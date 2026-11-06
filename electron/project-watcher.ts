@@ -1,6 +1,8 @@
+import * as os from 'node:os';
 import { folderKey } from '../src/folder-key';
 import { isAncestorOf } from '../src/owning-session';
 import { shouldIgnoreWatchPath } from '../src/watch-filter';
+import { isBroadWatchRoot } from '../src/watch-scope';
 import { type DirWatch, type WatchFn, watchDir } from './watch-dir';
 
 export interface FsFire {
@@ -17,11 +19,14 @@ export interface FsFire {
  *
  * A trailing throttle emits ONE fire per `debounceMs` window naming every touched folder
  * (mf-model spec §2.6, B3); a folder nested in another shares its ancestor's recursive watch.
+ * A home directory or filesystem root is watched top-level only and never that ancestor
+ * (see isBroadWatchRoot), so a project inside home keeps a recursive watch of its own.
  */
 export class ProjectWatcher {
   private folders: string[] = [];
   private keys: string[] = [];
   private readonly watches = new Map<string, DirWatch>();
+  private readonly homeDir: string;
   // Roots whose watch failed or vanished, until one opens again: an unwatchable root is retried
   // on every setFolders, and re-marking its repos each time re-ran their git on every switch.
   private readonly lostKeys = new Set<string>();
@@ -46,6 +51,7 @@ export class ProjectWatcher {
       onPath?: (absKey: string) => void;
       onLost?: (folders: readonly string[]) => void;
       onLive?: (roots: readonly string[]) => void;
+      homeDir?: string;
     } = {},
   ) {
     this.debounceMs = opts.debounceMs ?? 300;
@@ -55,6 +61,7 @@ export class ProjectWatcher {
     this.onPath = opts.onPath;
     this.onLost = opts.onLost;
     this.onLive = opts.onLive;
+    this.homeDir = opts.homeDir ?? os.homedir();
   }
 
   setFolders(folders: readonly string[]): void {
@@ -71,7 +78,9 @@ export class ProjectWatcher {
     this.keys = nextKeys;
     this.touched = new Set(touchedKeys.map((k) => nextKeys.indexOf(k)).filter((i) => i >= 0));
 
-    const roots = nextKeys.filter((k) => !nextKeys.some((o) => o !== k && isAncestorOf(o, k)));
+    const roots = nextKeys.filter(
+      (k) => !nextKeys.some((o) => o !== k && !this.isBroad(o) && isAncestorOf(o, k)),
+    );
     for (const [k, watcher] of this.watches) {
       if (!roots.includes(k)) this.close(k, watcher);
     }
@@ -80,7 +89,7 @@ export class ProjectWatcher {
     for (const k of roots) {
       if (!this.watches.has(k)) this.open(k, nextFolders[nextKeys.indexOf(k)]);
     }
-    this.onLive?.([...this.watches.keys()]);
+    this.live();
   }
 
   stop(): void {
@@ -92,20 +101,29 @@ export class ProjectWatcher {
     this.folders = [];
     this.keys = [];
     this.touched.clear();
-    this.onLive?.([...this.watches.keys()]);
+    this.live();
+  }
+
+  /** Coverage for the repo tracker: a top-level watch sees none of a repo below it. */
+  private live(): void {
+    this.onLive?.([...this.watches.keys()].filter((k) => !this.isBroad(k)));
+  }
+
+  private isBroad(key: string): boolean {
+    return isBroadWatchRoot(key, this.homeDir);
   }
 
   private open(key: string, dir: string): void {
     try {
       const watch = watchDir(
         dir,
-        { recursive: true, watch: this.watchFn },
+        { recursive: !this.isBroad(key), watch: this.watchFn },
         (_event, filename) => this.onEvent(key, filename ?? ''),
         (err) => {
           this.log?.(err ? `watch error on ${dir}: ${err}` : `watched folder vanished: ${dir}`);
           this.watches.delete(key);
           this.lost(key);
-          this.onLive?.([...this.watches.keys()]);
+          this.live();
         },
       );
       this.watches.set(key, watch);
@@ -130,8 +148,12 @@ export class ProjectWatcher {
     watch.close();
   }
 
+  /** The folders whose events this watch is the one to deliver. */
   private foldersUnder(watchKey: string): number[] {
-    return this.keys.flatMap((k, i) => (isAncestorOf(watchKey, k) ? [i] : []));
+    const covers = this.isBroad(watchKey)
+      ? (k: string) => k === watchKey
+      : (k: string) => isAncestorOf(watchKey, k);
+    return this.keys.flatMap((k, i) => (covers(k) ? [i] : []));
   }
 
   private onEvent(watchKey: string, filename: string): void {

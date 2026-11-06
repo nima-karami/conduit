@@ -33,6 +33,23 @@ describe('settings persistence', () => {
     expect(restoreSettings(serializeSettings(s))).toEqual(s);
   });
 
+  it('restores lastSeenVersion while old settings files omit it safely', () => {
+    expect(restoreSettings(undefined).lastSeenVersion).toBeUndefined();
+    const restored = restoreSettings(
+      JSON.stringify({ version: 1, settings: { lastSeenVersion: '0.53.0' } }),
+    );
+    expect(restored.lastSeenVersion).toBe('0.53.0');
+    expect(
+      restoreSettings(
+        JSON.stringify({ version: 1, settings: { lastSeenVersion: '0.54.0-beta.1' } }),
+      ).lastSeenVersion,
+    ).toBeUndefined();
+    expect(
+      restoreSettings(JSON.stringify({ version: 1, settings: { lastSeenVersion: '../bad' } }))
+        .lastSeenVersion,
+    ).toBeUndefined();
+  });
+
   // Theme migration — conductor decisions D2/D11. Every install written before the revamp
   // holds one of six ids that no longer exist, so mapping beats defaulting: a silent default
   // would reset everyone to one theme regardless of whether they ran light or dark.

@@ -204,4 +204,90 @@ describe('createPtyWriter', () => {
     expect(await p).toBe('submitted');
     expect(writes(h.log, 'a')).toEqual(['y', '\r']);
   });
+
+  it('submitEnter sends only the submit key', async () => {
+    const h = harness();
+    expect(await h.writer.submitEnter('a')).toBe('submitted');
+    expect(writes(h.log, 'a')).toEqual(['\r']);
+  });
+
+  it('submitEnter gates inside the slot', async () => {
+    const h = harness();
+    let gated = false;
+    const ahead = h.writer.submit('a', 'queued-ahead');
+    const p = h.writer.submitEnter('a', {
+      beforeEnter: () => {
+        gated = true;
+        return true;
+      },
+    });
+    await h.flush();
+    expect(gated).toBe(false);
+    expect(writes(h.log, 'a')).toEqual(['queued-ahead']);
+    await h.releaseGap();
+    expect(await ahead).toBe('submitted');
+    expect(gated).toBe(true);
+    expect(await p).toBe('submitted');
+    expect(writes(h.log, 'a')).toEqual(['queued-ahead', '\r', '\r']);
+  });
+
+  it('submitEnter with a closed gate → withheld, no \r', async () => {
+    const h = harness();
+    expect(await h.writer.submitEnter('a', { beforeEnter: () => false })).toBe('withheld');
+    expect(h.log).toEqual([]);
+  });
+
+  it('submitEnter queued behind a running submit: human key in the gap → withheld', async () => {
+    const h = harness();
+    let allowEnter = true;
+    const p1 = h.writer.submit('a', 'x');
+    const p2 = h.writer.submitEnter('a', {
+      beforeEnter: () => allowEnter,
+    });
+    await h.flush();
+    allowEnter = false;
+    await h.releaseGap();
+    expect(await p1).toBe('submitted');
+    expect(await p2).toBe('withheld');
+    expect(writes(h.log, 'a')).toEqual(['x', '\r']);
+  });
+
+  it('submitEnter with no pty → no-pty', async () => {
+    const h = harness();
+    expect(await h.writer.submitEnter('nope')).toBe('no-pty');
+    expect(h.log).toEqual([]);
+  });
+
+  it('submitEnter hook respawns the session and returns true → generation-changed, no \\r', async () => {
+    const h = harness();
+    const p = h.writer.submitEnter('a', {
+      beforeEnter: () => {
+        h.gens.set('a', 2);
+        return true;
+      },
+    });
+    await h.flush();
+    expect(await p).toBe('generation-changed');
+    expect(h.log).toEqual([]);
+  });
+
+  it('submitEnter hook sees a respawn inside the slot → withheld', async () => {
+    const h = harness();
+    const p1 = h.writer.submit('a', 'x');
+    const p2 = h.writer.submitEnter('a', {
+      beforeEnter: async () => h.gens.get('a') === 1,
+    });
+    await h.flush();
+    h.gens.set('a', 2);
+    await h.releaseGap();
+    expect(await p1).toBe('generation-changed');
+    expect(await p2).toBe('withheld');
+    expect(writes(h.log, 'a')).toEqual(['x']);
+  });
+
+  it('a failed submitEnter write → write-failed', async () => {
+    const h = harness();
+    h.failWrites();
+    expect(await h.writer.submitEnter('a')).toBe('write-failed');
+  });
 });

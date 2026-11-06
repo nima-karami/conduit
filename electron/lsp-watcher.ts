@@ -2,8 +2,10 @@
 // the filter is compiled from the registry's watchGlobs by the caller. ProjectWatcher is not
 // reused — it is single-root and reports no paths (spec §3.7).
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { shouldIgnoreWatchPath } from '../src/watch-filter';
+import { isBroadWatchRoot } from '../src/watch-scope';
 import { type DirWatch, type WatchFn, watchDir } from './watch-dir';
 
 /** LSP FileChangeType: Created 1 | Changed 2 | Deleted 3. */
@@ -33,6 +35,7 @@ export function watchServerRoot(
     watch?: WatchFn;
     stat?: (p: string) => Promise<boolean>;
     log?: (m: string) => void;
+    homeDir?: string;
   } = {},
 ): LspWatcherHandle {
   const stat = deps.stat ?? defaultStat;
@@ -88,7 +91,7 @@ export function watchServerRoot(
   try {
     watcher = watchDir(
       root,
-      { recursive: true, watch: deps.watch },
+      { recursive: !isBroadWatchRoot(root, deps.homeDir ?? os.homedir()), watch: deps.watch },
       (event, filename) => {
         const rel = filename ?? '';
         if (!rel || shouldIgnoreWatchPath(rel) || !filter.matches(rel)) return;

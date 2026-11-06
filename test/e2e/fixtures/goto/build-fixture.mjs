@@ -128,6 +128,17 @@ function writeTsconfigs(root) {
     'jsproj/consumer.js',
     "import { markerR19bJsconfigAlias } from '~js/target';\nexport const useJsconfig = markerR19bJsconfigAlias;\n",
   );
+  // Row 19c: a .js consumer reaching a sibling .ts source (allowJs is on by default, src/tsconfig-map.ts).
+  write(
+    root,
+    'jsproj/ts-lib.ts',
+    'export function markerR19cJsToTs(): number {\n  return 19;\n}\n',
+  );
+  write(
+    root,
+    'jsproj/ts-consumer.js',
+    "import { markerR19cJsToTs } from './ts-lib';\nexport const useJsToTs = markerR19cJsToTs();\n",
+  );
 }
 
 function writeFirstParty(root) {

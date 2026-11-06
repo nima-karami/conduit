@@ -61,7 +61,7 @@ import {
   pruneCorpus,
   quickOpenFileRows,
 } from '../src/quick-open-folders';
-import { quitConfirmCopy } from '../src/quit-guard';
+import { quitConfirmState } from '../src/quit-guard';
 import {
   historyRepoFor,
   orderRepos,
@@ -141,7 +141,7 @@ import { QuitScrim } from './components/quit-scrim';
 import { RightPane, type RightPaneHandle } from './components/right-pane';
 import type { SearchScopeModel } from './components/search-pane';
 import { ServerBanner } from './components/server-banner';
-import { SettingsModal } from './components/settings-modal';
+import { SettingsModal, type SettingsTab } from './components/settings-modal';
 import { Sidebar } from './components/sidebar';
 import { StatusBar } from './components/status-bar';
 import { TimedMessageDialog } from './components/timed-message-dialog';
@@ -149,7 +149,16 @@ import { Toasts } from './components/toasts';
 import { TopBar } from './components/top-bar';
 import type { UpdateStatus } from './components/update-card';
 import { WebPromptModal } from './components/web-prompt-modal';
+import { type ReleaseNotesView, WhatsNewDialog } from './components/whats-new-dialog';
 import { MCP_STR } from './conduit-mcp-strings';
+import {
+  getPinnedDiffs,
+  pruneDiffs,
+  pruneFiles,
+  rereadsOnFocus,
+  setNewest,
+  subscribePinnedDiffs,
+} from './content-cache';
 import { decideShortcut, type ShortcutContext } from './decide-shortcut';
 import { createDiffReadQueue, type DiffReadQueue, diffReadTargets } from './diff-read-queue';
 import { diffTabKey } from './diff-tab-scope';
@@ -250,6 +259,7 @@ import {
   IconWarning,
   SessionGlyph,
 } from './icons';
+import { syncOpenFileTabs } from './idle-models';
 import { createLiveAnnouncer } from './live-region';
 import { registerLspHoverProvider } from './lsp-nav';
 import {
@@ -342,8 +352,12 @@ import { runToolOpen, useDrainAfterCommit } from './tool-open-focus';
 import { registerTsNavigationProviders, setUnresolvedResolver } from './ts-nav';
 import {
   applyProjectFiles,
+  expectIndexRoot,
   forgetIndexedPath,
   moveIndexedPath,
+  onIndexRootEvicted,
+  retainIndexRoots,
+  setActiveIndexRoots,
   setCompilerOptionsRoot,
 } from './ts-project';
 import { isEditorEntry, isTerminalEntry, isTypingEntry } from './typing-guard';
@@ -357,13 +371,13 @@ import { canNavigate, type NavHistoryDeps, useNavHistory } from './use-nav-histo
 import { useReviewModeLayout } from './use-review-mode-layout';
 import { useSnooze } from './use-snooze';
 import { fileViewStateIds, renameViewState } from './view-state-store';
+import { shownFilePaths } from './watched-files';
 import {
   type WorkbenchChromeContextValue,
   WorkbenchChromeProvider,
 } from './workbench-chrome-state';
 
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
-type SettingsTab = 'general' | 'mcp' | 'appearance' | 'shortcuts' | 'skills' | 'about';
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 
 /** `record: false` for an open that is not a navigation (a Back reopen, a rename). */
@@ -552,8 +566,20 @@ export function App() {
     for (const t of diffReadTargets(docState.docs, (d) => !diffs.has(diffTabKey(d))))
       diffReadQueueRef.current.ensure(t);
   }, [docState.docs, diffs]);
+  // Content outlives its tab only as a bounded cache; see content-cache.ts for what stays.
+  const reviewDiffPins = useSyncExternalStore(subscribePinnedDiffs, getPinnedDiffs, getPinnedDiffs);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: files/diffs re-trigger it so a reply for a closed tab is pruned on arrival
+  useEffect(() => {
+    setFiles((m) => pruneFiles(m, docState.docs));
+    setDiffs((m) => pruneDiffs(m, docState.docs, reviewDiffPins));
+  }, [docState.docs, files, diffs, reviewDiffPins]);
+  // After the close dispatch, so releaseFileTab has already dropped the path's dirty/save state.
+  useEffect(() => syncOpenFileTabs(docState.docs), [docState.docs]);
+  const filesRef = useRef(files);
+  filesRef.current = files;
   const [palette, setPalette] = useState<{ initialQuery: string } | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
+  const [settingsAboutReleaseNotes, setSettingsAboutReleaseNotes] = useState(false);
   const [settingsFocusCli, setSettingsFocusCli] = useState<AgentCli | undefined>(undefined);
   const [recentsBySession, setRecentsBySession] = useState<Record<string, RecentDoc[]>>({});
   const [corpus, setCorpus] = useState<FolderCorpus>({});
@@ -574,6 +600,26 @@ export function App() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [updateDismissed, setUpdateDismissed] = useState(false);
   const dismissUpdate = useCallback(() => setUpdateDismissed(true), []);
+  const revealUpdate = useCallback(() => setUpdateDismissed(false), []);
+  const [installedNotes, setInstalledNotes] = useState<Extract<
+    HostToWebview,
+    { type: 'releaseNotes' }
+  > | null>(null);
+  const [installedToastDismissed, setInstalledToastDismissed] = useState(false);
+  const [releaseNotesView, setReleaseNotesView] = useState<
+    (ReleaseNotesView & { incoming: boolean }) | null
+  >(null);
+  const releaseNotesOpen =
+    releaseNotesView !== null && (!releaseNotesView.incoming || installedNotes !== null);
+  const openIncomingNotes = useCallback(() => {
+    if (updateStatus?.version && updateStatus.releaseNotes?.trim()) {
+      setReleaseNotesView({
+        version: updateStatus.version,
+        notes: updateStatus.releaseNotes,
+        incoming: true,
+      });
+    }
+  }, [updateStatus]);
   // This window's sidebar UI: hydrated once from the host, edits persisted back
   // (sidebar-tree-state.tsx). The ref is the authority so a step never reads a stale render.
   const [sidebarSync, setSidebarSync] = useState(INITIAL_SIDEBAR_UI_SYNC);
@@ -702,7 +748,6 @@ export function App() {
         askDirty: (req) => dirtyCloseRef.current.ask(req),
         askSessions: ({ reason, running, busy, onShown, signal }) =>
           new Promise<boolean | { proceed: boolean; stopAgents?: boolean }>((resolve) => {
-            const copy = quitConfirmCopy({ running, busy, reason, trayHint: false });
             const key = nextModalKey();
             signal.addEventListener(
               'abort',
@@ -715,24 +760,7 @@ export function App() {
             slot.open({
               kind: 'confirm',
               key,
-              state: {
-                title: copy.title,
-                message: copy.body,
-                confirmLabel: copy.confirmLabel,
-                // F4: only a window close ends agents; a quit's destructive choice is the secondary.
-                danger: reason === 'windowClose' || reason === 'quitAndStop',
-                // Cancel is the keyboard default so an accidental Enter never quits.
-                focusCancel: true,
-                onShown,
-                onCancel: () => resolve(false),
-                onConfirm: () => resolve(true),
-                ...(reason === 'quit' || reason === 'update'
-                  ? {
-                      secondaryLabel: 'Quit and stop all agents',
-                      onSecondary: () => resolve({ proceed: true, stopAgents: true }),
-                    }
-                  : {}),
-              },
+              state: quitConfirmState({ running, busy, reason, onShown, resolve }),
             });
           }),
         focusDialog: focusOpenModal,
@@ -794,7 +822,7 @@ export function App() {
         }
       } else if (msg.type === 'fileDiff') {
         const key = diffKey(msg.doc.path, scopeFromDiffArgs(msg));
-        setDiffs((m) => new Map(m).set(key, msg.doc));
+        setDiffs((m) => setNewest(m, key, msg.doc));
         diffReadQueueRef.current.settle(key);
       } else if (msg.type === 'searchResults') {
         setCorpus((c) => acceptSearchResults(c, msg, presentFolders(activeRef.current)));
@@ -853,6 +881,8 @@ export function App() {
             bumpHtmlReload(tabStateKey(changed.id, g));
           }
         }
+      } else if (msg.type === 'releaseNotes') {
+        setInstalledNotes(msg);
       } else if (msg.type === 'updateStatus') {
         setUpdateStatus(msg);
         // A freshly-staged update un-dismisses the update toast (the user may have
@@ -887,6 +917,7 @@ export function App() {
   // Mount-only deps: a re-post makes the host re-send its one-shot restoreDocs.
   useEffect(() => {
     post({ type: 'ready' });
+    post({ type: 'getReleaseNotes' });
   }, []);
 
   // K3: subscribe to successful saves so the files map is updated immediately
@@ -1094,15 +1125,28 @@ export function App() {
   // `byUser`: a user's open lands keyboard focus in Review, as its mount did; a tool-driven one
   // lands it only through landToolOpen (spec 2026-10-30-conduit-mcp-app-control §2.1 "Focus").
   const openReviewIn = useCallback(
-    (sessionId: string, source: ReviewSource, group?: GroupIndex, byUser = false) => {
+    (
+      sessionId: string,
+      source: ReviewSource,
+      group?: GroupIndex,
+      byUser = false,
+      mode?: OpenMode,
+    ) => {
       const shown = activeIdRef.current ?? '';
       const g = group ?? openTargetGroup(docStateRef.current, sessionId);
       const wasShown = reviewShownIn(sessionId, g);
-      if (sessionId === shown) {
+      const background = mode === 'background';
+      if (!background && sessionId === shown) {
         recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
         setCenterView('editor');
       }
-      dispatchDocs({ type: 'openReview', sessionId, source, group: g, shown });
+      dispatchDocs({
+        type: 'openReview',
+        sessionId,
+        source,
+        group: g,
+        ...(background ? { mode: 'background' as const } : { shown }),
+      });
       // After recordNav, which cancels any focus request still waiting to mount.
       if (byUser && !wasShown) focusView(sessionId, g, REVIEW_DOC_ID);
     },
@@ -2089,7 +2133,27 @@ export function App() {
       status: statusModel,
       commandHint: comboLabel('openCommands', settings.shortcuts) ?? '',
       focusAttention,
-      update: { status: updateStatus, dismissed: updateDismissed, dismiss: dismissUpdate },
+      update: {
+        status: updateStatus,
+        dismissed: updateDismissed,
+        dismiss: dismissUpdate,
+        reveal: revealUpdate,
+        openNotes: openIncomingNotes,
+        notesOpen: releaseNotesOpen,
+        installedToast:
+          installedNotes?.showToast && installedNotes.notes && !installedToastDismissed
+            ? {
+                version: installedNotes.version,
+                open: () =>
+                  setReleaseNotesView({
+                    version: installedNotes.version,
+                    notes: installedNotes.notes ?? '',
+                    incoming: false,
+                  }),
+                dismiss: () => setInstalledToastDismissed(true),
+              }
+            : undefined,
+      },
     }),
     [
       settings.explorerCollapsed,
@@ -2102,6 +2166,11 @@ export function App() {
       updateStatus,
       updateDismissed,
       dismissUpdate,
+      revealUpdate,
+      openIncomingNotes,
+      releaseNotesOpen,
+      installedNotes,
+      installedToastDismissed,
     ],
   );
   // A layout effect, so no commit the user (or the Back button) can observe has the new session's
@@ -2125,15 +2194,12 @@ export function App() {
     return () => cancelAnimationFrame(raf);
   }, [activeId]);
 
-  // Tell the host which files are open in editor/markdown tabs so it watches them on
-  // disk and pings us (fileChanged) when one changes externally. Sorted + joined into a
-  // stable key so an unrelated docs change (reorder/active) doesn't re-send the set.
+  // Tell the host which files are open in the shown sessions' editor/markdown tabs so it
+  // watches them on disk and pings us (fileChanged) when one changes externally. Sorted + joined
+  // into a stable key so an unrelated docs change (reorder/active) doesn't re-send the set.
   const openFilePathsKey = useMemo(
-    () =>
-      Array.from(new Set(docState.docs.filter((d) => d.kind === 'file').map((d) => d.path)))
-        .sort()
-        .join('\n'),
-    [docState.docs],
+    () => shownFilePaths(docState.docs, visibleSessionIds(activeId, splitId)).join('\n'),
+    [docState.docs, activeId, splitId],
   );
   useEffect(() => {
     post({ type: 'watchFiles', paths: openFilePathsKey ? openFilePathsKey.split('\n') : [] });
@@ -2198,7 +2264,8 @@ export function App() {
   const visibleFilePathsRef = useRef<readonly string[]>([]);
   useEffect(() => {
     for (const path of visibleFilePaths) {
-      if (!visibleFilePathsRef.current.includes(path)) post({ type: 'readFile', path });
+      if (!visibleFilePathsRef.current.includes(path) && rereadsOnFocus(filesRef.current.get(path)))
+        post({ type: 'readFile', path });
     }
     visibleFilePathsRef.current = visibleFilePaths;
   }, [visibleFilePaths]);
@@ -2375,7 +2442,9 @@ export function App() {
     // On regaining focus, also re-read every visible file tab so it reflects any on-disk
     // change made while the app was backgrounded (dirty-buffer protection still applies).
     const rereadVisibleFiles = () => {
-      for (const path of visibleFilePathsRef.current) post({ type: 'readFile', path });
+      for (const path of visibleFilePathsRef.current) {
+        if (rereadsOnFocus(filesRef.current.get(path))) post({ type: 'readFile', path });
+      }
     };
     const onFocus = () => {
       if (document.visibilityState !== 'hidden') {
@@ -2796,8 +2865,26 @@ export function App() {
     const key = folderKey(root);
     if (indexedRoots.current.has(key)) return;
     indexedRoots.current.add(key);
+    expectIndexRoot(root);
     post({ type: 'indexProject', root, seeds });
   }, []);
+  // The index may drop a root (budget, or no session presents it); asking again must re-index it.
+  useEffect(() => onIndexRootEvicted((key) => indexedRoots.current.delete(key)), []);
+  // Null until the host state arrives, so a cold start never reads as "every session closed".
+  const windowRootKeys = useMemo(
+    () =>
+      state
+        ? [...new Set(hostSessions.flatMap((s) => presentFolders(s)).map(folderKey))]
+            .sort()
+            .join('\n')
+        : null,
+    [state, hostSessions],
+  );
+  // A root no session in this window presents (closed, folder removed, moved away) leaves the
+  // TS index — otherwise every root ever activated stays in the language workers for good.
+  useEffect(() => {
+    if (windowRootKeys !== null) retainIndexRoots(windowRootKeys ? windowRootKeys.split('\n') : []);
+  }, [windowRootKeys]);
   // Every present folder, home first (spec §2.11): an added or located folder is new here and
   // gets indexed through the same effect.
   const lastPresent = useRef<{ id: string | undefined; folders: string[] }>({
@@ -2811,6 +2898,7 @@ export function App() {
     // A folder that left while unwatched may have changed; re-adding it (Undo) must re-index it.
     for (const k of foldersLeft(lastPresent.current, now)) indexedRoots.current.delete(k);
     lastPresent.current = now;
+    setActiveIndexRoots(folders);
     if (folders.length === 0) return;
     // Deliberately behind the session's own startup (PTY spawn, git interrogation, first
     // paint): indexing reads every source file in the project, and racing it against those
@@ -3079,11 +3167,15 @@ export function App() {
   // close button + Esc. Defined here because it needs forceCloseDoc (declared above).
   const closeReviewTab = useCallback(() => forceCloseDoc(REVIEW_DOC_ID), [forceCloseDoc]);
 
-  const openSettingsAt = useCallback((tab: SettingsTab, cli?: AgentCli) => {
-    setSettingsTab(tab);
-    setSettingsFocusCli(cli);
-    setSettingsOpen(true);
-  }, []);
+  const openSettingsAt = useCallback(
+    (tab: SettingsTab, cli?: AgentCli, opts?: { releaseNotes?: boolean }) => {
+      setSettingsTab(tab);
+      setSettingsFocusCli(cli);
+      setSettingsAboutReleaseNotes(!!opts?.releaseNotes);
+      setSettingsOpen(true);
+    },
+    [],
+  );
 
   // Cross-file go-to-definition: CodeViewer resolves the target (worker) and calls
   // this to open it as a doc tab (the reveal position is set alongside).
@@ -3223,13 +3315,17 @@ export function App() {
         forceClose: forceCloseDoc,
         closeDirtyUnprompted,
       }),
-    openReview: (id, source) =>
+    openReview: (id, source, focus = true) => {
       landToolOpen(
         id,
         'Review',
         (d) => d.kind === 'review',
-        (group) => openReviewIn(id, source, group),
-      ),
+        (group) => {
+          if (focus && id === activeIdRef.current) setCenterView('editor');
+          openReviewIn(id, source, group, false, focus ? undefined : 'background');
+        },
+      );
+    },
     openGitHistory: (id, root, commit) =>
       landToolOpen(
         id,
@@ -5187,6 +5283,22 @@ export function App() {
   return (
     <SidebarTreeProvider value={sidebarTree}>
       <WorkbenchChromeProvider value={chrome}>
+        {releaseNotesOpen && releaseNotesView && (
+          <WhatsNewDialog
+            release={{
+              ...releaseNotesView,
+              currentVersion: releaseNotesView.incoming ? installedNotes?.version : undefined,
+            }}
+            ready={
+              updateStatus?.status === 'ready' && updateStatus.version === releaseNotesView.version
+            }
+            onClose={() => setReleaseNotesView(null)}
+            onShowAllNotes={() => {
+              setReleaseNotesView(null);
+              openSettingsAt('about', undefined, { releaseNotes: true });
+            }}
+          />
+        )}
         <div className="shell">
           <AnimatedBg />
           <div ref={navLiveRef} className="sr-only" aria-live="polite" role="status" />
@@ -5273,10 +5385,14 @@ export function App() {
             <SettingsModal
               agents={agents}
               initialTab={settingsTab}
+              initialAboutReleaseNotes={settingsAboutReleaseNotes}
               initialCli={settingsFocusCli}
               about={state?.about}
               projectPath={active?.home || null}
-              onClose={() => setSettingsOpen(false)}
+              onClose={() => {
+                setSettingsAboutReleaseNotes(false);
+                setSettingsOpen(false);
+              }}
               onCheckUpdate={() => post({ type: 'updateCheck' })}
               onRelaunch={() => post({ type: 'updateRelaunch' })}
               updateStatus={updateStatus}

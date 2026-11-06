@@ -7,7 +7,8 @@
  * addon never reports a loss. `webview/terminal-gpu.ts` handles it; this drives the real thing:
  *
  *   1. Open three shell sessions, print a block of text in each, and measure the glyph pixels of
- *      the active pane (all three must be on the WebGL renderer, or the scenario proves nothing).
+ *      the active pane (all three must be on the WebGL renderer, or the scenario proves nothing: each
+ *      was shown, so the hidden two stay on WebGL as recently shown panes).
  *   2. Kill THIS app's GPU process — by the PID `app.getAppMetrics()` reports, never by name.
  *   3. Wait for the restart, then measure the pane that was active, and a pane that was hidden
  *      during the reset after activating it. Both must draw text again, on WebGL again.
@@ -198,6 +199,8 @@ await runScenario('terminal-gpu-reset', async ({ app, page, log }) => {
   assert(afterHidden >= MIN_GLYPH_PX, `hidden pane went dark after the reset (${afterHidden} px)`);
   // Text alone would also come back by leaving every pane on the DOM renderer for good.
   for (const sid of sids) {
+    await activate(page, sid);
+    await page.waitForTimeout(500);
     assert(await onWebgl(page, sid), `session ${sid} did not return to WebGL after the reset`);
   }
   assert(shaderResumed, 'the shader background did not resume after the reset');

@@ -1,12 +1,32 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import fs, { mkdtempSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readDiff, readDiffReply } from '../../src/file-service';
 
 const MB = 1024 * 1024;
 
 describe('readDiff oversize cap', () => {
+  it('refuses a >25MB work-side image without reading it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rd-'));
+    const p = join(dir, 'huge.png');
+    writeFileSync(p, '');
+    truncateSync(p, 26 * MB);
+    const read = vi.spyOn(fs.promises, 'readFile');
+    try {
+      const dto = await readDiff(
+        p,
+        async () => '',
+        async () => null,
+      );
+      expect(dto.image?.overCap).toBe(true);
+      expect(dto.binary).toBe(true);
+      expect(read).not.toHaveBeenCalledWith(p);
+    } finally {
+      read.mockRestore();
+    }
+  });
+
   it('marks a >2MB working file oversize instead of shipping its content', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'rd-'));
     const p = join(dir, 'big.txt');

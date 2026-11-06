@@ -53,7 +53,7 @@ function chrome(over: Partial<WorkbenchChromeContextValue> = {}): WorkbenchChrom
     },
     commandHint: '',
     focusAttention: vi.fn(),
-    update: { status: null, dismissed: false, dismiss: noop },
+    update: { status: null, dismissed: false, dismiss: noop, reveal: noop, openNotes: noop },
     ...over,
   };
 }
@@ -315,6 +315,44 @@ const items = () =>
   );
 
 describe('status bar (selector contract: Footer)', () => {
+  it('shows download progress and reveals the card; ready opens notes or reveals the card without notes', async () => {
+    const update = {
+      status: { type: 'updateStatus' as const, status: 'downloading' as const, percent: 41.6 },
+      dismissed: true,
+      dismiss: noop,
+      reveal: vi.fn(),
+      openNotes: vi.fn(),
+    };
+    await render(chrome({ update }), createElement(StatusBar));
+    expect(item('update')?.textContent).toBe('Updating · 42%');
+    await act(async () => item('update')?.click());
+    expect(update.reveal).toHaveBeenCalledTimes(1);
+    await render(
+      chrome({
+        update: {
+          ...update,
+          status: { type: 'updateStatus', status: 'ready', releaseNotes: 'notes' },
+        },
+      }),
+      createElement(StatusBar),
+    );
+    expect(item('update')?.textContent).toBe('Update ready');
+    await act(async () => item('update')?.click());
+    expect(update.openNotes).toHaveBeenCalledTimes(1);
+    await render(
+      chrome({ update: { ...update, status: { type: 'updateStatus', status: 'ready' } } }),
+      createElement(StatusBar),
+    );
+    await act(async () => item('update')?.click());
+    expect(update.reveal).toHaveBeenCalledTimes(2);
+    for (const status of ['checking', 'available', 'up-to-date', 'error'] as const) {
+      await render(
+        chrome({ update: { ...update, status: { type: 'updateStatus', status } } }),
+        createElement(StatusBar),
+      );
+      expect(item('update')).toBeNull();
+    }
+  });
   it('shows machine, branch, worktree, live, need-you and the hint for an active session', async () => {
     await render(
       chrome({

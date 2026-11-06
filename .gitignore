@@ -33,3 +33,4 @@ designs/
 .shots/
 build/vendor/
 native/tray/target/
+build/release-notes.md

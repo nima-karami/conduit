@@ -177,6 +177,7 @@ export interface TypingPort {
   submit: PtyWriter['submit'];
   /** One raw write, not queued behind a submit's gap, as today. */
   write(sessionId: string, data: string, opts?: TypingWriteOptions): boolean;
+  submitEnter: PtyWriter['submitEnter'];
   forget: PtyWriter['forget'];
 }
 
@@ -207,6 +208,11 @@ export interface ScrollbackPort {
    * on disk; the replay's tail is recorded too, since the terminal is shown it. Null = no history.
    */
   replayForColdStart(sessionId: string): FirstPaint | null;
+  /**
+   * For a `mode: 'view'` start of a session that isn't live: the same neutralized replay, recording
+   * nothing — no child continues that stream, so the ring stays what a later cold start replays.
+   */
+  replayForView(sessionId: string): FirstPaint | null;
   /**
    * For a start that finds the session already live: the ring recorded before its current launch
    * (earlier runs, relaunch markers, host-composed lines), run by run and recording nothing. The

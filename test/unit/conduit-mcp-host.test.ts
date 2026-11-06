@@ -15,7 +15,12 @@ import {
   ENDPOINT_READY_WAIT_MS,
   type McpRendererMessage,
 } from '../../src/conduit-mcp/host';
-import { ECHO_POLL_MS } from '../../src/conduit-mcp/notice-gate';
+import {
+  ECHO_POLL_MS,
+  LATE_ECHO_POLL_MS,
+  LATE_ECHO_WAIT_MS,
+  NOTICE_SPACING_MS,
+} from '../../src/conduit-mcp/notice-gate';
 import { composeNotice } from '../../src/conduit-mcp/notice-text';
 import { screenVerdict } from '../../src/conduit-mcp/screen-verdict';
 import type { StoreIo } from '../../src/conduit-mcp/store';
@@ -125,6 +130,11 @@ interface Harness {
   writer: ReturnType<typeof createPtyWriter>;
   /** Gap releases, when the harness holds submit gaps. */
   gaps: Array<() => void>;
+  /** Late-echo poll sleeps, when the harness holds them so cancel can be observed alive. */
+  lateEchoSleeps: Array<{ ms: number; release(): void }>;
+  releaseLateEcho(): Promise<void>;
+  failEnter: Set<string>;
+  submitEnterCalls: number;
   /** Every control open/file request the host handed to main. */
   opens: McpOpenRequest[];
   files: McpFileRequest[];
@@ -145,6 +155,7 @@ interface Harness {
   tokens: TokenStorePort;
   prepareLaunch(sessionId: string, def: AgentDefinition, spec: SpawnSpec): Promise<SpawnSpec>;
   spawn(sessionId: string, cols?: number, rows?: number): void;
+  respawn(sessionId: string, cols?: number, rows?: number): void;
   resize(sessionId: string, cols: number, rows: number): void;
   exit(sessionId: string, code?: number | null): void;
   output(sessionId: string, data: string): void;
@@ -182,6 +193,11 @@ function harness(
     listen?: boolean;
     platform?: ConduitMcpHostDeps['platform'];
     holdGaps?: boolean;
+    /**
+     * Hold LATE_ECHO_POLL_MS sleeps only: an instant poll would expire the watcher before cancel,
+     * and exit/delete/stop would then close the recheck without the cancel path running.
+     */
+    holdLateEcho?: boolean;
     /** Typed text shows on screen only at the host's next wait, as Codex renders it (measured). */
     lagEcho?: boolean;
     /** The fake prompt answers an Enter with a fresh empty prompt line. */
@@ -230,6 +246,18 @@ function harness(
     for (const listener of runtimeListeners) listener(event);
   };
   const gaps: Array<() => void> = [];
+  const lateEchoSleeps: Array<{ ms: number; release(): void }> = [];
+  const failEnter = new Set<string>();
+  const flushMicrotasks = async () => {
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+  };
+  const releaseLateEcho = async () => {
+    await flushMicrotasks();
+    const g = lateEchoSleeps.shift();
+    if (!g) throw new Error('no pending late-echo sleep');
+    g.release();
+    await flushMicrotasks();
+  };
   const opens: McpOpenRequest[] = [];
   const files: McpFileRequest[] = [];
   const lagged: Array<[string, string]> = [];
@@ -272,6 +300,20 @@ function harness(
     });
     emitRuntime({ type: 'spawned', sessionId: id, generation, size: { cols, rows } });
   };
+  const respawn: Harness['respawn'] = (id, cols = 40, rows = 24) => {
+    const generation = (gens.get(id) ?? 0) + 1;
+    gens.set(id, generation);
+    alive.add(id);
+    terminals.set(id, {
+      sessionId: id,
+      generation,
+      launchId: launchIds.get(id) ?? '0'.repeat(32),
+      state: 'live',
+      size: { cols, rows },
+      target: { hcSession: 'hc-test', terminal: id },
+    });
+    emitRuntime({ type: 'spawned', sessionId: id, generation, size: { cols, rows } });
+  };
   const resize: Harness['resize'] = (id, cols, rows) => {
     const terminal = terminals.get(id);
     if (terminal) terminal.size = { cols, rows };
@@ -284,9 +326,11 @@ function harness(
     terminals.delete(id);
     emitRuntime({ type: 'exit', sessionId: id, generation, code, reason: 'exited' });
   };
+  let submitEnterCalls = 0;
   const writer = createPtyWriter({
     generation: (id) => gens.get(id),
     input: (id, data) => {
+      if (data === '\r' && failEnter.has(id)) return false;
       inputs.push([id, data]);
       // The PTY echoes typed text back, which the host's screen model then shows.
       if (!echo.has(id)) return true;
@@ -445,6 +489,10 @@ function harness(
     attention,
     typing: {
       submit: writer.submit,
+      submitEnter: (sessionId, opts) => {
+        submitEnterCalls += 1;
+        return writer.submitEnter(sessionId, opts);
+      },
       write: (id, data) => {
         inputs.push([id, data]);
         return alive.has(id);
@@ -476,9 +524,24 @@ function harness(
     log: opts.log ?? noLog,
     now: () => clock.t,
     sleep: async (ms) => {
-      clock.t += ms;
-      opts.duringWait?.(host);
-      for (const [id, data] of lagged.splice(0)) output(id, data);
+      const finish = () => {
+        clock.t += ms;
+        opts.duringWait?.(host);
+        for (const [id, data] of lagged.splice(0)) output(id, data);
+      };
+      if (opts.holdLateEcho && ms === LATE_ECHO_POLL_MS) {
+        await new Promise<void>((resolve) => {
+          lateEchoSleeps.push({
+            ms,
+            release: () => {
+              finish();
+              resolve();
+            },
+          });
+        });
+        return;
+      }
+      finish();
     },
     storeIo: opts.storeIo,
     listen: opts.listen ?? true,
@@ -522,6 +585,12 @@ function harness(
     gens,
     writer,
     gaps,
+    lateEchoSleeps,
+    releaseLateEcho,
+    failEnter,
+    get submitEnterCalls() {
+      return submitEnterCalls;
+    },
     opens,
     files,
     screens,
@@ -537,6 +606,7 @@ function harness(
     tokens,
     prepareLaunch: (id, def, sp) => host.prepareLaunch(id, def, sp, allocateLaunch(id)),
     spawn,
+    respawn,
     resize,
     exit,
     output,
@@ -644,6 +714,18 @@ const settle = (h: Harness) => {
 };
 
 const writesTo = (h: Harness, id: string) => h.inputs.filter(([s]) => s === id).map(([, d]) => d);
+
+async function waitLateEchoHeld(h: Harness, n = 1) {
+  await expect.poll(() => h.lateEchoSleeps.length).toBe(n);
+}
+
+function lateEchoOutcomes(rec: ReturnType<typeof recordingLog>) {
+  return {
+    submitted: rec.of('notice late echo submitted'),
+    abandoned: rec.of('notice late echo abandoned'),
+    expired: rec.of('notice late echo expired'),
+  };
+}
 
 async function lastState(h: Harness) {
   await expect.poll(() => h.broadcasts.length, { timeout: 2_000 }).toBeGreaterThan(0);
@@ -1231,6 +1313,291 @@ describe('createConduitMcpHost — notices', () => {
       ['info', 'no-echo'],
     ]);
     expect(rec.of('notice result').map((e) => e.data?.outcome)).toEqual(['withheld']);
+  });
+
+  describe('late-echo watcher', () => {
+    const ECHO_AT_MS = 5_000;
+    const pollsTo = (ms: number) => ms / LATE_ECHO_POLL_MS;
+
+    async function withheldLateEcho(h: Harness, ca: Awaited<ReturnType<typeof client>>) {
+      h.echo.delete('s2');
+      await ca.call('send_message', { to: ['fake-2'], body: 'see' });
+      await h.host.tick();
+      expect(writesTo(h, 's2')).toEqual([composeNotice(false)]);
+      await waitLateEchoHeld(h);
+    }
+
+    async function expectSilentCancel(rec: ReturnType<typeof recordingLog>, h: Harness) {
+      await new Promise((r) => setTimeout(r, 50));
+      const o = lateEchoOutcomes(rec);
+      expect(o.submitted).toHaveLength(0);
+      expect(o.abandoned).toHaveLength(0);
+      expect(o.expired).toHaveLength(0);
+      expect(writesTo(h, 's2').filter((d) => d === '\r')).toEqual([]);
+    }
+
+    it('echo appears at +5 s after withheld → exactly one Enter, then confirm', async () => {
+      const rec = recordingLog();
+      const h = harness({ holdLateEcho: true, echoSubmit: true, log: rec.log });
+      const { ca } = await pair(h);
+      await withheldLateEcho(h, ca);
+      const start = h.clock.t;
+      for (let i = 0; i < pollsTo(ECHO_AT_MS) - 1; i += 1) {
+        await h.releaseLateEcho();
+        await waitLateEchoHeld(h);
+      }
+      h.echo.add('s2');
+      h.output('s2', composeNotice(false));
+      await h.releaseLateEcho();
+      expect(h.clock.t - start).toBe(ECHO_AT_MS);
+      await expect.poll(() => writesTo(h, 's2')).toEqual([composeNotice(false), '\r']);
+      expect(lateEchoOutcomes(rec).submitted).toHaveLength(1);
+      expect(lateEchoOutcomes(rec).submitted[0]?.data?.waitedMs).toBe(ECHO_AT_MS);
+      await expect.poll(() => rec.of('notice submit confirmed').length).toBe(1);
+      expect(writesTo(h, 's2')).toEqual([composeNotice(false), '\r']);
+    });
+
+    it('late Enter queued behind a running submit: human key in the gap → no second \\r', async () => {
+      const rec = recordingLog();
+      const h = harness({ holdGaps: true, holdLateEcho: true, log: rec.log });
+      const { ca } = await pair(h);
+      h.echo.delete('s2');
+      await ca.call('send_message', { to: ['fake-2'], body: 'see' });
+      const tickP = h.host.tick();
+      await expect.poll(() => h.gaps.length).toBe(1);
+      h.gaps.shift()?.();
+      await tickP;
+      expect(writesTo(h, 's2')).toEqual([composeNotice(false)]);
+      await waitLateEchoHeld(h);
+
+      const timed = h.writer.submit('s2', 'timed');
+      await expect.poll(() => h.gaps.length).toBe(1);
+      h.output('s2', composeNotice(false));
+      await h.releaseLateEcho();
+      await expect.poll(() => h.submitEnterCalls).toBe(1);
+
+      h.host.noteHostInput('s2', 'x');
+      h.gaps.shift()?.();
+      expect(await timed).toBe('submitted');
+      await expect.poll(() => lateEchoOutcomes(rec).abandoned.length).toBe(1);
+      expect(lateEchoOutcomes(rec).abandoned[0]?.data?.reason).toBe('draft');
+      expect(writesTo(h, 's2')).toEqual([composeNotice(false), 'timed', '\r']);
+      expect(lateEchoOutcomes(rec).submitted).toHaveLength(0);
+    });
+
+    it('late Enter marks pending messages as noticed', async () => {
+      const h = harness({ holdLateEcho: true });
+      const { ca } = await pair(h);
+      h.echo.delete('s2');
+      const sent = await ca.call('send_message', { to: ['fake-2'], body: 'see' });
+      await h.host.tick();
+      expect(writesTo(h, 's2')).toEqual([composeNotice(false)]);
+      await waitLateEchoHeld(h);
+      h.output('s2', composeNotice(false));
+      await h.releaseLateEcho();
+      await expect.poll(() => writesTo(h, 's2')).toEqual([composeNotice(false), '\r']);
+      const threadId = sent.body.thread_id as string;
+      await expect
+        .poll(async () => {
+          const replies: HostToWebview[] = [];
+          await h.host.handleRenderer(
+            { type: 'mcp:thread:get', requestId: 1, threadId },
+            (m) => replies.push(m),
+            1,
+          );
+          const r = replies[0];
+          return r.type === 'mcp:thread'
+            ? r.thread?.messages[0]?.recipients['fake-2']?.status
+            : undefined;
+        })
+        .toBe('noticed');
+    });
+
+    it('human keystroke before the late echo → no Enter, abandoned (draft)', async () => {
+      const rec = recordingLog();
+      const h = harness({ holdLateEcho: true, log: rec.log });
+      const { ca } = await pair(h);
+      await withheldLateEcho(h, ca);
+      h.host.noteHostInput('s2', 'x');
+      h.output('s2', composeNotice(false));
+      await h.releaseLateEcho();
+      await expect.poll(() => lateEchoOutcomes(rec).abandoned.length).toBe(1);
+      expect(lateEchoOutcomes(rec).abandoned[0]?.data?.reason).toBe('draft');
+      expect(writesTo(h, 's2')).toEqual([composeNotice(false)]);
+    });
+
+    it('echo never appears → expired at 30 s, no Enter', async () => {
+      const rec = recordingLog();
+      const h = harness({ holdLateEcho: true, log: rec.log });
+      const { ca } = await pair(h);
+      await withheldLateEcho(h, ca);
+      const start = h.clock.t;
+      for (let i = 0; i < pollsTo(LATE_ECHO_WAIT_MS) - 1; i += 1) {
+        await h.releaseLateEcho();
+        await waitLateEchoHeld(h);
+      }
+      await h.releaseLateEcho();
+      await expect.poll(() => lateEchoOutcomes(rec).expired.length).toBe(1);
+      expect(h.clock.t - start).toBe(LATE_ECHO_WAIT_MS);
+      expect(lateEchoOutcomes(rec).expired[0]?.data?.waitedMs).toBe(LATE_ECHO_WAIT_MS);
+      expect(writesTo(h, 's2')).toEqual([composeNotice(false)]);
+    });
+
+    it('session restarts (generation change) → abandoned (not-running)', async () => {
+      const rec = recordingLog();
+      const h = harness({ holdLateEcho: true, log: rec.log });
+      const { ca } = await pair(h);
+      await withheldLateEcho(h, ca);
+      h.respawn('s2', 40, 24);
+      await h.releaseLateEcho();
+      await expect.poll(() => lateEchoOutcomes(rec).abandoned.length).toBe(1);
+      expect(lateEchoOutcomes(rec).abandoned[0]?.data?.reason).toBe('not-running');
+      expect(writesTo(h, 's2')).toEqual([composeNotice(false)]);
+    });
+
+    it('blocking prompt appears → abandoned (blocking-prompt)', async () => {
+      const rec = recordingLog();
+      const h = harness({ holdLateEcho: true, log: rec.log });
+      const { ca } = await pair(h);
+      await withheldLateEcho(h, ca);
+      h.output('s2', '\x1b[2J\x1b[1;1Hfake❯ \x1b[17;1HEsc to cancel\x1b[1;7H');
+      await h.releaseLateEcho();
+      await expect.poll(() => lateEchoOutcomes(rec).abandoned.length).toBe(1);
+      expect(lateEchoOutcomes(rec).abandoned[0]?.data?.reason).toBe('blocking-prompt');
+      expect(writesTo(h, 's2')).toEqual([composeNotice(false)]);
+    });
+
+    it('normal path (echo within 2 s) unchanged: no late watcher started', async () => {
+      const rec = recordingLog();
+      const h = harness({ holdLateEcho: true, log: rec.log });
+      const { ca } = await pair(h);
+      await ca.call('send_message', { to: ['fake-2'], body: 'see' });
+      await h.host.tick();
+      expect(writesTo(h, 's2')).toEqual([composeNotice(false), '\r']);
+      expect(h.lateEchoSleeps).toHaveLength(0);
+      expect(lateEchoOutcomes(rec).submitted).toHaveLength(0);
+      expect(lateEchoOutcomes(rec).abandoned).toHaveLength(0);
+      expect(lateEchoOutcomes(rec).expired).toHaveLength(0);
+    });
+
+    it('session exit cancels the watcher, no Enter', async () => {
+      const rec = recordingLog();
+      const h = harness({ holdLateEcho: true, log: rec.log });
+      const { ca } = await pair(h);
+      await withheldLateEcho(h, ca);
+      h.exit('s2');
+      h.output('s2', composeNotice(false));
+      await h.releaseLateEcho();
+      await expectSilentCancel(rec, h);
+    });
+
+    it('session delete cancels the watcher, no Enter', async () => {
+      const rec = recordingLog();
+      const h = harness({ holdLateEcho: true, log: rec.log });
+      const { ca } = await pair(h);
+      await withheldLateEcho(h, ca);
+      await h.host.onSessionDeleted('s2');
+      h.sessions.delete('s2');
+      h.output('s2', composeNotice(false));
+      await h.releaseLateEcho();
+      await expectSilentCancel(rec, h);
+    });
+
+    it('host stop cancels the watcher, no Enter', async () => {
+      const rec = recordingLog();
+      const h = harness({ holdLateEcho: true, log: rec.log });
+      const { ca } = await pair(h);
+      await withheldLateEcho(h, ca);
+      await h.host.stop();
+      h.output('s2', composeNotice(false));
+      await h.releaseLateEcho();
+      await expectSilentCancel(rec, h);
+    });
+
+    it('a superseding notice cancels the old watcher', async () => {
+      const rec = recordingLog();
+      const h = harness({ holdLateEcho: true, log: rec.log });
+      const { ca } = await pair(h);
+      h.echo.delete('s2');
+      await ca.call('send_message', { to: ['fake-2'], body: 'first' });
+      await h.host.tick();
+      expect(writesTo(h, 's2')).toEqual([composeNotice(false)]);
+      await waitLateEchoHeld(h, 1);
+      h.clock.t += NOTICE_SPACING_MS;
+      await ca.call('send_message', { to: ['fake-2'], body: 'second' });
+      await h.host.tick();
+      expect(writesTo(h, 's2')).toEqual([composeNotice(false), composeNotice(false)]);
+      await waitLateEchoHeld(h, 2);
+      h.output('s2', composeNotice(false));
+      await h.releaseLateEcho();
+      await expectSilentCancel(rec, h);
+    });
+
+    it('in-slot no-echo (startup repaint) resumes polling', async () => {
+      const rec = recordingLog();
+      const h = harness({ holdGaps: true, holdLateEcho: true, log: rec.log });
+      const { ca } = await pair(h);
+      h.echo.delete('s2');
+      await ca.call('send_message', { to: ['fake-2'], body: 'see' });
+      const tickP = h.host.tick();
+      await expect.poll(() => h.gaps.length).toBe(1);
+      h.gaps.shift()?.();
+      await tickP;
+      await waitLateEchoHeld(h);
+
+      const timed = h.writer.submit('s2', 'timed');
+      await expect.poll(() => h.gaps.length).toBe(1);
+      h.output('s2', composeNotice(false));
+      await h.releaseLateEcho();
+      await expect.poll(() => h.submitEnterCalls).toBe(1);
+      h.output('s2', '\x1b[2J\x1b[1;1Hfake❯ ');
+      h.gaps.shift()?.();
+      expect(await timed).toBe('submitted');
+      expect(lateEchoOutcomes(rec).abandoned).toHaveLength(0);
+      await waitLateEchoHeld(h);
+      h.output('s2', composeNotice(false));
+      await h.releaseLateEcho();
+      await expect.poll(() => lateEchoOutcomes(rec).submitted.length).toBe(1);
+      expect(writesTo(h, 's2').filter((d) => d === '\r')).toEqual(['\r', '\r']);
+    });
+
+    it('a write-failed slot logs an outcome, no silent end', async () => {
+      const rec = recordingLog();
+      const h = harness({ holdLateEcho: true, log: rec.log });
+      const { ca } = await pair(h);
+      await withheldLateEcho(h, ca);
+      h.failEnter.add('s2');
+      h.output('s2', composeNotice(false));
+      await h.releaseLateEcho();
+      await expect.poll(() => lateEchoOutcomes(rec).abandoned.length).toBe(1);
+      expect(lateEchoOutcomes(rec).abandoned[0]?.data?.reason).toBe('write-failed');
+      expect(writesTo(h, 's2').filter((d) => d === '\r')).toEqual([]);
+    });
+
+    it('late submit refreshes lastNoticeAt (spacing from the Enter, not the withhold)', async () => {
+      const rec = recordingLog();
+      const h = harness({ holdLateEcho: true, echoSubmit: true, log: rec.log });
+      const { ca } = await pair(h);
+      await withheldLateEcho(h, ca);
+      for (let i = 0; i < pollsTo(ECHO_AT_MS) - 1; i += 1) {
+        await h.releaseLateEcho();
+        await waitLateEchoHeld(h);
+      }
+      h.echo.add('s2');
+      h.output('s2', composeNotice(false));
+      await h.releaseLateEcho();
+      await expect.poll(() => lateEchoOutcomes(rec).submitted.length).toBe(1);
+      expect(lateEchoOutcomes(rec).submitted[0]?.data?.waitedMs).toBe(ECHO_AT_MS);
+      await expect.poll(() => rec.of('notice submit confirmed').length).toBe(1);
+      await h.host.tick();
+      expect(h.host.uiState().sessions.s2?.gate).toBe('spacing');
+      h.clock.t += NOTICE_SPACING_MS - ECHO_AT_MS + 1_000;
+      await h.host.tick();
+      expect(h.host.uiState().sessions.s2?.gate).toBe('spacing');
+      h.clock.t += ECHO_AT_MS;
+      await h.host.tick();
+      expect(h.host.uiState().sessions.s2?.gate).not.toBe('spacing');
+    });
   });
 
   it('logs MCP connects, disconnects and tool calls by name and caller, never their bodies', async () => {

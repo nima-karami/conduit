@@ -229,6 +229,10 @@ export function createServices(o: ServicesOptions) {
   let installStarted = false;
   const core: ShellCore = {
     async start() {
+      if (o.names.hcEndpointError) {
+        log.warn('hc', o.names.hcEndpointError);
+        return { state: 'unavailable', reason: o.names.hcEndpointError, logPath: o.logPath };
+      }
       if (!installStarted && o.packaged && !o.e2e) {
         const gateMigrated = domain.settings().mcpGateMigrated;
         const result = server.installStartup({ previous: o.previousShims ?? [], gateMigrated });

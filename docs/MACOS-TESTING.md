@@ -44,8 +44,10 @@ signing.
 
 ## 3. Run
 
-Conduit launches and runs normally on arm64: open a terminal session (a shell starts via
-`node-pty`), browse files, and use the core UI.
+Conduit launches and runs normally on arm64: open a terminal session, browse files, and use
+the core UI. Its background terminal engine appears as `conduit-hc` in the process list.
+On upgrade, an existing compatible core keeps its live terminals until it next stops; the
+renamed engine starts after that.
 
 ## Limitations (by design, until a future signing spec)
 
@@ -54,3 +56,18 @@ Conduit launches and runs normally on arm64: open a terminal session (a shell st
 - **Not distributable** — this is a personal test build, not a public download. Signing +
   notarization (Apple Developer ID) is a deliberate future step that would unlock both a
   distributable download and mac auto-update.
+
+## Build locally on Apple Silicon
+
+From a checkout with dependencies installed, run:
+
+```sh
+npm run verify # includes npm run build
+node build/fetch-runtime.mjs
+CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac --arm64 --publish never
+```
+
+The fetch step downloads and verifies the pinned arm64 Node and hc runtime, packaging the
+engine as `runtime/hc/conduit-hc`. Packaging
+fails with the fetch command if required runtime files are missing. The app is under
+`dist/mac-arm64/Conduit.app`; the `.dmg` and `.zip` are under `dist/`.

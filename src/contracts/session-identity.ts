@@ -132,6 +132,10 @@ export interface InstanceNames {
   /** XDG_CONFIG_HOME / XDG_STATE_HOME for our core only: userData/hc/config and userData/hc/state (D24). */
   hcConfigHome: string;
   hcStateHome: string;
+  /** Over-budget POSIX endpoints move here; panes inherit it with HC_SESSION (D24, M22). */
+  hcSocket?: string;
+  /** See D25: endpoint failure must leave the app and server available to explain it. */
+  hcEndpointError?: string;
 }
 
 /** Write-once: never swapped. A new shim Node or protocol goes to a new dir (D2b). */
@@ -204,12 +208,7 @@ export function judgePersistedVersion(
   return found > SERVER_FILE_VERSION[file] ? 'newer' : 'read';
 }
 
-/**
- * The user's own XDG values, captured when the core is started and passed through to the server, so
- * session specs restore them (D24). Under isolation, a variable the user has unset is captured as
- * `""`, not left absent: terminal.run.env can only set, never unset, and the XDG base-dir spec treats
- * empty as unset (M22).
- */
+/** See D24/M22: empty XDG values must override the isolated core values in panes. */
 export const USER_XDG_PASSTHROUGH = {
   XDG_CONFIG_HOME: 'CONDUIT_USER_XDG_CONFIG_HOME',
   XDG_STATE_HOME: 'CONDUIT_USER_XDG_STATE_HOME',
@@ -223,16 +222,10 @@ export const USER_XDG_CAPTURED_ENV = 'CONDUIT_USER_XDG_CAPTURED';
 /** `hc run` flags for the supervisor start, from the app or from the server alike (D16, M17). */
 export const CORE_START_RUN_FLAGS = ['--bg', '--no-parent'] as const;
 
-/**
- * The one env builder for every process that may start our core: the app's supervisor start and the
- * server's own hc client. Two builders drifted before (the app skipped XDG isolation, and nothing
- * captured the user's originals). HC_* is stripped case-insensitively, since Windows env names are;
- * `isolateXdg` is false when M22 fails, and then our core shares the user's hc config (D24).
- */
+/** See docs/specs/2026-11-01-three-process-architecture.md D24/M22. */
 export function coreStartEnv(
   parent: Readonly<Record<string, string | undefined>>,
-  names: Pick<InstanceNames, 'hcSession' | 'hcConfigHome' | 'hcStateHome'>,
-  isolateXdg: boolean,
+  names: Pick<InstanceNames, 'hcSession' | 'hcConfigHome' | 'hcStateHome' | 'hcSocket'>,
 ): Record<string, string> {
   const env: Record<string, string> = {};
   const byUpper = new Map<string, string>();
@@ -255,14 +248,13 @@ export function coreStartEnv(
     for (const k of Object.keys(env)) if (k.toUpperCase() === passthrough) delete env[k];
     const original = byUpper.get(captured ? passthrough : xdg);
     if (original !== undefined) env[passthrough] = original;
-    else if (isolateXdg) env[passthrough] = '';
+    else env[passthrough] = '';
   }
   env[USER_XDG_CAPTURED_ENV] = '1';
-  if (isolateXdg) {
-    for (const k of Object.keys(env)) if (k.toUpperCase() in USER_XDG_PASSTHROUGH) delete env[k];
-    env.XDG_CONFIG_HOME = names.hcConfigHome;
-    env.XDG_STATE_HOME = names.hcStateHome;
-  }
+  for (const k of Object.keys(env)) if (k.toUpperCase() in USER_XDG_PASSTHROUGH) delete env[k];
+  env.XDG_CONFIG_HOME = names.hcConfigHome;
+  env.XDG_STATE_HOME = names.hcStateHome;
   env.HC_SESSION = names.hcSession;
+  if (names.hcSocket) env.HC_SOCKET = names.hcSocket;
   return env;
 }

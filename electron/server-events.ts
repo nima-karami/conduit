@@ -9,7 +9,7 @@ import type {
 } from '../src/contracts/server-protocol';
 import { shouldRaiseOsAttention } from '../src/os-attention';
 import type { HostToWebview } from '../src/protocol';
-import type { AppSessionStore, SessionFolderDiff } from './app-session-store';
+import type { AppSessionStore, SessionDiff } from './app-session-store';
 import type { AppLog } from './server-client';
 import type { TerminalHost } from './terminal-host';
 
@@ -26,7 +26,7 @@ export interface ServerEventRouterDeps {
   /** Queued by the app until the renderer is ready, like an OS open. */
   openFileInEditor(m: OpenFileInEditor): void;
   /** Folder watchers, repo scans and window ownership follow the server's list. */
-  sessionsApplied(diffs: SessionFolderDiff[]): void;
+  sessionsApplied(diffs: SessionDiff[]): void;
   onServerSettings(s: ServerSettings): void;
   onStores(s: Partial<DataStores>): void;
   onRuntime(h: RuntimeHealth): void;

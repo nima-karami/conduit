@@ -55,9 +55,10 @@ function harness(opts: { rearmAll?: boolean } = {}) {
           return s === 'queued' || s === 'noticed';
         }),
       precheck: async () => gate,
-      submit: async (_id, text) => {
+      submit: async (_id, text, onFinal) => {
         submits.push(text);
         if (submitDelay) await submitDelay;
+        await onFinal?.(outcome);
         return outcome;
       },
       markNoticed: async (h, ids) => {

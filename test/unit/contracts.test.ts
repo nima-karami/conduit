@@ -219,6 +219,7 @@ describe('frozen server calls', () => {
 describe('server ports', () => {
   it('type through the existing PtyWriter', () => {
     expectTypeOf<TypingPort['submit']>().toEqualTypeOf<PtyWriter['submit']>();
+    expectTypeOf<TypingPort['submitEnter']>().toEqualTypeOf<PtyWriter['submitEnter']>();
     expectTypeOf<TypingPort['forget']>().toEqualTypeOf<PtyWriter['forget']>();
   });
 
@@ -438,7 +439,6 @@ describe('session identity', () => {
         GIT_ASKPASS: '/askpass',
       },
       names,
-      false,
     );
     for (const k of [
       'VSCODE_PID',
@@ -451,7 +451,7 @@ describe('session identity', () => {
     ])
       expect(env).not.toHaveProperty(k);
     expect(env.PATH).toBe('/bin');
-    expect(coreStartEnv({ GIT_ASKPASS: '/askpass' }, names, false).GIT_ASKPASS).toBe('/askpass');
+    expect(coreStartEnv({ GIT_ASKPASS: '/askpass' }, names).GIT_ASKPASS).toBe('/askpass');
   });
 
   // Windows env names are case-insensitive, so a lower-case HC_ key would leak the parent session.
@@ -459,7 +459,6 @@ describe('session identity', () => {
     const env = coreStartEnv(
       { PATH: '/bin', hc_terminal_id: 't1', HC_SESSION: 'theirs', XDG_CONFIG_HOME: '/mine' },
       names,
-      true,
     );
     expect(env).toEqual({
       PATH: '/bin',
@@ -474,26 +473,29 @@ describe('session identity', () => {
 
   // The server runs under our isolated XDG; re-capturing there would pass ours off as the user's.
   it('keep the captured originals when the server restarts the core', () => {
-    const first = coreStartEnv({ PATH: '/bin' }, names, true);
-    const again = coreStartEnv(first, names, true);
+    const first = coreStartEnv({ PATH: '/bin' }, names);
+    const again = coreStartEnv(first, names);
     expect(again).toEqual(first);
     expect(again.CONDUIT_USER_XDG_CONFIG_HOME).toBe('');
   });
 
   // terminal.run.env can't unset, and the XDG spec reads empty as unset (M22).
   it('pass an absent user XDG variable through as empty under isolation', () => {
-    const env = coreStartEnv({ PATH: '/bin', XDG_STATE_HOME: '/s' }, names, true);
+    const env = coreStartEnv({ PATH: '/bin', XDG_STATE_HOME: '/s' }, names);
     expect(env.CONDUIT_USER_XDG_CONFIG_HOME).toBe('');
     expect(env.CONDUIT_USER_XDG_STATE_HOME).toBe('/s');
   });
 
   it('start the core in the version dir of the runtime root (M21)', () => {
-    expect(coreStartCwd('/u/runtime', '0.1.16')).toBe(path.join('/u/runtime', 'hc', '0.1.16'));
+    expect(coreStartCwd('/u/runtime', '0.1.16')).toBe(
+      path.join('/u/runtime', 'conduit-hc', '0.1.16'),
+    );
   });
 
-  it("leave the user's XDG alone when isolation is off (M22 fail)", () => {
-    const env = coreStartEnv({ XDG_STATE_HOME: '/s' }, names, false);
-    expect(env.XDG_STATE_HOME).toBe('/s');
+  it('always isolates XDG while preserving the user state home for panes', () => {
+    const env = coreStartEnv({ XDG_STATE_HOME: '/s' }, names);
+    expect(env.XDG_STATE_HOME).toBe(names.hcStateHome);
+    expect(env.XDG_CONFIG_HOME).toBe(names.hcConfigHome);
     expect(env.CONDUIT_USER_XDG_STATE_HOME).toBe('/s');
   });
 });

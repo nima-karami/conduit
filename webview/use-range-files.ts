@@ -2,6 +2,7 @@ import { useCallback, useSyncExternalStore } from 'react';
 import { type RefEndpoint, rangeKey } from '../src/git-range';
 import type { DiffTruncation, FileDiffDTO, HostToWebview } from '../src/protocol';
 import { post, subscribe } from './bridge';
+import { evictOldest } from './content-cache';
 
 /**
  * Shared loader for a two-ref comparison's per-file diffs (spec 2026-06-29-review-changes-polish
@@ -20,6 +21,11 @@ export interface RangeFiles {
   error?: string;
 }
 
+// A range's entry is every changed file's head+work text (up to 1000 files, plus image data URLs):
+// ~100 MB for one vendor commit. Eight keeps back/forward browsing instant without holding a
+// whole history's worth; entries a mounted view subscribes to are never evicted.
+const CACHE_MAX = 8;
+
 const LOADING: RangeFiles = { status: 'loading', files: [] };
 
 const cache = new Map<string, RangeFiles>();
@@ -27,6 +33,8 @@ const listeners = new Map<string, Set<() => void>>();
 const latestReq = new Map<string, number>();
 let reqCounter = 0;
 let wired = false;
+
+const trim = () => evictOldest(cache, CACHE_MAX, (k) => (listeners.get(k)?.size ?? 0) > 0);
 
 const keyFor = (sessionId: string, rk: string, repoRoot: string | undefined) =>
   `${sessionId}\0${rk}\0${repoRoot ?? ''}`;
@@ -43,12 +51,14 @@ function ensureWired() {
     const key = keyFor(msg.sessionId, msg.key, msg.repoRoot);
     // Latest-wins: drop a reply older than the newest request issued for this key.
     if ((latestReq.get(key) ?? 0) > msg.requestId) return;
+    cache.delete(key);
     cache.set(
       key,
       msg.error
         ? { status: 'error', files: [], error: msg.error }
         : { status: 'ready', files: msg.files, truncated: msg.truncated },
     );
+    trim();
     emit(key);
   });
 }
@@ -63,7 +73,9 @@ function send(
   ensureWired();
   reqCounter += 1;
   latestReq.set(key, reqCounter);
+  cache.delete(key);
   cache.set(key, LOADING);
+  trim();
   post({
     type: 'git:rangeDiff',
     sessionId,

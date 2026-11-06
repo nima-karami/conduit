@@ -1,7 +1,15 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { type ILinkProvider, Terminal } from '@xterm/xterm';
-import { type ReactNode, useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useReducer,
+  useRef,
+  useState,
+} from 'react';
 import '@xterm/xterm/css/xterm.css';
 import type { DisplayFacts } from '../../src/contracts/frames';
 import { FILE_INDEX_TTL_MS } from '../../src/file-index-ttl';
@@ -16,7 +24,7 @@ import { classifyLinkUri, dispatchLinkUri, type LinkUriSinks } from '../../src/l
 import { isAncestorOf } from '../../src/owning-session';
 import type { ResolveRoot } from '../../src/path-link-roots';
 import type { PathCandidate, TokenResolution } from '../../src/path-resolve';
-import type { HostToWebview, ServerUiState, TermGeometry } from '../../src/protocol';
+import type { HostToWebview, ServerUiState, TermGeometry, TermStartMode } from '../../src/protocol';
 import { withTimeout } from '../../src/with-timeout';
 import {
   logToHost,
@@ -37,6 +45,7 @@ import {
   IconSearch,
   IconTerminal,
 } from '../icons';
+import { encodeKey, KittyKeyboardState, registerKittyKeyboardHandlers } from '../kitty-keyboard';
 import { isMiddleButton, terminalLinkMiddleAction } from '../middle-click';
 import { chooseClickAction, rankCandidates } from '../path-candidate-rank';
 import { probePathKind } from '../path-probe';
@@ -58,7 +67,7 @@ import {
   writeReplay,
 } from '../terminal-conpty';
 import { CONTEXT_WINDOW_LINES, inferContextRoot } from '../terminal-context-root';
-import { formatPathForTerminal, TERMINAL_PATH_MIME } from '../terminal-drop';
+import { formatPathForTerminal, TERMINAL_PATH_MIME, terminalDropEffect } from '../terminal-drop';
 import { terminalFontFamily } from '../terminal-fonts';
 import { terminalGpu } from '../terminal-gpu';
 import { lastPick, notePick } from '../terminal-link-picks';
@@ -234,6 +243,7 @@ export function TerminalPane({
   onOpenAsSession,
   openAsSessionHint,
   inputBox,
+  startMode = 'run',
 }: {
   sessionId: string;
   agentId?: string;
@@ -273,6 +283,8 @@ export function TerminalPane({
   openAsSessionHint?: string;
   /** The session agent's input prompt row and prompt echo, when it has an adapter (inputBoxPrompt). */
   inputBox?: InputBoxPrompt;
+  /** Read when the pane first starts: a session that exited before then is viewed, never spawned. */
+  startMode?: TermStartMode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -284,6 +296,7 @@ export function TerminalPane({
   // The size the host's PTY was last given. Any fit that leaves the xterm at another size must
   // tell the host, or the PTY addresses rows the xterm doesn't have (cursor below the prompt).
   const sentSizeRef = useRef<TermGeometry | null>(null);
+  const visibleRef = useRef(visible);
   const searchRef = useRef<SearchAddon | null>(null);
   const { settings, update } = useSettings();
 
@@ -313,6 +326,8 @@ export function TerminalPane({
   rootsSigRef.current = rootsSig;
   const agentIdRef = useRef(agentId);
   agentIdRef.current = agentId;
+  const startModeRef = useRef(startMode);
+  startModeRef.current = startMode;
   const inputBoxRef = useRef(inputBox);
   inputBoxRef.current = inputBox;
   const onOpenFileRef = useRef(onOpenFile);
@@ -509,6 +524,17 @@ export function TerminalPane({
     if (!visible) setPicker(null);
   }, [visible]);
 
+  // Which hidden panes keep WebGL is terminal-gpu.ts's call (RECENT_WEBGL_TERMINALS). A layout
+  // effect, so an attach lands before the ResizeObserver's fit in the same frame: the DOM and
+  // WebGL renderers size the cell differently, and a renderer swapped after the fit leaves the
+  // cols fitted to the wrong cell. On mount it runs before the terminal exists; register reads
+  // the ref.
+  useLayoutEffect(() => {
+    visibleRef.current = visible;
+    const term = termRef.current;
+    if (term) terminalGpu.setVisible(term, visible);
+  }, [visible]);
+
   useEffect(() => {
     if (!ref.current) return;
     const suppressLinkMiddleDown = (e: MouseEvent) => {
@@ -518,6 +544,7 @@ export function TerminalPane({
     let fit: FitAddon;
     let search: SearchAddon;
     let unregisterGpu: (() => void) | null = null;
+    let kittyParserDisposables: { dispose(): void }[] = [];
     // Assigned once the fit/facts helpers below exist; a font refresh only arrives after that.
     let refitAfterFonts = () => {};
     const reportGpuLoss = () => terminalGpu.reportLoss(term);
@@ -582,6 +609,19 @@ export function TerminalPane({
       });
       termRef.current = term;
       registerTerminalQuerySwallowHandlers(term);
+      const kittyState = new KittyKeyboardState();
+      kittyParserDisposables = registerKittyKeyboardHandlers(term, kittyState);
+      term.attachCustomKeyEventHandler((ev) => {
+        const alternate = term.buffer.active.type === 'alternate';
+        const flags = kittyState.currentFlags(alternate);
+        if (flags === 0) return true;
+        const encoded = encodeKey(ev, flags);
+        if (encoded === null) return true;
+        // xterm calls this for keydown, keypress and keyup: send once, and swallow the rest so the
+        // legacy bytes never follow.
+        if (ev.type === 'keydown') term.input(encoded, true);
+        return false;
+      });
       // Test observability (opt-in): when a harness has pre-created window.__terms,
       // expose the live terminal so e2e can assert on RENDERED buffer content — not
       // just the term:data byte stream. The scrollback-restore bug shipped precisely
@@ -632,7 +672,9 @@ export function TerminalPane({
       });
       // Last in the try: a throw before it would return from the effect with no cleanup, leaking
       // the terminal's WebGL slot. The renderer draws box/block glyphs to fill the cell (crisper).
-      unregisterGpu = terminalGpu.register(term, () => refitAfterFonts());
+      unregisterGpu = terminalGpu.register(term, () => refitAfterFonts(), {
+        visible: visibleRef.current,
+      });
     } catch (e) {
       logToHost(`xterm init failed: ${e instanceof Error ? e.message : String(e)}`);
       return;
@@ -1083,6 +1125,7 @@ export function TerminalPane({
           rows: term.rows,
           agentId: agentIdRef.current,
           cwd: cwdRef.current,
+          ...(startModeRef.current === 'view' ? { mode: 'view' as const } : {}),
         });
         term.focus();
       } else {
@@ -1109,6 +1152,7 @@ export function TerminalPane({
       // initialized); dispose addons before the terminal that owns them.
       try {
         onData.dispose();
+        for (const d of kittyParserDisposables) d.dispose();
         term.element?.removeEventListener('mousedown', suppressLinkMiddleDown, true);
         term.element?.removeEventListener('webglcontextlost', reportGpuLoss, true);
       } catch {
@@ -1264,7 +1308,7 @@ export function TerminalPane({
   const onPathDragOver = (e: React.DragEvent) => {
     if (!isPathDrag(e)) return;
     e.preventDefault();
-    e.dataTransfer.dropEffect = 'copy';
+    e.dataTransfer.dropEffect = terminalDropEffect(e.dataTransfer.effectAllowed);
     if (!pathDragOver) setPathDragOver(true);
   };
   const onPathDragLeave = (e: React.DragEvent) => {

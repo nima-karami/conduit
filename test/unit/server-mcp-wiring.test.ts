@@ -165,6 +165,7 @@ function harness(opts: { manualTimers?: boolean } = {}) {
         // Held at the queue: the test plays the writer and runs the hooks at the slot itself.
         return new Promise<'withheld'>(() => undefined);
       },
+      submitEnter: async () => 'submitted' as const,
       write: (id: string, data: string, opts?: { generation?: number }) => {
         log.push(`write ${id} ${JSON.stringify(data)} g${opts?.generation}`);
         return true;

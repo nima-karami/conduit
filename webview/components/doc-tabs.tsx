@@ -29,7 +29,7 @@ import {
 import { middleClickProps } from '../middle-click';
 import { saveDocByPath } from '../save-registry';
 import { SPLIT_COPY } from '../split-editor-copy';
-import { acceptTabDrop, beginTabDrag, endTabDrag, tabDragOf } from '../tab-drag';
+import { acceptTabDrop, beginTabDrag, endTabDrag, tabDragOf, tabTerminalPath } from '../tab-drag';
 import { isStripOverflowing, scrollTargetTabId, TERMINAL_TABID } from '../tab-overflow';
 import { ContextMenu, type MenuState } from './context-menu';
 
@@ -334,7 +334,7 @@ export function DocTabs({
               onContextMenu={onTabContextMenu ? (e) => onTabContextMenu(e, d) : undefined}
               draggable={!!onReorder}
               onDragStart={(e) => {
-                beginTabDrag({ id: d.id, group }, e.dataTransfer);
+                beginTabDrag({ id: d.id, group, terminalPath: tabTerminalPath(d) }, e.dataTransfer);
                 if (d.kind === 'file') {
                   stampFileDrag(e.dataTransfer, d.path, { download: true, terminal: false });
                 }

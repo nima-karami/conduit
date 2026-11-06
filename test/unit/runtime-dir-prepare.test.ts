@@ -1,15 +1,17 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   promises,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CURRENT_SHIM_GENERATION,
   prepareRuntime,
@@ -30,7 +32,7 @@ function seedResources() {
   put(join(resourcesDir, 'runtime', 'node.exe'), 'node-bytes');
   put(join(resourcesDir, 'runtime', 'server', 'main.js'), 'main-js');
   put(join(resourcesDir, 'runtime', 'server', 'supervise.js'), 'supervise-js');
-  put(join(resourcesDir, 'runtime', 'hc', 'hc.exe'), 'hc-bytes');
+  put(join(resourcesDir, 'runtime', 'hc', 'conduit-hc.exe'), 'hc-bytes');
   put(join(resourcesDir, 'runtime', 'tray', 'conduit-tray.exe'), 'tray-bytes');
   put(join(resourcesDir, 'runtime', 'hc', 'conpty', 'conpty.dll'), 'conpty-bytes');
   put(join(resourcesDir, 'conduit-mcp', 'conduit-mcp-shim.cjs'), 'shim-v1');
@@ -76,6 +78,7 @@ const options = (fs: RuntimeFs, appVersion = '0.52.0') => ({
   appVersion,
   hcVersion: '0.1.16',
   shimVersion: CURRENT_SHIM_GENERATION,
+  platform: 'win32' as const,
   fs,
 });
 
@@ -90,6 +93,98 @@ beforeEach(() => {
 afterEach(() => rmSync(base, { recursive: true, force: true }));
 
 describe('prepareRuntime', () => {
+  it('publishes the renamed engine beside an immutable legacy runtime', async () => {
+    const legacy = runtime('hc', '0.1.16', 'hc.exe');
+    put(legacy, 'live-legacy-engine');
+    put(join(resourcesDir, 'runtime', 'hc', 'conduit-hc.exe'), 'renamed-engine');
+    const { fs, calls } = recordingFs();
+    const prepared = await prepareRuntime(options(fs));
+    expect(prepared.hcExe).toBe(runtime('conduit-hc', '0.1.16', 'conduit-hc.exe'));
+    expect(readFileSync(prepared.hcExe, 'utf8')).toBe('renamed-engine');
+    expect(readFileSync(legacy, 'utf8')).toBe('live-legacy-engine');
+    expect(calls.filter((c) => c.args.some((p) => p.startsWith(runtime('hc'))))).toEqual([]);
+  });
+  it('copies macOS binaries, including the shim node, preserving executable modes', async () => {
+    put(join(resourcesDir, 'runtime', 'node'), 'mac-node');
+    put(join(resourcesDir, 'runtime', 'hc', 'conduit-hc'), 'mac-hc');
+    chmodSync(join(resourcesDir, 'runtime', 'node'), 0o755);
+    chmodSync(join(resourcesDir, 'runtime', 'hc', 'conduit-hc'), 0o755);
+    const prepared = await prepareRuntime({
+      ...options(recordingFs().fs),
+      platform: 'darwin',
+      run: async () => {},
+    });
+    expect(prepared.nodeExe).toBe(runtime('0.52.0', 'node'));
+    expect(prepared.hcExe).toBe(runtime('conduit-hc', '0.1.16', 'conduit-hc'));
+    for (const file of [prepared.nodeExe, prepared.hcExe, join(prepared.shimDir, 'node')]) {
+      expect(readFileSync(file, 'utf8')).toBe(file === prepared.hcExe ? 'mac-hc' : 'mac-node');
+      if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o755);
+    }
+  });
+  it('removes quarantine from each complete staged macOS tree before publishing it', async () => {
+    put(join(resourcesDir, 'runtime', 'node'), 'mac-node');
+    put(join(resourcesDir, 'runtime', 'hc', 'conduit-hc'), 'mac-hc');
+    const cleared: string[] = [];
+    const run = vi.fn(async (file: string, args: string[]) => {
+      expect(file).toBe('xattr');
+      expect(args.slice(0, 2)).toEqual(['-dr', 'com.apple.quarantine']);
+      const staging = args[2];
+      expect(existsSync(staging)).toBe(true);
+      expect(existsSync(staging.slice(0, -4))).toBe(false);
+      const node = staging === runtime('conduit-hc', '0.1.16.tmp') ? 'conduit-hc' : 'node';
+      expect(readFileSync(join(staging, node), 'utf8')).toBe(
+        node === 'conduit-hc' ? 'mac-hc' : 'mac-node',
+      );
+      put(join(staging, 'quarantine-cleared'), 'cleared');
+      cleared.push(staging);
+    });
+    const opts = { ...options(recordingFs().fs), platform: 'darwin' as const, run };
+    const prepared = await prepareRuntime(opts);
+    expect(cleared).toEqual([
+      runtime('conduit-hc', '0.1.16.tmp'),
+      runtime('0.52.0.tmp'),
+      runtime('shim.tmp'),
+    ]);
+    for (const dir of [runtime('conduit-hc', '0.1.16'), runtime('0.52.0'), prepared.shimDir]) {
+      expect(readFileSync(join(dir, 'quarantine-cleared'), 'utf8')).toBe('cleared');
+    }
+    run.mockClear();
+    await prepareRuntime(opts);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('logs quarantine removal failures and still publishes the copied macOS runtime', async () => {
+    put(join(resourcesDir, 'runtime', 'node'), 'mac-node');
+    put(join(resourcesDir, 'runtime', 'hc', 'conduit-hc'), 'mac-hc');
+    const warn = vi.fn();
+    const prepared = await prepareRuntime({
+      ...options(recordingFs().fs),
+      platform: 'darwin',
+      run: async () => {
+        throw new Error('permission denied');
+      },
+      warn,
+    });
+    expect(readFileSync(prepared.nodeExe, 'utf8')).toBe('mac-node');
+    expect(readFileSync(prepared.hcExe, 'utf8')).toBe('mac-hc');
+    expect(readFileSync(join(prepared.shimDir, 'node'), 'utf8')).toBe('mac-node');
+    expect(warn).toHaveBeenCalledTimes(3);
+    for (const dir of [
+      runtime('conduit-hc', '0.1.16.tmp'),
+      runtime('0.52.0.tmp'),
+      runtime('shim.tmp'),
+    ]) {
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining(dir));
+    }
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('permission denied'));
+  });
+
+  it.each(['win32', 'linux'] as const)('does not run xattr on %s', async (platform) => {
+    put(join(resourcesDir, 'runtime', 'node'), 'posix-node');
+    const run = vi.fn(async () => {});
+    await prepareRuntime({ ...options(recordingFs().fs), platform, run });
+    expect(run).not.toHaveBeenCalled();
+  });
   it('copies each runtime dir through <dir>.tmp and a rename, never into the final path', async () => {
     const { fs, calls } = recordingFs();
     const prepared = await prepareRuntime(options(fs));
@@ -98,7 +193,7 @@ describe('prepareRuntime', () => {
       nodeExe: runtime('0.52.0', 'node.exe'),
       superviseJs: runtime('0.52.0', 'server', 'supervise.js'),
       mainJs: runtime('0.52.0', 'server', 'main.js'),
-      hcExe: runtime('hc', '0.1.16', 'hc.exe'),
+      hcExe: runtime('conduit-hc', '0.1.16', 'conduit-hc.exe'),
       trayExe: runtime('0.52.0', 'tray', 'conduit-tray.exe'),
       shimDir: runtime('shim'),
     });
@@ -107,13 +202,13 @@ describe('prepareRuntime', () => {
     expect(readFileSync(prepared.superviseJs, 'utf8')).toBe('supervise-js');
     expect(readFileSync(prepared.hcExe, 'utf8')).toBe('hc-bytes');
     expect(readFileSync(prepared.trayExe, 'utf8')).toBe('tray-bytes');
-    expect(readFileSync(runtime('hc', '0.1.16', 'conpty', 'conpty.dll'), 'utf8')).toBe(
+    expect(readFileSync(runtime('conduit-hc', '0.1.16', 'conpty', 'conpty.dll'), 'utf8')).toBe(
       'conpty-bytes',
     );
     expect(readFileSync(join(prepared.shimDir, 'node.exe'), 'utf8')).toBe('node-bytes');
     expect(readFileSync(join(prepared.shimDir, 'conduit-mcp-shim.cjs'), 'utf8')).toBe('shim-v1');
 
-    const targets = [runtime('0.52.0'), runtime('hc', '0.1.16'), runtime('shim')];
+    const targets = [runtime('0.52.0'), runtime('conduit-hc', '0.1.16'), runtime('shim')];
     for (const target of targets) {
       expect(calls).toContainEqual({ op: 'rename', args: [`${target}.tmp`, target] });
       expect(existsSync(`${target}.tmp`)).toBe(false);
@@ -138,12 +233,12 @@ describe('prepareRuntime', () => {
 
   it('removes a leftover .tmp before copying, so a half copy is never kept', async () => {
     put(runtime('0.52.0.tmp', 'half-copied'), 'junk');
-    put(runtime('hc', '0.1.16.tmp', 'half-copied'), 'junk');
+    put(runtime('conduit-hc', '0.1.16.tmp', 'half-copied'), 'junk');
     await prepareRuntime(options(recordingFs().fs));
 
     expect(existsSync(runtime('0.52.0.tmp'))).toBe(false);
     expect(existsSync(runtime('0.52.0', 'half-copied'))).toBe(false);
-    expect(existsSync(runtime('hc', '0.1.16', 'half-copied'))).toBe(false);
+    expect(existsSync(runtime('conduit-hc', '0.1.16', 'half-copied'))).toBe(false);
     expect(readFileSync(runtime('0.52.0', 'node.exe'), 'utf8')).toBe('node-bytes');
   });
 

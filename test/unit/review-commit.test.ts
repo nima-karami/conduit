@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import type { ParsedPatchFile } from '../../src/patch-parse';
 import type { CommitNode, FileDiffDTO } from '../../src/protocol';
 import {
   commitChangesFromFiles,
   conciseSourceLabel,
   filterCommitsForPicker,
   isPastedSha,
+  patchChangesFromFiles,
   reviewModeStatusLabel,
   reviewSourceLabel,
 } from '../../webview/review-commit';
@@ -88,6 +90,59 @@ describe('commitChangesFromFiles', () => {
   });
 });
 
+describe('patchChangesFromFiles', () => {
+  const patchFile = (over: Partial<ParsedPatchFile>): ParsedPatchFile => ({
+    path: 'x',
+    head: '',
+    work: '',
+    binary: false,
+    changeKind: 'M',
+    counts: { added: 0, removed: 0 },
+    hunks: [],
+    ...over,
+  });
+
+  it('presves rename badges', () => {
+    const [c] = patchChangesFromFiles([
+      patchFile({
+        path: 'new.txt',
+        oldPath: 'old.txt',
+        changeKind: 'R',
+        counts: { added: 1, removed: 1 },
+      }),
+    ]);
+    expect(c).toMatchObject({ path: 'new.txt', kind: 'R', added: 1, removed: 1, staged: false });
+  });
+
+  it('disambiguates duplicate paths so both rows survive', () => {
+    const out = patchChangesFromFiles([
+      patchFile({ path: 'a.ts', counts: { added: 1, removed: 0 } }),
+      patchFile({ path: 'a.ts', counts: { added: 2, removed: 0 } }),
+    ]);
+    expect(out.map((c) => c.path)).toEqual(['a.ts', 'a.ts (2)']);
+  });
+
+  it('keeps a real file named like a suffix distinct from a duplicate-path key', () => {
+    const out = patchChangesFromFiles([
+      patchFile({ path: 'f.ts' }),
+      patchFile({ path: 'f.ts' }),
+      patchFile({ path: 'f.ts (2)' }),
+    ]);
+    expect(out.map((c) => c.path)).toEqual(['f.ts', 'f.ts (2)', 'f.ts (2) (2)']);
+  });
+
+  it('maps copy and mode-only to M', () => {
+    const [copy] = patchChangesFromFiles([
+      patchFile({ path: 'copy.txt', changeKind: 'C', counts: { added: 5, removed: 0 } }),
+    ]);
+    const [mode] = patchChangesFromFiles([
+      patchFile({ path: 'script.sh', changeKind: 'T', counts: { added: 0, removed: 0 } }),
+    ]);
+    expect(copy.kind).toBe('M');
+    expect(mode.kind).toBe('M');
+  });
+});
+
 describe('reviewSourceLabel', () => {
   it('labels an absent source as the working tree', () => {
     expect(reviewSourceLabel(undefined)).toBe('Reviewing working tree');
@@ -127,6 +182,13 @@ describe('reviewSourceLabel', () => {
         head: { kind: 'branch', ref: 'origin/main', remote: true },
       }),
     ).toBe('Comparing v1.0.0 to origin/main');
+  });
+
+  it('labels a patch source as "Diff from <handle>"', () => {
+    expect(reviewSourceLabel({ kind: 'patch', files: [], handle: 'claude-1' })).toBe(
+      'Diff from claude-1',
+    );
+    expect(reviewSourceLabel({ kind: 'patch', files: [] })).toBe('Diff from agent');
   });
 });
 
@@ -168,6 +230,13 @@ describe('conciseSourceLabel', () => {
       }),
     ).toBe('v1.0.0…origin/main');
   });
+
+  it('labels a patch source by title or handle', () => {
+    expect(conciseSourceLabel({ kind: 'patch', files: [], title: 'My diff' })).toBe('My diff');
+    expect(conciseSourceLabel({ kind: 'patch', files: [], handle: 'claude-1' })).toBe(
+      'Diff from claude-1',
+    );
+  });
 });
 
 describe('reviewModeStatusLabel', () => {
@@ -190,6 +259,13 @@ describe('reviewModeStatusLabel', () => {
         head: { kind: 'working' },
       }),
     ).toBe('Comparing main to Working tree');
+  });
+
+  it('announces a patch source by title or handle', () => {
+    expect(reviewModeStatusLabel({ kind: 'patch', files: [], title: 'My diff' })).toBe('My diff');
+    expect(reviewModeStatusLabel({ kind: 'patch', files: [], handle: 'claude-1' })).toBe(
+      'Diff from claude-1',
+    );
   });
 });
 

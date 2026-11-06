@@ -18,7 +18,11 @@ export interface NotifierDeps {
   pending(handle: Handle): StoredMessage[];
   /** Decides only whether to TRY; the full gate runs again in the writer slot (plan ruling 1). */
   precheck(sessionId: string): Promise<GateVerdict>;
-  submit(sessionId: string, text: string): Promise<SubmitOutcome>;
+  submit(
+    sessionId: string,
+    text: string,
+    onFinal?: (outcome: SubmitOutcome) => void | Promise<void>,
+  ): Promise<SubmitOutcome>;
   markNoticed(handle: Handle, messageIds: string[]): Promise<void>;
   raise(item: AttentionRaise): void;
 }
@@ -95,12 +99,14 @@ export function createNotifier(deps: NotifierDeps, opts: { rearmAll: boolean }):
     }
 
     const urgent = pending.some((m) => m.priority === 'urgent');
-    const outcome = await deps.submit(s.sessionId, composeNotice(urgent));
-    if (outcome === 'submitted') {
-      const ids = pending.map((m) => m.messageId);
-      for (const id of ids) st.armed.delete(id);
-      await deps.markNoticed(s.handle, ids);
-    } else if (outcome === 'withheld') {
+    const outcome = await deps.submit(s.sessionId, composeNotice(urgent), async (finalOutcome) => {
+      if (finalOutcome === 'submitted') {
+        const ids = pending.map((m) => m.messageId);
+        for (const id of ids) st.armed.delete(id);
+        await deps.markNoticed(s.handle, ids);
+      }
+    });
+    if (outcome === 'withheld') {
       deps.raise({ kind: 'unsent-notice', handle: s.handle });
     }
   }

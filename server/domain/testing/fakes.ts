@@ -217,6 +217,10 @@ export function harness(opts: HarnessOptions = {}) {
         calls.push(`replay:${id}`);
         return state.replay;
       },
+      replayForView: (id) => {
+        calls.push(`view:${id}`);
+        return state.replay;
+      },
       replayBeforeLaunch: (id) => {
         calls.push(`before:${id}`);
         return state.before ?? null;
@@ -245,6 +249,7 @@ export function harness(opts: HarnessOptions = {}) {
         submitted.push({ sessionId, text });
         return 'submitted';
       },
+      submitEnter: async (): Promise<SubmitOutcome> => 'submitted',
       write: (sessionId, data, o) => {
         written.push({
           sessionId,

@@ -1,5 +1,9 @@
 {
   "scenarios": {
+    "rust-lsp": {
+      "reason": "Fails only inside full/affected remote runs (rust-analyzer ready, then go-to-definition empty for 90 s), on both main-based and collab branches; passes alone and when its exact shard is replayed on one runner (runs 41649056359, 41653781175, 41651226159, 41650646899). Load-sensitive on the shared runner, not a product regression. Lift when the scenario waits for rust-analyzer's indexing to finish (e.g. the experimental/serverStatus quiescent notification) instead of a fixed window.",
+      "since": "2026-11-03"
+    },
     "scrollback-inrun": {
       "reason": "herdr-core 0.1.16's attach history paint hard-breaks soft-wrapped lines with CRLF at the paint width, so a reload splits wrapped lines ('ech' / 'o R2-END'); everything else in the scenario passes (earlier runs, order, no duplicates, PTY = xterm). Upstream request filed in the run report; lift when hc keeps soft wraps.",
       "since": "2026-11-02"

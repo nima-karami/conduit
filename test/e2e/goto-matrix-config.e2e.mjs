@@ -88,6 +88,18 @@ runScenario('goto-matrix-config', async ({ app, page, log }) => {
   );
 
   await m.row(
+    '19c',
+    { flow: '.js importing a sibling .ts (allowJs)', trigger: 'f12', current: '❌', target: '✅' },
+    async () => {
+      const after = await nav('jsproj/ts-consumer.js', 'markerR19cJsToTs', 1, 'f12');
+      return {
+        pass: landed(after, 'jsproj/ts-lib.ts', 'markerR19cJsToTs'),
+        observed: describe(after),
+      };
+    },
+  );
+
+  await m.row(
     '20',
     { flow: 'baseUrl non-relative import', trigger: 'f12', current: '✅', target: '✅' },
     async () => {

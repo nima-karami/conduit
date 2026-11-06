@@ -51,6 +51,20 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe('watchServerRoot — a home directory or filesystem root', () => {
+  const recursiveFor = (root: string, homeDir: string) => {
+    const w = fakeWatch();
+    watchServerRoot(root, goFilter, () => {}, vi.fn(), vi.fn(), { watch: w.watch, homeDir });
+    return (w.watch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1];
+  };
+
+  it('is watched top-level only; a project root inside home stays recursive', () => {
+    expect(recursiveFor('C:\\Users\\me', 'c:/users/ME')).toEqual({ recursive: false });
+    expect(recursiveFor('D:\\', 'C:\\Users\\me')).toEqual({ recursive: false });
+    expect(recursiveFor('C:\\Users\\me\\mod', 'C:\\Users\\me')).toEqual({ recursive: true });
+  });
+});
+
 describe('watchServerRoot', () => {
   it('only rels passing filter.matches reach onChanges', async () => {
     const s = setup(['a.go', 'x.ts']);

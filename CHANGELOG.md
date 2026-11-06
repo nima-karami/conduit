@@ -6,6 +6,111 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.56.2] — 2026-11-05
+
+### Added
+- **Agents can show you any diff in Review.** A new `open_diff` tool takes a unified diff, inline
+  or as a `.diff`/`.patch` file, from git, `git format-patch`, svn, hg or `diff -u`, and opens it
+  in Review with real line numbers. Nothing in it is applied, and nothing in a diff view opens a
+  file from disk.
+
+### Changed
+- **Release notes moved into Settings → About**, as a button next to the update controls. It opens
+  the notes in place, with a back button; Escape steps back first.
+- **The quit confirmation shows only Quit, Quit and stop all agents, and the close (X) button.**
+  The X is the keyboard default, so pressing Enter right away never quits.
+- **Agent messages say who they're from:** you, the agent that started the session, a helper it
+  started, or another agent. Agents act on you and their lead, and treat other agents' messages
+  as information.
+
+### Fixed
+- **Claude Code's Ctrl+Enter and other modified keys work again** in Conduit's terminals.
+- **A message notice that a freshly started agent draws late is still sent**, and the Enter it
+  needs never lands on text you're typing.
+
+## [0.56.1] — 2026-11-04
+
+### Fixed
+- **Conduit's background service stays separate from your own Herdr setup.** Your hc settings,
+  sessions and installed hc are never used or touched by Conduit's built-in copy.
+- **Conduit's background engine shows as `conduit-hc`** in Task Manager and process lists, so it
+  is never mistaken for your own `hc`.
+- **A board or plan open in Conduit no longer reloads, or shows a "changed outside Conduit"
+  notice, when nothing changed** (seen on Macs). Real changes made while a plan was closed now show
+  up when you reopen it.
+
+## [0.56.0] — 2026-11-04
+
+### Added
+- **Every release's notes are now in Settings → Release notes.** Pick a version on the left to
+  read what changed in it. About and the What's-new dialog both link there.
+
+### Fixed
+- **Mac builds can start the background service and run agents.** The service's socket path was
+  longer than macOS allows, so it never started; it now uses a short private path.
+- **Saving or renaming files inside a folder opened through a symlink or junction works**, and
+  on a Mac renaming a file to change only its letter case (Foo → foo) no longer reports a name clash.
+
+## [0.55.1] — 2026-11-04
+
+### Added
+- **Drag an open file tab onto the terminal to paste its path**, the same as dragging a file from
+  the Files explorer.
+
+### Fixed
+- **Typing in a terminal no longer does extra work on every key.** A leftover scroll diagnostic
+  measured the page and wrote a log line on each keystroke, which made typing stutter on a busy
+  machine.
+- **Mac builds start their background service again.** Since 0.52.0 a Mac build was missing the
+  runtime it needs, so sessions and other actions failed with "background service is not
+  connected".
+
+## [0.54.0] — 2026-11-04
+
+### Changed
+- **Sessions you aren't looking at no longer watch their folders or run git.** Their branch and
+  change count update when the agent finishes a turn. Opening one shows its last state and
+  catches up in about a second. Minimized windows count as not looking.
+
+### Fixed
+- **Checking for updates in a build that can't update now says so.** It used to show a raw
+  "file not found" error.
+
+## [0.53.2] — 2026-11-03
+
+### Fixed
+- **Conduit uses much less memory over a long day.**
+  - **Code intelligence:** opening a JavaScript file could add over a gigabyte, because the
+    JavaScript language service was given every TypeScript file of every project you had opened. It
+    now gets only JavaScript files, type declarations and the TypeScript files your open JavaScript
+    files import. Projects no session uses any more are dropped from code intelligence, and the total
+    is capped.
+  - **Closed tabs** now free their content. Before, every image, PDF and file you had opened stayed in
+    memory until the window reloaded.
+  - **Terminals:** a finished session no longer holds its terminal while you're looking elsewhere. Its
+    output and exit line come back when you return, and the agent is not started again.
+  - **Background service:** it no longer rebuilds a busy session's saved output on every chunk it
+    receives.
+  - The app now runs the production build of its UI framework, which no longer records a profiling
+    entry for every screen update.
+- **A session opened on your home folder (or a whole drive) no longer keeps Conduit busy while
+  idle.** Conduit watched everything under it, so constant background writes (AppData, browser
+  caches) kept it re-reading the folder and re-checking its health, at up to 40% of a CPU core.
+  Such a folder is now watched one level deep; projects and repositories inside it are still
+  watched in full. A folder whose watch keeps reporting lost changes is re-checked at most twice a
+  minute.
+
+## [0.53.0] — 2026-11-03
+
+### Added
+- **See what's new before and after you update.** When an update is ready, the update card has a
+  **What's new** link that opens the release notes, with **Relaunch to update** right there. After
+  Conduit updates, a one-time **Updated to vX · What's new** notice opens the notes for the version
+  you're now on. The notes come from this changelog and ship with the app, so they open offline.
+- **Update progress in the status bar.** While an update downloads, the status bar shows
+  **Updating · 42%**; once it's ready, **Update ready**. Click it to open the notes or the update
+  card.
+
 ## [0.52.1] — 2026-11-03
 
 ### Changed
@@ -393,7 +498,7 @@ All notable user-facing changes to Conduit. Format follows
 
 0.47.0 was not published; its changes ship in this release.
 
-## [0.47.0] — 2026-10-08
+## [0.47.0] — 2026-10-08 [YANKED]
 
 ### Added
 - **Python, Rust and C/C++ code navigation.** With basedpyright (`pip install basedpyright`),
@@ -667,7 +772,7 @@ All notable user-facing changes to Conduit. Format follows
 - Nothing user-facing: the v0.41.0 tag never built (a unit test assumed Windows paths and failed
   the Linux gate), so 0.41.1 is the first published build of everything under 0.41.0 below.
 
-## [0.41.0] — 2026-09-25
+## [0.41.0] — 2026-09-25 [YANKED]
 
 ### Added
 - **Review covers every repo in the session.** With two or more repos, Review opens on

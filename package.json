@@ -2,7 +2,7 @@
   "name": "conduit",
   "displayName": "Conduit",
   "description": "Agent-agnostic multi-agent terminal dashboard (standalone desktop app)",
-  "version": "0.52.1",
+  "version": "0.56.2",
   "author": "Nima Karami",
   "license": "MIT",
   "main": "./out/main.js",
@@ -30,7 +30,7 @@
     "tray:build": "node tools/tray-build.mjs",
     "verify": "npm run check && npm run typecheck && npm run build && npm run test:unit && npm run tray:check && npm run fallow:check && npm run audit && npm run security",
     "verify:quick": "node tools/verify-quick.mjs",
-    "pack": "npm run build && electron-builder --dir",
+    "pack": "npm run build && node build/fetch-runtime.mjs && npm run tray:build && electron-builder --dir",
     "dist": "npm run build && node build/fetch-runtime.mjs && npm run tray:build && electron-builder --win",
     "release": "npm version patch && git push --follow-tags",
     "release:minor": "npm version minor && git push --follow-tags",
@@ -41,6 +41,7 @@
     "text-fit": "node test/e2e/visual/text-fit-sweep.mjs"
   },
   "build": {
+    "beforePack": "./build/check-runtime.mjs",
     "appId": "com.nimakarami.conduit",
     "productName": "Conduit",
     "artifactName": "${productName}-Setup-${version}.${ext}",
@@ -56,6 +57,10 @@
       "!node_modules/**/*"
     ],
     "extraResources": [
+      {
+        "from": "CHANGELOG.md",
+        "to": "CHANGELOG.md"
+      },
       {
         "from": "resources/skills",
         "to": "skills"
@@ -138,7 +143,33 @@
       "artifactName": "${productName}-${version}-arm64-unsigned.${ext}",
       "identity": null,
       "hardenedRuntime": false,
-      "gatekeeperAssess": false
+      "gatekeeperAssess": false,
+      "extraResources": [
+        {
+          "from": "build/vendor/node/node",
+          "to": "runtime/node"
+        },
+        {
+          "from": "build/vendor/hc",
+          "to": "runtime/hc"
+        },
+        {
+          "from": "out/server",
+          "to": "runtime/server",
+          "filter": [
+            "**/*",
+            "!**/*.map"
+          ]
+        },
+        {
+          "from": "build/vendor/node/LICENSE",
+          "to": "licenses/node/LICENSE"
+        },
+        {
+          "from": "THIRD_PARTY_NOTICES.txt",
+          "to": "THIRD_PARTY_NOTICES.txt"
+        }
+      ]
     },
     "publish": {
       "provider": "github",

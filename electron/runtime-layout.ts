@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync } from 'node:fs';
-import { delimiter, join } from 'node:path';
+import { join } from 'node:path';
 import { HC_PINNED_VERSION } from '../src/contracts/hc';
 import { coreStartCwd } from '../src/instance-names';
+import { runtimeBinaryName } from '../src/runtime-binary';
 
 export interface RuntimeLayout {
   nodeExe: string;
@@ -13,27 +14,24 @@ export interface RuntimeLayout {
 }
 
 /**
- * The first `name` on the app's PATH, as an absolute path. A bare node would be resolved by hc,
- * whose spelling (`node.EXE`) the server then writes into every CLI's MCP entry; a bare hc is
- * resolved inside an hc terminal, whose PATH hc rebuilds rather than taking the app's.
+ * hc rebuilds PATH inside terminals; pin the app's node path for the CLI's MCP entries.
  */
-function onPath(
+function nodeOnPath(
   env: NodeJS.ProcessEnv,
-  name: 'node' | 'hc',
   platform: NodeJS.Platform,
+  exists: (file: string) => boolean,
 ): string | undefined {
   const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH');
-  const exe = platform === 'win32' ? `${name}.exe` : name;
+  const exe = runtimeBinaryName('node', platform);
   return (key ? (env[key] ?? '') : '')
-    .split(delimiter)
+    .split(platform === 'win32' ? ';' : ':')
     .filter(Boolean)
     .map((dir) => join(dir, exe))
-    .find((candidate) => existsSync(candidate));
+    .find(exists);
 }
 
 /**
- * Packaged: what server/runtime-dir/prepare.ts copies out of the install dir (D2). Unpackaged: the
- * repo's own build plus the node and hc on PATH, overridable for dev and e2e.
+ * See D2/D24: a missing Conduit hc must never select the user's installed executable.
  */
 export function runtimeLayout(i: {
   packaged: boolean;
@@ -42,33 +40,43 @@ export function runtimeLayout(i: {
   appPath: string;
   env: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
+  exists?: (file: string) => boolean;
 }): RuntimeLayout {
-  const platform = i.platform ?? process.platform;
   const runtimeRoot = join(i.userData, 'runtime');
+  const platform = i.platform ?? process.platform;
+  const exists = i.exists ?? existsSync;
+  const nodeBinary = runtimeBinaryName('node', platform);
+  const hcBinary = runtimeBinaryName('hc', platform);
   const hcVersion = HC_PINNED_VERSION;
   const coreCwd = coreStartCwd(runtimeRoot, hcVersion);
   mkdirSync(coreCwd, { recursive: true });
   if (i.packaged) {
     const appDir = join(runtimeRoot, i.appVersion);
     return {
-      nodeExe: join(appDir, 'node.exe'),
+      nodeExe: join(appDir, nodeBinary),
       superviseJs: join(appDir, 'server', 'supervise.js'),
-      hcExe: join(coreCwd, 'hc.exe'),
+      hcExe: join(coreCwd, hcBinary),
       hcVersion,
       coreCwd,
       trayExe: platform === 'win32' ? join(appDir, 'tray', 'conduit-tray.exe') : null,
     };
   }
   const devTray = join(i.appPath, 'build', 'vendor', 'tray', 'conduit-tray.exe');
+  const vendorHc = join(i.appPath, 'build', 'vendor', 'hc', hcBinary);
+  if (!i.env.CONDUIT_HC_BINARY && !exists(vendorHc)) {
+    throw new Error(
+      `Missing vendored conduit-hc at ${vendorHc}; run node build/fetch-runtime.mjs or set CONDUIT_HC_BINARY.`,
+    );
+  }
   return {
-    nodeExe: i.env.CONDUIT_NODE_BINARY ?? onPath(i.env, 'node', platform) ?? 'node',
+    nodeExe: i.env.CONDUIT_NODE_BINARY ?? nodeOnPath(i.env, platform, exists) ?? 'node',
     superviseJs: join(i.appPath, 'out', 'server', 'supervise.js'),
-    hcExe: i.env.CONDUIT_HC_BINARY ?? onPath(i.env, 'hc', platform) ?? 'hc',
+    hcExe: i.env.CONDUIT_HC_BINARY || vendorHc,
     hcVersion,
     coreCwd,
     trayExe:
       platform === 'win32'
-        ? (i.env.CONDUIT_TRAY_BINARY ?? (existsSync(devTray) ? devTray : null))
+        ? (i.env.CONDUIT_TRAY_BINARY ?? (exists(devTray) ? devTray : null))
         : null,
   };
 }

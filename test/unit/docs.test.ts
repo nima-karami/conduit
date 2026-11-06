@@ -803,6 +803,66 @@ describe('docsReducer — openReview (review source)', () => {
     expect(s.docs[0].reviewSource).toBeUndefined();
   });
 
+  it('opens the singleton review doc with a patch source and a title-derived tab label', () => {
+    const source = {
+      kind: 'patch' as const,
+      files: [
+        {
+          path: 'a.txt',
+          head: 'one\ntwo\n',
+          work: 'one\nthree\n',
+          binary: false,
+          changeKind: 'M' as const,
+          counts: { added: 1, removed: 1 },
+          hunks: [],
+        },
+      ],
+      handle: 'claude-1',
+    };
+    const s = docsReducer(initialDocs, { type: 'openReview', sessionId: 'S1', source });
+    expect(s.docs).toHaveLength(1);
+    expect(s.docs[0].reviewSource).toEqual(source);
+    expect(s.docs[0].title).toBe('Diff from claude-1');
+  });
+
+  it('uses an explicit title for a patch source tab label', () => {
+    const source = {
+      kind: 'patch' as const,
+      files: [
+        {
+          path: 'a.txt',
+          head: '',
+          work: 'x\n',
+          binary: false,
+          changeKind: 'A' as const,
+          counts: { added: 1, removed: 0 },
+          hunks: [],
+        },
+      ],
+      title: 'Agent diff',
+    };
+    const s = docsReducer(initialDocs, { type: 'openReview', sessionId: 'S1', source });
+    expect(s.docs[0].title).toBe('Agent diff');
+  });
+
+  it('focus:false / background openReview does not come to the front', () => {
+    const prev = open(initialDocs, 'file', '/a.ts');
+    const next = docsReducer(prev, {
+      type: 'openReview',
+      sessionId: 'S1',
+      source: { kind: 'patch', files: [], handle: 'claude-1' },
+      mode: 'background',
+    });
+    expect(next.docs.some((d) => d.id === REVIEW_DOC_ID)).toBe(true);
+    expect(next.activeId).toBe(prev.activeId);
+    expect(remembered(next, 'S1')).toBe(remembered(prev, 'S1'));
+    expect(next.docs.find((d) => d.id === REVIEW_DOC_ID)?.reviewSource).toEqual({
+      kind: 'patch',
+      files: [],
+      handle: 'claude-1',
+    });
+  });
+
   it('transfers ownership + reactivates when reopened under another session', () => {
     let s = docsReducer(initialDocs, {
       type: 'openReview',

@@ -91,6 +91,31 @@ describe('planMutation — pure containment + rules', () => {
       expect(plan).toMatchObject({ kind: 'reject' });
     });
 
+    it('allows a case-only rename on a case-insensitive darwin filesystem', () => {
+      const r = root();
+      const from = J(r, 'Foo.ts');
+      const to = J(r, 'foo.ts');
+      fs.writeFileSync(from, 'x');
+      const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+      Object.defineProperty(process, 'platform', { value: 'darwin' });
+      try {
+        expect(planMutation({ op: 'rename', from, to }, [r])).toMatchObject({ kind: 'rename' });
+      } finally {
+        if (platform) Object.defineProperty(process, 'platform', platform);
+      }
+    });
+
+    it('rejects a case-only rename onto a different existing entry', () => {
+      const r = root();
+      const from = J(r, 'Foo.ts');
+      const to = J(r, 'foo.ts');
+      fs.writeFileSync(from, 'x');
+      // Two distinct entries can only exist on a case-sensitive FS (the ubuntu CI host).
+      if (fs.existsSync(to)) return;
+      fs.writeFileSync(to, 'y');
+      expect(planMutation({ op: 'rename', from, to }, [r])).toMatchObject({ kind: 'reject' });
+    });
+
     it('rejects renaming a workspace root itself', () => {
       const r = root();
       const plan = planMutation({ op: 'rename', from: r, to: J(r, '..', 'renamed') }, [r]);

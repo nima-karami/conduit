@@ -19,6 +19,7 @@ import type { GitInfo } from './types';
 export const FOCUS_STALE_MS = 30_000;
 /** Behind first fill and live edits. */
 export const FOCUS_PRIORITY = 1000;
+export const BACKGROUND_PRIORITY = FOCUS_PRIORITY + 1;
 
 export interface TrackerUpdate {
   key: string;
@@ -69,6 +70,11 @@ export interface RepoTracker {
   windowFocused(): void;
   /** Explicit Retry (repo:refresh). Root must already be registered (else no-op). */
   refreshNow(root: string): void;
+  /** These sessions just went on screen: catch-up marks for their repos that had no shown session
+   *  (spec 2026-11-03 §3.5). Called after the demand reports them visible, before the full send. */
+  sessionShown(sessionIds: readonly string[]): void;
+  /** A hidden session's reporting program finished a turn, or its process exited (spec §3.4). */
+  sessionTurnEnded(sessionId: string): void;
   /** Keyed by RepoInfo.root. */
   snapshotsFor(sessionId: string): Record<string, RepoSnapshot>;
   /** A repo's file listing (key) or the loose files outside every repo (null) may have changed.
@@ -89,6 +95,7 @@ interface Repo {
   info?: GitInfo;
   snapshot?: RepoSnapshot;
   lastRefreshAt?: number;
+  unshownSince?: number;
   covered: boolean;
   /** Mirrors the scheduler's pending kinds: set by a mark, cleared when a run takes them. */
   pending: boolean;
@@ -103,9 +110,18 @@ interface Repo {
 const FIRST_FILL_TAGS: ReadonlySet<RepoTag> = new Set(['home', 'attached']);
 
 /** GitInfo with today's dirty semantics: only a born branch or a detached HEAD carries it. */
-function withDirty(info: GitInfo, dirty: boolean): GitInfo {
+function withDirty(info: GitInfo, dirty: boolean | undefined): GitInfo {
   if (info.kind === 'bare' || info.kind === 'none' || info.unborn) return info;
+  if (dirty === undefined) {
+    const unknown = { ...info };
+    delete unknown.dirty;
+    return unknown;
+  }
   return { ...info, dirty };
+}
+
+function unshownDirty(prev: boolean | undefined, read: boolean): true | undefined {
+  return read || prev === true ? true : undefined;
 }
 
 export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
@@ -119,12 +135,13 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
   const notifyDirty = (key: string | null) => {
     for (const listener of dirtyListeners) listener(key);
   };
+  const isShown = (repo: Repo) => [...repo.sessions].some((s) => deps.isSessionVisible(s));
 
   const scheduler = createRefreshScheduler({
     run: (key, kinds) => runJob(key, kinds),
     eligible: (key) => {
       const repo = repos.get(key);
-      return !!repo && [...repo.sessions].some((s) => deps.isSessionVisible(s));
+      return !!repo && isShown(repo);
     },
     now: deps.now,
     setTimer: deps.setTimer,
@@ -154,7 +171,7 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
 
   const onLostCommonDir = (commonDir: string) => {
     for (const repo of repos.values())
-      if (repo.commonDir === commonDir) mark(repo, ['tree', 'meta']);
+      if (repo.commonDir === commonDir && isShown(repo)) mark(repo, ['tree', 'meta']);
   };
 
   // A covered common dir's events already arrive through the working-tree watch.
@@ -162,7 +179,8 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
     const wanted = new Set<string>();
     if (!stopped)
       for (const repo of repos.values())
-        if (repo.commonDir && !isCovered(repo.commonDir)) wanted.add(repo.commonDir);
+        if (repo.commonDir && isShown(repo) && !isCovered(repo.commonDir))
+          wanted.add(repo.commonDir);
     for (const [dir, w] of ownWatches) {
       if (wanted.has(dir)) continue;
       w.close();
@@ -178,13 +196,17 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
   };
 
   const snapshotOf = (repo: Repo): RepoSnapshot | undefined =>
-    repo.snapshot && (repo.pending ? { ...repo.snapshot, stale: true } : repo.snapshot);
+    repo.snapshot &&
+    (repo.pending || repo.unshownSince !== undefined
+      ? { ...repo.snapshot, stale: true }
+      : repo.snapshot);
 
   const wantsLinesFor = (repo: Repo) => [...repo.sessions].some((s) => deps.wantsLines(s));
 
   async function runJob(key: string, kinds: PendingKinds): Promise<void> {
     const repo = repos.get(key);
     if (!repo) return;
+    const shownAtStart = isShown(repo);
     repo.pending = false;
     try {
       let info = repo.info;
@@ -207,7 +229,14 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
           reconcileWatches();
         }
       }
-      const lines = wantsLinesFor(repo);
+      if (!kinds.tree && !shownAtStart) {
+        const gitChanged = !!info && repoGitFingerprint(info) !== repoGitFingerprint(repo.info);
+        repo.info = info;
+        if (info && gitChanged)
+          deps.publish({ key, root: repo.root, sessions: [...repo.sessions], git: info });
+        return;
+      }
+      const lines = shownAtStart && wantsLinesFor(repo);
       repo.readingLines = lines;
       const read = await deps.readChanges(repo.root, { lines }).finally(() => {
         repo.readingLines = undefined;
@@ -221,7 +250,12 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
           lines,
           refreshedAt: repo.lastRefreshAt,
         };
-        if (info) info = withDirty(info, read.trackedDirty);
+        if (info)
+          info = withDirty(
+            info,
+            shownAtStart ? read.trackedDirty : unshownDirty(info.dirty, read.trackedDirty),
+          );
+        if (shownAtStart && isShown(repo)) repo.unshownSince = undefined;
       } else {
         repo.snapshot = {
           ...(repo.snapshot ?? { changes: [], lines: false, refreshedAt: 0 }),
@@ -234,7 +268,8 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
         key,
         root: repo.root,
         sessions: [...repo.sessions],
-        snapshot: repo.snapshot,
+        snapshot:
+          repo.unshownSince !== undefined ? { ...repo.snapshot, stale: true } : repo.snapshot,
         ...(info && gitChanged ? { git: info } : {}),
       });
       // The failed read may have absorbed a demand rise, which would leave "Counting lines…" up
@@ -254,7 +289,7 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
     deps.removed(repo.key, repo.root, droppedBy);
   };
 
-  const firstFill = (added: ReadonlyArray<{ repo: Repo; info: RepoInfo }>) => {
+  const markRanked = (added: ReadonlyArray<{ repo: Repo; info: RepoInfo }>) => {
     const nested: Array<{ repo: Repo; info: RepoInfo }> = [];
     for (const a of added) {
       if (FIRST_FILL_TAGS.has(a.info.tag))
@@ -273,6 +308,12 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
     });
   };
 
+  const firstFill = (added: ReadonlyArray<{ repo: Repo; info: RepoInfo }>) => {
+    markRanked(added.filter(({ repo }) => isShown(repo)));
+    for (const { repo } of added)
+      if (!isShown(repo)) mark(repo, ['meta'], { background: true, priority: BACKGROUND_PRIORITY });
+  };
+
   function onWatchedPath(absKey: string): void {
     if (stopped) return;
     const hits = pathMap.classify(absKey);
@@ -280,7 +321,7 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
     for (const hit of hits) {
       const repo = repos.get(hit.key);
       if (!repo) continue;
-      mark(repo, [hit.kind]);
+      if (isShown(repo)) mark(repo, [hit.kind]);
       if (hit.kind === 'tree') notifyDirty(repo.key);
     }
   }
@@ -292,14 +333,16 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
     if (next.length > 0) sessionRepos.set(sessionId, next);
     else sessionRepos.delete(sessionId);
     const added: Array<{ repo: Repo; info: RepoInfo }> = [];
-    const joined: Repo[] = [];
+    const joined: Array<{ repo: Repo; info: RepoInfo }> = [];
+    const touched = new Set<Repo>();
     for (const ri of next) {
       const key = folderKey(ri.root);
       const existing = repos.get(key);
       if (existing) {
         if (!existing.sessions.has(sessionId)) {
           existing.sessions.add(sessionId);
-          joined.push(existing);
+          joined.push({ repo: existing, info: ri });
+          touched.add(existing);
         }
         continue;
       }
@@ -312,6 +355,7 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
       };
       repos.set(key, repo);
       added.push({ repo, info: ri });
+      touched.add(repo);
     }
     let removedAny = false;
     for (const key of prevKeys) {
@@ -319,17 +363,22 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
       const repo = repos.get(key);
       if (!repo) continue;
       repo.sessions.delete(sessionId);
+      touched.add(repo);
       if (repo.sessions.size === 0) {
         removeRepo(repo, [sessionId]);
         removedAny = true;
       }
     }
+    for (const repo of touched)
+      if (repo.sessions.size > 0 && !isShown(repo) && repo.unshownSince === undefined)
+        repo.unshownSince = deps.now();
     if (added.length > 0 || removedAny) {
       rebuildPathMap();
-      reconcileWatches();
     }
+    if (touched.size > 0) reconcileWatches();
+    markRanked(joined.filter(({ repo }) => isShown(repo) && repo.unshownSince !== undefined));
     // A session joining an already-read repo would otherwise wait for its next run.
-    for (const repo of joined) {
+    for (const { repo } of joined) {
       const snapshot = snapshotOf(repo);
       if (!snapshot && !repo.info) continue;
       deps.publish({
@@ -356,7 +405,7 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
           (f) => isAncestorOf(f, repo.key) || (!!repo.commonDir && isAncestorOf(f, repo.commonDir)),
         );
         if (!hit) continue;
-        mark(repo, ['tree', 'meta']);
+        if (isShown(repo)) mark(repo, ['tree', 'meta']);
         notifyDirty(repo.key);
       }
       // A dropped event may as well have been a loose file's.
@@ -371,9 +420,9 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
         // Edits made while nothing watched the tree are caught up once; losing coverage may
         // have dropped events, including a checkout.
         if (covered && !repo.covered) {
-          mark(repo, ['tree']);
+          if (isShown(repo)) mark(repo, ['tree']);
           notifyDirty(repo.key);
-        } else if (!covered && repo.covered) mark(repo, ['tree', 'meta']);
+        } else if (!covered && repo.covered && isShown(repo)) mark(repo, ['tree', 'meta']);
         repo.covered = covered;
       }
       // Loose files written while a root was unwatched raised no event either.
@@ -381,6 +430,9 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
       reconcileWatches();
     },
     visibilityChanged() {
+      for (const repo of repos.values())
+        if (!isShown(repo) && repo.unshownSince === undefined) repo.unshownSince = deps.now();
+      reconcileWatches();
       scheduler.reconsider();
     },
     linesDemandChanged() {
@@ -401,6 +453,24 @@ export function createRepoTracker(deps: RepoTrackerDeps): RepoTracker {
     refreshNow(root) {
       const repo = repos.get(folderKey(root));
       if (repo) mark(repo, ['meta', 'tree'], { immediate: true });
+    },
+    sessionShown(sessionIds) {
+      const pairs = new Map<string, { repo: Repo; info: RepoInfo }>();
+      for (const id of sessionIds)
+        for (const info of sessionRepos.get(id) ?? []) {
+          const repo = repos.get(folderKey(info.root));
+          if (repo && repo.unshownSince !== undefined && !pairs.has(repo.key))
+            pairs.set(repo.key, { repo, info });
+        }
+      markRanked([...pairs.values()]);
+    },
+    sessionTurnEnded(sessionId) {
+      for (const ri of sessionRepos.get(sessionId) ?? []) {
+        const repo = repos.get(folderKey(ri.root));
+        if (!repo || isShown(repo)) continue;
+        mark(repo, ['meta', 'tree'], { background: true, priority: BACKGROUND_PRIORITY });
+        notifyDirty(repo.key);
+      }
     },
     snapshotsFor(sessionId) {
       const out: Record<string, RepoSnapshot> = {};

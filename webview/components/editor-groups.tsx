@@ -6,6 +6,8 @@ import { SPLIT_COPY } from '../split-editor-copy';
 import {
   acceptTabDrop,
   currentTabDrag,
+  dropHitZone,
+  EDGE_ZONE_FRACTION,
   endTabDrag,
   subscribeTabDrag,
   type TabDrag,
@@ -31,7 +33,7 @@ function dropKindAt(
   if (drag.group !== g) return 'group';
   if (split) return null;
   const box = zone.getBoundingClientRect();
-  return clientX >= box.left + (box.width * 2) / 3 ? 'edge' : null;
+  return clientX >= box.right - box.width * EDGE_ZONE_FRACTION ? 'edge' : null;
 }
 
 export function EditorGroups({
@@ -44,6 +46,7 @@ export function EditorGroups({
   renderWeb,
   onFocusGroup,
   onMoveTab,
+  terminalGroup,
 }: {
   layout: CenterLayout;
   ratio: number;
@@ -54,6 +57,7 @@ export function EditorGroups({
   renderWeb: (doc: OpenDoc, onGuestFocus: () => void) => React.ReactNode;
   onFocusGroup: (g: GroupIndex) => void;
   onMoveTab: (id: string, toGroup: GroupIndex, beforeId: string | null, duplicate: boolean) => void;
+  terminalGroup: GroupIndex | null;
 }) {
   const gridRef = useRef<HTMLDivElement>(null);
   const [liveRatio, setLiveRatio] = useState(ratio);
@@ -134,6 +138,8 @@ export function EditorGroups({
       )}
       {tabDrag !== null &&
         layout.groups.map(({ group: g }) => {
+          const hit = dropHitZone(tabDrag, g, split, terminalGroup === g);
+          if (hit === 'none') return null;
           const kind = over?.group === g ? over.kind : null;
           return (
             <div
@@ -141,6 +147,7 @@ export function EditorGroups({
               className={`editorgroups__drop${kind === 'edge' ? ' editorgroups__drop--edge' : ''}`}
               data-group={g}
               data-over={kind ?? undefined}
+              data-hit={hit}
               onDragOver={(e) => {
                 const drag = tabDragOf(e);
                 const next = drag && dropKindAt(drag, g, split, e.currentTarget, e.clientX);
@@ -156,7 +163,14 @@ export function EditorGroups({
                 endTabDrag();
                 if (kind) onMoveTab(drag.id, kind === 'edge' ? 2 : g, null, e.ctrlKey);
               }}
-            />
+            >
+              {hit === 'edge' && (
+                <div
+                  className="editorgroups__dropedge"
+                  style={{ width: `${EDGE_ZONE_FRACTION * 100}%` }}
+                />
+              )}
+            </div>
           );
         })}
       {webDocs.map((doc) => {

@@ -152,7 +152,7 @@ describe('useMcpUi', () => {
     send({ kind: 'openReview', source }, 'A', 'r1');
     send({ kind: 'openGitHistory', repoRoot: '/w', commit }, 'A', 'r2');
     send({ kind: 'openUrl', url: 'https://x.test/', focus: false }, 'B', 'r3');
-    expect(h.openReview).toHaveBeenCalledWith('A', source);
+    expect(h.openReview).toHaveBeenCalledWith('A', source, true);
     expect(h.openGitHistory).toHaveBeenCalledWith('A', '/w', commit);
     expect(h.openUrl).toHaveBeenCalledWith('B', 'https://x.test/', false);
     expect(results()).toStrictEqual([

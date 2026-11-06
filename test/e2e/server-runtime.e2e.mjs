@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { until } from './conduit-mcp-helpers.mjs';
-import { assert as harnessAssert, phase, REPO, runScenario } from './harness.mjs';
+import { assert as harnessAssert, phase, REPO, resolveHcBinary, runScenario } from './harness.mjs';
 
 // W6's walking skeleton on real hc: the runtime, its ring and its screen model over W1's client,
 // in a private HC_SESSION with its own XDG dirs, so the user's own hc session is never touched.
@@ -40,7 +40,7 @@ async function settleCleanup(actions) {
 }
 
 runScenario('server-runtime', async ({ log }) => {
-  const hc = process.env.CONDUIT_HC_BINARY || 'hc';
+  const hc = resolveHcBinary();
   const version = await execFile(hc, ['--version'], { windowsHide: true });
   const versionText = `${version.stdout}${version.stderr}`;
   harnessAssert(

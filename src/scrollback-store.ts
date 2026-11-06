@@ -1,10 +1,10 @@
 import type { ReplayRun, TermGeometry } from './protocol';
 import {
-  appendToRing,
   attachReplay,
   type ColdReplay,
   coldReplay,
   lastRelaunchAt,
+  RingBuffer,
   ringPrefix,
   SCROLLBACK_CAP_BYTES,
   type ScrollbackRing,
@@ -12,8 +12,6 @@ import {
 } from './scrollback-persistence';
 
 const PERSIST_DEBOUNCE_MS = 250;
-
-const length = (ring: ScrollbackRing) => ring.reduce((n, s) => n + s.data.length, 0);
 
 export interface ScrollbackStoreOptions {
   /** Delivers a host-composed line to the session's terminal. */
@@ -28,7 +26,9 @@ export interface ScrollbackStoreOptions {
  * stamped when its bytes arrive, so a flush never has to ask a PTY that may already be gone.
  */
 export class ScrollbackStore {
-  private readonly rings = new Map<string, ScrollbackRing>();
+  private readonly rings = new Map<string, RingBuffer>();
+  /** What the last write to disk held, so an idle ring isn't re-serialised every flush. */
+  private readonly written = new Map<string, { version: number; beforeLaunch?: number }>();
   /** Characters of each ring recorded before the session's current launch; trimmed with it. */
   private readonly beforeLaunch = new Map<string, number>();
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -46,12 +46,16 @@ export class ScrollbackStore {
   }
 
   append(sessionId: string, chunk: string, geometry: TermGeometry | undefined): void {
-    const ring = this.rings.get(sessionId) ?? [];
-    const next = appendToRing(ring, chunk, geometry, this.cap);
-    this.rings.set(sessionId, next);
+    let ring = this.rings.get(sessionId);
+    if (!ring) {
+      ring = new RingBuffer();
+      this.rings.set(sessionId, ring);
+    }
+    const had = ring.charCount;
+    ring.append(chunk, geometry, this.cap);
     const before = this.beforeLaunch.get(sessionId);
     if (before !== undefined) {
-      const trimmed = length(ring) + chunk.length - length(next);
+      const trimmed = had + chunk.length - ring.charCount;
       this.beforeLaunch.set(sessionId, Math.max(0, before - trimmed));
     }
     if (this.timers.has(sessionId)) return;
@@ -73,12 +77,22 @@ export class ScrollbackStore {
     sessionId: string,
     restore: () => ScrollbackRing | undefined,
   ): ColdReplay | undefined {
-    const ring = this.rings.get(sessionId) ?? restore();
-    if (!ring) return undefined;
-    this.rings.set(sessionId, ring);
-    const replay = coldReplay(ring);
+    let buffer = this.rings.get(sessionId);
+    if (!buffer) {
+      const restored = restore();
+      if (!restored) return undefined;
+      buffer = RingBuffer.from(restored);
+      this.rings.set(sessionId, buffer);
+    }
+    const replay = coldReplay(buffer.toRing());
     if (replay.tail) this.append(sessionId, replay.tail.data, replay.tail.geometry);
     return replay;
+  }
+
+  /** `replayForColdStart` for a pane over no child: nothing follows the replay, so nothing is recorded. */
+  replayForView(sessionId: string): ColdReplay | undefined {
+    const ring = this.rings.get(sessionId);
+    return ring ? coldReplay(ring.toRing()) : undefined;
   }
 
   /**
@@ -92,8 +106,12 @@ export class ScrollbackStore {
   }
 
   /** A new launch starts here: what the ring holds now is the launches before it. */
-  markLaunch(sessionId: string, at = length(this.rings.get(sessionId) ?? [])): void {
+  markLaunch(sessionId: string, at = this.heldChars(sessionId)): void {
     this.beforeLaunch.set(sessionId, at);
+  }
+  private heldChars(sessionId: string): number {
+    const ring = this.rings.get(sessionId);
+    return ring ? ring.charCount : 0;
   }
 
   /**
@@ -102,7 +120,7 @@ export class ScrollbackStore {
    * before the last relaunch marker, so nothing of the live launch is shown twice.
    */
   replayBeforeLaunch(sessionId: string): { data: string; runs: ReplayRun[] } | undefined {
-    const ring = this.rings.get(sessionId) ?? [];
+    const ring = this.rings.get(sessionId)?.toRing() ?? [];
     const before = this.beforeLaunch.get(sessionId) ?? lastRelaunchAt(ring) ?? 0;
     const replay = attachReplay(ringPrefix(ring, before));
     return replay.data ? replay : undefined;
@@ -110,15 +128,19 @@ export class ScrollbackStore {
 
   /** The replay for a pane attaching to the session's live child (see `attachReplay`). */
   attachReplay(sessionId: string): { data: string; runs: ReplayRun[] } {
-    return attachReplay(this.rings.get(sessionId) ?? []);
+    return attachReplay(this.rings.get(sessionId)?.toRing() ?? []);
   }
 
   /** Writes now; a pending debounced write is cancelled, so it can't land after this one. */
   flush(sessionId: string): void {
     this.cancelTimer(sessionId);
-    const segments = this.rings.get(sessionId);
-    if (!segments) return;
+    const ring = this.rings.get(sessionId);
+    if (!ring) return;
     const beforeLaunch = this.beforeLaunch.get(sessionId);
+    const last = this.written.get(sessionId);
+    if (last && last.version === ring.version && last.beforeLaunch === beforeLaunch) return;
+    this.written.set(sessionId, { version: ring.version, beforeLaunch });
+    const segments = ring.toRing();
     this.persist(
       sessionId,
       serializeScrollback({
@@ -137,6 +159,7 @@ export class ScrollbackStore {
   drop(sessionId: string): void {
     this.cancelTimer(sessionId);
     this.rings.delete(sessionId);
+    this.written.delete(sessionId);
     this.beforeLaunch.delete(sessionId);
   }
 

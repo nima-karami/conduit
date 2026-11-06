@@ -15,6 +15,27 @@ shipped lives in `docs/runs/`, not here.
 
 Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live in.
 
+- **Full separation inside Conduit terminals.** A user's own `hc` typed in a Conduit terminal
+  currently reaches Conduit's core: hc copies the core's HC_SESSION into panes after applying
+  their environment (`hc` 0.1.16, `api/run.rs:221–224`). Options validated 2026-11-04: run the
+  core session-less, or an upstream fix.
+
+- **Agents on different machines talk to each other (2026-11-04, user).** Two people (e.g. Nima
+  and James), each running Conduit, authorize their agents to message each other and share
+  information across machines — today's messaging (`send_message`, inbox, handles) is local to
+  one Conduit server. Open questions for the spec: transport (relay vs. direct, NAT), identity
+  and the authorization handshake (who approves, per-agent or per-person, revocation), what can
+  be shared (messages only vs. files/attachments/session context), policy integration with the
+  existing MCP tool policies, and what a remote peer looks like in `list_sessions`. Relates to
+  the tasks+messaging spec awaiting D1–D12.
+
+- **Repo identity under path aliases.** A repo opened through a symlink, junction, subst/mapped
+  drive or macOS `/var`→`/private/var` is keyed lexically, while git reports a linked worktree's
+  gitdir canonically, so `RepoPathMap.classify`/`isCovered` can miss and double-watch `.git`.
+  Root fix: dual-key lexical + real, like `folderKeysOf(folders, realKeys)`
+  (`src/folder-validation.ts`). Realpath-ing git output alone was tried and rejected in review
+  (2026-11-04): it breaks the lexical match for normal aliased repos.
+
 - **Terminal still reported "stuck" with the agent idle.** v0.27.0/v0.27.1 fixed two real
   mechanisms (see `docs/runs/2026-08-06-terminal-follow/report.md`), but the originally
   reported symptom — scrolled up, agent has *stopped* producing, still cannot reach the

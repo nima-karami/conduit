@@ -87,6 +87,8 @@ function harness(over: Partial<ControlDeps> = {}): Harness {
     git: () => {
       throw new Error('git: not an open tool');
     },
+    realPath: async (p) => p,
+    readBytes: async () => null,
     targets: () => {
       throw new Error('targets: not an open tool');
     },

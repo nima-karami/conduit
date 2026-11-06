@@ -1,22 +1,43 @@
 {
-  "node": {
-    "version": "24.18.0",
-    "url": "https://nodejs.org/dist/v24.18.0/win-x64/node.exe",
-    "sha256": "9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de",
-    "dest": "node/node.exe"
+  "win32-x64": {
+    "node": {
+      "version": "24.18.0",
+      "url": "https://nodejs.org/dist/v24.18.0/win-x64/node.exe",
+      "sha256": "9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de",
+      "dest": "node/node.exe"
+    },
+    "nodeLicense": {
+      "version": "24.18.0",
+      "url": "https://raw.githubusercontent.com/nodejs/node/v24.18.0/LICENSE",
+      "sha256": "148eacf7863ef4329224a29398623077200a27194aa075569faf4a0a85566ca5",
+      "dest": "node/LICENSE"
+    },
+    "hc": {
+      "version": "0.1.16",
+      "url": "https://releases.herdr.dev/core/0.1.16/herdr-core-windows-x86_64.zip",
+      "sha256": "3535f8db6258bae909a9f29ea15ada9133471a905adb90655838807ee2f49049",
+      "dest": "hc",
+      "archive": "zip",
+      "rename": { "herdr-core.exe": "conduit-hc.exe" }
+    }
   },
-  "nodeLicense": {
-    "version": "24.18.0",
-    "url": "https://raw.githubusercontent.com/nodejs/node/v24.18.0/LICENSE",
-    "sha256": "148eacf7863ef4329224a29398623077200a27194aa075569faf4a0a85566ca5",
-    "dest": "node/LICENSE"
-  },
-  "hc": {
-    "version": "0.1.16",
-    "url": "https://releases.herdr.dev/core/0.1.16/herdr-core-windows-x86_64.zip",
-    "sha256": "3535f8db6258bae909a9f29ea15ada9133471a905adb90655838807ee2f49049",
-    "dest": "hc",
-    "archive": "zip",
-    "rename": { "herdr-core.exe": "hc.exe" }
+  "darwin-arm64": {
+    "node": {
+      "version": "24.18.0",
+      "url": "https://nodejs.org/dist/v24.18.0/node-v24.18.0-darwin-arm64.tar.gz",
+      "sha256": "e1a97e14c99c803e96c7339403282ea05a499c32f8d83defe9ef5ec66f979ed1",
+      "dest": "node",
+      "archive": "tar.gz",
+      "stripComponents": 1,
+      "rename": { "bin/node": "node" }
+    },
+    "hc": {
+      "version": "0.1.16",
+      "url": "https://releases.herdr.dev/core/0.1.16/herdr-core-macos-aarch64.tar.gz",
+      "sha256": "698d8f0c44f4e4b15fec174d52a39d57a014cfd71added44b53a0753b469d0fd",
+      "dest": "hc",
+      "archive": "tar.gz",
+      "rename": { "herdr-core": "conduit-hc" }
+    }
   }
 }

@@ -22,7 +22,7 @@ import {
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { markCoverageIncomplete, startCoverage, stopCoverage } from './coverage-capture.mjs';
 import { attemptDir, screenshotWindows, startCapture, stopTrace } from './failure-artifacts.mjs';
@@ -32,6 +32,7 @@ import {
   teardownNames,
   teardownScenarioServer,
 } from './harness-server-teardown.mjs';
+import { onPath, resolveHcBinary } from './hc-binary.mjs';
 import { acquireE2eLock, setBelowNormal } from './local-guard.mjs';
 import { EXIT_WATCHDOG, profilePrefix, RUN_MARKER, watchdogDelayMs } from './smoke-select.mjs';
 
@@ -182,11 +183,18 @@ export async function stopServer(app) {
 /** app -> its profile dir, until that app's server/hc teardown has run (once per app). */
 const pendingTeardown = new Map();
 
+/**
+ * Profiles a scenario drove with ownHc() without (or beyond) launching an app on them: ownHc can
+ * start a core, and nothing else would ever stop it.
+ */
+const hcOnlyProfiles = new Set();
+
 /** Runs after Electron is gone; teardownScenarioServer logs its own failures and only the session guard throws. */
 async function teardownServerFor(app) {
   const userDataDir = pendingTeardown.get(app);
   if (!userDataDir) return;
   pendingTeardown.delete(app);
+  hcOnlyProfiles.delete(userDataDir);
   await teardownScenarioServer({
     userDataDir,
     tmpdir: tmpdir(),
@@ -301,9 +309,13 @@ export async function launchElectron(launchOpts) {
   launchStartedAt = Date.now();
   armOnce(lockWaitMs);
   const { _electron } = loadPlaywright();
+  const env = launchOpts.env ?? process.env;
+  const withHc =
+    RESOLVED_HC && !env.CONDUIT_HC_BINARY ? { ...env, CONDUIT_HC_BINARY: RESOLVED_HC } : env;
   // The runner's orphan sweep kills only apps carrying its own run id (run-smoke.mjs).
   const app = await _electron.launch({
     ...launchOpts,
+    env: withHc,
     args: [...(launchOpts.args ?? []), `${RUN_MARKER}=${runId()}`],
   });
   liveApps.add(app);
@@ -387,20 +399,27 @@ export function finishScenario(code) {
         console.error('[harness] server teardown failed:', e?.message || e);
       }
     }
+    for (const dir of [...hcOnlyProfiles]) {
+      hcOnlyProfiles.delete(dir);
+      try {
+        await teardownScenarioServer({
+          userDataDir: dir,
+          tmpdir: tmpdir(),
+          log: (...a) => console.log(`[${scenarioName()}]`, ...a),
+        });
+      } catch (e) {
+        console.error('[harness] server teardown failed:', e?.message || e);
+      }
+    }
     process.exit(code);
   })();
   return finishing;
 }
 
-/** `name` as the first PATH entry holding it, the way the app's spawn of a bare name finds it. */
-export function onPath(name) {
-  const exe = process.platform === 'win32' ? `${name}.exe` : name;
-  return (process.env.PATH ?? '')
-    .split(delimiter)
-    .filter(Boolean)
-    .map((dir) => join(dir, exe))
-    .find((candidate) => existsSync(candidate));
-}
+export { resolveHcBinary };
+
+const RESOLVED_HC = resolveHcBinary();
+process.env.CONDUIT_HC_BINARY = RESOLVED_HC;
 
 /**
  * A caller that replaces PATH (stub CLIs, a bare System32) would leave the unpackaged server
@@ -410,9 +429,9 @@ function serverRuntimeEnv(env) {
   if (!Object.keys(env).some((k) => k.toUpperCase() === 'PATH')) return {};
   const pinned = {};
   const node = process.env.CONDUIT_NODE_BINARY ?? onPath('node');
-  const hc = process.env.CONDUIT_HC_BINARY ?? onPath('hc');
+  const hc = resolveHcBinary();
   if (node) pinned.CONDUIT_NODE_BINARY = node;
-  if (hc) pinned.CONDUIT_HC_BINARY = hc;
+  pinned.CONDUIT_HC_BINARY = hc;
   return pinned;
 }
 
@@ -576,13 +595,25 @@ export async function openSession(page, { path, agentId = 'shell:cmd', roots, pr
     },
   );
   await page.waitForSelector('.termpane', { state: 'attached', timeout: 25000 });
+  // A session the app opens on its own (e.g. its startup folder) can appear after `before` was taken,
+  // so prefer the new session whose folder name matches; the basename survives realpath aliasing.
+  const want = path.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop().toLowerCase();
   const sid = await page
     .waitForFunction(
-      (ids) => {
-        const cur = (window.__sessions || []).map((s) => s.id);
-        return cur.find((id) => !ids.includes(id)) || null;
+      ({ ids, name, since }) => {
+        const fresh = (window.__sessions || []).filter((s) => !ids.includes(s.id));
+        const base = (h) =>
+          String(h ?? '')
+            .replace(/\\/g, '/')
+            .replace(/\/+$/, '')
+            .split('/')
+            .pop()
+            .toLowerCase();
+        const match = fresh.find((s) => base(s.home) === name);
+        if (match) return match.id;
+        return Date.now() - since > 10000 ? (fresh[0]?.id ?? null) : null;
       },
-      before,
+      { ids: before, name: want, since: Date.now() },
       { timeout: 20000 },
     )
     .then((h) => h.jsonValue());
@@ -1587,21 +1618,19 @@ const HC_PINNED = /HC_PINNED_VERSION = '([^']+)'/.exec(
  * @returns {{ status: number | null, out: string, json: () => any }}
  */
 export function ownHc(userDataDir, args, { timeout = 30000 } = {}) {
-  const names = teardownNames(
-    userDataDir,
-    process.platform === 'win32' ? 'win32' : 'posix',
-    tmpdir(),
-  );
+  const names = teardownNames(userDataDir, process.platform, tmpdir());
   assertOwnSession(names.hcSession, process.env.HC_SESSION);
+  hcOnlyProfiles.add(userDataDir);
   const env = {
     ...hcEnv(process.env, names),
     CONDUIT_USER_XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME ?? '',
     CONDUIT_USER_XDG_STATE_HOME: process.env.XDG_STATE_HOME ?? '',
     CONDUIT_USER_XDG_CAPTURED: '1',
   };
-  const cwd = join(userDataDir, 'runtime', 'hc', HC_PINNED);
+  const cwd = join(userDataDir, 'runtime', 'conduit-hc', HC_PINNED);
   mkdirSync(cwd, { recursive: true });
-  const r = spawnSync(process.env.CONDUIT_HC_BINARY || 'hc', args, {
+  require(join(REPO, 'out', 'server', 'instance-names.js')).ensureHcSocketDirectory(names);
+  const r = spawnSync(resolveHcBinary(), args, {
     env,
     cwd,
     encoding: 'utf8',

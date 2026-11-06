@@ -10,6 +10,7 @@ import type { HostPlatform } from '../lsp-binary';
 import { mcpLaunchWiring, mcpServerCommand } from '../mcp-launch';
 import type { HostToWebview, WebviewToHost } from '../protocol';
 import type { SubmitOutcome } from '../pty-writer';
+import { readCappedBytes } from '../read-capped';
 import { PTY_SETTLE_MS } from '../timed-messages';
 import type { AgentDefinition, SpawnSpec } from '../types';
 import { adapterFor, MCP_ADAPTERS, type McpAdapter, notifiable } from './adapters';
@@ -52,6 +53,8 @@ import {
   evaluateGate,
   type GateVerdict,
   IDLE_QUIET_MS,
+  LATE_ECHO_POLL_MS,
+  LATE_ECHO_WAIT_MS,
 } from './notice-gate';
 import { type AttentionRaise, createNotifier, type Notifier } from './notifier';
 import { type ScreenSnapshot, screenVerdict } from './screen-verdict';
@@ -77,6 +80,7 @@ import {
   UNTYPED_ENTER_KEEP_MS,
 } from './typed-command';
 import {
+  type GateClosedReason,
   type Handle,
   HUMAN_HANDLE,
   type McpAttentionItem,
@@ -322,6 +326,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   let retentionTimer: ReturnType<typeof setInterval> | undefined;
   let broadcastTimer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
+  const lateEchoWatchers = new Map<string, () => void>();
 
   const rt = (sessionId: string): Runtime => {
     let r = runtime.get(sessionId);
@@ -490,6 +495,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     listedSessions().map(({ session: s, handle }) => ({
       handle,
       sessionId: s.id,
+      openedBy: s.openedBy?.sessionId ?? null,
       label: s.name,
       // A profile session is its definition's agent whatever client name it sends, as for notices.
       agent: (hasDefAdapter(s.id) ? undefined : liveKinds(s.id).at(-1)) ?? handlePrefix(handle),
@@ -518,6 +524,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   });
 
   // ---- gate -------------------------------------------------------------------------------
+
+  const cancelLateEcho = (sessionId: string) => {
+    const cancel = lateEchoWatchers.get(sessionId);
+    if (!cancel) return;
+    cancel();
+    if (lateEchoWatchers.get(sessionId) === cancel) lateEchoWatchers.delete(sessionId);
+  };
 
   const screenOf = async (
     sessionId: string,
@@ -614,13 +627,131 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     }
   };
 
-  const submitNotice = async (sessionId: string, text: string): Promise<SubmitOutcome> => {
+  const watchLateEcho = (
+    sessionId: string,
+    text: string,
+    adapter: McpAdapter,
+    gen: number | undefined,
+    seq: number,
+    handle: Handle | undefined,
+    r: Runtime,
+    onFinal: (outcome: SubmitOutcome) => void | Promise<void>,
+  ) => {
+    let cancelled = false;
+    const cancel = () => {
+      cancelled = true;
+    };
+    lateEchoWatchers.set(sessionId, cancel);
+
+    const recheckForLateEcho = async (): Promise<GateVerdict> => {
+      const session = deps.sessions.get(sessionId);
+      if (!session) return { open: false, reason: 'not-running' };
+      return evaluateEnterRecheck({
+        messagingOn: deps.domain.messagingOn(),
+        paused: session.mcpNoticesPaused === true,
+        running: deps.runtime.get(sessionId)?.state === 'live',
+        sameGeneration: gen !== undefined && deps.runtime.get(sessionId)?.generation === gen,
+        connectionLive: registry.isLive(sessionId),
+        screen: await screenOf(sessionId, adapter, text),
+        inputSinceText: r.inputSeq !== seq,
+      });
+    };
+
+    const finish = (outcome: SubmitOutcome) => {
+      if (lateEchoWatchers.get(sessionId) === cancel) lateEchoWatchers.delete(sessionId);
+      return Promise.resolve(onFinal(outcome)).catch((err: unknown) => {
+        deps.log.warn('conduit-mcp', 'notice late echo outcome callback failed', {
+          sessionId,
+          err: String(err),
+        });
+      });
+    };
+
+    (async () => {
+      const start = now();
+      for (;;) {
+        if (cancelled) return;
+        const verdict = await recheckForLateEcho();
+        if (cancelled) return;
+        let waitedMs = now() - start;
+        if (verdict.open) {
+          const submitOutcome = await deps.typing.submitEnter(sessionId, {
+            beforeEnter: async () => !cancelled && (await recheckForLateEcho()).open,
+          });
+          if (cancelled) return;
+          if (submitOutcome === 'submitted') {
+            deps.log.info('conduit-mcp', 'notice late echo submitted', {
+              sessionId,
+              handle,
+              waitedMs,
+            });
+            await finish(submitOutcome);
+            return;
+          }
+          if (submitOutcome !== 'withheld') {
+            deps.log.info('conduit-mcp', 'notice late echo abandoned', {
+              sessionId,
+              handle,
+              reason: submitOutcome,
+              waitedMs: now() - start,
+            });
+            await finish(submitOutcome);
+            return;
+          }
+          const after = await recheckForLateEcho();
+          if (cancelled) return;
+          if (!after.open && after.reason !== 'no-echo') {
+            deps.log.info('conduit-mcp', 'notice late echo abandoned', {
+              sessionId,
+              handle,
+              reason: after.reason,
+              waitedMs: now() - start,
+            });
+            await finish('withheld');
+            return;
+          }
+          waitedMs = now() - start;
+        } else if (verdict.reason !== 'no-echo') {
+          deps.log.info('conduit-mcp', 'notice late echo abandoned', {
+            sessionId,
+            handle,
+            reason: verdict.reason,
+            waitedMs,
+          });
+          await finish('withheld');
+          return;
+        }
+        if (waitedMs >= LATE_ECHO_WAIT_MS) {
+          deps.log.info('conduit-mcp', 'notice late echo expired', {
+            sessionId,
+            handle,
+            waitedMs,
+          });
+          await finish('withheld');
+          return;
+        }
+        await sleep(LATE_ECHO_POLL_MS);
+      }
+    })().catch((err: unknown) => {
+      deps.log.warn('conduit-mcp', 'notice late echo failed', { sessionId, err: String(err) });
+      void finish('withheld');
+    });
+  };
+
+  const submitNotice = async (
+    sessionId: string,
+    text: string,
+    onOutcome?: (outcome: SubmitOutcome) => void | Promise<void>,
+  ): Promise<SubmitOutcome> => {
+    cancelLateEcho(sessionId);
+
     const r = rt(sessionId);
     const handle = handleOf(sessionId);
     let gen: number | undefined;
     let seq = 0;
     /** The adapter whose screen admitted the text; its echo decides the Enter, whoever connects since. */
     let typedFor: McpAdapter | null = null;
+    let enterReason: GateClosedReason | undefined;
     const recheck = async (adapter: McpAdapter): Promise<GateVerdict> => {
       const session = deps.sessions.get(sessionId);
       if (!session) return { open: false, reason: 'not-running' };
@@ -650,6 +781,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           now,
           sleep,
         });
+        enterReason = verdict.open ? undefined : verdict.reason;
         deps.log.info('conduit-mcp', 'notice echo', {
           sessionId,
           handle,
@@ -661,12 +793,27 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     });
     deps.log.info('conduit-mcp', 'notice result', { sessionId, handle, outcome });
     if (outcome === 'submitted' || outcome === 'withheld') r.lastNoticeAt = now();
+    if (outcome === 'withheld' && enterReason === 'no-echo' && typedFor) {
+      const adapter = typedFor;
+      watchLateEcho(sessionId, text, adapter, gen, seq, handle, r, (finalOutcome) => {
+        if (finalOutcome === 'submitted') {
+          r.lastNoticeAt = now();
+          if (handle) dispatch({ t: 'notice-submitted', handle });
+          confirmSubmit(sessionId, adapter, handle).catch((err: unknown) => {
+            deps.log.warn('conduit-mcp', 'notice confirm failed', { sessionId, err: String(err) });
+          });
+        }
+        return onOutcome?.(finalOutcome);
+      });
+      return outcome;
+    }
     if (outcome === 'submitted' && handle) dispatch({ t: 'notice-submitted', handle });
     if (outcome === 'submitted' && typedFor) {
       confirmSubmit(sessionId, typedFor, handle).catch((err: unknown) => {
         deps.log.warn('conduit-mcp', 'notice confirm failed', { sessionId, err: String(err) });
       });
     }
+    await onOutcome?.(outcome);
     return outcome;
   };
 
@@ -736,6 +883,34 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
     now,
     info: (message, data) => deps.log.info('conduit-mcp', message, data),
+    realPath: async (absPath) => {
+      try {
+        return await fs.promises.realpath(absPath);
+      } catch {
+        return null;
+      }
+    },
+    readBytes: async (absPath, max) => {
+      try {
+        // The path can be swapped for a FIFO after the caller's stat: a non-blocking open plus a stat
+        // on the handle keeps a pre-approval read from parking a threadpool thread forever.
+        const fh = await fs.promises.open(
+          absPath,
+          fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0),
+        );
+        try {
+          if (!(await fh.stat()).isFile()) return null;
+          return await readCappedBytes(
+            (buffer, offset, length, position) => fh.read(buffer, offset, length, position),
+            max,
+          );
+        } finally {
+          await fh.close();
+        }
+      } catch {
+        return null;
+      }
+    },
     // Listed sessions only: a tool never reaches a session list_sessions doesn't show (spec A7).
     targets: () =>
       listedSessions().map(({ session: s, handle }) => ({
@@ -963,6 +1138,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         return app.prepareCloseFiles(caller, args, ctx);
       case 'open_review':
         return app.prepareOpenReview(caller, args, ctx);
+      case 'open_diff':
+        return app.prepareOpenDiff(caller, args, ctx);
       case 'open_git_history':
         return app.prepareOpenGitHistory(caller, args, ctx);
       case 'open_url':
@@ -1329,6 +1506,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     } else if (event.type === 'exit') {
       // A late exit of an older generation would revoke the live launch's token and binding.
       if (!r || event.generation !== r.launch) return;
+      cancelLateEcho(sessionId);
       deps.tokens.revoke({ sessionId }).catch((err: unknown) => {
         deps.log.warn('conduit-mcp', 'token not revoked', { sessionId, err: String(err) });
       });
@@ -1512,6 +1690,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       drainConnectionsOf(sessionId);
       screens.release(sessionId);
       notifier?.forget(sessionId);
+      cancelLateEcho(sessionId);
       deps.typing.forget(sessionId);
       runtime.delete(sessionId);
       await revoked;
@@ -1716,6 +1895,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       if (retentionTimer) clearInterval(retentionTimer);
       if (broadcastTimer) clearTimeout(broadcastTimer);
       broadcastTimer = undefined;
+      for (const sessionId of lateEchoWatchers.keys()) cancelLateEcho(sessionId);
       flow.dispose();
       for (const c of conns.values()) c.close();
       await endpoint?.close();

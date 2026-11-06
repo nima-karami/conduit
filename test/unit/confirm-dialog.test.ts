@@ -183,6 +183,64 @@ describe('ConfirmDialog', () => {
     expect(buttons[0].hasAttribute('data-modal-default')).toBe(true);
     expect(buttons[buttons.length - 1].hasAttribute('data-modal-default')).toBe(false);
   });
+
+  it('hideCancel with showClose and focusClose focuses the close control', async () => {
+    const { dialog, buttons } = await open({
+      hideCancel: true,
+      showClose: true,
+      focusClose: true,
+      secondaryLabel: 'Quit and stop all agents',
+      onSecondary: vi.fn(),
+    });
+    const close = dialog.querySelector<HTMLButtonElement>('.iconbtn[aria-label="Close"]');
+    expect(close).toBeTruthy();
+    expect(document.activeElement).toBe(close);
+    expect(close?.hasAttribute('data-modal-default')).toBe(true);
+    expect(buttons.some((b) => b.textContent === 'Cancel')).toBe(false);
+  });
+
+  it('close button calls onCancel then onClose', async () => {
+    const order: string[] = [];
+    const onClose = vi.fn(() => order.push('close'));
+    const { dialog } = await open(
+      { hideCancel: true, showClose: true, focusClose: true, onCancel: () => order.push('cancel') },
+      onClose,
+    );
+    const close = dialog.querySelector<HTMLButtonElement>('.iconbtn[aria-label="Close"]');
+    if (!close) throw new Error('close button missing');
+    await act(async () => click(close));
+    expect(order).toEqual(['cancel', 'close']);
+  });
+
+  it('Enter with focusClose does not run onConfirm', async () => {
+    const onCancel = vi.fn();
+    const { state, dialog } = await open({
+      hideCancel: true,
+      showClose: true,
+      focusClose: true,
+      onCancel,
+      secondaryLabel: 'Quit and stop all agents',
+      onSecondary: vi.fn(),
+    });
+    const close = dialog.querySelector<HTMLButtonElement>('.iconbtn[aria-label="Close"]');
+    const primary = dialog.querySelector<HTMLButtonElement>('.btn--primary, .btn--danger');
+    expect(document.activeElement).toBe(close);
+    expect(document.activeElement).not.toBe(primary);
+    await act(async () => {
+      (document.activeElement as HTMLElement | null)?.click();
+    });
+    expect(onCancel).toHaveBeenCalled();
+    expect(state.onConfirm).not.toHaveBeenCalled();
+  });
+
+  it('Escape with hideCancel and focusClose calls onCancel', async () => {
+    const onCancel = vi.fn();
+    await open({ hideCancel: true, showClose: true, focusClose: true, onCancel });
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(onCancel).toHaveBeenCalled();
+  });
 });
 
 describe('useFocusTrap', () => {

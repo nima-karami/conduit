@@ -25,7 +25,11 @@ afterEach(async () => {
 async function setup(options: { dispatch?: RpcHandler; eventBufferBound?: number } = {}) {
   const dir = await mkdtemp(path.join(tmpdir(), 'w3-test-pipe-'));
   directories.push(dir);
-  const names = instanceNames(dir, process.platform === 'win32' ? 'win32' : 'posix', tmpdir());
+  const names = instanceNames(dir, process.platform === 'win32' ? 'win32' : 'posix', tmpdir(), {
+    home: '/home/conduit-test',
+    uid: 1000,
+    runtimeDir: '',
+  });
   const onError = vi.fn();
   const transport = new PipeTransport(
     names.serverEndpoint,

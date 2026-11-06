@@ -59,6 +59,12 @@ export interface EnterRecheckInput {
  */
 export const ECHO_WAIT_MS = 2_000;
 export const ECHO_POLL_MS = 50;
+/**
+ * A fresh Codex draws typed text late while starting up; the Enter waits for the echo, bounded.
+ * The match is a substring (squashed screen rows), not an exact equality.
+ */
+export const LATE_ECHO_WAIT_MS = 30_000;
+export const LATE_ECHO_POLL_MS = 250;
 
 /** Re-runs the Enter recheck while its only objection is a missing echo. */
 export async function awaitEnterVerdict(

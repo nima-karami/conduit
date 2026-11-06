@@ -121,6 +121,14 @@ describe('workingSource / reviewSourceKey', () => {
       }),
     ).toBe('range:t:v1...c:f');
   });
+
+  it('reviewSourceKey for patch is stable per open and distinct across opens', () => {
+    const a: ReviewSource = { kind: 'patch', files: [] };
+    const b: ReviewSource = { kind: 'patch', files: [] };
+    expect(reviewSourceKey(a)).toBe(reviewSourceKey(a));
+    expect(reviewSourceKey(a)).toMatch(/^patch:agent:\d+$/);
+    expect(reviewSourceKey(a)).not.toBe(reviewSourceKey(b));
+  });
 });
 
 describe('inScope', () => {

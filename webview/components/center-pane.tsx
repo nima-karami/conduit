@@ -29,6 +29,7 @@ import { reviewRequestRoot } from '../review-repos';
 import type { ReviewScope } from '../review-scope';
 import { SPLIT_COPY } from '../split-editor-copy';
 import { requestTerminalFocus } from '../terminal-bus';
+import { nextRanPaneKeys, terminalPaneMounts } from '../terminal-pane-mounts';
 import { getTimerSnapshot, subscribeTimers, waitingCountFor } from '../timer-store';
 import { AgentScopeBanner } from './agent-scope-banner';
 import { CommitDiffView } from './commit-view';
@@ -248,9 +249,8 @@ export function CenterPane({
       setFocusRelaunchFor(null);
     }
   };
-  // An exited session keeps the pane it ran in, so its last output and exit line stay readable. A
-  // pane is never mounted fresh for one: its term:start would make sessions.start spawn it again.
-  const keptPanes = useRef(new Set<string>());
+  // The pane keys that mounted; an exited one remounts only while shown (terminalPaneMounts).
+  const ranPanes = useRef(new Set<string>());
   // Restarting an exited session doesn't bump restartSeq: the server relies on a fresh pane's
   // term:start to spawn it, so each exited → running seen here is a new pane key.
   const runs = useRef(new Map<string, { n: number; exited: boolean }>());
@@ -259,12 +259,19 @@ export function CenterPane({
     return (r?.n ?? 0) + (r?.exited && s.status === 'running' ? 1 : 0);
   };
   const paneKeyOf = (s: Session) => `${s.id}:${s.restartSeq ?? 0}:${runOf(s)}`;
-  const mountedPanes = sessions.filter(
-    (s) => s.status === 'running' || (s.status === 'exited' && keptPanes.current.has(paneKeyOf(s))),
-  );
+  const paneMounts = terminalPaneMounts(sessions, {
+    shown: new Set([activeId, splitId].filter((id): id is string => !!id)),
+    ran: ranPanes.current,
+    keyOf: paneKeyOf,
+  });
+  const mountedPanes = paneMounts.map((m) => m.session);
   // After commit, so only a pane that really mounted is kept, and renders stay pure.
   useLayoutEffect(() => {
-    keptPanes.current = new Set(mountedPanes.map(paneKeyOf));
+    ranPanes.current = nextRanPaneKeys(
+      ranPanes.current,
+      mountedPanes.map(paneKeyOf),
+      sessions.map(paneKeyOf),
+    );
     runs.current = new Map(
       sessions.map((s) => [s.id, { n: runOf(s), exited: s.status === 'exited' }]),
     );
@@ -379,7 +386,7 @@ export function CenterPane({
     // Terminals stay mounted (hidden while a doc tab is active) so the PTY survives. Split mode
     // shows the active + split sessions side by side.
     <div className="termstack" style={{ display: groupOne.activeDocId !== null ? 'none' : 'flex' }}>
-      {mountedPanes.map((s) => {
+      {paneMounts.map(({ session: s, mode }) => {
         const isSplit = s.id === splitId && s.id !== activeId;
         const visible = s.id === activeId || isSplit;
         return (
@@ -452,6 +459,7 @@ export function CenterPane({
               />
               <TerminalPane
                 key={paneKeyOf(s)}
+                startMode={mode}
                 sessionId={s.id}
                 agentId={s.agentId}
                 cwd={s.cwd ?? s.home}
@@ -619,6 +627,7 @@ export function CenterPane({
           )}
           onFocusGroup={onFocusGroup}
           onMoveTab={onMoveTab}
+          terminalGroup={groupOne.activeDocId === null ? 1 : null}
         />
       )}
 

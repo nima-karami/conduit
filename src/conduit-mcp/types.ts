@@ -23,6 +23,7 @@ export type ToolErrorCode =
   | 'messaging_off'
   | 'host_unavailable'
   | 'invalid_argument'
+  | 'invalid_input'
   | 'tool_disabled'
   | 'unknown_agent'
   | 'path_missing'

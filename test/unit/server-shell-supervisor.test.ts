@@ -12,6 +12,8 @@ import {
 } from '../../src/contracts/session-identity';
 import { instanceNames } from '../../src/instance-names';
 
+const posixOptions = { home: '/home/conduit-test', uid: 1000, runtimeDir: '' };
+
 const fsHooks = vi.hoisted(() => ({ renameError: undefined as Error | undefined }));
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
@@ -77,7 +79,7 @@ const crashRun = [1, 2, 4, 5, 6, 0];
 
 describe('server supervisor', () => {
   it('direct stop re-lists after targeted kills and leaves a core with another live terminal', async () => {
-    const names = instanceNames('/profile', 'posix', '/tmp');
+    const names = instanceNames('/profile', 'posix', '/tmp', posixOptions);
     const calls: string[] = [];
     let stopped = false;
     const hc = {
@@ -107,7 +109,7 @@ describe('server supervisor', () => {
   });
 
   it('direct stop leaves the core running when the final terminal listing fails', async () => {
-    const names = instanceNames('/profile', 'posix', '/tmp');
+    const names = instanceNames('/profile', 'posix', '/tmp', posixOptions);
     let listCalls = 0;
     let stopped = false;
     const hc = {
@@ -433,7 +435,7 @@ describe('server supervisor', () => {
   });
 
   it('keeps the XDG isolation decided at the supervisor start (C4 coreStartEnv)', () => {
-    const names = instanceNames('/profile', 'posix', '/tmp');
+    const names = instanceNames('/profile', 'posix', '/tmp', posixOptions);
     const isolated = serverChildEnv(
       {
         PATH: '/bin',
@@ -453,9 +455,9 @@ describe('server supervisor', () => {
       CONDUIT_USER_XDG_STATE_HOME: '/home/u/.local/state',
       HC_SESSION: names.hcSession,
     });
-    const shared = serverChildEnv({ PATH: '/bin', XDG_CONFIG_HOME: '/home/u/.config' }, names);
-    expect(shared.XDG_CONFIG_HOME).toBe('/home/u/.config');
-    expect(shared.XDG_STATE_HOME).toBeUndefined();
+    const standalone = serverChildEnv({ PATH: '/bin', XDG_CONFIG_HOME: '/home/u/.config' }, names);
+    expect(standalone.XDG_CONFIG_HOME).toBe(names.hcConfigHome);
+    expect(standalone.XDG_STATE_HOME).toBe(names.hcStateHome);
   });
 
   it('returns normally on SERVER_EXIT.done without stopping the core', async () => {

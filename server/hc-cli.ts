@@ -1,33 +1,25 @@
 import { execFile } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { HC_PINNED_VERSION, type HcClient } from '../src/contracts/hc';
-import {
-  coreStartEnv,
-  type InstanceNames,
-  USER_XDG_PASSTHROUGH,
-} from '../src/contracts/session-identity';
+import { type InstanceNames, USER_XDG_PASSTHROUGH } from '../src/contracts/session-identity';
 import { HcDisconnectedError, HcRpcError, NodeHcClient } from '../src/hc-client';
-import { coreStartCwd } from '../src/instance-names';
+import { coreStartCwd, coreStartEnv, ensureHcSocketDirectory } from '../src/instance-names';
+import { runtimeBinaryName } from '../src/runtime-binary';
 
 /**
- * Set by the app's supervisor start when our core runs isolated: the supervisor and server get the
- * user's own XDG values, so their env can't show the decision itself (D24, M22).
+ * See D24: legacy supervisor metadata never controls core isolation.
  */
 export const HC_XDG_ISOLATED_ENV = 'CONDUIT_HC_XDG_ISOLATED';
 
 /**
- * Our hc env: HC_* stripped, our HC_SESSION, and the XDG isolation our core start already decided
- * (M22): the server inherits that decision from its supervisor's env rather than a constant.
+ * See D24: every server hc call uses Conduit's config and state, including standalone startup.
  */
 export function serverChildEnv(
   parent: Readonly<Record<string, string | undefined>>,
   names: InstanceNames,
 ): Record<string, string> {
-  const isolated =
-    parent[HC_XDG_ISOLATED_ENV] === '1' ||
-    parent.XDG_CONFIG_HOME === names.hcConfigHome ||
-    parent.XDG_STATE_HOME === names.hcStateHome;
-  const env = coreStartEnv(parent, names, isolated);
+  const env = coreStartEnv(parent, names);
   delete env[HC_XDG_ISOLATED_ENV];
   delete env.NODE_CHANNEL_FD;
   delete env.NODE_CHANNEL_SERIALIZATION_MODE;
@@ -58,8 +50,14 @@ export function serverProcessEnv(
   return env;
 }
 
-/** `--hc <path>`: the bundled hc of this runtime version; dev and e2e use the one on PATH. */
-export const hcBinaryOf = (value: string | undefined) => value ?? 'hc';
+/** See D2/D24: standalone and uninstall calls cannot fall through to a user executable. */
+export const hcBinaryOf = (
+  value: string | undefined,
+  names: Pick<InstanceNames, 'runtimeRoot'>,
+  platform: NodeJS.Platform = process.platform,
+) =>
+  value ??
+  join(coreStartCwd(names.runtimeRoot, HC_PINNED_VERSION), runtimeBinaryName('hc', platform));
 
 function runHc(
   bin: string,
@@ -82,6 +80,7 @@ function runHc(
 
 /** May start a core, so cwd = coreStartCwd (M21, D23): only a cwd blocks the GC rename. */
 export async function startCore(bin: string, names: InstanceNames, env: Record<string, string>) {
+  ensureHcSocketDirectory(names);
   const cwd = coreStartCwd(names.runtimeRoot, HC_PINNED_VERSION);
   await mkdir(cwd, { recursive: true });
   await runHc(bin, ['server', 'start'], env, cwd);
@@ -97,9 +96,17 @@ export function hcClient(
   env: Record<string, string>,
   log: (m: string) => void,
 ) {
+  if (names.hcEndpointError) log(`hc endpoint unavailable: ${names.hcEndpointError}`);
   return new NodeHcClient({
     session: names.hcSession,
     env,
+    ...(names.hcEndpointError
+      ? {
+          connect: () => {
+            throw new Error(names.hcEndpointError);
+          },
+        }
+      : {}),
     log: (message, error) => log(`${message}: ${String(error)}`),
   });
 }

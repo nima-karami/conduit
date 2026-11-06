@@ -15,6 +15,9 @@ const { libs, models } = vi.hoisted(() => ({
     disposed: boolean;
     isDisposed: () => boolean;
     dispose: () => void;
+    getLanguageId: () => string;
+    onDidChangeContent: () => { dispose: () => void };
+    onWillDispose: () => { dispose: () => void };
   }[],
 }));
 
@@ -38,6 +41,8 @@ vi.mock('monaco-editor', () => {
     editor: {
       getModels: () => models.filter((m) => !m.disposed),
       getEditors: () => [],
+      onDidCreateModel: () => ({ dispose: () => {} }),
+      onDidChangeModelLanguage: () => ({ dispose: () => {} }),
     },
     typescript: {
       typescriptDefaults: defaults(),
@@ -48,7 +53,12 @@ vi.mock('monaco-editor', () => {
 });
 vi.mock('../../webview/monaco-warmup', () => ({ warmLanguageWorker: () => {} }));
 
-import { applyProjectFiles, forgetIndexedPath, moveIndexedPath } from '../../webview/ts-project';
+import {
+  __resetIndexForTest,
+  applyProjectFiles,
+  forgetIndexedPath,
+  moveIndexedPath,
+} from '../../webview/ts-project';
 
 function model(path: string) {
   const m = {
@@ -58,6 +68,9 @@ function model(path: string) {
     dispose: () => {
       m.disposed = true;
     },
+    getLanguageId: () => 'typescript',
+    onDidChangeContent: () => ({ dispose: () => {} }),
+    onWillDispose: () => ({ dispose: () => {} }),
   };
   models.push(m);
   return m;
@@ -76,7 +89,7 @@ const index = (files: Record<string, string>) =>
   });
 
 beforeEach(() => {
-  forgetIndexedPath('/w', () => false);
+  __resetIndexForTest();
   libs.clear();
   models.length = 0;
 });

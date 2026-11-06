@@ -31,6 +31,7 @@ import type { PreviewReason } from './preview-url';
 import type { QueueSummary } from './queue-summary';
 import type { RangePreset } from './range-preset';
 import type { RepoTag } from './repo-scan';
+import type { ReviewHunk } from './review-hunks';
 import type { ReviewMark, ReviewMarksRepo } from './review-marks';
 import type { ReviewNote, ReviewNotePatch } from './review-notes';
 import type { AppSettings } from './settings';
@@ -48,6 +49,13 @@ export interface TermGeometry {
   cols: number;
   rows: number;
 }
+
+/**
+ * How a pane's `term:start` starts its session. `run` spawns one that isn't live; `view` never
+ * spawns: an exited session's pane is remounted with its stored output and exit line, so it need
+ * not stay mounted to keep them. A live session attaches either way.
+ */
+export type TermStartMode = 'run' | 'view';
 
 /** The next `length` chars of a replay's data, and the size to write them at (absent: the pane's). */
 export interface ReplayRun {
@@ -257,6 +265,9 @@ export interface FileDiffDTO {
   /** The host could not produce this diff at all; `head`/`work` are ''. Only a THROWN read
    *  sets it — a missing blob reads as '' by design (spec 2026-09-22-scoped-diff-tabs §13 D7). */
   error?: string;
+  /** Pre-computed hunks with real line numbers, supplied by patch sources so original
+   *  @@ start lines are preserved instead of re-diffing from concatenated sides. */
+  hunks?: ReviewHunk[];
 }
 
 /** A multi-file diff (commit/range) truncated to a file-count cap: `shown` of `total` files were
@@ -442,6 +453,7 @@ export type ServerUiState = (
 ) & { runtime?: RuntimeHealth };
 
 export type HostToWebview =
+  | { type: 'releaseNotes'; version: string; notes: string | null; showToast: boolean }
   | { type: 'server:state'; state: ServerUiState }
   | { type: 'confirmStopAgentsFailed'; requestId: number; reason: string }
   | { type: 'serverSettings:result'; requestId: number; ok: boolean; settings: ServerSettings }
@@ -961,6 +973,8 @@ export type HostToWebview =
   | { type: 'web:openTab'; guestId: number; url: string; background: boolean };
 
 export type WebviewToHost =
+  | { type: 'releaseNotesShown'; version: string }
+  | { type: 'getReleaseNotes' }
   | { type: 'ready' }
   // Renderer→host log line, routed through the host's leveled file logger. Back-compatible:
   // a bare `{ type: 'log', message }` defaults to level `info`, scope `'renderer'`.
@@ -1259,6 +1273,8 @@ export type WebviewToHost =
       rows: number;
       agentId?: string;
       cwd?: string;
+      /** Absent = 'run', what an older renderer sends. */
+      mode?: TermStartMode;
     }
   | { type: 'term:input'; sessionId: string; data: string }
   // The pane's colours and cell size, sent before term:start and on a theme or font change: the

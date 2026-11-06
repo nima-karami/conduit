@@ -12,6 +12,10 @@ export interface SubmitHooks {
   beforeEnter?: () => boolean | Promise<boolean>;
 }
 
+export interface SubmitEnterOptions {
+  beforeEnter?: () => boolean | Promise<boolean>;
+}
+
 export interface PtyWriterDeps {
   generation(sessionId: string): number | undefined;
   input(sessionId: string, data: string): boolean;
@@ -21,6 +25,7 @@ export interface PtyWriterDeps {
 
 export interface PtyWriter {
   submit(sessionId: string, text: string, hooks?: SubmitHooks): Promise<SubmitOutcome>;
+  submitEnter(sessionId: string, opts?: SubmitEnterOptions): Promise<SubmitOutcome>;
   forget(sessionId: string): void;
 }
 
@@ -62,6 +67,16 @@ export function createPtyWriter(deps: PtyWriterDeps): PtyWriter {
     return deps.input(sessionId, '\r') ? 'submitted' : 'write-failed';
   };
 
+  const runEnter = async (sessionId: string, opts: SubmitEnterOptions): Promise<SubmitOutcome> => {
+    const gen = deps.generation(sessionId);
+    if (gen === undefined) return 'no-pty';
+    // The caller's full gate runs inside the slot, so the check and the write are atomic with
+    // respect to other queued work (a timed message's gap, another notice attempt).
+    if (!(await hookAllows(opts.beforeEnter))) return 'withheld';
+    if (deps.generation(sessionId) !== gen) return 'generation-changed';
+    return deps.input(sessionId, '\r') ? 'submitted' : 'write-failed';
+  };
+
   return {
     submit(sessionId, text, hooks = {}) {
       const next = (chains.get(sessionId) ?? Promise.resolve()).then(() =>
@@ -69,6 +84,19 @@ export function createPtyWriter(deps: PtyWriterDeps): PtyWriter {
       );
       // The caller still sees a rejection from `next`; the chain only orders slots, so a throwing
       // dep must not wedge every later submit for the session.
+      chains.set(
+        sessionId,
+        next.then(
+          () => undefined,
+          () => undefined,
+        ),
+      );
+      return next;
+    },
+    submitEnter(sessionId, opts = {}) {
+      const next = (chains.get(sessionId) ?? Promise.resolve()).then(() =>
+        runEnter(sessionId, opts),
+      );
       chains.set(
         sessionId,
         next.then(

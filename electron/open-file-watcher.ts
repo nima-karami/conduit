@@ -48,17 +48,46 @@ export class OpenFileWatcher {
   private watchedByDir = new Map<string, Set<string>>();
   private fullByKey = new Map<string, string>();
   private debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // see spec 2026-11-03-demand-driven-resources §3.2 G4 / D10
+  private byWindow = new Map<number, readonly string[]>();
+  private suspendedWindows = new Set<number>();
 
   constructor(
     private readonly onChange: (filePath: string) => void,
     private readonly debounceMs: number = DEFAULT_DEBOUNCE_MS,
   ) {}
 
+  setWindowPaths(windowId: number, paths: readonly string[]): void {
+    this.byWindow.set(windowId, paths);
+    this.applyUnion();
+  }
+
+  setWindowSuspended(windowId: number, suspended: boolean): void {
+    if (suspended) this.suspendedWindows.add(windowId);
+    else this.suspendedWindows.delete(windowId);
+    this.applyUnion();
+  }
+
+  dropWindow(windowId: number): void {
+    this.byWindow.delete(windowId);
+    this.suspendedWindows.delete(windowId);
+    this.applyUnion();
+  }
+
+  private applyUnion(): void {
+    const union = new Set<string>();
+    for (const [windowId, paths] of this.byWindow) {
+      if (this.suspendedWindows.has(windowId)) continue;
+      for (const p of paths) union.add(p);
+    }
+    this.setPaths([...union]);
+  }
+
   /**
    * Replace the watched set with exactly `paths`. Idempotent: re-sending the same set
    * is cheap (dirs already watched are reused; dirs no longer needed are dropped).
    */
-  setPaths(paths: readonly string[]): void {
+  private setPaths(paths: readonly string[]): void {
     const wanted = planWatchDirs(paths);
 
     this.fullByKey.clear();
@@ -117,6 +146,8 @@ export class OpenFileWatcher {
 
   /** Tear down every watcher and pending debounce. */
   stop(): void {
+    this.byWindow.clear();
+    this.suspendedWindows.clear();
     for (const w of this.dirWatchers.values()) w.close();
     this.dirWatchers.clear();
     this.watchedByDir.clear();

@@ -471,18 +471,61 @@ async function readPlanMarkdown(file: string): Promise<string | undefined> {
     // stat first: the size gate must not require reading an arbitrarily large file in.
     size = (await fs.promises.stat(file)).size;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    throw new Error(`plan unreadable: ${(err as Error).message}`);
+    return absentOrUnreadable(err);
   }
-  if (size > MAX_PLAN_BYTES) {
-    throw new Error(`plan unreadable: ${size} bytes exceeds the ${MAX_PLAN_BYTES} byte limit`);
-  }
+  refuseOversizedPlan(size);
   let bytes: Buffer;
   try {
     bytes = await fs.promises.readFile(file);
   } catch (err) {
-    throw new Error(`plan unreadable: ${(err as Error).message}`);
+    throw unreadable(err);
   }
+  return decodePlan(bytes);
+}
+
+/**
+ * `readPlan`'s markdown, synchronously — for the plan watcher's arm-time baseline, which must be
+ * in place before the watch's first event can settle. Same gate and decode, so the two agree.
+ */
+export function readPlanMarkdownSync(projectRoot: string, slug: string): string | undefined {
+  const file = planPath(projectRoot, slug);
+  let size: number;
+  try {
+    size = fs.statSync(file).size;
+  } catch (err) {
+    return absentOrUnreadable(err);
+  }
+  refuseOversizedPlan(size);
+  let bytes: Buffer;
+  try {
+    bytes = fs.readFileSync(file);
+  } catch (err) {
+    throw unreadable(err);
+  }
+  return decodePlan(bytes);
+}
+
+/** `readPlanComments`, synchronously; see `readPlanMarkdownSync`. */
+export function readPlanCommentsSync(projectRoot: string, slug: string): PlanCommentsData {
+  return restorePlanComments(readBlob(planCommentsPath(projectRoot, slug)));
+}
+
+function unreadable(err: unknown): Error {
+  return new Error(`plan unreadable: ${(err as Error).message}`);
+}
+
+function absentOrUnreadable(err: unknown): undefined {
+  if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+  throw unreadable(err);
+}
+
+function refuseOversizedPlan(size: number): void {
+  if (size > MAX_PLAN_BYTES) {
+    throw new Error(`plan unreadable: ${size} bytes exceeds the ${MAX_PLAN_BYTES} byte limit`);
+  }
+}
+
+function decodePlan(bytes: Buffer): string {
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {

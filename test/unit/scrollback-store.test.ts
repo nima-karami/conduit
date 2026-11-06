@@ -174,4 +174,18 @@ describe('ScrollbackStore', () => {
       expect(unmarked.replayBeforeLaunch('s2')?.data).toBe(`run1${RELAUNCH_MARKER.slice(0, 2)}`);
     });
   });
+
+  it('does not re-serialise a ring that has not changed since the last write', () => {
+    const { store, writes } = harness();
+    store.append('s1', 'a', { cols: 80, rows: 24 });
+    store.flush('s1');
+    store.flush('s1');
+    expect(writes).toHaveLength(1);
+    store.append('s1', 'b', { cols: 80, rows: 24 });
+    store.flush('s1');
+    expect(writes).toHaveLength(2);
+    store.markLaunch('s1');
+    store.flush('s1');
+    expect(writes).toHaveLength(3);
+  });
 });

@@ -1,9 +1,12 @@
 import {
   Fragment,
   type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
+  useRef,
   useState,
 } from 'react';
 import { AGENT_CLIS, type AgentCli } from '../../src/conduit-mcp/install-types';
@@ -44,8 +47,9 @@ import {
   readLogTail,
   revealLogs,
 } from '../bridge';
+import { CHROME_STR } from '../chrome-strings';
 import { MCP_STR } from '../conduit-mcp-strings';
-import { IconCheck, IconClose, IconDownload, IconRefreshCw } from '../icons';
+import { IconCheck, IconChevron, IconClose, IconDownload, IconRefreshCw } from '../icons';
 import { useSettings } from '../settings';
 import { DEFAULT_CUSTOM, validateShader } from '../shader-source';
 import { MONO_FONTS, THEMES, type ThemeDef, UI_FONTS } from '../themes';
@@ -54,13 +58,15 @@ import { AutoSaveDelayField } from './auto-save-delay-field';
 import { McpInstallRow } from './mcp-install-row';
 import { McpProjectEntries } from './mcp-project-entries';
 import { ModalLayer } from './modal-layer';
+import { ReleaseNotesPage } from './release-notes-page';
 import { SelectField } from './select-field';
 import { AgentRowPreview } from './session-card';
 import { ShortcutsTab } from './shortcuts-tab';
 import { ToolPolicyEditor } from './tool-policy-editor';
 import type { UpdateStatus } from './update-card';
 
-type Tab = 'general' | 'mcp' | 'appearance' | 'shortcuts' | 'skills' | 'about';
+export type SettingsTab = 'general' | 'mcp' | 'appearance' | 'shortcuts' | 'skills' | 'about';
+type Tab = SettingsTab;
 
 const BG_OPTS: { id: Background; label: string }[] = [
   { id: 'none', label: 'None' },
@@ -74,6 +80,7 @@ const BG_OPTS: { id: Background; label: string }[] = [
 export function SettingsModal({
   agents,
   initialTab = 'general',
+  initialAboutReleaseNotes = false,
   about,
   projectPath = null,
   initialCli,
@@ -86,6 +93,8 @@ export function SettingsModal({
 }: {
   agents: AgentDefinition[];
   initialTab?: Tab;
+  /** Opens About with the release-notes sub-page (What's new, status bar, About button). */
+  initialAboutReleaseNotes?: boolean;
   about?: AboutInfo;
   projectPath?: string | null;
   /** Opens the MCP tab at that CLI's row (banner, card menu). */
@@ -99,7 +108,21 @@ export function SettingsModal({
   updateStatus?: UpdateStatus | null;
 }) {
   const { settings, update } = useSettings();
-  const [tab, setTab] = useState<Tab>(initialTab);
+  const [tab, setTab] = useState<Tab>(initialAboutReleaseNotes ? 'about' : initialTab);
+  const [aboutReleaseNotes, setAboutReleaseNotes] = useState(initialAboutReleaseNotes);
+  const releaseNotesBtnRef = useRef<HTMLButtonElement>(null);
+  const pendingReleaseNotesBtnFocusRef = useRef(false);
+  useLayoutEffect(() => {
+    if (!aboutReleaseNotes && pendingReleaseNotesBtnFocusRef.current) {
+      pendingReleaseNotesBtnFocusRef.current = false;
+      releaseNotesBtnRef.current?.focus();
+    }
+  }, [aboutReleaseNotes]);
+  const paneRef = useRef<HTMLDivElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new section starts at its top
+  useLayoutEffect(() => {
+    if (paneRef.current) paneRef.current.scrollTop = 0;
+  }, [tab]);
   // Spent once the row has taken focus, so switching back to the MCP tab doesn't pull it again.
   const [focusCli, setFocusCli] = useState(initialCli);
   const spendFocusCli = useCallback(() => setFocusCli(undefined), []);
@@ -113,15 +136,29 @@ export function SettingsModal({
     { id: 'about', label: 'About' },
   ];
 
+  const leaveReleaseNotes = useCallback(() => {
+    setAboutReleaseNotes(false);
+    pendingReleaseNotesBtnFocusRef.current = true;
+  }, []);
+
+  const closeSettings = () => onClose();
+
+  const openReleaseNotes = useCallback(() => {
+    setTab('about');
+    setAboutReleaseNotes(true);
+  }, []);
   return (
-    <ModalLayer onDismiss={onClose}>
+    <ModalLayer
+      onDismiss={closeSettings}
+      onEscape={aboutReleaseNotes ? leaveReleaseNotes : closeSettings}
+    >
       <div className="modal settings" onClick={(e) => e.stopPropagation()}>
         <div className="modal__head settings__head">
           <div>
             <span className="modal__title">Settings</span>
             <span className="modal__sub">Tune the look and behaviour of Conduit</span>
           </div>
-          <button className="iconbtn" aria-label="Close settings" onClick={onClose}>
+          <button className="iconbtn" aria-label="Close settings" onClick={closeSettings}>
             <IconClose size={15} />
           </button>
         </div>
@@ -132,14 +169,20 @@ export function SettingsModal({
               <button
                 key={id}
                 className={`settings__navitem ${tab === id ? 'settings__navitem--active' : ''}`}
-                onClick={() => setTab(id)}
+                onClick={() => {
+                  setAboutReleaseNotes(false);
+                  setTab(id);
+                }}
               >
                 {label}
               </button>
             ))}
           </nav>
 
-          <div className="settings__pane">
+          <div
+            ref={paneRef}
+            className={`settings__pane${aboutReleaseNotes ? ' settings__pane--relnotes' : ''}`}
+          >
             {tab === 'appearance' && <Appearance settings={settings} update={update} />}
             {tab === 'general' && (
               <General
@@ -162,14 +205,19 @@ export function SettingsModal({
             )}
             {tab === 'shortcuts' && <ShortcutsTab settings={settings} update={update} />}
             {tab === 'skills' && <Skills projectPath={projectPath} />}
-            {tab === 'about' && (
-              <About
-                about={about}
-                updateStatus={updateStatus ?? null}
-                onCheckUpdate={onCheckUpdate ?? (() => {})}
-                onRelaunch={onRelaunch ?? (() => {})}
-              />
-            )}
+            {tab === 'about' &&
+              (aboutReleaseNotes ? (
+                <AboutReleaseNotes installedVersion={about?.version} onBack={leaveReleaseNotes} />
+              ) : (
+                <About
+                  about={about}
+                  updateStatus={updateStatus ?? null}
+                  onCheckUpdate={onCheckUpdate ?? (() => {})}
+                  onRelaunch={onRelaunch ?? (() => {})}
+                  releaseNotesBtnRef={releaseNotesBtnRef}
+                  onShowReleaseNotes={openReleaseNotes}
+                />
+              ))}
           </div>
         </div>
       </div>
@@ -1298,16 +1346,21 @@ function UpdatesControl({
   status,
   onCheck,
   onRelaunch,
+  onShowReleaseNotes,
+  releaseNotesBtnRef,
 }: {
   status: UpdateStatus | null;
   onCheck: () => void;
   onRelaunch: () => void;
+  onShowReleaseNotes: () => void;
+  releaseNotesBtnRef: RefObject<HTMLButtonElement | null>;
 }) {
   const s = status?.status;
+  let branch: React.ReactNode;
 
   if (s === 'ready') {
-    return (
-      <div className="about__updatectl">
+    branch = (
+      <>
         <span className="about__updatestatus about__updatestatus--ready">
           <IconRefreshCw size={13} />v{status?.version ?? '?'} ready
         </span>
@@ -1318,36 +1371,77 @@ function UpdatesControl({
         >
           Relaunch
         </button>
-      </div>
+      </>
+    );
+  } else if (s === 'available' || s === 'downloading') {
+    branch = (
+      <span className="about__updatestatus">
+        <IconDownload size={13} />
+        {s === 'downloading' ? `Downloading… ${status?.percent ?? 0}%` : 'Update available'}
+      </span>
+    );
+  } else {
+    const checking = s === 'checking';
+    branch = (
+      <>
+        {s === 'up-to-date' && (
+          <span className="about__updatestatus about__updatestatus--ok">
+            <IconCheck size={13} />
+            Up to date
+          </span>
+        )}
+        {s === 'error' && (
+          <span className="about__updatestatus about__updatestatus--err">Check failed</span>
+        )}
+        <button type="button" className="about__checkbtn" onClick={onCheck} disabled={checking}>
+          {checking ? 'Checking…' : s === 'error' ? 'Retry' : 'Check now'}
+        </button>
+      </>
     );
   }
 
-  if (s === 'available' || s === 'downloading') {
-    return (
-      <div className="about__updatectl">
-        <span className="about__updatestatus">
-          <IconDownload size={13} />
-          {s === 'downloading' ? `Downloading… ${status?.percent ?? 0}%` : 'Update available'}
-        </span>
-      </div>
-    );
-  }
-
-  const checking = s === 'checking';
   return (
     <div className="about__updatectl">
-      {s === 'up-to-date' && (
-        <span className="about__updatestatus about__updatestatus--ok">
-          <IconCheck size={13} />
-          Up to date
-        </span>
-      )}
-      {s === 'error' && (
-        <span className="about__updatestatus about__updatestatus--err">Check failed</span>
-      )}
-      <button type="button" className="about__checkbtn" onClick={onCheck} disabled={checking}>
-        {checking ? 'Checking…' : s === 'error' ? 'Retry' : 'Check now'}
+      {branch}
+      <button
+        ref={releaseNotesBtnRef}
+        type="button"
+        className="about__checkbtn"
+        onClick={onShowReleaseNotes}
+      >
+        {CHROME_STR.releaseNotes.tab}
       </button>
+    </div>
+  );
+}
+
+function AboutReleaseNotes({
+  installedVersion,
+  onBack,
+}: {
+  installedVersion?: string;
+  onBack: () => void;
+}) {
+  const backRef = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    backRef.current?.focus();
+  }, []);
+
+  return (
+    <div className="about about--relnotes">
+      <div className="about__subhead">
+        <button
+          ref={backRef}
+          type="button"
+          className="iconbtn"
+          aria-label={CHROME_STR.back}
+          onClick={onBack}
+        >
+          <IconChevron size={15} className="about__backicon" aria-hidden />
+        </button>
+        <span className="about__subtitle">{CHROME_STR.releaseNotes.tab}</span>
+      </div>
+      <ReleaseNotesPage installedVersion={installedVersion} />
     </div>
   );
 }
@@ -1357,11 +1451,15 @@ function About({
   updateStatus,
   onCheckUpdate,
   onRelaunch,
+  releaseNotesBtnRef,
+  onShowReleaseNotes,
 }: {
   about?: AboutInfo;
   updateStatus: UpdateStatus | null;
   onCheckUpdate: () => void;
   onRelaunch: () => void;
+  releaseNotesBtnRef: RefObject<HTMLButtonElement | null>;
+  onShowReleaseNotes: () => void;
 }) {
   const repoUrl = about?.repoUrl ?? GITHUB_URL;
   return (
@@ -1395,7 +1493,13 @@ function About({
         </div>
         <div className="about__row">
           <span className="about__rowlabel">Updates</span>
-          <UpdatesControl status={updateStatus} onCheck={onCheckUpdate} onRelaunch={onRelaunch} />
+          <UpdatesControl
+            status={updateStatus}
+            onCheck={onCheckUpdate}
+            onRelaunch={onRelaunch}
+            onShowReleaseNotes={onShowReleaseNotes}
+            releaseNotesBtnRef={releaseNotesBtnRef}
+          />
         </div>
       </div>
 

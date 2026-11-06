@@ -6,6 +6,7 @@ import type { ChangeDTO } from '../../src/protocol';
 import { REFRESH_COOLDOWN_MS, REFRESH_SETTLE_MS } from '../../src/repo-refresh-scheduler';
 import type { RepoInfo, RepoTag } from '../../src/repo-scan';
 import {
+  BACKGROUND_PRIORITY,
   createRepoTracker,
   FOCUS_PRIORITY,
   FOCUS_STALE_MS,
@@ -175,18 +176,362 @@ describe('createRepoTracker', () => {
     expect(h.reads).toEqual([]);
   });
 
-  it('repo contained only by hidden sessions runs no git; becoming visible runs it once', async () => {
+  it('sessionShown immediately catches up a repo registered while hidden', async () => {
     const h = harness();
     h.tracker.setSessionRepos('bg', [info('/w/A', 'home')]);
     h.tracker.onWatchedPath(edit('/w/A/x.ts'));
     await flush(60_000);
     expect(h.reads).toEqual([]);
-    expect(h.interrogations).toEqual([]);
+    expect(h.interrogations).toEqual(['/w/A']);
+    h.clear();
     h.visible.add('bg');
+    h.tracker.sessionShown(['bg']);
     h.tracker.visibilityChanged();
-    await flush(60_000);
+    await flush();
     expect(h.reads).toHaveLength(1);
     expect(h.interrogations).toHaveLength(1);
+  });
+
+  it('a hidden first fill interrogates only: no readChanges, git published, no snapshot', async () => {
+    const h = harness();
+    h.tracker.setSessionRepos('bg', [info('/w/A', 'home')]);
+    await flush(299);
+    expect(h.interrogations).toEqual([]);
+    await flush(1);
+    expect(h.interrogations).toEqual(['/w/A']);
+    expect(h.reads).toEqual([]);
+    expect(h.updates).toEqual([
+      {
+        key: folderKey('/w/A'),
+        root: '/w/A',
+        sessions: ['bg'],
+        git: { kind: 'branch', branch: 'main' },
+      },
+    ]);
+    expect(h.tracker.snapshotsFor('bg')).toEqual({});
+    await flush(60_000);
+    expect(h.interrogations).toHaveLength(1);
+  });
+
+  it('a repo of hidden sessions only records no watch-driven mark', async () => {
+    const h = harness();
+    h.visible.add('s1');
+    h.tracker.setSessionRepos('s1', [info('/w/A', 'home')]);
+    await settleAll();
+    const [watch] = h.watches;
+    h.visible.clear();
+    h.tracker.visibilityChanged();
+    h.clear();
+    h.tracker.onWatchedPath(edit('/w/A/x.ts'));
+    h.tracker.onWatchedPath(edit('/w/A/.git/HEAD'));
+    h.tracker.lostFolders(['/w']);
+    watch.onLost();
+    h.tracker.setLiveRoots(['/w']);
+    h.tracker.setLiveRoots([]);
+    await flush(5000);
+    expect(h.reads).toEqual([]);
+    expect(h.interrogations).toEqual([]);
+    h.visible.add('s1');
+    h.tracker.visibilityChanged();
+    await flush(5000);
+    expect(h.reads).toEqual([]);
+    expect(h.interrogations).toEqual([]);
+  });
+
+  it('no git-dir watch for a repo with no shown session; visibilityChanged opens and closes it', async () => {
+    const h = harness();
+    h.tracker.setSessionRepos('bg', [info('/w/A', 'home')]);
+    await settleAll();
+    expect(h.openWatches()).toEqual([]);
+    h.visible.add('bg');
+    h.tracker.visibilityChanged();
+    expect(h.openWatches()).toEqual([folderKey('/w/A/.git')]);
+    h.visible.clear();
+    h.tracker.visibilityChanged();
+    expect(h.openWatches()).toEqual([]);
+  });
+
+  it.each([false, true])(
+    'a shown session joining an unshown repo after its show catches up (covered: %s)',
+    async (covered) => {
+      const h = harness();
+      h.tracker.setSessionRepos('A', [info('/w/R', 'home')]);
+      await settleAll();
+      h.visible.add('B');
+      h.tracker.sessionShown(['B']);
+      if (covered) h.tracker.setLiveRoots(['/w']);
+      await settleAll();
+      h.clear();
+      h.tracker.setSessionRepos('B', [info('/w/R', 'attached')]);
+      expect(h.openWatches()).toEqual(covered ? [] : [folderKey('/w/R/.git')]);
+      await flush();
+      expect(h.reads).toEqual([{ root: '/w/R', lines: false }]);
+      expect(h.tracker.snapshotsFor('B')['/w/R'].stale).toBeUndefined();
+      expect(h.updates.at(-1)?.snapshot?.stale).toBeUndefined();
+      expect(h.updates.at(-1)?.sessions).toEqual(['A', 'B']);
+      await flush(20_000);
+      expect(h.reads).toHaveLength(1);
+    },
+  );
+
+  it.each([false, true])(
+    'a shared repo losing its shown member updates staleness and watches (another shown: %s)',
+    async (anotherShown) => {
+      const h = harness();
+      h.visible.add('front');
+      if (anotherShown) h.visible.add('other');
+      h.tracker.setSessionRepos('front', [info('/w/R', 'home')]);
+      h.tracker.setSessionRepos('other', [info('/w/R', 'attached')]);
+      await settleAll();
+      expect(h.tracker.snapshotsFor('other')['/w/R'].stale).toBeUndefined();
+      expect(h.openWatches()).toEqual([folderKey('/w/R/.git')]);
+      h.clear();
+      h.tracker.dropSession('front');
+      expect(h.tracker.snapshotsFor('other')['/w/R'].stale).toBe(anotherShown ? undefined : true);
+      expect(h.openWatches()).toEqual(anotherShown ? [folderKey('/w/R/.git')] : []);
+      await flush(5000);
+      expect(h.reads).toEqual([]);
+      expect(h.interrogations).toEqual([]);
+    },
+  );
+
+  it('turn end on a hidden session refreshes once, lines:false, and invalidates its file index', async () => {
+    expect(BACKGROUND_PRIORITY).toBe(FOCUS_PRIORITY + 1);
+    const h = harness();
+    h.tracker.setSessionRepos('bg', [info('/w/A', 'home')]);
+    await flush(10_000);
+    h.clear();
+    h.wants.add('bg');
+    const dirty: Array<string | null> = [];
+    h.tracker.onDirty((key) => dirty.push(key));
+    h.readResult.set('/w/A', { ok: true, changes: [change('a.ts')], trackedDirty: true });
+    h.tracker.sessionTurnEnded('bg');
+    expect(dirty).toEqual([folderKey('/w/A')]);
+    await flush(299);
+    expect(h.reads).toEqual([]);
+    await flush(1);
+    expect(h.reads).toEqual([{ root: '/w/A', lines: false }]);
+    expect(h.updates).toHaveLength(1);
+    expect(h.updates[0]).toMatchObject({
+      sessions: ['bg'],
+      git: { kind: 'branch', branch: 'main', dirty: true },
+      snapshot: { changes: [change('a.ts')], lines: false, stale: true },
+    });
+    expect(h.openWatches()).toEqual([]);
+  });
+
+  it('turn-end work waits behind ready shown work at the concurrency cap', async () => {
+    const h = harness();
+    h.tracker.setSessionRepos('bg', [info('/w/bg', 'home')]);
+    h.visible.add('front');
+    h.tracker.setSessionRepos(
+      'front',
+      Array.from({ length: 6 }, (_, i) => info(`/w/f${i}`)),
+    );
+    await flush(10_000);
+    const release = h.gateReads();
+    h.clear();
+    for (let i = 0; i < 4; i++) h.tracker.refreshNow(`/w/f${i}`);
+    await flush();
+    h.tracker.sessionTurnEnded('bg');
+    h.tracker.onWatchedPath(edit('/w/f4/x.ts'));
+    h.tracker.onWatchedPath(edit('/w/f5/x.ts'));
+    await flush(300);
+    expect(h.reads).toHaveLength(4);
+    release();
+    await flush();
+    expect(h.reads.map((r) => r.root)).toEqual([
+      '/w/f0',
+      '/w/f1',
+      '/w/f2',
+      '/w/f3',
+      '/w/f4',
+      '/w/f5',
+      '/w/bg',
+    ]);
+  });
+
+  it('four hidden turn ends leave a slot for shown refreshNow before any hidden read resolves', async () => {
+    const h = harness();
+    h.visible.add('front');
+    h.tracker.setSessionRepos('front', [info('/w/front', 'home')]);
+    for (let i = 0; i < 4; i++) h.tracker.setSessionRepos(`bg${i}`, [info(`/w/bg${i}`, 'home')]);
+    await flush(10_000);
+    h.clear();
+    const release = h.gateReads();
+    for (let i = 0; i < 4; i++) h.tracker.sessionTurnEnded(`bg${i}`);
+    await flush(300);
+    h.tracker.refreshNow('/w/front');
+    await flush();
+    expect(h.reads.map((r) => r.root)).toEqual(['/w/bg0', '/w/bg1', '/w/bg2', '/w/front']);
+    release();
+    await flush();
+    expect(h.reads.map((r) => r.root)).toEqual([
+      '/w/bg0',
+      '/w/bg1',
+      '/w/bg2',
+      '/w/front',
+      '/w/bg3',
+    ]);
+  });
+
+  it('a turn end for a repo that has a shown session does nothing extra', async () => {
+    const h = harness();
+    h.visible.add('front');
+    h.tracker.setSessionRepos('front', [info('/w/A', 'home')]);
+    h.tracker.setSessionRepos('bg', [info('/w/A', 'home')]);
+    await settleAll();
+    h.clear();
+    const dirty = vi.fn();
+    h.tracker.onDirty(dirty);
+    h.tracker.sessionTurnEnded('bg');
+    h.tracker.sessionShown(['front', 'bg']);
+    h.tracker.sessionShown(['unknown']);
+    h.tracker.sessionTurnEnded('unknown');
+    await flush(20_000);
+    expect(h.reads).toEqual([]);
+    expect(h.interrogations).toEqual([]);
+    expect(dirty).not.toHaveBeenCalled();
+  });
+
+  it('turn ends 1 s apart while hidden: one run then one trailing at 10 s', async () => {
+    const h = harness();
+    h.tracker.setSessionRepos('bg', [info('/w/A', 'home')]);
+    await flush(10_000);
+    h.clear();
+    h.tracker.sessionTurnEnded('bg');
+    await flush(300);
+    expect(h.reads).toHaveLength(1);
+    await flush(700);
+    h.tracker.sessionTurnEnded('bg');
+    await flush(1000);
+    h.tracker.sessionTurnEnded('bg');
+    await flush(8299);
+    expect(h.reads).toHaveLength(1);
+    await flush(1);
+    expect(h.reads).toHaveLength(2);
+    await flush(30_000);
+    expect(h.reads).toHaveLength(2);
+  });
+
+  it('sessionShown catches up unshown repos; home/attached first, nested by index mtime', async () => {
+    const h = harness();
+    h.mtimes.set('/w/n1', 10);
+    h.mtimes.set('/w/n2', 30);
+    h.mtimes.set('/w/n3', 20);
+    h.tracker.setSessionRepos('bg', [
+      info('/w/n1'),
+      info('/w/n2'),
+      info('/w/n3'),
+      info('/w', 'home'),
+      info('/z', 'attached'),
+    ]);
+    h.tracker.setSessionRepos('also', [info('/w/n2'), info('/w', 'home')]);
+    await settleAll();
+    h.clear();
+    h.visible.add('bg').add('also');
+    h.tracker.sessionShown(['bg', 'also', 'unknown']);
+    await flush();
+    expect(h.interrogations).toEqual(['/w', '/z', '/w/n2', '/w/n3', '/w/n1']);
+    expect(h.reads.map((r) => r.root)).toEqual(h.interrogations);
+    expect(Object.values(h.tracker.snapshotsFor('bg')).every((s) => !s.stale)).toBe(true);
+    h.clear();
+    h.tracker.sessionShown(['bg', 'also']);
+    await settleAll();
+    expect(h.reads).toEqual([]);
+  });
+
+  it.each([false, true])(
+    'hidden clean reads preserve dirty uncertainty (previous dirty: %s)',
+    async (wasDirty) => {
+      const h = harness();
+      h.visible.add('s1');
+      h.readResult.set('/w/A', { ok: true, changes: [], trackedDirty: wasDirty });
+      h.tracker.setSessionRepos('s1', [info('/w/A', 'home')]);
+      await settleAll();
+      h.visible.clear();
+      h.tracker.visibilityChanged();
+      expect(h.tracker.snapshotsFor('s1')['/w/A'].stale).toBe(true);
+      h.clear();
+      h.git.set('/w/A', {
+        info: { kind: 'branch', branch: 'next' },
+        gitDir: '/w/A/.git',
+        commonDir: '/w/A/.git',
+      });
+      h.readResult.set('/w/A', { ok: true, changes: [], trackedDirty: false });
+      h.tracker.sessionTurnEnded('s1');
+      await flush(10_000);
+      expect(h.updates[0].git).toEqual({
+        kind: 'branch',
+        branch: 'next',
+        ...(wasDirty ? { dirty: true } : {}),
+      });
+      expect(h.updates[0].snapshot?.stale).toBe(true);
+      expect(h.tracker.snapshotsFor('s1')['/w/A'].stale).toBe(true);
+      h.visible.add('s1');
+      h.tracker.sessionShown(['s1']);
+      await flush();
+      expect(h.tracker.snapshotsFor('s1')['/w/A'].stale).toBeUndefined();
+      expect(h.updates.at(-1)?.snapshot?.stale).toBeUndefined();
+      if (wasDirty) expect(h.updates.at(-1)?.git?.dirty).toBe(false);
+    },
+  );
+
+  it('a hidden-start read landing after show stays stale until a shown catch-up succeeds', async () => {
+    const h = harness();
+    h.tracker.setSessionRepos('bg', [info('/w/A', 'home')]);
+    await flush(10_000);
+    h.clear();
+    const release = h.gateReads();
+    h.tracker.sessionTurnEnded('bg');
+    await flush(300);
+    h.visible.add('bg');
+    h.tracker.visibilityChanged();
+    release();
+    await flush();
+    expect(h.updates[0].snapshot?.stale).toBe(true);
+    expect(h.updates[0].git).toBeUndefined();
+    expect(h.tracker.snapshotsFor('bg')['/w/A'].stale).toBe(true);
+    h.readResult.set('/w/A', { ok: false, reason: 'timeout' });
+    h.tracker.sessionShown(['bg']);
+    await flush();
+    expect(h.updates.at(-1)?.snapshot).toMatchObject({ stale: true, error: 'timeout' });
+    h.readResult.set('/w/A', { ok: true, changes: [], trackedDirty: false });
+    h.tracker.sessionShown(['bg']);
+    await flush();
+    expect(h.updates.at(-1)?.snapshot?.stale).toBeUndefined();
+    expect(h.tracker.snapshotsFor('bg')['/w/A'].stale).toBeUndefined();
+  });
+
+  it('a shown-start read landing after hide cannot clear unshownSince', async () => {
+    const h = harness();
+    h.visible.add('s1');
+    const release = h.gateReads();
+    h.tracker.setSessionRepos('s1', [info('/w/A', 'home')]);
+    await flush();
+    h.visible.clear();
+    h.tracker.visibilityChanged();
+    release();
+    await flush();
+    expect(h.updates[0].snapshot?.stale).toBe(true);
+    h.visible.add('s1');
+    h.tracker.visibilityChanged();
+    expect(h.tracker.snapshotsFor('s1')['/w/A'].stale).toBe(true);
+    h.tracker.sessionShown(['s1']);
+    await flush();
+    expect(h.tracker.snapshotsFor('s1')['/w/A'].stale).toBeUndefined();
+  });
+
+  it('a meta-only mark on a shown repo still reads changes', async () => {
+    const h = harness();
+    h.visible.add('s1');
+    h.tracker.setSessionRepos('s1', [info('/w/A', 'home')]);
+    await settleAll();
+    h.clear();
+    h.tracker.onWatchedPath(edit('/w/A/.git/HEAD'));
+    await settleAll();
+    expect(h.interrogations).toEqual(['/w/A']);
+    expect(h.reads).toEqual([{ root: '/w/A', lines: false }]);
   });
 
   it('background session gets the snapshot via publish.sessions without its own run', async () => {
@@ -499,7 +844,7 @@ describe('createRepoTracker', () => {
     expect(h.reads.map((r) => r.root)).toEqual(['/w/U', '/w/S']);
   });
 
-  it('snapshotsFor marks pending repos stale; a completed publish never carries stale', async () => {
+  it('pending and hidden snapshots stay stale; completed shown publishes are fresh', async () => {
     const h = harness();
     h.visible.add('s1');
     h.tracker.setSessionRepos('s1', [info('/w/A', 'home')]);

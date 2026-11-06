@@ -14,3 +14,14 @@ export function formatPathForTerminal(path: string, isWindows: boolean): string 
   const quoted = /\s/.test(normalized) ? `"${normalized}"` : normalized;
   return `${quoted} `;
 }
+
+/** The drop effect a terminal shows for a drag whose source allows `effectAllowed`: copy when
+ *  the source allows it, else whatever it does allow — an effect outside it cancels the drop
+ *  (a web tab's drag, say, is move-only). */
+export function terminalDropEffect(effectAllowed: string): DataTransfer['dropEffect'] {
+  if (effectAllowed === 'none') return 'none';
+  if (effectAllowed === 'uninitialized' || effectAllowed === 'all') return 'copy';
+  if (effectAllowed.startsWith('copy')) return 'copy';
+  if (effectAllowed.startsWith('link')) return 'link';
+  return 'move';
+}

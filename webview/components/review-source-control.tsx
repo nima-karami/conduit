@@ -37,8 +37,10 @@ export function ReviewSourceControl({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const reasonId = useId();
   const [open, setOpen] = useState(false);
+  const patch = source?.kind === 'patch';
+  const pickerLocked = locked && !patch;
   // A lock (e.g. Mod+Shift+R into All repos) closes the picker; it must not reopen on unlock.
-  if (locked && open) setOpen(false);
+  if ((pickerLocked || patch) && open) setOpen(false);
   const working = source === undefined || source.kind === 'working';
   const scope = scopeOfSource(source);
 
@@ -62,17 +64,17 @@ export function ReviewSourceControl({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="Review source"
-        aria-disabled={locked ? 'true' : undefined}
-        aria-describedby={locked ? reasonId : undefined}
-        title={locked ? LOCK_REASON : reviewSourceLabel(source)}
+        aria-disabled={pickerLocked || patch ? 'true' : undefined}
+        aria-describedby={pickerLocked ? reasonId : undefined}
+        title={pickerLocked ? LOCK_REASON : reviewSourceLabel(source)}
         onClick={() => {
-          if (!locked) setOpen((v) => !v);
+          if (!pickerLocked && !patch) setOpen((v) => !v);
         }}
       >
         <span className="gh__reffilter-label">{conciseSourceLabel(source)}</span>
         <IconChevronDown size={13} className="gh__reffilter-caret" />
       </button>
-      {locked && (
+      {pickerLocked && (
         <span id={reasonId} className="sr-only">
           {LOCK_REASON}
         </span>
@@ -86,7 +88,7 @@ export function ReviewSourceControl({
         disabled={!working}
         title={working ? undefined : 'A commit or comparison has no staged / unstaged split'}
       />
-      {open && (
+      {open && !patch && (
         <CommitPickerMenu
           sessionId={sessionId}
           source={source}

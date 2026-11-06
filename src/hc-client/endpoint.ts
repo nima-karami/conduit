@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { homedir, userInfo } from 'node:os';
+import { homedir } from 'node:os';
 import { posix, win32 } from 'node:path';
 import { parse } from 'smol-toml';
 
@@ -8,6 +8,7 @@ export interface EndpointOptions {
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   uid?: number;
+  runtimeDir?: string;
 }
 
 /**
@@ -38,13 +39,15 @@ export function resolveHcEndpoint(options: EndpointOptions = {}): string {
     if (typeof config.socket === 'string') return config.socket;
   }
   if (platform === 'win32') {
-    const account = (env.USERNAME || userInfo().username).replace(/[^\p{L}\p{N}]/gu, '');
+    // See hc 0.1.16 platform/windows.rs:351 (is_ascii_alphanumeric).
+    const account = (env.USERNAME ?? '').replace(/[^a-zA-Z0-9]/g, '');
     return `\\\\.\\pipe\\herdr-core-${account}-${session}.sock`;
   }
   const uid = options.uid ?? process.getuid?.();
   const userRuntime = uid === undefined ? undefined : `/run/user/${uid}`;
   const runtime =
-    env.XDG_RUNTIME_DIR || (userRuntime && existsSync(userRuntime) ? userRuntime : undefined);
+    options.runtimeDir ??
+    (env.XDG_RUNTIME_DIR || (userRuntime && existsSync(userRuntime) ? userRuntime : undefined));
   const stateHome = env.XDG_STATE_HOME || posix.join(env.HOME || homedir(), '.local', 'state');
   const directory = runtime
     ? posix.join(runtime, 'herdr-core')

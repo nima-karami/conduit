@@ -26,7 +26,7 @@ describe('OpenFileWatcher change cadence', () => {
     const file = path.join('r', 'a.ts');
     const seen: string[] = [];
     const w = new OpenFileWatcher((p) => seen.push(p), 150);
-    w.setPaths([file]);
+    w.setWindowPaths(1, [file]);
     for (let i = 0; i < 10; i++) {
       writeTo(file);
       vi.advanceTimersByTime(100);
@@ -42,7 +42,7 @@ describe('OpenFileWatcher change cadence', () => {
     const file = path.join('r', 'app.log.1');
     const seen: number[] = [];
     const w = new OpenFileWatcher(() => seen.push(Date.now()), 150);
-    w.setPaths([file]);
+    w.setWindowPaths(1, [file]);
     const start = Date.now();
     for (let i = 0; i < 30; i++) {
       writeTo(file);
@@ -79,5 +79,59 @@ describe('planWatchDirs', () => {
 
   it('returns an empty map for no paths', () => {
     expect(planWatchDirs([]).size).toBe(0);
+  });
+});
+
+describe('OpenFileWatcher per-window union', () => {
+  const dirs = () => [...dirEvents.keys()].sort();
+
+  it("two windows' sets are watched as a union", () => {
+    const w = new OpenFileWatcher(() => {});
+    w.setWindowPaths(1, ['/w/a/x.ts']);
+    w.setWindowPaths(2, ['/w/b/y.ts']);
+    expect(dirs()).toEqual(['/w/a', '/w/b']);
+    w.stop();
+  });
+
+  it("a window's later post replaces only its own set", () => {
+    const w = new OpenFileWatcher(() => {});
+    w.setWindowPaths(1, ['/w/a/x.ts']);
+    w.setWindowPaths(2, ['/w/b/y.ts']);
+    w.setWindowPaths(1, ['/w/c/z.ts']);
+    expect(dirs()).toEqual(['/w/b', '/w/c']);
+    w.stop();
+  });
+
+  it("a suspended window's paths are released and return on unsuspend", () => {
+    const w = new OpenFileWatcher(() => {});
+    w.setWindowPaths(1, ['/w/a/x.ts']);
+    w.setWindowPaths(2, ['/w/b/y.ts']);
+    w.setWindowSuspended(1, true);
+    expect(dirs()).toEqual(['/w/b']);
+    w.setWindowPaths(1, ['/w/a/x.ts', '/w/d/q.ts']);
+    expect(dirs()).toEqual(['/w/b']);
+    w.setWindowSuspended(1, false);
+    expect(dirs()).toEqual(['/w/a', '/w/b', '/w/d']);
+    w.stop();
+  });
+
+  it('dropWindow releases its paths but keeps a path another window also has', () => {
+    const w = new OpenFileWatcher(() => {});
+    w.setWindowPaths(1, ['/w/a/x.ts', '/w/s/shared.ts']);
+    w.setWindowPaths(2, ['/w/s/shared.ts']);
+    w.dropWindow(1);
+    expect(dirs()).toEqual(['/w/s']);
+    w.dropWindow(2);
+    expect(dirs()).toEqual([]);
+    w.stop();
+  });
+
+  it('a dropped window does not keep a stale suspension', () => {
+    const w = new OpenFileWatcher(() => {});
+    w.setWindowSuspended(1, true);
+    w.dropWindow(1);
+    w.setWindowPaths(1, ['/w/a/x.ts']);
+    expect(dirs()).toEqual(['/w/a']);
+    w.stop();
   });
 });

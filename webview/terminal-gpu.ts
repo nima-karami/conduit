@@ -17,6 +17,12 @@ export const GPU_REATTACH_DELAY_MS = 1000;
 // Under Chromium's ~16 live contexts per page, leaving room for the shader background: past the
 // limit Chromium evicts the oldest context, which would read here as a GPU reset.
 export const MAX_WEBGL_TERMINALS = 12;
+// A hidden pane keeps its context while among the panes most recently shown, and the window is the
+// whole cap: an attach in the commit that shows a pane paints black frames until xterm's own
+// visibility observer resumes rendering (QA 2026-11-03, 8 panes, window 4: 0/30 switches among
+// recent panes blank, 9-10/16 switches to a long-hidden one blank, up to 2 frames), while 4 vs 8
+// live contexts measured within ±40 MB noise in GPU-process private bytes on a hardware GPU.
+export const RECENT_WEBGL_TERMINALS = MAX_WEBGL_TERMINALS;
 // Chromium refuses new WebGL contexts for the page for a while after a repeat GPU reset (we keep
 // that guard; see electron/main.ts). Terminals it refuses stay on DOM and retry on this schedule,
 // which starts over once every terminal is back on WebGL.
@@ -50,7 +56,9 @@ export interface GpuCoordinator<T> {
    * Returns the unregister, which disposes the terminal's WebGL addon if it has one.
    * `onFontRefresh` re-fits the pane and re-reports its facts after a font refresh.
    */
-  register(term: T, onFontRefresh?: () => void): () => void;
+  register(term: T, onFontRefresh?: () => void, opts?: { visible?: boolean }): () => void;
+  /** Hidden: the addon is disposed and its slot freed. Shown: attaches when a slot is free. */
+  setVisible(term: T, visible: boolean): void;
   reportLoss(term: T): void;
   /** A face finished loading: every live terminal re-rasterises (spec 2026-11-02 §8). */
   refreshFonts(): void;
@@ -60,6 +68,9 @@ export interface GpuCoordinator<T> {
 export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordinator<T> {
   const entries = new Map<T, WebglHandle | null>();
   const fontRefresh = new Map<T, () => void>();
+  const hidden = new Set<T>();
+  // Most recently shown first; a hidden terminal keeps its addon while within the first RECENT.
+  let recent: T[] = [];
   let mode: 'webgl' | 'fallback' | 'dom' = 'webgl';
   let losses: number[] = [];
   let live = 0;
@@ -82,9 +93,9 @@ export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordin
     failed.clear();
     for (const [term, handle] of entries) {
       if (live >= MAX_WEBGL_TERMINALS) break;
-      if (!handle) attach(term);
+      if (!handle && !hidden.has(term)) attach(term);
     }
-    if (live >= Math.min(entries.size, MAX_WEBGL_TERMINALS)) {
+    if (live >= Math.min(entries.size - hidden.size, MAX_WEBGL_TERMINALS)) {
       retriesUsed = 0;
       deps.log('reattach', { terminals: entries.size, attached: live });
       return;
@@ -111,27 +122,77 @@ export function createGpuCoordinator<T>(deps: GpuCoordinatorDeps<T>): GpuCoordin
 
   const promoteOldestWaiting = () => {
     for (const [term, handle] of entries) {
-      if (!handle && !failed.has(term) && attach(term)) return;
+      if (!handle && !failed.has(term) && !hidden.has(term) && attach(term)) return;
     }
   };
 
+  const freeSlot = (handle: WebglHandle) => {
+    handle.dispose();
+    live--;
+    // Only a WebGL terminal frees a slot, and none exist outside webgl mode.
+    promoteOldestWaiting();
+  };
+
+  /** Disposes a hidden terminal's addon; `promote` hands its slot to a waiting visible one. */
+  const release = (term: T, promote: boolean) => {
+    recent = recent.filter((t) => t !== term);
+    const handle = entries.get(term);
+    if (!handle) return;
+    entries.set(term, null);
+    if (promote) freeSlot(handle);
+    else {
+      handle.dispose();
+      live--;
+    }
+  };
+
+  const touch = (term: T) => {
+    recent = [term, ...recent.filter((t) => t !== term)];
+    for (const t of recent.slice(RECENT_WEBGL_TERMINALS)) if (hidden.has(t)) release(t, true);
+  };
+
+  /** A shown terminal outranks a hidden one kept only for recency. */
+  const attachShown = (term: T) => {
+    if (mode !== 'webgl' || failed.has(term) || entries.get(term)) return;
+    if (live >= MAX_WEBGL_TERMINALS) {
+      const victim = [...recent].reverse().find((t) => hidden.has(t) && entries.get(t));
+      if (victim === undefined) return;
+      release(victim, false);
+    }
+    attach(term);
+  };
+
   return {
-    register(term, onFontRefresh) {
+    register(term, onFontRefresh, opts) {
       entries.set(term, null);
       if (onFontRefresh) fontRefresh.set(term, onFontRefresh);
-      if (mode === 'webgl' && live < MAX_WEBGL_TERMINALS) attach(term);
+      if (opts?.visible === false) hidden.add(term);
+      else {
+        attachShown(term);
+        touch(term);
+      }
       return () => {
         fontRefresh.delete(term);
         if (!entries.has(term)) return;
         const handle = entries.get(term);
         entries.delete(term);
         failed.delete(term);
-        if (!handle) return;
-        handle.dispose();
-        live--;
-        // Only a WebGL terminal frees a slot, and none exist outside webgl mode.
-        promoteOldestWaiting();
+        hidden.delete(term);
+        recent = recent.filter((t) => t !== term);
+        if (handle) freeSlot(handle);
       };
+    },
+    setVisible(term, visible) {
+      if (!entries.has(term) || hidden.has(term) !== visible) return;
+      if (visible) {
+        hidden.delete(term);
+        attachShown(term);
+        touch(term);
+        return;
+      }
+      // Hidden before any release, so the freed slot never promotes this terminal again.
+      hidden.add(term);
+      if (!recent.slice(0, RECENT_WEBGL_TERMINALS).includes(term)) release(term, true);
     },
     reportLoss(term) {
       // Every context in the document is lost together, so the rest of the burst lands here.

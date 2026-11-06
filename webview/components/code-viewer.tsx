@@ -514,7 +514,7 @@ export function CodeViewer({
     const blurSub = editor.onDidBlurEditorWidget(() => fileSaves.trigger(doc.path, 'editorBlur'));
     setEditor(editor);
 
-    // Don't dispose models we keep for cross-file resolution; only dispose the editor.
+    // Only the editor goes: the model is the tab's buffer, released with the tab (idle-models.ts).
     return () => {
       debouncedCapture.cancel();
       captureViewState(); // sync final capture BEFORE dispose, else saveViewState has no editor

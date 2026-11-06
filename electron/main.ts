@@ -28,6 +28,7 @@ import { isAppIndexUrl } from '../src/app-navigation';
 import { asyncSingleFlight } from '../src/async-singleflight';
 import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
 import { fingerprint } from '../src/board-watch';
+import { changelogSection } from '../src/changelog';
 import {
   createCloseGuard,
   createQuitGrant,
@@ -49,7 +50,7 @@ import type {
   ServerMethods,
   SessionMutation,
 } from '../src/contracts/server-protocol';
-import { coreStartEnv, SERVER_EXHAUSTED_FILE } from '../src/contracts/session-identity';
+import { SERVER_EXHAUSTED_FILE } from '../src/contracts/session-identity';
 import { decideCrashRecovery } from '../src/crash-recovery';
 import { ExpiringCache } from '../src/expiring-cache';
 import { indexToSearchHits, walkFilesAsync } from '../src/file-search';
@@ -103,7 +104,7 @@ import {
   takeChunks,
   wantsFullIndex,
 } from '../src/index-streams';
-import { instanceNames } from '../src/instance-names';
+import { coreStartEnv, instanceNames } from '../src/instance-names';
 import { type HostPlatform, resolveServerBinary, type SearchContext } from '../src/lsp-binary';
 import { compileRootMarkers, compileWatchGlobs, LANGUAGE_SERVERS } from '../src/lsp-registry';
 import { resolveServerRoot } from '../src/lsp-root';
@@ -145,6 +146,7 @@ import { summarizeQueue } from '../src/queue-summary';
 import { busySessions, runningSessions } from '../src/quit-guard';
 import { resolveRangePreset } from '../src/range-preset';
 import { createGrantStore, hostCanonical } from '../src/read-grants';
+import { releaseNotesAckVersion, releaseNotesDecision } from '../src/release-notes-decision';
 import { createRepoFileIndex } from '../src/repo-file-index';
 import {
   filterExistingRepos,
@@ -203,7 +205,7 @@ import {
 } from '../src/window-registry';
 import { currentWindowsPty } from '../src/windows-pty-info';
 import { parseTrustStore, serializeTrustStore } from '../src/workspace-trust';
-import { AppSessionStore, type SessionFolderDiff } from './app-session-store';
+import { AppSessionStore, type SessionDiff } from './app-session-store';
 import { extractOpenTarget, gitRootOf } from './arg-utils';
 import { BoardWatcher } from './board-watcher';
 import {
@@ -278,6 +280,18 @@ import { createTerminalHost } from './terminal-host';
 import { createTerminalLinkFactory } from './terminal-link';
 import { checkForUpdate, initUpdater, quitAndInstall } from './updater';
 import { closeWindowSessions, reconcileSessionOwners } from './window-session-close';
+
+function readBundledChangelog(): string | null {
+  const changelogPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'CHANGELOG.md')
+    : path.join(app.getAppPath(), 'CHANGELOG.md');
+  try {
+    return fs.readFileSync(changelogPath, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
 
 function readAboutInfo(): AboutInfo {
   try {
@@ -1170,7 +1184,7 @@ async function stopAllAgentsHeadless(): Promise<void> {
           process.platform === 'win32' ? 'win32' : 'posix',
           os.tmpdir(),
         );
-        const env = coreStartEnv(process.env, names, true);
+        const env = coreStartEnv(process.env, names);
         const layout = runtimeLayout({
           packaged: app.isPackaged,
           userData: userData(),
@@ -1371,6 +1385,7 @@ app.whenReady().then(() => {
   // `state` broadcast via Session.repoGit. See docs/plans/2026-10-16-multi-repo-tracking.plan.md.
   const gitDemand = createSessionResourceDemand(
     (ids) => {
+      folders.visibilityChanged();
       for (const id of ids) if (deferredRepoScans.has(id)) scheduleRepoScan(id);
       for (const w of windows.values()) {
         const shown = ids
@@ -1379,13 +1394,13 @@ app.whenReady().then(() => {
             const s = store.get(id);
             return s ? [s.home, ...presentRoots(s)] : [];
           });
-        const stale = shown.filter((root) => pendingFsByWindow.get(w.id)?.has(root));
-        for (const root of stale) pendingFsByWindow.get(w.id)?.delete(root);
-        if (stale.length)
+        // see spec 2026-11-03-demand-driven-resources §3.5
+        for (const root of shown) pendingFsByWindow.get(w.id)?.delete(root);
+        if (shown.length)
           w.webContents.send('to-webview', {
             type: 'fsChanged',
-            root: stale[0],
-            folders: [...new Set(stale)],
+            root: shown[0],
+            folders: [...new Set(shown)],
           });
       }
       for (const [windowId, request] of deferredProjectRequests) {
@@ -1411,6 +1426,8 @@ app.whenReady().then(() => {
         repoScanner.forget(id);
         deferredRepoScans.add(id);
       }
+      folders.visibilityChanged();
+      repoTrackerHost.tracker.visibilityChanged();
     },
   );
   const deferredRepoScans = new Set<string>();
@@ -1516,7 +1533,9 @@ app.whenReady().then(() => {
   const movingSessions = new Set<string>();
 
   // User settings (theme/fonts/layout/behaviour), persisted to settings.json.
+  const settingsFileExistedAtLoad = fs.existsSync(settingsFile());
   let settings: AppSettings = restoreSettings(readBlob(settingsFile()));
+  const releaseNotesOffers = new Map<number, string>();
 
   // Diagnostics logger (Slice A): the host's sole disk writer. Constructed here — before
   // window creation — so startup seams are captured. Level comes from settings and is
@@ -1858,6 +1877,7 @@ app.whenReady().then(() => {
     suspect: (sessionId, folder) =>
       serverClient()?.notify('folders.suspect', { sessionId, path: folder }),
     visibleSessionIds: () => gitDemand.visibleIds(),
+    isWindowSuspended: (windowId) => gitDemand.isSuspended(windowId),
     log: (level, msg, data) => log[level]('folders', msg, data),
   });
   folders.onFoldersChanged(() => pruneFileIndexes());
@@ -2206,13 +2226,11 @@ app.whenReady().then(() => {
   // client of it. See docs/plans/2026-11-02-three-process-w7-app-client.plan.md.
   const e2e = process.env.CONDUIT_E2E === '1';
   const appLog: AppLog = (level, msg, data) => log[level]('server', msg, data);
-  const names = instanceNames(
-    userData(),
-    process.platform === 'win32' ? 'win32' : 'posix',
-    os.tmpdir(),
-  );
+  const names = instanceNames(userData(), process.platform, os.tmpdir(), {
+    log: (m) => log.warn('hc', m),
+  });
   // M22: isolated XDG for our core; every app hc call goes through this env (our HC_SESSION).
-  const hcEnv = coreStartEnv(process.env, names, true);
+  const hcEnv = coreStartEnv(process.env, names);
   const hc = hcClient(names, hcEnv, (m) => log.warn('hc', m));
   // Before the lifecycle: the start rule and its F6/F9 waits read this one subscription.
   const hcEvents = createHcEvents(hc, { 'conduit.instance': names.instance }, appLog);
@@ -2342,7 +2360,7 @@ app.whenReady().then(() => {
   };
 
   /** The app's side of every server list: owners, cwd auto-follow, folder runtime, indexes. */
-  const sessionsApplied = (diffs: SessionFolderDiff[]) => {
+  const sessionsApplied = (diffs: SessionDiff[]) => {
     let membership = reconcileSessionOwners(
       sessionOwner,
       store.list().map((s) => s.id),
@@ -2351,6 +2369,11 @@ app.whenReady().then(() => {
       (id) => pendingCreates.isHeld(id),
     );
     for (const d of diffs) {
+      if (d.kind === 'turnEnded') {
+        if (!gitDemand.isVisible(d.sessionId))
+          repoTrackerHost.tracker.sessionTurnEnded(d.sessionId);
+        continue;
+      }
       if (d.kind === 'removed') {
         forgetSession(d.sessionId);
         membership = true;
@@ -2489,6 +2512,7 @@ app.whenReady().then(() => {
           appVersion,
           hcVersion: HC_PINNED_VERSION,
           shimVersion: CURRENT_SHIM_GENERATION,
+          warn: (message) => log.warn('runtime', message),
         })
       : undefined;
     const layout = runtimeLayout({
@@ -2647,6 +2671,35 @@ app.whenReady().then(() => {
         case 'revealLogs':
           void shell.openPath(userData());
           break;
+        case 'getReleaseNotes': {
+          const version = app.getVersion();
+          const changelog = readBundledChangelog();
+          const notes = changelog === null ? null : changelogSection(changelog, version);
+          const decision = releaseNotesDecision(
+            version,
+            settings.lastSeenVersion,
+            notes,
+            settingsFileExistedAtLoad,
+          );
+          if (decision.persistVersion && settings.lastSeenVersion !== decision.persistVersion) {
+            settings = { ...settings, lastSeenVersion: decision.persistVersion };
+            persistFile(settingsFile(), serializeSettings(settings), 'settings.json');
+          }
+          if (decision.showToast) releaseNotesOffers.set(senderId, version);
+          else releaseNotesOffers.delete(senderId);
+          replyHere({ type: 'releaseNotes', version, notes, showToast: decision.showToast });
+          break;
+        }
+        case 'releaseNotesShown': {
+          const version = releaseNotesAckVersion(releaseNotesOffers.get(senderId), m.version);
+          if (!version) break;
+          releaseNotesOffers.delete(senderId);
+          if (settings.lastSeenVersion !== version) {
+            settings = { ...settings, lastSeenVersion: version };
+            persistFile(settingsFile(), serializeSettings(settings), 'settings.json');
+          }
+          break;
+        }
         case 'window:sidebar':
           // Sender-scoped: a window only ever writes its own entry, validated like a restore. A
           // sender outside the registry (closing, or a guest) would leave an entry no close drops.
@@ -2944,7 +2997,7 @@ app.whenReady().then(() => {
           // Watch exactly the files the renderer reports open. These paths were all served
           // via readFile, so they're files the host already chose to expose — watching is
           // read-only and adds no new trust surface.
-          openFileWatcher.setPaths(m.paths);
+          openFileWatcher.setWindowPaths(senderId, m.paths);
           break;
         }
         case 'persistDocs': {
@@ -3215,6 +3268,8 @@ app.whenReady().then(() => {
           if (!root) break;
           try {
             const doc = await readPlan(root, m.slug);
+            planWatcher.recordShown(root, m.slug, 'plan', contentHash(doc.markdown ?? ''));
+            planWatcher.recordShown(root, m.slug, 'comments', commentsFingerprint(doc.comments));
             broadcast({
               type: 'plan:doc',
               root,
@@ -3244,7 +3299,7 @@ app.whenReady().then(() => {
           const root = normalizeRoot(m.root);
           if (!root) break;
           // Before the fingerprint, not inside the write: a slug the write would reject anyway
-          // must not leave a `lastWritten` entry keyed on it, and markdown the loader would
+          // must not leave a fingerprint keyed on it, and markdown the loader would
           // refuse must not reach the disk (electron/conduit-fs.ts planWriteRefusal).
           const refusal = planWriteRefusal(m.slug, m.markdown);
           if (refusal) {
@@ -3295,8 +3350,9 @@ app.whenReady().then(() => {
               origin: 'ack',
             });
             const fingerprint = commentsFingerprint(next);
+            // The ack is what every window now shows, whether or not it needs writing.
+            planWatcher.recordShown(root, m.slug, 'comments', fingerprint);
             if (fingerprint !== commentsFingerprint(current)) {
-              planWatcher.recordWrite(root, m.slug, 'comments', fingerprint);
               await writePlanCommentsFile(root, m.slug, next);
             }
           } catch (err) {
@@ -3503,11 +3559,12 @@ app.whenReady().then(() => {
             // gitDemand's set decides which windows get a session's repo deltas.
             const ownIds = repoTrackerHost.ownedIds(senderId, m.ids);
             gitDemand.setVisible(senderId, ownIds);
+            // see spec 2026-11-03-demand-driven-resources §3.5 (order: watches, then catch-up)
+            folders.visibilityChanged();
             // Unconditional, even for an unchanged set: a reloaded renderer re-posts the same
             // ids and has to re-hydrate from the cache.
             repoTrackerHost.windowShown(senderId, ownIds);
           }
-          folders.visibilityChanged();
           for (const id of m.ids) if (deferredRepoScans.has(id)) scheduleRepoScan(id);
           break;
         case 'changes:subscribe':
@@ -3713,9 +3770,10 @@ app.whenReady().then(() => {
               });
             };
           // Per-project board at `<root>/.conduit/board.json` (empty if absent/none).
-          sendBoardBundle(replyHere)(readBoardForProject(m.path));
+          const shown = readBoardForProject(m.path);
+          sendBoardBundle(replyHere)(shown);
           // Live watch so an external agent's edits update the open board without reopening.
-          boardWatcher.watch(m.path, sendBoardBundle(broadcast));
+          boardWatcher.watch(m.path, shown, sendBoardBundle(broadcast));
           // Surface any pending board proposal (N1) + watch for it appearing/clearing live.
           sendProposal(replyHere, m.path, 'board');
           armProposalWatch(m.path);
@@ -4516,6 +4574,8 @@ app.whenReady().then(() => {
     return bundle;
   });
 
+  ipcMain.handle('readChangelog', () => readBundledChangelog());
+
   // Recent log tail for Settings→About (Slice B). Bounded host-side; disk content is already
   // redacted. `off` lets the renderer show a "logging is off" note instead of an empty block.
   ipcMain.handle('readLogTail', (_e, n: number) => {
@@ -4624,6 +4684,7 @@ app.whenReady().then(() => {
       onUnresponsive: (windowId) => closeGuard.onUnresponsive(windowId),
       onSessionEnd: flushStateSync,
       onClosed: (windowId) => {
+        releaseNotesOffers.delete(windowId);
         closeGuard.onWindowGone(windowId);
         presence.drop(windowId);
         sidebarUiByWindow.delete(windowId);
@@ -4633,6 +4694,7 @@ app.whenReady().then(() => {
         windowConfirmed.delete(windowId);
         gitDemand.dropWindow(windowId);
         repoTrackerHost.dropWindow(windowId);
+        openFileWatcher.dropWindow(windowId);
         deferredProjectRequests.delete(windowId);
         pendingFsByWindow.delete(windowId);
         for (const [key, request] of deferredIndexes)
@@ -4653,10 +4715,13 @@ app.whenReady().then(() => {
     w.once('closed', () => lspManager.dropWebContents(wcId));
     w.on('minimize', () => {
       gitDemand.setSuspended(w.id, true);
+      openFileWatcher.setWindowSuspended(w.id, true);
       lspManager.setWindowMinimized(wcId, true);
     });
     w.on('restore', () => {
       gitDemand.setSuspended(w.id, false);
+      folders.visibilityChanged();
+      openFileWatcher.setWindowSuspended(w.id, false);
       repoTrackerHost.windowRestored(w.id);
       lspManager.setWindowMinimized(wcId, false);
     });

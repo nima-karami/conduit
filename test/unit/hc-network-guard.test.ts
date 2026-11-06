@@ -37,11 +37,7 @@ describe('hc stays offline under Conduit', () => {
 
   it('the core never inherits a release-server override', () => {
     const names = { hcSession: 'conduit-x', hcConfigHome: '/c', hcStateHome: '/s' };
-    const env = coreStartEnv(
-      { PATH: '/bin', HERDR_RELEASES_URL: 'https://evil.example' },
-      names,
-      false,
-    );
+    const env = coreStartEnv({ PATH: '/bin', HERDR_RELEASES_URL: 'https://evil.example' }, names);
     expect(env).not.toHaveProperty('HERDR_RELEASES_URL');
   });
 });

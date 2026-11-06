@@ -51,6 +51,9 @@ const api = {
   copyDiagnostics(): Promise<string | null> {
     return ipcRenderer.invoke('copyDiagnostics');
   },
+  readChangelog(): Promise<string | null> {
+    return ipcRenderer.invoke('readChangelog');
+  },
   /** Read the last `n` lines of the active log (already redacted on disk) for the About tail. */
   readLogTail(n: number): Promise<{ off: boolean; tail: string }> {
     return ipcRenderer.invoke('readLogTail', n);

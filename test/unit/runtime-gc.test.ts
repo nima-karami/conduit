@@ -27,6 +27,29 @@ function fakeFs(tree: Record<string, string[]>, busy: string[] = []) {
 }
 
 describe('collectRuntimeGarbage', () => {
+  it('collects both layouts while preserving a busy legacy core and the current renamed engine', async () => {
+    const renamed = join(ROOT, 'conduit-hc');
+    const held = join(HC, '0.1.13');
+    const { deps, log } = fakeFs(
+      {
+        [HC]: ['0.1.13', '0.1.14', '0.1.15', '0.1.16'],
+        [renamed]: ['0.1.13', '0.1.14', '0.1.15', '0.1.16'],
+      },
+      [held],
+    );
+    const result = await collectRuntimeGarbage(
+      ROOT,
+      { appVersion: '0.55.1', hcVersion: '0.1.16' },
+      deps,
+    );
+    expect(result.inUse).toEqual([held]);
+    expect(result.removed).toEqual([
+      join(HC, '0.1.14'),
+      join(renamed, '0.1.14'),
+      join(renamed, '0.1.13'),
+    ]);
+    expect(log).not.toContain(`rm ${held}.gc`);
+  });
   it('newest two kept, current always', async () => {
     const { deps, log } = fakeFs({
       [ROOT]: ['0.49.0', '0.52.0-beta.1', '0.51.0', '0.50.0', '0.52.0', 'hc', 'shim'],

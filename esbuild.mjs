@@ -36,7 +36,11 @@ const contentSearchWorker = {
 
 const serverShell = {
   ...common,
-  entryPoints: ['server/main.ts', 'server/supervise.ts'],
+  entryPoints: {
+    main: 'server/main.ts',
+    supervise: 'server/supervise.ts',
+    'instance-names': 'src/instance-names.ts',
+  },
   outdir: 'out/server',
   platform: 'node',
   format: 'cjs',
@@ -52,6 +56,9 @@ export const webBuild = (out = 'out') => ({
   format: 'iife',
   jsx: 'automatic',
   plugins: [monacoDompurify],
+  // Without this esbuild bundles React's development build, which also runs the profiler on every
+  // commit (performance.measure per render) and keeps per-fiber debug stacks.
+  define: { 'process.env.NODE_ENV': '"production"' },
   // .ttf = Monaco's codicon font and our bundled faces (webview/fonts.css); .woff/.woff2 = KaTeX
   // math fonts (referenced by katex.min.css). Without these loaders esbuild errors on the url()s.
   loader: { '.ttf': 'file', '.woff': 'file', '.woff2': 'file' },

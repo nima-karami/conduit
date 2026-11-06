@@ -10,18 +10,36 @@ permissions:
   actions: read
 
 jobs:
+  # Validate notes before the full e2e workflow so a missing CHANGELOG section fails early.
+  release-notes-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: node tools/release-notes.mjs "$GITHUB_REF_NAME"
+
   # Run the full authoritative gate (Biome, typecheck, tests, fallow, audit, Semgrep,
   # gitleaks) on Linux first. Semgrep has no native Windows build and the security scan
   # is best-effort there, so gating on Linux keeps it deterministic. The build only runs
   # if this passes.
   gate:
     uses: ./.github/workflows/verify.yml
+    needs: release-notes-check
 
   # The full e2e suite at the tag's commit (spec docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md
   # §14 Q2): passed or flaky-passed proceeds; a QUARANTINED-FAIL doesn't block. `gate` already
   # runs verify, so e2e doesn't repeat it.
   e2e:
     uses: ./.github/workflows/e2e.yml
+    needs: release-notes-check
     with:
       selection: full
       verify: false
@@ -31,6 +49,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -40,6 +60,8 @@ jobs:
       - run: npm ci
 
       - run: npm run build
+      - name: Prepare release notes
+        run: node tools/release-notes.mjs "$env:GITHUB_REF_NAME"
       # The pinned node.exe and hc the installer bundles (ADR 0007); build/runtime-pins.json checks them.
       - run: node build/fetch-runtime.mjs
 
@@ -70,7 +92,8 @@ jobs:
       # from the cert subject. Hardcoding it on an UNSIGNED build embeds publisherName into
       # app-update.yml and makes electron-updater reject every (unsigned) update — the 0.1.13→0.2.0
       # auto-update breakage. See docs/WINDOWS-SIGNING.md.
-      - run: npx electron-builder --win --publish never
+      # Quoted long form: pwsh splits an unquoted `-c.x=y` into `-c` and `.x=y`.
+      - run: npx electron-builder --win --publish never "--config.releaseInfo.releaseNotesFile=build/release-notes.md"
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -89,12 +112,12 @@ jobs:
       # One atomic `gh release create` uploads all three artifacts to a single release.
       # artifactName (package.json) yields a hyphenated installer name with no spaces, so
       # the uploaded asset name matches the url inside latest.yml exactly (else the updater
-      # 404s). --generate-notes fills the body from commits since the previous tag.
+      # 404s). Release notes come from the matching CHANGELOG section.
       - name: Publish GitHub Release
         shell: bash
         run: |
           gh release create "$GITHUB_REF_NAME" \
             dist/*.exe dist/*.exe.blockmap dist/latest.yml \
-            --title "Conduit $GITHUB_REF_NAME" --generate-notes
+            --title "Conduit $GITHUB_REF_NAME" --notes-file build/release-notes.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

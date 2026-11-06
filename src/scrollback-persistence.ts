@@ -41,11 +41,94 @@ export const SCROLLBACK_CAP_BYTES = 256 * 1024;
 const sameGeometry = (a?: TermGeometry, b?: TermGeometry) =>
   a === b || (!!a && !!b && a.cols === b.cols && a.rows === b.rows);
 
+// Below this a chunk is folded into the previous one (a bounded copy); above it, it stands alone.
+// Keeps the entry count down for chatty streams without re-copying the whole window per chunk.
+const FOLD_BELOW = 4096;
+
+interface RingEntry {
+  data: string;
+  geometry?: TermGeometry;
+  /** Continues the entry before it: one segment in `toRing()`. */
+  cont: boolean;
+}
+
+const entryOf = (data: string, geometry: TermGeometry | undefined, cont: boolean): RingEntry =>
+  geometry ? { data, geometry, cont } : { data, cont };
+
+/**
+ * The ring as a chunk list, so a full window trims from the head without re-flattening 256K
+ * chars per append (string concat + slice does). Same semantics as `appendToRing`: onto the last
+ * segment when the size is unchanged, else a new one; trim from the head to `cap`, a partly
+ * trimmed head keeping its geometry. Segments are only joined by `toRing()`.
+ */
+export class RingBuffer {
+  private entries: RingEntry[] = [];
+  private head = 0;
+  private cached: ScrollbackRing | undefined;
+  /** Bumps on every change, so a writer can tell whether anything moved since it last looked. */
+  version = 0;
+  /** Characters held; written only by this class. */
+  charCount = 0;
+
+  static from(ring: ScrollbackRing): RingBuffer {
+    const b = new RingBuffer();
+    for (const s of ring) {
+      b.entries.push(entryOf(s.data, s.geometry, false));
+      b.charCount += s.data.length;
+    }
+    return b;
+  }
+
+  append(chunk: string, geometry: TermGeometry | undefined, cap: number): void {
+    this.version++;
+    this.cached = undefined;
+    const last =
+      this.entries.length > this.head ? this.entries[this.entries.length - 1] : undefined;
+    if (last && sameGeometry(last.geometry, geometry)) {
+      if (last.data.length < FOLD_BELOW) last.data += chunk;
+      else this.entries.push(entryOf(chunk, geometry, true));
+    } else {
+      this.entries.push(entryOf(chunk, geometry, false));
+    }
+    this.charCount += chunk.length;
+    let excess = this.charCount - cap;
+    while (excess > 0) {
+      const first = this.entries[this.head];
+      if (first.data.length <= excess) {
+        this.head++;
+        excess -= first.data.length;
+        this.charCount -= first.data.length;
+      } else {
+        first.data = first.data.slice(excess);
+        this.charCount -= excess;
+        excess = 0;
+      }
+    }
+    if (this.head > 1024 && this.head * 2 > this.entries.length) {
+      this.entries = this.entries.slice(this.head);
+      this.head = 0;
+    }
+  }
+
+  /** The segments, oldest first. Cached until the next append. */
+  toRing(): ScrollbackRing {
+    if (this.cached) return this.cached;
+    const out: ScrollbackRing = [];
+    for (let i = this.head; i < this.entries.length; i++) {
+      const e = this.entries[i];
+      const prev = out[out.length - 1];
+      if (e.cont && i > this.head && prev) prev.data += e.data;
+      else out.push(e.geometry ? { data: e.data, geometry: e.geometry } : { data: e.data });
+    }
+    this.cached = out;
+    return out;
+  }
+}
+
 /**
  * Append `chunk`, recorded at `geometry`, to the ring: onto the last segment when the size is
- * unchanged, else as a new segment. Then trim from the head across segments to `cap` chars; a
- * partly trimmed head segment keeps its geometry (same mid-sequence tolerance as
- * `appendScrollback`). Pure — returns a new ring.
+ * unchanged, else as a new segment. Then trim from the head across segments to `cap` chars.
+ * Pure — returns a new ring. Hot paths hold a `RingBuffer` instead.
  */
 export function appendToRing(
   ring: ScrollbackRing,
@@ -53,23 +136,9 @@ export function appendToRing(
   geometry: TermGeometry | undefined,
   cap: number,
 ): ScrollbackRing {
-  const last = ring[ring.length - 1];
-  const next =
-    last && sameGeometry(last.geometry, geometry)
-      ? [...ring.slice(0, -1), { ...last, data: last.data + chunk }]
-      : [...ring, geometry ? { data: chunk, geometry } : { data: chunk }];
-  let excess = next.reduce((n, s) => n + s.data.length, 0) - cap;
-  while (excess > 0) {
-    const head = next[0];
-    if (head.data.length <= excess) {
-      next.shift();
-      excess -= head.data.length;
-    } else {
-      next[0] = { ...head, data: head.data.slice(excess) };
-      excess = 0;
-    }
-  }
-  return next;
+  const b = RingBuffer.from(ring);
+  b.append(chunk, geometry, cap);
+  return b.toRing();
 }
 
 /**

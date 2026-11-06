@@ -61,6 +61,11 @@ export function killTimerStart(start: number, o: { killMs: number; waitCapMs?: n
 export function killTimerOnLine(state: KillTimer, line: string, now: number): KillTimer;
 export const RUN_MARKER: '--conduit-e2e-run';
 export function profilePrefix(runId: string): string;
+export function selectRunProfiles(
+  entries: { name: string; isDirectory: () => boolean }[],
+  runId: string,
+  existingProfiles?: ReadonlySet<string>,
+): string[];
 export function orphanVictims(
   procs: { ProcessId: number; ParentProcessId: number; CommandLine: string | null }[],
   runId: string,

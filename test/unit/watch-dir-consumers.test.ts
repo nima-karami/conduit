@@ -9,6 +9,8 @@ import {
   BOARD_FILE_NAME,
   conduitDir,
   PLANS_DIR_NAME,
+  readBoardForProject,
+  writePlanCommentsFile,
   writePlanFile,
 } from '../../electron/conduit-fs';
 import { OpenFileWatcher } from '../../electron/open-file-watcher';
@@ -16,6 +18,7 @@ import { PlanWatcher } from '../../electron/plan-watcher';
 import { EXISTS_POLL_MS, watchDirWhilePresent } from '../../electron/watch-dir';
 import type { BoardData } from '../../src/board';
 import { serializeBoardArtifact } from '../../src/conduit-store';
+import { contentHash } from '../../src/review-marks';
 import { board, delay, waitFor } from './watch-test-helpers';
 
 type Listener = (event: string, filename: string | null) => void;
@@ -174,7 +177,7 @@ describe('BoardWatcher when .conduit/ comes back', () => {
     const seen: BoardData[] = [];
     const bw = new BoardWatcher(20);
     try {
-      bw.watch(root, (b) => seen.push(b));
+      bw.watch(root, readBoardForProject(root), (b) => seen.push(b));
       expect(watches).toHaveLength(1);
       removeWatched(watches[0]);
       poll();
@@ -182,6 +185,7 @@ describe('BoardWatcher when .conduit/ comes back', () => {
       await recreate(dir);
       poll();
       expect(watches).toHaveLength(2);
+      await delay(0);
       fs.writeFileSync(path.join(dir, BOARD_FILE_NAME), serializeBoardArtifact(board(cards('b'))));
       await waitFor(() => seen.length > 0, 3000);
       expect(seen.at(-1)?.cards.map((c) => c.id)).toEqual(['b']);
@@ -195,11 +199,12 @@ describe('BoardWatcher when .conduit/ comes back', () => {
     const seen: BoardData[] = [];
     const bw = new BoardWatcher(20);
     try {
-      bw.watch(root, (b) => seen.push(b));
+      bw.watch(root, readBoardForProject(root), (b) => seen.push(b));
       expect(watches).toHaveLength(0);
       fs.mkdirSync(conduitDir(root));
       poll();
       expect(watches).toHaveLength(1);
+      await delay(0);
       fs.writeFileSync(
         path.join(conduitDir(root), BOARD_FILE_NAME),
         serializeBoardArtifact(board(cards('c'))),
@@ -218,7 +223,7 @@ describe('BoardWatcher when .conduit/ comes back', () => {
     const seen: BoardData[] = [];
     const bw = new BoardWatcher(20);
     try {
-      bw.watch(root, (b) => seen.push(b));
+      bw.watch(root, readBoardForProject(root), (b) => seen.push(b));
       removeWatched(watches[0]);
       await recreate(dir);
       fs.writeFileSync(path.join(dir, BOARD_FILE_NAME), serializeBoardArtifact(board(cards('r'))));
@@ -236,7 +241,7 @@ describe('BoardWatcher when .conduit/ comes back', () => {
     const seen: BoardData[] = [];
     const bw = new BoardWatcher(20);
     try {
-      bw.watch(root, (b) => seen.push(b));
+      bw.watch(root, readBoardForProject(root), (b) => seen.push(b));
       fs.mkdirSync(conduitDir(root));
       fs.writeFileSync(
         path.join(conduitDir(root), BOARD_FILE_NAME),
@@ -261,10 +266,54 @@ describe('BoardWatcher when .conduit/ comes back', () => {
     const seen: BoardData[] = [];
     const bw = new BoardWatcher(20);
     try {
-      bw.watch(root, (b) => seen.push(b));
+      bw.watch(root, readBoardForProject(root), (b) => seen.push(b));
       expect(watches).toHaveLength(1);
       await delay(100);
       expect(seen).toEqual([]);
+    } finally {
+      bw.stop();
+    }
+  });
+
+  // FSEvents reports a write made just before the watch armed as an event after it.
+  it('an event that leaves the board as it was is not delivered, before or after an edit', async () => {
+    const root = mkRoot();
+    const file = path.join(conduitDir(root), BOARD_FILE_NAME);
+    fs.mkdirSync(conduitDir(root));
+    fs.writeFileSync(file, serializeBoardArtifact(board(cards('s'))));
+    const seen: BoardData[] = [];
+    const bw = new BoardWatcher(20);
+    try {
+      bw.watch(root, readBoardForProject(root), (b) => seen.push(b));
+      watches[0].cb('change', BOARD_FILE_NAME);
+      await delay(100);
+      expect(seen).toEqual([]);
+      fs.writeFileSync(file, serializeBoardArtifact(board(cards('t'))));
+      await waitFor(() => seen.length > 0, 3000);
+      await delay(100);
+      watches[0].cb('change', BOARD_FILE_NAME);
+      await delay(100);
+      expect(seen.map((b) => b.cards.map((c) => c.id))).toEqual([['t']]);
+    } finally {
+      bw.stop();
+    }
+  });
+
+  it('an edit between sending the board and arming the watch is delivered', async () => {
+    const root = mkRoot();
+    const file = path.join(conduitDir(root), BOARD_FILE_NAME);
+    fs.mkdirSync(conduitDir(root));
+    fs.writeFileSync(file, serializeBoardArtifact(board(cards('sent'))));
+    const seen: BoardData[] = [];
+    const bw = new BoardWatcher(20);
+    try {
+      const shown = readBoardForProject(root);
+      fs.writeFileSync(file, serializeBoardArtifact(board(cards('raced'))));
+      bw.watch(root, shown, (b) => seen.push(b));
+      await waitFor(() => seen.length > 0, 3000);
+      watches[0].cb('change', BOARD_FILE_NAME);
+      await delay(100);
+      expect(seen.map((b) => b.cards.map((c) => c.id))).toEqual([['raced']]);
     } finally {
       bw.stop();
     }
@@ -288,6 +337,7 @@ describe('PlanWatcher when .conduit/plans/ comes back', () => {
       await recreate(plans);
       poll();
       expect(watches).toHaveLength(2);
+      await delay(0);
       await writePlanFile(root, 'next', '# Next\n');
       await waitFor(() => seen.includes('next'), 3000);
     } finally {
@@ -303,6 +353,7 @@ describe('PlanWatcher when .conduit/plans/ comes back', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       pw.watch(root);
+      fs.writeFileSync(path.join(conduitDir(root), PLANS_DIR_NAME, 'kept.md'), '# Kept, edited\n');
       watches[0].cb('change', 'kept.md');
       watches[0].w.emit('error', new Error('EPERM'));
       expect(watches).toHaveLength(1);
@@ -312,6 +363,71 @@ describe('PlanWatcher when .conduit/plans/ comes back', () => {
     } finally {
       pw.stop();
       warn.mockRestore();
+    }
+  });
+
+  it('re-watched after an edit made while unwatched: a plan the renderer was shown is re-sent', async () => {
+    const root = mkRoot();
+    const file = path.join(conduitDir(root), PLANS_DIR_NAME, 'open.md');
+    await writePlanFile(root, 'open', '# Shown\n');
+    await writePlanFile(root, 'other', '# Never opened\n');
+    const seen: string[] = [];
+    const pw = new PlanWatcher((_r, slug, _f, markdown) => seen.push(`${slug}|${markdown}`), 20);
+    try {
+      pw.recordShown(root, 'open', 'plan', contentHash('# Shown\n'));
+      pw.watch(root);
+      pw.unwatch(root);
+      pw.watch(root);
+      await delay(100);
+      expect(seen).toEqual([]);
+      pw.unwatch(root);
+      fs.writeFileSync(file, '# Edited while closed\n');
+      pw.watch(root);
+      await waitFor(() => seen.length > 0, 3000);
+      await delay(100);
+      expect(seen).toEqual(['open|# Edited while closed\n']);
+    } finally {
+      pw.stop();
+    }
+  });
+
+  // FSEvents reports a write made just before the watch armed as an event after it.
+  it('an event that leaves a plan or its comments as they were is not delivered', async () => {
+    const root = mkRoot();
+    await writePlanFile(root, 'kept', '# Kept\n');
+    await writePlanCommentsFile(root, 'kept', {
+      version: 1,
+      comments: [
+        {
+          id: 'c-1',
+          author: 'human',
+          text: 'hi',
+          anchor: { index: 0, hash: 'abcd1234', snippet: 'kept' },
+          status: 'open',
+          createdAt: '2026-11-04T10:00:00.000Z',
+        },
+      ],
+    });
+    const seen: string[] = [];
+    const pw = new PlanWatcher(
+      (_r, slug, file, markdown) => seen.push(`${slug}|${file}|${markdown}`),
+      20,
+    );
+    try {
+      pw.watch(root);
+      watches[0].cb('change', 'kept.md');
+      watches[0].cb('change', 'kept.comments.json');
+      watches[0].cb('rename', null);
+      await delay(100);
+      expect(seen).toEqual([]);
+      fs.writeFileSync(path.join(conduitDir(root), PLANS_DIR_NAME, 'kept.md'), '# Kept, edited\n');
+      await waitFor(() => seen.length > 0, 3000);
+      await delay(100);
+      watches[0].cb('change', 'kept.md');
+      await delay(100);
+      expect(seen).toEqual(['kept|plan|# Kept, edited\n']);
+    } finally {
+      pw.stop();
     }
   });
 });
@@ -326,7 +442,7 @@ describe('OpenFileWatcher when a watched file directory comes back', () => {
     const changed = vi.fn();
     const ow = new OpenFileWatcher(changed, 20);
     try {
-      ow.setPaths([file]);
+      ow.setWindowPaths(1, [file]);
       expect(watches).toHaveLength(1);
       removeWatched(watches[0]);
       expect(watches[0].close).toHaveBeenCalledTimes(1);
@@ -334,6 +450,7 @@ describe('OpenFileWatcher when a watched file directory comes back', () => {
       poll();
       expect(watches).toHaveLength(2);
       expect(watches[1].dir).toBe(sub);
+      await delay(0);
       fs.writeFileSync(file, 'y');
       await waitFor(() => changed.mock.calls.length > 0, 3000);
       expect(changed).toHaveBeenCalledWith(file);
@@ -353,7 +470,7 @@ describe('OpenFileWatcher when a watched file directory comes back', () => {
     const changed = vi.fn();
     const ow = new OpenFileWatcher(changed, 20);
     try {
-      ow.setPaths([a, b]);
+      ow.setWindowPaths(1, [a, b]);
       removeWatched(watches[0]);
       await recreate(sub);
       fs.writeFileSync(a, 'restored');

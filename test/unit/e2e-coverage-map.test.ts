@@ -1,7 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { Session } from 'node:inspector/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import vm from 'node:vm';
 import * as esbuild from 'esbuild';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -16,7 +17,9 @@ import {
 } from '../e2e/ci-coverage-map.mjs';
 import { executedRanges } from '../e2e/coverage-capture.mjs';
 
-const dir = mkdtempSync(join(tmpdir(), 'cov-map-'));
+// esbuild resolves the entry through any alias (macOS /var -> /private/var) but not the outfile, so
+// an aliased dir maps every source outside the project.
+const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'cov-map-')));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 /**
@@ -81,7 +84,7 @@ beforeAll(async () => {
   session.connect();
   await session.post('Profiler.enable');
   await session.post('Profiler.startPreciseCoverage', { callCount: true, detailed: false });
-  vm.runInThisContext(js, { filename: 'file:///fixture/out/webview.js' });
+  vm.runInThisContext(js, { filename: pathToFileURL(join(dir, 'out', 'webview.js')).href });
   await (globalThis as unknown as { e2eCovFixture: () => Promise<number> }).e2eCovFixture();
   const { result } = await session.post('Profiler.takePreciseCoverage');
   await session.post('Profiler.stopPreciseCoverage');

@@ -187,6 +187,20 @@ runScenario('review-tab-state', async ({ page, log }) => {
   // ── 2. Scroll a meaningful distance ─────────────────────────────────────────────────────
   const target = await page.$eval('.review__scroll', (el) => Math.round(el.scrollHeight * 0.4));
   await scrollTo(page, target);
+  // The virtual list mounts the cards for a new offset a frame or more later; on a loaded runner
+  // that outlasts the fixed settle above, and the snapshot would see no card at the top.
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector('.review__scroll');
+      if (!el) return false;
+      const y = el.getBoundingClientRect().top;
+      return Array.from(document.querySelectorAll('.review .rcard')).some(
+        (n) => n.getBoundingClientRect().bottom > y,
+      );
+    },
+    null,
+    { timeout: 10000 },
+  );
   const before = await chrome(page);
   log('chrome BEFORE', JSON.stringify(before));
   assert(before.scrollTop > 200, `expected a meaningful scroll offset, got ${before.scrollTop}`);

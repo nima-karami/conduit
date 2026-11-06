@@ -20,6 +20,7 @@ export function createTyping(
   });
   return {
     submit: writer.submit,
+    submitEnter: writer.submitEnter,
     forget: writer.forget,
     write: (sessionId, data, options) => write(sessionId, data, options?.generation),
   };

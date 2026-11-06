@@ -1,16 +1,34 @@
-import { describe, expect, it, vi } from 'vitest';
-import {
-  ariaKeyShortcut,
-  comboFromEvent,
-  comboLabel,
-  effectiveCombo,
-  formatCombo,
-  type KeyEvt,
-  matchCombo,
-  SHORTCUT_ACTIONS,
-} from '../../webview/shortcuts';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { KeyEvt } from '../../webview/shortcuts';
 
-// In the node test env navigator is undefined, so Mod === ctrlKey.
+type Shortcuts = typeof import('../../webview/shortcuts');
+let ariaKeyShortcut: Shortcuts['ariaKeyShortcut'];
+let comboFromEvent: Shortcuts['comboFromEvent'];
+let comboLabel: Shortcuts['comboLabel'];
+let effectiveCombo: Shortcuts['effectiveCombo'];
+let formatCombo: Shortcuts['formatCombo'];
+let matchCombo: Shortcuts['matchCombo'];
+let SHORTCUT_ACTIONS: Shortcuts['SHORTCUT_ACTIONS'];
+
+beforeAll(async () => {
+  vi.resetModules();
+  vi.stubGlobal('navigator', { platform: 'Win32' });
+  ({
+    ariaKeyShortcut,
+    comboFromEvent,
+    comboLabel,
+    effectiveCombo,
+    formatCombo,
+    matchCombo,
+    SHORTCUT_ACTIONS,
+  } = await import('../../webview/shortcuts'));
+});
+
+afterAll(() => {
+  vi.unstubAllGlobals();
+  vi.resetModules();
+});
+
 const ev = (o: KeyEvt): KeyEvt => o;
 
 describe('shortcuts', () => {

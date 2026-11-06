@@ -42,7 +42,11 @@ async function harness(settings: Record<string, unknown> = {}, tokenBlob?: strin
   await fake.listen();
   const events: string[] = [];
   const names = {
-    ...instanceNames(userData, process.platform === 'win32' ? 'win32' : 'posix', os.tmpdir()),
+    ...instanceNames(userData, process.platform === 'win32' ? 'win32' : 'posix', os.tmpdir(), {
+      home: '/home/conduit-test',
+      uid: 1000,
+      runtimeDir: '',
+    }),
     mcpEndpoint: testEndpoint(),
   };
   const build = () =>

@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { isInsideAnyRoot, realPathLeaf } from './path-guard';
+import { isInsideAnyRealRoot, isInsideAnyRoot } from './path-guard';
 
 /**
  * Import (copy) files/folders from OUTSIDE the workspace into a folder inside it —
@@ -56,7 +56,7 @@ export async function fsImport(
   if (roots.length === 0) return { ok: false, error: 'No open workspace to import into.' };
 
   const absTarget = path.resolve(targetDir);
-  if (!isInsideAnyRoot(absTarget, roots) || !isInsideAnyRoot(realPathLeaf(absTarget), roots)) {
+  if (!isInsideAnyRoot(absTarget, roots) || !isInsideAnyRealRoot(absTarget, roots)) {
     return { ok: false, error: `Refusing to import outside the workspace: ${targetDir}` };
   }
 

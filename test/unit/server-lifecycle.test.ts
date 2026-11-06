@@ -49,6 +49,7 @@ async function harness(
     hcExe?: string;
     trayExe?: string;
     app?: AppLaunch;
+    hcEndpointError?: string;
   } = {},
 ) {
   const fake = new FakeHc();
@@ -135,6 +136,7 @@ async function harness(
     runtimeRoot: '/u/runtime',
     hcConfigHome: '/u/hc/config',
     hcStateHome: '/u/hc/state',
+    ...(o.hcEndpointError ? { hcEndpointError: o.hcEndpointError } : {}),
   };
   const clock = { now: 1_000_000 };
   const spawned: number[] = [];
@@ -142,6 +144,7 @@ async function harness(
   let clients = 0;
   let settled = 0;
   const states: ServerLifecycleState[] = [];
+  const logs: unknown[] = [];
   const lifecycle = createServerLifecycle({
     names,
     layout: {
@@ -182,7 +185,9 @@ async function harness(
       detachedArgs.push(args);
     },
     now: () => clock.now,
-    log: () => {},
+    log: (_level, message, data) => {
+      logs.push({ message, data });
+    },
   });
   lifecycle.onState((s) => states.push(s));
   const router = createServerEventRouter({
@@ -221,6 +226,7 @@ async function harness(
     spawned,
     detachedArgs,
     states,
+    logs,
     clients: () => clients,
     settled: () => settled,
     addSupervisor,
@@ -289,6 +295,20 @@ describe('createServerLifecycle start rule', () => {
     },
   );
 
+  it('publishes endpoint configuration failure without starting a supervisor or opening C2', async () => {
+    const h = await harness({ hcEndpointError: 'hc holder cannot fit within 103 bytes' });
+    open = h;
+    await h.lifecycle.start();
+    expect(h.lifecycle.current()).toMatchObject({
+      state: 'unavailable',
+      reason: 'start-failed',
+      detail: 'hc holder cannot fit within 103 bytes',
+    });
+    expect(h.runs()).toBe(0);
+    expect(h.clients()).toBe(0);
+    expect(h.spawned).toEqual([]);
+    expect(JSON.stringify(h.logs)).toContain('hc holder cannot fit within 103 bytes');
+  });
   it('passes the selected hc executable to normal and detached supervisor argv', async () => {
     const selected = '/private runtime/hc/selected-hc';
     const h = await harness({ hcExe: selected });
