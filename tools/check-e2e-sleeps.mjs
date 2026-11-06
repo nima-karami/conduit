@@ -1,44 +1,46 @@
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const NEEDLE = 'waitForTimeout(';
 const BASELINE = join('test', 'e2e', 'sleep-baseline.json');
 const E2E_DIR = join('test', 'e2e');
 
-/** @param {string} source */
-export function countSleeps(source) {
+/** @param {string} rel */
+export function toPosixRel(rel) {
+  return rel.split(/[/\\]/).join('/');
+}
+
+/**
+ * @param {string} source
+ * @param {number} start
+ * @param {number} end
+ */
+function countSleepsIn(source, start, end) {
   let count = 0;
-  let i = 0;
-  const n = source.length;
-  while (i < n) {
+  let i = start;
+  while (i < end) {
     const c = source[i];
     const next = source[i + 1];
     if (c === '/' && next === '/') {
       i += 2;
-      while (i < n && source[i] !== '\n') i++;
+      while (i < end && source[i] !== '\n') i++;
       continue;
     }
     if (c === '/' && next === '*') {
       i += 2;
-      while (i < n - 1 && !(source[i] === '*' && source[i + 1] === '/')) i++;
+      while (i < end - 1 && !(source[i] === '*' && source[i + 1] === '/')) i++;
       i += 2;
       continue;
     }
-    if (c === '"' || c === "'" || c === '`') {
-      const q = c;
-      i++;
-      while (i < n) {
-        if (source[i] === '\\') {
-          i += 2;
-          continue;
-        }
-        if (source[i] === q) {
-          i++;
-          break;
-        }
-        i++;
-      }
+    if (c === '"' || c === "'") {
+      i = skipQuotedString(source, i, end, c);
+      continue;
+    }
+    if (c === '`') {
+      const scanned = scanTemplateLiteral(source, i, end);
+      count += scanned.count;
+      i = scanned.i;
       continue;
     }
     if (source.startsWith(NEEDLE, i)) {
@@ -49,6 +51,99 @@ export function countSleeps(source) {
     i++;
   }
   return count;
+}
+
+/**
+ * @param {string} source
+ * @param {number} i
+ * @param {number} end
+ * @param {string} quote
+ */
+function skipQuotedString(source, i, end, quote) {
+  i++;
+  while (i < end) {
+    if (source[i] === '\\') {
+      i += 2;
+      continue;
+    }
+    if (source[i] === quote) {
+      return i + 1;
+    }
+    i++;
+  }
+  return i;
+}
+
+/**
+ * @param {string} source
+ * @param {number} i
+ * @param {number} end
+ */
+function scanTemplateLiteral(source, i, end) {
+  let count = 0;
+  i++;
+  while (i < end) {
+    if (source[i] === '\\') {
+      i += 2;
+      continue;
+    }
+    if (source[i] === '$' && source[i + 1] === '{') {
+      i += 2;
+      const inner = scanTemplateInterpolation(source, i, end);
+      count += inner.count;
+      i = inner.i;
+      continue;
+    }
+    if (source[i] === '`') {
+      return { count, i: i + 1 };
+    }
+    i++;
+  }
+  return { count, i };
+}
+
+/**
+ * @param {string} source
+ * @param {number} i index after "${"
+ * @param {number} end
+ */
+function scanTemplateInterpolation(source, i, end) {
+  let depth = 1;
+  let j = i;
+  while (j < end && depth > 0) {
+    const c = source[j];
+    const next = source[j + 1];
+    if (c === '/' && next === '/') {
+      j += 2;
+      while (j < end && source[j] !== '\n') j++;
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      j += 2;
+      while (j < end - 1 && !(source[j] === '*' && source[j + 1] === '/')) j++;
+      j += 2;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      j = skipQuotedString(source, j, end, c);
+      continue;
+    }
+    if (c === '`') {
+      const scanned = scanTemplateLiteral(source, j, end);
+      j = scanned.i;
+      continue;
+    }
+    if (c === '{') depth++;
+    else if (c === '}') depth--;
+    j++;
+  }
+  const closeIndex = j - 1;
+  return { count: countSleepsIn(source, i, closeIndex), i: j };
+}
+
+/** @param {string} source */
+export function countSleeps(source) {
+  return countSleepsIn(source, 0, source.length);
 }
 
 /**
@@ -68,9 +163,9 @@ export function compareToBaseline(counts, baseline) {
   return { ok: over.length === 0 && under.length === 0, over, under };
 }
 
-/** @param {string} root */
+/** @param {string} root @param {string} absPath */
 function posixRel(root, absPath) {
-  return relative(root, absPath).split(sep).join('/');
+  return toPosixRel(relative(root, absPath));
 }
 
 /** @param {string} dir @param {string} projectRoot */
@@ -100,41 +195,63 @@ export function currentSleepCounts(projectRoot = process.cwd()) {
   return sorted;
 }
 
-/** @param {string} projectRoot */
-function loadBaseline(projectRoot) {
-  const path = join(projectRoot, BASELINE);
-  return /** @type {Record<string, number>} */ (JSON.parse(readFileSync(path, 'utf8')));
+/** @param {Record<string, number>} raw */
+function normalizeCountKeys(raw) {
+  /** @type {Record<string, number>} */
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) {
+    out[toPosixRel(k)] = v;
+  }
+  return out;
 }
 
-/** @param {string} projectRoot @param {Record<string, number>} data */
-function writeBaseline(projectRoot, data) {
-  const path = join(projectRoot, BASELINE);
-  writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+/** @param {string} baselinePath @param {Record<string, number>} data */
+function writeBaselineFile(baselinePath, data) {
+  writeFileSync(baselinePath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+}
+
+/**
+ * @param {{
+ *   root: string;
+ *   baselinePath: string;
+ *   update?: boolean;
+ *   log?: (message: string) => void;
+ * }} opts
+ */
+export function run({ root, baselinePath, update = false, log = (msg) => console.error(msg) }) {
+  const counts = currentSleepCounts(root);
+
+  if (update) {
+    writeBaselineFile(baselinePath, counts);
+    return { exitCode: 0 };
+  }
+
+  const baseline = normalizeCountKeys(
+    /** @type {Record<string, number>} */ (JSON.parse(readFileSync(baselinePath, 'utf8'))),
+  );
+  const { ok, over, under } = compareToBaseline(counts, baseline);
+  for (const { file, count, allowed } of over) {
+    log(
+      `${file}: ${count} fixed sleeps, baseline ${allowed} — wait on a real condition instead (CON-134)`,
+    );
+  }
+  for (const { file, count, allowed } of under) {
+    log(
+      `${file}: ${count} fixed sleeps, baseline ${allowed} — lower the baseline: npm run check:e2e-sleeps -- --update`,
+    );
+  }
+  return { exitCode: ok ? 0 : 1 };
 }
 
 function main() {
   const projectRoot = process.cwd();
   const update = process.argv.includes('--update');
-  const counts = currentSleepCounts(projectRoot);
-
-  if (update) {
-    writeBaseline(projectRoot, counts);
-    process.exit(0);
-  }
-
-  const baseline = loadBaseline(projectRoot);
-  const { ok, over, under } = compareToBaseline(counts, baseline);
-  for (const { file, count, allowed } of over) {
-    console.error(
-      `${file}: ${count} fixed sleeps, baseline ${allowed} — wait on a real condition instead (CON-134)`,
-    );
-  }
-  for (const { file, count, allowed } of under) {
-    console.error(
-      `${file}: ${count} fixed sleeps, baseline ${allowed} — lower the baseline: npm run check:e2e-sleeps -- --update`,
-    );
-  }
-  process.exit(ok ? 0 : 1);
+  const { exitCode } = run({
+    root: projectRoot,
+    baselinePath: join(projectRoot, BASELINE),
+    update,
+  });
+  process.exit(exitCode);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
