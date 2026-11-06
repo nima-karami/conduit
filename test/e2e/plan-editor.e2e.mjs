@@ -69,7 +69,7 @@ let launched = null;
 let code = 0;
 try {
   launched = await launchApp();
-  const { page } = launched;
+  const { page, app } = launched;
 
   await page.addInitScript(() => {
     window.__conduitPasteSpy = [];
@@ -79,9 +79,24 @@ try {
   await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
   await tapBridge(page);
 
+  /** requestProject reconciles plan watches; a main round-trip means that IPC has run. */
+  const armPlanWatch = async (sessionId, projectRoot) => {
+    await page.evaluate(
+      ({ id, p }) =>
+        window.agentDeck.post({ type: 'requestProject', auto: true, path: p, sessionId: id }),
+      { id: sessionId, p: projectRoot.replace(/\\/g, '/') },
+    );
+    await app.evaluate(() => 1);
+  };
+
+  /** Bounded window for a negative: write-through must stay paused while the conflict stands. */
+  const observeNothingFor = async (ms, check) => {
+    await page.waitForTimeout(ms);
+    return check();
+  };
+
   const sessionA = await openSession(page, { path: root });
-  // Let sendProject arm the plan watch on this root before anything lands in the directory.
-  await page.waitForTimeout(1500);
+  await armPlanWatch(sessionA, root);
 
   copyFileSync(FIXTURE, join(plans, 'identity.md'));
   log('wrote identity.md into .conduit/plans (external, no refocus)');
@@ -116,12 +131,16 @@ try {
   const fenceOf = (text, lang) =>
     new RegExp(`\`\`\`${lang}\\n[\\s\\S]*?\\n\`\`\``).exec(text)?.[0] ?? null;
 
-  const untilFile = async (holds, budgetMs) => {
+  const untilFile = async (holds, budgetMs, read = readPlan) => {
     const started = Date.now();
     for (;;) {
-      if (holds(readPlan())) return Date.now() - started;
+      try {
+        if (holds(read())) return Date.now() - started;
+      } catch {
+        // File not back yet (recreate).
+      }
       if (Date.now() - started >= budgetMs) return null;
-      await page.waitForTimeout(50);
+      await new Promise((r) => setTimeout(r, 50));
     }
   };
   const visible = (locator, timeout) =>
@@ -166,7 +185,11 @@ try {
   await page.evaluate(() => {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   });
-  await page.waitForTimeout(800);
+  await page.waitForFunction(() => {
+    const ed = document.querySelector('.plan__editor');
+    const a = document.activeElement;
+    return !ed || !a || !ed.contains(a);
+  });
 
   const beforeReload = readPlan();
   const reloaded = beforeReload.replace(
@@ -196,7 +219,9 @@ try {
   // (c) An agent rewrite inside the 300 ms write debounce is a conflict, never a merge.
   await prose.locator('p').first().click();
   await page.keyboard.type(' PENDING-EDIT');
-  await page.waitForTimeout(120);
+  await page
+    .locator('.plan__save', { hasText: 'Saving…' })
+    .waitFor({ state: 'visible', timeout: 2000 });
 
   const beforeConflict = readPlan();
   const theirs = beforeConflict.replace(
@@ -213,7 +238,10 @@ try {
   );
 
   // Well past the debounce: the pending edit must still not be on disk.
-  await page.waitForTimeout(1200);
+  assert(
+    await observeNothingFor(1200, () => !readPlan().includes('PENDING-EDIT')),
+    'write-through must stay paused until the human chooses',
+  );
   const held = readPlan();
   assert(
     held.includes('AGENT-EDIT-2'),
@@ -227,7 +255,11 @@ try {
     await visible(editor.locator('text=AGENT-EDIT-2').first(), 5000),
     'Load theirs must render the agent’s version',
   );
-  await page.waitForTimeout(600);
+  const loadTheirsMs = await untilFile(
+    (t) => t.includes('AGENT-EDIT-2') && !t.includes('PENDING-EDIT'),
+    5000,
+  );
+  assert(loadTheirsMs !== null, 'Load theirs must leave the agent’s bytes on disk');
   const settled = readPlan();
   assert(
     settled.includes('AGENT-EDIT-2') && !settled.includes('PENDING-EDIT'),
@@ -241,7 +273,9 @@ try {
   // it does.
   await prose.locator('p').first().click();
   await page.keyboard.type(' KEPT-EDIT');
-  await page.waitForTimeout(120);
+  await page
+    .locator('.plan__save', { hasText: 'Saving…' })
+    .waitFor({ state: 'visible', timeout: 2000 });
 
   const beforeKeep = readPlan();
   const theirsAgain = beforeKeep.replace(
@@ -261,10 +295,9 @@ try {
   );
 
   await banner.locator('button', { hasText: 'Keep mine' }).click();
-  const kept = await untilFile((t) => t.includes('KEPT-EDIT'), 5000);
+  const kept = await untilFile((t) => t.includes('KEPT-EDIT') && !t.includes('AGENT-EDIT-3'), 5000);
   assert(kept !== null, 'Keep mine must write the human’s typed text to disk');
 
-  await page.waitForTimeout(600);
   const mine = readPlan();
   assert(
     !mine.includes('AGENT-EDIT-3'),
@@ -301,18 +334,7 @@ try {
   // write takes that path — an agent's write is an external one, which always recovered the pane,
   // so nothing short of clicking this button in the real app can see it.
   await recreate.click();
-  const remade = await (async () => {
-    const started = Date.now();
-    for (;;) {
-      try {
-        if (readPlan().includes('# identity')) return Date.now() - started;
-      } catch {
-        // Not back yet.
-      }
-      if (Date.now() - started >= 5000) return null;
-      await page.waitForTimeout(50);
-    }
-  })();
+  const remade = await untilFile((t) => t.includes('# identity'), 5000);
   assert(remade !== null, 'Recreate empty must write the plan file back');
   assert(
     await visible(editor, 8000),
@@ -334,7 +356,7 @@ try {
   // (e) A plan in a project that is NOT on screen binds to the session that owns it.
   const sessionB = await openSession(page, { path: otherRoot });
   assert(sessionB !== sessionA, 'the second project must open its own session');
-  await page.waitForTimeout(1500);
+  await armPlanWatch(sessionB, otherRoot);
 
   writeFileSync(join(plans, `${SECOND_SLUG}.md`), SECOND_MD, 'utf8');
   const secondToast = page
@@ -366,14 +388,12 @@ try {
   await secondEditor.locator('[contenteditable="true"] p').first().click();
   await page.keyboard.type(' OWNER-EDIT');
   const secondFile = join(plans, `${SECOND_SLUG}.md`);
-  const wroteSecond = await (async () => {
-    const started = Date.now();
-    for (;;) {
-      if (readFileSync(secondFile, 'utf8').includes('OWNER-EDIT')) return true;
-      if (Date.now() - started >= 4000) return false;
-      await page.waitForTimeout(50);
-    }
-  })();
+  const wroteSecond =
+    (await untilFile(
+      (t) => t.includes('OWNER-EDIT'),
+      4000,
+      () => readFileSync(secondFile, 'utf8'),
+    )) !== null;
   assert(wroteSecond, 'the edit must reach the plan file of the project that owns it');
 
   await page.waitForFunction(

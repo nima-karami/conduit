@@ -91,17 +91,32 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
   await page.waitForFunction((dir) => (window.__cap || '').includes('>'), parent, {
     timeout: 30000,
   });
-  await page.waitForTimeout(500);
   /** Until the PTY output stops growing: a repaint landing mid-hover moves the rows. */
   const waitQuiet = async () => {
-    let last = -1;
-    for (let i = 0; i < 40; i++) {
-      const len = await page.evaluate(() => (window.__cap || '').length);
-      if (len === last) return;
-      last = len;
-      await page.waitForTimeout(500);
-    }
+    await page.evaluate(() => {
+      window.__capQuietAt = (window.__cap || '').length;
+      window.__capQuietT = Date.now();
+    });
+    await page.waitForFunction(
+      () => {
+        const len = (window.__cap || '').length;
+        if (len !== window.__capQuietAt) {
+          window.__capQuietAt = len;
+          window.__capQuietT = Date.now();
+          return false;
+        }
+        return Date.now() - window.__capQuietT >= 500;
+      },
+      null,
+      { timeout: 20000 },
+    );
   };
+  /** Bounded window for a negative: a non-link click must open neither picker nor tab. */
+  const observeNothingFor = async (ms, check) => {
+    await page.waitForTimeout(ms);
+    return check();
+  };
+  await waitQuiet();
   // Printed by the shell, not written into the xterm: ConPTY repaints its screen when the
   // terminal is re-shown, and bytes it never produced would vanish from under the click.
   await typeLine(page, sid, 'chcp 65001 >nul');
@@ -177,8 +192,16 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
       // pointer may still rest where an earlier, since-repainted link was.
       await page.mouse.move(c.resetX, c.resetY);
       await page.mouse.move(c.x, c.y);
-      await page.waitForTimeout(150);
-      if (!onLink || (await hovering())) break;
+      if (!onLink) break;
+      const shown = await page
+        .waitForFunction(
+          (id) => !!window.__terms[id].element.querySelector('.xterm-cursor-pointer'),
+          sid,
+          { timeout: 500 },
+        )
+        .then(() => true)
+        .catch(() => false);
+      if (shown) break;
     }
     if (onLink) assert(await hovering(), `"${needle}" never showed the link pointer`);
     await page.mouse.click(c.x, c.y, { button });
@@ -322,10 +345,13 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
   );
   const tabsBefore = (await tabInfo(page)).length;
   await clickAt(LINE_TOOL, LINE_TOOL.indexOf('U'), { onLink: false });
-  await page.waitForTimeout(800);
-  const pickerOnU = await page.locator('.pathpick').count();
   assert(
-    pickerOnU === 0 && (await tabInfo(page)).length === tabsBefore,
+    await observeNothingFor(
+      800,
+      async () =>
+        (await page.locator('.pathpick').count()) === 0 &&
+        (await tabInfo(page)).length === tabsBefore,
+    ),
     'a click on "Update(" must open nothing',
   );
   log('step 5: tool header links only its path ✓');
@@ -370,7 +396,6 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
     /no longer exists/.test(toastText ?? ''),
     `expected a "no longer exists" toast, got "${toastText}"`,
   );
-  await page.waitForTimeout(500);
   assert((await tabInfo(page)).length === tabs7, 'a stale pick must open no tab');
   log('step 7: stale pick toasts and opens nothing ✓');
 
@@ -416,7 +441,7 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
       { id: sid, before: colsBefore },
       { timeout: 8000 },
     );
-    await page.waitForTimeout(500);
+    await waitQuiet();
   }
   await typeLine(page, sid, 'cls');
   // Blank lines first and right-aligned, so the link lands in the bottom-right corner and the
@@ -467,11 +492,15 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
   /** Chromium sends a row that lands under a stationary pointer a pointermove at the same point,
    *  but on its own schedule; sending it here makes the hover state deterministic without moving
    *  at all, so an ungated pointermove handler fails this step (the unit test models the same). */
-  const settleRestingPointer = async () => {
-    await page.mouse.move(c8.x, c8.y);
-    await page.waitForTimeout(600);
+  const settleRestingPointer = async (rowSel, at = c8) => {
+    await page.mouse.move(at.x, at.y);
+    await page.waitForFunction(
+      ({ x, y, rowSel: sel }) => !!document.elementFromPoint(x, y)?.closest(sel)?.matches(':hover'),
+      { x: at.x, y: at.y, rowSel },
+      { timeout: 5000 },
+    );
   };
-  await settleRestingPointer();
+  await settleRestingPointer('.ctxmenu__item');
   const menu8 = await restingOn('.ctxmenu[role="menu"]', '.ctxmenu__item');
   log('step 8 menu: pointer rests on item', menu8.underIdx, 'active', menu8.activeIdx);
   assert(
@@ -534,8 +563,7 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
     null,
     { timeout: 5000 },
   );
-  await page.mouse.move(pickAt.x, pickAt.y);
-  await page.waitForTimeout(600);
+  await settleRestingPointer('[role="option"]', pickAt);
   const pick8 = await restingOn('.pathpick', '[role="option"]', pickAt);
   log('step 8 picker: pointer rests on row', pick8.underIdx, 'active', pick8.activeIdx);
   assert(
@@ -580,11 +608,13 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
   await page.keyboard.press('Enter');
   await page.waitForSelector('.pathpick', { state: 'detached', timeout: 5000 });
   // The terminal tab was active; the pick makes repoB's index.ts the active tab.
-  let active9 = null;
-  for (let i = 0; i < 60 && active9?.title !== 'index.ts'; i++) {
-    await page.waitForTimeout(250);
-    active9 = (await tabInfo(page)).find((t) => t.active) ?? null;
-  }
+  await page.waitForFunction(
+    () =>
+      document.querySelector('.tabbar [role="tab"].tab--active span')?.textContent === 'index.ts',
+    null,
+    { timeout: 15000 },
+  );
+  const active9 = (await tabInfo(page)).find((t) => t.active) ?? null;
   assert(
     active9?.title === 'index.ts',
     `index.ts should be the active tab, got ${JSON.stringify(active9)}`,
