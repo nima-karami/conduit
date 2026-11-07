@@ -250,6 +250,8 @@ export function harness(opts: HarnessOptions = {}) {
         return 'submitted';
       },
       submitEnter: async (): Promise<SubmitOutcome> => 'submitted',
+      sequence: async (_id, write): Promise<SubmitOutcome> =>
+        write() ? 'submitted' : 'write-failed',
       write: (sessionId, data, o) => {
         written.push({
           sessionId,

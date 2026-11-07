@@ -218,6 +218,38 @@ const REPO = {
 // $ref/const, so combinations like "exactly one of paths or all" are checked host-side.
 const APP_CONTROL_SCHEMAS: readonly ToolSchema[] = [
   {
+    name: 'read_screen',
+    description:
+      "Read a helper session's visible terminal screen. The opener sees its helpers' raw screens, unredacted.",
+    inputSchema: {
+      ...OBJECT,
+      properties: {
+        session: SESSION,
+        lines: { type: 'integer', minimum: 1, maximum: 200, default: 60 },
+      },
+      required: ['session'],
+    },
+  },
+  {
+    name: 'send_input',
+    description:
+      "Type into a helper session. This asks the human by default and is for unsticking helpers that don't speak MCP.",
+    inputSchema: {
+      ...OBJECT,
+      properties: {
+        session: SESSION,
+        text: { type: 'string', maxLength: 4000 },
+        keys: {
+          type: 'array',
+          items: { type: 'string', enum: ['enter', 'tab', 'esc', 'backspace', 'space', 'ctrl+c'] },
+          maxItems: 20,
+        },
+        submit: { type: 'boolean', default: false },
+      },
+      required: ['session'],
+    },
+  },
+  {
     name: 'close_session',
     description:
       'Close a Conduit session from list_sessions (handle or id), including your own. Refuses with unsaved_changes when it has unsaved files; nothing is closed then. Pass sessions (1–30 handles or ids) to close several, each reported on its own; children: true closes every session you opened.',

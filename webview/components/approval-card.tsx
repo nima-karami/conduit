@@ -30,6 +30,10 @@ function summaryText(s: AskSummary): string {
       return STR.summary.close_session(s);
     case 'focus_session':
       return STR.summary.focus_session(s);
+    case 'read_screen':
+      return STR.summary.read_screen(s);
+    case 'send_input':
+      return STR.summary.send_input(s);
     case 'attach_folder':
       return STR.summary.attach_folder(s);
     case 'close_files':
@@ -205,6 +209,17 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
         </div>
       </div>
       <div className="askcard__summary">{summaryText(ask.summary)}</div>
+      {ask.summary.tool === 'send_input' && (
+        <div className="askcard__input">
+          <pre className="askcard__inputtext">{STR.inputText(ask.summary)}</pre>
+          {ask.summary.keys.length > 0 && (
+            <div className="askcard__inputkeys">
+              Keys: {STR.inputKeys(ask.summary)}
+              {ask.summary.keys.includes('ctrl+c') && ` — ${STR.ctrlCWarning.toLowerCase()}`}
+            </div>
+          )}
+        </div>
+      )}
       <div className="askcard__reason">{reasonText(ask)}</div>
       <div className="askcard__raw">
         <button

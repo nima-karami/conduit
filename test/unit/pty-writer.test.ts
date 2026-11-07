@@ -205,6 +205,46 @@ describe('createPtyWriter', () => {
     expect(writes(h.log, 'a')).toEqual(['y', '\r']);
   });
 
+  it('serializes input writes and waits the submit gap before Enter', async () => {
+    const h = harness();
+    const sequence = Reflect.get(h.writer, 'sequence');
+    expect(typeof sequence).toBe('function');
+    const p = sequence(
+      'a',
+      () => {
+        h.log.push(['a', 'text']);
+        return true;
+      },
+      { submit: true },
+    );
+    await h.flush();
+    expect(writes(h.log, 'a')).toEqual(['text']);
+    expect(h.gaps.map((g) => g.ms)).toEqual([120]);
+    await h.releaseGap();
+    expect(await p).toBe('submitted');
+    expect(writes(h.log, 'a')).toEqual(['text', '\r']);
+  });
+  it('keeps a queued sequence outside another submit and drops a stale Enter', async () => {
+    const h = harness();
+    const first = h.writer.submit('a', 'first');
+    const second = h.writer.sequence(
+      'a',
+      () => {
+        h.log.push(['a', 'second']);
+        return true;
+      },
+      { submit: true },
+    );
+    await h.flush();
+    expect(writes(h.log, 'a')).toEqual(['first']);
+    await h.releaseGap();
+    expect(await first).toBe('submitted');
+    expect(writes(h.log, 'a')).toEqual(['first', '\r', 'second']);
+    h.gens.set('a', 2);
+    await h.releaseGap();
+    expect(await second).toBe('generation-changed');
+    expect(writes(h.log, 'a')).toEqual(['first', '\r', 'second']);
+  });
   it('submitEnter sends only the submit key', async () => {
     const h = harness();
     expect(await h.writer.submitEnter('a')).toBe('submitted');

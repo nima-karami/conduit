@@ -112,6 +112,7 @@ function harness(opts: { manualTimers?: boolean } = {}) {
       allocateLaunch,
     } as McpHostDeps['sessions'],
     domain: {
+      bracketedPaste: () => false,
       homeOf: (id: string) => sessions.get(id)?.home,
       resolvePath: (h: string, rel: string) => (rel.startsWith('/') ? rel : `${h}/${rel}`),
       kindOf: async () => 'dir' as const,
@@ -167,6 +168,8 @@ function harness(opts: { manualTimers?: boolean } = {}) {
         return new Promise<'withheld'>(() => undefined);
       },
       submitEnter: async () => 'submitted' as const,
+      sequence: async (_id: string, write: () => boolean) =>
+        write() ? ('submitted' as const) : ('write-failed' as const),
       write: (id: string, data: string, opts?: { generation?: number }) => {
         log.push(`write ${id} ${JSON.stringify(data)} g${opts?.generation}`);
         return true;

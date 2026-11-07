@@ -59,6 +59,7 @@ import {
 } from './notice-gate';
 import { composeUnreadBanner } from './notice-text';
 import { type AttentionRaise, bannerCandidates, createNotifier, type Notifier } from './notifier';
+import { createScreenToolHandlers } from './screen-tools';
 import { type ScreenSnapshot, screenVerdict } from './screen-verdict';
 import { assignHandle, createSessionRegistry } from './session-registry';
 import {
@@ -981,6 +982,28 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   };
   const control = createControlHandlers(controlDeps);
   const app = createAppControlHandlers(controlDeps, control.prepared);
+  const screen = createScreenToolHandlers(
+    {
+      control: controlDeps,
+      snapshot: (id) => {
+        if (deps.runtime.get(id)?.state === 'live') deps.screens.ensure(id, { seedTail: true });
+        return deps.runtime.screen(id);
+      },
+      cols: (id) => deps.runtime.get(id)?.size.cols ?? null,
+      presence: presenceOf,
+      bracketedPaste: (id) => deps.domain.bracketedPaste(id),
+      generation: (id) => deps.runtime.get(id)?.generation,
+      details: (id) => {
+        const session = deps.sessions.get(id);
+        return session ? { label: session.name, home: session.home } : undefined;
+      },
+      typing: deps.typing,
+      noteInput: (id, data) => {
+        noteInput(id, data);
+      },
+    },
+    control.prepared,
+  );
 
   /** Session > CLI kind (the persisted handle's prefix) > global, per field (spec §3.1). */
   const resolveFor = (sessionId: string, tool: ToolName): ResolvedPolicy => {
@@ -1272,6 +1295,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         return app.prepareCloseSession(caller, args, ctx);
       case 'focus_session':
         return app.prepareFocusSession(caller, args, ctx);
+      case 'read_screen':
+        return screen.prepareReadScreen(caller, args, ctx);
+      case 'send_input':
+        return screen.prepareSendInput(caller, args, ctx);
       case 'attach_folder':
         return app.prepareAttachFolder(caller, args, ctx);
       case 'close_files':
@@ -1638,13 +1665,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       r.spawnedAt = now();
       r.hasDraft = false;
       r.lastInputAt = undefined;
-      // A CLI paints its UI before it initializes and never fully repaints (spec §2.4 D6).
-      if (r.tracker) screens.keepTail(sessionId);
       if (r.defAdapter && !r.unavailable) {
         // A retired PTY ends with no exit event, so the previous child's model would carry over.
         screens.release(sessionId);
         screens.ensure(sessionId, { seedTail: false });
-      }
+      } else screens.keepTail(sessionId);
     } else if (event.type === 'size') {
       if (r) r.size = event.size;
     } else if (event.type === 'exit') {

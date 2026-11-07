@@ -13,6 +13,8 @@ export const MESSAGING_TOOL_NAMES = [
 const SESSION_TOOL_NAMES = [
   'open_session',
   'open_terminal',
+  'read_screen',
+  'send_input',
   'close_session',
   'focus_session',
   'attach_folder',
@@ -134,6 +136,20 @@ export const TOOL_SPECS: Readonly<{
     access: ACCESS_VALUES,
     budget: 'act',
     defaults: { access: 'off', when: 'viewing', move: 'yes' },
+  },
+  read_screen: {
+    fields: ['access', 'when', 'reach'],
+    access: ACCESS_VALUES,
+    reach: REACH_TO_ANY,
+    budget: 'show',
+    defaults: { access: 'on', when: 'viewing', reach: 'opened' },
+  },
+  send_input: {
+    fields: ['access', 'when', 'reach'],
+    access: ACCESS_VALUES,
+    reach: REACH_TO_ANY,
+    budget: 'act',
+    defaults: { access: 'ask', when: 'viewing', reach: 'opened' },
   },
   open_file: VIEW_SPEC,
   close_session: {
