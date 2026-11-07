@@ -688,7 +688,11 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
         hint: 'call list_agents; a bare command must be an agent CLI on PATH',
       });
     const real = await deps.realPath(v.path);
-    if (real !== null && isRefusedLeaf(real))
+    if (real === null)
+      return fail('invalid_args', `couldn't resolve where ${agent} points`, {
+        hint: `couldn't resolve where ${agent} points`,
+      });
+    if (isRefusedLeaf(real))
       return fail('invalid_args', `"${agent}" runs ${real}, a shell or tool`, {
         hint: 'use open_terminal to run shells and tools',
       });

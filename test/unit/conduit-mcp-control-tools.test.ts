@@ -1201,6 +1201,14 @@ describe('open_session bare commands: the ask and the path checks (flexible-agen
     expect(h.opens).toEqual([]);
   });
 
+  it('a PATH hit with an unresolved real path is refused, and nothing opens', async () => {
+    const h = harness({ agentIds: () => ['claude'], realPath: async () => null });
+    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ agent: 'kiro' }));
+    expect(r).toMatchObject({ ok: false, error: { code: 'invalid_args' } });
+    expect(!r.ok && r.error.hint).toContain("couldn't resolve where kiro points");
+    expect(h.opens).toEqual([]);
+  });
+
   it('a PATH hit that is not a file is unknown_agent', async () => {
     const h = harness({
       agentIds: () => ['claude'],

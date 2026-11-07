@@ -3475,12 +3475,23 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
   });
 
   it('a bare command asks under an on policy, and the card names its path', async () => {
+    const realpath = vi.spyOn(fs.promises, 'realpath').mockImplementation(async (candidate) => {
+      if (candidate === '/usr/bin/kiro') return candidate;
+      throw new Error(`unexpected realpath in this fixture: ${candidate}`);
+    });
     const { h, c } = await asking({ kinds: { '/w': 'dir', '/usr/bin/kiro': 'file' } });
-    setPolicy(h, { open_session: { access: 'on' } });
-    c.call(1, 'open_session', { path: '/w', agent: 'kiro' });
-    expect(await replyOrAsk(h, c, 1)).toBe('asked');
-    expect(asksOf(h)[0]?.summary).toMatchObject({ tool: 'open_session', command: '/usr/bin/kiro' });
-    expect(h.opens).toEqual([]);
+    try {
+      setPolicy(h, { open_session: { access: 'on' } });
+      c.call(1, 'open_session', { path: '/w', agent: 'kiro' });
+      expect(await replyOrAsk(h, c, 1)).toBe('asked');
+      expect(asksOf(h)[0]?.summary).toMatchObject({
+        tool: 'open_session',
+        command: '/usr/bin/kiro',
+      });
+      expect(h.opens).toEqual([]);
+    } finally {
+      realpath.mockRestore();
+    }
   });
 
   it('a registered agent under an on policy opens without asking', async () => {

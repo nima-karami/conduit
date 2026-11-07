@@ -198,6 +198,7 @@ export const DEFAULT_TOOL_POLICY: Readonly<GlobalPolicy> = Object.freeze(default
 const NAMES: ReadonlySet<string> = new Set(TOOL_NAMES);
 const MESSAGING: ReadonlySet<ToolName> = new Set(MESSAGING_TOOL_NAMES);
 const SERVER_ACTIONS: ReadonlySet<ToolName> = new Set([
+  'list_agents',
   'open_session',
   'open_terminal',
   'close_session',

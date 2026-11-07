@@ -281,6 +281,14 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
     expect(
       gateToolCall({
         ...base,
+        tool: 'list_agents',
+        policy: { access: 'on' },
+        ownerReady: () => false,
+      }),
+    ).toBeNull();
+    expect(
+      gateToolCall({
+        ...base,
         tool: 'open_session',
         policy: { access: 'on', when: 'viewing' },
         ownerReady: () => false,
