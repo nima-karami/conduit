@@ -10,28 +10,18 @@ import {
   REPO,
   shutdownApp,
 } from './harness.mjs';
-import { injectStop, isAlive, waitForLine, waitForMessage, waitUntil } from './tray-helpers.mjs';
+import {
+  injectStop,
+  isAlive,
+  sessionTerminalGone,
+  waitForLine,
+  waitForMessage,
+  waitUntil,
+} from './tray-helpers.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[tray-helper] SKIP — suite is Windows-only');
   await finishScenario(0);
-}
-
-/** Stop-all kills the last session and the idle core stops with it: an `hc ls` that lands mid-stop
- * reports `unavailable`, which means no terminal can be live. Any other failure still throws. */
-function sessionTerminalGone(userDataDir, sessionId) {
-  const r = ownHc(userDataDir, ['ls', '--json', '--label', `conduit.session=${sessionId}`]);
-  if (r.status !== 0) {
-    let kind;
-    try {
-      kind = JSON.parse(r.out).error?.kind;
-    } catch {
-      kind = undefined;
-    }
-    if (kind === 'unavailable') return true;
-    throw new Error(`hc ls: exit ${r.status}: ${r.out.slice(0, 300)}`);
-  }
-  return !hcTerminalOf(userDataDir, sessionId);
 }
 
 let launched;

@@ -1,5 +1,6 @@
 import { appendFile, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import { hcTerminalOf, ownHc } from './harness.mjs';
 
 export const seamOut = (dir) => join(dir, 'tray-seam.jsonl');
 export const seamIn = (dir) => join(dir, 'tray-seam-in.jsonl');
@@ -65,6 +66,23 @@ export async function waitUntil(predicate, description, ms = 30000) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`Timed out waiting for ${description}`);
+}
+
+/** Stop-all kills the last session and the idle core stops with it: an `hc ls` that lands mid-stop
+ * reports `unavailable`, which means no terminal can be live. Any other failure still throws. */
+export function sessionTerminalGone(userDataDir, sessionId) {
+  const r = ownHc(userDataDir, ['ls', '--json', '--label', `conduit.session=${sessionId}`]);
+  if (r.status !== 0) {
+    let kind;
+    try {
+      kind = JSON.parse(r.out).error?.kind;
+    } catch {
+      kind = undefined;
+    }
+    if (kind === 'unavailable') return true;
+    throw new Error(`hc ls: exit ${r.status}: ${r.out.slice(0, 300)}`);
+  }
+  return !hcTerminalOf(userDataDir, sessionId);
 }
 
 export function isAlive(pid) {

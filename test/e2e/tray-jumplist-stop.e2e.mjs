@@ -10,7 +10,7 @@ import {
   REPO,
   shutdownApp,
 } from './harness.mjs';
-import { waitForMessage, waitUntil } from './tray-helpers.mjs';
+import { sessionTerminalGone, waitForMessage, waitUntil } from './tray-helpers.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[tray-jumplist-stop] SKIP — suite is Windows-only');
@@ -50,7 +50,7 @@ try {
   });
   assert(exit === 0, `headless stop exited ${exit}`);
   assert(windows === 0, `headless stop opened ${windows} windows`);
-  await waitUntil(() => !hcTerminalOf(userDataDir, sid), 'session terminal exit');
+  await waitUntil(() => sessionTerminalGone(userDataDir, sid), 'session terminal exit');
   console.log('[tray-jumplist-stop] PASS');
 } catch (error) {
   console.error('[tray-jumplist-stop] FAIL', error);
