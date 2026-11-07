@@ -368,6 +368,7 @@ describe('Part B catalog rows (app-control spec, tool-policy spec §3.2)', () =>
   it('groups', () => {
     const of = (g: string) => TOOL_GROUPS.find((x) => x.group === g)?.tools;
     expect(of('sessions')).toEqual([
+      'list_agents',
       'open_session',
       'open_terminal',
       'close_session',

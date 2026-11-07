@@ -1,3 +1,4 @@
+import type { AgentSource } from '../types';
 import {
   type AttachmentSender,
   type AttachmentSnapshot,
@@ -51,6 +52,23 @@ export interface DirectoryEntry {
   connectable: boolean;
   notices: 'typed' | 'pull';
 }
+/** One registry entry as list_agents reports it (flexible-agent-contracts §4.2). */
+export interface AgentListing {
+  id: string;
+  label: string;
+  command: string;
+  source: AgentSource;
+  model: boolean;
+  messaging: 'wired' | 'env' | 'none';
+  notices: boolean;
+  brief: boolean;
+}
+export interface ListAgentsOutput {
+  agents: AgentListing[];
+  /** A bare command on PATH can be opened by its name, besides the listed ids. */
+  bare_commands: true;
+}
+
 /** Internal to Conduit: the open path stores its first message to a session that cannot read yet. */
 export interface SendOptions {
   allowUnconnected?: boolean;

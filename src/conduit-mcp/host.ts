@@ -11,9 +11,12 @@ import { mcpLaunchWiring, mcpServerCommand } from '../mcp-launch';
 import type { HostToWebview, WebviewToHost } from '../protocol';
 import type { SubmitOutcome } from '../pty-writer';
 import { readCappedBytes } from '../read-capped';
+import { COMMAND_AGENT_ID } from '../session-command';
 import { PTY_SETTLE_MS } from '../timed-messages';
 import type { AgentDefinition, SpawnSpec } from '../types';
-import { adapterFor, MCP_ADAPTERS, type McpAdapter, notifiable } from './adapters';
+import { adapterFor, MCP_ADAPTERS, type McpAdapter, modelFlagOf, notifiable } from './adapters';
+import { agentListing } from './agent-listing';
+import { registeredIdFor } from './agent-resolve';
 import { createAppControlHandlers } from './app-control-tools';
 import { snapshotAttachment } from './attachments';
 import { type AttentionEvent, reduceAttention, youAttention } from './attention-items';
@@ -33,6 +36,7 @@ import {
 } from './control-tools';
 import { isCountedInput, nextDraftState, settleDraft, stripTerminalReplies } from './draft-input';
 import {
+  agentHandlePrefix,
   cliKindOfHandle,
   type HandleCounters,
   handlePrefixForCommand,
@@ -925,13 +929,31 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       return { sessionId };
     },
     agentIds: () => deps.domain.agentIds(),
-    // Every MCP-opened session gets a handle so its opener can address it (CON-149). A command with
-    // no adapter takes its program's prefix; a CLI that connects later keeps this handle.
-    claimHandle: (sessionId) => {
+    registeredIdOf: (name) => registeredIdFor(name, (id) => deps.domain.agentDef(id)?.id),
+    agents: () =>
+      deps.domain
+        .agentCatalog()
+        .map(({ def, source }) =>
+          agentListing(def, source, { messagingOn: deps.domain.messagingOn(), e2e: deps.e2e }),
+        ),
+    // Every MCP-opened session gets a handle so its opener can address it (CON-149). An adapter-less
+    // program takes its profile's or command's name (flexible-agent-contracts §4.1), or a terminal's
+    // program prefix; a CLI that connects later keeps this handle.
+    claimHandle: (sessionId, tool) => {
       const def = deps.domain.defOf(sessionId);
       if (!def) return null;
       const adapter = adapterFor(def, { e2e: deps.e2e });
-      return claimHandle(sessionId, adapter ? adapter.id : handlePrefixForCommand(def.command));
+      if (adapter) return claimHandle(sessionId, adapter.id);
+      if (tool === 'open_terminal')
+        return claimHandle(sessionId, handlePrefixForCommand(def.command));
+      return claimHandle(
+        sessionId,
+        agentHandlePrefix(
+          def.id === COMMAND_AGENT_ID
+            ? { kind: 'command', command: def.command }
+            : { kind: 'profile', id: def.id },
+        ),
+      );
     },
     now,
     info: (message, data) => deps.log.info('conduit-mcp', message, data),
@@ -972,10 +994,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       })),
     ownerWindowOf: (sessionId) => deps.ownerWindowOf(sessionId),
     windowReady: (windowId) => deps.windowReady(windowId),
-    adapterOf: (agentId) => {
+    modelFlagOf: (agentId) => {
       const def = deps.domain.agentDef(agentId);
-      return def === undefined ? undefined : adapterFor(def, { e2e: deps.e2e })?.id;
+      return def === undefined ? undefined : modelFlagOf(def);
     },
+    commandModelFlag: (command) => modelFlagOf({ id: COMMAND_AGENT_ID, command }),
     messageReady: () => deps.domain.messagingOn() && store.available(),
     sendMessage: (caller, args, opts) => tools.sendMessage(caller, args, opts),
   };
@@ -1262,6 +1285,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     ctx: ControlCallContext,
   ): Promise<Result<Prepared<unknown>>> => {
     switch (name) {
+      case 'list_agents':
+        return control.prepareListAgents(caller, args);
       case 'open_session':
         return control.prepareOpenSession(caller, args, ctx);
       case 'open_terminal':
@@ -1337,7 +1362,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         if (!sessionId) return [];
         const names = listedTools(sessionId);
         lastListed.set(conn.id, names.join(','));
-        return toolSchemas(deps.domain.agentIds()).filter((t) => names.some((n) => n === t.name));
+        return toolSchemas().filter((t) => names.some((n) => n === t.name));
       },
       call: (name, args, ctx) => callTool(current(), name, args, { ...ctx, connId: conn.id }),
       cancelled: (requestId) => {
@@ -1412,7 +1437,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
   /**
    * Tells each initialized connection whose tool set changed to re-list. The key is the names
-   * only: an agent-enum change alone is ignored, since open_session validates agents live (A6).
+   * only: open_session's agent is free text checked at open, so the agent set never changes the list.
    */
   const syncToolLists = () => {
     for (const s of deps.sessions.list()) {

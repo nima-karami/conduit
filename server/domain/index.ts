@@ -8,7 +8,7 @@ import { scopeFromSpawnArgs } from '../../src/agent-scope';
 import { AgentScopeTracker } from '../../src/agent-scope-tracker';
 import { atomicWriteFile, atomicWriteFileSync } from '../../src/atomic-write';
 import type { McpOpenRequest } from '../../src/conduit-mcp/control-tools';
-import { loadAgentsConfig, readBlob, readFileState } from '../../src/config';
+import { type AgentsConfig, loadAgentsConfig, readBlob, readFileState } from '../../src/config';
 import type {
   AttentionStatusRead,
   DomainOpenOutcome,
@@ -57,6 +57,7 @@ import { lastNonEmptyLine } from '../../src/last-line';
 import { previewLaunch } from '../../src/launch-preview';
 import { buildLaunchSpec, sanitizeChildEnv } from '../../src/launch-spec';
 import { LauncherHost } from '../../src/launcher-host';
+import type { LauncherKind } from '../../src/launchers';
 import {
   decideLimitAction,
   type LimitEpisode,
@@ -97,6 +98,7 @@ import {
 import { TimerScheduler } from '../../src/timer-scheduler';
 import type {
   AgentDefinition,
+  AgentSource,
   BriefRequest,
   Session,
   SessionCommand,
@@ -194,6 +196,14 @@ type Handlers = {
 
 const PERSIST_COALESCE_MS = 150;
 
+/** list_agents' source for each launcher kind (flexible-agent-contracts §4.2). */
+const SOURCE_OF_LAUNCHER: Record<LauncherKind, AgentSource> = {
+  config: 'profile',
+  custom: 'launcher',
+  cli: 'detected',
+  shell: 'shell',
+};
+
 interface Facts {
   generation: number | null;
   spawn: SessionRuntime['spawn'];
@@ -279,12 +289,18 @@ export function createDomain(deps: DomainDeps): Domain {
   const settings = () => settingsStore.get();
 
   const registry = new AgentRegistry([]);
-  const readAgentsConfig = () =>
-    loadAgentsConfig(file('agents.json'), {
+  let agentsLast: AgentsConfig | undefined;
+  const readAgentsConfig = (): AgentsConfig => {
+    const next = loadAgentsConfig(file('agents.json'), {
       homeDir: deps.homeDir,
       e2e: deps.e2e,
       warn: (message, data) => log.warn('agents', message, data),
+      error: (message, data) => log.error('agents', message, data),
+      last: agentsLast,
     });
+    agentsLast = next;
+    return next;
+  };
   const agentsConfig = readAgentsConfig();
   // The brief host holds this map, so a reload refills it in place.
   const agentBriefs = new Map(agentsConfig.briefs);
@@ -1512,6 +1528,13 @@ export function createDomain(deps: DomainDeps): Domain {
         () => 'missing' as const,
       ),
     agentIds: () => registry.list().map((d) => d.id),
+    agentCatalog: () => {
+      const kinds = new Map(launcherHost.dtos().map((d) => [d.id, d.kind]));
+      return registry.list().flatMap((def) => {
+        const kind = kinds.get(def.id);
+        return kind === undefined ? [] : [{ def, source: SOURCE_OF_LAUNCHER[kind] }];
+      });
+    },
     resolveCommand,
     foldersOf: (id) => {
       const s = mgr.get(id);

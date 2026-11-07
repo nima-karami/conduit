@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createShimEndpoint } from '../../server/mcp/endpoint';
 import { createSessionScreens, type SessionScreens } from '../../server/runtime/session-screens';
 import { createTokenStore } from '../../server/runtime/testing/token-store';
+import { AgentRegistry } from '../../src/agent-registry';
 import { MCP_ADAPTERS } from '../../src/conduit-mcp/adapters';
 import type { McpFileRequest, McpOpenRequest, PathKind } from '../../src/conduit-mcp/control-tools';
 import {
@@ -194,6 +195,7 @@ function session(id: string, extra: Partial<Session> = {}): Session {
 function harness(
   opts: {
     dir?: string;
+    registry?: AgentRegistry;
     messagingOn?: () => boolean;
     storeIo?: StoreIo;
     listen?: boolean;
@@ -391,11 +393,13 @@ function harness(
     onChange: () => ({ dispose: () => [] }),
     allocateLaunch,
   };
+  const registry = opts.registry ?? new AgentRegistry(DEFS);
   const domain: McpHostDeps['domain'] = {
     homeOf: (id: string) => sessions.get(id)?.home,
     resolvePath: (h: string, rel: string) => (rel.startsWith('/') ? rel : `${h}/${rel}`),
     kindOf: opts.kindOf ?? (async (abs: string) => opts.kinds?.[abs] ?? 'missing'),
-    agentIds: () => DEFS.map((d) => d.id),
+    agentIds: () => registry.list().map((d) => d.id),
+    agentCatalog: () => registry.list().map((def) => ({ def, source: 'profile' as const })),
     resolveCommand: (c: string) => `/usr/bin/${c}`,
     openSession: async (req: McpOpenRequest) => {
       const id = `n${opens.length + 1}`;
@@ -427,7 +431,7 @@ function harness(
     },
     git: async () => ({ ok: false as const, stdout: '', stderr: 'not a git repository' }),
     defOf: (id: string) => defOfSession(sessions.get(id)),
-    agentDef: (id: string) => DEFS.find((d) => d.id === id),
+    agentDef: (id: string) => registry.get(id),
     projectName: () => null,
     installState: opts.installState ?? (() => 'not-installed' as const),
     messagingOn: opts.messagingOn ?? (() => true),
@@ -3465,6 +3469,55 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       expect(h.toOwner.filter((entry) => entry.msg.type === 'mcp:ask')).toEqual([]);
       expect(h.toWindow.filter((entry) => entry.msg.type === 'mcp:ui')).toEqual([]);
     }
+  });
+
+  it('a bare command asks under an on policy, and the card names its path', async () => {
+    const { h, c } = await asking({ kinds: { '/w': 'dir', '/usr/bin/kiro': 'file' } });
+    setPolicy(h, { open_session: { access: 'on' } });
+    c.call(1, 'open_session', { path: '/w', agent: 'kiro' });
+    expect(await replyOrAsk(h, c, 1)).toBe('asked');
+    expect(asksOf(h)[0]?.summary).toMatchObject({ tool: 'open_session', command: '/usr/bin/kiro' });
+    expect(h.opens).toEqual([]);
+  });
+
+  it('a registered agent under an on policy opens without asking', async () => {
+    const { h, c } = await asking();
+    setPolicy(h, { open_session: { access: 'on' } });
+    c.call(1, 'open_session', OPEN);
+    expect(await replyOrAsk(h, c, 1)).toBe('ok');
+    expect(asksOf(h)).toEqual([]);
+  });
+
+  it('a bare name that is an alias of a profile opens that profile, through the real registry', async () => {
+    const registry = new AgentRegistry([FAKE, { ...CLAUDE, id: 'my-claude', label: 'My Claude' }], {
+      'cli:claude': 'my-claude',
+    });
+    const h = harness({ kinds: { '/w': 'dir', '/w/wt': 'dir' }, registry });
+    await h.host.start();
+    const a = await launch(h, 's1');
+    setPolicy(h, { open_session: { access: 'on' } });
+    const c = await client(h.ep, a.token);
+    const r = await c.call('open_session', { path: 'wt', agent: 'claude', focus: false });
+    expect(r.isError).toBe(false);
+    expect(h.opens[0]?.launch).toEqual({ kind: 'agent', agentId: 'my-claude' });
+  });
+
+  it('list_agents answers with the master switch off, every row none', async () => {
+    let messaging = true;
+    const h = harness({ messagingOn: () => messaging });
+    await h.host.start();
+    const a = await launch(h, 's1');
+    const c = await client(h.ep, a.token);
+    messaging = false;
+    const r = await c.call('list_agents', {});
+    expect(r.isError).toBe(false);
+    const body = r.body as {
+      agents: Array<{ id: string; messaging: string }>;
+      bare_commands: boolean;
+    };
+    expect(body.bare_commands).toBe(true);
+    expect(body.agents.map((x) => x.id)).toEqual(DEFS.map((d) => d.id));
+    expect(body.agents.every((x) => x.messaging === 'none')).toBe(true);
   });
 
   it("the gate asks about the caller's own window, not any window", async () => {

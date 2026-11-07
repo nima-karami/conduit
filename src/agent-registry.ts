@@ -3,7 +3,9 @@ import type { AgentDefinition, SpawnSpec } from './types';
 /** Ids Conduit synthesizes itself; a configured definition here would shadow one (`conduit:command`). */
 export const RESERVED_AGENT_ID_PREFIX = 'conduit:';
 
-const defKey = (d: AgentDefinition) => JSON.stringify([d.id, d.command, d.args, d.label]);
+// Capabilities count: a model_flag edit changes what the agent launches with.
+const defKey = (d: AgentDefinition) =>
+  JSON.stringify([d.id, d.command, d.args, d.label, d.capabilities ?? null]);
 const aliasKey = (a: Record<string, string>) =>
   JSON.stringify(Object.entries(a).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)));
 

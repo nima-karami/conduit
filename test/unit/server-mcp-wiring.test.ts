@@ -116,6 +116,7 @@ function harness(opts: { manualTimers?: boolean } = {}) {
       resolvePath: (h: string, rel: string) => (rel.startsWith('/') ? rel : `${h}/${rel}`),
       kindOf: async () => 'dir' as const,
       agentIds: () => [FAKE.id],
+      agentCatalog: () => [{ def: FAKE, source: 'profile' as const }],
       resolveCommand: (c: string) => `/usr/bin/${c}`,
       openSession: async (req: McpOpenRequest) => {
         opens.push(req);

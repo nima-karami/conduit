@@ -429,7 +429,9 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
         p.release();
         return null;
       }
-      switch (c.policy.access) {
+      // A bare command is not one the human registered, so 'on' still asks (flexible-agent-contracts §3.1).
+      const access = p.alwaysAsk && c.policy.access === 'on' ? 'ask' : c.policy.access;
+      switch (access) {
         case 'on':
           return runNow(c, p);
         case 'ask':

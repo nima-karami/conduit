@@ -40,6 +40,8 @@ function summaryText(s: AskSummary): string {
       return STR.summary.open_diff(s);
     case 'open_git_history':
       return STR.summary.open_git_history(s);
+    case 'list_agents':
+      return STR.summary.list_agents();
     case 'open_url':
       return STR.summary.open_url(s);
   }

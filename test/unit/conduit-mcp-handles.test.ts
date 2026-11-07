@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  agentHandlePrefix,
   allocateHandle,
   cliKindOfHandle,
   handlePrefixForCommand,
@@ -88,5 +89,28 @@ describe('handlePrefixForCommand', () => {
     ['', 'term'],
   ])('%s → %s', (command, want) => {
     expect(handlePrefixForCommand(command)).toBe(want);
+  });
+});
+
+describe('agentHandlePrefix (adapter-less agents, flexible-agent-contracts §4.1)', () => {
+  it.each([
+    [{ id: 'kiro' }, 'kiro'],
+    [{ id: 'Kiro CLI!' }, 'kiro-cli'],
+    [{ id: 'my-very-long-profile-name-here' }, 'my-very-long-profile'],
+    [{ id: 'you' }, 'term'],
+    [{ id: 'fake' }, 'term'],
+    [{ id: 'codex' }, 'term'],
+    [{ id: '!!!' }, 'term'],
+  ])('a profile %j → %s', (def, want) => {
+    expect(agentHandlePrefix({ kind: 'profile', id: def.id })).toBe(want);
+  });
+
+  it.each([
+    ['C:\\tools\\kiro.exe', 'kiro'],
+    ['/usr/local/bin/kiro', 'kiro'],
+    ['kiro.cmd', 'kiro'],
+    ['/usr/bin/you', 'term'],
+  ])('a bare command %s → %s', (command, want) => {
+    expect(agentHandlePrefix({ kind: 'command', command })).toBe(want);
   });
 });

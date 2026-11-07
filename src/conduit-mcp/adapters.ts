@@ -129,6 +129,13 @@ export function adapterFor(
   );
 }
 
+/** Whether the adapter takes a brief at launch: its CLI can read the role file. */
+export function supportsBrief(a: McpAdapter | undefined): boolean {
+  if (a === undefined) return false;
+  const { brief } = a;
+  return brief !== null;
+}
+
 export function notifiable(a: McpAdapter): boolean {
   return a.screen !== null && a.screen.emptyInput.length > 0;
 }
@@ -139,14 +146,38 @@ export function notifiable(a: McpAdapter): boolean {
  * model flag wired here, which open_session refuses. The fake adapter never takes one.
  */
 export function modelArgs(kind: McpAdapterId | undefined, model: string): string[] | null {
+  const flag = modelFlagOfAdapter(kind);
+  return flag === undefined ? null : [flag, model];
+}
+
+function modelFlagOfAdapter(kind: McpAdapterId | undefined): string | undefined {
   switch (kind) {
     case 'claude':
     case 'cursor':
-      return ['--model', model];
+      return '--model';
     case 'codex':
-      return ['-m', model];
+      return '-m';
     case 'fake':
     case undefined:
-      return null;
+      return undefined;
   }
+}
+
+/**
+ * The flag a definition's model goes after: the built-in adapter's own flag wins, else the
+ * profile's capabilities.model_flag (flexible-agent-contracts §4.4). Undefined when neither applies.
+ */
+export function modelFlagOf(
+  def: Pick<AgentDefinition, 'id' | 'command' | 'capabilities'>,
+): string | undefined {
+  return modelFlagOfAdapter(adapterFor(def, { e2e: false })?.id) ?? def.capabilities?.model_flag;
+}
+
+/** argv for a model on this definition, or null when it can't take one. */
+export function modelArgsFor(
+  def: Pick<AgentDefinition, 'id' | 'command' | 'capabilities'>,
+  model: string,
+): string[] | null {
+  const flag = modelFlagOf(def);
+  return flag === undefined ? null : [flag, model];
 }

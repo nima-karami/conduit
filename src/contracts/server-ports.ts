@@ -11,7 +11,13 @@ import type { CliPolicyLayers, GlobalPolicy } from '../conduit-mcp/tool-policy';
 import type { PtyWriter } from '../pty-writer';
 import type { ActivitySnapshot, SessionActivity } from '../session-activity';
 import type { SessionManager } from '../session-manager';
-import type { AgentDefinition, SessionAttentionFacts, SessionOpener, SpawnSpec } from '../types';
+import type {
+  AgentDefinition,
+  AgentSource,
+  SessionAttentionFacts,
+  SessionOpener,
+  SpawnSpec,
+} from '../types';
 import type { ServerEvent, ServerEvents } from './server-protocol';
 import type { TokenRecord } from './session-identity';
 import type { FirstPaint } from './terminal-link';
@@ -101,6 +107,8 @@ export interface DomainPort
   defOf(sessionId: string): AgentDefinition | undefined;
   /** The registry's definition for an agent id; open_session's model check reads its adapter. */
   agentDef(agentId: string): AgentDefinition | undefined;
+  /** Every registry entry with where it came from, for list_agents. */
+  agentCatalog(): Array<{ def: AgentDefinition; source: AgentSource }>;
   projectName(projectId: string | undefined): string | null;
   /** The CLI's user-scope install state, shown with a not-connected session. */
   installState(cli: AgentCli): UserInstallState;

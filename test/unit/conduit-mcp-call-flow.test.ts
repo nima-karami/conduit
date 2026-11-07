@@ -118,6 +118,7 @@ function setup() {
       kind?: CliKind;
       wiredAtLaunch?: boolean;
       routesUi?: boolean;
+      alwaysAsk?: boolean;
       /** Replaces run's body; gets this call's in-flight entry (for flow.requestUi). */
       runBody?: (inflight: InFlight) => Promise<Result<string>>;
     } = {},
@@ -127,6 +128,7 @@ function setup() {
     const prepared: PreparedCall<string> = {
       summary: { tool: 'open_session', path: '/repo', agent: 'claude', focus: true },
       routesUi: o.routesUi ?? false,
+      alwaysAsk: o.alwaysAsk ?? false,
       run: async () => {
         spies.run++;
         if (o.runGate) await o.runGate.hold();
@@ -215,6 +217,23 @@ describe('createCallFlow', () => {
     const c = t.call({ policy: ON });
     expect(await c.promise).toEqual({ ok: true, value: 'opened' });
     expect(c.spies).toEqual({ run: 1, release: 0 });
+    expect(t.asks()).toEqual([]);
+  });
+
+  it('a bare command asks even under an on policy; deny refuses and runs nothing', async () => {
+    const t = setup();
+    const c = t.call({ policy: ON, alwaysAsk: true });
+    await t.flush();
+    expect(t.asks()).toHaveLength(1);
+    answerLast(t, t.flow, 'deny');
+    expect(await c.promise).toMatchObject({ ok: false });
+    expect(c.spies.run).toBe(0);
+  });
+
+  it('a registered call under an on policy does not ask', async () => {
+    const t = setup();
+    const c = t.call({ policy: ON, alwaysAsk: false });
+    expect(await c.promise).toEqual({ ok: true, value: 'opened' });
     expect(t.asks()).toEqual([]);
   });
 

@@ -27,8 +27,9 @@ function load(raw: string, e2e = false) {
   const file = path.join(dir, 'agents.json');
   fs.writeFileSync(file, raw);
   const warn = vi.fn();
+  const error = vi.fn();
   const homeDir = path.join(dir, 'home');
-  return { file, warn, homeDir, cfg: loadAgentsConfig(file, { homeDir, e2e, warn }) };
+  return { file, warn, homeDir, cfg: loadAgentsConfig(file, { homeDir, e2e, warn, error }) };
 }
 
 describe('loadAgentsConfig', () => {
@@ -87,7 +88,86 @@ describe('loadAgentsConfig', () => {
       homeDir: dir,
       e2e: false,
       warn: () => {},
+      error: () => {},
     });
     expect(cfg).toEqual({ defs: [], briefs: new Map() });
+  });
+});
+
+describe('loadAgentsConfig per-entry validation (flexible-agent-contracts §4.4)', () => {
+  it('a bad entry is dropped with one warning and the others are kept', () => {
+    const { cfg, warn } = load(
+      JSON.stringify([def({ id: 'good' }), def({ id: 'bad', command: '' }), def({ id: 'ok' })]),
+    );
+    expect(cfg.defs.map((d) => d.id)).toEqual(['good', 'ok']);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('the first of two duplicate ids wins, and the second is dropped with a warning', () => {
+    const { cfg, warn } = load(
+      JSON.stringify([def({ id: 'a', label: 'first' }), def({ id: 'a', label: 'second' })]),
+    );
+    expect(cfg.defs).toEqual([expect.objectContaining({ id: 'a', label: 'first' })]);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['a reserved cli: id', { id: 'cli:claude' }],
+    ['a reserved shell: id', { id: 'shell:x' }],
+    ['a reserved conduit: id', { id: 'conduit:x' }],
+    ['a command with a leading dash', { command: '-x' }],
+    ['a command with a NUL', { command: 'x\u0000' }],
+    ['a whitespace-only command', { command: '   ' }],
+    ['a non-string label', { label: 7 }],
+    ['args that are not strings', { args: [1] }],
+  ])('%s → dropped', (_label, over) => {
+    const { cfg, warn } = load(JSON.stringify([def(over)]));
+    expect(cfg.defs).toEqual([]);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('missing args → [] and missing label → the id', () => {
+    const { cfg, warn } = load(JSON.stringify([{ id: 'kiro', command: 'kiro' }]));
+    expect(cfg.defs).toEqual([expect.objectContaining({ id: 'kiro', label: 'kiro', args: [] })]);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('capabilities.model_flag is kept when valid, dropped with a warning when not', () => {
+    const ok = load(JSON.stringify([def({ capabilities: { model_flag: '--model' } })]));
+    expect(ok.cfg.defs[0].capabilities).toEqual({ model_flag: '--model' });
+    expect(ok.warn).not.toHaveBeenCalled();
+
+    for (const flag of ['model', '--mo del', '-', '--a;b', 3]) {
+      const bad = load(JSON.stringify([def({ capabilities: { model_flag: flag } })]));
+      expect(bad.cfg.defs).toHaveLength(1);
+      expect(bad.cfg.defs[0].capabilities?.model_flag).toBeUndefined();
+      expect(bad.warn).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('more than 200 entries keeps the first 200 and warns once', () => {
+    const many = Array.from({ length: 201 }, (_, i) => def({ id: `a${i}` }));
+    const { cfg, warn } = load(JSON.stringify(many));
+    expect(cfg.defs).toHaveLength(200);
+    expect(cfg.defs[199].id).toBe('a199');
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('a parse error keeps the last good set and logs an error', () => {
+    const file = path.join(dir, 'agents.json');
+    const warn = vi.fn();
+    const error = vi.fn();
+    const opts = { homeDir: path.join(dir, 'home'), e2e: false, warn, error };
+    fs.writeFileSync(file, JSON.stringify([def({ id: 'kept' })]));
+    const first = loadAgentsConfig(file, opts);
+    fs.writeFileSync(file, '{nope');
+    const second = loadAgentsConfig(file, { ...opts, last: first });
+    expect(second.defs.map((d) => d.id)).toEqual(['kept']);
+    expect(error).toHaveBeenCalledTimes(1);
+  });
+
+  it('a parse error with no earlier set is empty', () => {
+    const { cfg } = load('{nope');
+    expect(cfg.defs).toEqual([]);
   });
 });

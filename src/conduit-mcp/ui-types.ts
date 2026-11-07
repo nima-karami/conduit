@@ -28,6 +28,8 @@ export type AskSummary =
       path: string;
       agent: string;
       focus: boolean;
+      /** A bare command on PATH: the absolute path that will run. */
+      command?: string;
       model?: string;
       /** Characters in the first message, when one is given. */
       message?: number;
@@ -44,7 +46,8 @@ export type AskSummary =
   | { tool: 'open_review'; what: string }
   | { tool: 'open_diff'; title: string; path?: string }
   | { tool: 'open_git_history'; ref: string | null }
-  | { tool: 'open_url'; url: string };
+  | { tool: 'open_url'; url: string }
+  | { tool: 'list_agents' };
 
 /** Structurally webview ReviewScope. */
 export type McpReviewScope = 'all' | 'staged' | 'unstaged';

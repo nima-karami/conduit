@@ -36,7 +36,17 @@ export interface AgentDefinition {
   icon: string; // VS Code ThemeIcon id
   color: string; // VS Code ThemeColor id
   cwdStrategy: CwdStrategy;
+  /** Optional facts about the CLI that Conduit can't infer from its command (agents.json). */
+  capabilities?: AgentCapabilities;
 }
+
+export interface AgentCapabilities {
+  /** The flag the CLI takes its model name after (flexible-agent-contracts §4.4). */
+  model_flag?: string;
+}
+
+/** Where a registry entry came from, as list_agents reports it. */
+export type AgentSource = 'profile' | 'launcher' | 'detected' | 'shell';
 
 export type SessionStatus = 'running' | 'exited' | 'stale';
 

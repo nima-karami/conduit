@@ -6,7 +6,8 @@ import type { DomainOpenOutcome, DomainPort } from '../contracts/server-ports';
 import { coerceModel, coerceSessionCommand, commandLabel } from '../session-command';
 import type { SessionOpResult } from '../session-ops';
 import type { SessionCommand, SessionOpener } from '../types';
-import { type McpAdapterId, modelArgs } from './adapters';
+import { listAgentsOutput } from './agent-listing';
+import { isRefusedLeaf, resolveAgentArg } from './agent-resolve';
 import type { GitCall } from './git-refs';
 import {
   type MESSAGING_TOOL_NAMES,
@@ -16,10 +17,15 @@ import {
   TOOL_SPECS,
   type ToolName,
 } from './tool-policy';
-import { type Caller, MAX_BODY_BYTES, type SendOptions } from './tools';
+import {
+  type AgentListing,
+  type Caller,
+  type ListAgentsOutput,
+  MAX_BODY_BYTES,
+  type SendOptions,
+} from './tools';
 import {
   type Handle,
-  MAX_VALID_IDS,
   type Result,
   type SendMessageOutput,
   type ToolError,
@@ -85,10 +91,15 @@ export interface ControlDeps {
   resolvePath(home: string, p: string): string;
   kindOf(absPath: string): Promise<PathKind>;
   agentIds(): string[];
+  /** Every listed agent, for list_agents (flexible-agent-contracts §4.2). */
+  agents(): AgentListing[];
+  /** The registered id a name reaches, aliases included (flexible-agent-contracts §3.1). */
+  registeredIdOf(name: string): string | undefined;
   resolveCommand(command: string): string | undefined;
   openSession(req: McpOpenRequest): Promise<McpOpenOutcome>;
   openFile(req: McpFileRequest): Promise<{ sessionId: string }>;
-  claimHandle(sessionId: string): Handle | null;
+  /** The handle an opened session gets; the tool picks the prefix rule for an adapter-less program. */
+  claimHandle(sessionId: string, tool: 'open_session' | 'open_terminal'): Handle | null;
   now(): number;
   info(message: string, data: Record<string, unknown>): void;
   foldersOf(sessionId: string): { home: string; roots: string[] } | undefined;
@@ -104,8 +115,10 @@ export interface ControlDeps {
   targets(): readonly TargetSession[];
   ownerWindowOf(sessionId: string): number | null;
   windowReady(windowId: number): boolean;
-  /** The adapter kind a registered agent launches through; undefined ⇒ no adapter. */
-  adapterOf(agentId: string): McpAdapterId | undefined;
+  /** The flag a registered agent's model goes after; undefined ⇒ it takes no model. */
+  modelFlagOf(agentId: string): string | undefined;
+  /** The same for a bare command's resolved path (flexible-agent-contracts §3.1). */
+  commandModelFlag(command: string): string | undefined;
   /** Messaging is on and its store is up, so a message can be stored. */
   messageReady(): boolean;
   /** send_message's own storage, from the caller to a session's handle (CON-148). */
@@ -126,6 +139,11 @@ export interface PreparedCall<T> {
   summary: AskSummary;
   /** Its run waits on a renderer (mcp:ui): the ask budget shrinks by UI_TIMEOUT_MS. */
   routesUi: boolean;
+  /**
+   * A bare command on PATH: an 'on' policy still asks, since the human never registered the program
+   * (flexible-agent-contracts §3.1).
+   */
+  alwaysAsk?: boolean;
   /** Executes; refunds the rate token itself when the open fails (step 9). */
   run(): Promise<Result<T>>;
   /** Refunds the token for a refusal between prepare and run that isn't an ask outcome. Idempotent. */
@@ -154,6 +172,7 @@ export interface ControlHandlers {
     args: unknown,
     ctx: ControlCallContext,
   ): Promise<Result<Prepared<OpenFileOutput>>>;
+  prepareListAgents(caller: Caller, args: unknown): Promise<Result<Prepared<ListAgentsOutput>>>;
   /** reserve → home → check → refund unless the exec kept the token. */
   prepared<T>(
     tool: ControlTool,
@@ -377,6 +396,7 @@ export type CheckResult<T> =
   | {
       summary: AskSummary;
       routesUi?: true;
+      alwaysAsk?: boolean;
       exec: (token: Token) => Promise<Result<T>>;
     };
 
@@ -495,6 +515,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
         value: {
           summary: c.summary,
           routesUi: c.routesUi === true,
+          alwaysAsk: c.alwaysAsk === true,
           async run() {
             try {
               return await exec(token);
@@ -532,60 +553,65 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     return { id: sent.value.message_id };
   }
 
+  /** What open_session or open_terminal launches, once its arguments name something real. */
+  interface Resolved {
+    launch: McpLaunch;
+    /** The output's `agent`: a registered id, or a command's leaf. */
+    agent: string;
+    /** A bare command: the summary shows its absolute path, and its label defaults to the leaf. */
+    bare: boolean;
+    label: string | undefined;
+  }
+
+  const modelFlagOfLaunch = (launch: McpLaunch): string | undefined =>
+    launch.kind === 'agent'
+      ? deps.modelFlagOf(launch.agentId)
+      : deps.commandModelFlag(launch.command.command);
+
   function prepareOpen(
     tool: 'open_session' | 'open_terminal',
     caller: Caller,
     a: Common & OpenExtras & Partial<SessionExtras>,
-    launch: McpLaunch,
-    agent: string,
+    resolve: () => Promise<Result<Resolved>>,
   ): Promise<Result<Prepared<OpenSessionOutput>>> {
     return prepared(tool, caller, async (who) => {
       const abs = deps.resolvePath(who.home, a.path);
       const bad = await checkKind(abs, 'dir');
       if (bad) return bad;
-      if (launch.kind === 'agent') {
-        const ids = deps.agentIds();
-        if (!ids.includes(launch.agentId))
-          return fail(
-            'unknown_agent',
-            `unknown agent "${launch.agentId}"; registered: ${ids.join(', ')}`,
-            {
-              hint: 'call list_agents to see the ids you can open',
-              valid: ids.slice(0, MAX_VALID_IDS),
-            },
-          );
-        const model = a.model;
-        if (model !== undefined && modelArgs(deps.adapterOf(launch.agentId), model) === null) {
-          const withModel = ids.filter((id) => modelArgs(deps.adapterOf(id), model) !== null);
-          return fail('invalid_args', "this agent doesn't take a model", {
-            hint: `add an agents.json profile with capabilities.model_flag, or use one of: ${
-              withModel.length > 0 ? withModel.join(', ') : 'none'
-            }`,
-          });
-        }
-      } else if (deps.resolveCommand(launch.command.command) === undefined) {
-        return fail('command_not_found', `command not found: ${launch.command.command}`);
+      const target = await resolve();
+      if (!target.ok) return target;
+      const { launch, agent, bare, label } = target.value;
+      if (a.model !== undefined && modelFlagOfLaunch(launch) === undefined) {
+        const withModel = deps.agentIds().filter((id) => deps.modelFlagOf(id) !== undefined);
+        return fail('invalid_args', "this agent doesn't take a model", {
+          hint: `add an agents.json profile with capabilities.model_flag, or use one of: ${
+            withModel.length > 0 ? withModel.join(', ') : 'none'
+          }`,
+        });
       }
       if (a.message !== undefined && !deps.messageReady())
         return fail('invalid_args', 'message needs messaging on');
+      const command = launch.kind === 'command' ? launch.command : null;
       const summary: AskSummary =
-        launch.kind === 'agent'
+        command !== null && tool === 'open_terminal'
           ? {
+              tool: 'open_terminal',
+              path: abs,
+              command: [command.command, ...command.args].join(' '),
+              focus: a.focus,
+            }
+          : {
               tool: 'open_session',
               path: abs,
               agent,
               focus: a.focus,
+              ...(bare && command !== null ? { command: command.command } : {}),
               ...(a.model !== undefined ? { model: a.model } : {}),
               ...(a.message !== undefined ? { message: Array.from(a.message).length } : {}),
-            }
-          : {
-              tool: 'open_terminal',
-              path: abs,
-              command: [launch.command.command, ...launch.command.args].join(' '),
-              focus: a.focus,
             };
       return {
         summary,
+        alwaysAsk: bare,
         exec: async (token): Promise<Result<OpenSessionOutput>> => {
           let outcome: McpOpenOutcome;
           try {
@@ -593,7 +619,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
               callerSessionId: who.sessionId,
               openedBy: { handle: caller.handle, sessionId: who.sessionId },
               home: abs,
-              label: a.label,
+              label: a.label ?? label,
               focus: a.focus,
               launch,
               closeWhenDone: a.closeWhenDone,
@@ -618,7 +644,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
             sessionId: outcome.sessionId,
             path: abs,
           });
-          const handle = deps.claimHandle(outcome.sessionId);
+          const handle = deps.claimHandle(outcome.sessionId, tool);
           if (a.message === undefined)
             return {
               ok: true,
@@ -638,17 +664,52 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
   const focusFor = <T extends Common>(a: T, ctx: ControlCallContext): T =>
     ctx.move === 'no' ? { ...a, focus: false } : a;
 
+  async function resolveSessionAgent(agent: string): Promise<Result<Resolved>> {
+    const arg = resolveAgentArg(agent, {
+      registeredIds: deps.agentIds(),
+      resolveRegistered: (n) => deps.registeredIdOf(n),
+      resolveCommand: (c) => deps.resolveCommand(c),
+    });
+    if (!arg.ok) return arg;
+    const v = arg.value;
+    if (v.kind === 'registered')
+      return {
+        ok: true,
+        value: {
+          launch: { kind: 'agent', agentId: v.id },
+          agent: v.id,
+          bare: false,
+          label: undefined,
+        },
+      };
+    // PATH can hand back a directory, or a symlink named like an agent that runs a shell.
+    if ((await deps.kindOf(v.path)) !== 'file')
+      return fail('unknown_agent', `command "${agent}" on PATH is not a file: ${v.path}`, {
+        hint: 'call list_agents; a bare command must be an agent CLI on PATH',
+      });
+    const real = await deps.realPath(v.path);
+    if (real !== null && isRefusedLeaf(real))
+      return fail('invalid_args', `"${agent}" runs ${real}, a shell or tool`, {
+        hint: 'use open_terminal to run shells and tools',
+      });
+    return {
+      ok: true,
+      value: {
+        launch: { kind: 'command', command: { command: v.path, args: [] } },
+        agent: v.leaf,
+        bare: true,
+        label: v.leaf,
+      },
+    };
+  }
+
   return {
     prepared,
     async prepareOpenSession(caller, raw, ctx) {
       const a = parseSessionArgs(raw);
       if (isFail(a)) return a;
-      return prepareOpen(
-        'open_session',
-        caller,
-        focusFor(a, ctx),
-        { kind: 'agent', agentId: a.agent },
-        a.agent,
+      return prepareOpen('open_session', caller, focusFor(a, ctx), () =>
+        resolveSessionAgent(a.agent),
       );
     },
     async prepareOpenTerminal(caller, raw, ctx) {
@@ -659,9 +720,30 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
         'open_terminal',
         caller,
         focusFor({ ...a, label: a.label ?? leaf }, ctx),
-        { kind: 'command', command: a.command },
-        leaf,
+        async () =>
+          deps.resolveCommand(a.command.command) === undefined
+            ? fail('command_not_found', `command not found: ${a.command.command}`)
+            : {
+                ok: true,
+                value: {
+                  launch: { kind: 'command', command: a.command },
+                  agent: leaf,
+                  bare: false,
+                  label: undefined,
+                },
+              },
       );
+    },
+    async prepareListAgents(caller, raw) {
+      const o = parseKeys(raw, []);
+      if (isFail(o)) return o;
+      return prepared('list_agents', caller, async () => ({
+        summary: { tool: 'list_agents' },
+        exec: async (token) => {
+          token.keep();
+          return { ok: true, value: listAgentsOutput(deps.agents()) };
+        },
+      }));
     },
     async prepareOpenFile(caller, raw) {
       const a = parseFileArgs(raw);
