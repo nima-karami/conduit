@@ -31,7 +31,7 @@ describe('server domain: server settings', () => {
 
     // Seeded once: a later settings.json never overrides the server's own file.
     writeFileSync(join(h.userData, 'settings.json'), v051Settings({ trackCwd: true }));
-    h.domain.dispose();
+    await h.domain.dispose();
     const again = harness({ userData: h.userData });
     expect(again.domain.settings().trackCwd).toBe(false);
   });
@@ -86,7 +86,7 @@ describe('server domain: server settings', () => {
       await h.call('serverSettings.patch', { patch: { trackCwd: false } });
       expect(read(userData, 'server-settings.json')).toBe(corrupt);
       expect(h.logs.some((l) => l.includes('backup failed'))).toBe(true);
-      h.domain.dispose();
+      await h.domain.dispose();
     } finally {
       rmSync(userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     }
@@ -177,7 +177,7 @@ describe('server domain: persisted formats', () => {
     expect(ids).not.toContain(idle);
 
     // A restart reopens only what reconcile adopted or left unconfirmed.
-    a.domain.dispose();
+    await a.domain.dispose();
     const b = harness({ userData: a.userData, reconciled: false });
     b.runtime.fire({
       type: 'unconfirmed',
@@ -239,7 +239,7 @@ describe('server domain: persisted formats', () => {
     const a = harness();
     const id = await a.create();
     await a.domain.persist();
-    a.domain.dispose();
+    await a.domain.dispose();
     const b = harness({ userData: a.userData });
     expect(b.domain.snapshot().sessions.map((s) => [s.id, s.status])).toEqual([[id, 'stale']]);
   });
@@ -253,7 +253,7 @@ describe('server domain: persisted formats', () => {
       const id = await a.create();
       await a.call('sessions.start', { sessionId: id });
       await a.domain.persist();
-      a.domain.dispose();
+      await a.domain.dispose();
 
       const b = harness({ userData: a.userData, reconciled: false });
       expect(b.domain.snapshot().sessions.find((s) => s.id === id)?.status).toBe('stale');
@@ -276,7 +276,7 @@ describe('server domain: persisted formats', () => {
     const id = await a.create();
     await a.call('sessions.start', { sessionId: id });
     await a.domain.persist();
-    a.domain.dispose();
+    await a.domain.dispose();
 
     const b = harness({ userData: a.userData, reconciled: false });
     b.runtime.fire({ type: 'exit', sessionId: id, generation: 1, code: 0, reason: 'exited' });

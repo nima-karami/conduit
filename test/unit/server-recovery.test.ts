@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import * as endpoint from '../../server/mcp/endpoint';
 import { createServices } from '../../server/services';
+import * as atomicWrite from '../../src/atomic-write';
 import { toolError } from '../../src/conduit-mcp/types';
 import { NodeHcClient } from '../../src/hc-client';
 import { FakeHc } from '../../src/hc-client/testing/fake-hc';
@@ -268,6 +269,36 @@ it('publishes one combined sessions.changed for domain and attention invalidatio
   await h.rpc('sessions.start', { sessionId: id });
   await vi.advanceTimersByTimeAsync(150);
   expect(h.events.filter((e) => e === 'sessions.changed')).toHaveLength(1);
+});
+
+it('waits for an in-flight domain write before closing', async () => {
+  const h = await harness();
+  await h.services.core.start();
+  // Hold every write at submission: a held write has not touched disk, so close() can only
+  // finish by waiting for it, and none can be lost to a later one overwriting a single slot.
+  const original = atomicWrite.atomicWriteFile;
+  const held: Array<() => void> = [];
+  let passThrough = false;
+  let submitted!: () => void;
+  const writing = new Promise<void>((resolve) => {
+    submitted = resolve;
+  });
+  vi.spyOn(atomicWrite, 'atomicWriteFile').mockImplementation((file, data, callback, io) => {
+    if (passThrough) return original(file, data, callback, io);
+    held.push(() => original(file, data, callback, io));
+    submitted();
+  });
+  await h.create();
+  await writing;
+  let closed = false;
+  const closing = h.services.close().then(() => {
+    closed = true;
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(closed).toBe(false);
+  passThrough = true;
+  for (const run of held.splice(0)) run();
+  await closing;
 });
 
 it('holds the shutdown persistence barrier until scrollback writes finish and propagates failure', async () => {

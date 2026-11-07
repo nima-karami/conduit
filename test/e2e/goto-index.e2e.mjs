@@ -24,12 +24,15 @@ const fileRowByName = (page, name) =>
 runScenario('goto-index', async ({ page, log }) => {
   await openSession(page, { path: REPO });
 
-  // Indexing now starts when the session opens — no need to poke it, and no need to open a
-  // file first. Wait for the stream to finish (the last chunk sets done).
+  // The count can cross 400 before the deep file's chunk reaches Monaco.
   await page.waitForFunction(
     () => {
       const libs = window.monaco?.languages.typescript.typescriptDefaults.getExtraLibs();
-      return libs ? Object.keys(libs).length > 400 : false;
+      if (!libs) return false;
+      const paths = Object.keys(libs);
+      return (
+        paths.length > 400 && paths.some((k) => k.endsWith('webview/components/code-viewer.tsx'))
+      );
     },
     null,
     { timeout: 60000 },
