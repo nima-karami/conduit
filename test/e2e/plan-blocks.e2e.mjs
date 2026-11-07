@@ -11,8 +11,8 @@
  * is shut down before the temp dir goes (the session's shell holds it as its cwd).
  *
  * A change reaches disk ~500 ms after the last input — Milkdown's listener debounces 200 ms, the
- * block editors 150 ms and PlanView's write 300 ms — so every check polls the file rather than
- * sleeping a fixed time.
+ * block editors 150 ms and PlanView's write 300 ms — so every check waits for the save
+ * acknowledgement rather than sleeping a fixed time.
  *
  * Windows-only, matching the suite.
  */
@@ -81,38 +81,40 @@ try {
   const fenceOf = (text, lang) =>
     new RegExp(`\`\`\`${lang}\\n([\\s\\S]*?)\\n\`\`\``).exec(text)?.[1] ?? null;
 
-  let currentCondition;
-  await page.exposeFunction('__planBlocksCondition', () => currentCondition());
+  const beginSave = async () => {
+    const save = page.locator('.plan__save:visible').first();
+    await save
+      .locator('xpath=self::*[@data-plan-save="saved"]')
+      .waitFor({ state: 'attached', timeout: 4000 });
+    await save.evaluate((element) => {
+      window.__trackedPlanSave?.observer.disconnect();
+      const state = { sawPending: false, done: false, observer: null };
+      state.observer = new MutationObserver((records) => {
+        const phase = element.getAttribute('data-plan-save');
+        if (
+          phase === 'pending' ||
+          phase === 'saving' ||
+          records.some((r) => r.oldValue === 'pending' || r.oldValue === 'saving')
+        ) {
+          state.sawPending = true;
+        }
+        if (state.sawPending && phase === 'saved') state.done = true;
+      });
+      state.observer.observe(element, {
+        attributes: true,
+        attributeFilter: ['data-plan-save'],
+        attributeOldValue: true,
+      });
+      window.__trackedPlanSave = state;
+    });
+  };
+  const waitForSave = (timeout = 4000) =>
+    page.waitForFunction(() => window.__trackedPlanSave?.done === true, null, { timeout });
   const until = async (holds, budgetMs) => {
     const started = Date.now();
-    currentCondition = holds;
     try {
-      await page.evaluate(() => {
-        window.__planBlocksPoll = { pending: false, value: false, error: null };
-      });
-      await page.waitForFunction(
-        () => {
-          const state = window.__planBlocksPoll;
-          if (state.error) throw new Error(state.error);
-          if (state.value) return true;
-          if (!state.pending) {
-            state.pending = true;
-            window.__planBlocksCondition().then(
-              (value) => {
-                state.value = value;
-                state.pending = false;
-              },
-              (error) => {
-                state.error = String(error);
-              },
-            );
-          }
-          return false;
-        },
-        null,
-        { timeout: budgetMs, polling: 50 },
-      );
-      return Date.now() - started;
+      await waitForSave(budgetMs);
+      return holds() ? Date.now() - started : null;
     } catch (error) {
       if (error.name !== 'TimeoutError') throw error;
       return null;
@@ -143,6 +145,7 @@ try {
   await page.keyboard.press('End');
   const lefts = SIGNATURE.length - SIGNATURE.indexOf(' }): Promise');
   for (let i = 0; i < lefts; i++) await page.keyboard.press('ArrowLeft');
+  await beginSave();
   const typed = await page.evaluate((text) => {
     const editor = (window.monaco?.editor.getEditors?.() ?? []).find((e) => e.hasTextFocus());
     if (!editor) return false;
@@ -231,6 +234,7 @@ try {
 
   const menu = page.locator('.ctxmenu').first();
   await menu.waitFor({ state: 'visible', timeout: 4000 });
+  await beginSave();
   await menu.locator('.ctxmenu__item', { hasText: 'Delete' }).first().click();
 
   const wroteDelete = await untilFile((t) => !t.includes('txn -->|lookup| identity'), 4000);
@@ -272,6 +276,7 @@ try {
   await page.mouse.click(paneAt.x, paneAt.y, { button: 'right' });
 
   await menu.waitFor({ state: 'visible', timeout: 4000 });
+  await beginSave();
   await menu.locator('.ctxmenu__item', { hasText: 'Add node' }).first().click();
 
   // New statements take their siblings' indent (spec §3.2); the fixture's top level is 2 spaces.
@@ -287,6 +292,7 @@ try {
 
   const picker = page.locator('.planflow__picker').first();
   await picker.waitFor({ state: 'visible', timeout: 4000 });
+  await beginSave();
   await picker.locator('#planflow-pick-n1').click();
 
   const wroteConnect = await untilFile(
@@ -303,6 +309,7 @@ try {
   const selectedNodes = await page.locator('.planflow__node--selected').count();
   assert(selectedNodes === 1, `clicking a node must select exactly it, got ${selectedNodes}`);
 
+  await beginSave();
   await page.keyboard.press('Delete');
   const wroteNodeDelete = await untilFile((t) => {
     const fence = fenceOf(t, 'mermaid') ?? '';
@@ -331,6 +338,7 @@ try {
   const selectedEdges = await page.locator('.react-flow__edge.selected').count();
   assert(selectedEdges === 1, `clicking an edge must select exactly it, got ${selectedEdges}`);
 
+  await beginSave();
   await page.keyboard.press('Delete');
   const wroteEdgeDelete = await untilFile(
     (t) => !(fenceOf(t, 'mermaid') ?? '').includes('web --> identity'),
@@ -398,6 +406,7 @@ try {
     );
     await page.keyboard.press('Control+A');
     await page.keyboard.type('load');
+    await beginSave();
     await page.keyboard.press('Enter');
   };
 
@@ -422,6 +431,7 @@ try {
   assert(fidelityPane !== null, 'the fidelity canvas must have a point clear of its nodes');
   await page.mouse.click(fidelityPane.x, fidelityPane.y, { button: 'right' });
   await menu.waitFor({ state: 'visible', timeout: 4000 });
+  await beginSave();
   await menu.locator('.ctxmenu__item', { hasText: 'Add node' }).first().click();
   const added = relabelled.replace('    w1 -.-> w2\n', '    w1 -.-> w2\n    n1\n');
   const wroteNode = await until(() => readFileSync(fidelityFile, 'utf8') === added, 4000);
@@ -450,6 +460,7 @@ try {
     .waitFor({ state: 'visible', timeout: 4000 });
   await page.keyboard.press('Control+A');
   await page.keyboard.type('Parser');
+  await beginSave();
   await page.keyboard.press('Enter');
   const renamed = crlfBefore.replace('parse[Parse]', 'parse[Parser]');
   const wroteRename = await until(() => readFileSync(crlfFile, 'utf8') === renamed, 4000);
@@ -491,6 +502,7 @@ try {
   const prose = page.locator('.plan__editor .ProseMirror:visible').first();
   await prose.waitFor({ state: 'visible', timeout: 6000 });
   await prose.click();
+  await beginSave();
   await page.keyboard.type('Hello plan');
 
   const wroteEmpty = await until(

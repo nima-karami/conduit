@@ -31,6 +31,7 @@ import {
   openSession,
   profileDir,
   REPO,
+  shutdownApp,
   tapBridge,
 } from './harness.mjs';
 
@@ -157,7 +158,7 @@ try {
       return false;
     },
     draggedH,
-    { timeout: 600 },
+    { timeout: 5000 },
   );
   await closeApp(firstApp, page1);
   firstApp = null;
@@ -199,12 +200,12 @@ try {
   }
   console.error('[commit-detail-resize] ERROR:', e?.message || e);
   try {
-    if (firstApp) await firstApp.close();
+    if (firstApp) await shutdownApp(firstApp);
   } catch {
     /* ignore */
   }
   try {
-    if (secondApp) await secondApp.close();
+    if (secondApp) await shutdownApp(secondApp);
   } catch {
     /* ignore */
   }
