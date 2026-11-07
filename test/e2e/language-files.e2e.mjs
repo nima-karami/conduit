@@ -119,6 +119,18 @@ const editorInfo = (page, name) =>
 
 const hasDirtyTab = (page) => page.evaluate(() => !!document.querySelector('.tab__dirty'));
 
+/** Bounded negative: `forbidden` must stay falsy for the whole `ms` window. */
+async function assertAbsentFor(page, ms, forbidden, what) {
+  try {
+    await page.waitForFunction(forbidden, null, { timeout: ms });
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+    return;
+  }
+  assert(false, `${what} appeared during the ${ms} ms observation window`);
+}
+const dirtyTabShown = () => !!document.querySelector('.tab__dirty');
+
 const banners = (page) =>
   page.evaluate(() =>
     [...document.querySelectorAll('.viewer__banner')].map((b) => b.textContent.trim()),
@@ -356,11 +368,9 @@ async function scenario({ app, page, log }, root) {
   await setSettings(page, { autoSave: 'afterDelay', autoSaveDelay: 300 });
   const idleBefore = statSync(at('bom-idle.txt')).mtimeMs;
   await openDoc(app, page, sid, at('bom-idle.txt'));
-  await page.waitForTimeout(1500);
-  const idleDirty = await page.evaluate(() => !!document.querySelector('.tab__dirty'));
+  // Auto-save fires 300 ms after the last edit: the window is several delays long.
+  await assertAbsentFor(page, 1500, dirtyTabShown, 'a dirty mark on an untouched BOM file');
   await closeAllDocs(page);
-  await page.waitForTimeout(800);
-  assert(!idleDirty, 'an untouched BOM file must not be dirty');
   assert(statSync(at('bom-idle.txt')).mtimeMs === idleBefore, 'an untouched BOM file was written');
 
   // AC-A4 — edits to a CRLF golden and a BOM file save byte-exact.
@@ -395,20 +405,25 @@ async function scenario({ app, page, log }, root) {
     await openDoc(app, page, sid, at(name));
     const shown = await banners(page);
     assert(shown.includes(banner), `${name} banner: ${JSON.stringify(shown)}`);
-    await page.waitForTimeout(500);
-    assert(!(await hasDirtyTab(page)), `${name} opened dirty`);
+    await assertAbsentFor(page, 500, dirtyTabShown, `${name} opening dirty`);
     const valueBefore = (await editorInfo(page, name)).value;
     await focusEditorOf(page, name);
     await page.keyboard.type('zz');
     await page.keyboard.press('Control+s');
-    await page.waitForTimeout(600);
+    await assertAbsentFor(page, 600, dirtyTabShown, `${name} dirty after typing`);
     const info = await editorInfo(page, name);
     assert(info.readOnly === true, `${name} should be read-only`);
     assert(info.value === valueBefore, `${name} accepted typing`);
     assert(readFileSync(at(name)).equals(before), `${name} changed on disk`);
     assert(!(await hasDirtyTab(page)), `${name} dirty after typing into a read-only doc`);
     await page.evaluate(() => document.querySelector('.tabbar [role="tab"] .tab__close')?.click());
-    await page.waitForTimeout(400);
+    await page.waitForFunction(
+      () =>
+        !document.querySelector('.tabbar [role="tab"]') ||
+        !!document.querySelector('[role="alertdialog"]'),
+      null,
+      { timeout: 10_000 },
+    );
     const prompt = await page.evaluate(
       () => document.querySelector('[role="alertdialog"]')?.textContent ?? null,
     );

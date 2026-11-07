@@ -83,6 +83,17 @@ const waitTreeIds = (page, ids, timeout = 5000) =>
 const sessionById = (page, id) =>
   page.evaluate((sid) => (window.__sessions || []).find((s) => s.id === sid) ?? null, id);
 
+/** Bounded negative: `forbidden(arg)` must stay falsy for the whole `ms` window. */
+async function assertAbsentFor(page, ms, forbidden, what, arg = null) {
+  try {
+    await page.waitForFunction(forbidden, arg, { timeout: ms });
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+    return;
+  }
+  assert(false, `${what} appeared during the ${ms} ms observation window`);
+}
+
 const liveRegion = (page) =>
   page.$eval('.sidebar [aria-live="polite"]', (el) => el.textContent.replace(/\u200b/g, ''));
 
@@ -367,7 +378,13 @@ try {
   );
   await page.keyboard.press('Enter');
   await page.waitForSelector('.confirm', { state: 'detached', timeout: 5000 });
-  await page.waitForTimeout(500);
+  await assertAbsentFor(
+    page,
+    500,
+    (id) => !(window.__projects || []).some((p) => p.id === id),
+    'the cancelled delete removing the space',
+    alphaId,
+  );
   assert(
     await page.evaluate((id) => (window.__projects || []).some((p) => p.id === id), alphaId),
     'Enter on the default focus must cancel, not delete',
@@ -537,7 +554,12 @@ try {
     sLone,
     { timeout: 10000 },
   );
-  await page.waitForTimeout(800);
+  await assertAbsentFor(
+    page,
+    800,
+    () => (window.__projects || []).filter((p) => p.name === 'RMB pipeline').length > 1,
+    'a second RMB pipeline project',
+  );
   const rmbCount = await page.evaluate(
     () => (window.__projects || []).filter((p) => p.name === 'RMB pipeline').length,
   );
@@ -554,7 +576,20 @@ try {
   await card(sLone).click({ button: 'right', position: { x: 30, y: 10 } });
   await page.locator('.ctxmenu__item', { hasText: exact('Copy home path') }).click();
   const home = (await sessionById(page, sLone)).home;
-  await page.waitForTimeout(200);
+  // The host writes the clipboard after the menu action; wait for the home path (a machine with a
+  // dead clipboard never matches and falls to the precondition probe below).
+  await launched.app.evaluate(
+    ({ clipboard }, want) =>
+      new Promise((resolve) => {
+        const deadline = Date.now() + 3000;
+        const tick = () => {
+          if (clipboard.readText() === want || Date.now() >= deadline) return resolve();
+          setTimeout(tick, 5);
+        };
+        tick();
+      }),
+    home,
+  );
   const clip = await launched.app.evaluate(({ clipboard }) => clipboard.readText());
   // A machine whose clipboard refuses every write (paste.e2e's precondition: OpenClipboard error 5)
   // can't prove this step. Tell it apart from a product miss with a round-trip in the main process,
@@ -647,7 +682,13 @@ try {
     !ontoAll.error && !ontoAll.accepted && !ontoAll.cue,
     `All is never a drop target: ${JSON.stringify(ontoAll)}`,
   );
-  await page.waitForTimeout(1000);
+  await assertAbsentFor(
+    page,
+    1000,
+    ([sid, want]) => (window.__sessions || []).find((s) => s.id === sid)?.projectId !== want,
+    'a project change from a drop on its own Space or All',
+    [sLone, betaId],
+  );
   assert(
     (await sessionById(page, sLone))?.projectId === betaId,
     'a drop on its own Space or on All changes nothing',
@@ -657,7 +698,16 @@ try {
   // ── Hover × closes the session ───────────────────────────────────────────
   const cardBox = await card(sLone).boundingBox();
   await page.mouse.move(cardBox.x + cardBox.width / 2, cardBox.y + cardBox.height / 2);
-  await page.waitForTimeout(350);
+  await page.waitForFunction(
+    (sid) => {
+      const btn = document.querySelector(
+        `.sidebar .session[data-sessionid="${sid}"] .session__kill`,
+      );
+      return !!btn && getComputedStyle(btn).pointerEvents === 'auto';
+    },
+    sLone,
+    { timeout: 5000 },
+  );
   const kill = await page.evaluate((sid) => {
     const btn = document.querySelector(`.sidebar .session[data-sessionid="${sid}"] .session__kill`);
     if (!btn) return null;

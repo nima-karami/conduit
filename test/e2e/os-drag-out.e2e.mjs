@@ -36,6 +36,28 @@ const other = win32.resolve(project, 'other.txt');
 writeFileSync(other, 'not dragged');
 mkdirSync(win32.resolve(project, 'docs'));
 
+/**
+ * Resolves true once the host probe `log` holds at least `min` entries of `kind` (any kind when
+ * null), false at the deadline. Polled in the main process: the entries are written there by IPC
+ * and will-download handlers the page cannot observe.
+ */
+const waitLogCount = (app, { log, kind = null, min, timeout }) =>
+  app.evaluate(
+    (_e, a) =>
+      new Promise((resolve) => {
+        const deadline = Date.now() + a.timeout;
+        const tick = () => {
+          const entries = globalThis[a.log] ?? [];
+          const n = a.kind ? entries.filter((e) => e.kind === a.kind).length : entries.length;
+          if (n >= a.min) return resolve(true);
+          if (Date.now() >= deadline) return resolve(false);
+          setTimeout(tick, 5);
+        };
+        tick();
+      }),
+    { log, kind, min, timeout },
+  );
+const DOWNLOAD_LOG = '__conduitDownloadLog';
 const downloadLog = (app) => app.evaluate(() => globalThis.__conduitDownloadLog);
 /** The app window's webContents id, and a real download it starts (not a drag). */
 const appContentsId = (app) =>
@@ -58,6 +80,17 @@ const dragStartOn = (locator) =>
     return { downloadUrl: dt.getData('DownloadURL'), prevented: ev.defaultPrevented };
   });
 
+/** Bounded negative: the page URL must not leave `url` during the window. */
+async function assertUrlHeldFor(page, ms, url) {
+  try {
+    await page.waitForFunction((u) => location.href !== u, url, { timeout: ms });
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+    return;
+  }
+  assert(false, `the page navigated away from ${url}`);
+}
+
 await runScenario('os-drag-out', async ({ app, page, log }) => {
   await openSession(page, { path: project });
   await tapBridge(page);
@@ -69,7 +102,18 @@ await runScenario('os-drag-out', async ({ app, page, log }) => {
   await row.first().waitFor({ state: 'visible', timeout: 10_000 });
   await row.first().click();
   await page.keyboard.press('Control+C');
-  await page.waitForTimeout(500);
+  if (WIN32_OS_CLIPBOARD) {
+    assert(
+      await waitLogCount(app, { log: '__conduitClipboardLog', min: 1, timeout: 10_000 }),
+      'Ctrl+C recorded an OS clipboard request',
+    );
+  } else {
+    // Nothing may be recorded: a bounded negative window.
+    assert(
+      !(await waitLogCount(app, { log: '__conduitClipboardLog', min: 1, timeout: 500 })),
+      'unsupported: nothing recorded',
+    );
+  }
 
   const clip = await app.evaluate(() => globalThis.__conduitClipboardLog);
   assert(Array.isArray(clip), '__conduitClipboardLog is installed under CONDUIT_E2E');
@@ -98,7 +142,10 @@ await runScenario('os-drag-out', async ({ app, page, log }) => {
   assert(Array.isArray(log0), '__conduitDownloadLog is installed under CONDUIT_E2E');
 
   await pageDownload(app, fileUrl);
-  await page.waitForTimeout(500);
+  assert(
+    await waitLogCount(app, { log: DOWNLOAD_LOG, kind: 'download', min: 1, timeout: 10_000 }),
+    'the page-initiated download reached will-download',
+  );
   const pageInitiated = (await downloadLog(app)).filter((e) => e.kind === 'download');
   assert(
     pageInitiated.length === 1 &&
@@ -115,7 +162,10 @@ await runScenario('os-drag-out', async ({ app, page, log }) => {
       dragged.downloadUrl.endsWith(encodeURIComponent(NAME)),
     `file row stamps DownloadURL, got "${dragged.downloadUrl}"`,
   );
-  await page.waitForTimeout(300);
+  assert(
+    await waitLogCount(app, { log: DOWNLOAD_LOG, kind: 'arm', min: 1, timeout: 10_000 }),
+    'dragstart reached the host',
+  );
   const armedEntry = (await downloadLog(app)).filter((e) => e.kind === 'arm').at(-1);
   assert(
     armedEntry?.accepted === true && armedEntry.path === file,
@@ -126,8 +176,18 @@ await runScenario('os-drag-out', async ({ app, page, log }) => {
   const allow = (url) =>
     app.evaluate((_e, a) => globalThis.__conduitAllowDownload(a.url, a.cid), { url, cid });
   assert((await allow(otherUrl)) === false, 'another file than the armed one is refused');
+  // allow() above records a 'download' entry too, so wait for one beyond the current count.
+  const downloadsBefore = (await downloadLog(app)).filter((e) => e.kind === 'download').length;
   await pageDownload(app, otherUrl);
-  await page.waitForTimeout(500);
+  assert(
+    await waitLogCount(app, {
+      log: DOWNLOAD_LOG,
+      kind: 'download',
+      min: downloadsBefore + 1,
+      timeout: 10_000,
+    }),
+    'the second page-initiated download reached will-download',
+  );
   const otherReal = (await downloadLog(app)).filter((e) => e.kind === 'download').at(-1);
   assert(
     otherReal && !otherReal.allowed && otherReal.url.includes('other.txt'),
@@ -142,7 +202,8 @@ await runScenario('os-drag-out', async ({ app, page, log }) => {
     has: page.locator('.filerow__name', { hasText: /^docs$/ }),
   });
   const folderDrag = await dragStartOn(folderRow.first());
-  await page.waitForTimeout(300);
+  // Bounded negative: a folder drag must not arm.
+  await waitLogCount(app, { log: DOWNLOAD_LOG, kind: 'arm', min: armsBefore + 1, timeout: 300 });
   assert(
     folderDrag.downloadUrl === '',
     `a folder drag carries no DownloadURL: "${folderDrag.downloadUrl}"`,
@@ -157,7 +218,7 @@ await runScenario('os-drag-out', async ({ app, page, log }) => {
   await page.evaluate(() => {
     location.href = 'file:///C:/Windows/win.ini';
   });
-  await page.waitForTimeout(500);
+  await assertUrlHeldFor(page, 500, before);
   assert(
     before.includes('index.html') && page.url() === before,
     `still the app shell: ${page.url()}`,
