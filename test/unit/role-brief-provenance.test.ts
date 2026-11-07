@@ -27,7 +27,7 @@ describe('role brief provenance', () => {
   });
 
   it('no MCP tool schema has a brief property', () => {
-    expect(JSON.stringify(toolSchemas(['claude']))).not.toContain('"brief"');
+    expect(JSON.stringify(toolSchemas())).not.toContain('"brief"');
   });
 
   it('only the host and the session manager write a brief state, and no MCP file reads one', () => {

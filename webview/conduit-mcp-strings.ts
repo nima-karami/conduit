@@ -246,12 +246,14 @@ export const MCP_STR = {
   tools: {
     description: {
       list_sessions: 'Lets an agent see the other sessions it can message.',
+      list_agents: 'Lets an agent see which agents it can open.',
       wait_sessions:
         'Lets an agent block until a session finishes a turn, exits, needs you, or messages it.',
       send_message: 'Lets an agent message other sessions and you.',
       read_inbox: 'Lets an agent read the messages sent to it.',
       read_attachment: 'Lets an agent open files attached to its messages.',
-      open_session: 'Lets an agent start sessions from your profiles.',
+      open_session:
+        'Lets an agent start sessions from your profiles or any agent CLI on your PATH.',
       open_terminal: 'Lets an agent run any program as you, outside its own sandbox.',
       open_file: 'Lets an agent open files in your editor.',
       close_session: 'Lets an agent close sessions; a closed session loses its scrollback.',
@@ -318,7 +320,7 @@ export const MCP_STR = {
     title: (handle: string, tool: string) => `${handle} requests ${tool}`,
     summary: {
       open_session: (s) =>
-        `Open a ${s.agent}${s.model === undefined ? '' : ` (model ${s.model})`} session in ${s.path}${s.message === undefined ? '' : `, with a first message (${s.message} chars)`}${s.focus ? '' : ', in the background'}`,
+        `Open a ${s.agent}${s.command === undefined ? '' : ` (${s.command})`}${s.model === undefined ? '' : ` (model ${s.model})`} session in ${s.path}${s.message === undefined ? '' : `, with a first message (${s.message} chars)`}${s.focus ? '' : ', in the background'}`,
       open_terminal: (s) => `Run ${s.command} in ${s.path}${s.focus ? '' : ', in the background'}`,
       open_file: (s) => `Open ${s.path}${s.line === null ? '' : ` at line ${s.line}`}`,
       close_session: (s) =>

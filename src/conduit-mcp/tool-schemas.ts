@@ -30,6 +30,12 @@ const MESSAGING_SCHEMAS: readonly ToolSchema[] = [
     inputSchema: { ...OBJECT, properties: {} },
   },
   {
+    name: 'list_agents',
+    description:
+      'List the agents open_session can open: registered ids (profile, launcher, detected, shell) with their model, messaging, notices and brief support. An agent CLI on PATH that is not listed can still be opened by its command name.',
+    inputSchema: { ...OBJECT, properties: {} },
+  },
+  {
     name: 'wait_sessions',
     description:
       "Block until one of these sessions finishes a turn, exits, needs the human, or messages you; prefer this to polling files. Keep timeout_s within your client's tool timeout (Codex: 180 s).",
@@ -134,18 +140,22 @@ const LABEL = { type: 'string', maxLength: MAX_LABEL_CHARS } as const;
 const FOCUS = { type: 'boolean', default: true } as const;
 const CLOSE_WHEN_DONE = { type: 'boolean', default: false } as const;
 
-// Spec 2026-10-27-conduit-mcp-control-tools §3.1; agent ids are an enum unless S0 finds a CLI that rejects it (A6).
-function controlSchemas(agentIds: readonly string[]): ToolSchema[] {
+// Spec 2026-10-27-conduit-mcp-control-tools §3.1; agent is free text, resolved and checked at open (flexible-agent-contracts §4.1).
+function controlSchemas(): ToolSchema[] {
   return [
     {
       name: 'open_session',
       description:
-        "Open a new Conduit session running a registered agent in a folder (absolute, or relative to your session's home folder). model picks the agent's model, for agents whose CLI takes one. message is the new session's first task, delivered once its prompt is ready. close_when_done:true closes the session once its program exits; finished output is lost. focus:true (default) moves the human's view to it, which can end your on-screen access; when opening several, pass focus:false for all but the last.",
+        "Open a new Conduit session running an agent in a folder (absolute, or relative to your session's home folder). agent is a registered id from list_agents, or an agent CLI's command name on PATH, e.g. \"kiro\". model picks the agent's model, for agents whose CLI takes one. message is the new session's first task, delivered once its prompt is ready. close_when_done:true closes the session once its program exits; finished output is lost. focus:true (default) moves the human's view to it, which can end your on-screen access; when opening several, pass focus:false for all but the last.",
       inputSchema: {
         ...OBJECT,
         properties: {
           path: PATH,
-          agent: { type: 'string', enum: [...agentIds] },
+          agent: {
+            type: 'string',
+            description:
+              'A registered agent id (see list_agents) or an agent CLI\'s command name on PATH, e.g. "kiro".',
+          },
           label: LABEL,
           focus: FOCUS,
           close_when_done: CLOSE_WHEN_DONE,
@@ -318,8 +328,8 @@ const APP_CONTROL_SCHEMAS: readonly ToolSchema[] = [
 ];
 
 /** Every tool in TOOL_NAMES order; callers filter to the effective set. */
-export function toolSchemas(agentIds: readonly string[]): ToolSchema[] {
-  const all = [...MESSAGING_SCHEMAS, ...controlSchemas(agentIds), ...APP_CONTROL_SCHEMAS];
+export function toolSchemas(): ToolSchema[] {
+  const all = [...MESSAGING_SCHEMAS, ...controlSchemas(), ...APP_CONTROL_SCHEMAS];
   const byName = new Map(all.map((s) => [s.name, s]));
   return TOOL_NAMES.map((n) => {
     const s = byName.get(n);

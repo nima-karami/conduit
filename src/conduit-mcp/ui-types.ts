@@ -28,6 +28,8 @@ export type AskSummary =
       path: string;
       agent: string;
       focus: boolean;
+      /** A bare command on PATH: the absolute path that will run. */
+      command?: string;
       model?: string;
       /** Characters in the first message, when one is given. */
       message?: number;

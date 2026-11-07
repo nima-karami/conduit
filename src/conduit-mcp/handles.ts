@@ -1,3 +1,4 @@
+import { commandLeaf } from '../launch-args';
 import type { CliKind } from './tool-policy';
 import type { Handle } from './types';
 
@@ -64,4 +65,30 @@ export function handlePrefixForCommand(command: string): string {
     .toLowerCase()
     .replace(/\.(exe|cmd|bat|ps1)$/, '');
   return COMMAND_HANDLE_PREFIX.get(leaf) ?? 'term';
+}
+
+/** Prefixes a built-in adapter owns; an adapter-less agent never takes one (flexible-agent-contracts §4.1). */
+const RESERVED_PREFIXES: ReadonlySet<string> = new Set([
+  ...COMMAND_HANDLE_PREFIX.keys(),
+  'cursor',
+  'you',
+  'fake',
+]);
+const SLUG_MAX = 20;
+
+export type AgentNaming = { kind: 'profile'; id: string } | { kind: 'command'; command: string };
+
+/**
+ * An adapter-less agent's handle prefix: the slug of its profile id or its command's leaf, else
+ * 'term' when the slug is empty or one an adapter owns.
+ */
+export function agentHandlePrefix(named: AgentNaming): string {
+  const name = named.kind === 'profile' ? named.id : commandLeaf(named.command);
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+/, '')
+    .slice(0, SLUG_MAX)
+    .replace(/-+$/, '');
+  return slug === '' || RESERVED_PREFIXES.has(slug) ? 'term' : slug;
 }

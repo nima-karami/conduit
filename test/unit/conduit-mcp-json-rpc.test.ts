@@ -12,8 +12,7 @@ import {
 import { TOOL_NAMES } from '../../src/conduit-mcp/tool-policy';
 import { CONDUIT_INSTRUCTIONS, toolSchemas } from '../../src/conduit-mcp/tool-schemas';
 
-const AGENTS = ['claude', 'codex', 'shell:pwsh'] as const;
-const SCHEMAS = toolSchemas(AGENTS);
+const SCHEMAS = toolSchemas();
 
 function core(over: Partial<McpServerCoreDeps> = {}) {
   const calls: Array<{ name: string; args: unknown }> = [];
@@ -151,15 +150,14 @@ describe('toolSchemas', () => {
     }
   });
 
-  it('open_session.agent.enum equals the given ids', () => {
+  it('open_session.agent is a free string: any agent CLI name on PATH, validated at open', () => {
     const s = schemaOf('open_session').inputSchema;
     const p = s.properties as Props;
-    expect(p.agent).toMatchObject({ type: 'string', enum: [...AGENTS] });
+    expect(p.agent).toMatchObject({ type: 'string' });
+    expect(p.agent).not.toHaveProperty('enum');
     expect(p.label).toMatchObject({ type: 'string', maxLength: 80 });
     expect(p.focus).toMatchObject({ type: 'boolean', default: true });
     expect(s.required).toEqual(['path', 'agent']);
-    const other = toolSchemas(['x']).find((t) => t.name === 'open_session');
-    expect((other?.inputSchema.properties as Props | undefined)?.agent.enum).toEqual(['x']);
   });
 
   it('open_terminal bounds: command maxLength 1024, args maxItems 64', () => {

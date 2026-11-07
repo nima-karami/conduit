@@ -396,6 +396,7 @@ function harness(
     resolvePath: (h: string, rel: string) => (rel.startsWith('/') ? rel : `${h}/${rel}`),
     kindOf: opts.kindOf ?? (async (abs: string) => opts.kinds?.[abs] ?? 'missing'),
     agentIds: () => DEFS.map((d) => d.id),
+    agentCatalog: () => DEFS.map((def) => ({ def, source: 'profile' as const })),
     resolveCommand: (c: string) => `/usr/bin/${c}`,
     openSession: async (req: McpOpenRequest) => {
       const id = `n${opens.length + 1}`;

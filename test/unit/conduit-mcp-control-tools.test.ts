@@ -20,6 +20,7 @@ import type { Caller } from '../../src/conduit-mcp/tools';
 import { type Result, toolError } from '../../src/conduit-mcp/types';
 
 const HOME = '/home/main';
+const leafOf = (c: string) => c.split(/[/]/).pop() ?? '';
 const noUi: ControlCallContext['ui'] = async () => {
   throw new Error('the open tools never ask the renderer');
 };
@@ -101,7 +102,10 @@ function harness(over: Partial<ControlDeps> = {}): Harness {
     windowReady: () => {
       throw new Error('windowReady: not an open tool');
     },
-    adapterOf: (id) => (id === 'claude' ? 'claude' : id === 'codex' ? 'codex' : undefined),
+    modelFlagOf: (id) => (id === 'claude' ? '--model' : id === 'codex' ? '-m' : undefined),
+    commandModelFlag: (c) =>
+      leafOf(c) === 'codex' ? '-m' : leafOf(c) === 'claude' ? '--model' : undefined,
+    registeredIdOf: (n) => (h.deps.agentIds().includes(n) ? n : undefined),
     messageReady: () => true,
     sendMessage: async (who, args, opts) => {
       h.sent.push({ from: who.handle, args, opts });
@@ -284,9 +288,9 @@ describe('createControlHandlers', () => {
 
   it('unknown agent → unknown_agent listing the registered ids', async () => {
     const h = harness();
-    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ agent: 'aider' }));
+    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ agent: 'nope' }));
     expect(code(r)).toBe('unknown_agent');
-    expect(!r.ok && r.error.message).toContain('claude, codex');
+    expect(!r.ok && r.error.valid).toEqual(['claude', 'codex']);
     expect(h.opens).toEqual([]);
   });
 
@@ -524,7 +528,7 @@ describe('createControlHandlers', () => {
       expect(code(await c.openSession(caller(), sessionArgs({ path: '/gone' })))).toBe(
         'path_missing',
       );
-      expect(code(await c.openSession(caller(), sessionArgs({ agent: 'aider' })))).toBe(
+      expect(code(await c.openSession(caller(), sessionArgs({ agent: 'nope' })))).toBe(
         'unknown_agent',
       );
     }
@@ -635,11 +639,11 @@ describe('createControlHandlers', () => {
       'rate_limited',
     );
     const stranger: Caller = { handle: 'x-1', sessionId: 'gone' };
+    expect(code(await c.openSession(stranger, sessionArgs({ path: '/gone', agent: 'nope' })))).toBe(
+      'not_in_session',
+    );
     expect(
-      code(await c.openSession(stranger, sessionArgs({ path: '/gone', agent: 'aider' }))),
-    ).toBe('not_in_session');
-    expect(
-      code(await c.openSession(caller(2), sessionArgs({ path: '/repo/a.ts', agent: 'aider' }))),
+      code(await c.openSession(caller(2), sessionArgs({ path: '/repo/a.ts', agent: 'nope' }))),
     ).toBe('not_a_directory');
   });
 });
@@ -830,7 +834,7 @@ describe('tool schemas (plan B5)', () => {
 
   it('schemas use only the allowed keywords', () => {
     const bad: string[] = [];
-    for (const t of toolSchemas(['claude'])) walk(t.inputSchema, t.name, bad);
+    for (const t of toolSchemas()) walk(t.inputSchema, t.name, bad);
     expect(bad).toEqual([]);
   });
 });
@@ -839,7 +843,7 @@ describe('session tool descriptions', () => {
   it('state that focus:true can end on-screen access', () => {
     const sentence =
       " focus:true (default) moves the human's view to it, which can end your on-screen access; when opening several, pass focus:false for all but the last.";
-    const byName = new Map(toolSchemas(['claude']).map((t) => [t.name, t.description]));
+    const byName = new Map(toolSchemas().map((t) => [t.name, t.description]));
     for (const name of ['open_session', 'open_terminal'])
       expect(byName.get(name)?.endsWith(sentence)).toBe(true);
     expect(byName.get('open_file')).not.toContain('on-screen access');
@@ -1040,5 +1044,120 @@ describe('open_session model and message (CON-148)', () => {
     });
     expect(code(r)).toBe('invalid_args');
     expect(h.opens).toEqual([]);
+  });
+});
+
+describe('open_session agent resolution (flexible-agent-contracts §3.1, §4.1)', () => {
+  const NO_MOVE = ctxOf();
+
+  it('a registered id wins over a PATH command of the same name', async () => {
+    const h = harness({ agentIds: () => ['claude', 'kiro'] });
+    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ agent: 'kiro' }));
+    expect(r.ok).toBe(true);
+    expect(h.opens[0].launch).toEqual({ kind: 'agent', agentId: 'kiro' });
+  });
+
+  it('a bare command on PATH opens a command session at its absolute path', async () => {
+    const h = harness({ agentIds: () => ['claude'] });
+    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ agent: 'kiro' }));
+    expect(r).toMatchObject({ ok: true, value: { agent: 'kiro' } });
+    expect(h.opens[0].launch).toEqual({
+      kind: 'command',
+      command: { command: '/usr/bin/kiro', args: [] },
+    });
+    expect(h.opens[0].label).toBe('kiro');
+  });
+
+  it('the approval summary shows the absolute path of a bare command', async () => {
+    const h = harness({ agentIds: () => ['claude'] });
+    const p = await createControlHandlers(h.deps).prepareOpenSession(
+      caller(),
+      sessionArgs({ agent: 'kiro' }),
+      NO_MOVE,
+    );
+    expect(p.ok && 'summary' in p.value ? p.value.summary : null).toMatchObject({
+      tool: 'open_session',
+      agent: 'kiro',
+      command: '/usr/bin/kiro',
+    });
+  });
+
+  it.each(['powershell', 'node', 'git'])(
+    'the refused leaf %s → invalid_args with a hint',
+    async (agent) => {
+      const h = harness({ agentIds: () => ['claude'] });
+      const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ agent }));
+      expect(r).toMatchObject({ ok: false, error: { code: 'invalid_args' } });
+      expect(!r.ok && r.error.hint).toContain('open_terminal');
+      expect(h.opens).toEqual([]);
+    },
+  );
+
+  it('a path as agent → invalid_args, nothing opened', async () => {
+    const h = harness({ agentIds: () => ['claude'] });
+    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ agent: 'C:\\x\\kiro' }));
+    expect(code(r)).toBe('invalid_args');
+    expect(h.opens).toEqual([]);
+  });
+
+  it('a name not on PATH → unknown_agent with a hint and the valid ids', async () => {
+    const h = harness({ agentIds: () => ['claude'] });
+    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ agent: 'nope' }));
+    expect(r).toMatchObject({
+      ok: false,
+      error: { code: 'unknown_agent', valid: ['claude'] },
+    });
+    expect(!r.ok && r.error.hint).toContain('list_agents');
+  });
+
+  it('a bare codex gets the codex model flag', async () => {
+    const h = harness({ agentIds: () => ['claude'] });
+    const r = await whenOn(h.deps).openSession(
+      caller(),
+      sessionArgs({ agent: 'codex', model: 'gpt-6' }),
+    );
+    expect(r.ok).toBe(true);
+    expect(h.opens[0].model).toBe('gpt-6');
+    expect(h.opens[0].launch).toMatchObject({
+      kind: 'command',
+      command: { command: '/usr/bin/codex' },
+    });
+  });
+
+  it('a model on a bare command without a model flag → invalid_args naming the ids that take one', async () => {
+    const h = harness({ agentIds: () => ['claude', 'kiro'] });
+    const r = await whenOn(h.deps).openSession(
+      caller(),
+      sessionArgs({ agent: 'kiro', model: 'k2' }),
+    );
+    expect(r).toMatchObject({ ok: false, error: { code: 'invalid_args' } });
+    expect(!r.ok && r.error.hint).toEqual(expect.stringContaining('capabilities.model_flag'));
+    expect(!r.ok && r.error.hint).toEqual(expect.stringContaining('claude'));
+    expect(h.opens).toEqual([]);
+  });
+
+  it('a profile with a model_flag takes a model', async () => {
+    const h = harness({
+      agentIds: () => ['claude', 'kiro'],
+      modelFlagOf: (id) => (id === 'kiro' ? '--m' : id === 'claude' ? '--model' : undefined),
+    });
+    const r = await whenOn(h.deps).openSession(
+      caller(),
+      sessionArgs({ agent: 'kiro', model: 'k2' }),
+    );
+    expect(r.ok).toBe(true);
+    expect(h.opens[0].model).toBe('k2');
+  });
+});
+
+describe('open_session alias resolution (flexible-agent-contracts §3.1)', () => {
+  it('an alias of a registered definition runs that definition, not the PATH command', async () => {
+    const h = harness({
+      agentIds: () => ['my-claude'],
+      registeredIdOf: (n) => (n === 'claude' ? 'my-claude' : undefined),
+    });
+    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ agent: 'claude' }));
+    expect(r.ok).toBe(true);
+    expect(h.opens[0].launch).toEqual({ kind: 'agent', agentId: 'my-claude' });
   });
 });

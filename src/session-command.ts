@@ -1,6 +1,6 @@
 // Node-free: the renderer imports commandLabel for card labels and the tools dialog.
 import { type AgentRegistry, RESERVED_AGENT_ID_PREFIX } from './agent-registry';
-import { adapterFor, modelArgs } from './conduit-mcp/adapters';
+import { modelArgsFor } from './conduit-mcp/adapters';
 import { commandLeaf } from './launch-args';
 import type { AgentDefinition, Session, SessionCommand, SessionOpener } from './types';
 
@@ -35,13 +35,17 @@ export function effectiveDef(
   s: Pick<Session, 'agentId' | 'command' | 'model'>,
   registry: Pick<AgentRegistry, 'get'>,
 ): AgentDefinition | undefined {
-  if (s.agentId === COMMAND_AGENT_ID) return s.command ? commandDef(s.command) : undefined;
-  const def = registry.get(s.agentId);
+  const def =
+    s.agentId === COMMAND_AGENT_ID
+      ? s.command
+        ? commandDef(s.command)
+        : undefined
+      : registry.get(s.agentId);
   // Re-checked here: the persisted value is only as trusted as the file it came from.
   const model = s.model === undefined ? undefined : coerceModel(s.model);
   if (!def || model === undefined) return def;
-  // An agent whose command no longer has a model flag launches without the model, not refused.
-  const flags = modelArgs(adapterFor(def, { e2e: false })?.id, model) ?? [];
+  // A program whose CLI has no model flag launches without the model, not refused.
+  const flags = modelArgsFor(def, model) ?? [];
   return { ...def, args: [...def.args, ...flags] };
 }
 

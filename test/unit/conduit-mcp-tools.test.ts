@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AttachmentSender, AttachmentSnapshot } from '../../src/conduit-mcp/attachments';
 import { createMessageStore, type StoreIo } from '../../src/conduit-mcp/store';
 import {
+  type AgentListing,
   type Caller,
   createToolHandlers,
   type DirectoryEntry,
@@ -110,6 +111,7 @@ async function harness(over: Partial<ToolDeps> = {}) {
   const deps: ToolDeps = {
     store,
     directory: () => DIRECTORY,
+    agents: () => [],
     messagingOn: () => on,
     now: () => new Date(clock),
     newId: (prefix) => `${prefix}_${String(++ids).padStart(16, '0')}`,
@@ -930,5 +932,93 @@ describe('contract S1: error codes, hints, list_sessions fields', () => {
       notices: 'pull',
     });
     expect(byHandle['kiro-2']).toMatchObject({ messageable: true });
+  });
+});
+
+describe('listAgents (flexible-agent-contracts §4.2)', () => {
+  const AGENTS: AgentListing[] = [
+    {
+      id: 'cli:codex',
+      label: 'Codex',
+      command: '/usr/bin/codex',
+      source: 'detected',
+      model: true,
+      messaging: 'wired',
+      notices: true,
+      brief: false,
+    },
+    {
+      id: 'shell:pwsh',
+      label: 'PowerShell',
+      command: 'pwsh',
+      source: 'shell',
+      model: false,
+      messaging: 'none',
+      notices: false,
+      brief: false,
+    },
+    {
+      id: 'zeta',
+      label: 'Zeta',
+      command: 'zeta',
+      source: 'profile',
+      model: false,
+      messaging: 'env',
+      notices: false,
+      brief: false,
+    },
+    {
+      id: 'mine',
+      label: 'Mine',
+      command: 'mine',
+      source: 'launcher',
+      model: false,
+      messaging: 'env',
+      notices: false,
+      brief: false,
+    },
+    {
+      id: 'alpha',
+      label: 'Alpha',
+      command: 'alpha',
+      source: 'profile',
+      model: true,
+      messaging: 'env',
+      notices: false,
+      brief: false,
+    },
+  ];
+
+  it('lists every agent in source order (profile, launcher, detected, shell), then label', async () => {
+    const h = await harness({ agents: () => AGENTS });
+    const out = okValue(h.tools.listAgents(CLAUDE));
+    expect(out.agents.map((a) => a.id)).toEqual([
+      'alpha',
+      'zeta',
+      'mine',
+      'cli:codex',
+      'shell:pwsh',
+    ]);
+    expect(out.bare_commands).toBe(true);
+  });
+
+  it('each entry carries the §4.2 fields and nothing else', async () => {
+    const h = await harness({ agents: () => AGENTS });
+    const out = okValue(h.tools.listAgents(CLAUDE));
+    expect(out.agents.find((a) => a.id === 'cli:codex')).toEqual({
+      id: 'cli:codex',
+      label: 'Codex',
+      command: '/usr/bin/codex',
+      source: 'detected',
+      model: true,
+      messaging: 'wired',
+      notices: true,
+      brief: false,
+    });
+  });
+
+  it('an empty catalog lists nothing and still answers', async () => {
+    const h = await harness({ agents: () => [] });
+    expect(okValue(h.tools.listAgents(CLAUDE))).toEqual({ agents: [], bare_commands: true });
   });
 });

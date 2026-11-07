@@ -12,9 +12,13 @@ All notable user-facing changes to Conduit. Format follows
 - `open_file` takes a list of `paths` to open several files in one call.
 - `wait_sessions` lets an agent block until a session finishes a turn, exits, needs you, or messages it, so it doesn't have to poll.
 - `close_session` takes a list of sessions, or `children: true` to close every session the agent opened. You approve the whole call once.
+- `open_session` opens any agent CLI on your PATH by name, such as `kiro`, not only the agents in your agents.json. The approval card shows the full path it will run.
+- `list_agents` lists the agents `open_session` can open, with each one's model, message and notice support.
+- An agents.json profile can set `capabilities.model_flag`, so `open_session`'s `model` works with a CLI Conduit has no built-in support for.
 
 ### Changed
 - Terminals an agent opens get a handle and stay in `list_sessions` after they exit, so the agent can close them.
+- A bad entry in agents.json is skipped with a warning; the other entries still load. A file that doesn't parse keeps the agents loaded before it.
 - Tool errors say what to do next and use one set of codes. `unknown_handle` is now `unknown_session`; `invalid_argument` and `invalid_input` are now `invalid_args`.
 - `list_sessions` shows each session's id, opener, folder, whether a message can reach it, and whether it gets typed notices.
 

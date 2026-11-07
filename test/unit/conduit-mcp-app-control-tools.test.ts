@@ -105,6 +105,7 @@ function harness(): Harness {
     resolvePath: (home, p) => (p.startsWith('/') ? p : `${home}/${p}`),
     kindOf: async () => 'missing',
     agentIds: () => [],
+    registeredIdOf: () => undefined,
     resolveCommand: () => undefined,
     openSession: async () => {
       throw new Error('not used');
@@ -117,7 +118,8 @@ function harness(): Harness {
       throw new Error('not used');
     },
     claimHandle: () => null,
-    adapterOf: () => undefined,
+    modelFlagOf: () => undefined,
+    commandModelFlag: () => undefined,
     messageReady: () => false,
     sendMessage: async () => {
       throw new Error('not used');

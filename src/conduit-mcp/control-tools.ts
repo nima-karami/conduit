@@ -6,7 +6,7 @@ import type { DomainOpenOutcome, DomainPort } from '../contracts/server-ports';
 import { coerceModel, coerceSessionCommand, commandLabel } from '../session-command';
 import type { SessionOpResult } from '../session-ops';
 import type { SessionCommand, SessionOpener } from '../types';
-import { type McpAdapterId, modelArgs } from './adapters';
+import { resolveAgentArg } from './agent-resolve';
 import type { GitCall } from './git-refs';
 import {
   type MESSAGING_TOOL_NAMES,
@@ -19,7 +19,6 @@ import {
 import { type Caller, MAX_BODY_BYTES, type SendOptions } from './tools';
 import {
   type Handle,
-  MAX_VALID_IDS,
   type Result,
   type SendMessageOutput,
   type ToolError,
@@ -85,10 +84,13 @@ export interface ControlDeps {
   resolvePath(home: string, p: string): string;
   kindOf(absPath: string): Promise<PathKind>;
   agentIds(): string[];
+  /** The registered id a name reaches, aliases included (flexible-agent-contracts §3.1). */
+  registeredIdOf(name: string): string | undefined;
   resolveCommand(command: string): string | undefined;
   openSession(req: McpOpenRequest): Promise<McpOpenOutcome>;
   openFile(req: McpFileRequest): Promise<{ sessionId: string }>;
-  claimHandle(sessionId: string): Handle | null;
+  /** The handle an opened session gets; the tool picks the prefix rule for an adapter-less program. */
+  claimHandle(sessionId: string, tool: 'open_session' | 'open_terminal'): Handle | null;
   now(): number;
   info(message: string, data: Record<string, unknown>): void;
   foldersOf(sessionId: string): { home: string; roots: string[] } | undefined;
@@ -104,8 +106,10 @@ export interface ControlDeps {
   targets(): readonly TargetSession[];
   ownerWindowOf(sessionId: string): number | null;
   windowReady(windowId: number): boolean;
-  /** The adapter kind a registered agent launches through; undefined ⇒ no adapter. */
-  adapterOf(agentId: string): McpAdapterId | undefined;
+  /** The flag a registered agent's model goes after; undefined ⇒ it takes no model. */
+  modelFlagOf(agentId: string): string | undefined;
+  /** The same for a bare command's resolved path (flexible-agent-contracts §3.1). */
+  commandModelFlag(command: string): string | undefined;
   /** Messaging is on and its store is up, so a message can be stored. */
   messageReady(): boolean;
   /** send_message's own storage, from the caller to a session's handle (CON-148). */
@@ -532,57 +536,61 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     return { id: sent.value.message_id };
   }
 
+  /** What open_session or open_terminal launches, once its arguments name something real. */
+  interface Resolved {
+    launch: McpLaunch;
+    /** The output's `agent`: a registered id, or a command's leaf. */
+    agent: string;
+    /** A bare command: the summary shows its absolute path, and its label defaults to the leaf. */
+    bare: boolean;
+    label: string | undefined;
+  }
+
+  const modelFlagOfLaunch = (launch: McpLaunch): string | undefined =>
+    launch.kind === 'agent'
+      ? deps.modelFlagOf(launch.agentId)
+      : deps.commandModelFlag(launch.command.command);
+
   function prepareOpen(
     tool: 'open_session' | 'open_terminal',
     caller: Caller,
     a: Common & OpenExtras & Partial<SessionExtras>,
-    launch: McpLaunch,
-    agent: string,
+    resolve: () => Result<Resolved>,
   ): Promise<Result<Prepared<OpenSessionOutput>>> {
     return prepared(tool, caller, async (who) => {
       const abs = deps.resolvePath(who.home, a.path);
       const bad = await checkKind(abs, 'dir');
       if (bad) return bad;
-      if (launch.kind === 'agent') {
-        const ids = deps.agentIds();
-        if (!ids.includes(launch.agentId))
-          return fail(
-            'unknown_agent',
-            `unknown agent "${launch.agentId}"; registered: ${ids.join(', ')}`,
-            {
-              hint: 'call list_agents to see the ids you can open',
-              valid: ids.slice(0, MAX_VALID_IDS),
-            },
-          );
-        const model = a.model;
-        if (model !== undefined && modelArgs(deps.adapterOf(launch.agentId), model) === null) {
-          const withModel = ids.filter((id) => modelArgs(deps.adapterOf(id), model) !== null);
-          return fail('invalid_args', "this agent doesn't take a model", {
-            hint: `add an agents.json profile with capabilities.model_flag, or use one of: ${
-              withModel.length > 0 ? withModel.join(', ') : 'none'
-            }`,
-          });
-        }
-      } else if (deps.resolveCommand(launch.command.command) === undefined) {
-        return fail('command_not_found', `command not found: ${launch.command.command}`);
+      const target = resolve();
+      if (!target.ok) return target;
+      const { launch, agent, bare, label } = target.value;
+      if (a.model !== undefined && modelFlagOfLaunch(launch) === undefined) {
+        const withModel = deps.agentIds().filter((id) => deps.modelFlagOf(id) !== undefined);
+        return fail('invalid_args', "this agent doesn't take a model", {
+          hint: `add an agents.json profile with capabilities.model_flag, or use one of: ${
+            withModel.length > 0 ? withModel.join(', ') : 'none'
+          }`,
+        });
       }
       if (a.message !== undefined && !deps.messageReady())
         return fail('invalid_args', 'message needs messaging on');
+      const command = launch.kind === 'command' ? launch.command : null;
       const summary: AskSummary =
-        launch.kind === 'agent'
+        command !== null && tool === 'open_terminal'
           ? {
+              tool: 'open_terminal',
+              path: abs,
+              command: [command.command, ...command.args].join(' '),
+              focus: a.focus,
+            }
+          : {
               tool: 'open_session',
               path: abs,
               agent,
               focus: a.focus,
+              ...(bare && command !== null ? { command: command.command } : {}),
               ...(a.model !== undefined ? { model: a.model } : {}),
               ...(a.message !== undefined ? { message: Array.from(a.message).length } : {}),
-            }
-          : {
-              tool: 'open_terminal',
-              path: abs,
-              command: [launch.command.command, ...launch.command.args].join(' '),
-              focus: a.focus,
             };
       return {
         summary,
@@ -593,7 +601,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
               callerSessionId: who.sessionId,
               openedBy: { handle: caller.handle, sessionId: who.sessionId },
               home: abs,
-              label: a.label,
+              label: a.label ?? label,
               focus: a.focus,
               launch,
               closeWhenDone: a.closeWhenDone,
@@ -618,7 +626,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
             sessionId: outcome.sessionId,
             path: abs,
           });
-          const handle = deps.claimHandle(outcome.sessionId);
+          const handle = deps.claimHandle(outcome.sessionId, tool);
           if (a.message === undefined)
             return {
               ok: true,
@@ -638,17 +646,35 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
   const focusFor = <T extends Common>(a: T, ctx: ControlCallContext): T =>
     ctx.move === 'no' ? { ...a, focus: false } : a;
 
+  function resolveSessionAgent(agent: string): Result<Resolved> {
+    const arg = resolveAgentArg(agent, {
+      registeredIds: deps.agentIds(),
+      resolveRegistered: (n) => deps.registeredIdOf(n),
+      resolveCommand: (c) => deps.resolveCommand(c),
+    });
+    if (!arg.ok) return arg;
+    const v = arg.value;
+    return {
+      ok: true,
+      value:
+        v.kind === 'registered'
+          ? { launch: { kind: 'agent', agentId: v.id }, agent: v.id, bare: false, label: undefined }
+          : {
+              launch: { kind: 'command', command: { command: v.path, args: [] } },
+              agent: v.leaf,
+              bare: true,
+              label: v.leaf,
+            },
+    };
+  }
+
   return {
     prepared,
     async prepareOpenSession(caller, raw, ctx) {
       const a = parseSessionArgs(raw);
       if (isFail(a)) return a;
-      return prepareOpen(
-        'open_session',
-        caller,
-        focusFor(a, ctx),
-        { kind: 'agent', agentId: a.agent },
-        a.agent,
+      return prepareOpen('open_session', caller, focusFor(a, ctx), () =>
+        resolveSessionAgent(a.agent),
       );
     },
     async prepareOpenTerminal(caller, raw, ctx) {
@@ -659,8 +685,18 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
         'open_terminal',
         caller,
         focusFor({ ...a, label: a.label ?? leaf }, ctx),
-        { kind: 'command', command: a.command },
-        leaf,
+        () =>
+          deps.resolveCommand(a.command.command) === undefined
+            ? fail('command_not_found', `command not found: ${a.command.command}`)
+            : {
+                ok: true,
+                value: {
+                  launch: { kind: 'command', command: a.command },
+                  agent: leaf,
+                  bare: false,
+                  label: undefined,
+                },
+              },
       );
     },
     async prepareOpenFile(caller, raw) {

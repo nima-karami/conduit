@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AgentRegistry } from '../../src/agent-registry';
 import { scopeFromSpawnArgs } from '../../src/agent-scope';
 import type { HostPlatform } from '../../src/lsp-binary';
 import {
@@ -10,6 +11,7 @@ import {
   parseBriefRequest,
   type RoleBriefHostDeps,
 } from '../../src/role-brief-host';
+import { effectiveDef } from '../../src/session-command';
 import type {
   AgentBriefSource,
   AgentDefinition,
@@ -132,6 +134,21 @@ describe('prepareSpawn', () => {
     expect(out.spec.args.filter((a) => a === briefDir(c.id))).toHaveLength(1);
     expect(input).toEqual(frozen);
     expect(out.banners).toEqual([]);
+  });
+
+  it('a model flag from the launch definition precedes the brief --', () => {
+    const host = make();
+    const c = create(host, CLAUDE, { kind: 'text', text: 'x' });
+    const launch = effectiveDef({ agentId: CLAUDE.id, model: 'opus' }, new AgentRegistry([CLAUDE]));
+    const out = host.prepareSpawn(c.id, CLAUDE, spec(launch?.args ?? []));
+    expect(out.spec.args).toEqual([
+      '--model',
+      'opus',
+      '--add-dir',
+      briefDir(c.id),
+      '--',
+      prompt(briefFile(c.id)),
+    ]);
   });
 
   it('AC3: codex and the fake read in place, with no --add-dir', () => {

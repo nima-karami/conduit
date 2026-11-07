@@ -495,3 +495,36 @@ None blocking. The human ruled on 2026-10-27:
   counted in characters. A send failure after the open carries the new `handle` on the error, with the message
   "session opened; resend the task with send_message: <cause>". `effectiveDef` re-checks a stored `model` with
   `coerceModel`, so a bad value adds no flag. `duplicate` keeps the model.
+
+## 17. Amendment 2026-11-07 (CON-166 S2)
+
+- **Any agent CLI by name (CON-166).** `open_session`'s `agent` is a registered id from `list_agents`, or
+  the name of a command on PATH (`kiro`, `kiro.cmd`). Resolution is in order: a registered id wins; a
+  name matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` whose leaf (lowercased, `.exe`/`.cmd`/`.bat` removed)
+  is not a shell or system tool is looked up on PATH (`resolveAgentArg`, `src/conduit-mcp/agent-resolve.ts`).
+  A path (any `\` or `/`) is `invalid_args`. A shell or tool leaf (`powershell`, `node`, `git`, …) is
+  `invalid_args` with a hint to use `open_terminal`. A name not on PATH is `unknown_agent` with a hint and
+  the registered ids in `valid`.
+- **Bare commands open as command sessions.** The session runs the resolved absolute path with no args, the
+  same launch as `open_terminal`, so older app versions read it as a terminal session. The approval summary
+  shows that path. `label` defaults to the leaf, and the result's `agent` is the leaf. A leaf with a built-in
+  adapter (`claude`, `codex`, `cursor-agent`, `agent`) gets that adapter's wiring, notices, brief and model.
+- **Handle prefix for adapter-less agents (CON-166).** A profile or bare command with no adapter takes the
+  slug of its profile id or command leaf: lowercase, `[a-z0-9-]`, at most 20 characters, trailing `-`
+  trimmed (`agentHandlePrefix`, `src/conduit-mcp/handles.ts`). An empty slug, `you`, `fake`, or an adapter
+  prefix that the program doesn't match gives `term`. `open_terminal` keeps the program-prefix rule above.
+- **`model` for profiles (CON-166).** `agents.json` entries take `capabilities.model_flag`, one dash-led
+  flag (`^--?[A-Za-z][A-Za-z0-9-]{0,30}$`). It takes the model as `[flag, model]`, before any `--` the brief
+  adds. A built-in adapter's flag wins over the profile's (`modelFlagOf`). `effectiveDef` applies the flag to
+  command sessions as well as profiles. A bare command with no flag refuses a model with `invalid_args` and
+  a hint naming the profile field and the ids that take one.
+- **`list_agents` (CON-166).** Messaging group, access `on`, no budget, no input. Entries follow §4.2 of
+  the flexible-agent-contracts spec, ordered profile, launcher, detected, shell, then label. It is not
+  gated on messaging, since it only describes what can be opened.
+- **`agents.json` validation (CON-166).** Each entry is checked alone. A bad entry is dropped with one
+  `warn` naming its index or id and the reason. Duplicate ids keep the first. Ids starting `cli:`, `shell:` or
+  `conduit:` are refused. Command must be a non-empty string with no NUL and no leading `-`. `args` default to
+  `[]` and must be strings. `label` defaults to the id. At most 200 entries are read. A file that doesn't
+  parse keeps the last good set in memory and logs an error; a missing file is the empty set.
+- **Schema.** `open_session.agent` is a plain string. The enum of registered ids is gone, so a bare command
+  name is valid input. Validation happens at open, and `tools/list` no longer depends on the agent set.

@@ -5,6 +5,7 @@ import { type ToolError, toolError } from './types';
 
 export const MESSAGING_TOOL_NAMES = [
   'list_sessions',
+  'list_agents',
   'wait_sessions',
   'send_message',
   'read_inbox',
@@ -119,6 +120,7 @@ export const TOOL_SPECS: Readonly<{
   [K in ToolName]: ToolSpec<K extends MessagingToolName ? null : RateBudget>;
 }> = {
   list_sessions: MESSAGING_SPEC,
+  list_agents: MESSAGING_SPEC,
   wait_sessions: MESSAGING_SPEC,
   send_message: MESSAGING_SPEC,
   read_inbox: MESSAGING_SPEC,
