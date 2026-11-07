@@ -785,6 +785,7 @@ describe('createConduitMcpHost — launch', () => {
       'missing token placeholder',
       JSON.stringify({
         mcpServers: {
+          // biome-ignore lint/suspicious/noTemplateCurlyInString: Cursor's literal ${env:…} placeholder, not a template
           conduit: { env: { CONDUIT_MCP_ENDPOINT: '${env:CONDUIT_MCP_ENDPOINT}' } },
         },
       }),
@@ -793,6 +794,7 @@ describe('createConduitMcpHost — launch', () => {
       'missing endpoint placeholder',
       JSON.stringify({
         mcpServers: {
+          // biome-ignore lint/suspicious/noTemplateCurlyInString: Cursor's literal ${env:…} placeholder, not a template
           conduit: { env: { CONDUIT_SESSION_TOKEN: '${env:CONDUIT_SESSION_TOKEN}' } },
         },
       }),
@@ -821,7 +823,9 @@ describe('createConduitMcpHost — launch', () => {
             command: '/old/conduit',
             args: ['old-shim'],
             env: {
+              // biome-ignore lint/suspicious/noTemplateCurlyInString: Cursor's literal ${env:…} placeholder, not a template
               CONDUIT_SESSION_TOKEN: '${env:CONDUIT_SESSION_TOKEN}',
+              // biome-ignore lint/suspicious/noTemplateCurlyInString: Cursor's literal ${env:…} placeholder, not a template
               CONDUIT_MCP_ENDPOINT: '${env:CONDUIT_MCP_ENDPOINT}',
             },
           },
@@ -2220,7 +2224,6 @@ describe('a launch waits for the endpoint (conductor decision: restored sessions
 });
 
 describe('control tools: gate, effective tool list, list_changed, session layer (spec 2026-10-30-conduit-mcp-tool-policy §3.3)', () => {
-  const MESSAGING = ['list_sessions', 'send_message', 'read_inbox', 'read_attachment'];
   // Every tool but open_terminal defaults to ask or on (tool-policy spec §3.2).
   const DEFAULT_LIST = TOOL_NAMES.filter((t) => t !== 'open_terminal');
   const policyOf = (h: Harness, id: string, layer: PolicyLayer | undefined) => {
@@ -3186,7 +3189,13 @@ describe('typed-command detection → notConnected (spec 2026-10-27-conduit-mcp-
     });
     const io = failingIo();
     io.fail = false;
-    const slow: StoreIo = { ...io, readLog: async () => (await gate, undefined) };
+    const slow: StoreIo = {
+      ...io,
+      readLog: async () => {
+        await gate;
+        return undefined;
+      },
+    };
     const h = harness({ storeIo: slow });
     const started = h.host.start();
     await expect

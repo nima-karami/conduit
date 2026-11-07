@@ -1458,4 +1458,45 @@ describe('contract S1: unknown_session lists only targets within reach', () => {
     const r = await app.prepareFocusSession(caller(), { session: 'nope-9' }, ctx);
     expect(r.ok ? null : r.error.valid).toEqual(['claude-1', 'claude-2', 'codex-1']);
   });
+
+  it('a target that closes during the ask re-checks to unknown_session with the same hint and valid', async () => {
+    const h = harness();
+    const app = build(h);
+    const { ctx } = context({ reach: 'any' });
+    const p = call(await app.prepareFocusSession(caller(), { session: 'codex-1' }, ctx));
+    h.targets = h.targets.filter((t) => t.sessionId !== 'same-1');
+    const r = await p.run();
+    expect(r).toMatchObject({ ok: false, error: { code: 'unknown_session' } });
+    if (r.ok) return;
+    expect(r.error.valid).toEqual(['claude-1', 'claude-2', 'codex-2']);
+    expect(r.error.hint).toEqual(expect.stringContaining('valid'));
+  });
+
+  it('a window that no longer knows the close target answers unknown_session with the same hint and valid', async () => {
+    const h = harness();
+    const app = build(h);
+    const { ctx } = context({
+      reach: 'any',
+      answer: () => ({ ok: true, value: { kind: 'unknownSession' } }),
+    });
+    const r = await runIt(app.prepareCloseSession(caller(), { session: 'codex-1' }, ctx));
+    expect(r).toMatchObject({ ok: false, error: { code: 'unknown_session' } });
+    if (r.ok) return;
+    expect(r.error.valid).toEqual(['claude-1', 'claude-2', 'codex-1', 'codex-2']);
+    expect(r.error.hint).toEqual(expect.stringContaining('valid'));
+  });
+
+  it('attach_folder whose session is gone at the add answers unknown_session with the same hint and valid', async () => {
+    const h = harness();
+    h.addResult = () => ({ ok: false, reason: 'unknown-session' });
+    const app = build(h);
+    const { ctx } = context({ reach: 'window' });
+    const r = await runIt(
+      app.prepareAttachFolder(caller(), { path: 'sub', session: 'codex-1' }, ctx),
+    );
+    expect(r).toMatchObject({ ok: false, error: { code: 'unknown_session' } });
+    if (r.ok) return;
+    expect(r.error.valid).toEqual(['claude-1', 'claude-2', 'codex-1']);
+    expect(r.error.hint).toEqual(expect.stringContaining('valid'));
+  });
 });

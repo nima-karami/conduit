@@ -503,14 +503,10 @@ function isImageOutput(v: unknown): v is Extract<ReadAttachmentOutput, { kind: '
 export function toToolCallResult(r: Result<unknown>): ToolCallResult {
   if (!r.ok) {
     const { error } = r;
-    // Text-only clients read the hint; the code stays in structuredContent for the rest.
-    const text =
-      error.hint === undefined ? JSON.stringify({ error }) : `${error.message} Hint: ${error.hint}`;
-    return {
-      content: [{ type: 'text', text }],
-      structuredContent: { error },
-      isError: true,
-    };
+    // content[0] is always the JSON payload; the hint also goes in its own item for text-only clients.
+    const content: ToolCallResult['content'] = [{ type: 'text', text: JSON.stringify({ error }) }];
+    if (error.hint !== undefined) content.push({ type: 'text', text: `Hint: ${error.hint}` });
+    return { content, structuredContent: { error }, isError: true };
   }
   if (isImageOutput(r.value)) {
     const { base64, ...meta } = r.value;

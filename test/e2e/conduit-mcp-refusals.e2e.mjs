@@ -129,7 +129,8 @@ await runScenario(
         `tokenless tools/list: ${JSON.stringify(list)}`,
       );
       const call = await bare.request('tools/call', { name: 'list_sessions', arguments: {} });
-      const body = JSON.parse(call.result?.content?.[0]?.text ?? '{}');
+      const body =
+        call.result?.structuredContent ?? JSON.parse(call.result?.content?.[0]?.text ?? '{}');
       assert(
         call.result?.isError === true && body.error?.code === 'not_in_session',
         `tokenless tools/call: ${JSON.stringify(call)}`,

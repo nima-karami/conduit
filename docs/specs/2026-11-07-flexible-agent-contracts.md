@@ -142,9 +142,10 @@ Input `session`, `text` (≤ 4000 chars), `keys` (≤ 20 of `enter|tab|esc|backs
 | `invalid_args` for an unknown target | `unknown_session` | wait_sessions |
 | `invalid_argument`, `invalid_input` | `invalid_args` | messaging tools |
 | — | `self_target` (exists), `session_exited`, `session_restarting` (new) | read_screen, send_input |
-Error object gains optional `hint` (one sentence) and `valid` (string[] ≤ 30). The text content renders
-`<message> Hint: <hint>` so text-only clients see it. Required hints: unknown_agent, unknown_session (`valid` =
-targets **within the caller's reach**), tool_disabled (names the tool's policy in Settings → MCP), not_messageable,
+Error object gains optional `hint` (one sentence) and `valid` (string[] ≤ 30). Text content[0] is always the
+JSON error payload (`{"error":{code,message,retryable,hint?,valid?}}`); when a hint exists, a second text item
+`Hint: <hint>` follows so text-only clients see it. `structuredContent` stays `{error}`. Required hints: unknown_agent, unknown_session (`valid` =
+targets **within the caller's reach**; race-path re-checks carry the same hint and `valid`), tool_disabled (names the tool and Settings → MCP), not_messageable,
 out_of_reach (names the reach setting), model not supported, not_in_session. Renderer strings
 (webview/conduit-mcp-strings.ts) follow the renames; a unit test asserts the retired codes appear nowhere in src/
 or webview/.

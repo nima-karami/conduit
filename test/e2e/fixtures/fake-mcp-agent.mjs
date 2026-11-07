@@ -83,6 +83,7 @@ let lastCallId = null;
 async function callTool(name, args, onSent) {
   const r = await rpc('tools/call', { name, arguments: args }, onSent);
   if (r.error) return { rpcError: r.error };
+  if (r.result?.structuredContent !== undefined) return r.result.structuredContent;
   const text = r.result?.content?.find((c) => c.type === 'text')?.text;
   try {
     return text === undefined ? r.result : JSON.parse(text);

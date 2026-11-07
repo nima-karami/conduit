@@ -145,7 +145,8 @@ const SOURCE_KEYS = {
   range: ['kind', 'base', 'head'],
 } as const;
 type ReachTool = 'close_session' | 'focus_session' | 'attach_folder';
-const UNKNOWN_SESSION_HINT = 'use a handle from valid; list_sessions shows the current ones';
+const LIST_SESSIONS_HINT = 'list_sessions shows the current ones';
+const UNKNOWN_SESSION_HINT = `use a handle from valid; ${LIST_SESSIONS_HINT}`;
 const REACH_REFUSAL: Record<Exclude<Reach, 'any'>, string> = {
   self: 'this tool may only act on your own session',
   opened: 'this tool may only act on your session and sessions you opened',
@@ -195,6 +196,25 @@ export function createAppControlHandlers(
     });
   };
 
+  /** The handles this caller may name with this tool: the ones its reach admits. */
+  const validTargets = (tool: ReachTool, callerId: string, reach: Reach | undefined): string[] =>
+    deps
+      .targets()
+      .filter((x) => inReach(tool, reach, callerId, x) === null)
+      .map((x) => x.handle);
+
+  /** Every unknown_session carries the first check's hint and valid list, race path included. */
+  const staleSession = (
+    message: string,
+    tool: ReachTool,
+    callerId: string,
+    reach: Reach | undefined,
+  ): Fail =>
+    fail('unknown_session', message, {
+      hint: UNKNOWN_SESSION_HINT,
+      valid: validTargets(tool, callerId, reach),
+    });
+
   const routeWindow = (sessionId: string): number | Fail => {
     const w = deps.ownerWindowOf(sessionId);
     return w === null || !deps.windowReady(w) ? { ok: false, error: windowNotReady() } : w;
@@ -208,7 +228,8 @@ export function createAppControlHandlers(
     reach: Reach | undefined,
   ): Fail | null => {
     const t = deps.targets().find((x) => x.sessionId === targetId);
-    if (!t) return fail('unknown_session', 'that session is no longer in list_sessions');
+    if (!t)
+      return staleSession('that session is no longer in list_sessions', tool, callerId, reach);
     return inReach(tool, reach, callerId, t);
   };
 
@@ -224,9 +245,16 @@ export function createAppControlHandlers(
     return repoRootOf(deps.git, f);
   };
 
-  const wrongAnswer = (r: McpUiResult): Fail =>
+  /** `unknownSession` is the caller's own session-lookup for this tool, so it carries the same valid list. */
+  /** No first check to match on these paths, so the window's answer carries the list hint alone. */
+  const notInWindow = (): Fail =>
+    fail('unknown_session', 'that session is not in its window any more', {
+      hint: LIST_SESSIONS_HINT,
+    });
+
+  const wrongAnswer = (r: McpUiResult, unknownSession: () => Fail = notInWindow): Fail =>
     r.kind === 'unknownSession'
-      ? fail('unknown_session', 'that session is not in its window any more')
+      ? unknownSession()
       : fail(
           'open_failed',
           r.kind === 'failed' ? r.message : `Conduit's window answered ${r.kind}`,
@@ -275,7 +303,17 @@ export function createAppControlHandlers(
     const r = await ctx.ui(currentWindow, sessionId, { kind: 'closeSession', target: sessionId });
     if (!r.ok) return r;
     const v = r.value;
-    if (v.kind !== 'closeSession') return wrongAnswer(v);
+    if (v.kind !== 'closeSession')
+      return wrongAnswer(v, () =>
+        closedBy === undefined
+          ? notInWindow()
+          : staleSession(
+              'that session is not in its window any more',
+              'close_session',
+              closedBy.sessionId,
+              ctx.reach,
+            ),
+      );
     if (!v.ok) return fail('unsaved_changes', `unsaved changes in:\n${v.unsaved.join('\n')}`);
     return { ok: true, value: { closed: sessionId } };
   };
@@ -475,7 +513,12 @@ export function createAppControlHandlers(
                 case 'invalid-path':
                   return fail('invalid_args', `not a valid folder path: ${abs}`);
                 case 'unknown-session':
-                  return fail('unknown_session', 'that session is no longer open');
+                  return staleSession(
+                    'that session is no longer open',
+                    'attach_folder',
+                    who.sessionId,
+                    ctx.reach,
+                  );
                 default:
                   return fail('attach_refused', `can't attach ${abs}: ${r.reason}`);
               }

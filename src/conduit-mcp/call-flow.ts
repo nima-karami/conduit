@@ -43,7 +43,7 @@ export function askBudgetMs(kind: CliKind, wiredAtLaunch: boolean): number {
 export const MAX_ASKS_PER_CALLER = 3;
 /** An app-control tool's renderer step (spec 2026-10-30-conduit-mcp-app-control §2.3). */
 export const UI_TIMEOUT_MS = 5_000;
-/** What an ask holds back from its CLI budget so the reply lands first; wait_sessions clamps to the same. */
+/** What an ask holds back from its CLI budget so the reply lands first. Waits use WAIT_REPLY_MARGIN_MS instead (session-waits.ts). */
 export const askMarginMs = (routesUi: boolean): number => (routesUi ? UI_TIMEOUT_MS : 0);
 
 export interface InFlight {

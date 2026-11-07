@@ -875,24 +875,30 @@ describe('contract S1: error codes, hints, list_sessions fields', () => {
     expect(r).toMatchObject({ ok: false, error: { code: 'not_messageable' } });
   });
 
-  it('a tool error with a hint renders as "<message> Hint: <hint>" in the text content', () => {
-    const r = toToolCallResult({
-      ok: false,
-      error: { ...toolError('unknown_agent', 'unknown agent "x"'), hint: 'call list_agents' },
-    });
+  it('a tool error with a hint: content[0] is the JSON payload with the hint inside, content[1] is the hint', () => {
+    const error = {
+      ...toolError('unknown_agent', 'unknown agent "x"', undefined, { valid: ['claude'] }),
+      hint: 'call list_agents',
+    };
+    const r = toToolCallResult({ ok: false, error });
     expect(r.isError).toBe(true);
-    expect(r.content[0]).toEqual({
-      type: 'text',
-      text: 'unknown agent "x" Hint: call list_agents',
+    expect(r.content).toEqual([
+      { type: 'text', text: JSON.stringify({ error }) },
+      { type: 'text', text: 'Hint: call list_agents' },
+    ]);
+    expect(JSON.parse((r.content[0] as { text: string }).text).error).toMatchObject({
+      code: 'unknown_agent',
+      hint: 'call list_agents',
+      valid: ['claude'],
     });
+    expect(r.structuredContent).toEqual({ error });
   });
 
-  it('a tool error without a hint keeps the JSON text content', () => {
-    const r = toToolCallResult({ ok: false, error: toolError('not_found', 'gone') });
-    expect(r.content[0]).toEqual({
-      type: 'text',
-      text: JSON.stringify({ error: toolError('not_found', 'gone') }),
-    });
+  it('a tool error without a hint has only the JSON text content', () => {
+    const error = toolError('not_found', 'gone');
+    const r = toToolCallResult({ ok: false, error });
+    expect(r.content).toEqual([{ type: 'text', text: JSON.stringify({ error }) }]);
+    expect(r.structuredContent).toEqual({ error });
   });
 
   it('toolError keeps at most 30 valid ids', () => {

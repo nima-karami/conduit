@@ -372,7 +372,7 @@ export function coercePolicyPatch(tool: ToolName, v: unknown): ToolPolicyPatch |
 /** Also the call flow's fail-closed answer for a policy that reached it as 'off'. */
 export const toolDisabled = (tool: ToolName): ToolError =>
   toolError('tool_disabled', `${tool} is not enabled for this session`, undefined, {
-    hint: `this tool's policy is set in Settings → MCP`,
+    hint: `Turn on ${tool} in Settings → MCP (it is off for this session or CLI)`,
   });
 
 export const NOT_IN_SESSION_HINT =

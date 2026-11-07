@@ -39,7 +39,6 @@ export type ToolErrorCode =
   | 'denied'
   | 'approval_timeout'
   | 'cancelled'
-  | 'unknown_session'
   | 'session_exited'
   | 'session_restarting'
   | 'out_of_reach'
