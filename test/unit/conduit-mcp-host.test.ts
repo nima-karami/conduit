@@ -3963,6 +3963,51 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
     expect(uiOf(h)).toEqual([]);
   });
 
+  it('closeWhenDone whose window times out leaves the exited session open and logs it', async () => {
+    const rec = recordingLog();
+    const { h } = await twoSessions({ manualTimers: true, log: rec.log });
+    const closing = h.host.closeWhenDone('s2');
+    await lastUi(h);
+    h.advance(5_000);
+    await closing;
+    expect(h.closes).toEqual([]);
+    expect(h.sessions.has('s2')).toBe(true);
+    expect(rec.of('closeWhenDone kept open').map((e) => e.data)).toEqual([
+      { sessionId: 's2', code: 'ui_timeout' },
+    ]);
+  });
+
+  it('closeWhenDone whose window does not know the session closes it through the domain', async () => {
+    const rec = recordingLog();
+    const { h } = await twoSessions({ log: rec.log });
+    const closing = h.host.closeWhenDone('s2');
+    const ui = await lastUi(h);
+    await uiResult(h, ui.requestId, { kind: 'unknownSession' }, 2);
+    await closing;
+    expect(h.closes).toEqual(['s2']);
+    expect(rec.of('control app').map((e) => e.data)).toContainEqual(
+      expect.objectContaining({
+        tool: 'closeWhenDone',
+        sessionId: 's2',
+        fallback: 'unknownSession',
+      }),
+    );
+    expect(rec.of('closeWhenDone kept open')).toEqual([]);
+  });
+
+  it('closeWhenDone whose session is deleted mid-wait is logged closed, with no domain close', async () => {
+    const rec = recordingLog();
+    const { h } = await twoSessions({ log: rec.log });
+    const closing = h.host.closeWhenDone('s2');
+    await lastUi(h);
+    h.sessions.delete('s2');
+    await h.host.onSessionDeleted('s2');
+    await closing;
+    expect(h.closes).toEqual([]);
+    expect(rec.of('closeWhenDone kept open')).toEqual([]);
+    expect(rec.of('closeWhenDone closed').map((e) => e.data)).toEqual([{ sessionId: 's2' }]);
+  });
+
   it('a terminal an agent opened stays listed after it exits, and its opener can close it (CON-149)', async () => {
     const h = harness({ kinds: { '/w': 'dir' } });
     await h.host.start();
