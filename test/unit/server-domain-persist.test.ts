@@ -88,7 +88,7 @@ describe('server domain: server settings', () => {
       expect(h.logs.some((l) => l.includes('backup failed'))).toBe(true);
       await h.domain.dispose();
     } finally {
-      rmSync(userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+      rmSync(userData, { recursive: true, force: true });
     }
   });
 
