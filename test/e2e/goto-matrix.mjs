@@ -18,7 +18,6 @@ import { assert, showRightView } from './harness.mjs';
 
 /** Bounded wait for one navigation. The wrapper's own deadline is 6 s. */
 const NAV_SETTLE_MS = 7000;
-const NAV_POLL_MS = 150;
 /** How long the post-change observation may keep moving before it is read anyway. */
 const NAV_QUIESCE_MS = 4000;
 
@@ -254,12 +253,33 @@ async function findRow(page, wantPath, passes = 3) {
     if (!geom) return null;
     const step = Math.max(60, geom.height - 40);
     for (let top = 0; top <= geom.total; top += step) {
-      await page.evaluate((t) => {
+      const moved = await page.evaluate((t) => {
+        const rows = () =>
+          Array.from(document.querySelectorAll('.filerow'), (r) => r.dataset.path).join('|');
         const first = document.querySelector('.filerow');
         const scroller = first?.closest('[class*="scroll"]') ?? first?.parentElement;
-        if (scroller) scroller.scrollTop = t;
+        if (!scroller) return null;
+        const mounted = rows();
+        const from = scroller.scrollTop;
+        scroller.scrollTop = t;
+        window.__rowsBeforeScroll = mounted;
+        return scroller.scrollTop !== from;
       }, top);
-      await page.waitForTimeout(120);
+      // The scroll event drives a React state update that mounts the new rows, so wait for the
+      // mounted set to change — unless the scroller did not move, when nothing will.
+      if (moved) {
+        await page
+          .waitForFunction(
+            () =>
+              Array.from(document.querySelectorAll('.filerow'), (r) => r.dataset.path).join('|') !==
+              window.__rowsBeforeScroll,
+            null,
+            { timeout: NAV_QUIESCE_MS },
+          )
+          .catch((error) => {
+            if (!isTimeout(error)) throw error;
+          });
+      }
       const hit = await probe();
       if (hit) return hit;
     }
@@ -343,18 +363,6 @@ export function observe(page) {
       ),
     };
   });
-}
-
-function changed(a, b) {
-  return (
-    a.path !== b.path ||
-    a.line !== b.line ||
-    a.column !== b.column ||
-    a.tabs.length !== b.tabs.length ||
-    a.peek !== b.peek ||
-    a.overlay !== b.overlay ||
-    a.toasts.length !== b.toasts.length
-  );
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -503,6 +511,7 @@ export async function clearTransients(page) {
  */
 export async function trigger(page, kind, label = 'Go to Definition') {
   const before = await observe(page);
+  const seq = await readNavSeq(page);
   if (kind === 'f12') {
     await page.keyboard.press('F12');
   } else {
@@ -531,37 +540,61 @@ export async function trigger(page, kind, label = 'Go to Definition') {
       .filter({ has: page.getByText(label, { exact: true }) });
     await item.first().click();
   }
-  const deadline = Date.now() + NAV_SETTLE_MS;
-  let last = before;
-  while (Date.now() < deadline) {
-    await page.waitForTimeout(NAV_POLL_MS);
-    last = await observe(page);
-    if (changed(before, last) && !inFlight(last)) break;
-  }
-  // Then settle until the observation STOPS moving. A fixed pause was enough while every
-  // target was already in the index; an on-demand resolution adds a host round trip, a file
-  // read and a fresh CodeViewer mount after the tab strip has already changed — sampling in
-  // that window sees the right tab with `editors: 0` and reads as a failure.
-  return { before, after: await settle(page, Date.now() + NAV_QUIESCE_MS) };
+  return { before, after: await awaitNav(page, seq) };
 }
 
-/**
- * The wrapper's in-flight notice, which is a PROMISE of an outcome rather than one: it appears
- * the moment a host resolution starts and is replaced (or closed) when the navigation lands.
- * Sampling while it is up reads a nav that is still running as one that finished.
- */
-const inFlight = (o) => /^Resolving /.test(o.overlay);
+/** The app's navigation counter (`webview/nav-signal.ts`); read BEFORE the nav is triggered. */
+export const readNavSeq = (page) =>
+  page.evaluate(() => Number(document.documentElement.dataset.navSeq ?? 0));
 
-/** Poll until two consecutive observations agree AND an editor is mounted, or time runs out. */
-async function settle(page, deadline) {
-  let prev = await observe(page);
-  for (;;) {
-    await page.waitForTimeout(NAV_POLL_MS);
-    const now = await observe(page);
-    if (!inFlight(now) && now.editors > 0 && !changed(prev, now)) return now;
-    if (Date.now() >= deadline) return now;
-    prev = now;
-  }
+const isTimeout = (error) => error?.name === 'TimeoutError';
+
+/**
+ * Wait for the navigation that began after `seqBefore` to finish, then for what it reported to
+ * be on screen: the landed file at its line, the peek widget, or the toast / inline message.
+ * Both waits are bounded; a timeout falls through to the observation, which then fails its row
+ * with what was actually seen.
+ */
+export async function awaitNav(page, seqBefore) {
+  await page
+    .waitForFunction(
+      (n) => {
+        const d = document.documentElement.dataset;
+        return Number(d.navSeq ?? 0) > n && d.navState !== 'running';
+      },
+      seqBefore,
+      { timeout: NAV_SETTLE_MS },
+    )
+    .catch((error) => {
+      if (!isTimeout(error)) throw error;
+    });
+  const done = await page.evaluate(() => {
+    const d = document.documentElement.dataset;
+    return { state: d.navState ?? '', target: d.navTarget ?? '' };
+  });
+  await page
+    .waitForFunction(
+      ({ state, target }) => {
+        if (target) {
+          const eds = window.monaco?.editor.getEditors() ?? [];
+          const outer = eds.filter((e) => !e.getDomNode()?.closest('.zone-widget'));
+          const ed = outer[outer.length - 1];
+          const at = ed?.getModel()?.uri.path ?? '';
+          const norm = (x) => x.split('\\').join('/').replace(/^\/+/, '').toLowerCase();
+          const [, path, line] = /^(.*):(\d+):\d+$/.exec(target) ?? [];
+          return norm(at) === norm(path) && ed?.getPosition()?.lineNumber === Number(line);
+        }
+        if (state === 'peeked') return !!document.querySelector('.monaco-editor .zone-widget');
+        if (state === 'navigated' || state === 'cancelled' || state === '') return true;
+        return !!document.querySelector('.toast__msg, .monaco-editor-overlaymessage');
+      },
+      done,
+      { timeout: NAV_QUIESCE_MS },
+    )
+    .catch((error) => {
+      if (!isTimeout(error)) throw error;
+    });
+  return observe(page);
 }
 
 /** Read the context menu's navigation rows without running one (row 41). */
