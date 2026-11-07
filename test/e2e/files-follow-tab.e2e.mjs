@@ -123,31 +123,30 @@ async function showFiles(page) {
   await page.waitForSelector('.files__bar', { state: 'visible', timeout: 15000 });
 }
 
-/** Scroll the Files scroller until `name`'s row mounts (the tree is windowed). */
+/** Scroll the Files scroller until the named row mounts (the tree is windowed). */
 async function scrollToRow(page, name) {
-  for (let i = 0; i < 40; i++) {
-    if ((await fileRow(page, name).count()) > 0) break;
-    const previous = await page.evaluate((sel) => {
-      const sc = document.querySelector(sel);
-      if (!sc) return null;
-      const before = sc.scrollTop;
-      sc.scrollTop += sc.clientHeight / 2;
-      return before;
-    }, SCROLLER);
-    await page
-      .waitForFunction(
-        ({ sel, before }) => {
-          const sc = document.querySelector(sel);
-          return !!sc && sc.scrollTop > before;
-        },
-        { sel: SCROLLER, before: previous },
-        { timeout: 1000 },
-      )
-      .catch((error) => {
-        if (error.name !== 'TimeoutError') throw error;
-        throw new Error(`Files scroller did not advance while seeking ${name}`, { cause: error });
+  // The tree re-windows after the scroll event, so a scroller already at its end is not stuck: the
+  // row is still coming. The only end condition is the row being mounted.
+  await page
+    .waitForFunction(
+      ({ sel, row }) => {
+        const mounted = Array.from(document.querySelectorAll('.filerow__name')).some(
+          (n) => n.textContent === row,
+        );
+        if (mounted) return true;
+        const sc = document.querySelector(sel);
+        if (sc) sc.scrollTop += sc.clientHeight / 2;
+        return false;
+      },
+      { sel: SCROLLER, row: name },
+      { polling: 'raf', timeout: 15000 },
+    )
+    .catch((error) => {
+      if (error.name !== 'TimeoutError') throw error;
+      throw new Error(`Files row ${name} never mounted while scrolling the tree`, {
+        cause: error,
       });
-  }
+    });
   await fileRow(page, name).scrollIntoViewIfNeeded();
 }
 

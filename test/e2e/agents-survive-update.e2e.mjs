@@ -204,7 +204,9 @@ async function run() {
       'gap call was not sent',
     );
     assert(
-      await until(() => b.output().includes('working 300'), 40_000),
+      // The fake agent's 100 ms interval drifts, so the last tick number is not fixed; the prompt it
+      // writes straight after the final tick marks the end of the busy interval.
+      await until(() => /working \d+\r\nfake❯ /.test(b.output()), 40_000),
       'busy interval did not end in gap',
     );
     assert(
