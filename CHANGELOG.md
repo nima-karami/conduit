@@ -6,9 +6,15 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.60.0] — 2026-11-07
+
 ### Added
 - When an agent stops on a usage-limit, rate-limit, provider-error or update screen, its session shows it needs you, with the reason.
 - Select several agents in the sidebar with Ctrl/Cmd-click or Shift-click, then right-click to close them together; right-click a lead agent to close its sub-agents.
+
+### Fixed
+- A settings or session change made just before the background service stops is no longer lost.
+- A helper opened with `close_when_done` is reported closed when the window closed it, and still closes when the window has not seen it yet.
 
 ## [0.59.0] — 2026-11-07
 
