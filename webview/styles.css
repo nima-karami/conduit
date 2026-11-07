@@ -2597,6 +2597,13 @@ body.resizing .panel__resize::after {
 .session--attention:hover {
   background: color-mix(in srgb, var(--amber) 18%, var(--raise));
 }
+/* In the Ctrl/Shift selection but not the active row: the active fill, softened, with the accent
+   edge at half strength, so it reads as picked without competing with the one open row. */
+.session--picked {
+  --notch-line: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--state-sel-bg) 60%, transparent);
+  color: var(--text);
+}
 .session__select {
   flex: 1 1 auto;
   min-width: 0;
@@ -15536,6 +15543,7 @@ button.toggle--on .toggle__knob {
     .ns-pill--on,
     .session--active,
     .session--attention,
+    .session--picked,
     .space--on,
     .filerow--selected,
     .filerow--revealed,

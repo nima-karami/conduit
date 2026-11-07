@@ -6,6 +6,9 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- Select several agents in the sidebar with Ctrl/Cmd-click or Shift-click, then right-click to close them together; right-click a lead agent to close its sub-agents.
+
 ## [0.59.0] — 2026-11-07
 
 ### Added

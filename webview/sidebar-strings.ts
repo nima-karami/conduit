@@ -107,7 +107,9 @@ export const SIDEBAR_STR = {
     copyName: 'Copy name',
     reveal: 'Reveal in Explorer',
     close: 'Close',
+    closeSubAgents: (n: number) => `Close all sub-agents (${number.format(n)})`,
     closeOthers: 'Close others',
     closeAll: 'Close all',
+    closeSelected: (n: number) => `Close ${count(n, 'session', 'sessions')}`,
   },
 } as const;

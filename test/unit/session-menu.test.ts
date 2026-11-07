@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { MenuItem } from '../../webview/components/context-menu';
 import { MCP_STR } from '../../webview/conduit-mcp-strings';
 import {
+  buildSelectionMenu,
   buildSessionMenu,
   type SessionMenuAction,
   type SessionMenuInput,
@@ -27,6 +28,7 @@ const ACTIONS: SessionMenuAction[] = [
   'copyName',
   'reveal',
   'close',
+  'closeSubAgents',
   'closeOthers',
   'closeAll',
 ];
@@ -217,6 +219,7 @@ describe('buildSessionMenu — entries, order and separators', () => {
       mcpHandle: 'h-1',
       mcpSwitchable: true,
       mcpSetupNeeded: true,
+      subAgentCount: 2,
     });
     const items = buildSessionMenu(value).filter((i) => !i.disabled);
     const rect = { left: 1, top: 2, right: 3, bottom: 4, width: 2, height: 2 };
@@ -241,6 +244,7 @@ describe('buildSessionMenu — entries, order and separators', () => {
       'copyName',
       'reveal',
       'close',
+      'closeSubAgents',
       'closeOthers',
       'closeAll',
     ]);
@@ -254,5 +258,35 @@ describe('buildSessionMenu — entries, order and separators', () => {
     const { value, calls } = input();
     find(buildSessionMenu(value), 'Move to space…')?.onClick();
     expect(calls).toEqual([{ action: 'moveSpace', arg: undefined }]);
+  });
+});
+
+describe('close sub-agents and the multi-selection menu', () => {
+  it('offers Close all sub-agents (N) only for a lead with children, right after Close', () => {
+    expect(labels(buildSessionMenu(input({ subAgentCount: 3 }).value))).toContain(
+      'Close all sub-agents (3)',
+    );
+    const none = labels(buildSessionMenu(input({ subAgentCount: 0 }).value));
+    expect(none.some((l) => l.startsWith('Close all sub-agents'))).toBe(false);
+    const menu = labels(buildSessionMenu(input({ subAgentCount: 3 }).value));
+    expect(menu.indexOf('Close all sub-agents (3)')).toBe(menu.indexOf('Close') + 1);
+  });
+
+  it('Close all sub-agents is danger and calls its own action', () => {
+    const { value, calls } = input({ subAgentCount: 2 });
+    const item = find(buildSessionMenu(value), 'Close all sub-agents (2)');
+    expect(item?.danger).toBe(true);
+    item?.onClick();
+    expect(calls).toEqual([{ action: 'closeSubAgents', arg: undefined }]);
+  });
+
+  it('the multi-selection menu is one danger entry, Close N sessions, that calls onClose', () => {
+    const onClose = vi.fn();
+    const items = buildSelectionMenu({ count: 2, icon: 'x', onClose });
+    expect(labels(items)).toEqual(['Close 2 sessions']);
+    expect(items[0]?.danger).toBe(true);
+    expect(items[0]?.icon).toBe('x');
+    items[0]?.onClick();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

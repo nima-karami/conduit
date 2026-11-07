@@ -73,6 +73,7 @@ export function AgentRow({
   space,
   now,
   selected,
+  multiSelected = false,
   tabbable,
   pinned,
   guides,
@@ -99,6 +100,8 @@ export function AgentRow({
   space?: string;
   now: number;
   selected: boolean;
+  /** Part of the Ctrl/Shift multi-selection (CON-167); independent of the active row. */
+  multiSelected?: boolean;
   tabbable: boolean;
   pinned: boolean;
   guides: RowGuides;
@@ -107,7 +110,7 @@ export function AgentRow({
   onEditStart: () => void;
   onEditEnd: () => void;
   onRename: (name: string) => void;
-  onSelect: () => void;
+  onSelect: (e: React.MouseEvent) => void;
   onPin: () => void;
   onClose: () => void;
   onRelaunch: () => void;
@@ -130,8 +133,9 @@ export function AgentRow({
     'session',
     child ? 'session--child' : 'session--root',
     selected && 'session--active',
+    multiSelected && !selected && 'session--picked',
     // Selection wins over the attention wash outright (spec §6), so the two never compete in CSS.
-    attention && !selected && 'session--attention',
+    attention && !selected && !multiSelected && 'session--attention',
     row.state === 'stopped' && 'session--stopped',
   ]
     .filter(Boolean)
@@ -143,7 +147,7 @@ export function AgentRow({
       data-sessionid={session.id}
       // Level 1 is the status group header: the tree is one flat list (see Sidebar).
       aria-level={row.depth + 2}
-      aria-selected={selected}
+      aria-selected={selected || multiSelected}
       aria-expanded={hasKids ? !row.folded : undefined}
       aria-label={label}
       title={tooltip}

@@ -41,6 +41,15 @@ import { IconBoard, IconPencil, IconPlus, IconSearch, IconSettings, IconTrash } 
 import { cardMcpStatus } from '../mcp-card-status';
 import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
 import { projectAnnouncer } from '../project-announcer';
+import {
+  applyRowClick,
+  descendantIds,
+  NO_SELECTION,
+  pruneSelection,
+  type RowMenuScope,
+  type RowSelection,
+  selectPlain,
+} from '../sidebar-selection';
 import { SIDEBAR_STR } from '../sidebar-strings';
 import { useSidebarTreeState } from '../sidebar-tree-state';
 import { buildAgentsPaneMenu } from '../sort-filter-menu';
@@ -192,9 +201,10 @@ export function Sidebar({
   onRename: (id: string, name: string) => void;
   onRelaunch: (id: string) => void;
   onOpenSettings: () => void;
-  onContextMenu?: (e: React.MouseEvent, session: Session) => void;
+  /** `scope` carries the multi-selection and the row's sub-agents, so the menu can act on them. */
+  onContextMenu?: (e: React.MouseEvent, session: Session, scope: RowMenuScope) => void;
   /** Shift+F10 / the Menu key on a row: the same menu, anchored to the row. */
-  onRowMenu?: (session: Session, at: { anchor: Rect; keyboard: true }) => void;
+  onRowMenu?: (session: Session, at: { anchor: Rect; keyboard: true }, scope: RowMenuScope) => void;
   /** Messaging state by session id, for the row tooltip (conduit-mcp spec §8). */
   mcpBadges: Readonly<Record<string, McpSessionBadge>>;
   /** Sessions whose agent CLI never reached the host, by session id (mcp-install spec §2.5). */
@@ -221,6 +231,8 @@ export function Sidebar({
   const [filter, setFilter] = useState('');
   const [filterOpen, setFilterOpen] = useState(false);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // Renderer-only multi-selection (CON-167); never persisted.
+  const [selection, setSelection] = useState<RowSelection>(NO_SELECTION);
   useEffect(() => {
     const open = menu;
     return () => open?.onClosed?.();
@@ -377,6 +389,11 @@ export function Sidebar({
   const dragIdRef = useRef<string | null>(null);
   const [dropKey, setDropKey] = useState<string | null>(null);
   const sessionsById = useMemo(() => new Map(sessions.map((s) => [s.id, s])), [sessions]);
+  // A session that closes elsewhere drops out of the selection.
+  useEffect(() => {
+    const live = new Set(sessions.map((s) => s.id));
+    setSelection((cur) => pruneSelection(cur, live));
+  }, [sessions]);
 
   const spaceDrop = (row: SpaceRowModel): SpaceDropHandlers | undefined => {
     if (row.key === SPACE_KEY_ALL) return undefined;
@@ -458,6 +475,31 @@ export function Sidebar({
     [items],
   );
   const visibleIds = model.visibleIds;
+  // Visible session rows in order: the axis a Shift+click range is cut from.
+  const visibleRowIds = useMemo(
+    () => items.flatMap((it) => (it.kind === 'row' ? [it.key] : [])),
+    [items],
+  );
+  // A plain click opens the row as it always did; Ctrl/Cmd and Shift only change the selection.
+  const onRowClick = (id: string, e: React.MouseEvent) => {
+    if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      setSelection(selectPlain(id));
+      onSelect(id);
+      return;
+    }
+    setSelection(
+      applyRowClick(
+        selection,
+        id,
+        { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey },
+        visibleRowIds,
+      ),
+    );
+  };
+  const scopeFor = (id: string): RowMenuScope => ({
+    selectedIds: selection.ids.includes(id) ? selection.ids : [],
+    subAgentIds: descendantIds((x) => model.rows[x]?.childIds ?? [], id),
+  });
   // Reported only when the order changes, not on every rebuild of the model.
   const reportedRef = useRef<readonly string[] | null>(null);
   useEffect(() => {
@@ -563,6 +605,11 @@ export function Sidebar({
   };
 
   const onTreeKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape' && selection.ids.length > 0) {
+      e.preventDefault();
+      setSelection(NO_SELECTION);
+      return;
+    }
     const el = e.target as HTMLElement;
     if (el.getAttribute('role') !== 'treeitem') return;
     const groupKey = el.dataset.agentGroup as AgentGroup | undefined;
@@ -617,6 +664,7 @@ export function Sidebar({
       }
       case 'Enter':
         e.preventDefault();
+        setSelection(selectPlain(id));
         onSelect(id);
         return;
       case 'F2':
@@ -632,10 +680,14 @@ export function Sidebar({
         e.preventDefault();
         const r = el.getBoundingClientRect();
         noteMenuRow(id);
-        onRowMenu(s, {
-          anchor: { left: r.left, right: r.right, top: r.top, bottom: r.bottom },
-          keyboard: true,
-        });
+        onRowMenu(
+          s,
+          {
+            anchor: { left: r.left, right: r.right, top: r.top, bottom: r.bottom },
+            keyboard: true,
+          },
+          scopeFor(id),
+        );
         return;
       }
     }
@@ -753,6 +805,7 @@ export function Sidebar({
         space={row.depth === 0 ? space : undefined}
         now={now}
         selected={s.id === activeId}
+        multiSelected={selection.ids.includes(s.id)}
         tabbable={s.id === tabId}
         pinned={ui.pinnedIds.includes(s.id)}
         guides={f.guides}
@@ -761,7 +814,7 @@ export function Sidebar({
         onEditStart={() => onSetRenaming(s.id)}
         onEditEnd={() => onSetRenaming(null)}
         onRename={(name) => onRename(s.id, name)}
-        onSelect={() => onSelect(s.id)}
+        onSelect={(e) => onRowClick(s.id, e)}
         onPin={() => togglePin(s.id)}
         onClose={() => onKill(s.id)}
         onRelaunch={() => onRelaunch(s.id)}
@@ -770,7 +823,9 @@ export function Sidebar({
           onContextMenu
             ? (e) => {
                 noteMenuRow(s.id);
-                onContextMenu(e, s);
+                // Right-clicking outside the selection moves it to that row, as a file manager does.
+                if (!selection.ids.includes(s.id)) setSelection(selectPlain(s.id));
+                onContextMenu(e, s, scopeFor(s.id));
               }
             : undefined
         }
@@ -968,6 +1023,7 @@ export function Sidebar({
             data-agent-tree=""
             role="tree"
             aria-label={SIDEBAR_STR.agents}
+            aria-multiselectable="true"
             onKeyDown={onTreeKey}
             onBlur={(e) => {
               // Only a move to a real element outside counts: a removed row blurs to nothing.

@@ -316,10 +316,11 @@ import {
 } from './save-registry';
 import { selectionInActiveDoc } from './selection-registry';
 import { selectionSourceFor } from './selection-source';
-import { buildSessionMenu, type SessionMenuAction } from './session-menu';
+import { buildSelectionMenu, buildSessionMenu, type SessionMenuAction } from './session-menu';
 import { sessionMcpLink, sessionSnoozeInput } from './session-menu-input';
 import { useSettings } from './settings';
 import { comboLabel, effectiveCombo, isWindows, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
+import { NO_SCOPE, type RowMenuScope } from './sidebar-selection';
 import {
   INITIAL_SIDEBAR_UI_SYNC,
   pruneSidebarUi,
@@ -524,6 +525,7 @@ const SESSION_MENU_ICONS: Record<SessionMenuAction, React.ReactNode> = {
   copyName: <IconCopy size={14} />,
   reveal: <IconExternal size={14} />,
   close: <IconTrash size={14} />,
+  closeSubAgents: <IconTrash size={14} />,
   closeOthers: <IconTrash size={14} />,
   closeAll: <IconTrash size={14} />,
 };
@@ -3499,12 +3501,41 @@ export function App() {
     ];
   };
 
+  // Running names among `ids`: a confirm lists exactly the sessions whose terminals it ends.
+  const runningNamesOf = (ids: readonly string[]) =>
+    sessions
+      .filter((x) => ids.includes(x.id) && x.status === 'running')
+      .map((x) => x.name)
+      .join(', ');
+
   // A right-click opens at the pointer; Shift+F10 on a row anchors to it with keyboard highlight.
+  // `scope` is the row's multi-selection and sub-agents (CON-167); a multi-selection gets its own menu.
   const openSessionMenu = (
     s: Session,
     at: { x: number; y: number } | { anchor: Rect; keyboard: true },
+    scope: RowMenuScope = NO_SCOPE,
   ) => {
     const point = 'anchor' in at ? { x: at.anchor.left, y: at.anchor.bottom } : at;
+    const showMenu = (items: MenuItem[]) =>
+      setMenu(
+        'anchor' in at ? { ...triggerMenu(at.anchor), keyboard: true, items } : { ...at, items },
+      );
+    if (scope.selectedIds.length >= 2) {
+      const ids = [...scope.selectedIds];
+      showMenu(
+        buildSelectionMenu({
+          count: ids.length,
+          icon: <IconTrash size={14} />,
+          onClose: () =>
+            closeSessions(
+              ids,
+              `Close ${ids.length} sessions`,
+              `Running terminals will be terminated: ${runningNamesOf(ids)}.`,
+            ),
+        }),
+      );
+      return;
+    }
     const others = closeOthersIds(
       sessions.map((x) => x.id),
       s.id,
@@ -3537,6 +3568,7 @@ export function App() {
       mcpLink: sessionMcpLink(badge, notConnected, mcp.state?.enabled ?? false),
       otherCount: others.length,
       allCount: all.length,
+      subAgentCount: scope.subAgentIds.length,
       windowMoves: moveMenuItems(s.id),
       icons: SESSION_MENU_ICONS,
       actions: {
@@ -3576,6 +3608,14 @@ export function App() {
         copyName: () => copyToClipboard(s.name),
         reveal: () => post({ type: 'revealInExplorer', path: s.home }),
         close: () => requestKill(s.id),
+        closeSubAgents: () => {
+          const ids = [...scope.subAgentIds];
+          closeSessions(
+            ids,
+            'Close sub-agents',
+            `Running terminals will be terminated: ${runningNamesOf(ids)}.`,
+          );
+        },
         closeOthers: () =>
           closeSessions(
             others,
@@ -3590,13 +3630,11 @@ export function App() {
           ),
       },
     });
-    setMenu(
-      'anchor' in at ? { ...triggerMenu(at.anchor), keyboard: true, items } : { ...at, items },
-    );
+    showMenu(items);
   };
-  const onSessionContextMenu = (e: React.MouseEvent, s: Session) => {
+  const onSessionContextMenu = (e: React.MouseEvent, s: Session, scope: RowMenuScope) => {
     e.preventDefault();
-    openSessionMenu(s, { x: e.clientX, y: e.clientY });
+    openSessionMenu(s, { x: e.clientX, y: e.clientY }, scope);
   };
 
   const onGroupStripContextMenu = (e: React.MouseEvent, group: GroupIndex) => {
