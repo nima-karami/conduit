@@ -118,7 +118,18 @@ try {
   // Chromium sends the stationary pointer a same-point move after layout on its own schedule;
   // sending one here makes the row under it see exactly that, without moving.
   await page.mouse.move(at.x, at.y);
-  await page.waitForTimeout(600);
+  try {
+    await page.waitForFunction(
+      () =>
+        document.querySelector('.branch-chip-menu .git-branch-menu__row.ctxmenu__item--active') !==
+        document.querySelector('.branch-chip-menu .git-branch-menu__row'),
+      null,
+      { timeout: 600 },
+    );
+    assert(false, 'the active row changed under the resting pointer');
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+  }
 
   const state = await page.evaluate(({ x, y }) => {
     const list = Array.from(document.querySelectorAll('.branch-chip-menu .git-branch-menu__row'));

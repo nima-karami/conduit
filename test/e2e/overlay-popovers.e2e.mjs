@@ -169,7 +169,18 @@ try {
   log('(2) listbox parented to body, within the viewport, last option hit-tests correctly ✓');
 
   await page.locator(baseInput).fill('m');
-  await page.waitForTimeout(200);
+  try {
+    await page.waitForFunction(
+      () => document.querySelectorAll('[role="listbox"]').length !== 1,
+      null,
+      {
+        timeout: 200,
+      },
+    );
+    assert(false, '(2) the list detached while typing a query');
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+  }
   assert(
     (await page.locator('[role="listbox"]').count()) === 1,
     '(2) the list must stay attached while typing a query',
@@ -233,7 +244,9 @@ try {
       .focus()
       .catch(() => {});
     await page.keyboard.press('Control+Backquote');
-    await page.waitForTimeout(250);
+    await page.waitForFunction(() => !document.activeElement?.closest('.xterm'), null, {
+      timeout: 250,
+    });
     await page.keyboard.press('Control+Shift+P');
     const palette = await page
       .waitForSelector('.palette', { state: 'visible', timeout: 3000 })

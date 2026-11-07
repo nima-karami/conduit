@@ -162,7 +162,7 @@ try {
         el.dispatchEvent(
           new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt, ...extra }),
         );
-      const tick = () => new Promise((r) => setTimeout(r, 60));
+      const tick = () => new Promise((r) => requestAnimationFrame(r));
       fire(src, 'dragstart');
       await tick();
       fire(dst, 'dragover');
@@ -182,7 +182,31 @@ try {
   assert(!dragged.error, `drag setup: ${dragged.error}`);
   // Rows stay draggable: a drag onto a Space row or another window is still a move.
   assert(dragged.draggable === 'true', `rows stay draggable, got ${dragged.draggable}`);
-  await page.waitForTimeout(800);
+  try {
+    await page.waitForFunction(
+      ({ order, projects }) => {
+        const currentOrder = [
+          ...document.querySelectorAll('[data-agent-tree] > [role="treeitem"]'),
+        ].map((el) =>
+          el.dataset.agentGroup !== undefined
+            ? `group:${el.dataset.agentGroup}`
+            : el.dataset.sessionid,
+        );
+        const currentProjects = Object.fromEntries(
+          (window.__sessions || []).map((s) => [s.id, s.projectId ?? null]),
+        );
+        return (
+          JSON.stringify(currentOrder) !== JSON.stringify(order) ||
+          JSON.stringify(currentProjects) !== JSON.stringify(projects)
+        );
+      },
+      { order: order0, projects: projectsBefore },
+      { timeout: 800 },
+    );
+    assert(false, 'row-on-row drop changed the tree or Space');
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+  }
   const order1 = await treeOrder(page);
   assert(
     JSON.stringify(order1) === JSON.stringify(order0),
@@ -236,13 +260,20 @@ try {
   log(`folded Pinned: rows hidden, count "${countText}" ✓`);
 
   // The window's sidebar state rides the debounced layout write.
-  const deadline = Date.now() + 10000;
-  let ui = null;
-  while (Date.now() < deadline) {
-    ui = persistedSidebarUi(userDataDir);
-    if (ui?.foldedGroups?.includes('pinned') && ui?.selection?.projectId === projectId) break;
-    await page.waitForTimeout(200);
-  }
+  await page.exposeFunction('__persistedSidebarUi', () => persistedSidebarUi(userDataDir));
+  const ui = await page
+    .waitForFunction(
+      async (pid) => {
+        const value = await window.__persistedSidebarUi();
+        return value?.foldedGroups?.includes('pinned') && value?.selection?.projectId === pid
+          ? value
+          : null;
+      },
+      projectId,
+      { timeout: 10000 },
+    )
+    .then((handle) => handle.jsonValue());
+  await page.removeExposedFunction('__persistedSidebarUi');
   assert(
     ui?.foldedGroups?.includes('pinned') &&
       ui?.pinnedIds?.includes(sid1) &&

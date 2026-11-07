@@ -34,7 +34,14 @@ runScenario('idle-fs-quiet', async ({ page, log }) => {
   writeFileSync(join(root, 'b.ts'), 'export const b = 2;\n');
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
-  await page.waitForTimeout(SETTLE_MS);
+  await page.waitForFunction(
+    () =>
+      (window.__sessions || []).some((session) =>
+        Object.values(session.repoGit ?? {}).some((git) => git.kind !== 'none'),
+      ),
+    null,
+    { timeout: SETTLE_MS },
+  );
 
   const written = new Map();
   const outside = watch(root, { recursive: true }, (_e, f) => {
@@ -47,7 +54,13 @@ runScenario('idle-fs-quiet', async ({ page, log }) => {
       if (m.type === 'fsChanged') window.__fsChanged += 1;
     });
   });
-  await page.waitForTimeout(WINDOW_MS);
+  try {
+    await page.waitForFunction((max) => window.__fsChanged > max, MAX_IDLE_EVENTS, {
+      timeout: WINDOW_MS,
+    });
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+  }
   const count = await page.evaluate(() => window.__fsChanged);
   outside.close();
 

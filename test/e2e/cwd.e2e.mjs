@@ -46,8 +46,16 @@ try {
 
   /** Bounded window for a negative: cwd must not move (UNC refuse / trackCwd off). */
   const observeNothingFor = async (ms, check) => {
-    await page.waitForTimeout(ms);
-    return check();
+    await page.exposeFunction('__cwdCheck', check);
+    try {
+      await page.waitForFunction(async () => !(await window.__cwdCheck()), null, { timeout: ms });
+      return false;
+    } catch (error) {
+      if (error.name !== 'TimeoutError') throw error;
+      return true;
+    } finally {
+      await page.removeExposedFunction('__cwdCheck');
+    }
   };
 
   // Capture agents and settings from state subscription.

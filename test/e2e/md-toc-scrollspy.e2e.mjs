@@ -76,14 +76,35 @@ runScenario('md-toc-scrollspy', async ({ page, log }) => {
     // Clicking the LAST (short final) entry activates it — the original bug was that a
     // short final section's heading can't reach the reading line, so it never lit up.
     await last.click();
-    await page.waitForTimeout(200);
+    await last
+      .locator(
+        'xpath=self::*[contains(concat(" ", normalize-space(@class), " "), " markdown-toc__item--active ")]',
+      )
+      .waitFor({ state: 'attached', timeout: 200 });
     assert(await isActive(last), `clicking the last entry "${lastText}" must activate it`);
     log(`clicked last "${lastText}" → active ✓`);
 
     // Clicking the SECOND-TO-LAST entry keeps THAT entry active (not the last) — the
     // reported regression where it jumped to the very last section.
     await secondLast.click();
-    await page.waitForTimeout(200);
+    await secondLast
+      .locator(
+        'xpath=self::*[contains(concat(" ", normalize-space(@class), " "), " markdown-toc__item--active ")]',
+      )
+      .waitFor({ state: 'attached', timeout: 200 });
+    try {
+      await page.waitForFunction(
+        () => {
+          const items = document.querySelectorAll('.markdown-toc__item');
+          return !items[items.length - 2]?.classList.contains('markdown-toc__item--active');
+        },
+        null,
+        { timeout: 200 },
+      );
+      assert(false, 'the second-to-last entry lost its active state');
+    } catch (error) {
+      if (error.name !== 'TimeoutError') throw error;
+    }
     assert(
       await isActive(secondLast),
       `clicking the second-to-last entry "${secondLastText}" must keep it active`,

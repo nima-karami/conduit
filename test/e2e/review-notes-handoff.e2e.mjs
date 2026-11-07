@@ -207,7 +207,14 @@ try {
   log('the composer saved a note onto a line in each file ✓');
 
   // (3) They landed on disk, ENVELOPED (ADR 0002).
-  await page.waitForTimeout(800); // the host writes after it broadcasts
+  await page.exposeFunction('__reviewNotesSaved', () => {
+    try {
+      return JSON.parse(readFileSync(notesPath, 'utf8')).data.notes.length === 2;
+    } catch {
+      return false;
+    }
+  });
+  await page.waitForFunction(() => window.__reviewNotesSaved(), null, { timeout: 800 });
   assert(existsSync(notesPath), `review-notes.json was not written to ${notesPath}`);
   const envelope = JSON.parse(readFileSync(notesPath, 'utf8'));
   assert(envelope.conduit === 1, `envelope.conduit should be 1; got ${envelope.conduit}`);
@@ -374,7 +381,15 @@ try {
   log('Send to agent delivered the re-anchored markdown to the bus for the right session ✓');
 
   await waitForSendLabel(page2, /Send to agent \(0\)/);
-  await page2.waitForTimeout(600);
+  await page2.exposeFunction('__reviewNotesSent', () => {
+    try {
+      const notes = JSON.parse(readFileSync(notesPath, 'utf8')).data.notes;
+      return notes.length === 2 && notes.every((note) => typeof note.sentAt === 'string');
+    } catch {
+      return false;
+    }
+  });
+  await page2.waitForFunction(() => window.__reviewNotesSent(), null, { timeout: 600 });
   const afterSend = JSON.parse(readFileSync(notesPath, 'utf8')).data.notes;
   assert(
     afterSend.every((n) => typeof n.sentAt === 'string'),

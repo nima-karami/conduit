@@ -74,9 +74,14 @@ runScenario('tabbar-overflow', async ({ page, log }) => {
     if (opened >= 15) break;
     const row = fileRowByName(page, name);
     if ((await row.count()) === 0) continue;
+    const before = await page.locator('.tabbar .tab').count();
     await row.first().dblclick();
     opened += 1;
-    await page.waitForTimeout(150);
+    await page.waitForFunction(
+      (count) => document.querySelectorAll('.tabbar .tab').length > count,
+      before,
+      { timeout: 150 },
+    );
     if (await stripOverflowing(page)) break;
   }
 
@@ -105,7 +110,11 @@ runScenario('tabbar-overflow', async ({ page, log }) => {
     const n = await closeBtns.count();
     if (n === 0) break;
     await closeBtns.nth(n - 1).click();
-    await page.waitForTimeout(150);
+    await page.waitForFunction(
+      (count) => document.querySelectorAll('.tab .tab__close').length < count,
+      n,
+      { timeout: 150 },
+    );
   }
 
   const flatState = await measureTab(page, anchorId);

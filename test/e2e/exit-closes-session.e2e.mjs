@@ -31,6 +31,9 @@ try {
   launched = await launchApp();
   const { page } = launched;
   await tapBridge(page);
+  await page.evaluate(() => {
+    window.__terms = {};
+  });
 
   const sid = await openSession(page, { path: REPO.replace(/\\/g, '/'), agentId: 'shell:cmd' });
   log('shell session opened, id =', sid);
@@ -43,9 +46,23 @@ try {
   );
   log('session running ✓');
 
-  // Let cmd.exe reach its prompt before sending input (as a real user would) — input
-  // sent during ConPTY startup is dropped and the shell never exits.
-  await page.waitForTimeout(2000);
+  const marker = `CONDUIT-EXIT-READY-${sid}`;
+  await page.waitForFunction(
+    ({ id, text }) => {
+      const buffer = window.__terms?.[id]?.buffer?.active;
+      if (!buffer) return false;
+      if (window.__exitReadyMarkers?.[id] !== true) {
+        window.__exitReadyMarkers ??= {};
+        window.__exitReadyMarkers[id] = true;
+        window.agentDeck.post({ type: 'term:input', sessionId: id, data: `echo ${text}\r\n` });
+      }
+      for (let y = 0; y < buffer.length; y++)
+        if (buffer.getLine(y)?.translateToString(true).trim() === text) return true;
+      return false;
+    },
+    { id: sid, text: marker },
+    { timeout: 2_000 },
+  );
 
   // Send `exit` to the shell's PTY — cmd.exe terminates.
   await page.evaluate(
@@ -67,9 +84,7 @@ try {
   log('session auto-closed after exit ✓');
 
   log('PASS ✓ exit-closes-session: plain shell auto-closes on PTY exit');
-  // Bound the teardown — app.close() can hang on a loaded machine; the assertion already
-  // passed, so don't let a slow close turn a PASS into a TIMEOUT.
-  await Promise.race([launched.cleanup(), new Promise((r) => setTimeout(r, 5000))]);
+  await launched.cleanup();
   await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';

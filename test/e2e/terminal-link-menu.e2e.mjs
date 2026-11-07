@@ -71,7 +71,19 @@ runScenario('terminal-link-menu', async ({ page, log }) => {
     await typeLine(page, sid, `echo ${line}`);
     await waitForOutput(page, sid, line);
   }
-  await page.waitForTimeout(800);
+  await typeLine(page, sid, 'echo __PLM_SYNC__');
+  await page.waitForFunction(
+    (id) => {
+      const buf = window.__terms[id]?.buffer.active;
+      if (!buf) return false;
+      for (let y = 0; y < buf.length; y++) {
+        if (buf.getLine(y)?.translateToString(true).trim() === '__PLM_SYNC__') return true;
+      }
+      return false;
+    },
+    sid,
+    { timeout: 800 },
+  );
 
   /** Viewport point of char `charIdx` of the last row that is exactly `line` (the echo output). */
   const cellOf = (line, charIdx) =>
@@ -98,18 +110,15 @@ runScenario('terminal-link-menu', async ({ page, log }) => {
   const rightClick = async (line, charIdx, { onLink = true } = {}) => {
     const c = await cellOf(line, charIdx);
     assert(c.ok, `"${line}" is not on screen`);
-    const pointer = () =>
-      page.evaluate(
+    await page.mouse.move(c.x, c.y + 300);
+    await page.mouse.move(c.x, c.y, { steps: 4 });
+    if (onLink) {
+      await page.waitForFunction(
         (id) => !!window.__terms[id].element.querySelector('.xterm-cursor-pointer'),
         sid,
+        { timeout: 8000 },
       );
-    for (let i = 0; i < 20; i++) {
-      await page.mouse.move(c.x, c.y + 300);
-      await page.mouse.move(c.x, c.y, { steps: 4 });
-      await page.waitForTimeout(400);
-      if (!onLink || (await pointer())) break;
     }
-    if (onLink) assert(await pointer(), `"${line}" never showed the link pointer`);
     await page.mouse.click(c.x, c.y, { button: 'right' });
     await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 8000 });
     return page.evaluate(() =>

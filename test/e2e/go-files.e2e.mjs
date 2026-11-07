@@ -124,14 +124,22 @@ const spanClasses = (page, scope, texts) =>
   );
 
 async function waitForDistinctClasses(page, scope, texts, log, label) {
-  let got = {};
-  const deadline = Date.now() + 30000;
-  while (Date.now() < deadline) {
-    got = await spanClasses(page, scope, texts);
-    const cls = Object.values(got);
-    if (cls.every(Boolean) && new Set(cls).size === texts.length) break;
-    await page.waitForTimeout(500);
-  }
+  await page.waitForFunction(
+    ({ scope: wantedScope, texts: wantedTexts }) => {
+      const container = document.querySelector(wantedScope);
+      if (!container) return false;
+      const classes = wantedTexts.map((text) => {
+        const span = Array.from(container.querySelectorAll('.view-line span span')).find(
+          (el) => el.textContent.trim() === text,
+        );
+        return span ? [...span.classList].find((c) => c.startsWith('mtk')) : null;
+      });
+      return classes.every(Boolean) && new Set(classes).size === wantedTexts.length;
+    },
+    { scope, texts },
+    { timeout: 30000 },
+  );
+  const got = await spanClasses(page, scope, texts);
   log(`${label} classes: ${JSON.stringify(got)}`);
   const cls = Object.values(got);
   assert(

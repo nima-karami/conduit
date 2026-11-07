@@ -75,9 +75,10 @@ try {
   assert(sid, 'No running session found after openRepo');
   log('first launch: session running, id =', sid);
 
-  // Wait a moment to ensure sessions.json is written (mgr.onChange triggers write).
-  await page1.waitForTimeout(500);
   const sessionsPath = join(userDataDir, 'sessions.json');
+  await page1.exposeFunction('__sessionsFileExists', () => existsSync(sessionsPath));
+  await page1.waitForFunction(() => window.__sessionsFileExists(), null, { timeout: 500 });
+  await page1.removeExposedFunction('__sessionsFileExists');
   assert(existsSync(sessionsPath), 'sessions.json was not written to userData dir');
   log('sessions.json exists ✓');
 

@@ -49,7 +49,17 @@ try {
   const { page } = launched;
 
   await openSession(page, { path: root });
-  await page.waitForTimeout(1500);
+  await page.evaluate((path) => {
+    window.__planWatchBarrier = false;
+    const off = window.agentDeck.subscribe((message) => {
+      if (message.type !== 'state') return;
+      off();
+      window.__planWatchBarrier = true;
+    });
+    window.agentDeck.post({ type: 'requestProject', path });
+    window.agentDeck.post({ type: 'ready' });
+  }, root);
+  await page.waitForFunction(() => window.__planWatchBarrier, null, { timeout: 1500 });
 
   copyFileSync(FIXTURE, join(plans, 'identity.md'));
   log('wrote identity.md into .conduit/plans');
@@ -68,12 +78,20 @@ try {
   const fenceOf = (text, lang) =>
     new RegExp(`\`\`\`${lang}\\n([\\s\\S]*?)\\n\`\`\``).exec(text)?.[1] ?? null;
 
+  let currentCondition;
+  await page.exposeFunction('__planBlocksCondition', () => currentCondition());
   const until = async (holds, budgetMs) => {
     const started = Date.now();
-    for (;;) {
-      if (holds()) return Date.now() - started;
-      if (Date.now() - started >= budgetMs) return null;
-      await page.waitForTimeout(50);
+    currentCondition = holds;
+    try {
+      await page.waitForFunction(() => window.__planBlocksCondition(), null, {
+        timeout: budgetMs,
+        polling: 50,
+      });
+      return Date.now() - started;
+    } catch (error) {
+      if (error.name !== 'TimeoutError') throw error;
+      return null;
     }
   };
   const untilFile = (holds, budgetMs) => until(() => holds(readPlan()), budgetMs);

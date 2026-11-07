@@ -60,12 +60,24 @@ runScenario('middle-click-surfaces-links', async ({ app, page, log }) => {
     await middleClickJitter(page, mdLink('external link'));
     const externalCalls = async () =>
       (await getSpyCalls(app)).filter((c) => c.api === 'openExternal');
-    const deadline = Date.now() + 5000;
-    while ((await externalCalls()).length === 0 && Date.now() < deadline) {
-      await page.waitForTimeout(100);
-    }
-    // A duplicate host-side open (C5) would land after the renderer's; give it time to show.
-    await page.waitForTimeout(800);
+    const waitForCalls = (count, ms) =>
+      app.evaluate(
+        (_, { count, ms }) =>
+          new Promise((resolve) => {
+            const deadline = Date.now() + ms;
+            const poll = () => {
+              const found = (global.__spyCalls || []).filter(
+                (c) => c.api === 'openExternal',
+              ).length;
+              if (found >= count || Date.now() >= deadline) return resolve(found);
+              setTimeout(poll, 25);
+            };
+            poll();
+          }),
+        { count, ms },
+      );
+    assert((await waitForCalls(1, 5000)) >= 1, 'AC-7: openExternal was not called');
+    assert((await waitForCalls(2, 800)) === 1, 'AC-7: duplicate openExternal call');
     const calls = await externalCalls();
     assert(
       calls.length === 1,

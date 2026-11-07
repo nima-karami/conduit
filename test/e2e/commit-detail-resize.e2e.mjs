@@ -17,7 +17,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -128,8 +128,21 @@ try {
     `expected the drag to grow the pane (>${startH + 40}), got ${draggedH}`,
   );
 
-  // Let the debounced settings persist (250ms) land, then close (flush-on-unload belt+braces).
-  await page1.waitForTimeout(600);
+  await page1.exposeFunction('__savedDetailHeight', () => {
+    const file = join(userDataDir, 'settings.json');
+    return existsSync(file)
+      ? JSON.parse(readFileSync(file, 'utf8')).settings?.historyDetailHeight
+      : null;
+  });
+  await page1.waitForFunction(
+    async (height) => {
+      const saved = await window.__savedDetailHeight();
+      return typeof saved === 'number' && Math.abs(saved - height) < 8;
+    },
+    draggedH,
+    { timeout: 600 },
+  );
+  await page1.removeExposedFunction('__savedDetailHeight');
   await closeApp(firstApp, page1);
   firstApp = null;
   log('launch 1 closed ✓');

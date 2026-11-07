@@ -66,7 +66,27 @@ runScenario('lsp-trust-multi', async ({ app, page, log }) => {
     const { prompt } = await lsp(page, { type: 'lsp:trustState' });
     if (prompt) promptIds.add(prompt.id);
   }
-  await page.waitForTimeout(2_000);
+  try {
+    await page.waitForFunction(
+      async () => {
+        const snap = await window.agentDeck.lsp({ type: 'lsp:statusSnapshot' });
+        return (
+          snap.servers.find(
+            (s) => ['python', 'rust', 'cpp'].includes(s.languageId) && s.state !== 'restricted',
+          ) ?? null
+        );
+      },
+      null,
+      { polling: 'raf', timeout: 2_000 },
+    );
+    const changed = await lsp(page, { type: 'lsp:statusSnapshot' });
+    assert(
+      false,
+      `an untrusted server left the restricted state: ${JSON.stringify(changed.servers)}`,
+    );
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+  }
   const spawned = recordTree(appPid).filter((p) => SERVER_PROCS.test(p.name));
   assert(spawned.length === 0, `untrusted folder spawned ${JSON.stringify(spawned)}`);
   assert(promptIds.size === 1, `expected one prompt for the folder, saw ${[...promptIds]}`);

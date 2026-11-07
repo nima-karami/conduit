@@ -97,7 +97,10 @@ runScenario('editor-nav-history', async ({ app, page, log }) => {
         await page.keyboard.press('Control+Shift+P');
         await page.waitForSelector('.palette', { state: 'visible', timeout: 5000 });
         await page.keyboard.type('Go back');
-        await page.waitForTimeout(150);
+        await page
+          .locator('.palette__row')
+          .filter({ has: page.locator('.palette__title', { hasText: /^Go back$/ }) })
+          .waitFor({ state: 'visible', timeout: 150 });
         await page.keyboard.press('Enter');
       },
     ],
