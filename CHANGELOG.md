@@ -8,6 +8,7 @@ All notable user-facing changes to Conduit. Format follows
 
 ### Added
 - When an agent stops on a usage-limit, rate-limit, provider-error or update screen, its session shows it needs you, with the reason.
+- Select several agents in the sidebar with Ctrl/Cmd-click or Shift-click, then right-click to close them together; right-click a lead agent to close its sub-agents.
 
 ## [0.59.0] — 2026-11-07
 

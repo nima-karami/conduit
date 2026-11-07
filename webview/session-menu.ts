@@ -32,6 +32,7 @@ export type SessionMenuAction =
   | 'copyName'
   | 'reveal'
   | 'close'
+  | 'closeSubAgents'
   | 'closeOthers'
   | 'closeAll';
 
@@ -68,9 +69,30 @@ export interface SessionMenuInput {
   mcpLink?: SessionMcpLink | null;
   otherCount: number;
   allCount: number;
+  /** Descendants under this row in the agent tree; the sub-agents entry shows only when > 0. */
+  subAgentCount?: number;
   windowMoves: readonly MenuItem[];
   icons: Readonly<Record<SessionMenuAction, ReactNode>>;
   actions: Readonly<Record<SessionMenuAction, (activation?: MenuActivation) => void>>;
+}
+
+/**
+ * The menu for a multi-selection (two or more rows): the one thing that applies to all of them.
+ * Single-row items are left out on purpose; each would act on only one of the selected rows.
+ */
+export function buildSelectionMenu(input: {
+  count: number;
+  icon: ReactNode;
+  onClose: () => void;
+}): MenuItem[] {
+  return [
+    {
+      label: SIDEBAR_STR.menu.closeSelected(input.count),
+      icon: input.icon,
+      danger: true,
+      onClick: () => input.onClose(),
+    },
+  ];
 }
 
 export function buildSessionMenu(input: SessionMenuInput): MenuItem[] {
@@ -152,6 +174,9 @@ export function buildSessionMenu(input: SessionMenuInput): MenuItem[] {
     [item('copyHome', M.copyHome), item('copyName', M.copyName), item('reveal', M.reveal)],
     [
       item('close', M.close, { danger: true }),
+      ...(input.subAgentCount
+        ? [item('closeSubAgents', M.closeSubAgents(input.subAgentCount), { danger: true })]
+        : []),
       item('closeOthers', M.closeOthers, { danger: true, disabled: input.otherCount === 0 }),
       item('closeAll', M.closeAll, { danger: true }),
     ],

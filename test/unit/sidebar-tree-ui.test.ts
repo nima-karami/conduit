@@ -6,6 +6,7 @@ import { needYouEntries, presentationSessions } from '../../src/attention';
 import { defaultSidebarUi, type SidebarUiState } from '../../src/sidebar-state';
 import type { Project, Session } from '../../src/types';
 import { Sidebar } from '../../webview/components/sidebar';
+import type { RowMenuScope } from '../../webview/sidebar-selection';
 import {
   type SidebarTreeContextValue,
   SidebarTreeProvider,
@@ -78,7 +79,7 @@ interface Setup {
   tree?: Partial<SidebarTreeContextValue>;
   activeId?: string;
   onSelect?: (id: string) => void;
-  onContextMenu?: (e: React.MouseEvent, s: Session) => void;
+  onContextMenu?: (e: React.MouseEvent, s: Session, scope: RowMenuScope) => void;
   onSetRenaming?: (id: string | null) => void;
   onKill?: (id: string) => void;
   onNew?: () => void;
@@ -356,6 +357,89 @@ describe('keyboard', () => {
   });
 });
 
+describe('multi-selection', () => {
+  const modClick = async (el: Element, init: MouseEventInit) =>
+    act(async () => {
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ...init }));
+    });
+  const selectedIds = () =>
+    qa('.session[role="treeitem"][aria-selected="true"]').map((el) => el.dataset.sessionid);
+
+  it('Ctrl+click adds rows without opening them; a plain click opens and resets', async () => {
+    const onSelect = vi.fn();
+    await render({ sessions: family(), onSelect });
+    await click(rowEl('p').querySelector('[data-agent-action="select"]'));
+    expect(onSelect).toHaveBeenLastCalledWith('p');
+    await modClick(rowEl('l').querySelector('[data-agent-action="select"]') as Element, {
+      ctrlKey: true,
+    });
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(selectedIds()).toEqual(['p', 'l']);
+    expect(rowEl('l').classList.contains('session--picked')).toBe(true);
+    await click(rowEl('g').querySelector('[data-agent-action="select"]'));
+    expect(onSelect).toHaveBeenLastCalledWith('g');
+    expect(selectedIds()).toEqual(['g']);
+  });
+
+  it('Shift+click selects the visible range from the anchor', async () => {
+    await render({ sessions: family() });
+    await click(rowEl('c').querySelector('[data-agent-action="select"]'));
+    await modClick(rowEl('l').querySelector('[data-agent-action="select"]') as Element, {
+      shiftKey: true,
+    });
+    expect(selectedIds()).toEqual(['c', 'g', 'l']);
+  });
+
+  it('Escape clears the selection', async () => {
+    await render({ sessions: family() });
+    await modClick(rowEl('p').querySelector('[data-agent-action="select"]') as Element, {
+      ctrlKey: true,
+    });
+    expect(selectedIds()).toEqual(['p']);
+    await key(rowEl('p'), 'Escape');
+    expect(selectedIds()).toEqual([]);
+  });
+
+  it('a right-click carries the selection, or moves it to a row outside it', async () => {
+    const onContextMenu = vi.fn((e: React.MouseEvent, _s: Session, _scope: RowMenuScope) =>
+      e.preventDefault(),
+    );
+    await render({ sessions: family(), onContextMenu });
+    await modClick(rowEl('p').querySelector('[data-agent-action="select"]') as Element, {
+      ctrlKey: true,
+    });
+    await modClick(rowEl('l').querySelector('[data-agent-action="select"]') as Element, {
+      ctrlKey: true,
+    });
+    await act(async () => {
+      rowEl('l').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    });
+    expect(onContextMenu.mock.calls[0]?.[2]).toEqual({
+      selectedIds: ['p', 'l'],
+      subAgentIds: [],
+    });
+    await act(async () => {
+      rowEl('c').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    });
+    expect(onContextMenu.mock.calls[1]?.[2]).toEqual({ selectedIds: [], subAgentIds: ['g'] });
+    expect(selectedIds()).toEqual(['c']);
+  });
+
+  it('a lead passes its sub-agents, every descendant and not itself', async () => {
+    const onContextMenu = vi.fn((e: React.MouseEvent, _s: Session, _scope: RowMenuScope) =>
+      e.preventDefault(),
+    );
+    await render({ sessions: family(), onContextMenu });
+    await act(async () => {
+      rowEl('p').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    });
+    expect(onContextMenu.mock.calls[0]?.[2]).toEqual({
+      selectedIds: [],
+      subAgentIds: ['c', 'g'],
+    });
+  });
+});
+
 describe('a row that changes group keeps its node', () => {
   it('focus survives Working → Done and a pin', async () => {
     await render({
@@ -450,10 +534,14 @@ describe('keyboard menu and group headers', () => {
       el.dispatchEvent(ev);
     });
     expect(ev.defaultPrevented).toBe(true);
-    expect(onRowMenu).toHaveBeenCalledWith(expect.objectContaining({ id: 'c' }), {
-      anchor: { left: 1, right: 201, top: 10, bottom: 36 },
-      keyboard: true,
-    });
+    expect(onRowMenu).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'c' }),
+      {
+        anchor: { left: 1, right: 201, top: 10, bottom: 36 },
+        keyboard: true,
+      },
+      { selectedIds: [], subAgentIds: ['g'] },
+    );
     await key(el, 'ContextMenu');
     await key(el, 'F10');
     expect(onRowMenu).toHaveBeenCalledTimes(2);
