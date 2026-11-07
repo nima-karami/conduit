@@ -1657,7 +1657,17 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       const memo = stuckFeed.get(s.id);
       if (outputAt === undefined || outputAt === memo?.outputAt) continue;
       if (memo && t - memo.at < STUCK_CHECK_MS) continue;
-      const snap = await deps.runtime.screen(s.id);
+      let snap: Awaited<ReturnType<typeof deps.runtime.screen>>;
+      try {
+        snap = await deps.runtime.screen(s.id);
+      } catch (err) {
+        // One unreadable screen must not skip the other sessions or the notifier this tick.
+        deps.log.warn('conduit-mcp', 'stuck screen read failed', {
+          sessionId: s.id,
+          err: String(err),
+        });
+        continue;
+      }
       if (!snap || deps.runtime.get(s.id)?.state !== 'live') continue;
       const stuck = detectStuckScreen(cli, snap.lines);
       const prev = memo?.stuck ?? null;

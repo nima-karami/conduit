@@ -178,4 +178,13 @@ describe('detectStuckScreen', () => {
       ),
     ).toBeNull();
   });
+
+  it('ignores the Cursor usage sentence quoted mid-row (e.g. this repo open in Cursor)', () => {
+    expect(
+      detectStuckScreen(
+        'cursor',
+        rows("  const s = 'Your usage limits will reset when your monthly cycle ends';"),
+      ),
+    ).toBeNull();
+  });
 });

@@ -22,7 +22,7 @@ const CODEX_UPDATE_FOOTER = /enter continue · esc skip/;
 
 const CURSOR_PROVIDER_ERROR = /^[ \t]*Error: Unable to reach the model provider[ \t]*$/m;
 const CURSOR_USAGE_RESET =
-  /^[ \t]*model\. Your usage limits will reset|Your usage limits will reset when your monthly cycle ends/m;
+  /^[ \t]*(?:model\. )?Your usage limits will reset when your monthly cycle ends/m;
 
 const CLAUDE_USAGE_LIMIT =
   /^[ \t]*(?:Claude usage limit reached|You[’']ve hit your (?:usage|session|weekly) limit)/m;
