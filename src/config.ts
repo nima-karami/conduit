@@ -10,7 +10,7 @@ export interface AgentsConfig {
 }
 
 /** The most agents.json entries Conduit reads; the rest are dropped with one warning. */
-export const MAX_AGENTS = 200;
+const MAX_AGENTS = 200;
 /** capabilities.model_flag: one dash-led flag, as one argv entry (flexible-agent-contracts §4.4). */
 const MODEL_FLAG_SHAPE = /^--?[A-Za-z][A-Za-z0-9-]{0,30}$/;
 const RESERVED_ID_PREFIXES = ['cli:', 'shell:', 'conduit:'];

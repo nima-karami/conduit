@@ -11,7 +11,7 @@ export type AgentArg =
  * Shells, interpreters and system tools, by normalized leaf (see normalizeLeaf): open_terminal runs
  * these, not an agent open. Grows by review.
  */
-export const REFUSED_LEAVES: ReadonlySet<string> = new Set([
+const REFUSED_LEAVES: ReadonlySet<string> = new Set([
   'cmd',
   'powershell',
   'powershell_ise',
@@ -78,12 +78,12 @@ const SEPARATOR = /[\\/]/;
 const EXECUTABLE_EXT = /\.(exe|cmd|bat|com)$/;
 
 /** A program's file name, lowercased, without its directory or Windows extension. */
-export function programLeaf(name: string): string {
+function programLeaf(name: string): string {
   return (name.split(/[\\/]/).pop() ?? '').toLowerCase().replace(EXECUTABLE_EXT, '');
 }
 
 /** programLeaf without a version or -preview suffix: python3.12.exe → python, pwsh-preview → pwsh. */
-export function normalizeLeaf(name: string): string {
+function normalizeLeaf(name: string): string {
   return programLeaf(name)
     .replace(/[0-9.]+$/, '')
     .replace(/-preview$/, '');
