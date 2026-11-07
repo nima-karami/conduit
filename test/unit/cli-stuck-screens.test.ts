@@ -110,7 +110,13 @@ describe('detectStuckScreen', () => {
 
   it('does not flag source code or log text that merely mentions a limit', () => {
     expect(detectStuckScreen('codex', rows('const re = /You’ve hit your usage limit/'))).toBeNull();
-    expect(detectStuckScreen('codex', rows('Approaching rate limits in the docs'))).toBeNull();
+    // The footer is present, so only the row anchor keeps this from matching the switch prompt.
+    expect(
+      detectStuckScreen(
+        'codex',
+        rows(`  Approaching rate limits in the docs\n\n  enter select · esc back`),
+      ),
+    ).toBeNull();
     expect(
       detectStuckScreen('cursor', rows('Error: Unable to reach the model provider in logs')),
     ).toBeNull();

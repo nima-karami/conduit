@@ -294,15 +294,22 @@ export function createAppControlHandlers(
     closedBy: CloseOpener | undefined,
     ctx: ControlCallContext,
   ): Promise<Result<CloseSessionOutput>> => {
-    const currentWindow = deps.ownerWindowOf(sessionId);
-    if (currentWindow === null || !deps.windowReady(currentWindow)) {
+    const domainClose = async (): Promise<Result<CloseSessionOutput>> => {
       const result = await deps.closeSession(sessionId, closedBy ? { closedBy } : {});
       if (!result.ok) return fail(result.code, result.message);
       return { ok: true, value: { closed: sessionId } };
-    }
+    };
+    const currentWindow = deps.ownerWindowOf(sessionId);
+    if (currentWindow === null || !deps.windowReady(currentWindow)) return domainClose();
     const r = await ctx.ui(currentWindow, sessionId, { kind: 'closeSession', target: sessionId });
     if (!r.ok) return r;
     const v = r.value;
+    // No caller to answer on this path: a window that does not know the session cannot close it,
+    // so the domain does (deterministic, and the same outcome as a windowless close).
+    if (v.kind === 'unknownSession' && closedBy === undefined) {
+      deps.info('control app', { tool: 'closeWhenDone', sessionId, fallback: 'unknownSession' });
+      return domainClose();
+    }
     if (v.kind !== 'closeSession')
       return wrongAnswer(v, () =>
         closedBy === undefined

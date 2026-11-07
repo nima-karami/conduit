@@ -380,6 +380,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
   const handleOf = (sessionId: string): Handle | undefined =>
     deps.sessions.get(sessionId)?.mcpHandle;
+  /** closeWhenDone waits still open, keyed by session; a delete during one means the close happened. */
+  const closingWhenDone = new Map<string, { deleted: boolean }>();
   /** Initialized connections' client kinds; seq is initialize order. */
   const connKinds = new Map<number, { kind: ClientKind; seq: number }>();
   let connSeq = 0;
@@ -1897,6 +1899,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
      * session open, exited and listed.
      */
     async closeWhenDone(sessionId) {
+      const closing = { deleted: false };
+      closingWhenDone.set(sessionId, closing);
       const ctx: ControlCallContext = {
         move: undefined,
         reach: undefined,
@@ -1909,15 +1913,23 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             action,
           }),
       };
-      const r = await app.closeRouted(sessionId, undefined, ctx);
-      if (!r.ok)
-        deps.log.info('conduit-mcp', 'closeWhenDone kept open', {
-          sessionId,
-          code: r.error.code,
-        });
+      try {
+        const r = await app.closeRouted(sessionId, undefined, ctx);
+        // The renderer's own kill ends the wait as window_not_ready; the session is closed all the same.
+        if (closing.deleted) deps.log.info('conduit-mcp', 'closeWhenDone closed', { sessionId });
+        else if (!r.ok)
+          deps.log.info('conduit-mcp', 'closeWhenDone kept open', {
+            sessionId,
+            code: r.error.code,
+          });
+      } finally {
+        if (closingWhenDone.get(sessionId) === closing) closingWhenDone.delete(sessionId);
+      }
     },
 
     async onSessionDeleted(sessionId) {
+      const closing = closingWhenDone.get(sessionId);
+      if (closing) closing.deleted = true;
       // Before the drain: the session's waiting asks end now, so their cancelled replies are owed.
       flow.sessionGone(sessionId);
       sessionWaits.cancel((w) => w.caller.sessionId === sessionId);
