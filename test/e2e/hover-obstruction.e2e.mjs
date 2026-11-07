@@ -68,7 +68,10 @@ const settleHover = (page, hovered) =>
   page.waitForFunction(
     (want) => {
       if (!!document.querySelector('[data-agent-tree] .session:hover') !== want) return false;
-      for (const a of document.getAnimations()) a.finish();
+      for (const a of document.getAnimations()) {
+        // A looping animation (a spinner) has no end to jump to; only transitions need settling.
+        if (Number.isFinite(a.effect?.getComputedTiming().endTime)) a.finish();
+      }
       return true;
     },
     hovered,
