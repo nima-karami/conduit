@@ -221,6 +221,7 @@ function harness(
     installState?: McpHostDeps['domain']['installState'];
     toolPolicy?: () => { global: GlobalPolicy; byCli: CliPolicyLayers };
     kindOf?: (abs: string) => Promise<PathKind>;
+    bracketedPaste?: () => boolean;
     /** Timers fire only through advance(); otherwise asks and UI waits never expire. */
     manualTimers?: boolean;
   } = {},
@@ -395,6 +396,7 @@ function harness(
   };
   const registry = opts.registry ?? new AgentRegistry(DEFS);
   const domain: McpHostDeps['domain'] = {
+    bracketedPaste: opts.bracketedPaste ?? (() => false),
     homeOf: (id: string) => sessions.get(id)?.home,
     resolvePath: (h: string, rel: string) => (rel.startsWith('/') ? rel : `${h}/${rel}`),
     kindOf: opts.kindOf ?? (async (abs: string) => opts.kinds?.[abs] ?? 'missing'),
@@ -512,6 +514,7 @@ function harness(
     attention,
     typing: {
       submit: writer.submit,
+      sequence: writer.sequence,
       submitEnter: (sessionId, opts) => {
         submitEnterCalls += 1;
         return writer.submitEnter(sessionId, opts);
@@ -2738,10 +2741,10 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     return (await h.screens.snapshot(id))?.lines[0];
   }
 
-  it('S6 a shell keeps an output tail only while messaging is on', async () => {
+  it('S6 a shell keeps an output tail whether messaging is on or off', async () => {
     for (const [on, row] of [
       [true, 'before'],
-      [false, ''],
+      [false, 'before'],
     ] as const) {
       const h = harness({ messagingOn: () => on });
       await h.host.start();
@@ -4074,6 +4077,225 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
     expect(c.errorOf(await c.reply(1))).toBe('approval_timeout');
   });
 
+  it('read_screen refuses the caller as its own target', async () => {
+    const { h, c } = await twoSessions();
+    c.call(1, 'read_screen', { session: h.sessions.get('s1')?.mcpHandle });
+    expect(c.errorOf(await c.reply(1))).toBe('self_target');
+  });
+
+  it('reads trimmed last rows and relative cursor from the helper screen', async () => {
+    const { h, c } = await twoSessions();
+    allow(h, 's1', { read_screen: { access: 'on', reach: 'any' } });
+    h.output('s2', 'first\r\nsecond\r\nthird');
+    c.call(1, 'read_screen', { session: 's2', lines: 2 });
+    expect(resultOf(await c.reply(1))).toMatchObject({
+      rows: ['second', 'third'],
+      cursor_row: 1,
+      cols: 40,
+      presence: 'idle',
+    });
+    h.busy.add('s2');
+    c.call(2, 'read_screen', { session: 's2' });
+    expect(resultOf(await c.reply(2))).toMatchObject({ presence: 'busy' });
+  });
+
+  it('sends text, keys and a separate submit in order', async () => {
+    const { h, c } = await twoSessions();
+    allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
+    c.call(1, 'send_input', {
+      session: 's2',
+      text: 'hello',
+      keys: ['tab', 'ctrl+c'],
+      submit: true,
+    });
+    expect(resultOf(await c.reply(1))).toMatchObject({ sent_chars: 5, keys_sent: 2 });
+    expect(h.inputs.filter(([id]) => id === 's2')).toEqual([
+      ['s2', 'hello'],
+      ['s2', '\t\x03'],
+      ['s2', '\r'],
+    ]);
+  });
+
+  it('rejects unsafe input before typing', async () => {
+    const { h, c } = await twoSessions();
+    allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
+    c.call(1, 'send_input', { session: 's2', text: 'a\nb' });
+    expect(c.errorOf(await c.reply(1))).toBe('invalid_args');
+    expect(h.inputs.filter(([id]) => id === 's2')).toEqual([]);
+  });
+  it('uses bracketed paste and rejects all control characters', async () => {
+    const { h, c } = await twoSessions({ bracketedPaste: () => true });
+    allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
+    c.call(1, 'send_input', { session: 's2', text: 'a\nb' });
+    expect(resultOf(await c.reply(1))).toMatchObject({ sent_chars: 3 });
+    expect(h.inputs).toContainEqual(['s2', '\x1b[200~a\nb\x1b[201~']);
+    for (const [i, text] of ['\x00', '\x1b[200~', '\x7f', '\x85'].entries()) {
+      c.call(i + 2, 'send_input', { session: 's2', text });
+      expect(c.errorOf(await c.reply(i + 2))).toBe('invalid_args');
+    }
+  });
+
+  it('reports target and input errors without writing', async () => {
+    const { h, c } = await twoSessions();
+    allow(h, 's1', {
+      send_input: { access: 'on', reach: 'opened' },
+      read_screen: { access: 'on', reach: 'opened' },
+    });
+    c.call(1, 'read_screen', { session: 'missing' });
+    expect(resultOf(await c.reply(1))).toMatchObject({
+      error: {
+        code: 'unknown_session',
+        hint: expect.stringContaining('list_sessions'),
+        valid: [h.sessions.get('s1')?.mcpHandle],
+      },
+    });
+    c.call(2, 'read_screen', { session: 's2' });
+    expect(resultOf(await c.reply(2))).toMatchObject({
+      error: { code: 'out_of_reach', hint: expect.stringContaining('Settings') },
+    });
+    allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
+    c.call(3, 'send_input', { session: 's2' });
+    expect(c.errorOf(await c.reply(3))).toBe('invalid_args');
+    h.exit('s2');
+    c.call(4, 'send_input', { session: 's2', text: 'x' });
+    expect(c.errorOf(await c.reply(4))).toBe('session_exited');
+    expect(h.inputs.filter(([id]) => id === 's2')).toEqual([]);
+  });
+
+  it('reports a failed submit as restarting', async () => {
+    const { h, c } = await twoSessions();
+    allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
+    h.failEnter.add('s2');
+    c.call(1, 'send_input', { session: 's2', text: 'x', submit: true });
+    expect(c.errorOf(await c.reply(1))).toBe('session_restarting');
+  });
+  it('maps every supported key and validates input limits', async () => {
+    const { h, c } = await twoSessions();
+    allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
+    c.call(1, 'send_input', {
+      session: 's2',
+      keys: ['enter', 'tab', 'esc', 'backspace', 'space', 'ctrl+c'],
+    });
+    expect(resultOf(await c.reply(1))).toMatchObject({ sent_chars: 0, keys_sent: 6 });
+    expect(h.inputs).toContainEqual(['s2', '\r\t\x1b\x7f \x03']);
+    for (const [i, args] of [
+      { text: 'x'.repeat(4001) },
+      { keys: Array(21).fill('tab') },
+      { keys: ['bad'] },
+      { submit: true },
+    ].entries()) {
+      c.call(i + 2, 'send_input', { session: 's2', ...args });
+      expect(c.errorOf(await c.reply(i + 2))).toBe('invalid_args');
+    }
+  });
+
+  it('returns empty rows without a snapshot and null cursor outside the requested rows', async () => {
+    const { h, c } = await twoSessions();
+    allow(h, 's1', { read_screen: { access: 'on', reach: 'any' } });
+    h.screens.dispose('s2');
+    c.call(1, 'read_screen', { session: 's2' });
+    expect(resultOf(await c.reply(1))).toMatchObject({ rows: [], cursor_row: null, cols: 40 });
+    h.screens.start('s2', 40, 10);
+    h.output('s2', 'first\r\nsecond\r\nthird\x1b[2A');
+    c.call(2, 'read_screen', { session: 's2', lines: 1 });
+    expect(resultOf(await c.reply(2))).toMatchObject({ rows: ['third'], cursor_row: null });
+    for (const [i, lines] of [0, 201, 1.5].entries()) {
+      c.call(i + 3, 'read_screen', { session: 's2', lines });
+      expect(c.errorOf(await c.reply(i + 3))).toBe('invalid_args');
+    }
+  });
+
+  it('rechecks paste mode after approval and shows the full request', async () => {
+    let paste = true;
+    const { h, c } = await twoSessions({ bracketedPaste: () => paste });
+    allow(h, 's1', { send_input: { access: 'ask', reach: 'any' } });
+    c.call(1, 'send_input', { session: 's2', text: 'first\nsecond', keys: ['ctrl+c'] });
+    await until(() => h.toOwner.some(({ msg }) => msg.type === 'mcp:ask'));
+    const ask = h.toOwner.find(({ msg }) => msg.type === 'mcp:ask')?.msg;
+    if (ask?.type !== 'mcp:ask') throw new Error('missing ask');
+    expect(ask.summary).toMatchObject({
+      tool: 'send_input',
+      text: 'first\nsecond',
+      keys: ['ctrl+c'],
+    });
+    paste = false;
+    await h.host.handleRenderer(
+      { type: 'mcp:askAnswer', askId: ask.askId, answer: 'approve' },
+      () => undefined,
+      1,
+    );
+    expect(c.errorOf(await c.reply(1))).toBe('invalid_args');
+    expect(h.inputs.filter(([id]) => id === 's2')).toEqual([]);
+  });
+  it('reports a refused write as restarting', async () => {
+    const { h, c } = await twoSessions();
+    allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
+    h.alive.delete('s2');
+    c.call(1, 'send_input', { session: 's2', text: 'x' });
+    expect(c.errorOf(await c.reply(1))).toBe('session_restarting');
+  });
+
+  it('rechecks reach and exit while approval is pending', async () => {
+    const { h, c } = await twoSessions();
+    h.owners.set('s2', 1);
+    allow(h, 's1', { send_input: { access: 'ask', reach: 'window' } });
+    c.call(1, 'send_input', { session: 's2', text: 'x' });
+    await until(() => h.toOwner.some(({ msg }) => msg.type === 'mcp:ask'));
+    const first = h.toOwner.find(({ msg }) => msg.type === 'mcp:ask')?.msg;
+    if (first?.type !== 'mcp:ask') throw new Error('missing ask');
+    h.owners.set('s2', 2);
+    await h.host.handleRenderer(
+      { type: 'mcp:askAnswer', askId: first.askId, answer: 'approve' },
+      () => undefined,
+      1,
+    );
+    expect(c.errorOf(await c.reply(1))).toBe('out_of_reach');
+    h.owners.set('s2', 1);
+    c.call(2, 'send_input', { session: 's2', text: 'x' });
+    await until(() => h.toOwner.filter(({ msg }) => msg.type === 'mcp:ask').length === 2);
+    const second = h.toOwner.filter(({ msg }) => msg.type === 'mcp:ask')[1]?.msg;
+    if (second?.type !== 'mcp:ask') throw new Error('missing ask');
+    h.exit('s2');
+    await h.host.handleRenderer(
+      { type: 'mcp:askAnswer', askId: second.askId, answer: 'approve' },
+      () => undefined,
+      1,
+    );
+    expect(c.errorOf(await c.reply(2))).toBe('session_exited');
+    expect(h.inputs.filter(([id]) => id === 's2')).toEqual([]);
+  });
+  it('reads a helper launched while messaging was off through its real lifecycle', async () => {
+    let messaging = true;
+    const h = harness({ messagingOn: () => messaging });
+    await h.host.start();
+    const caller = await launch(h, 's1');
+    const c = await rawClient(h.ep, caller.token);
+    messaging = false;
+    h.sessions.set(
+      's2',
+      session('s2', {
+        agentId: SHELL.id,
+        mcpHandle: 'term-1',
+        openedBy: { handle: 'fake-1', sessionId: 's1' },
+      }),
+    );
+    await launch(h, 's2', SHELL);
+    h.output('s2', 'unregistered helper screen');
+    messaging = true;
+    allow(h, 's1', { read_screen: { access: 'on', reach: 'opened' } });
+    c.call(1, 'read_screen', { session: 's2' });
+    expect(resultOf(await c.reply(1))).toMatchObject({ rows: ['unregistered helper screen'] });
+  });
+  it('marks typed helper input as a draft for the notice gate', async () => {
+    const { h, c } = await twoSessions();
+    h.output('s2', 'fake❯ ');
+    h.clock.t += 10000;
+    allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
+    c.call(1, 'send_input', { session: 's2', text: 'draft' });
+    expect(resultOf(await c.reply(1))).toMatchObject({ sent_chars: 5 });
+    await h.host.tick();
+    expect(h.host.uiState().sessions.s2?.gate).toBe('draft');
+  });
   it('focus_session and attach_folder run host-side', async () => {
     const { h, c } = await twoSessions();
     allow(h, 's1', {

@@ -26,6 +26,11 @@ export interface PtyWriterDeps {
 export interface PtyWriter {
   submit(sessionId: string, text: string, hooks?: SubmitHooks): Promise<SubmitOutcome>;
   submitEnter(sessionId: string, opts?: SubmitEnterOptions): Promise<SubmitOutcome>;
+  sequence(
+    sessionId: string,
+    write: () => boolean,
+    opts: SubmitEnterOptions & { submit: boolean },
+  ): Promise<SubmitOutcome>;
   forget(sessionId: string): void;
 }
 
@@ -96,6 +101,29 @@ export function createPtyWriter(deps: PtyWriterDeps): PtyWriter {
     submitEnter(sessionId, opts = {}) {
       const next = (chains.get(sessionId) ?? Promise.resolve()).then(() =>
         runEnter(sessionId, opts),
+      );
+      chains.set(
+        sessionId,
+        next.then(
+          () => undefined,
+          () => undefined,
+        ),
+      );
+      return next;
+    },
+    sequence(sessionId, write, opts) {
+      const next = (chains.get(sessionId) ?? Promise.resolve()).then(
+        async (): Promise<SubmitOutcome> => {
+          const gen = deps.generation(sessionId);
+          if (gen === undefined) return 'no-pty';
+          if (!write()) return 'write-failed';
+          if (!opts.submit) return 'submitted';
+          await deps.sleep(deps.gapMs);
+          if (deps.generation(sessionId) !== gen) return 'generation-changed';
+          if (!(await hookAllows(opts.beforeEnter))) return 'withheld';
+          if (deps.generation(sessionId) !== gen) return 'generation-changed';
+          return deps.input(sessionId, '\r') ? 'submitted' : 'write-failed';
+        },
       );
       chains.set(
         sessionId,

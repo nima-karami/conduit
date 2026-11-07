@@ -112,6 +112,7 @@ export interface DomainPort
   projectName(projectId: string | undefined): string | null;
   /** The CLI's user-scope install state, shown with a not-connected session. */
   installState(cli: AgentCli): UserInstallState;
+  bracketedPaste(sessionId: string): boolean;
   messagingOn(): boolean;
   /** ServerSettings.mcpToolPolicy and mcpToolPolicyByCli, read per call. */
   toolPolicy(): { global: GlobalPolicy; byCli: CliPolicyLayers };
@@ -188,6 +189,7 @@ export interface TypingPort {
   /** One raw write, not queued behind a submit's gap, as today. */
   write(sessionId: string, data: string, opts?: TypingWriteOptions): boolean;
   submitEnter: PtyWriter['submitEnter'];
+  sequence: PtyWriter['sequence'];
   forget: PtyWriter['forget'];
 }
 

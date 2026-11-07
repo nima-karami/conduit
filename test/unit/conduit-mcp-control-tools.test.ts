@@ -839,6 +839,31 @@ describe('tool schemas (plan B5)', () => {
     for (const t of toolSchemas()) walk(t.inputSchema, t.name, bad);
     expect(bad).toEqual([]);
   });
+
+  it('exposes flat read_screen and send_input schemas with their contract descriptions', () => {
+    const byName = new Map(toolSchemas(['claude']).map((tool) => [tool.name, tool]));
+    expect(byName.get('read_screen')?.description).toContain(
+      "opener sees its helpers' raw screens",
+    );
+    expect(byName.get('read_screen')?.inputSchema).toMatchObject({
+      properties: {
+        session: { type: 'string' },
+        lines: { type: 'integer', minimum: 1, maximum: 200, default: 60 },
+      },
+      required: ['session'],
+    });
+    expect(byName.get('send_input')?.description).toContain('asks the human by default');
+    expect(byName.get('send_input')?.description).toContain("helpers that don't speak MCP");
+    expect(byName.get('send_input')?.inputSchema).toMatchObject({
+      properties: {
+        session: { type: 'string' },
+        text: { type: 'string', maxLength: 4000 },
+        keys: { type: 'array', maxItems: 20 },
+        submit: { type: 'boolean', default: false },
+      },
+      required: ['session'],
+    });
+  });
 });
 
 describe('session tool descriptions', () => {

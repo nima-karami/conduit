@@ -173,6 +173,18 @@ describe('ApprovalCard', () => {
     const cases: [AskSummary, string][] = [
       [{ tool: 'close_session', target: 'fake-2' }, 'Close fake-2'],
       [{ tool: 'focus_session', target: 'fake-2' }, 'Switch your view to fake-2'],
+      [{ tool: 'read_screen', target: 'fake-2' }, 'Read the screen of fake-2'],
+      [
+        {
+          tool: 'send_input',
+          target: 'fake-2',
+          label: 'Kiro',
+          home: '/work/kiro',
+          text: 'continue',
+          keys: [],
+        },
+        'Type into fake-2 (Kiro, /work/kiro)',
+      ],
       [{ tool: 'attach_folder', path: '/w/sub', target: 'fake-1' }, 'Attach /w/sub to fake-1'],
       [{ tool: 'close_files', count: 3, all: false }, 'Close 3 tabs'],
       [{ tool: 'close_files', count: 1, all: false }, 'Close 1 tab'],
@@ -197,6 +209,27 @@ describe('ApprovalCard', () => {
       expect(document.querySelector('.askcard__summary')?.textContent).toBe(text);
       closed(`b${i}`);
     });
+  });
+
+  it('shows the full send_input text in a scrollable area and warns for ctrl+c', () => {
+    mount();
+    emit({
+      ...ask('input'),
+      tool: 'send_input',
+      summary: {
+        tool: 'send_input',
+        target: 'kiro-1',
+        label: 'Kiro',
+        home: '/work/kiro',
+        text: 'line one\nline two — full text',
+        keys: ['enter', 'ctrl+c'],
+      },
+      args: {},
+    });
+    const text = document.querySelector<HTMLElement>('.askcard__inputtext');
+    expect(text?.textContent).toBe('line one\nline two — full text');
+    expect(text?.tagName).toBe('PRE');
+    expect(region()?.textContent).toContain('Keys: enter, ctrl+c — may stop the program');
   });
 
   it('raw arguments start collapsed, expand on the button, and collapse again per ask', () => {

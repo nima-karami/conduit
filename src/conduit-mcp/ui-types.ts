@@ -40,6 +40,15 @@ export type AskSummary =
   /** Several sessions: the first names (at most 8) of `total`. */
   | { tool: 'close_session'; targets: Handle[]; total: number }
   | { tool: 'focus_session'; target: Handle }
+  | { tool: 'read_screen'; target: Handle }
+  | {
+      tool: 'send_input';
+      target: Handle;
+      label: string;
+      home: string;
+      text: string;
+      keys: string[];
+    }
   | { tool: 'attach_folder'; path: string; target: Handle }
   | { tool: 'close_files'; count: number; all: boolean }
   /** 'working', a short sha, or 'base…head'. */

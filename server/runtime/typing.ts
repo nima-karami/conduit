@@ -21,6 +21,7 @@ export function createTyping(
   return {
     submit: writer.submit,
     submitEnter: writer.submitEnter,
+    sequence: writer.sequence,
     forget: writer.forget,
     write: (sessionId, data, options) => write(sessionId, data, options?.generation),
   };

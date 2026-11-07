@@ -1520,6 +1520,7 @@ export function createDomain(deps: DomainDeps): Domain {
   };
 
   const domain: DomainPort = {
+    bracketedPaste: (id) => !!pasteModes.get(id)?.on,
     homeOf: (id) => mgr.get(id)?.home,
     resolvePath: (home, target) => resolve(home, target),
     kindOf: (target) =>

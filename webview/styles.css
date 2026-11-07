@@ -7204,6 +7204,26 @@ body.gh-resizing {
   color: var(--text-dim);
   font-size: calc(12px * var(--font-scale));
 }
+.askcard__input {
+  min-height: 0;
+}
+.askcard__inputtext {
+  max-height: 160px;
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: calc(11.5px * var(--font-scale));
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  border-radius: 3px;
+}
+.askcard__inputkeys {
+  margin-top: 4px;
+  color: var(--text-dim);
+  font-size: calc(12px * var(--font-scale));
+}
 .askcard__rawtoggle {
   display: inline-flex;
   align-items: center;

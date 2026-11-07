@@ -228,3 +228,11 @@ Rules for the list forms:
   already made stay reported.
 
 The per-entry shape exists so a refusal never discards the closes already made.
+
+## 10. Amendment 2026-11-07: read_screen and send_input (CON-166 S3)
+
+Both tools are in the `sessions` group. `read_screen` uses the `show` budget, access `on`, and reach `opened` (choices `self|opened|window|any`). It accepts `session` and `lines` (integer 1–200, default 60) and returns `{ session, rows, cursor_row, cols, presence }`. It reads the target’s visible viewport snapshot: trim trailing spaces from rows, drop trailing blank rows, then return the last requested rows. `cursor_row` is relative to the returned rows and null when outside them; `cols` is the current runtime width or null if unknown. An undefined snapshot returns `rows: []`. Presence is `idle`, `busy`, or `exited`. The opener can see its helpers’ raw screens without redaction. Targeting the caller’s own session returns `self_target`; unknown and out-of-reach targets use `unknown_session` and `out_of_reach` respectively, with the required hints and reach-limited `valid` targets.
+
+`send_input` uses the `act` budget, access `ask`, and reach `opened`. It accepts `session`, optional `text` (up to 4,000 characters), optional `keys` (up to 20 from `enter|tab|esc|backspace|space|ctrl+c`), and `submit` (boolean, default false); text or keys is required. Reject C0 controls except newline, DEL, C1 controls, and `ESC[200~`/`ESC[201~`. Newline is allowed only when the target has bracketed paste enabled; otherwise return `invalid_args` with hint `submit lines one at a time with submit:true`. Send text as bracketed paste when enabled, otherwise raw. Map keys to `\r`, `\t`, `\x1b`, `\x7f`, space, and `\x03`, respectively. Write in order: text, keys, then Enter through the typing submit operation when `submit` is true. Use the target’s current session generation for writes. A false write returns retryable `session_restarting`; an exited target returns `session_exited`; the caller’s own session returns `self_target`. Success returns `{ session, sent_chars, keys_sent }`.
+
+The `send_input` approval card must show the full text, in a scrollable area, and the requested keys. Its summary text is: “Type into <handle> (<label>, <home>)”. When `ctrl+c` is requested, also show “may stop the program”.

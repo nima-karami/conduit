@@ -258,6 +258,8 @@ export const MCP_STR = {
       open_file: 'Lets an agent open files in your editor.',
       close_session: 'Lets an agent close sessions; a closed session loses its scrollback.',
       focus_session: 'Lets an agent switch your view to another session.',
+      read_screen: 'Lets an agent read a helper session’s visible screen.',
+      send_input: 'Lets an agent type into a helper session after you approve.',
       attach_folder: 'Lets an agent attach folders to sessions.',
       close_files: 'Lets an agent close tabs in its own session.',
       open_review: 'Lets an agent open Review at a commit, a range, or your working changes.',
@@ -330,6 +332,8 @@ export const MCP_STR = {
           ? `Close ${s.target}`
           : `Close ${s.total} sessions: ${s.targets.join(', ')}${s.total > s.targets.length ? ` and ${s.total - s.targets.length} more` : ''}`,
       focus_session: (s) => `Switch your view to ${s.target}`,
+      read_screen: (s) => `Read the screen of ${s.target}`,
+      send_input: (s) => `Type into ${s.target} (${s.label}, ${s.home})`,
       attach_folder: (s) => `Attach ${s.path} to ${s.target}`,
       close_files: (s) =>
         s.all ? 'Close all of its tabs' : s.count === 1 ? 'Close 1 tab' : `Close ${s.count} tabs`,
@@ -343,6 +347,9 @@ export const MCP_STR = {
       open_url: (s) => `Open ${s.url} in a Conduit tab`,
       list_agents: () => 'List the agents you can open',
     } satisfies { [K in AskSummary['tool']]: (s: Extract<AskSummary, { tool: K }>) => string },
+    inputText: (s: Extract<AskSummary, { tool: 'send_input' }>) => s.text,
+    inputKeys: (s: Extract<AskSummary, { tool: 'send_input' }>) => s.keys.join(', '),
+    ctrlCWarning: 'May stop the program',
     reason: {
       session: 'Ask: set for this session',
       global: 'Ask: the default for all CLIs',

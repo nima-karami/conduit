@@ -325,6 +325,16 @@ describe('Part B catalog rows (app-control spec, tool-policy spec §3.2)', () =>
       reach: 'window',
       move: 'yes',
     });
+    expect(DEFAULT_TOOL_POLICY.read_screen).toStrictEqual({
+      access: 'on',
+      when: 'viewing',
+      reach: 'opened',
+    });
+    expect(DEFAULT_TOOL_POLICY.send_input).toStrictEqual({
+      access: 'ask',
+      when: 'viewing',
+      reach: 'opened',
+    });
     expect(DEFAULT_TOOL_POLICY.attach_folder).toStrictEqual({
       access: 'ask',
       when: 'viewing',
@@ -340,6 +350,8 @@ describe('Part B catalog rows (app-control spec, tool-policy spec §3.2)', () =>
       expect(DEFAULT_TOOL_POLICY[t]).toStrictEqual({ access: 'on', when: 'viewing' });
     expect(TOOL_SPECS.close_session.budget).toBe('act');
     expect(TOOL_SPECS.attach_folder.budget).toBe('act');
+    expect(TOOL_SPECS.read_screen.budget).toBe('show');
+    expect(TOOL_SPECS.send_input.budget).toBe('act');
     for (const t of [
       'focus_session',
       'close_files',
@@ -371,6 +383,8 @@ describe('Part B catalog rows (app-control spec, tool-policy spec §3.2)', () =>
       'list_agents',
       'open_session',
       'open_terminal',
+      'read_screen',
+      'send_input',
       'close_session',
       'focus_session',
       'attach_folder',
