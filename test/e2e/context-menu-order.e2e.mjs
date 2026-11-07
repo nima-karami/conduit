@@ -35,8 +35,8 @@ const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8' });
 async function openMenuOn(page, selector) {
   await page.click(selector, { button: 'right' });
   await page.waitForSelector('.ctxmenu', { timeout: 8000 });
-  // Let the keyboard/positioning effects settle so the full item list is rendered.
-  await page.waitForTimeout(120);
+  // The items render with the menu itself; wait for the list, not for a settle.
+  await page.waitForSelector('.ctxmenu .ctxmenu__scroll .ctxmenu__item', { timeout: 8000 });
   return page.evaluate(() => {
     // The item wrappers live in `.ctxmenu__scroll`, not directly under `.ctxmenu` — the frame
     // itself must not scroll or Neon's chamfer cuts the bottom of the CONTENT (blockers Q4).
@@ -134,7 +134,7 @@ async function markAndPinTab(page, ext) {
   }, ext);
   if (!found) return false;
   await page.dblclick('.tab[data-ctxtest="1"]');
-  await page.waitForTimeout(120);
+  await page.waitForSelector('.tab[data-ctxtest="1"]:not(.tab--preview)', { timeout: 8000 });
   return true;
 }
 

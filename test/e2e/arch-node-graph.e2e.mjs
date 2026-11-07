@@ -4,12 +4,28 @@
  * snapshot, like the harness's window.__sessions). Runs HIDDEN. This crosses the view↔model↔undo
  * boundary a unit test can't.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, watch, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assert, closeApp, finishScenario, launchApp, makeLog, openSession } from './harness.mjs';
 
 const log = makeLog('arch-node-graph');
+
+/** Resolves true once `file` is gone — event-driven off the parent dir, bounded by `ms`. */
+function waitGone(file, dir, ms) {
+  return new Promise((resolve) => {
+    const watcher = watch(dir, () => {
+      if (!existsSync(file)) done(true);
+    });
+    const deadline = setTimeout(() => done(!existsSync(file)), ms);
+    function done(v) {
+      clearTimeout(deadline);
+      watcher.close();
+      resolve(v);
+    }
+    if (!existsSync(file)) done(true);
+  });
+}
 
 // Use a throwaway project so the canvas seeds clean and never mutates the repo's own
 // .conduit/architecture.json (applyDoc persists to the active project).
@@ -35,7 +51,13 @@ try {
       .focus()
       .catch(() => {});
     await page.keyboard.press('Control+Backquote'); // leave the terminal so the app combo fires
-    await page.waitForTimeout(250);
+    await page
+      .waitForFunction(
+        () => !document.activeElement?.classList.contains('xterm-helper-textarea'),
+        null,
+        { timeout: 3000 },
+      )
+      .catch(() => {});
     await page.keyboard.press('Control+Shift+P');
     const palette = await page
       .waitForSelector('.palette', { state: 'visible', timeout: 3000 })
@@ -200,7 +222,14 @@ try {
   await page.mouse.down();
   await page.mouse.move(bBox.x + 120, bBox.y + 60, { steps: 8 });
   await page.mouse.up();
-  await page.waitForTimeout(200);
+  await page.waitForFunction(
+    ([sel, x, y]) => {
+      const r = document.querySelector(sel)?.getBoundingClientRect();
+      return !!r && (Math.abs(r.x - x) > 20 || Math.abs(r.y - y) > 20);
+    },
+    [`.react-flow__node[data-id="${b}"] .archnode__head`, bBox.x, bBox.y],
+    { timeout: 5000 },
+  );
   assert(
     (await typedEdge.count()) === 1,
     'the typed edge should still render after moving the node (measured-size feedback preserves handle bounds)',
@@ -460,11 +489,7 @@ try {
   // Apply: the reviewed doc becomes canonical and the proposal file is deleted.
   await page.locator('.arch__reviewapply').click();
   await page.waitForSelector('.arch__reviewbar', { state: 'detached', timeout: 5000 });
-  let cleared = false;
-  for (let i = 0; i < 20 && !cleared; i++) {
-    if (!existsSync(proposalPath)) cleared = true;
-    else await page.waitForTimeout(150);
-  }
+  const cleared = await waitGone(proposalPath, join(tmpProject, '.conduit'), 3000);
   assert(cleared, 'Apply should delete the consumed .proposed.json');
   const canonical = JSON.parse(
     readFileSync(join(tmpProject, '.conduit', 'architecture.json'), 'utf8'),

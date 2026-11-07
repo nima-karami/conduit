@@ -49,14 +49,24 @@ const rowCombo = (page, description) =>
   row(page, description).locator('.shortcuts__keys kbd').first().textContent();
 
 async function waitRowCombo(page, description, want) {
-  const until = Date.now() + 5000;
-  let got = null;
-  while (Date.now() < until) {
-    got = await rowCombo(page, description);
-    if (got === want) return;
-    await page.waitForTimeout(50);
+  try {
+    await page.waitForFunction(
+      ([desc, combo]) =>
+        Array.from(document.querySelectorAll('.shortcuts__row')).some(
+          (r) =>
+            (r.querySelector('.shortcuts__desc')?.textContent ?? '').startsWith(desc) &&
+            r.querySelector('.shortcuts__keys kbd')?.textContent === combo,
+        ),
+      [description, want],
+      { timeout: 5000 },
+    );
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+    assert(
+      false,
+      `row "${description}" should show "${want}", shows "${await rowCombo(page, description)}"`,
+    );
   }
-  assert(false, `row "${description}" should show "${want}", shows "${got}"`);
 }
 
 async function record(page, description, key) {
@@ -74,9 +84,28 @@ async function snapshot(page) {
 async function assertInert(page, key, what) {
   const before = await snapshot(page);
   await page.keyboard.press(key);
-  await page.waitForTimeout(1000);
-  const after = await snapshot(page);
-  assert(after === before, `${what}: ${key} must be inert, went ${before} → ${after}`);
+  // Bounded negative: neither the active tab nor the cursor line may move inside the window.
+  try {
+    await page.waitForFunction(
+      (was) => {
+        const tab =
+          document.querySelector('.tabbar [role="tab"].tab--active span')?.textContent ?? null;
+        const eds = (window.monaco?.editor.getEditors() ?? []).filter((e) => {
+          const n = e.getDomNode();
+          return n?.isConnected && !n.closest('.zone-widget');
+        });
+        const ed = eds.find((e) => e.hasTextFocus()) ?? eds[eds.length - 1];
+        const line = ed?.getPosition()?.lineNumber ?? null;
+        return JSON.stringify({ tab, line }) !== was;
+      },
+      before,
+      { timeout: 1000 },
+    );
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+    return;
+  }
+  assert(false, `${what}: ${key} must be inert, went ${before} → ${await snapshot(page)}`);
 }
 
 async function assertNavigates(page, key, what) {
@@ -168,7 +197,7 @@ try {
   // AC-8
   await openShortcuts(page);
   await record(page, DEF, 'd');
-  await page.waitForTimeout(300);
+  await row(page, DEF).locator('.shortcuts__note').waitFor({ state: 'visible', timeout: 5000 });
   assert(
     (await rowCombo(page, DEF)) === 'Press keys…',
     'AC-8: a refused key keeps the row recording',

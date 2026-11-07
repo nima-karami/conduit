@@ -8,7 +8,7 @@
  * content is compared per CHANGED line: the unstaged side's context contains the staged marker.
  */
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, watch, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -82,54 +82,87 @@ function makeRepo() {
   return root;
 }
 
+/** Resolves when `ok(docs)` holds for docs.json — event-driven off the profile dir, bounded by `ms`. */
+function waitDocsPersisted(dir, ok, ms) {
+  const file = join(dir, 'docs.json');
+  const holds = () => {
+    try {
+      return ok(JSON.parse(readFileSync(file, 'utf8')).docs ?? []);
+    } catch {
+      return false;
+    }
+  };
+  return new Promise((resolve, reject) => {
+    const watcher = watch(dir, () => holds() && done());
+    const deadline = setTimeout(() => {
+      watcher.close();
+      reject(new Error(`docs.json never held the expected tabs within ${ms} ms`));
+    }, ms);
+    function done() {
+      clearTimeout(deadline);
+      watcher.close();
+      resolve();
+    }
+    if (holds()) done();
+  });
+}
+
 // ── Page helpers ───────────────────────────────────────────────────────────────────────────
 
 /** The mounted diff editor's content, with changed lines split per side. */
-const diffInfo = (page) =>
-  page.evaluate(() => {
-    const eds = (window.monaco?.editor.getDiffEditors() ?? []).filter(
-      (e) => e.getContainerDomNode().isConnected,
-    );
-    const ed = eds[eds.length - 1];
-    const model = ed?.getModel();
-    const changes = ed?.getLineChanges();
-    if (!ed || !model || !changes) return null;
-    const added = [];
-    const removed = [];
-    for (const c of changes) {
-      if (c.originalEndLineNumber > 0)
-        for (let l = c.originalStartLineNumber; l <= c.originalEndLineNumber; l++)
-          removed.push(model.original.getLineContent(l));
-      if (c.modifiedEndLineNumber > 0)
-        for (let l = c.modifiedStartLineNumber; l <= c.modifiedEndLineNumber; l++)
-          added.push(model.modified.getLineContent(l));
-    }
-    const pos = ed.getModifiedEditor().getPosition();
-    return {
-      original: model.original.getValue(),
-      modified: model.modified.getValue(),
-      added: added.join('\n'),
-      removed: removed.join('\n'),
-      cursorLine: pos?.lineNumber ?? null,
-      toggle:
-        document
-          .querySelector(
-            '.diff-controls [aria-label="Inline view"], .diff-controls [aria-label="Side-by-side view"]',
-          )
-          ?.getAttribute('aria-label') ?? null,
-    };
-  });
-
-/** Poll the mounted diff editor until `ok(info)` holds; returns the last info either way. */
-async function waitDiff(page, ok, timeout = 15000) {
-  const deadline = Date.now() + timeout;
-  let info = null;
-  while (Date.now() < deadline) {
-    info = await diffInfo(page);
-    if (info && ok(info)) return info;
-    await page.waitForTimeout(150);
+function readDiff(spec) {
+  const eds = (window.monaco?.editor.getDiffEditors() ?? []).filter(
+    (e) => e.getContainerDomNode().isConnected,
+  );
+  const ed = eds[eds.length - 1];
+  const model = ed?.getModel();
+  const changes = ed?.getLineChanges();
+  if (!ed || !model || !changes) return null;
+  const added = [];
+  const removed = [];
+  for (const c of changes) {
+    if (c.originalEndLineNumber > 0)
+      for (let l = c.originalStartLineNumber; l <= c.originalEndLineNumber; l++)
+        removed.push(model.original.getLineContent(l));
+    if (c.modifiedEndLineNumber > 0)
+      for (let l = c.modifiedStartLineNumber; l <= c.modifiedEndLineNumber; l++)
+        added.push(model.modified.getLineContent(l));
   }
-  return info;
+  const pos = ed.getModifiedEditor().getPosition();
+  const info = {
+    original: model.original.getValue(),
+    modified: model.modified.getValue(),
+    added: added.join('\n'),
+    removed: removed.join('\n'),
+    cursorLine: pos?.lineNumber ?? null,
+    toggle:
+      document
+        .querySelector(
+          '.diff-controls [aria-label="Inline view"], .diff-controls [aria-label="Side-by-side view"]',
+        )
+        ?.getAttribute('aria-label') ?? null,
+  };
+  if (!spec) return info;
+  const holds = Object.entries(spec).every(([side, marks]) =>
+    marks.every((m) => info[side].includes(m)),
+  );
+  return holds ? info : null;
+}
+
+const diffInfo = (page) => page.evaluate(readDiff, null);
+
+/**
+ * Wait in the page until the mounted diff editor holds every mark in `spec` ({ added: [...],
+ * modified: [...] }); returns the last info either way, so the caller's assert names the failure.
+ */
+async function waitDiff(page, spec, timeout = 15000) {
+  try {
+    const handle = await page.waitForFunction(readDiff, spec, { timeout });
+    return await handle.jsonValue();
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+    return diffInfo(page);
+  }
 }
 
 async function closeTab(page, title) {
@@ -209,7 +242,7 @@ async function assertSidesHighlightTogether(page, label) {
 async function stagedAndUnstagedTabs(page) {
   await (await changeRow(page, 'Staged', 'both.ts')).click();
   await waitActiveTab(page, 'both.ts (Index)');
-  const idx = await waitDiff(page, (d) => d.added.includes(STAGED_MARK));
+  const idx = await waitDiff(page, { added: [STAGED_MARK] });
   assert(
     idx?.added.includes(STAGED_MARK) && !idx.added.includes(UNSTAGED_MARK),
     `(Index) must change only the staged line; added=${JSON.stringify(idx?.added)}`,
@@ -220,7 +253,7 @@ async function stagedAndUnstagedTabs(page) {
   await row.click();
   await waitActiveTab(page, 'both.ts (Working Tree)');
   await assertSidesHighlightTogether(page, '(Working Tree)');
-  const wt = await waitDiff(page, (d) => d.added.includes(UNSTAGED_MARK));
+  const wt = await waitDiff(page, { added: [UNSTAGED_MARK] });
   assert(
     wt?.added.includes(UNSTAGED_MARK) && !wt.added.includes(STAGED_MARK),
     `(Working Tree) must change only the unstaged line; added=${JSON.stringify(wt?.added)}`,
@@ -238,10 +271,7 @@ async function unscopedOpenerUnchanged(page) {
   await (await changeRow(page, 'Changes', 'both.ts')).click({ button: 'right' });
   await page.getByRole('menuitem', { name: 'Open diff', exact: true }).click();
   await waitActiveTab(page, 'both.ts');
-  const all = await waitDiff(
-    page,
-    (d) => d.added.includes(STAGED_MARK) && d.added.includes(UNSTAGED_MARK),
-  );
+  const all = await waitDiff(page, { added: [STAGED_MARK, UNSTAGED_MARK] });
   assert(
     all?.added.includes(STAGED_MARK) && all.added.includes(UNSTAGED_MARK),
     `unscoped tab must change both lines against HEAD; added=${JSON.stringify(all?.added)}`,
@@ -265,7 +295,7 @@ async function reviewCardAtScope(page) {
   );
   await page.click('.review .rcard[data-path="both.ts"] .rcard__sbs');
   await waitActiveTab(page, 'both.ts (Working Tree)');
-  const wt = await waitDiff(page, (d) => d.added.includes(UNSTAGED_MARK));
+  const wt = await waitDiff(page, { added: [UNSTAGED_MARK] });
   assert(
     wt?.added.includes(UNSTAGED_MARK) && !wt.added.includes(STAGED_MARK),
     `Review@Unstaged card must open the (Working Tree) side; added=${JSON.stringify(wt?.added)}`,
@@ -290,7 +320,7 @@ async function conflictedRowUnscoped(page) {
 async function editOnDiskRefreshes(page, root) {
   await (await changeRow(page, 'Changes', 'both.ts')).click();
   await waitActiveTab(page, 'both.ts (Working Tree)');
-  await waitDiff(page, (d) => d.added.includes(UNSTAGED_MARK));
+  await waitDiff(page, { added: [UNSTAGED_MARK] });
   await page.evaluate(() => {
     const eds = window.monaco.editor
       .getDiffEditors()
@@ -298,7 +328,7 @@ async function editOnDiskRefreshes(page, root) {
     eds[eds.length - 1].getModifiedEditor().setPosition({ lineNumber: 18, column: 1 });
   });
   appendFileSync(join(root, 'both.ts'), `const later = '${LATER_MARK}';\n`);
-  const after = await waitDiff(page, (d) => d.modified.includes(LATER_MARK), 20000);
+  const after = await waitDiff(page, { modified: [LATER_MARK] }, 20000);
   assert(
     after?.modified.includes(LATER_MARK),
     '(Working Tree) must pick up an on-disk edit without being reopened',
@@ -354,10 +384,7 @@ async function stagingEmptiesWorkingTree(page) {
     'the emptied (Working Tree) tab must stay open',
   );
   await activateTab(page, 'both.ts (Index)');
-  const idx = await waitDiff(
-    page,
-    (d) => d.added.includes(UNSTAGED_MARK) && d.added.includes(LATER_MARK),
-  );
+  const idx = await waitDiff(page, { added: [UNSTAGED_MARK, LATER_MARK] });
   assert(
     idx?.added.includes(UNSTAGED_MARK) && idx.added.includes(STAGED_MARK),
     `(Index) must now hold every staged change; added=${JSON.stringify(idx?.added)}`,
@@ -370,7 +397,7 @@ async function stagingEmptiesWorkingTree(page) {
 async function untrackedFile(page) {
   await (await changeRow(page, 'Changes', 'new.ts')).click();
   await waitActiveTab(page, 'new.ts (Working Tree)');
-  const d = await waitDiff(page, (i) => i.added.includes(NEW_MARK));
+  const d = await waitDiff(page, { added: [NEW_MARK] });
   assert(
     d &&
       d.original === '' &&
@@ -387,8 +414,15 @@ async function restartKeepsScope(page, root) {
     titles.includes('both.ts (Index)') && titles.includes('both.ts (Working Tree)'),
     `both scoped tabs must be open before the restart: ${JSON.stringify(titles)}`,
   );
-  // Let the debounced persistDocs land before closing.
-  await page.waitForTimeout(800);
+  // The debounced persistDocs has landed once docs.json holds both scopes.
+  await waitDocsPersisted(
+    userDataDir,
+    (docs) =>
+      ['staged', 'unstaged'].every((scope) =>
+        docs.some((d) => d.kind === 'diff' && d.diffScope === scope && d.path.endsWith('both.ts')),
+      ),
+    10000,
+  );
   await closeApp(launched.app, page);
   launched = await launchApp({ userDataDir });
   const next = launched.page;
@@ -406,13 +440,13 @@ async function restartKeepsScope(page, root) {
     { timeout: 20000 },
   );
   await activateTab(next, 'both.ts (Index)');
-  const idx = await waitDiff(next, (d) => d.added.includes(STAGED_MARK));
+  const idx = await waitDiff(next, { added: [STAGED_MARK] });
   assert(
     idx?.added.includes(STAGED_MARK) && !idx.added.includes(UNSTAGED_MARK),
     `restored (Index) must show the staged side; added=${JSON.stringify(idx?.added)}`,
   );
   await activateTab(next, 'both.ts (Working Tree)');
-  const wt = await waitDiff(next, (d) => d.added.includes(UNSTAGED_MARK));
+  const wt = await waitDiff(next, { added: [UNSTAGED_MARK] });
   assert(
     wt?.added.includes(UNSTAGED_MARK) && !wt.added.includes(STAGED_MARK),
     `restored (Working Tree) must show the unstaged side; added=${JSON.stringify(wt?.added)}`,
@@ -423,7 +457,7 @@ async function restartKeepsScope(page, root) {
   await next.locator('.tabbar [role="tab"][aria-selected="true"]').focus();
   await next.keyboard.press('Control+Shift+T');
   await waitActiveTab(next, 'both.ts (Index)');
-  const re = await waitDiff(next, (d) => d.added.includes(STAGED_MARK));
+  const re = await waitDiff(next, { added: [STAGED_MARK] });
   assert(
     re?.added.includes(STAGED_MARK) && !re.added.includes(UNSTAGED_MARK),
     `Mod+Shift+T must reopen (Index) with the staged side; added=${JSON.stringify(re?.added)}`,
@@ -465,7 +499,15 @@ async function retryRecoversAndKeepsFocus(page) {
     { timeout: 15000 },
   );
   // An idle project must leave the Error state alone: nothing re-reads it behind the user's back.
-  await page.waitForTimeout(2000);
+  try {
+    await page.waitForFunction(
+      (t) => document.querySelector('.difftab .viewer__notice > div')?.textContent !== t,
+      errorText,
+      { timeout: 2000 },
+    );
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+  }
   const still = await page.evaluate(
     () => document.querySelector('.difftab .viewer__notice > div')?.textContent ?? null,
   );
@@ -473,7 +515,7 @@ async function retryRecoversAndKeepsFocus(page) {
 
   await setDiffFailure(launched.app, 'both.ts', false);
   await page.locator('.difftab .viewer__notice-action', { hasText: 'Retry' }).click();
-  const d = await waitDiff(page, (i) => i.added.includes(UNSTAGED_MARK));
+  const d = await waitDiff(page, { added: [UNSTAGED_MARK] });
   assert(d?.added.includes(UNSTAGED_MARK), 'Retry must bring the real diff back');
   const focus = await page.evaluate(() => {
     const a = document.activeElement;

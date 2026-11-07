@@ -13,9 +13,9 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, watch, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   assert,
   closeApp,
@@ -169,15 +169,26 @@ runScenario('board-sessions', async ({ app, page, log }) => {
     };
     const column = (name) =>
       page.locator('.bcol').filter({ has: page.locator('.bcol__title', { hasText: name }) });
-    const savedStage = async (want) => {
-      const deadline = Date.now() + 5000;
-      let saved = readData().cards[0];
-      while (saved.stage !== want && Date.now() < deadline) {
-        await page.waitForTimeout(100);
-        saved = readData().cards[0];
-      }
-      return saved;
-    };
+    // Event-driven off the board's directory; on timeout it returns the card as it is, so the
+    // caller's assert names the stage it found.
+    const savedStage = (want) =>
+      new Promise((resolve) => {
+        const card0 = () => readData().cards[0];
+        const watcher = watch(dirname(boardFile), () => {
+          try {
+            if (card0().stage === want) finish();
+          } catch {
+            // mid-write: the next event re-reads
+          }
+        });
+        const deadline = setTimeout(finish, 5000);
+        function finish() {
+          clearTimeout(deadline);
+          watcher.close();
+          resolve(card0());
+        }
+        if (card0().stage === want) finish();
+      });
 
     // ── Scenario 1: header and list ─────────────────────────────────────────
     await openBoard();
@@ -269,6 +280,10 @@ runScenario('board-sessions', async ({ app, page, log }) => {
 
     // ── Scenario 3: keyboard jump, close, no write ──────────────────────────
     const before = readData();
+    let boardWrites = 0;
+    const writeWatch = watch(dirname(boardFile), (_event, name) => {
+      if (name === 'board.json') boardWrites++;
+    });
     // Starting S2 auto-switched to it, so S1 goes active first: the row has to CHANGE the session.
     await activateViaSidebar(S1, 'S1');
     await openBoard();
@@ -294,9 +309,9 @@ runScenario('board-sessions', async ({ app, page, log }) => {
     });
     await openBoard();
     await waitRows([`rmb-second, ${label}, running`], 'the closed session left the card');
-    await page.waitForTimeout(1500);
+    writeWatch.close();
     assert(
-      JSON.stringify(readData()) === JSON.stringify(before),
+      boardWrites === 0 && JSON.stringify(readData()) === JSON.stringify(before),
       'activating and closing sessions never writes board.json',
     );
     log('scenario 3: Enter and a row click jump, a closed session drops its row, no write ✓');

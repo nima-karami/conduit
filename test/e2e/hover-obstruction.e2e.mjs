@@ -63,10 +63,22 @@ const hitAt = (page, x, y) =>
     [x, y],
   );
 
+/** Wait for the row's :hover to flip, then land its transitions — a hidden window never ticks them. */
+const settleHover = (page, hovered) =>
+  page.waitForFunction(
+    (want) => {
+      if (!!document.querySelector('[data-agent-tree] .session:hover') !== want) return false;
+      for (const a of document.getAnimations()) a.finish();
+      return true;
+    },
+    hovered,
+    { timeout: 5000 },
+  );
+
 /** Park the pointer somewhere inert so nothing is hovered. */
 const restPointer = async (page) => {
   await page.mouse.move(4, 420);
-  await page.waitForTimeout(350);
+  await settleHover(page, false);
 };
 
 /**
@@ -114,7 +126,7 @@ runScenario('hover-obstruction', async ({ page, log }) => {
   // permanently dead, and the at-rest assertions above would still pass. Asserted on computed
   // style rather than by hit-testing, because the card's height changes on hover.
   await card.hover();
-  await page.waitForTimeout(400);
+  await settleHover(page, true);
   const revealed = await page.evaluate(() => {
     const kill = document.querySelector('[data-agent-tree] .session .session__kill');
     if (!kill) return null;
@@ -156,7 +168,7 @@ runScenario('hover-obstruction', async ({ page, log }) => {
   log('resting row exposes no invisible Pin/× over its age ✓');
 
   await page.mouse.move(rowBox.x + rowBox.width / 2, rowBox.y + rowBox.height / 2);
-  await page.waitForTimeout(400);
+  await settleHover(page, true);
   const pin = await page.evaluate(() => {
     const row = document.querySelector('[data-agent-tree] .session');
     const btn = row?.querySelector('.session__pin');

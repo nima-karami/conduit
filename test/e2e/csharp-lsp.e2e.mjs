@@ -32,16 +32,23 @@ const INSTALL_TOAST = `C# navigation needs csharp-ls — install with ${INSTALL_
 
 const endsWith = (p, suffix) => (p ?? '').toLowerCase().endsWith(suffix.toLowerCase());
 
-async function waitFor(page, pred, ms) {
-  const deadline = Date.now() + ms;
-  let last = await observe(page);
-  while (Date.now() < deadline) {
-    if (pred(last)) return last;
-    await page.waitForTimeout(150);
-    last = await observe(page);
-  }
-  return last;
-}
+const waitToast = (page, text, ms) =>
+  page.waitForFunction(
+    (t) =>
+      Array.from(document.querySelectorAll('.toast__msg')).some((e) => e.textContent?.trim() === t),
+    text,
+    { timeout: ms },
+  );
+
+const waitEditorPath = (page, suffix, ms) =>
+  page.waitForFunction(
+    (sfx) =>
+      (window.monaco?.editor.getEditors() ?? []).some((e) =>
+        e.getModel()?.uri.path.toLowerCase().endsWith(sfx),
+      ),
+    suffix.toLowerCase(),
+    { timeout: ms },
+  );
 
 async function runPalette(page, query, title) {
   await page.keyboard.press('Control+Shift+P');
@@ -59,7 +66,8 @@ async function untrustedAndPrompt(app, page, sid, program, installed, log) {
   await openDoc(app, page, sid, program);
   const held = await waitCsState(page, installed ? 'restricted' : 'absent', log);
   assert(held.pid === null, `an untrusted server has a pid: ${JSON.stringify(held)}`);
-  await page.waitForTimeout(1_000);
+  // The open raised its prompt, so the host has already decided not to spawn anything.
+  if (installed) await page.locator('.trust-prompt').waitFor({ state: 'visible', timeout: 10_000 });
   const spawned = recordTree(appPid).filter((p) => CSHARP_TOOLS.test(p.name));
   assert(spawned.length === 0, `untrusted folder spawned ${JSON.stringify(spawned)}`);
   log(`B2 untrusted folder: ${held.state}, no csharp-ls / dotnet process ✓`);
@@ -112,9 +120,20 @@ async function missingScenario(dir, program, log) {
     // Twice inside one toast lifetime (5 s): the second F12 must not stack another toast.
     await placeCursor(page, program, 'Greet(');
     await page.keyboard.press('F12');
-    await waitFor(page, (o) => o.toasts.includes(INSTALL_TOAST), 8_000);
+    await waitToast(page, INSTALL_TOAST, 8_000);
     await page.keyboard.press('F12');
-    await page.waitForTimeout(1_000);
+    // A stacked or error toast would show within the window; its absence is the pass.
+    try {
+      await page.waitForFunction(
+        () =>
+          document.querySelectorAll('.toast__msg').length > 1 ||
+          document.querySelector('.toast--error, .toast.error') !== null,
+        null,
+        { timeout: 1_000 },
+      );
+    } catch (error) {
+      if (error.name !== 'TimeoutError') throw error;
+    }
     const r = await observe(page);
     const errors = await page.evaluate(() =>
       Array.from(document.querySelectorAll('.toast--error .toast__msg, .toast.error')).map(
@@ -167,7 +186,8 @@ async function navigation(app, page, sid, program, log) {
   await clearTransients(page);
   await placeCursor(page, program, 'Greet(');
   await page.keyboard.press('F12');
-  const f12 = await waitFor(page, (o) => endsWith(o.path, 'Greeter.cs'), 15_000);
+  await waitEditorPath(page, 'Greeter.cs', 15_000);
+  const f12 = await observe(page);
   log(`F12 Greet → ${f12.path}:${f12.line} "${f12.lineText}" toasts=${JSON.stringify(f12.toasts)}`);
   assert(endsWith(f12.path, 'Greeter.cs'), `F12 landed in ${f12.path}`);
   assert(f12.lineText.includes('public string Greet'), `caret line is "${f12.lineText}"`);
