@@ -52,16 +52,21 @@ runScenario('csharp-lsp-idle', async ({ app, page, log }) => {
     `csharp-ls has no descendants after loading the project: ${JSON.stringify(tree)}`,
   );
 
+  await page.evaluate((serverKey) => {
+    window.__csharpStopped = false;
+    window.agentDeck.subscribe((message) => {
+      if (
+        message.type === 'lsp:status' &&
+        message.status.serverKey === serverKey &&
+        message.status.state === 'stopped'
+      ) {
+        window.__csharpStopped = true;
+      }
+    });
+  }, live.serverKey);
   await closeAllDocs(page);
   const t0 = Date.now();
-  await page.waitForFunction(
-    async () => {
-      const snap = await window.agentDeck.lsp({ type: 'lsp:statusSnapshot' });
-      return !snap.servers.some((s) => s.languageId === 'csharp' && s.state !== 'stopped');
-    },
-    null,
-    { timeout: STOP_CEILING_MS },
-  );
+  await page.waitForFunction(() => window.__csharpStopped, null, { timeout: STOP_CEILING_MS });
   const stoppedAfter = (Date.now() - t0) / 1000;
   log(`csharp server released after ${stoppedAfter.toFixed(1)}s`);
   const left = await survivorsAfter(tree, 5_000);

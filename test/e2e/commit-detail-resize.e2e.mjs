@@ -134,15 +134,31 @@ try {
       ? JSON.parse(readFileSync(file, 'utf8')).settings?.historyDetailHeight
       : null;
   });
+  await page1.evaluate(() => {
+    window.__heightPoll = { pending: false, value: null, error: null };
+  });
   await page1.waitForFunction(
-    async (height) => {
-      const saved = await window.__savedDetailHeight();
-      return typeof saved === 'number' && Math.abs(saved - height) < 8;
+    (height) => {
+      const state = window.__heightPoll;
+      if (state.error) throw new Error(state.error);
+      if (typeof state.value === 'number' && Math.abs(state.value - height) < 8) return true;
+      if (!state.pending) {
+        state.pending = true;
+        window.__savedDetailHeight().then(
+          (value) => {
+            state.value = value;
+            state.pending = false;
+          },
+          (error) => {
+            state.error = String(error);
+          },
+        );
+      }
+      return false;
     },
     draggedH,
     { timeout: 600 },
   );
-  await page1.removeExposedFunction('__savedDetailHeight');
   await closeApp(firstApp, page1);
   firstApp = null;
   log('launch 1 closed ✓');

@@ -110,10 +110,31 @@ try {
   const until = async (holds, budgetMs) => {
     currentCondition = holds;
     try {
-      const result = await page.waitForFunction(() => window.__planHandoffCondition(), null, {
-        timeout: budgetMs,
-        polling: 50,
+      await page.evaluate(() => {
+        window.__planHandoffPoll = { pending: false, value: null, error: null };
       });
+      const result = await page.waitForFunction(
+        () => {
+          const state = window.__planHandoffPoll;
+          if (state.error) throw new Error(state.error);
+          if (state.value) return state.value;
+          if (!state.pending) {
+            state.pending = true;
+            window.__planHandoffCondition().then(
+              (value) => {
+                state.value = value;
+                state.pending = false;
+              },
+              (error) => {
+                state.error = String(error);
+              },
+            );
+          }
+          return false;
+        },
+        null,
+        { timeout: budgetMs, polling: 50 },
+      );
       return await result.jsonValue();
     } catch (error) {
       if (error.name !== 'TimeoutError') throw error;

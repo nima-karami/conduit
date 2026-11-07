@@ -179,6 +179,33 @@ const waitForSendLabel = (page, re) =>
     { timeout: 8000 },
   );
 
+async function waitForDiskCondition(page, name, timeout) {
+  await page.evaluate(() => {
+    window.__reviewNotesPoll = { pending: false, matched: false, error: null };
+  });
+  await page.waitForFunction(
+    (name) => {
+      const state = window.__reviewNotesPoll;
+      if (state.error) throw new Error(state.error);
+      if (state.matched) return true;
+      if (!state.pending) {
+        state.pending = true;
+        window[name]().then(
+          (matched) => {
+            state.matched = matched;
+            state.pending = false;
+          },
+          (error) => {
+            state.error = String(error);
+          },
+        );
+      }
+      return false;
+    },
+    name,
+    { timeout, polling: 50 },
+  );
+}
 let firstApp = null;
 let secondApp = null;
 let firstPage = null;
@@ -214,7 +241,7 @@ try {
       return false;
     }
   });
-  await page.waitForFunction(() => window.__reviewNotesSaved(), null, { timeout: 800 });
+  await waitForDiskCondition(page, '__reviewNotesSaved', 800);
   assert(existsSync(notesPath), `review-notes.json was not written to ${notesPath}`);
   const envelope = JSON.parse(readFileSync(notesPath, 'utf8'));
   assert(envelope.conduit === 1, `envelope.conduit should be 1; got ${envelope.conduit}`);
@@ -389,7 +416,7 @@ try {
       return false;
     }
   });
-  await page2.waitForFunction(() => window.__reviewNotesSent(), null, { timeout: 600 });
+  await waitForDiskCondition(page2, '__reviewNotesSent', 600);
   const afterSend = JSON.parse(readFileSync(notesPath, 'utf8')).data.notes;
   assert(
     afterSend.every((n) => typeof n.sentAt === 'string'),

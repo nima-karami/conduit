@@ -55,35 +55,55 @@ function goplsInstalled() {
 
 const lsp = (page, msg) => page.evaluate((m) => window.agentDeck.lsp(m), msg);
 
+async function waitLsp(page, request, match, ms) {
+  await page.evaluate(() => {
+    window.__goLspPoll = { pending: false, value: null, error: null };
+  });
+  const handle = await page.waitForFunction(
+    ({ request, match }) => {
+      const state = window.__goLspPoll;
+      if (state.error) throw new Error(state.error);
+      const value =
+        match === 'prompt'
+          ? state.value?.prompt
+          : state.value?.servers?.find((s) =>
+              match === 'readyOrBad'
+                ? ['ready', 'absent', 'crashed'].includes(s.state)
+                : s.state === match,
+            );
+      if (value) return value;
+      if (!state.pending) {
+        state.pending = true;
+        window.agentDeck.lsp(request).then(
+          (value) => {
+            state.value = value;
+            state.pending = false;
+          },
+          (error) => {
+            state.error = String(error);
+          },
+        );
+      }
+      return false;
+    },
+    { request, match },
+    { timeout: ms },
+  );
+  return handle.jsonValue();
+}
+
 async function waitReady(page, log) {
   const t0 = Date.now();
-  const result = await page.waitForFunction(
-    async () => {
-      const snap = await window.agentDeck.lsp({ type: 'lsp:statusSnapshot' });
-      const ready = snap.servers.find((s) => s.state === 'ready');
-      const bad = snap.servers.find((s) => s.state === 'absent' || s.state === 'crashed');
-      return ready ? { ready } : bad ? { bad } : null;
-    },
-    null,
-    { polling: 'raf', timeout: READY_CEILING_MS },
-  );
-  const { ready, bad } = await result.jsonValue();
-  assert(!bad, `gopls server went ${bad?.state}`);
+  const ready = await waitLsp(page, { type: 'lsp:statusSnapshot' }, 'readyOrBad', READY_CEILING_MS);
+  assert(ready.state === 'ready', `gopls server went ${ready.state}`);
   assert(ready, `gopls never reached ready within ${READY_CEILING_MS / 1000}s`);
   log(`gopls ready in ${((Date.now() - t0) / 1000).toFixed(1)}s (pid ${ready.pid})`);
   return ready;
 }
 
 async function waitState(page, state, log) {
-  const result = await page.waitForFunction(
-    async (wanted) => {
-      const snap = await window.agentDeck.lsp({ type: 'lsp:statusSnapshot' });
-      return snap.servers.find((s) => s.state === wanted) ?? null;
-    },
-    state,
-    { polling: 'raf', timeout: 30_000 },
-  );
-  const hit = await result.jsonValue();
+  const hit = await waitLsp(page, { type: 'lsp:statusSnapshot' }, state, 30_000);
+  assert(hit, `server never reached ${state}`);
   log(`server ${state} (pid ${hit.pid})`);
   return hit;
 }
@@ -93,12 +113,7 @@ async function waitState(page, state, log) {
 async function trustViaHost(page, path, log) {
   const asked = await lsp(page, { type: 'lsp:trustRequest', path, languageId: 'go' });
   assert(asked.ok, `trust request refused for ${path}`);
-  const promptHandle = await page.waitForFunction(
-    async () => (await window.agentDeck.lsp({ type: 'lsp:trustState' })).prompt ?? null,
-    null,
-    { polling: 'raf', timeout: 10_000 },
-  );
-  const state = { prompt: await promptHandle.jsonValue() };
+  const state = { prompt: await waitLsp(page, { type: 'lsp:trustState' }, 'prompt', 10_000) };
   assert(state.prompt, 'the host raised no trust prompt');
   const answered = await lsp(page, {
     type: 'lsp:trustAnswer',
@@ -378,14 +393,7 @@ async function missingScenario(dir, log) {
     const sid = await openSession(page, { path: dir });
     const main = join(dir, 'main.go');
     await openDoc(app, page, sid, main);
-    await page.waitForFunction(
-      async () => {
-        const snap = await window.agentDeck.lsp({ type: 'lsp:statusSnapshot' });
-        return snap.servers.find((x) => x.state === 'absent') ?? null;
-      },
-      null,
-      { polling: 'raf', timeout: 20_000 },
-    );
+    await waitLsp(page, { type: 'lsp:statusSnapshot' }, 'absent', 20_000);
     const snap = await lsp(page, { type: 'lsp:statusSnapshot' });
     log(`missing gopls → servers ${JSON.stringify(snap.servers)}`);
     assert(
@@ -534,6 +542,7 @@ runScenario('go-lsp', async ({ app, page, log }) => {
   await waitState(page, 'restricted', log);
   log('revoked: gopls tree gone, folder Restricted again ✓');
   await trustViaHost(page, main, log);
+  await wakeGoDoc(page, main);
 
   // ── E7: no orphans after a normal quit ──
   const live = await waitReady(page, log);

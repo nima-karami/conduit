@@ -261,19 +261,35 @@ try {
 
   // The window's sidebar state rides the debounced layout write.
   await page.exposeFunction('__persistedSidebarUi', () => persistedSidebarUi(userDataDir));
+  await page.evaluate(() => {
+    window.__sidebarUiPoll = { pending: false, value: null, error: null };
+  });
   const ui = await page
     .waitForFunction(
-      async (pid) => {
-        const value = await window.__persistedSidebarUi();
-        return value?.foldedGroups?.includes('pinned') && value?.selection?.projectId === pid
-          ? value
-          : null;
+      (pid) => {
+        const state = window.__sidebarUiPoll;
+        if (state.error) throw new Error(state.error);
+        const value = state.value;
+        if (value?.foldedGroups?.includes('pinned') && value?.selection?.projectId === pid)
+          return value;
+        if (!state.pending) {
+          state.pending = true;
+          window.__persistedSidebarUi().then(
+            (next) => {
+              state.value = next;
+              state.pending = false;
+            },
+            (error) => {
+              state.error = String(error);
+            },
+          );
+        }
+        return null;
       },
       projectId,
       { timeout: 10000 },
     )
     .then((handle) => handle.jsonValue());
-  await page.removeExposedFunction('__persistedSidebarUi');
   assert(
     ui?.foldedGroups?.includes('pinned') &&
       ui?.pinnedIds?.includes(sid1) &&

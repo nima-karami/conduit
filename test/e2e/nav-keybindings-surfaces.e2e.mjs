@@ -147,7 +147,31 @@ let inertCheck;
 const observeNothingFor = async (page, ms, check) => {
   inertCheck = check;
   try {
-    await page.waitForFunction(async () => !(await window.__inertCheck()), null, { timeout: ms });
+    await page.evaluate(() => {
+      window.__inertPoll = { pending: false, changed: false, error: null };
+    });
+    await page.waitForFunction(
+      () => {
+        const state = window.__inertPoll;
+        if (state.error) throw new Error(state.error);
+        if (state.changed) return true;
+        if (!state.pending) {
+          state.pending = true;
+          window.__inertCheck().then(
+            (held) => {
+              state.changed = !held;
+              state.pending = false;
+            },
+            (error) => {
+              state.error = String(error);
+            },
+          );
+        }
+        return false;
+      },
+      null,
+      { timeout: ms, polling: 50 },
+    );
     return false;
   } catch (error) {
     if (error.name !== 'TimeoutError') throw error;

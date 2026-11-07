@@ -114,10 +114,11 @@ await runScenario(
     assert(!(await paneMounted(page, b)), 'B’s exited pane stayed mounted while A was shown');
 
     phase('no respawn, no record');
+    const signal = AbortSignal.timeout(1500);
     const watched = [
-      [watch(workA, { signal: AbortSignal.timeout(1500) }), 'spawns.txt'],
-      [watch(workB, { signal: AbortSignal.timeout(1500) }), 'spawns.txt'],
-      [watch(userDataDir, { signal: AbortSignal.timeout(1500) }), `scrollback-${a}.json`],
+      [watch(workA, { signal }), 'spawns.txt'],
+      [watch(workB, { signal }), 'spawns.txt'],
+      [watch(userDataDir, { signal }), `scrollback-${a}.json`],
     ];
     const unexpectedWrite = await new Promise((resolve) => {
       let settled = false;
@@ -127,6 +128,7 @@ await runScenario(
         for (const [watcher] of watched) watcher.close();
         resolve(value);
       };
+      signal.addEventListener('abort', () => finish(null), { once: true });
       for (const [watcher, target] of watched) {
         const onWrite = (_event, filename) => {
           if (String(filename) === target) finish(target);

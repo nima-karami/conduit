@@ -87,10 +87,31 @@ try {
     const started = Date.now();
     currentCondition = holds;
     try {
-      await page.waitForFunction(() => window.__planBlocksCondition(), null, {
-        timeout: budgetMs,
-        polling: 50,
+      await page.evaluate(() => {
+        window.__planBlocksPoll = { pending: false, value: false, error: null };
       });
+      await page.waitForFunction(
+        () => {
+          const state = window.__planBlocksPoll;
+          if (state.error) throw new Error(state.error);
+          if (state.value) return true;
+          if (!state.pending) {
+            state.pending = true;
+            window.__planBlocksCondition().then(
+              (value) => {
+                state.value = value;
+                state.pending = false;
+              },
+              (error) => {
+                state.error = String(error);
+              },
+            );
+          }
+          return false;
+        },
+        null,
+        { timeout: budgetMs, polling: 50 },
+      );
       return Date.now() - started;
     } catch (error) {
       if (error.name !== 'TimeoutError') throw error;
@@ -130,7 +151,7 @@ try {
   }, ADDED_PARAM);
   assert(typed, 'the focused editor must be reachable to type into');
 
-  const wroteCode = await untilFile((t) => t.includes('traceId: string'), 4000);
+  const wroteCode = await untilFile((t) => fenceOf(t, 'ts') === SIGNATURE_AFTER, 4000);
   assert(wroteCode !== null, 'a keystroke in the Monaco fence must reach the file within 4 s');
   log(`Monaco edit written through in ${wroteCode} ms ✓`);
 

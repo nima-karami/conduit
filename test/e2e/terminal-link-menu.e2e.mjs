@@ -110,8 +110,14 @@ runScenario('terminal-link-menu', async ({ page, log }) => {
   /** Real hover (waiting for the link pointer when `onLink`), then a real right-click. */
   const rightClick = async (line, charIdx, { onLink = true } = {}) => {
     if (onLink) {
+      await page.evaluate(() => {
+        window.__linkMenuPoll = { pending: false, ready: false };
+      });
       await page.waitForFunction(
-        async ({ id, line }) => {
+        ({ id, line }) => {
+          const state = window.__linkMenuPoll;
+          if (state.ready) return true;
+          if (state.pending) return false;
           const buf = window.__terms[id]?.buffer.active;
           const provider = window.__termLinkProviders[id];
           if (!buf || !provider) return false;
@@ -120,11 +126,12 @@ runScenario('terminal-link-menu', async ({ page, log }) => {
             if ((buf.getLine(y)?.translateToString(true) ?? '').trim() === line) row = y;
           }
           if (row < 0) return false;
-          return new Promise((resolve) => {
-            provider.provideLinks(row + 1, (links) =>
-              resolve((links ?? []).some((link) => link.text === line)),
-            );
+          state.pending = true;
+          provider.provideLinks(row + 1, (links) => {
+            state.ready = (links ?? []).some((link) => link.text === line);
+            state.pending = false;
           });
+          return state.ready;
         },
         { id: sid, line },
         { timeout: 8000 },

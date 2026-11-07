@@ -66,27 +66,41 @@ runScenario('lsp-trust-multi', async ({ app, page, log }) => {
     const { prompt } = await lsp(page, { type: 'lsp:trustState' });
     if (prompt) promptIds.add(prompt.id);
   }
+  await page.evaluate(() => {
+    window.__trustPoll = { pending: false, value: null, error: null };
+  });
+  let changed = null;
   try {
-    await page.waitForFunction(
-      async () => {
-        const snap = await window.agentDeck.lsp({ type: 'lsp:statusSnapshot' });
-        return (
-          snap.servers.find(
-            (s) => ['python', 'rust', 'cpp'].includes(s.languageId) && s.state !== 'restricted',
-          ) ?? null
+    const handle = await page.waitForFunction(
+      () => {
+        const state = window.__trustPoll;
+        if (state.error) throw new Error(state.error);
+        const changed = state.value?.servers.find(
+          (s) => ['python', 'rust', 'cpp'].includes(s.languageId) && s.state !== 'restricted',
         );
+        if (changed) return changed;
+        if (!state.pending) {
+          state.pending = true;
+          window.agentDeck.lsp({ type: 'lsp:statusSnapshot' }).then(
+            (value) => {
+              state.value = value;
+              state.pending = false;
+            },
+            (error) => {
+              state.error = String(error);
+            },
+          );
+        }
+        return false;
       },
       null,
-      { polling: 'raf', timeout: 2_000 },
+      { timeout: 2_000 },
     );
-    const changed = await lsp(page, { type: 'lsp:statusSnapshot' });
-    assert(
-      false,
-      `an untrusted server left the restricted state: ${JSON.stringify(changed.servers)}`,
-    );
+    changed = await handle.jsonValue();
   } catch (error) {
     if (error.name !== 'TimeoutError') throw error;
   }
+  assert(!changed, `an untrusted server left the restricted state: ${JSON.stringify(changed)}`);
   const spawned = recordTree(appPid).filter((p) => SERVER_PROCS.test(p.name));
   assert(spawned.length === 0, `untrusted folder spawned ${JSON.stringify(spawned)}`);
   assert(promptIds.size === 1, `expected one prompt for the folder, saw ${[...promptIds]}`);

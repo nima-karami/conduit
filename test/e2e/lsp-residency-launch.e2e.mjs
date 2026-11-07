@@ -16,28 +16,69 @@ import { assertInstalled, liveServers, lsp, probeServer, trustViaHost } from './
 import { writePythonFixture } from './python-fixture.mjs';
 import { writeRustFixture } from './rust-fixture.mjs';
 
+async function waitHost(page, mode, paths, ms) {
+  await page.evaluate(() => {
+    window.__residencyPoll = { pending: false, value: null, error: null };
+  });
+  try {
+    const handle = await page.waitForFunction(
+      ({ mode, paths }) => {
+        const state = window.__residencyPoll;
+        if (state.error) throw new Error(state.error);
+        const value =
+          mode === 'held'
+            ? state.value?.every((reply) => reply.kind === 'stale') && paths
+            : state.value?.servers?.find(
+                (s) =>
+                  (mode === 'any'
+                    ? ['python', 'rust'].includes(s.languageId)
+                    : s.languageId === mode) &&
+                  ['starting', 'loading', 'ready', 'restarting'].includes(s.state),
+              );
+        if (value) return value;
+        if (!state.pending) {
+          state.pending = true;
+          const request =
+            mode === 'held'
+              ? Promise.all(
+                  paths.map((path, i) =>
+                    window.agentDeck.lsp({
+                      type: 'lsp:request',
+                      requestId: `held-${Date.now()}-${i}`,
+                      path,
+                      version: 999_999,
+                      op: 'documentSymbol',
+                      line: 0,
+                      character: 0,
+                    }),
+                  ),
+                )
+              : window.agentDeck.lsp({ type: 'lsp:statusSnapshot' });
+          request.then(
+            (value) => {
+              state.value = value;
+              state.pending = false;
+            },
+            (error) => {
+              state.error = String(error);
+            },
+          );
+        }
+        return false;
+      },
+      { mode, paths },
+      { timeout: ms },
+    );
+    return await handle.jsonValue();
+  } catch (error) {
+    if (error.name === 'TimeoutError') return null;
+    throw error;
+  }
+}
+
 async function waitLive(page, languageId, ms) {
   const t0 = Date.now();
-  const handle = await page
-    .waitForFunction(
-      async (wanted) => {
-        const snap = await window.agentDeck.lsp({ type: 'lsp:statusSnapshot' });
-        return (
-          snap.servers.find(
-            (s) =>
-              s.languageId === wanted &&
-              ['starting', 'loading', 'ready', 'restarting'].includes(s.state),
-          ) ?? null
-        );
-      },
-      languageId,
-      { polling: 'raf', timeout: ms },
-    )
-    .catch((error) => {
-      if (error.name === 'TimeoutError') return null;
-      throw error;
-    });
-  const status = handle ? await handle.jsonValue() : null;
+  const status = await waitHost(page, languageId, [], ms);
   return status ? { at: Date.now() - t0, status } : null;
 }
 
@@ -74,7 +115,11 @@ runScenario('lsp-residency-launch', async ({ app, page, log }) => {
       try {
         const docs = JSON.parse(readFileSync(docsPath, 'utf8')).docs;
         const paths = new Set(docs?.map((doc) => doc.path.replace(/\\/g, '/')) ?? []);
-        if (paths.has(py.main.replace(/\\/g, '/')) && paths.has(rs.main.replace(/\\/g, '/')))
+        if (
+          paths.has(py.main.replace(/\\/g, '/')) &&
+          paths.has(rs.main.replace(/\\/g, '/')) &&
+          !docs.some((doc) => doc.sessionId === sid && doc.active)
+        )
           finish(true);
       } catch {
         // An atomic write may replace the file between existence and read.
@@ -116,53 +161,15 @@ runScenario('lsp-residency-launch', async ({ app, page, log }) => {
     // tabs, which syncs them — the case that used to launch a server per tab.
     appendFileSync(py.main, '\n# touched\n');
     appendFileSync(rs.main, '\n// touched\n');
-    const heldHandle = await p2.waitForFunction(
-      async (paths) => {
-        const held = [];
-        for (const [i, path] of paths.entries()) {
-          const reply = await window.agentDeck.lsp({
-            type: 'lsp:request',
-            requestId: `held-${Date.now()}-${i}`,
-            path,
-            version: 999_999,
-            op: 'documentSymbol',
-            line: 0,
-            character: 0,
-          });
-          if (reply.kind === 'stale') held.push(path);
-        }
-        return held.length === paths.length ? held : null;
-      },
-      [py.main, rs.main],
-      { polling: 'raf', timeout: 15_000 },
-    );
-    const held = await heldHandle.jsonValue();
+    const held = (await waitHost(p2, 'held', [py.main, rs.main], 15_000)) ?? [];
     log(`host holds the hidden tabs → ${JSON.stringify(held)}`);
     assert(
       held.length === 2,
       'the hidden .py/.rs tabs never reached the host; the check below would prove nothing',
     );
 
-    try {
-      await p2.waitForFunction(
-        async () => {
-          const snap = await window.agentDeck.lsp({ type: 'lsp:statusSnapshot' });
-          return (
-            snap.servers.find(
-              (s) =>
-                ['python', 'rust'].includes(s.languageId) &&
-                ['starting', 'loading', 'ready', 'restarting'].includes(s.state),
-            ) ?? null
-          );
-        },
-        null,
-        { polling: 'raf', timeout: 5_000 },
-      );
-      const started = [...(await liveServers(p2, 'python')), ...(await liveServers(p2, 'rust'))];
-      assert(false, `a server started for a tab nobody shows: ${JSON.stringify(started)}`);
-    } catch (error) {
-      if (error.name !== 'TimeoutError') throw error;
-    }
+    const started = await waitHost(p2, 'any', [], 5_000);
+    assert(!started, `a server started for a tab nobody shows: ${JSON.stringify(started)}`);
     log('5 s with only the Terminal shown: no python or rust server ✓');
 
     await pyTab.click();
