@@ -73,7 +73,8 @@ runScenario('lsp-residency-launch', async ({ app, page, log }) => {
       if (!existsSync(docsPath)) return;
       try {
         const docs = JSON.parse(readFileSync(docsPath, 'utf8')).docs;
-        if (docs?.some((doc) => doc.path === py.main) && docs.some((doc) => doc.path === rs.main))
+        const paths = new Set(docs?.map((doc) => doc.path.replace(/\\/g, '/')) ?? []);
+        if (paths.has(py.main.replace(/\\/g, '/')) && paths.has(rs.main.replace(/\\/g, '/')))
           finish(true);
       } catch {
         // An atomic write may replace the file between existence and read.
@@ -81,10 +82,7 @@ runScenario('lsp-residency-launch', async ({ app, page, log }) => {
     };
     watcher.on('change', inspect);
     watcher.on('rename', inspect);
-    watcher.on('error', (error) => {
-      if (error.name === 'AbortError') finish(false);
-      else finish(false);
-    });
+    watcher.on('error', () => finish(false));
     signal.addEventListener('abort', () => finish(false), { once: true });
     inspect();
   });

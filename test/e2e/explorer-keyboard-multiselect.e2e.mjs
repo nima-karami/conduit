@@ -142,13 +142,24 @@ runScenario('explorer-keyboard-multiselect', async ({ page, log }) => {
   // ── The payoff: a keyboard-built selection reaches the selection-aware menu ─
   await fileRow(page, 'a.txt').first().click({ button: 'right' });
   await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 8000 });
-  await page.waitForFunction(
-    (want) =>
-      document.querySelectorAll('.filerow--selected').length === want &&
-      document.querySelectorAll('.filerow[aria-selected="true"]').length === want,
-    names.length - 1,
-    { timeout: 120 },
-  );
+  let selectionChanged;
+  try {
+    selectionChanged = await page.waitForFunction(
+      (want) => {
+        const selected = document.querySelectorAll('.filerow--selected').length;
+        const ariaSelected = document.querySelectorAll('.filerow[aria-selected="true"]').length;
+        return selected !== want || ariaSelected !== want ? { selected, ariaSelected } : null;
+      },
+      names.length - 1,
+      { timeout: 400 },
+    );
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+  }
+  if (selectionChanged) {
+    const counts = await selectionChanged.jsonValue();
+    assert(false, `selection changed under the open menu: ${JSON.stringify(counts)}`);
+  }
   await expectCount(names.length - 1, 'selection preserved under the open menu');
 
   const rows = await menuRows(page);

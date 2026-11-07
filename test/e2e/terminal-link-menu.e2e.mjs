@@ -53,6 +53,7 @@ runScenario('terminal-link-menu', async ({ page, log }) => {
   const projectId = await createProject(page, 'LinkProj');
   await page.evaluate(() => {
     window.__terms = {};
+    window.__termLinkProviders = {};
   });
   const sid = await openSession(page, { path: parent, projectId });
   await page.waitForFunction(
@@ -108,6 +109,27 @@ runScenario('terminal-link-menu', async ({ page, log }) => {
 
   /** Real hover (waiting for the link pointer when `onLink`), then a real right-click. */
   const rightClick = async (line, charIdx, { onLink = true } = {}) => {
+    if (onLink) {
+      await page.waitForFunction(
+        async ({ id, line }) => {
+          const buf = window.__terms[id]?.buffer.active;
+          const provider = window.__termLinkProviders[id];
+          if (!buf || !provider) return false;
+          let row = -1;
+          for (let y = 0; y < buf.length; y++) {
+            if ((buf.getLine(y)?.translateToString(true) ?? '').trim() === line) row = y;
+          }
+          if (row < 0) return false;
+          return new Promise((resolve) => {
+            provider.provideLinks(row + 1, (links) =>
+              resolve((links ?? []).some((link) => link.text === line)),
+            );
+          });
+        },
+        { id: sid, line },
+        { timeout: 8000 },
+      );
+    }
     const c = await cellOf(line, charIdx);
     assert(c.ok, `"${line}" is not on screen`);
     await page.mouse.move(c.x, c.y + 300);

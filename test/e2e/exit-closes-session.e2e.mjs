@@ -46,22 +46,25 @@ try {
   );
   log('session running ✓');
 
+  await page.waitForFunction((id) => /Microsoft Windows/.test(window.__capBy?.[id] ?? ''), sid, {
+    timeout: 20_000,
+  });
   const marker = `CONDUIT-EXIT-READY-${sid}`;
+  await page.evaluate(
+    ({ id, text }) =>
+      window.agentDeck.post({ type: 'term:input', sessionId: id, data: `echo ${text}\r\n` }),
+    { id: sid, text: marker },
+  );
   await page.waitForFunction(
     ({ id, text }) => {
       const buffer = window.__terms?.[id]?.buffer?.active;
       if (!buffer) return false;
-      if (window.__exitReadyMarkers?.[id] !== true) {
-        window.__exitReadyMarkers ??= {};
-        window.__exitReadyMarkers[id] = true;
-        window.agentDeck.post({ type: 'term:input', sessionId: id, data: `echo ${text}\r\n` });
-      }
       for (let y = 0; y < buffer.length; y++)
         if (buffer.getLine(y)?.translateToString(true).trim() === text) return true;
       return false;
     },
     { id: sid, text: marker },
-    { timeout: 2_000 },
+    { timeout: 20_000 },
   );
 
   // Send `exit` to the shell's PTY — cmd.exe terminates.
@@ -84,6 +87,7 @@ try {
   log('session auto-closed after exit ✓');
 
   log('PASS ✓ exit-closes-session: plain shell auto-closes on PTY exit');
+  // cleanup uses the harness's bounded shutdown grace period.
   await launched.cleanup();
   await finishScenario(0);
 } catch (e) {

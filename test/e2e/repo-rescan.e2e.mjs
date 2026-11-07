@@ -64,20 +64,22 @@ runScenario('repo-rescan', async ({ page, log }) => {
   // Open a SECOND session elsewhere — it becomes active, so the single live fs-watch follows
   // it, not `root`. (sibling temp dir: neither contains the other.)
   const other = mkdtempSync(join(tmpdir(), 'conduit-other-'));
+  const barrierDir = join(other, 'watch-barrier');
+  mkdirSync(barrierDir);
   const otherPath = other.replace(/\\/g, '/');
   const sid2 = await openSession(page, { path: otherPath });
   await page.evaluate(
-    ({ path, sessionId }) => {
+    ({ path, sessionId, watchDir }) => {
       window.__watchBarrier = false;
       const off = window.agentDeck.subscribe((message) => {
-        if (message.type !== 'state') return;
+        if (message.type !== 'dirEntries' || message.path !== watchDir) return;
         off();
         window.__watchBarrier = true;
       });
       window.agentDeck.post({ type: 'requestProject', path, sessionId });
-      window.agentDeck.post({ type: 'ready' });
+      window.agentDeck.post({ type: 'readDir', path: watchDir });
     },
-    { path: otherPath, sessionId: sid2 },
+    { path: otherPath, sessionId: sid2, watchDir: barrierDir },
   );
   await page.waitForFunction(() => window.__watchBarrier, null, { timeout: 600 });
 

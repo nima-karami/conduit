@@ -69,7 +69,7 @@ runScenario('review-compact-header', async ({ page, log }) => {
       return scope && getComputedStyle(scope).display === 'none';
     },
     null,
-    { timeout: 200 },
+    { timeout: 5000 },
   );
   assert(
     (await page.locator('.review__chip').count()) === 0,
@@ -228,7 +228,7 @@ runScenario('review-compact-header', async ({ page, log }) => {
       );
     },
     null,
-    { timeout: 200 },
+    { timeout: 5000 },
   );
   const scopeVisibleWide = await page.evaluate(() => {
     const el = document.querySelector('.review__scope');

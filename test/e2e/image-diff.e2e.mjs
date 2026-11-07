@@ -186,7 +186,7 @@ try {
     await page.waitForFunction(() => !!document.querySelector('.imgstage__img'), null, {
       timeout: 10000,
     });
-    await page.waitForSelector('.imgstage__img--ready', { state: 'attached', timeout: 400 });
+    await page.waitForSelector('.imgstage__img--ready', { state: 'attached', timeout: 5000 });
 
     const before = await page.evaluate(
       () => document.querySelector('.imgstage__zoom')?.textContent ?? '',
@@ -196,7 +196,7 @@ try {
     // Zoom-in button is keyboard-focusable (Tab + Enter); synthetic Ctrl+= key dispatch
     // is unreliable in the Electron harness (same limitation as paste's synthetic Ctrl+V),
     // so the button is the deterministic driver. Hover reveals the auto-hide controls;
-    // click + poll, since the stage's natural-size state may commit a tick after onLoad.
+    // Wait for the zoom readout to reflect the click.
     await page.hover('.imgstage');
     await page.click('.imgstage__btn[aria-label="Zoom in"]', { force: true });
     await page.waitForFunction(

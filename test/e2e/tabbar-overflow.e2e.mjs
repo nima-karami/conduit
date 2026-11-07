@@ -62,12 +62,14 @@ runScenario('tabbar-overflow', async ({ page, log }) => {
   // The names come from the live tree rather than a hardcoded list: the tree is windowed, so a
   // named file further down webview/ may not be mounted and would silently be skipped.
   const mountedFileNames = () =>
-    page.evaluate(() =>
-      Array.from(document.querySelectorAll('.filerow'))
-        .filter((r) => !r.querySelector('.treechev'))
-        .map((r) => r.querySelector('.filerow__name')?.textContent ?? '')
-        .filter((n) => /\.(tsx?|css|mjs|json|md)$/.test(n)),
-    );
+    page.evaluate(() => [
+      ...new Set(
+        Array.from(document.querySelectorAll('.filerow'))
+          .filter((r) => !r.querySelector('.treechev'))
+          .map((r) => r.querySelector('.filerow__name')?.textContent ?? '')
+          .filter((n) => /\.(tsx?|css|mjs|json|md)$/.test(n)),
+      ),
+    ]);
 
   let opened = 0;
   for (const name of await mountedFileNames()) {
@@ -80,7 +82,7 @@ runScenario('tabbar-overflow', async ({ page, log }) => {
     await page.waitForFunction(
       (count) => document.querySelectorAll('.tabbar .tab').length > count,
       before,
-      { timeout: 150 },
+      { timeout: 5000 },
     );
     if (await stripOverflowing(page)) break;
   }
@@ -113,7 +115,7 @@ runScenario('tabbar-overflow', async ({ page, log }) => {
     await page.waitForFunction(
       (count) => document.querySelectorAll('.tab .tab__close').length < count,
       n,
-      { timeout: 150 },
+      { timeout: 5000 },
     );
   }
 

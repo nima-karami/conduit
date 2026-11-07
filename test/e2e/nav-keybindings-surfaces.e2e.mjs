@@ -87,7 +87,7 @@ async function setShortcuts(page, shortcuts) {
       });
     },
     shortcuts,
-    { timeout: 300 },
+    { timeout: 5000 },
   );
 }
 

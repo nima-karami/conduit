@@ -49,16 +49,19 @@ try {
   const { page } = launched;
 
   await openSession(page, { path: root });
-  await page.evaluate((path) => {
-    window.__planWatchBarrier = false;
-    const off = window.agentDeck.subscribe((message) => {
-      if (message.type !== 'state') return;
-      off();
-      window.__planWatchBarrier = true;
-    });
-    window.agentDeck.post({ type: 'requestProject', path });
-    window.agentDeck.post({ type: 'ready' });
-  }, root);
+  await page.evaluate(
+    ({ path, watchDir }) => {
+      window.__planWatchBarrier = false;
+      const off = window.agentDeck.subscribe((message) => {
+        if (message.type !== 'dirEntries' || message.path !== watchDir) return;
+        off();
+        window.__planWatchBarrier = true;
+      });
+      window.agentDeck.post({ type: 'requestProject', path });
+      window.agentDeck.post({ type: 'readDir', path: watchDir });
+    },
+    { path: root, watchDir: plans },
+  );
   await page.waitForFunction(() => window.__planWatchBarrier, null, { timeout: 1500 });
 
   copyFileSync(FIXTURE, join(plans, 'identity.md'));

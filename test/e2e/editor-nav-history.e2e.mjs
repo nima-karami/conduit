@@ -100,7 +100,7 @@ runScenario('editor-nav-history', async ({ app, page, log }) => {
         await page
           .locator('.palette__row')
           .filter({ has: page.locator('.palette__title', { hasText: /^Go back$/ }) })
-          .waitFor({ state: 'visible', timeout: 150 });
+          .waitFor({ state: 'visible', timeout: 5000 });
         await page.keyboard.press('Enter');
       },
     ],

@@ -116,17 +116,24 @@ try {
   await row('long.ts').dblclick();
   await waitEditor(page);
   const scrollToBottom = async () => {
-    await page.click('.viewer__monaco .view-lines');
-    await page.keyboard.press('Control+End');
-    await page.waitForFunction(
-      () => {
-        const lines = [...document.querySelectorAll('.viewer__monaco .line-numbers')];
-        return lines.some((line) => Number(line.textContent) > 300);
-      },
-      null,
-      { timeout: 3500 },
-    );
-    return topVisibleLine(page);
+    // Monaco can drop the first key while the TS worker resolves the cross-file import.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      await page.click('.viewer__monaco .view-lines');
+      await page.keyboard.press('Control+End');
+      try {
+        await page.waitForFunction(
+          () => {
+            const lines = [...document.querySelectorAll('.viewer__monaco .line-numbers')];
+            return lines.some((line) => Number(line.textContent) > 300);
+          },
+          null,
+          { timeout: 875 },
+        );
+        return topVisibleLine(page);
+      } catch (error) {
+        if (error.name !== 'TimeoutError' || attempt === 3) throw error;
+      }
+    }
   };
   const savedTop = await scrollToBottom();
   assert(
