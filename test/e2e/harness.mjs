@@ -1248,6 +1248,21 @@ export async function runShellReader(page, sid, { script, dumpPath }) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Node-side condition poll for a check that needs an async query. Not `page.waitForFunction`: it
+ * treats a returned Promise as truthy before it settles, so an async predicate passes at once.
+ * Resolves the first truthy value `fn` returns, or null at the deadline (the caller asserts).
+ */
+export async function pollUntil(fn, timeoutMs, intervalMs = 100) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const got = await fn();
+    if (got) return got;
+    if (Date.now() >= deadline) return null;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
+/**
  * Hard assertion. Throws with `msg` if `cond` is falsy, which will propagate
  * to the scenario's top-level catch and exit with code 1.
  *

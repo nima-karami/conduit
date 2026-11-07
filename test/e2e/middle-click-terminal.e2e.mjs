@@ -20,6 +20,7 @@ import {
   closeApp,
   getSpyCalls,
   openSession,
+  pollUntil,
   runScenario,
   spyMain,
 } from './harness.mjs';
@@ -70,13 +71,11 @@ async function activateLink(page, sid, lineText, linkText, button) {
       });
   });
   const q = { s: sid, want: lineText, needle: linkText };
-  try {
-    await page.waitForFunction(async (query) => !!(await window.__findLink(query)).link, q, {
-      timeout: 20000,
-    });
-  } catch (error) {
-    if (error.name !== 'TimeoutError') throw error;
-  }
+  // A miss falls through: the activation below returns the provider's own error for the caller.
+  await pollUntil(
+    () => page.evaluate(async (query) => !!(await window.__findLink(query)).link, q),
+    20000,
+  );
   return page.evaluate(
     async ({ query, btn }) => {
       const r = await window.__findLink(query);

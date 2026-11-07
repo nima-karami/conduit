@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario, writeToTerminal } from './harness.mjs';
+import { assert, openSession, pollUntil, runScenario, writeToTerminal } from './harness.mjs';
 
 const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 
@@ -64,16 +64,15 @@ runScenario('terminal-commit-link', async ({ page, log }) => {
   // The active repo is detected for the freshly-opened session only after openSession returns
   // (cwd/repo can lag it on a loaded machine — see [[conduit-smoke-env-flakiness]]): ask until the
   // host resolves the full sha, and let the assertions below report if it never does.
-  await page
-    .waitForFunction(
-      async ({ s, toks, want }) =>
-        (await window.__validate(s, toks)).some((r) => r.token === want && r.commit === want),
-      { s: sid, toks: tokens, want: full },
-      { timeout: 30000 },
-    )
-    .catch((error) => {
-      if (error.name !== 'TimeoutError') throw error;
-    });
+  await pollUntil(
+    () =>
+      page.evaluate(
+        async ({ s, toks, want }) =>
+          (await window.__validate(s, toks)).some((r) => r.token === want && r.commit === want),
+        { s: sid, toks: tokens, want: full },
+      ),
+    30000,
+  );
   const results = await page.evaluate(({ s, toks }) => window.__validate(s, toks), {
     s: sid,
     toks: tokens,
@@ -150,13 +149,10 @@ runScenario('terminal-commit-link', async ({ page, log }) => {
       });
   });
   const linkQuery = { s: sid, sha: full };
-  await page
-    .waitForFunction(async (q) => !!(await window.__findCommitLink(q)).link, linkQuery, {
-      timeout: 20000,
-    })
-    .catch((error) => {
-      if (error.name !== 'TimeoutError') throw error;
-    });
+  await pollUntil(
+    () => page.evaluate(async (q) => !!(await window.__findCommitLink(q)).link, linkQuery),
+    20000,
+  );
   const routed = await page.evaluate(async (q) => {
     const r = await window.__findCommitLink(q);
     if (!r.link) return r;

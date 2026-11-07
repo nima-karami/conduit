@@ -18,7 +18,14 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, finishScenario, openSession, runScenario, showRightView } from './harness.mjs';
+import {
+  assert,
+  finishScenario,
+  openSession,
+  pollUntil,
+  runScenario,
+  showRightView,
+} from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[html-viewer] SKIP — suite is Windows-only');
@@ -84,20 +91,21 @@ runScenario('html-viewer', async ({ app, page, log }) => {
 
   // The guest's own state is the readiness signal (its CSS/JS ran, the fetch settled). The
   // webview tag's executeJavaScript rejects before dom-ready, which just means "not yet".
-  await page.waitForFunction(
-    async () => {
-      const frame = document.querySelector('.htmlview__frame');
-      try {
-        return await frame.executeJavaScript(
-          `!!document.querySelector('#h') && document.body.dataset.ran === 'yes' && window.__net !== 'pending'`,
-        );
-      } catch {
-        return false;
-      }
-    },
-    null,
-    { timeout: 20000 },
+  const guestReady = await pollUntil(
+    () =>
+      page.evaluate(async () => {
+        const frame = document.querySelector('.htmlview__frame');
+        try {
+          return await frame.executeJavaScript(
+            `!!document.querySelector('#h') && document.body.dataset.ran === 'yes' && window.__net !== 'pending'`,
+          );
+        } catch {
+          return false;
+        }
+      }),
+    20000,
   );
+  assert(guestReady, 'the HTML guest never became ready (CSS/JS ran, fetch settled) within 20s');
   const probe = await inGuest(
     app,
     `({
