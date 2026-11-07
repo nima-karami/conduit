@@ -274,3 +274,23 @@ describe('needYouEntries (sidebar-agent-tree spec §4 footer projection)', () =>
     expect(attentionEntries(sessions, [], new Map(), NOW).map((e) => e.key)).toEqual(['session:l']);
   });
 });
+
+describe('needYouEntries — stuck sessions (CON-151)', () => {
+  it('a stuck session is one needs-you entry carrying the reason, outranking busy', () => {
+    const sessions = [
+      {
+        ...s('a', { busy: true, attentionReason: 'stuck' }),
+        stuckReason: 'Codex usage limit reached',
+      },
+      s('b'),
+    ];
+    const entries = needYouEntries(sessions, [], new Map(), 0);
+    expect(entries).toEqual([
+      expect.objectContaining({
+        key: 'session:a',
+        sessionId: 'a',
+        detail: 'Codex usage limit reached',
+      }),
+    ]);
+  });
+});

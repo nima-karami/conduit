@@ -84,7 +84,8 @@ function completionsOf(s: Pick<Session, 'completions'>): number {
 }
 
 function reasonOf(s: Pick<Session, 'attentionReason'>): AttentionReason {
-  return s.attentionReason === 'blocked' || s.attentionReason === 'bell' ? s.attentionReason : null;
+  const r = s.attentionReason;
+  return r === 'blocked' || r === 'bell' || r === 'stuck' ? r : null;
 }
 
 /** Spec §4 "Own row status"; legacy needsAttention/completedRun and repo dirtiness play no part. */

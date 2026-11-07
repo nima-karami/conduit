@@ -6,6 +6,9 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- When an agent stops on a usage-limit, rate-limit, provider-error or update screen, its session shows it needs you, with the reason.
+
 ## [0.59.0] — 2026-11-07
 
 ### Added

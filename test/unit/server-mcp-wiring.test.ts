@@ -146,6 +146,7 @@ function harness(opts: { manualTimers?: boolean } = {}) {
         completions: 0,
       }),
       lastOutputAt: () => undefined,
+      setStuck: () => undefined,
       setVisible: (w: number, ids: readonly string[]) => {
         log.push(`visible ${w} ${ids.join(',')}`);
         return false;

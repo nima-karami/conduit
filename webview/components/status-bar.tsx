@@ -8,6 +8,7 @@ import { useWorkbenchChromeState } from '../workbench-chrome-state';
 
 /** The first entry's own reason, as the old header chip titled it; null when it has none. */
 function attentionReason(entry: AttentionEntry | null): string | null {
+  if (entry?.kind === 'session') return entry.detail ?? null;
   if (!entry?.handle) return null;
   if (entry.kind === 'ask') return MCP_STR.ask.chipReason(entry.handle);
   return entry.reason ? MCP_STR.attention[entry.reason](entry.handle) : null;

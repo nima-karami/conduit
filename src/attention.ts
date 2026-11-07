@@ -109,6 +109,8 @@ export interface AttentionEntry {
   threadId: string | null;
   reason: McpAttentionReason | null;
   handle: Handle | null;
+  /** A session entry's own words for why it needs you, when the server gives them (stuck screens). */
+  detail?: string;
 }
 
 /**
@@ -117,7 +119,9 @@ export interface AttentionEntry {
  * chip). An item tied to a snoozed session is hidden with it, so Snooze silences the whole
  * session; an ask is not, because its call times out unanswered. Pure.
  */
-export function attentionEntries<T extends SessionStateFields & { id: string }>(
+export function attentionEntries<
+  T extends SessionStateFields & { id: string; stuckReason?: string },
+>(
   sessions: readonly T[],
   items: readonly McpAttentionItem[],
   snoozed: SnoozeMap,
@@ -141,6 +145,7 @@ export function attentionEntries<T extends SessionStateFields & { id: string }>(
       threadId: null,
       reason: null,
       handle: null,
+      detail: s.stuckReason,
     }),
   );
   const fromItems: AttentionEntry[] = items
@@ -164,7 +169,11 @@ export function attentionEntries<T extends SessionStateFields & { id: string }>(
  * keys, snooze and click targets are attentionEntries' own.
  */
 export function needYouEntries<
-  T extends SessionStateFields & { id: string; attentionReason?: AttentionReason },
+  T extends SessionStateFields & {
+    id: string;
+    attentionReason?: AttentionReason;
+    stuckReason?: string;
+  },
 >(
   sessions: readonly T[],
   items: readonly McpAttentionItem[],

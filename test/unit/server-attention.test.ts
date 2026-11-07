@@ -430,3 +430,61 @@ describe('ServerAttention — review round (authority switch, bell latch)', () =
     expect(facts().attentionReason).toBeNull();
   });
 });
+
+describe('ServerAttention — stuck screens (CON-151)', () => {
+  const stuckFact = () => {
+    const s = attention.statusOf('a');
+    return { attentionReason: s.attentionReason, stuckReason: s.stuckReason };
+  };
+  const USAGE = { kind: 'usage-limit' as const, reason: 'Codex usage limit reached' };
+
+  it('a stuck screen is needs-you with the reason text', () => {
+    setup();
+    attention.setStuck('a', USAGE);
+    expect(stuckFact()).toEqual({ attentionReason: 'stuck', stuckReason: USAGE.reason });
+  });
+
+  it('stuck outranks a reported Working status', () => {
+    setup();
+    status({ state: 'working' });
+    attention.setStuck('a', USAGE);
+    expect(stuckFact().attentionReason).toBe('stuck');
+    expect(attention.statusOf('a').busy).toBe(true);
+  });
+
+  it('clearing returns to what the program reports', () => {
+    setup();
+    status({ state: 'blocked', kind: 'question' });
+    attention.setStuck('a', USAGE);
+    attention.setStuck('a', null);
+    expect(stuckFact()).toEqual({ attentionReason: 'blocked', stuckReason: undefined });
+  });
+
+  it('visibility does not clear a stuck screen the host has not seen recover', () => {
+    setup();
+    attention.setStuck('a', USAGE);
+    attention.setVisible(1, ['a']);
+    expect(stuckFact().attentionReason).toBe('stuck');
+  });
+
+  it('exit clears a stuck screen', () => {
+    setup();
+    attention.setStuck('a', USAGE);
+    emit({ type: 'exit', sessionId: 'a', generation: 1, code: 0, reason: 'exited' });
+    expect(stuckFact()).toEqual({ attentionReason: null, stuckReason: undefined });
+  });
+
+  it('onChange fires once per change, not for a repeated value', () => {
+    setup();
+    let changes = 0;
+    attention.onChange(() => changes++);
+    attention.setStuck('a', USAGE);
+    attention.setStuck('a', { ...USAGE });
+    expect(changes).toBe(1);
+    attention.setStuck('a', { kind: 'update-prompt', reason: 'Codex is asking whether to update' });
+    expect(changes).toBe(2);
+    attention.setStuck('a', null);
+    attention.setStuck('a', null);
+    expect(changes).toBe(3);
+  });
+});

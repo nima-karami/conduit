@@ -268,9 +268,10 @@ describe('server ports', () => {
     >();
     expectTypeOf<SessionAttentionFacts>().toEqualTypeOf<{
       attentionReason: AttentionReason;
+      stuckReason?: string;
       completions: number;
     }>();
-    expectTypeOf<AttentionReason>().toEqualTypeOf<'blocked' | 'bell' | null>();
+    expectTypeOf<AttentionReason>().toEqualTypeOf<'blocked' | 'bell' | 'stuck' | null>();
     expectTypeOf<SweepResult['completedIds']>().toEqualTypeOf<string[]>();
   });
 

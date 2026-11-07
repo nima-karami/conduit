@@ -43,6 +43,7 @@ export function serializeSessions(sessions: Session[]): string {
       lastLine: _lastLine,
       completedRun: _completedRun,
       attentionReason: _attentionReason,
+      stuckReason: _stuckReason,
       completions: _completions,
       missingRoots: _missingRoots,
       homeMissing: _homeMissing,
@@ -107,6 +108,7 @@ export function parseSessions(blob: string | undefined): SessionsParse {
       mcpToolOverrides: legacyToolOverrides,
       // Server runtime facts: a restored record starts without them, whatever the file says.
       attentionReason: _attentionReason,
+      stuckReason: _stuckReason,
       completions: _completions,
       ...rest
     } = entry as Record<string, unknown>;

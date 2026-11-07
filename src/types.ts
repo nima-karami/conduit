@@ -66,11 +66,13 @@ export type SessionIconKind =
   | 'agent';
 
 /** Why a session needs the human now; see docs/specs/archive/2026-11-02-sidebar-agent-tree.md §4. */
-export type AttentionReason = 'blocked' | 'bell' | null;
+export type AttentionReason = 'blocked' | 'bell' | 'stuck' | null;
 
 /** The server's runtime attention facts (ServerAttention); never persisted. */
 export interface SessionAttentionFacts {
   attentionReason: AttentionReason;
+  /** Why a `stuck` session needs the human, in the words the sidebar shows. Absent otherwise. */
+  stuckReason?: string;
   /** Qualifying run ends this server lifetime; monotonic per session until it is forgotten. */
   completions: number;
 }
@@ -121,6 +123,8 @@ export interface Session {
   completedRun?: boolean;
   /** Runtime-only server fact; an absent value on a legacy record reads as null. */
   attentionReason?: AttentionReason;
+  /** Runtime-only: the words for a `stuck` attentionReason. Never persisted. */
+  stuckReason?: string;
   /** Runtime-only server fact; an absent value on a legacy record reads as 0. */
   completions?: number;
   /**

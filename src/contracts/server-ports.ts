@@ -5,6 +5,8 @@
 // provides and another consumes. W0b refactors the host onto these on main first, so W5 imports it
 // instead of copying it (D27). No port calls back into its caller: TypingPort is a plain writer, so W6
 // never reaches W5's draft tracker (F8).
+
+import type { StuckScreen } from '../cli-stuck-screens';
 import type { ControlDeps, McpOpenRequest } from '../conduit-mcp/control-tools';
 import type { AgentCli, UserInstallState } from '../conduit-mcp/install-types';
 import type { CliPolicyLayers, GlobalPolicy } from '../conduit-mcp/tool-policy';
@@ -155,6 +157,11 @@ export type ServerAttentionSnapshot = ActivitySnapshot & SessionAttentionFacts;
 export interface AttentionPort
   extends Pick<SessionActivity, 'lastOutputAt' | 'setVisible' | 'dropWindow'> {
   statusOf(sessionId: string): ServerAttentionSnapshot;
+  /**
+   * The screen the host read as stuck (cli-stuck-screens), or null once it reads as recovered.
+   * Outranks the program's own status while set; exit clears it.
+   */
+  setStuck(sessionId: string, stuck: StuckScreen | null): void;
   recordInput(sessionId: string, now: number): void;
   clearAll(): void;
   onEdge(listener: (edge: AttentionEdge) => void): () => void;

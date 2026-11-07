@@ -285,3 +285,12 @@ describe('defaultNewAgentProject', () => {
     expect(defaultNewAgentProject({ kind: 'all' }, sessions, undefined)).toBeNull();
   });
 });
+
+describe('agentOwnState — stuck screens (CON-151)', () => {
+  it('a stuck session is blocked, busy or not', () => {
+    expect(agentOwnState(S('a', { attentionReason: 'stuck', busy: true }), 0, false)).toBe(
+      'blocked',
+    );
+    expect(agentOwnState(S('a', { attentionReason: 'stuck' }), 0, false)).toBe('blocked');
+  });
+});

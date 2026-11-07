@@ -1,3 +1,4 @@
+import type { StuckScreen } from '../../src/cli-stuck-screens';
 import type {
   AttentionEdge,
   AttentionPort,
@@ -45,6 +46,8 @@ export class ServerAttention implements AttentionPort {
    */
   private readonly completions = new Map<string, number>();
   private readonly reasons = new Map<string, Exclude<AttentionReason, null>>();
+  /** Kept apart from `reasons`: visibility acknowledges those, but not a screen still stuck. */
+  private readonly stuck = new Map<string, StuckScreen>();
   /** Window ids presence reported, so clearAll can drop every one of them. */
   private readonly windows = new Set<number>();
   private readonly edgeListeners = new Set<(edge: AttentionEdge) => void>();
@@ -61,8 +64,10 @@ export class ServerAttention implements AttentionPort {
   }
 
   statusOf(sessionId: string): ServerAttentionSnapshot {
+    const stuck = this.stuck.get(sessionId);
     const facts = {
-      attentionReason: this.reasons.get(sessionId) ?? null,
+      attentionReason: stuck ? ('stuck' as const) : (this.reasons.get(sessionId) ?? null),
+      ...(stuck ? { stuckReason: stuck.reason } : {}),
       completions: this.completions.get(sessionId) ?? 0,
     };
     const base = this.activity.statusOf(sessionId);
@@ -78,6 +83,18 @@ export class ServerAttention implements AttentionPort {
 
   lastOutputAt(sessionId: string): number | undefined {
     return this.activity.lastOutputAt(sessionId);
+  }
+
+  setStuck(sessionId: string, stuck: StuckScreen | null): void {
+    const prev = this.stuck.get(sessionId);
+    if (stuck === null) {
+      if (!prev) return;
+      this.stuck.delete(sessionId);
+    } else {
+      if (prev?.kind === stuck.kind && prev.reason === stuck.reason) return;
+      this.stuck.set(sessionId, stuck);
+    }
+    this.changed();
   }
 
   setVisible(windowId: number, ids: readonly string[]): boolean {
@@ -250,6 +267,7 @@ export class ServerAttention implements AttentionPort {
   private reset(sessionId: string): void {
     this.reported.delete(sessionId);
     this.reasons.delete(sessionId);
+    this.stuck.delete(sessionId);
     this.bells.delete(sessionId);
     this.inertTails.delete(sessionId);
   }
