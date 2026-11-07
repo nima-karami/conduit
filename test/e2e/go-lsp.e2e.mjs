@@ -13,7 +13,7 @@
  * Needs gopls installed: `go install golang.org/x/tools/gopls@latest`.
  * Run: node test/e2e/run-smoke.mjs go-lsp   (needs `npm run build` first)
  */
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -26,7 +26,7 @@ import {
   trigger,
 } from './goto-matrix.mjs';
 import { assert, closeApp, launchApp, openSession, runScenario } from './harness.mjs';
-import { waitServerIdle } from './lsp-fixture.mjs';
+import { recordTree, survivorsAfter, waitServerIdle } from './lsp-fixture.mjs';
 
 const READY_CEILING_MS = 120_000;
 const INSTALL_CODE = 'go install golang.org/x/tools/gopls@latest';
@@ -51,48 +51,6 @@ function writeGoFixture(dir) {
 function goplsInstalled() {
   if (spawnSync('where', ['gopls'], { stdio: 'ignore' }).status === 0) return true;
   return existsSync(join(homedir(), 'go', 'bin', 'gopls.exe'));
-}
-
-/** `pid` and every descendant, by ParentProcessId walk. */
-function recordTree(pid) {
-  const json = execFileSync(
-    'powershell',
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name | ConvertTo-Json -Compress',
-    ],
-    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
-  );
-  const procs = JSON.parse(json);
-  const tree = [{ pid, name: procs.find((p) => p.ProcessId === pid)?.Name ?? '?' }];
-  for (let i = 0; i < tree.length; i++) {
-    for (const p of procs) {
-      if (p.ParentProcessId === tree[i].pid) tree.push({ pid: p.ProcessId, name: p.Name });
-    }
-  }
-  return tree;
-}
-
-const alive = (pid) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-async function survivorsAfter(tree, ms) {
-  const deadline = Date.now() + ms;
-  let left = tree;
-  while (Date.now() < deadline) {
-    left = tree.filter((p) => alive(p.pid));
-    if (left.length === 0) return [];
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  return left;
 }
 
 const lsp = (page, msg) => page.evaluate((m) => window.agentDeck.lsp(m), msg);

@@ -82,31 +82,33 @@ function processList() {
   return JSON.parse(json);
 }
 
-/** `pid` and every descendant, by ParentProcessId walk. */
+/** `pid` and every descendant, by ParentProcessId walk. Windows reuses pids and keeps a dead
+ *  parent's id on its children, so a child only counts if it was created after that parent. */
 export function recordTree(pid, procs = processList()) {
-  const tree = [{ pid, name: procs.find((p) => p.ProcessId === pid)?.Name ?? '?' }];
+  const root = procs.find((p) => p.ProcessId === pid);
+  const tree = [{ pid, name: root?.Name ?? '?', created: root?.Created ?? null }];
   for (let i = 0; i < tree.length; i++) {
     for (const p of procs) {
-      if (p.ParentProcessId === tree[i].pid) tree.push({ pid: p.ProcessId, name: p.Name });
+      if (p.ParentProcessId !== tree[i].pid || p.ProcessId === tree[i].pid) continue;
+      if (tree[i].created && p.Created && p.Created < tree[i].created) continue;
+      tree.push({ pid: p.ProcessId, name: p.Name, created: p.Created ?? null });
     }
   }
   return tree;
 }
 
-const alive = (pid) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
+/** Same process, not a later one that reused its pid. */
+const stillRunning = (entry, procs) =>
+  procs.some(
+    (p) => p.ProcessId === entry.pid && (entry.created == null || p.Created === entry.created),
+  );
 
 export async function survivorsAfter(tree, ms) {
   const deadline = Date.now() + ms;
   let left = tree;
   while (Date.now() < deadline) {
-    left = tree.filter((p) => alive(p.pid));
+    const procs = processList();
+    left = tree.filter((p) => stillRunning(p, procs));
     if (left.length === 0) return [];
     await new Promise((r) => setTimeout(r, 200));
   }
