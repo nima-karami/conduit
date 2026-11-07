@@ -30,6 +30,7 @@ import {
   REPO,
   shutdownApp,
   tapBridge,
+  terminalFace,
   typeLine,
   waitForOutput,
 } from './harness.mjs';
@@ -117,6 +118,18 @@ const waitForShown = (page, id, text) =>
     { s: id, t: text },
     { timeout: 30000 },
   );
+const waitForLine = (page, id, text) =>
+  page.waitForFunction(
+    ({ s, t }) => {
+      const b = window.__terms?.[s]?.buffer.active;
+      if (!b) return false;
+      for (let i = 0; i < b.length; i++)
+        if (b.getLine(i)?.translateToString(true).trim() === t) return true;
+      return false;
+    },
+    { s: id, t: text },
+    { timeout: 30000 },
+  );
 // Trailing blanks are not content: a repaint omits the ones the shell's own echo wrote.
 const nonEmpty = (lines) => (lines ?? []).map((l) => l.trimEnd()).filter((l) => l !== '');
 
@@ -152,7 +165,7 @@ try {
   await typeLine(page, sid, 'echo R1-END');
   await waitForOutput(page, sid, 'R1-END');
   await noteSize(page, sid);
-  await page.waitForTimeout(500);
+  await waitForLine(page, sid, 'R1-END');
 
   // ── 1. Exit, narrow the window, Restart in the same app run ────────────────
   await typeLine(page, sid, 'exit 3');
@@ -175,7 +188,7 @@ try {
   await page.waitForTimeout(1500);
   await typeLine(page, sid, 'echo AFTER-RESTART');
   await waitForOutput(page, sid, 'AFTER-RESTART');
-  await page.waitForTimeout(500);
+  await waitForLine(page, sid, 'AFTER-RESTART');
   await noteSize(page, sid);
   const restarted = (await logicalLines(page, sid)) ?? [];
   dump('after Restart (last 50)', restarted.slice(-50));
@@ -190,7 +203,7 @@ try {
   await typeLine(page, sid, 'for /L %i in (1,1,30) do @echo R2-%i');
   await typeLine(page, sid, 'echo R2-END');
   await waitForOutput(page, sid, 'R2-END');
-  await page.waitForTimeout(1000);
+  await waitForLine(page, sid, 'R2-END');
   const cols = await page.evaluate((id) => window.__terms?.[id]?.cols, sid);
   log(`pane before reload: ${cols} cols`);
 
@@ -231,7 +244,7 @@ try {
   // Late terminal fonts make the reloaded pane's first measurement taller than where the layout
   // settles — the timing that left the PTY taller than the xterm. Hold the font files back so
   // every reload hits it instead of some: past the 3 s boot font wait, so the terminal mounts in
-  // a fallback face, and well inside the 3 s settle below, so the face lands before the probe.
+  // a fallback face, then wait for the held face to land before the probe.
   log(`live before the reloads: ${await noteSize(page, sid)}`);
   const hold = await holdBackLocalFonts(app, page, 4000);
   for (let round = 1; round <= RELOADS; round++) {
@@ -247,7 +260,12 @@ try {
     });
     await page.click(`[data-sessionid="${sid}"]`);
     await waitForShown(page, sid, 'R2-END');
-    await page.waitForTimeout(3000);
+    const { family } = await terminalFace(page);
+    await page.waitForFunction(
+      (fam) => [...document.fonts].some((f) => f.family.includes(fam) && f.status === 'loaded'),
+      family,
+      { timeout: 3000 },
+    );
     const after = nonEmpty(await logicalLines(page, sid)).filter((l) => l !== '— attached —');
     const lost = before.filter((l) => !after.includes(l));
     const added = after.filter((l) => !before.includes(l));

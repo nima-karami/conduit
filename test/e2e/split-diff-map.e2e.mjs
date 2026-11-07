@@ -97,11 +97,16 @@ runScenario('split-diff-map', async ({ app, page, log }) => {
   await showRightView(page, 'changes');
   await page.locator('.change', { hasText: 'plain.ts' }).click();
   await page.waitForFunction(
-    () => (window.monaco.editor.getDiffEditors?.() ?? []).length > 0,
+    () => {
+      const diff = window.monaco.editor.getDiffEditors?.()[0];
+      return (
+        diff?.getModifiedEditor().getModel()?.getValue().includes('export const plain = 2;') &&
+        diff.getLineChanges() !== null
+      );
+    },
     null,
     { timeout: 15000 },
   );
-  await page.waitForTimeout(500);
   assert(
     (await renderModeLabel()) === 'Inline view',
     'plain.ts must open side-by-side (the diffSideBySide default) before it is toggled off',
@@ -125,13 +130,18 @@ runScenario('split-diff-map', async ({ app, page, log }) => {
   );
   await page.locator('.review .rcard[data-path="wide.ts"] .rcard__sbs').first().click();
   await page.waitForFunction(
-    () => (window.monaco.editor.getDiffEditors?.() ?? []).length > 0,
+    () => {
+      const diff = window.monaco.editor.getDiffEditors?.()[0];
+      return (
+        diff?.getModifiedEditor().getModel()?.getValue().includes('const changed10 = 20;') &&
+        diff.getLineChanges() !== null
+      );
+    },
     null,
     {
       timeout: 25000,
     },
   );
-  await page.waitForTimeout(2500);
   assert(
     (await renderModeLabel()) === 'Inline view',
     'the review card must open its diff side-by-side even though the global setting is now false',
@@ -142,11 +152,16 @@ runScenario('split-diff-map', async ({ app, page, log }) => {
   // exactly where its own toggle left it — the global setting, not the doc-level override.
   await page.locator('.tab', { hasText: 'plain.ts' }).click();
   await page.waitForFunction(
-    () => (window.monaco.editor.getDiffEditors?.() ?? []).length > 0,
+    () => {
+      const diff = window.monaco.editor.getDiffEditors?.()[0];
+      return (
+        diff?.getModifiedEditor().getModel()?.getValue().includes('export const plain = 2;') &&
+        diff.getLineChanges() !== null
+      );
+    },
     null,
     { timeout: 15000 },
   );
-  await page.waitForTimeout(500);
   assert(
     (await renderModeLabel()) === 'Side-by-side view',
     'a diff unrelated to the review card must stay on the global (now inline) setting — diffSideBySide leaked from the override otherwise',
@@ -156,7 +171,13 @@ runScenario('split-diff-map', async ({ app, page, log }) => {
   // Back to wide.ts's diff tab for the rest of the assertions below.
   await page.locator('.tab', { hasText: 'wide.ts' }).click();
   await page.waitForFunction(
-    () => (window.monaco.editor.getDiffEditors?.() ?? []).length > 0,
+    () => {
+      const diff = window.monaco.editor.getDiffEditors?.()[0];
+      return (
+        diff?.getModifiedEditor().getModel()?.getValue().includes('const changed10 = 20;') &&
+        diff.getLineChanges() !== null
+      );
+    },
     null,
     { timeout: 15000 },
   );

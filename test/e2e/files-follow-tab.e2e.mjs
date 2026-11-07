@@ -50,13 +50,27 @@ const revealedNames = (page) =>
   );
 
 async function expectRevealed(page, want, what) {
-  const deadline = Date.now() + 10000;
-  let got = [];
-  while (Date.now() < deadline) {
-    got = await revealedNames(page);
-    if (JSON.stringify(got) === JSON.stringify(want)) return;
-    await page.waitForTimeout(150);
-  }
+  const ok = await page
+    .waitForFunction(
+      (expected) =>
+        JSON.stringify(
+          Array.from(
+            document.querySelectorAll('.filerow--revealed'),
+            (e) => e.querySelector('.filerow__name')?.textContent ?? null,
+          ),
+        ) === JSON.stringify(expected),
+      want,
+      { timeout: 10000 },
+    )
+    .then(
+      () => true,
+      (error) => {
+        if (error.name === 'TimeoutError') return false;
+        throw error;
+      },
+    );
+  if (ok) return;
+  const got = await revealedNames(page);
   assert(false, `${what}: revealed rows ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
 }
 
@@ -113,13 +127,37 @@ async function showFiles(page) {
 async function scrollToRow(page, name) {
   for (let i = 0; i < 40; i++) {
     if ((await fileRow(page, name).count()) > 0) break;
-    await page.evaluate((sel) => {
+    const previous = await page.evaluate((sel) => {
       const sc = document.querySelector(sel);
-      if (sc) sc.scrollTop += sc.clientHeight / 2;
+      if (!sc) return null;
+      const before = sc.scrollTop;
+      sc.scrollTop += sc.clientHeight / 2;
+      return before;
     }, SCROLLER);
-    await page.waitForTimeout(100);
+    await page
+      .waitForFunction(
+        ({ sel, before }) => {
+          const sc = document.querySelector(sel);
+          return !!sc && sc.scrollTop > before;
+        },
+        { sel: SCROLLER, before: previous },
+        { timeout: 1000 },
+      )
+      .catch((error) => {
+        if (error.name !== 'TimeoutError') throw error;
+        throw new Error(`Files scroller did not advance while seeking ${name}`, { cause: error });
+      });
   }
   await fileRow(page, name).scrollIntoViewIfNeeded();
+}
+
+async function assertAbsentFor(page, ms, forbidden, what) {
+  try {
+    await page.waitForFunction(forbidden, null, { timeout: ms });
+    assert(false, `${what} appeared during the ${ms} ms observation window`);
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+  }
 }
 
 async function openFromTree(page, name) {
@@ -136,9 +174,6 @@ const setScrollTop = (page, top) =>
     },
     [SCROLLER, top],
   );
-
-const scrollTopOf = (page) =>
-  page.evaluate((sel) => document.querySelector(sel)?.scrollTop ?? -1, SCROLLER);
 
 const treeState = (page) =>
   page.evaluate(() => ({
@@ -240,8 +275,12 @@ runScenario('files-follow-tab', async ({ page, log }) => {
   await waitRevealedInView(page, 'F7 precondition');
   await setScrollTop(page, 0);
   await page.locator(`.files__bar button[aria-label="Refresh ${sectionLabel}"]`).click();
-  await page.waitForTimeout(1500);
-  assert((await scrollTopOf(page)) === 0, 'F7: a refresh with the same target scrolled the tree');
+  await assertAbsentFor(
+    page,
+    1500,
+    () => (document.querySelector('.rightpane__scroll--files')?.scrollTop ?? -1) !== 0,
+    'F7: a refresh with the same target scrolled the tree',
+  );
   // Once its reveal has scrolled, the focused row is no longer pinned: a pin widens the window
   // contiguously, so a permanent one would mount every row between the top and zz.txt.
   const mounted = await page.evaluate(() => ({
@@ -286,9 +325,11 @@ runScenario('files-follow-tab', async ({ page, log }) => {
     .locator(`.files__bar button[aria-label="Expand ${sectionLabel}"]`)
     .waitFor({ state: 'visible', timeout: 5000 });
   await activateTab(page, 'x.ts');
-  await page.waitForTimeout(800);
-  assert(
-    (await page.locator(`.files__bar button[aria-label="Expand ${sectionLabel}"]`).count()) === 1,
+  await assertAbsentFor(
+    page,
+    800,
+    (label) =>
+      document.querySelectorAll(`.files__bar button[aria-label="Expand ${label}"]`).length !== 1,
     'F8: activating a tab expanded a collapsed section',
   );
   await expectRevealed(page, [], 'F8 collapsed section');
@@ -301,8 +342,12 @@ runScenario('files-follow-tab', async ({ page, log }) => {
   await input.click();
   await input.fill('zz');
   await activateTab(page, 'a.txt');
-  await page.waitForTimeout(500);
-  assert((await input.inputValue()) === 'zz', 'F9: activating a tab cleared the search query');
+  await assertAbsentFor(
+    page,
+    500,
+    () => document.querySelector('.search__inputbox textarea')?.value !== 'zz',
+    'F9: activating a tab cleared the search query',
+  );
   await input.fill('');
   await expectRevealed(page, ['a.txt'], 'F9 after clearing the search');
   log('F9: search query kept ✓');

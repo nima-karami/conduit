@@ -380,11 +380,15 @@ runScenario('review-multi-repo', async ({ app, page, log }) => {
   // hit-tested click.
   const srcBox = await page.locator('.review__source').boundingBox();
   await page.mouse.click(srcBox.x + srcBox.width / 2, srcBox.y + srcBox.height / 2);
-  await page.waitForTimeout(500);
-  assert(
-    (await page.locator('.commit-picker').count()) === 0,
-    'clicking the locked source trigger must not open the picker',
-  );
+  const pickerStayedClosed = await page.evaluate(async () => {
+    const until = performance.now() + 500;
+    while (performance.now() < until) {
+      if (document.querySelector('.commit-picker')) return false;
+      await new Promise(requestAnimationFrame);
+    }
+    return !document.querySelector('.commit-picker');
+  });
+  assert(pickerStayedClosed, 'clicking the locked source trigger must not open the picker');
   log('EARS 1/2: chip before the source; source locked with its reason; a click opens nothing ✓');
 
   // ── EARS 6: groups in display order, each with its tag and count ───────────────────────────
