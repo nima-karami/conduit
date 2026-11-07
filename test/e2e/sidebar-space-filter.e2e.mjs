@@ -101,7 +101,7 @@ async function newWindow(app, page) {
 
 const pressed = (page, key) => spaceRow(page, key).getAttribute('aria-pressed');
 
-await /** Bounded negative check: a later child-move message would show as the child leaving `space`. */
+/** Bounded negative check: a later child-move message would show as the child leaving `space`. */
 async function assertChildKeepsAlpha(page, id, space, what) {
   try {
     await page.waitForFunction(
@@ -114,7 +114,7 @@ async function assertChildKeepsAlpha(page, id, space, what) {
     if (error.name !== 'TimeoutError') throw error;
   }
   assert((await sessionOf(page, id))?.projectId === space, what);
-};
+}
 
 /** Resolves once the app has `n` windows; the 'window' event is the signal, not a poll. */
 async function waitWindows(app, n, timeout) {
