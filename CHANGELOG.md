@@ -6,29 +6,41 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.59.0] — 2026-11-07
+
 ### Added
-- Agents can read a helper's screen and, after you approve, type into it.
+- `open_session` opens any agent CLI on your PATH by name, such as `kiro`, not only the agents in your agents.json. It always asks you first, and the approval card shows the full path it will run. Shells and general tools are refused; use `open_terminal` for those.
+- `list_agents` lists the agents `open_session` can open, with each one's model, message and notice support.
+- An agents.json profile can set `capabilities.model_flag`, so `open_session`'s `model` works with a CLI Conduit has no built-in support for.
+- Agents can read a helper's screen and, after you approve, type into it (`read_screen`, `send_input`).
+- `close_session` takes a list of sessions, or `children: true` to close every session the agent opened. You approve the whole call once.
+
+### Changed
+- Tool errors say what to do next and use one set of codes. `unknown_handle` is now `unknown_session`; `invalid_argument` and `invalid_input` are now `invalid_args`.
+- `list_sessions` shows each session's id, opener, folder, whether a message can reach it, and whether it gets typed notices.
+- A bad entry in agents.json is skipped with a warning; the other entries still load. Entries whose ids start with `cli:`, `shell:` or `conduit:` are ignored and logged. A file that doesn't parse keeps the agents loaded before it.
+
+### Fixed
+- A first `message` no longer makes `open_session` fail. The session opens, and the message id comes back in `message.id`, or the store error does if the message could not be saved.
+- `wait_sessions` trims a `timeout_s` longer than the calling agent can wait, and reports it in `clamped_to`. Before, the agent's call timed out with no reply.
+
+## [0.58.0] — 2026-11-07
+
+### Added
 - `open_session` takes a `model` to pick the agent's model and a `message` to send the new session its first task.
 - `open_session` and `open_terminal` take `close_when_done`: the session closes once its program exits.
 - `open_file` takes a list of `paths` to open several files in one call.
 - `wait_sessions` lets an agent block until a session finishes a turn, exits, needs you, or messages it, so it doesn't have to poll.
-- `close_session` takes a list of sessions, or `children: true` to close every session the agent opened. You approve the whole call once.
-- `open_session` opens any agent CLI on your PATH by name, such as `kiro`, not only the agents in your agents.json. The approval card shows the full path it will run.
-- `list_agents` lists the agents `open_session` can open, with each one's model, message and notice support.
-- An agents.json profile can set `capabilities.model_flag`, so `open_session`'s `model` works with a CLI Conduit has no built-in support for.
 
 ### Changed
 - Terminals an agent opens get a handle and stay in `list_sessions` after they exit, so the agent can close them.
-- A bad entry in agents.json is skipped with a warning; the other entries still load. Entries whose ids start with `cli:`, `shell:` or `conduit:` are ignored and logged. A file that doesn't parse keeps the agents loaded before it.
-- Tool errors say what to do next and use one set of codes. `unknown_handle` is now `unknown_session`; `invalid_argument` and `invalid_input` are now `invalid_args`.
-- `list_sessions` shows each session's id, opener, folder, whether a message can reach it, and whether it gets typed notices.
+- Sending a message to a terminal with no Conduit-connected agent in it now fails instead of queuing a message nothing can read.
 
 ### Fixed
 - An agent that stays busy learns of new messages on its next Conduit tool call, not only when it goes idle.
-- A first `message` no longer makes `open_session` fail. The session opens, and the message id comes back in `message.id`, or the store error does if the message could not be saved.
-- `wait_sessions` trims a `timeout_s` longer than the calling agent can wait, and reports it in `clamped_to`. Before, the agent's call timed out with no reply.
 - The notification-area icon is Conduit's app icon.
 - Clicking the notification-area icon works. Clicks used to wait until Conduit sent its next update.
+- A setting you change is no longer occasionally lost when Windows briefly locks the settings file.
 
 ## [0.57.0] — 2026-11-06
 
