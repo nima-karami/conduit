@@ -33,6 +33,23 @@ async function openFile(page, root, name) {
   assert(await waitActive(page, name), `${name} should be active after a tree open`);
 }
 
+/** The sidebar row is gone in the same commit that re-derives the Back/Forward buttons. */
+const waitRowGone = (page, id) =>
+  page.waitForFunction((sid) => !document.querySelector(`.session[data-sessionid="${sid}"]`), id, {
+    timeout: 10000,
+  });
+
+/** Bounded negative: `forbidden` must not hold at any point of the `ms` window. */
+async function assertAbsentFor(page, ms, forbidden, what) {
+  try {
+    await page.waitForFunction(forbidden, null, { timeout: ms });
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+    return;
+  }
+  assert(false, `${what} appeared during the ${ms} ms observation window`);
+}
+
 async function closeTab(page, title) {
   await page
     .locator('.tabbar [role="tab"]', { hasText: title })
@@ -191,10 +208,18 @@ runScenario('editor-nav-history-lifecycle', async ({ page, log }) => {
     await p2.waitForFunction((id) => !(window.__sessions || []).some((s) => s.id === id), t1, {
       timeout: 15000,
     });
-    await p2.waitForTimeout(300);
+    await waitRowGone(p2, t1);
     if (!(await navDisabled(p2)).back) {
       await p2.keyboard.press('Alt+ArrowLeft');
-      await p2.waitForTimeout(800);
+      await assertAbsentFor(
+        p2,
+        1000,
+        () =>
+          /^[ab].ts$/.test(
+            document.querySelector('.tabbar [role="tab"].tab--active span')?.textContent ?? '',
+          ),
+        'AC10: an S1 doc',
+      );
     }
     const landed = await activeTab(p2);
     assert(landed !== 'a.ts' && landed !== 'b.ts', `AC10: never lands on an S1 doc, got ${landed}`);
@@ -221,7 +246,7 @@ runScenario('editor-nav-history-lifecycle', async ({ page, log }) => {
     await p3.waitForFunction((id) => !(window.__sessions || []).some((s) => s.id === id), u1, {
       timeout: 15000,
     });
-    await p3.waitForTimeout(300);
+    await waitRowGone(p3, u1);
     assert(
       (await navDisabled(p3)).back,
       'after the kill the only live entry is the doc on screen, so Back is disabled',

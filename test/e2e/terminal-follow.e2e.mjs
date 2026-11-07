@@ -53,6 +53,20 @@ try {
       return buf.viewportY >= buf.baseY;
     }, sid);
 
+  // The marker is matched against the tail of the buffer: the command's echo carries `%i`, never a
+  // finished number, so only real output can match.
+  const waitPrinted = (marker) =>
+    page.waitForFunction(
+      ([id, m]) => {
+        const b = window.__terms[id].buffer.active;
+        for (let i = b.length - 1; i >= Math.max(0, b.length - 60); i--)
+          if (b.getLine(i)?.translateToString(true).includes(m)) return true;
+        return false;
+      },
+      [sid, marker],
+      { timeout: 60000 },
+    );
+
   // A bounded producer: enough scrollback to scroll through, then it stops on its own.
   await page.evaluate(
     (id) =>
@@ -67,15 +81,10 @@ try {
     timeout: 30000,
   });
 
-  // Wait for it to go quiet, so only the wheel can report a scroll from here on.
-  let last = -1;
-  for (let i = 0; i < 40; i++) {
-    const now = await baseY();
-    if (now === last) break;
-    last = now;
-    await page.waitForTimeout(500);
-  }
-  log(`producer idle at baseY=${last} ✓`);
+  // The producer's last line is on screen once it has gone quiet, so only the wheel can report a
+  // scroll from here on.
+  await waitPrinted('conduit-follow-line 3000');
+  log(`producer idle at baseY=${await baseY()} ✓`);
   assert(await atBottom(), 'the viewport should be following before the user scrolls');
 
   const box = await page.evaluate(() => {
@@ -87,8 +96,13 @@ try {
   });
   await page.mouse.move(box.cx, box.cy);
   for (let i = 0; i < 10; i++) {
+    const was = await page.evaluate((id) => window.__terms[id].buffer.active.viewportY, sid);
     await page.mouse.wheel(0, -120);
-    await page.waitForTimeout(40);
+    await page.waitForFunction(
+      ([id, y]) => window.__terms[id].buffer.active.viewportY < y,
+      [sid, was],
+      { timeout: 8000 },
+    );
   }
   assert(!(await atBottom()), 'a real wheel scroll should leave the viewport off the bottom');
 
@@ -123,7 +137,7 @@ try {
       }),
     sid,
   );
-  await page.waitForTimeout(3000);
+  await waitPrinted('conduit-follow-again 2000');
   assert(await atBottom(), 'follow-mode should stay armed as more output arrives');
   log('PASS: follow-mode stays armed ✓');
 

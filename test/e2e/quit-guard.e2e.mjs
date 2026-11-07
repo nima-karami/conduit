@@ -27,6 +27,16 @@ if (process.platform !== 'win32') {
 const log = makeLog('quit-guard');
 const CONFIRM_TIMEOUT_MS = 5000; // max wait for confirmQuit to arrive
 
+/** Main-side flag that flips if the first window ever finishes closing after this call. */
+const watchWindowClosed = (app) =>
+  app.evaluate((electron) => {
+    globalThis.__qgClosed = false;
+    electron.BrowserWindow.getAllWindows()[0]?.once('closed', () => {
+      globalThis.__qgClosed = true;
+    });
+  });
+const windowEverClosed = (app) => app.evaluate(() => globalThis.__qgClosed === true);
+
 let launched = null;
 try {
   launched = await launchApp();
@@ -111,7 +121,19 @@ try {
   // 3000ms and assert nothing auto-resolved: the dialog is still up and the app
   // is still alive. We post NO quitDecision here — only the passage of time.
   const AUTO_DISMISS_WAIT_MS = 3800;
-  await page.waitForTimeout(AUTO_DISMISS_WAIT_MS);
+  // A bounded negative: the dialog must not leave the DOM during the window (a quit would end the
+  // page and reject with a non-timeout error, failing the scenario too).
+  try {
+    await page.waitForFunction(() => !document.querySelector('[role="alertdialog"]'), null, {
+      timeout: AUTO_DISMISS_WAIT_MS,
+    });
+    assert(
+      false,
+      `The quit dialog was dismissed within ${AUTO_DISMISS_WAIT_MS}ms with no decision`,
+    );
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+  }
 
   const windowAliveAfterWait = await app
     .evaluate((electron) => {
@@ -142,6 +164,7 @@ try {
   });
 
   // Send cancel decision.
+  await watchWindowClosed(app);
   await page.evaluate(() => {
     window.agentDeck.post({
       type: 'quitDecision',
@@ -149,9 +172,6 @@ try {
       proceed: false,
     });
   });
-
-  // Give the main process a moment to process the cancel.
-  await page.waitForTimeout(500);
 
   const windowOpenAfterCancel = await app.evaluate((electron) => {
     const { BrowserWindow } = electron;
@@ -177,6 +197,8 @@ try {
     .then(() => true)
     .catch(() => false);
   assert(confirmQuitArrived2, 'Expected confirmQuit on second close attempt');
+  // The guard was released by the cancel (it asked again) and the window never finished closing.
+  assert(!(await windowEverClosed(app)), 'The cancelled close must not have closed the window');
   log('confirmQuit arrived again ✓');
 
   // Send proceed decision — the app should quit.
@@ -260,6 +282,7 @@ try {
   log('update confirmQuit arrived with reason=update ✓');
 
   // Cancel — app stays open, update pending.
+  await watchWindowClosed(app2);
   await page2.evaluate(() => {
     window.agentDeck.post({
       type: 'quitDecision',
@@ -267,7 +290,6 @@ try {
       proceed: false,
     });
   });
-  await page2.waitForTimeout(300);
 
   const windowOpenAfterUpdateCancel = await app2.evaluate((electron) => {
     const { BrowserWindow } = electron;
@@ -291,6 +313,10 @@ try {
     { timeout: 10000 },
   );
   log('all sessions killed / none running ✓');
+  assert(
+    !(await windowEverClosed(app2)),
+    'The cancelled update relaunch must not close the window',
+  );
 
   // Clear captured messages.
   await page2.evaluate(() => {

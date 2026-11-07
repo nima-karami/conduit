@@ -24,7 +24,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, getSpyCalls, openSession, runScenario, spyMain } from './harness.mjs';
+import { assert, getSpyCalls, openSession, runScenario, spyMain, typeLine } from './harness.mjs';
 
 const URL_UNDER_TEST = 'https://example.com/conduit-osc8-probe';
 const LABEL = 'CLICK-ME-OSC8';
@@ -62,7 +62,23 @@ runScenario('terminal-osc8-link', async ({ app, page, log }) => {
   await page.waitForFunction((dir) => (window.__cap || '').includes(`${dir}>`), workDir, {
     timeout: 30000,
   });
-  await page.waitForTimeout(500);
+  // The shell has answered an echoed marker and printed its next prompt, so nothing more is coming.
+  // The caret splits the marker in the typed line, so only the printed line holds it whole.
+  await typeLine(page, sid, 'echo __S^YNC1__');
+  await page.waitForFunction(
+    ([id, dir]) => {
+      const buf = window.__terms[id].buffer.active;
+      let marked = false;
+      for (let y = 0; y < buf.length; y++) {
+        const text = buf.getLine(y)?.translateToString(true) ?? '';
+        if (marked && text.includes(`${dir}>`)) return true;
+        if (text.includes('__SYNC1__')) marked = true;
+      }
+      return false;
+    },
+    [sid, workDir],
+    { timeout: 20000 },
+  );
 
   // Write the hyperlink on its own fresh row and report where it landed.
   const cell = await page.evaluate(
@@ -116,9 +132,32 @@ runScenario('terminal-osc8-link', async ({ app, page, log }) => {
 
   // Hover first: xterm resolves links on hover, and the click must land on a live link.
   await page.mouse.move(x, y);
-  await page.waitForTimeout(400);
+  await page.waitForFunction(
+    (id) =>
+      window.__terms[id].element
+        .querySelector('.xterm-screen')
+        ?.classList.contains('xterm-cursor-pointer'),
+    sid,
+    { timeout: 8000 },
+  );
   await page.mouse.click(x, y);
-  await page.waitForTimeout(1200);
+  // Polls the host spy (as middle-click-terminal does): the open, then a bounded look for a duplicate.
+  const openExternalCount = (n, ms) =>
+    app.evaluate(
+      (_, { n, ms }) =>
+        new Promise((resolve) => {
+          const t0 = Date.now();
+          const tick = () => {
+            const count = (global.__spyCalls || []).filter((c) => c.api === 'openExternal').length;
+            if (count >= n || Date.now() - t0 >= ms) return resolve(count);
+            setTimeout(tick, 25);
+          };
+          tick();
+        }),
+      { n, ms },
+    );
+  assert((await openExternalCount(1, 5000)) >= 1, 'the OSC 8 click never reached openExternal');
+  await openExternalCount(2, 500);
 
   const confirms = await page.evaluate(() => window.__confirms);
   const opens = await page.evaluate(() => window.__opens);
