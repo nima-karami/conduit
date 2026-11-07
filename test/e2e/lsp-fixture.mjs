@@ -97,6 +97,15 @@ export function recordTree(pid, procs = processList()) {
   return tree;
 }
 
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 /** Same process, not a later one that reused its pid. */
 const stillRunning = (entry, procs) =>
   procs.some(
