@@ -127,6 +127,18 @@ async function waitState(page, pred, arg, what) {
   assert(ok, `timed out waiting for state: ${what}`);
 }
 
+/** A refusal has no signal to wait for: observe a bounded window for `forbidden(arg)` to turn true. */
+async function assertAbsentFor(page, ms, forbidden, arg, what) {
+  const appeared = await page.waitForFunction(forbidden, arg, { timeout: ms }).then(
+    () => true,
+    (error) => {
+      if (error.name !== 'TimeoutError') throw error;
+      return false;
+    },
+  );
+  assert(!appeared, `${what} (appeared during the ${ms} ms observation window)`);
+}
+
 const sessionIn = (state, id) => state.sessions.find((s) => s.id === id);
 
 /** Poll the async `pred` every 100 ms; resolves whether it held within `ms`. */
@@ -352,11 +364,14 @@ const PHASES = [
           refused.error === 'home-missing' && refused.sessionId === undefined,
           `missing home → home-missing (got ${JSON.stringify(refused)})`,
         );
-        await page.waitForTimeout(500);
-        assert(
-          (await state()).sessions.length === countBefore &&
-            !(await state()).sessions.some((s) => s.home === missingHome),
-          'no session created for a missing home',
+        await assertAbsentFor(
+          page,
+          500,
+          ({ n, home }) =>
+            window.__mfmState.sessions.length !== n ||
+            window.__mfmState.sessions.some((s) => s.home === home),
+          { n: countBefore, home: missingHome },
+          'a session was created for a missing home',
         );
         log('openRepo: missing root kept + marked; missing home refused');
 
@@ -802,7 +817,10 @@ const PHASES = [
       const claudeCmd = join(bin, 'claude.cmd');
       // Ends on the first line it reads: a pane's term:dispose only detaches (the agent runs on in
       // hc), so the scenario ends the program by typing to it.
-      writeFileSync(claudeCmd, ['@echo off', 'echo CLAUDE-ARGS %*', 'set /p _=', ''].join('\r\n'));
+      writeFileSync(
+        claudeCmd,
+        ['@echo off', 'echo CLAUDE-ARGS %*', 'echo ARGV-DONE', 'set /p _=', ''].join('\r\n'),
+      );
       // loadAgents reads agents.json once, at launch.
       writeFileSync(
         file('agents.json'),
@@ -851,10 +869,9 @@ const PHASES = [
           );
           const sid = opened.sessionId;
           assert(
-            await until(async () => (await output(page, sid)).includes('CLAUDE-ARGS'), 20000),
+            await until(async () => (await output(page, sid)).includes('ARGV-DONE'), 20000),
             `launch: the fake claude echoed its args (got ${JSON.stringify(await output(page, sid))})`,
           );
-          await page.waitForTimeout(300);
           const echoed = await output(page, sid);
           assert(
             echoed.includes(`CLAUDE-ARGS --add-dir ${root}`),
@@ -891,11 +908,14 @@ const PHASES = [
             window.__capBy[id] = '';
             window.agentDeck.post({ type: 'relaunch', id });
           }, sid);
-          await page.waitForTimeout(1500);
-          assert(
-            !(await output(page, sid)).includes('CLAUDE-ARGS') &&
-              sessionIn(await state(), sid)?.status !== 'running',
-            `launch: a relaunch against a missing home spawns nothing (got ${JSON.stringify(await output(page, sid))})`,
+          await assertAbsentFor(
+            page,
+            1500,
+            (id) =>
+              (window.__capBy[id] ?? '').includes('CLAUDE-ARGS') ||
+              window.__mfmState.sessions.find((x) => x.id === id)?.status === 'running',
+            sid,
+            'launch: a relaunch against a missing home spawned',
           );
           await page.evaluate(
             (id) =>
@@ -907,15 +927,18 @@ const PHASES = [
             await until(async () => (await output(page, sid)).includes(line), 15000),
             `launch: the dim refusal line arrives (got ${JSON.stringify(await output(page, sid))})`,
           );
-          await page.waitForTimeout(1500);
           // A cold start replays the session's earlier output (which holds the first run's
           // CLAUDE-ARGS) ahead of the refusal, so only what follows the refusal can be a spawn.
-          const after = await output(page, sid);
-          assert(
-            after.split('CLAUDE-ARGS').length <= 2 &&
-              sessionIn(await state(), sid)?.status !== 'running',
-            `launch: nothing spawned for a missing home (got ${JSON.stringify(after)})`,
+          await assertAbsentFor(
+            page,
+            1500,
+            (id) =>
+              (window.__capBy[id] ?? '').split('CLAUDE-ARGS').length > 2 ||
+              window.__mfmState.sessions.find((x) => x.id === id)?.status === 'running',
+            sid,
+            'launch: a spawn followed the missing-home refusal',
           );
+          const after = await output(page, sid);
           assert(
             !after.slice(after.indexOf(line)).includes('CLAUDE-ARGS'),
             `launch: the refusal line lands below the replayed history (got ${JSON.stringify(after)})`,

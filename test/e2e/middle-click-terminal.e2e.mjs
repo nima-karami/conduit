@@ -43,51 +43,49 @@ const lines = (stem, n) =>
 /**
  * Finds the buffer row that reads exactly `lineText` (the echo's OUTPUT row, not the prompt row
  * that also contains it), asks the provider for that row's links and activates the one whose
- * text contains `linkText` with a `mouseup` of `button`. Retries because the first provideLinks
- * for a path can race the host's resolvePathToken reply and come back empty.
+ * text contains `linkText` with a `mouseup` of `button`. The first provideLinks for a path can
+ * race the host's resolvePathToken reply and come back empty, so the link is awaited as a
+ * condition (re-asked until it exists) before a single activation.
  */
 async function activateLink(page, sid, lineText, linkText, button) {
-  let result = { error: 'not attempted' };
-  for (let attempt = 0; attempt < 8; attempt++) {
-    result = await page.evaluate(
-      ({ s, want, needle, btn }) =>
-        new Promise((resolve) => {
-          const buf = window.__terms?.[s]?.buffer.active;
-          if (!buf) return resolve({ error: 'no terminal' });
-          let row = -1;
-          for (let y = buf.length - 1; y >= 0; y--) {
-            if (buf.getLine(y)?.translateToString(true).trim() === want) {
-              row = y;
-              break;
-            }
+  await page.evaluate(() => {
+    window.__findLink = ({ s, want, needle }) =>
+      new Promise((resolve) => {
+        const buf = window.__terms?.[s]?.buffer.active;
+        if (!buf) return resolve({ error: 'no terminal' });
+        let row = -1;
+        for (let y = buf.length - 1; y >= 0; y--) {
+          if (buf.getLine(y)?.translateToString(true).trim() === want) {
+            row = y;
+            break;
           }
-          if (row < 0) return resolve({ error: `"${want}" not in buffer` });
-          const provider = window.__termLinkProviders?.[s];
-          if (!provider) return resolve({ error: 'no link provider' });
-          let done = false;
-          provider.provideLinks(row + 1, (links) => {
-            if (done) return;
-            done = true;
-            const link = (links || []).find((l) => l.text.includes(needle));
-            if (!link) {
-              return resolve({ error: 'no link', texts: (links || []).map((l) => l.text) });
-            }
-            link.activate(new MouseEvent('mouseup', { button: btn }), link.text);
-            resolve({ ok: true, text: link.text });
-          });
-          setTimeout(() => {
-            if (!done) {
-              done = true;
-              resolve({ error: 'provideLinks timeout' });
-            }
-          }, 5000);
-        }),
-      { s: sid, want: lineText, needle: linkText, btn: button },
-    );
-    if (result.ok) return result;
-    await page.waitForTimeout(500);
+        }
+        if (row < 0) return resolve({ error: `"${want}" not in buffer` });
+        const provider = window.__termLinkProviders?.[s];
+        if (!provider) return resolve({ error: 'no link provider' });
+        provider.provideLinks(row + 1, (links) => {
+          const link = (links || []).find((l) => l.text.includes(needle));
+          resolve(link ? { link } : { error: 'no link', texts: (links || []).map((l) => l.text) });
+        });
+      });
+  });
+  const q = { s: sid, want: lineText, needle: linkText };
+  try {
+    await page.waitForFunction(async (query) => !!(await window.__findLink(query)).link, q, {
+      timeout: 20000,
+    });
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
   }
-  return result;
+  return page.evaluate(
+    async ({ query, btn }) => {
+      const r = await window.__findLink(query);
+      if (!r.link) return r;
+      r.link.activate(new MouseEvent('mouseup', { button: btn }), r.link.text);
+      return { ok: true, text: r.link.text };
+    },
+    { query: q, btn: button },
+  );
 }
 
 runScenario('middle-click-terminal', async ({ app, page, log }) => {
@@ -129,8 +127,16 @@ runScenario('middle-click-terminal', async ({ app, page, log }) => {
 
   await openViaTree(page, root, ['a.ts']);
   assert(await waitActive(page, 'a.ts', 15000), 'a.ts should open as the active tab');
-  // Let late focus/scroll from the tree double-click settle, or the snapshot races it.
-  await page.waitForTimeout(600);
+  // The tree double-click's late focus/scroll must land before the snapshot is taken: the editor
+  // for a.ts is mounted and the tree has selected its row.
+  await page.waitForFunction(
+    () =>
+      (window.monaco?.editor.getEditors() ?? []).some(
+        (e) => e.getDomNode()?.isConnected && e.getModel()?.uri.path.endsWith('/a.ts'),
+      ) && !!document.querySelector('.filerow--selected[data-path$="a.ts"]'),
+    null,
+    { timeout: 10000 },
+  );
   const tabsBefore = await tabInfo(page);
   const before = await snapshotUnchanged(page);
   log('before', JSON.stringify(before));
@@ -158,16 +164,28 @@ runScenario('middle-click-terminal', async ({ app, page, log }) => {
   const ext = await activateLink(page, sid, LINK_URL, LINK_URL, 1);
   log('middle url activate', JSON.stringify(ext));
   assert(ext.ok === true, `URL link should activate, got ${JSON.stringify(ext)}`);
-  const deadline = Date.now() + 5000;
-  let calls = [];
-  while (Date.now() < deadline) {
-    calls = (await getSpyCalls(app)).filter((c) => c.api === 'openExternal');
-    if (calls.length > 0) break;
-    await page.waitForTimeout(150);
-  }
-  // A second, duplicate open would land shortly after the first; give it the chance to.
-  await page.waitForTimeout(500);
-  calls = (await getSpyCalls(app)).filter((c) => c.api === 'openExternal');
+  // Polls the host spy until `n` openExternal calls exist or `ms` pass; returns the count.
+  const openExternalCount = (n, ms) =>
+    app.evaluate(
+      (_, { n, ms }) =>
+        new Promise((resolve) => {
+          const t0 = Date.now();
+          const tick = () => {
+            const count = (global.__spyCalls || []).filter((c) => c.api === 'openExternal').length;
+            if (count >= n || Date.now() - t0 >= ms) return resolve(count);
+            setTimeout(tick, 25);
+          };
+          tick();
+        }),
+      { n, ms },
+    );
+  assert(
+    (await openExternalCount(1, 5000)) >= 1,
+    'the URL middle-click never reached openExternal',
+  );
+  // A second, duplicate open would land shortly after the first: observe a bounded window for it.
+  await openExternalCount(2, 500);
+  const calls = (await getSpyCalls(app)).filter((c) => c.api === 'openExternal');
   log('openExternal calls', JSON.stringify(calls.map((c) => c.args)));
   assert(calls.length === 1, `URL middle-click → exactly one openExternal, got ${calls.length}`);
   assert(

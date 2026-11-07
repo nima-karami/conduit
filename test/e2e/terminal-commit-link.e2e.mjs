@@ -47,31 +47,38 @@ runScenario('terminal-commit-link', async ({ page, log }) => {
   const sid = await openSession(page, { path: dir });
 
   // 1) Host validation is the real gate — drive the IPC directly.
-  const validate = (tokens) =>
-    page.evaluate(
-      ({ s, toks }) =>
-        new Promise((resolve) => {
-          window.agentDeck.subscribe((m) => {
-            if (m.type === 'validateCommitsResult' && m.sessionId === s) resolve(m.results);
-          });
-          window.agentDeck.post({ type: 'validateCommits', sessionId: s, tokens: toks });
-          // Resolve all-null if no reply arrives — so a build WITHOUT the host handler fails the
-          // assertions fast instead of hanging (discrimination), matching validate-failed → plain.
-          setTimeout(() => resolve(toks.map((token) => ({ token, commit: null }))), 3000);
-        }),
-      { s: sid, toks: tokens },
-    );
+  await page.evaluate(() => {
+    window.__validate = (s, toks) =>
+      new Promise((resolve) => {
+        window.agentDeck.subscribe((m) => {
+          if (m.type === 'validateCommitsResult' && m.sessionId === s) resolve(m.results);
+        });
+        window.agentDeck.post({ type: 'validateCommits', sessionId: s, tokens: toks });
+        // Resolve all-null if no reply arrives — so a build WITHOUT the host handler fails the
+        // assertions fast instead of hanging (discrimination), matching validate-failed → plain.
+        setTimeout(() => resolve(toks.map((token) => ({ token, commit: null }))), 3000);
+      });
+  });
+  const tokens = [short, full, 'deadbeef9', 'abc12'];
 
-  // Retry until the active repo is detected for the freshly-opened session (cwd/repo can lag
-  // openSession on a loaded machine — see [[conduit-smoke-env-flakiness]]).
-  let results = [];
-  let byTok = {};
-  for (let i = 0; i < 12; i++) {
-    results = await validate([short, full, 'deadbeef9', 'abc12']);
-    byTok = Object.fromEntries(results.map((r) => [r.token, r.commit]));
-    if (byTok[full] === full) break;
-    await page.waitForTimeout(500);
-  }
+  // The active repo is detected for the freshly-opened session only after openSession returns
+  // (cwd/repo can lag it on a loaded machine — see [[conduit-smoke-env-flakiness]]): ask until the
+  // host resolves the full sha, and let the assertions below report if it never does.
+  await page
+    .waitForFunction(
+      async ({ s, toks, want }) =>
+        (await window.__validate(s, toks)).some((r) => r.token === want && r.commit === want),
+      { s: sid, toks: tokens, want: full },
+      { timeout: 30000 },
+    )
+    .catch((error) => {
+      if (error.name !== 'TimeoutError') throw error;
+    });
+  const results = await page.evaluate(({ s, toks }) => window.__validate(s, toks), {
+    s: sid,
+    toks: tokens,
+  });
+  const byTok = Object.fromEntries(results.map((r) => [r.token, r.commit]));
   log('validate:', JSON.stringify(results));
 
   assert(byTok[short] === full, `short sha ${short} → full ${full}, got ${byTok[short]}`);
@@ -117,53 +124,45 @@ runScenario('terminal-commit-link', async ({ page, log }) => {
     log('buffer tail:', dump);
   }
   assert(found, 'rendered sha never appeared in the terminal buffer');
-  await page.waitForTimeout(300); // let the validate round-trip warm the renderer cache
 
-  // Activate the link, retrying ONLY a transient "sha not in buffer": the sha was confirmed
-  // present above, so a single miss right after is a render-timing flake under machine load
-  // ([[conduit-smoke-env-flakiness]]), not a bug. Real errors (no provider / no commit link /
-  // provideLinks timeout) break out and fail fast.
-  let routed = { error: 'not attempted' };
-  for (let attempt = 0; attempt < 6; attempt++) {
-    routed = await page.evaluate(
-      ({ s, sha }) =>
-        new Promise((resolve) => {
-          const term = window.__terms[s];
-          const buf = term.buffer.active;
-          const probe = sha.slice(0, 12);
-          let row = -1;
-          for (let y = 0; y < buf.length; y++) {
-            const line = buf.getLine(y);
-            if (line?.translateToString(true).includes(probe)) {
-              row = y;
-              break;
-            }
+  // Activate the link once the provider yields it: the host validation behind it resolves
+  // asynchronously, so the link is awaited as a condition. A missing provider or row fails fast.
+  await page.evaluate(() => {
+    window.__findCommitLink = ({ s, sha }) =>
+      new Promise((resolve) => {
+        const buf = window.__terms[s].buffer.active;
+        const probe = sha.slice(0, 12);
+        let row = -1;
+        for (let y = 0; y < buf.length; y++) {
+          if (buf.getLine(y)?.translateToString(true).includes(probe)) {
+            row = y;
+            break;
           }
-          if (row < 0) return resolve({ error: 'sha not in buffer' });
-          const provider = window.__termLinkProviders[s];
-          if (!provider) return resolve({ error: 'no link provider' });
-          let done = false;
-          // The provider does getLine(bufferLineNumber - 1), so pass the absolute row + 1.
-          provider.provideLinks(row + 1, (links) => {
-            if (done) return;
-            done = true;
-            const found = (links || []).find((l) => l.text === sha);
-            if (!found) return resolve({ error: 'no commit link', count: (links || []).length });
-            found.activate(new MouseEvent('click'), found.text);
-            resolve({ ok: true });
-          });
-          setTimeout(() => {
-            if (!done) {
-              done = true;
-              resolve({ error: 'provideLinks timeout' });
-            }
-          }, 4000);
-        }),
-      { s: sid, sha: full },
-    );
-    if (routed.ok || routed.error !== 'sha not in buffer') break;
-    await page.waitForTimeout(400);
-  }
+        }
+        if (row < 0) return resolve({ error: 'sha not in buffer' });
+        const provider = window.__termLinkProviders[s];
+        if (!provider) return resolve({ error: 'no link provider' });
+        // The provider does getLine(bufferLineNumber - 1), so pass the absolute row + 1.
+        provider.provideLinks(row + 1, (links) => {
+          const link = (links || []).find((l) => l.text === sha);
+          resolve(link ? { link } : { error: 'no commit link', count: (links || []).length });
+        });
+      });
+  });
+  const linkQuery = { s: sid, sha: full };
+  await page
+    .waitForFunction(async (q) => !!(await window.__findCommitLink(q)).link, linkQuery, {
+      timeout: 20000,
+    })
+    .catch((error) => {
+      if (error.name !== 'TimeoutError') throw error;
+    });
+  const routed = await page.evaluate(async (q) => {
+    const r = await window.__findCommitLink(q);
+    if (!r.link) return r;
+    r.link.activate(new MouseEvent('click'), r.link.text);
+    return { ok: true };
+  }, linkQuery);
   log('routed:', JSON.stringify(routed));
   assert(routed.ok === true, `commit link should activate, got ${JSON.stringify(routed)}`);
 

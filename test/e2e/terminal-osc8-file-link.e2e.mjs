@@ -81,16 +81,30 @@ runScenario('terminal-osc8-file-link', async ({ app, page, log }) => {
   const sid = await openSession(page, { path: home, agentId: 'shell:powershell' });
   await page.waitForFunction((id) => !!window.__terms?.[id], sid, { timeout: 20000 });
   await page.waitForFunction(() => (window.__cap || '').includes('PS '), null, { timeout: 30000 });
-  await page.waitForTimeout(500);
 
+  /** Round-trips a marker through the shell and waits for it in the xterm buffer: the shell has
+   *  consumed everything typed before it, and xterm has parsed (so positioned) its output. The
+   *  marker is split in the command so only the printed line holds it whole, not the echo. */
+  let syncSeq = 0;
   const waitQuiet = async () => {
-    let last = -1;
-    for (let i = 0; i < 40; i++) {
-      const len = await page.evaluate(() => (window.__cap || '').length);
-      if (len === last) return;
-      last = len;
-      await page.waitForTimeout(500);
-    }
+    const mark = `__SYNC${++syncSeq}__`;
+    await typeLine(page, sid, `Write-Output ('__SYNC' + '${syncSeq}__')`);
+    await page.waitForFunction(
+      ({ id, m }) => {
+        const buf = window.__terms[id].buffer.active;
+        for (let y = 0; y < buf.length; y++) {
+          if (buf.getLine(y)?.translateToString(true).includes(m)) return true;
+        }
+        return false;
+      },
+      { id: sid, m: mark },
+      { timeout: 20000 },
+    );
+  };
+
+  const timedOut = (error) => {
+    if (error.name !== 'TimeoutError') throw error;
+    return false;
   };
 
   /** Viewport point of char `charIdx` of the last row whose text contains `needle`. */
@@ -130,12 +144,15 @@ runScenario('terminal-osc8-file-link', async ({ app, page, log }) => {
   const clickLink = async (needle, charIdx, button = 'left') => {
     const c = await cellOf(needle, charIdx);
     assert(c.onScreen, `"${needle}" is not on screen: ${JSON.stringify(c)}`);
-    for (let attempt = 0; attempt < 40; attempt++) {
-      await page.mouse.move(c.x, c.y + 400);
-      await page.mouse.move(c.x, c.y, { steps: 4 });
-      await page.waitForTimeout(400);
-      if (await hovering()) break;
-    }
+    await page.mouse.move(c.x, c.y + 400);
+    await page.mouse.move(c.x, c.y, { steps: 4 });
+    await page
+      .waitForFunction(
+        (id) => !!window.__terms[id].element.querySelector('.xterm-cursor-pointer'),
+        sid,
+        { timeout: 10000 },
+      )
+      .catch(timedOut);
     assert(await hovering(), `"${needle}" never showed the link pointer`);
     await page.mouse.click(c.x, c.y, { button });
   };
@@ -157,27 +174,34 @@ runScenario('terminal-osc8-file-link', async ({ app, page, log }) => {
   };
   /** Whether any editor model is the file ending in `suffix` (a preview tab can be replaced in
    *  place, so a tab count alone cannot tell). */
-  const docOpen = (suffix) =>
-    page.evaluate(
-      (sfx) =>
-        (window.monaco?.editor.getModels() ?? []).some((m) =>
-          m.uri.path.toLowerCase().endsWith(sfx),
-        ),
-      suffix,
-    );
-  const waitDoc = async (suffix, ms = 15000) => {
-    for (const t0 = Date.now(); Date.now() - t0 < ms; ) {
-      if (await docOpen(suffix)) return true;
-      await page.waitForTimeout(250);
-    }
-    return false;
-  };
+  const waitDoc = (suffix, ms = 15000) =>
+    page
+      .waitForFunction(
+        (sfx) =>
+          (window.monaco?.editor.getModels() ?? []).some((m) =>
+            m.uri.path.toLowerCase().endsWith(sfx),
+          ),
+        suffix,
+        { timeout: ms },
+      )
+      .then(() => true, timedOut);
   const externalCalls = async () =>
     (await getSpyCalls(app)).filter((c) => c.api === 'openExternal').length;
   /** Nothing opened: no new tab, no external open, no window.open. */
   const assertNothingOpened = async (tabsBefore, what, forbidden) => {
-    await page.waitForTimeout(1500);
-    assert(!(await docOpen(forbidden)), `${what}: ${forbidden} must not open`);
+    // A dead click has no signal to wait for: observe a bounded window for the forbidden outcomes.
+    const appeared = await page
+      .waitForFunction(
+        (sfx) =>
+          window.__opens.length > 0 ||
+          (window.monaco?.editor.getModels() ?? []).some((m) =>
+            m.uri.path.toLowerCase().endsWith(sfx),
+          ),
+        forbidden,
+        { timeout: 1500 },
+      )
+      .then(() => true, timedOut);
+    assert(!appeared, `${what}: ${forbidden} must not open and window.open must not be called`);
     assert((await tabInfo(page)).length === tabsBefore, `${what}: no tab may open`);
     assert((await externalCalls()) === 0, `${what}: openExternal must not be called`);
     const opens = await page.evaluate(() => window.__opens.length);

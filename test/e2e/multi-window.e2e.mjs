@@ -71,6 +71,18 @@ async function openSessionIn(page, { path, agentId = 'shell:cmd' }) {
     .then((h) => h.jsonValue());
 }
 
+/** A rejected action has no signal to wait for: observe a bounded window for `forbidden` to turn true. */
+async function assertAbsentFor(page, ms, forbidden, arg, what) {
+  const appeared = await page.waitForFunction(forbidden, arg, { timeout: ms }).then(
+    () => true,
+    (error) => {
+      if (error.name !== 'TimeoutError') throw error;
+      return false;
+    },
+  );
+  assert(!appeared, `${what} (appeared during the ${ms} ms observation window)`);
+}
+
 const ids = (page) => page.evaluate(() => (window.__sessions || []).map((s) => s.id));
 
 let launched = null;
@@ -130,8 +142,21 @@ try {
   assert(sidB && sidB !== sidA, 'Expected a distinct session id for B in window 2');
 
   // ── ASSERT ISOLATION: each window sees only its own sessions ─────────────────
-  // Settle so both windows have received their latest filtered state.
-  await page1.waitForTimeout(500);
+  // Both windows must have received their latest filtered state; then a stray cross-window
+  // session gets a bounded window to show up.
+  await page1.waitForFunction((id) => (window.__sessions || []).some((s) => s.id === id), sidA, {
+    timeout: 15000,
+  });
+  await page2.waitForFunction((id) => (window.__sessions || []).some((s) => s.id === id), sidB, {
+    timeout: 15000,
+  });
+  await assertAbsentFor(
+    page1,
+    500,
+    (id) => (window.__sessions || []).some((s) => s.id === id),
+    sidB,
+    'ISOLATION: window 1 received session B',
+  );
   const w1 = await ids(page1);
   const w2 = await ids(page2);
   log('window-1 sessions =', JSON.stringify(w1));
@@ -146,10 +171,9 @@ try {
   // ── ASSERT term ROUTING: B's output never reaches window 1 ───────────────────
   // Wait for B's shell to actually emit (the prompt) so it's ready for stdin, then send
   // the sentinel echo. Without this the input can land before ConPTY attaches.
-  await page2
-    .waitForFunction(() => (window.__cap || '').length > 0, null, { timeout: 15000 })
-    .catch(() => {});
-  await page2.waitForTimeout(800);
+  await page2.waitForFunction(() => /[A-Za-z]:.*>/.test(window.__cap || ''), null, {
+    timeout: 15000,
+  });
   const SENTINEL = `MW_SENTINEL_${Date.now()}`;
   await page1.evaluate(() => {
     window.__cap = '';
@@ -380,7 +404,7 @@ try {
     },
     { w1id: await page1.evaluate(() => window.__winId), w2id: win2Id },
   );
-  await page2.waitForTimeout(300);
+  // setBounds is synchronous in the host, so getBounds already reflects it.
   const b1 = await app.evaluate((e, id) => e.BrowserWindow.fromId(id)?.getBounds(), win2Id);
   const w1Id = await page1.evaluate(() => window.__winId);
   const w1Bounds = await app.evaluate((e, id) => e.BrowserWindow.fromId(id)?.getBounds(), w1Id);
@@ -451,12 +475,13 @@ try {
       }),
     { id: sidS, p: dropInW1 },
   );
-  await page1.waitForTimeout(800);
-  const stillW1 = await page1.evaluate(
-    (id) => (window.__sessions || []).some((s) => s.id === id),
+  await assertAbsentFor(
+    page1,
+    800,
+    (id) => !(window.__sessions || []).some((s) => s.id === id),
     sidS,
+    'DROP-ON-SOURCE: S left window-1 (it must stay: no-op)',
   );
-  assert(stillW1, 'DROP-ON-SOURCE: S must stay in window-1 (no-op)');
   const winsAfterNoop = await app.evaluate((e) => e.BrowserWindow.getAllWindows().length);
   assert(
     winsAfterNoop === winsBeforeNoop,

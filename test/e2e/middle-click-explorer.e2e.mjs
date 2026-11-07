@@ -24,6 +24,16 @@ for (let i = 0; i < 60; i++) files[`f${String(i).padStart(2, '0')}.txt`] = `fill
 
 const tabCount = async (page) => (await tabInfo(page)).length;
 
+/** A dead click has no signal to wait for: observe a bounded window for `forbidden` to turn true. */
+async function assertAbsentFor(page, ms, forbidden, arg, what) {
+  try {
+    await page.waitForFunction(forbidden, arg, { timeout: ms });
+    assert(false, `${what} (appeared during the ${ms} ms observation window)`);
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+  }
+}
+
 const exactText = (s) => new RegExp(`^${s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
 
 runScenario('middle-click-explorer', async ({ app, page, log }) => {
@@ -93,7 +103,9 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
     window.__statusLog = [];
   });
   await row('e.ts').first().click({ button: 'middle' });
-  await page.waitForTimeout(150);
+  await page.waitForFunction(() => window.__statusLog.includes('e.ts is already open'), null, {
+    timeout: 3000,
+  });
   await row('e.ts').first().click({ button: 'middle' });
   await page.waitForFunction(
     () => window.__statusLog.filter((t) => t === 'e.ts is already open').length >= 2,
@@ -142,12 +154,17 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
   const expanded0 = await row('dir1').first().getAttribute('aria-expanded');
   const c6 = await tabCount(page);
   await middleClickJitter(page, row('dir1').first());
-  await page.waitForTimeout(400);
-  assert(
-    (await row('dir1').first().getAttribute('aria-expanded')) === expanded0,
-    'AC-6: middle-click must not expand/collapse a folder',
+  await assertAbsentFor(
+    page,
+    400,
+    ({ tabs, expanded }) =>
+      document.querySelectorAll('.tabbar [role="tab"]').length !== tabs ||
+      Array.from(document.querySelectorAll('.filerow[data-path]'))
+        .find((el) => el.querySelector('.filerow__name')?.textContent === 'dir1')
+        ?.getAttribute('aria-expanded') !== expanded,
+    { tabs: c6, expanded: expanded0 },
+    'AC-6: middle-click on a folder must not open a tab or expand/collapse it',
   );
-  assert((await tabCount(page)) === c6, 'AC-6: middle-click on a folder opens nothing');
   log('AC-6 folder middle-click is a no-op ✓');
 
   // AC-11: press on one row, release on another → nothing, and no drag starts
@@ -164,11 +181,13 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
   await page.mouse.down({ button: 'middle' });
   await page.mouse.move(gBox.x + 30, gBox.y + gBox.height / 2, { steps: 10 });
   await page.mouse.up({ button: 'middle' });
-  await page.waitForTimeout(400);
-  assert((await tabCount(page)) === c11, 'AC-11: a middle drag across rows opens nothing');
-  assert(
-    (await page.evaluate(() => window.__dragstarts)) === 0,
-    'AC-11: a middle drag must not start a drag',
+  await assertAbsentFor(
+    page,
+    400,
+    (tabs) =>
+      document.querySelectorAll('.tabbar [role="tab"]').length !== tabs || window.__dragstarts > 0,
+    c11,
+    'AC-11: a middle drag across rows must open nothing and start no drag',
   );
   log('AC-11 middle drag opens nothing, no dragstart ✓');
 
@@ -242,7 +261,20 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
     tree.evaluate((t, v) => {
       t.scrollTop = v;
     }, top);
-  const settle = () => page.waitForTimeout(400);
+  // The virtual window has caught up with the scroll once the mounted rows span the viewport.
+  const settle = () =>
+    page.waitForFunction(() => {
+      const t = document.querySelector('.rightpane__scroll--files');
+      const rows = t?.querySelectorAll('.filerow[data-path]');
+      if (!t || !rows?.length) return false;
+      const tr = t.getBoundingClientRect();
+      const atStart = t.scrollTop <= 0;
+      const atEnd = t.scrollTop + t.clientHeight >= t.scrollHeight - 1;
+      return (
+        (atStart || rows[0].getBoundingClientRect().top <= tr.top + 1) &&
+        (atEnd || rows[rows.length - 1].getBoundingClientRect().bottom >= tr.bottom - 1)
+      );
+    });
   await scrollTree(rowH * 25);
   await settle();
   const pressAcrossShift = async (button) => {

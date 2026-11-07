@@ -40,15 +40,11 @@
   "test/e2e/markdown-search.e2e.mjs": 1,
   "test/e2e/md-toc-scrollspy.e2e.mjs": 2,
   "test/e2e/mf-live-edits.e2e.mjs": 1,
-  "test/e2e/middle-click-explorer.e2e.mjs": 4,
   "test/e2e/middle-click-review.e2e.mjs": 1,
   "test/e2e/middle-click-surfaces-links.e2e.mjs": 2,
   "test/e2e/middle-click-surfaces-search.e2e.mjs": 1,
-  "test/e2e/middle-click-terminal.e2e.mjs": 4,
-  "test/e2e/multi-folder-model.e2e.mjs": 4,
   "test/e2e/multi-repo.e2e.mjs": 1,
   "test/e2e/multi-window-restore.e2e.mjs": 3,
-  "test/e2e/multi-window.e2e.mjs": 4,
   "test/e2e/nav-keybindings-settings.e2e.mjs": 3,
   "test/e2e/nav-keybindings-surfaces.e2e.mjs": 2,
   "test/e2e/new-session-folders-card.e2e.mjs": 1,
@@ -97,7 +93,6 @@
   "test/e2e/stress/whole-app.stress.mjs": 4,
   "test/e2e/tab-scroll-state.e2e.mjs": 2,
   "test/e2e/tabbar-overflow.e2e.mjs": 2,
-  "test/e2e/terminal-commit-link.e2e.mjs": 3,
   "test/e2e/terminal-follow.e2e.mjs": 3,
   "test/e2e/terminal-gpu-reset.e2e.mjs": 7,
   "test/e2e/terminal-input-box-links.e2e.mjs": 1,
@@ -107,6 +102,5 @@
   "test/e2e/terminal-path-links-v2.e2e.mjs": 1,
   "test/e2e/theme-first-paint.e2e.mjs": 1,
   "test/e2e/timed-messages-concurrency.e2e.mjs": 1,
-  "test/e2e/worktree-commit-seen.e2e.mjs": 1,
-  "test/e2e/terminal-osc8-file-link.e2e.mjs": 5
+  "test/e2e/worktree-commit-seen.e2e.mjs": 1
 }
