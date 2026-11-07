@@ -7,6 +7,7 @@ import { createShimEndpoint } from '../../server/mcp/endpoint';
 import { createSessionScreens, type SessionScreens } from '../../server/runtime/session-screens';
 import { createTokenStore } from '../../server/runtime/testing/token-store';
 import { AgentRegistry } from '../../src/agent-registry';
+import type { StuckScreen } from '../../src/cli-stuck-screens';
 import { MCP_ADAPTERS } from '../../src/conduit-mcp/adapters';
 import type { McpFileRequest, McpOpenRequest, PathKind } from '../../src/conduit-mcp/control-tools';
 import {
@@ -166,6 +167,10 @@ interface Harness {
   setNeedsYou(sessionId: string, on: boolean): void;
   /** Host timers armed and not yet fired or cleared. */
   readonly pendingTimers: number;
+  /** Every stuck-screen verdict the host handed to attention, in order. */
+  stuckCalls: Array<[string, StuckScreen | null]>;
+  /** Every session whose screen the host read, in order. */
+  screenReads: string[];
 }
 
 const dirs: string[] = [];
@@ -442,18 +447,31 @@ function harness(
   const attentionListeners = new Set<Parameters<McpHostDeps['attention']['onEdge']>[0]>();
   const completions = new Map<string, number>();
   const needing = new Set<string>();
+  const stuckCalls: Array<[string, StuckScreen | null]> = [];
+  const stuck = new Map<string, StuckScreen>();
+  const screenReads: string[] = [];
   const changeListeners = new Set<() => void>();
   const notifyAttention = () => {
     for (const l of changeListeners) l();
   };
   const attention: McpHostDeps['attention'] = {
-    statusOf: (id) => ({
-      busy: busy.has(id),
-      needsAttention: false,
-      completedRun: false,
-      attentionReason: needing.has(id) ? 'blocked' : null,
-      completions: completions.get(id) ?? 0,
-    }),
+    statusOf: (id) => {
+      const s = stuck.get(id);
+      return {
+        busy: busy.has(id),
+        needsAttention: false,
+        completedRun: false,
+        attentionReason: s ? 'stuck' : needing.has(id) ? 'blocked' : null,
+        ...(s ? { stuckReason: s.reason } : {}),
+        completions: completions.get(id) ?? 0,
+      };
+    },
+    setStuck: (id, next) => {
+      stuckCalls.push([id, next]);
+      if (next) stuck.set(id, next);
+      else stuck.delete(id);
+      notifyAttention();
+    },
     lastOutputAt: (id) => lastOut.get(id),
     setVisible: () => false,
     dropWindow: () => undefined,
@@ -529,7 +547,10 @@ function harness(
     tokens,
     runtime: {
       get: (id) => terminals.get(id),
-      screen: async (id) => (await screens.snapshot(id)) ?? null,
+      screen: async (id) => {
+        screenReads.push(id);
+        return (await screens.snapshot(id)) ?? null;
+      },
       on: (listener) => {
         runtimeListeners.add(listener);
         return () => runtimeListeners.delete(listener);
@@ -600,6 +621,8 @@ function harness(
     dir,
     ep,
     clock,
+    stuckCalls,
+    screenReads,
     sessions,
     inputs,
     echo,
@@ -4624,5 +4647,120 @@ describe('createConduitMcpHost — wait_sessions', () => {
     const { ca } = await pairForWait(h);
     const r = await ca.call('wait_sessions', args);
     expect(r.body.error.code).toBe('invalid_args');
+  });
+});
+
+describe('createConduitMcpHost — stuck screens (CON-151)', () => {
+  const UPDATE_PROMPT = [
+    '  Update available · 0.166.0 → 0.167.0',
+    '  Release notes: https://github.com/openai/codex/releases/latest',
+    '',
+    '› 1. Update now (runs `powershell ...`)',
+    '  2. Skip',
+    '  3. Skip until next version',
+    '',
+    '  enter continue · esc skip',
+  ].join('\r\n');
+  const UPDATE = { kind: 'update-prompt', reason: 'Codex is asking whether to update' };
+  // Enough rows to scroll the prompt off the live bottom.
+  const FILLER = Array.from({ length: 30 }, (_, i) => `line ${i}`).join('\r\n');
+
+  /** Stamps the output the way the attention does: each output is new, so the feed sees it. */
+  const print = (h: Harness, id: string, data: string) => {
+    h.clock.t += 1;
+    h.output(id, data);
+    h.lastOut.set(id, h.clock.t);
+  };
+  /** Screen reads of one session by one tick. The notice pass reads handled sessions too. */
+  const readsOf = async (h: Harness, id: string) => {
+    const from = h.screenReads.length;
+    await h.host.tick();
+    return h.screenReads.slice(from).filter((x) => x === id).length;
+  };
+  const codex = (h: Harness, id = 's3') => {
+    h.sessions.set(id, session(id, { agentId: 'codex' }));
+    return launch(h, id, CODEX, spec('/usr/bin/codex'));
+  };
+
+  it('reports a stuck screen once, not again while it stays', async () => {
+    const h = harness();
+    await h.host.start();
+    await codex(h);
+    print(h, 's3', UPDATE_PROMPT);
+    await h.host.tick();
+    print(h, 's3', 'still waiting');
+    await h.host.tick();
+    expect(h.stuckCalls).toEqual([['s3', UPDATE]]);
+  });
+
+  it('reads at most once per second, and a recovered screen clears the stuck fact', async () => {
+    const h = harness();
+    await h.host.start();
+    await codex(h);
+    print(h, 's3', UPDATE_PROMPT);
+    await h.host.tick();
+    print(h, 's3', FILLER);
+    await h.host.tick();
+    expect(h.stuckCalls).toEqual([['s3', UPDATE]]);
+    settle(h);
+    await h.host.tick();
+    expect(h.stuckCalls).toEqual([
+      ['s3', UPDATE],
+      ['s3', null],
+    ]);
+  });
+
+  it('reads the screen only after output it has not yet seen', async () => {
+    const h = harness();
+    await h.host.start();
+    await codex(h);
+    const idle = await readsOf(h, 's3');
+    print(h, 's3', UPDATE_PROMPT);
+    expect(await readsOf(h, 's3')).toBe(idle + 1);
+    settle(h);
+    expect(await readsOf(h, 's3')).toBe(idle);
+  });
+
+  it('never reads a session with no CLI kind for its stuck screen', async () => {
+    const h = harness();
+    await h.host.start();
+    await launch(h, 's1');
+    const idle = await readsOf(h, 's1');
+    print(h, 's1', UPDATE_PROMPT);
+    expect(await readsOf(h, 's1')).toBe(idle);
+    expect(h.stuckCalls).toEqual([]);
+  });
+
+  it('a relaunched session reports its stuck screen again', async () => {
+    const h = harness();
+    await h.host.start();
+    await codex(h);
+    print(h, 's3', UPDATE_PROMPT);
+    await h.host.tick();
+    h.exit('s3');
+    h.respawn('s3');
+    print(h, 's3', UPDATE_PROMPT);
+    await h.host.tick();
+    expect(h.stuckCalls).toEqual([
+      ['s3', UPDATE],
+      ['s3', UPDATE],
+    ]);
+  });
+
+  it('wait_sessions needs_you fires when a CLI screen gets stuck', async () => {
+    const h = harness({ manualTimers: true });
+    await h.host.start();
+    const a = await launch(h, 's1');
+    const ca = await client(h.ep, a.token);
+    const c = await codex(h);
+    await client(h.ep, c.token);
+    const base = h.pendingTimers;
+    const p = ca.call('wait_sessions', { sessions: ['codex-1'], until: ['needs_you'] });
+    await expect.poll(() => h.pendingTimers).toBe(base + 1);
+    print(h, 's3', UPDATE_PROMPT);
+    await h.host.tick();
+    expect((await p).body).toMatchObject({
+      fired: [{ session: 'codex-1', condition: 'needs_you' }],
+    });
   });
 });

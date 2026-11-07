@@ -40,6 +40,15 @@ const CODEX_WORKING = rows(`› run the tests
 
 ›`);
 
+const CODEX_UPDATE_PROMPT = rows(`  Update available · 0.166.0 → 0.167.0
+  Release notes: https://github.com/openai/codex/releases/latest
+
+› 1. Update now (runs \`powershell ...\`)
+  2. Skip
+  3. Skip until next version
+
+  enter continue · esc skip`);
+
 const padding = (n: number): string[] => Array.from({ length: n }, (_, i) => `  filler line ${i}`);
 
 describe('detectStuckScreen', () => {
@@ -156,5 +165,32 @@ describe('detectStuckScreen', () => {
       kind: 'usage-limit',
       reason: 'Codex usage limit reached — try again at 3:26 AM',
     });
+  });
+
+  it('flags Codex asking whether to update', () => {
+    expect(detectStuckScreen('codex', CODEX_UPDATE_PROMPT)).toEqual({
+      kind: 'update-prompt',
+      reason: 'Codex is asking whether to update',
+    });
+  });
+
+  it('needs both the update line and its footer', () => {
+    expect(detectStuckScreen('codex', rows('  Update available · 0.166.0 → 0.167.0'))).toBeNull();
+    expect(detectStuckScreen('codex', rows('  enter continue · esc skip'))).toBeNull();
+    expect(
+      detectStuckScreen(
+        'codex',
+        rows('See "Update available" in the changelog. enter continue · esc skip'),
+      ),
+    ).toBeNull();
+  });
+
+  it('ignores the Cursor usage sentence quoted mid-row (e.g. this repo open in Cursor)', () => {
+    expect(
+      detectStuckScreen(
+        'cursor',
+        rows("  const s = 'Your usage limits will reset when your monthly cycle ends';"),
+      ),
+    ).toBeNull();
   });
 });

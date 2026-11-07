@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { atomicWriteFileSync } from '../atomic-write';
+import { detectStuckScreen, type StuckScreen } from '../cli-stuck-screens';
 import type { DraftPort, LaunchPort, McpHostDeps } from '../contracts/server-ports';
 import type { CliBindingRecord } from '../contracts/session-identity';
 import type { LaunchIds } from '../contracts/terminal-runtime';
@@ -136,7 +137,7 @@ type HostLog = Record<
 >;
 
 export interface ConduitMcpHostDeps extends Omit<McpHostDeps, 'attention'> {
-  attention: Pick<McpHostDeps['attention'], 'statusOf' | 'lastOutputAt' | 'onChange'>;
+  attention: Pick<McpHostDeps['attention'], 'statusOf' | 'lastOutputAt' | 'onChange' | 'setStuck'>;
   dir: string;
   endpointPath: string;
   execPath: string;
@@ -216,6 +217,7 @@ export interface ConduitMcpHost extends LaunchPort, DraftPort {
 }
 
 const TICK_MS = 500;
+const STUCK_CHECK_MS = 1_000;
 /** closeWhenDone is not a CLI call: no connection owns its UI wait (see ConduitMcpHost.closeWhenDone). */
 const UNTRACKED_CONN = -1;
 const SUBMIT_CONFIRM_WAIT_MS = 2_000;
@@ -408,6 +410,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const id = pickNoticeAdapterId(r?.defAdapter?.id, boundKinds(sessionId, r));
     return MCP_ADAPTERS.find((a) => a.id === id) ?? null;
   };
+  /** The CLI whose stuck screens the feed reads; a shell or a fake client has none. */
+  const cliKindOf = (sessionId: string) => {
+    const id = noticeAdapterOf(sessionId)?.id;
+    return id === 'claude' || id === 'codex' || id === 'cursor' ? id : null;
+  };
+  /** Per session: when the screen was last read, at which output stamp, and what it showed. */
+  const stuckFeed = new Map<string, { at: number; outputAt: number; stuck: StuckScreen | null }>();
   /** list_sessions' notices: typed when the session's adapter can push notices, else the agent pulls. */
   const noticesOf = (sessionId: string): 'typed' | 'pull' => {
     const a = noticeAdapterOf(sessionId);
@@ -1636,6 +1645,40 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     r.detect = { cli, at: now() };
   };
 
+  /**
+   * Stuck-screen feed (CON-151): a CLI that stopped on a limit or update screen shows needs-you.
+   * Reads the screen only for a live CLI session that printed since its last read, at most once
+   * per STUCK_CHECK_MS, and reports to attention only when the verdict changes.
+   */
+  const stuckPass = async () => {
+    const t = now();
+    for (const s of deps.sessions.list()) {
+      const cli = cliKindOf(s.id);
+      if (cli === null || deps.runtime.get(s.id)?.state !== 'live') continue;
+      const outputAt = deps.attention.lastOutputAt(s.id);
+      const memo = stuckFeed.get(s.id);
+      if (outputAt === undefined || outputAt === memo?.outputAt) continue;
+      if (memo && t - memo.at < STUCK_CHECK_MS) continue;
+      let snap: Awaited<ReturnType<typeof deps.runtime.screen>>;
+      try {
+        snap = await deps.runtime.screen(s.id);
+      } catch (err) {
+        // One unreadable screen must not skip the other sessions or the notifier this tick.
+        deps.log.warn('conduit-mcp', 'stuck screen read failed', {
+          sessionId: s.id,
+          err: String(err),
+        });
+        continue;
+      }
+      if (!snap || deps.runtime.get(s.id)?.state !== 'live') continue;
+      const stuck = detectStuckScreen(cli, snap.lines);
+      const prev = memo?.stuck ?? null;
+      stuckFeed.set(s.id, { at: t, outputAt, stuck });
+      if (prev?.kind === stuck?.kind && prev?.reason === stuck?.reason) continue;
+      deps.attention.setStuck(s.id, stuck);
+    }
+  };
+
   /** A typed CLI that hasn't initialized within the grace never reached this host (spec §2.5). */
   const detectPass = () => {
     const t = now();
@@ -1657,6 +1700,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     if (stopped) return;
     // Before the notifier check: detection must not wait for the message store to load.
     detectPass();
+    await stuckPass();
     if (!notifier) return;
     // Badge gate state for every notifiable session, then the notifier's own pass.
     for (const s of notifierSessions()) await evaluate(s.sessionId);
@@ -1686,6 +1730,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const sessionId = 'sessionId' in event ? event.sessionId : undefined;
     if (sessionId === undefined) return;
     const r = runtime.get(sessionId);
+    // Attention clears its own stuck fact on spawn and exit; the feed's memo must match it.
+    if (event.type === 'spawned' || event.type === 'exit') stuckFeed.delete(sessionId);
     if (event.type === 'spawned') {
       if (!r) return;
       r.size = event.size;

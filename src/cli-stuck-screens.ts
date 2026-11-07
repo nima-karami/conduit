@@ -1,6 +1,6 @@
 import type { CliKind } from './conduit-mcp/tool-policy';
 
-export type StuckKind = 'usage-limit' | 'rate-limit-prompt' | 'provider-error';
+export type StuckKind = 'usage-limit' | 'rate-limit-prompt' | 'provider-error' | 'update-prompt';
 
 export interface StuckScreen {
   kind: StuckKind;
@@ -17,10 +17,12 @@ const CODEX_USAGE_LIMIT = /^[ \t]*■ You[’']ve hit your usage limit/m;
 const CODEX_RETRY_AT = /try again at ([0-9:]+\s*[AP]M)/;
 const CODEX_SWITCH_PROMPT = /^[ \t]*Approaching rate limits[ \t]*$/m;
 const CODEX_SWITCH_FOOTER = /enter select · esc back/;
+const CODEX_UPDATE_PROMPT = /^[ \t]*Update available\b/m;
+const CODEX_UPDATE_FOOTER = /enter continue · esc skip/;
 
 const CURSOR_PROVIDER_ERROR = /^[ \t]*Error: Unable to reach the model provider[ \t]*$/m;
 const CURSOR_USAGE_RESET =
-  /^[ \t]*model\. Your usage limits will reset|Your usage limits will reset when your monthly cycle ends/m;
+  /^[ \t]*(?:model\. )?Your usage limits will reset when your monthly cycle ends/m;
 
 const CLAUDE_USAGE_LIMIT =
   /^[ \t]*(?:Claude usage limit reached|You[’']ve hit your (?:usage|session|weekly) limit)/m;
@@ -36,6 +38,10 @@ function detectCodex(text: string): StuckScreen | null {
   // The prompt is what blocks input, so it wins over the usage line it is shown under.
   if (CODEX_SWITCH_PROMPT.test(text) && CODEX_SWITCH_FOOTER.test(text)) {
     return { kind: 'rate-limit-prompt', reason: 'Codex asks whether to switch models' };
+  }
+  // Same rule as the switch prompt: a blocking prompt outranks the usage line above it.
+  if (CODEX_UPDATE_PROMPT.test(text) && CODEX_UPDATE_FOOTER.test(text)) {
+    return { kind: 'update-prompt', reason: 'Codex is asking whether to update' };
   }
   if (CODEX_USAGE_LIMIT.test(text)) {
     const retry = CODEX_RETRY_AT.exec(text);
