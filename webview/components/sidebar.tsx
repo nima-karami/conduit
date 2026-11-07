@@ -890,7 +890,10 @@ export function Sidebar({
   const liveCount = sessions.filter((s) => s.status === 'running').length;
   const agentsMenu = buildAgentsViewMenu(
     agentsView,
-    agentViewCounts(sessions, runtime, askSessionIds),
+    agentViewCounts(sessions, runtime, askSessionIds, {
+      selection: ui.selection,
+      matchingIds,
+    }),
     setAgentsView,
   );
   const selected = selectionKey(ui.selection);

@@ -8,8 +8,13 @@ import {
   DEFAULT_SPACES_VIEW,
   type SpacesView,
 } from '../../src/sidebar-view';
+import type { Session } from '../../src/types';
 import { ViewMenu } from '../../webview/components/view-menu';
-import { buildAgentsViewMenu, buildSpacesViewMenu } from '../../webview/sidebar-view-menu';
+import {
+  agentViewCounts,
+  buildAgentsViewMenu,
+  buildSpacesViewMenu,
+} from '../../webview/sidebar-view-menu';
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -110,6 +115,51 @@ describe('buildAgentsViewMenu', () => {
     expect(build().sections[2].options.map((o) => o.hint)).toEqual(['3', '1']);
     const none = buildAgentsViewMenu(DEFAULT_AGENTS_VIEW, { running: 0, needsYou: 0 }, () => {});
     expect(none.sections[2].options.map((o) => o.hint)).toEqual([undefined, undefined]);
+  });
+});
+
+describe('agentViewCounts', () => {
+  const sess = (id: string, over: Partial<Session> = {}): Session => ({
+    id,
+    name: id,
+    agentId: 'a',
+    home: '/w',
+    roots: [],
+    status: 'running',
+    createdAt: 0,
+    lastActiveAt: 0,
+    attentionReason: null,
+    completions: 0,
+    ...over,
+  });
+  const all = [
+    sess('a', { projectId: 'p1' }),
+    sess('b', { projectId: 'p1', attentionReason: 'blocked' }),
+    sess('c', { projectId: 'p2', attentionReason: 'blocked' }),
+    sess('d', { projectId: 'p2', status: 'exited' }),
+  ];
+  const runtime = { seen: {}, stateSince: {} };
+  const every = new Set(all.map((s) => s.id));
+
+  it('counts every running agent when nothing narrows the list', () => {
+    expect(
+      agentViewCounts(all, runtime, new Set(), { selection: { kind: 'all' }, matchingIds: every }),
+    ).toEqual({ running: 3, needsYou: 2 });
+  });
+
+  it('counts only the selected Space and the current search', () => {
+    expect(
+      agentViewCounts(all, runtime, new Set(), {
+        selection: { kind: 'space', projectId: 'p1' },
+        matchingIds: every,
+      }),
+    ).toEqual({ running: 2, needsYou: 1 });
+    expect(
+      agentViewCounts(all, runtime, new Set(), {
+        selection: { kind: 'all' },
+        matchingIds: new Set(['a', 'c']),
+      }),
+    ).toEqual({ running: 2, needsYou: 1 });
   });
 });
 
@@ -248,6 +298,20 @@ describe('ViewMenu', () => {
     expect(q('[role="menu"]')).toBeNull();
     expect(trigger().getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(trigger());
+  });
+
+  it('an outside pointer dismissal leaves focus where the click put it', async () => {
+    await renderAgents();
+    await open();
+    const elsewhere = document.createElement('button');
+    document.body.append(elsewhere);
+    await act(async () => {
+      elsewhere.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      elsewhere.focus();
+    });
+    expect(q('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(elsewhere);
+    expect(document.activeElement).not.toBe(trigger());
   });
 
   it('clicking the trigger again closes it', async () => {

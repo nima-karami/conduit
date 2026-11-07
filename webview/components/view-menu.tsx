@@ -34,8 +34,9 @@ export function ViewMenu({ label, model }: { label: string; model: ViewMenuModel
     everOpenRef.current = false;
   }, [open]);
 
-  const dismiss = useCallback(() => {
-    returnFocusRef.current = !!menuRef.current?.contains(document.activeElement);
+  // Only the keyboard hands focus back: after an outside click the click's own target owns it.
+  const dismiss = useCallback((viaKeyboard: boolean) => {
+    returnFocusRef.current = viaKeyboard && !!menuRef.current?.contains(document.activeElement);
     setAnchor(null);
   }, []);
 
@@ -43,7 +44,7 @@ export function ViewMenu({ label, model }: { label: string; model: ViewMenuModel
     // A keyboard click never saw the mousedown that records the open state.
     const wasOpen = e.detail === 0 ? open : wasOpenRef.current;
     if (menuToggleIntent(wasOpen) === 'close') {
-      dismiss();
+      dismiss(false);
       return;
     }
     const r = e.currentTarget.getBoundingClientRect();
@@ -83,7 +84,8 @@ export function ViewMenu({ label, model }: { label: string; model: ViewMenuModel
           aria-label={label}
           className={`ctxmenu viewmenu${hasChips ? ' viewmenu--chips' : ''}`}
           triggerRef={triggerRef}
-          onClose={dismiss}
+          onClose={() => dismiss(false)}
+          onEscape={() => dismiss(true)}
           onKeyDown={moveMenuFocus}
         >
           <div className="ctxmenu__scroll">

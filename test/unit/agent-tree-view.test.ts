@@ -203,6 +203,13 @@ describe('Group', () => {
     expect(t.visibleIds.slice(0, 5)).toEqual(['pin', 'lead', 'h-ask', 'h-busy', 'busy-b']);
   });
 
+  it('By space: a root whose Space is not listed joins the no-space group instead of vanishing', () => {
+    const orphan = S('orphan', { projectId: 'gone', createdAt: 60 });
+    const t = build({ group: 'space' }, [...SESSIONS, orphan]);
+    expect(t.groups.find((g) => g.key === 'space:')?.rootIds).toEqual(['idle-b', 'orphan']);
+    expect(t.visibleIds).toContain('orphan');
+  });
+
   it('By agent type: Claude, Codex, Cursor, Other; a helper of another kind nests under its lead', () => {
     const t = build({ group: 'type' });
     expect(groupsOf(t)).toEqual([

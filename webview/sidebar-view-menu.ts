@@ -1,4 +1,5 @@
-import { type AgentRuntime, agentOwnState } from '../src/sidebar-state';
+import { inSelection } from '../src/agent-tree';
+import { type AgentRuntime, agentOwnState, type SpaceSelection } from '../src/sidebar-state';
 import {
   AGENT_GROUPINGS,
   AGENT_KINDS,
@@ -59,10 +60,13 @@ export function agentViewCounts(
   sessions: readonly Session[],
   runtime: AgentRuntime,
   askSessionIds: ReadonlySet<string>,
+  /** The Space and search the list is already narrowed by: a hint counts what the switch would show. */
+  scope: { selection: SpaceSelection; matchingIds: ReadonlySet<string> },
 ): { running: number; needsYou: number } {
   let running = 0;
   let needsYou = 0;
   for (const s of sessions) {
+    if (!inSelection(s, scope.selection) || !scope.matchingIds.has(s.id)) continue;
     if (s.status !== 'running') continue;
     running++;
     // An unseen id is baselined, as in the tree, so it can never read as Done here either.

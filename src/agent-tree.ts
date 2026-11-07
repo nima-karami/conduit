@@ -62,7 +62,7 @@ const maxState = (a: AgentState, b: AgentState): AgentState => (RANK[a] >= RANK[
 const discount = (s: AgentState): AgentState => (s === 'done' ? 'idle' : s);
 const byId = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-function inSelection(s: Session, selection: SpaceSelection): boolean {
+export function inSelection(s: Session, selection: SpaceSelection): boolean {
   if (selection.kind === 'all') return true;
   if (selection.kind === 'none') return s.projectId === undefined;
   return s.projectId === selection.projectId;
@@ -242,17 +242,26 @@ export function buildAgentTree(input: {
   // A root decides its group; its helpers follow it wherever they would have landed alone.
   if (view.group === 'none') push('flat', unpinned);
   else if (view.group === 'space') {
-    const spaceKeys = [...(input.spaces ?? []).map((sp) => sp.id), undefined].map(spaceGroupKey);
-    for (const key of spaceKeys)
+    const listed = (input.spaces ?? []).map((sp) => spaceGroupKey(sp.id));
+    // A root whose Space is not listed (deleted elsewhere, not yet synced) joins the no-Space group
+    // instead of vanishing.
+    const placed = (id: string) => {
+      const key = spaceGroupKey(byKey.get(id)?.projectId);
+      return listed.includes(key) ? key : spaceGroupKey(undefined);
+    };
+    for (const key of [...listed, spaceGroupKey(undefined)])
       push(
         key,
-        unpinned.filter((id) => spaceGroupKey(byKey.get(id)?.projectId) === key),
+        unpinned.filter((id) => placed(id) === key),
       );
   } else if (view.group === 'type') {
     for (const kind of AGENT_KINDS)
       push(
         kindGroupKey(kind),
-        unpinned.filter((id) => kindOf(byKey.get(id) as Session) === kind),
+        unpinned.filter((id) => {
+          const s = byKey.get(id);
+          return s !== undefined && kindOf(s) === kind;
+        }),
       );
   } else {
     for (const key of STATUS_GROUPS)
