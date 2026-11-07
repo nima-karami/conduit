@@ -27,7 +27,7 @@ describe('server domain: sessions.start', () => {
     expect(a.runtime.spawns[0]?.ids.launchId).toMatch(/^[0-9a-f]{32}$/);
     expect(persisted(a.userData).sessions.find((s) => s.id === id)?.lastGeneration).toBe(1);
 
-    a.domain.dispose();
+    await a.domain.dispose();
     const b = harness({ userData: a.userData });
     b.domain.adopted([]);
     const second = (await start(b, id)) as Started;

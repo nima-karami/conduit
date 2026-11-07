@@ -173,7 +173,7 @@ export interface Domain {
   settings(): ServerSettings;
   pendingTimers(): boolean;
   persist(): Promise<void>;
-  dispose(): void;
+  dispose(): Promise<void>;
 }
 
 /** The C2 requests and notifications W4 answers (main-ts-ownership.md, the server rows). */
@@ -402,6 +402,7 @@ export function createDomain(deps: DomainDeps): Domain {
     markReconciled = r;
   });
   const persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const pendingWrites = new Set<Promise<void>>();
   function writeSync(name: string, text: string) {
     try {
       atomicWriteFileSync(file(name), text);
@@ -410,9 +411,14 @@ export function createDomain(deps: DomainDeps): Domain {
     }
   }
   function writeAsync(name: string, text: string) {
-    atomicWriteFile(file(name), text, (err) => {
-      if (err) log.error('persist', `${name} write failed: ${String(err)}`);
+    const pending = new Promise<void>((resolve) => {
+      atomicWriteFile(file(name), text, (err) => {
+        if (err) log.error('persist', `${name} write failed: ${String(err)}`);
+        resolve();
+      });
     });
+    pendingWrites.add(pending);
+    void pending.then(() => pendingWrites.delete(pending));
   }
   /** D40: with restore off only what may still run is written, with its launch counter. */
   const persistedSessions = () =>
@@ -1600,13 +1606,14 @@ export function createDomain(deps: DomainDeps): Domain {
       const launchers = launcherHost.pendingFlush();
       if (launchers !== null) writeSync('launchers.json', launchers);
     },
-    dispose: () => {
+    dispose: async () => {
       unsubscribe();
       timers.stop();
       folders.dispose();
       clearTimeout(timersChangedTimer);
       for (const t of persistTimers.values()) clearTimeout(t);
       persistTimers.clear();
+      await Promise.all(pendingWrites);
     },
   };
 }

@@ -154,11 +154,9 @@ const tempDirs: string[] = [];
 const domains: Domain[] = [];
 
 /** For afterEach: disposes every harness's domain and removes the temp dirs harnesses made. */
-export function disposeHarnesses(): void {
-  for (const d of domains.splice(0)) d.dispose();
-  // dispose() doesn't wait for an async atomic write still in flight; rm retries past it.
-  for (const dir of tempDirs.splice(0))
-    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+export async function disposeHarnesses(): Promise<void> {
+  await Promise.all(domains.splice(0).map((d) => d.dispose()));
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 }
 
 /** A domain over fakes for every port, in a fresh temp userData (posix paths on CI). */

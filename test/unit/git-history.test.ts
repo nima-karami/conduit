@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import * as os from 'node:os';
 import { join } from 'node:path';
@@ -393,15 +394,6 @@ describe('diff producers: renamed-with-edits (integration, temp repo)', () => {
 });
 
 describe('diff producers: Git LFS images (integration, temp repo)', () => {
-  const lfsPresent = (() => {
-    try {
-      execFileSync('git', ['lfs', 'version'], { stdio: 'ignore' });
-      return true;
-    } catch {
-      return false;
-    }
-  })();
-
   const INTEGRATION_TIMEOUT_MS = 30_000;
   // A real 1×1 PNG: the bytes must survive pointer → local object → data URL untouched.
   const PNG = Buffer.from(
@@ -414,21 +406,29 @@ describe('diff producers: Git LFS images (integration, temp repo)', () => {
   let baseSha = '';
   let headSha = '';
 
+  const pointer = (bytes: Buffer) => {
+    const oid = createHash('sha256').update(bytes).digest('hex');
+    return {
+      oid,
+      text: `version https://git-lfs.github.com/spec/v1\noid sha256:${oid}\nsize ${bytes.length}\n`,
+    };
+  };
+
   beforeAll(() => {
-    if (!lfsPresent) return;
     repo = mkdtempSync(join(os.tmpdir(), 'conduit-lfs-'));
     const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, stdio: 'ignore' });
     git('init', '-q');
     git('config', 'user.email', 'test@example.com');
     git('config', 'user.name', 'Test');
     git('config', 'commit.gpgsign', 'false');
-    git('lfs', 'install', '--local');
-    git('lfs', 'track', '*.png');
-    git('add', '-A');
-    git('commit', '-q', '-m', 'track png in lfs');
+    git('commit', '-q', '--allow-empty', '-m', 'base');
     baseSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim();
     mkdirSync(join(repo, 'src/assets/symbols'), { recursive: true });
-    writeFileSync(join(repo, REL), PNG);
+    const { oid, text } = pointer(PNG);
+    const objectDir = join(repo, '.git', 'lfs', 'objects', oid.slice(0, 2), oid.slice(2, 4));
+    mkdirSync(objectDir, { recursive: true });
+    writeFileSync(join(objectDir, oid), PNG);
+    writeFileSync(join(repo, REL), text);
     git('add', '-A');
     git('commit', '-q', '-m', 'add png');
     headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim();
@@ -443,8 +443,8 @@ describe('diff producers: Git LFS images (integration, temp repo)', () => {
     url?.startsWith('data:image/png;base64,') === true &&
     Buffer.from(url.slice(url.indexOf(',') + 1), 'base64').equals(PNG);
 
-  it.runIf(lfsPresent)(
-    'getRangeDiff ships the smudged image, not the LFS pointer',
+  it(
+    'getRangeDiff ships the local LFS image, not the pointer',
     async () => {
       const { files } = await getRangeDiff(
         repo,
@@ -458,8 +458,8 @@ describe('diff producers: Git LFS images (integration, temp repo)', () => {
     INTEGRATION_TIMEOUT_MS,
   );
 
-  it.runIf(lfsPresent)(
-    'getCommitDiff ships the smudged image, not the LFS pointer',
+  it(
+    'getCommitDiff ships the local LFS image, not the pointer',
     async () => {
       const { files } = await getCommitDiff(repo, headSha);
       const doc = files.find((d) => d.path === REL);
@@ -468,11 +468,11 @@ describe('diff producers: Git LFS images (integration, temp repo)', () => {
     INTEGRATION_TIMEOUT_MS,
   );
 
-  it.runIf(lfsPresent)(
+  it(
     'an image whose LFS object is not local keeps its true status (the pointer stands in)',
     async () => {
       const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, stdio: 'ignore' });
-      writeFileSync(join(repo, REL), Buffer.concat([PNG, Buffer.from([0])]));
+      writeFileSync(join(repo, REL), pointer(Buffer.concat([PNG, Buffer.from([0])])).text);
       git('add', '-A');
       git('commit', '-q', '-m', 'modify png');
       const modSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim();

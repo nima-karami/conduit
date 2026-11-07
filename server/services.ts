@@ -391,7 +391,7 @@ export function createServices(o: ServicesOptions) {
         } catch (error) {
           log.error('mcp', `stop failed: ${String(error)}`);
         }
-        domain.dispose();
+        await domain.dispose();
         attention.dispose();
         await runtime.close();
       })();
