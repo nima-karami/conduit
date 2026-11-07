@@ -82,7 +82,22 @@ runScenario('html-viewer', async ({ app, page, log }) => {
   );
   log('.docpage document treatment applied (it was absent before this work) ✓');
 
-  await page.waitForTimeout(5000);
+  // The guest's own state is the readiness signal (its CSS/JS ran, the fetch settled). The
+  // webview tag's executeJavaScript rejects before dom-ready, which just means "not yet".
+  await page.waitForFunction(
+    async () => {
+      const frame = document.querySelector('.htmlview__frame');
+      try {
+        return await frame.executeJavaScript(
+          `!!document.querySelector('#h') && document.body.dataset.ran === 'yes' && window.__net !== 'pending'`,
+        );
+      } catch {
+        return false;
+      }
+    },
+    null,
+    { timeout: 20000 },
+  );
   const probe = await inGuest(
     app,
     `({
@@ -134,7 +149,7 @@ runScenario('html-viewer', async ({ app, page, log }) => {
 
   // ── A non-HTML file is untouched by any of this ──────────────────────────
   await row('notes.md').click();
-  await page.waitForTimeout(1500);
+  await page.locator('.docpanel', { hasText: 'not html' }).first().waitFor({ timeout: 10000 });
   assert(
     (await page.locator('.htmlview__frame').count()) === 0,
     'a markdown file must not mount a preview guest',
@@ -143,7 +158,10 @@ runScenario('html-viewer', async ({ app, page, log }) => {
 
   // ── An empty .html says so rather than showing a blank pane ──────────────
   await row('blank.html').click();
-  await page.waitForTimeout(2500);
+  await page
+    .locator('.docpanel', { hasText: 'This file is empty.' })
+    .first()
+    .waitFor({ timeout: 10000 });
   const emptyShown = await page.locator('.docpanel', { hasText: 'This file is empty.' }).count();
   assert(emptyShown > 0, 'an empty .html renders the empty-document state, not a blank pane');
   assert(

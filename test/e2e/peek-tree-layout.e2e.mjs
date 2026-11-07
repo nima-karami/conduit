@@ -131,6 +131,30 @@ function assertRows(rows, where) {
   }
 }
 
+/**
+ * Resolves once the peek tree's file rows are mounted and their rects are identical on two
+ * consecutive polls (the predicate is re-run every 100 ms — a hidden window throttles rAF — and `window.__peekSig` carries the last).
+ * `pick` is the row index to also require inside the viewport, or -1 for no such requirement.
+ */
+async function waitPeekRowsAtRest(page, minRows, pick, timeout) {
+  await page.waitForFunction(
+    ([min, idx]) => {
+      const rows = Array.from(
+        document.querySelectorAll('.zone-widget .ref-tree .monaco-list-row'),
+      ).filter((r) => r.querySelector('.reference-file'));
+      if (rows.length < min) return false;
+      const rects = rows.map((r) => r.getBoundingClientRect());
+      if (idx >= 0 && (rects[idx].top < 0 || rects[idx].bottom > window.innerHeight)) return false;
+      const sig = rects.map((b) => `${b.left},${b.top},${b.width},${b.height}`).join('|');
+      const settled = window.__peekSig === sig;
+      window.__peekSig = sig;
+      return settled;
+    },
+    [minRows, pick],
+    { timeout, polling: 100 },
+  );
+}
+
 runScenario('peek-tree-layout', async ({ app, page, log }) => {
   const root = buildFixture();
   const target = join(root, 'src', 'partner.ts');
@@ -145,7 +169,7 @@ runScenario('peek-tree-layout', async ({ app, page, log }) => {
     await page.keyboard.press(key);
     await page.waitForSelector('.zone-widget .reference-file', { timeout: 20000 });
     // The tree lays out on the frame after it mounts.
-    await page.waitForTimeout(500);
+    await waitPeekRowsAtRest(page, 6, -1, 10000);
   };
 
   for (const size of ['default', 'narrow']) {
@@ -153,7 +177,7 @@ runScenario('peek-tree-layout', async ({ app, page, log }) => {
       await app.evaluate((electron) =>
         electron.BrowserWindow.getAllWindows()[0].setSize(1100, 800),
       );
-      await page.waitForTimeout(500);
+      await page.waitForFunction(() => window.innerWidth <= 1100, null, { timeout: 5000 });
     }
     for (const [key, what] of [
       ['Shift+F12', 'references'],
@@ -168,22 +192,17 @@ runScenario('peek-tree-layout', async ({ app, page, log }) => {
     // Select a FILE row with a real click — the selected/focused styling is its own rule set.
     // Opening a peek scrolls the host editor to reveal it, on animation frames a hidden window
     // throttles — so aim only once the row is inside the viewport and has stopped moving.
-    let at = null;
-    let prev = null;
-    for (const deadline = Date.now() + 10000; Date.now() < deadline && !at; ) {
-      const cur = await page.evaluate(() => {
-        const rows = Array.from(
-          document.querySelectorAll('.zone-widget .ref-tree .monaco-list-row'),
-        ).filter((r) => r.querySelector('.reference-file'));
-        const b = rows[2]?.getBoundingClientRect();
-        if (!b || b.top < 0 || b.bottom > window.innerHeight) return null;
-        return { x: b.left + 40, y: b.top + b.height / 2 };
-      });
-      if (cur && prev && cur.x === prev.x && cur.y === prev.y) at = cur;
-      prev = cur;
-      await page.waitForTimeout(150);
-    }
-    assert(at, `${size}: the third file row never came to rest inside the peek`);
+    await waitPeekRowsAtRest(page, 3, 2, 10000).catch((error) => {
+      if (error.name !== 'TimeoutError') throw error;
+      assert(false, `${size}: the third file row never came to rest inside the peek`);
+    });
+    const at = await page.evaluate(() => {
+      const rows = Array.from(
+        document.querySelectorAll('.zone-widget .ref-tree .monaco-list-row'),
+      ).filter((r) => r.querySelector('.reference-file'));
+      const b = rows[2].getBoundingClientRect();
+      return { x: b.left + 40, y: b.top + b.height / 2 };
+    });
     await page.mouse.click(at.x, at.y);
     const selected = await page
       .waitForFunction(

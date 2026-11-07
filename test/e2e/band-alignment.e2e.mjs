@@ -88,7 +88,6 @@ runScenario('band-alignment', async ({ app, page, log }) => {
     document.documentElement.dataset.theme = 'aero-dark';
     document.documentElement.dataset.density = 'comfortable';
   });
-  await page.waitForTimeout(600);
 
   /** The panel's top edge row and the fill two rows in, as [r,g,b]. */
   const topEdge = async () => {
@@ -124,9 +123,20 @@ runScenario('band-alignment', async ({ app, page, log }) => {
     );
   };
   const spread = (s) => Math.max(...s.ring.map((c, i) => Math.abs(c - s.fill[i])));
+  /**
+   * A hidden window repaints on a later compositor frame than the style change, and no DOM event
+   * announces it — so sample (each screenshot forces a capture) until the pixels show the state,
+   * bounded by a deadline; the caller asserts on whatever the last sample was.
+   */
+  const edgeWhen = async (ready) => {
+    const deadline = Date.now() + 8000;
+    let sample = await topEdge();
+    while (!ready(sample) && Date.now() < deadline) sample = await topEdge();
+    return sample;
+  };
 
   // Alignment is cheap to get by deleting the hairline; prove it is still drawn.
-  const rest = await topEdge();
+  const rest = await edgeWhen((e) => spread(e) >= 8 && e.accent === 0);
   log(`panel top edge ${JSON.stringify(rest.ring)} vs fill ${JSON.stringify(rest.fill)}`);
   assert(
     spread(rest) >= 8,
@@ -139,8 +149,7 @@ runScenario('band-alignment', async ({ app, page, log }) => {
   await page.evaluate(() => {
     document.querySelector('.panel--sessions').classList.add('panel--droptarget');
   });
-  await page.waitForTimeout(600);
-  const dropping = await topEdge();
+  const dropping = await edgeWhen((e) => e.accent >= 30);
   log(`droptarget edge: ${dropping.accent}/120 px read as the accent`);
   assert(
     dropping.accent >= 30,

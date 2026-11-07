@@ -69,8 +69,11 @@ runScenario('editor-far-column', async ({ page, log }) => {
   await waitForIndexReady(page, log);
   await openViaTree(page, root, ['a.ts']);
   await page.evaluate(() => document.fonts.ready);
-  // A web font's `loadingdone` and any re-layout it triggers land after `ready` resolves.
-  await page.waitForTimeout(300);
+  // A web font's `loadingdone` and the re-layout it triggers can land after `ready` resolves;
+  // two frames let Monaco apply the remeasure before the caret is placed.
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  );
 
   await placeCursor(page, a, 'farTarget()');
   const caretAt = await page.evaluate(() =>
@@ -99,14 +102,24 @@ runScenario('editor-far-column', async ({ page, log }) => {
   assert(point.column > 120, `pointOn should target a far column, got ${point.column}`);
   await page.keyboard.down('Control');
   await page.mouse.move(point.x, point.y);
-  await page.waitForTimeout(250);
+  // The Ctrl-hover link decoration is Monaco's signal that the definition lookup has resolved.
+  await page.waitForSelector('.monaco-editor .goto-definition-link', { timeout: 5000 });
   await page.mouse.click(point.x, point.y);
   await page.keyboard.up('Control');
-  let after = await observe(page);
-  for (let i = 0; i < 40 && !/target\.ts$/.test(after.path ?? ''); i++) {
-    await page.waitForTimeout(150);
-    after = await observe(page);
-  }
+  await page
+    .waitForFunction(
+      () => {
+        const eds = window.monaco?.editor.getEditors() ?? [];
+        const ed = eds[eds.length - 1];
+        return /target\.ts$/.test(ed?.getModel()?.uri.path ?? '');
+      },
+      null,
+      { timeout: 6000 },
+    )
+    .catch((error) => {
+      if (error.name !== 'TimeoutError') throw error;
+    });
+  const after = await observe(page);
   assert(
     /target\.ts$/.test(after.path ?? '') && after.line === 5,
     `a real Ctrl+click on farTarget (column ${point.column}) should land on target.ts:5, got ${JSON.stringify(after)}`,

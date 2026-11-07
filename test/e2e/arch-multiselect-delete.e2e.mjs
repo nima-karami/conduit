@@ -49,7 +49,9 @@ runScenario('arch-multiselect-delete', async ({ page, log }) => {
       .focus()
       .catch(() => {});
     await page.keyboard.press('Control+Backquote');
-    await page.waitForTimeout(250);
+    await page
+      .waitForFunction(() => !document.activeElement?.closest('.xterm'), null, { timeout: 3000 })
+      .catch(() => {});
     await page.keyboard.press('Control+Shift+P');
     const palette = await page
       .waitForSelector('.palette', { state: 'visible', timeout: 3000 })
@@ -91,12 +93,28 @@ runScenario('arch-multiselect-delete', async ({ page, log }) => {
     log(`${label}: ${n} selected ✓`);
   };
 
+  // Bounded negative check: a late collapse would show as the count leaving `n` in the window.
+  const assertSelectionHolds = async (n) => {
+    const changed = await page
+      .waitForFunction(
+        (want) => document.querySelectorAll('.react-flow__node.selected').length !== want,
+        n,
+        { timeout: 400 },
+      )
+      .then(() => true)
+      .catch((error) => {
+        if (error.name !== 'TimeoutError') throw error;
+        return false;
+      });
+    assert(!changed, `selection left ${n} while the context menu was open`);
+  };
+
   // ── Collapse leg: right-clicking a node OUTSIDE the selection collapses onto it ──
   await body(a).click();
   await expectSelected(1, 'click node A');
   await body(b).click({ button: 'right' });
   await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 8000 });
-  await page.waitForTimeout(120);
+  await page.waitForSelector(`.react-flow__node[data-id="${b}"].selected`, { timeout: 5000 });
   await expectSelected(1, 'right-click node B collapses onto it');
   const bSelected = await page.locator(`.react-flow__node[data-id="${b}"].selected`).count();
   assert(bSelected === 1, 'the collapsed selection must be the RIGHT-CLICKED node');
@@ -116,7 +134,7 @@ runScenario('arch-multiselect-delete', async ({ page, log }) => {
 
   await body(a).click({ button: 'right' });
   await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 8000 });
-  await page.waitForTimeout(120);
+  await assertSelectionHolds(2);
   await expectSelected(2, 'selection preserved under the open menu');
 
   const rows = await menuRows(page);

@@ -45,10 +45,43 @@ const userDataDir = profileDir('tlf');
 // Past the boot font wait (BOOT_FONT_TIMEOUT_MS, 3 s), so the first terminal mounts in a fallback.
 const FONT_DELAY_MS = 6000;
 
-async function waitForFont(page) {
+/**
+ * Waits for the session's terminal to have refit after the late face arrived: cells as wide as
+ * the real face's advance and the screen inside its pane. These are the facts judged next, so a
+ * terminal that never gets there times out here and is then reported by the judges, not hidden.
+ */
+async function waitTerminalSettled(page, id) {
+  await page
+    .waitForFunction(
+      (sid) => {
+        const t = window.__terms?.[sid];
+        const screen = t?.element?.querySelector('.xterm-screen');
+        const pane = t?.element?.closest('.termpane');
+        if (!t || !screen || !pane) return false;
+        const px = Number(t.options.fontSize);
+        const ctx = document.createElement('canvas').getContext('2d');
+        const dpr = window.devicePixelRatio || 1;
+        ctx.font = `${px}px ${String(t.options.fontFamily)}`;
+        const expected = Math.floor(ctx.measureText('W').width * dpr) / dpr;
+        const box = screen.getBoundingClientRect();
+        return (
+          Math.abs(box.width / t.cols - expected) < 0.05 &&
+          box.height > 0 &&
+          box.height <= pane.clientHeight
+        );
+      },
+      id,
+      { timeout: 15000 },
+    )
+    .catch((error) => {
+      if (error.name !== 'TimeoutError') throw error;
+      log(`terminal ${id} had not settled after 15 s; the judges report what is wrong`);
+    });
+}
+
+async function waitForFont(page, id) {
   const { family, px } = await terminalFace(page);
   const font = `${px}px "${family}"`;
-  await page.waitForTimeout(1000);
   log(
     `${family} faces before: ${await page.evaluate(
       (fam) =>
@@ -62,7 +95,7 @@ async function waitForFont(page) {
   // Under WebGL nothing in the page requests the face; the editor or a code block would.
   await page.evaluate((f) => document.fonts.load(f), font);
   await page.waitForFunction((f) => document.fonts.check(f), font, { timeout: 30000 });
-  await page.waitForTimeout(1500);
+  await waitTerminalSettled(page, id);
 }
 
 const measure = (page, id, label) => probeTerminalSize(page, id, `FONT-PROBE-${label}`);
@@ -127,13 +160,13 @@ try {
   // ── 1. A fresh session, its font arriving after its first fit ─────────────
   const sid = await openSession(page, { path: REPO, agentId: 'shell:cmd' });
   assert(sid, 'No session after openRepo');
-  await waitForFont(page);
+  await waitForFont(page, sid);
   // A terminal opened once the font is in: the cell size every terminal should have.
   const control = await openSession(page, { path: REPO, agentId: 'shell:cmd' });
   const truth = await measure(page, control, 'control');
   log(`control (opened after the font): xterm ${truth.xterm}, cell ${truth.cellH}px`);
   await page.click(`[data-sessionid="${sid}"]`);
-  await page.waitForTimeout(1000);
+  await waitTerminalSettled(page, sid);
   judge('fresh session', await measure(page, sid, 'fresh'), truth.cellH);
   judgeWidth('fresh session', await measureCellWidth(page, sid));
 
@@ -149,7 +182,7 @@ try {
   });
   await page.click(`[data-sessionid="${sid}"]`);
   await page.waitForFunction((id) => !!window.__terms?.[id], sid, { timeout: 20000 });
-  await waitForFont(page);
+  await waitForFont(page, sid);
   judge('after reload', await measure(page, sid, 'reload'), truth.cellH);
   judgeWidth('after reload', await measureCellWidth(page, sid));
 

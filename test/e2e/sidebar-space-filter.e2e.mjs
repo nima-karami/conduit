@@ -101,7 +101,39 @@ async function newWindow(app, page) {
 
 const pressed = (page, key) => spaceRow(page, key).getAttribute('aria-pressed');
 
-await runScenario(
+await /** Bounded negative check: a later child-move message would show as the child leaving `space`. */
+async function assertChildKeepsAlpha(page, id, space, what) {
+  try {
+    await page.waitForFunction(
+      ([sid, sp]) => (window.__sessions || []).find((x) => x.id === sid)?.projectId !== sp,
+      [id, space],
+      { timeout: 800 },
+    );
+    assert(false, `${what}: the child left Alpha within the observation window`);
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+  }
+  assert((await sessionOf(page, id))?.projectId === space, what);
+};
+
+/** Resolves once the app has `n` windows; the 'window' event is the signal, not a poll. */
+async function waitWindows(app, n, timeout) {
+  await new Promise((resolve) => {
+    const done = () => {
+      app.off('window', check);
+      clearTimeout(timer);
+      resolve();
+    };
+    const check = () => {
+      if (app.windows().length >= n) done();
+    };
+    const timer = setTimeout(done, timeout);
+    app.on('window', check);
+    check();
+  });
+}
+
+runScenario(
   'sidebar-space-filter',
   async ({ app, page, userDataDir, log }) => {
     await tapMcp(page);
@@ -198,7 +230,17 @@ await runScenario(
     await filter.waitFor({ state: 'visible', timeout: 5_000 });
     await filter.fill(lName);
     await page.evaluate(() => document.activeElement?.blur());
-    await page.waitForTimeout(300);
+    // Bounded negative check: blur must not collapse a non-empty query within the window.
+    const collapsed = await page
+      .waitForFunction(() => !document.querySelector('input.sessbar__filter'), null, {
+        timeout: 400,
+      })
+      .then(() => true)
+      .catch((error) => {
+        if (error.name !== 'TimeoutError') throw error;
+        return false;
+      });
+    assert(!collapsed, 'a non-empty query collapsed on blur');
     assert(await filter.isVisible(), 'a non-empty query stays visible on blur');
     await waitRows(page, [l], 'the blurred query keeps filtering');
     await filter.focus();
@@ -230,8 +272,7 @@ await runScenario(
       (s) => s?.projectId === beta,
       'the dropped parent moves to Beta',
     );
-    await page.waitForTimeout(500);
-    assert((await sessionOf(page, c))?.projectId === alpha, 'its child keeps Alpha');
+    await assertChildKeepsAlpha(page, c, alpha, 'its child keeps Alpha');
     assert((await sessionOf(page, l))?.projectId === undefined, 'the loose agent is untouched');
     log('drop on Beta moves P alone; All refuses the drop ✓');
 
@@ -272,8 +313,7 @@ await runScenario(
       (s) => s?.projectId === gamma,
       'the picker moves P to Gamma',
     );
-    await page.waitForTimeout(500);
-    assert((await sessionOf(page, c))?.projectId === alpha, 'the child still keeps Alpha');
+    await assertChildKeepsAlpha(page, c, alpha, 'the child still keeps Alpha');
     await selectSpace(page, gamma);
     await waitRows(page, [p], 'Gamma holds just P');
     await selectSpace(page, alpha);
@@ -316,9 +356,7 @@ await runScenario(
     let second = null;
     try {
       second = await launchApp({ userDataDir, openFolder: false });
-      const deadline = Date.now() + 20_000;
-      while (second.app.windows().length < 2 && Date.now() < deadline)
-        await new Promise((r) => setTimeout(r, 250));
+      await waitWindows(second.app, 2, 20_000);
       const pages = second.app.windows();
       assert(pages.length === 2, `two windows restored, got ${pages.length}`);
       for (const pg of pages) {

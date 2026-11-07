@@ -73,13 +73,33 @@ runScenario('explorer-multiselect-delete', async ({ app, page, log }) => {
     log(`${label}: ${n} selected ✓`);
   };
 
-  /** Poll the REAL filesystem — the delete is async all the way through the host. */
+  /** The delete is async through the host; the row leaving the tree is the signal, then the REAL filesystem is checked. */
   const waitGone = async (name) => {
-    for (let i = 0; i < 60; i++) {
-      if (!existsSync(abs(name))) return true;
-      await page.waitForTimeout(250);
-    }
-    return false;
+    const detached = await fileRow(page, name)
+      .first()
+      .waitFor({ state: 'detached', timeout: 15000 })
+      .then(() => true)
+      .catch((error) => {
+        if (error.name !== 'TimeoutError') throw error;
+        return false;
+      });
+    return detached && !existsSync(abs(name));
+  };
+
+  // The menu is open; a late collapse would show as the selected count leaving `n` in the window.
+  const assertSelectionHolds = async (n) => {
+    const changed = await page
+      .waitForFunction(
+        (want) => document.querySelectorAll('.filerow--selected').length !== want,
+        n,
+        { timeout: 400 },
+      )
+      .then(() => true)
+      .catch((error) => {
+        if (error.name !== 'TimeoutError') throw error;
+        return false;
+      });
+    assert(!changed, `selection left ${n} while the context menu was open`);
   };
 
   // ── Delete a 3-file selection from the menu ────────────────────────────────
@@ -94,7 +114,7 @@ runScenario('explorer-multiselect-delete', async ({ app, page, log }) => {
 
   await fileRow(page, 'c.txt').first().click({ button: 'right' });
   await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 8000 });
-  await page.waitForTimeout(120);
+  await assertSelectionHolds(3);
   await expectCount(3, 'selection preserved under the open menu');
 
   const rows = await menuRows(page);
@@ -152,7 +172,10 @@ runScenario('explorer-multiselect-delete', async ({ app, page, log }) => {
 
   await fileRow(page, 'e.txt').first().click({ button: 'right' });
   await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 8000 });
-  await page.waitForTimeout(120);
+  await fileRow(page, 'e.txt')
+    .first()
+    .and(page.locator('.filerow--selected'))
+    .waitFor({ timeout: 5000 });
   await expectCount(1, 'selection collapsed onto the clicked row');
   const rows2 = await menuRows(page);
   assert(

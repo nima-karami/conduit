@@ -260,7 +260,27 @@ try {
     const el = document.querySelector('.review__scroll');
     if (el) el.scrollTop += 400;
   });
-  await page.waitForTimeout(200);
+  // The scroll lands on a later frame; the pinned state is what the asserts below measure.
+  await page
+    .waitForFunction(
+      () => {
+        const card = document.querySelector('.rcard[data-path="long.ts"]');
+        const head = card?.querySelector('.rcard__head');
+        const scroll = document.querySelector('.review__scroll');
+        if (!card || !head || !scroll) return false;
+        const padTop = Number.parseFloat(getComputedStyle(scroll).paddingTop) || 0;
+        const port = scroll.getBoundingClientRect().top + padTop;
+        return (
+          card.getBoundingClientRect().top < port - 20 &&
+          Math.abs(head.getBoundingClientRect().top - port) < 8
+        );
+      },
+      null,
+      { timeout: 8000 },
+    )
+    .catch((error) => {
+      if (error.name !== 'TimeoutError') throw error;
+    });
   const stuck = await page.evaluate(() => {
     const card = document.querySelector('.rcard[data-path="long.ts"]');
     const head = card?.querySelector('.rcard__head');
@@ -311,10 +331,30 @@ try {
   log('ignore-whitespace hides an indent-only change and restores it ✓');
 
   // (7) The source picker offers Last commit, and hides the two rows this repo can't resolve.
+  // An ABSENCE needs proof both preset lookups were answered, so record their replies first.
+  await page.evaluate(() => {
+    window.__presetReplies = new Set();
+    window.agentDeck.subscribe((m) => {
+      if (m.type === 'git:resolveRangeResult') window.__presetReplies.add(m.preset);
+    });
+  });
   await page.click('.review__source');
   await page.waitForSelector('.commit-picker__row', { state: 'visible', timeout: 10000 });
-  // Both presets need a round trip; give the replies a beat before asserting an ABSENCE.
-  await page.waitForTimeout(600);
+  await page.waitForFunction(
+    () =>
+      window.__presetReplies.has('unpushed') &&
+      window.__presetReplies.has('branchPoint') &&
+      (() => {
+        const text = document.querySelector('.commit-picker__list')?.textContent ?? '';
+        return (
+          text.includes('Last commit') &&
+          !text.includes('Unpushed') &&
+          !text.includes('Since branch point')
+        );
+      })(),
+    null,
+    { timeout: 10000 },
+  );
   const pickerText = await page.textContent('.commit-picker__list');
   assert(pickerText.includes('Last commit'), 'the picker must offer Last commit');
   assert(!pickerText.includes('Unpushed'), 'a repo with no upstream must not offer Unpushed');
@@ -325,7 +365,15 @@ try {
   // Escape closes the picker ONLY — Review itself stays (QA mf-review R2).
   await page.keyboard.press('Escape');
   await page.waitForSelector('.commit-picker__row', { state: 'detached', timeout: 8000 });
-  await page.waitForTimeout(300);
+  // Bounded negative check: Review must not close in the window after the picker did.
+  const reviewClosed = await page
+    .waitForFunction(() => !document.querySelector('.review .rcard'), null, { timeout: 400 })
+    .then(() => true)
+    .catch((error) => {
+      if (error.name !== 'TimeoutError') throw error;
+      return false;
+    });
+  assert(!reviewClosed, 'Escape in the source picker must not close Review');
   assert(
     await page.locator('.review .rcard').first().isVisible(),
     'Escape in the source picker must not close Review',

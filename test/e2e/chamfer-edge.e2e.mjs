@@ -88,7 +88,12 @@ runScenario('chamfer-edge', async ({ app, page, log }) => {
     document.querySelector('.sidebar button[aria-label="New agent"]')?.click(),
   );
   await page.waitForSelector('.modal', { timeout: 10000 });
-  await page.waitForTimeout(400);
+  // The survey reads computed style, which an entrance animation is still moving.
+  await page.waitForFunction(
+    () => document.querySelector('.modal')?.getAnimations({ subtree: true }).length === 0,
+    null,
+    { timeout: 5000 },
+  );
 
   const inModal = await survey(CHAMFERED);
   log(`modal surfaces: ${inModal.map((r) => r.cls).join(' | ') || '(none)'}`);
@@ -96,7 +101,15 @@ runScenario('chamfer-edge', async ({ app, page, log }) => {
 
   // Hover re-colours the edge through the state ladder; the corner has to come along.
   await page.hover('.btn:not(.btn--primary)');
-  await page.waitForTimeout(300);
+  // Likewise the hover transition: wait until the hovered button's colours have arrived.
+  await page.waitForFunction(
+    () => {
+      const btn = document.querySelector('.btn:not(.btn--primary)');
+      return !!btn?.matches(':hover') && btn.getAnimations({ subtree: true }).length === 0;
+    },
+    null,
+    { timeout: 5000 },
+  );
   await check('modal / button hovered');
 
   await page.keyboard.press('Escape');

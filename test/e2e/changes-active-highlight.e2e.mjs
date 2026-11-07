@@ -49,47 +49,47 @@ function makeRepos() {
   return { home, ref };
 }
 
-/** Every `[aria-current="true"]` in the Changes list, with its section, repo and class. */
-const activeRows = (page) =>
-  page.evaluate(() => {
-    const scroller = document.querySelector('.rightpane__scroll:not(.rightpane__scroll--files)');
-    return Array.from(scroller?.querySelectorAll('[aria-current="true"]') ?? [], (el) => {
-      let sec = el.previousElementSibling;
-      while (sec && !sec.classList.contains('changes__section')) sec = sec.previousElementSibling;
-      const head = el.closest('.repo-head__list')?.previousElementSibling;
-      return {
-        file: el.querySelector('.change__file')?.textContent ?? null,
-        section: sec?.querySelector('span')?.textContent ?? null,
-        repo: head?.querySelector('.repo-head__name')?.textContent ?? null,
-        cls: el.classList.contains('change') && el.classList.contains('change--active'),
-      };
-    });
+/**
+ * In-page: every `[aria-current="true"]` in the Changes list (section, repo, class) compared with
+ * `wanted` ([] or one {file, section[, repo]} each).
+ */
+function compareActive([wanted, detail]) {
+  const scroller = document.querySelector('.rightpane__scroll:not(.rightpane__scroll--files)');
+  const rows = Array.from(scroller?.querySelectorAll('[aria-current="true"]') ?? [], (el) => {
+    let sec = el.previousElementSibling;
+    while (sec && !sec.classList.contains('changes__section')) sec = sec.previousElementSibling;
+    const head = el.closest('.repo-head__list')?.previousElementSibling;
+    return {
+      file: el.querySelector('.change__file')?.textContent ?? null,
+      section: sec?.querySelector('span')?.textContent ?? null,
+      repo: head?.querySelector('.repo-head__name')?.textContent ?? null,
+      cls: el.classList.contains('change') && el.classList.contains('change--active'),
+    };
   });
-
-const activeClassCount = (page) =>
-  page.evaluate(() => document.querySelectorAll('.change--active').length);
-
-/** Polls until the active rows are exactly `want` ([] or one {file, section[, repo]}). */
-async function expectActive(page, want, what) {
-  const deadline = Date.now() + 10000;
-  let rows = [];
-  let classes = -1;
-  const matches = () =>
-    rows.length === want.length &&
-    classes === want.length &&
+  const classes = document.querySelectorAll('.change--active').length;
+  const ok =
+    rows.length === wanted.length &&
+    classes === wanted.length &&
     rows.every(
       (r, i) =>
         r.cls &&
-        r.file === want[i].file &&
-        r.section === want[i].section &&
-        (want[i].repo === undefined || r.repo === want[i].repo),
+        r.file === wanted[i].file &&
+        r.section === wanted[i].section &&
+        (wanted[i].repo === undefined || r.repo === wanted[i].repo),
     );
-  while (Date.now() < deadline) {
-    rows = await activeRows(page);
-    classes = await activeClassCount(page);
-    if (matches()) return;
-    await page.waitForTimeout(150);
-  }
+  return detail ? { rows, classes } : ok;
+}
+
+async function expectActive(page, want, what) {
+  const matched = await page.waitForFunction(compareActive, [want, false], { timeout: 10000 }).then(
+    () => true,
+    (error) => {
+      if (error.name !== 'TimeoutError') throw error;
+      return false;
+    },
+  );
+  if (matched) return;
+  const { rows, classes } = await page.evaluate(compareActive, [want, true]);
   assert(
     false,
     `${what}: active rows ${JSON.stringify(rows)} (${classes} with .change--active), want ${JSON.stringify(want)}`,
@@ -139,11 +139,15 @@ const activeRowInView = (page) =>
     return b.top >= a.top - 1 && b.bottom <= a.bottom + 1;
   });
 
-const scrollTopOf = (page) =>
-  page.evaluate(
-    () =>
-      document.querySelector('.rightpane__scroll:not(.rightpane__scroll--files)')?.scrollTop ?? -1,
-  );
+/** Bounded negative check: `forbidden` (given `arg`) must stay false for the whole window. */
+async function assertAbsentFor(page, ms, forbidden, what, arg = null) {
+  try {
+    await page.waitForFunction(forbidden, arg, { timeout: ms });
+    assert(false, `${what} appeared during the ${ms} ms observation window`);
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+  }
+}
 
 async function waitInView(page, what) {
   const ok = await page
@@ -280,8 +284,14 @@ runScenario('changes-active-highlight', async ({ page, log }) => {
     if (sc) sc.scrollTop = 0;
   });
   await refreshChanges(page);
-  await page.waitForTimeout(1500);
-  assert((await scrollTopOf(page)) === 0, 'a refresh with the same target must not scroll');
+  await assertAbsentFor(
+    page,
+    1500,
+    () =>
+      (document.querySelector('.rightpane__scroll:not(.rightpane__scroll--files)')?.scrollTop ??
+        -1) !== 0,
+    'a refresh with the same target scrolled the list',
+  );
   await expectActive(page, [{ file: 'zz-last.txt', section: 'Changes' }], 'after refresh');
   assert(!(await activeRowInView(page)), 'precondition: the row is scrolled away');
   log('Refresh with the same target leaves scrollTop alone ✓');
@@ -322,17 +332,21 @@ runScenario('changes-active-highlight', async ({ page, log }) => {
     { timeout: 5000 },
   );
   await expectActive(page, [], 'repo 2 collapsed');
-  await page.waitForTimeout(500);
-  const stillCollapsed = await page.evaluate((n) => {
-    const h = Array.from(document.querySelectorAll('.repo-head')).find(
-      (x) => x.querySelector('.repo-head__name')?.textContent === n,
-    );
-    return (
-      h?.querySelector('.repo-head__chev')?.getAttribute('aria-expanded') === 'false' &&
-      !h.nextElementSibling?.classList.contains('repo-head__list')
-    );
-  }, refName);
-  assert(stillCollapsed, 'D3: repo 2 must stay collapsed');
+  await assertAbsentFor(
+    page,
+    500,
+    (n) => {
+      const h = Array.from(document.querySelectorAll('.repo-head')).find(
+        (x) => x.querySelector('.repo-head__name')?.textContent === n,
+      );
+      return !(
+        h?.querySelector('.repo-head__chev')?.getAttribute('aria-expanded') === 'false' &&
+        !h.nextElementSibling?.classList.contains('repo-head__list')
+      );
+    },
+    'D3: repo 2 re-expanded',
+    refName,
+  );
   log('collapsed repo: no highlight, stays collapsed ✓');
 
   await page.locator('.changes__kebab').click();
