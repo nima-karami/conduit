@@ -17,7 +17,7 @@ import { adapterFor, MCP_ADAPTERS, type McpAdapter, notifiable } from './adapter
 import { createAppControlHandlers } from './app-control-tools';
 import { snapshotAttachment } from './attachments';
 import { type AttentionEvent, reduceAttention, youAttention } from './attention-items';
-import { createCallFlow } from './call-flow';
+import { askBudgetMs, createCallFlow } from './call-flow';
 import {
   bindsTypedLine,
   type ClientKind,
@@ -62,6 +62,7 @@ import { type AttentionRaise, bannerCandidates, createNotifier, type Notifier } 
 import { type ScreenSnapshot, screenVerdict } from './screen-verdict';
 import { assignHandle, createSessionRegistry } from './session-registry';
 import {
+  clampWaitTimeout,
   createSessionWaits,
   parseWaitArgs,
   WAIT_MAX_PER_CALLER,
@@ -75,6 +76,7 @@ import {
   gateToolCall,
   isMessagingTool,
   isToolName,
+  NOT_IN_SESSION_HINT,
   type ResolvedPolicy,
   resolvePolicy,
   TOOL_NAMES,
@@ -399,6 +401,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const id = pickNoticeAdapterId(r?.defAdapter?.id, boundKinds(sessionId, r));
     return MCP_ADAPTERS.find((a) => a.id === id) ?? null;
   };
+  /** list_sessions' notices: typed when the session's adapter can push notices, else the agent pulls. */
+  const noticesOf = (sessionId: string): 'typed' | 'pull' => {
+    const a = noticeAdapterOf(sessionId);
+    return a !== null && notifiable(a) ? 'typed' : 'pull';
+  };
   /** Every change of a binding goes through here, so the embedder's copy never drifts. */
   const setBound = (
     sessionId: string,
@@ -545,6 +552,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       presence: presenceOf(s.id),
       messaging: registry.isLive(s.id) ? 'connected' : 'unavailable',
       connectable: hasDefAdapter(s.id),
+      notices: noticesOf(s.id),
     }));
 
   const tools = createToolHandlers({
@@ -969,7 +977,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       return def === undefined ? undefined : adapterFor(def, { e2e: deps.e2e })?.id;
     },
     messageReady: () => deps.domain.messagingOn() && store.available(),
-    sendMessage: (caller, args) => tools.sendMessage(caller, args),
+    sendMessage: (caller, args, opts) => tools.sendMessage(caller, args, opts),
   };
   const control = createControlHandlers(controlDeps);
   const app = createAppControlHandlers(controlDeps, control.prepared);
@@ -1083,12 +1091,17 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       const result = await (async (): Promise<Result<unknown> | null> => {
         // The core refused names outside the catalog already; this only narrows the type.
         if (!isToolName(name)) {
-          return { ok: false, error: toolError('invalid_argument', `unknown tool: ${name}`) };
+          return { ok: false, error: toolError('invalid_args', `unknown tool: ${name}`) };
         }
         if (!sessionId || !handle) {
           return {
             ok: false,
-            error: toolError('not_in_session', 'this MCP connection is not a Conduit session'),
+            error: toolError(
+              'not_in_session',
+              'this MCP connection is not a Conduit session',
+              undefined,
+              { hint: NOT_IN_SESSION_HINT },
+            ),
           };
         }
         const resolved = resolveFor(sessionId, name);
@@ -1177,7 +1190,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     if (caller.sessionId === null)
       return {
         ok: false,
-        error: toolError('not_in_session', 'this MCP connection is not a Conduit session'),
+        error: toolError(
+          'not_in_session',
+          'this MCP connection is not a Conduit session',
+          undefined,
+          { hint: NOT_IN_SESSION_HINT },
+        ),
       };
     const listed = listedSessions();
     const targets: WaitTarget[] = [];
@@ -1186,7 +1204,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       if (!hit)
         return {
           ok: false,
-          error: toolError('invalid_args', `no session "${v}" in list_sessions`),
+          error: toolError('unknown_session', `no session "${v}" in list_sessions`, undefined, {
+            hint: 'use a handle from valid; list_sessions shows the current ones',
+            valid: listed.map((x) => x.handle),
+          }),
         };
       if (hit.session.id === caller.sessionId)
         return {
@@ -1204,14 +1225,18 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           `more than ${WAIT_MAX_PER_CALLER} waits are open for this session`,
         ),
       };
+    // Unknown caller kinds read as 'agent', the smallest budget, as cliKindOfHandle already does.
+    const budgetMs = askBudgetMs(cliKindOfHandle(caller.handle), wiredAtLaunch(caller.sessionId));
+    const { timeoutS, clampedTo } = clampWaitTimeout(parsed.value.timeoutS, budgetMs);
     const out = await sessionWaits.open({
       caller: { sessionId: caller.sessionId, handle: caller.handle },
       key: { connId: ctx.connId, requestId: ctx.requestId },
       targets,
       until: parsed.value.until,
-      timeoutMs: parsed.value.timeoutS * 1000,
+      timeoutMs: timeoutS * 1000,
     });
-    return out === null ? null : { ok: true, value: out };
+    if (out === null) return null;
+    return { ok: true, value: clampedTo === undefined ? out : { ...out, clamped_to: clampedTo } };
   };
 
   const runMessaging = async (caller: Caller, name: ToolName, args: unknown, ctx: CallContext) => {

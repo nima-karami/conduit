@@ -371,7 +371,12 @@ export function coercePolicyPatch(tool: ToolName, v: unknown): ToolPolicyPatch |
 
 /** Also the call flow's fail-closed answer for a policy that reached it as 'off'. */
 export const toolDisabled = (tool: ToolName): ToolError =>
-  toolError('tool_disabled', `${tool} is not enabled for this session`);
+  toolError('tool_disabled', `${tool} is not enabled for this session`, undefined, {
+    hint: `this tool's policy is set in Settings → MCP`,
+  });
+
+export const NOT_IN_SESSION_HINT =
+  'Conduit MCP tools work only from a CLI that a Conduit terminal started; run it there';
 
 /** Also the call flow's refusal when an ask finds no owner window. */
 export const windowNotReady = (): ToolError =>
@@ -387,9 +392,10 @@ export function gateToolCall(i: {
   onScreen: () => boolean;
 }): ToolError | null {
   if (i.sessionId === null)
-    return toolError('not_in_session', 'this MCP connection is not a Conduit session');
+    return toolError('not_in_session', 'this MCP connection is not a Conduit session', undefined, {
+      hint: NOT_IN_SESSION_HINT,
+    });
   if (!i.messagingOn) return toolError('messaging_off', 'Conduit messaging is turned off');
-  // Deliberately silent on how to enable it (spec 2026-10-27-conduit-mcp-control-tools §3.2).
   if (i.policy.access === 'off') return toolDisabled(i.tool);
   if (isMessagingTool(i.tool)) return null;
   // Without a ready window there is no card to ask on and no visibility to trust; an `on` server

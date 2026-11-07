@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { createSessionWaits, type WaitCondition } from '../../src/conduit-mcp/session-waits';
+import {
+  clampWaitTimeout,
+  createSessionWaits,
+  WAIT_REPLY_MARGIN_MS,
+  type WaitCondition,
+} from '../../src/conduit-mcp/session-waits';
 
 /** A fake host: each session's run counter is set by the test; reads never fail. */
 function rig() {
@@ -76,5 +81,29 @@ describe('session waits: turn-end memo', () => {
     await open();
     waits.forget('s9', 'fake-7');
     expect(await settled(open())).toBe('pending');
+  });
+});
+
+describe('contract S1: wait timeout clamp', () => {
+  it('clamps to the budget less the reply margin, in whole seconds, and reports the clamp', () => {
+    expect(WAIT_REPLY_MARGIN_MS).toBe(5_000);
+    expect(clampWaitTimeout(30, 25_000)).toEqual({ timeoutS: 20, clampedTo: 20 });
+  });
+
+  it('a timeout at or under the trimmed budget is left alone, with no clamped_to', () => {
+    expect(clampWaitTimeout(20, 25_000)).toEqual({ timeoutS: 20, clampedTo: undefined });
+    expect(clampWaitTimeout(5, 170_000)).toEqual({ timeoutS: 5, clampedTo: undefined });
+  });
+
+  it('per caller budget: codex 45 s, launch-wired codex 165 s, claude 115 s, agent 20 s', () => {
+    expect(clampWaitTimeout(540, 50_000).timeoutS).toBe(45);
+    expect(clampWaitTimeout(540, 170_000).timeoutS).toBe(165);
+    expect(clampWaitTimeout(540, 120_000).timeoutS).toBe(115);
+    expect(clampWaitTimeout(540, 25_000).timeoutS).toBe(20);
+  });
+
+  it('floors a fractional budget and never goes below 1 s', () => {
+    expect(clampWaitTimeout(540, 50_999)).toEqual({ timeoutS: 45, clampedTo: 45 });
+    expect(clampWaitTimeout(540, 400)).toEqual({ timeoutS: 1, clampedTo: 1 });
   });
 });

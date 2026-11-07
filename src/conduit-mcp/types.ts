@@ -9,7 +9,7 @@ export const THREAD_AGENT_LIMIT = 20;
 export type RecipientStatus = 'queued' | 'noticed' | 'read' | 'undelivered' | 'expired';
 export type ToolErrorCode =
   | 'not_in_session'
-  | 'unknown_handle'
+  | 'unknown_session'
   | 'not_messageable'
   | 'self_target'
   | 'too_large'
@@ -23,8 +23,6 @@ export type ToolErrorCode =
   | 'store_unavailable'
   | 'messaging_off'
   | 'host_unavailable'
-  | 'invalid_argument'
-  | 'invalid_input'
   | 'tool_disabled'
   | 'unknown_agent'
   | 'path_missing'
@@ -42,6 +40,8 @@ export type ToolErrorCode =
   | 'approval_timeout'
   | 'cancelled'
   | 'unknown_session'
+  | 'session_exited'
+  | 'session_restarting'
   | 'out_of_reach'
   | 'move_not_allowed'
   | 'bad_ref'
@@ -58,8 +58,14 @@ export interface ToolError {
   sessionId?: string;
   /** Set when a session was opened but the call failed after it: the handle it holds. */
   handle?: Handle;
+  /** One sentence on what the caller does next (spec flexible-agent-contracts §4.7). */
+  hint?: string;
+  /** The values the caller may retry with, at most MAX_VALID_IDS. */
+  valid?: string[];
 }
 export type Result<T> = { ok: true; value: T } | { ok: false; error: ToolError };
+
+export const MAX_VALID_IDS = 30;
 
 const RETRYABLE: ReadonlySet<ToolErrorCode> = new Set([
   'rate_limited',
@@ -67,14 +73,27 @@ const RETRYABLE: ReadonlySet<ToolErrorCode> = new Set([
   'host_unavailable',
   'window_not_ready',
   'server_stopping',
+  'session_restarting',
 ]);
 
-export function toolError(code: ToolErrorCode, message: string, sessionId?: string): ToolError {
+export interface ToolErrorDetail {
+  hint?: string;
+  valid?: readonly string[];
+}
+
+export function toolError(
+  code: ToolErrorCode,
+  message: string,
+  sessionId?: string,
+  detail?: ToolErrorDetail,
+): ToolError {
   return {
     code,
     message,
     retryable: RETRYABLE.has(code),
     ...(sessionId === undefined ? {} : { sessionId }),
+    ...(detail?.hint === undefined ? {} : { hint: detail.hint }),
+    ...(detail?.valid === undefined ? {} : { valid: detail.valid.slice(0, MAX_VALID_IDS) }),
   };
 }
 
@@ -151,12 +170,20 @@ export type Presence = 'busy' | 'idle' | 'exited';
 export interface ListSessionsOutput {
   sessions: Array<{
     handle: Handle;
+    session_id: string;
     label: string;
     agent: string;
+    /** The opener's handle; null when the opener is not a listed session (or none opened it). */
+    opened_by: Handle | null;
     project: string | null;
+    home: string;
     roots: string[];
     presence: Presence;
     messaging: 'connected' | 'unavailable';
+    /** What send_message accepts: an MCP adapter is defined, or a client is live. */
+    messageable: boolean;
+    /** "typed" when the session's adapter delivers typed notices, else the agent pulls read_inbox. */
+    notices: 'typed' | 'pull';
     self: boolean;
   }>;
   human: { handle: 'you' };

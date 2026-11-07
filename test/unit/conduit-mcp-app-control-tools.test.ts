@@ -1209,11 +1209,11 @@ describe('open_diff', () => {
     expect(code(await app.prepareOpenDiff(caller(), { patch: big }, ctx))).toBe('invalid_args');
   });
 
-  it('rejects a non-diff with invalid_input', async () => {
+  it('rejects a non-diff with invalid_args', async () => {
     const app = build(harness());
     const { ctx } = context();
     const r = await app.prepareOpenDiff(caller(), { patch: 'hello world' }, ctx);
-    expect(code(r)).toBe('invalid_input');
+    expect(code(r)).toBe('invalid_args');
     expect(r.ok ? '' : r.error.message).toBe('not a unified diff');
   });
 
@@ -1300,7 +1300,7 @@ describe('open_diff', () => {
     const app = build(h);
     const { ctx } = context();
     expect(code(await app.prepareOpenDiff(caller(), { patch_file: 'fifo.patch' }, ctx))).toBe(
-      'invalid_input',
+      'invalid_args',
     );
     expect(reads).toBe(0);
   });
@@ -1431,5 +1431,31 @@ describe('open_url', () => {
     expect(code(await app.prepareOpenUrl(caller(), { url: 'http://x/' }, ctx))).toBe(
       'rate_limited',
     );
+  });
+});
+
+describe('contract S1: unknown_session lists only targets within reach', () => {
+  it.each([
+    ['self', ['claude-1']],
+    ['opened', ['claude-1', 'claude-2']],
+    ['window', ['claude-1', 'claude-2', 'codex-1']],
+    ['any', ['claude-1', 'claude-2', 'codex-1', 'codex-2']],
+  ] as const)('close_session with reach %s → valid %j', async (reach, valid) => {
+    const h = harness();
+    const app = build(h);
+    const { ctx } = context({ reach });
+    const r = await app.prepareCloseSession(caller(), { session: 'nope-9' }, ctx);
+    expect(r).toMatchObject({ ok: false, error: { code: 'unknown_session' } });
+    if (r.ok) return;
+    expect(r.error.valid).toEqual(valid);
+    expect(r.error.hint).toEqual(expect.stringContaining('valid'));
+  });
+
+  it('focus_session with reach window lists the caller window only', async () => {
+    const h = harness();
+    const app = build(h);
+    const { ctx } = context({ reach: 'window' });
+    const r = await app.prepareFocusSession(caller(), { session: 'nope-9' }, ctx);
+    expect(r.ok ? null : r.error.valid).toEqual(['claude-1', 'claude-2', 'codex-1']);
   });
 });

@@ -144,6 +144,8 @@ const SOURCE_KEYS = {
   commit: ['kind', 'ref'],
   range: ['kind', 'base', 'head'],
 } as const;
+type ReachTool = 'close_session' | 'focus_session' | 'attach_folder';
+const UNKNOWN_SESSION_HINT = 'use a handle from valid; list_sessions shows the current ones';
 const REACH_REFUSAL: Record<Exclude<Reach, 'any'>, string> = {
   self: 'this tool may only act on your own session',
   opened: 'this tool may only act on your session and sessions you opened',
@@ -156,17 +158,27 @@ export function createAppControlHandlers(
   deps: ControlDeps,
   prepared: ControlHandlers['prepared'],
 ): AppControlHandlers {
-  const resolveTarget = (v: unknown): TargetSession | Fail => {
+  /** `valid` is the handles this caller may name with this tool: the ones its reach admits. */
+  const resolveTarget = (
+    v: unknown,
+    tool: ReachTool,
+    callerId: string,
+    reach: Reach | undefined,
+  ): TargetSession | Fail => {
     if (!validSessionArg(v))
       return fail('invalid_args', `session must be a handle or id of 1–${MAX_SESSION_CHARS} chars`);
     const all = deps.targets();
     const t = all.find((x) => x.handle === v) ?? all.find((x) => x.sessionId === v);
-    return t ?? fail('unknown_session', `no session "${v}" in list_sessions`);
+    if (t) return t;
+    return fail('unknown_session', `no session "${v}" in list_sessions`, {
+      hint: UNKNOWN_SESSION_HINT,
+      valid: all.filter((x) => inReach(tool, reach, callerId, x) === null).map((x) => x.handle),
+    });
   };
 
   /** A reach the tool doesn't offer (absent, or attach_folder's 'any') counts as the narrowest. */
   const inReach = (
-    tool: 'close_session' | 'focus_session' | 'attach_folder',
+    tool: ReachTool,
     reach: Reach | undefined,
     callerId: string,
     t: TargetSession,
@@ -178,7 +190,9 @@ export function createAppControlHandlers(
       const w = deps.ownerWindowOf(t.sessionId);
       if (w !== null && w === deps.ownerWindowOf(callerId)) return null;
     }
-    return fail('out_of_reach', REACH_REFUSAL[r]);
+    return fail('out_of_reach', REACH_REFUSAL[r], {
+      hint: `widen ${tool}'s reach in Settings → MCP to act on this session`,
+    });
   };
 
   const routeWindow = (sessionId: string): number | Fail => {
@@ -329,7 +343,7 @@ export function createAppControlHandlers(
             .filter((t) => t.openerSessionId === who.sessionId && t.sessionId !== who.sessionId)
             .map((t) => ({ name: t.handle, target: t }))
         : form.sessions.map((raw) => {
-            const t = resolveTarget(raw);
+            const t = resolveTarget(raw, 'close_session', who.sessionId, ctx.reach);
             return { name: isFail(t) ? raw : t.handle, target: t };
           });
     // A session named twice (handle and id, say) closes once; unknown names have no session to match.
@@ -367,7 +381,7 @@ export function createAppControlHandlers(
         const form = closeFormOf(raw);
         if (isFail(form)) return form;
         if (form.form !== 'session') return closeMany(caller, who, form, ctx);
-        const t = resolveTarget(form.session);
+        const t = resolveTarget(form.session, 'close_session', who.sessionId, ctx.reach);
         if (isFail(t)) return t;
         const out = inReach('close_session', ctx.reach, who.sessionId, t);
         if (out) return out;
@@ -396,7 +410,7 @@ export function createAppControlHandlers(
       prepared('focus_session', caller, async (who) => {
         const o = parseKeys(raw, ['session']);
         if (isFail(o)) return o;
-        const t = resolveTarget(o.session);
+        const t = resolveTarget(o.session, 'focus_session', who.sessionId, ctx.reach);
         if (isFail(t)) return t;
         const out = inReach('focus_session', ctx.reach, who.sessionId, t);
         if (out) return out;
@@ -432,7 +446,7 @@ export function createAppControlHandlers(
           handle: caller.handle,
         };
         if (named) {
-          const t = resolveTarget(o.session);
+          const t = resolveTarget(o.session, 'attach_folder', who.sessionId, ctx.reach);
           if (isFail(t)) return t;
           const out = inReach('attach_folder', ctx.reach, who.sessionId, t);
           if (out) return out;
@@ -662,7 +676,7 @@ export function createAppControlHandlers(
           // A FIFO named *.patch blocks a libuv thread forever on Mac/Linux, before approval.
           const kind = await deps.kindOf(real);
           if (kind !== 'file') {
-            return fail('invalid_input', 'patch_file is not a regular file');
+            return fail('invalid_args', 'patch_file is not a regular file');
           }
           const bytes = await deps.readBytes(real, MAX_PATCH_BYTES + 1);
           if (bytes === null) return fail('path_missing', `could not read: ${real}`);
@@ -676,7 +690,7 @@ export function createAppControlHandlers(
           return fail('invalid_args', 'patch exceeds 5 MB size cap');
         }
         const parsed = parsePatch(patchText);
-        if (!parsed.ok) return fail('invalid_input', parsed.reason);
+        if (!parsed.ok) return fail('invalid_args', parsed.reason);
         const files = parsed.files;
         const title = typeof o.title === 'string' ? o.title : undefined;
         const summaryTitle = title ?? files[0]?.path ?? 'diff';

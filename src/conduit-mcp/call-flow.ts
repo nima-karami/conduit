@@ -43,6 +43,8 @@ export function askBudgetMs(kind: CliKind, wiredAtLaunch: boolean): number {
 export const MAX_ASKS_PER_CALLER = 3;
 /** An app-control tool's renderer step (spec 2026-10-30-conduit-mcp-app-control §2.3). */
 export const UI_TIMEOUT_MS = 5_000;
+/** What an ask holds back from its CLI budget so the reply lands first; wait_sessions clamps to the same. */
+export const askMarginMs = (routesUi: boolean): number => (routesUi ? UI_TIMEOUT_MS : 0);
 
 export interface InFlight {
   /** True once notifications/cancelled named this request. Never true for a null requestId. */
@@ -252,7 +254,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     const askMs =
       startOf(c.inflight) +
       askBudgetMs(c.kind, c.wiredAtLaunch) -
-      (p.routesUi ? UI_TIMEOUT_MS : 0) -
+      askMarginMs(p.routesUi) -
       deps.now();
     if (askMs <= 0) {
       p.release();

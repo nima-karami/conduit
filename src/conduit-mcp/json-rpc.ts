@@ -75,7 +75,7 @@ const fail = (id: JsonRpcId | null, code: number, message: string) =>
 
 function unknownTool(name: unknown): ToolCallResult {
   const error = {
-    code: 'invalid_argument',
+    code: 'invalid_args',
     message: `unknown tool: ${String(name)}`,
     retryable: false,
   };

@@ -266,6 +266,7 @@ describe('createCallFlow', () => {
         code: 'tool_disabled',
         message: 'open_session is not enabled for this session',
         retryable: false,
+        hint: "this tool's policy is set in Settings → MCP",
       },
     });
     expect(t.asks()).toEqual([]);

@@ -7,7 +7,7 @@
 //   - \\ No newline at end of file
 //   - CRLF patches
 //
-// Rejects anything that is not a unified diff with a clear `invalid_input` reason.
+// Rejects anything that is not a unified diff with a clear `invalid_args` reason.
 
 import type { FileDiffDTO } from './protocol';
 import type { ReviewHunk } from './review-hunks';

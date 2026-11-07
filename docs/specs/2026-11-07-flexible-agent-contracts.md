@@ -72,9 +72,10 @@ notices for unknown CLIs · one CLI catalog refactor (v1) · new Settings UI.
   the call is still `ok`. The open never fails because of the message.
 
 ### 3.3 Waits
-`wait_sessions` clamps `timeout_s` to `floor((askBudgetMs(callerKind, wiredAtLaunch(callerSession)) − ASK_MARGIN) /
-1000)` using the same margin the ask path subtracts (call-flow.ts ~254). Unknown/null caller kind → `agent` budget.
-When clamped the result adds `clamped_to: <seconds>`. Minimum 1 s.
+`wait_sessions` clamps the effective `timeout_s` (including the default 120 s) to
+`floor((askBudgetMs(callerKind, wiredAtLaunch(callerSession)) − 5000) / 1000)` (a fixed 5 s reply margin, so the
+result lands before the client gives up). Unknown/null caller kind → `agent` budget. When clamped the result adds
+`clamped_to: <seconds>`. Minimum 1 s.
 
 ## 4. Interface contract
 Flat schemas (no oneOf/anyOf/$ref/const). Snake_case on the wire. Target inputs accept a handle or a session id.

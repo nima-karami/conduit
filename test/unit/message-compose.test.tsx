@@ -152,7 +152,7 @@ describe('MessageCompose', () => {
             thread_id: 't1',
             recipients: [
               { handle: 'claude-1', status: 'queued' },
-              { handle: 'codex-2', status: 'refused', reason: 'unknown_handle' },
+              { handle: 'codex-2', status: 'refused', reason: 'unknown_session' },
             ],
           },
         }),

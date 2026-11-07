@@ -15,9 +15,13 @@ All notable user-facing changes to Conduit. Format follows
 
 ### Changed
 - Terminals an agent opens get a handle and stay in `list_sessions` after they exit, so the agent can close them.
+- Tool errors say what to do next and use one set of codes. `unknown_handle` is now `unknown_session`; `invalid_argument` and `invalid_input` are now `invalid_args`.
+- `list_sessions` shows each session's id, opener, folder, whether a message can reach it, and whether it gets typed notices.
 
 ### Fixed
 - An agent that stays busy learns of new messages on its next Conduit tool call, not only when it goes idle.
+- A first `message` no longer makes `open_session` fail. The session opens, and the message id comes back in `message.id`, or the store error does if the message could not be saved.
+- `wait_sessions` trims a `timeout_s` longer than the calling agent can wait, and reports it in `clamped_to`. Before, the agent's call timed out with no reply.
 - The notification-area icon is Conduit's app icon.
 - Clicking the notification-area icon works. Clicks used to wait until Conduit sent its next update.
 

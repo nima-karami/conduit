@@ -11,17 +11,20 @@ import type { GitCall } from './git-refs';
 import {
   type MESSAGING_TOOL_NAMES,
   type Move,
+  NOT_IN_SESSION_HINT,
   type Reach,
   TOOL_SPECS,
   type ToolName,
 } from './tool-policy';
-import { type Caller, MAX_BODY_BYTES } from './tools';
+import { type Caller, MAX_BODY_BYTES, type SendOptions } from './tools';
 import {
   type Handle,
+  MAX_VALID_IDS,
   type Result,
   type SendMessageOutput,
   type ToolError,
   type ToolErrorCode,
+  type ToolErrorDetail,
   toolError,
 } from './types';
 import type { AskSummary, McpUiAction, McpUiResult } from './ui-types';
@@ -39,8 +42,15 @@ export interface OpenSessionOutput {
   handle: Handle | null;
   label: string;
   agent: string;
-  /** Present when open_session's message was stored (CON-148). */
-  message_id?: string;
+  /**
+   * Present when open_session got a message. A failure to store it never fails the open: the
+   * session is open and `id` is null with the reason (spec flexible-agent-contracts §3.2).
+   */
+  message?: OpenMessageOutput;
+}
+export interface OpenMessageOutput {
+  id: string | null;
+  error?: { code: ToolErrorCode; message: string };
 }
 export type OpenFileOutput = { opened: string; session_id: string } | { results: OpenFileResult[] };
 export type McpLaunch =
@@ -99,7 +109,11 @@ export interface ControlDeps {
   /** Messaging is on and its store is up, so a message can be stored. */
   messageReady(): boolean;
   /** send_message's own storage, from the caller to a session's handle (CON-148). */
-  sendMessage(caller: Caller, args: unknown): Promise<Result<SendMessageOutput>>;
+  sendMessage(
+    caller: Caller,
+    args: unknown,
+    opts?: SendOptions,
+  ): Promise<Result<SendMessageOutput>>;
 }
 export interface TargetSession {
   sessionId: string;
@@ -149,9 +163,9 @@ export interface ControlHandlers {
 }
 
 export type Fail = { ok: false; error: ToolError };
-export const fail = (code: ToolErrorCode, message: string): Fail => ({
+export const fail = (code: ToolErrorCode, message: string, detail?: ToolErrorDetail): Fail => ({
   ok: false,
-  error: toolError(code, message),
+  error: toolError(code, message, undefined, detail),
 });
 export const isFail = (v: unknown): v is Fail =>
   typeof v === 'object' && v !== null && (v as { ok?: unknown }).ok === false;
@@ -423,7 +437,9 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
   function home(caller: Caller): { sessionId: string; home: string } | Fail {
     const home = caller.sessionId === null ? undefined : deps.homeOf(caller.sessionId);
     if (caller.sessionId === null || home === undefined)
-      return fail('not_in_session', 'this MCP connection is not a Conduit session');
+      return fail('not_in_session', 'this MCP connection is not a Conduit session', {
+        hint: NOT_IN_SESSION_HINT,
+      });
     return { sessionId: caller.sessionId, home };
   }
 
@@ -496,31 +512,24 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     }
   }
 
-  /** The opener's message to the session it just opened, stored as send_message stores it (CON-148). */
+  /**
+   * The opener's first message to the session it just opened (CON-148). The session cannot read
+   * yet, so the send skips the not_messageable check for this one message (spec §3.2).
+   */
   async function openMessage(
     caller: Caller,
-    sessionId: string,
     handle: Handle | null,
     body: string,
-  ): Promise<Result<string>> {
+  ): Promise<OpenMessageOutput> {
     if (handle === null)
       return {
-        ok: false,
-        error: toolError('open_failed', 'opened, but it has no handle to message', sessionId),
+        id: null,
+        error: { code: 'open_failed', message: 'opened, but it has no handle to message' },
       };
-    const sent = await deps.sendMessage(caller, { to: [handle], body });
-    // The session is open and holds its handle, so the caller can resend the task itself.
+    const sent = await deps.sendMessage(caller, { to: [handle], body }, { allowUnconnected: true });
     if (!sent.ok)
-      return {
-        ok: false,
-        error: {
-          ...sent.error,
-          message: `session opened; resend the task with send_message: ${sent.error.message}`,
-          sessionId,
-          handle,
-        },
-      };
-    return { ok: true, value: sent.value.message_id };
+      return { id: null, error: { code: sent.error.code, message: sent.error.message } };
+    return { id: sent.value.message_id };
   }
 
   function prepareOpen(
@@ -540,9 +549,20 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
           return fail(
             'unknown_agent',
             `unknown agent "${launch.agentId}"; registered: ${ids.join(', ')}`,
+            {
+              hint: 'call list_agents to see the ids you can open',
+              valid: ids.slice(0, MAX_VALID_IDS),
+            },
           );
-        if (a.model !== undefined && modelArgs(deps.adapterOf(launch.agentId), a.model) === null)
-          return fail('invalid_args', "this agent doesn't take a model");
+        const model = a.model;
+        if (model !== undefined && modelArgs(deps.adapterOf(launch.agentId), model) === null) {
+          const withModel = ids.filter((id) => modelArgs(deps.adapterOf(id), model) !== null);
+          return fail('invalid_args', "this agent doesn't take a model", {
+            hint: `add an agents.json profile with capabilities.model_flag, or use one of: ${
+              withModel.length > 0 ? withModel.join(', ') : 'none'
+            }`,
+          });
+        }
       } else if (deps.resolveCommand(launch.command.command) === undefined) {
         return fail('command_not_found', `command not found: ${launch.command.command}`);
       }
@@ -604,17 +624,10 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
               ok: true,
               value: { session_id: outcome.sessionId, handle, label: outcome.label, agent },
             };
-          const sent = await openMessage(caller, outcome.sessionId, handle, a.message);
-          if (!sent.ok) return sent;
+          const message = await openMessage(caller, handle, a.message);
           return {
             ok: true,
-            value: {
-              session_id: outcome.sessionId,
-              handle,
-              label: outcome.label,
-              agent,
-              message_id: sent.value,
-            },
+            value: { session_id: outcome.sessionId, handle, label: outcome.label, agent, message },
           };
         },
       };

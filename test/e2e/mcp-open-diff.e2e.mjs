@@ -134,7 +134,7 @@ await runScenario(
 
     phase('invalid input');
     const notDiff = await callTool(page, a.sessionId, 'open_diff', { patch: 'this is not a diff' });
-    assert(errCode(notDiff) === 'invalid_input', `non-diff: ${JSON.stringify(notDiff)}`);
+    assert(errCode(notDiff) === 'invalid_args', `non-diff: ${JSON.stringify(notDiff)}`);
     assert(errMsg(notDiff).includes('unified diff'), `non-diff message: ${errMsg(notDiff)}`);
 
     const neither = await callTool(page, a.sessionId, 'open_diff', {});

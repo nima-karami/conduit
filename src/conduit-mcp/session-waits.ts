@@ -41,6 +41,8 @@ export interface WaitOutput {
   fired: WaitFired[];
   timed_out: boolean;
   states: WaitState[];
+  /** Present only when timeout_s was trimmed to the caller's budget. */
+  clamped_to?: number;
 }
 export interface WaitArgs {
   sessions: string[];
@@ -88,6 +90,27 @@ export function parseWaitArgs(raw: unknown): Result<WaitArgs> {
       timeoutS: timeout ?? WAIT_DEFAULT_TIMEOUT_S,
     },
   };
+}
+
+/**
+ * Held back from the caller's CLI budget so the reply reaches the client before the client gives
+ * up on the call (lead decision, flexible-agent-contracts S1).
+ */
+export const WAIT_REPLY_MARGIN_MS = 5_000;
+
+/**
+ * A wait that outlives the caller's CLI call budget gets no reply: trim it to the budget less
+ * WAIT_REPLY_MARGIN_MS (spec flexible-agent-contracts §3.3) rather than refuse it. Whole seconds,
+ * at least 1.
+ */
+export function clampWaitTimeout(
+  timeoutS: number,
+  budgetMs: number,
+): { timeoutS: number; clampedTo: number | undefined } {
+  const limit = Math.max(1, Math.floor((budgetMs - WAIT_REPLY_MARGIN_MS) / 1000));
+  return timeoutS > limit
+    ? { timeoutS: limit, clampedTo: limit }
+    : { timeoutS, clampedTo: undefined };
 }
 
 interface WaitEvaluation {

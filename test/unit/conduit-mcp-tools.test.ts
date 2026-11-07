@@ -58,6 +58,7 @@ const DIRECTORY: DirectoryEntry[] = [
     presence: 'idle',
     messaging: 'connected',
     connectable: true,
+    notices: 'typed',
   },
   {
     handle: 'codex-2',
@@ -71,6 +72,7 @@ const DIRECTORY: DirectoryEntry[] = [
     presence: 'busy',
     messaging: 'connected',
     connectable: true,
+    notices: 'typed',
   },
 ];
 
@@ -151,10 +153,10 @@ function okValue<T>(r: Result<T>): T {
 const errCode = (r: Result<unknown>) => (r.ok ? 'ok' : r.error.code);
 
 describe('sendMessage', () => {
-  it("sender is the caller's handle; args.from is rejected as invalid_argument", async () => {
+  it("sender is the caller's handle; args.from is rejected as invalid_args", async () => {
     const h = await harness();
     expect(errCode(await h.tools.sendMessage(CLAUDE, { ...send(), from: 'codex-2' }))).toBe(
-      'invalid_argument',
+      'invalid_args',
     );
     const out = okValue(await h.tools.sendMessage(CLAUDE, send()));
     expect(h.store.get(out.message_id)?.from).toBe('claude-1');
@@ -196,7 +198,7 @@ describe('sendMessage', () => {
     );
     expect(out.recipients).toEqual([
       { handle: 'codex-2', status: 'queued' },
-      { handle: 'ghost-9', status: 'refused', reason: 'unknown_handle' },
+      { handle: 'ghost-9', status: 'refused', reason: 'unknown_session' },
       { handle: 'claude-1', status: 'refused', reason: 'self_target' },
       { handle: 'you', status: 'queued' },
     ]);
@@ -207,7 +209,7 @@ describe('sendMessage', () => {
     const h = await harness();
     expect(
       errCode(await h.tools.sendMessage(CLAUDE, { to: ['ghost', 'claude-1'], body: 'x' })),
-    ).toBe('unknown_handle');
+    ).toBe('unknown_session');
     expect(h.store.threads()).toEqual([]);
   });
 
@@ -219,10 +221,10 @@ describe('sendMessage', () => {
     expect(errCode(await h.tools.sendMessage(YOU, { to: ['you'], body: 'x' }))).toBe('self_target');
   });
 
-  it('unknown → unknown_handle', async () => {
+  it('unknown → unknown_session', async () => {
     const h = await harness();
     expect(errCode(await h.tools.sendMessage(CLAUDE, { to: ['codex-9'], body: 'x' }))).toBe(
-      'unknown_handle',
+      'unknown_session',
     );
   });
 
@@ -239,6 +241,7 @@ describe('sendMessage', () => {
       presence: 'idle',
       messaging: 'unavailable',
       connectable: false,
+      notices: 'typed',
     };
     const CLI_NOT_YET_CONNECTED: DirectoryEntry = {
       ...TERMINAL,
@@ -246,6 +249,7 @@ describe('sendMessage', () => {
       sessionId: 's4',
       agent: 'claude',
       connectable: true,
+      notices: 'typed',
     };
 
     it('a terminal with no connectable CLI → not_messageable, and nothing is stored', async () => {
@@ -299,7 +303,7 @@ describe('sendMessage', () => {
     ).toBe('too_large');
   });
 
-  it('malformed arguments → invalid_argument', async () => {
+  it('malformed arguments → invalid_args', async () => {
     const h = await harness();
     for (const args of [
       null,
@@ -314,7 +318,7 @@ describe('sendMessage', () => {
       send('x', { attachments: [{ path: 'a', mode: 'x' }] }),
       send('x', { thread_id: 4 }),
     ]) {
-      expect(errCode(await h.tools.sendMessage(CLAUDE, args))).toBe('invalid_argument');
+      expect(errCode(await h.tools.sendMessage(CLAUDE, args))).toBe('invalid_args');
     }
   });
 
@@ -414,14 +418,14 @@ describe('sendMessage', () => {
     expect(h.store.threads()).toEqual([]);
   });
 
-  it('you with attachments → invalid_argument (v1)', async () => {
+  it('you with attachments → invalid_args (v1)', async () => {
     const h = await harness();
     const r = await h.tools.sendMessage(YOU, {
       to: ['claude-1'],
       body: 'x',
       attachments: [{ path: 'docs/spec.md' }],
     });
-    expect(errCode(r)).toBe('invalid_argument');
+    expect(errCode(r)).toBe('invalid_args');
     expect(h.snapshots).toEqual([]);
   });
 
@@ -565,10 +569,10 @@ describe('readInbox', () => {
     expect(okValue(await h.tools.readInbox(CODEX, { limit: 0 })).messages).toHaveLength(1);
   });
 
-  it('bad arguments → invalid_argument', async () => {
+  it('bad arguments → invalid_args', async () => {
     const h = await harness();
     for (const args of [{ limit: 'x' }, { unread_only: 'yes' }, { thread_id: 1 }, { from: 'x' }]) {
-      expect(errCode(await h.tools.readInbox(CODEX, args))).toBe('invalid_argument');
+      expect(errCode(await h.tools.readInbox(CODEX, args))).toBe('invalid_args');
     }
   });
 });
@@ -586,6 +590,7 @@ describe('frameBody peer relation', () => {
     presence: 'idle',
     messaging: 'connected',
     connectable: true,
+    notices: 'typed',
   });
   const directory = (opts: { s1?: string | null; s2?: string | null } = {}): DirectoryEntry[] => [
     entry('claude-1', 's1', opts.s1 ?? null),
@@ -734,22 +739,32 @@ describe('listSessions', () => {
     expect(out.sessions).toEqual([
       {
         handle: 'claude-1',
+        session_id: 's1',
         label: 'Claude',
         agent: 'claude',
+        opened_by: null,
         project: 'conduit',
+        home: '/work/a',
         roots: ['/work/a', '/work/shared'],
         presence: 'idle',
         messaging: 'connected',
+        messageable: true,
+        notices: 'typed',
         self: false,
       },
       {
         handle: 'codex-2',
+        session_id: 's2',
         label: 'Codex',
         agent: 'codex',
+        opened_by: 'claude-1',
         project: null,
+        home: '/work/b',
         roots: ['/work/b'],
         presence: 'busy',
         messaging: 'connected',
+        messageable: true,
+        notices: 'typed',
         self: true,
       },
     ]);
@@ -766,6 +781,7 @@ describe('toToolCallResult', () => {
     const e = toolError('not_found', 'nope');
     expect(toToolCallResult({ ok: false, error: e })).toEqual({
       content: [{ type: 'text', text: JSON.stringify({ error: e }) }],
+      structuredContent: { error: e },
       isError: true,
     });
   });
@@ -782,5 +798,137 @@ describe('toToolCallResult', () => {
       text: 'x',
     };
     expect(toToolCallResult({ ok: true, value: page }).content[0].type).toBe('text');
+  });
+});
+
+describe('contract S1: error codes, hints, list_sessions fields', () => {
+  const TERM: DirectoryEntry = {
+    handle: 'term-1',
+    sessionId: 's3',
+    openedBy: 's1',
+    label: 'Shell',
+    agent: 'term',
+    project: null,
+    home: '/work/c',
+    roots: [],
+    presence: 'idle',
+    messaging: 'unavailable',
+    connectable: false,
+    notices: 'pull',
+  };
+
+  it('send_message to an unknown handle → unknown_session, valid handles, a hint', async () => {
+    const h = await harness();
+    const r = await h.tools.sendMessage(CLAUDE, { to: ['ghost-9'], body: 'x' });
+    expect(r).toMatchObject({ ok: false, error: { code: 'unknown_session' } });
+    if (r.ok) return;
+    expect(r.error.valid).toEqual(['claude-1', 'codex-2']);
+    expect(r.error.hint).toEqual(expect.stringContaining('valid'));
+  });
+
+  it('a recipient in a mixed send reports unknown_session', async () => {
+    const h = await harness();
+    const out = okValue(
+      await h.tools.sendMessage(CLAUDE, { to: ['ghost-9', 'codex-2'], body: 'x' }),
+    );
+    expect(out.recipients).toEqual([
+      { handle: 'ghost-9', status: 'refused', reason: 'unknown_session' },
+      { handle: 'codex-2', status: 'queued' },
+    ]);
+  });
+
+  it('a malformed body is invalid_args', async () => {
+    const h = await harness();
+    const r = await h.tools.sendMessage(CLAUDE, { to: ['claude-1'], body: 3 });
+    expect(r).toMatchObject({ ok: false, error: { code: 'invalid_args' } });
+  });
+
+  it('not_messageable carries a hint', async () => {
+    const h = await harness({ directory: () => [...DIRECTORY, TERM] });
+    const r = await h.tools.sendMessage(CLAUDE, { to: ['term-1'], body: 'x' });
+    expect(r).toMatchObject({ ok: false, error: { code: 'not_messageable' } });
+    if (r.ok) return;
+    expect(r.error.hint).toEqual(expect.stringContaining('open_session'));
+  });
+
+  it('a first message may skip the not_messageable check only when allowUnconnected is passed', async () => {
+    const h = await harness({ directory: () => [...DIRECTORY, TERM] });
+    const refused = await h.tools.sendMessage(CLAUDE, { to: ['term-1'], body: 'task' });
+    expect(refused).toMatchObject({ ok: false, error: { code: 'not_messageable' } });
+    const out = okValue(
+      await h.tools.sendMessage(
+        CLAUDE,
+        { to: ['term-1'], body: 'task' },
+        { allowUnconnected: true },
+      ),
+    );
+    expect(out.recipients).toEqual([{ handle: 'term-1', status: 'queued' }]);
+    const inbox = okValue(
+      await h.tools.readInbox({ handle: 'term-1', sessionId: 's3' }, { unread_only: true }),
+    );
+    expect(inbox.messages.map((m) => m.message_id)).toEqual([out.message_id]);
+  });
+
+  it('an agent send without the option still gets not_messageable', async () => {
+    const h = await harness({ directory: () => [...DIRECTORY, TERM] });
+    const r = await h.tools.sendMessage(CODEX, { to: ['term-1'], body: 'x' });
+    expect(r).toMatchObject({ ok: false, error: { code: 'not_messageable' } });
+  });
+
+  it('a tool error with a hint renders as "<message> Hint: <hint>" in the text content', () => {
+    const r = toToolCallResult({
+      ok: false,
+      error: { ...toolError('unknown_agent', 'unknown agent "x"'), hint: 'call list_agents' },
+    });
+    expect(r.isError).toBe(true);
+    expect(r.content[0]).toEqual({
+      type: 'text',
+      text: 'unknown agent "x" Hint: call list_agents',
+    });
+  });
+
+  it('a tool error without a hint keeps the JSON text content', () => {
+    const r = toToolCallResult({ ok: false, error: toolError('not_found', 'gone') });
+    expect(r.content[0]).toEqual({
+      type: 'text',
+      text: JSON.stringify({ error: toolError('not_found', 'gone') }),
+    });
+  });
+
+  it('toolError keeps at most 30 valid ids', () => {
+    const many = Array.from({ length: 35 }, (_, i) => `h-${i}`);
+    expect(toolError('unknown_agent', 'x', undefined, { valid: many }).valid).toHaveLength(30);
+  });
+
+  it('list_sessions adds session_id, opened_by, home, messageable and notices', async () => {
+    const h = await harness({
+      directory: () => [
+        ...DIRECTORY,
+        TERM,
+        { ...TERM, handle: 'kiro-2', sessionId: 's5', connectable: false, messaging: 'connected' },
+      ],
+    });
+    const out = okValue(h.tools.listSessions(CLAUDE));
+    const byHandle = Object.fromEntries(out.sessions.map((s) => [s.handle, s]));
+    expect(byHandle['claude-1']).toMatchObject({
+      session_id: 's1',
+      opened_by: null,
+      home: '/work/a',
+      messageable: true,
+      notices: 'typed',
+    });
+    expect(byHandle['codex-2']).toMatchObject({
+      session_id: 's2',
+      opened_by: 'claude-1',
+      home: '/work/b',
+      messageable: true,
+    });
+    expect(byHandle['term-1']).toMatchObject({
+      session_id: 's3',
+      opened_by: 'claude-1',
+      messageable: false,
+      notices: 'pull',
+    });
+    expect(byHandle['kiro-2']).toMatchObject({ messageable: true });
   });
 });

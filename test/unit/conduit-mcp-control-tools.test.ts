@@ -30,7 +30,7 @@ interface Harness {
   opens: McpOpenRequest[];
   files: McpFileRequest[];
   logs: Array<{ message: string; data: Record<string, unknown> }>;
-  sent: Array<{ from: string; args: unknown }>;
+  sent: Array<{ from: string; args: unknown; opts?: unknown }>;
   clock: { t: number };
   kinds: Record<string, PathKind>;
   outcome: (req: McpOpenRequest) => Promise<McpOpenOutcome>;
@@ -41,7 +41,7 @@ function harness(over: Partial<ControlDeps> = {}): Harness {
     opens: [] as McpOpenRequest[],
     files: [] as McpFileRequest[],
     logs: [] as Array<{ message: string; data: Record<string, unknown> }>,
-    sent: [] as Array<{ from: string; args: unknown }>,
+    sent: [] as Array<{ from: string; args: unknown; opts?: unknown }>,
     clock: { t: 1_000_000 },
     kinds: {
       [HOME]: 'dir',
@@ -103,8 +103,8 @@ function harness(over: Partial<ControlDeps> = {}): Harness {
     },
     adapterOf: (id) => (id === 'claude' ? 'claude' : id === 'codex' ? 'codex' : undefined),
     messageReady: () => true,
-    sendMessage: async (who, args) => {
-      h.sent.push({ from: who.handle, args });
+    sendMessage: async (who, args, opts) => {
+      h.sent.push({ from: who.handle, args, opts });
       return {
         ok: true,
         value: { message_id: `m-${h.sent.length}`, thread_id: 't', recipients: [] },
@@ -907,7 +907,7 @@ describe('open_session model and message (CON-148)', () => {
     });
   });
 
-  it('a message is stored once from the caller to the new handle, and the result carries message_id', async () => {
+  it('a message is stored once from the caller to the new handle, and the result carries message.id', async () => {
     const h = harness();
     const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ message: 'start on T1' }));
     expect(r).toEqual({
@@ -917,11 +917,15 @@ describe('open_session model and message (CON-148)', () => {
         handle: 'h-new-1-0',
         label: 'T1',
         agent: 'claude',
-        message_id: 'm-1',
+        message: { id: 'm-1' },
       },
     });
     expect(h.sent).toEqual([
-      { from: 'claude-1', args: { to: ['h-new-1-0'], body: 'start on T1' } },
+      {
+        from: 'claude-1',
+        args: { to: ['h-new-1-0'], body: 'start on T1' },
+        opts: { allowUnconnected: true },
+      },
     ]);
   });
 
@@ -956,7 +960,23 @@ describe('open_session model and message (CON-148)', () => {
     expect(h.sent).toEqual([]);
   });
 
-  it('a stored-message failure after the open keeps the session id and the open', async () => {
+  it('the first message goes through the send with allowUnconnected, and its id is reported', async () => {
+    const h = harness();
+    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ message: 'start on T1' }));
+    expect(r).toMatchObject({
+      ok: true,
+      value: { handle: 'h-new-1-0', message: { id: 'm-1' } },
+    });
+    expect(h.sent).toEqual([
+      {
+        from: 'claude-1',
+        args: { to: ['h-new-1-0'], body: 'start on T1' },
+        opts: { allowUnconnected: true },
+      },
+    ]);
+  });
+
+  it('a store failure after the open is ok: the session stays, message.id is null with the error', async () => {
     const h = harness({
       sendMessage: async () => ({
         ok: false,
@@ -964,21 +984,51 @@ describe('open_session model and message (CON-148)', () => {
       }),
     });
     const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ message: 'hi' }));
-    expect(code(r)).toBe('store_unavailable');
-    expect(!r.ok && r.error.sessionId).toBe('new-1-0');
-    expect(!r.ok && r.error.handle).toBe('h-new-1-0');
-    expect(!r.ok && r.error.message).toBe(
-      'session opened; resend the task with send_message: disk full',
-    );
+    expect(r).toMatchObject({
+      ok: true,
+      value: {
+        session_id: 'new-1-0',
+        handle: 'h-new-1-0',
+        message: { id: null, error: { code: 'store_unavailable', message: 'disk full' } },
+      },
+    });
     expect(h.opens).toHaveLength(1);
   });
 
-  it('a message with no handle to address says so and keeps the session id', async () => {
+  it('a message with no handle to address is ok with message.id null', async () => {
     const h = harness({ claimHandle: () => null });
     const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ message: 'hi' }));
-    expect(code(r)).toBe('open_failed');
-    expect(!r.ok && r.error.sessionId).toBe('new-1-0');
+    expect(r).toMatchObject({
+      ok: true,
+      value: {
+        session_id: 'new-1-0',
+        handle: null,
+        message: { id: null, error: { code: 'open_failed' } },
+      },
+    });
     expect(h.sent).toEqual([]);
+  });
+
+  it('an unknown agent names the registered ids in valid, with a hint', async () => {
+    const ids = Array.from({ length: 35 }, (_, i) => `agent-${i}`);
+    const h = harness({ agentIds: () => ids });
+    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ agent: 'nope' }));
+    expect(r).toMatchObject({ ok: false, error: { code: 'unknown_agent' } });
+    if (r.ok) return;
+    expect(r.error.valid).toEqual(ids.slice(0, 30));
+    expect(r.error.hint).toEqual(expect.stringContaining('list_agents'));
+  });
+
+  it('a model on an agent with no model flag names the ids that take one', async () => {
+    const h = harness({ agentIds: () => ['claude', 'sh'] });
+    const r = await whenOn(h.deps).openSession(
+      caller(),
+      sessionArgs({ agent: 'sh', model: 'opus' }),
+    );
+    expect(r).toMatchObject({ ok: false, error: { code: 'invalid_args' } });
+    if (r.ok) return;
+    expect(r.error.hint).toEqual(expect.stringContaining('claude'));
+    expect(r.error.hint).toEqual(expect.stringContaining('capabilities.model_flag'));
   });
 
   it('message is not an open_terminal argument', async () => {

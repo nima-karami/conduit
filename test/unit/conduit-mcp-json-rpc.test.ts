@@ -98,7 +98,7 @@ describe('createMcpServerCore', () => {
     expect(b.calls).toEqual([{ name: 'list_sessions', args: {} }]);
   });
 
-  it('tools/call open_session reaches deps.call (not invalid_argument)', async () => {
+  it('tools/call open_session reaches deps.call (not invalid_args)', async () => {
     const { calls } = await rpc(
       req(6, 'tools/call', { name: 'open_session', arguments: { path: '.' } }),
     );
@@ -112,11 +112,11 @@ describe('createMcpServerCore', () => {
     }
   });
 
-  it('tools/call with an unknown tool name is an invalid_argument tool error', async () => {
+  it('tools/call with an unknown tool name is an invalid_args tool error', async () => {
     const { reply, calls } = await rpc(req(5, 'tools/call', { name: 'rm_rf', arguments: {} }));
     expect(calls).toEqual([]);
     expect(reply.result.isError).toBe(true);
-    expect(JSON.parse(reply.result.content[0].text).error.code).toBe('invalid_argument');
+    expect(JSON.parse(reply.result.content[0].text).error.code).toBe('invalid_args');
   });
 
   it('TOOLS_LIST_CHANGED is a JSON-RPC notification without id', () => {

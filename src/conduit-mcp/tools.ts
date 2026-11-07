@@ -26,6 +26,7 @@ import {
   THREAD_AGENT_LIMIT,
   type ToolError,
   type ToolErrorCode,
+  type ToolErrorDetail,
   toolError,
 } from './types';
 
@@ -48,6 +49,11 @@ export interface DirectoryEntry {
   messaging: 'connected' | 'unavailable';
   /** Its definition has a messaging adapter, so the CLI can connect and read queued messages. */
   connectable: boolean;
+  notices: 'typed' | 'pull';
+}
+/** Internal to Conduit: the open path stores its first message to a session that cannot read yet. */
+export interface SendOptions {
+  allowUnconnected?: boolean;
 }
 export interface ToolDeps {
   store: MessageStore;
@@ -63,7 +69,11 @@ export interface ToolDeps {
 }
 export interface ToolHandlers {
   listSessions(caller: Caller): Result<ListSessionsOutput>;
-  sendMessage(caller: Caller, args: unknown): Promise<Result<SendMessageOutput>>;
+  sendMessage(
+    caller: Caller,
+    args: unknown,
+    opts?: SendOptions,
+  ): Promise<Result<SendMessageOutput>>;
   readInbox(caller: Caller, args: unknown): Promise<Result<ReadInboxOutput>>;
   readAttachment(caller: Caller, args: unknown): Promise<Result<ReadAttachmentOutput>>;
 }
@@ -126,11 +136,15 @@ export function frameBody(
 }
 
 type Fail = { ok: false; error: ToolError };
-const fail = (code: ToolErrorCode, message: string): Fail => ({
+const fail = (code: ToolErrorCode, message: string, detail?: ToolErrorDetail): Fail => ({
   ok: false,
-  error: toolError(code, message),
+  error: toolError(code, message, undefined, detail),
 });
-const invalid = (message: string) => fail('invalid_argument', message);
+const invalid = (message: string) => fail('invalid_args', message);
+
+const NOT_MESSAGEABLE_HINT =
+  'send it to a session whose list_sessions entry says messageable: true, or start one with open_session';
+const UNKNOWN_SESSION_HINT = 'use a handle from valid; list_sessions shows the current ones';
 const MESSAGING_OFF = () => fail('messaging_off', 'Conduit messaging is turned off');
 
 type Args = Record<string, unknown>;
@@ -236,7 +250,11 @@ export function createToolHandlers(deps: ToolDeps): ToolHandlers {
   }
 
   // Check order is fixed by the plan (Contracts, tools.ts "Order of sendMessage checks").
-  async function sendMessage(caller: Caller, raw: unknown): Promise<Result<SendMessageOutput>> {
+  async function sendMessage(
+    caller: Caller,
+    raw: unknown,
+    opts: SendOptions = {},
+  ): Promise<Result<SendMessageOutput>> {
     if (!deps.messagingOn()) return MESSAGING_OFF();
     const a = parseSendArgs(raw);
     if (isFail(a)) return a;
@@ -278,9 +296,10 @@ export function createToolHandlers(deps: ToolDeps): ToolHandlers {
       if (h === caller.handle)
         recipients.push({ handle: h, status: 'refused', reason: 'self_target' });
       else if (h === HUMAN_HANDLE) recipients.push({ handle: h, status: 'queued' });
-      else if (!entry) recipients.push({ handle: h, status: 'refused', reason: 'unknown_handle' });
-      // Nothing in it can ever read: the message would sit unread forever.
-      else if (entry.messaging === 'unavailable' && !entry.connectable)
+      else if (!entry) recipients.push({ handle: h, status: 'refused', reason: 'unknown_session' });
+      // Nothing in it can ever read: the message would sit unread forever. The open path's first
+      // message is the one exception: the session it just opened reads once its CLI connects.
+      else if (entry.messaging === 'unavailable' && !entry.connectable && !opts.allowUnconnected)
         recipients.push({ handle: h, status: 'refused', reason: 'not_messageable' });
       else recipients.push({ handle: h, status: 'queued' });
     }
@@ -291,8 +310,14 @@ export function createToolHandlers(deps: ToolDeps): ToolHandlers {
         return fail(
           'not_messageable',
           `${first.handle} is a terminal with no Conduit-connected agent; it can't read messages`,
+          { hint: NOT_MESSAGEABLE_HINT },
         );
-      return fail(first.reason ?? 'unknown_handle', `no deliverable recipient (${first.handle})`);
+      if (first.reason === 'unknown_session')
+        return fail('unknown_session', `no session "${first.handle}" in list_sessions`, {
+          hint: UNKNOWN_SESSION_HINT,
+          valid: directory.map((e) => e.handle),
+        });
+      return fail(first.reason ?? 'unknown_session', `no deliverable recipient (${first.handle})`);
     }
 
     const snapshots: AttachmentSnapshot[] = [];
@@ -439,17 +464,24 @@ export function createToolHandlers(deps: ToolDeps): ToolHandlers {
   return {
     listSessions(caller) {
       if (!deps.messagingOn()) return MESSAGING_OFF();
+      const directory = deps.directory();
+      const handleOf = new Map(directory.map((e) => [e.sessionId, e.handle]));
       return {
         ok: true,
         value: {
-          sessions: deps.directory().map((e) => ({
+          sessions: directory.map((e) => ({
             handle: e.handle,
+            session_id: e.sessionId,
             label: e.label,
             agent: e.agent,
+            opened_by: e.openedBy === null ? null : (handleOf.get(e.openedBy) ?? null),
             project: e.project,
+            home: e.home,
             roots: [e.home, ...e.roots],
             presence: e.presence,
             messaging: e.messaging,
+            messageable: e.connectable || e.messaging === 'connected',
+            notices: e.notices,
             self: e.handle === caller.handle,
           })),
           human: { handle: HUMAN_HANDLE },
@@ -470,7 +502,15 @@ function isImageOutput(v: unknown): v is Extract<ReadAttachmentOutput, { kind: '
 
 export function toToolCallResult(r: Result<unknown>): ToolCallResult {
   if (!r.ok) {
-    return { content: [{ type: 'text', text: JSON.stringify({ error: r.error }) }], isError: true };
+    const { error } = r;
+    // Text-only clients read the hint; the code stays in structuredContent for the rest.
+    const text =
+      error.hint === undefined ? JSON.stringify({ error }) : `${error.message} Hint: ${error.hint}`;
+    return {
+      content: [{ type: 'text', text }],
+      structuredContent: { error },
+      isError: true,
+    };
   }
   if (isImageOutput(r.value)) {
     const { base64, ...meta } = r.value;

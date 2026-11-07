@@ -681,11 +681,12 @@ async function client(ep: string, token: string | null, clientName?: string) {
   });
   const call = async (name: string, args: unknown = {}) => {
     const r = (await request('tools/call', { name, arguments: args })) as {
-      result: { content: Array<{ text: string }>; isError?: boolean };
+      result: { content: Array<{ text: string }>; structuredContent?: unknown; isError?: boolean };
     };
     return {
       isError: r.result.isError === true,
-      body: JSON.parse(r.result.content[0].text),
+      // A hinted error's text is prose; its structured body carries the code.
+      body: r.result.structuredContent ?? JSON.parse(r.result.content[0].text),
       content: r.result.content,
     };
   };
@@ -2410,14 +2411,14 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
     expect(r.body).toMatchObject({
       session_id: 'n1',
       handle: 'fake-2',
-      message_id: expect.any(String),
+      message: { id: expect.any(String) },
     });
     const n1 = await launch(h, 'n1');
     const cb = await client(h.ep, n1.token);
     const inbox = await cb.call('read_inbox');
     expect(inbox.body.messages).toHaveLength(1);
     expect(inbox.body.messages[0]).toMatchObject({
-      message_id: r.body.message_id,
+      message_id: r.body.message.id,
       from: 'fake-1',
     });
     expect(inbox.body.messages[0].body).toContain('start on T1');
@@ -2619,7 +2620,7 @@ describe('lazy identity: token for every session, handle from clientInfo (spec 2
       .toEqual([['fake-1', 'fake']]);
     expect(Object.keys(h.host.uiState().sessions)).toEqual(['s1']);
     expect((await ca.call('send_message', { to: ['claude-1'], body: 'x' })).body.error.code).toBe(
-      'unknown_handle',
+      'unknown_session',
     );
   });
 
@@ -3365,8 +3366,11 @@ async function rawClient(ep: string, token: string | null) {
     await reply(id);
   };
   const errorOf = (l: Record<string, unknown> | undefined) => {
-    const r = l?.result as { content: Array<{ text: string }> } | undefined;
-    return r ? (JSON.parse(r.content[0].text).error?.code ?? 'ok') : undefined;
+    const r = l?.result as
+      | { content: Array<{ text: string }>; structuredContent?: { error?: { code: string } } }
+      | undefined;
+    if (!r) return undefined;
+    return (r.structuredContent ?? JSON.parse(r.content[0].text)).error?.code ?? 'ok';
   };
   return { sock, lines, send, reply, call, cancel, barrier, errorOf, isClosed: () => closed };
 }
@@ -3784,8 +3788,10 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
   const uiResult = (h: Harness, requestId: string, result: unknown, senderId: number) =>
     h.host.handleRenderer({ type: 'mcp:uiResult', requestId, result }, () => undefined, senderId);
   const resultOf = (l: Record<string, unknown> | undefined) => {
-    const r = l?.result as { content: Array<{ text: string }> } | undefined;
-    return r ? JSON.parse(r.content[0].text) : undefined;
+    const r = l?.result as
+      | { content: Array<{ text: string }>; structuredContent?: unknown }
+      | undefined;
+    return r ? (r.structuredContent ?? JSON.parse(r.content[0].text)) : undefined;
   };
   const allow = (h: Harness, id: string, layer: PolicyLayer) => {
     const s = h.sessions.get(id);
@@ -4064,10 +4070,12 @@ describe('createConduitMcpHost — wait_sessions', () => {
     h.exit('s2');
     const r = await ca.call('wait_sessions', { sessions: ['fake-2'], until: ['exited'] });
     expect(r.isError).toBe(false);
+    // The default 120 s is over an unknown caller's trimmed 20 s, so it reports the clamp too.
     expect(r.body).toEqual({
       fired: [{ session: 'fake-2', condition: 'exited' }],
       timed_out: false,
       states: [{ session: 'fake-2', presence: 'exited', needs_you: false, unread_from: 0 }],
+      clamped_to: 20,
     });
   });
 
@@ -4093,6 +4101,7 @@ describe('createConduitMcpHost — wait_sessions', () => {
       fired: [{ session: 'fake-2', condition: 'turn_end' }],
       timed_out: false,
       states: [{ session: 'fake-2', presence: 'idle', needs_you: false, unread_from: 0 }],
+      clamped_to: 20,
     });
   });
 
@@ -4139,6 +4148,7 @@ describe('createConduitMcpHost — wait_sessions', () => {
       fired: [{ session: 'fake-2', condition: 'message' }],
       timed_out: false,
       states: [{ session: 'fake-2', presence: 'idle', needs_you: false, unread_from: 1 }],
+      clamped_to: 20,
     });
   });
 
@@ -4153,6 +4163,7 @@ describe('createConduitMcpHost — wait_sessions', () => {
       fired: [{ session: 'fake-2', condition: 'needs_you' }],
       timed_out: false,
       states: [{ session: 'fake-2', presence: 'idle', needs_you: true, unread_from: 0 }],
+      clamped_to: 20,
     });
   });
 
@@ -4219,12 +4230,40 @@ describe('createConduitMcpHost — wait_sessions', () => {
     expect(r.body.error.code).toBe('rate_limited');
   });
 
-  it('an unknown session is invalid_args naming it', async () => {
+  it('an unknown session is unknown_session naming it, with the listed handles as valid', async () => {
     const h = harness();
     const { ca } = await pairForWait(h);
     const r = await ca.call('wait_sessions', { sessions: ['nope'], until: ['exited'] });
-    expect(r.body.error.code).toBe('invalid_args');
+    expect(r.body.error.code).toBe('unknown_session');
     expect(r.body.error.message).toContain('nope');
+    expect(r.body.error.valid).toEqual(['fake-1', 'fake-2']);
+    expect(r.body.error.hint).toEqual(expect.stringContaining('valid'));
+  });
+
+  it('a timeout over the caller budget is trimmed and reports clamped_to', async () => {
+    const h = harness({ manualTimers: true });
+    const { ca } = await pairForWait(h);
+    const base = h.pendingTimers;
+    const p = ca.call('wait_sessions', { sessions: ['fake-2'], until: ['exited'], timeout_s: 540 });
+    await expect.poll(() => h.pendingTimers).toBe(base + 1);
+    // An unknown caller's 25 s budget less the 5 s reply margin.
+    h.advance(20_000);
+    expect((await p).body).toEqual({
+      fired: [],
+      timed_out: true,
+      states: [{ session: 'fake-2', presence: 'idle', needs_you: false, unread_from: 0 }],
+      clamped_to: 20,
+    });
+  });
+
+  it('a timeout within the caller budget has no clamped_to', async () => {
+    const h = harness({ manualTimers: true });
+    const { ca } = await pairForWait(h);
+    const base = h.pendingTimers;
+    const p = ca.call('wait_sessions', { sessions: ['fake-2'], until: ['exited'], timeout_s: 5 });
+    await expect.poll(() => h.pendingTimers).toBe(base + 1);
+    h.advance(5_000);
+    expect(Object.keys((await p).body)).not.toContain('clamped_to');
   });
 
   it('a session cannot wait on itself', async () => {
