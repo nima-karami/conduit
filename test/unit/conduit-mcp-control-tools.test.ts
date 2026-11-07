@@ -841,7 +841,7 @@ describe('tool schemas (plan B5)', () => {
   });
 
   it('exposes flat read_screen and send_input schemas with their contract descriptions', () => {
-    const byName = new Map(toolSchemas(['claude']).map((tool) => [tool.name, tool]));
+    const byName = new Map(toolSchemas().map((tool) => [tool.name, tool]));
     expect(byName.get('read_screen')?.description).toContain(
       "opener sees its helpers' raw screens",
     );
