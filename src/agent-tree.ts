@@ -1,11 +1,19 @@
 import {
-  type AgentGroup,
+  type AgentGroupKey,
   type AgentRuntime,
   type AgentState,
   agentOwnState,
   type SidebarUiState,
   type SpaceSelection,
 } from './sidebar-state';
+import {
+  AGENT_KINDS,
+  type AgentKind,
+  type AgentsView,
+  DEFAULT_AGENTS_VIEW,
+  kindGroupKey,
+  spaceGroupKey,
+} from './sidebar-view';
 import type { Project, Session } from './types';
 
 /**
@@ -26,7 +34,7 @@ export interface AgentTreeRow {
   folded: boolean;
 }
 export interface AgentTreeGroup {
-  key: AgentGroup;
+  key: AgentGroupKey;
   rootIds: string[];
   folded: boolean;
 }
@@ -71,6 +79,19 @@ function ownState(s: Session, runtime: AgentRuntime, asks: ReadonlySet<string>):
   return agentOwnState(s, runtime.seen[s.id] ?? Number.POSITIVE_INFINITY, asks.has(s.id));
 }
 
+/** Running only, Needs you (own state, so a lead is never kept for its helper) and the kinds. */
+function passesFilters(
+  s: Session,
+  view: AgentsView,
+  runtime: AgentRuntime,
+  asks: ReadonlySet<string>,
+  kindOf: (s: Session) => AgentKind,
+): boolean {
+  if (view.runningOnly && s.status !== 'running') return false;
+  if (view.needsYou && ownState(s, runtime, asks) !== 'blocked') return false;
+  return view.kinds.length === 0 || view.kinds.includes(kindOf(s));
+}
+
 /** Cuts every cycle at its lexically smallest id, in place. */
 function breakCycles(parent: Map<string, string | null>): void {
   const mark = new Map<string, 1 | 2>();
@@ -91,16 +112,30 @@ function breakCycles(parent: Map<string, string | null>): void {
   }
 }
 
+const byName = (a: Session | undefined, b: Session | undefined) =>
+  (a?.name ?? '').localeCompare(b?.name ?? '', undefined, { sensitivity: 'base', numeric: true });
+
 export function buildAgentTree(input: {
   sessions: readonly Session[];
   runtime: AgentRuntime;
   ui: SidebarUiState;
   matchingIds: ReadonlySet<string>;
   askSessionIds: ReadonlySet<string>;
+  /** The ⋯ menu's options; absent = the defaults, which are the sidebar as it was. */
+  view?: AgentsView;
+  /** Which agent family a session belongs to (the kind filter and By agent type). */
+  kindOf?: (s: Session) => AgentKind;
+  /** The Spaces in panel order: the By space groups follow it. */
+  spaces?: readonly { id: string }[];
 }): AgentTreeModel {
   const { runtime, ui } = input;
+  const view = input.view ?? DEFAULT_AGENTS_VIEW;
+  const kindOf = input.kindOf ?? (() => 'other' as const);
   const included = input.sessions.filter(
-    (s) => inSelection(s, ui.selection) && input.matchingIds.has(s.id),
+    (s) =>
+      inSelection(s, ui.selection) &&
+      input.matchingIds.has(s.id) &&
+      passesFilters(s, view, runtime, input.askSessionIds, kindOf),
   );
   const byKey = new Map(included.map((s) => [s.id, s]));
   const pinned = ui.pinnedIds.filter((id) => byKey.has(id));
@@ -172,15 +207,26 @@ export function buildAgentTree(input: {
     };
   }
 
+  // 'recent' is the order the sidebar has always had: Needs you rises, then the latest state change.
   const compare = (a: string, b: string): number => {
     const ra = rows[a];
     const rb = rows[b];
-    return (
-      RANK[rb.effectiveState] - RANK[ra.effectiveState] ||
-      rb.stateSince - ra.stateSince ||
-      (byKey.get(a)?.createdAt ?? 0) - (byKey.get(b)?.createdAt ?? 0) ||
-      byId(a, b)
-    );
+    const rank = RANK[rb.effectiveState] - RANK[ra.effectiveState];
+    switch (view.sort) {
+      case 'name':
+        return byName(byKey.get(a), byKey.get(b)) || byId(a, b);
+      case 'status':
+        return rank || byName(byKey.get(a), byKey.get(b)) || byId(a, b);
+      case 'created':
+        return (byKey.get(b)?.createdAt ?? 0) - (byKey.get(a)?.createdAt ?? 0) || byId(a, b);
+      default:
+        return (
+          rank ||
+          rb.stateSince - ra.stateSince ||
+          (byKey.get(a)?.createdAt ?? 0) - (byKey.get(b)?.createdAt ?? 0) ||
+          byId(a, b)
+        );
+    }
   };
   for (const row of Object.values(rows)) row.childIds.sort(compare);
 
@@ -188,11 +234,32 @@ export function buildAgentTree(input: {
   const groups: AgentTreeGroup[] = [];
   if (pinned.length > 0)
     groups.push({ key: 'pinned', rootIds: pinned, folded: folds.has('pinned') });
-  for (const key of STATUS_GROUPS) {
-    const rootIds = roots
-      .filter((id) => !pinnedSet.has(id) && rows[id].effectiveState === key)
-      .sort(compare);
-    if (rootIds.length > 0) groups.push({ key, rootIds, folded: folds.has(key) });
+  const unpinned = roots.filter((id) => !pinnedSet.has(id));
+  const push = (key: AgentGroupKey, ids: string[]) => {
+    if (ids.length > 0)
+      groups.push({ key, rootIds: ids.sort(compare), folded: key !== 'flat' && folds.has(key) });
+  };
+  // A root decides its group; its helpers follow it wherever they would have landed alone.
+  if (view.group === 'none') push('flat', unpinned);
+  else if (view.group === 'space') {
+    const spaceKeys = [...(input.spaces ?? []).map((sp) => sp.id), undefined].map(spaceGroupKey);
+    for (const key of spaceKeys)
+      push(
+        key,
+        unpinned.filter((id) => spaceGroupKey(byKey.get(id)?.projectId) === key),
+      );
+  } else if (view.group === 'type') {
+    for (const kind of AGENT_KINDS)
+      push(
+        kindGroupKey(kind),
+        unpinned.filter((id) => kindOf(byKey.get(id) as Session) === kind),
+      );
+  } else {
+    for (const key of STATUS_GROUPS)
+      push(
+        key,
+        unpinned.filter((id) => rows[id].effectiveState === key),
+      );
   }
 
   const visibleIds: string[] = [];

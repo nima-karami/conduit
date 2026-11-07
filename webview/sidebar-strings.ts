@@ -1,7 +1,8 @@
 // User-facing strings for the Spaces list, the agent tree and the session menu: one place for the
 // future i18n seam (docs/specs/archive/2026-11-02-sidebar-agent-tree.md §9), in MCP_STR's function style.
 
-import type { AgentGroup, AgentState } from '../src/sidebar-state';
+import type { AgentGroup, AgentGroupKey, AgentState } from '../src/sidebar-state';
+import type { AgentKind } from '../src/sidebar-view';
 
 const plural = new Intl.PluralRules(undefined);
 const number = new Intl.NumberFormat(undefined);
@@ -20,6 +21,26 @@ const STATE: Record<AgentState, string> = {
 };
 
 const GROUP: Record<AgentGroup, string> = { pinned: 'Pinned', ...STATE };
+
+const KIND_TITLE: Record<AgentKind, string> = {
+  claude: 'Claude',
+  codex: 'Codex',
+  cursor: 'Cursor',
+  other: 'Other',
+};
+
+interface GroupTitleOpts {
+  /** The Space's name for a By space group; absent = the group of agents without a Space. */
+  spaceName?: string;
+}
+
+/** A group header's title: status groups keep their state words, the others name their bucket. */
+function groupTitle(key: AgentGroupKey, o: GroupTitleOpts): string {
+  if (key.startsWith('space:')) return o.spaceName ?? SPACELESS;
+  if (key.startsWith('type:')) return KIND_TITLE[key.slice(5) as AgentKind] ?? key.slice(5);
+  return GROUP[key as AgentGroup];
+}
+const SPACELESS = 'No space';
 
 /** A mark's tooltip says a little more than its accessible state word. */
 const MARK_TIP: Record<AgentState, string> = {
@@ -50,9 +71,10 @@ export const SIDEBAR_STR = {
   live: (n: number) => `${number.format(n)} live`,
   state: (s: AgentState) => STATE[s],
   markTip: (s: AgentState) => MARK_TIP[s],
-  group: (g: AgentGroup) => GROUP[g],
+  group: (g: AgentGroupKey, o: GroupTitleOpts = {}) => groupTitle(g, o),
   /** The group header's accessible name counts roots, never descendants (spec §4). */
-  groupLabel: (g: AgentGroup, roots: number) => `${GROUP[g]} (${number.format(roots)})`,
+  groupLabel: (g: AgentGroupKey, roots: number, o: GroupTitleOpts = {}) =>
+    `${groupTitle(g, o)} (${number.format(roots)})`,
   /**
    * The row's accessible name (plan selector table): name and own status, the Space only under
    * All, and a descendant's Needs you, which the own mark does not show.
@@ -84,6 +106,25 @@ export const SIDEBAR_STR = {
   renameSpaceLabel: (name: string) => `Rename ${name}`,
   deleteSpace: 'Delete space…',
   deleteSpaceConfirm: 'Delete space',
+  /** The ⋯ view menus on the Agents and Spaces panels. */
+  viewMenu: {
+    agentsLabel: 'Agents view options',
+    spacesLabel: 'Spaces view options',
+    customized: 'customized',
+    reset: 'Reset',
+    sort: 'Sort',
+    group: 'Group',
+    filter: 'Filter',
+    agentType: 'Agent type',
+    sorts: { recent: 'Recent activity', name: 'Name', status: 'Status', created: 'Created' },
+    groups: { status: 'By status', space: 'By space', type: 'By agent type', none: 'None' },
+    runningOnly: 'Running only',
+    needsYou: 'Needs you',
+    kinds: { claude: 'Claude', codex: 'Codex', cursor: 'Cursor', other: 'Other' },
+    spacesSorts: { manual: 'Manual', name: 'Name', recent: 'Recent' },
+    hideEmpty: 'Hide empty spaces',
+    noAgentsMatch: 'No agents match',
+  },
   // Pane menu.
   closeAll: 'Close all sessions',
   closeAllStale: 'Close all stale sessions',

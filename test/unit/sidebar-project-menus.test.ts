@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { WebviewToHost } from '../../src/protocol';
 import { defaultSidebarUi } from '../../src/sidebar-state';
+import { DEFAULT_AGENTS_VIEW, DEFAULT_SPACES_VIEW } from '../../src/sidebar-view';
 import type { Project, Session } from '../../src/types';
 import type { ConfirmState } from '../../webview/components/confirm-dialog';
 import { Sidebar } from '../../webview/components/sidebar';
@@ -91,6 +92,10 @@ async function render(
             filterRequest: 0,
             requestFilter: noop,
             updateUi: noop,
+            agentsView: DEFAULT_AGENTS_VIEW,
+            spacesView: DEFAULT_SPACES_VIEW,
+            setAgentsView: noop,
+            setSpacesView: noop,
             reportVisibleIds: noop,
           },
         },

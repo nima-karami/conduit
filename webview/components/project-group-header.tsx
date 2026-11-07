@@ -1,7 +1,7 @@
 import { LayoutGrid } from 'lucide-react';
 import type { SpaceRowModel } from '../../src/agent-tree';
 import type { Rect } from '../../src/menu-position';
-import type { AgentGroup } from '../../src/sidebar-state';
+import type { AgentGroupKey } from '../../src/sidebar-state';
 import { IconChevron, IconChevronDown } from '../icons';
 import { SIDEBAR_STR } from '../sidebar-strings';
 import { AgentMark, RenameInput } from './session-card';
@@ -118,13 +118,16 @@ export function SpaceRow({
  */
 export function AgentGroupHeader({
   group,
+  spaceName,
   roots,
   folded,
   tabbable,
   onToggle,
   onFocus,
 }: {
-  group: AgentGroup;
+  group: AgentGroupKey;
+  /** The Space a By space group is for; see SIDEBAR_STR.group. */
+  spaceName?: string;
   roots: number;
   folded: boolean;
   tabbable: boolean;
@@ -139,7 +142,7 @@ export function AgentGroupHeader({
       aria-level={1}
       data-agent-group={group}
       aria-expanded={!folded}
-      aria-label={SIDEBAR_STR.groupLabel(group, roots)}
+      aria-label={SIDEBAR_STR.groupLabel(group, roots, { spaceName })}
       tabIndex={tabbable ? 0 : -1}
       onClick={onToggle}
       onFocus={onFocus}
@@ -147,7 +150,7 @@ export function AgentGroupHeader({
       <span className="proj__chevron" aria-hidden>
         {folded ? <IconChevron size={9} /> : <IconChevronDown size={9} />}
       </span>
-      <span className="proj__name">{SIDEBAR_STR.group(group)}</span>
+      <span className="proj__name">{SIDEBAR_STR.group(group, { spaceName })}</span>
       <span className="proj__count">{roots}</span>
     </button>
   );

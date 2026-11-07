@@ -8811,6 +8811,129 @@ body.gh-resizing {
   margin: 4px 6px;
 }
 
+/* ⋯ view menus on the Agents and Spaces headers: the context menu's surface and rows, plus a
+   section label row, switch indicators and agent-type chips. Radios and chips take --r-round so
+   Neon draws them square. */
+.viewmenu {
+  min-width: 208px;
+}
+.viewmenu--chips {
+  min-width: 252px;
+}
+.viewmenu__trigger {
+  position: relative;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+}
+.viewmenu__trigger[aria-expanded="true"] {
+  color: var(--state-on-fg);
+  background: var(--state-sel-bg);
+  border-color: var(--state-on-fg);
+}
+/* Non-default options: a mark on the button, which stays legible when the menu is shut. */
+.viewmenu__dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-round);
+  background: var(--accent);
+  pointer-events: none;
+}
+.viewmenu__section + .viewmenu__section {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+}
+.viewmenu__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px 3px;
+}
+.viewmenu__label {
+  color: var(--text-faint);
+  font-size: calc(11px * var(--font-scale));
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+/* Also the Reset in the empty-result row. */
+.viewmenu__reset {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: calc(11px * var(--font-scale));
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
+  cursor: pointer;
+}
+.viewmenu__reset:hover {
+  text-decoration: underline;
+}
+.viewmenu__ind {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid var(--text-faint);
+  color: var(--on-accent);
+}
+.viewmenu__ind--radio {
+  border-radius: var(--r-round);
+}
+.viewmenu__ind--check {
+  border-radius: min(4px, var(--r-badge));
+}
+.viewmenu__option[aria-checked="true"] .viewmenu__ind {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+/* The dot of a selected radio is the raised surface showing through a ring of accent. */
+.viewmenu__option[aria-checked="true"] .viewmenu__ind--radio {
+  box-shadow: inset 0 0 0 2.5px var(--raise);
+}
+.viewmenu__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 10px 8px;
+}
+.viewmenu__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px 3px 7px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-round);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: calc(11.5px * var(--font-scale));
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
+  cursor: pointer;
+}
+.viewmenu__chip[aria-checked="true"] {
+  border-color: var(--accent);
+  background: var(--state-sel-bg);
+  color: var(--state-on-fg);
+}
+/* An empty result takes one quiet line, not the full empty-state card. */
+.agents__nomatch {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 14px;
+  color: var(--text-faint);
+  font-size: calc(12px * var(--font-scale));
+}
+
 /* Move to project… (mf-sidebar spec §2.7): a menu surface with a filter on top. The pointer
    drives the same highlight the arrow keys do, so rows need no separate :hover fill. */
 .projpicker__filter,

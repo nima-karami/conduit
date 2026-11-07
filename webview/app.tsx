@@ -2084,6 +2084,10 @@ export function App() {
       filterRequest,
       requestFilter,
       updateUi: updateSidebarUi,
+      agentsView: settings.sidebarAgentsView,
+      spacesView: settings.sidebarSpacesView,
+      setAgentsView: (next) => update({ sidebarAgentsView: next }),
+      setSpacesView: (next) => update({ sidebarSpacesView: next }),
       reportVisibleIds,
     }),
     [
@@ -2096,6 +2100,9 @@ export function App() {
       filterRequest,
       requestFilter,
       updateSidebarUi,
+      settings.sidebarAgentsView,
+      settings.sidebarSpacesView,
+      update,
       reportVisibleIds,
     ],
   );

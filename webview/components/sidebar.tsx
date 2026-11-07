@@ -26,11 +26,12 @@ import {
   sessionMatchesFilter,
 } from '../../src/session-groups';
 import type {
-  AgentGroup,
+  AgentGroupKey,
   AgentState,
   SidebarUiState,
   SpaceSelection,
 } from '../../src/sidebar-state';
+import { agentKindOf, hasAgentFilters, viewSpaceRows } from '../../src/sidebar-view';
 import { staleSessionIds } from '../../src/stale-sessions';
 import type { AgentDefinition, Project, Session } from '../../src/types';
 import { post } from '../bridge';
@@ -52,6 +53,7 @@ import {
 } from '../sidebar-selection';
 import { SIDEBAR_STR } from '../sidebar-strings';
 import { useSidebarTreeState } from '../sidebar-tree-state';
+import { agentViewCounts, buildAgentsViewMenu, buildSpacesViewMenu } from '../sidebar-view-menu';
 import { buildAgentsPaneMenu } from '../sort-filter-menu';
 import type { ConfirmState } from './confirm-dialog';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
@@ -63,9 +65,10 @@ import {
   SpaceRow,
 } from './project-group-header';
 import { AgentRow, RenameInput, type RowGuides } from './session-card';
+import { ViewMenu } from './view-menu';
 
 const GROUP_NAV = 'group:';
-const groupNavId = (g: AgentGroup) => `${GROUP_NAV}${g}`;
+const groupNavId = (g: AgentGroupKey) => `${GROUP_NAV}${g}`;
 const isGroupNavId = (id: string) => id.startsWith(GROUP_NAV);
 
 /** One rendered row of the flattened, unfolded forest: the pointer and keyboard order. */
@@ -77,8 +80,8 @@ interface FlatRow {
 
 /** The tree's direct children, in pointer and keyboard order. */
 type TreeItem =
-  | { kind: 'group'; key: AgentGroup; navId: string; group: AgentTreeGroup }
-  | { kind: 'row'; key: string; navId: string; row: FlatRow; group: AgentGroup };
+  | { kind: 'group'; key: AgentGroupKey; navId: string; group: AgentTreeGroup }
+  | { kind: 'row'; key: string; navId: string; row: FlatRow; group: AgentGroupKey };
 
 /**
  * Depth-first over each unfolded group, iteratively (ancestry comes from persisted, possibly
@@ -221,6 +224,7 @@ export function Sidebar({
 }) {
   const tree = useSidebarTreeState();
   const { ui, runtime, askSessionIds, bindings, updateUi, reportVisibleIds } = tree;
+  const { agentsView, spacesView, setAgentsView, setSpacesView } = tree;
   const baseId = useId();
   const filterId = `${baseId}-filter`;
   const treeRef = useRef<HTMLDivElement>(null);
@@ -271,6 +275,11 @@ export function Sidebar({
         lastFocusedBySpace: tree.lastFocusedBySpace,
       }),
     [projects, sessions, runtime, askSessionIds, tree.lastFocusedBySpace],
+  );
+  const visibleSpaceRows = useMemo(
+    () =>
+      viewSpaceRows(spaceRows, spacesView, { sessions, selectedKey: selectionKey(ui.selection) }),
+    [spaceRows, spacesView, sessions, ui.selection],
   );
   const spaceName = (row: SpaceRowModel) =>
     row.key === SPACE_KEY_ALL
@@ -441,9 +450,36 @@ export function Sidebar({
       ),
     [sessions, filter, projectName, labelFor],
   );
+  const kindOf = useCallback(
+    (s: Session) =>
+      agentKindOf(
+        resolveAgentIcon({
+          session: s,
+          agents,
+          boundCli: bindings[s.id]?.cli,
+          handle: bindings[s.id]?.handle,
+        }),
+      ),
+    [agents, bindings],
+  );
+  // The By space groups follow the order the Spaces panel shows.
+  const groupSpaces = useMemo(
+    () => visibleSpaceRows.flatMap((r) => (r.projectId === null ? [] : [{ id: r.projectId }])),
+    [visibleSpaceRows],
+  );
   const model = useMemo(
-    () => buildAgentTree({ sessions, runtime, ui, matchingIds, askSessionIds }),
-    [sessions, runtime, ui, matchingIds, askSessionIds],
+    () =>
+      buildAgentTree({
+        sessions,
+        runtime,
+        ui,
+        matchingIds,
+        askSessionIds,
+        view: agentsView,
+        kindOf,
+        spaces: groupSpaces,
+      }),
+    [sessions, runtime, ui, matchingIds, askSessionIds, agentsView, kindOf, groupSpaces],
   );
   // Reveal once per change of the active agent, as soon as its session exists and the saved fold
   // state has landed; a fold the user makes afterwards stays folded.
@@ -462,7 +498,9 @@ export function Sidebar({
   const items = useMemo(() => {
     const out: TreeItem[] = [];
     for (const g of model.groups) {
-      out.push({ kind: 'group', key: g.key, navId: groupNavId(g.key), group: g });
+      // Group: None has no header; its rows are the list.
+      if (g.key !== 'flat')
+        out.push({ kind: 'group', key: g.key, navId: groupNavId(g.key), group: g });
       if (g.folded) continue;
       for (const f of flattenGroup(model, g.rootIds))
         out.push({ kind: 'row', key: f.id, navId: f.id, row: f, group: g.key });
@@ -592,7 +630,7 @@ export function Sidebar({
     const pinned = ui.pinnedIds.includes(id);
     setUi({ pinnedIds: pinned ? ui.pinnedIds.filter((x) => x !== id) : [...ui.pinnedIds, id] });
   };
-  const toggleGroup = (g: AgentGroup) => {
+  const toggleGroup = (g: AgentGroupKey) => {
     const folded = ui.foldedGroups.includes(g);
     setUi({
       foldedGroups: folded ? ui.foldedGroups.filter((x) => x !== g) : [...ui.foldedGroups, g],
@@ -612,7 +650,7 @@ export function Sidebar({
     }
     const el = e.target as HTMLElement;
     if (el.getAttribute('role') !== 'treeitem') return;
-    const groupKey = el.dataset.agentGroup as AgentGroup | undefined;
+    const groupKey = el.dataset.agentGroup as AgentGroupKey | undefined;
     const navId = groupKey !== undefined ? groupNavId(groupKey) : el.dataset.sessionid;
     if (navId === undefined) return;
     const at = navIds.indexOf(navId);
@@ -659,7 +697,8 @@ export function Sidebar({
         if (row.childIds.length > 0 && !row.folded) return toggleFold(id);
         if (row.parentId !== null && navIds.includes(row.parentId)) return focusItem(row.parentId);
         const g = groupOfRow.get(id);
-        if (row.depth === 0 && g !== undefined) focusItem(groupNavId(g));
+        if (row.depth === 0 && g !== undefined && navIds.includes(groupNavId(g)))
+          focusItem(groupNavId(g));
         return;
       }
       case 'Enter':
@@ -849,6 +888,11 @@ export function Sidebar({
   };
 
   const liveCount = sessions.filter((s) => s.status === 'running').length;
+  const agentsMenu = buildAgentsViewMenu(
+    agentsView,
+    agentViewCounts(sessions, runtime, askSessionIds),
+    setAgentsView,
+  );
   const selected = selectionKey(ui.selection);
   const shown = model.groups.length > 0;
 
@@ -878,6 +922,17 @@ export function Sidebar({
         }
       />
     );
+  else if (!shown && hasAgentFilters(agentsView))
+    empty = (
+      <p className="agents__nomatch" role="status">
+        {SIDEBAR_STR.viewMenu.noAgentsMatch}
+        {agentsMenu.reset && (
+          <button type="button" className="viewmenu__reset" onClick={agentsMenu.reset}>
+            {SIDEBAR_STR.viewMenu.reset}
+          </button>
+        )}
+      </p>
+    );
   else if (!shown) empty = <EmptyState title={SIDEBAR_STR.emptySpace} />;
 
   return (
@@ -897,10 +952,14 @@ export function Sidebar({
           >
             <IconPlus size={15} />
           </button>
+          <ViewMenu
+            label={SIDEBAR_STR.viewMenu.spacesLabel}
+            model={buildSpacesViewMenu(spacesView, setSpacesView)}
+          />
         </div>
       </div>
       <div className="spaces">
-        {spaceRows.map((row) => (
+        {visibleSpaceRows.map((row) => (
           <SpaceRow
             key={row.key}
             row={row}
@@ -968,6 +1027,7 @@ export function Sidebar({
           >
             <IconPlus size={15} />
           </button>
+          <ViewMenu label={SIDEBAR_STR.viewMenu.agentsLabel} model={agentsMenu} />
         </div>
       </div>
 
@@ -1037,6 +1097,11 @@ export function Sidebar({
                 <AgentGroupHeader
                   key={`group:${it.key}`}
                   group={it.group.key}
+                  spaceName={
+                    it.group.key.startsWith('space:')
+                      ? projectName(it.group.key.slice('space:'.length))
+                      : undefined
+                  }
                   roots={it.group.rootIds.length}
                   folded={it.group.folded}
                   tabbable={it.navId === tabId}

@@ -1,3 +1,4 @@
+import { AGENT_KINDS } from './sidebar-view';
 import type { AttentionReason, Session } from './types';
 
 /**
@@ -8,6 +9,11 @@ import type { AttentionReason, Session } from './types';
 /** 'blocked' is the Needs you state; the copy lives with the UI. */
 export type AgentState = 'blocked' | 'done' | 'working' | 'idle' | 'stopped';
 export type AgentGroup = 'pinned' | AgentState;
+/**
+ * A group's identity for folding. The Space and type groups of the ⋯ menu's Group option join the
+ * status ones; `flat` (Group: None) has no header, so it never folds and is never stored (parse drops it).
+ */
+export type AgentGroupKey = AgentGroup | 'flat' | `space:${string}` | `type:${string}`;
 export type SpaceSelection =
   | { kind: 'all' }
   | { kind: 'none' }
@@ -15,7 +21,7 @@ export type SpaceSelection =
 
 export interface SidebarUiState {
   selection: SpaceSelection;
-  foldedGroups: AgentGroup[];
+  foldedGroups: AgentGroupKey[];
   foldedSessions: string[];
   pinnedIds: string[];
 }
@@ -59,7 +65,11 @@ function uniqueCapped<T>(v: unknown[], keep: (x: unknown) => x is T): T[] {
 }
 
 const isId = (x: unknown): x is string => typeof x === 'string' && x !== '';
-const isGroup = (x: unknown): x is AgentGroup => GROUPS.includes(x as AgentGroup);
+const isGroup = (x: unknown): x is AgentGroupKey =>
+  GROUPS.includes(x as AgentGroup) ||
+  (typeof x === 'string' &&
+    (x.startsWith('space:') ||
+      (x.startsWith('type:') && AGENT_KINDS.includes(x.slice(5) as never))));
 
 /** Tolerant per field: a bad field takes its default, the rest survive. */
 export function parseSidebarUi(value: unknown): SidebarUiState {

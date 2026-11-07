@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import { type AgentRuntime, defaultSidebarUi, type SidebarUiState } from '../src/sidebar-state';
+import type { AgentsView, SpacesView } from '../src/sidebar-view';
 
 /**
  * What the App hands the sidebar tree (docs/plans/2026-11-02-sidebar-agent-tree.plan.md "Renderer
@@ -17,6 +18,11 @@ export interface SidebarTreeContextValue {
   filterRequest: number;
   requestFilter(): void;
   updateUi(next: SidebarUiState): void;
+  /** The ⋯ menus' options: app settings, shared by every window (src/sidebar-view.ts). */
+  agentsView: AgentsView;
+  spacesView: SpacesView;
+  setAgentsView(next: AgentsView): void;
+  setSpacesView(next: SpacesView): void;
   /** The flattened visible order, for next/previous agent; never sets App state. */
   reportVisibleIds(ids: readonly string[]): void;
 }

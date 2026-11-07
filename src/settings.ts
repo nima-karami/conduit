@@ -7,6 +7,14 @@ import {
 } from './conduit-mcp/tool-policy';
 import { DEFAULT_LAYOUT, parseLayout, serializeLayout } from './layout';
 import type { LogLevel } from './logging';
+import {
+  type AgentsView,
+  coerceAgentsView,
+  coerceSpacesView,
+  DEFAULT_AGENTS_VIEW,
+  DEFAULT_SPACES_VIEW,
+  type SpacesView,
+} from './sidebar-view';
 
 const VERSION = 1;
 
@@ -120,6 +128,10 @@ export interface AppSettings {
   sessionSort: SessionSort;
   sessionGroupByProject: boolean;
   collapsedProjects: string[];
+  // The Agents and Spaces panels' ⋯ menus. App-wide on purpose: one sort/group/filter in every
+  // window, unlike the per-window selection and folds (sidebar-state.ts).
+  sidebarAgentsView: AgentsView;
+  sidebarSpacesView: SpacesView;
   // behaviour
   shortcuts: Record<string, string>; // actionId -> combo override (defaults used when absent)
   defaultAgentId: string; // '' = ask each time
@@ -231,6 +243,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sessionSort: 'manual',
   sessionGroupByProject: true,
   collapsedProjects: [],
+  sidebarAgentsView: DEFAULT_AGENTS_VIEW,
+  sidebarSpacesView: DEFAULT_SPACES_VIEW,
   shortcuts: {},
   defaultAgentId: '',
   restoreSessions: true,
@@ -488,6 +502,8 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     ),
     // Pre-project entries were absolute folder paths; ids and 'standalone' never hold a separator.
     collapsedProjects: strArr(payload.collapsedProjects).filter((k) => !/[\\/]/.test(k)),
+    sidebarAgentsView: coerceAgentsView(payload.sidebarAgentsView),
+    sidebarSpacesView: coerceSpacesView(payload.sidebarSpacesView),
     shortcuts: strMap(payload.shortcuts),
     defaultAgentId: strOr(payload.defaultAgentId, DEFAULT_SETTINGS.defaultAgentId),
     restoreSessions: bool(payload.restoreSessions, DEFAULT_SETTINGS.restoreSessions),

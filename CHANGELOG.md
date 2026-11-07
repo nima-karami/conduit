@@ -6,6 +6,9 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- The Agents and Spaces panels have a ⋯ menu to sort, group and filter the list (for agents: by status, space or agent type, running only, needs you); your choices are kept between launches.
+
 ## [0.60.0] — 2026-11-07
 
 ### Added

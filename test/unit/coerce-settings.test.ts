@@ -595,3 +595,46 @@ describe('coerceSettings — agent tree compatibility', () => {
     expect(r.explorerCollapsed).toBe(true);
   });
 });
+
+describe('coerceSettings — sidebar panel views', () => {
+  it('default to the unchanged sidebar', () => {
+    const r = coerce({});
+    expect(r.sidebarAgentsView).toEqual({
+      sort: 'recent',
+      group: 'status',
+      runningOnly: false,
+      needsYou: false,
+      kinds: [],
+    });
+    expect(r.sidebarSpacesView).toEqual({ sort: 'manual', hideEmpty: false });
+  });
+
+  it('survive a restart: serialize then restore', () => {
+    const blob = serializeSettings({
+      ...DEFAULT_SETTINGS,
+      sidebarAgentsView: {
+        sort: 'name',
+        group: 'type',
+        runningOnly: true,
+        needsYou: false,
+        kinds: ['claude', 'cursor'],
+      },
+      sidebarSpacesView: { sort: 'recent', hideEmpty: true },
+    });
+    expect(restoreSettings(blob)).toMatchObject({
+      sidebarAgentsView: {
+        sort: 'name',
+        group: 'type',
+        runningOnly: true,
+        kinds: ['claude', 'cursor'],
+      },
+      sidebarSpacesView: { sort: 'recent', hideEmpty: true },
+    });
+  });
+
+  it('a malformed stored view falls back field by field', () => {
+    const r = coerce({ sidebarAgentsView: { sort: 3, group: 'space' }, sidebarSpacesView: 'x' });
+    expect(r.sidebarAgentsView).toMatchObject({ sort: 'recent', group: 'space' });
+    expect(r.sidebarSpacesView).toEqual(DEFAULT_SETTINGS.sidebarSpacesView);
+  });
+});

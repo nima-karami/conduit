@@ -4,6 +4,12 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { needYouEntries, presentationSessions } from '../../src/attention';
 import { defaultSidebarUi, type SidebarUiState } from '../../src/sidebar-state';
+import {
+  type AgentsView,
+  DEFAULT_AGENTS_VIEW,
+  DEFAULT_SPACES_VIEW,
+  type SpacesView,
+} from '../../src/sidebar-view';
 import type { Project, Session } from '../../src/types';
 import { Sidebar } from '../../webview/components/sidebar';
 import type { RowMenuScope } from '../../webview/sidebar-selection';
@@ -102,6 +108,8 @@ async function render(s: Setup) {
     const [ui, setUi] = useState<SidebarUiState>({ ...defaultSidebarUi(), ...s.ui });
     const [filterRequest, setFilterRequest] = useState(0);
     bumpFilter = () => setFilterRequest((n) => n + 1);
+    const [agentsView, setAgentsView] = useState<AgentsView>(DEFAULT_AGENTS_VIEW);
+    const [spacesView, setSpacesView] = useState<SpacesView>(DEFAULT_SPACES_VIEW);
     const [sessions, setList] = useState(s.sessions);
     setSessions = setList;
     const value: SidebarTreeContextValue = {
@@ -117,6 +125,10 @@ async function render(s: Setup) {
         spies.updateUi(next);
         setUi(next);
       },
+      agentsView,
+      spacesView,
+      setAgentsView,
+      setSpacesView,
       reportVisibleIds: spies.reportVisibleIds,
       ...s.tree,
     };
@@ -712,5 +724,95 @@ describe('states and ages', () => {
     await key(input, 'Enter');
     expect(requests).toEqual([{ type: 'project:create', name: 'Gamma', requestId: 1 }]);
     expect(q('input[aria-label="New space name"]')).toBeNull();
+  });
+});
+
+describe('panel ⋯ view menus', () => {
+  const stubResizeObserver = () =>
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        disconnect() {}
+        unobserve() {}
+      },
+    );
+  const pick = async (label: string) =>
+    click(qa('[role^="menuitem"]').find((e) => e.textContent?.startsWith(label)) as HTMLElement);
+  const agentsMenu = async () => click(q('button[aria-label^="Agents view options"]'));
+  const spacesMenu = async () => click(q('button[aria-label^="Spaces view options"]'));
+  const headers = () => qa('button.proj__label').map((e) => e.getAttribute('aria-label'));
+
+  it('each panel header carries a ⋯ menu button, closed and unmarked by default', async () => {
+    await render({ sessions: family() });
+    for (const name of ['Agents view options', 'Spaces view options']) {
+      const btn = q(`button[aria-label="${name}"]`);
+      expect(btn.getAttribute('aria-expanded')).toBe('false');
+      expect(btn.closest('.panel-head')).not.toBeNull();
+    }
+    expect(q('.viewmenu__dot')).toBeNull();
+  });
+
+  it('Group: By agent type regroups the same rows under Claude / Codex / Other headers', async () => {
+    stubResizeObserver();
+    await render({
+      sessions: [
+        session('a', { appIcon: 'claude' }),
+        session('b', { appIcon: 'codex' }),
+        session('c', { appIcon: 'claude' }),
+        session('d'),
+      ],
+    });
+    expect(headers()).toEqual(['Idle (4)']);
+    await agentsMenu();
+    await pick('By agent type');
+    expect(headers()).toEqual(['Claude (2)', 'Codex (1)', 'Other (1)']);
+    expect(rowIds()).toEqual(['a', 'c', 'b', 'd']);
+    expect(q('.viewmenu__dot')).not.toBeNull();
+  });
+
+  it('By space titles each group with its Space, and None drops the headers', async () => {
+    stubResizeObserver();
+    await render({ sessions: family() });
+    await agentsMenu();
+    await pick('By space');
+    expect(headers()).toEqual(['Alpha (1)', 'No space (1)']);
+    await pick('None');
+    expect(headers()).toEqual([]);
+    expect(rowIds()).toEqual(['p', 'c', 'g', 'l']);
+  });
+
+  it('Filter: Running only hides stopped agents', async () => {
+    stubResizeObserver();
+    await render({ sessions: [session('on'), session('off', { status: 'exited' })] });
+    await agentsMenu();
+    await pick('Running only');
+    expect(rowIds()).toEqual(['on']);
+  });
+
+  it('a filter that hides everything leaves one No agents match row, and Reset brings them back', async () => {
+    stubResizeObserver();
+    await render({ sessions: [session('a', { appIcon: 'claude' })] });
+    await agentsMenu();
+    await pick('Codex');
+    expect(rowIds()).toEqual([]);
+    const row = q('.agents__nomatch');
+    expect(row.textContent).toBe('No agents matchReset');
+    await click(row.querySelector('button'));
+    expect(rowIds()).toEqual(['a']);
+    expect(q('.agents__nomatch')).toBeNull();
+  });
+
+  it('Spaces: Sort by Recent puts the active Space first, Hide empty drops an empty one', async () => {
+    stubResizeObserver();
+    await render({ sessions: [session('a', { projectId: 'p-b' })] });
+    const spaces = () => qa('button.space').map((e) => e.dataset.spaceId);
+    expect(spaces()).toEqual(['all', 'p-a', 'p-b']);
+    await spacesMenu();
+    await pick('Hide empty spaces');
+    expect(spaces()).toEqual(['all', 'p-b']);
+    await pick('Hide empty spaces');
+    await pick('Recent');
+    expect(spaces()).toEqual(['all', 'p-b', 'p-a']);
   });
 });
