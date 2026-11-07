@@ -150,9 +150,9 @@ async function scrollToRow(page, name) {
   await fileRow(page, name).scrollIntoViewIfNeeded();
 }
 
-async function assertAbsentFor(page, ms, forbidden, what) {
+async function assertAbsentFor(page, ms, forbidden, what, arg = null) {
   try {
-    await page.waitForFunction(forbidden, null, { timeout: ms });
+    await page.waitForFunction(forbidden, arg, { timeout: ms });
     assert(false, `${what} appeared during the ${ms} ms observation window`);
   } catch (error) {
     if (error.name !== 'TimeoutError') throw error;
@@ -330,6 +330,7 @@ runScenario('files-follow-tab', async ({ page, log }) => {
     (label) =>
       document.querySelectorAll(`.files__bar button[aria-label="Expand ${label}"]`).length !== 1,
     'F8: activating a tab expanded a collapsed section',
+    sectionLabel,
   );
   await expectRevealed(page, [], 'F8 collapsed section');
   await page.locator(`.files__bar button[aria-label="Expand ${sectionLabel}"]`).click();

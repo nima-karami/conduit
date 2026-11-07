@@ -118,9 +118,12 @@ async function connect() {
       }
       if (msg.method === 'notifications/tools/list_changed' && msg.id === undefined) {
         record('LIST_CHANGED');
-        void rpc('tools/list', {}).then((list) =>
-          record('TOOLS', { tools: (list.result?.tools ?? []).map((t) => t.name) }),
-        );
+        void rpc('tools/list', {}).then((list) => {
+          record('TOOLS', { tools: (list.result?.tools ?? []).map((t) => t.name) });
+          // The records scroll the prompt away; an idle CLI redraws it, or the notice gate never
+          // sees an empty input (a server swap re-lists the tools while the agent sits idle).
+          redrawIfIdle();
+        });
         continue;
       }
       const w = waiting.get(msg.id);
@@ -146,6 +149,11 @@ async function connect() {
 let line = '';
 let permit = false;
 let busyUntil = 0;
+
+// A function, not an inline check: the stdout handler's own `line` shadows the typed line.
+function redrawIfIdle() {
+  if (busyUntil === 0 && !permit && line === '') write(PROMPT);
+}
 
 function startBusy(ms) {
   busyUntil = Date.now() + ms;
