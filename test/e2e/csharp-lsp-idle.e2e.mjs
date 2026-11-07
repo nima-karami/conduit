@@ -19,7 +19,6 @@ import {
 import { closeAllDocs, openDoc } from './goto-matrix.mjs';
 import { assert, openSession, runScenario } from './harness.mjs';
 import {
-  lsp,
   recordTree,
   survivorsAfter,
   trustViaHost,
@@ -53,17 +52,23 @@ runScenario('csharp-lsp-idle', async ({ app, page, log }) => {
     `csharp-ls has no descendants after loading the project: ${JSON.stringify(tree)}`,
   );
 
+  await page.evaluate((serverKey) => {
+    window.__csharpStopped = false;
+    window.agentDeck.subscribe((message) => {
+      if (
+        message.type === 'lsp:status' &&
+        message.status.serverKey === serverKey &&
+        message.status.state === 'stopped'
+      ) {
+        window.__csharpStopped = true;
+      }
+    });
+  }, live.serverKey);
   await closeAllDocs(page);
   const t0 = Date.now();
-  let held = true;
-  while (held && Date.now() - t0 < STOP_CEILING_MS) {
-    await page.waitForTimeout(1_000);
-    const snap = await lsp(page, { type: 'lsp:statusSnapshot' });
-    held = snap.servers.some((s) => s.languageId === 'csharp' && s.state !== 'stopped');
-  }
+  await page.waitForFunction(() => window.__csharpStopped, null, { timeout: STOP_CEILING_MS });
   const stoppedAfter = (Date.now() - t0) / 1000;
   log(`csharp server released after ${stoppedAfter.toFixed(1)}s`);
-  assert(!held, `csharp-ls still held ${STOP_CEILING_MS / 1000}s after its last tab closed`);
   const left = await survivorsAfter(tree, 5_000);
   assert(left.length === 0, `csharp-ls tree alive after the idle stop: ${JSON.stringify(left)}`);
   log('B4 idle stop: csharp-ls and its descendants gone after the last .cs tab closed ✓');

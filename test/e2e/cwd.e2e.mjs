@@ -45,9 +45,46 @@ try {
   await tapBridge(page);
 
   /** Bounded window for a negative: cwd must not move (UNC refuse / trackCwd off). */
+  let cwdCheck;
+  await page.exposeFunction('__cwdCheck', () => cwdCheck());
   const observeNothingFor = async (ms, check) => {
-    await page.waitForTimeout(ms);
-    return check();
+    cwdCheck = check;
+    await page.evaluate(() => {
+      window.__cwdPoll = { pending: false, failed: false, count: 0, error: null };
+    });
+    try {
+      await page.waitForFunction(
+        () => {
+          const state = window.__cwdPoll;
+          if (state.error) throw new Error(state.error);
+          if (state.failed) return true;
+          if (!state.pending) {
+            state.pending = true;
+            window.__cwdCheck().then(
+              (value) => {
+                state.failed = !value;
+                state.count++;
+                state.pending = false;
+              },
+              (error) => {
+                state.error = String(error);
+              },
+            );
+          }
+          return false;
+        },
+        null,
+        { timeout: ms },
+      );
+      return false;
+    } catch (error) {
+      if (error.name !== 'TimeoutError') throw error;
+      const state = await page.evaluate(() => window.__cwdPoll);
+      if (state.error) throw new Error(state.error);
+      if (!state.count) throw new Error('cwd check did not complete during observation');
+      if (state.failed) return false;
+      return true;
+    }
   };
 
   // Capture agents and settings from state subscription.

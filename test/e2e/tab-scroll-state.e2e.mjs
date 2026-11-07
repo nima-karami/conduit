@@ -62,27 +62,28 @@ const repoArg = repo.replace(/\\/g, '/');
 // `.line-numbers` child — so walk up to the nearest ancestor carrying a finite `top`. The
 // smallest such top is the line at the viewport top. Robust to virtualization (only visible
 // lines are in the DOM) and needs no Monaco API handle.
-const topVisibleLine = (page) =>
-  page.evaluate(() => {
-    const nums = Array.from(document.querySelectorAll('.viewer__monaco .line-numbers'));
-    let best = null;
-    let bestTop = Number.POSITIVE_INFINITY;
-    for (const el of nums) {
-      if (!el.textContent) continue;
-      let node = el;
-      let t = Number.parseFloat(node.style.top);
-      while (!Number.isFinite(t) && node.parentElement) {
-        node = node.parentElement;
-        if (node.classList.contains('viewer__monaco')) break;
-        t = Number.parseFloat(node.style.top);
-      }
-      if (Number.isFinite(t) && t < bestTop) {
-        bestTop = t;
-        best = el;
-      }
+const topVisibleLineInPage = () => {
+  const nums = Array.from(document.querySelectorAll('.viewer__monaco .line-numbers'));
+  let best = null;
+  let bestTop = Number.POSITIVE_INFINITY;
+  for (const el of nums) {
+    if (!el.textContent) continue;
+    let node = el;
+    let t = Number.parseFloat(node.style.top);
+    while (!Number.isFinite(t) && node.parentElement) {
+      node = node.parentElement;
+      if (node.classList.contains('viewer__monaco')) break;
+      t = Number.parseFloat(node.style.top);
     }
-    return best ? Number(best.textContent) : null;
-  });
+    if (Number.isFinite(t) && t < bestTop) {
+      bestTop = t;
+      best = el;
+    }
+  }
+  return best ? Number(best.textContent) : null;
+};
+
+const topVisibleLine = (page) => page.evaluate(topVisibleLineInPage);
 
 const waitEditor = (page) =>
   page.waitForSelector('.viewer__monaco .view-lines', { state: 'attached', timeout: 20000 });
@@ -93,12 +94,9 @@ const tab = (page, name) => page.locator('.tabbar [role="tab"]', { hasText: name
 // paints a frame or two after `.view-lines` attaches. Poll until it reports a line. (The restore
 // itself is pre-paint via restoreViewState, so the first non-null read already reflects it.)
 const readTopReady = async (page) => {
-  let top = null;
-  for (let i = 0; i < 25 && top === null; i++) {
-    top = await topVisibleLine(page);
-    if (top === null) await page.waitForTimeout(120);
-  }
-  return top;
+  return page
+    .waitForFunction(topVisibleLineInPage, null, { timeout: 3000 })
+    .then((handle) => handle.jsonValue());
 };
 
 let launched = null;
@@ -117,17 +115,25 @@ try {
   // Open long.ts (permanent) and scroll to the bottom.
   await row('long.ts').dblclick();
   await waitEditor(page);
-  // Ctrl+End can be dropped while the TS worker is still resolving the cross-file import even
-  // though the editor is focused; retry until the scroll actually takes.
   const scrollToBottom = async () => {
-    let top = null;
-    for (let i = 0; i < 14 && (top ?? 0) <= 300; i++) {
+    // Monaco can drop the first key while the TS worker resolves the cross-file import.
+    for (let attempt = 0; attempt < 4; attempt++) {
       await page.click('.viewer__monaco .view-lines');
       await page.keyboard.press('Control+End');
-      await page.waitForTimeout(250);
-      top = await topVisibleLine(page);
+      try {
+        await page.waitForFunction(
+          () => {
+            const lines = [...document.querySelectorAll('.viewer__monaco .line-numbers')];
+            return lines.some((line) => Number(line.textContent) > 300);
+          },
+          null,
+          { timeout: 875 },
+        );
+        return topVisibleLine(page);
+      } catch (error) {
+        if (error.name !== 'TimeoutError' || attempt === 3) throw error;
+      }
     }
-    return top;
   };
   const savedTop = await scrollToBottom();
   assert(

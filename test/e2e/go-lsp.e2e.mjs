@@ -55,39 +55,57 @@ function goplsInstalled() {
 
 const lsp = (page, msg) => page.evaluate((m) => window.agentDeck.lsp(m), msg);
 
+async function waitLsp(page, request, match, ms) {
+  await page.evaluate(() => {
+    window.__goLspPoll = { pending: false, value: null, error: null };
+  });
+  const handle = await page.waitForFunction(
+    ({ request, match }) => {
+      const state = window.__goLspPoll;
+      if (state.error) throw new Error(state.error);
+      const value =
+        match === 'prompt'
+          ? state.value?.prompt
+          : state.value?.servers?.find((s) =>
+              match === 'readyOrBad'
+                ? ['ready', 'absent', 'crashed'].includes(s.state)
+                : s.state === match,
+            );
+      if (value) return value;
+      if (!state.pending) {
+        state.pending = true;
+        window.agentDeck.lsp(request).then(
+          (value) => {
+            state.value = value;
+            state.pending = false;
+          },
+          (error) => {
+            state.error = String(error);
+          },
+        );
+      }
+      return false;
+    },
+    { request, match },
+    { timeout: ms },
+  );
+  return handle.jsonValue();
+}
+
 async function waitReady(page, log) {
   const t0 = Date.now();
-  while (Date.now() - t0 < READY_CEILING_MS) {
-    const snap = await lsp(page, { type: 'lsp:statusSnapshot' });
-    const ready = snap.servers.find((s) => s.state === 'ready');
-    if (ready) {
-      log(`gopls ready in ${((Date.now() - t0) / 1000).toFixed(1)}s (pid ${ready.pid})`);
-      return ready;
-    }
-    const bad = snap.servers.find((s) => s.state === 'absent' || s.state === 'crashed');
-    assert(!bad, `gopls server went ${bad?.state}`);
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  assert(false, `gopls never reached ready within ${READY_CEILING_MS / 1000}s`);
+  const ready = await waitLsp(page, { type: 'lsp:statusSnapshot' }, 'readyOrBad', READY_CEILING_MS);
+  assert(ready.state === 'ready', `gopls server went ${ready.state}`);
+  assert(ready, `gopls never reached ready within ${READY_CEILING_MS / 1000}s`);
+  log(`gopls ready in ${((Date.now() - t0) / 1000).toFixed(1)}s (pid ${ready.pid})`);
+  return ready;
 }
 
 async function waitState(page, state, log) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < 30_000) {
-    const snap = await lsp(page, { type: 'lsp:statusSnapshot' });
-    const hit = snap.servers.find((s) => s.state === state);
-    if (hit) {
-      log(`server ${state} (pid ${hit.pid})`);
-      return hit;
-    }
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  const last = await lsp(page, { type: 'lsp:statusSnapshot' });
-  const trust = await lsp(page, { type: 'lsp:trustState' });
-  assert(
-    false,
-    `no server reached ${state} within 30s: ${JSON.stringify(last.servers)} trust=${JSON.stringify(trust)}`,
-  );
+  const hit = await waitLsp(page, { type: 'lsp:statusSnapshot' }, state, 30_000);
+  assert(hit, `server never reached ${state}`);
+  log(`server ${state} (pid ${hit.pid})`);
+  return hit;
 }
 
 /** Trust the fixture folder through the host's own prompt flow — the path the prompt's Trust
@@ -95,12 +113,7 @@ async function waitState(page, state, log) {
 async function trustViaHost(page, path, log) {
   const asked = await lsp(page, { type: 'lsp:trustRequest', path, languageId: 'go' });
   assert(asked.ok, `trust request refused for ${path}`);
-  const t0 = Date.now();
-  let state = await lsp(page, { type: 'lsp:trustState' });
-  while (!state.prompt && Date.now() - t0 < 10_000) {
-    await new Promise((r) => setTimeout(r, 100));
-    state = await lsp(page, { type: 'lsp:trustState' });
-  }
+  const state = { prompt: await waitLsp(page, { type: 'lsp:trustState' }, 'prompt', 10_000) };
   assert(state.prompt, 'the host raised no trust prompt');
   const answered = await lsp(page, {
     type: 'lsp:trustAnswer',
@@ -142,15 +155,45 @@ function wakeGoDoc(page, path) {
 
 const endsWith = (p, suffix) => (p ?? '').toLowerCase().endsWith(suffix.toLowerCase());
 
-async function waitFor(page, pred, ms) {
-  const deadline = Date.now() + ms;
-  let last = await observe(page);
-  while (Date.now() < deadline) {
-    if (pred(last)) return last;
-    await new Promise((r) => setTimeout(r, 150));
-    last = await observe(page);
+async function waitFor(page, want, ms) {
+  try {
+    const hit = await page.waitForFunction(
+      (expected) => {
+        const eds = window.monaco?.editor.getEditors() ?? [];
+        const outer = eds.filter((e) => e.getDomNode() && !e.getDomNode().closest('.zone-widget'));
+        const ed = outer[outer.length - 1] ?? eds[eds.length - 1] ?? null;
+        const model = ed?.getModel() ?? null;
+        const pos = ed?.getPosition() ?? null;
+        const value = {
+          path: model ? model.uri.path.replace(/^\/+/, '') : null,
+          line: pos?.lineNumber ?? null,
+          column: pos?.column ?? null,
+          lineText: model && pos ? model.getLineContent(pos.lineNumber).trim() : '',
+          editors: eds.length,
+          peek: !!document.querySelector('.monaco-editor .zone-widget'),
+          toasts: Array.from(document.querySelectorAll('.toast__msg'), (e) =>
+            (e.textContent ?? '').trim(),
+          ),
+          toastCodes: Array.from(
+            document.querySelectorAll('.toast__msg .toast__code'),
+            (e) => e.textContent ?? '',
+          ),
+        };
+        return (expected.peek && value.peek) ||
+          (expected.pathSuffix &&
+            value.path?.toLowerCase().endsWith(expected.pathSuffix.toLowerCase())) ||
+          (expected.toast && value.toasts.includes(expected.toast))
+          ? value
+          : null;
+      },
+      want,
+      { polling: 'raf', timeout: ms },
+    );
+    return await hit.jsonValue();
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+    return observe(page);
   }
-  return last;
 }
 
 /** Set the buffer of the editor showing `absPath`; returns the previous text. */
@@ -196,7 +239,7 @@ async function editorScenarios(app, page, sid, dir, log) {
   await page.keyboard.down('Control');
   await page.mouse.click(at.x, at.y);
   await page.keyboard.up('Control');
-  const click = await waitFor(page, (o) => endsWith(o.path, 'util.go'), 10_000);
+  const click = await waitFor(page, { pathSuffix: 'util.go' }, 10_000);
   log(`Ctrl+click Greet → ${click.path}:${click.line} "${click.lineText}"`);
   assert(endsWith(click.path, 'util.go'), `Ctrl+click landed in ${click.path}`);
   assert(click.lineText.includes('func Greet'), `caret line is "${click.lineText}"`);
@@ -206,7 +249,7 @@ async function editorScenarios(app, page, sid, dir, log) {
   await placeCursor(page, helper, 'helper');
   await clearTransients(page);
   await page.keyboard.press('Shift+F12');
-  const peek = await waitFor(page, (o) => o.peek, 10_000);
+  const peek = await waitFor(page, { peek: true }, 10_000);
   await page.waitForFunction(
     () => {
       const files = [...document.querySelectorAll('.zone-widget .reference-file')].map(
@@ -323,7 +366,7 @@ async function editorScenarios(app, page, sid, dir, log) {
   await placeCursor(page, main, 'helper');
   // ONE F12, given the nav budget: a retry would hide a first navigation lost to the restart.
   await page.keyboard.press('F12');
-  const after = await waitFor(page, (o) => endsWith(o.path, 'helper.go'), 90_000);
+  const after = await waitFor(page, { pathSuffix: 'helper.go' }, 90_000);
   log(
     `F12 after restart → ${after.path} "${after.lineText}" toasts=${JSON.stringify(after.toasts)}`,
   );
@@ -350,12 +393,8 @@ async function missingScenario(dir, log) {
     const sid = await openSession(page, { path: dir });
     const main = join(dir, 'main.go');
     await openDoc(app, page, sid, main);
-    const t0 = Date.now();
-    let snap = await lsp(page, { type: 'lsp:statusSnapshot' });
-    while (!snap.servers.some((x) => x.state === 'absent') && Date.now() - t0 < 20_000) {
-      await new Promise((r) => setTimeout(r, 250));
-      snap = await lsp(page, { type: 'lsp:statusSnapshot' });
-    }
+    await waitLsp(page, { type: 'lsp:statusSnapshot' }, 'absent', 20_000);
+    const snap = await lsp(page, { type: 'lsp:statusSnapshot' });
     log(`missing gopls → servers ${JSON.stringify(snap.servers)}`);
     assert(
       snap.servers.some((x) => x.state === 'absent'),
@@ -364,9 +403,20 @@ async function missingScenario(dir, log) {
     // Twice inside one toast lifetime (5 s): the second F12 must not stack another toast.
     await placeCursor(page, main, 'helper');
     await page.keyboard.press('F12');
-    await waitFor(page, (o) => o.toasts.includes(INSTALL_TOAST), 8_000);
+    await waitFor(page, { toast: INSTALL_TOAST }, 8_000);
     await page.keyboard.press('F12');
-    await page.waitForTimeout(1_000);
+    try {
+      await page.waitForFunction(
+        (expected) =>
+          [...document.querySelectorAll('.toast__msg')].filter(
+            (e) => e.textContent?.trim() === expected,
+          ).length > 1,
+        INSTALL_TOAST,
+        { polling: 'raf', timeout: 1_000 },
+      );
+    } catch (error) {
+      if (error.name !== 'TimeoutError') throw error;
+    }
     const r = await observe(page);
     const errors = await page.evaluate(() =>
       Array.from(document.querySelectorAll('.toast--error .toast__msg, .toast.error')).map(
@@ -492,6 +542,7 @@ runScenario('go-lsp', async ({ app, page, log }) => {
   await waitState(page, 'restricted', log);
   log('revoked: gopls tree gone, folder Restricted again ✓');
   await trustViaHost(page, main, log);
+  await wakeGoDoc(page, main);
 
   // ── E7: no orphans after a normal quit ──
   const live = await waitReady(page, log);

@@ -156,7 +156,7 @@ runScenario('commit-review-bounds', async ({ page, log }) => {
       const list = document.querySelector('.review__scroll');
       if (list) list.scrollTop += 1200;
     });
-    await page.waitForTimeout(60);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
   }
   const scrolled = await page.evaluate(() => 1);
   assert(

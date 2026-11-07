@@ -65,7 +65,20 @@ try {
   await tapBridge(page);
 
   const sessionId = await openSession(page, { path: root });
-  await page.waitForTimeout(1500);
+  await page.evaluate(
+    ({ path, watchDir }) => {
+      window.__planWatchBarrier = false;
+      const off = window.agentDeck.subscribe((message) => {
+        if (message.type !== 'dirEntries' || message.path !== watchDir) return;
+        off();
+        window.__planWatchBarrier = true;
+      });
+      window.agentDeck.post({ type: 'requestProject', path });
+      window.agentDeck.post({ type: 'readDir', path: watchDir });
+    },
+    { path: root, watchDir: plans },
+  );
+  await page.waitForFunction(() => window.__planWatchBarrier, null, { timeout: 1500 });
 
   copyFileSync(FIXTURE, join(plans, 'identity.md'));
   log('wrote identity.md into .conduit/plans');
@@ -92,16 +105,42 @@ try {
   const fenceOf = (text, lang) =>
     new RegExp(`\`\`\`${lang}\\n([\\s\\S]*?)\\n\`\`\``).exec(text)?.[1] ?? null;
 
+  let currentCondition;
+  await page.exposeFunction('__planHandoffCondition', () => currentCondition());
   const until = async (holds, budgetMs) => {
-    const started = Date.now();
-    for (;;) {
-      const value = holds();
-      if (value) return value;
-      if (Date.now() - started >= budgetMs) return null;
-      await page.waitForTimeout(50);
+    currentCondition = holds;
+    try {
+      await page.evaluate(() => {
+        window.__planHandoffPoll = { pending: false, value: null, error: null };
+      });
+      const result = await page.waitForFunction(
+        () => {
+          const state = window.__planHandoffPoll;
+          if (state.error) throw new Error(state.error);
+          if (state.value) return state.value;
+          if (!state.pending) {
+            state.pending = true;
+            window.__planHandoffCondition().then(
+              (value) => {
+                state.value = value;
+                state.pending = false;
+              },
+              (error) => {
+                state.error = String(error);
+              },
+            );
+          }
+          return false;
+        },
+        null,
+        { timeout: budgetMs, polling: 50 },
+      );
+      return await result.jsonValue();
+    } catch (error) {
+      if (error.name !== 'TimeoutError') throw error;
+      return null;
     }
   };
-
   const sendText = () =>
     page.evaluate(() => document.querySelector('.plan__send')?.textContent ?? '');
   const waitForSend = (re) =>

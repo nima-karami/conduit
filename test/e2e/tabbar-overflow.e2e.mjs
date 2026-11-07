@@ -62,21 +62,28 @@ runScenario('tabbar-overflow', async ({ page, log }) => {
   // The names come from the live tree rather than a hardcoded list: the tree is windowed, so a
   // named file further down webview/ may not be mounted and would silently be skipped.
   const mountedFileNames = () =>
-    page.evaluate(() =>
-      Array.from(document.querySelectorAll('.filerow'))
-        .filter((r) => !r.querySelector('.treechev'))
-        .map((r) => r.querySelector('.filerow__name')?.textContent ?? '')
-        .filter((n) => /\.(tsx?|css|mjs|json|md)$/.test(n)),
-    );
+    page.evaluate(() => [
+      ...new Set(
+        Array.from(document.querySelectorAll('.filerow'))
+          .filter((r) => !r.querySelector('.treechev'))
+          .map((r) => r.querySelector('.filerow__name')?.textContent ?? '')
+          .filter((n) => /\.(tsx?|css|mjs|json|md)$/.test(n)),
+      ),
+    ]);
 
   let opened = 0;
   for (const name of await mountedFileNames()) {
     if (opened >= 15) break;
     const row = fileRowByName(page, name);
     if ((await row.count()) === 0) continue;
+    const before = await page.locator('.tabbar .tab').count();
     await row.first().dblclick();
     opened += 1;
-    await page.waitForTimeout(150);
+    await page.waitForFunction(
+      (count) => document.querySelectorAll('.tabbar .tab').length > count,
+      before,
+      { timeout: 5000 },
+    );
     if (await stripOverflowing(page)) break;
   }
 
@@ -105,7 +112,11 @@ runScenario('tabbar-overflow', async ({ page, log }) => {
     const n = await closeBtns.count();
     if (n === 0) break;
     await closeBtns.nth(n - 1).click();
-    await page.waitForTimeout(150);
+    await page.waitForFunction(
+      (count) => document.querySelectorAll('.tab .tab__close').length < count,
+      n,
+      { timeout: 5000 },
+    );
   }
 
   const flatState = await measureTab(page, anchorId);

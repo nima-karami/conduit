@@ -64,12 +64,37 @@ runScenario('repo-rescan', async ({ page, log }) => {
   // Open a SECOND session elsewhere — it becomes active, so the single live fs-watch follows
   // it, not `root`. (sibling temp dir: neither contains the other.)
   const other = mkdtempSync(join(tmpdir(), 'conduit-other-'));
-  await openSession(page, { path: other.replace(/\\/g, '/') });
-  await page.waitForTimeout(600); // let the watch re-point to the second session
+  const barrierDir = join(other, 'watch-barrier');
+  mkdirSync(barrierDir);
+  const otherPath = other.replace(/\\/g, '/');
+  const sid2 = await openSession(page, { path: otherPath });
+  await page.evaluate(
+    ({ path, sessionId, watchDir }) => {
+      window.__watchBarrier = false;
+      const off = window.agentDeck.subscribe((message) => {
+        if (message.type !== 'dirEntries' || message.path !== watchDir) return;
+        off();
+        window.__watchBarrier = true;
+      });
+      window.agentDeck.post({ type: 'requestProject', path, sessionId });
+      window.agentDeck.post({ type: 'readDir', path: watchDir });
+    },
+    { path: otherPath, sessionId: sid2, watchDir: barrierDir },
+  );
+  await page.waitForFunction(() => window.__watchBarrier, null, { timeout: 600 });
 
   // Create a repo under the FIRST session's root while it is outside every watched folder.
   makeRepo(join(root, 'repo-c'));
-  await page.waitForTimeout(800); // a stray fs-watch event would land here (there should be none)
+  try {
+    await page.waitForFunction(
+      (id) => ((window.__sessions || []).find((s) => s.id === id)?.repos ?? []).length > 0,
+      sid1,
+      { timeout: 800 },
+    );
+    assert(false, 'a repo registered before the refresh');
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+  }
   // Checked here, after the open scan and any stray watch event had their time, so the post below
   // is the only thing that can register repo-c.
   assert((await repoNames(page, sid1)).length === 0, 'no repo registered before the refresh');

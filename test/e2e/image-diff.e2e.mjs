@@ -186,7 +186,7 @@ try {
     await page.waitForFunction(() => !!document.querySelector('.imgstage__img'), null, {
       timeout: 10000,
     });
-    await page.waitForTimeout(400); // image decode + onLoad → natural state
+    await page.waitForSelector('.imgstage__img--ready', { state: 'attached', timeout: 5000 });
 
     const before = await page.evaluate(
       () => document.querySelector('.imgstage__zoom')?.textContent ?? '',
@@ -196,17 +196,17 @@ try {
     // Zoom-in button is keyboard-focusable (Tab + Enter); synthetic Ctrl+= key dispatch
     // is unreliable in the Electron harness (same limitation as paste's synthetic Ctrl+V),
     // so the button is the deterministic driver. Hover reveals the auto-hide controls;
-    // click + poll, since the stage's natural-size state may commit a tick after onLoad.
+    // Wait for the zoom readout to reflect the click.
     await page.hover('.imgstage');
-    let after = before;
-    for (let i = 0; i < 8 && after === before; i++) {
-      await page.click('.imgstage__btn[aria-label="Zoom in"]', { force: true });
-      await page.waitForTimeout(250);
-      after = await page.evaluate(
-        () => document.querySelector('.imgstage__zoom')?.textContent ?? '',
-      );
-    }
-
+    await page.click('.imgstage__btn[aria-label="Zoom in"]', { force: true });
+    await page.waitForFunction(
+      (previous) => document.querySelector('.imgstage__zoom')?.textContent !== previous,
+      before,
+      { timeout: 2000 },
+    );
+    const after = await page.evaluate(
+      () => document.querySelector('.imgstage__zoom')?.textContent ?? '',
+    );
     log(`zoom before=${before} after=${after}`);
     assert(
       before !== after,

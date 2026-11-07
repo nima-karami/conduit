@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { writeClangdFixture } from './clangd-fixture.mjs';
 import { clearTransients, observe, openDoc, placeCursor } from './goto-matrix.mjs';
 import { assert, openSession, runScenario } from './harness.mjs';
-import { errorToasts, lsp, waitObserved, waitServerState } from './lsp-fixture.mjs';
+import { errorToasts, lsp, waitServerState } from './lsp-fixture.mjs';
 import { writePythonFixture } from './python-fixture.mjs';
 import { writeRustFixture } from './rust-fixture.mjs';
 
@@ -32,6 +32,15 @@ const TOASTS = {
 };
 /** The toast's whole `.toast__msg` text: message, then the code element. */
 const shown = ({ text, code }) => `${text} ${code}`;
+
+async function waitToast(page, expected) {
+  await page.waitForFunction(
+    (message) =>
+      [...document.querySelectorAll('.toast__msg')].some((e) => e.textContent?.trim() === message),
+    expected,
+    { polling: 'raf', timeout: 8_000 },
+  );
+}
 
 const empty = mkdtempSync(join(tmpdir(), 'conduit-noservers-'));
 const sys = process.env.SystemRoot ?? 'C:\\Windows';
@@ -53,9 +62,20 @@ const env = {
 async function f12Toast(page, file, token, want, log) {
   await placeCursor(page, file, token);
   await page.keyboard.press('F12');
-  await waitObserved(page, (o) => o.toasts.includes(shown(want)), 8_000);
+  await waitToast(page, shown(want));
   await page.keyboard.press('F12');
-  await page.waitForTimeout(1_000);
+  try {
+    await page.waitForFunction(
+      (expected) =>
+        [...document.querySelectorAll('.toast__msg')].filter(
+          (e) => e.textContent?.trim() === expected,
+        ).length > 1,
+      shown(want),
+      { polling: 'raf', timeout: 1_000 },
+    );
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+  }
   const { toasts, toastCodes } = await observe(page);
   const errors = await errorToasts(page);
   log(`F12 in ${file} → toasts ${JSON.stringify(toasts)} errors ${JSON.stringify(errors)}`);
@@ -114,7 +134,7 @@ runScenario(
     await waitServerState(page, 'cpp', 'absent', log, 20_000);
     await placeCursor(page, cpp.main, 'greet(');
     await page.keyboard.press('F12');
-    await waitObserved(page, (o) => o.toasts.includes(shown(TOASTS.cpp)), 8_000);
+    await waitToast(page, shown(TOASTS.cpp));
     await openDoc(app, page, sid, cpp.header);
     await f12Toast(page, cpp.header, 'twice', TOASTS.cpp, log);
     const snap = await lsp(page, { type: 'lsp:statusSnapshot' });

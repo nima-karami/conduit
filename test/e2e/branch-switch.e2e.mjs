@@ -96,31 +96,17 @@ async function tapGit(page) {
   });
 }
 
-/**
- * Poll the session's host-pushed GitInfo until `predicate` holds. The predicate runs HERE, not
- * in the page, so waitForFunction can't do the waiting for us — an earlier version resolved on
- * the first truthy `git` object and then asserted the predicate against it, which meant it was
- * really asserting "the refresh had already landed", and it read the pre-switch branch whenever
- * the host's post-checkout refresh took a beat longer than the round trip.
- */
-async function gitForSession(page, sid, root, predicate, timeout = 4000) {
-  const deadline = Date.now() + timeout;
-  const read = () =>
-    page.evaluate(
-      ({ id, r }) => (window.__sessions || []).find((x) => x.id === id)?.repoGit?.[r] ?? null,
-      { id: sid, r: root },
-    );
-  let value = await read();
-  while (!(value && (!predicate || predicate(value))) && Date.now() < deadline) {
-    await page.waitForTimeout(100);
-    value = await read();
-  }
-  if (!value || (predicate && !predicate(value))) {
-    throw Object.assign(new Error(`git predicate failed; got ${JSON.stringify(value)}`), {
-      name: 'AssertionError',
-    });
-  }
-  return value;
+async function gitForSession(page, sid, root, branch, timeout = 4000) {
+  return page
+    .waitForFunction(
+      ({ id, r, branch }) => {
+        const git = (window.__sessions || []).find((x) => x.id === id)?.repoGit?.[r];
+        return git?.kind === 'branch' && git.branch === branch ? git : null;
+      },
+      { id: sid, r: root, branch },
+      { timeout },
+    )
+    .then((handle) => handle.jsonValue());
 }
 
 const sameRoot = (a, b) =>
@@ -159,7 +145,7 @@ try {
   const sid = await openSession(page, { path: repo });
   log('opened session on main:', sid);
 
-  await gitForSession(page, sid, repo, (g) => g.kind === 'branch' && g.branch === 'main');
+  await gitForSession(page, sid, repo, 'main');
   const homeBefore = await page.evaluate(
     (id) => (window.__sessions || []).find((s) => s.id === id)?.home ?? null,
     sid,
@@ -219,7 +205,7 @@ try {
   log('switch idle+clean result:', JSON.stringify(r1));
   assert(r1.ok === true, `expected ok=true, got ${JSON.stringify(r1)}`);
   assert(sameRoot(r1.repoRoot, repoRoot), `switch must echo repoRoot, got ${r1.repoRoot}`);
-  await gitForSession(page, sid, repo, (g) => g.branch === 'feature', 5000);
+  await gitForSession(page, sid, repo, 'feature', 5000);
   await page.waitForFunction(
     () =>
       document.querySelector('.repo-head .branch-chip .branch-chip__ref-label')?.textContent ===

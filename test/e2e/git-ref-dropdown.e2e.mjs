@@ -48,7 +48,13 @@ runScenario('git-ref-dropdown', async ({ page, log }) => {
     },
     refLabel,
   );
-  await page.waitForTimeout(500);
+  await page.waitForFunction(
+    (label) =>
+      !document.querySelector('.ctxmenu') &&
+      document.querySelector('button.gh__reffilter')?.innerText.trim() === label,
+    refLabel,
+    { timeout: 500 },
+  );
 
   assert((await page.$('.ctxmenu')) === null, 'menu should close after selecting a ref');
   const newLabel = (await page.$eval('button.gh__reffilter', (e) => e.innerText)).trim();

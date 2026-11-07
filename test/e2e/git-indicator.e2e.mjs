@@ -134,24 +134,57 @@ const readChipOnce = (page) =>
     };
   });
 
+let chipPredicate;
 /** The single repo head's chip, once `predicate` holds (polled, 6 s ceiling). */
 async function readChip(page, predicate) {
   await openChangesTab(page);
-  let last = null;
-  for (const deadline = Date.now() + 6000; Date.now() < deadline; ) {
-    last = await readChipOnce(page);
-    if (last && predicate(last)) return last;
-    await page.waitForTimeout(100);
-  }
-  throw Object.assign(new Error(`chip predicate failed; got ${JSON.stringify(last)}`), {
-    name: 'AssertionError',
+  chipPredicate = predicate;
+  await page.evaluate(() => {
+    window.__chipPoll = { pending: false, matched: false, error: null };
   });
+  await page.waitForFunction(
+    () => {
+      const state = window.__chipPoll;
+      if (state.error) throw new Error(state.error);
+      if (state.matched) return true;
+      if (state.pending) return false;
+      const chip = document.querySelector('.repo-head .branch-chip');
+      if (!chip) return false;
+      state.pending = true;
+      window
+        .__chipMatches({
+          label: chip.querySelector('.branch-chip__ref-label')?.textContent ?? null,
+          tag: chip.querySelector('.branch-chip__tag')?.textContent ?? null,
+          op: chip.querySelector('.branch-chip__op')?.textContent ?? null,
+          worktree:
+            chip.querySelector('.branch-chip__worktree .branch-chip__label')?.textContent ?? null,
+          worktreeGlyph: !!chip.querySelector('.branch-chip__worktree .branch-chip__glyph'),
+          dirty: !!chip.querySelector('.branch-chip__dirty'),
+          text: chip.textContent,
+          name: chip.getAttribute('aria-label'),
+          heads: document.querySelectorAll('.repo-head').length,
+        })
+        .then(
+          (matched) => {
+            state.matched = matched;
+            state.pending = false;
+          },
+          (error) => {
+            state.error = String(error);
+          },
+        );
+      return false;
+    },
+    null,
+    { timeout: 6000, polling: 100 },
+  );
+  return readChipOnce(page);
 }
-
 let launched;
 try {
   launched = await launchApp();
   const { page } = launched;
+  await page.exposeFunction('__chipMatches', (chip) => chipPredicate(chip));
   await tapBridge(page);
 
   // ── Scenario 1: shows the current branch "main" ─────────────────────────────
@@ -225,8 +258,19 @@ try {
     sidPlain,
     { timeout: 4000, polling: 100 },
   );
-  // Give the host a moment to interrogate + broadcast after the scan.
-  await page.waitForTimeout(2000);
+  try {
+    await page.waitForFunction(
+      (id) => {
+        const session = (window.__sessions || []).find((item) => item.id === id);
+        return Object.keys(session?.repoGit ?? {}).length > 0;
+      },
+      sidPlain,
+      { timeout: 2000 },
+    );
+    assert(false, 'non-git cwd acquired repo git state');
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+  }
   const plainState = await page.evaluate((id) => {
     const s = (window.__sessions || []).find((x) => x.id === id);
     return s ? { repos: s.repos, repoGit: s.repoGit ?? null } : null;

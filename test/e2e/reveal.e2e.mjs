@@ -43,13 +43,33 @@ try {
   await tapBridge(page);
   await openSession(page, { path: DIR_PATH, agentId: 'shell:cmd' });
 
+  const waitForCall = (api, path) =>
+    app.evaluate(
+      (_, { api, path }) =>
+        new Promise((resolve) => {
+          const deadline = Date.now() + 500;
+          const poll = () => {
+            const found = (global.__spyCalls || []).some(
+              (c) => c.api === api && (path === null || c.args[0] === path),
+            );
+            if (found || Date.now() >= deadline) return resolve(found);
+            setTimeout(poll, 25);
+          };
+          poll();
+        }),
+      { api, path },
+    );
   // ── Test 1: reveal a DIRECTORY → openPath ───────────────────────────────────
   await clearSpyCalls(app);
   await page.evaluate(
     (p) => window.agentDeck.post({ type: 'revealInExplorer', path: p }),
     DIR_PATH,
   );
-  await page.waitForTimeout(500);
+  assert(await waitForCall('openPath', DIR_PATH), 'directory reveal was not received');
+  assert(
+    !(await waitForCall('showItemInFolder', null)),
+    'directory reveal invoked showItemInFolder',
+  );
   const callsDir = await getSpyCalls(app);
   log(
     'calls after dir reveal:',
@@ -67,7 +87,8 @@ try {
     (p) => window.agentDeck.post({ type: 'revealInExplorer', path: p }),
     FILE_PATH,
   );
-  await page.waitForTimeout(500);
+  assert(await waitForCall('showItemInFolder', FILE_PATH), 'file reveal was not received');
+  assert(!(await waitForCall('openPath', null)), 'file reveal invoked openPath');
   const callsFile = await getSpyCalls(app);
   log(
     'calls after file reveal:',

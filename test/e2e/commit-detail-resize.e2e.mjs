@@ -17,7 +17,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,6 +31,7 @@ import {
   openSession,
   profileDir,
   REPO,
+  shutdownApp,
   tapBridge,
 } from './harness.mjs';
 
@@ -128,8 +129,37 @@ try {
     `expected the drag to grow the pane (>${startH + 40}), got ${draggedH}`,
   );
 
-  // Let the debounced settings persist (250ms) land, then close (flush-on-unload belt+braces).
-  await page1.waitForTimeout(600);
+  await page1.exposeFunction('__savedDetailHeight', () => {
+    const file = join(userDataDir, 'settings.json');
+    return existsSync(file)
+      ? JSON.parse(readFileSync(file, 'utf8')).settings?.historyDetailHeight
+      : null;
+  });
+  await page1.evaluate(() => {
+    window.__heightPoll = { pending: false, value: null, error: null };
+  });
+  await page1.waitForFunction(
+    (height) => {
+      const state = window.__heightPoll;
+      if (state.error) throw new Error(state.error);
+      if (typeof state.value === 'number' && Math.abs(state.value - height) < 8) return true;
+      if (!state.pending) {
+        state.pending = true;
+        window.__savedDetailHeight().then(
+          (value) => {
+            state.value = value;
+            state.pending = false;
+          },
+          (error) => {
+            state.error = String(error);
+          },
+        );
+      }
+      return false;
+    },
+    draggedH,
+    { timeout: 5000 },
+  );
   await closeApp(firstApp, page1);
   firstApp = null;
   log('launch 1 closed ✓');
@@ -170,12 +200,12 @@ try {
   }
   console.error('[commit-detail-resize] ERROR:', e?.message || e);
   try {
-    if (firstApp) await firstApp.close();
+    if (firstApp) await shutdownApp(firstApp);
   } catch {
     /* ignore */
   }
   try {
-    if (secondApp) await secondApp.close();
+    if (secondApp) await shutdownApp(secondApp);
   } catch {
     /* ignore */
   }

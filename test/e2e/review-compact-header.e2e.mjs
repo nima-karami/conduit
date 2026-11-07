@@ -63,8 +63,14 @@ runScenario('review-compact-header', async ({ page, log }) => {
     null,
     { timeout: 15000 },
   );
-  // Let the head's ResizeObserver settle before measuring.
-  await page.waitForTimeout(200);
+  await page.waitForFunction(
+    () => {
+      const scope = document.querySelector('.review__scope');
+      return scope && getComputedStyle(scope).display === 'none';
+    },
+    null,
+    { timeout: 5000 },
+  );
   assert(
     (await page.locator('.review__chip').count()) === 0,
     'a single-repo Review has no repo chip',
@@ -212,7 +218,18 @@ runScenario('review-compact-header', async ({ page, log }) => {
 
   // ── widen: scope segment comes back, scope rows leave the menu ──────────────────────────
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.waitForTimeout(200);
+  await page.waitForFunction(
+    () => {
+      const scope = document.querySelector('.review__scope');
+      return (
+        scope &&
+        getComputedStyle(scope).display !== 'none' &&
+        scope.getBoundingClientRect().width > 0
+      );
+    },
+    null,
+    { timeout: 5000 },
+  );
   const scopeVisibleWide = await page.evaluate(() => {
     const el = document.querySelector('.review__scope');
     if (!el) return null;

@@ -73,9 +73,22 @@ async function setShortcuts(page, shortcuts) {
       }),
     shortcuts,
   );
-  // STOP (CON-134): host echoed shortcuts, but Monaco's rebuilt nav rules are not
-  // UI-exposed (no data-* / __navRules). One React commit is still a fixed wait.
-  await page.waitForTimeout(300);
+  await page.waitForFunction(
+    (wanted) => {
+      const editor = window.monaco?.editor
+        .getEditors()
+        .find((item) => item._standaloneKeybindingService);
+      const service = editor?._standaloneKeybindingService;
+      if (!service) return false;
+      return ['goToDefinition', 'goToReferences', 'goToImplementation'].every((id) => {
+        const binding = service.lookupKeybinding(`conduit.dispatch.${id}`);
+        const expected = wanted[id]?.toLowerCase();
+        return expected ? binding?.getUserSettingsLabel()?.toLowerCase() === expected : !binding;
+      });
+    },
+    shortcuts,
+    { timeout: 5000 },
+  );
 }
 
 /** Caret on the nth `token` in the plan block's editor, focused. */
@@ -130,9 +143,40 @@ async function waitPlanLine(page, line, timeout = 10000) {
 }
 
 /** Bounded window for a negative: a rebound-away chord must not navigate. */
+let inertCheck;
 const observeNothingFor = async (page, ms, check) => {
-  await page.waitForTimeout(ms);
-  return check();
+  inertCheck = check;
+  try {
+    await page.evaluate(() => {
+      window.__inertPoll = { pending: false, changed: false, error: null };
+    });
+    await page.waitForFunction(
+      () => {
+        const state = window.__inertPoll;
+        if (state.error) throw new Error(state.error);
+        if (state.changed) return true;
+        if (!state.pending) {
+          state.pending = true;
+          window.__inertCheck().then(
+            (held) => {
+              state.changed = !held;
+              state.pending = false;
+            },
+            (error) => {
+              state.error = String(error);
+            },
+          );
+        }
+        return false;
+      },
+      null,
+      { timeout: ms, polling: 50 },
+    );
+    return false;
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+    return true;
+  }
 };
 
 /** The peek's embedded editor: model path + caret, or null when no peek is open. */
@@ -164,6 +208,7 @@ async function assertInert(page, key, what) {
 }
 
 runScenario('nav-keybindings-surfaces', async ({ page, log }) => {
+  await page.exposeFunction('__inertCheck', () => inertCheck());
   const root = makeNavFixture([]);
   writeFileSync(join(root, 'impl.ts'), `${IMPL.join('\n')}\n`);
   const plans = join(root, '.conduit', 'plans');

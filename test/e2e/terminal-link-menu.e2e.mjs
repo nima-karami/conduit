@@ -53,6 +53,7 @@ runScenario('terminal-link-menu', async ({ page, log }) => {
   const projectId = await createProject(page, 'LinkProj');
   await page.evaluate(() => {
     window.__terms = {};
+    window.__termLinkProviders = {};
   });
   const sid = await openSession(page, { path: parent, projectId });
   await page.waitForFunction(
@@ -71,7 +72,19 @@ runScenario('terminal-link-menu', async ({ page, log }) => {
     await typeLine(page, sid, `echo ${line}`);
     await waitForOutput(page, sid, line);
   }
-  await page.waitForTimeout(800);
+  await typeLine(page, sid, 'echo __PLM_SYNC__');
+  await page.waitForFunction(
+    (id) => {
+      const buf = window.__terms[id]?.buffer.active;
+      if (!buf) return false;
+      for (let y = 0; y < buf.length; y++) {
+        if (buf.getLine(y)?.translateToString(true).trim() === '__PLM_SYNC__') return true;
+      }
+      return false;
+    },
+    sid,
+    { timeout: 800 },
+  );
 
   /** Viewport point of char `charIdx` of the last row that is exactly `line` (the echo output). */
   const cellOf = (line, charIdx) =>
@@ -96,20 +109,45 @@ runScenario('terminal-link-menu', async ({ page, log }) => {
 
   /** Real hover (waiting for the link pointer when `onLink`), then a real right-click. */
   const rightClick = async (line, charIdx, { onLink = true } = {}) => {
+    if (onLink) {
+      await page.evaluate(() => {
+        window.__linkMenuPoll = { pending: false, ready: false };
+      });
+      await page.waitForFunction(
+        ({ id, line }) => {
+          const state = window.__linkMenuPoll;
+          if (state.ready) return true;
+          if (state.pending) return false;
+          const buf = window.__terms[id]?.buffer.active;
+          const provider = window.__termLinkProviders[id];
+          if (!buf || !provider) return false;
+          let row = -1;
+          for (let y = 0; y < buf.length; y++) {
+            if ((buf.getLine(y)?.translateToString(true) ?? '').trim() === line) row = y;
+          }
+          if (row < 0) return false;
+          state.pending = true;
+          provider.provideLinks(row + 1, (links) => {
+            state.ready = (links ?? []).some((link) => link.text === line);
+            state.pending = false;
+          });
+          return state.ready;
+        },
+        { id: sid, line },
+        { timeout: 8000 },
+      );
+    }
     const c = await cellOf(line, charIdx);
     assert(c.ok, `"${line}" is not on screen`);
-    const pointer = () =>
-      page.evaluate(
+    await page.mouse.move(c.x, c.y + 300);
+    await page.mouse.move(c.x, c.y, { steps: 4 });
+    if (onLink) {
+      await page.waitForFunction(
         (id) => !!window.__terms[id].element.querySelector('.xterm-cursor-pointer'),
         sid,
+        { timeout: 8000 },
       );
-    for (let i = 0; i < 20; i++) {
-      await page.mouse.move(c.x, c.y + 300);
-      await page.mouse.move(c.x, c.y, { steps: 4 });
-      await page.waitForTimeout(400);
-      if (!onLink || (await pointer())) break;
     }
-    if (onLink) assert(await pointer(), `"${line}" never showed the link pointer`);
     await page.mouse.click(c.x, c.y, { button: 'right' });
     await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 8000 });
     return page.evaluate(() =>

@@ -6,7 +6,7 @@
  *   - back on A: its output once, the exit line, no relaunch marker;
  *   - A's program ran once, A stays exited, and its stored ring is byte-identical.
  */
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, watch } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { until } from './conduit-mcp-helpers.mjs';
@@ -114,8 +114,34 @@ await runScenario(
     assert(!(await paneMounted(page, b)), 'B’s exited pane stayed mounted while A was shown');
 
     phase('no respawn, no record');
-    // Long enough for a respawn's output or a ring write (debounced 250ms) to have landed.
-    await page.waitForTimeout(1500);
+    const signal = AbortSignal.timeout(1500);
+    const watched = [
+      [watch(workA, { signal }), 'spawns.txt'],
+      [watch(workB, { signal }), 'spawns.txt'],
+      [watch(userDataDir, { signal }), `scrollback-${a}.json`],
+    ];
+    const unexpectedWrite = await new Promise((resolve) => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        for (const [watcher] of watched) watcher.close();
+        resolve(value);
+      };
+      signal.addEventListener('abort', () => finish(null), { once: true });
+      for (const [watcher, target] of watched) {
+        const onWrite = (_event, filename) => {
+          if (String(filename) === target) finish(target);
+        };
+        watcher.on('change', onWrite);
+        watcher.on('rename', onWrite);
+        watcher.on('error', (error) => {
+          if (error.name === 'AbortError') finish(null);
+          else finish(error);
+        });
+      }
+    });
+    assert(!unexpectedWrite, `viewing an exited pane wrote ${unexpectedWrite}`);
     assert(spawnsIn(workA) === 1, `A's program ran ${spawnsIn(workA)} times, expected once`);
     assert(spawnsIn(workB) === 1, `B's program ran ${spawnsIn(workB)} times, expected once`);
     assert((await session(page, a))?.status === 'exited', 'A did not stay exited');

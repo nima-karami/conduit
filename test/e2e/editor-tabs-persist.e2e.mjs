@@ -12,7 +12,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, watch, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -116,10 +116,38 @@ try {
   assert(b1?.preview, 'launch 1: b.txt should be a preview tab');
   log('launch 1: a.txt permanent + b.txt preview ✓');
 
-  // Let the debounced persistDocs land before closing.
-  await page1.waitForTimeout(800);
   const docsPath = join(userDataDir, 'docs.json');
-  assert(existsSync(docsPath), 'docs.json was not written');
+  const docSaved = await new Promise((resolve) => {
+    const signal = AbortSignal.timeout(800);
+    const docWatcher = watch(userDataDir, { signal });
+    let settled = false;
+    const finish = (saved) => {
+      if (settled) return;
+      settled = true;
+      docWatcher.close();
+      resolve(saved);
+    };
+    const inspect = () => {
+      if (!existsSync(docsPath)) return false;
+      try {
+        const value = JSON.parse(readFileSync(docsPath, 'utf8'));
+        if (!Array.isArray(value.docs) || value.docs.length !== 2) return false;
+        finish(true);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    docWatcher.on('change', inspect);
+    docWatcher.on('rename', inspect);
+    docWatcher.on('error', (error) => {
+      if (error.name === 'AbortError') finish(false);
+      else finish(false);
+    });
+    signal.addEventListener('abort', () => finish(false), { once: true });
+    inspect();
+  });
+  assert(docSaved, 'docs.json with both open tabs was not written');
   const savedDocs = JSON.parse(readFileSync(docsPath, 'utf8'));
   log('docs.json on disk:', JSON.stringify(savedDocs));
   assert(

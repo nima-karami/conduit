@@ -79,12 +79,13 @@ try {
   await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
   await tapBridge(page);
 
-  await page.waitForFunction((id) => (window.__sessions || []).some((s) => s.id === id), SID, {
-    timeout: 20000,
-  });
-  // Let the restored session register before relaunch (kill-race guard drops a term:start
-  // that races restore).
-  await page.waitForTimeout(1000);
+  await page.waitForFunction(
+    (id) => (window.__sessions || []).some((s) => s.id === id && s.status === 'stale'),
+    SID,
+    {
+      timeout: 20000,
+    },
+  );
 
   // Opt in to the terminal-exposure hook, then relaunch (mounts a real pane → term:start).
   await page.evaluate(() => {
@@ -101,7 +102,23 @@ try {
   await page.waitForFunction(() => /Microsoft Windows|>/.test(window.__cap || ''), null, {
     timeout: 20000,
   });
-  await page.waitForTimeout(1500);
+  await page.evaluate(
+    (id) =>
+      window.agentDeck.post({ type: 'term:input', sessionId: id, data: 'echo __SBR_SYNC__\r' }),
+    SID,
+  );
+  await page.waitForFunction(
+    (id) => {
+      const buf = window.__terms?.[id]?.buffer.active;
+      if (!buf) return false;
+      for (let y = 0; y < buf.length; y++) {
+        if (buf.getLine(y)?.translateToString(true).trim() === '__SBR_SYNC__') return true;
+      }
+      return false;
+    },
+    SID,
+    { timeout: 1500 },
+  );
 
   const buf = await page.evaluate((id) => {
     const t = window.__terms?.[id];

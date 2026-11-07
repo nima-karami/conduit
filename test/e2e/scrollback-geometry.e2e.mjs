@@ -93,10 +93,13 @@ try {
   await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
   await tapBridge(page);
 
-  await page.waitForFunction((id) => (window.__sessions || []).some((s) => s.id === id), SID, {
-    timeout: 20000,
-  });
-  await page.waitForTimeout(1000);
+  await page.waitForFunction(
+    (id) => (window.__sessions || []).some((s) => s.id === id && s.status === 'stale'),
+    SID,
+    {
+      timeout: 20000,
+    },
+  );
 
   await page.evaluate(() => {
     window.__terms = {};
@@ -111,7 +114,23 @@ try {
   await page.waitForFunction(() => /Microsoft Windows/.test(window.__cap || ''), null, {
     timeout: 20000,
   });
-  await page.waitForTimeout(1500);
+  await page.evaluate(
+    (id) =>
+      window.agentDeck.post({ type: 'term:input', sessionId: id, data: 'echo __SBG_SYNC__\r' }),
+    SID,
+  );
+  await page.waitForFunction(
+    (id) => {
+      const buf = window.__terms?.[id]?.buffer.active;
+      if (!buf) return false;
+      for (let y = 0; y < buf.length; y++) {
+        if (buf.getLine(y)?.translateToString(true).trim() === '__SBG_SYNC__') return true;
+      }
+      return false;
+    },
+    SID,
+    { timeout: 1500 },
+  );
 
   const lines = await logicalLines(page, SID);
   const cols = await page.evaluate((id) => window.__terms?.[id]?.cols, SID);

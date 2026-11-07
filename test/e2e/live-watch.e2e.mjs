@@ -34,8 +34,7 @@ try {
   await openSession(page, { path: project });
   await tapBridge(page);
   await showRightView(page, 'files');
-  // Let the host arm the project watcher (it does so when the renderer requests the project).
-  await page.waitForTimeout(1200);
+  await page.getByText('No files', { exact: true }).waitFor({ state: 'visible', timeout: 1200 });
 
   // Create a file on disk from OUTSIDE the renderer; do NOT fire any focus/visibility event.
   writeFileSync(join(project, 'live.txt'), 'created externally');
