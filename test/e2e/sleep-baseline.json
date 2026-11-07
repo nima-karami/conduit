@@ -107,5 +107,6 @@
   "test/e2e/terminal-path-links-v2.e2e.mjs": 1,
   "test/e2e/theme-first-paint.e2e.mjs": 1,
   "test/e2e/timed-messages-concurrency.e2e.mjs": 1,
-  "test/e2e/worktree-commit-seen.e2e.mjs": 1
+  "test/e2e/worktree-commit-seen.e2e.mjs": 1,
+  "test/e2e/terminal-osc8-file-link.e2e.mjs": 5
 }
