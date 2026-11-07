@@ -62,7 +62,8 @@ function harness(over: Partial<ControlDeps> = {}): Harness {
   h.deps = {
     homeOf: (id) => (id.startsWith('caller') ? HOME : undefined),
     resolvePath: (home, p) => (p.startsWith('/') ? p : `${home}/${p}`),
-    kindOf: async (abs) => h.kinds[abs] ?? 'missing',
+    // PATH hits are files unless a test says otherwise.
+    kindOf: async (abs) => h.kinds[abs] ?? (abs.startsWith('/usr/bin/') ? 'file' : 'missing'),
     agentIds: () => ['claude', 'codex'],
     resolveCommand: (c) => (c === 'nope' ? undefined : `/usr/bin/${c}`),
     openSession: async (req) => {
@@ -106,6 +107,7 @@ function harness(over: Partial<ControlDeps> = {}): Harness {
     commandModelFlag: (c) =>
       leafOf(c) === 'codex' ? '-m' : leafOf(c) === 'claude' ? '--model' : undefined,
     registeredIdOf: (n) => (h.deps.agentIds().includes(n) ? n : undefined),
+    agents: () => [],
     messageReady: () => true,
     sendMessage: async (who, args, opts) => {
       h.sent.push({ from: who.handle, args, opts });
@@ -1150,14 +1152,66 @@ describe('open_session agent resolution (flexible-agent-contracts §3.1, §4.1)'
   });
 });
 
-describe('open_session alias resolution (flexible-agent-contracts §3.1)', () => {
-  it('an alias of a registered definition runs that definition, not the PATH command', async () => {
+describe('open_session bare commands: the ask and the path checks (flexible-agent-contracts §3.1)', () => {
+  const NO_MOVE = ctxOf();
+  const alwaysAsk = (r: Result<Prepared<unknown>>) =>
+    r.ok && 'summary' in r.value ? r.value.alwaysAsk : 'not a call';
+
+  it('a bare command is always asked; a registered id is not', async () => {
+    const h = harness({ agentIds: () => ['claude'] });
+    const c = createControlHandlers(h.deps);
+    expect(
+      alwaysAsk(await c.prepareOpenSession(caller(), sessionArgs({ agent: 'kiro' }), NO_MOVE)),
+    ).toBe(true);
+    expect(
+      alwaysAsk(await c.prepareOpenSession(caller(), sessionArgs({ agent: 'claude' }), NO_MOVE)),
+    ).toBe(false);
+  });
+
+  it('a PATH hit that is a symlink to a shell is refused, and nothing opens', async () => {
+    const h = harness({ agentIds: () => ['claude'], realPath: async () => '/bin/bash' });
+    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ agent: 'kiro' }));
+    expect(r).toMatchObject({ ok: false, error: { code: 'invalid_args' } });
+    expect(!r.ok && r.error.hint).toContain('open_terminal');
+    expect(h.opens).toEqual([]);
+  });
+
+  it('a PATH hit that is not a file is unknown_agent', async () => {
     const h = harness({
-      agentIds: () => ['my-claude'],
-      registeredIdOf: (n) => (n === 'claude' ? 'my-claude' : undefined),
+      agentIds: () => ['claude'],
+      kindOf: async (abs) => (abs === '/repo' || abs === '/usr/bin/kiro' ? 'dir' : 'missing'),
     });
-    const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ agent: 'claude' }));
-    expect(r.ok).toBe(true);
-    expect(h.opens[0].launch).toEqual({ kind: 'agent', agentId: 'my-claude' });
+    expect(code(await whenOn(h.deps).openSession(caller(), sessionArgs({ agent: 'kiro' })))).toBe(
+      'unknown_agent',
+    );
+  });
+});
+
+describe('list_agents (flexible-agent-contracts §4.2)', () => {
+  it('answers through the call flow with the listing in its order', async () => {
+    const row = (id: string, source: 'profile' | 'shell') => ({
+      id,
+      label: id,
+      command: id,
+      source,
+      model: false,
+      messaging: 'none' as const,
+      notices: false,
+      brief: false,
+    });
+    const h = harness({ agents: () => [row('shell:pwsh', 'shell'), row('zeta', 'profile')] });
+    const c = createControlHandlers(h.deps);
+    const p = await c.prepareListAgents(caller(), {});
+    if (!p.ok || 'done' in p.value) throw new Error('expected a call');
+    const r = await p.value.run();
+    expect(r).toEqual({
+      ok: true,
+      value: { agents: [row('zeta', 'profile'), row('shell:pwsh', 'shell')], bare_commands: true },
+    });
+  });
+
+  it('takes no arguments', async () => {
+    const c = createControlHandlers(harness().deps);
+    expect(code(await c.prepareListAgents(caller(), { path: '/repo' }))).toBe('invalid_args');
   });
 });

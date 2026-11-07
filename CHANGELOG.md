@@ -18,7 +18,7 @@ All notable user-facing changes to Conduit. Format follows
 
 ### Changed
 - Terminals an agent opens get a handle and stay in `list_sessions` after they exit, so the agent can close them.
-- A bad entry in agents.json is skipped with a warning; the other entries still load. A file that doesn't parse keeps the agents loaded before it.
+- A bad entry in agents.json is skipped with a warning; the other entries still load. Entries whose ids start with `cli:`, `shell:` or `conduit:` are ignored and logged. A file that doesn't parse keeps the agents loaded before it.
 - Tool errors say what to do next and use one set of codes. `unknown_handle` is now `unknown_session`; `invalid_argument` and `invalid_input` are now `invalid_args`.
 - `list_sessions` shows each session's id, opener, folder, whether a message can reach it, and whether it gets typed notices.
 

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { resolveAgentArg } from '../../src/conduit-mcp/agent-resolve';
+import { AgentRegistry } from '../../src/agent-registry';
+import {
+  isRefusedLeaf,
+  registeredIdFor,
+  resolveAgentArg,
+} from '../../src/conduit-mcp/agent-resolve';
 
 const registeredIds = ['claude', 'cli:codex', 'shell:pwsh'];
 const onPath: Record<string, string> = {
@@ -105,5 +110,55 @@ describe('resolveAgentArg', () => {
       ok: false,
       error: { code: 'unknown_agent' },
     });
+  });
+});
+
+describe('refused leaves are normalized (flexible-agent-contracts §3.1)', () => {
+  it.each([
+    'powershell.cmd',
+    'NODE.BAT',
+    'bash.com',
+    'python3.12',
+    'python3',
+    'pythonw',
+    'pwsh-preview7.4',
+    'java.exe',
+    'env',
+    'docker.exe',
+  ])('%s is refused', (name) => {
+    expect(isRefusedLeaf(name)).toBe(true);
+    expect(resolveAgentArg(name, { registeredIds: [], resolveCommand: () => '/x' })).toMatchObject({
+      ok: false,
+      error: { code: 'invalid_args' },
+    });
+  });
+
+  it('an agent-shaped name is not refused by its look', () => {
+    expect(isRefusedLeaf('kiro.cmd')).toBe(false);
+    expect(isRefusedLeaf('codex')).toBe(false);
+  });
+});
+
+describe('registeredIdFor through the real registry (flexible-agent-contracts §3.1)', () => {
+  it('a name reaches its cli: alias, which a shadowing profile holds', () => {
+    const registry = new AgentRegistry(
+      [
+        {
+          id: 'my-claude',
+          label: 'My Claude',
+          command: 'claude',
+          args: [],
+          icon: 'terminal',
+          color: 'green',
+          cwdStrategy: 'workspaceFolder',
+        },
+      ],
+      { 'cli:claude': 'my-claude' },
+    );
+    const lookup = (id: string) => registry.get(id)?.id;
+    expect(registeredIdFor('claude', lookup)).toBe('my-claude');
+    expect(registeredIdFor('CLAUDE.exe', lookup)).toBe('my-claude');
+    expect(registeredIdFor('claude2', lookup)).toBeUndefined();
+    expect(registeredIdFor('my-claude', lookup)).toBe('my-claude');
   });
 });

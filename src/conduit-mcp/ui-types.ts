@@ -46,7 +46,8 @@ export type AskSummary =
   | { tool: 'open_review'; what: string }
   | { tool: 'open_diff'; title: string; path?: string }
   | { tool: 'open_git_history'; ref: string | null }
-  | { tool: 'open_url'; url: string };
+  | { tool: 'open_url'; url: string }
+  | { tool: 'list_agents' };
 
 /** Structurally webview ReviewScope. */
 export type McpReviewScope = 'all' | 'staged' | 'unstaged';

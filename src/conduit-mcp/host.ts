@@ -16,6 +16,7 @@ import { PTY_SETTLE_MS } from '../timed-messages';
 import type { AgentDefinition, SpawnSpec } from '../types';
 import { adapterFor, MCP_ADAPTERS, type McpAdapter, modelFlagOf, notifiable } from './adapters';
 import { agentListing } from './agent-listing';
+import { registeredIdFor } from './agent-resolve';
 import { createAppControlHandlers } from './app-control-tools';
 import { snapshotAttachment } from './attachments';
 import { type AttentionEvent, reduceAttention, youAttention } from './attention-items';
@@ -561,12 +562,6 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   const tools = createToolHandlers({
     store,
     directory,
-    agents: () =>
-      deps.domain
-        .agentCatalog()
-        .map(({ def, source }) =>
-          agentListing(def, source, { messagingOn: deps.domain.messagingOn(), e2e: deps.e2e }),
-        ),
     messagingOn: () => deps.domain.messagingOn(),
     now: () => new Date(now()),
     newId: (prefix) => `${prefix}_${base32(randomBytes(10))}`,
@@ -934,7 +929,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       return { sessionId };
     },
     agentIds: () => deps.domain.agentIds(),
-    registeredIdOf: (name) => deps.domain.agentDef(name)?.id,
+    registeredIdOf: (name) => registeredIdFor(name, (id) => deps.domain.agentDef(id)?.id),
+    agents: () =>
+      deps.domain
+        .agentCatalog()
+        .map(({ def, source }) =>
+          agentListing(def, source, { messagingOn: deps.domain.messagingOn(), e2e: deps.e2e }),
+        ),
     // Every MCP-opened session gets a handle so its opener can address it (CON-149). An adapter-less
     // program takes its profile's or command's name (flexible-agent-contracts §4.1), or a terminal's
     // program prefix; a CLI that connects later keeps this handle.
@@ -1265,8 +1266,6 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     switch (name) {
       case 'list_sessions':
         return tools.listSessions(caller);
-      case 'list_agents':
-        return tools.listAgents(caller);
       case 'wait_sessions':
         return runWait(caller, args, ctx);
       case 'send_message':
@@ -1286,6 +1285,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     ctx: ControlCallContext,
   ): Promise<Result<Prepared<unknown>>> => {
     switch (name) {
+      case 'list_agents':
+        return control.prepareListAgents(caller, args);
       case 'open_session':
         return control.prepareOpenSession(caller, args, ctx);
       case 'open_terminal':

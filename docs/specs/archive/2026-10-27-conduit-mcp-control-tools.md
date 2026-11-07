@@ -518,13 +518,20 @@ None blocking. The human ruled on 2026-10-27:
   adds. A built-in adapter's flag wins over the profile's (`modelFlagOf`). `effectiveDef` applies the flag to
   command sessions as well as profiles. A bare command with no flag refuses a model with `invalid_args` and
   a hint naming the profile field and the ids that take one.
-- **`list_agents` (CON-166).** Messaging group, access `on`, no budget, no input. Entries follow §4.2 of
-  the flexible-agent-contracts spec, ordered profile, launcher, detected, shell, then label. It is not
-  gated on messaging, since it only describes what can be opened.
+- **`list_agents` (CON-166).** Sessions group, budget `show`, access `on`, no input. Entries follow §4.2 of
+  the flexible-agent-contracts spec, ordered profile, launcher, detected, shell, then label. It answers with
+  the master messaging switch off, and then every row is `none`.
 - **`agents.json` validation (CON-166).** Each entry is checked alone. A bad entry is dropped with one
   `warn` naming its index or id and the reason. Duplicate ids keep the first. Ids starting `cli:`, `shell:` or
   `conduit:` are refused. Command must be a non-empty string with no NUL and no leading `-`. `args` default to
   `[]` and must be strings. `label` defaults to the id. At most 200 entries are read. A file that doesn't
   parse keeps the last good set in memory and logs an error; a missing file is the empty set.
+- **Always asked (CON-166).** A bare command on PATH asks the human even when the `open_session` policy is
+  `on`; `off` still refuses. The card names the resolved absolute path. A registered agent follows the policy.
+- **Checks on a PATH hit (CON-166).** The name is refused by its normalized leaf (lowercase, `.exe/.cmd/.bat/.com`
+  removed, version suffix and `-preview` removed), so `python3.12`, `pythonw` and `NODE.BAT` are refused. The
+  hit must be a file, and its real path (symlinks followed) must not be a refused leaf.
+- **Aliases (CON-166).** A bare name reaches its `cli:<name>` registry entry, which is a shadowing profile or the
+  detected CLI, before PATH is searched. A registered id always wins.
 - **Schema.** `open_session.agent` is a plain string. The enum of registered ids is gone, so a bare command
   name is valid input. Validation happens at open, and `tools/list` no longer depends on the agent set.

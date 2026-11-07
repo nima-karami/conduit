@@ -5,13 +5,13 @@ import { type ToolError, toolError } from './types';
 
 export const MESSAGING_TOOL_NAMES = [
   'list_sessions',
-  'list_agents',
   'wait_sessions',
   'send_message',
   'read_inbox',
   'read_attachment',
 ] as const;
 const SESSION_TOOL_NAMES = [
+  'list_agents',
   'open_session',
   'open_terminal',
   'close_session',
@@ -120,7 +120,12 @@ export const TOOL_SPECS: Readonly<{
   [K in ToolName]: ToolSpec<K extends MessagingToolName ? null : RateBudget>;
 }> = {
   list_sessions: MESSAGING_SPEC,
-  list_agents: MESSAGING_SPEC,
+  list_agents: {
+    fields: ['access'],
+    access: ['off', 'on'],
+    budget: 'show',
+    defaults: { access: 'on' },
+  },
   wait_sessions: MESSAGING_SPEC,
   send_message: MESSAGING_SPEC,
   read_inbox: MESSAGING_SPEC,
@@ -397,7 +402,9 @@ export function gateToolCall(i: {
     return toolError('not_in_session', 'this MCP connection is not a Conduit session', undefined, {
       hint: NOT_IN_SESSION_HINT,
     });
-  if (!i.messagingOn) return toolError('messaging_off', 'Conduit messaging is turned off');
+  // The agent catalog answers with the master switch off: a 'none' row says why nothing messages.
+  if (!i.messagingOn && i.tool !== 'list_agents')
+    return toolError('messaging_off', 'Conduit messaging is turned off');
   if (i.policy.access === 'off') return toolDisabled(i.tool);
   if (isMessagingTool(i.tool)) return null;
   // Without a ready window there is no card to ask on and no visibility to trust; an `on` server

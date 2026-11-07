@@ -106,6 +106,7 @@ function harness(): Harness {
     kindOf: async () => 'missing',
     agentIds: () => [],
     registeredIdOf: () => undefined,
+    agents: () => [],
     resolveCommand: () => undefined,
     openSession: async () => {
       throw new Error('not used');

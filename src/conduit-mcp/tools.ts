@@ -68,12 +68,7 @@ export interface ListAgentsOutput {
   /** A bare command on PATH can be opened by its name, besides the listed ids. */
   bare_commands: true;
 }
-const SOURCE_ORDER: Record<AgentSource, number> = {
-  profile: 0,
-  launcher: 1,
-  detected: 2,
-  shell: 3,
-};
+
 /** Internal to Conduit: the open path stores its first message to a session that cannot read yet. */
 export interface SendOptions {
   allowUnconnected?: boolean;
@@ -81,7 +76,6 @@ export interface SendOptions {
 export interface ToolDeps {
   store: MessageStore;
   directory(): DirectoryEntry[];
-  agents(): AgentListing[];
   messagingOn(): boolean;
   now(): Date;
   /** 'm_' / 't_' + 16 base32 chars */
@@ -93,7 +87,6 @@ export interface ToolDeps {
 }
 export interface ToolHandlers {
   listSessions(caller: Caller): Result<ListSessionsOutput>;
-  listAgents(caller: Caller): Result<ListAgentsOutput>;
   sendMessage(
     caller: Caller,
     args: unknown,
@@ -487,14 +480,6 @@ export function createToolHandlers(deps: ToolDeps): ToolHandlers {
   }
 
   return {
-    listAgents() {
-      const agents = [...deps.agents()].sort(
-        (a, b) =>
-          SOURCE_ORDER[a.source] - SOURCE_ORDER[b.source] ||
-          (a.label < b.label ? -1 : a.label > b.label ? 1 : 0),
-      );
-      return { ok: true, value: { agents, bare_commands: true } };
-    },
     listSessions(caller) {
       if (!deps.messagingOn()) return MESSAGING_OFF();
       const directory = deps.directory();

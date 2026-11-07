@@ -6,7 +6,8 @@ import type { DomainOpenOutcome, DomainPort } from '../contracts/server-ports';
 import { coerceModel, coerceSessionCommand, commandLabel } from '../session-command';
 import type { SessionOpResult } from '../session-ops';
 import type { SessionCommand, SessionOpener } from '../types';
-import { resolveAgentArg } from './agent-resolve';
+import { listAgentsOutput } from './agent-listing';
+import { isRefusedLeaf, resolveAgentArg } from './agent-resolve';
 import type { GitCall } from './git-refs';
 import {
   type MESSAGING_TOOL_NAMES,
@@ -16,7 +17,13 @@ import {
   TOOL_SPECS,
   type ToolName,
 } from './tool-policy';
-import { type Caller, MAX_BODY_BYTES, type SendOptions } from './tools';
+import {
+  type AgentListing,
+  type Caller,
+  type ListAgentsOutput,
+  MAX_BODY_BYTES,
+  type SendOptions,
+} from './tools';
 import {
   type Handle,
   type Result,
@@ -84,6 +91,8 @@ export interface ControlDeps {
   resolvePath(home: string, p: string): string;
   kindOf(absPath: string): Promise<PathKind>;
   agentIds(): string[];
+  /** Every listed agent, for list_agents (flexible-agent-contracts §4.2). */
+  agents(): AgentListing[];
   /** The registered id a name reaches, aliases included (flexible-agent-contracts §3.1). */
   registeredIdOf(name: string): string | undefined;
   resolveCommand(command: string): string | undefined;
@@ -130,6 +139,11 @@ export interface PreparedCall<T> {
   summary: AskSummary;
   /** Its run waits on a renderer (mcp:ui): the ask budget shrinks by UI_TIMEOUT_MS. */
   routesUi: boolean;
+  /**
+   * A bare command on PATH: an 'on' policy still asks, since the human never registered the program
+   * (flexible-agent-contracts §3.1).
+   */
+  alwaysAsk?: boolean;
   /** Executes; refunds the rate token itself when the open fails (step 9). */
   run(): Promise<Result<T>>;
   /** Refunds the token for a refusal between prepare and run that isn't an ask outcome. Idempotent. */
@@ -158,6 +172,7 @@ export interface ControlHandlers {
     args: unknown,
     ctx: ControlCallContext,
   ): Promise<Result<Prepared<OpenFileOutput>>>;
+  prepareListAgents(caller: Caller, args: unknown): Promise<Result<Prepared<ListAgentsOutput>>>;
   /** reserve → home → check → refund unless the exec kept the token. */
   prepared<T>(
     tool: ControlTool,
@@ -381,6 +396,7 @@ export type CheckResult<T> =
   | {
       summary: AskSummary;
       routesUi?: true;
+      alwaysAsk?: boolean;
       exec: (token: Token) => Promise<Result<T>>;
     };
 
@@ -499,6 +515,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
         value: {
           summary: c.summary,
           routesUi: c.routesUi === true,
+          alwaysAsk: c.alwaysAsk === true,
           async run() {
             try {
               return await exec(token);
@@ -555,13 +572,13 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     tool: 'open_session' | 'open_terminal',
     caller: Caller,
     a: Common & OpenExtras & Partial<SessionExtras>,
-    resolve: () => Result<Resolved>,
+    resolve: () => Promise<Result<Resolved>>,
   ): Promise<Result<Prepared<OpenSessionOutput>>> {
     return prepared(tool, caller, async (who) => {
       const abs = deps.resolvePath(who.home, a.path);
       const bad = await checkKind(abs, 'dir');
       if (bad) return bad;
-      const target = resolve();
+      const target = await resolve();
       if (!target.ok) return target;
       const { launch, agent, bare, label } = target.value;
       if (a.model !== undefined && modelFlagOfLaunch(launch) === undefined) {
@@ -594,6 +611,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
             };
       return {
         summary,
+        alwaysAsk: bare,
         exec: async (token): Promise<Result<OpenSessionOutput>> => {
           let outcome: McpOpenOutcome;
           try {
@@ -646,7 +664,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
   const focusFor = <T extends Common>(a: T, ctx: ControlCallContext): T =>
     ctx.move === 'no' ? { ...a, focus: false } : a;
 
-  function resolveSessionAgent(agent: string): Result<Resolved> {
+  async function resolveSessionAgent(agent: string): Promise<Result<Resolved>> {
     const arg = resolveAgentArg(agent, {
       registeredIds: deps.agentIds(),
       resolveRegistered: (n) => deps.registeredIdOf(n),
@@ -654,17 +672,34 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     });
     if (!arg.ok) return arg;
     const v = arg.value;
+    if (v.kind === 'registered')
+      return {
+        ok: true,
+        value: {
+          launch: { kind: 'agent', agentId: v.id },
+          agent: v.id,
+          bare: false,
+          label: undefined,
+        },
+      };
+    // PATH can hand back a directory, or a symlink named like an agent that runs a shell.
+    if ((await deps.kindOf(v.path)) !== 'file')
+      return fail('unknown_agent', `command "${agent}" on PATH is not a file: ${v.path}`, {
+        hint: 'call list_agents; a bare command must be an agent CLI on PATH',
+      });
+    const real = await deps.realPath(v.path);
+    if (real !== null && isRefusedLeaf(real))
+      return fail('invalid_args', `"${agent}" runs ${real}, a shell or tool`, {
+        hint: 'use open_terminal to run shells and tools',
+      });
     return {
       ok: true,
-      value:
-        v.kind === 'registered'
-          ? { launch: { kind: 'agent', agentId: v.id }, agent: v.id, bare: false, label: undefined }
-          : {
-              launch: { kind: 'command', command: { command: v.path, args: [] } },
-              agent: v.leaf,
-              bare: true,
-              label: v.leaf,
-            },
+      value: {
+        launch: { kind: 'command', command: { command: v.path, args: [] } },
+        agent: v.leaf,
+        bare: true,
+        label: v.leaf,
+      },
     };
   }
 
@@ -685,7 +720,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
         'open_terminal',
         caller,
         focusFor({ ...a, label: a.label ?? leaf }, ctx),
-        () =>
+        async () =>
           deps.resolveCommand(a.command.command) === undefined
             ? fail('command_not_found', `command not found: ${a.command.command}`)
             : {
@@ -698,6 +733,17 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
                 },
               },
       );
+    },
+    async prepareListAgents(caller, raw) {
+      const o = parseKeys(raw, []);
+      if (isFail(o)) return o;
+      return prepared('list_agents', caller, async () => ({
+        summary: { tool: 'list_agents' },
+        exec: async (token) => {
+          token.keep();
+          return { ok: true, value: listAgentsOutput(deps.agents()) };
+        },
+      }));
     },
     async prepareOpenFile(caller, raw) {
       const a = parseFileArgs(raw);

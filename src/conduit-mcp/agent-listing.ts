@@ -3,7 +3,7 @@
 
 import type { AgentDefinition, AgentSource } from '../types';
 import { adapterFor, modelFlagOf, notifiable, supportsBrief } from './adapters';
-import type { AgentListing } from './tools';
+import type { AgentListing, ListAgentsOutput } from './tools';
 
 export function agentListing(
   def: AgentDefinition,
@@ -24,4 +24,21 @@ export function agentListing(
     notices: adapter !== undefined && notifiable(adapter),
     brief: supportsBrief(adapter),
   };
+}
+
+const SOURCE_ORDER: Record<AgentSource, number> = {
+  profile: 0,
+  launcher: 1,
+  detected: 2,
+  shell: 3,
+};
+
+/** list_agents' output: profile, launcher, detected, shell, then label (flexible-agent-contracts §4.2). */
+export function listAgentsOutput(agents: readonly AgentListing[]): ListAgentsOutput {
+  const sorted = [...agents].sort(
+    (a, b) =>
+      SOURCE_ORDER[a.source] - SOURCE_ORDER[b.source] ||
+      (a.label < b.label ? -1 : a.label > b.label ? 1 : 0),
+  );
+  return { agents: sorted, bare_commands: true };
 }

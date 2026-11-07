@@ -320,7 +320,9 @@ export const MCP_STR = {
     title: (handle: string, tool: string) => `${handle} requests ${tool}`,
     summary: {
       open_session: (s) =>
-        `Open a ${s.agent}${s.command === undefined ? '' : ` (${s.command})`}${s.model === undefined ? '' : ` (model ${s.model})`} session in ${s.path}${s.message === undefined ? '' : `, with a first message (${s.message} chars)`}${s.focus ? '' : ', in the background'}`,
+        s.command === undefined
+          ? `Open a ${s.agent}${s.model === undefined ? '' : ` (model ${s.model})`} session in ${s.path}${s.message === undefined ? '' : `, with a first message (${s.message} chars)`}${s.focus ? '' : ', in the background'}`
+          : `Run ${s.command} as a new ${s.agent} session in ${s.path}${s.model === undefined ? '' : ` (model ${s.model})`}${s.message === undefined ? '' : `, with a first message (${s.message} chars)`}${s.focus ? '' : ', in the background'}`,
       open_terminal: (s) => `Run ${s.command} in ${s.path}${s.focus ? '' : ', in the background'}`,
       open_file: (s) => `Open ${s.path}${s.line === null ? '' : ` at line ${s.line}`}`,
       close_session: (s) =>
@@ -339,6 +341,7 @@ export const MCP_STR = {
       open_git_history: (s) =>
         s.ref === null ? 'Open the commit history' : `Open the commit history at ${s.ref}`,
       open_url: (s) => `Open ${s.url} in a Conduit tab`,
+      list_agents: () => 'List the agents you can open',
     } satisfies { [K in AskSummary['tool']]: (s: Extract<AskSummary, { tool: K }>) => string },
     reason: {
       session: 'Ask: set for this session',
