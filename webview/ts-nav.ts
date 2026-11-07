@@ -44,6 +44,7 @@ import {
   specifierSpanAt,
   unresolvedSpecifierSpans,
 } from './nav-outcome';
+import { navSignal } from './nav-signal';
 import { fileUri, openDefinitionFile, pathForUri } from './project-index';
 import { indexStatus, isIndexReady } from './ts-project';
 
@@ -156,6 +157,7 @@ async function landOnResolvedEntry(
   const fileName = fileUri(entry).toString();
   const span = await symbolSpanIn(model, fileName, name);
   if (!span) {
+    navSignal.landing(entry, 1, 1);
     openDefinitionFile(entry, { line: 1, column: 1 }, groupOfEditor(editor));
     // Landing on line 1 because the symbol could not be found is reported as exactly that,
     // never dressed up as a navigation — see contract 3.
@@ -176,6 +178,7 @@ async function landOnResolvedEntry(
   } catch {
     // No program for the entry yet — the located line below is still a real landing.
   }
+  navSignal.landing(entry, span.line, 1);
   openDefinitionFile(entry, { line: span.line, column: 1 }, groupOfEditor(editor));
   return { kind: 'navigated' };
 }
@@ -407,6 +410,7 @@ async function unresolvedFor(
 function openLocation(editor: monaco.editor.ICodeEditor, loc: monaco.languages.Location): void {
   const current = editor.getModel()?.uri;
   const target = { lineNumber: loc.range.startLineNumber, column: loc.range.startColumn };
+  navSignal.landing(pathForUri(loc.uri), target.lineNumber, target.column);
   if (current && current.toString() === loc.uri.toString()) {
     editor.setPosition(target);
     editor.revealRangeInCenter(loc.range);
@@ -510,6 +514,21 @@ export async function runNavCommand(
   editor: monaco.editor.ICodeEditor,
   commandId: string,
   deps: NavDeps = {},
+): Promise<NavOutcome> {
+  navSignal.begin();
+  let outcome: NavOutcome = { kind: 'timed-out' };
+  try {
+    outcome = await runNavCommandInner(editor, commandId, deps);
+    return outcome;
+  } finally {
+    navSignal.end(outcome.kind);
+  }
+}
+
+async function runNavCommandInner(
+  editor: monaco.editor.ICodeEditor,
+  commandId: string,
+  deps: NavDeps,
 ): Promise<NavOutcome> {
   // These commands resolve their target from the FOCUSED editor, so a menu click (which
   // moved focus to the menu) has to hand it back first.

@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildGotoFixture } from './fixtures/goto/build-fixture.mjs';
 import {
+  awaitNav,
   clearTransients,
   createMatrix,
   describe,
@@ -22,6 +23,7 @@ import {
   openDoc,
   placeCursor,
   readNavMenu,
+  readNavSeq,
   tapIndex,
   trigger,
   waitForIndexReady,
@@ -79,6 +81,7 @@ runScenario('goto-matrix-feedback', async ({ app, page, log }) => {
       // Re-seed the model in the SAME tick the navigation starts in. A tab switch loses this
       // race against a local file every time (the baseline's INCONCLUSIVE); an edit does not,
       // and a version bump is the only way our own worker call can go stale.
+      const seq = await readNavSeq(page);
       await page.evaluate(() => {
         const eds = window.monaco.editor.getEditors();
         const ed = eds[eds.length - 1];
@@ -91,8 +94,7 @@ runScenario('goto-matrix-feedback', async ({ app, page, log }) => {
         ]);
         window.__r38 = { v0, v1: model.getVersionId() };
       });
-      await page.waitForTimeout(4000);
-      const after = await observe(page);
+      const after = await awaitNav(page, seq);
       const bump = await page.evaluate(() => window.__r38);
       const spoke = after.toasts.length > before.toasts.length || !!after.overlay;
       const arrived = after.path?.endsWith('rel-target.ts') && after.lineText.includes('markerR02');
