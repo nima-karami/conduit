@@ -81,17 +81,19 @@ runScenario('terminal-osc8-file-link', async ({ app, page, log }) => {
   const sid = await openSession(page, { path: home, agentId: 'shell:powershell' });
   await page.waitForFunction((id) => !!window.__terms?.[id], sid, { timeout: 20000 });
   await page.waitForFunction(() => (window.__cap || '').includes('PS '), null, { timeout: 30000 });
-  await page.waitForTimeout(500);
 
-  const waitQuiet = async () => {
-    let last = -1;
-    for (let i = 0; i < 40; i++) {
-      const len = await page.evaluate(() => (window.__cap || '').length);
-      if (len === last) return;
-      last = len;
-      await page.waitForTimeout(500);
-    }
-  };
+  /** Settled: the shell has finished its output and drawn a fresh prompt on the cursor row. */
+  const waitQuiet = () =>
+    page.waitForFunction(
+      (id) => {
+        const buf = window.__terms[id]?.buffer.active;
+        const line = buf?.getLine(buf.baseY + buf.cursorY)?.translateToString(true) ?? '';
+        return /^PS .*>$/.test(line);
+      },
+      sid,
+      { timeout: 20000 },
+    );
+  await waitQuiet();
 
   /** Viewport point of char `charIdx` of the last row whose text contains `needle`. */
   const cellOf = (needle, charIdx) =>
@@ -133,8 +135,18 @@ runScenario('terminal-osc8-file-link', async ({ app, page, log }) => {
     for (let attempt = 0; attempt < 40; attempt++) {
       await page.mouse.move(c.x, c.y + 400);
       await page.mouse.move(c.x, c.y, { steps: 4 });
-      await page.waitForTimeout(400);
-      if (await hovering()) break;
+      const shown = await page
+        .waitForFunction(
+          (id) => !!window.__terms[id].element.querySelector('.xterm-cursor-pointer'),
+          sid,
+          { timeout: 400 },
+        )
+        .then(() => true)
+        .catch((error) => {
+          if (error.name !== 'TimeoutError') throw error;
+          return false;
+        });
+      if (shown) break;
     }
     assert(await hovering(), `"${needle}" never showed the link pointer`);
     await page.mouse.click(c.x, c.y, { button });
@@ -155,29 +167,29 @@ runScenario('terminal-osc8-file-link', async ({ app, page, log }) => {
     });
     await waitQuiet();
   };
-  /** Whether any editor model is the file ending in `suffix` (a preview tab can be replaced in
-   *  place, so a tab count alone cannot tell). */
-  const docOpen = (suffix) =>
-    page.evaluate(
-      (sfx) =>
-        (window.monaco?.editor.getModels() ?? []).some((m) =>
-          m.uri.path.toLowerCase().endsWith(sfx),
-        ),
-      suffix,
-    );
-  const waitDoc = async (suffix, ms = 15000) => {
-    for (const t0 = Date.now(); Date.now() - t0 < ms; ) {
-      if (await docOpen(suffix)) return true;
-      await page.waitForTimeout(250);
-    }
-    return false;
-  };
+  /** Waits for an editor model ending in `suffix` (a preview tab can be replaced in place, so a
+   *  tab count alone cannot tell); false at the deadline. */
+  const waitDoc = (suffix, ms = 15000) =>
+    page
+      .waitForFunction(
+        (sfx) =>
+          (window.monaco?.editor.getModels() ?? []).some((m) =>
+            m.uri.path.toLowerCase().endsWith(sfx),
+          ),
+        suffix,
+        { timeout: ms },
+      )
+      .then(() => true)
+      .catch((error) => {
+        if (error.name !== 'TimeoutError') throw error;
+        return false;
+      });
   const externalCalls = async () =>
     (await getSpyCalls(app)).filter((c) => c.api === 'openExternal').length;
   /** Nothing opened: no new tab, no external open, no window.open. */
   const assertNothingOpened = async (tabsBefore, what, forbidden) => {
-    await page.waitForTimeout(1500);
-    assert(!(await docOpen(forbidden)), `${what}: ${forbidden} must not open`);
+    // Bounded negative: the forbidden doc must not open within the window.
+    assert(!(await waitDoc(forbidden, 1500)), `${what}: ${forbidden} must not open`);
     assert((await tabInfo(page)).length === tabsBefore, `${what}: no tab may open`);
     assert((await externalCalls()) === 0, `${what}: openExternal must not be called`);
     const opens = await page.evaluate(() => window.__opens.length);

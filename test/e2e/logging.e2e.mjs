@@ -43,6 +43,23 @@ const log = makeLog('logging');
 // Must match electron/logger.ts CONDUIT_E2E branch.
 const LOGS_DIR = join(tmpdir(), 'conduit-e2e-logs');
 
+let probeSeq = 0;
+/**
+ * Waits until the node-side `check` (disk, main-process spy) turns truthy, by exposing it to the
+ * page and polling it from waitForFunction: the state it watches is written by the host, outside
+ * the page's reach.
+ */
+async function waitForHost(page, check, what, timeout = 10_000) {
+  const name = `__hostProbe${++probeSeq}`;
+  await page.exposeFunction(name, async () => !!(await check()));
+  try {
+    await page.waitForFunction((n) => window[n](), name, { timeout, polling: 50 });
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+    assert(false, `timed out waiting for ${what}`);
+  }
+}
+
 /** Read every JSONL record from the newest conduit-*.log in the logs dir. */
 function readRecords() {
   const files = readdirSync(LOGS_DIR)
@@ -89,7 +106,11 @@ try {
       data: { token: 'super-secret-value', path: 'G:/awby/projects/conduit' },
     }),
   );
-  await page.waitForTimeout(700); // let the debounced/async writes land
+  await waitForHost(
+    page,
+    () => readRecords().some((r) => r.msg === 'redaction-probe'),
+    'the redaction probe on disk',
+  );
 
   const records = readRecords();
   log(`read ${records.length} JSONL record(s) from ${LOGS_DIR}`);
@@ -126,7 +147,11 @@ try {
   // server.log (the e2e app log is redirected to temp, so server.log is the observable child).
   await clearSpyCalls(app);
   await page.evaluate(() => window.agentDeck.revealLogs());
-  await page.waitForTimeout(400);
+  await waitForHost(
+    page,
+    async () => (await getSpyCalls(app)).some((c) => c.api === 'openPath'),
+    'revealLogs to call openPath',
+  );
   const calls = await getSpyCalls(app);
   const samePath = (a, b) => resolve(String(a)).toLowerCase() === resolve(String(b)).toLowerCase();
   assertCall(
@@ -144,7 +169,11 @@ try {
   await page.evaluate(() =>
     window.__conduitLog.warn('e2e-renderer', 'parity-probe', { kept: 'ok' }),
   );
-  await page.waitForTimeout(600);
+  await waitForHost(
+    page,
+    () => readRecords().some((r) => r.scope === 'e2e-renderer' && r.msg === 'parity-probe'),
+    'the renderer parity record on disk',
+  );
   const afterParity = readRecords();
   const parity = afterParity.find(
     (r) => r.scope === 'e2e-renderer' && r.msg === 'parity-probe' && r.level === 'warn',
@@ -156,7 +185,11 @@ try {
   // (e) copyDiagnostics: writes a bundle (version header + log content) and reveals it.
   await clearSpyCalls(app);
   const bundlePath = await page.evaluate(() => window.agentDeck.copyDiagnostics());
-  await page.waitForTimeout(400);
+  await waitForHost(
+    page,
+    async () => (await getSpyCalls(app)).some((c) => c.api === 'showItemInFolder'),
+    'copyDiagnostics to reveal the bundle',
+  );
   assert(
     typeof bundlePath === 'string' && bundlePath.length > 0,
     'copyDiagnostics returned no path',

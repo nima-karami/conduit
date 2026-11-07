@@ -59,7 +59,9 @@ runScenario('link-cwd', async ({ page, log }) => {
     });
     window.agentDeck.post({ type: 'ready' });
   });
-  await page.waitForTimeout(800);
+  await page.waitForFunction(() => (window.__agentsList || []).length > 0, null, {
+    timeout: 20000,
+  });
   const agentIds = await page.evaluate(() => window.__agentsList || []);
   const psAgent = agentIds.find((id) => id === 'shell:pwsh' || id === 'shell:powershell');
   if (!psAgent) {
@@ -71,8 +73,8 @@ runScenario('link-cwd', async ({ page, log }) => {
   await page.evaluate(() =>
     window.agentDeck.post({ type: 'updateServerSettings', patch: { trackCwd: true } }),
   );
-  await page.waitForTimeout(300);
 
+  // Same ordered bridge channel as the spawn below: the setting is applied before the session opens.
   const sid = await openSession(page, { path: root.replace(/\\/g, '/'), agentId: psAgent });
   log('session', sid);
 
@@ -139,14 +141,8 @@ runScenario('link-cwd', async ({ page, log }) => {
       { s: sid, toks: tokens },
     );
 
-  let reply = { results: [], root: undefined };
-  let byTok = {};
-  for (let i = 0; i < 12; i++) {
-    reply = await validate([alpha, beta, alpha.slice(0, 8)]);
-    byTok = Object.fromEntries(reply.results.map((r) => [r.token, r.commit]));
-    if (byTok[alpha] === alpha) break;
-    await page.waitForTimeout(500);
-  }
+  const reply = await validate([alpha, beta, alpha.slice(0, 8)]);
+  const byTok = Object.fromEntries(reply.results.map((r) => [r.token, r.commit]));
   log('validate', JSON.stringify(reply));
   assert(byTok[alpha] === alpha, `repo-a (cwd) commit should resolve, got ${byTok[alpha]}`);
   assert(byTok[alpha.slice(0, 8)] === alpha, `repo-a short sha should resolve to full oid`);
@@ -210,7 +206,7 @@ runScenario('link-cwd', async ({ page, log }) => {
   await page.waitForFunction(
     ({ s, p }) => {
       const buf = window.__terms[s]?.buffer.active;
-      if (!buf) return false;
+      if (!buf || !window.__termLinkProviders[s]) return false;
       for (let y = 0; y < buf.length; y++)
         if (buf.getLine(y)?.translateToString(true).includes(p)) return true;
       return false;
@@ -218,45 +214,39 @@ runScenario('link-cwd', async ({ page, log }) => {
     { s: sid, p: probe },
     { timeout: 8000 },
   );
-  await page.waitForTimeout(300);
 
-  let routed = { error: 'not attempted' };
-  for (let attempt = 0; attempt < 6; attempt++) {
-    routed = await page.evaluate(
-      ({ s, sha }) =>
-        new Promise((resolve) => {
-          const buf = window.__terms[s].buffer.active;
-          const p = sha.slice(0, 12);
-          let row = -1;
-          for (let y = 0; y < buf.length; y++)
-            if (buf.getLine(y)?.translateToString(true).includes(p)) {
-              row = y;
-              break;
-            }
-          if (row < 0) return resolve({ error: 'sha not in buffer' });
-          const provider = window.__termLinkProviders[s];
-          if (!provider) return resolve({ error: 'no link provider' });
-          let done = false;
-          provider.provideLinks(row + 1, (links) => {
-            if (done) return;
+  const routed = await page.evaluate(
+    ({ s, sha }) =>
+      new Promise((resolve) => {
+        const buf = window.__terms[s].buffer.active;
+        const p = sha.slice(0, 12);
+        let row = -1;
+        for (let y = 0; y < buf.length; y++)
+          if (buf.getLine(y)?.translateToString(true).includes(p)) {
+            row = y;
+            break;
+          }
+        if (row < 0) return resolve({ error: 'sha not in buffer' });
+        const provider = window.__termLinkProviders[s];
+        if (!provider) return resolve({ error: 'no link provider' });
+        let done = false;
+        provider.provideLinks(row + 1, (links) => {
+          if (done) return;
+          done = true;
+          const link = (links || []).find((l) => l.text === sha);
+          if (!link) return resolve({ error: 'no commit link' });
+          link.activate(new MouseEvent('click'), link.text);
+          resolve({ ok: true });
+        });
+        setTimeout(() => {
+          if (!done) {
             done = true;
-            const link = (links || []).find((l) => l.text === sha);
-            if (!link) return resolve({ error: 'no commit link' });
-            link.activate(new MouseEvent('click'), link.text);
-            resolve({ ok: true });
-          });
-          setTimeout(() => {
-            if (!done) {
-              done = true;
-              resolve({ error: 'provideLinks timeout' });
-            }
-          }, 4000);
-        }),
-      { s: sid, sha: alpha },
-    );
-    if (routed.ok || routed.error !== 'sha not in buffer') break;
-    await page.waitForTimeout(400);
-  }
+            resolve({ error: 'provideLinks timeout' });
+          }
+        }, 4000);
+      }),
+    { s: sid, sha: alpha },
+  );
   log('routed', JSON.stringify(routed));
   assert(routed.ok === true, `commit link should activate, got ${JSON.stringify(routed)}`);
 
