@@ -350,7 +350,22 @@ runScenario('multi-repo', async ({ page, log }) => {
     ({ id, p }) => window.agentDeck.post({ type: 'repo:context', sessionId: id, path: p }),
     { id: sid, p: join(root, 'repo-a', 'a.txt').replace(/\\/g, '/') },
   );
-  await page.waitForTimeout(400);
+  try {
+    await page.waitForFunction(
+      (id) => {
+        const session = (window.__sessions || []).find((item) => item.id === id);
+        return (
+          !session?.repoPinned ||
+          !(session.activeRepoRoot || '').replace(/\\/g, '/').endsWith('repo-b')
+        );
+      },
+      sid,
+      { timeout: 400 },
+    );
+    assert(false, 'pin did not hold across repo:context');
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+  }
   const stillB = await page.evaluate((id) => {
     const s = (window.__sessions || []).find((x) => x.id === id);
     return (

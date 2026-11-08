@@ -122,7 +122,21 @@ runScenario('middle-click-surfaces-search', async ({ app, page, log }) => {
     const tabsBefore = await tabInfo(page);
     await middleClickJitter(page, head);
     // A negative can only be observed over a window; 800 ms covers a React commit comfortably.
-    await page.waitForTimeout(800);
+    try {
+      await page.waitForFunction(
+        () => {
+          const head = [...document.querySelectorAll('.searchgroup')].find(
+            (el) => el.querySelector('.searchgroup__file')?.textContent?.trim() === 'a.ts',
+          );
+          return head?.querySelectorAll('.searchmatch').length !== 1;
+        },
+        null,
+        { timeout: 800 },
+      );
+      assert(false, 'S4: middle-click collapsed the group');
+    } catch (error) {
+      if (error.name !== 'TimeoutError') throw error;
+    }
     const rows = await group(page, 'a.ts').locator('.searchmatch').count();
     assert(rows === 1, `S4 non-name-only head: middle-click collapsed the group (${rows} rows)`);
     const tabs = await tabInfo(page);

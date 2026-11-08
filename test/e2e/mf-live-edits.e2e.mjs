@@ -47,6 +47,7 @@ import {
   launchApp,
   makeLog,
   openSession,
+  pollUntil,
   profileDir,
   REPO,
   removeDir,
@@ -142,14 +143,7 @@ const launches = async (page, sid) => [...new Set(records(plain(await raw(page, 
 const since = async (page, sid, mark) => plain((await raw(page, sid)).slice(mark));
 const mark = (page, sid) => raw(page, sid).then((r) => r.length);
 
-async function until(pred, ms, step = 100) {
-  const deadline = Date.now() + ms;
-  for (;;) {
-    if (await pred()) return true;
-    if (Date.now() >= deadline) return false;
-    await new Promise((r) => setTimeout(r, step));
-  }
-}
+const until = pollUntil;
 
 /** The lines the fake received since `from`, deduped in order. */
 const gotSince = async (page, sid, from) => [
@@ -203,18 +197,19 @@ const type = (page, sid, data) =>
   );
 
 async function renameAway(from, to) {
-  const deadline = Date.now() + 5000;
-  for (;;) {
+  let lastError;
+  const renamed = await pollUntil(() => {
     try {
       renameSync(from, to);
-      return;
-    } catch (e) {
-      if (!['EPERM', 'EBUSY', 'EACCES'].includes(e?.code) || Date.now() >= deadline) throw e;
-      await new Promise((r) => setTimeout(r, 100));
+      return true;
+    } catch (error) {
+      if (!['EPERM', 'EBUSY', 'EACCES'].includes(error?.code)) throw error;
+      lastError = error;
+      return false;
     }
-  }
+  }, 5000);
+  if (!renamed) throw lastError;
 }
-
 /**
  * The window is hidden, so OS focus never arrives: drive the host's own handlers. A real focus gain
  * follows a blur, a presence report apart (the host coalesces reports per tick).
@@ -223,7 +218,7 @@ const focusWindow = (app) =>
   app.evaluate(async ({ BrowserWindow }) => {
     const all = BrowserWindow.getAllWindows();
     for (const w of all) w.emit('blur');
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((resolve) => setImmediate(resolve));
     for (const w of all) w.emit('focus');
   });
 
@@ -277,9 +272,8 @@ async function waitBannerGone(page, what) {
 }
 
 /** Bounded window for a negative: no extra launch, banner, paste, or prompt answer. */
-async function observeNothingFor(page, ms, check) {
-  await page.waitForTimeout(ms);
-  return check();
+async function observeNothingFor(_page, ms, check) {
+  return !(await pollUntil(async () => !(await check()), ms));
 }
 
 async function waitNotBusy(page, sid, what) {

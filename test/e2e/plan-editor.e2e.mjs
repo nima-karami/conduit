@@ -41,6 +41,7 @@ import {
   launchApp,
   makeLog,
   openSession,
+  pollUntil,
   tapBridge,
   writeToTerminal,
 } from './harness.mjs';
@@ -91,8 +92,7 @@ try {
 
   /** Bounded window for a negative: write-through must stay paused while the conflict stands. */
   const observeNothingFor = async (ms, check) => {
-    await page.waitForTimeout(ms);
-    return check();
+    return !(await pollUntil(() => !check(), ms));
   };
 
   const sessionA = await openSession(page, { path: root });
@@ -133,15 +133,18 @@ try {
 
   const untilFile = async (holds, budgetMs, read = readPlan) => {
     const started = Date.now();
-    for (;;) {
-      try {
-        if (holds(read())) return Date.now() - started;
-      } catch {
-        // File not back yet (recreate).
-      }
-      if (Date.now() - started >= budgetMs) return null;
-      await new Promise((r) => setTimeout(r, 50));
-    }
+    const found = await pollUntil(
+      () => {
+        try {
+          return holds(read());
+        } catch {
+          return false;
+        }
+      },
+      budgetMs,
+      50,
+    );
+    return found ? Date.now() - started : null;
   };
   const visible = (locator, timeout) =>
     locator
@@ -149,10 +152,39 @@ try {
       .then(() => true)
       .catch(() => false);
 
+  const beginSave = async () => {
+    const save = page.locator('.plan__save:visible').first();
+    await save.locator('xpath=self::*[@data-plan-save="saved"]').waitFor({ timeout: 4000 });
+    await save.evaluate((element) => {
+      window.__trackedPlanSave?.observer.disconnect();
+      const state = { sawPending: false, done: false, observer: null };
+      state.observer = new MutationObserver((records) => {
+        const phase = element.getAttribute('data-plan-save');
+        if (
+          phase === 'pending' ||
+          phase === 'saving' ||
+          records.some((r) => r.oldValue === 'pending' || r.oldValue === 'saving')
+        )
+          state.sawPending = true;
+        if (state.sawPending && phase === 'saved') state.done = true;
+      });
+      state.observer.observe(element, {
+        attributes: true,
+        attributeFilter: ['data-plan-save'],
+        attributeOldValue: true,
+      });
+      window.__trackedPlanSave = state;
+    });
+  };
+  const waitForSave = () =>
+    page.waitForFunction(() => window.__trackedPlanSave?.done === true, null, { timeout: 5000 });
+
   // (a) Type into the first paragraph: the file must differ in that paragraph and nowhere else.
   const prose = editor.locator('[contenteditable="true"]').first();
   await prose.locator('p').first().click();
+  await beginSave();
   await page.keyboard.type(' XYZZY-EDIT');
+  await waitForSave();
 
   const wrote = await untilFile((t) => t.includes('XYZZY-EDIT'), 2500);
   assert(wrote !== null, 'an edit to a paragraph must reach the file within 2 s');
@@ -388,7 +420,9 @@ try {
 
   // Send counts human-changed blocks, and a freshly loaded plan has none.
   await secondEditor.locator('[contenteditable="true"] p').first().click();
+  await beginSave();
   await page.keyboard.type(' OWNER-EDIT');
+  await waitForSave();
   const secondFile = join(plans, `${SECOND_SLUG}.md`);
   const wroteSecond =
     (await untilFile(

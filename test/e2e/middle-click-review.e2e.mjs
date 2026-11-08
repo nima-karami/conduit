@@ -5,7 +5,15 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { assert, closeApp, openHistory, openReview, openSession, runScenario } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  openHistory,
+  openReview,
+  openSession,
+  pollUntil,
+  runScenario,
+} from './harness.mjs';
 import {
   middleClickJitter,
   sameSnapshot,
@@ -75,13 +83,18 @@ function reviewState(page) {
 // A reveal or a windowing pass lands a frame or two after the triggering action; the hidden
 // window throttles frames, so a baseline taken too early would blame the middle-click for it.
 async function settle(page) {
-  let prev = JSON.stringify([await snapshotUnchanged(page), await reviewState(page)]);
-  for (let i = 0; i < 20; i++) {
-    await page.waitForTimeout(250);
-    const next = JSON.stringify([await snapshotUnchanged(page), await reviewState(page)]);
-    if (next === prev) return;
-    prev = next;
-  }
+  let prev = null;
+  const settled = await pollUntil(
+    async () => {
+      const next = JSON.stringify([await snapshotUnchanged(page), await reviewState(page)]);
+      const unchanged = prev !== null && next === prev;
+      prev = next;
+      return unchanged;
+    },
+    5000,
+    250,
+  );
+  assert(settled, 'Review state did not settle');
 }
 
 async function assertBackground(page, before, tab, what) {

@@ -117,7 +117,6 @@ async function openMarkdownViaTree(page) {
       log(`WARNING: failed to expand dir "${dir}", falling back to IPC-only`);
       return false;
     }
-    await page.waitForTimeout(400);
   }
 
   // Click the markdown fixture file.

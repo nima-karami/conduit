@@ -135,7 +135,7 @@ runScenario('search-selection', async ({ page, log }) => {
 
   // And the engine can actually match it — a result for a two-line query proves the
   // per-line scan was really bypassed, not just that the box accepted the text.
-  await page.waitForTimeout(1200);
+  await page.locator('.searchmatch').first().waitFor({ state: 'attached', timeout: 5000 });
   const hits = await page.locator('.searchmatch').count();
   log(`results for the two-line query: ${hits}`);
   assert(hits > 0, 'a multi-line query must actually find its span in the file');

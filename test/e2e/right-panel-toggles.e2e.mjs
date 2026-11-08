@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import {
   assert,
   openSession,
+  pollUntil,
   runCommand,
   runScenario,
   shownRightView,
@@ -66,12 +67,11 @@ async function readSettings(app) {
 
 /** Poll the persisted settings until `pred` holds; returns the last read either way. */
 async function waitSettings(app, pred, timeoutMs = 8000) {
-  const deadline = Date.now() + timeoutMs;
   let s = await readSettings(app);
-  while (!(s && pred(s)) && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 100));
+  await pollUntil(async () => {
     s = await readSettings(app);
-  }
+    return s && pred(s);
+  }, timeoutMs);
   return s;
 }
 
@@ -296,7 +296,7 @@ runScenario('right-panel-toggles', async ({ app, page, log }) => {
     },
   );
   // Held long enough that a helper which does not wait would already have clicked.
-  await page.waitForTimeout(700);
+  await pollUntil(() => settled, 700);
   assert(!settled, 'showRightView waits while the pressed toggle has no visible panel');
   await page.evaluate(() => {
     document.querySelector('#right-pane').style.display = '';

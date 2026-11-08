@@ -31,6 +31,7 @@ import {
   launchElectron,
   makeLog,
   openSession,
+  pollUntil,
   profileDir,
   REPO,
   tapBridge,
@@ -169,7 +170,9 @@ async function startReader(page, sid, { mine, other, dumpPath }) {
     { s: sid, at: from },
     { timeout: 30000 },
   );
-  await page.waitForTimeout(900); // let xterm process ESC[?2004h
+  await page.waitForFunction((id) => window.__terms?.[id]?.modes.bracketedPasteMode === true, sid, {
+    timeout: 5000,
+  });
 }
 
 const endReaders = (page, sids) =>
@@ -183,13 +186,12 @@ const endReaders = (page, sids) =>
   );
 
 async function readDump(path) {
-  const deadline = Date.now() + 20000;
-  while (Date.now() < deadline) {
+  const text = await pollUntil(() => {
     const text = readFileSync(path, 'utf8');
-    if (/mine=/.test(text)) return text.trim();
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  throw new Error(`the reader never wrote its dump: ${path}`);
+    return /mine=/.test(text) ? text.trim() : null;
+  }, 20000);
+  assert(text, `the reader never wrote its dump: ${path}`);
+  return text;
 }
 
 const dumpPath = (tag) => join(mkdtempSync(join(tmpdir(), `conduit-par-dump-${tag}-`)), 'd.txt');

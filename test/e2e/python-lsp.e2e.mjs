@@ -12,7 +12,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { clearTransients, openDoc, placeCursor } from './goto-matrix.mjs';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openSession, pollUntil, runScenario } from './harness.mjs';
 import {
   assertInstalled,
   breadcrumbWith,
@@ -73,7 +73,11 @@ runScenario('python-lsp', async ({ app, page, log }) => {
 
   // ── B8: kept from the server, and F12 says why ──
   await openDoc(app, page, sid, big.huge);
-  await page.waitForTimeout(5_000);
+  const unexpectedServer = await pollUntil(async () => {
+    const snap = await lsp(page, { type: 'lsp:statusSnapshot' });
+    return snap.servers.some((s) => s.languageId === 'python');
+  }, 5_000);
+  assert(!unexpectedServer, 'a Python server started while the oversized file was open');
   const alone = await lsp(page, { type: 'lsp:statusSnapshot' });
   log(`huge.py alone → servers ${JSON.stringify(alone.servers)}`);
   assert(

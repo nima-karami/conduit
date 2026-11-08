@@ -30,7 +30,14 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario, typeLine, waitForOutput } from './harness.mjs';
+import {
+  assert,
+  openSession,
+  pollUntil,
+  runScenario,
+  typeLine,
+  waitForOutput,
+} from './harness.mjs';
 import { tabInfo } from './middle-click-fixture.mjs';
 import { openPalette, paletteRow } from './middle-click-surfaces-helpers.mjs';
 import { waitCursor } from './nav-history-fixture.mjs';
@@ -113,8 +120,7 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
   };
   /** Bounded window for a negative: a non-link click must open neither picker nor tab. */
   const observeNothingFor = async (ms, check) => {
-    await page.waitForTimeout(ms);
-    return check();
+    return !(await pollUntil(async () => !(await check()), ms));
   };
   await waitQuiet();
   // Printed by the shell, not written into the xterm: ConPTY repaints its screen when the
@@ -166,20 +172,21 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
     const c = await cellOf(needle, charIdx);
     assert(c.onScreen, `"${needle}" is not on screen: ${JSON.stringify(c)}`);
     if (onLink && needle === LINE_BOTTOM) {
-      const providerLinks = await page.evaluate(
-        ({ id, row }) =>
-          new Promise((resolve) => {
-            const timer = setTimeout(() => resolve({ timedOut: true }), 2000);
-            window.__termLinkProviders[id].provideLinks(row + 1, (links) => {
-              clearTimeout(timer);
-              resolve({
-                timedOut: false,
-                links: (links ?? []).map((link) => ({ text: link.text, range: link.range })),
-              });
-            });
-          }),
+      await page.evaluate(
+        ({ id, row }) => {
+          window.__bottomProviderLinks = null;
+          window.__termLinkProviders[id].provideLinks(row + 1, (links) => {
+            window.__bottomProviderLinks = (links ?? []).map((link) => ({
+              text: link.text,
+              range: link.range,
+            }));
+          });
+        },
         { id: sid, row: c.row },
       );
+      const providerLinks = await page
+        .waitForFunction(() => window.__bottomProviderLinks, null, { timeout: 2000 })
+        .then((h) => h.jsonValue());
       log('bottom-link provider before hover:', JSON.stringify({ cell: c, result: providerLinks }));
     }
     const hovering = () =>

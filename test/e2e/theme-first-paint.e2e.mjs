@@ -64,9 +64,16 @@ runScenario('theme-first-paint', async ({ app, page, log }) => {
   await page.reload();
   await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
   await page.waitForSelector('.topbar', { state: 'attached', timeout: 20000 });
-  // Give the host's `state` reply time to land — that is exactly the message the old code
-  // waited for, so a regression has fully played out by now.
-  await page.waitForTimeout(1500);
+  await page.evaluate(() => {
+    window.__themeStateReceived = false;
+    const off = window.agentDeck.subscribe((message) => {
+      if (message.type !== 'state') return;
+      off();
+      window.__themeStateReceived = true;
+    });
+    window.agentDeck.post({ type: 'ready' });
+  });
+  await page.waitForFunction(() => window.__themeStateReceived, null, { timeout: 5000 });
 
   const seq = await page.evaluate(() => window.__themeSeq);
   log(`data-theme sequence after reload: ${JSON.stringify(seq)}`);

@@ -14,7 +14,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario, writeToTerminal } from './harness.mjs';
+import { assert, openSession, runScenario, typeLine, writeToTerminal } from './harness.mjs';
 import { openPalette, paletteRow } from './middle-click-surfaces-helpers.mjs';
 
 const OUT_URL = 'https://example.com/agent-output-link';
@@ -40,7 +40,18 @@ runScenario('terminal-input-box-links', async ({ page, log }) => {
   await page.waitForFunction((dir) => (window.__cap || '').includes(`${dir}>`), workDir, {
     timeout: 30000,
   });
-  await page.waitForTimeout(500);
+  await typeLine(page, sid, 'echo __INPUT^_SYNC__');
+  await page.waitForFunction(
+    (id) => {
+      const buf = window.__terms[id].buffer.active;
+      for (let row = 0; row < buf.length; row++) {
+        if (buf.getLine(row)?.translateToString(true).includes('__INPUT_SYNC__')) return true;
+      }
+      return false;
+    },
+    sid,
+    { timeout: 5000 },
+  );
 
   const cols = await page.evaluate((id) => window.__terms[id].cols, sid);
   const rule = '─'.repeat(cols);
