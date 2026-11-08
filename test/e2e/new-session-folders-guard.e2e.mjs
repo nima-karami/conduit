@@ -7,7 +7,7 @@
  * exit 0 pass/SKIP · 1 assertion failed · 2 infra error
  */
 
-import { assert, phase } from './harness.mjs';
+import { assert, phase, pollUntil } from './harness.mjs';
 import {
   browseAdd,
   clearFolders,
@@ -45,7 +45,16 @@ await runNewSession('new-session-folders-guard', async ({ fx, log, launch }) => 
   await page.locator('.ns__foot .btn--primary').click({ force: true });
   await page.focus('.modal.ns');
   await page.keyboard.press('Enter');
-  await page.waitForTimeout(1500);
+  assert(
+    !(await pollUntil(
+      async () =>
+        (await hostMsgs(app)).filter((t) => t === 'openRepo').length !== opensBefore ||
+        (await page.evaluate(() => window.__sessions.length)) !== sessionsBefore ||
+        !(await page.isVisible('.modal.ns')),
+      1500,
+    )),
+    'the guard must prevent a session throughout the observation window',
+  );
   const opensAfter = (await hostMsgs(app)).filter((t) => t === 'openRepo').length;
   assert(opensAfter === opensBefore, `no openRepo is posted (${opensBefore} → ${opensAfter})`);
   assert(

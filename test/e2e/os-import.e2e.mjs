@@ -16,6 +16,7 @@ import {
   finishScenario,
   launchApp,
   openSession,
+  pollUntil,
   showRightView,
   tapBridge,
 } from './harness.mjs';
@@ -87,9 +88,10 @@ try {
     .then(() => true)
     .catch(() => false);
   assert(!menuShown, 'a file-only drop opens no drop-intent menu');
-  for (let i = 0; i < 40 && !existsSync(join(project, 'seamed.txt')); i++) {
-    await page.waitForTimeout(100);
-  }
+  assert(
+    await pollUntil(() => existsSync(join(project, 'seamed.txt')), 4000),
+    'the dropped file must be copied',
+  );
   assert(existsSync(join(project, 'seamed.txt')), 'the dropped file is copied in');
   await page
     .locator('.filerow', { has: page.locator('.filerow__name', { hasText: /^seamed\.txt$/ }) })

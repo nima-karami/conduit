@@ -6,7 +6,7 @@
  * exit 0 pass/SKIP · 1 assertion failed · 2 infra error
  */
 
-import { assert, openSession, phase, runCommand } from './harness.mjs';
+import { assert, openSession, phase, pollUntil, runCommand } from './harness.mjs';
 import {
   browseAdd,
   CARD,
@@ -37,7 +37,24 @@ await runNewSession('new-session-folders-card', async ({ fx, log, launch }) => {
   await page.focus('.modal.ns');
   for (let i = 0; i < 6; i++) await page.keyboard.press('Enter');
   await page.waitForSelector('.modal.ns', { state: 'detached', timeout: 10000 });
-  await page.waitForTimeout(1500);
+  assert(
+    await pollUntil(
+      async () =>
+        (await hostMsgs(app)).filter((t) => t === 'openRepo').length >= heldOpens + 1 &&
+        (await page.evaluate(() => window.__sessions.length)) >= heldSessions + 1,
+      5000,
+    ),
+    'the requested session must appear',
+  );
+  assert(
+    !(await pollUntil(
+      async () =>
+        (await hostMsgs(app)).filter((t) => t === 'openRepo').length > heldOpens + 1 ||
+        (await page.evaluate(() => window.__sessions.length)) > heldSessions + 1,
+      1500,
+    )),
+    'held Enter must not start another session',
+  );
   const heldOpensAfter = (await hostMsgs(app)).filter((t) => t === 'openRepo').length;
   assert(
     heldOpensAfter - heldOpens === 1,

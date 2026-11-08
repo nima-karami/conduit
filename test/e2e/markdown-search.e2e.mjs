@@ -112,7 +112,14 @@ runScenario('markdown-search', async ({ app, page, log }) => {
   }
   await filterInput.click();
   await page.keyboard.press('Control+f');
-  await page.waitForTimeout(300);
+  try {
+    await page.waitForFunction((selector) => !!document.querySelector(selector), mdBar, {
+      timeout: 300,
+    });
+    assert(false, 'markdown find opened while focus was outside the viewer');
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+  }
   assert(
     (await page.locator(mdBar).count()) === 0,
     'markdown find must not open when focus is outside the markdown viewer',

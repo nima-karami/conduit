@@ -90,10 +90,15 @@ runScenario('quickopen-fresh', async ({ app, page, log }) => {
     await closePalette(page);
     log('palette used once: kept.ts + gone.ts listed');
 
+    await page.evaluate(() => {
+      window.__indexChanged = false;
+      window.agentDeck.subscribe((m) => {
+        if (m.type === 'fileIndexChanged') window.__indexChanged = true;
+      });
+    });
     writeFileSync(join(root, 'fresh-one.ts'), 'export const one = 1;\n');
     rmSync(join(root, 'gone.ts'));
-    // Reopen only after the host had time to signal; the reopen itself must then re-ask.
-    await page.waitForTimeout(2000);
+    await page.waitForFunction(() => window.__indexChanged, null, { timeout: REFRESH_BUDGET_MS });
     await openPalette(page, '.ts');
     await waitRows(
       page,

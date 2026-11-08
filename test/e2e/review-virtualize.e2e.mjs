@@ -65,7 +65,7 @@ async function navBoundary(page, rootA, rootB) {
     if (nav) nav.scrollTop = nav.scrollHeight / 2 - nav.clientHeight / 2;
   });
   for (let i = 0; i < 40; i++) {
-    await page.waitForTimeout(300);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
     const r = await page.evaluate(
       ([a, b]) => {
         const rows = [...document.querySelectorAll('.rightpane .review__navrow')];
