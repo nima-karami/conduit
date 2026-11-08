@@ -170,9 +170,6 @@ async function startReader(page, sid, { mine, other, dumpPath }) {
     { s: sid, at: from },
     { timeout: 30000 },
   );
-  await page.waitForFunction((id) => window.__terms?.[id]?.modes.bracketedPasteMode === true, sid, {
-    timeout: 5000,
-  });
 }
 
 const endReaders = (page, sids) =>
