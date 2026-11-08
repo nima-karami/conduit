@@ -184,9 +184,9 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
         },
         { id: sid, row: c.row },
       );
-      const providerLinks = await page
-        .waitForFunction(() => window.__bottomProviderLinks, null, { timeout: 2000 })
-        .then((h) => h.jsonValue());
+      // Diagnostic only: a provider that never calls back is logged, not fatal.
+      const links = await pollUntil(() => page.evaluate(() => window.__bottomProviderLinks), 5000);
+      const providerLinks = links ? { timedOut: false, links } : { timedOut: true };
       log('bottom-link provider before hover:', JSON.stringify({ cell: c, result: providerLinks }));
     }
     const hovering = () =>

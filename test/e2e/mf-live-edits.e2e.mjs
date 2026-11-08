@@ -638,11 +638,21 @@ async function phaseCantStart({ page, sid }) {
     await until(shows, 10000),
     `B1: row + centre say Can't start and name the command (row: ${JSON.stringify(await rowCantStart(page, nope))})`,
   );
+  // Relaunch flips the session to running before the pane's start is refused, so the
+  // reason legitimately disappears for a moment; assert on the state after the refusal.
+  await page.evaluate((id) => {
+    window.__relaunchReachedRunning = false;
+    window.agentDeck.subscribe((m) => {
+      if (m.type === 'state' && m.sessions?.some((s) => s.id === id && s.status === 'running')) {
+        window.__relaunchReachedRunning = true;
+      }
+    });
+  }, nope);
   await page.locator('.session-stale button', { hasText: '↻ Relaunch' }).click();
-  assert(
-    await observeNothingFor(page, 1500, shows),
-    'B1: after Relaunch refuses again, the reason is still shown',
-  );
+  await page.waitForFunction(() => window.__relaunchReachedRunning === true, null, {
+    timeout: 10000,
+  });
+  assert(await until(shows, 10000), 'B1: after Relaunch refuses again, the reason is still shown');
   await page.evaluate((id) => window.agentDeck.post({ type: 'kill', id }), nope);
   await page
     .locator(`[data-agent-tree] .session[data-sessionid="${sid}"] [data-agent-action="select"]`)

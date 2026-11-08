@@ -41,16 +41,15 @@ runScenario('terminal-input-box-links', async ({ page, log }) => {
     timeout: 30000,
   });
   await typeLine(page, sid, 'echo __INPUT^_SYNC__');
+  // The injected box below must not race cmd's next prompt, so wait for that prompt.
   await page.waitForFunction(
-    (id) => {
-      const buf = window.__terms[id].buffer.active;
-      for (let row = 0; row < buf.length; row++) {
-        if (buf.getLine(row)?.translateToString(true).includes('__INPUT_SYNC__')) return true;
-      }
-      return false;
+    (dir) => {
+      const cap = window.__cap || '';
+      const at = cap.lastIndexOf('__INPUT_SYNC__');
+      return at >= 0 && cap.slice(at).includes(`${dir}>`);
     },
-    sid,
-    { timeout: 5000 },
+    workDir,
+    { timeout: 10000 },
   );
 
   const cols = await page.evaluate((id) => window.__terms[id].cols, sid);
