@@ -14,6 +14,7 @@ export interface GateInput {
   spawnedAt: number | undefined;
   connectionLive: boolean;
   busy: boolean;
+  midTurnQueue: boolean;
   /** SessionActivity's output clock (plan ruling 9). */
   lastOutputAt: number | undefined;
   screen: ScreenVerdict;
@@ -33,8 +34,11 @@ export function evaluateGate(i: GateInput): GateVerdict {
   if (!i.running) return closed('not-running');
   if (i.spawnedAt === undefined || i.now - i.spawnedAt < i.settleMs) return closed('settling');
   if (!i.connectionLive) return closed('no-connection');
-  if (i.busy) return closed('busy');
-  if (within(i.now, i.lastOutputAt, IDLE_QUIET_MS)) return closed('quiet');
+  // Queue-capable CLIs take input mid-turn; see spec amendment CON-172.
+  if (!i.midTurnQueue) {
+    if (i.busy) return closed('busy');
+    if (within(i.now, i.lastOutputAt, IDLE_QUIET_MS)) return closed('quiet');
+  }
   if (i.screen === 'blocking') return closed('blocking-prompt');
   if (i.screen !== 'empty-input') return closed('no-empty-input');
   if (i.hasDraft) return closed('draft');

@@ -24,6 +24,9 @@
 // notice's echo is visible there. `permit` draws `Allow tool?` / `❯ 1. Yes` / `2. No` at the
 // cursor, then 10 blank lines, then `Esc to cancel` — S0's cursor-far-from-footer layout — until
 // `1`, `2` or Esc. `busy <ms>` prints a line every 100 ms. Idle prints nothing at all.
+// `busyq <ms>` is `busy` with the prompt kept on the cursor row under the `working n` lines, as an
+// agent that accepts input mid-turn draws its empty box. A line submitted meanwhile is recorded as
+// `INPUT {"queued":true}`; a `[conduit]` one is still read, as the agent reads its queue.
 import { spawn } from 'node:child_process';
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
@@ -149,22 +152,36 @@ async function connect() {
 let line = '';
 let permit = false;
 let busyUntil = 0;
+let busyQueue = false;
 
 // A function, not an inline check: the stdout handler's own `line` shadows the typed line.
 function redrawIfIdle() {
   if (busyUntil === 0 && !permit && line === '') write(PROMPT);
 }
 
-function startBusy(ms) {
+/** The prompt on the cursor row, with whatever is typed so far: the row a queue-mode agent shows. */
+function redrawBusyPrompt() {
+  write(`\r${ESC}[2K${PROMPT}${line}`);
+}
+
+function startBusy(ms, queue = false) {
   busyUntil = Date.now() + ms;
+  busyQueue = queue;
   let n = 0;
   const t = setInterval(() => {
     n += 1;
-    write(`working ${n}\r\n`);
+    if (queue) {
+      write(`\r${ESC}[2Kworking ${n}\r\n`);
+      redrawBusyPrompt();
+    } else {
+      write(`working ${n}\r\n`);
+    }
     if (Date.now() >= busyUntil) {
       clearInterval(t);
       busyUntil = 0;
-      write(PROMPT);
+      busyQueue = false;
+      if (queue) redrawBusyPrompt();
+      else write(PROMPT);
     }
   }, 100);
 }
@@ -178,10 +195,18 @@ function closePermit() {
 async function submit() {
   const got = line;
   line = '';
-  record('INPUT', { line: got });
+  const queued = busyUntil > 0 && busyQueue;
+  record('INPUT', queued ? { line: got, queued: true } : { line: got });
   if (got === 'quit') {
     server?.kill();
     process.exit(0);
+  }
+  if (queued) {
+    if (got.startsWith('[conduit]')) {
+      record('INBOX', { result: await callTool('read_inbox', {}) });
+    }
+    redrawBusyPrompt();
+    return;
   }
   if (got.startsWith('[conduit]')) {
     record('INBOX', { result: await callTool('read_inbox', {}) });
@@ -231,6 +256,12 @@ async function submit() {
     startBusy(Number(busy[1]));
     return;
   }
+  const busyq = /^busyq (\d+)$/.exec(got);
+  if (busyq) {
+    write('\r\n');
+    startBusy(Number(busyq[1]), true);
+    return;
+  }
   prompt();
 }
 
@@ -249,8 +280,12 @@ function key(ch) {
     }
   } else if (ch === '\x03') {
     line = '';
-    write('^C');
-    prompt();
+    if (busyUntil > 0 && busyQueue) {
+      redrawBusyPrompt();
+    } else {
+      write('^C');
+      prompt();
+    }
   } else if (ch !== '\n') {
     line += ch;
     write(ch);

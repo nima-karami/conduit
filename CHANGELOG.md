@@ -9,6 +9,9 @@ All notable user-facing changes to Conduit. Format follows
 ### Added
 - The Agents and Spaces panels have a ⋯ menu to sort, group and filter the list (for agents: by status, space or agent type, running only, needs you); your choices are kept between launches.
 
+### Fixed
+- Messages now reach Claude and Codex agents while they work, including when only their own subagents are running, instead of waiting for them to go idle.
+
 ## [0.60.0] — 2026-11-07
 
 ### Added

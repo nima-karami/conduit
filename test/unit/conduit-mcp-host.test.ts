@@ -73,8 +73,10 @@ const CLAUDE_BEFORE_INIT: {
 );
 const CODEX: AgentDefinition = { ...FAKE, id: 'codex', command: '/usr/bin/codex' };
 const CURSOR: AgentDefinition = { ...FAKE, id: 'cursor', command: '/usr/bin/agent' };
+/** The e2e fake that queues mid-turn input (adapters.ts `fake-queue`, CON-172). */
+const FAKE_QUEUE: AgentDefinition = { ...FAKE, id: 'e2e-fake-mcp-queue' };
 const CLAUDE: AgentDefinition = { ...FAKE, id: 'claude', command: '/usr/bin/claude' };
-const DEFS = [FAKE, SHELL, CODEX, CURSOR, CLAUDE];
+const DEFS = [FAKE, SHELL, CODEX, CURSOR, CLAUDE, FAKE_QUEUE];
 const defOfSession = (s: Session | undefined): AgentDefinition | undefined =>
   s?.agentId === COMMAND_AGENT_ID
     ? s.command && commandDef(s.command)
@@ -1406,6 +1408,19 @@ describe('createConduitMcpHost — notices', () => {
     return { ca, cb };
   }
 
+  /** s2 runs the queue adapter: busy does not hold its notice (spec CON-172). */
+  async function pairQueue(h: Harness) {
+    await h.host.start();
+    const a = await launch(h, 's1');
+    const ca = await client(h.ep, a.token);
+    const b = await launch(h, 's2', FAKE_QUEUE);
+    await client(h.ep, b.token);
+    h.output('s2', 'fake❯ ');
+    h.echo.add('s2');
+    settle(h);
+    return { ca, handle: h.sessions.get('s2')?.mcpHandle ?? '' };
+  }
+
   it('idle prompt + quiet + settled + live connection → notice text, the echo, then "\\r"', async () => {
     const h = harness();
     const { ca } = await pair(h);
@@ -1962,6 +1977,54 @@ describe('createConduitMcpHost — notices', () => {
     await expect.poll(() => h.host.uiState().attention.map((a) => a.reason)).toEqual([]);
   });
 
+  it('queue adapter busy at an empty prompt → notice + Enter', async () => {
+    const h = harness();
+    const { ca, handle } = await pairQueue(h);
+    h.busy.add('s2');
+    await ca.call('send_message', { to: [handle], body: 'see' });
+    h.clock.t += 1_000;
+    await h.host.tick();
+    expect(writesTo(h, 's2')).toEqual([composeNotice(false), '\r']);
+  });
+
+  it('queue adapter busy with a draft → nothing written', async () => {
+    const h = harness();
+    const { ca, handle } = await pairQueue(h);
+    h.busy.add('s2');
+    h.host.onRendererInput('s2', 'fix the');
+    await ca.call('send_message', { to: [handle], body: 'see' });
+    h.clock.t += 1_000;
+    await h.host.tick();
+    expect(writesTo(h, 's2')).toEqual([]);
+    expect(h.host.uiState().sessions.s2?.gate).toBe('draft');
+  });
+
+  it('queue adapter on a permission prompt → nothing written', async () => {
+    const h = harness();
+    const { ca, handle } = await pairQueue(h);
+    h.busy.add('s2');
+    h.output('s2', '[2J[1;1Hfake❯ [17;1HEsc to cancel[1;7H');
+    await ca.call('send_message', { to: [handle], body: 'see' });
+    h.clock.t += 1_000;
+    await h.host.tick();
+    expect(writesTo(h, 's2')).toEqual([]);
+    expect(h.host.uiState().sessions.s2?.gate).toBe('blocking-prompt');
+  });
+
+  it('second message while the queued notice is unread → no second write', async () => {
+    const h = harness();
+    const { ca, handle } = await pairQueue(h);
+    h.busy.add('s2');
+    await ca.call('send_message', { to: [handle], body: 'one' });
+    h.clock.t += 1_000;
+    await h.host.tick();
+    expect(writesTo(h, 's2')).toEqual([composeNotice(false), '\r']);
+    await ca.call('send_message', { to: [handle], body: 'two' });
+    h.clock.t += 31_000;
+    await h.host.tick();
+    expect(writesTo(h, 's2')).toHaveLength(2);
+  });
+
   it('paused → no submit; badge gate "paused"', async () => {
     const h = harness();
     const { ca } = await pair(h);
@@ -2009,6 +2072,7 @@ describe('createConduitMcpHost — notices', () => {
     h.echo.add('s4');
     settle(h);
     await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    h.clock.t += 1_000;
     await h.host.tick();
     expect(writesTo(h, 's4')).toEqual([composeNotice(false), '\r']);
   });
@@ -2734,6 +2798,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     claudeBox(h, 'sh1');
     settle(h);
     await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    h.clock.t += 1_000;
     await h.host.tick();
     expect(writesTo(h, 'sh1')).toEqual([composeNotice(false), '\r']);
   });
@@ -2754,6 +2819,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     h.echo.add('sh1');
     settle(h);
     await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    h.clock.t += 1_000;
     await h.host.tick();
     expect(writesTo(h, 'sh1')).toEqual([composeNotice(false), '\r']);
   });
@@ -2823,6 +2889,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
       claudeBox(h, 'sh1');
       settle(h);
       await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+      h.clock.t += 1_000;
       await h.host.tick();
       expect(writesTo(h, 'sh1')).toEqual([composeNotice(false), '\r']);
     });
@@ -2839,6 +2906,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     claudeBox(h, 'sh1');
     settle(h);
     await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    h.clock.t += 1_000;
     await h.host.tick();
     expect(writesTo(h, 'sh1')).toEqual([composeNotice(false), '\r']);
   });
@@ -2912,6 +2980,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     claudeBox(h, 'sh1');
     settle(h);
     await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    h.clock.t += 1_000;
     await h.host.tick();
     expect(writesTo(h, 'sh1')).toEqual([composeNotice(false), '\r']);
   });
@@ -2959,6 +3028,7 @@ describe('notice adapter from the live client (spec 2026-10-27-conduit-mcp-insta
     claudeBox(h, 'sh1');
     settle(h);
     await ca.call('send_message', { to: ['claude-1'], body: 'see' });
+    h.clock.t += 1_000;
     await h.host.tick();
     expect(writesTo(h, 'sh1')).toEqual([composeNotice(false), '\r']);
     bound.sock.destroy();

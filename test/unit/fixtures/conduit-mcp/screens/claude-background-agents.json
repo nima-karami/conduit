@@ -1,0 +1,30 @@
+{
+  "cli": "claude",
+  "version": "2.1.319",
+  "cols": 200,
+  "rows": 19,
+  "cursorY": 12,
+  "cursorX": 2,
+  "cursorRowStyles": "..",
+  "lines": [
+    "",
+    "● STARTED",
+    "",
+    "✻ Waiting for 1 background agent to finish",
+    "",
+    "❯ MIDTURN-PROBE: when you see this, reply PONG-A.",
+    "",
+    "● PONG-A",
+    "",
+    "✻ Waiting for 1 background agent to finish",
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  > Haiku 5.5  |  ~ 69k/1000k  |  * conduit @ main  |  + 6% session used (1h05m left)",
+    "  ⏵⏵ auto mode on (shift+tab to cycle)",
+    "",
+    "  ● main",
+    "  ◯ general-purpose  Summarize 2026-11 specs                                                                                                                                     13s · ↓ 170.7k tokens"
+  ]
+}

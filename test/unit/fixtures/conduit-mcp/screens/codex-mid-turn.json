@@ -1,0 +1,27 @@
+{
+  "cli": "codex",
+  "version": "0.166.0",
+  "cols": 200,
+  "rows": 16,
+  "cursorY": 12,
+  "cursorX": 2,
+  "cursorRowStyles": "..dddddddddddddddddddddddd",
+  "lines": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "• Working (1s • esc to interrupt)",
+    "",
+    "",
+    "› Ask Codex to do anything",
+    "",
+    "  GPT-6-Luna low · Approve for me · Context 0% used · 5h 100% left · G:awbyprojectsconduit-wtcon172",
+    "  ? for shortcuts                                                                                                                                                              ⚠ 1 warning · f2 to view"
+  ]
+}
