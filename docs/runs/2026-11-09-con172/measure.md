@@ -8,4 +8,6 @@ Driven through Conduit (open_session / read_screen / send_input / send_message) 
 | Main idle, background subagent running | Claude Code 2.1.319 | `✻ Waiting for 1 background agent to finish`, empty `❯` box (`claude-background-agents.json`); presence `busy` | accepted at once; answered `PONG-A` while the subagent kept running | **held ~30 s until the subagent finished and the turn ended** (the reported bug) |
 | Main agent mid-turn | Codex 0.166.0 (gpt-6-luna) | `• Working (… esc to interrupt)` above an empty `›` box (`codex-mid-turn.json`) | accepted; folded into the running turn, no interrupt; quoted verbatim in the final reply | held (`busy`) |
 
+Note: the three fixtures were reconstructed from `read_screen` rows (text and cursor row only). `cursorX` and `cursorRowStyles` were copied from the matching idle fixtures, not captured.
+
 Conclusion: Claude and Codex both take typed input safely mid-turn → `midTurn: 'queues'`. Cursor unmeasured → stays `holds`.

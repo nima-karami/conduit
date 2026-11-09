@@ -135,42 +135,46 @@ export async function until(pred, ms, step = 100) {
 }
 
 /**
- * A fresh profile with the fake agent `agentId` registered, for `runScenario(name, fn, { userDataDir })`.
+ * A fresh profile with the given fake agents registered, for `runScenario(name, fn, { userDataDir })`.
  * @param {string} label
+ * @param {Array<[string, string]>} agents [id, label] pairs
  * @returns {string} the userDataDir
  */
-function registerFakeAgent(label, agentId, agentLabel) {
+function registerFakeAgents(label, agents) {
   const userDataDir = profileDir(label);
   recordsDir = join(userDataDir, 'e2e-records');
   writeFileSync(
     join(userDataDir, 'agents.json'),
-    JSON.stringify([
-      {
-        id: agentId,
+    JSON.stringify(
+      agents.map(([id, agentLabel]) => ({
+        id,
         label: agentLabel,
         command: process.execPath,
         args: [FAKE_AGENT, '--records', recordsDir],
         icon: 'terminal',
         color: 'green',
         cwdStrategy: 'workspaceFolder',
-      },
-    ]),
+      })),
+    ),
   );
   return userDataDir;
 }
 
 /** @param {string} label @returns {string} the userDataDir */
 export function fakeAgentProfile(label) {
-  return registerFakeAgent(label, FAKE_AGENT_ID, 'Fake MCP');
+  return registerFakeAgents(label, [[FAKE_AGENT_ID, 'Fake MCP']]);
 }
 
 /**
- * As `fakeAgentProfile`, for the agent the host's e2e-only `fake-queue` adapter matches: an agent
- * that accepts input mid-turn (`busyq`), so its notices queue instead of waiting for idle.
+ * As `fakeAgentProfile`, plus the agent the host's e2e-only `fake-queue` adapter matches: one that
+ * accepts input mid-turn (`busyq`), so its notices queue instead of waiting for idle.
  * @param {string} label @returns {string} the userDataDir
  */
 export function fakeQueueAgentProfile(label) {
-  return registerFakeAgent(label, FAKE_QUEUE_AGENT_ID, 'Fake MCP queue');
+  return registerFakeAgents(label, [
+    [FAKE_AGENT_ID, 'Fake MCP'],
+    [FAKE_QUEUE_AGENT_ID, 'Fake MCP queue'],
+  ]);
 }
 
 /** Mirror the latest `mcp:state` broadcast into `window.__mcp`. Idempotent. */

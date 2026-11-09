@@ -344,6 +344,48 @@ describe('createNotifier', () => {
     expect(m.recipients[H].noticeCount).toBe(1);
   });
 
+  it('queue mode: urgent arriving while a normal notice is outstanding still gets its own notice', async () => {
+    const h = harness({ queues: true });
+    h.add('normal');
+    h.advance(MIDTURN_DEBOUNCE_MS);
+    await h.notifier.tick();
+    expect(h.submits).toHaveLength(1);
+    const u = h.add('urgent');
+    h.advance(MIDTURN_DEBOUNCE_MS);
+    await h.notifier.tick();
+    expect(h.submits).toEqual([composeNotice(false), composeNotice(true)]);
+    expect(h.marked[1]).toContain(u.messageId);
+  });
+
+  it('queue mode: urgent held by a closed gate while a notice is outstanding raises urgent-waiting', async () => {
+    const h = harness({ queues: true });
+    h.add('normal');
+    h.advance(MIDTURN_DEBOUNCE_MS);
+    await h.notifier.tick();
+    h.setGate(CLOSED);
+    const u = h.add('urgent');
+    h.advance(MIDTURN_DEBOUNCE_MS);
+    await h.notifier.tick();
+    await h.notifier.tick();
+    expect(h.submits).toHaveLength(1);
+    expect(h.raises).toEqual([{ kind: 'urgent-waiting', handle: H, messageId: u.messageId }]);
+  });
+
+  it('queue mode: busy rising after the notice then idle re-arms and notices again', async () => {
+    const h = harness({ queues: true });
+    const m = h.add('normal');
+    h.advance(MIDTURN_DEBOUNCE_MS);
+    await h.notifier.tick();
+    expect(h.submits).toHaveLength(1);
+    h.advance(1);
+    h.session.busy = true;
+    await h.notifier.tick();
+    h.session.busy = false;
+    await h.notifier.tick();
+    expect(h.submits).toHaveLength(2);
+    expect(m.recipients[H].noticeCount).toBe(2);
+  });
+
   it('queue mode: unread 5 min → re-notice once, then escalate', async () => {
     const h = harness({ queues: true });
     const m = h.add('normal');

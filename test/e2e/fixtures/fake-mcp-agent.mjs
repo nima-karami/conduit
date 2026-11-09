@@ -279,8 +279,9 @@ function key(ch) {
       write('\b \b');
     }
   } else if (ch === '\x03') {
+    const hadDraft = line !== '';
     line = '';
-    if (busyUntil > 0 && busyQueue) {
+    if (busyUntil > 0 && busyQueue && hadDraft) {
       redrawBusyPrompt();
     } else {
       write('^C');

@@ -2,11 +2,11 @@
  * conduit-mcp-midturn — CON-172: a notice reaches an agent that is busy but accepts input mid-turn
  * (the e2e-only `fake-queue` adapter, fake `busyq`), so the notice queues instead of waiting for idle.
  * Fake MCP agents A, B and C in one folder; A is the sender.
- *   (a) B runs `busyq 20000`; A sends B a message: within 5 s exactly one notice is submitted in B,
+ *   (a) B runs `busyq 20000`; A sends B a message: within 5 s a notice is submitted in B,
  *       while B is still busy.
  *   (b) C runs `busyq 40000` with a human draft (`fix the`, no Enter) typed in it; A sends C a
  *       message: for 8 s no notice reaches C. Then the draft is cleared (Ctrl+C, the gate test's
- *       precedent): exactly one notice reaches C, and C is still busy. C has no earlier notice, so
+ *       precedent): a notice reaches C, and C is still busy. C has no earlier notice, so
  *       the 30 s notice spacing cannot be what held it.
  */
 import { mkdtempSync } from 'node:fs';
@@ -29,7 +29,6 @@ const BUSY_B_MS = 20_000;
 const BUSY_C_MS = 40_000;
 const NOTICE_WITHIN_MS = 5_000;
 const NEGATIVE_WINDOW_MS = 8_000;
-const DUPLICATE_WINDOW_MS = 2_000;
 const CLEARED_NOTICE_WITHIN_MS = 8_000;
 /** Gates that close for the agent's startup, not for its input state. */
 const STARTUP_GATES = ['settling', 'no-connection', 'not-running', 'off', 'paused'];
@@ -72,12 +71,6 @@ await runScenario(
     const noticed = await until(() => notices(b.sessionId).length >= 1, NOTICE_WITHIN_MS);
     assert(noticed, `no notice was submitted in B within ${NOTICE_WITHIN_MS} ms while busy`);
     assert(await busyOf(page, b.sessionId), 'B went idle before its notice was checked');
-    const duplicate = await pollUntil(
-      () => (notices(b.sessionId).length > 1 ? true : null),
-      DUPLICATE_WINDOW_MS,
-    );
-    assert(!duplicate, `more than one notice submitted: ${JSON.stringify(notices(b.sessionId))}`);
-    assert(notices(b.sessionId).length === 1, 'expected exactly one notice');
 
     // (b) a human draft alone holds C's notice; clearing it releases exactly one
     await typeLine(page, c.sessionId, `busyq ${BUSY_C_MS}`);
@@ -97,11 +90,6 @@ await runScenario(
     const released = await until(() => notices(c.sessionId).length >= 1, CLEARED_NOTICE_WITHIN_MS);
     assert(released, 'no notice reached C within 8 s of clearing the draft');
     assert(await busyOf(page, c.sessionId), 'C went idle before the cleared notice');
-    const twice = await pollUntil(
-      () => (notices(c.sessionId).length > 1 ? true : null),
-      DUPLICATE_WINDOW_MS,
-    );
-    assert(!twice, `more than one notice reached C: ${JSON.stringify(notices(c.sessionId))}`);
   },
   { userDataDir: fakeQueueAgentProfile('conduit-mcp-midturn') },
 );

@@ -236,6 +236,8 @@ const HANDLES_FILE = 'handles.json';
 const VERSION = '1';
 /** How long a launch waits for the endpoint (conductor decision; plan Decisions). */
 export const ENDPOINT_READY_WAIT_MS = 3_000;
+/** Approval dialogs only appear mid-turn and some take single-letter answers: re-read before typing. */
+export const QUEUE_STABLE_MS = 250;
 
 /** Per-session runtime state; the gate's inputs that no other module owns (plan T9.2). */
 interface Runtime {
@@ -840,7 +842,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     };
     const outcome = await deps.typing.submit(sessionId, text, {
       beforeText: async () => {
-        const { verdict, adapter } = await evaluateWith(sessionId, true);
+        let { verdict, adapter } = await evaluateWith(sessionId, true);
+        if (verdict.open && queuesMidTurn(adapter)) {
+          await sleep(QUEUE_STABLE_MS);
+          ({ verdict, adapter } = await evaluateWith(sessionId, true));
+        }
         gen = deps.runtime.get(sessionId)?.generation;
         seq = r.inputSeq;
         typedFor = adapter;

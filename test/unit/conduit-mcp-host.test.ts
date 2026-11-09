@@ -16,6 +16,7 @@ import {
   createConduitMcpHost,
   ENDPOINT_READY_WAIT_MS,
   type McpRendererMessage,
+  QUEUE_STABLE_MS,
 } from '../../src/conduit-mcp/host';
 import {
   ECHO_POLL_MS,
@@ -219,6 +220,8 @@ function harness(
     echoSubmit?: boolean;
     /** Runs inside the host's wait between echo polls, i.e. while the Enter is still pending. */
     duringWait?: (host: ConduitMcpHost) => void;
+    /** Runs inside the queue-mode stability wait (QUEUE_STABLE_MS), between the two screen reads. */
+    onStableWait?: (host: ConduitMcpHost) => void;
     tickMs?: number;
     log?: ConduitMcpHostDeps['log'];
     createEndpoint?: ConduitMcpHostDeps['createEndpoint'];
@@ -576,6 +579,7 @@ function harness(
       const finish = () => {
         clock.t += ms;
         opts.duringWait?.(host);
+        if (ms === QUEUE_STABLE_MS) opts.onStableWait?.(host);
         for (const [id, data] of lagged.splice(0)) output(id, data);
       };
       if (opts.holdLateEcho && ms === LATE_ECHO_POLL_MS) {
@@ -2009,6 +2013,56 @@ describe('createConduitMcpHost — notices', () => {
     await h.host.tick();
     expect(writesTo(h, 's2')).toEqual([]);
     expect(h.host.uiState().sessions.s2?.gate).toBe('blocking-prompt');
+  });
+
+  it('queue adapter: a permission prompt appearing between the two reads → nothing written', async () => {
+    const h = harness({
+      onStableWait: () => h.output('s2', '\x1b[2J\x1b[1;1Hfake❯ \x1b[17;1HEsc to cancel\x1b[1;7H'),
+    });
+    const { ca, handle } = await pairQueue(h);
+    h.busy.add('s2');
+    await ca.call('send_message', { to: [handle], body: 'see' });
+    h.clock.t += 1_000;
+    await h.host.tick();
+    expect(writesTo(h, 's2')).toEqual([]);
+    expect(h.host.uiState().sessions.s2?.gate).toBe('blocking-prompt');
+  });
+
+  it('queue adapter: two open reads → notice and Enter written', async () => {
+    let stableWaits = 0;
+    const h = harness({ onStableWait: () => void stableWaits++ });
+    const { ca, handle } = await pairQueue(h);
+    h.busy.add('s2');
+    await ca.call('send_message', { to: [handle], body: 'see' });
+    h.clock.t += 1_000;
+    await h.host.tick();
+    expect(writesTo(h, 's2')).toEqual([composeNotice(false), '\r']);
+    expect(stableWaits).toBe(1);
+  });
+
+  it('hold adapter: no second screen read', async () => {
+    let stableWaits = 0;
+    const h = harness({ onStableWait: () => void stableWaits++ });
+    const { ca } = await pair(h);
+    await ca.call('send_message', { to: ['fake-2'], body: 'see' });
+    await h.host.tick();
+    expect(writesTo(h, 's2')).toEqual([composeNotice(false), '\r']);
+    expect(stableWaits).toBe(0);
+  });
+
+  it('queue adapter: urgent message while busy at an empty prompt is delivered with the (urgent) text, never Esc or Ctrl+C', async () => {
+    const h = harness();
+    const { ca, handle } = await pairQueue(h);
+    h.busy.add('s2');
+    await ca.call('send_message', { to: [handle], body: 'now', priority: 'urgent' });
+    h.clock.t += 1_000;
+    await h.host.tick();
+    const writes = writesTo(h, 's2');
+    expect(writes).toEqual([composeNotice(true), '\r']);
+    for (const w of writes) {
+      expect(w).not.toContain('\x1b');
+      expect(w).not.toContain('\x03');
+    }
   });
 
   it('second message while the queued notice is unread → no second write', async () => {

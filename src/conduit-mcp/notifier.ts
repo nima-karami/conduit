@@ -144,7 +144,11 @@ export function createNotifier(deps: NotifierDeps, opts: { rearmAll: boolean }):
           !st.armed.has(m.messageId) &&
           !st.exhausted.has(m.messageId),
       );
-      if (outstanding) return;
+      // An urgent message must not wait behind a normal notice that is still unread.
+      const urgentDue = due.some(
+        (m) => m.priority === 'urgent' && m.recipients[s.handle]?.status === 'queued',
+      );
+      if (outstanding && !urgentDue) return;
     }
 
     const verdict = await deps.precheck(s.sessionId);
