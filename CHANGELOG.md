@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.62.0] — 2026-11-09
+
 ### Fixed
 - Messages now reach Claude and Codex agents while they work, including when only their own subagents are running, instead of waiting for them to go idle.
 
