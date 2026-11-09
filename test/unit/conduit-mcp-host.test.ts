@@ -2003,7 +2003,7 @@ describe('createConduitMcpHost — notices', () => {
     const h = harness();
     const { ca, handle } = await pairQueue(h);
     h.busy.add('s2');
-    h.output('s2', '[2J[1;1Hfake❯ [17;1HEsc to cancel[1;7H');
+    h.output('s2', '\x1b[2J\x1b[1;1Hfake❯ \x1b[17;1HEsc to cancel\x1b[1;7H');
     await ca.call('send_message', { to: [handle], body: 'see' });
     h.clock.t += 1_000;
     await h.host.tick();
