@@ -18,6 +18,7 @@ import {
   showRightView,
   windowsOnlyScenario,
 } from './harness.mjs';
+import { revealLabel } from './platform.mjs';
 
 await windowsOnlyScenario('mf-files', 'PowerShell cwd hook and Windows directory locks');
 
@@ -376,7 +377,7 @@ async function phaseActions({ app, page, log, sid }) {
   await page.keyboard.press('Escape');
   await page.locator('.ctxmenu').waitFor({ state: 'detached', timeout: 5000 });
   assert(
-    JSON.stringify(homeItems) === JSON.stringify(['Reveal in Explorer', 'Copy path']),
+    JSON.stringify(homeItems) === JSON.stringify([revealLabel(), 'Copy path']),
     `home menu should be Reveal + Copy path only, got ${JSON.stringify(homeItems)}`,
   );
   log('home menu has no Remove / Make home ✓');

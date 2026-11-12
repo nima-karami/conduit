@@ -26,6 +26,7 @@ import {
   waitForOutput,
   waitForShellPrompt,
 } from './harness.mjs';
+import { revealLabel } from './platform.mjs';
 
 const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 
@@ -183,7 +184,7 @@ runScenario('terminal-link-menu', async ({ page, log }) => {
   const want = [
     'Copy path',
     'Copy relative path',
-    'Reveal in Explorer',
+    revealLabel(),
     'Open as new session',
     ...TERMINAL_ITEMS,
   ];

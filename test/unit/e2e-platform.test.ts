@@ -4,6 +4,7 @@ import {
   e2ePlatformSupported,
   isShellPromptLine,
   parseSttySize,
+  revealLabel,
   uriPathKey,
   windowsOnlySkipMessage,
 } from '../e2e/platform.mjs';
@@ -78,5 +79,13 @@ describe('shellPromptPattern / isShellPromptLine', () => {
     expect(isShellPromptLine('root# ', 'linux')).toBe(true);
     expect(isShellPromptLine('C:\\repo>', 'linux')).toBe(false);
     expect(isShellPromptLine('build output', 'linux')).toBe(false);
+  });
+});
+
+describe('revealLabel', () => {
+  it('matches the product wording per platform', () => {
+    expect(revealLabel('win32')).toBe('Reveal in Explorer');
+    expect(revealLabel('darwin')).toBe('Reveal in Finder');
+    expect(revealLabel('linux')).toBe('Show in Files');
   });
 });

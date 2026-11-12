@@ -10,3 +10,4 @@ export function windowsOnlySkipMessage(
 export function uriPathKey(p: string, platform?: string): string;
 export function shellPromptPattern(platform?: string): RegExp;
 export function isShellPromptLine(line: string, platform?: string): boolean;
+export function revealLabel(platform?: string): string;

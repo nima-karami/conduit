@@ -16,6 +16,7 @@ import {
   showRightView,
   windowsOnlyScenario,
 } from './harness.mjs';
+import { revealLabel } from './platform.mjs';
 
 await windowsOnlyScenario('explorer-open-as-session', 'cmd.exe shell sessions and Explorer labels');
 
@@ -109,7 +110,7 @@ runScenario('explorer-open-as-session', async ({ page, log }) => {
     'a standalone session offers the item without a project hint',
   );
   assert(
-    labels.indexOf('Reveal in Explorer') < i && i < labels.indexOf('Delete'),
+    labels.indexOf(revealLabel()) < i && i < labels.indexOf('Delete'),
     'the item belongs after the reveal-style items and before the destructive one',
   );
 

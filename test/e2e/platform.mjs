@@ -65,3 +65,10 @@ export function shellPromptPattern(platform = process.platform) {
 export function isShellPromptLine(line, platform = process.platform) {
   return shellPromptPattern(platform).test(line);
 }
+
+/** The file-manager menu label; mirrors src/platform-words.ts (e2e cannot import TS). */
+export function revealLabel(platform = process.platform) {
+  if (platform === 'win32') return 'Reveal in Explorer';
+  if (platform === 'darwin') return 'Reveal in Finder';
+  return 'Show in Files';
+}
