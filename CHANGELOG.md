@@ -6,6 +6,9 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- Background animations pause when Conduit is unfocused, hidden, or idle for a minute, so an idle window no longer uses CPU.
+
 ## [0.61.0] — 2026-11-08
 
 ### Added
