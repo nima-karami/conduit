@@ -38,6 +38,7 @@ import {
 import { PLAN_SLUG_RE } from '../src/plan-path';
 import { emptyNotesData, type ReviewNotesData } from '../src/review-notes';
 import { safeSpecFileName } from '../src/spec-path';
+import { applyReplacedMode, checkReplaceable } from '../src/user-file-replace';
 
 const CONDUIT_DIR = '.conduit';
 /** Subdirectory under `.conduit/` holding per-card feature specs (`<card-id>.md`). */
@@ -237,7 +238,12 @@ async function writeAtomic(target: string, text: string): Promise<void> {
   await fs.promises.mkdir(dir, { recursive: true });
   const tmp = path.join(dir, `.${path.basename(target)}.${randomBytes(6).toString('hex')}.tmp`);
   try {
+    // `.conduit/` lives in the user's project and is edited by hand (specs, plans, board), so a
+    // save keeps its mode and refuses a read-only file, as a save in the editor does.
+    const replace = await checkReplaceable(target);
+    if (!replace.ok) throw new Error(replace.error);
     await fs.promises.writeFile(tmp, text, 'utf8');
+    if (replace.original) await applyReplacedMode(tmp, replace.original);
     await fs.promises.rename(tmp, target);
   } catch (err) {
     // Best-effort cleanup of the temp file; never mask the original error.
