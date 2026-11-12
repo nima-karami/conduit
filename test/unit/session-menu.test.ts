@@ -42,6 +42,7 @@ function input(over: Partial<SessionMenuInput> = {}) {
     ACTIONS.map((a) => [a, `icon:${a}`]),
   ) as unknown as SessionMenuInput['icons'];
   const value: SessionMenuInput = {
+    platform: 'win32',
     name: 'claude-1',
     maySplit: false,
     canRelaunch: false,
@@ -83,6 +84,18 @@ const TAIL = [
   'Close others',
   'Close all',
 ];
+
+describe('buildSessionMenu — reveal label', () => {
+  it('follows the platform', () => {
+    const revealOn = (platform: 'darwin' | 'linux' | 'win32') =>
+      find(buildSessionMenu(input({ platform }).value), 'Reveal in Explorer') ??
+      find(buildSessionMenu(input({ platform }).value), 'Reveal in Finder') ??
+      find(buildSessionMenu(input({ platform }).value), 'Show in Files');
+    expect(revealOn('win32')?.label).toBe('Reveal in Explorer');
+    expect(revealOn('darwin')?.label).toBe('Reveal in Finder');
+    expect(revealOn('linux')?.label).toBe('Show in Files');
+  });
+});
 
 describe('buildSessionMenu — entries, order and separators', () => {
   it('a plain session: Go to and Pin lead, then timers, edit, copy and close', () => {

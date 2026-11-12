@@ -44,6 +44,7 @@ import { type NewSessionPrefill, projectForNewSession } from '../src/new-session
 import { resolveOwningSession } from '../src/owning-session';
 import { sessionPaletteFields } from '../src/palette-state';
 import { PLANS_DIR } from '../src/plan-path';
+import { platformWords, rendererPlatform } from '../src/platform-words';
 import type {
   ChangeDTO,
   CommitNode,
@@ -398,6 +399,8 @@ const joinPath = (base: string, rel: string) =>
  *  enough that a file an agent just wrote is navigable by the time the user looks for it,
  *  long enough that a multi-file write lands as one top-up. */
 const INCREMENTAL_INDEX_DEBOUNCE_MS = 500;
+// OS wording (trash, file manager) for this host; see src/platform-words.ts.
+const OS_WORDS = platformWords(rendererPlatform);
 
 /** Stable empty badges, so the rail doesn't re-render on every state before messaging loads. */
 const NO_MCP_BADGES: Readonly<Record<string, McpSessionBadge>> = {};
@@ -3552,6 +3555,7 @@ export function App() {
     const notConnected = mcp.state?.notConnected[s.id];
     const pinned = sidebarUi.pinnedIds.includes(s.id);
     const items = buildSessionMenu({
+      platform: rendererPlatform,
       name: s.name,
       maySplit: s.status === 'running' && s.id !== activeId,
       canRelaunch: canRelaunch(s),
@@ -3725,7 +3729,7 @@ export function App() {
           onClick: () => copyToClipboard(baseName(doc.path)),
         },
         {
-          label: 'Reveal in Explorer',
+          label: OS_WORDS.reveal,
           icon: <IconExternal size={14} />,
           onClick: () => post({ type: 'revealInExplorer', path: doc.path }),
         },
@@ -3797,7 +3801,7 @@ export function App() {
         },
         ...moveMenuItems(s.id),
         {
-          label: 'Reveal in Explorer',
+          label: OS_WORDS.reveal,
           icon: <IconExternal size={14} />,
           separatorBefore: true,
           onClick: () => post({ type: 'revealInExplorer', path: s.home }),
@@ -3899,7 +3903,10 @@ export function App() {
       const permanently = (stuck: typeof nodes) => {
         showConfirm({
           title: 'Delete permanently',
-          message: permanentConfirmMessage(stuck.map((n) => n.path)),
+          message: permanentConfirmMessage(
+            stuck.map((n) => n.path),
+            rendererPlatform,
+          ),
           confirmLabel: 'Delete permanently',
           danger: true,
           focusCancel: stuck.length > 1,
@@ -3911,9 +3918,12 @@ export function App() {
         });
       };
       showConfirm({
-        title: 'Move to Recycle Bin',
-        message: trashConfirmMessage(nodes.map((n) => n.path)),
-        confirmLabel: 'Move to Recycle Bin',
+        title: OS_WORDS.moveToTrash,
+        message: trashConfirmMessage(
+          nodes.map((n) => n.path),
+          rendererPlatform,
+        ),
+        confirmLabel: OS_WORDS.moveToTrash,
         danger: true,
         focusCancel: nodes.length > 1,
         onConfirm: () => {
@@ -4028,7 +4038,7 @@ export function App() {
       onClick: () => copyToClipboard(abs),
     },
     {
-      label: 'Reveal in Explorer',
+      label: OS_WORDS.reveal,
       icon: <IconExternal size={14} />,
       onClick: () => post({ type: 'revealInExplorer', path: abs }),
     },
@@ -4640,7 +4650,7 @@ export function App() {
       cmds.push(
         {
           id: 'cmd:reveal',
-          title: 'Reveal project in Explorer',
+          title: OS_WORDS.revealProject,
           keywords: ['finder', 'file manager', 'show in folder'],
           group: 'Commands',
           icon: <IconExternal size={14} />,
@@ -4725,7 +4735,7 @@ export function App() {
       cmds.push(
         {
           id: 'cmd:revealFile',
-          title: 'Reveal active file in Explorer',
+          title: OS_WORDS.revealActiveFile,
           keywords: ['show file'],
           group: 'Commands',
           icon: <IconExternal size={14} />,

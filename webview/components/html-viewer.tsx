@@ -6,6 +6,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
+import { platformWords, rendererPlatform } from '../../src/platform-words';
 import type { PreviewReason } from '../../src/preview-url';
 import type { FileContentDTO, HostToWebview } from '../../src/protocol';
 import { openExternal, post, subscribe } from '../bridge';
@@ -29,6 +30,8 @@ import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
 import { MdFindBar } from './md-find-bar';
 
+const OS_WORDS = platformWords(rendererPlatform);
+
 const HTML_VIEWER_STRINGS = {
   viewSource: 'View source',
   viewRendered: 'View rendered',
@@ -40,7 +43,6 @@ const HTML_VIEWER_STRINGS = {
   openExternally: 'Open externally',
   back: 'Back',
   backAria: 'Back to the previous page',
-  reveal: 'Reveal in Explorer',
   emptyTitle: 'Empty document',
   emptyHint: 'This file is empty.',
   dirtyNotice: 'Showing the saved file — you have unsaved changes.',
@@ -624,7 +626,7 @@ function PreviewBody({
             className="viewer__notice-action"
             onClick={() => post({ type: 'revealInExplorer', path: docPath })}
           >
-            {HTML_VIEWER_STRINGS.reveal}
+            {OS_WORDS.reveal}
           </button>
         ) : (
           <button

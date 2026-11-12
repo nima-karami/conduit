@@ -3,7 +3,6 @@
 import type { ResolveRoot } from '../../src/path-link-roots';
 import { elisionTail, type PathCandidate } from '../../src/path-resolve';
 import { TERM_LINK_STR } from '../term-link-strings';
-import type { LinkMenuAction } from '../term-menu';
 import { repoTagLabel } from './repo-picker-menu';
 
 /** At or above this many rows the picker shows a filter (spec §5). */
@@ -89,14 +88,15 @@ export function filterRows(rows: readonly PickerRow[], query: string): PickerRow
   return rows.filter((r) => r.accessibleName.toLowerCase().includes(q));
 }
 
-/** The focused element's accessible name, so the count is announced on open. */
+/** The focused element's accessible name, so the count is announced on open. `actionLabel` is the
+ *  menu label of the action being picked for (see linkActionLabel). */
 export function pickerHeading(
   token: string,
   total: number,
-  action?: LinkMenuAction,
+  actionLabel?: string,
   list: PickerList = 'files',
 ): string {
-  if (action) return TERM_LINK_STR.pickFor(TERM_LINK_STR[action]);
+  if (actionLabel !== undefined) return TERM_LINK_STR.pickFor(actionLabel);
   return list === 'links'
     ? TERM_LINK_STR.linksHeading(token, total)
     : TERM_LINK_STR.heading(token, total);

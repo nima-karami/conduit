@@ -334,7 +334,7 @@ export class LspManager {
                   : {}),
               };
             }),
-          languages: this.deps.registry.map(languageInfo),
+          languages: this.deps.registry.map((s) => languageInfo(s, this.deps.platform)),
         });
       case 'lsp:restart':
         this.restartLanguage(msg.languageId);

@@ -18,7 +18,6 @@ export const TERM_LINK_STR = {
   showAll: 'Show all matches',
   copyPath: 'Copy path',
   copyRelativePath: 'Copy relative path',
-  reveal: 'Reveal in Explorer',
   openAsSession: 'Open as new session',
   workingHere: 'working here',
   showingNewest: (shown: number) => `Showing the ${count.format(shown)} newest`,

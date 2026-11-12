@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 import { SNOOZE_MS } from '../src/attention';
 import type { Handle, McpUnavailableReason } from '../src/conduit-mcp/types';
+import type { HostPlatform } from '../src/lsp-binary';
+import { platformWords } from '../src/platform-words';
 import type { MenuActivation, MenuItem } from './components/context-menu';
 import { MCP_STR } from './conduit-mcp-strings';
 import type { CardMcpStatus } from './mcp-card-status';
@@ -48,6 +50,8 @@ function mcpLinkTip(link: SessionMcpLink): string {
 }
 
 export interface SessionMenuInput {
+  /** Names the file manager in the reveal item. */
+  platform: HostPlatform;
   name: string;
   maySplit: boolean;
   canRelaunch: boolean;
@@ -171,7 +175,11 @@ export function buildSessionMenu(input: SessionMenuInput): MenuItem[] {
       item('moveSpace', M.moveSpace),
       ...input.windowMoves,
     ],
-    [item('copyHome', M.copyHome), item('copyName', M.copyName), item('reveal', M.reveal)],
+    [
+      item('copyHome', M.copyHome),
+      item('copyName', M.copyName),
+      item('reveal', platformWords(input.platform).reveal),
+    ],
     [
       item('close', M.close, { danger: true }),
       ...(input.subAgentCount

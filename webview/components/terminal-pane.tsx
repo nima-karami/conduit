@@ -24,6 +24,7 @@ import { classifyLinkUri, dispatchLinkUri, type LinkUriSinks } from '../../src/l
 import { isAncestorOf } from '../../src/owning-session';
 import type { ResolveRoot } from '../../src/path-link-roots';
 import type { PathCandidate, TokenResolution } from '../../src/path-resolve';
+import { rendererPlatform } from '../../src/platform-words';
 import type { HostToWebview, ServerUiState, TermGeometry, TermStartMode } from '../../src/protocol';
 import { withTimeout } from '../../src/with-timeout';
 import {
@@ -1575,6 +1576,7 @@ export function TerminalPane({
         mode,
       });
     const linkItems: MenuItem[] = buildLinkMenuItems({
+      platform: rendererPlatform,
       target: single ? (single.isDir ? 'dir' : 'file') : null,
       matchCount: found.res.total,
       openAsSessionHint: openAsSessionHintRef.current,

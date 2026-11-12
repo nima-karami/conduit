@@ -12,6 +12,7 @@ import {
   searchQueryOf,
 } from '../../webview/components/path-candidate-picker-model';
 import { TERM_LINK_STR } from '../../webview/term-link-strings';
+import { linkActionLabel } from '../../webview/term-menu';
 
 const ROOTS: ResolveRoot[] = [
   { abs: '/w', kind: 'home', name: 'w', userChosen: true },
@@ -122,7 +123,10 @@ describe('pickerHeading and strings', () => {
   });
 
   it('an action heading asks to pick a match', () => {
-    expect(pickerHeading('x', 3, 'copyPath')).toBe('Copy path — pick a match');
+    expect(pickerHeading('x', 3, 'Copy path')).toBe('Copy path — pick a match');
+    expect(pickerHeading('x', 3, linkActionLabel('reveal', 'linux'))).toBe(
+      'Show in Files — pick a match',
+    );
   });
 
   it(`a ${FILTER_THRESHOLD}-row picker still announces its count through the heading`, () => {

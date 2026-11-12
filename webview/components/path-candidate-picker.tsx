@@ -5,11 +5,12 @@
  * into the overlay stack. Pure rows/heading: path-candidate-picker-model.ts.
  */
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { rendererPlatform } from '../../src/platform-words';
 import { useHoverGate } from '../hover-gate';
 import { IconDoc, IconFolder, IconSearch } from '../icons';
 import { isMiddleButton } from '../middle-click';
 import { TERM_LINK_STR } from '../term-link-strings';
-import type { LinkMenuAction } from '../term-menu';
+import { type LinkMenuAction, linkActionLabel } from '../term-menu';
 import {
   FILTER_THRESHOLD,
   filterRows,
@@ -71,7 +72,7 @@ export function PathCandidatePicker({
   const heading = pickerHeading(
     token,
     pickerCount(list, query, visible, rows, total),
-    mode.kind === 'action' ? mode.action : undefined,
+    mode.kind === 'action' ? linkActionLabel(mode.action, rendererPlatform) : undefined,
     list,
   );
   const items: Item[] = useMemo(
