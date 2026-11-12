@@ -13,14 +13,17 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { assert, finishScenario, openSession, runScenario } from './harness.mjs';
+import {
+  assert,
+  finishScenario,
+  openSession,
+  runScenario,
+  windowsOnlyScenario,
+} from './harness.mjs';
 
 const NAME = 'short-path-root';
 
-if (process.platform !== 'win32') {
-  console.log(`[${NAME}] SKIP — suite is Windows-only`);
-  await finishScenario(0);
-}
+await windowsOnlyScenario('short-path-root', '8.3 short-name paths (RUNNER~1)');
 
 const same = (a, b) => a.toLowerCase() === b.toLowerCase();
 

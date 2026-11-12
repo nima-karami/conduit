@@ -24,6 +24,7 @@ import {
 import {
   assert,
   closeApp,
+  e2ePlatformSupported,
   finishScenario,
   launchApp,
   makeLog,
@@ -34,8 +35,8 @@ import {
 } from './harness.mjs';
 
 const NAME = 'scoped-diff-tabs';
-if (process.platform !== 'win32') {
-  console.log(`[${NAME}] SKIP — suite is Windows-only (non-win32 platform)`);
+if (!e2ePlatformSupported()) {
+  console.log(`[${NAME}] SKIP — suite does not run on this platform (macOS)`);
   await finishScenario(0);
 }
 const log = makeLog(NAME);

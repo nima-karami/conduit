@@ -11,7 +11,15 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario, showRightView } from './harness.mjs';
+import {
+  assert,
+  openSession,
+  runScenario,
+  showRightView,
+  windowsOnlyScenario,
+} from './harness.mjs';
+
+await windowsOnlyScenario('mf-files', 'PowerShell cwd hook and Windows directory locks');
 
 // ── fixture ─────────────────────────────────────────────────────────────────
 

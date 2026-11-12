@@ -24,12 +24,10 @@ import {
   REPO,
   spyMain,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[open-with] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('open-with', 'Windows OpenAs chooser (rundll32)');
 
 const log = makeLog('open-with');
 

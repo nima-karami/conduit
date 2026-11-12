@@ -32,12 +32,10 @@ import {
   openSession,
   spyMain,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[logging] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('logging', 'cmd.exe shell session');
 
 const log = makeLog('logging');
 // Must match electron/logger.ts CONDUIT_E2E branch.

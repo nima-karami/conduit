@@ -31,12 +31,10 @@ import {
   shutdownApp,
   tapBridge,
   terminalFace,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[terminal-late-font] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('terminal-late-font', 'cmd.exe shell sessions');
 
 const log = makeLog('terminal-late-font');
 const require = createRequire(import.meta.url);

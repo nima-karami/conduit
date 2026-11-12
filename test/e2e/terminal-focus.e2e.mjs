@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import {
   assert,
   closeApp,
+  e2ePlatformSupported,
   finishScenario,
   launchApp,
   makeLog,
@@ -20,8 +21,8 @@ import {
   REPO,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[terminal-focus] SKIP — suite is Windows-only');
+if (!e2ePlatformSupported()) {
+  console.log('[terminal-focus] SKIP — suite does not run on this platform (macOS)');
   await finishScenario(0);
 }
 

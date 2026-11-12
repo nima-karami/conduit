@@ -21,6 +21,7 @@ import {
   shutdownApp,
   stopServer,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
 export const CARD = { id: 'c-rmb', title: 'Move RMB to CI' };
@@ -100,11 +101,8 @@ export async function runNewSession(name, fn) {
     console.log(`[${name}] SKIP — suite does not run on this platform (macOS)`);
     await finishScenario(0);
   }
-  if (process.platform !== 'win32') {
-    // .cmd stubs on PATH, `where git`, and a cmd prompt the scenarios match: no POSIX port.
-    console.error(`[${name}] ERROR: new-session-folders is Windows-only (cmd stubs and prompt)`);
-    await finishScenario(2);
-  }
+  // .cmd stubs on PATH, `where git`, and a cmd prompt the scenarios match: no POSIX port.
+  await windowsOnlyScenario(name, '.cmd stubs and cmd prompt');
   const fx = makeFixture();
   let launched = null;
   let code = 0;

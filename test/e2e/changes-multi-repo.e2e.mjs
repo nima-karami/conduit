@@ -13,6 +13,7 @@ import { changeRow, installTabHelpers } from './changes-fixture.mjs';
 import {
   assert,
   closeApp,
+  e2ePlatformSupported,
   finishScenario,
   launchApp,
   makeLog,
@@ -27,8 +28,8 @@ import {
 const NAME = 'changes-multi-repo';
 const log = makeLog(NAME);
 
-if (process.platform !== 'win32') {
-  console.log(`[${NAME}] SKIP — suite is Windows-only (non-win32 platform)`);
+if (!e2ePlatformSupported()) {
+  console.log(`[${NAME}] SKIP — suite does not run on this platform (macOS)`);
   await finishScenario(0);
 }
 

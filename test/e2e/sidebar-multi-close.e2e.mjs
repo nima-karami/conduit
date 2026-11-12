@@ -5,8 +5,17 @@
 import { mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, removeDir, runScenario, tapBridge } from './harness.mjs';
+import {
+  assert,
+  openSession,
+  removeDir,
+  runScenario,
+  tapBridge,
+  windowsOnlyScenario,
+} from './harness.mjs';
 import { killAll, row } from './sidebar-tree-helpers.mjs';
+
+await windowsOnlyScenario('sidebar-multi-close', 'cmd.exe shell sessions');
 
 await runScenario('sidebar-multi-close', async ({ page, log }) => {
   await tapBridge(page);

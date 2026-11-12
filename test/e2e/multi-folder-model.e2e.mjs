@@ -46,15 +46,13 @@ import {
   removeDir,
   shutdownApp,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
 const NAME = 'multi-folder-model';
 const log = makeLog(NAME);
 
-if (process.platform !== 'win32') {
-  console.log(`[${NAME}] SKIP — suite is Windows-only (non-win32 platform)`);
-  await finishScenario(0);
-}
+await windowsOnlyScenario('multi-folder-model', 'cmd.exe shell sessions');
 
 const userDataDir = profileDir('mfm');
 const work = mkdtempSync(join(tmpdir(), 'conduit-mfm-work-'));

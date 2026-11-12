@@ -28,12 +28,10 @@ import {
   openSession,
   REPO,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[paste] SKIP — this test targets Windows ConPTY bracketed paste.');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('paste', 'ConPTY bracketed paste');
 
 // A PowerShell reader: enables ENABLE_VIRTUAL_TERMINAL_INPUT (so ConPTY forwards the
 // bracketed-paste markers) + ESC[?2004h (so xterm brackets the paste), reads stdin,

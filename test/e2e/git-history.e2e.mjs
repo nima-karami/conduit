@@ -31,12 +31,10 @@ import {
   openSession,
   REPO,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[git-history] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('git-history', 'cmd.exe shell sessions');
 
 const log = makeLog('git-history');
 const SCRATCH = join(tmpdir(), 'claude-scratch');

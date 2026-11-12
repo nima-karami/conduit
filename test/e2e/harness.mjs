@@ -34,7 +34,12 @@ import {
 } from './harness-server-teardown.mjs';
 import { onPath, resolveHcBinary } from './hc-binary.mjs';
 import { acquireE2eLock, setBelowNormal } from './local-guard.mjs';
-import { defaultShellAgent, e2ePlatformSupported, parseSttySize } from './platform.mjs';
+import {
+  defaultShellAgent,
+  e2ePlatformSupported,
+  parseSttySize,
+  windowsOnlySkipMessage,
+} from './platform.mjs';
 import { killTree } from './proc-table.mjs';
 import { EXIT_WATCHDOG, profilePrefix, RUN_MARKER, watchdogDelayMs } from './smoke-select.mjs';
 
@@ -431,6 +436,20 @@ export function finishScenario(code) {
     process.exit(code);
   })();
   return finishing;
+}
+
+/**
+ * Marks a scenario that is Windows-only by nature: on other platforms it SKIPs (exit 0) before
+ * anything launches. See windowsOnlySkipMessage.
+ * @param {string} name
+ * @param {string} reason
+ * @returns {Promise<void>}
+ */
+export async function windowsOnlyScenario(name, reason) {
+  const message = windowsOnlySkipMessage(name, reason);
+  if (message === null) return;
+  console.log(message);
+  await finishScenario(0);
 }
 
 export { resolveHcBinary };

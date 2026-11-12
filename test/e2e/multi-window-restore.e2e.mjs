@@ -30,15 +30,16 @@ import {
   makeLog,
   profileDir,
   REPO,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
 const log = makeLog('multi-window-restore');
 const require = createRequire(import.meta.url);
 
-if (process.platform !== 'win32') {
-  console.log('[multi-window-restore] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario(
+  'multi-window-restore',
+  'cmd.exe shell sessions and PowerShell process query',
+);
 
 const here = dirname(fileURLToPath(import.meta.url));
 const EVIDENCE = join(here, '..', '..', '.autoloop', 'evidence');

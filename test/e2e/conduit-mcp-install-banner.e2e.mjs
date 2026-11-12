@@ -21,7 +21,16 @@ import {
   tapMcp,
   until,
 } from './conduit-mcp-helpers.mjs';
-import { assert, openSession, profileDir, runScenario, typeLine } from './harness.mjs';
+import {
+  assert,
+  openSession,
+  profileDir,
+  runScenario,
+  typeLine,
+  windowsOnlyScenario,
+} from './harness.mjs';
+
+await windowsOnlyScenario('conduit-mcp-install-banner', '.cmd agent stubs');
 
 const userDataDir = profileDir('mcp-install-banner');
 const { homeDir, env: homeEnv } = isolatedHome(userDataDir);

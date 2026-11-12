@@ -15,7 +15,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { commitBase } from './changes-fixture.mjs';
-import { assert, openReview, openSession, runScenario } from './harness.mjs';
+import { assert, openReview, openSession, runScenario, windowsOnlyScenario } from './harness.mjs';
+
+await windowsOnlyScenario('language-coverage', 'Windows-only per the suite');
 
 /** [file name, language id, content]. One fixture per §2.2 table row and alias. */
 const ROWS = [

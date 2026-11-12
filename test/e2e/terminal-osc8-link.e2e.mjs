@@ -24,7 +24,17 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, getSpyCalls, openSession, runScenario, spyMain, typeLine } from './harness.mjs';
+import {
+  assert,
+  getSpyCalls,
+  openSession,
+  runScenario,
+  spyMain,
+  typeLine,
+  windowsOnlyScenario,
+} from './harness.mjs';
+
+await windowsOnlyScenario('terminal-osc8-link', 'cmd.exe quoting and ConPTY');
 
 const URL_UNDER_TEST = 'https://example.com/conduit-osc8-probe';
 const LABEL = 'CLICK-ME-OSC8';

@@ -25,12 +25,10 @@ import {
   showRightView,
   tapBridge,
   typeLine,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[cwd] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('cwd', 'PowerShell cwd tracking over ConPTY');
 
 const log = makeLog('cwd');
 

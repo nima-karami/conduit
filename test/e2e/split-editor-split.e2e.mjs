@@ -16,6 +16,7 @@
 
 import {
   assert,
+  e2ePlatformSupported,
   finishScenario,
   launchApp,
   makeLog,
@@ -34,8 +35,8 @@ import {
   sleep,
 } from './split-editor-helpers.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[split-editor-split] SKIP — suite is Windows-only');
+if (!e2ePlatformSupported()) {
+  console.log('[split-editor-split] SKIP — suite does not run on this platform (macOS)');
   await finishScenario(0);
 }
 

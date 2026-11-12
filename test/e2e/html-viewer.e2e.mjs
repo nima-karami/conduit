@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   assert,
+  e2ePlatformSupported,
   finishScenario,
   openSession,
   pollUntil,
@@ -27,8 +28,8 @@ import {
   showRightView,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[html-viewer] SKIP — suite is Windows-only');
+if (!e2ePlatformSupported()) {
+  console.log('[html-viewer] SKIP — suite does not run on this platform (macOS)');
   await finishScenario(0);
 }
 

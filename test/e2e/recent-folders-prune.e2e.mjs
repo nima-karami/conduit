@@ -13,12 +13,20 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, finishScenario, launchElectron, makeLog, profileDir, REPO } from './harness.mjs';
+import {
+  assert,
+  e2ePlatformSupported,
+  finishScenario,
+  launchElectron,
+  makeLog,
+  profileDir,
+  REPO,
+} from './harness.mjs';
 
 const log = makeLog('recent-folders-prune');
 
-if (process.platform !== 'win32') {
-  console.log('[recent-folders-prune] SKIP — suite is Windows-only');
+if (!e2ePlatformSupported()) {
+  console.log('[recent-folders-prune] SKIP — suite does not run on this platform (macOS)');
   await finishScenario(0);
 }
 

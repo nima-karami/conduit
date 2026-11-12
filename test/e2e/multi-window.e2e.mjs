@@ -18,14 +18,19 @@ import { mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { answerQuitAsks, assert, finishScenario, launchApp, makeLog, REPO } from './harness.mjs';
+import {
+  answerQuitAsks,
+  assert,
+  finishScenario,
+  launchApp,
+  makeLog,
+  REPO,
+  windowsOnlyScenario,
+} from './harness.mjs';
 
 const log = makeLog('multi-window');
 
-if (process.platform !== 'win32') {
-  console.log('[multi-window] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('multi-window', 'cmd.exe shell sessions');
 
 const here = dirname(fileURLToPath(import.meta.url));
 const EVIDENCE = join(here, '..', '..', '.autoloop', 'evidence');

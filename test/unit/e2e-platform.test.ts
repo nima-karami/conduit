@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { defaultShellAgent, e2ePlatformSupported, parseSttySize } from '../e2e/platform.mjs';
+import {
+  defaultShellAgent,
+  e2ePlatformSupported,
+  parseSttySize,
+  windowsOnlySkipMessage,
+} from '../e2e/platform.mjs';
 
 describe('e2ePlatformSupported', () => {
   it('runs the suite on Windows and Linux, SKIPs elsewhere', () => {
@@ -28,5 +33,20 @@ describe('parseSttySize', () => {
   it('returns null when no size line is present', () => {
     expect(parseSttySize('PROBE\r\nuser@host:~$ ')).toBeNull();
     expect(parseSttySize('')).toBeNull();
+  });
+});
+
+describe('windowsOnlySkipMessage', () => {
+  it('is null on win32 so the scenario runs', () => {
+    expect(windowsOnlySkipMessage('attention', 'cmd.exe shell sessions', 'win32')).toBeNull();
+  });
+
+  it('names the scenario and the Windows-only reason elsewhere', () => {
+    expect(windowsOnlySkipMessage('attention', 'cmd.exe shell sessions', 'linux')).toBe(
+      '[attention] SKIP — Windows-only: cmd.exe shell sessions',
+    );
+    expect(windowsOnlySkipMessage('paste', 'ConPTY bracketed paste', 'darwin')).toBe(
+      '[paste] SKIP — Windows-only: ConPTY bracketed paste',
+    );
   });
 });

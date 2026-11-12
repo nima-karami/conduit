@@ -24,7 +24,10 @@ import {
   tapBridge,
   typeLine,
   waitForOutput,
+  windowsOnlyScenario,
 } from './harness.mjs';
+
+await windowsOnlyScenario('demand-watch', 'cmd.exe shell sessions');
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const norm = (p) => String(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();

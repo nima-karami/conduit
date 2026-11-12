@@ -35,7 +35,10 @@ import {
   terminalFace,
   typeLine,
   waitForOutput,
+  windowsOnlyScenario,
 } from './harness.mjs';
+
+await windowsOnlyScenario('terminal-local-font', 'cmd.exe shell sessions');
 
 /** webview/terminal-fonts.ts BOOT_FONT_TIMEOUT_MS. */
 const BOOT_FONT_TIMEOUT_MS = 3000;

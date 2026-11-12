@@ -8,13 +8,11 @@ import {
   REPO,
   shutdownApp,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 import { injectStop, waitForMessage, waitUntil } from './tray-helpers.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[tray-stop-app-open] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('tray-stop-app-open', 'Windows tray and cmd.exe shell');
 
 let launched;
 let code = 0;

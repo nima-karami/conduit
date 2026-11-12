@@ -23,12 +23,10 @@ import {
   openSession,
   REPO,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[dnd] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('dnd', 'cmd.exe shell sessions');
 
 const log = makeLog('dnd');
 
