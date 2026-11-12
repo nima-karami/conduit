@@ -69,17 +69,18 @@ try {
     );
 
   // A bounded producer: enough scrollback to scroll through, then it stops on its own.
+  const producer =
+    process.platform === 'win32'
+      ? 'for /L %i in (1,1,3000) do @echo conduit-follow-line %i\r'
+      : 'for i in $(seq 1 3000); do echo conduit-follow-line $i; done\r';
   await page.evaluate(
-    (id) =>
+    ({ id, data }) =>
       window.agentDeck.post({
         type: 'term:input',
         sessionId: id,
-        data:
-          process.platform === 'win32'
-            ? 'for /L %i in (1,1,3000) do @echo conduit-follow-line %i\r'
-            : 'for i in $(seq 1 3000); do echo conduit-follow-line $i; done\r',
+        data,
       }),
-    sid,
+    { id: sid, data: producer },
   );
   await page.waitForFunction((id) => (window.__terms?.[id]?.buffer.active.baseY ?? 0) > 200, sid, {
     timeout: 30000,

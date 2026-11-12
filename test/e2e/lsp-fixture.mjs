@@ -68,7 +68,28 @@ export function breadcrumbWith(page, symbol) {
     .catch(() => null);
 }
 
+/** Every live process. `lstart` is the start time, so a reused pid is told apart the same way. */
 function processList() {
+  if (process.platform !== 'win32') {
+    const out = execFileSync('ps', ['-A', '-o', 'pid=,ppid=,lstart=,comm='], {
+      encoding: 'utf8',
+      env: { ...process.env, LC_ALL: 'C' },
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    return out.split('\n').flatMap((line) => {
+      const m =
+        /^\s*(\d+)\s+(\d+)\s+(\w{3} \w{3} [ \d]\d \d{2}:\d{2}:\d{2} \d{4})\s+(.+?)\s*$/.exec(line);
+      if (!m) return [];
+      return [
+        {
+          ProcessId: Number(m[1]),
+          ParentProcessId: Number(m[2]),
+          Name: m[4],
+          Created: new Date(m[3]).toISOString(),
+        },
+      ];
+    });
+  }
   const json = execFileSync(
     'powershell',
     [
@@ -382,6 +403,20 @@ export function heavySampler(page, log) {
 /** Working set (MB) of each pid, for the run's measured numbers. */
 export function workingSetsMb(pids) {
   if (pids.length === 0) return {};
+  if (process.platform !== 'win32') {
+    // ps exits 1 when none of the pids is alive; the rows it did print still count.
+    const rows = spawnSync('ps', ['-o', 'pid=,rss=', '-p', pids.join(',')], { encoding: 'utf8' });
+    return Object.fromEntries(
+      (rows.stdout ?? '')
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => {
+          const [pid, rssKb] = l.trim().split(/\s+/).map(Number);
+          return [pid, Math.round(rssKb / 1024)];
+        }),
+    );
+  }
   const out = execFileSync(
     'powershell',
     [

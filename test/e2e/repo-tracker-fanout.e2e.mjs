@@ -85,10 +85,13 @@ async function installGitDirWatchProbe(app, repos) {
     fs.watch = function (file, ...args) {
       const watcher = watch.call(this, file, ...args);
       const k = key(file);
-      // Linux serves a recursive watch as per-directory non-recursive children: count the caller's.
-      const recursive = args[0]?.recursive === true;
-      const repo = Object.keys(open).find((d) => k === `${d}/.git` || k.startsWith(`${d}/.git/`));
-      if (repo && (process.platform !== 'linux' || recursive)) {
+      // On Linux a recursive watch is a walk (CON-9): only a watch rooted at the common dir itself
+      // counts, not the per-directory watches beneath it.
+      const linux = process.platform === 'linux';
+      const repo = Object.keys(open).find((d) =>
+        linux ? k === `${d}/.git` : k === `${d}/.git` || k.startsWith(`${d}/.git/`),
+      );
+      if (repo) {
         open[repo]++;
         watcher.once('close', () => open[repo]--);
       }
