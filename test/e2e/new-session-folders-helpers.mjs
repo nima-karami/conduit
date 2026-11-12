@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path';
 import {
   assert,
   closeApp,
+  e2ePlatformSupported,
   finishScenario,
   launchApp,
   makeLog,
@@ -95,9 +96,14 @@ function makeFixture() {
  */
 export async function runNewSession(name, fn) {
   const log = makeLog(name);
-  if (process.platform !== 'win32') {
-    console.log(`[${name}] SKIP — suite is Windows-only`);
+  if (!e2ePlatformSupported()) {
+    console.log(`[${name}] SKIP — suite does not run on this platform (macOS)`);
     await finishScenario(0);
+  }
+  if (process.platform !== 'win32') {
+    // .cmd stubs on PATH, `where git`, and a cmd prompt the scenarios match: no POSIX port.
+    console.error(`[${name}] ERROR: new-session-folders is Windows-only (cmd stubs and prompt)`);
+    await finishScenario(2);
   }
   const fx = makeFixture();
   let launched = null;

@@ -5,7 +5,7 @@
  * inline launch/bridge/assertion boilerplate.
  *
  * Conventions:
- *   exit 0 — pass (or SKIP on non-win32)
+ *   exit 0 — pass (or SKIP on macOS)
  *   exit 1 — test assertion failed
  *   exit 2 — harness/infra error (exception before assertions ran)
  */
@@ -34,10 +34,14 @@ import {
 } from './harness-server-teardown.mjs';
 import { onPath, resolveHcBinary } from './hc-binary.mjs';
 import { acquireE2eLock, setBelowNormal } from './local-guard.mjs';
+import { defaultShellAgent, e2ePlatformSupported, parseSttySize } from './platform.mjs';
+import { killTree } from './proc-table.mjs';
 import { EXIT_WATCHDOG, profilePrefix, RUN_MARKER, watchdogDelayMs } from './smoke-select.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 export const REPO = join(here, '..', '..');
+export { defaultShellAgent, e2ePlatformSupported, parseSttySize };
+
 const require = createRequire(import.meta.url);
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -93,11 +97,16 @@ const appProcess = new WeakMap();
 /**
  * Force-terminate an Electron app's whole process tree. Playwright's `app.close()` only
  * resolves once the app exits of its own accord, so a wedged host needs the OS. `taskkill /T`
- * takes the renderer/GPU children with it; without `/T` they outlive the main process.
+ * takes the renderer/GPU children with it; without `/T` they outlive the main process. Linux has
+ * no such flag, so the children are collected from /proc first (proc-table.mjs).
  */
 function killAppTree(app) {
   const pid = appProcess.get(app)?.pid;
   if (!pid) return;
+  if (process.platform === 'linux') {
+    killTree(pid);
+    return;
+  }
   try {
     if (process.platform === 'win32') {
       spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
@@ -312,11 +321,15 @@ export async function launchElectron(launchOpts, { headless = false, onWindow } 
   const env = launchOpts.env ?? process.env;
   const withHc =
     RESOLVED_HC && !env.CONDUIT_HC_BINARY ? { ...env, CONDUIT_HC_BINARY: RESOLVED_HC } : env;
+  // The dev electron's chrome-sandbox is not setuid, so Chromium's sandbox cannot start on Linux;
+  // headless ozone keeps a tested app from ever showing a window (owner rule).
+  const linuxArgs =
+    process.platform === 'linux' ? ['--ozone-platform=headless', '--no-sandbox'] : [];
   // The runner's orphan sweep kills only apps carrying its own run id (run-smoke.mjs).
   const app = await _electron.launch({
     ...launchOpts,
     env: withHc,
-    args: [...(launchOpts.args ?? []), `${RUN_MARKER}=${runId()}`],
+    args: [...(launchOpts.args ?? []), ...linuxArgs, `${RUN_MARKER}=${runId()}`],
   });
   liveApps.add(app);
   appProcess.set(app, app.process());
@@ -576,7 +589,10 @@ export async function tapBridge(page) {
  * @param {{ path: string, agentId?: string, roots?: string[], projectId?: string | null, cardId?: string }} opts
  * @returns {Promise<string>} The new session id.
  */
-export async function openSession(page, { path, agentId = 'shell:cmd', roots, projectId, cardId }) {
+export async function openSession(
+  page,
+  { path, agentId = defaultShellAgent(), roots, projectId, cardId },
+) {
   await tapBridge(page);
   const before = await page.evaluate(() => (window.__sessions || []).map((s) => s.id));
   await page.evaluate(
@@ -1223,6 +1239,7 @@ export async function sendDragDrop(page, { files, targetSelector }) {
  *   dumpPath — absolute path the script writes its result to (must use DUMP env var)
  */
 export async function runShellReader(page, sid, { script, dumpPath }) {
+  if (process.platform !== 'win32') throw new Error('runShellReader is Windows-only (PowerShell)');
   const scriptDir = mkdtempSync(join(tmpdir(), 'conduit-reader-'));
   const scriptPath = join(scriptDir, 'reader.ps1');
   writeFileSync(scriptPath, script);
@@ -1562,25 +1579,34 @@ export async function writeToTerminal(page, sessionId, data) {
 }
 
 /**
- * Ask the shell (cmd.exe) for the PTY's size with `mode con`, tagged by `probe`, and measure the
- * xterm against its pane in the same tick. `pty` and `xterm` are both `<cols>x<rows>`.
+ * Ask the shell for the PTY's size, tagged by `probe` (`mode con` under cmd, `stty size` under
+ * POSIX shells), and measure the xterm against its pane in the same tick. `pty` and `xterm` are
+ * both `<cols>x<rows>`.
  */
 export async function probeTerminalSize(page, sessionId, probe) {
-  await typeLine(page, sessionId, `echo ${probe} & mode con | findstr "Lines Columns"`);
+  const onWindows = process.platform === 'win32';
+  await typeLine(
+    page,
+    sessionId,
+    onWindows ? `echo ${probe} & mode con | findstr "Lines Columns"` : `echo ${probe}; stty size`,
+  );
   await waitForOutput(page, sessionId, probe);
   await page.waitForFunction(
-    ({ s, p }) => /Columns:\s*\d+/.test((window.__capBy?.[s] ?? '').split(p).at(-1) ?? ''),
-    { s: sessionId, p: probe },
+    ({ s, p, win }) => {
+      const after = (window.__capBy?.[s] ?? '').split(p).at(-1) ?? '';
+      return win ? /Columns:\s*\d+/.test(after) : /^\s*\d+ \d+\s*$/m.test(after);
+    },
+    { s: sessionId, p: probe, win: onWindows },
     { timeout: 20000 },
   );
-  return page.evaluate(
+  const m = await page.evaluate(
     ({ s, p }) => {
       const t = window.__terms?.[s];
       const after = (window.__capBy?.[s] ?? '').split(p).at(-1) ?? '';
       const screenH = t?.element?.querySelector('.xterm-screen')?.getBoundingClientRect().height;
       return {
+        after,
         xterm: t ? `${t.cols}x${t.rows}` : 'none',
-        pty: `${/Columns:\s*(\d+)/.exec(after)?.[1]}x${/Lines:\s*(\d+)/.exec(after)?.[1]}`,
         screenH: Math.round(screenH ?? -1),
         paneH: Math.round(t?.element?.closest('.termpane')?.clientHeight ?? -1),
         cellH: Math.round(((screenH ?? 0) / (t?.rows || 1)) * 100) / 100,
@@ -1588,6 +1614,17 @@ export async function probeTerminalSize(page, sessionId, probe) {
     },
     { s: sessionId, p: probe },
   );
+  const { after, ...rest } = m;
+  const pty = onWindows
+    ? `${/Columns:\s*(\d+)/.exec(after)?.[1]}x${/Lines:\s*(\d+)/.exec(after)?.[1]}`
+    : sttyPty(after);
+  return { ...rest, pty };
+}
+
+/** `<cols>x<rows>` from the `stty size` output that follows the probe tag. */
+function sttyPty(after) {
+  const size = parseSttySize(after);
+  return size ? `${size.cols}x${size.rows}` : 'none';
 }
 
 /**
@@ -1750,8 +1787,8 @@ class AssertionError extends Error {
  *   agents.json written before launch.
  */
 export async function runScenario(name, fn, { env, userDataDir } = {}) {
-  if (process.platform !== 'win32') {
-    console.log(`[${name}] SKIP — suite is Windows-only (non-win32 platform)`);
+  if (!e2ePlatformSupported()) {
+    console.log(`[${name}] SKIP — suite does not run on this platform (macOS)`);
     await finishScenario(0);
   }
 

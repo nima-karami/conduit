@@ -28,7 +28,7 @@
  *                 QUARANTINED-FAIL, reported but not failing the run
  *
  * Exit codes: 0 all PASS/SKIP/QUARANTINED-FAIL; 1 a scenario failed (including FLAKY); 2 usage error or local refusal.
- * On non-win32 platforms prints a suite-level SKIP and exits 0.
+ * On macOS prints a suite-level SKIP and exits 0.
  */
 
 import { spawn, spawnSync } from 'node:child_process';
@@ -38,6 +38,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveHcBinary } from './hc-binary.mjs';
+import { e2ePlatformSupported } from './platform.mjs';
+import { findByCmdline, killTree, readProcTable } from './proc-table.mjs';
 import {
   applyQuarantine,
   classify,
@@ -47,6 +49,8 @@ import {
   killTimerStart,
   orphanVictims,
   parseRunnerArgs,
+  profilePrefix,
+  RUN_MARKER,
   repeatMode,
   resolveSelection,
   selectRunProfiles,
@@ -76,6 +80,7 @@ const RUN_ID = `${process.pid}-${randomBytes(4).toString('hex')}`;
  * carries no marker at all.
  */
 function sweepOrphanElectrons() {
+  if (process.platform === 'linux') return sweepOrphanElectronsLinux();
   if (process.platform !== 'win32') return 0;
   const script =
     `@(Get-CimInstance Win32_Process -Filter "Name='electron.exe'" | ` +
@@ -95,6 +100,21 @@ function sweepOrphanElectrons() {
     spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
   }
   return pids.length;
+}
+
+/**
+ * Linux twin of the sweep above: the run's apps (marker on their command line) and any process
+ * still carrying this run's profile prefix, each with its tree. Children of a dead root lose their
+ * ancestry, so the prefix is what finds them; it embeds this run's id and nothing else's.
+ */
+function sweepOrphanElectronsLinux() {
+  const needles = [`${RUN_MARKER}=${RUN_ID}`, profilePrefix(RUN_ID)];
+  const victims = findByCmdline(readProcTable(), needles).filter((p) => p.pid !== process.pid);
+  const killed = new Set();
+  for (const v of victims) {
+    for (const pid of killTree(v.pid)) killed.add(pid);
+  }
+  return killed.size;
 }
 
 function runProfiles(existingProfiles = new Set()) {
@@ -162,8 +182,8 @@ async function sweepScenarioServers(profilesBefore) {
 }
 
 async function main() {
-  if (process.platform !== 'win32') {
-    console.log('[smoke] SKIP (suite is Windows-only)');
+  if (!e2ePlatformSupported()) {
+    console.log('[smoke] SKIP (suite does not run on macOS)');
     process.exit(0);
   }
 

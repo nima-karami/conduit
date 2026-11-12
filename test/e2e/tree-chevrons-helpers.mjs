@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { commitBase, git } from './changes-fixture.mjs';
 import {
   assert,
+  e2ePlatformSupported,
   finishScenario,
   launchApp,
   makeLog,
@@ -430,8 +431,8 @@ async function runTheme(theme) {
 }
 
 export async function runTreeChevrons(theme) {
-  if (process.platform !== 'win32') {
-    console.log(`[${NAME}] SKIP — suite is Windows-only (non-win32 platform)`);
+  if (!e2ePlatformSupported()) {
+    console.log(`[${NAME}] SKIP — suite does not run on this platform (macOS)`);
     await finishScenario(0);
   }
   let code = 0;
