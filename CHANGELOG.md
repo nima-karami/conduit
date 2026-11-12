@@ -10,6 +10,7 @@ All notable user-facing changes to Conduit. Format follows
 - A session in your home folder no longer re-indexes home every time an agent or shell writes a dotfile there (such as `~/.claude.json` or `~/.bash_history`).
 - Clicking close again while the quit prompt is up now offers "Close anyway".
 - A window that won't close is closed after 5 seconds.
+- Background animations pause when Conduit is unfocused, hidden, or idle for a minute, so an idle window no longer uses CPU.
 
 ## [0.61.0] — 2026-11-08
 
