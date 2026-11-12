@@ -11,6 +11,8 @@ All notable user-facing changes to Conduit. Format follows
 - Clicking close again while the quit prompt is up now offers "Close anyway".
 - A window that won't close is closed after 5 seconds.
 - Background animations pause when Conduit is unfocused, hidden, or idle for a minute, so an idle window no longer uses CPU.
+- On Linux, live refresh of a project no longer watches its `node_modules`, build output or git object store, so large repos stay well inside the inotify watch limit. If the limit is still reached, Conduit shows a notice with the fix (raise `fs.inotify.max_user_watches`).
+- On Linux and macOS, menus and dialogs say Trash, Reveal in Finder or Show in Files instead of Recycle Bin and Explorer, and the missing-clangd hint shows the install command for your system (`sudo apt install clangd` on Linux, `brew install llvm` on macOS).
 
 ## [0.61.0] — 2026-11-08
 

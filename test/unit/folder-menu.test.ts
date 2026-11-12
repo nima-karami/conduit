@@ -21,12 +21,19 @@ const handlers = (): FolderMenuHandlers & Record<string, ReturnType<typeof vi.fn
 
 describe('buildFolderMenuItems', () => {
   it('home: Reveal in Explorer, Copy path — no Remove, no Make home', () => {
-    const items = buildFolderMenuItems(sec({ kind: 'home' }), handlers());
+    const items = buildFolderMenuItems(sec({ kind: 'home' }), handlers(), 'win32');
     expect(items.map((i) => i.label)).toEqual(['Reveal in Explorer', 'Copy path']);
   });
 
+  it('names the file manager per platform', () => {
+    const label = (platform: 'darwin' | 'linux') =>
+      buildFolderMenuItems(sec({ kind: 'home' }), handlers(), platform)[0].label;
+    expect(label('darwin')).toBe('Reveal in Finder');
+    expect(label('linux')).toBe('Show in Files');
+  });
+
   it('attached: Make home, Reveal, Copy path, Remove from session (danger, separatorBefore)', () => {
-    const items = buildFolderMenuItems(sec(), handlers());
+    const items = buildFolderMenuItems(sec(), handlers(), 'win32');
     expect(items.map((i) => i.label)).toEqual([
       'Make home',
       'Reveal in Explorer',
@@ -41,7 +48,7 @@ describe('buildFolderMenuItems', () => {
   });
 
   it('missing attached: Make home disabled with title "Folder not found"', () => {
-    const items = buildFolderMenuItems(sec({ missing: true }), handlers());
+    const items = buildFolderMenuItems(sec({ missing: true }), handlers(), 'win32');
     const make = items.find((i) => i.label === 'Make home');
     expect(make?.disabled).toBe(true);
     expect(make?.title).toBe('Folder not found');
@@ -50,7 +57,7 @@ describe('buildFolderMenuItems', () => {
 
   it('each item calls its handler', () => {
     const h = handlers();
-    const items = buildFolderMenuItems(sec(), h);
+    const items = buildFolderMenuItems(sec(), h, 'win32');
     for (const i of items) i.onClick();
     expect(h.makeHome).toHaveBeenCalledTimes(1);
     expect(h.reveal).toHaveBeenCalledTimes(1);

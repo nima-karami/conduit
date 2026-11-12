@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { createRepoTrackerHost } from '../../electron/repo-tracker-host';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRepoTrackerHost, gitDirWatchIgnore } from '../../electron/repo-tracker-host';
 import type { watchDirWhilePresent } from '../../electron/watch-dir';
 import type { AppSessionView } from '../../src/contracts/server-protocol';
 import type { GitInterrogation } from '../../src/git-info';
@@ -440,4 +440,20 @@ it('a repo whose common dir is the posix filesystem root never opens a git-dir w
   await vi.advanceTimersByTimeAsync(2000);
   expect(h.watches).toEqual([]);
   h.host.stop();
+});
+
+describe('gitDirWatchIgnore', () => {
+  it('drops the object and log stores of a git dir, and keeps what branch changes land on', () => {
+    expect(gitDirWatchIgnore('objects')).toBe(true);
+    expect(gitDirWatchIgnore('objects/ab')).toBe(true);
+    expect(gitDirWatchIgnore('objects/pack')).toBe(true);
+    expect(gitDirWatchIgnore('logs')).toBe(true);
+    expect(gitDirWatchIgnore('logs/HEAD')).toBe(true);
+    expect(gitDirWatchIgnore('refs')).toBe(false);
+    expect(gitDirWatchIgnore('refs/heads')).toBe(false);
+    expect(gitDirWatchIgnore('HEAD')).toBe(false);
+    expect(gitDirWatchIgnore('index')).toBe(false);
+    expect(gitDirWatchIgnore('worktrees/wt1/HEAD')).toBe(false);
+    expect(gitDirWatchIgnore('refs/heads/main.lock')).toBe(true);
+  });
 });

@@ -14,6 +14,7 @@ const HTML = { path: '/p/report.html', kind: 'file' as const };
 
 function ctx(over: Partial<ExplorerMenuContext> = {}): ExplorerMenuContext {
   return {
+    platform: 'win32',
     node: FILE,
     targets: [FILE.path],
     targetDir: '/p',
@@ -73,6 +74,14 @@ const DIR_LABELS = [
 describe('buildExplorerMenuItems — single target', () => {
   it('builds the file variant in its established order', () => {
     expect(labels(ctx())).toEqual(FILE_LABELS);
+  });
+
+  it('names the reveal item for the platform; Windows keeps Reveal in Explorer', () => {
+    const revealLabel = (platform: 'darwin' | 'linux' | 'win32') =>
+      labels(ctx({ platform })).find((l) => l.startsWith('Reveal in ') || l.startsWith('Show in '));
+    expect(revealLabel('win32')).toBe('Reveal in Explorer');
+    expect(revealLabel('darwin')).toBe('Reveal in Finder');
+    expect(revealLabel('linux')).toBe('Show in Files');
   });
 
   it('builds the folder variant in its established order', () => {

@@ -1,10 +1,11 @@
+import type { HostPlatform } from '../src/lsp-binary';
+import { platformWords } from '../src/platform-words';
 import type { FolderSectionModel } from '../src/session-sections';
 import type { MenuItem } from './components/context-menu';
 
 const STR = {
   makeHome: 'Make home',
   notFound: 'Folder not found',
-  reveal: 'Reveal in Explorer',
   copyPath: 'Copy path',
   remove: 'Remove from session',
 };
@@ -20,9 +21,10 @@ export interface FolderMenuHandlers {
 export function buildFolderMenuItems(
   section: FolderSectionModel,
   h: FolderMenuHandlers,
+  platform: HostPlatform,
 ): MenuItem[] {
   const common: MenuItem[] = [
-    { label: STR.reveal, onClick: h.reveal },
+    { label: platformWords(platform).reveal, onClick: h.reveal },
     { label: STR.copyPath, onClick: h.copyPath },
   ];
   if (section.kind === 'home') return common;

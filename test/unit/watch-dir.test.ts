@@ -1,7 +1,9 @@
 import { EventEmitter } from 'node:events';
 import type * as fs from 'node:fs';
+import * as nodeFs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { namesWatchedDir, type WatchFn, watchDir } from '../../electron/watch-dir';
 
 type Listener = (event: string, filename: string | Buffer | null) => void;
@@ -15,9 +17,10 @@ function setup(dir: string, recursive = false) {
   });
   const events: [string, string | null][] = [];
   const gone: (Error | undefined)[] = [];
+  // Windows paths throughout, so the platform is pinned: the Linux walk is tested apart.
   const handle = watchDir(
     dir,
-    { recursive, watch: watch as WatchFn },
+    { recursive, watch: watch as WatchFn, platform: 'win32' },
     (event, filename) => events.push([event, filename]),
     (err) => gone.push(err),
   );
@@ -129,5 +132,99 @@ describe('namesWatchedDir', () => {
     expect(namesWatchedDir('C:\\x\\R', '\\\\?\\C:\\x\\R')).toBe(true);
     expect(namesWatchedDir('C:\\x\\R', '\\\\?\\c:\\X\\r')).toBe(true);
     expect(namesWatchedDir('C:\\x\\R', '\\\\?\\C:\\x')).toBe(false);
+  });
+});
+
+describe('watchDir on Linux', () => {
+  const roots: string[] = [];
+  afterEach(() => {
+    for (const r of roots.splice(0)) nodeFs.rmSync(r, { recursive: true, force: true });
+  });
+  const mkRoot = (): string => {
+    const r = nodeFs.realpathSync(nodeFs.mkdtempSync(path.join(os.tmpdir(), 'watch-dir-linux-')));
+    roots.push(r);
+    return r;
+  };
+  const fakeWatch = () => {
+    const opened: { dir: string; recursive?: boolean }[] = [];
+    const watch = vi.fn((dir: string, o: { recursive?: boolean }) => {
+      opened.push({ dir, recursive: o.recursive });
+      return Object.assign(new EventEmitter(), { close: vi.fn() }) as unknown as fs.FSWatcher;
+    });
+    return { watch, opened };
+  };
+
+  it('a recursive watch opens non-recursive watches and skips node_modules by default', async () => {
+    const root = mkRoot();
+    nodeFs.mkdirSync(path.join(root, 'src'));
+    nodeFs.mkdirSync(path.join(root, 'node_modules', 'pkg'), { recursive: true });
+    const fw = fakeWatch();
+    const h = watchDir(
+      root,
+      { recursive: true, watch: fw.watch as WatchFn, platform: 'linux' },
+      vi.fn(),
+      vi.fn(),
+    );
+    await vi.waitFor(() => expect(fw.opened.length).toBe(2));
+    expect(fw.opened.every((x) => x.recursive === false)).toBe(true);
+    expect(fw.opened.map((x) => path.relative(root, x.dir)).sort()).toEqual(['', 'src']);
+    h.close();
+  });
+
+  it('an ENOSPC goes to onLimit when the caller gives one, and the watch stays open', async () => {
+    const root = mkRoot();
+    for (const d of ['a', 'b', 'c']) nodeFs.mkdirSync(path.join(root, d));
+    const enospc = Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
+    let calls = 0;
+    const watch = vi.fn(() => {
+      calls += 1;
+      if (calls === 3) throw enospc;
+      return Object.assign(new EventEmitter(), { close: vi.fn() }) as unknown as fs.FSWatcher;
+    });
+    const onLimit = vi.fn();
+    const onGone = vi.fn();
+    const h = watchDir(
+      root,
+      { recursive: true, watch: watch as WatchFn, platform: 'linux', onLimit },
+      vi.fn(),
+      onGone,
+    );
+    await vi.waitFor(() => expect(onLimit).toHaveBeenCalledWith(enospc));
+    expect(onGone).not.toHaveBeenCalled();
+    h.close();
+  });
+
+  it('without onLimit, an ENOSPC reports through onGone like any other watch error', async () => {
+    const root = mkRoot();
+    for (const d of ['a', 'b']) nodeFs.mkdirSync(path.join(root, d));
+    const enospc = Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
+    let calls = 0;
+    const watch = vi.fn(() => {
+      calls += 1;
+      if (calls === 2) throw enospc;
+      return Object.assign(new EventEmitter(), { close: vi.fn() }) as unknown as fs.FSWatcher;
+    });
+    const onGone = vi.fn();
+    const h = watchDir(
+      root,
+      { recursive: true, watch: watch as WatchFn, platform: 'linux' },
+      vi.fn(),
+      onGone,
+    );
+    await vi.waitFor(() => expect(onGone).toHaveBeenCalledWith(enospc));
+    expect(onGone).toHaveBeenCalledTimes(1);
+    h.close();
+  });
+
+  it('a non-recursive watch is unchanged on Linux', () => {
+    const fw = fakeWatch();
+    const h = watchDir(
+      '/x/y',
+      { recursive: false, watch: fw.watch as WatchFn, platform: 'linux' },
+      vi.fn(),
+      vi.fn(),
+    );
+    expect(fw.watch).toHaveBeenCalledWith('/x/y', { recursive: false }, expect.any(Function));
+    h.close();
   });
 });

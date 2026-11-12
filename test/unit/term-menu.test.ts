@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { pickerHeading } from '../../webview/components/path-candidate-picker-model';
-import { buildLinkMenuItems, buildTerminalMenuItems } from '../../webview/term-menu';
+import {
+  buildLinkMenuItems,
+  buildTerminalMenuItems,
+  linkActionLabel,
+} from '../../webview/term-menu';
 import { expectCopyEnabledOnlyWithSelection, separatorBeforeOf } from '../helpers/menu';
 
 const ids = (ctx: Parameters<typeof buildTerminalMenuItems>[0]) =>
@@ -62,7 +66,9 @@ describe('buildLinkMenuItems', () => {
     buildLinkMenuItems(ctx).map((i) => [i.id, i.separatorBefore === true, i.hint ?? null]);
 
   it('file link', () => {
-    expect(shape({ target: 'file', matchCount: 1, openAsSessionHint: 'in Proj' })).toEqual([
+    expect(
+      shape({ platform: 'win32', target: 'file', matchCount: 1, openAsSessionHint: 'in Proj' }),
+    ).toEqual([
       ['open', false, null],
       ['copyPath', true, null],
       ['copyRelativePath', false, null],
@@ -72,18 +78,13 @@ describe('buildLinkMenuItems', () => {
   });
 
   it('file link with 3 matches adds Show all matches', () => {
-    expect(buildLinkMenuItems({ target: 'file', matchCount: 3 }).map((i) => i.id)).toEqual([
-      'open',
-      'showAll',
-      'copyPath',
-      'copyRelativePath',
-      'reveal',
-      'openAsSession',
-    ]);
+    expect(
+      buildLinkMenuItems({ platform: 'win32', target: 'file', matchCount: 3 }).map((i) => i.id),
+    ).toEqual(['open', 'showAll', 'copyPath', 'copyRelativePath', 'reveal', 'openAsSession']);
   });
 
   it('dir link single: no primary, no separator before Copy path', () => {
-    expect(shape({ target: 'dir', matchCount: 1 })).toEqual([
+    expect(shape({ platform: 'win32', target: 'dir', matchCount: 1 })).toEqual([
       ['copyPath', false, null],
       ['copyRelativePath', false, null],
       ['reveal', false, null],
@@ -92,7 +93,9 @@ describe('buildLinkMenuItems', () => {
   });
 
   it('ambiguous: Show all matches, then every action hinted with the count', () => {
-    expect(shape({ target: null, matchCount: 3, openAsSessionHint: 'in Proj' })).toEqual([
+    expect(
+      shape({ platform: 'win32', target: null, matchCount: 3, openAsSessionHint: 'in Proj' }),
+    ).toEqual([
       ['showAll', false, null],
       ['copyPath', true, '3 matches'],
       ['copyRelativePath', false, '3 matches'],
@@ -102,7 +105,9 @@ describe('buildLinkMenuItems', () => {
   });
 
   it('labels come from the shared strings', () => {
-    const labels = buildLinkMenuItems({ target: 'file', matchCount: 2 }).map((i) => i.label);
+    const labels = buildLinkMenuItems({ target: 'file', matchCount: 2, platform: 'win32' }).map(
+      (i) => i.label,
+    );
     expect(labels).toEqual([
       'Open',
       'Show all matches',
@@ -113,7 +118,17 @@ describe('buildLinkMenuItems', () => {
     ]);
   });
 
+  it('the reveal label follows the platform', () => {
+    const reveal = (platform: 'darwin' | 'linux') =>
+      buildLinkMenuItems({ target: 'file', matchCount: 1, platform }).find((i) => i.id === 'reveal')
+        ?.label;
+    expect(reveal('darwin')).toBe('Reveal in Finder');
+    expect(reveal('linux')).toBe('Show in Files');
+  });
+
   it('an action picker heading names the action', () => {
-    expect(pickerHeading('x', 3, 'copyPath')).toBe('Copy path — pick a match');
+    expect(pickerHeading('x', 3, linkActionLabel('copyPath', 'win32'))).toBe(
+      'Copy path — pick a match',
+    );
   });
 });

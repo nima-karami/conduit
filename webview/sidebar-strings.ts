@@ -146,7 +146,6 @@ export const SIDEBAR_STR = {
     moveSpace: 'Move to space…',
     copyHome: 'Copy home path',
     copyName: 'Copy name',
-    reveal: 'Reveal in Explorer',
     close: 'Close',
     closeSubAgents: (n: number) => `Close all sub-agents (${number.format(n)})`,
     closeOthers: 'Close others',

@@ -18,6 +18,7 @@ import { folderKey } from '../../src/folder-key';
 import type { ConflictPolicy } from '../../src/fs-dnd';
 import { countNoun } from '../../src/menu-selection';
 import { type DroppedPath, mapDropItems, type OsDropPlan, planOsDrop } from '../../src/os-drop';
+import { rendererPlatform } from '../../src/platform-words';
 import { type ChangeKind, MAX_PROBE_PATHS } from '../../src/protocol';
 import { repoBaseName } from '../../src/repo-display';
 import {
@@ -541,15 +542,19 @@ export function FilesView({
     openFolderMenu(section, at) {
       setMenu({
         ...at,
-        items: buildFolderMenuItems(section, {
-          makeHome: () => void actions.makeHome(section),
-          reveal: () => revealPath(section.path),
-          copyPath: () => {
-            copyToClipboard(section.path);
-            announce(STR.copiedPath);
+        items: buildFolderMenuItems(
+          section,
+          {
+            makeHome: () => void actions.makeHome(section),
+            reveal: () => revealPath(section.path),
+            copyPath: () => {
+              copyToClipboard(section.path);
+              announce(STR.copiedPath);
+            },
+            remove: () => void removeFolder(section),
           },
-          remove: () => void removeFolder(section),
-        }),
+          rendererPlatform,
+        ),
       });
     },
   };
