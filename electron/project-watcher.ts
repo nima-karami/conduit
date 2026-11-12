@@ -2,7 +2,7 @@ import * as os from 'node:os';
 import { folderKey } from '../src/folder-key';
 import { isAncestorOf } from '../src/owning-session';
 import { shouldIgnoreWatchPath } from '../src/watch-filter';
-import { isBroadWatchRoot } from '../src/watch-scope';
+import { isBroadRootDotfileEvent, isBroadWatchRoot } from '../src/watch-scope';
 import { type DirWatch, type WatchFn, watchDir } from './watch-dir';
 
 export interface FsFire {
@@ -157,6 +157,8 @@ export class ProjectWatcher {
   }
 
   private onEvent(watchKey: string, filename: string): void {
+    // Agents' dotfile churn in home re-walked home on every write (CON-5).
+    if (this.isBroad(watchKey) && isBroadRootDotfileEvent(filename)) return;
     if (!filename) {
       const hit = this.foldersUnder(watchKey);
       const lost = hit.map((i) => this.folders[i]);

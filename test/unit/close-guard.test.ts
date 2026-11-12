@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ACK_TIMEOUT_MS,
+  armCloseFallback,
+  CLOSE_DESTROY_GRACE_MS,
   type CloseGuardDeps,
   createCloseGuard,
   createQuitGrant,
@@ -594,6 +596,163 @@ describe('openWindowIds', () => {
   });
 });
 
+describe('createCloseGuard — repeat request while shown', () => {
+  it('repeat quit while shown opens the Close anyway box once', () => {
+    const t = setup([1, 2]);
+    t.guard.requestAppQuit('quit');
+    t.show(1);
+    t.guard.requestAppQuit('quit');
+    t.guard.requestAppQuit('quit');
+    expect(t.of('confirmUnresponsive')).toEqual([['confirmUnresponsive', 1]]);
+  });
+
+  it('repeat quit while the box is open does not open a second box', () => {
+    const t = setup([1]);
+    t.guard.requestAppQuit('quit');
+    t.show(1);
+    t.guard.requestAppQuit('quit');
+    t.guard.requestAppQuit('quit');
+    expect(t.of('confirmUnresponsive')).toHaveLength(1);
+  });
+
+  it('Close anyway on a repeat quit settles the ask as proceed', async () => {
+    const t = setup([1]);
+    t.guard.requestAppQuit('quit');
+    t.show(1);
+    t.guard.requestAppQuit('quit');
+    t.boxes[0]?.resolve(true);
+    await vi.runAllTimersAsync();
+    expect(t.of('proceedApp')).toEqual([['proceedApp', 'quit']]);
+    expect(t.guard.pending()).toBe(false);
+  });
+
+  it('Wait on a repeat quit leaves the dialog ask up and proceeds nothing', async () => {
+    const t = setup([1]);
+    t.guard.requestAppQuit('quit');
+    t.show(1);
+    t.guard.requestAppQuit('quit');
+    t.boxes[0]?.resolve(false);
+    await vi.runAllTimersAsync();
+    expect(t.of('proceedApp')).toEqual([]);
+    expect(t.of('abort')).toEqual([]);
+    expect(t.guard.pending()).toBe(true);
+    t.guard.requestAppQuit('quit');
+    expect(t.of('confirmUnresponsive')).toHaveLength(2);
+  });
+
+  it('repeat quit before shown opens no box', () => {
+    const t = setup([1]);
+    t.guard.requestAppQuit('quit');
+    t.guard.requestAppQuit('quit');
+    t.guard.onAck(1, 1);
+    t.guard.requestAppQuit('quit');
+    expect(t.of('confirmUnresponsive')).toEqual([]);
+    expect(t.of('focus')).toHaveLength(2);
+  });
+
+  it('repeat window close while shown opens the Close anyway box once', () => {
+    const t = setup([1]);
+    t.guard.requestWindowClose(1);
+    t.show(1);
+    t.guard.requestWindowClose(1);
+    t.guard.requestWindowClose(1);
+    expect(t.of('confirmUnresponsive')).toEqual([['confirmUnresponsive', 1]]);
+  });
+
+  it('Close anyway on a repeat window close proceeds the window', async () => {
+    const t = setup([1]);
+    t.guard.requestWindowClose(1);
+    t.show(1);
+    t.guard.requestWindowClose(1);
+    t.boxes[0]?.resolve(true);
+    await vi.runAllTimersAsync();
+    expect(t.of('proceedWindow')).toEqual([['proceedWindow', 1]]);
+    expect(t.guard.pending()).toBe(false);
+  });
+
+  it('Wait on a repeat window close leaves the dialog ask up', async () => {
+    const t = setup([1]);
+    t.guard.requestWindowClose(1);
+    t.show(1);
+    t.guard.requestWindowClose(1);
+    t.boxes[0]?.resolve(false);
+    await vi.runAllTimersAsync();
+    expect(t.of('proceedWindow')).toEqual([]);
+    expect(t.guard.pending()).toBe(true);
+  });
+
+  it('repeat window close before shown opens no box', () => {
+    const t = setup([1]);
+    t.guard.requestWindowClose(1);
+    t.guard.requestWindowClose(1);
+    t.guard.onAck(1, 1);
+    t.guard.requestWindowClose(1);
+    expect(t.of('confirmUnresponsive')).toEqual([]);
+  });
+});
+
+describe('armCloseFallback', () => {
+  function fakeWindow() {
+    let destroyed = false;
+    const closedListeners: (() => void)[] = [];
+    const w = {
+      id: 7,
+      isDestroyed: () => destroyed,
+      destroy: vi.fn(() => {
+        destroyed = true;
+      }),
+      once: (_event: 'closed', fn: () => void) => closedListeners.push(fn),
+    };
+    const closed = () => {
+      destroyed = true;
+      for (const fn of closedListeners.splice(0)) fn();
+    };
+    return { w, closed };
+  }
+  const deps = () => {
+    const log = vi.fn();
+    return {
+      log,
+      setTimer: (fn: () => void, ms: number) => setTimeout(fn, ms),
+      clearTimer: (h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>),
+    };
+  };
+
+  it('destroys a window still open after the grace period, with one warn line', () => {
+    const { w } = fakeWindow();
+    const d = deps();
+    armCloseFallback(w, d);
+    vi.advanceTimersByTime(CLOSE_DESTROY_GRACE_MS - 1);
+    expect(w.destroy).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(w.destroy).toHaveBeenCalledTimes(1);
+    expect(d.log).toHaveBeenCalledTimes(1);
+    expect(d.log.mock.calls[0]?.[0]).toContain('window 7');
+  });
+
+  it('a window that closes in time is not destroyed', () => {
+    const { w, closed } = fakeWindow();
+    const d = deps();
+    armCloseFallback(w, d);
+    vi.advanceTimersByTime(CLOSE_DESTROY_GRACE_MS - 1000);
+    closed();
+    vi.advanceTimersByTime(60_000);
+    expect(w.destroy).not.toHaveBeenCalled();
+    expect(d.log).not.toHaveBeenCalled();
+  });
+
+  it('an already-destroyed window is not destroyed again or logged', () => {
+    const { w } = fakeWindow();
+    const d = deps();
+    armCloseFallback(w, d);
+    w.destroy();
+    w.destroy.mockClear();
+    vi.advanceTimersByTime(CLOSE_DESTROY_GRACE_MS);
+    expect(w.destroy).not.toHaveBeenCalled();
+    expect(d.log).not.toHaveBeenCalled();
+  });
+});
+
 describe('createQuitGrant', () => {
   function grantSetup() {
     const onExpire = vi.fn();
@@ -636,6 +795,8 @@ describe('createQuitGrant', () => {
   });
 
   it('constants match D7', () => {
-    expect([ACK_TIMEOUT_MS, SHOWN_TIMEOUT_MS, GRANT_TTL_MS]).toEqual([3000, 12_000, 5000]);
+    expect([ACK_TIMEOUT_MS, SHOWN_TIMEOUT_MS, GRANT_TTL_MS, CLOSE_DESTROY_GRACE_MS]).toEqual([
+      3000, 12_000, 5000, 5000,
+    ]);
   });
 });

@@ -9448,6 +9448,13 @@ button.toggle--on .toggle__knob {
 :root[data-reduce-motion="true"] .theatre::after {
   animation: none;
 }
+/* Paused, not stopped: a resume continues the same frame instead of restarting the sweep. */
+:root[data-motion-paused="true"] .bgfx,
+:root[data-motion-paused="true"] .bgfx::before,
+:root[data-motion-paused="true"] .bgfx::after,
+:root[data-motion-paused="true"] .theatre::after {
+  animation-play-state: paused;
+}
 
 /* ---------- sidebar collapse + disabled chrome buttons ---------- */
 .shell--sidebar-collapsed {

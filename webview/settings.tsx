@@ -14,6 +14,7 @@ import { DEFAULT_SETTINGS, FONT_SIZE_SCALE } from '../src/settings';
 import { mirrorServerKeys, serverPatchOf } from '../src/settings-mirror';
 import { decideHydrate, jsonEqual, makeGate, onLocalEdit, onPostFired } from '../src/settings-sync';
 import { initialSettings, post } from './bridge';
+import { startMotionPause } from './motion-pause';
 import { splitSettingsPatch, uiSettingsEqual } from './settings-hydration';
 import { coupleThemeDefaults } from './themes';
 
@@ -110,6 +111,20 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     applyToDom(next, applied.current);
     applied.current = next;
   }, [settings]);
+
+  // Background animations run forever otherwise, and the app burned CPU with nobody looking.
+  // See webview/motion-pause.ts.
+  useEffect(
+    () =>
+      startMotionPause({
+        win: window,
+        doc: document,
+        now: () => Date.now(),
+        setTimer: setTimeout,
+        clearTimer: clearTimeout,
+      }),
+    [],
+  );
 
   // Flush the pending debounced persist synchronously. Returns true if it posted.
   const flush = useCallback((): boolean => {
