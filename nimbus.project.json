@@ -1,0 +1,20 @@
+{
+  "project": "conduit",
+  "quick_gate": ["npm", "run", "verify:quick"],
+  "full_gate": ["npm", "run", "verify"],
+  "app_start": null,
+  "protected_paths": [
+    "nimbus.project.json",
+    "package.json",
+    "package-lock.json",
+    "biome.json",
+    "tsconfig.json",
+    "tsconfig.webview.json",
+    "vitest.config.ts",
+    ".github/**",
+    ".husky/**",
+    "test/e2e/quarantine.json",
+    "tools/check-e2e-sleeps.mjs",
+    "tools/verify-quick.mjs"
+  ]
+}
