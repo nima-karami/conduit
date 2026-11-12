@@ -30,9 +30,12 @@ import {
   spyMain,
   typeLine,
   waitForOutput,
+  windowsOnlyScenario,
 } from './harness.mjs';
 import { tabInfo } from './middle-click-fixture.mjs';
 import { waitCursor } from './nav-history-fixture.mjs';
+
+await windowsOnlyScenario('terminal-osc8-file-link', 'PowerShell-printed OSC 8 links');
 
 // Must match electron/logger.ts's CONDUIT_E2E branch (see logging.e2e.mjs).
 const LOGS_DIR = join(tmpdir(), 'conduit-e2e-logs');

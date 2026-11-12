@@ -30,10 +30,16 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, finishScenario, openSession, runScenario } from './harness.mjs';
+import {
+  assert,
+  e2ePlatformSupported,
+  finishScenario,
+  openSession,
+  runScenario,
+} from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[preview-transport] SKIP — suite is Windows-only');
+if (!e2ePlatformSupported()) {
+  console.log('[preview-transport] SKIP — suite does not run on this platform (macOS)');
   await finishScenario(0);
 }
 

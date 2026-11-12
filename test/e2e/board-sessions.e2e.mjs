@@ -26,7 +26,10 @@ import {
   runScenario,
   stopServer,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
+
+await windowsOnlyScenario('board-sessions', 'cmd.exe shell agent and drive-letter paths');
 
 const CARD_ID = 'card-e2e';
 const TITLE = 'Move RMB to CI';

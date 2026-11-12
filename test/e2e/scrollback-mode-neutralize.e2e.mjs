@@ -24,12 +24,10 @@ import {
   REPO,
   shutdownApp,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[scrollback-mode-neutralize] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('scrollback-mode-neutralize', 'cmd.exe shell sessions');
 
 const log = makeLog('scrollback-mode-neutralize');
 const require = createRequire(import.meta.url);

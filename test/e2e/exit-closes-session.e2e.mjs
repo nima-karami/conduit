@@ -17,12 +17,10 @@ import {
   openSession,
   REPO,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[exit-closes-session] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('exit-closes-session', 'ConPTY shell exit');
 
 const log = makeLog('exit-closes-session');
 

@@ -25,6 +25,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   assert,
+  e2ePlatformSupported,
   finishScenario,
   launchApp,
   makeLog,
@@ -34,8 +35,8 @@ import {
 } from './harness.mjs';
 import { G, groupCount, openFromExplorer, sleep, waitShown } from './split-editor-helpers.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[tab-strip-overflow] SKIP — suite is Windows-only');
+if (!e2ePlatformSupported()) {
+  console.log('[tab-strip-overflow] SKIP — suite does not run on this platform (macOS)');
   await finishScenario(0);
 }
 

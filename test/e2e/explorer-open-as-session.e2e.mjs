@@ -9,7 +9,15 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { assert, openSession, runScenario, showRightView } from './harness.mjs';
+import {
+  assert,
+  openSession,
+  runScenario,
+  showRightView,
+  windowsOnlyScenario,
+} from './harness.mjs';
+
+await windowsOnlyScenario('explorer-open-as-session', 'cmd.exe shell sessions and Explorer labels');
 
 const ITEM = 'Open as new session';
 

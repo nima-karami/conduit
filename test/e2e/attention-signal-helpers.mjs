@@ -15,6 +15,8 @@
 
 import {
   assert,
+  defaultShellAgent,
+  e2ePlatformSupported,
   finishScenario,
   getSpyCalls,
   launchApp,
@@ -46,8 +48,8 @@ export const QUALIFYING_BURST = `node -e "process.stdout.write('x'.repeat(4000)+
  * @param {(ctx: Record<string, any>) => Promise<void>} rows
  */
 export async function runAttentionSignal(name, rows) {
-  if (process.platform !== 'win32') {
-    console.log(`[${name}] SKIP — suite is Windows-only`);
+  if (!e2ePlatformSupported()) {
+    console.log(`[${name}] SKIP — suite does not run on this platform (macOS)`);
     await finishScenario(0);
   }
 
@@ -128,9 +130,9 @@ export async function runAttentionSignal(name, rows) {
     // sidB is opened LAST so it is the active session the renderer reports as visible;
     // sidA and sidC are the background sessions under test.
     const repo = REPO.replace(/\\/g, '/');
-    const sidA = await openSession(page, { path: repo, agentId: 'shell:cmd' });
-    const sidC = await openSession(page, { path: repo, agentId: 'shell:cmd' });
-    const sidB = await openSession(page, { path: repo, agentId: 'shell:cmd' });
+    const sidA = await openSession(page, { path: repo, agentId: defaultShellAgent() });
+    const sidC = await openSession(page, { path: repo, agentId: defaultShellAgent() });
+    const sidB = await openSession(page, { path: repo, agentId: defaultShellAgent() });
     log('sessions:', { sidA, sidB, sidC });
 
     await page.waitForFunction(() => window.__cap.length > 0, null, { timeout: 20000 });

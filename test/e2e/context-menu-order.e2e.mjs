@@ -21,12 +21,10 @@ import {
   openSession,
   showRightView,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[ctx-menu-order] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('ctx-menu-order', 'cmd.exe shell sessions');
 
 const log = makeLog('ctx-menu-order');
 const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8' });

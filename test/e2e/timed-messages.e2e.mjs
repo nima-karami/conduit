@@ -30,12 +30,10 @@ import {
   runShellReader,
   stopServer,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[timed-messages] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('timed-messages', 'cmd.exe prompt timing');
 
 const log = makeLog('timed-messages');
 

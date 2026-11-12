@@ -31,12 +31,10 @@ import {
   revealSessionRow,
   shutdownApp,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[scrollback] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('scrollback', 'ConPTY spawn clear and cmd.exe shell');
 
 const log = makeLog('scrollback');
 

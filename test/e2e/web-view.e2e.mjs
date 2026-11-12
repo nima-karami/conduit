@@ -21,12 +21,10 @@ import {
   openSession,
   REPO,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[web-view] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('web-view', 'cmd.exe shell sessions');
 
 const log = makeLog('web-view');
 const TITLE = 'Conduit Web Fixture';

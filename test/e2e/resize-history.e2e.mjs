@@ -24,12 +24,10 @@ import {
   tapBridge,
   typeLine,
   waitForOutput,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[resize-history] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('resize-history', 'ConPTY resize repaint');
 
 const log = makeLog('resize-history');
 const require = createRequire(import.meta.url);

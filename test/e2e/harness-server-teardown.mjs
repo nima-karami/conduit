@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { connect as netConnect } from 'node:net';
 import { resolveHcBinary } from './hc-binary.mjs';
+import { findByCmdline, readProcTable } from './proc-table.mjs';
 
 const require = createRequire(import.meta.url);
 const runtimeIdentity = () => require('../../out/server/instance-names.js');
@@ -204,20 +205,28 @@ const wqlLike = (value) =>
     .replaceAll('%', '[%]')
     .replaceAll('_', '[_]');
 
-/** Profile and PID filters avoid fetching every process command line on each app teardown. */
+/**
+ * The processes of one profile, as `{ ProcessId, ParentProcessId, Name, CommandLine }` rows: the
+ * ones whose command line names it, plus their parents and children (the core and its holders).
+ * Linux reads /proc; Windows asks CIM. Profile and PID filters avoid fetching every process
+ * command line on each app teardown.
+ */
 export function listProfileProcs(
   userDataDir,
   names,
   { platform = process.platform, run = spawnSync } = {},
 ) {
+  const needles = [
+    ...new Set([
+      userDataDir,
+      userDataDir.replaceAll(BACKSLASH, '/'),
+      userDataDir.replaceAll('/', BACKSLASH),
+      `-${names.hcSession}.holder`,
+    ]),
+  ];
+  if (platform === 'linux') return profileRows(readProcTable(), needles);
   if (platform !== 'win32') return [];
-  const needles = new Set([
-    userDataDir,
-    userDataDir.replaceAll(BACKSLASH, '/'),
-    userDataDir.replaceAll('/', BACKSLASH),
-    `-${names.hcSession}.holder`,
-  ]);
-  const filter = `ProcessId <> ${process.pid} AND (${[...needles]
+  const filter = `ProcessId <> ${process.pid} AND (${needles
     .map((needle) => `CommandLine LIKE '%${wqlLike(needle)}%'`)
     .join(' OR ')})`;
   const script = `
@@ -258,6 +267,31 @@ export function listProfileProcs(
   )
     throw new Error('invalid process table');
   return parsed;
+}
+
+/**
+ * The Linux half of listProfileProcs, over a table from proc-table.mjs: seeds are the processes
+ * whose command line holds a needle; the rows are the seeds, their parents and their children,
+ * minus this process. Same shape as the Windows rows.
+ * @param {{ pid: number, ppid: number, comm: string, cmdline: string | null }[]} table
+ * @param {string[]} needles
+ * @param {number} [self]
+ */
+export function profileRows(table, needles, self = process.pid) {
+  const seeds = findByCmdline(table, needles).filter((p) => p.pid !== self);
+  const seedPids = new Set(seeds.map((p) => p.pid));
+  const parentPids = new Set(seeds.map((p) => p.ppid));
+  return table
+    .filter(
+      (p) =>
+        p.pid !== self && (seedPids.has(p.pid) || parentPids.has(p.pid) || seedPids.has(p.ppid)),
+    )
+    .map((p) => ({
+      ProcessId: p.pid,
+      ParentProcessId: p.ppid,
+      Name: p.comm,
+      CommandLine: p.cmdline,
+    }));
 }
 
 const realExec = (bin, args, opts) =>

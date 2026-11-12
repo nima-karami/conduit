@@ -29,12 +29,10 @@ import {
   profileDir,
   REPO,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[session-restore-toggle] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('session-restore-toggle', 'cmd.exe shell sessions');
 
 const log = makeLog('session-restore-toggle');
 
