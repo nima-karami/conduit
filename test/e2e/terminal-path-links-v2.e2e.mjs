@@ -69,6 +69,16 @@ const LINE_CTX = 'src/ctx.ts:9';
 const DEEP_DIR = 'src/a-deliberately-long-folder-name-so-the-picker-is-wide/deep';
 const LINE_BOTTOM = `${DEEP_DIR}/index.ts:7`;
 
+/**
+ * The bash form of `echo <line>`: the Windows lines are cmd.exe syntax, which bash would parse
+ * (parentheses, `:`) as a syntax error. Single quotes keep them literal; a `'` in a line would end
+ * the quote early, so such a line is refused rather than sent.
+ */
+function bashEcho(line) {
+  if (line.includes("'")) throw new Error(`bashEcho: line contains a single quote: ${line}`);
+  return `echo '${line}'`;
+}
+
 runScenario('terminal-path-links-v2', async ({ page, log }) => {
   const parent = mkdtempSync(join(tmpdir(), 'conduit-pl2-')).replace(/\\/g, '/');
   makeRepo(join(parent, 'repoA'), 'a');
@@ -124,9 +134,10 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
   await waitQuiet();
   // Printed by the shell, not written into the xterm: ConPTY repaints its screen when the
   // terminal is re-shown, and bytes it never produced would vanish from under the click.
-  await typeLine(page, sid, 'chcp 65001 >nul');
+  // Windows-only: chcp switches cmd's code page; bash has no such step.
+  if (process.platform === 'win32') await typeLine(page, sid, 'chcp 65001 >nul');
   for (const line of [LINE_AMBIG, LINE_TOOL, LINE_ELIDED]) {
-    await typeLine(page, sid, `echo ${line}`);
+    await typeLine(page, sid, process.platform === 'win32' ? `echo ${line}` : bashEcho(line));
     await waitForOutput(page, sid, line);
   }
   await waitQuiet();
@@ -407,7 +418,13 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
   // ── 7b. context root (v1, T7.3): the agent was working in repoA ────────────────────
   // One command, so no prompt line (itself a path under home) lands between the two lines, as in
   // agent output. cmd's `^` keeps `(`, `)` and `&&` literal inside the echo.
-  await typeLine(page, sid, `(echo Bash^(cd ${parent}/repoA ^&^& npm test^) & echo ${LINE_CTX})`);
+  await typeLine(
+    page,
+    sid,
+    process.platform === 'win32'
+      ? `(echo Bash^(cd ${parent}/repoA ^&^& npm test^) & echo ${LINE_CTX})`
+      : `printf 'Bash(cd %s/repoA && npm test)\\n%s\\n' '${parent}' '${LINE_CTX}'`,
+  );
   await waitForOutput(page, sid, LINE_CTX);
   await waitQuiet();
   await clickAt(LINE_CTX, 3);
@@ -448,13 +465,26 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
     );
     await waitQuiet();
   }
-  await typeLine(page, sid, 'cls');
+  await typeLine(page, sid, process.platform === 'win32' ? 'cls' : 'clear');
   // Blank lines first and right-aligned, so the link lands in the bottom-right corner and the
   // menu and picker are clamped up and left over the pointer that clicked it (unclamped, the
   // pointer only ever rests on the frame's own padding).
-  await typeLine(page, sid, 'for /L %i in (1,1,120) do @echo.');
+  await typeLine(
+    page,
+    sid,
+    process.platform === 'win32'
+      ? 'for /L %i in (1,1,120) do @echo.'
+      : 'for i in $(seq 120); do echo; done',
+  );
   const cols = await page.evaluate((id) => window.__terms[id].cols, sid);
-  await typeLine(page, sid, `echo ${' '.repeat(cols - LINE_BOTTOM.length - 1)}${LINE_BOTTOM}`);
+  // Both forms end at column cols-1: the Windows padding is cols-1 minus the link's length.
+  await typeLine(
+    page,
+    sid,
+    process.platform === 'win32'
+      ? `echo ${' '.repeat(cols - LINE_BOTTOM.length - 1)}${LINE_BOTTOM}`
+      : `printf '%*s\\n' ${cols - 1} '${LINE_BOTTOM}'`,
+  );
   await waitForOutput(page, sid, LINE_BOTTOM);
   await waitQuiet();
   // What the app copies, not what the OS clipboard holds (see markdown-viewer.e2e.mjs).
@@ -596,8 +626,12 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
 
   // ── 9. keyboard path (v1 row 60): the palette's "Open Detected Link…" ──────────────
   await backToTerminal();
-  await typeLine(page, sid, 'cls');
-  await typeLine(page, sid, `echo ${LINE_ELIDED}`);
+  await typeLine(page, sid, process.platform === 'win32' ? 'cls' : 'clear');
+  await typeLine(
+    page,
+    sid,
+    process.platform === 'win32' ? `echo ${LINE_ELIDED}` : bashEcho(LINE_ELIDED),
+  );
   await waitForOutput(page, sid, LINE_ELIDED, 4);
   await waitQuiet();
   const tabs9 = (await tabInfo(page)).length;

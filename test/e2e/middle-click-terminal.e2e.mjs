@@ -225,13 +225,17 @@ runScenario('middle-click-terminal', async ({ app, page, log }) => {
     log('URL link on Linux → no external open (middle is paste) ✓');
   }
 
-  await page
-    .locator('.tabbar [role="tab"]', { has: page.locator('span', { hasText: /^b\.ts$/ }) })
-    .first()
-    .click();
-  assert(await waitActive(page, 'b.ts'), 'clicking the b.ts tab should activate it');
-  assert(await waitCursor(page, 12), 'activated b.ts should land on line 12 (the link :line)');
-  log('activated background tab lands on :12 ✓');
+  // Only Windows opens b.ts from the middle-click; on Linux the middle-click is a paste, so no
+  // such tab exists to click.
+  if (process.platform === 'win32') {
+    await page
+      .locator('.tabbar [role="tab"]', { has: page.locator('span', { hasText: /^b\.ts$/ }) })
+      .first()
+      .click();
+    assert(await waitActive(page, 'b.ts'), 'clicking the b.ts tab should activate it');
+    assert(await waitCursor(page, 12), 'activated b.ts should land on line 12 (the link :line)');
+    log('activated background tab lands on :12 ✓');
+  }
 
   const left = await activateLink(page, sid, LEFT_LINE, 'c.ts', 0);
   log('left path activate', JSON.stringify(left));

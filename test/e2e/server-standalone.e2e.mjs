@@ -387,6 +387,9 @@ async function run() {
     observer.close();
 
     phase('5. server.stopAll: terminals, server, supervisor and core all end');
+    // On Linux `hc server status` starts a core when none is running, so the core is identified
+    // by pid before stopAll and only that pid is polled afterwards.
+    const corePid = process.platform === 'win32' ? null : hcCorePid(env);
     const stopped = await app.c2.call('server.stopAll');
     assert(stopped.killed === 3, `stopAll: ${JSON.stringify(stopped)}`);
     assert(
@@ -395,22 +398,29 @@ async function run() {
     );
     client.close();
     client = undefined;
-    assert(
-      await until(
-        async () => {
-          const r = spawnSync(HC, ['server', 'status'], {
-            env,
-            encoding: 'utf8',
-            windowsHide: true,
-            timeout: 10_000,
-          });
-          return r.status !== 0 || /not running/i.test(`${r.stdout}${r.stderr}`);
-        },
-        30_000,
-        500,
-      ),
-      'our hc core is still running after stopAll',
-    );
+    if (process.platform === 'win32') {
+      assert(
+        await until(
+          async () => {
+            const r = spawnSync(HC, ['server', 'status'], {
+              env,
+              encoding: 'utf8',
+              windowsHide: true,
+              timeout: 10_000,
+            });
+            return r.status !== 0 || /not running/i.test(`${r.stdout}${r.stderr}`);
+          },
+          30_000,
+          500,
+        ),
+        'our hc core is still running after stopAll',
+      );
+    } else {
+      assert(
+        await until(() => pidGone(corePid), 30_000, 500),
+        `our hc core (pid ${corePid}) is still running after stopAll`,
+      );
+    }
     log(`PASS: hc ${versionText.trim()}`);
   } catch (error) {
     const serverLog = join(userData, 'server.log');
@@ -426,6 +436,32 @@ async function run() {
     throw error;
   } finally {
     await cleanup();
+  }
+}
+
+/** The pid of the hc core this profile's session runs (`server.status`'s `pid`). */
+function hcCorePid(env) {
+  const r = spawnSync(HC, ['server', 'status', '--json'], {
+    env,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 10_000,
+  });
+  const pid = r.status === 0 ? JSON.parse(r.stdout).pid : undefined;
+  assert(
+    Number.isInteger(pid) && pid > 0,
+    `hc server status --json gave no core pid: exit ${r.status}: ${r.stdout}${r.stderr}`,
+  );
+  return pid;
+}
+
+/** True once no process has `pid` (signal 0 only probes). */
+function pidGone(pid) {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return error?.code === 'ESRCH';
   }
 }
 
