@@ -32,13 +32,11 @@ import {
   makeLog,
   openSession,
   tapBridge,
+  windowsOnlyScenario,
   writeToTerminal,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[plan-handoff] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('plan-handoff', 'cmd.exe bracketed paste');
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = join(here, 'fixtures', 'plan', 'identity.md');

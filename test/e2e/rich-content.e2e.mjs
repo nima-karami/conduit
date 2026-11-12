@@ -20,12 +20,10 @@ import {
   REPO,
   showRightView,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[rich-content] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('rich-content', 'cmd.exe shell session');
 
 const log = makeLog('rich-content');
 

@@ -20,7 +20,16 @@ import {
   waitExit,
   windowCount,
 } from './dirty-quit-helpers.mjs';
-import { answerQuitAsks, launchApp, openSession, profileDir, REPO } from './harness.mjs';
+import {
+  answerQuitAsks,
+  launchApp,
+  openSession,
+  profileDir,
+  REPO,
+  windowsOnlyScenario,
+} from './harness.mjs';
+
+await windowsOnlyScenario('dirty-quit-windows', 'cmd.exe shell command');
 
 const disk = (root) => readFileSync(join(root, 'a.ts'), 'utf8');
 const scrim = (page) => page.locator('.quit-scrim');

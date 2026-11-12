@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import {
   assert,
+  e2ePlatformSupported,
   finishScenario,
   launchApp,
   makeLog,
@@ -28,8 +29,8 @@ import {
   tapBridge,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[git-indicator] SKIP — suite is Windows-only');
+if (!e2ePlatformSupported()) {
+  console.log('[git-indicator] SKIP — suite does not run on this platform (macOS)');
   await finishScenario(0);
 }
 

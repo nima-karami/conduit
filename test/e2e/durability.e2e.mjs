@@ -25,12 +25,10 @@ import {
   REPO,
   stopServer,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[durability] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('durability', 'cmd.exe shell sessions across restarts');
 
 const log = makeLog('durability');
 

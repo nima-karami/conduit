@@ -17,12 +17,10 @@ import {
   openSession,
   REPO,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[quit-guard] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('quit-guard', 'cmd.exe shell sessions');
 
 const log = makeLog('quit-guard');
 const CONFIRM_TIMEOUT_MS = 5000; // max wait for confirmQuit to arrive

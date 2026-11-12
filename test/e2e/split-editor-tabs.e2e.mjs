@@ -12,7 +12,14 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { assert, finishScenario, launchApp, makeLog, openSession } from './harness.mjs';
+import {
+  assert,
+  e2ePlatformSupported,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openSession,
+} from './harness.mjs';
 import {
   editorPosition,
   explorer,
@@ -28,8 +35,8 @@ import {
   waitShown,
 } from './split-editor-helpers.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[split-editor-tabs] SKIP — suite is Windows-only');
+if (!e2ePlatformSupported()) {
+  console.log('[split-editor-tabs] SKIP — suite does not run on this platform (macOS)');
   await finishScenario(0);
 }
 

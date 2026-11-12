@@ -30,6 +30,7 @@ import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
 import { fingerprint } from '../src/board-watch';
 import { changelogSection } from '../src/changelog';
 import {
+  armCloseFallback,
   createCloseGuard,
   createQuitGrant,
   GRANT_TTL_MS,
@@ -2028,6 +2029,12 @@ app.whenReady().then(() => {
     }
   >();
 
+  const closeFallbackDeps = {
+    setTimer: (fn: () => void, ms: number) => setTimeout(fn, ms),
+    clearTimer: (h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>),
+    log: (message: string) => log.warn('window', message),
+  };
+
   const closeGuard = createCloseGuard({
     windowIds: openWindows,
     prepare: (id) => {
@@ -2073,6 +2080,8 @@ app.whenReady().then(() => {
       const finish = () => {
         quitAsks.clear();
         stopAgentsOnQuit = false;
+        for (const w of windows.values())
+          if (!w.isDestroyed()) armCloseFallback(w, closeFallbackDeps);
         quitGrant.issue();
         if (reason === 'update') quitAndInstall();
         else setImmediate(() => app.quit());
@@ -2131,7 +2140,9 @@ app.whenReady().then(() => {
         close: () => {
           windowClosing.delete(id);
           windowConfirmed.add(id);
-          if (!w.isDestroyed()) w.close();
+          if (w.isDestroyed()) return;
+          armCloseFallback(w, closeFallbackDeps);
+          w.close();
         },
         failed: (message) => {
           windowClosing.delete(id);

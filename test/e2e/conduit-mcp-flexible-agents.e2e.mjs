@@ -14,7 +14,9 @@ import {
   tapMcp,
   until,
 } from './conduit-mcp-helpers.mjs';
-import { assert, phase, REPO, removeDir, runScenario } from './harness.mjs';
+import { assert, phase, REPO, removeDir, runScenario, windowsOnlyScenario } from './harness.mjs';
+
+await windowsOnlyScenario('conduit-mcp-flexible-agents', 'PowerShell agent');
 
 await runScenario(
   'conduit-mcp-flexible-agents',

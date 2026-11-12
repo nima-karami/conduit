@@ -374,4 +374,36 @@ describe('ProjectWatcher — a home directory or filesystem root', () => {
     vi.advanceTimersByTime(300);
     expect(h.fires[1]).toEqual({ root: HOME, folders: [HOME] });
   });
+
+  it('a dot entry at the top of home is dropped whole: no fire, no path, no suspect', () => {
+    const h = setup({ homeDir: HOME });
+    h.pw.setFolders([HOME]);
+    h.emit(HOME, '.claude.json');
+    h.emit(HOME, '.claude.json.tmp.123');
+    h.emit(HOME, '.bash_history');
+    vi.advanceTimersByTime(300);
+    expect(h.fires).toEqual([]);
+    expect(h.paths).toEqual([]);
+    expect(h.suspects).toEqual([]);
+    expect(h.lost).toEqual([]);
+  });
+
+  it('a non-dot top-level entry of home still fires', () => {
+    const h = setup({ homeDir: HOME });
+    h.pw.setFolders([HOME]);
+    h.emit(HOME, '.claude.json');
+    h.emit(HOME, 'notes.txt');
+    vi.advanceTimersByTime(300);
+    expect(h.fires).toEqual([{ root: HOME, folders: [HOME] }]);
+    expect(h.paths).toHaveLength(1);
+    expect(h.paths[0]).toMatch(/notes\.txt$/);
+  });
+
+  it('a dot entry under a non-broad root still fires', () => {
+    const h = setup({ homeDir: HOME });
+    h.pw.setFolders([APP]);
+    h.emit(APP, '.env');
+    vi.advanceTimersByTime(300);
+    expect(h.fires).toEqual([{ root: APP, folders: [APP] }]);
+  });
 });

@@ -28,12 +28,10 @@ import {
   REPO,
   showRightView,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[pdf-viewer] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('pdf-viewer', 'cmd.exe shell sessions');
 
 const log = makeLog('pdf-viewer');
 const FIXTURE = join(REPO, 'test', 'e2e', 'fixtures', 'sample.pdf');

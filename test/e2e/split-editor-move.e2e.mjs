@@ -13,7 +13,15 @@
  *       Terminal.
  */
 
-import { assert, finishScenario, launchApp, makeLog, openReview, openSession } from './harness.mjs';
+import {
+  assert,
+  e2ePlatformSupported,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openReview,
+  openSession,
+} from './harness.mjs';
 import {
   editorPosition,
   explorer,
@@ -31,8 +39,8 @@ import {
   waitShown,
 } from './split-editor-helpers.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[split-editor-move] SKIP — suite is Windows-only');
+if (!e2ePlatformSupported()) {
+  console.log('[split-editor-move] SKIP — suite does not run on this platform (macOS)');
   await finishScenario(0);
 }
 

@@ -11,6 +11,7 @@ import { openFile, setMode, sleep, typeAtStart } from './auto-save-helpers.mjs';
 import {
   assert,
   captureFailure,
+  e2ePlatformSupported,
   finishScenario,
   launchApp,
   makeLog,
@@ -88,8 +89,8 @@ export const windowCount = (app) =>
 /** Run each selected phase in turn with the harness exit convention (0 pass / 1 fail / 2 error). */
 export async function runPhases(name, phases) {
   const log = makeLog(name);
-  if (process.platform !== 'win32') {
-    log('SKIP — suite is Windows-only (non-win32 platform)');
+  if (!e2ePlatformSupported()) {
+    log('SKIP — suite does not run on this platform (macOS)');
     await finishScenario(0);
   }
   let code = 0;

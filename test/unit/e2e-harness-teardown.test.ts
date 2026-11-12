@@ -26,6 +26,10 @@ describe('teardown and cross-process identity', () => {
       const file = join(directory, 'harness.mjs');
       copyFileSync(join(__dirname, '..', 'e2e', 'harness-server-teardown.mjs'), file);
       copyFileSync(join(__dirname, '..', 'e2e', 'hc-binary.mjs'), join(directory, 'hc-binary.mjs'));
+      copyFileSync(
+        join(__dirname, '..', 'e2e', 'proc-table.mjs'),
+        join(directory, 'proc-table.mjs'),
+      );
       const unloaded = await import(pathToFileURL(file).href);
       expect(() => unloaded.assertOwnSession('conduit-test', undefined)).not.toThrow();
     } finally {

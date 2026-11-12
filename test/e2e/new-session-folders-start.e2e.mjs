@@ -10,7 +10,7 @@
 
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { assert, phase, tapBridge } from './harness.mjs';
+import { assert, phase, tapBridge, windowsOnlyScenario } from './harness.mjs';
 import {
   browseAdd,
   clearFolders,
@@ -26,6 +26,8 @@ import {
   waitPreview,
   waitStubArgs,
 } from './new-session-folders-helpers.mjs';
+
+await windowsOnlyScenario('new-session-folders-start', '.cmd stubs and cmd prompt');
 
 await runNewSession('new-session-folders-start', async ({ fx, log, launch, close }) => {
   const { A, B, stubDir, userDataDir } = fx;

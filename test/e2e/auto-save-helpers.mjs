@@ -11,6 +11,7 @@ import { dirname, join } from 'node:path';
 import {
   assert,
   captureFailure,
+  e2ePlatformSupported,
   finishScenario,
   launchApp,
   makeLog,
@@ -172,8 +173,8 @@ export const writesTo = async (app, name) =>
  */
 export async function runAutoSave(name, { before = {}, files, phases }) {
   const log = makeLog(name);
-  if (process.platform !== 'win32') {
-    log('SKIP — suite is Windows-only (non-win32 platform)');
+  if (!e2ePlatformSupported()) {
+    log('SKIP — suite does not run on this platform (macOS)');
     await finishScenario(0);
   }
   let code = 0;

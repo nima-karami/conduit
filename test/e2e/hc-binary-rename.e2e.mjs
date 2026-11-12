@@ -16,8 +16,17 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { until } from './conduit-mcp-helpers.mjs';
-import { assert, finishScenario, makeLog, REPO, resolveHcBinary } from './harness.mjs';
+import {
+  assert,
+  finishScenario,
+  makeLog,
+  REPO,
+  resolveHcBinary,
+  windowsOnlyScenario,
+} from './harness.mjs';
 import { assertOwnSession } from './harness-server-teardown.mjs';
+
+await windowsOnlyScenario('hc-binary-rename', 'hc.exe binary name and ConPTY helper');
 
 const execFile = promisify(execFileCallback);
 const require = createRequire(import.meta.url);

@@ -8,13 +8,11 @@ import {
   openSession,
   REPO,
   shutdownApp,
+  windowsOnlyScenario,
 } from './harness.mjs';
 import { waitForLine, waitForMessage } from './tray-helpers.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[tray-helper-restart] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('tray-helper-restart', 'Windows tray helper');
 
 let first;
 let second;

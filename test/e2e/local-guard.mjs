@@ -7,9 +7,13 @@
  */
 import { rmSync } from 'node:fs';
 import { connect, createServer } from 'node:net';
-import { constants, setPriority } from 'node:os';
+import { constants, setPriority, tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-const DEFAULT_PIPE = '\\\\.\\pipe\\conduit-e2e';
+// Linux has no named pipes; a socket in the temp dir is the same machine-wide rendezvous. A bare
+// relative name would make the lock per-cwd, i.e. per checkout.
+const DEFAULT_PIPE =
+  process.platform === 'win32' ? '\\\\.\\pipe\\conduit-e2e' : join(tmpdir(), 'conduit-e2e.sock');
 const REPORT_EVERY_MS = 30_000;
 
 let held = null;
@@ -83,7 +87,7 @@ export async function acquireE2eLock({
     }
     const current = await readOwner(pipePath);
     // A Unix socket file outlives a killed owner (a Windows pipe does not); nobody accepting on it
-    // means it is stale. Only the unit test runs off Windows.
+    // means it is stale.
     if (current?.refused && process.platform !== 'win32') {
       rmSync(pipePath, { force: true });
       continue;

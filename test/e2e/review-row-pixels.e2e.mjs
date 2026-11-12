@@ -33,6 +33,7 @@ import { join } from 'node:path';
 import {
   assert,
   closeApp,
+  e2ePlatformSupported,
   finishScenario,
   launchApp,
   makeLog,
@@ -275,8 +276,8 @@ async function main() {
   log('PASS ✓');
 }
 
-if (process.platform !== 'win32') {
-  console.log('[review-row-pixels] SKIP — suite is Windows-only (non-win32 platform)');
+if (!e2ePlatformSupported()) {
+  console.log('[review-row-pixels] SKIP — suite does not run on this platform (macOS)');
   await finishScenario(0);
 }
 

@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path';
 import {
   assert,
   closeApp,
+  e2ePlatformSupported,
   finishScenario,
   launchApp,
   makeLog,
@@ -20,6 +21,7 @@ import {
   shutdownApp,
   stopServer,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
 export const CARD = { id: 'c-rmb', title: 'Move RMB to CI' };
@@ -95,10 +97,12 @@ function makeFixture() {
  */
 export async function runNewSession(name, fn) {
   const log = makeLog(name);
-  if (process.platform !== 'win32') {
-    console.log(`[${name}] SKIP — suite is Windows-only`);
+  if (!e2ePlatformSupported()) {
+    console.log(`[${name}] SKIP — suite does not run on this platform (macOS)`);
     await finishScenario(0);
   }
+  // .cmd stubs on PATH, `where git`, and a cmd prompt the scenarios match: no POSIX port.
+  await windowsOnlyScenario(name, '.cmd stubs and cmd prompt');
   const fx = makeFixture();
   let launched = null;
   let code = 0;

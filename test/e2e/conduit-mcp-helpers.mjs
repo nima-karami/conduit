@@ -53,6 +53,8 @@ export function pathWith(dir) {
  * Conduit shell is detected as Claude and the fake connects as `claude-code`.
  */
 export function fakeClaudeOnPath(binDir, recordsDir, label) {
+  if (process.platform !== 'win32')
+    throw new Error('fakeClaudeOnPath is Windows-only (claude.cmd)');
   mkdirSync(binDir, { recursive: true });
   writeFileSync(
     join(binDir, 'claude.cmd'),

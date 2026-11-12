@@ -21,7 +21,10 @@ import {
   runScenario,
   showRightView,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
+
+await windowsOnlyScenario('os-drag-out', 'Windows clipboard file format and PowerShell stdin');
 
 // Mirrors OS_FILE_CLIPBOARD.win32 in src/drag-out-policy.ts (S0 F4: PASS); flip both together.
 const WIN32_OS_CLIPBOARD = true;

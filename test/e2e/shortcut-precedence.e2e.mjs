@@ -13,6 +13,7 @@ import { openViaTree } from './goto-matrix.mjs';
 import {
   assert,
   closeApp,
+  e2ePlatformSupported,
   finishScenario,
   launchApp,
   makeLog,
@@ -20,8 +21,8 @@ import {
   REPO,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[shortcut-precedence] SKIP — suite is Windows-only');
+if (!e2ePlatformSupported()) {
+  console.log('[shortcut-precedence] SKIP — suite does not run on this platform (macOS)');
   await finishScenario(0);
 }
 

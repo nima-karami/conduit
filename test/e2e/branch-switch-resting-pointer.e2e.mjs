@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   assert,
+  e2ePlatformSupported,
   finishScenario,
   launchApp,
   makeLog,
@@ -25,8 +26,8 @@ import {
 
 const NAME = 'branch-switch-resting-pointer';
 
-if (process.platform !== 'win32') {
-  console.log(`[${NAME}] SKIP — suite is Windows-only`);
+if (!e2ePlatformSupported()) {
+  console.log(`[${NAME}] SKIP — suite does not run on this platform (macOS)`);
   await finishScenario(0);
 }
 

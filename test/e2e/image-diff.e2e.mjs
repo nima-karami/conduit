@@ -24,12 +24,10 @@ import {
   REPO,
   showRightView,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[image-diff] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('image-diff', 'cmd.exe shell sessions');
 
 const log = makeLog('image-diff');
 

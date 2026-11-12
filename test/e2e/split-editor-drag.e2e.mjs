@@ -19,7 +19,15 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, finishScenario, launchApp, makeLog, openSession, profileDir } from './harness.mjs';
+import {
+  assert,
+  e2ePlatformSupported,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openSession,
+  profileDir,
+} from './harness.mjs';
 import {
   G,
   groupCount,
@@ -31,8 +39,8 @@ import {
   waitShown,
 } from './split-editor-helpers.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[split-editor-drag] SKIP — suite is Windows-only');
+if (!e2ePlatformSupported()) {
+  console.log('[split-editor-drag] SKIP — suite does not run on this platform (macOS)');
   await finishScenario(0);
 }
 

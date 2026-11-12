@@ -10,12 +10,10 @@ import {
   setWindowFocus,
   spyMain,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[attention] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('attention', 'cmd.exe shell sessions');
 
 // Attention routing hinges on real window focus/blur semantics, so it needs a
 // visible, focusable window — opt out of the suite's hidden-window mode (the

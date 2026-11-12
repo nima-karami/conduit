@@ -19,7 +19,29 @@ afterEach(async () => {
   if (r) await act(async () => r.unmount());
   host?.remove();
   opener?.remove();
+  vi.unstubAllGlobals();
 });
+
+/** Frames run only when the test says so, so "painted" is observable. */
+function fakeFrames() {
+  const frames = new Map<number, FrameRequestCallback>();
+  let next = 1;
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+    const id = next++;
+    frames.set(id, cb);
+    return id;
+  });
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => {
+    frames.delete(id);
+  });
+  return {
+    runFrame() {
+      const pending = [...frames.values()];
+      frames.clear();
+      for (const cb of pending) cb(0);
+    },
+  };
+}
 
 async function open(overrides: Partial<ConfirmState> = {}, onClose = vi.fn()) {
   opener = document.createElement('button');
@@ -157,16 +179,43 @@ describe('ConfirmDialog', () => {
     expect(msg?.textContent).toBe('It is still running.');
   });
 
-  it('onShown called once on mount', async () => {
+  it('onShown called once on mount, after two animation frames', async () => {
+    const frames = fakeFrames();
     const onShown = vi.fn();
     const onClose = vi.fn();
     const state: ConfirmState = { title: 't', message: 'm', onConfirm: vi.fn(), onShown };
     await open(state, onClose);
+    frames.runFrame();
+    frames.runFrame();
     const r = root;
     await act(async () =>
       r?.render(createElement(ConfirmDialog, { state: { ...state }, onClose })),
     );
+    frames.runFrame();
+    frames.runFrame();
     expect(onShown).toHaveBeenCalledTimes(1);
+  });
+
+  it('onShown does not fire until the second animation frame (the dialog is painted)', async () => {
+    const frames = fakeFrames();
+    const onShown = vi.fn();
+    await open({ onShown });
+    expect(onShown).not.toHaveBeenCalled();
+    frames.runFrame();
+    expect(onShown).not.toHaveBeenCalled();
+    frames.runFrame();
+    expect(onShown).toHaveBeenCalledTimes(1);
+  });
+
+  it('onShown is cancelled when the dialog unmounts before the second frame', async () => {
+    const frames = fakeFrames();
+    const onShown = vi.fn();
+    await open({ onShown });
+    frames.runFrame();
+    await unmount();
+    frames.runFrame();
+    frames.runFrame();
+    expect(onShown).not.toHaveBeenCalled();
   });
 
   it('the autofocused button carries data-modal-default: the primary by default', async () => {
