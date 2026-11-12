@@ -133,14 +133,13 @@ try {
 
   // The fix is re-arming follow-mode, not a one-shot jump: it must STAY at the bottom while
   // new output arrives.
+  const againLoop =
+    process.platform === 'win32'
+      ? 'for /L %i in (1,1,2000) do @echo conduit-follow-again %i\r'
+      : 'for i in $(seq 1 2000); do echo conduit-follow-again $i; done\r';
   await page.evaluate(
-    (id) =>
-      window.agentDeck.post({
-        type: 'term:input',
-        sessionId: id,
-        data: 'for /L %i in (1,1,2000) do @echo conduit-follow-again %i\r',
-      }),
-    sid,
+    ({ id, data }) => window.agentDeck.post({ type: 'term:input', sessionId: id, data }),
+    { id: sid, data: againLoop },
   );
   await waitPrinted('conduit-follow-again 2000');
   assert(await atBottom(), 'follow-mode should stay armed as more output arrives');
