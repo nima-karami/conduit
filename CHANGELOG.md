@@ -6,6 +6,9 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- A session in your home folder no longer re-indexes home every time an agent or shell writes a dotfile there (such as `~/.claude.json` or `~/.bash_history`).
+
 ## [0.61.0] — 2026-11-08
 
 ### Added
