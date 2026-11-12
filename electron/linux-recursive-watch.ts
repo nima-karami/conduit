@@ -30,7 +30,7 @@ export interface RecursiveWatch {
 }
 
 /** The inotify and fd limits: an open that hits one stops the walk, it does not end the tree. */
-export function isWatchLimit(error: unknown): boolean {
+function isWatchLimit(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
   return code === 'ENOSPC' || code === 'EMFILE';
 }
