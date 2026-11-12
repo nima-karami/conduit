@@ -6,8 +6,10 @@
  */
 
 import { topLevelPaths } from '../src/drop-intent';
+import type { HostPlatform } from '../src/lsp-binary';
 import { isHtmlDocPath } from '../src/media-kind';
 import { countLabel, type MenuTargets, resolveMenuTargets } from '../src/menu-selection';
+import { platformWords } from '../src/platform-words';
 import type { MenuItem } from './components/context-menu';
 import { type HtmlView, setHtmlView } from './html-view-store';
 import {
@@ -36,6 +38,8 @@ export function resolveExplorerTargets(
 }
 
 export interface ExplorerMenuContext {
+  /** Names the file manager in the reveal item. */
+  platform: HostPlatform;
   /** The right-clicked row. Its kind picks the variant (file vs folder); §16 #6. */
   node: { path: string; kind: 'dir' | 'file' };
   /** What the selection-scoped items act on: tree-ordered, top-level de-duped (§4.1). */
@@ -162,7 +166,7 @@ export function buildExplorerMenuItems(ctx: ExplorerMenuContext): MenuItem[] {
       onClick: () => ctx.onCopyText(targets.map(ctx.relativePath).join('\n')),
     },
     {
-      label: 'Reveal in Explorer',
+      label: platformWords(ctx.platform).reveal,
       icon: <IconExternal size={14} />,
       disabled: many,
       onClick: () => ctx.onReveal(node.path),

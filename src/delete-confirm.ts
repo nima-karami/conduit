@@ -7,7 +7,9 @@
  * verbatim, so both builders branch on N === 1 rather than degrading the bulk form.
  */
 
+import type { HostPlatform } from './lsp-binary';
 import { countNoun } from './menu-selection';
+import { platformWords } from './platform-words';
 
 /** The confirm is a fixed-size modal with no scroll region (§16 #3). */
 const NAME_LIST_CAP = 5;
@@ -33,16 +35,18 @@ function nameListing(paths: readonly string[]): string {
   return `\n\n${[...shown, ...(rest > 0 ? [`…and ${rest} more`] : [])].join('\n')}`;
 }
 
-export function trashConfirmMessage(paths: readonly string[]): string {
-  if (paths.length === 1) return `Move "${baseName(paths[0])}" to the Recycle Bin?`;
-  return `Move ${countNoun(paths.length, 'item', 'items')} to the Recycle Bin?${nameListing(paths)}`;
+export function trashConfirmMessage(paths: readonly string[], platform: HostPlatform): string {
+  const trash = platformWords(platform).trash;
+  if (paths.length === 1) return `Move "${baseName(paths[0])}" to the ${trash}?`;
+  return `Move ${countNoun(paths.length, 'item', 'items')} to the ${trash}?${nameListing(paths)}`;
 }
 
-export function permanentConfirmMessage(paths: readonly string[]): string {
+export function permanentConfirmMessage(paths: readonly string[], platform: HostPlatform): string {
+  const trash = platformWords(platform).trash;
   if (paths.length === 1) {
-    return `Couldn't move "${baseName(paths[0])}" to the Recycle Bin. Delete it permanently? This cannot be undone.`;
+    return `Couldn't move "${baseName(paths[0])}" to the ${trash}. Delete it permanently? This cannot be undone.`;
   }
-  return `Couldn't move ${countNoun(paths.length, 'item', 'items')} to the Recycle Bin. Delete permanently? This cannot be undone.${nameListing(paths)}`;
+  return `Couldn't move ${countNoun(paths.length, 'item', 'items')} to the ${trash}. Delete permanently? This cannot be undone.${nameListing(paths)}`;
 }
 
 /** Empty when there is nothing to say, so the caller can skip announcing. */

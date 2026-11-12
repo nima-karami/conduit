@@ -10,6 +10,8 @@
  *   / no permission); when enabled, a failed read surfaces an error toast.
  */
 
+import type { HostPlatform } from '../src/lsp-binary';
+import { platformWords } from '../src/platform-words';
 import { TERM_LINK_STR } from './term-link-strings';
 
 export interface TerminalMenuContext {
@@ -79,7 +81,14 @@ export type LinkMenuAction =
   | 'reveal'
   | 'openAsSession';
 
+/** The menu label of a link action. Only reveal names the OS, so only it depends on the platform. */
+export function linkActionLabel(action: LinkMenuAction, platform: HostPlatform): string {
+  return action === 'reveal' ? platformWords(platform).reveal : TERM_LINK_STR[action];
+}
+
 export interface LinkMenuContext {
+  /** Names the file manager in the reveal item. */
+  platform: HostPlatform;
   /** null = ambiguous (chooseClickAction → pick): every action goes through the picker. */
   target: 'file' | 'dir' | null;
   /** All matches (the resolution's total). */
@@ -112,7 +121,7 @@ export function buildLinkMenuItems(ctx: LinkMenuContext): LinkMenuItemSpec[] {
       ...(primary.length > 0 ? { separatorBefore: true } : {}),
     },
     { id: 'copyRelativePath', label: TERM_LINK_STR.copyRelativePath, ...countHint },
-    { id: 'reveal', label: TERM_LINK_STR.reveal, ...countHint },
+    { id: 'reveal', label: platformWords(ctx.platform).reveal, ...countHint },
   ];
   const sessionHint = ambiguous
     ? countHint

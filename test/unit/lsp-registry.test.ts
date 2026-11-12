@@ -72,7 +72,7 @@ describe('registry', () => {
   });
 
   it('languageInfo(GO_SERVER) has moduleMarker go.mod', () => {
-    expect(languageInfo(GO_SERVER)).toEqual({
+    expect(languageInfo(GO_SERVER, 'linux')).toEqual({
       languageId: 'go',
       languageIds: ['go'],
       displayName: 'Go',
@@ -323,13 +323,23 @@ describe('Python, Rust and C/C++ (spec 2026-10-08-language-coverage §2.5)', () 
   });
 });
 
+describe('CLANGD_SERVER install hint', () => {
+  it('names the package manager that exists on each platform', () => {
+    const hint = (platform: 'win32' | 'darwin' | 'linux') =>
+      languageInfo(CLANGD_SERVER, platform).installHint;
+    expect(hint('win32')).toBe('winget install LLVM.LLVM');
+    expect(hint('darwin')).toBe('brew install llvm');
+    expect(hint('linux')).toBe('sudo apt install clangd');
+  });
+});
+
 describe('CSHARP_SERVER', () => {
   it('is served as csharp with a project marker required', () => {
     expect(serverSpecFor('csharp')).toBe(CSHARP_SERVER);
     expect(CSHARP_SERVER.requiresMarker).toBe(true);
     expect(GO_SERVER.requiresMarker).toBe(false);
     expect(GO_SERVER.watchIgnoreDirs).toEqual([]);
-    expect(languageInfo(CSHARP_SERVER)).toEqual({
+    expect(languageInfo(CSHARP_SERVER, 'linux')).toEqual({
       languageId: 'csharp',
       languageIds: ['csharp'],
       displayName: 'C#',

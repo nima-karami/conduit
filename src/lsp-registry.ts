@@ -34,7 +34,8 @@ export interface LanguageServerSpec {
   /** Dir names whose contents never reach the server's watched-files feed — build output the
    *  server's own project load regenerates would otherwise loop reload → regenerate. */
   watchIgnoreDirs: readonly string[];
-  installHint: string;
+  /** The install line per platform: the package manager there is what the user has. */
+  installHint: Readonly<Record<HostPlatform, string>>;
   /** What starting it runs in the project, for the Workspace Trust prompt's one-line why. */
   runsTools: string;
   /** Sent as `initialize.initializationOptions` when set. */
@@ -55,6 +56,13 @@ export interface LanguageServerSpec {
     platform: HostPlatform,
   ): Record<string, string | undefined>;
 }
+
+/** A tool installed the same way on every platform. */
+const everywhere = (command: string): Readonly<Record<HostPlatform, string>> => ({
+  win32: command,
+  darwin: command,
+  linux: command,
+});
 
 export const GO_FIXED_DIRS: Readonly<Record<HostPlatform, readonly string[]>> = {
   darwin: ['/usr/local/go/bin', '/opt/homebrew/bin'],
@@ -114,7 +122,7 @@ export const GO_SERVER: LanguageServerSpec = {
   requiresMarker: false,
   watchGlobs: ['**/*.go', '**/go.mod', '**/go.sum', '**/go.work'],
   watchIgnoreDirs: [],
-  installHint: 'go install golang.org/x/tools/gopls@latest',
+  installHint: everywhere('go install golang.org/x/tools/gopls@latest'),
   runsTools: 'gopls, go list',
 
   async resolveToolDir(ctx) {
@@ -185,7 +193,7 @@ export const CSHARP_SERVER: LanguageServerSpec = {
     '**/global.json',
   ],
   watchIgnoreDirs: ['bin', 'obj'],
-  installHint: 'dotnet tool install --global csharp-ls',
+  installHint: everywhere('dotnet tool install --global csharp-ls'),
   runsTools: 'csharp-ls, dotnet / MSBuild (evaluates project files)',
 
   async resolveToolDir(ctx) {
@@ -242,7 +250,7 @@ export const PYTHON_SERVER: LanguageServerSpec = {
     '.pytest_cache',
     '.ruff_cache',
   ],
-  installHint: 'pip install basedpyright',
+  installHint: everywhere('pip install basedpyright'),
   runsTools: "basedpyright, python (reads the interpreter's import paths)",
   settings: { 'basedpyright.analysis': PY_ANALYSIS, 'python.analysis': PY_ANALYSIS },
 
@@ -280,7 +288,7 @@ export const RUST_SERVER: LanguageServerSpec = {
   requiresMarker: true,
   watchGlobs: ['**/*.rs', '**/Cargo.toml', '**/Cargo.lock', '**/rust-toolchain.toml'],
   watchIgnoreDirs: ['target'],
-  installHint: 'rustup component add rust-analyzer',
+  installHint: everywhere('rustup component add rust-analyzer'),
   runsTools: 'rust-analyzer, cargo metadata, build scripts and proc-macros',
   initializationOptions: { checkOnSave: false },
   settings: { 'rust-analyzer': { checkOnSave: false } },
@@ -332,7 +340,11 @@ export const CLANGD_SERVER: LanguageServerSpec = {
     '**/.clangd',
   ],
   watchIgnoreDirs: ['CMakeFiles'],
-  installHint: 'winget install LLVM.LLVM',
+  installHint: {
+    win32: 'winget install LLVM.LLVM',
+    darwin: 'brew install llvm',
+    linux: 'sudo apt install clangd',
+  },
   runsTools: 'clangd (reads compile_commands.json; writes .cache/clangd)',
 
   async resolveToolDir() {
@@ -371,13 +383,13 @@ export function serverSpecFor(
   return registry.find((s) => s.languageIds.includes(languageId)) ?? null;
 }
 
-export function languageInfo(spec: LanguageServerSpec): LspLanguageInfo {
+export function languageInfo(spec: LanguageServerSpec, platform: HostPlatform): LspLanguageInfo {
   return {
     languageId: primaryLanguageId(spec),
     languageIds: [...spec.languageIds],
     displayName: spec.displayName,
     binary: spec.binary,
-    installHint: spec.installHint,
+    installHint: spec.installHint[platform],
     moduleMarker: spec.rootMarkers.module[0] ?? '',
   };
 }

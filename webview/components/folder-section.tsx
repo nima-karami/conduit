@@ -13,6 +13,7 @@ import { dropIntent, topLevelPaths } from '../../src/drop-intent';
 import { folderKey } from '../../src/folder-key';
 import { countNoun } from '../../src/menu-selection';
 import { isAncestorOf } from '../../src/owning-session';
+import { rendererPlatform } from '../../src/platform-words';
 import type { ChangeKind } from '../../src/protocol';
 import type { FolderSectionModel } from '../../src/session-sections';
 import type { ActiveTarget } from '../active-target';
@@ -646,6 +647,7 @@ export function FolderSection({
       x: e.clientX,
       y: e.clientY,
       items: buildExplorerMenuItems({
+        platform: rendererPlatform,
         node,
         targets,
         targetDir: dropFolderFor(node),
