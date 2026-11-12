@@ -6,6 +6,10 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- Clicking close again while the quit prompt is up now offers "Close anyway".
+- A window that won't close is closed after 5 seconds.
+
 ## [0.61.0] — 2026-11-08
 
 ### Added
