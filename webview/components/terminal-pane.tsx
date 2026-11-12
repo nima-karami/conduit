@@ -59,7 +59,7 @@ import {
 } from '../term-menu';
 import { initialTermSearchState, termSearchReducer } from '../term-search';
 import { notifyTerminalBus, registerTerminal } from '../terminal-bus';
-import { terminalClipboardAction } from '../terminal-clipboard';
+import { pasteRoute, terminalClipboardAction } from '../terminal-clipboard';
 import { matchConhostCellWidths, windowsPtyOptions, writeReplay } from '../terminal-conpty';
 import { CONTEXT_WINDOW_LINES, inferContextRoot } from '../terminal-context-root';
 import { formatPathForTerminal, TERMINAL_PATH_MIME, terminalDropEffect } from '../terminal-drop';
@@ -109,6 +109,7 @@ const MENU_ICONS = {
 // copies only when a selection exists. Drives terminalClipboardAction.
 const IS_MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
 const IS_WINDOWS = typeof navigator !== 'undefined' && /Win/i.test(navigator.platform);
+const IS_LINUX = typeof navigator !== 'undefined' && /Linux/i.test(navigator.platform);
 // Mirrors PATH_LINK_OPTS in electron/main.ts: the host folds case everywhere but Linux.
 const CONTEXT_PATH_OPTS = {
   platform: IS_WINDOWS ? ('win32' as const) : ('posix' as const),
@@ -216,6 +217,16 @@ function displayFactsOf(term: Terminal): DisplayFacts {
 
 function tellHostFacts(sessionId: string, term: Terminal) {
   post({ type: 'term:facts', sessionId, facts: displayFactsOf(term) });
+}
+
+// A rejected read() (permission, unsupported platform) means no image, not an error to toast.
+async function clipboardHasImage(): Promise<boolean> {
+  try {
+    const items = await navigator.clipboard.read();
+    return items.some((item) => item.types.some((t) => t.startsWith('image/')));
+  } catch {
+    return false;
+  }
 }
 
 /** True while a cold replay is queued: the fit is skipped and owed to the replay's end. */
@@ -1388,16 +1399,23 @@ export function TerminalPane({
   // not N lines each acting like Enter. Raw text via term:input would bypass that.
   // The app removes the native Edit menu (Menu.setApplicationMenu(null)), so Ctrl/Cmd+V
   // has no accelerator and never fires a native paste — the keydown handler calls this.
+  // On Linux an image-only clipboard is forwarded as a raw Ctrl+V so Claude Code reads the
+  // image itself; see pasteRoute for why 0x16 is never sent without an image.
   const pasteFromClipboard = () => {
     const term = termRef.current;
     if (!term) return;
     void (async () => {
+      let text: string;
       try {
-        const text = await navigator.clipboard.readText();
-        if (text) term.paste(text);
+        text = await navigator.clipboard.readText();
       } catch {
         pushToast({ message: 'Paste failed: clipboard is unavailable.', variant: 'error' });
+        return;
       }
+      const hasImage = !text && IS_LINUX && (await clipboardHasImage());
+      const route = pasteRoute({ text, hasImage, isLinux: IS_LINUX });
+      if (route === 'text') term.paste(text);
+      else if (route === 'raw-ctrl-v') post({ type: 'term:input', sessionId, data: '\x16' });
     })();
   };
 

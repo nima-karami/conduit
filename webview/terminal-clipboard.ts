@@ -34,3 +34,15 @@ export function terminalClipboardAction(
   }
   return null;
 }
+
+// What Ctrl+V should do. On Linux, Claude Code reads an image from the clipboard itself when
+// it receives a raw 0x16 on stdin, so an image-only clipboard forwards the keystroke. Off
+// Linux that path is not taken, and a raw 0x16 is never sent without an image: in bash it is
+// readline's quoted-insert and would swallow the next key.
+export type PasteRoute = 'text' | 'raw-ctrl-v' | 'none';
+
+export function pasteRoute(o: { text: string; hasImage: boolean; isLinux: boolean }): PasteRoute {
+  if (o.text) return 'text';
+  if (o.isLinux && o.hasImage) return 'raw-ctrl-v';
+  return 'none';
+}

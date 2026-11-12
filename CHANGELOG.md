@@ -6,6 +6,9 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- On Linux, Ctrl+V in a terminal now reaches Claude Code when the clipboard holds an image, so Claude Code can attach it. Text pastes as before.
+
 ## [0.61.0] — 2026-11-08
 
 ### Added
