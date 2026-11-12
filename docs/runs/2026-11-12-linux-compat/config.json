@@ -1,0 +1,27 @@
+{
+  "project": "conduit",
+  "worker": "build-loop",
+  "policy": {
+    "spec_approval": "ask",
+    "design_pick": "ask",
+    "scope_change": "ask",
+    "budget_overrun": "ask",
+    "release": "ask",
+    "nimbus_change": "ask"
+  },
+  "quiet_hours": null,
+  "budget": {
+    "run": {
+      "tokens": 20000000,
+      "minutes": 600
+    },
+    "step": {
+      "tokens": 2000000,
+      "minutes": 90,
+      "attempts": 3
+    }
+  },
+  "notify": {
+    "channel": "notion-mention"
+  }
+}
