@@ -13,6 +13,7 @@ import {
 } from './path-guard';
 import type { DiffBase, DiffScope, DirEntryDTO, FileContentDTO, FileDiffDTO } from './protocol';
 import type { GrantStore } from './read-grants';
+import { applyReplacedMode, checkReplaceable } from './user-file-replace';
 
 export { isBinary, langFromPath };
 
@@ -302,6 +303,9 @@ export async function writeFile(
   // Same-directory temp so the final rename is atomic (same filesystem/volume).
   const tmp = path.join(dir, `.${path.basename(target)}.${process.pid}.${Date.now()}.tmp`);
   try {
+    // A read-only target is refused before any temp file exists; see user-file-replace.ts.
+    const replace = await checkReplaceable(target);
+    if (!replace.ok) return replace;
     // Overwrite of a buffer whose folder was deleted under it. Rooted writes only: validateWrite
     // proved the whole path inside a root; a read grant is one exact file, never its folders.
     // And only below a root that still exists — a recursive mkdir would otherwise recreate a
@@ -314,6 +318,7 @@ export async function writeFile(
       await fs.promises.mkdir(dir, { recursive: true });
     }
     await fs.promises.writeFile(tmp, content, 'utf8');
+    if (replace.original) await applyReplacedMode(tmp, replace.original);
     await fs.promises.rename(tmp, target);
     return { ok: true, path: target };
   } catch (e: unknown) {

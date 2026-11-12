@@ -617,3 +617,44 @@ describe('parseWriteOptions (IPC trust boundary)', () => {
     expect(parseWriteOptions('x')).toBeNull();
   });
 });
+
+// POSIX permission semantics: a rename swaps the directory entry, so a save must carry the
+// replaced file's mode, and refuse a file the process cannot write. Root bypasses W_OK.
+const isRoot = process.platform !== 'win32' && process.getuid?.() === 0;
+const posixOnly = process.platform === 'win32' || isRoot;
+
+describe("fileService writeFile keeps a user file's permissions (POSIX)", () => {
+  it.skipIf(process.platform === 'win32')('creates a new file with default bits', async () => {
+    const root = fs.realpathSync.native(tmp());
+    const f = path.join(root, 'fresh.ts');
+    const res = await writeFile(f, 'new', [root]);
+    expect(res.ok).toBe(true);
+    expect(fs.readFileSync(f, 'utf8')).toBe('new');
+  });
+
+  it.skipIf(posixOnly)('saving over a 0755 file keeps it executable', async () => {
+    const root = fs.realpathSync.native(tmp());
+    const f = path.join(root, 'run.sh');
+    fs.writeFileSync(f, '#!/bin/sh\necho a\n');
+    fs.chmodSync(f, 0o755);
+    const res = await writeFile(f, '#!/bin/sh\necho b\n', [root]);
+    expect(res.ok).toBe(true);
+    expect(fs.readFileSync(f, 'utf8')).toBe('#!/bin/sh\necho b\n');
+    expect(fs.statSync(f).mode & 0o7777).toBe(0o755);
+  });
+
+  it.skipIf(posixOnly)(
+    'saving over a 0444 file is refused and leaves content and mode unchanged',
+    async () => {
+      const root = fs.realpathSync.native(tmp());
+      const f = path.join(root, 'ro.ts');
+      fs.writeFileSync(f, 'locked');
+      fs.chmodSync(f, 0o444);
+      const res = await writeFile(f, 'changed', [root]);
+      expect(res).toEqual({ ok: false, error: `Permission denied: ${f} is read-only` });
+      expect(fs.readFileSync(f, 'utf8')).toBe('locked');
+      expect(fs.statSync(f).mode & 0o7777).toBe(0o444);
+      expect(fs.readdirSync(root).filter((n) => n.includes('.tmp'))).toEqual([]);
+    },
+  );
+});

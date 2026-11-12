@@ -257,3 +257,30 @@ describe('pipeline config + queue (G4)', () => {
     expect(new Set(queue.entries.map((e) => e.id)).size).toBe(20);
   });
 });
+
+// A `.conduit/` artifact is a user-owned workspace file: a save keeps its mode and refuses a
+// read-only one, the same as a file the editor writes. Root bypasses W_OK, so skip it there.
+const posixOnly = process.platform === 'win32' || process.getuid?.() === 0;
+
+describe('conduit-fs writes to a user-owned artifact keep its permissions (POSIX)', () => {
+  it.skipIf(posixOnly)('saving over a 0755 artifact keeps 0755', async () => {
+    await writeBoardArtifactFile(root, { version: 1, cards: [] });
+    const file = conduitPath(root, 'board.json');
+    fs.chmodSync(file, 0o755);
+    await writeBoardArtifactFile(root, { version: 1, cards: [] });
+    expect(fs.statSync(file).mode & 0o7777).toBe(0o755);
+  });
+
+  it.skipIf(posixOnly)('a read-only artifact is refused and left untouched', async () => {
+    await writeBoardArtifactFile(root, { version: 1, cards: [] });
+    const file = conduitPath(root, 'board.json');
+    const before = fs.readFileSync(file, 'utf8');
+    fs.chmodSync(file, 0o444);
+    await expect(
+      writeBoardArtifactFile(root, { version: 1, cards: [{ id: 'X' }] } as unknown as BoardData),
+    ).rejects.toThrow('read-only');
+    expect(fs.readFileSync(file, 'utf8')).toBe(before);
+    expect(fs.statSync(file).mode & 0o7777).toBe(0o444);
+    expectNoTempLeftovers();
+  });
+});
