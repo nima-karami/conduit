@@ -23,7 +23,9 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, REPO, runScenario } from './harness.mjs';
+import { assert, openSession, REPO, runScenario, windowsOnlyScenario } from './harness.mjs';
+
+await windowsOnlyScenario('terminal-gpu-reset', 'cmd.exe shell sessions');
 
 const SESSIONS = 3;
 // Measured: ~17k bright pixels with text on screen; the broken atlas leaves 0–119 (the cursor).

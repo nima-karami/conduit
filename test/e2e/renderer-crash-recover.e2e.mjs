@@ -21,10 +21,18 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, finishScenario, launchApp, makeLog, openSession } from './harness.mjs';
+import {
+  assert,
+  e2ePlatformSupported,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openSession,
+  waitForShellPrompt,
+} from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[renderer-crash-recover] SKIP — suite is Windows-only');
+if (!e2ePlatformSupported()) {
+  console.log('[renderer-crash-recover] SKIP — suite does not run on this platform (macOS)');
   await finishScenario(0);
 }
 
@@ -87,9 +95,13 @@ try {
     timeout: 15000,
   });
   // ConPTY needs a moment to spawn and paint; input typed before the prompt exists is lost.
-  await page.waitForFunction(() => /Microsoft Windows|>/.test(window.__cap || ''), null, {
-    timeout: 25000,
-  });
+  if (process.platform === 'win32') {
+    await page.waitForFunction(() => /Microsoft Windows|>/.test(window.__cap || ''), null, {
+      timeout: 25000,
+    });
+  } else {
+    await waitForShellPrompt(page, sid, 25000);
+  }
 
   // Seeds the ring AND proves the PTY works before the crash — the post-crash assertions are
   // only meaningful against a shell that was demonstrably alive.

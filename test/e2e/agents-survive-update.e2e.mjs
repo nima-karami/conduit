@@ -42,7 +42,7 @@ async function run() {
       },
     ]),
   );
-  const names = teardownNames(userData, 'win32', tmpdir());
+  const names = teardownNames(userData, process.platform, tmpdir());
   assertOwnSession(names.hcSession, process.env.HC_SESSION);
   const env = {
     ...hcEnv(process.env, names),
@@ -206,7 +206,7 @@ async function run() {
     assert(
       // The fake agent's 100 ms interval drifts, so the last tick number is not fixed; the prompt it
       // writes straight after the final tick marks the end of the busy interval.
-      await until(() => /working \d+\r\nfake❯ /.test(b.output()), 40_000),
+      await until(() => /working \d+\r+\nfake❯ /.test(b.output()), 40_000),
       'busy interval did not end in gap',
     );
     assert(

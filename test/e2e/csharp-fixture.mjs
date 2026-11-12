@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { assert } from './harness.mjs';
+import { probeServer } from './lsp-fixture.mjs';
 
 export const READY_CEILING_MS = 150_000;
 export const CSHARP_TOOLS = /csharp-ls|dotnet/i;
@@ -76,6 +77,12 @@ export function restoreFixture(dir, log) {
 
 /** The host's own lookup is richer (lsp-registry CSHARP_SERVER); this only tells installed from not. */
 export function csharpLsInstalled() {
+  if (process.platform !== 'win32') {
+    return (
+      probeServer('csharp-ls', ['--version']).ok ||
+      existsSync(join(homedir(), '.dotnet', 'tools', 'csharp-ls'))
+    );
+  }
   if (spawnSync('where', ['csharp-ls'], { stdio: 'ignore' }).status === 0) return true;
   return existsSync(join(homedir(), '.dotnet', 'tools', 'csharp-ls.exe'));
 }

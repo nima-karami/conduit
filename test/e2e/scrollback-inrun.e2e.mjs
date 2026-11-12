@@ -33,12 +33,10 @@ import {
   terminalFace,
   typeLine,
   waitForOutput,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[scrollback-inrun] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('scrollback-inrun', 'cmd.exe /k agent sessions');
 
 const log = makeLog('scrollback-inrun');
 const require = createRequire(import.meta.url);

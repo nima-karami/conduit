@@ -8,7 +8,15 @@
  * dir. Run: `npm run build`, then `node test/e2e/run-smoke.mjs nav-keybindings-settings`.
  */
 
-import { assert, closeApp, finishScenario, launchApp, makeLog, openSession } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  e2ePlatformSupported,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openSession,
+} from './harness.mjs';
 import {
   activeTab,
   cursorLine,
@@ -21,8 +29,8 @@ import {
   waitForIndexReady,
 } from './nav-history-fixture.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[nav-keybindings-settings] SKIP — suite is Windows-only');
+if (!e2ePlatformSupported()) {
+  console.log('[nav-keybindings-settings] SKIP — suite does not run on this platform (macOS)');
   await finishScenario(0);
 }
 

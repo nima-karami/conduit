@@ -25,12 +25,10 @@ import {
   revealSessionRow,
   shutdownApp,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[scrollback-restore] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('scrollback-restore', 'ConPTY spawn clear');
 
 const log = makeLog('scrollback-restore');
 const require = createRequire(import.meta.url);

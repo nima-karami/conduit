@@ -5,13 +5,14 @@
  * `AUTO_SAVE_SHOTS=<absolute dir>` saves screenshots of the new UI there (runtime proof).
  */
 
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
   assert,
   captureFailure,
+  e2ePlatformSupported,
   finishScenario,
+  fixtureMkdtemp,
   launchApp,
   makeLog,
   openSession,
@@ -172,8 +173,8 @@ export const writesTo = async (app, name) =>
  */
 export async function runAutoSave(name, { before = {}, files, phases }) {
   const log = makeLog(name);
-  if (process.platform !== 'win32') {
-    log('SKIP — suite is Windows-only (non-win32 platform)');
+  if (!e2ePlatformSupported()) {
+    log('SKIP — suite does not run on this platform (macOS)');
     await finishScenario(0);
   }
   let code = 0;
@@ -185,7 +186,7 @@ export async function runAutoSave(name, { before = {}, files, phases }) {
     }
     const selected = Object.entries(phases).filter(([n]) => !ONLY || ONLY === n);
     if (selected.length > 0) {
-      const root = mkdtempSync(join(tmpdir(), 'conduit-autosave-'));
+      const root = fixtureMkdtemp('conduit-autosave-');
       for (const [n, c] of Object.entries(files)) {
         mkdirSync(dirname(join(root, n)), { recursive: true });
         writeFileSync(join(root, n), c);

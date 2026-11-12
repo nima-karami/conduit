@@ -24,7 +24,15 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario, writeToTerminal } from './harness.mjs';
+import {
+  assert,
+  openSession,
+  runScenario,
+  windowsOnlyScenario,
+  writeToTerminal,
+} from './harness.mjs';
+
+await windowsOnlyScenario('link-cwd', 'PowerShell cwd injection');
 
 const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 

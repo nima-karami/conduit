@@ -21,10 +21,17 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assert, finishScenario, launchApp, makeLog, openSession } from './harness.mjs';
+import {
+  assert,
+  e2ePlatformSupported,
+  finishScenario,
+  launchApp,
+  makeLog,
+  openSession,
+} from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[plan-blocks] SKIP — suite is Windows-only');
+if (!e2ePlatformSupported()) {
+  console.log('[plan-blocks] SKIP — suite does not run on this platform (macOS)');
   await finishScenario(0);
 }
 

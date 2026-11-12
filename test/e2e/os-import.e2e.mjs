@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   assert,
+  e2ePlatformSupported,
   finishScenario,
   launchApp,
   openSession,
@@ -20,8 +21,8 @@ import {
   tapBridge,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[os-import] SKIP — suite is Windows-only');
+if (!e2ePlatformSupported()) {
+  console.log('[os-import] SKIP — suite does not run on this platform (macOS)');
   await finishScenario(0);
 }
 

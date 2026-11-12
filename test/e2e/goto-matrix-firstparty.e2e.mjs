@@ -28,7 +28,7 @@ import {
   waitForIndexReady,
   waitForSupplementalIndex,
 } from './goto-matrix.mjs';
-import { openSession, runScenario } from './harness.mjs';
+import { installUriPathKey, openSession, runScenario } from './harness.mjs';
 
 runScenario('goto-matrix-firstparty', async ({ app, page, log }) => {
   const base = mkdtempSync(join(tmpdir(), 'goto-fx-fp-'));
@@ -244,10 +244,11 @@ runScenario('goto-matrix-firstparty', async ({ app, page, log }) => {
       await clearTransients(page);
       await closeAllDocs(page);
       const treePath = await openViaTree(page, root, ['src', 'first', 'rel-target.ts']);
+      await installUriPathKey(page);
       await page.waitForFunction(
         (want) =>
           (window.monaco?.editor.getEditors() ?? []).some(
-            (e) => e.getModel()?.uri.path.toLowerCase() === `/${want.toLowerCase()}`,
+            (e) => window.__uriPathKey(e.getModel()?.uri.path) === window.__uriPathKey(want),
           ),
         treePath,
         { timeout: 20000 },
@@ -272,11 +273,12 @@ runScenario('goto-matrix-firstparty', async ({ app, page, log }) => {
     async () => {
       await clearTransients(page);
       await openDoc(app, page, sid, f('src/first/dirty-target.ts'));
+      await installUriPathKey(page);
       const shifted = await page.evaluate(
         (p) => {
           const ed = window.monaco.editor
             .getEditors()
-            .find((e) => e.getModel()?.uri.path.toLowerCase() === `/${p.toLowerCase()}`);
+            .find((e) => window.__uriPathKey(e.getModel()?.uri.path) === window.__uriPathKey(p));
           const model = ed?.getModel();
           if (!ed || !model) return 0;
           ed.executeEdits('goto-matrix', [

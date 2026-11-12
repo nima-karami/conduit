@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import {
   assert,
   createProject,
+  e2ePlatformSupported,
   finishScenario,
   launchElectron,
   makeLog,
@@ -32,8 +33,8 @@ import {
   tapBridge,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[sidebar-dnd] SKIP — suite is Windows-only');
+if (!e2ePlatformSupported()) {
+  console.log('[sidebar-dnd] SKIP — suite does not run on this platform (macOS)');
   await finishScenario(0);
 }
 
@@ -136,6 +137,21 @@ try {
   // ── Scenarios 1 & 2: rank order, and no manual reorder ─────────────────
   log('Scenarios 1 & 2: the tree is in rank order and a row-on-row drop reorders nothing...');
   await selectSpace(page, 'all');
+  // Bash sessions flip working↔idle as they settle, and each flip can move a row; read the order
+  // only once no session's status has changed for ~1 s.
+  await page.waitForFunction(
+    () => {
+      const sig = JSON.stringify((window.__sessions || []).map((s) => [s.id, s.status]));
+      const now = Date.now();
+      if (window.__statusSig !== sig) {
+        window.__statusSig = sig;
+        window.__statusSigAt = now;
+      }
+      return now - window.__statusSigAt >= 1000;
+    },
+    null,
+    { polling: 100, timeout: 30000 },
+  );
   const order0 = await treeOrder(page);
   const groups0 = order0.filter((k) => k.startsWith('group:')).map((k) => k.slice(6));
   assert(

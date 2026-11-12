@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { openSession, REPO, spyMain } from './harness.mjs';
+import { defaultShellAgent, openSession, REPO, spyMain } from './harness.mjs';
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'pipe' });
 
@@ -190,7 +190,7 @@ export function guestScript(app, url, js) {
 
 /** A shell session on the repo, an `openExternal` spy, and `url` open as the active web tab. */
 export async function startWebFixture(app, page, url, title) {
-  await openSession(page, { path: REPO.replace(/\\/g, '/'), agentId: 'shell:cmd' });
+  await openSession(page, { path: REPO.replace(/\\/g, '/'), agentId: defaultShellAgent() });
   await spyMain(app, [{ api: 'openExternal' }]);
   await openWebTab(app, page, url, title);
 }

@@ -25,8 +25,15 @@ import {
   pointOn,
   trigger,
 } from './goto-matrix.mjs';
-import { assert, closeApp, launchApp, openSession, runScenario } from './harness.mjs';
-import { recordTree, survivorsAfter, waitServerIdle } from './lsp-fixture.mjs';
+import {
+  assert,
+  closeApp,
+  installUriPathKey,
+  launchApp,
+  openSession,
+  runScenario,
+} from './harness.mjs';
+import { probeServer, recordTree, survivorsAfter, waitServerIdle } from './lsp-fixture.mjs';
 
 const READY_CEILING_MS = 120_000;
 const INSTALL_CODE = 'go install golang.org/x/tools/gopls@latest';
@@ -49,6 +56,11 @@ function writeGoFixture(dir) {
 
 /** The host's own lookup is richer (spec §3.4); this only has to tell "installed" from "not". */
 function goplsInstalled() {
+  if (process.platform !== 'win32') {
+    return (
+      probeServer('gopls', ['version']).ok || existsSync(join(homedir(), 'go', 'bin', 'gopls'))
+    );
+  }
   if (spawnSync('where', ['gopls'], { stdio: 'ignore' }).status === 0) return true;
   return existsSync(join(homedir(), 'go', 'bin', 'gopls.exe'));
 }
@@ -197,12 +209,13 @@ async function waitFor(page, want, ms) {
 }
 
 /** Set the buffer of the editor showing `absPath`; returns the previous text. */
-function setBuffer(page, absPath, edit) {
+async function setBuffer(page, absPath, edit) {
+  await installUriPathKey(page);
   return page.evaluate(
     ({ path, e }) => {
       const ed = window.monaco.editor
         .getEditors()
-        .find((x) => x.getModel()?.uri.path.toLowerCase() === `/${path.toLowerCase()}`);
+        .find((x) => window.__uriPathKey(x.getModel()?.uri.path) === window.__uriPathKey(path));
       const model = ed.getModel();
       const before = model.getValue();
       model.setValue(e.whole ?? before.replace(e.from, e.to));

@@ -9,13 +9,11 @@ import {
   openSession,
   REPO,
   shutdownApp,
+  windowsOnlyScenario,
 } from './harness.mjs';
 import { sessionTerminalGone, waitForMessage, waitUntil } from './tray-helpers.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[tray-jumplist-stop] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('tray-jumplist-stop', 'Windows jump list and cmd.exe shell');
 
 let launched;
 let headless;

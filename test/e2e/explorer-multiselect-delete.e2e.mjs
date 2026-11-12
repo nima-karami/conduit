@@ -11,11 +11,11 @@
  * here and would hang the harness.
  */
 
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   assert,
+  fixtureMkdtemp,
   getSpyCalls,
   openSession,
   runScenario,
@@ -45,7 +45,7 @@ const menuRows = (page) =>
   });
 
 runScenario('explorer-multiselect-delete', async ({ app, page, log }) => {
-  const dir = mkdtempSync(join(tmpdir(), 'conduit-mdel-'));
+  const dir = fixtureMkdtemp('conduit-mdel-');
   const names = ['a.txt', 'b.txt', 'c.txt', 'd.txt', 'e.txt'];
   for (const n of names) writeFileSync(join(dir, n), `${n}\n`);
   const abs = (n) => join(dir, n);

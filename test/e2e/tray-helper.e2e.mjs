@@ -9,6 +9,7 @@ import {
   ownHc,
   REPO,
   shutdownApp,
+  windowsOnlyScenario,
 } from './harness.mjs';
 import {
   injectStop,
@@ -19,10 +20,7 @@ import {
   waitUntil,
 } from './tray-helpers.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[tray-helper] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('tray-helper', 'Windows tray helper and cmd.exe shell');
 
 let launched;
 let code = 0;

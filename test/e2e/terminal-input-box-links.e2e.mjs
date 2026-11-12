@@ -14,7 +14,13 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario, writeToTerminal } from './harness.mjs';
+import {
+  assert,
+  openSession,
+  runScenario,
+  waitForShellPrompt,
+  writeToTerminal,
+} from './harness.mjs';
 import { openPalette, paletteRow } from './middle-click-surfaces-helpers.mjs';
 
 const OUT_URL = 'https://example.com/agent-output-link';
@@ -37,9 +43,7 @@ runScenario('terminal-input-box-links', async ({ page, log }) => {
   }
   const sid = await openSession(page, { path: workDir.replace(/\\/g, '/') });
   await page.waitForFunction((id) => !!window.__termLinkProviders?.[id], sid, { timeout: 20000 });
-  await page.waitForFunction((dir) => (window.__cap || '').includes(`${dir}>`), workDir, {
-    timeout: 30000,
-  });
+  await waitForShellPrompt(page, sid, 30000);
   await page.waitForTimeout(500);
 
   const cols = await page.evaluate((id) => window.__terms[id].cols, sid);

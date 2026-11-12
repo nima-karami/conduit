@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { clangdInstalled, writeClangdFixture } from './clangd-fixture.mjs';
 import { csharpLsInstalled, writeCsharpFixture } from './csharp-fixture.mjs';
 import { clearTransients, openDoc, placeCursor } from './goto-matrix.mjs';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, installUriPathKey, openSession, runScenario } from './harness.mjs';
 import {
   EVICT_MIN_HIDDEN_MS,
   endsWith,
@@ -29,12 +29,13 @@ import { writeRustFixture } from './rust-fixture.mjs';
 
 /** Edits the model of a tab that is open but not shown (no editor is mounted on it): `prepend`
  *  first, then `from` → `to`. Returns the 1-based line `to` ends up on, or null with no model. */
-function editHiddenTab(page, absPath, { prepend = '', from, to }) {
+async function editHiddenTab(page, absPath, { prepend = '', from, to }) {
+  await installUriPathKey(page);
   return page.evaluate(
     ({ path, prepend, from, to }) => {
       const model = window.monaco.editor
         .getModels()
-        .find((m) => m.uri.path.toLowerCase() === `/${path.toLowerCase()}`);
+        .find((m) => window.__uriPathKey(m.uri.path) === window.__uriPathKey(path));
       if (!model) return null;
       model.setValue(prepend + model.getValue().replace(from, to));
       return (

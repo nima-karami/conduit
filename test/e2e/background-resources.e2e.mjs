@@ -33,7 +33,13 @@ runScenario('background-resources', async ({ app, page, log }) => {
       fs.watch = function (file, ...args) {
         const watcher = watch.call(this, file, ...args);
         const k = key(file);
-        if (k === key(target) || k.startsWith(`${key(target)}/.git`)) {
+        // On Linux a recursive watch is a walk of non-recursive watches (CON-9): the root's own
+        // watch is the handle, and the per-directory watches beneath it are not counted.
+        const counts =
+          process.platform === 'linux'
+            ? k === key(target)
+            : k === key(target) || k.startsWith(`${key(target)}/.git`);
+        if (counts) {
           globalThis.__resources.handles++;
           watcher.once('close', () => globalThis.__resources.handles--);
         }

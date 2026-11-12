@@ -22,12 +22,10 @@ it('executes the runner when launched through a directory junction or symlink', 
       { encoding: 'utf8', timeout: 10_000, windowsHide: true },
     );
     expect(result.error).toBeUndefined();
-    expect(result.status).toBe(process.platform === 'win32' ? 2 : 0);
-    expect(result.stdout).toContain(
-      process.platform === 'win32'
-        ? 'unknown flag --not-a-runner-flag'
-        : 'SKIP (suite is Windows-only)',
-    );
+    // The runner executed through the alias and rejected the flag; the suite now runs on Linux too,
+    // so the same usage error is the proof on every platform.
+    expect(result.status).toBe(2);
+    expect(result.stdout).toContain('unknown flag --not-a-runner-flag');
   } finally {
     // Remove only the link, never its target (the checkout): a Windows junction is a directory
     // entry, a POSIX symlink is a file entry.

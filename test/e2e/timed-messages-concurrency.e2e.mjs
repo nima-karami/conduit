@@ -34,12 +34,10 @@ import {
   profileDir,
   REPO,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[timed-messages-concurrency] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('timed-messages-concurrency', 'PowerShell stdin reader over ConPTY');
 
 const log = makeLog('timed-messages-concurrency');
 

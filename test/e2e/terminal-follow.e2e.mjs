@@ -18,6 +18,7 @@
 import {
   assert,
   closeApp,
+  e2ePlatformSupported,
   finishScenario,
   launchApp,
   makeLog,
@@ -25,8 +26,8 @@ import {
   REPO,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[terminal-follow] SKIP — suite is Windows-only');
+if (!e2ePlatformSupported()) {
+  console.log('[terminal-follow] SKIP — suite does not run on this platform (macOS)');
   await finishScenario(0);
 }
 
@@ -68,14 +69,18 @@ try {
     );
 
   // A bounded producer: enough scrollback to scroll through, then it stops on its own.
+  const producer =
+    process.platform === 'win32'
+      ? 'for /L %i in (1,1,3000) do @echo conduit-follow-line %i\r'
+      : 'for i in $(seq 1 3000); do echo conduit-follow-line $i; done\r';
   await page.evaluate(
-    (id) =>
+    ({ id, data }) =>
       window.agentDeck.post({
         type: 'term:input',
         sessionId: id,
-        data: 'for /L %i in (1,1,3000) do @echo conduit-follow-line %i\r',
+        data,
       }),
-    sid,
+    { id: sid, data: producer },
   );
   await page.waitForFunction((id) => (window.__terms?.[id]?.buffer.active.baseY ?? 0) > 200, sid, {
     timeout: 30000,
@@ -128,14 +133,13 @@ try {
 
   // The fix is re-arming follow-mode, not a one-shot jump: it must STAY at the bottom while
   // new output arrives.
+  const againLoop =
+    process.platform === 'win32'
+      ? 'for /L %i in (1,1,2000) do @echo conduit-follow-again %i\r'
+      : 'for i in $(seq 1 2000); do echo conduit-follow-again $i; done\r';
   await page.evaluate(
-    (id) =>
-      window.agentDeck.post({
-        type: 'term:input',
-        sessionId: id,
-        data: 'for /L %i in (1,1,2000) do @echo conduit-follow-again %i\r',
-      }),
-    sid,
+    ({ id, data }) => window.agentDeck.post({ type: 'term:input', sessionId: id, data }),
+    { id: sid, data: againLoop },
   );
   await waitPrinted('conduit-follow-again 2000');
   assert(await atBottom(), 'follow-mode should stay armed as more output arrives');

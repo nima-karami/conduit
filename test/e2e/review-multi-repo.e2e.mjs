@@ -28,8 +28,11 @@ import {
   openSession,
   runScenario,
   tapBridge,
+  windowsOnlyScenario,
   writeToTerminal,
 } from './harness.mjs';
+
+await windowsOnlyScenario('review-multi-repo', 'cmd.exe shell sessions and cmd prompt OSC 9;9');
 
 // --no-optional-locks: this scenario polls git while the app runs its own; a status that takes
 // index.lock makes the app's git reset / restore fail, and Discard all stops at its first step.

@@ -61,7 +61,7 @@ const pausedShown = (page, sid) =>
 await runScenario(
   'server-restart-supervisor',
   async ({ page, userDataDir, log }) => {
-    const names = teardownNames(userDataDir, 'win32', tmpdir());
+    const names = teardownNames(userDataDir, process.platform, tmpdir());
     const work = mkdtempSync(join(tmpdir(), 'conduit-server-restart-'));
     await page.evaluate(() => {
       window.__terms = {};

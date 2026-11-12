@@ -23,6 +23,7 @@ import { join } from 'node:path';
 import {
   assert,
   createProject,
+  e2ePlatformSupported,
   filterAgents,
   finishScenario,
   launchApp,
@@ -37,8 +38,8 @@ import {
   tapBridge,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[sidebar-projects] SKIP — suite is Windows-only');
+if (!e2ePlatformSupported()) {
+  console.log('[sidebar-projects] SKIP — suite does not run on this platform (macOS)');
   await finishScenario(0);
 }
 

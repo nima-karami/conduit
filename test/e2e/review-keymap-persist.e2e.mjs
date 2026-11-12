@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import {
   assert,
   closeApp,
+  e2ePlatformSupported,
   finishScenario,
   launchElectron,
   makeLog,
@@ -31,8 +32,8 @@ import {
   tapBridge,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[review-keymap-persist] SKIP — suite is Windows-only');
+if (!e2ePlatformSupported()) {
+  console.log('[review-keymap-persist] SKIP — suite does not run on this platform (macOS)');
   await finishScenario(0);
 }
 

@@ -56,15 +56,13 @@ import {
   shutdownApp,
   stopServer,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
 const NAME = 'mf-live-edits';
 const log = makeLog(NAME);
 
-if (process.platform !== 'win32') {
-  console.log(`[${NAME}] SKIP — suite is Windows-only (non-win32 platform)`);
-  await finishScenario(0);
-}
+await windowsOnlyScenario('mf-live-edits', '.cmd agent stub (claude.cmd)');
 
 const userDataDir = profileDir('mle');
 const work = mkdtempSync(join(tmpdir(), 'conduit-mle-work-'));

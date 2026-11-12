@@ -25,12 +25,10 @@ import {
   revealSessionRow,
   shutdownApp,
   tapBridge,
+  windowsOnlyScenario,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[scrollback-geometry] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('scrollback-geometry', 'ConPTY absolute painting');
 
 const log = makeLog('scrollback-geometry');
 const require = createRequire(import.meta.url);

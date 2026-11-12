@@ -15,7 +15,14 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { changeRow, commitBase, installTabHelpers } from './changes-fixture.mjs';
-import { assert, openChangesTab, openSession, runScenario, showRightView } from './harness.mjs';
+import {
+  assert,
+  openChangesTab,
+  openSession,
+  runScenario,
+  showRightView,
+  waitForShellPrompt,
+} from './harness.mjs';
 import {
   G,
   groupCount,
@@ -54,17 +61,7 @@ runScenario('split-editor-focus-keep', async ({ app, page, log }) => {
       for (let i = 0; i < buf.length; i++) lines.push(buf.getLine(i)?.translateToString(true));
       return lines.join('\n').trimEnd();
     }, sid);
-  await page.waitForFunction(
-    (id) => {
-      const buf = window.__terms[id].buffer.active;
-      for (let i = 0; i < buf.length; i++) {
-        if (/>\s*$/.test(buf.getLine(i)?.translateToString(true) ?? '')) return true;
-      }
-      return false;
-    },
-    sid,
-    { timeout: 20000 },
-  );
+  await waitForShellPrompt(page, sid);
   const ptyIn = () => page.evaluate(() => window.__ptyIn.splice(0));
   const onTerminal = () =>
     page.evaluate(

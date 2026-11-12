@@ -11,7 +11,16 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario, showRightView } from './harness.mjs';
+import {
+  assert,
+  openSession,
+  runScenario,
+  showRightView,
+  windowsOnlyScenario,
+} from './harness.mjs';
+import { revealLabel } from './platform.mjs';
+
+await windowsOnlyScenario('mf-files', 'PowerShell cwd hook and Windows directory locks');
 
 // ── fixture ─────────────────────────────────────────────────────────────────
 
@@ -368,7 +377,7 @@ async function phaseActions({ app, page, log, sid }) {
   await page.keyboard.press('Escape');
   await page.locator('.ctxmenu').waitFor({ state: 'detached', timeout: 5000 });
   assert(
-    JSON.stringify(homeItems) === JSON.stringify(['Reveal in Explorer', 'Copy path']),
+    JSON.stringify(homeItems) === JSON.stringify([revealLabel(), 'Copy path']),
     `home menu should be Reveal + Copy path only, got ${JSON.stringify(homeItems)}`,
   );
   log('home menu has no Remove / Make home ✓');

@@ -45,13 +45,11 @@ import {
   profileDir,
   showRightView,
   tapBridge,
+  windowsOnlyScenario,
   writeToTerminal,
 } from './harness.mjs';
 
-if (process.platform !== 'win32') {
-  console.log('[review-notes-handoff] SKIP — suite is Windows-only');
-  await finishScenario(0);
-}
+await windowsOnlyScenario('review-notes-handoff', 'cmd.exe bracketed paste');
 
 const log = makeLog('review-notes-handoff');
 const lines = (n, f) => Array.from({ length: n }, (_, i) => f(i)).join('\n');
