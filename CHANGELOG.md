@@ -8,6 +8,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ### Fixed
 - A session in your home folder no longer re-indexes home every time an agent or shell writes a dotfile there (such as `~/.claude.json` or `~/.bash_history`).
+- Clicking close again while the quit prompt is up now offers "Close anyway".
+- A window that won't close is closed after 5 seconds.
 
 ## [0.61.0] — 2026-11-08
 

@@ -39,8 +39,17 @@ export function ConfirmDialog({ state, onClose }: { state: ConfirmState; onClose
   const messageId = useId();
   const onShownRef = useRef(state.onShown);
 
+  // Shown means painted: a frame after mount runs before the paint, the second one after it.
   useEffect(() => {
-    onShownRef.current?.();
+    let outer = 0;
+    let inner = 0;
+    outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => onShownRef.current?.());
+    });
+    return () => {
+      cancelAnimationFrame(outer);
+      cancelAnimationFrame(inner);
+    };
   }, []);
 
   const cancel = () => {

@@ -10,6 +10,8 @@ export interface GuardAsk {
 export const ACK_TIMEOUT_MS = 3000;
 export const SHOWN_TIMEOUT_MS = 12_000;
 export const GRANT_TTL_MS = 5000;
+// A proceeded window that has not closed by now is stuck in its beforeunload handler.
+export const CLOSE_DESTROY_GRACE_MS = 5000;
 
 export interface CloseGuardDeps {
   windowIds(): number[];
@@ -162,9 +164,22 @@ export function createCloseGuard(deps: CloseGuardDeps): CloseGuard {
     }
   }
 
+  // A shown dialog that the user cannot see (display not updating) must not trap them: a repeat
+  // request is their way to reach the native box that can close the window without it.
+  function openBox(a: LiveAsk): void {
+    if (a.phase !== 'shown' || a.box) return;
+    const box = new AbortController();
+    a.box = box;
+    void deps.confirmUnresponsive(a.id, box.signal).then((closeAnyway) => {
+      a.box = null;
+      if (closeAnyway) settle(a, true, 'answered');
+    });
+  }
+
   function reprobe(a: LiveAsk): void {
     if (a.phase === 'shown') deps.ask(a.id, a.ask);
     deps.focus(a.id);
+    openBox(a);
   }
 
   function liveAsk(id: number, requestId: number): LiveAsk | null {
@@ -237,13 +252,7 @@ export function createCloseGuard(deps: CloseGuardDeps): CloseGuard {
     },
     onUnresponsive(id) {
       const a = guard?.current;
-      if (!a || a.id !== id || a.phase !== 'shown' || a.box) return;
-      const box = new AbortController();
-      a.box = box;
-      void deps.confirmUnresponsive(id, box.signal).then((closeAnyway) => {
-        a.box = null;
-        if (closeAnyway) settle(a, true, 'answered');
-      });
+      if (a && a.id === id) openBox(a);
     },
     onWindowCreated(id) {
       if (guard?.kind === 'app' && !guard.toAsk.includes(id)) guard.toAsk.push(id);
@@ -255,6 +264,35 @@ export function createCloseGuard(deps: CloseGuardDeps): CloseGuard {
     },
     pending: () => guard !== null,
   };
+}
+
+/** The part of a BrowserWindow the fallback needs. */
+export interface CloseFallbackWindow {
+  id: number;
+  isDestroyed(): boolean;
+  destroy(): void;
+  once(event: 'closed', listener: () => void): unknown;
+}
+/**
+ * Destroys a window whose proceeded close is still pending after the grace period (its renderer is
+ * stuck, e.g. in beforeunload). Destroy skips beforeunload, so the close cannot hang.
+ */
+export function armCloseFallback(
+  w: CloseFallbackWindow,
+  deps: {
+    setTimer(fn: () => void, ms: number): unknown;
+    clearTimer(h: unknown): void;
+    log(m: string): void;
+  },
+): void {
+  const timer = deps.setTimer(() => {
+    if (w.isDestroyed()) return;
+    deps.log(
+      `close guard: window ${w.id} still open ${CLOSE_DESTROY_GRACE_MS} ms after its close proceeded; destroying it`,
+    );
+    w.destroy();
+  }, CLOSE_DESTROY_GRACE_MS);
+  w.once('closed', () => deps.clearTimer(timer));
 }
 
 export interface QuitGrant {
