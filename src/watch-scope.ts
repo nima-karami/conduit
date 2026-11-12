@@ -14,3 +14,8 @@ export function isBroadWatchRoot(dir: string, homeDir: string | undefined): bool
   const k = folderKey(dir);
   return FILESYSTEM_ROOT.test(k) || (!!homeDir && k === folderKey(homeDir));
 }
+
+// Agents' dotfile churn in home re-walked home on every write (CON-5).
+export function isBroadRootDotfileEvent(filename: string): boolean {
+  return filename.length > 0 && !/[\\/]/.test(filename) && filename.startsWith('.');
+}
