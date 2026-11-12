@@ -1,6 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { folderKey } from '../src/folder-key';
+import { shouldIgnoreWatchPath } from '../src/watch-filter';
+import { createRecursiveWatch, type RecursiveWatch } from './linux-recursive-watch';
 
 export type WatchFn = (
   dir: string,
@@ -40,18 +42,42 @@ export function namesWatchedDir(dir: string, filename: string): boolean {
   return folderKey(m[1] ? `\\\\${rest}` : rest) === folderKey(dir);
 }
 
+export interface WatchDirOpts {
+  recursive?: boolean;
+  watch?: WatchFn;
+  /**
+   * Linux recursive watches only: the directories to leave unwatched, root-relative. Defaults to
+   * `shouldIgnoreWatchPath`. A caller watching something other than a project tree passes its own.
+   */
+  ignore?: (rel: string) => boolean;
+  /**
+   * Linux recursive watches only: receives an ENOSPC/EMFILE. The watch keeps the directories it
+   * already has and `onGone` is not called. Without it a limit error goes to `onGone`.
+   */
+  onLimit?: (error: Error) => void;
+  /** Tests only; the real platform is used otherwise. */
+  platform?: NodeJS.Platform;
+}
+
 /**
  * `fs.watch` on a directory that cannot outlive it: the directory vanishing, or the watch
  * erroring, closes the watch and calls `onGone` exactly once (`error` is undefined for a
  * vanish). What "gone" means — drop, mark missing, re-arm later — is the caller's decision.
  * Throws whatever `fs.watch` throws when the watch cannot be opened.
+ *
+ * On Linux a recursive watch is a walk with one non-recursive watch per kept directory
+ * (`linux-recursive-watch.ts`): Node's own recursive watch there has no ignore list and costs
+ * an inotify watch on every node_modules directory too.
  */
 export function watchDir(
   dir: string,
-  opts: { recursive?: boolean; watch?: WatchFn },
+  opts: WatchDirOpts,
   onEvent: (event: string, filename: string | null) => void,
   onGone: (error?: Error) => void,
 ): DirWatch {
+  if (opts.recursive && (opts.platform ?? process.platform) === 'linux') {
+    return watchTree(dir, opts, onEvent, onGone);
+  }
   const watch = opts.watch ?? fs.watch;
   const target = resolveWatchDir(dir);
   let closed = false;
@@ -79,6 +105,38 @@ export function watchDir(
   return { close };
 }
 
+function watchTree(
+  dir: string,
+  opts: WatchDirOpts,
+  onEvent: (event: string, filename: string | null) => void,
+  onGone: (error?: Error) => void,
+): DirWatch {
+  let closed = false;
+  let tree: RecursiveWatch | undefined;
+  const stop = () => {
+    if (closed) return;
+    closed = true;
+    tree?.close();
+  };
+  tree = createRecursiveWatch(
+    dir,
+    {
+      ignore: opts.ignore ?? shouldIgnoreWatchPath,
+      watch: opts.watch,
+      onLimit: opts.onLimit,
+    },
+    (event, rel) => {
+      if (!closed) onEvent(event, rel);
+    },
+    (error) => {
+      if (closed) return;
+      stop();
+      onGone(error);
+    },
+  );
+  return { close: stop };
+}
+
 /**
  * A `watchDir` for a directory that may not exist yet, or may be deleted and recreated (a branch
  * switch): while it is missing — at start, after a vanish, or after an 'error' — it is looked for
@@ -90,7 +148,9 @@ export function watchDir(
  */
 export function watchDirWhilePresent(
   dir: string,
-  opts: { recursive?: boolean; log?: (message: string, error?: unknown) => void },
+  opts: Pick<WatchDirOpts, 'recursive' | 'ignore' | 'onLimit'> & {
+    log?: (message: string, error?: unknown) => void;
+  },
   onEvent: (event: string, filename: string | null) => void,
 ): DirWatch {
   let watch: DirWatch | null = null;
@@ -121,11 +181,16 @@ export function watchDirWhilePresent(
   const arm = () => {
     if (!present()) return awaitDir();
     try {
-      watch = watchDir(dir, { recursive: opts.recursive }, onEvent, (err) => {
-        watch = null;
-        if (err) return fail('watch error', err);
-        awaitDir();
-      });
+      watch = watchDir(
+        dir,
+        { recursive: opts.recursive, ignore: opts.ignore, onLimit: opts.onLimit },
+        onEvent,
+        (err) => {
+          watch = null;
+          if (err) return fail('watch error', err);
+          awaitDir();
+        },
+      );
     } catch (err) {
       return fail('could not watch', err);
     }

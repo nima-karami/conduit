@@ -938,6 +938,9 @@ async function gitShowBuffer(
 //    changes/updater/watcher errors).
 //  - reply(e, msg): direct request→response inside `handle`, back to the requester.
 //  - sendToOwner: session-scoped streams (term:data/exit, restored replay, activate).
+// The inotify limit is one notice per app run: every later hit would repeat the same advice.
+let watchLimitNoticed = false;
+
 function broadcast(msg: HostToWebview) {
   for (const w of windows.values()) w.webContents.send('to-webview', msg);
 }
@@ -1870,6 +1873,16 @@ app.whenReady().then(() => {
       new ProjectWatcher(onFire, {
         log: (m) => console.log('[watch]', m),
         onSuspect,
+        onWatchLimit: () => {
+          if (watchLimitNoticed) return;
+          watchLimitNoticed = true;
+          log.warn('folders', 'watch limit reached (inotify)');
+          broadcast({
+            type: 'error',
+            message:
+              'Conduit ran out of file watchers (inotify limit). Live refresh is off for some folders; raise fs.inotify.max_user_watches to fix.',
+          });
+        },
         onPath: (k) => repoTrackerHost.onWatchedPath(k),
         onLost: (f) => repoTrackerHost.lostFolders(f),
         onLive: (r) => repoTrackerHost.setLiveRoots(r),

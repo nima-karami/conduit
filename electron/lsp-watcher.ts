@@ -33,6 +33,8 @@ export function watchServerRoot(
   onGone: () => void,
   deps: {
     watch?: WatchFn;
+    /** Tests only: which platform's watch semantics apply (see watchDir). */
+    platform?: NodeJS.Platform;
     stat?: (p: string) => Promise<boolean>;
     log?: (m: string) => void;
     homeDir?: string;
@@ -91,7 +93,11 @@ export function watchServerRoot(
   try {
     watcher = watchDir(
       root,
-      { recursive: !isBroadWatchRoot(root, deps.homeDir ?? os.homedir()), watch: deps.watch },
+      {
+        recursive: !isBroadWatchRoot(root, deps.homeDir ?? os.homedir()),
+        watch: deps.watch,
+        platform: deps.platform,
+      },
       (event, filename) => {
         const rel = filename ?? '';
         if (!rel || shouldIgnoreWatchPath(rel) || !filter.matches(rel)) return;

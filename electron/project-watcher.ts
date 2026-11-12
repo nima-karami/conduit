@@ -40,6 +40,8 @@ export class ProjectWatcher {
   private readonly onPath?: (absKey: string) => void;
   private readonly onLost?: (folders: readonly string[]) => void;
   private readonly onLive?: (roots: readonly string[]) => void;
+  private readonly onWatchLimit?: () => void;
+  private readonly platform?: NodeJS.Platform;
 
   constructor(
     private readonly onFire: (fire: FsFire) => void,
@@ -51,6 +53,10 @@ export class ProjectWatcher {
       onPath?: (absKey: string) => void;
       onLost?: (folders: readonly string[]) => void;
       onLive?: (roots: readonly string[]) => void;
+      /** The inotify/fd limit was hit: some folders are no longer watched (the rest still are). */
+      onWatchLimit?: () => void;
+      /** Tests only: which platform's watch semantics apply (see watchDir). */
+      platform?: NodeJS.Platform;
       homeDir?: string;
     } = {},
   ) {
@@ -61,6 +67,8 @@ export class ProjectWatcher {
     this.onPath = opts.onPath;
     this.onLost = opts.onLost;
     this.onLive = opts.onLive;
+    this.onWatchLimit = opts.onWatchLimit;
+    this.platform = opts.platform;
     this.homeDir = opts.homeDir ?? os.homedir();
   }
 
@@ -117,7 +125,16 @@ export class ProjectWatcher {
     try {
       const watch = watchDir(
         dir,
-        { recursive: !this.isBroad(key), watch: this.watchFn },
+        {
+          recursive: !this.isBroad(key),
+          watch: this.watchFn,
+          platform: this.platform,
+          // Partial coverage is kept: the folder's other directories stay live (see watchDir).
+          onLimit: (err) => {
+            this.log?.(`watch limit reached under ${dir}: ${err}`);
+            this.onWatchLimit?.();
+          },
+        },
         (_event, filename) => this.onEvent(key, filename ?? ''),
         (err) => {
           this.log?.(err ? `watch error on ${dir}: ${err}` : `watched folder vanished: ${dir}`);

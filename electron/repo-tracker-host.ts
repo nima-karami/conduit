@@ -55,6 +55,14 @@ export interface RepoTrackerHost {
   stop(): void;
 }
 
+/**
+ * For a watch rooted AT a git dir: `objects/` and `logs/` sit at its top level, and the filter
+ * only knows them under a `.git` segment, so the path is prefixed as the event check below does.
+ */
+export function gitDirWatchIgnore(rel: string): boolean {
+  return shouldIgnoreWatchPath(`.git/${rel}`);
+}
+
 async function indexMtime(root: string): Promise<number> {
   const dotGit = path.join(root, '.git');
   const st = await fs.promises.stat(dotGit);
@@ -124,8 +132,18 @@ export function createRepoTrackerHost(deps: RepoTrackerHostDeps): RepoTrackerHos
         commonDir,
         {
           recursive: true,
+          ignore: gitDirWatchIgnore,
           log: (message, error) =>
             log.warn('repo-tracker', `git dir ${message}`, { commonDir, error: String(error) }),
+          onLimit: (error) =>
+            log.warn(
+              'repo-tracker',
+              'git dir watch limit reached; some refs may not refresh live',
+              {
+                commonDir,
+                error: String(error),
+              },
+            ),
         },
         (_event, filename) => {
           if (filename === null) return onLost();
