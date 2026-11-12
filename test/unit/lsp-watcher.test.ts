@@ -38,6 +38,7 @@ function setup(existing: string[] = [], filter = goFilter) {
   const files = new Set(existing.map(abs));
   const handle = watchServerRoot(ROOT, filter, (c) => batches.push(c), onMarker, onGone, {
     watch: w.watch,
+    platform: 'win32',
     stat: async (p) => files.has(p),
     log,
   });
@@ -54,7 +55,11 @@ afterEach(() => {
 describe('watchServerRoot — a home directory or filesystem root', () => {
   const recursiveFor = (root: string, homeDir: string) => {
     const w = fakeWatch();
-    watchServerRoot(root, goFilter, () => {}, vi.fn(), vi.fn(), { watch: w.watch, homeDir });
+    watchServerRoot(root, goFilter, () => {}, vi.fn(), vi.fn(), {
+      watch: w.watch,
+      platform: 'win32',
+      homeDir,
+    });
     return (w.watch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1];
   };
 
@@ -207,6 +212,7 @@ describe('watchServerRoot', () => {
     try {
       watchServerRoot(ROOT, goFilter, onChanges, vi.fn(), onGone, {
         watch: w.watch,
+        platform: 'win32',
         stat: async () => true,
         log,
       });

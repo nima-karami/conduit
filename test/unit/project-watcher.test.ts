@@ -30,9 +30,11 @@ function setup(opts: { throwOn?: string[]; homeDir?: string } = {}) {
   const paths: string[] = [];
   const lost: (readonly string[])[] = [];
   const live: (readonly string[])[] = [];
+  // Windows event semantics (the `\\?\` self-name, `recursive` flags): the platform is pinned.
   const pw = new ProjectWatcher((f) => fires.push(f), {
     debounceMs: 300,
     watch,
+    platform: 'win32',
     homeDir: opts.homeDir ?? '/nobody',
     log: (m) => logs.push(m),
     onSuspect: (folders) => suspects.push(folders),
