@@ -55,6 +55,12 @@ export interface WatchDirOpts {
    * already has and `onGone` is not called. Without it a limit error goes to `onGone`.
    */
   onLimit?: (error: Error) => void;
+  /**
+   * Linux recursive watches only: a directory that cannot be read or watched (EACCES/EPERM) is
+   * skipped with its subtree, and the rest stays live. Defaults to a console warning, so a skipped
+   * folder is never silent.
+   */
+  onSkip?: (rel: string, error: Error) => void;
   /** Tests only; the real platform is used otherwise. */
   platform?: NodeJS.Platform;
 }
@@ -124,6 +130,7 @@ function watchTree(
       ignore: opts.ignore ?? shouldIgnoreWatchPath,
       watch: opts.watch,
       onLimit: opts.onLimit,
+      onSkip: opts.onSkip,
     },
     (event, rel) => {
       if (!closed) onEvent(event, rel);
@@ -148,7 +155,7 @@ function watchTree(
  */
 export function watchDirWhilePresent(
   dir: string,
-  opts: Pick<WatchDirOpts, 'recursive' | 'ignore' | 'onLimit'> & {
+  opts: Pick<WatchDirOpts, 'recursive' | 'ignore' | 'onLimit' | 'onSkip'> & {
     log?: (message: string, error?: unknown) => void;
   },
   onEvent: (event: string, filename: string | null) => void,
@@ -183,7 +190,12 @@ export function watchDirWhilePresent(
     try {
       watch = watchDir(
         dir,
-        { recursive: opts.recursive, ignore: opts.ignore, onLimit: opts.onLimit },
+        {
+          recursive: opts.recursive,
+          ignore: opts.ignore,
+          onLimit: opts.onLimit,
+          onSkip: opts.onSkip,
+        },
         onEvent,
         (err) => {
           watch = null;

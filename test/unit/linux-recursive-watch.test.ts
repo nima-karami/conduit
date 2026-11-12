@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRecursiveWatch } from '../../electron/linux-recursive-watch';
+import type { WatchFn } from '../../electron/watch-dir';
 import { shouldIgnoreWatchPath } from '../../src/watch-filter';
 
 type Listener = (event: string, filename: string | Buffer | null) => void;
@@ -301,5 +302,94 @@ describe('createRecursiveWatch', () => {
     fw.opened[0].cb('change', 'README.md');
     expect(onEvent).toHaveBeenCalledWith('change', 'README.md');
     h.close();
+  });
+
+  describe('an unreadable folder', () => {
+    const eacces = () => Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+
+    it('a readdir EACCES drops that subtree, keeps its siblings live, and does not end the watch', async () => {
+      const root = mkRoot();
+      mkTree(root, ['src/locked/deep', 'src/open']);
+      const locked = path.join(root, 'src', 'locked');
+      const fw = fakeWatch();
+      const onError = vi.fn();
+      const onSkip = vi.fn();
+      const onEvent = vi.fn();
+      const readdir = (dir: string) =>
+        dir === locked
+          ? Promise.reject(eacces())
+          : nodeFs.promises.readdir(dir, { withFileTypes: true });
+      const h = createRecursiveWatch(
+        root,
+        { ignore: () => false, watch: fw.watch, readdir, onSkip },
+        onEvent,
+        onError,
+      );
+      await vi.waitFor(() => expect(onSkip).toHaveBeenCalledTimes(1));
+      expect(onSkip.mock.calls[0][0]).toBe('src/locked');
+      expect(onSkip.mock.calls[0][1]).toMatchObject({ code: 'EACCES' });
+      expect(
+        fw
+          .open()
+          .map((x) => rel(root, x.dir))
+          .sort(),
+      ).toEqual(['', 'src', 'src/open']);
+      expect(fw.opened.find((x) => rel(root, x.dir) === 'src/locked')?.close).toHaveBeenCalled();
+      fw.opened.find((x) => rel(root, x.dir) === 'src/open')?.cb('change', 'a.ts');
+      expect(onEvent).toHaveBeenCalledWith('change', 'src/open/a.ts');
+      expect(onError).not.toHaveBeenCalled();
+      h.close();
+    });
+
+    it('an EACCES opening a child watch skips that subtree once, and the rest stays live', async () => {
+      const root = mkRoot();
+      mkTree(root, ['src/locked/deep', 'src/open']);
+      const locked = path.join(root, 'src', 'locked');
+      const fw = fakeWatch();
+      const onError = vi.fn();
+      const onSkip = vi.fn();
+      const onEvent = vi.fn();
+      const watch = vi.fn((dir: string, o: { recursive?: boolean }, cb: Listener) => {
+        if (dir === locked) throw eacces();
+        return fw.watch(dir, o, cb);
+      });
+      const h = createRecursiveWatch(
+        root,
+        { ignore: () => false, watch: watch as WatchFn, onSkip },
+        onEvent,
+        onError,
+      );
+      await vi.waitFor(() => expect(onSkip).toHaveBeenCalledTimes(1));
+      expect(onSkip.mock.calls[0][0]).toBe('src/locked');
+      expect(
+        fw
+          .open()
+          .map((x) => rel(root, x.dir))
+          .sort(),
+      ).toEqual(['', 'src', 'src/open']);
+      await new Promise((r) => setTimeout(r, 30));
+      expect(onSkip).toHaveBeenCalledTimes(1);
+      expect(watch.mock.calls.some(([d]) => d === path.join(locked, 'deep'))).toBe(false);
+      fw.opened.find((x) => rel(root, x.dir) === 'src/open')?.cb('change', 'b.ts');
+      expect(onEvent).toHaveBeenCalledWith('change', 'src/open/b.ts');
+      expect(onError).not.toHaveBeenCalled();
+      h.close();
+    });
+
+    it('an EACCES on the root itself still ends the watch through onError', async () => {
+      const root = mkRoot();
+      const fw = fakeWatch();
+      const onError = vi.fn();
+      const readdir = () => Promise.reject(eacces());
+      const h = createRecursiveWatch(
+        root,
+        { ignore: () => false, watch: fw.watch, readdir },
+        vi.fn(),
+        onError,
+      );
+      await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+      expect(onError.mock.calls[0][0]).toMatchObject({ code: 'EACCES' });
+      h.close();
+    });
   });
 });

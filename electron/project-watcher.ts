@@ -134,6 +134,7 @@ export class ProjectWatcher {
             this.log?.(`watch limit reached under ${dir}: ${err}`);
             this.onWatchLimit?.();
           },
+          onSkip: (rel, err) => this.log?.(`skipped unreadable folder ${dir}/${rel}: ${err}`),
         },
         (_event, filename) => this.onEvent(key, filename ?? ''),
         (err) => {

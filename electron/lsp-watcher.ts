@@ -97,6 +97,7 @@ export function watchServerRoot(
         recursive: !isBroadWatchRoot(root, deps.homeDir ?? os.homedir()),
         watch: deps.watch,
         platform: deps.platform,
+        onSkip: (rel, err) => deps.log?.(`lsp skipped unreadable folder ${root}/${rel}: ${err}`),
       },
       (event, filename) => {
         const rel = filename ?? '';

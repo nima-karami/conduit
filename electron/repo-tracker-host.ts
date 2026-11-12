@@ -135,6 +135,12 @@ export function createRepoTrackerHost(deps: RepoTrackerHostDeps): RepoTrackerHos
           ignore: gitDirWatchIgnore,
           log: (message, error) =>
             log.warn('repo-tracker', `git dir ${message}`, { commonDir, error: String(error) }),
+          onSkip: (rel, error) =>
+            log.warn('repo-tracker', 'git dir skipped an unreadable folder', {
+              commonDir,
+              rel,
+              error: String(error),
+            }),
           onLimit: (error) =>
             log.warn(
               'repo-tracker',

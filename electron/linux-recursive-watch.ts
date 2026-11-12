@@ -16,6 +16,13 @@ export interface RecursiveWatchOpts {
    * open are kept: the limit costs coverage, not the whole tree.
    */
   onLimit?: (error: Error) => void;
+  /**
+   * A child directory that cannot be read or watched (EACCES/EPERM) is skipped with its subtree,
+   * reported once per directory (default: a console warning). The rest of the watch stays alive.
+   */
+  onSkip?: (rel: string, error: Error) => void;
+  /** Tests only: the directory listing, so an unreadable folder can be simulated anywhere. */
+  readdir?: (dir: string) => Promise<fs.Dirent[]>;
 }
 
 export interface RecursiveWatch {
@@ -27,6 +34,12 @@ export function isWatchLimit(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
   return code === 'ENOSPC' || code === 'EMFILE';
 }
+
+/** A child directory the process may not read: skipped, not a reason to end the whole watch. */
+const isUnreadable = (error: unknown): boolean => {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === 'EACCES' || code === 'EPERM';
+};
 
 /**
  * A directory that vanished between being listed and being opened: expected while a tree
@@ -50,9 +63,12 @@ export function createRecursiveWatch(
   onError: (error?: Error) => void,
 ): RecursiveWatch {
   const watch = opts.watch ?? fs.watch;
+  const readdir =
+    opts.readdir ?? ((dir: string) => fs.promises.readdir(dir, { withFileTypes: true }));
   const onLimit = opts.onLimit ?? onError;
   const rootName = path.basename(root);
   const watchers = new Map<string, fs.FSWatcher>();
+  const skipped = new Set<string>();
   let closed = false;
   // Once the limit is hit no new watch is opened: the walk stops, the existing ones stay.
   let limited = false;
@@ -90,6 +106,14 @@ export function createRecursiveWatch(
     }
   };
 
+  /** An unreadable child: its subtree is dropped and the rest of the watch carries on. */
+  const skip = (rel: string, error: Error) => {
+    drop(rel);
+    if (skipped.has(rel)) return;
+    skipped.add(rel);
+    (opts.onSkip ?? ((r, e) => console.warn(`[watch] skipped ${r}: ${e}`)))(rel, error);
+  };
+
   /** Opens the watch on `rel`; false when it was not opened (limit, raced removal, closed). */
   const open = (rel: string): boolean => {
     if (closed || limited) return false;
@@ -104,6 +128,10 @@ export function createRecursiveWatch(
         return false;
       }
       if (isGoneRace(error)) return false;
+      if (isUnreadable(error)) {
+        skip(rel, error as Error);
+        return false;
+      }
       fail(error as Error);
       return false;
     }
@@ -123,6 +151,7 @@ export function createRecursiveWatch(
       st = await fs.promises.lstat(abs(rel));
     } catch (error) {
       if (closed) return;
+      if (rel !== '' && isUnreadable(error)) return skip(rel, error as Error);
       if (!isGoneRace(error)) return fail(error as Error);
       if (rel === '') return fail(undefined);
       return drop(rel);
@@ -164,9 +193,13 @@ export function createRecursiveWatch(
       if (!watchers.has(rel) && !open(rel)) continue;
       let entries: fs.Dirent[];
       try {
-        entries = await fs.promises.readdir(abs(rel), { withFileTypes: true });
+        entries = await readdir(abs(rel));
       } catch (error) {
         if (closed) return;
+        if (rel !== '' && isUnreadable(error)) {
+          skip(rel, error as Error);
+          continue;
+        }
         if (!isGoneRace(error)) return fail(error as Error);
         await reconcile(rel);
         continue;
