@@ -35,3 +35,33 @@ export function parseSttySize(text) {
   const m = /^\s*(\d+) (\d+)\s*$/m.exec(text);
   return m ? { rows: Number(m[1]), cols: Number(m[2]) } : null;
 }
+
+/**
+ * A POSIX path as a Monaco `uri.path` would compare it: separators normalised to `/`, a leading
+ * `/` ensured, and lowercased only on win32, the one platform whose paths are case-insensitive.
+ * @param {string} p
+ * @param {string} [platform]
+ */
+export function uriPathKey(p, platform = process.platform) {
+  let s = String(p).replace(/\\/g, '/');
+  if (!s.startsWith('/')) s = `/${s}`;
+  return platform === 'win32' ? s.toLowerCase() : s;
+}
+
+/**
+ * The prompt a shell ends its line with: cmd.exe's `>` on win32, `$`/`#` everywhere else. Exposed
+ * as a RegExp so a page-side waitForFunction can receive its source.
+ * @param {string} [platform]
+ * @returns {RegExp}
+ */
+export function shellPromptPattern(platform = process.platform) {
+  return platform === 'win32' ? />\s*$/ : /[$#]\s*$/;
+}
+
+/**
+ * @param {string} line
+ * @param {string} [platform]
+ */
+export function isShellPromptLine(line, platform = process.platform) {
+  return shellPromptPattern(platform).test(line);
+}

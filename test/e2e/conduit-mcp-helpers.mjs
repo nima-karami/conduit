@@ -6,7 +6,7 @@
  * session, never from the terminal stream: ConPTY doubles the cell at every wrap, which corrupted
  * any record wider than the terminal (see the fixture's header).
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, join, resolve } from 'node:path';
 import { openSession, profileDir, REPO, tapBridge, typeLine } from './harness.mjs';
 
@@ -49,17 +49,25 @@ export function pathWith(dir) {
 }
 
 /**
- * A `claude.cmd` in `binDir` that runs FAKE_CLI as Claude (`--as claude`), so typing `claude` in a
- * Conduit shell is detected as Claude and the fake connects as `claude-code`.
+ * A `claude` launcher in `binDir` that runs FAKE_CLI as Claude (`--as claude`), so typing `claude`
+ * in a Conduit shell is detected as Claude and the fake connects as `claude-code`. A `.cmd` on
+ * Windows; on POSIX a `sh` script, which must be executable for the shell's PATH lookup.
  */
 export function fakeClaudeOnPath(binDir, recordsDir, label) {
-  if (process.platform !== 'win32')
-    throw new Error('fakeClaudeOnPath is Windows-only (claude.cmd)');
   mkdirSync(binDir, { recursive: true });
+  if (process.platform === 'win32') {
+    writeFileSync(
+      join(binDir, 'claude.cmd'),
+      `@"${process.execPath}" "${FAKE_CLI}" --as claude --records "${recordsDir}" --name ${label}\r\n`,
+    );
+    return;
+  }
+  const launcher = join(binDir, 'claude');
   writeFileSync(
-    join(binDir, 'claude.cmd'),
-    `@"${process.execPath}" "${FAKE_CLI}" --as claude --records "${recordsDir}" --name ${label}\r\n`,
+    launcher,
+    `#!/bin/sh\nexec "${process.execPath}" "${FAKE_CLI}" --as claude --records "${recordsDir}" --name ${label} "$@"\n`,
   );
+  chmodSync(launcher, 0o755);
 }
 
 /** FAKE_CLI's records of `kind` under `label`. */

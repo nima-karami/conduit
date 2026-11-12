@@ -28,6 +28,7 @@ import {
   launchApp,
   makeLog,
   openSession,
+  waitForShellPrompt,
 } from './harness.mjs';
 
 if (!e2ePlatformSupported()) {
@@ -94,9 +95,13 @@ try {
     timeout: 15000,
   });
   // ConPTY needs a moment to spawn and paint; input typed before the prompt exists is lost.
-  await page.waitForFunction(() => /Microsoft Windows|>/.test(window.__cap || ''), null, {
-    timeout: 25000,
-  });
+  if (process.platform === 'win32') {
+    await page.waitForFunction(() => /Microsoft Windows|>/.test(window.__cap || ''), null, {
+      timeout: 25000,
+    });
+  } else {
+    await waitForShellPrompt(page, sid, 25000);
+  }
 
   // Seeds the ring AND proves the PTY works before the crash — the post-crash assertions are
   // only meaningful against a shell that was demonstrably alive.

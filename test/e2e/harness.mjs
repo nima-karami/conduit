@@ -38,6 +38,8 @@ import {
   defaultShellAgent,
   e2ePlatformSupported,
   parseSttySize,
+  shellPromptPattern,
+  uriPathKey,
   windowsOnlySkipMessage,
 } from './platform.mjs';
 import { killTree } from './proc-table.mjs';
@@ -45,7 +47,7 @@ import { EXIT_WATCHDOG, profilePrefix, RUN_MARKER, watchdogDelayMs } from './smo
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 export const REPO = join(here, '..', '..');
-export { defaultShellAgent, e2ePlatformSupported, parseSttySize };
+export { defaultShellAgent, e2ePlatformSupported, parseSttySize, shellPromptPattern };
 
 const require = createRequire(import.meta.url);
 
@@ -409,6 +411,7 @@ export function finishScenario(code) {
       } else if (dir) {
         rmSync(dir, { recursive: true, force: true });
       }
+      if (code === 0) for (const d of linuxFixtureDirs) rmSync(d, { recursive: true, force: true });
       if (code === 0) await stopCoverageWithin(...liveApps);
     } catch (e) {
       console.error('[harness] artifact capture failed:', e?.message || e);
@@ -1498,6 +1501,67 @@ export function logicalLines(page, sessionId) {
     }
     return out;
   }, sessionId);
+}
+
+/**
+ * Puts `uriPathKey` into the page as `window.__uriPathKey(p)`, bound to this process's platform.
+ * Page predicates cannot import this module, so the helper's own source is evaluated there: both
+ * sides of a Monaco `uri.path` comparison then run through one definition, not two copies.
+ */
+export function installUriPathKey(page) {
+  return page.evaluate(
+    `window.__uriPathKey ??= (p) => (${uriPathKey.toString()})(p, ${JSON.stringify(process.platform)})`,
+  );
+}
+
+/**
+ * Wait until the session's last printed line ends in its shell prompt. Reads the raw captured
+ * output, so terminal escapes (bracketed-paste toggles, OSC shell-integration marks) are stripped
+ * first or they would hide the prompt from the end-of-line match.
+ */
+export function waitForShellPrompt(page, sessionId, timeoutMs = 20000) {
+  return page.waitForFunction(
+    ({ s, src }) => {
+      const esc = String.fromCharCode(27);
+      const ansi = new RegExp(
+        `${esc}\\][^\\x07${esc}]*(?:\\x07|${esc}\\\\)|${esc}\\[[0-9;?]*[ -/]*[@-~]|${esc}[@-_]`,
+        'g',
+      );
+      const raw = (window.__capBy?.[s] ?? '').replace(ansi, '');
+      const lines = raw.split(/\r\n|\r|\n/).filter((l) => l.trim() !== '');
+      return new RegExp(src).test(lines[lines.length - 1] ?? '');
+    },
+    { s: sessionId, src: shellPromptPattern().source },
+    { timeout: timeoutMs },
+  );
+}
+
+/**
+ * A directory for fixture files a scenario will trash or watch. On Linux the system temp dir is
+ * often tmpfs, which `gio trash` refuses, so Conduit correctly falls back to its permanent-delete
+ * prompt; a dir under the home cache keeps the trash path the product actually takes.
+ * @returns {string}
+ */
+export function fixtureTmpdir() {
+  if (process.platform !== 'linux') return tmpdir();
+  const dir = join(homedir(), '.cache', 'conduit-e2e');
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+/** Linux fixture dirs a passing scenario removes on finish; the cache dir would otherwise grow. */
+const linuxFixtureDirs = [];
+
+/**
+ * `mkdtemp` under fixtureTmpdir(). On Linux the dir is removed when the scenario passes; Windows
+ * temp dirs are left to the OS, as they always were.
+ * @param {string} prefix
+ * @returns {string}
+ */
+export function fixtureMkdtemp(prefix) {
+  const dir = mkdtempSync(join(fixtureTmpdir(), prefix));
+  if (process.platform === 'linux') linuxFixtureDirs.push(dir);
+  return dir;
 }
 
 /** Type `text` and Enter into the session's PTY. */

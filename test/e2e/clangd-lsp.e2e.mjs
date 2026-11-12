@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CPP_GREET_CALL, clangdProbe, writeClangdFixture } from './clangd-fixture.mjs';
 import { clearTransients, openDoc, placeCursor } from './goto-matrix.mjs';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, installUriPathKey, openSession, runScenario } from './harness.mjs';
 import {
   assertInstalled,
   breadcrumbWith,
@@ -84,11 +84,12 @@ runScenario('clangd-lsp', async ({ app, page, log }) => {
 
   // ── B7: the .h joins the same clangd ──
   await openDoc(app, page, sid, fx.header);
+  await installUriPathKey(page);
   const headerLang = await page.evaluate(
     (p) =>
       window.monaco.editor
         .getModels()
-        .find((m) => m.uri.path.toLowerCase() === `/${p.toLowerCase()}`)
+        .find((m) => window.__uriPathKey(m.uri.path) === window.__uriPathKey(p))
         ?.getLanguageId() ?? null,
     fx.header.replace(/\\/g, '/'),
   );

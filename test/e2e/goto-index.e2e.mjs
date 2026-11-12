@@ -15,6 +15,7 @@
  * Run: node test/e2e/run-smoke.mjs goto-index   (needs `npm run build` first)
  */
 import { assert, openSession, REPO, runScenario, showRightView } from './harness.mjs';
+import { uriPathKey } from './platform.mjs';
 
 const fileRowByName = (page, name) =>
   page.locator('.filerow', {
@@ -119,8 +120,16 @@ runScenario('goto-index', async ({ page, log }) => {
   // …and in the PROJECT's copy. A checkout carrying a git worktree or agent scratch tree under a
   // dot-directory holds a second copy of every file; landing there still ends in "shortcuts.ts"
   // while sending the user to a stale duplicate (src/source-index.ts).
+  // The dot-dir test applies to the part under REPO only: a worktree checkout lives under a dot
+  // directory (~/projects/.wt/...), and that is the project's own location, not a tool-state copy.
+  const landedKey = uriPathKey(landed);
+  const repoKey = uriPathKey(REPO);
   assert(
-    !/\/\.[^/]+\//.test(landed),
+    landedKey.startsWith(repoKey),
+    `Go to Definition must land inside the project (${repoKey}), got ${landed}`,
+  );
+  assert(
+    !/\/\.[^/]+\//.test(landedKey.slice(repoKey.length)),
     `resolved into a tool-state copy, not the project's own file: ${landed}`,
   );
 

@@ -42,7 +42,7 @@ async function run() {
       },
     ]),
   );
-  const names = teardownNames(userData, 'win32', tmpdir());
+  const names = teardownNames(userData, process.platform, tmpdir());
   assertOwnSession(names.hcSession, process.env.HC_SESSION);
   const env = {
     ...hcEnv(process.env, names),

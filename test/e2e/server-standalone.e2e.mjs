@@ -117,7 +117,7 @@ async function run() {
   const recordsDir = join(directory, 'records');
   for (const d of [userData, work, recordsDir]) mkdirSync(d, { recursive: true });
   writeAgents(userData, recordsDir);
-  const names = teardownNames(userData, 'win32', tmpdir());
+  const names = teardownNames(userData, process.platform, tmpdir());
   assertOwnSession(names.hcSession, process.env.HC_SESSION);
   // coreStartEnv with isolation (M22): the user's XDG captured for the sessions, ours for hc.
   const env = {

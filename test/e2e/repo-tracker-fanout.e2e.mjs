@@ -85,8 +85,10 @@ async function installGitDirWatchProbe(app, repos) {
     fs.watch = function (file, ...args) {
       const watcher = watch.call(this, file, ...args);
       const k = key(file);
+      // Linux serves a recursive watch as per-directory non-recursive children: count the caller's.
+      const recursive = args[0]?.recursive === true;
       const repo = Object.keys(open).find((d) => k === `${d}/.git` || k.startsWith(`${d}/.git/`));
-      if (repo) {
+      if (repo && (process.platform !== 'linux' || recursive)) {
         open[repo]++;
         watcher.once('close', () => open[repo]--);
       }

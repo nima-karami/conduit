@@ -143,26 +143,6 @@ runScenario('middle-click-terminal', async ({ app, page, log }) => {
   const bg = await activateLink(page, sid, PATH_LINE, 'b.ts', 1);
   log('middle path activate', JSON.stringify(bg));
   assert(bg.ok === true, `path link should activate, got ${JSON.stringify(bg)}`);
-
-  const b = await waitTab(page, 'b.ts').catch(() => null);
-  assert(b, 'middle-click on the file link should create a b.ts tab');
-  assert(!b.active, 'b.ts must open in the BACKGROUND (not active)');
-  assert(!b.preview, 'b.ts must be a pinned tab, not a preview');
-  const bgDiff = sameSnapshot(before, await snapshotUnchanged(page));
-  assert(bgDiff === null, `background open must leave the view unchanged: ${bgDiff}`);
-  const announced = await waitStatus(page, 'Opened b.ts in a background tab')
-    .then(() => true)
-    .catch(() => false);
-  assert(announced, 'status region should announce "Opened b.ts in a background tab"');
-  log('file link → background tab ✓');
-
-  await spyMain(app, [{ api: 'openExternal' }]);
-  await clearSpyCalls(app);
-  const tabCount = (await tabInfo(page)).length;
-  assert(tabCount === tabsBefore.length + 1, `expected one new tab, got ${tabCount}`);
-  const ext = await activateLink(page, sid, LINK_URL, LINK_URL, 1);
-  log('middle url activate', JSON.stringify(ext));
-  assert(ext.ok === true, `URL link should activate, got ${JSON.stringify(ext)}`);
   // Polls the host spy until `n` openExternal calls exist or `ms` pass; returns the count.
   const openExternalCount = (n, ms) =>
     app.evaluate(
@@ -178,25 +158,72 @@ runScenario('middle-click-terminal', async ({ app, page, log }) => {
         }),
       { n, ms },
     );
-  assert(
-    (await openExternalCount(1, 5000)) >= 1,
-    'the URL middle-click never reached openExternal',
-  );
-  // A second, duplicate open would land shortly after the first: observe a bounded window for it.
-  await openExternalCount(2, 500);
-  const calls = (await getSpyCalls(app)).filter((c) => c.api === 'openExternal');
-  log('openExternal calls', JSON.stringify(calls.map((c) => c.args)));
-  assert(calls.length === 1, `URL middle-click → exactly one openExternal, got ${calls.length}`);
-  assert(
-    calls[0].args[0] === LINK_URL,
-    `openExternal should get ${LINK_URL}, got ${calls[0].args[0]}`,
-  );
-  const afterUrl = await tabInfo(page);
-  assert(
-    afterUrl.length === tabCount,
-    `URL middle-click must not open a tab (${tabCount} → ${afterUrl.length})`,
-  );
-  log('URL link → one external open, no tab ✓');
+  if (process.platform === 'win32') {
+    const b = await waitTab(page, 'b.ts').catch(() => null);
+    assert(b, 'middle-click on the file link should create a b.ts tab');
+    assert(!b.active, 'b.ts must open in the BACKGROUND (not active)');
+    assert(!b.preview, 'b.ts must be a pinned tab, not a preview');
+    const bgDiff = sameSnapshot(before, await snapshotUnchanged(page));
+    assert(bgDiff === null, `background open must leave the view unchanged: ${bgDiff}`);
+    const announced = await waitStatus(page, 'Opened b.ts in a background tab')
+      .then(() => true)
+      .catch(() => false);
+    assert(announced, 'status region should announce "Opened b.ts in a background tab"');
+    log('file link → background tab ✓');
+  } else {
+    // Linux: middle is primary-selection paste, so xterm's link activation ignores it (see
+    // webview/middle-click.ts). The bounded wait only has to outlast the tab that would have landed.
+    const opened = await waitTab(page, 'b.ts', 3000).then(
+      () => true,
+      () => false,
+    );
+    assert(!opened, 'middle-click on a file link must open no tab on Linux (paste, not open)');
+    log('file link on Linux → no tab (middle is paste) ✓');
+  }
+
+  await spyMain(app, [{ api: 'openExternal' }]);
+  await clearSpyCalls(app);
+  const tabCount = (await tabInfo(page)).length;
+  if (process.platform === 'win32') {
+    assert(tabCount === tabsBefore.length + 1, `expected one new tab, got ${tabCount}`);
+  } else {
+    assert(
+      tabCount === tabsBefore.length,
+      `middle-click on Linux must open no tab, got ${tabCount}`,
+    );
+  }
+  const ext = await activateLink(page, sid, LINK_URL, LINK_URL, 1);
+  log('middle url activate', JSON.stringify(ext));
+  assert(ext.ok === true, `URL link should activate, got ${JSON.stringify(ext)}`);
+  if (process.platform === 'win32') {
+    assert(
+      (await openExternalCount(1, 5000)) >= 1,
+      'the URL middle-click never reached openExternal',
+    );
+    // A second, duplicate open would land shortly after the first: observe a bounded window for it.
+    await openExternalCount(2, 500);
+    const calls = (await getSpyCalls(app)).filter((c) => c.api === 'openExternal');
+    log('openExternal calls', JSON.stringify(calls.map((c) => c.args)));
+    assert(calls.length === 1, `URL middle-click → exactly one openExternal, got ${calls.length}`);
+    assert(
+      calls[0].args[0] === LINK_URL,
+      `openExternal should get ${LINK_URL}, got ${calls[0].args[0]}`,
+    );
+    const afterUrl = await tabInfo(page);
+    assert(
+      afterUrl.length === tabCount,
+      `URL middle-click must not open a tab (${tabCount} → ${afterUrl.length})`,
+    );
+    log('URL link → one external open, no tab ✓');
+  } else {
+    await openExternalCount(1, 3000);
+    const calls = (await getSpyCalls(app)).filter((c) => c.api === 'openExternal');
+    assert(
+      calls.length === 0,
+      `URL middle-click on Linux must not open externally, got ${calls.length}`,
+    );
+    log('URL link on Linux → no external open (middle is paste) ✓');
+  }
 
   await page
     .locator('.tabbar [role="tab"]', { has: page.locator('span', { hasText: /^b\.ts$/ }) })

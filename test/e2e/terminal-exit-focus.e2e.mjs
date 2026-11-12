@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openSession, runScenario, waitForShellPrompt } from './harness.mjs';
 import { G, openFromExplorer, sleep, tabOf } from './split-editor-helpers.mjs';
 
 const root = mkdtempSync(join(tmpdir(), 'conduit-terminal-exit-'));
@@ -35,17 +35,7 @@ runScenario('terminal-exit-focus', async ({ page, log }) => {
     window.__ptyIn = [];
     window.__terms[id].onData((d) => window.__ptyIn.push(d));
   }, sid);
-  await page.waitForFunction(
-    (id) => {
-      const buf = window.__terms[id].buffer.active;
-      for (let i = 0; i < buf.length; i++) {
-        if (/>\s*$/.test(buf.getLine(i)?.translateToString(true) ?? '')) return true;
-      }
-      return false;
-    },
-    sid,
-    { timeout: 20000 },
-  );
+  await waitForShellPrompt(page, sid);
   const ptyIn = () => page.evaluate(() => window.__ptyIn.splice(0));
   const state = () =>
     page.evaluate((sel) => {

@@ -74,7 +74,10 @@ try {
       window.agentDeck.post({
         type: 'term:input',
         sessionId: id,
-        data: 'for /L %i in (1,1,3000) do @echo conduit-follow-line %i\r',
+        data:
+          process.platform === 'win32'
+            ? 'for /L %i in (1,1,3000) do @echo conduit-follow-line %i\r'
+            : 'for i in $(seq 1 3000); do echo conduit-follow-line $i; done\r',
       }),
     sid,
   );

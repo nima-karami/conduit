@@ -33,7 +33,13 @@ runScenario('background-resources', async ({ app, page, log }) => {
       fs.watch = function (file, ...args) {
         const watcher = watch.call(this, file, ...args);
         const k = key(file);
-        if (k === key(target) || k.startsWith(`${key(target)}/.git`)) {
+        // On Linux a recursive watch is one public fs.watch per directory; the children are
+        // non-recursive, so only the caller's own recursive call is the handle this counts.
+        const recursive = args[0]?.recursive === true;
+        if (
+          (process.platform !== 'linux' || recursive) &&
+          (k === key(target) || k.startsWith(`${key(target)}/.git`))
+        ) {
           globalThis.__resources.handles++;
           watcher.once('close', () => globalThis.__resources.handles--);
         }

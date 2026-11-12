@@ -250,7 +250,7 @@ const APP_VERSION = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8'))
  * lookup then starts a new server, whose attention counters begin at zero.
  */
 export async function restartServer(userDataDir) {
-  const { serverEndpoint } = teardownNames(userDataDir, 'win32', tmpdir());
+  const { serverEndpoint } = teardownNames(userDataDir, process.platform, tmpdir());
   const c2 = await C2.open(serverEndpoint);
   const closed = new Promise((resolve) => c2.socket.once('close', resolve));
   await c2.call('hello', { appVersion: APP_VERSION, generation: SERVER_PROTOCOL_GENERATION });

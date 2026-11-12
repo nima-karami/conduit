@@ -13,12 +13,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { writeClangdFixture } from './clangd-fixture.mjs';
 import { clearTransients, observe, openDoc, placeCursor } from './goto-matrix.mjs';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, installUriPathKey, openSession, runScenario } from './harness.mjs';
 import { errorToasts, lsp, waitServerState } from './lsp-fixture.mjs';
 import { writePythonFixture } from './python-fixture.mjs';
 import { writeRustFixture } from './rust-fixture.mjs';
 
 /** `text` is the message, `code` the command its `.toast__code` element shows after it. */
+/** The product's clangd install hint per platform (src/lsp-registry.ts `installHint`). */
+const CLANGD_INSTALL_HINT = {
+  linux: 'sudo apt install clangd',
+  darwin: 'brew install llvm',
+  win32: 'winget install LLVM.LLVM',
+};
 const TOASTS = {
   python: {
     text: 'Python navigation needs basedpyright-langserver — install with',
@@ -28,7 +34,10 @@ const TOASTS = {
     text: 'Rust navigation needs rust-analyzer — install with',
     code: 'rustup component add rust-analyzer',
   },
-  cpp: { text: 'C/C++ navigation needs clangd — install with', code: 'winget install LLVM.LLVM' },
+  cpp: {
+    text: 'C/C++ navigation needs clangd — install with',
+    code: CLANGD_INSTALL_HINT[process.platform],
+  },
 };
 /** The toast's whole `.toast__msg` text: message, then the code element. */
 const shown = ({ text, code }) => `${text} ${code}`;
@@ -44,7 +53,8 @@ async function waitToast(page, expected) {
 
 const empty = mkdtempSync(join(tmpdir(), 'conduit-noservers-'));
 const sys = process.env.SystemRoot ?? 'C:\\Windows';
-const path = `${sys}\\System32;${sys}`;
+// POSIX has no System32: /usr/bin:/bin is the closest "no language servers installed" PATH.
+const path = process.platform === 'win32' ? `${sys}\\System32;${sys}` : '/usr/bin:/bin';
 const env = {
   PATH: path,
   Path: path,
@@ -94,13 +104,14 @@ async function f12Toast(page, file, token, want, log) {
 async function assertEditable(page, file, token, typed) {
   await placeCursor(page, file, token);
   await page.keyboard.type('x');
+  await installUriPathKey(page);
   const edited = await page.evaluate(
     ({ p, t }) =>
       window.monaco.editor
         .getEditors()
         .some(
           (e) =>
-            e.getModel()?.uri.path.toLowerCase() === `/${p.toLowerCase()}` &&
+            window.__uriPathKey(e.getModel()?.uri.path) === window.__uriPathKey(p) &&
             e.getModel()?.getValue().includes(t),
         ),
     { p: file.replace(/\\/g, '/'), t: typed },

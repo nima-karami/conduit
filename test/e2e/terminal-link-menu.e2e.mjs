@@ -24,6 +24,7 @@ import {
   runScenario,
   typeLine,
   waitForOutput,
+  waitForShellPrompt,
 } from './harness.mjs';
 
 const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -61,7 +62,7 @@ runScenario('terminal-link-menu', async ({ page, log }) => {
     sid,
     { timeout: 30000 },
   );
-  await page.waitForFunction(() => (window.__cap || '').includes('>'), null, { timeout: 30000 });
+  await waitForShellPrompt(page, sid, 30000);
 
   const DIR_LINE = repoB;
   const FILE_LINE = 'repoB/src/a.ts';

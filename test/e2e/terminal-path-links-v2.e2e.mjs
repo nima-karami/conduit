@@ -30,7 +30,14 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario, typeLine, waitForOutput } from './harness.mjs';
+import {
+  assert,
+  openSession,
+  runScenario,
+  typeLine,
+  waitForOutput,
+  waitForShellPrompt,
+} from './harness.mjs';
 import { tabInfo } from './middle-click-fixture.mjs';
 import { openPalette, paletteRow } from './middle-click-surfaces-helpers.mjs';
 import { waitCursor } from './nav-history-fixture.mjs';
@@ -88,9 +95,7 @@ runScenario('terminal-path-links-v2', async ({ page, log }) => {
     sid,
     { timeout: 30000 },
   );
-  await page.waitForFunction((dir) => (window.__cap || '').includes('>'), parent, {
-    timeout: 30000,
-  });
+  await waitForShellPrompt(page, sid, 30000);
   /** Until the PTY output stops growing: a repaint landing mid-hover moves the rows. */
   const waitQuiet = async () => {
     await page.evaluate(() => {

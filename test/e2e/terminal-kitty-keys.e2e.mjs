@@ -11,6 +11,7 @@ import {
   runScenario,
   tapBridge,
   typeLine,
+  waitForShellPrompt,
   writeToTerminal,
 } from './harness.mjs';
 
@@ -46,17 +47,7 @@ await runScenario('terminal-kitty-keys', async ({ app, page, log }) => {
     window.__terms[id].onData((d) => window.__ptyIn.push(d));
   }, sid);
 
-  await page.waitForFunction(
-    (id) => {
-      const buf = window.__terms[id].buffer.active;
-      for (let i = 0; i < buf.length; i++) {
-        if (/>\s*$/.test(buf.getLine(i)?.translateToString(true) ?? '')) return true;
-      }
-      return false;
-    },
-    sid,
-    { timeout: 20000 },
-  );
+  await waitForShellPrompt(page, sid);
 
   await page.evaluate((id) => window.__terms[id].focus(), sid);
   await typeLine(page, sid, `node "${probeScript.replace(/\\/g, '/')}"`);

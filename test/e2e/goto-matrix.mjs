@@ -14,7 +14,10 @@
  *     expected to fail against the pre-fix build — the table is the deliverable.
  */
 
-import { assert, showRightView } from './harness.mjs';
+import { assert, installUriPathKey, showRightView } from './harness.mjs';
+import { uriPathKey } from './platform.mjs';
+
+export { uriPathKey };
 
 /** Bounded wait for one navigation. The wrapper's own deadline is 6 s. */
 const NAV_SETTLE_MS = 7000;
@@ -131,10 +134,11 @@ export async function openDoc(app, page, sessionId, absPath) {
     },
     { path: p, sid: sessionId },
   );
+  await installUriPathKey(page);
   await page.waitForFunction(
     (want) =>
       (window.monaco?.editor.getEditors() ?? []).some(
-        (e) => e.getModel()?.uri.path.toLowerCase() === `/${want.toLowerCase()}`,
+        (e) => window.__uriPathKey(e.getModel()?.uri.path) === window.__uriPathKey(want),
       ),
     p,
     { timeout: 20000 },
@@ -372,10 +376,11 @@ export function observe(page) {
 /** Put the cursor on the `nth` occurrence of `token` in the file that is open as `absPath`. */
 export async function placeCursor(page, absPath, token, nth = 0) {
   const p = absPath.replace(/\\/g, '/');
+  await installUriPathKey(page);
   const ok = await page.evaluate(
     ({ path, tok, n }) => {
       const ed = (window.monaco?.editor.getEditors() ?? []).find(
-        (e) => e.getModel()?.uri.path.toLowerCase() === `/${path.toLowerCase()}`,
+        (e) => window.__uriPathKey(e.getModel()?.uri.path) === window.__uriPathKey(path),
       );
       const model = ed?.getModel();
       if (!ed || !model) return false;
@@ -403,20 +408,22 @@ export async function placeCursor(page, absPath, token, nth = 0) {
  */
 export async function glyphAt(page, absPath, position) {
   const p = absPath.replace(/\\/g, '/');
+  await installUriPathKey(page);
   await page.evaluate(
     ({ path, pos }) => {
       const ed = window.monaco.editor
         .getEditors()
-        .find((e) => e.getModel()?.uri.path.toLowerCase() === `/${path.toLowerCase()}`);
+        .find((e) => window.__uriPathKey(e.getModel()?.uri.path) === window.__uriPathKey(path));
       ed.revealPositionInCenterIfOutsideViewport(pos);
     },
     { path: p, pos: position },
   );
+  await installUriPathKey(page);
   const painted = await page.waitForFunction(
     ({ path, pos }) => {
       const ed = window.monaco.editor
         .getEditors()
-        .find((e) => e.getModel()?.uri.path.toLowerCase() === `/${path.toLowerCase()}`);
+        .find((e) => window.__uriPathKey(e.getModel()?.uri.path) === window.__uriPathKey(path));
       const model = ed.getModel();
       const tabSize = model.getOptions().tabSize;
       const text = model.getLineContent(pos.lineNumber);
@@ -465,11 +472,12 @@ export async function glyphAt(page, absPath, position) {
  */
 export async function pointOn(page, absPath, token, nth = 0) {
   const p = absPath.replace(/\\/g, '/');
+  await installUriPathKey(page);
   const pos = await page.evaluate(
     ({ path, tok, n }) => {
       const ed = window.monaco.editor
         .getEditors()
-        .find((e) => e.getModel()?.uri.path.toLowerCase() === `/${path.toLowerCase()}`);
+        .find((e) => window.__uriPathKey(e.getModel()?.uri.path) === window.__uriPathKey(path));
       const model = ed?.getModel();
       if (!model) return null;
       const text = model.getValue();
@@ -572,6 +580,7 @@ export async function awaitNav(page, seqBefore) {
     const d = document.documentElement.dataset;
     return { state: d.navState ?? '', target: d.navTarget ?? '' };
   });
+  await installUriPathKey(page);
   await page
     .waitForFunction(
       ({ state, target }) => {
@@ -580,9 +589,11 @@ export async function awaitNav(page, seqBefore) {
           const outer = eds.filter((e) => !e.getDomNode()?.closest('.zone-widget'));
           const ed = outer[outer.length - 1];
           const at = ed?.getModel()?.uri.path ?? '';
-          const norm = (x) => x.split('\\').join('/').replace(/^\/+/, '').toLowerCase();
           const [, path, line] = /^(.*):(\d+):\d+$/.exec(target) ?? [];
-          return norm(at) === norm(path) && ed?.getPosition()?.lineNumber === Number(line);
+          return (
+            window.__uriPathKey(at) === window.__uriPathKey(path) &&
+            ed?.getPosition()?.lineNumber === Number(line)
+          );
         }
         if (state === 'peeked') return !!document.querySelector('.monaco-editor .zone-widget');
         if (state === 'navigated' || state === 'cancelled' || state === '') return true;
@@ -691,8 +702,9 @@ export function createMatrix(name, log) {
 
 /** Did the navigation land in `pathSuffix` with `marker` on the cursor's line? */
 export function landed(after, pathSuffix, marker) {
-  const p = (after.path ?? '').toLowerCase();
-  return p.endsWith(pathSuffix.toLowerCase()) && after.lineText.includes(marker);
+  return (
+    uriPathKey(after.path ?? '').endsWith(uriPathKey(pathSuffix)) && after.lineText.includes(marker)
+  );
 }
 
 /** One-line rendering of what a row saw, for the evidence table. */

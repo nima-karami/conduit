@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   defaultShellAgent,
   e2ePlatformSupported,
+  isShellPromptLine,
   parseSttySize,
+  uriPathKey,
   windowsOnlySkipMessage,
 } from '../e2e/platform.mjs';
 
@@ -48,5 +50,33 @@ describe('windowsOnlySkipMessage', () => {
     expect(windowsOnlySkipMessage('paste', 'ConPTY bracketed paste', 'darwin')).toBe(
       '[paste] SKIP — Windows-only: ConPTY bracketed paste',
     );
+  });
+});
+
+describe('uriPathKey', () => {
+  it('normalises separators and prefixes a missing slash on every platform', () => {
+    expect(uriPathKey('src\\a.ts', 'linux')).toBe('/src/a.ts');
+    expect(uriPathKey('/src/a.ts', 'linux')).toBe('/src/a.ts');
+    expect(uriPathKey('C:\\Repo\\A.ts', 'win32')).toBe('/c:/repo/a.ts');
+  });
+
+  it('lowercases only on win32, where paths are case-insensitive', () => {
+    expect(uriPathKey('/Home/Me/Main.go', 'linux')).toBe('/Home/Me/Main.go');
+    expect(uriPathKey('/Home/Me/Main.go', 'win32')).toBe('/home/me/main.go');
+  });
+});
+
+describe('shellPromptPattern / isShellPromptLine', () => {
+  it('matches cmd.exe prompts only on win32', () => {
+    expect(isShellPromptLine('C:\\repo>', 'win32')).toBe(true);
+    expect(isShellPromptLine('C:\\repo> ', 'win32')).toBe(true);
+    expect(isShellPromptLine('user@host:~$ ', 'win32')).toBe(false);
+  });
+
+  it('matches $ and # prompts on POSIX', () => {
+    expect(isShellPromptLine('user@host:~/repo$ ', 'linux')).toBe(true);
+    expect(isShellPromptLine('root# ', 'linux')).toBe(true);
+    expect(isShellPromptLine('C:\\repo>', 'linux')).toBe(false);
+    expect(isShellPromptLine('build output', 'linux')).toBe(false);
   });
 });
