@@ -358,7 +358,14 @@ runScenario('overlay-modals', async ({ page, log }) => {
       .focus()
       .catch(() => {});
     await page.keyboard.press('Control+Backquote');
-    await page.waitForTimeout(250);
+    try {
+      await page.waitForFunction(() => !document.activeElement?.closest('.xterm'), null, {
+        timeout: 5000,
+      });
+    } catch (error) {
+      if (error.name !== 'TimeoutError') throw error;
+      continue;
+    }
     await page.keyboard.press('Control+Shift+P');
     const palette = await page
       .waitForSelector('.palette', { state: 'visible', timeout: 3000 })

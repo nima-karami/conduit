@@ -124,6 +124,7 @@ export function conduitCommand(app) {
 }
 
 export const FAKE_AGENT_ID = 'e2e-fake-mcp';
+export const FAKE_QUEUE_AGENT_ID = 'e2e-fake-mcp-queue';
 export const FAKE_AGENT = join(REPO, 'test', 'e2e', 'fixtures', 'fake-mcp-agent.mjs');
 export const NOTICE = '[conduit] New messages for you. Use the conduit read_inbox tool.';
 export const URGENT_NOTICE =
@@ -144,28 +145,46 @@ export async function until(pred, ms, step = 100) {
 }
 
 /**
- * A fresh profile with the fake agent registered, for `runScenario(name, fn, { userDataDir })`.
+ * A fresh profile with the given fake agents registered, for `runScenario(name, fn, { userDataDir })`.
  * @param {string} label
+ * @param {Array<[string, string]>} agents [id, label] pairs
  * @returns {string} the userDataDir
  */
-export function fakeAgentProfile(label) {
+function registerFakeAgents(label, agents) {
   const userDataDir = profileDir(label);
   recordsDir = join(userDataDir, 'e2e-records');
   writeFileSync(
     join(userDataDir, 'agents.json'),
-    JSON.stringify([
-      {
-        id: FAKE_AGENT_ID,
-        label: 'Fake MCP',
+    JSON.stringify(
+      agents.map(([id, agentLabel]) => ({
+        id,
+        label: agentLabel,
         command: process.execPath,
         args: [FAKE_AGENT, '--records', recordsDir],
         icon: 'terminal',
         color: 'green',
         cwdStrategy: 'workspaceFolder',
-      },
-    ]),
+      })),
+    ),
   );
   return userDataDir;
+}
+
+/** @param {string} label @returns {string} the userDataDir */
+export function fakeAgentProfile(label) {
+  return registerFakeAgents(label, [[FAKE_AGENT_ID, 'Fake MCP']]);
+}
+
+/**
+ * As `fakeAgentProfile`, plus the agent the host's e2e-only `fake-queue` adapter matches: one that
+ * accepts input mid-turn (`busyq`), so its notices queue instead of waiting for idle.
+ * @param {string} label @returns {string} the userDataDir
+ */
+export function fakeQueueAgentProfile(label) {
+  return registerFakeAgents(label, [
+    [FAKE_AGENT_ID, 'Fake MCP'],
+    [FAKE_QUEUE_AGENT_ID, 'Fake MCP queue'],
+  ]);
 }
 
 /** Mirror the latest `mcp:state` broadcast into `window.__mcp`. Idempotent. */
@@ -196,10 +215,10 @@ export function records(sessionId, kind) {
 }
 
 /** Open a fake-agent session in `path` and wait for its MCP handshake to finish. */
-export async function openFake(page, path, { projectId } = {}) {
+export async function openFake(page, path, { projectId, agentId = FAKE_AGENT_ID } = {}) {
   const sessionId = await openSession(page, {
     path,
-    agentId: FAKE_AGENT_ID,
+    agentId,
     ...(projectId !== undefined ? { projectId } : {}),
   });
   const ok = await until(

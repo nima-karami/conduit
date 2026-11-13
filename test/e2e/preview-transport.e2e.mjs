@@ -35,6 +35,7 @@ import {
   e2ePlatformSupported,
   finishScenario,
   openSession,
+  pollUntil,
   runScenario,
 } from './harness.mjs';
 
@@ -143,18 +144,30 @@ runScenario('preview-transport', async ({ app, page, log }) => {
   // Unknown 4: mount the guest with NO src, then assign it — the precheck design depends on
   // a guest created lazily on first src assignment, not refused at DOM insertion by
   // will-attach-webview seeing an empty src.
-  await page.evaluate((url) => {
+  await page.evaluate(() => {
     const el = document.createElement('webview');
     el.id = 'pt-guest';
     el.setAttribute('partition', 'conduit-preview');
     el.style.cssText = 'position:fixed;left:0;top:0;width:800px;height:600px;z-index:99999';
     document.body.appendChild(el);
-    setTimeout(() => {
-      el.setAttribute('src', url);
-    }, 250);
-  }, a.url);
+  });
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector('#pt-guest');
+      return (
+        el?.isConnected && typeof el.getWebContentsId === 'function' && !el.hasAttribute('src')
+      );
+    },
+    null,
+    { timeout: 5000 },
+  );
+  await page.evaluate((url) => document.querySelector('#pt-guest').setAttribute('src', url), a.url);
 
-  await page.waitForTimeout(6000);
+  const settled = await pollUntil(async () => {
+    const p = await inGuest(app, 'window.__probe || null');
+    return p && !p.error && !Object.values(p).includes('pending');
+  }, 6000);
+  assert(settled, 'guest fetches did not settle');
 
   const probe = await inGuest(
     app,

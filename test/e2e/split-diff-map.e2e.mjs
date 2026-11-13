@@ -181,7 +181,23 @@ runScenario('split-diff-map', async ({ app, page, log }) => {
     null,
     { timeout: 15000 },
   );
-  await page.waitForTimeout(1500);
+  await page.waitForFunction(
+    () => {
+      const canvases = [
+        ...document.querySelectorAll('.monaco-diff-editor canvas.diffOverviewRuler'),
+      ];
+      return (
+        canvases.length >= 2 &&
+        canvases.every((canvas) => {
+          if (!canvas.width || !canvas.height) return false;
+          const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+          return data.some((value, index) => index % 4 === 3 && value > 0);
+        })
+      );
+    },
+    null,
+    { timeout: 5000 },
+  );
 
   // ── AC-T5.4, as it actually is ─────────────────────────────────────────────────────────────
   // The spec asked for a minimap in both panes. Monaco does not allow one: its diff widget sets
@@ -326,7 +342,14 @@ runScenario('split-diff-map', async ({ app, page, log }) => {
       const diff = window.monaco.editor.getDiffEditors()[0];
       diff.getModifiedEditor().revealLineInCenter(10);
     });
-    await page.waitForTimeout(500);
+    await page.waitForFunction(
+      () =>
+        ['.line-insert', '.line-delete', '.char-insert', '.char-delete'].every((selector) =>
+          document.querySelector(`.monaco-diff-editor ${selector}`),
+        ),
+      null,
+      { timeout: 5000 },
+    );
     const got = await page.evaluate(() => {
       const pick = (sel) => {
         for (const el of document.querySelectorAll(`.monaco-diff-editor ${sel}`)) {
@@ -409,7 +432,11 @@ runScenario('split-diff-map', async ({ app, page, log }) => {
     timeout: 10000,
   });
   log('render mode really switched to inline ✓');
-  await page.waitForTimeout(800);
+  await page.waitForFunction(
+    () => document.querySelector('.monaco-diff-editor canvas.diffOverviewRuler')?.width > 0,
+    null,
+    { timeout: 5000 },
+  );
   const inline = await page.evaluate(P_DIFF);
   log(`after toggling render mode: ${JSON.stringify(inline)}`);
   const inlineColours = await washes('inline');
@@ -441,7 +468,9 @@ runScenario('split-diff-map', async ({ app, page, log }) => {
     null,
     { timeout: 25000 },
   );
-  await page.waitForTimeout(1500);
+  await page
+    .locator('.diff-controls button[aria-label="Inline view"]')
+    .waitFor({ state: 'attached', timeout: 5000 });
   assert(
     (await renderModeLabel()) === 'Inline view',
     'the side-by-side override survives re-opening the card after the tab was toggled inline',

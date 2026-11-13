@@ -18,6 +18,8 @@ import {
   assert,
   openSession,
   runScenario,
+  typeLine,
+  waitForOutput,
   waitForShellPrompt,
   writeToTerminal,
 } from './harness.mjs';
@@ -43,8 +45,28 @@ runScenario('terminal-input-box-links', async ({ page, log }) => {
   }
   const sid = await openSession(page, { path: workDir.replace(/\\/g, '/') });
   await page.waitForFunction((id) => !!window.__termLinkProviders?.[id], sid, { timeout: 20000 });
-  await waitForShellPrompt(page, sid, 30000);
-  await page.waitForTimeout(500);
+  if (process.platform === 'win32') {
+    await page.waitForFunction((dir) => (window.__cap || '').includes(`${dir}>`), workDir, {
+      timeout: 30000,
+    });
+    await typeLine(page, sid, 'echo __INPUT^_SYNC__');
+    // The injected box below must not race cmd's next prompt, so wait for that prompt.
+    await page.waitForFunction(
+      (dir) => {
+        const cap = window.__cap || '';
+        const at = cap.lastIndexOf('__INPUT_SYNC__');
+        return at >= 0 && cap.slice(at).includes(`${dir}>`);
+      },
+      workDir,
+      { timeout: 10000 },
+    );
+  } else {
+    await waitForShellPrompt(page, sid, 30000);
+    // Same sync as cmd's: the quotes keep the typed echo from matching, only its output does.
+    await typeLine(page, sid, 'echo __INPUT""_SYNC__');
+    await waitForOutput(page, sid, '__INPUT_SYNC__', 0);
+    await waitForShellPrompt(page, sid, 10000);
+  }
 
   const cols = await page.evaluate((id) => window.__terms[id].cols, sid);
   const rule = '─'.repeat(cols);

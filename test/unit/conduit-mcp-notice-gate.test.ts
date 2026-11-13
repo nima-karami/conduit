@@ -26,6 +26,7 @@ const OPEN: GateInput = {
   spawnedAt: NOW - SETTLE,
   connectionLive: true,
   busy: false,
+  midTurnQueue: false,
   lastOutputAt: NOW - IDLE_QUIET_MS,
   screen: 'empty-input',
   hasDraft: false,
@@ -57,6 +58,37 @@ describe('evaluateGate', () => {
   ];
   it.each(closed)('closed: %s', (reason, flip) => {
     expect(evaluateGate({ ...OPEN, ...flip })).toEqual({ open: false, reason });
+  });
+
+  it('midTurnQueue: busy and noisy output still open on an empty prompt', () => {
+    expect(evaluateGate({ ...OPEN, midTurnQueue: true, busy: true, lastOutputAt: NOW })).toEqual({
+      open: true,
+    });
+  });
+
+  it('midTurnQueue: blocking, no-empty-input, draft and spacing still close', () => {
+    const q = { ...OPEN, midTurnQueue: true, busy: true, lastOutputAt: NOW };
+    expect(evaluateGate({ ...q, screen: 'blocking' })).toEqual({
+      open: false,
+      reason: 'blocking-prompt',
+    });
+    expect(evaluateGate({ ...q, screen: 'unknown' })).toEqual({
+      open: false,
+      reason: 'no-empty-input',
+    });
+    expect(evaluateGate({ ...q, hasDraft: true })).toEqual({ open: false, reason: 'draft' });
+    expect(evaluateGate({ ...q, lastNoticeAt: NOW - 29_999 })).toEqual({
+      open: false,
+      reason: 'spacing',
+    });
+  });
+
+  it('without midTurnQueue busy and quiet close as before', () => {
+    expect(evaluateGate({ ...OPEN, busy: true })).toEqual({ open: false, reason: 'busy' });
+    expect(evaluateGate({ ...OPEN, lastOutputAt: NOW })).toEqual({
+      open: false,
+      reason: 'quiet',
+    });
   });
 
   it('precedence follows the declared order', () => {

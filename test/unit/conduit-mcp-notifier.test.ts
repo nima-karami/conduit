@@ -5,7 +5,9 @@ import {
   type AttentionRaise,
   bannerCandidates,
   createNotifier,
+  MIDTURN_DEBOUNCE_MS,
   type NotifierSession,
+  QUEUED_NOTICE_STALE_MS,
 } from '../../src/conduit-mcp/notifier';
 import type { Priority, StoredMessage } from '../../src/conduit-mcp/types';
 import type { SubmitOutcome } from '../../src/pty-writer';
@@ -13,9 +15,15 @@ import type { SubmitOutcome } from '../../src/pty-writer';
 const H = 'codex-2';
 const S = 's2';
 
-function harness(opts: { rearmAll?: boolean } = {}) {
+function harness(opts: { rearmAll?: boolean; queues?: boolean } = {}) {
   const msgs: StoredMessage[] = [];
-  const session: NotifierSession = { sessionId: S, handle: H, busy: false };
+  let t = Date.UTC(2026, 9, 25, 1, 0, 0);
+  const session: NotifierSession = {
+    sessionId: S,
+    handle: H,
+    busy: false,
+    queues: opts.queues ?? false,
+  };
   let gate: GateVerdict = { open: true };
   let outcome: SubmitOutcome = 'submitted';
   let submitDelay: Promise<void> | null = null;
@@ -24,7 +32,12 @@ function harness(opts: { rearmAll?: boolean } = {}) {
   const marked: string[][] = [];
   let n = 0;
 
-  const add = (priority: Priority, status: 'queued' | 'noticed' = 'queued', noticeCount = 0) => {
+  const add = (
+    priority: Priority,
+    status: 'queued' | 'noticed' = 'queued',
+    noticeCount = 0,
+    sentMs = t,
+  ) => {
     n += 1;
     const m: StoredMessage = {
       messageId: `m_${n}`,
@@ -34,7 +47,7 @@ function harness(opts: { rearmAll?: boolean } = {}) {
       subject: '',
       kind: 'inform',
       priority,
-      sentAt: new Date(Date.UTC(2026, 9, 25, 0, 0, n)).toISOString(),
+      sentAt: new Date(sentMs).toISOString(),
       body: 'secret peer text',
       attachments: [],
       recipients: { [H]: { status, noticeCount, updatedAt: '' } },
@@ -67,10 +80,16 @@ function harness(opts: { rearmAll?: boolean } = {}) {
         for (const m of msgs) {
           if (!ids.includes(m.messageId)) continue;
           const r = m.recipients[h];
-          m.recipients[h] = { ...r, status: 'noticed', noticeCount: r.noticeCount + 1 };
+          m.recipients[h] = {
+            ...r,
+            status: 'noticed',
+            noticeCount: r.noticeCount + 1,
+            updatedAt: new Date(t).toISOString(),
+          };
         }
       },
       raise: (item) => raises.push(item),
+      now: () => t,
     },
     { rearmAll: opts.rearmAll ?? false },
   );
@@ -79,6 +98,9 @@ function harness(opts: { rearmAll?: boolean } = {}) {
     notifier,
     session,
     add,
+    advance: (ms: number) => {
+      t += ms;
+    },
     read,
     submits,
     raises,
@@ -266,6 +288,135 @@ describe('createNotifier', () => {
     h.add('normal', 'noticed', 1);
     await h.notifier.tick();
     expect(h.submits).toHaveLength(1);
+  });
+
+  it('queue mode: a burst inside 1 s gives one notice', async () => {
+    const h = harness({ queues: true });
+    const a = h.add('normal');
+    h.advance(500);
+    const b = h.add('normal');
+    await h.notifier.tick();
+    expect(h.submits).toEqual([]);
+    h.advance(500);
+    await h.notifier.tick();
+    await h.notifier.tick();
+    expect(h.submits).toEqual([composeNotice(false)]);
+    expect(h.marked).toEqual([[a.messageId, b.messageId]]);
+  });
+
+  it('queue mode: no second notice while a noticed message is unread', async () => {
+    const h = harness({ queues: true });
+    h.add('normal');
+    h.advance(MIDTURN_DEBOUNCE_MS);
+    await h.notifier.tick();
+    h.add('normal');
+    h.advance(MIDTURN_DEBOUNCE_MS);
+    await h.notifier.tick();
+    await h.notifier.tick();
+    expect(h.submits).toHaveLength(1);
+  });
+
+  it('queue mode: after read, a new message notices again', async () => {
+    const h = harness({ queues: true });
+    const a = h.add('normal');
+    h.advance(MIDTURN_DEBOUNCE_MS);
+    await h.notifier.tick();
+    h.read(a);
+    const b = h.add('normal');
+    h.advance(MIDTURN_DEBOUNCE_MS);
+    await h.notifier.tick();
+    expect(h.submits).toHaveLength(2);
+    expect(h.marked[1]).toEqual([b.messageId]);
+  });
+
+  it('the idle edge of the turn a notice was queued into does not re-arm', async () => {
+    const h = harness({ queues: true });
+    h.session.busy = true;
+    const m = h.add('normal');
+    await h.notifier.tick();
+    h.advance(MIDTURN_DEBOUNCE_MS);
+    await h.notifier.tick();
+    expect(h.submits).toHaveLength(1);
+    h.session.busy = false;
+    await h.notifier.tick();
+    await h.notifier.tick();
+    expect(h.submits).toHaveLength(1);
+    expect(m.recipients[H].noticeCount).toBe(1);
+  });
+
+  it('queue mode: urgent arriving while a normal notice is outstanding still gets its own notice', async () => {
+    const h = harness({ queues: true });
+    h.add('normal');
+    h.advance(MIDTURN_DEBOUNCE_MS);
+    await h.notifier.tick();
+    expect(h.submits).toHaveLength(1);
+    const u = h.add('urgent');
+    h.advance(MIDTURN_DEBOUNCE_MS);
+    await h.notifier.tick();
+    expect(h.submits).toEqual([composeNotice(false), composeNotice(true)]);
+    expect(h.marked[1]).toContain(u.messageId);
+  });
+
+  it('queue mode: urgent held by a closed gate while a notice is outstanding raises urgent-waiting', async () => {
+    const h = harness({ queues: true });
+    h.add('normal');
+    h.advance(MIDTURN_DEBOUNCE_MS);
+    await h.notifier.tick();
+    h.setGate(CLOSED);
+    const u = h.add('urgent');
+    h.advance(MIDTURN_DEBOUNCE_MS);
+    await h.notifier.tick();
+    await h.notifier.tick();
+    expect(h.submits).toHaveLength(1);
+    expect(h.raises).toEqual([{ kind: 'urgent-waiting', handle: H, messageId: u.messageId }]);
+  });
+
+  it('queue mode: busy rising after the notice then idle re-arms and notices again', async () => {
+    const h = harness({ queues: true });
+    const m = h.add('normal');
+    h.advance(MIDTURN_DEBOUNCE_MS);
+    await h.notifier.tick();
+    expect(h.submits).toHaveLength(1);
+    h.advance(1);
+    h.session.busy = true;
+    await h.notifier.tick();
+    h.session.busy = false;
+    await h.notifier.tick();
+    expect(h.submits).toHaveLength(2);
+    expect(m.recipients[H].noticeCount).toBe(2);
+  });
+
+  it('queue mode: unread 5 min → re-notice once, then escalate', async () => {
+    const h = harness({ queues: true });
+    const m = h.add('normal');
+    h.advance(MIDTURN_DEBOUNCE_MS);
+    await h.notifier.tick();
+    h.advance(QUEUED_NOTICE_STALE_MS - 1);
+    await h.notifier.tick();
+    expect(h.submits).toHaveLength(1);
+    h.advance(1);
+    await h.notifier.tick();
+    expect(h.submits).toHaveLength(2);
+    expect(m.recipients[H].noticeCount).toBe(2);
+    h.advance(QUEUED_NOTICE_STALE_MS);
+    await h.notifier.tick();
+    await h.notifier.tick();
+    expect(h.submits).toHaveLength(2);
+    expect(h.raises).toEqual([
+      { kind: 'unread-after-renotice', handle: H, messageId: m.messageId },
+    ]);
+  });
+
+  it('hold mode unchanged: busy→idle re-notice', async () => {
+    const h = harness({ queues: false });
+    const m = h.add('normal');
+    await h.notifier.tick();
+    await h.cycle();
+    expect(h.submits).toHaveLength(2);
+    expect(m.recipients[H].noticeCount).toBe(2);
+    h.advance(QUEUED_NOTICE_STALE_MS);
+    await h.notifier.tick();
+    expect(h.submits).toHaveLength(2);
   });
 
   it('no overlapping ticks per session', async () => {

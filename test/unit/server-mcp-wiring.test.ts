@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createMcp, type ServerMcp } from '../../server/mcp';
 import type { McpOpenRequest } from '../../src/conduit-mcp/control-tools';
+import { MIDTURN_DEBOUNCE_MS } from '../../src/conduit-mcp/notifier';
 import { DEFAULT_TOOL_POLICY } from '../../src/conduit-mcp/tool-policy';
 import type { McpHostDeps } from '../../src/contracts/server-ports';
 import type { ServerEvents, WindowPresence } from '../../src/contracts/server-protocol';
@@ -596,6 +597,8 @@ describe('D28 bindings across a server restart', () => {
       },
     );
     expect(sent.reply).toMatchObject({ result: { ok: true } });
+    // Codex queues mid-turn, so its notices wait out the burst debounce before the next tick.
+    h.clock.t += MIDTURN_DEBOUNCE_MS;
   };
 
   it('bindings rebind on resume: the matching client gets the typed CLI’s notices', async () => {

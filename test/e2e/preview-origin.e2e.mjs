@@ -18,6 +18,7 @@ import {
   e2ePlatformSupported,
   finishScenario,
   openSession,
+  pollUntil,
   removeDir,
   runScenario,
   stopServer,
@@ -100,21 +101,34 @@ runScenario('preview-origin', async ({ app, page, log }) => {
     const a = await canPreview(page, join(rootA, 'report.html').replace(/\\/g, '/'));
     assert(a.ok === true, `root A report.html should be previewable: ${JSON.stringify(a)}`);
 
-    await page.evaluate((url) => {
+    await page.evaluate(() => {
       const el = document.createElement('webview');
       el.id = 'po-guest';
       el.setAttribute('partition', 'conduit-preview');
       el.style.cssText = 'position:fixed;left:0;top:0;width:800px;height:600px;z-index:99999';
       document.body.appendChild(el);
-      setTimeout(() => el.setAttribute('src', url), 250);
-    }, a.url);
+    });
+    await page.waitForFunction(
+      () => {
+        const el = document.querySelector('#po-guest');
+        return (
+          el?.isConnected && typeof el.getWebContentsId === 'function' && !el.hasAttribute('src')
+        );
+      },
+      null,
+      { timeout: 5000 },
+    );
+    await page.evaluate(
+      (url) => document.querySelector('#po-guest').setAttribute('src', url),
+      a.url,
+    );
 
     let probe;
-    for (let i = 0; i < 40; i++) {
-      await page.waitForTimeout(250);
+    const settled = await pollUntil(async () => {
       probe = await inGuest(app, 'window.__probe || null');
-      if (probe && !probe.error && !Object.values(probe).includes('pending')) break;
-    }
+      return probe && !probe.error && !Object.values(probe).includes('pending');
+    }, 10000);
+    assert(settled, 'guest fetches did not settle');
     log(`guest probe: ${JSON.stringify(probe)}`);
     assert(probe && !probe.error, `guest should be reachable: ${JSON.stringify(probe)}`);
 

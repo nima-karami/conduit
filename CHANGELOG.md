@@ -16,6 +16,11 @@ All notable user-facing changes to Conduit. Format follows
 - On Linux, live refresh of a project no longer watches its `node_modules`, build output or git object store, so large repos stay well inside the inotify watch limit. If the limit is still reached, Conduit shows a notice with the fix (raise `fs.inotify.max_user_watches`).
 - On Linux and macOS, menus and dialogs say Trash, Reveal in Finder or Show in Files instead of Recycle Bin and Explorer, and the missing-clangd hint shows the install command for your system (`sudo apt install clangd` on Linux, `brew install llvm` on macOS).
 
+## [0.62.0] — 2026-11-09
+
+### Fixed
+- Messages now reach Claude and Codex agents while they work, including when only their own subagents are running, instead of waiting for them to go idle.
+
 ## [0.61.0] — 2026-11-08
 
 ### Added

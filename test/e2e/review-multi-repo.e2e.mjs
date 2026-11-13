@@ -26,6 +26,7 @@ import {
   assert,
   openReview,
   openSession,
+  pollUntil,
   runScenario,
   tapBridge,
   windowsOnlyScenario,
@@ -244,9 +245,8 @@ async function toggleMark(page, sel, want) {
 
 /** Poll `userData/review-marks.json` until `pred` holds (the host writes after it broadcasts). */
 async function waitMarksFile(file, pred, what) {
-  const deadline = Date.now() + 8000;
   let last = null;
-  while (Date.now() < deadline) {
+  const found = await pollUntil(() => {
     if (existsSync(file)) {
       try {
         last = JSON.parse(readFileSync(file, 'utf8'));
@@ -255,8 +255,9 @@ async function waitMarksFile(file, pred, what) {
         /* mid-write; retry */
       }
     }
-    await new Promise((r) => setTimeout(r, 200));
-  }
+    return null;
+  }, 8000);
+  if (found) return found;
   throw new Error(`review-marks.json never showed ${what}; last: ${JSON.stringify(last)}`);
 }
 
@@ -306,7 +307,7 @@ async function revealNavRow(page, sel) {
       const nav = document.querySelector('.rightpane .review__nav');
       if (nav) nav.scrollTop += Math.max(nav.clientHeight / 2, 40);
     });
-    await page.waitForTimeout(250);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
   }
   throw new Error(`navigator row ${sel} never mounted`);
 }
@@ -637,7 +638,15 @@ runScenario('review-multi-repo', async ({ app, page, log }) => {
   assert(attachedHeading.test(paste.text), 'an attached repo’s path is absolute, forward-slashed');
   assert(lines.indexOf('## rmb') < lines.indexOf('## ci'), 'sections follow the display order');
   await waitForSendLabel(page, /Send to agent \(0\)/);
-  await page.waitForTimeout(600);
+  const notesSaved = await pollUntil(
+    () =>
+      [fx.rmb, fx.ci].every((root) => {
+        const notes = notesOf(root);
+        return notes.length === 1 && typeof notes[0].sentAt === 'string';
+      }),
+    5000,
+  );
+  assert(notesSaved, 'sent notes must persist for both repos');
   for (const root of [fx.rmb, fx.ci]) {
     const notes = notesOf(root);
     assert(
@@ -703,21 +712,17 @@ runScenario('review-multi-repo', async ({ app, page, log }) => {
     [fx.proto]: ['room.proto', 'staged.proto'],
     [fx.ci]: ['README.md', 'pipeline.yml'],
   };
-  const deadline = Date.now() + 20000;
   let cached = {};
-  for (;;) {
+  const staged = await pollUntil(() => {
     cached = Object.fromEntries(
       Object.keys(wantStaged).map((r) => [
         r,
         git(r, 'diff', '--cached', '--name-only').split('\n'),
       ]),
     );
-    if (Object.entries(wantStaged).every(([r, fs]) => fs.every((f) => cached[r].includes(f))))
-      break;
-    if (Date.now() > deadline)
-      throw new Error(`Stage all did not stage every repo: ${JSON.stringify(cached)}`);
-    await new Promise((r) => setTimeout(r, 300));
-  }
+    return Object.entries(wantStaged).every(([r, fs]) => fs.every((f) => cached[r].includes(f)));
+  }, 20000);
+  assert(staged, `Stage all did not stage every repo: ${JSON.stringify(cached)}`);
   log('EARS 9: Stage all staged all three repos; discard / stash / pop disabled with a reason ✓');
   // Bulk actions act on exactly the files Review lists; its own notes file is never listed.
   for (const r of [fx.rmb, fx.ci]) {
@@ -760,18 +765,19 @@ runScenario('review-multi-repo', async ({ app, page, log }) => {
     'ci/README.md must be staged and edited again',
   );
   await page.click('.rnav .changes__refresh');
-  const mmDeadline = Date.now() + 15000;
   let mmKebab = [];
-  for (;;) {
-    await page.click('.rnav .changes__kebab');
-    await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 5000 });
-    mmKebab = await menuRows(page);
-    await closeMenu(page);
-    if (mmKebab.find((r) => r.label === 'Stage all')?.disabled === false) break;
-    if (Date.now() > mmDeadline)
-      throw new Error(`narrowed kebab Stage all stayed disabled: ${JSON.stringify(mmKebab)}`);
-    await page.waitForTimeout(300);
-  }
+  const menuReady = await pollUntil(
+    async () => {
+      await page.click('.rnav .changes__kebab');
+      await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 5000 });
+      mmKebab = await menuRows(page);
+      await closeMenu(page);
+      return mmKebab.find((r) => r.label === 'Stage all')?.disabled === false;
+    },
+    15000,
+    300,
+  );
+  assert(menuReady, `narrowed kebab Stage all stayed disabled: ${JSON.stringify(mmKebab)}`);
   assert(
     mmKebab.find((r) => r.label === 'Unstage all')?.disabled === false,
     `narrowed kebab Unstage all must be enabled: ${JSON.stringify(mmKebab)}`,
@@ -792,14 +798,12 @@ runScenario('review-multi-repo', async ({ app, page, log }) => {
     `the narrowed Discard all confirm must count the 2 listed files: ${JSON.stringify(discardMsg)}`,
   );
   await page.locator('.confirm .confirm__actions button', { hasText: 'Discard all' }).click();
-  const discardDeadline = Date.now() + 15000;
-  for (;;) {
-    const st = git(fx.ci, 'status', '--porcelain', '-uall');
-    if (st === '?? .conduit/review-notes.json') break;
-    if (Date.now() > discardDeadline)
-      throw new Error(`Discard all left ci as ${JSON.stringify(st)}`);
-    await page.waitForTimeout(300);
-  }
+  let st;
+  const discarded = await pollUntil(() => {
+    st = git(fx.ci, 'status', '--porcelain', '-uall');
+    return st === '?? .conduit/review-notes.json';
+  }, 15000);
+  assert(discarded, `Discard all left ci as ${JSON.stringify(st)}`);
   assert(
     notesOf(fx.ci).length === ciNotesBefore,
     'Discard all must keep ci’s review notes file and its notes',
@@ -874,17 +878,21 @@ runScenario('review-multi-repo', async ({ app, page, log }) => {
       { s: sid, tok: fx.extSha },
     );
   let validated = { commit: null, root: null };
-  for (let i = 0; i < 12 && validated.commit !== fx.extSha; i++) {
-    validated = await validate();
-    if (validated.commit !== fx.extSha) await page.waitForTimeout(500);
-  }
+  await pollUntil(
+    async () => {
+      validated = await validate();
+      return validated.commit === fx.extSha;
+    },
+    6000,
+    500,
+  );
   assert(
     validated.commit === fx.extSha && key(validated.root ?? '') === k.ext,
     `ext's sha must validate against ext; got ${JSON.stringify(validated)}`,
   );
   await writeToTerminal(page, sid, `\r\nBuilt ${fx.extSha}\r\n`);
   let routed = { error: 'not attempted' };
-  for (let attempt = 0; attempt < 6; attempt++) {
+  const routeCommit = async () => {
     routed = await page.evaluate(
       ({ s, sha }) =>
         new Promise((resolve) => {
@@ -914,9 +922,9 @@ runScenario('review-multi-repo', async ({ app, page, log }) => {
         }),
       { s: sid, sha: fx.extSha },
     );
-    if (routed.ok || routed.error !== 'sha not in buffer') break;
-    await page.waitForTimeout(400);
-  }
+    return routed.ok || routed.error !== 'sha not in buffer';
+  };
+  await pollUntil(routeCommit, 2400, 400);
   assert(routed.ok === true, `the ext commit link must activate; got ${JSON.stringify(routed)}`);
   await waitCards(page, [`${k.ext}|ext-only.txt`], 'the ext commit’s file', 20000);
   const extLabel = (await page.textContent('.review__source')) ?? '';

@@ -46,17 +46,31 @@ function representativeStates(grammar: Grammar): string[] {
   return grammarStates(grammar).filter((state) => !/^\D+(?:[2-9]|\d{2,})$/.test(state));
 }
 
-/** Median of `runs` after a warm-up: a quadratic rule is slow every run, a GC pause only once. */
-function elapsed(fn: () => void, runs = 5): number {
-  fn();
-  const samples: number[] = [];
-  for (let i = 0; i < runs; i++) {
-    const t = performance.now();
+/** Grouped wall samples can put scheduler stalls on one size; interleaved minima limit that bias. */
+function elapsedPair(
+  short: () => void,
+  full: () => void,
+): { quarter: number; full: number; fullMedian: number } {
+  short();
+  full();
+  let quarter = Infinity;
+  const fullSamples: number[] = [];
+  const measure = (fn: () => void): number => {
+    const start = performance.now();
     fn();
-    samples.push(performance.now() - t);
+    return performance.now() - start;
+  };
+  for (let i = 0; i < 5; i++) {
+    if (i % 2 === 0) {
+      quarter = Math.min(quarter, measure(short));
+      fullSamples.push(measure(full));
+    } else {
+      fullSamples.push(measure(full));
+      quarter = Math.min(quarter, measure(short));
+    }
   }
-  samples.sort((a, b) => a - b);
-  return samples[Math.floor(samples.length / 2)] ?? 0;
+  fullSamples.sort((a, b) => a - b);
+  return { quarter, full: fullSamples[0] ?? 0, fullMedian: fullSamples[2] ?? 0 };
 }
 
 describe('grammar runner', () => {
@@ -71,7 +85,7 @@ describe('grammar runner', () => {
 
 describe('grammar linearity', () => {
   for (const [name, grammar] of Object.entries(ALL)) {
-    // A hang guard only: linearity is the 20k→80k ratio test below, which load can't move much.
+    // A hang guard only: linearity is checked separately by the 20k→80k ratio.
     // One run per cell, no warm-up or median: a hang is slow on its first run, and a grammar with
     // many states (groovy's interpolation depths) otherwise pays six runs for each of them.
     it(`${name} tokenizes adversarial 20 000-char lines from every state without hanging`, () => {
@@ -106,10 +120,11 @@ describe('grammar linearity', () => {
           // GC jitter can't move the ratio (CI measured 8.0–8.1 for a linear rule at 5 000).
           const short = make(20000);
           const line = make(80000);
-          const quarter = elapsed(() => rawTokens(tokenizer, [short, '']));
-          // Already over budget at 20 000: one timed run at 80 000 is enough to read the growth.
-          const full = elapsed(() => rawTokens(tokenizer, [line, '']), quarter > 50 ? 1 : 5);
-          if (full < 10) continue;
+          const { quarter, full, fullMedian } = elapsedPair(
+            () => rawTokens(tokenizer, [short, '']),
+            () => rawTokens(tokenizer, [line, '']),
+          );
+          if (fullMedian < 10) continue;
           expect(
             full / quarter,
             `${name}@${state} on ${JSON.stringify(line.slice(0, 6))}…`,

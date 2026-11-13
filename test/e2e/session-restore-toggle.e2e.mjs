@@ -26,6 +26,7 @@ import {
   finishScenario,
   launchElectron,
   makeLog,
+  pollUntil,
   profileDir,
   REPO,
   tapBridge,
@@ -95,8 +96,7 @@ try {
   assert(sid, 'The opened cmd session never printed after openRepo');
   log('first launch: session live, id =', sid);
 
-  await page1.waitForTimeout(500);
-  assert(existsSync(sessionsPath), 'sessions.json was not written');
+  assert(await pollUntil(() => existsSync(sessionsPath), 5000), 'sessions.json was not written');
   await closeApp(appHandle, page1);
   appHandle = null;
 

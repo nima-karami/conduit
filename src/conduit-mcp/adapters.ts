@@ -1,7 +1,7 @@
 import { commandLeaf } from '../launch-args';
 import type { AgentDefinition } from '../types';
 
-export type McpAdapterId = 'claude' | 'codex' | 'cursor' | 'fake';
+export type McpAdapterId = 'claude' | 'codex' | 'cursor' | 'fake' | 'fake-queue';
 export interface ScreenPatterns {
   /** Matched on every viewport row. */
   blocking: readonly RegExp[];
@@ -47,7 +47,11 @@ export interface McpAdapter {
   screen: ScreenPatterns | null;
   e2eOnly: boolean;
   brief: BriefSupport | null;
+  /** 'queues': typed input mid-turn is queued, so a notice may go in while busy. see docs/runs/2026-11-09-con172/measure.md */
+  midTurn: 'queues' | 'holds';
 }
+
+const FAKE_SCREEN: ScreenPatterns = { blocking: [/Esc to cancel/], emptyInput: [/^fake❯\s*$/] };
 
 // Patterns come from the captured screens in test/unit/fixtures/conduit-mcp/screens/
 // (docs/runs/2026-10-25-conduit-mcp/s0-screens.md). Claude renders the space after ❯ as U+00A0,
@@ -67,6 +71,7 @@ export const MCP_ADAPTERS: readonly McpAdapter[] = [
     },
     e2eOnly: false,
     brief: { readAccess: 'add-dir' },
+    midTurn: 'queues',
   },
   {
     // Idle row measured in Conduit (fixture codex-idle). An approval replaces the composer, so it
@@ -86,6 +91,7 @@ export const MCP_ADAPTERS: readonly McpAdapter[] = [
     },
     e2eOnly: false,
     brief: { readAccess: 'none' },
+    midTurn: 'queues',
   },
   {
     id: 'cursor',
@@ -107,15 +113,27 @@ export const MCP_ADAPTERS: readonly McpAdapter[] = [
     },
     e2eOnly: false,
     brief: { readAccess: 'none' },
+    midTurn: 'holds',
   },
   {
     id: 'fake',
     leaves: [],
     ids: ['e2e-fake-mcp'],
     wiring: 'mcp-config-flag',
-    screen: { blocking: [/Esc to cancel/], emptyInput: [/^fake❯\s*$/] },
+    screen: FAKE_SCREEN,
     e2eOnly: true,
     brief: { readAccess: 'none' },
+    midTurn: 'holds',
+  },
+  {
+    id: 'fake-queue',
+    leaves: [],
+    ids: ['e2e-fake-mcp-queue'],
+    wiring: 'mcp-config-flag',
+    screen: FAKE_SCREEN,
+    e2eOnly: true,
+    brief: { readAccess: 'none' },
+    midTurn: 'queues',
   },
 ];
 
@@ -158,9 +176,15 @@ function modelFlagOfAdapter(kind: McpAdapterId | undefined): string | undefined 
     case 'codex':
       return '-m';
     case 'fake':
+    case 'fake-queue':
     case undefined:
       return undefined;
   }
+}
+
+/** Whether typed input mid-turn is queued by the CLI, so a notice can go in while it is busy. */
+export function queuesMidTurn(a: McpAdapter | null): boolean {
+  return a?.midTurn === 'queues';
 }
 
 /**

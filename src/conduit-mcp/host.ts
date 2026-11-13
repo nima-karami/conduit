@@ -15,7 +15,14 @@ import { readCappedBytes } from '../read-capped';
 import { COMMAND_AGENT_ID } from '../session-command';
 import { PTY_SETTLE_MS } from '../timed-messages';
 import type { AgentDefinition, SpawnSpec } from '../types';
-import { adapterFor, MCP_ADAPTERS, type McpAdapter, modelFlagOf, notifiable } from './adapters';
+import {
+  adapterFor,
+  MCP_ADAPTERS,
+  type McpAdapter,
+  modelFlagOf,
+  notifiable,
+  queuesMidTurn,
+} from './adapters';
 import { agentListing } from './agent-listing';
 import { registeredIdFor } from './agent-resolve';
 import { createAppControlHandlers } from './app-control-tools';
@@ -229,6 +236,8 @@ const HANDLES_FILE = 'handles.json';
 const VERSION = '1';
 /** How long a launch waits for the endpoint (conductor decision; plan Decisions). */
 export const ENDPOINT_READY_WAIT_MS = 3_000;
+/** Approval dialogs only appear mid-turn and some take single-letter answers: re-read before typing. */
+export const QUEUE_STABLE_MS = 250;
 
 /** Per-session runtime state; the gate's inputs that no other module owns (plan T9.2). */
 interface Runtime {
@@ -647,6 +656,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       spawnedAt: r.spawnedAt,
       connectionLive: registry.isLive(sessionId),
       busy: deps.attention.statusOf(sessionId).busy,
+      midTurnQueue: queuesMidTurn(adapter),
       lastOutputAt: deps.attention.lastOutputAt(sessionId),
       screen,
       hasDraft: r.hasDraft,
@@ -832,7 +842,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     };
     const outcome = await deps.typing.submit(sessionId, text, {
       beforeText: async () => {
-        const { verdict, adapter } = await evaluateWith(sessionId, true);
+        let { verdict, adapter } = await evaluateWith(sessionId, true);
+        if (verdict.open && queuesMidTurn(adapter)) {
+          await sleep(QUEUE_STABLE_MS);
+          ({ verdict, adapter } = await evaluateWith(sessionId, true));
+        }
         gen = deps.runtime.get(sessionId)?.generation;
         seq = r.inputSeq;
         typedFor = adapter;
@@ -1083,7 +1097,14 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       const r = runtime.get(s.id);
       const adapter = noticeAdapterOf(s.id);
       if (!s.mcpHandle || !r || !adapter || !notifiable(adapter) || r.unavailable) return [];
-      return [{ sessionId: s.id, handle: s.mcpHandle, busy: deps.attention.statusOf(s.id).busy }];
+      return [
+        {
+          sessionId: s.id,
+          handle: s.mcpHandle,
+          busy: deps.attention.statusOf(s.id).busy,
+          queues: queuesMidTurn(adapter),
+        },
+      ];
     });
 
   const raise = (item: AttentionRaise) => {
@@ -1112,6 +1133,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           }
         },
         raise,
+        now: () => now(),
       },
       { rearmAll: true },
     );
@@ -1227,7 +1249,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   };
 
   /**
-   * A busy lead never gets a typed notice (the gate waits for idle), so the unread count rides
+   * A busy lead on a holding CLI never gets a typed notice (spec CON-172), so the unread count rides
    * every tool result it makes until read_inbox reads them. Marks nothing: see bannerCandidates.
    */
   const unreadBannerFor = (handle: Handle | undefined, tool: string): string | null => {

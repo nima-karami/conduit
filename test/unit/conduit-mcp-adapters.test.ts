@@ -7,6 +7,7 @@ import {
   type McpAdapter,
   modelArgs,
   notifiable,
+  queuesMidTurn,
 } from '../../src/conduit-mcp/adapters';
 import {
   NOTICE_ECHO_ROWS,
@@ -354,6 +355,37 @@ describe('brief support', () => {
     for (const id of ['codex', 'cursor', 'fake'] as const) {
       expect(adapter(id).brief).toEqual({ readAccess: 'none' });
     }
+  });
+});
+
+describe('midTurn (CON-172)', () => {
+  it('midTurn: claude and codex queue, cursor and fake hold', () => {
+    expect(adapter('claude').midTurn).toBe('queues');
+    expect(adapter('codex').midTurn).toBe('queues');
+    expect(adapter('cursor').midTurn).toBe('holds');
+    expect(adapter('fake').midTurn).toBe('holds');
+  });
+
+  it('fake-queue matches e2e-fake-mcp-queue only under e2e', () => {
+    const def = { id: 'e2e-fake-mcp-queue', command: 'node' };
+    expect(adapterFor(def, { e2e: true })?.id).toBe('fake-queue');
+    expect(adapterFor(def, { e2e: false })).toBeUndefined();
+    expect(adapter('fake-queue').midTurn).toBe('queues');
+    expect(adapter('fake-queue').screen).toEqual(adapter('fake').screen);
+  });
+
+  it.each([
+    ['claude-mid-turn', 'claude'],
+    ['claude-background-agents', 'claude'],
+    ['codex-mid-turn', 'codex'],
+  ] as const)('%s → empty-input', (name, id) => {
+    expect(screenVerdict(adapter(id).screen, screen(name))).toBe('empty-input');
+  });
+
+  it('queuesMidTurn(null) is false', () => {
+    expect(queuesMidTurn(null)).toBe(false);
+    expect(queuesMidTurn(adapter('claude'))).toBe(true);
+    expect(queuesMidTurn(adapter('cursor'))).toBe(false);
   });
 });
 

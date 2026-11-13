@@ -21,6 +21,7 @@ import {
   launchApp,
   makeLog,
   openSession,
+  pollUntil,
   REPO,
   spyMain,
   tapBridge,
@@ -49,7 +50,21 @@ try {
     (p) => window.agentDeck.post({ type: 'openExternalPath', path: p }),
     FILE_PATH,
   );
-  await page.waitForTimeout(500);
+  assert(
+    await pollUntil(
+      async () =>
+        (await getSpyCalls(app)).some((c) => c.api === 'openPath' && c.args[0] === FILE_PATH),
+      5000,
+    ),
+    'openPath was not called',
+  );
+  assert(
+    !(await pollUntil(
+      async () => (await getSpyCalls(app)).filter((c) => c.api === 'openPath').length > 1,
+      500,
+    )),
+    'duplicate openPath call',
+  );
   const calls = await getSpyCalls(app);
   log(
     'calls after openExternalPath:',

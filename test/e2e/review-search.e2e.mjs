@@ -255,7 +255,15 @@ runScenario('review-search', async ({ page, log }) => {
   await waitForStatus(page, /^1 \/ 120$/);
   await page.click(`${BAR} .term-find__input`);
   await page.keyboard.press('Enter');
-  await page.waitForTimeout(400);
+  // The shot needs the current match painted, which is what Enter produces here.
+  await page.waitForFunction(
+    () => {
+      const hl = CSS.highlights?.get('review-find-current');
+      return !!hl && [...hl].some((r) => r.toString().includes('const q'));
+    },
+    null,
+    { timeout: 10000 },
+  );
   const shot = join(shotDir, 'lane-c-search.png');
   await page.screenshot({ path: shot });
   log(`screenshot: ${shot}`);

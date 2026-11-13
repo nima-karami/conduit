@@ -131,7 +131,16 @@ runScenario('search-refusal', async ({ app, page, log }) => {
       before,
       { timeout: 15000 },
     );
-    await page.waitForTimeout(QUIET_MS);
+    try {
+      await page.waitForFunction(
+        (n) => window.__searchReplies.filter((m) => m.type === 'searchResults').length > n + 1,
+        before,
+        { timeout: QUIET_MS },
+      );
+      assert(false, 'a refused searchFiles request produced an extra reply');
+    } catch (error) {
+      if (error.name !== 'TimeoutError') throw error;
+    }
     const after = (await fileReplies(page)).slice(before);
     assert(
       after.length === 1 && after[0].root === wsRoot,
