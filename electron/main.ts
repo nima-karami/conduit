@@ -2093,8 +2093,6 @@ app.whenReady().then(() => {
       const finish = () => {
         quitAsks.clear();
         stopAgentsOnQuit = false;
-        for (const w of windows.values())
-          if (!w.isDestroyed()) armCloseFallback(w, closeFallbackDeps);
         quitGrant.issue();
         if (reason === 'update') quitAndInstall();
         else setImmediate(() => app.quit());
@@ -4669,6 +4667,9 @@ app.whenReady().then(() => {
     // dispose branch (Slice C).
     isQuitting = true;
     log.info('app', 'quit');
+    // Armed only now that the quit is certain: an update relaunch that doesn't quit keeps its
+    // windows, and a fallback armed at the guard's proceed would destroy them (CON-14).
+    for (const w of windows.values()) if (!w.isDestroyed()) armCloseFallback(w, closeFallbackDeps);
     // Capture the final state SYNCHRONOUSLY + atomically while windows + ownership are intact.
     // Synchronous so it completes before the auto-update installer can force-kill the process
     // (async writes would be truncated → data loss). Agents keep running in hc (F4).
