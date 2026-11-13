@@ -121,3 +121,32 @@ jobs:
             --title "Conduit $GITHUB_REF_NAME" --notes-file build/release-notes.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-linux:
+    # Linux ships in the release the Windows job just created; uploading after it avoids two
+    # jobs racing to create the release. latest-linux.yml is what the deb/AppImage updater reads.
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+      - name: Prepare release notes
+        run: node tools/release-notes.mjs "$GITHUB_REF_NAME"
+      - run: node build/fetch-runtime.mjs --platform linux --arch x64
+
+      - run: npx electron-builder --linux --x64 --publish never "--config.releaseInfo.releaseNotesFile=build/release-notes.md"
+
+      - name: Upload Linux builds to the release
+        run: gh release upload "$GITHUB_REF_NAME" dist/*.deb dist/*.AppImage dist/latest-linux.yml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

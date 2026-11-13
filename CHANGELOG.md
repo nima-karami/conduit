@@ -6,6 +6,9 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- Conduit releases now include Linux builds (a .deb and an AppImage for x64), and installed Linux builds update themselves.
+
 ### Fixed
 - On Linux, Ctrl+V in a terminal now reaches Claude Code when the clipboard holds an image, so Claude Code can attach it. Text pastes as before.
 - Saving a file on Linux and macOS keeps its permissions: a script stays executable, and a read-only file is no longer silently replaced — the save fails with a "read-only" error instead.
