@@ -2,7 +2,7 @@
   "name": "conduit",
   "displayName": "Conduit",
   "description": "Agent-agnostic multi-agent terminal dashboard (standalone desktop app)",
-  "version": "0.62.0",
+  "version": "0.63.0",
   "homepage": "https://github.com/nima-karami/conduit",
   "desktopName": "conduit.desktop",
   "author": "Nima Karami",

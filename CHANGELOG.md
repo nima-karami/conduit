@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.63.0] — 2026-11-12
+
 ### Added
 - Conduit releases now include Linux builds (a .deb and an AppImage for x64), and installed Linux builds update themselves.
 
