@@ -150,7 +150,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const flag = args.shift();
     if (!['--platform', '--arch'].includes(flag) || !args[0] || args[0].startsWith('--')) {
       throw new Error(
-        'Usage: node build/fetch-runtime.mjs [--platform darwin|win32] [--arch arm64|x64]',
+        'Usage: node build/fetch-runtime.mjs [--platform darwin|linux|win32] [--arch arm64|x64]',
       );
     }
     options[flag.slice(2)] = args.shift();

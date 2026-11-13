@@ -5,7 +5,11 @@ import { join } from 'node:path';
 export default async function checkRuntime(context) {
   const platform = context.electronPlatformName;
   const arch = { 1: 'x64', 3: 'arm64' }[context.arch] ?? `arch-${context.arch}`;
-  if (!((platform === 'win32' && arch === 'x64') || (platform === 'darwin' && arch === 'arm64'))) {
+  const supported =
+    (platform === 'win32' && arch === 'x64') ||
+    (platform === 'darwin' && arch === 'arm64') ||
+    (platform === 'linux' && arch === 'x64');
+  if (!supported) {
     throw new Error(`No pinned runtime for ${platform}-${arch}`);
   }
   const extension = platform === 'win32' ? '.exe' : '';
@@ -19,7 +23,7 @@ export default async function checkRuntime(context) {
     'resources/conduit-mcp/conduit-mcp-shim.cjs',
     'THIRD_PARTY_NOTICES.txt',
   ];
-  // hc's Windows archive ships its notices as a folder, the macOS one as a single file.
+  // hc's Windows archive ships its notices as a folder, the macOS and Linux ones as a single file.
   const notices = 'build/vendor/hc/THIRD-PARTY-NOTICES';
   const missing = [];
   try {

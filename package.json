@@ -3,6 +3,8 @@
   "displayName": "Conduit",
   "description": "Agent-agnostic multi-agent terminal dashboard (standalone desktop app)",
   "version": "0.62.0",
+  "homepage": "https://github.com/nima-karami/conduit",
+  "desktopName": "conduit.desktop",
   "author": "Nima Karami",
   "license": "MIT",
   "main": "./out/main.js",
@@ -33,6 +35,7 @@
     "verify:quick": "node tools/verify-quick.mjs",
     "pack": "npm run build && node build/fetch-runtime.mjs && npm run tray:build && electron-builder --dir",
     "dist": "npm run build && node build/fetch-runtime.mjs && npm run tray:build && electron-builder --win",
+    "dist:linux": "npm run build && node build/fetch-runtime.mjs --platform linux --arch x64 && electron-builder --linux --x64 --publish never",
     "release": "npm version patch && git push --follow-tags",
     "release:minor": "npm version minor && git push --follow-tags",
     "release:major": "npm version major && git push --follow-tags",
@@ -127,6 +130,43 @@
       "installerHeaderIcon": "assets/icon.ico",
       "uninstallDisplayName": "Conduit",
       "include": "build/installer.nsh"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "build/icons",
+      "category": "Development",
+      "executableName": "conduit",
+      "maintainer": "Nima Karami <94768955+nima-karami@users.noreply.github.com>",
+      "artifactName": "${productName}-${version}-linux-x64.${ext}",
+      "extraResources": [
+        {
+          "from": "build/vendor/node/node",
+          "to": "runtime/node"
+        },
+        {
+          "from": "build/vendor/hc",
+          "to": "runtime/hc"
+        },
+        {
+          "from": "out/server",
+          "to": "runtime/server",
+          "filter": [
+            "**/*",
+            "!**/*.map"
+          ]
+        },
+        {
+          "from": "build/vendor/node/LICENSE",
+          "to": "licenses/node/LICENSE"
+        },
+        {
+          "from": "THIRD_PARTY_NOTICES.txt",
+          "to": "THIRD_PARTY_NOTICES.txt"
+        }
+      ]
     },
     "mac": {
       "target": [
