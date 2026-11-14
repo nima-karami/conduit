@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { newCode, normalizeCode } from '../../src/network/pairing-code';
+import { PAIRING_WORDS } from '../../src/network/pairing-words';
 
 const FIXTURE = ['apple', 'zoo', 'ability', 'river'];
 const BIG = Array.from({ length: 2048 }, (_, i) => `w${i}`);
@@ -75,5 +76,18 @@ describe('newCode', () => {
     newCode(small, FIXTURE);
     expect(small).toHaveBeenCalledTimes(1);
     expect(small).toHaveBeenCalledWith(1);
+  });
+});
+
+describe('the shipped word list', () => {
+  it('is 2048 distinct lowercase words, so codes carry 33 bits', () => {
+    expect(PAIRING_WORDS).toHaveLength(2048);
+    expect(new Set(PAIRING_WORDS).size).toBe(2048);
+    expect(PAIRING_WORDS.every((w) => /^[a-z]+$/.test(w))).toBe(true);
+  });
+  it('is the default list for both functions', () => {
+    const code = newCode(() => new Uint8Array(5));
+    expect(code).toEqual(['abandon', 'abandon', 'abandon']);
+    expect(normalizeCode('Abandon ZOO ability')).toBe('abandon zoo ability');
   });
 });

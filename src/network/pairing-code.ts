@@ -1,3 +1,5 @@
+import { PAIRING_WORDS } from './pairing-words';
+
 // Three words, not a numeric code: the joiner types it from a screen to another machine, and
 // words survive being read aloud or retyped. See the pairing plan, T2.2.
 
@@ -21,7 +23,7 @@ function bitsPerWord(size: number): number {
  */
 export function newCode(
   rand: (n: number) => Uint8Array,
-  words: readonly string[],
+  words: readonly string[] = PAIRING_WORDS,
 ): [string, string, string] {
   const perWord = bitsPerWord(words.length);
   const byteCount = Math.ceil((WORDS_PER_CODE * perWord) / 8);
@@ -30,25 +32,30 @@ export function newCode(
     throw new Error(`rand returned ${bytes.length} bytes, expected ${byteCount}`);
   }
 
-  const picked: string[] = [];
   let bit = 0;
-  for (let w = 0; w < WORDS_PER_CODE; w++) {
+  const pick = (): string => {
     let index = 0;
     for (let k = 0; k < perWord; k++) {
-      const byte = bytes[bit >> 3] as number;
+      const byte = bytes[bit >> 3];
+      if (byte === undefined) throw new Error('ran out of random bits');
       index = (index << 1) | ((byte >> (7 - (bit & 7))) & 1);
       bit++;
     }
-    picked.push(words[index] as string);
-  }
-  return [picked[0] as string, picked[1] as string, picked[2] as string];
+    const word = words[index];
+    if (word === undefined) throw new Error('word index out of range');
+    return word;
+  };
+  return [pick(), pick(), pick()];
 }
 
 /**
  * Accepts what people actually type: any case, any run of spaces, tabs, newlines or hyphens
  * between words. Returns the canonical form, or null if it cannot be a code from this list.
  */
-export function normalizeCode(input: string, words: readonly string[]): string | null {
+export function normalizeCode(
+  input: string,
+  words: readonly string[] = PAIRING_WORDS,
+): string | null {
   const parts = input
     .trim()
     .toLowerCase()
