@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 // commitment). Every input is fixed-length (32-byte keys and nonces), so plain concatenation is
 // unambiguous and needs no length prefixes.
 
-export const PAIRING_KEY_BYTES = 32;
+const PAIRING_KEY_BYTES = 32;
 export const PAIRING_NONCE_BYTES = 32;
 
 const COMMIT_LABEL = Buffer.from('conduit-pair-commit-v1', 'ascii');

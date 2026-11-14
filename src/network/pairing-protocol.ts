@@ -6,7 +6,7 @@ import { commitment, fingerprint, linkIdFor, PAIRING_NONCE_BYTES } from './pairi
 // its reasons are docs/plans/2026-11-14-conduit-network-machinery.plan.md decisions 3 and 10. Both
 // sides run inside a TLS 1.3 connection whose certificates carry the server keys passed in here.
 
-export const PAIRING_VERSION = 1;
+const PAIRING_VERSION = 1;
 const MAX_NAME_CHARS = 64;
 const MAX_ADDRESSES = 16;
 const MAX_ADDRESS_CHARS = 255;
