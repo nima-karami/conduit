@@ -95,3 +95,16 @@ describe('openRequest', () => {
     expect(h.requestPopup.current()).toBeNull();
   });
 });
+
+describe('openSessionTerminal', () => {
+  it('opens the session terminal through the registered openers', () => {
+    const h = harness({}, []);
+    expect(h.openSessionTerminal('sess-9')).toBe(true);
+    expect(h.openTerminal).toHaveBeenCalledWith('sess-9');
+  });
+
+  it('returns false when no openers are registered', () => {
+    const api = createRequestOpen({ openAs: () => 'popup', requests: () => [] });
+    expect(api.openSessionTerminal('sess-9')).toBe(false);
+  });
+});

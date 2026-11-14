@@ -79,7 +79,10 @@ async function render(value: WorkbenchChromeContextValue, child: ReactElement): 
 const ready = (count: number): ChangesModel =>
   ({ kind: 'ready', count }) as unknown as Extract<ChangesModel, { kind: 'ready' }>;
 const mcp = (youUnread: number, youUrgent: number): McpUiState =>
-  ({ youUnread, youUrgent }) as unknown as McpUiState;
+  ({ youUnread, youUrgent, requests: { open: [], ended: [] } }) as unknown as McpUiState;
+
+const openRequest = (o: { waiting?: boolean; priority?: string }) =>
+  ({ id: 'r', waiting: false, priority: 'normal', ...o }) as never;
 
 function topBar(
   props: {
@@ -102,16 +105,27 @@ const toggle = (view: string) =>
   document.querySelector<HTMLButtonElement>(`button[data-right-view="${view}"]`);
 
 describe('header toggles (selector contract: Header toggles)', () => {
-  it('renders Files, Changes, Messages in order with label, pressed state and controls', async () => {
+  it('renders Needs you, Files, Changes, Messages in order with label, pressed state and controls', async () => {
     await render(chrome({ rightOpen: true, rightTab: 'changes' }), topBar());
     const views = [...document.querySelectorAll<HTMLButtonElement>('button[data-right-view]')];
-    expect(views.map((b) => b.dataset.rightView)).toEqual(['files', 'changes', 'messages']);
+    expect(views.map((b) => b.dataset.rightView)).toEqual([
+      'needs',
+      'files',
+      'changes',
+      'messages',
+    ]);
     expect(views.map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Needs you',
       'Files',
       'Changes',
       'Messages',
     ]);
-    expect(views.map((b) => b.getAttribute('aria-pressed'))).toEqual(['false', 'true', 'false']);
+    expect(views.map((b) => b.getAttribute('aria-pressed'))).toEqual([
+      'false',
+      'false',
+      'true',
+      'false',
+    ]);
     for (const b of views) expect(b.getAttribute('aria-controls')).toBe('right-pane');
   });
 
@@ -145,6 +159,22 @@ describe('header toggles (selector contract: Header toggles)', () => {
     );
     expect(messages?.querySelector('.topbar__badge--urgent')).not.toBeNull();
     expect(toggle('files')?.hasAttribute('aria-describedby')).toBe(false);
+  });
+
+  it('Needs you badge counts open requests; waiting or urgent takes the urgent badge', async () => {
+    const withOpen = (open: unknown[]) =>
+      ({ youUnread: 0, youUrgent: 0, requests: { open, ended: [] } }) as unknown as McpUiState;
+    await render(chrome(), topBar({ mcpState: withOpen([openRequest({})]) }));
+    const needs = document.querySelector<HTMLButtonElement>('button[data-right-view="needs"]');
+    expect(needs?.querySelector('.topbar__badge')?.textContent).toBe('1');
+    expect(needs?.querySelector('.topbar__badge--urgent')).toBeNull();
+    await render(
+      chrome(),
+      topBar({ mcpState: withOpen([openRequest({ waiting: true }), openRequest({})]) }),
+    );
+    const urgent = document.querySelector<HTMLButtonElement>('button[data-right-view="needs"]');
+    expect(urgent?.querySelector('.topbar__badge--urgent')).not.toBeNull();
+    expect(urgent?.querySelector('.topbar__badge')?.textContent).toBe('2');
   });
 
   it('no count, no badge', async () => {

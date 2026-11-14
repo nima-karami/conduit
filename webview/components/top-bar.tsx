@@ -1,4 +1,4 @@
-import { MessageSquare } from 'lucide-react';
+import { CircleDot, MessageSquare } from 'lucide-react';
 import { type ReactNode, useEffect, useId, useState, useSyncExternalStore } from 'react';
 import type { ChangesModel } from '../../src/changes-view-model';
 import type { McpUiState } from '../../src/conduit-mcp/ui-types';
@@ -33,6 +33,7 @@ export function changesBadgeCount(
 }
 
 const VIEWS: readonly { id: RightPaneTab; icon: ReactNode }[] = [
+  { id: 'needs', icon: <CircleDot size={14} aria-hidden /> },
   { id: 'files', icon: <IconDoc size={14} /> },
   { id: 'changes', icon: <IconBranch size={14} /> },
   { id: 'messages', icon: <MessageSquare size={14} aria-hidden /> },
@@ -130,7 +131,17 @@ export function TopBar({
 
   const changesCount = changesBadgeCount(reviewMode, navModel, changesModel);
   const mcpBadge = mcpState ? tabBadge(mcpState) : null;
+  const openRequests = mcpState?.requests.open ?? [];
+  const needsBadge: Badge | null =
+    openRequests.length > 0
+      ? {
+          count: openRequests.length,
+          urgent: openRequests.some((r) => r.waiting || r.priority === 'urgent'),
+          text: CHROME_STR.needsBadge(openRequests.length),
+        }
+      : null;
   const badges: Record<RightPaneTab, Badge | null> = {
+    needs: needsBadge,
     files: null,
     changes:
       changesCount > 0
