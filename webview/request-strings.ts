@@ -82,7 +82,8 @@ export const REQ_STR = {
   awayEnded: (time: string) => `Away ended ${time}`,
 
   digestTitle: 'While you were away',
-  stillNeedYou: (n: number) => `${countNoun(n, 'request', 'requests')} still need you`,
+  stillNeedYou: (n: number) =>
+    `${countNoun(n, 'request', 'requests')} still ${n === 1 ? 'needs' : 'need'} you`,
   wentWithDefaultN: (n: number) => `${countNoun(n, 'request', 'requests')} went with the default`,
   expiredN: (n: number) => `${countNoun(n, 'request', 'requests')} expired`,
   clearedN: (n: number) => `${countNoun(n, 'request', 'requests')} cleared by themselves`,
@@ -138,4 +139,14 @@ export const REQ_STR = {
     needPick: 'Pick an option to send.',
     attendLine: "Answer in its terminal, where it's waiting.",
   },
+};
+
+export const awayStr = {
+  menuHeading: 'Set yourself away',
+  bannerAway: "You're away.",
+  bannerUntil: (time: string) => `You're away until ${time}.`,
+  explainer:
+    'Only urgent requests send notifications. Requests still arrive and wait here; approvals are never allowed by silence.',
+  listedBelow: 'listed below',
+  window: (from: string, to: string) => `${from} – ${to}`,
 };
