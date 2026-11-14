@@ -50,7 +50,7 @@ Codex rollout item_completed ──> codexWatch.onAction ───────�
 - **POL-D3 allow**: Lead allows `open_terminal` and `open_session` with no ask.
 - POL-D4: Lead acts off screen (`when: 'always'` in the Lead profile).
 - POL-D5: kind assignments and kind grants apply only to sessions Conduit launched with a known adapter.
-- POL-D6: if the Activity store fails, local principals go ahead with a gap marker. The engine takes `auditWritable` so that guests fail closed later; there are no guests in MVP.
+- POL-D6: if the Activity store fails, local principals go ahead with a gap marker. Guests fail closed in v1; with no guests in MVP the engine takes no `auditWritable` input (added with the Guest profile).
 - POL-D7: picker defaults by principal; a "until this session ends" grant also expires after 7 days unused.
 - POL-D8: Activity is human-only and never readable through MCP. POL-D9: allow/ask/deny. POL-D14: observed lane for Claude and Codex.
 - POL-D16: one-use override, local only, never past a floor. POL-D17: one Activity row per raised request, linked by `requestId`.
@@ -160,7 +160,7 @@ export interface PolicyState {
 }
 export interface PolicyInput {
   principal: Principal; tool: ToolName; targets: readonly PolicyTarget[];
-  masterOn: boolean; auditWritable: boolean; toYou: boolean; now: number;
+  masterOn: boolean; toYou: boolean; now: number;   // auditWritable dropped: no guests in MVP, so nothing reads it
 }
 export interface PolicyDecision {
   decision: Decision; reason: Reason;
@@ -281,7 +281,7 @@ export interface PolicyServiceDeps { dir: string; now(): number; newId(): string
   clearTimer(t: unknown): void; warn(m: string, e?: unknown): void; legacy(): LegacyPolicy; onChanged(): void }
 export interface PolicyService {
   start(): void; stop(): Promise<void>;
-  decide(input: Omit<PolicyInput, 'auditWritable' | 'now'>): PolicyDecision;   // also touches a matched grant, consumes a matched override
+  decide(input: Omit<PolicyInput, 'now'>): PolicyDecision;   // also touches a matched grant, consumes a matched override
   visibleTools(p: Principal, masterOn: boolean): ToolName[];
   setAssignment(point: AssignmentPoint, profileId: ProfileId | null): { ok: true } | { ok: false; error: 'unknown-profile' | 'read-only' };
   applyLegacyPatch(point: AssignmentPoint, tool: ToolName, patch: ToolPolicyPatch): { ok: true } | { ok: false; error: 'read-only' };
@@ -392,7 +392,7 @@ None. Nothing repeats enough to be worth a script; the fixture scrub in T0.2 is 
 ### Slice 0: Contracts and fixtures (orchestrator)
 **Check:** `npx tsc --noEmit -p .` exits 0. Fixtures parse as JSON.
 - T0.1: merge the CON-21 tip. Write `policy-types.ts` (C1 minus `GrantChoice` and `PermissionAnswer`) on the lane base branch `con24-s1-base`.
-- T0.2: fixtures are **scrubbed of home paths, tokens, account and user ids, and file contents** before commit; grep the files for `/home/`, `namemenima`, `account`, `token` and `creator_` before staging. Record a real Claude Code 2.1.325 PostToolUse payload. Run `claude -p` in a scratch folder with a `--settings` hook that tees stdin; this is a CLI, no GUI. Capture Bash, Edit and an MCP call, scrub them, and save as `test/fixtures/claude-hooks/post-tool-use-{bash,edit,mcp}.json`. Also write a scrubbed 6-line Codex `actions.jsonl` covering CommandExecution, FileChange and McpToolCall. If the PostToolUse shape doesn't carry `tool_name`/`tool_input`, stop and report to the lead before Slice 1 lane C.
+- T0.2 (done: async hook measured, see the run report): fixtures are **scrubbed of home paths, tokens, account and user ids, and file contents** before commit; grep the files for `/home/`, `namemenima`, `account`, `token` and `creator_` before staging. Record a real Claude Code 2.1.325 PostToolUse payload. Run `claude -p` in a scratch folder with a `--settings` hook that tees stdin; this is a CLI, no GUI. Capture Bash, Edit and an MCP call, scrub them, and save as `test/fixtures/claude-hooks/post-tool-use-{bash,edit,mcp}.json`. Also write a scrubbed 6-line Codex `actions.jsonl` covering CommandExecution, FileChange and McpToolCall. If the PostToolUse shape doesn't carry `tool_name`/`tool_input`, stop and report to the lead before Slice 1 lane C.
 
 ### Slice 1: Pure core
 **Check:** `npx vitest run test/unit/policy-engine.test.ts test/unit/policy-profiles.test.ts test/unit/policy-file.test.ts test/unit/grant-store.test.ts test/unit/activity-log.test.ts test/unit/activity-log-fs.test.ts test/unit/codex-rollout-actions.test.ts test/unit/claude-tool-actions.test.ts` passes, and so does `npx tsc --noEmit`. `npm run verify` exits 0 after each lane merge (fallow-safe placement, see Verification).
@@ -536,7 +536,7 @@ Failing tests:
 **Claims:** `server/domain/index.ts`, `server/services.ts`, `host.ts`
 
 - **T4.1 Claude hook.**
-  - Files: `hook-protocol.ts`, `endpoint.ts` (`HOOK_EVENTS`), `claude-hook-settings.ts` (PostToolUse, matcher `Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*`), `claude-signals.ts` (case → `[]`), `conduit-hook.cjs` (for PostToolUse only: read ≤ 4 MiB, drop `tool_response` and every `content`/`new_string`/`old_string` field, then post). Update `claude-hook-settings.test.ts`.
+  - Files: `hook-protocol.ts`, `endpoint.ts` (`HOOK_EVENTS`), `claude-hook-settings.ts` (PostToolUse, matcher `Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*`, **`async: true`** — measured: sync adds the client's ~60 ms per call; async adds nothing to the agent's path), `claude-signals.ts` (case → `[]`), `conduit-hook.cjs` (for PostToolUse only: read ≤ 4 MiB, drop `tool_response` and every `content`/`new_string`/`old_string` field, then post). Update `claude-hook-settings.test.ts`.
   - Failing tests: 'PostToolUse is allowed by the endpoint'; 'hook client strips tool_response and contents' (`test/unit/conduit-hook-client.test.ts`).
 - **T4.2 Codex watch.**
   - Files: `codex-rollout-watch.ts` (`onAction(sessionId, CodexAction)` dep, skips the replay read, reports `onFeed(sessionId, 'unavailable')` on an ambiguous or no bind after the 30 s bind window); test `codex-rollout-watch.test.ts`.
