@@ -26,10 +26,7 @@
         "oldLines": 1,
         "newStart": 1,
         "newLines": 1,
-        "lines": [
-          "-FIXTURE-CONTENT-hello",
-          "+FIXTURE-CONTENT-goodbye"
-        ]
+        "lines": ["-FIXTURE-CONTENT-hello", "+FIXTURE-CONTENT-goodbye"]
       }
     ],
     "userModified": false,
