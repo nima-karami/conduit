@@ -188,7 +188,7 @@ export function matchesScope(scope: Scope, target: PolicyTarget | null): boolean
 export const WORKER_PROFILE: Profile;                // fallback for an unknown profileId
 // policy-engine.ts
 export function decide(state: PolicyState, input: PolicyInput): PolicyDecision;
-export function visibleTools(state: PolicyState, principal: Principal, masterOn: boolean, now: number): ToolName[];
+export function visibleTools(state: PolicyState, principal: Principal, now: number): ToolName[];  // master-off keeps every tool listed (today: messaging_off, not unknown-tool)
 export function assignmentFor(state: PolicyState, p: Principal): { point: AssignmentPoint; assignment: Assignment };
 export function reasonText(reason: Reason, decision: Decision, names: { profileName(id: ProfileId): string; cliName(k: CliKind): string }): string;
 ```
@@ -198,13 +198,15 @@ export function reasonText(reason: Reason, decision: Decision, names: { profileN
 
 Engine invariants:
 - **Precedence is exactly POL §4.3:** floors (a, d, c), then explicit denies (passable only by a matching one-use override, never a floor), then active, unexpired, unsuspended grants matching who × tool × scope, then the most specific assignment.
-- **Assignment specificity.** A session beats a peer, which beats a kind, which beats the default. Kind is used only when `launchedCli !== null`. A remote principal uses its peer assignment; with none, an own peer is Worker with `open_session`, `open_terminal`, `send_input`, `close_session` and `attach_folder` at ask.
+- **Assignment specificity.** A session beats a peer, which beats a kind, which beats the default. Kind is used only when `launchedCli !== null`. A remote principal uses its peer assignment; with none, an own peer is Worker with NET §4.1's orchestrate set (`open_session`, `open_terminal`, `close_session`, `send_input`, `read_screen`) at ask.
 - **Within an assignment.** An exception beats the profile, and a narrower scope beats a wider one. On an exact tie the stricter decision wins (deny > ask > allow).
 - **Several targets.** The strictest per-target decision wins, and its reason is reported.
 - **Remote principals.** `when` is forced to `'always'`, and `reach: 'window'` becomes `'opened'`.
 - **`onScreenOnly`.** It forces `when: 'viewing'` on every tool whose rule has a `when`.
 - **Defaults.** A target with no session or path matches the caller's `homeFolder`. Floor (c): a local session with `toYou` on `send_message` or `request_input` is always allowed.
 - **Every result carries exactly one `Reason`.**
+- **Explicit denies (review ruling).** Only exception denies are explicit (step 2). A profile deny is decided at step 4, so a grant can pass it: Guest is a deny profile that Share grants pass (§1 success 5). "Rule" in §4.3 step 2 means the v1 user-made rules. Explicit denies come only from the chosen assignment, which replaces lower ones.
+- **Hidden tools.** `visibleTools` hides a tool only when it is denied for every target: a non-master floor, or a profile deny with no non-deny exception and no matching grant.
 
 ### C3 Stores — `policy-file.ts`, `grant-store.ts` (Slice 1, lane B)
 ```ts
