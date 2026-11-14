@@ -587,6 +587,7 @@ function harness(
     },
     emit,
     ownerWindowOf: (id) => (owners.has(id) ? (owners.get(id) ?? null) : 1),
+    appConnected: () => true,
     windowReady: (w) => presence.ready.has(w),
     onScreen: (w, id) => presence.shown.get(w)?.has(id) ?? true,
     newAskId: () => `ask-${++askN}`,

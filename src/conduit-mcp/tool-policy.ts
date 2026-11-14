@@ -421,7 +421,7 @@ export const toolDisabled = (tool: ToolName): ToolError =>
 export const NOT_IN_SESSION_HINT =
   'Conduit MCP tools work only from a CLI that a Conduit terminal started; run it there';
 
-/** Also the call flow's refusal when an ask finds no owner window. */
+/** Also the call flow's refusal when an ask finds no owner window while an app is connected. */
 export const windowNotReady = (): ToolError =>
   toolError('window_not_ready', "this session's Conduit window isn't ready; try again shortly");
 
@@ -433,6 +433,7 @@ export function gateToolCall(i: {
   policy: ToolPolicy;
   ownerReady: () => boolean;
   onScreen: () => boolean;
+  appConnected: boolean;
 }): ToolError | null {
   if (i.sessionId === null)
     return toolError('not_in_session', 'this MCP connection is not a Conduit session', undefined, {
@@ -443,6 +444,15 @@ export function gateToolCall(i: {
     return toolError('messaging_off', 'Conduit messaging is turned off');
   if (i.policy.access === 'off') return toolDisabled(i.tool);
   if (isMessagingTool(i.tool) || isRequestTool(i.tool)) return null;
+  // REQ-D21c: with no app at all, an always-ask may wait for one, but only for a server action, which
+  // can run once approved without a window (docs/specs/2026-11-14-user-input-requests.md §4.3).
+  if (
+    !i.appConnected &&
+    i.policy.access === 'ask' &&
+    i.policy.when === 'always' &&
+    SERVER_ACTIONS.has(i.tool)
+  )
+    return null;
   // Without a ready window there is no card to ask on and no visibility to trust; an `on` server
   // action needs neither (architecture D8).
   if (!i.ownerReady())

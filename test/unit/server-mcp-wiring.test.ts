@@ -4,9 +4,10 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createMcp, type ServerMcp } from '../../server/mcp';
+import { ASK_TIMEOUT_MS } from '../../src/conduit-mcp/call-flow';
 import type { McpOpenRequest } from '../../src/conduit-mcp/control-tools';
 import { MIDTURN_DEBOUNCE_MS } from '../../src/conduit-mcp/notifier';
-import { DEFAULT_TOOL_POLICY } from '../../src/conduit-mcp/tool-policy';
+import { DEFAULT_TOOL_POLICY, type GlobalPolicy } from '../../src/conduit-mcp/tool-policy';
 import type { McpHostDeps } from '../../src/contracts/server-ports';
 import type { ServerEvents, WindowPresence } from '../../src/contracts/server-protocol';
 import type {
@@ -31,6 +32,10 @@ const FAKE: AgentDefinition = {
   cwdStrategy: 'workspaceFolder',
 };
 const SHELL: AgentDefinition = { ...FAKE, id: 'pwsh', command: 'pwsh' };
+const ALWAYS_OPEN: GlobalPolicy = {
+  ...DEFAULT_TOOL_POLICY,
+  open_session: { access: 'ask', when: 'always' },
+};
 const spec = (): SpawnSpec => ({
   command: '/usr/bin/node',
   args: ['fake.mjs'],
@@ -53,7 +58,7 @@ afterEach(async () => {
   for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
 
-function harness(opts: { manualTimers?: boolean } = {}) {
+function harness(opts: { manualTimers?: boolean; policy?: GlobalPolicy } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'w5-wiring-'));
   dirs.push(dir);
   const ep = testEndpoint();
@@ -138,7 +143,7 @@ function harness(opts: { manualTimers?: boolean } = {}) {
       projectName: () => null,
       installState: () => 'not-installed' as const,
       messagingOn: () => true,
-      toolPolicy: () => ({ global: DEFAULT_TOOL_POLICY, byCli: {} }),
+      toolPolicy: () => ({ global: opts.policy ?? DEFAULT_TOOL_POLICY, byCli: {} }),
       limit: {
         resumeNow: async () => false,
         autoResumeOn: () => true,
@@ -683,7 +688,17 @@ describe('D28 bindings across a server restart', () => {
   });
 });
 
-describe('D8 grace: no app for 5 s', () => {
+describe('REQ-D21c: an ask outlives the app connection', () => {
+  const OPEN_CALL = {
+    id: 5,
+    method: 'tools/call',
+    params: { name: 'open_session', arguments: { path: '/w', agent: FAKE.id } },
+  };
+  const errorOf = (l: Record<string, unknown> | undefined) => {
+    const r = l?.result as { content: Array<{ text: string }> } | undefined;
+    return r ? JSON.parse(r.content[0]?.text ?? '{}').error?.code : undefined;
+  };
+
   async function askingManual() {
     const h = harness({ manualTimers: true });
     await h.mcp.start();
@@ -691,40 +706,60 @@ describe('D8 grace: no app for 5 s', () => {
     const app = {};
     h.mcp.presence(app, [win(1, { ownedSessionIds: ['s1'], visibleSessionIds: ['s1'] })]);
     const c = await client(h.ep, token);
-    c.send({
-      id: 5,
-      method: 'tools/call',
-      params: { name: 'open_session', arguments: { path: '/w', agent: FAKE.id } },
-    });
+    c.send(OPEN_CALL);
     await expect.poll(() => h.mcp.pendingAsks().length).toBe(1);
     return { h, c, app };
   }
-  const errorOf = (l: Record<string, unknown> | undefined) => {
-    const r = l?.result as { content: Array<{ text: string }> } | undefined;
-    return r ? JSON.parse(r.content[0]?.text ?? '{}').error?.code : undefined;
-  };
 
-  it('denies every waiting ask with ui_unavailable when the grace runs out', async () => {
+  async function callingWithNoApp(policy?: GlobalPolicy) {
+    const h = harness({ manualTimers: true, policy });
+    await h.mcp.start();
+    const { token } = await h.launch('s1');
+    const c = await client(h.ep, token);
+    c.send(OPEN_CALL);
+    return { h, c };
+  }
+
+  it('a waiting ask survives the app disconnecting until its budget ends', async () => {
     const { h, c, app } = await askingManual();
     h.mcp.appDisconnected(app);
-    h.advance(4_900);
+    h.advance(5_100);
     expect(h.mcp.pendingAsks()).toHaveLength(1);
-    h.advance(200);
-    await expect.poll(() => errorOf(c.lines.find((l) => l.id === 5))).toBe('ui_unavailable');
+    expect(errorOf(c.lines.find((l) => l.id === 5))).toBeUndefined();
+    h.advance(ASK_TIMEOUT_MS.agent - 5_100 - 1);
+    expect(h.mcp.pendingAsks()).toHaveLength(1);
+    h.advance(1);
+    await expect.poll(() => errorOf(c.lines.find((l) => l.id === 5))).toBe('approval_timeout');
     expect(h.mcp.pendingAsks()).toEqual([]);
     expect(h.opens).toEqual([]);
   });
 
-  it('an app back with no window does not end the grace', async () => {
-    const { h, c, app } = await askingManual();
-    h.mcp.appDisconnected(app);
-    h.mcp.presence({}, []);
-    h.advance(5_100);
-    await expect.poll(() => errorOf(c.lines.find((l) => l.id === 5))).toBe('ui_unavailable');
+  it('an ask with when always started with no app becomes answerable from the reconnected owner window', async () => {
+    const { h, c } = await callingWithNoApp(ALWAYS_OPEN);
+    await expect.poll(() => h.mcp.pendingAsks().length).toBe(1);
+    const askId = h.mcp.pendingAsks()[0]?.askId ?? '';
+    const back = {};
+    h.mcp.presence(back, [win(1, { ownedSessionIds: ['s1'], visibleSessionIds: ['s1'] })]);
+    await h.mcp.fromRenderer(back, {
+      windowId: 1,
+      message: { type: 'mcp:askAnswer', askId, answer: 'approve' },
+    });
+    await expect.poll(() => h.opens.length).toBe(1);
+    await expect.poll(() => c.lines.some((l) => l.id === 5)).toBe(true);
+    expect(h.mcp.pendingAsks()).toEqual([]);
+    expect(h.of('approvals.changed').at(-1)?.pending).toEqual([]);
   });
 
-  it('a renderer message from a connection no presence named answers nothing and is no app', async () => {
-    const { h, c, app } = await askingManual();
+  it('when viewing with no app is still window_not_ready', async () => {
+    const { h, c } = await callingWithNoApp();
+    await expect.poll(() => errorOf(c.lines.find((l) => l.id === 5))).toBe('window_not_ready');
+    expect(h.mcp.pendingAsks()).toEqual([]);
+    expect(h.opens).toEqual([]);
+  });
+
+  it('a window no presence named cannot answer an ask no window owns', async () => {
+    const { h, c } = await callingWithNoApp(ALWAYS_OPEN);
+    await expect.poll(() => h.mcp.pendingAsks().length).toBe(1);
     const askId = h.mcp.pendingAsks()[0]?.askId ?? '';
     await h.mcp.fromRenderer(
       {},
@@ -732,26 +767,6 @@ describe('D8 grace: no app for 5 s', () => {
     );
     expect(h.opens).toEqual([]);
     expect(h.mcp.pendingAsks()).toHaveLength(1);
-    // Had the lookup allocated that connection, the grace would never start.
-    h.mcp.appDisconnected(app);
-    h.advance(5_100);
-    await expect.poll(() => errorOf(c.lines.find((l) => l.id === 5))).toBe('ui_unavailable');
-  });
-
-  it('an app back whose windows are all not ready does not end the grace', async () => {
-    const { h, c, app } = await askingManual();
-    h.mcp.appDisconnected(app);
-    h.mcp.presence({}, [win(1, { ready: false, ownedSessionIds: ['s1'] })]);
-    h.advance(5_100);
-    await expect.poll(() => errorOf(c.lines.find((l) => l.id === 5))).toBe('ui_unavailable');
-  });
-
-  it('an app back within the grace keeps the asks', async () => {
-    const { h, app } = await askingManual();
-    h.mcp.appDisconnected(app);
-    h.advance(3_000);
-    h.mcp.presence({}, [win(1, { ownedSessionIds: ['s1'], visibleSessionIds: ['s1'] })]);
-    h.advance(10_000);
-    expect(h.mcp.pendingAsks()).toHaveLength(1);
+    expect(c.lines.some((l) => l.id === 5)).toBe(false);
   });
 });

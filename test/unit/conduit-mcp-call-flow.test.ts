@@ -64,7 +64,13 @@ function setup() {
     [CALLER, ASK],
     ['caller-2', ASK],
   ]);
-  const state = { messagingOn: true, policyWritten: 0, awaitingChanged: 0, sendThrows: false };
+  const state = {
+    messagingOn: true,
+    appUp: true,
+    policyWritten: 0,
+    awaitingChanged: 0,
+    sendThrows: false,
+  };
   const uiSent: Array<{ windowId: number; msg: HostToWebview }> = [];
   const notReady = new Set<number>();
   const flow = createCallFlow({
@@ -78,6 +84,7 @@ function setup() {
     },
     newAskId: () => `ask-${++ask}`,
     ownerWindowOf: (id) => owners.get(id) ?? null,
+    appConnected: () => state.appUp,
     sendToOwner: (to, msg) => sent.push({ to, msg }),
     flashOwner: (id) => flashed.push(id),
     resolve: (id) => policies.get(id) ?? null,
@@ -464,6 +471,23 @@ describe('createCallFlow', () => {
     expect(c.spies).toEqual({ run: 0, release: 1 });
     expect(t.asks()).toEqual([]);
     expect(t.flashed).toEqual([]);
+  });
+
+  it('ask with no app and no owner opens a wait on NO_OWNER_WINDOW and expires at its budget', async () => {
+    const t = setup();
+    t.owners.set(CALLER, null);
+    t.state.appUp = false;
+    const c = t.call();
+    await t.flush();
+    expect(t.asks()).toHaveLength(1);
+    expect(t.flow.answer('ask-1', 1, 'approve')).toBe(false);
+    t.advance(ASK_TIMEOUT_MS.claude - 1);
+    await t.flush();
+    expect(c.out.done).toBe(false);
+    t.advance(1);
+    expect(errCode(await c.promise)).toBe('approval_timeout');
+    expect(c.spies).toEqual({ run: 0, release: 0 });
+    expect(t.closed()).toEqual([{ type: 'mcp:askClosed', askId: 'ask-1', outcome: 'expired' }]);
   });
 
   it('no await between the cap check and open', async () => {
