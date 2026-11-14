@@ -8,6 +8,7 @@ import {
 } from '../../src/conduit-mcp/host';
 import type { GateRow, McpInstallDeps } from '../../src/conduit-mcp/install';
 import type { McpInstallResult, McpInstallStatus } from '../../src/conduit-mcp/install-types';
+import type { McpNetworkPort } from '../../src/conduit-mcp/remote-routing';
 import type { McpUiState } from '../../src/conduit-mcp/ui-types';
 import type { HookPost } from '../../src/contracts/hook-protocol';
 import type {
@@ -90,6 +91,8 @@ export interface ServerMcp {
   launch: LaunchPort;
   /** For W4's runAddDir. */
   draft: DraftPort;
+  /** For the network's remote directory and monitor snapshot (Slice 5). */
+  networkPort(): McpNetworkPort;
   /** DomainDeps.closeWhenDone: a closeWhenDone program exited; see ConduitMcpHost.closeWhenDone. */
   closeWhenDone(sessionId: string): Promise<void>;
   /** Startup ordering: see docs/specs/archive/2026-11-01-three-process-architecture.md F1.4.5-6. */
@@ -241,6 +244,7 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
     tokens,
     emit,
     machineId: deps.machineId,
+    network: deps.network,
     dir: deps.dir,
     endpointPath: deps.endpointPath,
     execPath: deps.shim.execPath,
@@ -282,6 +286,7 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
     },
     draft: { noteHostInput: (sessionId, data) => h.noteHostInput(sessionId, data) },
     closeWhenDone: (sessionId) => h.closeWhenDone(sessionId),
+    networkPort: () => h.networkPort(),
     start: () => h.start(),
     resumeAdopted,
     async stop() {

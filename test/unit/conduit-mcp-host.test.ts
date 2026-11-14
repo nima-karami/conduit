@@ -4437,6 +4437,8 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
     expect(resultOf(await c.reply(2))).toMatchObject({
       error: { code: 'out_of_reach', hint: expect.stringContaining('Settings') },
     });
+    c.call(5, 'read_screen', { session: 'claude-9@m-0123abcd' });
+    expect(c.errorOf(await c.reply(5))).toBe('peer_unsupported');
     allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
     c.call(3, 'send_input', { session: 's2' });
     expect(c.errorOf(await c.reply(3))).toBe('invalid_args');

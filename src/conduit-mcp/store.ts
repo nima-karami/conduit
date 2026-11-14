@@ -49,6 +49,7 @@ export interface MessageStore {
   setStatus(messageId: string, handle: Handle, status: RcptStatus): Promise<Result<void>>;
   allowMore(threadId: string): Promise<Result<void>>;
   get(messageId: string): StoredMessage | undefined;
+  has(messageId: string): boolean;
   /** sentAt ascending */
   thread(threadId: string): StoredMessage[];
   /** lastAt descending */
@@ -397,6 +398,8 @@ export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): M
       }),
 
     get: (id) => state.messages.get(id),
+
+    has: (id) => state.messages.has(id),
 
     thread: (threadId) =>
       all()

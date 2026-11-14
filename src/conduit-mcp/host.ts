@@ -77,6 +77,7 @@ import {
 } from './notice-gate';
 import { composeUnreadBanner } from './notice-text';
 import { type AttentionRaise, bannerCandidates, createNotifier, type Notifier } from './notifier';
+import type { McpNetworkPort } from './remote-routing';
 import { createRequestsIo } from './request-file-fs';
 import { createRequestNotices } from './request-notices';
 import { createRequestService, type RequestService } from './request-service';
@@ -239,6 +240,7 @@ export interface ConduitMcpHost extends LaunchPort, DraftPort {
     senderId: number,
   ): Promise<void>;
   tick(): Promise<void>;
+  networkPort(): McpNetworkPort;
   stop(): Promise<void>;
 }
 
@@ -565,6 +567,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   });
   // Set by start: a host that never listened has no connections, so no waits to wake.
   let stopAttentionWatch: (() => void) | undefined;
+  let stopNetworkWatch: (() => void) | undefined;
 
   const loadCounters = (): HandleCounters => {
     if (counters) return counters;
@@ -607,6 +610,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   const tools = createToolHandlers({
     store,
     directory,
+    remote: () => deps.network?.remoteEntries() ?? [],
     messagingOn: () => deps.domain.messagingOn(),
     now: () => new Date(now()),
     newId,
@@ -2049,6 +2053,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         sessionWaits.notify();
         requestService.onAttention(factsWithHandles());
       });
+      stopNetworkWatch = deps.network?.onChange(() => {
+        scheduleBroadcast();
+        sessionWaits.notify();
+      });
       startupSweep = (async () => {
         try {
           // Configs left by a crash: they name a dead session and can't be reused.
@@ -2475,6 +2483,20 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     tick,
 
+    networkPort: (): McpNetworkPort => ({
+      localDirectory: () => directory(),
+      youUnread: () => uiState().youUnread,
+      ownerPresence: () => requestService.presence().state,
+      requestsSummary: () =>
+        requestService.ui().open.map((r) => ({
+          requestId: r.id,
+          type: r.kind,
+          summary: r.title.slice(0, 200),
+          sessionHandle: r.requester === 'conduit' ? null : r.requester,
+          createdAt: r.createdAt,
+        })),
+    }),
+
     async stop() {
       stopped = true;
       stopRuntime();
@@ -2485,6 +2507,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       broadcastTimer = undefined;
       for (const sessionId of lateEchoWatchers.keys()) cancelLateEcho(sessionId);
       stopAttentionWatch?.();
+      stopNetworkWatch?.();
       sessionWaits.dispose();
       flow.dispose();
       for (const c of conns.values()) c.close();
