@@ -9,6 +9,7 @@ import {
   BUILT_IN_PROFILES,
   matchesScope,
   profileById,
+  WORKER_PROFILE,
 } from '../../src/conduit-mcp/policy-profiles';
 import type {
   Assignment,
@@ -19,6 +20,7 @@ import type {
   PolicyState,
   PolicyTarget,
   Principal,
+  Profile,
   ProfileId,
   Reason,
 } from '../../src/conduit-mcp/policy-types';
@@ -132,7 +134,7 @@ describe('decide', () => {
     expect(d.decision).toBe('allow');
   });
 
-  it('local to-you send_message passes an observer deny (floor c)', () => {
+  it('local to-you send_message passes an explicit deny (floor c)', () => {
     const s = state({
       default: assignment('observer', [
         except('send_message', { kind: 'anywhere' }, { decision: 'deny' }),
@@ -568,6 +570,73 @@ describe('decide', () => {
     expect(d.grantId).toBeNull();
   });
 
+  it('two session targets with one grant each are allowed', () => {
+    const grants = ['s2', 's3'].map((sid) =>
+      grant({ id: `g-${sid}`, on: { kind: 'session', sessionId: sid } }),
+    );
+    const d = decide(
+      state(worker, { grants }),
+      input({
+        tool: 'open_session',
+        targets: [target({ sessionId: 's2' }), target({ sessionId: 's3' })],
+      }),
+    );
+    expect(d.decision).toBe('allow');
+    expect(d.reason).toEqual({ by: 'grant', grantId: 'g-s2' });
+    expect(d.grantId).toBe('g-s2');
+  });
+
+  it('a granted target plus an assignment-allowed target is allowed', () => {
+    const s = state(
+      {
+        default: assignment('worker', [
+          except('open_session', { kind: 'folder', path: '/other' }, { decision: 'allow' }),
+        ]),
+      },
+      { grants: [grant({ on: { kind: 'session', sessionId: 's2' } })] },
+    );
+    const d = decide(
+      s,
+      input({
+        tool: 'open_session',
+        targets: [target({ sessionId: 's2' }), target({ folder: '/other' })],
+      }),
+    );
+    expect(d.decision).toBe('allow');
+    expect(d.reason).toEqual({ by: 'grant', grantId: 'g1' });
+  });
+
+  it('a granted target plus an asking target still asks', () => {
+    const d = decide(
+      state(worker, { grants: [grant({ on: { kind: 'session', sessionId: 's2' } })] }),
+      input({
+        tool: 'open_session',
+        targets: [target({ sessionId: 's2' }), target({ sessionId: 's3' })],
+      }),
+    );
+    expect(d.decision).toBe('ask');
+    expect(d.reason).toEqual({ by: 'profile', point: { kind: 'default' }, profileId: 'worker' });
+    expect(d.grantId).toBeNull();
+  });
+
+  it('a peer grant passes for its remote principal and not for a local session', () => {
+    const peerGrant = grant({
+      id: 'gp',
+      who: { kind: 'peer', machineId: 'm-0000000a' },
+      tool: 'attach_folder',
+    });
+    const r = remote({ messaging: false, monitor: false, drive: true });
+    const withGrant = decide(
+      state(worker, { grants: [peerGrant] }),
+      input({ principal: r, tool: 'attach_folder' }),
+    );
+    expect(withGrant.decision).toBe('allow');
+    expect(withGrant.reason).toEqual({ by: 'grant', grantId: 'gp' });
+    expect(
+      decide(state(worker, { grants: [peerGrant] }), input({ tool: 'attach_folder' })).decision,
+    ).toBe('ask');
+  });
+
   it('a second target needing another override stays denied', () => {
     const overrides: OneUseOverride[] = ['s2', 's3'].map((sid) => ({
       id: `o-${sid}`,
@@ -685,6 +754,26 @@ describe('visibleTools', () => {
       ]),
     });
     expect(visibleTools(s, session(), NOW)).toContain('open_terminal');
+  });
+
+  it('visibleTools keeps send_message and request_input listed under a profile that denies them', () => {
+    const custom: Profile = {
+      id: 'p-x',
+      name: 'Custom',
+      builtIn: false,
+      rules: {
+        ...WORKER_PROFILE.rules,
+        send_message: { ...WORKER_PROFILE.rules.send_message, decision: 'deny' },
+        request_input: { ...WORKER_PROFILE.rules.request_input, decision: 'deny' },
+      },
+    };
+    const visible = visibleTools(
+      state({ default: assignment('p-x') }, { profiles: [custom] }),
+      session(),
+      NOW,
+    );
+    expect(visible).toContain('send_message');
+    expect(visible).toContain('request_input');
   });
 
   it('visibleTools keeps a tool denied only for the home folder', () => {
