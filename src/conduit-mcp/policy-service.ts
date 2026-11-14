@@ -169,12 +169,19 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     scheduleWrite();
   };
 
+  // One warning per outage per file: a disk that stays down is retried without spamming the log.
+  const outages = new Set<string>();
+
   async function save(io: RequestsIo, name: string, text: string, redo: () => void): Promise<void> {
     try {
       await io.write(text);
+      outages.delete(name);
     } catch (e) {
       redo();
-      deps.warn(`${name} could not be saved; will retry`, e);
+      if (!outages.has(name)) {
+        outages.add(name);
+        deps.warn(`${name} could not be saved; will retry`, e);
+      }
     }
   }
 

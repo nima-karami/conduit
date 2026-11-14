@@ -990,6 +990,30 @@ describe('policy service', () => {
     expect(saved.ok && saved.file.overrides).toEqual([]);
   });
 
+  it('a failing disk warns once per outage', async () => {
+    const h = harness({ writeFails: true });
+    h.service.start();
+    h.service.setAssignment({ kind: 'default' }, 'lead');
+    const saveFailures = () => h.warnings.filter((m) => m.includes('policy.json'));
+    for (let i = 0; i < 3; i++) {
+      h.fire(WRITE_MS);
+      await h.settle();
+    }
+    expect(saveFailures()).toHaveLength(1);
+
+    h.setWriteDown(false);
+    h.fire(WRITE_MS);
+    await h.settle();
+    expect(h.policyWrites).toHaveLength(1);
+
+    h.setWriteDown(true);
+    h.service.setAssignment({ kind: 'default' }, 'worker');
+    h.fire(WRITE_MS);
+    await h.settle();
+    expect(saveFailures()).toHaveLength(2);
+    await h.service.stop();
+  });
+
   it('a failed save is retried until it succeeds', async () => {
     const h = harness({ writeFails: true });
     h.service.start();
