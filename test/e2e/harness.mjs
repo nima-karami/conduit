@@ -693,7 +693,7 @@ export async function createProject(page, name) {
  * Ordinary scenarios navigate only through this; raw toggle clicks belong to right-panel-toggles.
  *
  * @param {object} page
- * @param {'files' | 'changes' | 'messages'} view
+ * @param {'needs' | 'files' | 'changes' | 'messages'} view
  */
 export async function showRightView(page, view) {
   const toggle = page.locator(`button[data-right-view="${view}"]`);
