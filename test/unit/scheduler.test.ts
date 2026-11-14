@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { DeliveryResult, Job, PreFireVerdict } from '../../src/contracts/scheduler';
+import type { DeliveryResult, Job, JobState, PreFireVerdict } from '../../src/contracts/scheduler';
 import { JOB_HISTORY_MAX } from '../../src/contracts/scheduler';
 import { MAX_MESSAGE_CHARS, MESSAGE_TOO_LONG } from '../../src/message-text';
 import {
@@ -498,10 +498,12 @@ describe('the limit job', () => {
     expect(h.scheduler.list()).toHaveLength(2);
   });
 
-  it('arms a reset that has already passed for immediate delivery, not the past', () => {
+  it('arms a reset that has already passed for immediate delivery, not the past', async () => {
     const h = harness();
-    const r = resume(h, { resetAt: NOW - HOUR, proposed: true });
+    const r = resume(h, { resetAt: NOW - HOUR });
     expect(r.ok && r.job.nextAt).toBe(NOW);
+    await h.tick(0);
+    expect(h.delivered).toEqual([{ sessionId: 's1', message: LIMIT_MESSAGE }]);
   });
 
   it('proposed never fires; accept arms', async () => {
@@ -1143,5 +1145,173 @@ describe('deferred pre-fire (R13)', () => {
     await flush();
     expect(h.preFired).toHaveLength(0);
     expect(h.scheduler.list()[0].state).toBe('proposed');
+  });
+});
+
+describe('review fixes', () => {
+  const deferJob = async (h: Harness, reason: string) => {
+    h.setVerdict({ go: 'wait', reason });
+    const r = resume(h, { resetAt: NOW + 60_000 });
+    await h.tick(2 * 60_000);
+    return r.ok ? r.job.id : '';
+  };
+
+  const limitJob = (over: Partial<Job> = {}): Job => ({
+    id: 'L1',
+    sessionId: 's1',
+    origin: 'limit',
+    trigger: {
+      kind: 'limit-reset',
+      episodeId: 'e1',
+      resetAt: NOW + 60_000,
+      marginMs: RESET_MARGIN,
+    },
+    action: { kind: 'send', message: LIMIT_MESSAGE },
+    nextAt: NOW + 60_000 + RESET_MARGIN,
+    state: 'armed',
+    attempts: 0,
+    maxAttempts: 3,
+    createdAt: NOW,
+    history: [],
+    ...over,
+  });
+
+  it('deferred → PTY down → recheck → PTY back → preFire runs again and delivers', async () => {
+    const h = harness();
+    const id = await deferJob(h, 'session busy');
+    h.alive.delete('s1');
+    h.setVerdict({ go: true });
+    h.scheduler.recheck(id);
+    expect(h.preFired).toHaveLength(1);
+
+    h.alive.add('s1');
+    h.scheduler.onPtyStart('s1');
+    await h.tick(PTY_SETTLE_MS);
+    expect(h.preFired).toHaveLength(2);
+    expect(h.delivered).toEqual([{ sessionId: 's1', message: LIMIT_MESSAGE }]);
+  });
+
+  it('a job waiting on its PTY, re-armed by armResume, fires at the new nextAt', async () => {
+    const h = harness();
+    resume(h, { resetAt: NOW + 60_000 });
+    h.alive.delete('s1');
+    await h.tick(2 * 60_000);
+    expect(h.scheduler.list()[0].state).toBe('waiting');
+
+    const newNextAt = NOW + HOUR + RESET_MARGIN;
+    const r = resume(h, { resetAt: NOW + HOUR });
+    expect(r.ok && r.job.state).toBe('armed');
+    expect(h.scheduler.list()[0].waitingSince).toBeUndefined();
+
+    h.alive.add('s1');
+    h.scheduler.onPtyStart('s1');
+    await h.tick(newNextAt - 1 - h.now());
+    expect(h.delivered).toHaveLength(0);
+    await h.tick(1);
+    expect(h.delivered).toEqual([{ sessionId: 's1', message: LIMIT_MESSAGE }]);
+    expect(h.now()).toBe(newNextAt);
+  });
+
+  it('a deferred job re-armed by armResume is not delivered by recheck before its new nextAt', async () => {
+    const h = harness();
+    const id = await deferJob(h, 'session busy');
+    const newNextAt = NOW + 3 * HOUR + RESET_MARGIN;
+    const r = resume(h, { resetAt: NOW + 3 * HOUR });
+    expect(r.ok && r.job.id).toBe(id);
+    expect(h.scheduler.list()[0].state).toBe('armed');
+
+    h.setVerdict({ go: true });
+    h.scheduler.recheck(id);
+    await flush();
+    expect(h.delivered).toHaveLength(0);
+
+    await h.tick(newNextAt - h.now());
+    expect(h.delivered).toEqual([{ sessionId: 's1', message: LIMIT_MESSAGE }]);
+  });
+
+  it('a limit delivery that succeeds raises onFired like a limit timer did', async () => {
+    const h = harness();
+    const r = resume(h);
+    await h.tick(HOUR + RESET_MARGIN);
+    expect(h.fired).toHaveLength(1);
+    expect(h.fired[0]).toMatchObject({
+      id: r.ok ? r.job.id : '',
+      sessionId: 's1',
+      delivered: true,
+    });
+  });
+
+  it('sendOnce lets a rejected delivery propagate, and the session queue keeps going', async () => {
+    let boom = true;
+    const h = harness({
+      deliver: async () => {
+        if (boom) throw new Error('pty write failed');
+        return OK;
+      },
+    });
+    await expect(h.scheduler.sendOnce('s1', 'first')).rejects.toThrow('pty write failed');
+    boom = false;
+    expect(await h.scheduler.sendOnce('s1', 'second')).toBe(true);
+  });
+
+  it('a joined limit delivery is recorded in history and the job verifies', async () => {
+    const h = harness();
+    h.setDeliverResult({ ok: true, joined: true });
+    resume(h);
+    await h.tick(HOUR + RESET_MARGIN);
+    expect(h.scheduler.list()[0].state).toBe('verifying');
+    expect(h.scheduler.list()[0].history.map((e) => e.reason)).toContain(
+      'lines joined (no bracketed paste)',
+    );
+  });
+
+  it('an over-long message that reaches fire time fails with MESSAGE_TOO_LONG and is never delivered', async () => {
+    const h = harness();
+    h.scheduler.load([
+      limitJob({ action: { kind: 'send', message: 'x'.repeat(MAX_MESSAGE_CHARS + 1) } }),
+    ]);
+    await h.tick(2 * 60_000);
+    expect(h.delivered).toHaveLength(0);
+    expect(h.scheduler.list()[0].state).toBe('failed');
+    expect(h.failed).toEqual([{ id: 'L1', reason: MESSAGE_TOO_LONG }]);
+  });
+
+  describe('toTimedMessage for limit jobs', () => {
+    const withState = (state: JobState, history: Job['history'] = []) =>
+      toTimedMessage(limitJob({ state, history }));
+
+    it('proposed and terminal skipped/failed/cancelled have no row', () => {
+      expect(withState('proposed')).toBe(null);
+      expect(withState('skipped')).toBe(null);
+      expect(withState('failed')).toBe(null);
+      expect(withState('cancelled')).toBe(null);
+    });
+
+    it('armed and waiting project as armed and waiting', () => {
+      expect(withState('armed')).toMatchObject({ state: 'armed', origin: 'limit' });
+      expect(withState('waiting')).toMatchObject({ state: 'waiting', origin: 'limit' });
+    });
+
+    it('checking projects as done at the scheduled time, since nothing was delivered', () => {
+      expect(withState('checking')).toMatchObject({
+        state: 'done',
+        firedCount: 1,
+        nextAt: NOW + 60_000 + RESET_MARGIN,
+      });
+    });
+
+    it('sending, verifying and done project as done at the last delivery time', () => {
+      const history = [
+        { at: NOW + 10, state: 'sending' as const },
+        { at: NOW + 20, state: 'verifying' as const },
+      ];
+      for (const state of ['sending', 'verifying', 'done'] as const) {
+        expect(withState(state, history)).toMatchObject({
+          state: 'done',
+          firedCount: 1,
+          nextAt: NOW + 20,
+        });
+      }
+    });
   });
 });

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { Job, LimitEpisode, SchedulerFile } from '../../src/contracts/scheduler';
 import { JOB_HISTORY_MAX } from '../../src/contracts/scheduler';
 import {
@@ -9,7 +9,7 @@ import {
 import type { TimedMessage, TimedMessagesFile } from '../../src/timed-messages';
 
 const NOW = Date.UTC(2026, 10, 13, 12, 0, 0);
-const OPTS = { maxAttempts: 3, now: NOW };
+const OPTS = { maxAttempts: 3 };
 const HOUR = 3_600_000;
 
 function job(over: Partial<Job> = {}): Job {
@@ -105,7 +105,7 @@ describe('parseSchedulerFile', () => {
       jobs: [job(), limitJob()],
       episodes: [episode()],
     };
-    const parsed = parseSchedulerFile(serializeSchedulerFile(original), OPTS);
+    const parsed = parseSchedulerFile(serializeSchedulerFile(original, NOW), OPTS);
     expect(parsed).toEqual(original);
   });
 
@@ -217,13 +217,7 @@ describe('migrateTimedMessagesV1 (R9)', () => {
 });
 
 describe('serializeSchedulerFile', () => {
-  beforeEach(() => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(NOW);
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-  });
+  const ser = (file: SchedulerFile) => serializeSchedulerFile(file, NOW);
 
   it('serialize drops done time jobs and old terminal limit jobs', () => {
     const doneTime = job({ id: 'done-time', state: 'done' });
@@ -239,7 +233,7 @@ describe('serializeSchedulerFile', () => {
     });
     const live = job({ id: 'live', state: 'waiting' });
     const kept = JSON.parse(
-      serializeSchedulerFile({
+      ser({
         version: 2,
         jobs: [doneTime, oldLimit, recentLimit, live],
         episodes: [],
@@ -253,7 +247,7 @@ describe('serializeSchedulerFile', () => {
     const open = episode({ id: 'e2', state: 'open' });
     const orphan = episode({ id: 'e3', state: 'closed' });
     const kept = JSON.parse(
-      serializeSchedulerFile({
+      ser({
         version: 2,
         jobs: [
           limitJob({
@@ -275,9 +269,7 @@ describe('serializeSchedulerFile', () => {
         history: [{ at: NOW - i, state: 'done' }],
       }),
     );
-    const kept = JSON.parse(
-      serializeSchedulerFile({ version: 2, jobs: terminal, episodes: [] }),
-    ) as SchedulerFile;
+    const kept = JSON.parse(ser({ version: 2, jobs: terminal, episodes: [] })) as SchedulerFile;
     expect(kept.jobs).toHaveLength(10);
     expect(kept.jobs.map((j) => j.id)).toEqual(terminal.slice(0, 10).map((j) => j.id));
   });
@@ -289,5 +281,58 @@ describe('serializeSchedulerFile', () => {
     }));
     const blob = v2({ jobs: [job({ history })] });
     expect(parseSchedulerFile(blob, OPTS).jobs[0].history).toHaveLength(JOB_HISTORY_MAX);
+  });
+});
+
+describe('parseSchedulerFile bounds (conductor ruling)', () => {
+  it('uses opts.maxAttempts when a job has none', () => {
+    const blob = JSON.stringify({
+      version: 2,
+      jobs: [{ ...job(), maxAttempts: undefined }],
+      episodes: [],
+    });
+    expect(parseSchedulerFile(blob, { maxAttempts: 4 }).jobs[0].maxAttempts).toBe(4);
+  });
+
+  it('clamps maxAttempts to 1..5', () => {
+    const blob = JSON.stringify({
+      version: 2,
+      jobs: [job({ id: 'hi', maxAttempts: 9 }), job({ id: 'lo', maxAttempts: 0 })],
+      episodes: [],
+    });
+    const jobs = parseSchedulerFile(blob, OPTS).jobs;
+    expect(jobs.map((j) => j.maxAttempts)).toEqual([5, 1]);
+  });
+
+  it('clamps attempts to 0..maxAttempts', () => {
+    const blob = JSON.stringify({
+      version: 2,
+      jobs: [job({ id: 'over', attempts: 7, maxAttempts: 3 }), job({ id: 'under', attempts: -2 })],
+      episodes: [],
+    });
+    const jobs = parseSchedulerFile(blob, OPTS).jobs;
+    expect(jobs.map((j) => j.attempts)).toEqual([3, 0]);
+  });
+
+  it('caps non-terminal time jobs at MAX_TOTAL, first in file order wins', () => {
+    const jobs = Array.from({ length: 21 }, (_, i) => job({ id: `t${i}` }));
+    const kept = parseSchedulerFile(JSON.stringify({ version: 2, jobs, episodes: [] }), OPTS).jobs;
+    expect(kept).toHaveLength(20);
+    expect(kept[0].id).toBe('t0');
+    expect(kept[19].id).toBe('t19');
+  });
+});
+
+describe('serializeSchedulerFile retention uses the now argument', () => {
+  it('drops a terminal limit job whose last entry is 24 h old at the given now', () => {
+    const recent = limitJob({
+      id: 'recent',
+      state: 'done',
+      history: [{ at: NOW - HOUR, state: 'done' }],
+    });
+    const kept = JSON.parse(
+      serializeSchedulerFile({ version: 2, jobs: [recent], episodes: [] }, NOW + 2 * 24 * HOUR),
+    ) as SchedulerFile;
+    expect(kept.jobs).toEqual([]);
   });
 });

@@ -1,5 +1,3 @@
-// The Scheduler owns jobs, their timers, states, history and caps. Time jobs keep the timed-message
-// semantics of timer-scheduler.ts; limit-reset jobs follow the state machine in the plan's Task A.2.
 // see docs/specs/2026-11-13-scheduler-auto-resume.md §2 "Job states", R7, R8, R9
 
 import {
@@ -78,6 +76,8 @@ const TIME_JOB_ATTEMPTS = 1;
 const JOINED_REASON = 'lines joined (no bracketed paste)';
 const NO_SESSION_REASON = 'no live session';
 const RESUME_BUSY_STATES: readonly JobState[] = ['checking', 'sending', 'verifying'];
+const RESUME_DONE_STATES: readonly JobState[] = ['checking', 'sending', 'verifying', 'done'];
+const RE_ARMED_REASON = 're-armed';
 
 const isTerminal = (state: JobState): boolean => TERMINAL_JOB_STATES.includes(state);
 
@@ -103,16 +103,12 @@ export class Scheduler {
   private handle: unknown = null;
   /** Shifted only by `advanceClock`, which exists only under CONDUIT_E2E. */
   private clockOffset = 0;
-  /** Per session: the instant its freshly started PTY is ready to be written to. */
   private readonly settleUntil = new Map<string, number>();
   /** Jobs with a delivery in flight — a second evaluate must not fire them again. */
   private readonly inFlight = new Set<string>();
   /** Limit-reset jobs the pre-fire check deferred; only `recheck` re-runs them. */
   private readonly deferred = new Set<string>();
-  /**
-   * One delivery at a time per SESSION. A delivery is two writes 120 ms apart, so two jobs
-   * coming due together would otherwise interleave into one garbled executed command.
-   */
+  // see spec 2026-11-13-scheduler-auto-resume R5
   private readonly sessionQueue = new Map<string, Promise<unknown>>();
 
   constructor(private readonly deps: SchedulerDeps) {}
@@ -129,7 +125,6 @@ export class Scheduler {
     return this.jobs.filter((j) => j.sessionId === sessionId).reverse();
   }
 
-  /** Adopt the persisted jobs. Jobs for a session the manager no longer knows are dropped. */
   load(jobs: readonly Job[]): void {
     this.jobs = jobs.filter((j) => this.deps.sessionExists(j.sessionId));
     this.evaluate();
@@ -203,14 +198,9 @@ export class Scheduler {
         return { ok: false, error: 'A resume is already in flight.' };
       }
       const episodeChanged = limitTriggerOf(live)?.episodeId !== input.episodeId;
-      const state: JobState =
-        input.proposed && (live.state === 'armed' || live.state === 'proposed')
-          ? 'proposed'
-          : !input.proposed && live.state === 'proposed'
-            ? 'armed'
-            : live.state;
+      const state: JobState = input.proposed ? 'proposed' : 'armed';
       const updated = this.record(
-        {
+        withoutWaiting({
           ...live,
           origin: 'limit',
           trigger,
@@ -218,9 +208,10 @@ export class Scheduler {
           nextAt,
           attempts: episodeChanged ? 0 : live.attempts,
           maxAttempts: input.maxAttempts,
-        },
+        }),
         now,
         state,
+        state === 'armed' ? RE_ARMED_REASON : undefined,
       );
       this.put(updated);
       this.changed();
@@ -278,10 +269,6 @@ export class Scheduler {
     this.changed();
   }
 
-  /**
-   * The CLI's own signal settles a job that is verifying: `resumed` ends it; `limited` re-arms
-   * it at the new reset, or fails it once its attempts are spent.
-   */
   resolveVerify(
     sessionId: string,
     outcome: { kind: 'resumed' } | { kind: 'limited'; resetAt: number },
@@ -317,8 +304,8 @@ export class Scheduler {
   recheck(jobId: string): void {
     const job = this.find(jobId);
     if (!job || job.state !== 'waiting' || limitTriggerOf(job) === null) return;
-    if (!this.deps.isAlive(job.sessionId)) return;
     this.deferred.delete(job.id);
+    if (!this.deps.isAlive(job.sessionId)) return;
     this.checkResume(job, this.now());
     this.onChangeAndArm();
   }
@@ -368,18 +355,25 @@ export class Scheduler {
     return result !== 'not-live' && result.ok;
   }
 
-  /**
-   * THE one place a message is handed to the write. Serialized per session, liveness re-read
-   * inside the queue rather than before it (the process can exit while an earlier delivery is
-   * still mid-flight). A rejected delivery becomes a failed result, so the job records it.
-   */
+  // liveness is re-read inside the queue: the PTY can exit while an earlier delivery is in flight
   private enqueue(job: Job): Promise<DeliveryResult | Pending> {
     const prior = this.sessionQueue.get(job.sessionId) ?? Promise.resolve();
-    const run: Promise<DeliveryResult | Pending> = prior
-      .then(() => this.deliverNow(job))
-      .catch((e: unknown): DeliveryResult => ({ ok: false, reason: errorText(e) }));
-    this.sessionQueue.set(job.sessionId, run);
+    const run = prior.then(() => this.deliverNow(job));
+    this.sessionQueue.set(
+      job.sessionId,
+      run.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
     return run;
+  }
+
+  // a queued job records a rejected delivery as a failed result; sendOnce lets it propagate
+  private dispatch(job: Job): Promise<DeliveryResult | Pending> {
+    return this.enqueue(job).catch(
+      (e: unknown): DeliveryResult => ({ ok: false, reason: errorText(e) }),
+    );
   }
 
   private async deliverNow(job: Job): Promise<DeliveryResult | Pending> {
@@ -389,7 +383,6 @@ export class Scheduler {
     return this.deps.deliver({ ...job, action: { kind: 'send', message: check.message } });
   }
 
-  /** That session's PTY just came up. Everything waiting on it delivers once the settle window closes. */
   onPtyStart(sessionId: string): void {
     this.settleUntil.set(sessionId, this.now() + PTY_SETTLE_MS);
     this.arm();
@@ -503,7 +496,7 @@ export class Scheduler {
   private fireTime(job: Job, slots: number, late: boolean): void {
     this.inFlight.add(job.id);
     const sending = this.record(job, this.now(), 'sending');
-    void this.enqueue(sending).then((result) => {
+    void this.dispatch(sending).then((result) => {
       this.inFlight.delete(job.id);
       const at = this.now();
       const delivered = result !== 'not-live' && result.ok;
@@ -532,7 +525,6 @@ export class Scheduler {
     });
   }
 
-  /** The pre-fire check, then delivery. Verdict and dispatch both run in the same pass. */
   private checkResume(job: Job, now: number): void {
     const late = now - job.nextAt > LATE_GRACE_MS;
     const checking = this.record(job, now, 'checking', late ? 'late' : undefined);
@@ -550,16 +542,21 @@ export class Scheduler {
     const sending = this.record(checking, now, 'sending');
     this.put(sending);
     this.inFlight.add(job.id);
-    void this.enqueue(sending).then((result) => {
+    void this.dispatch(sending).then((result) => {
       this.inFlight.delete(job.id);
       const at = this.now();
       const latest = this.find(job.id);
-      if (latest && latest.state === 'sending') this.settleDelivery(latest, result, at);
+      if (latest && latest.state === 'sending') this.settleDelivery(latest, result, at, late);
       this.onChangeAndArm();
     });
   }
 
-  private settleDelivery(job: Job, result: DeliveryResult | Pending, at: number): void {
+  private settleDelivery(
+    job: Job,
+    result: DeliveryResult | Pending,
+    at: number,
+    late: boolean,
+  ): void {
     if (result === 'not-live') {
       this.put(this.record({ ...job, waitingSince: at }, at, 'waiting', NO_SESSION_REASON));
       return;
@@ -574,6 +571,7 @@ export class Scheduler {
       nextAt: at + this.deps.verifyMs(),
     };
     this.put(this.record(verifying, at, 'verifying', result.joined ? JOINED_REASON : undefined));
+    this.deps.onFired({ id: job.id, sessionId: job.sessionId, at, late, delivered: true });
   }
 
   private fail(job: Job, at: number, reason: string): void {
@@ -671,16 +669,20 @@ export class Scheduler {
   }
 }
 
-/**
- * The legacy projection the renderer's timer chip, row and dialog read. Ask-mode proposals and
- * terminal jobs other than `done` have no row in that view.
- */
+// see spec 2026-11-13-scheduler-auto-resume §3 "Producers / consumers"
 export function toTimedMessage(job: Job): TimedMessage | null {
   if (job.state === 'proposed' || job.state === 'skipped' || job.state === 'failed') return null;
   if (job.state === 'cancelled') return null;
-  const state: TimedMessage['state'] =
-    job.state === 'done' ? 'done' : job.state === 'waiting' ? 'waiting' : 'armed';
   const limit = job.trigger.kind === 'limit-reset';
+  const delivered = limit && RESUME_DONE_STATES.includes(job.state);
+  const lastDelivery = [...job.history].reverse().find((e) => e.state === 'verifying');
+  const state: TimedMessage['state'] = delivered
+    ? 'done'
+    : job.state === 'done'
+      ? 'done'
+      : job.state === 'waiting'
+        ? 'waiting'
+        : 'armed';
   const timing =
     job.trigger.kind === 'every'
       ? { kind: 'interval' as const, everyMs: job.trigger.everyMs }
@@ -698,9 +700,9 @@ export function toTimedMessage(job: Job): TimedMessage | null {
     sessionId: job.sessionId,
     message: job.action.message,
     ...timing,
-    nextAt: job.nextAt,
+    nextAt: delivered ? (lastDelivery?.at ?? job.nextAt) : job.nextAt,
     maxRepeats: job.trigger.kind === 'every' ? job.trigger.maxRepeats : 1,
-    firedCount: job.firedCount ?? 0,
+    firedCount: delivered ? 1 : (job.firedCount ?? 0),
     state,
     origin: limit ? 'limit' : 'manual',
     createdAt: job.createdAt,

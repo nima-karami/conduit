@@ -15,12 +15,18 @@ import {
 } from './contracts/scheduler';
 import { judgePersistedVersion } from './contracts/session-identity';
 import { normalizeMessage } from './message-text';
-import { MAX_REPEATS, type TimedMessage, type TimedMessagesFile } from './timed-messages';
+import {
+  MAX_REPEATS,
+  MAX_TOTAL,
+  type TimedMessage,
+  type TimedMessagesFile,
+} from './timed-messages';
 
 const HOUR_MS = 3_600_000;
 const LIMIT_RECORD_KEEP_MS = 24 * HOUR_MS;
 const TERMINAL_LIMIT_KEEP_PER_SESSION = 10;
 const MIGRATED_MARGIN_MS = 60_000;
+const MAX_ATTEMPTS_CEILING = 5;
 
 const JOB_STATES: readonly JobState[] = [
   'proposed',
@@ -46,7 +52,6 @@ const FIXED_SOURCES: readonly Exclude<SignalSource, `rule:${string}`>[] = [
 
 interface ParseOpts {
   maxAttempts: number;
-  now: number;
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
@@ -55,7 +60,6 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 const isSafeInt = (v: unknown, lo: number, hi = Number.MAX_SAFE_INTEGER): v is number =>
   typeof v === 'number' && Number.isSafeInteger(v) && v >= lo && v <= hi;
 
-/** undefined when absent, null when present but invalid. */
 function optionalInt(v: unknown, lo: number, hi?: number): number | undefined | null {
   if (v === undefined) return undefined;
   return isSafeInt(v, lo, hi) ? v : null;
@@ -71,6 +75,19 @@ const isCli = (v: unknown): v is CliKind | 'other' =>
 function isSignalSource(v: unknown): v is SignalSource {
   if (typeof v !== 'string') return false;
   return v.startsWith('rule:') || FIXED_SOURCES.some((s) => s === v);
+}
+
+const clamp = (n: number, lo: number, hi: number): number => Math.min(Math.max(n, lo), hi);
+
+/** Time jobs past MAX_TOTAL are dropped; the first ones in file order win, as parseTimedMessagesFile did. */
+function capTimeJobs(jobs: Job[]): Job[] {
+  let live = 0;
+  return jobs.filter((j) => {
+    if (j.trigger.kind === 'limit-reset' || TERMINAL_JOB_STATES.includes(j.state)) return true;
+    if (live >= MAX_TOTAL) return false;
+    live += 1;
+    return true;
+  });
 }
 
 function emptyFile(): SchedulerFile {
@@ -129,12 +146,17 @@ function parseHistory(v: unknown): JobHistoryEntry[] {
   return entries.slice(-JOB_HISTORY_MAX);
 }
 
-function parseJob(v: unknown): Job | null {
+function parseJob(v: unknown, fallbackMaxAttempts: number): Job | null {
   if (!isRecord(v)) return null;
   const trigger = parseTrigger(v.trigger);
   const action = parseAction(v.action);
   const firedCount = optionalInt(v.firedCount, 0, MAX_REPEATS);
   const waitingSince = optionalInt(v.waitingSince, 0);
+  const maxAttempts = clamp(
+    isSafeInt(v.maxAttempts, 0) ? v.maxAttempts : fallbackMaxAttempts,
+    1,
+    MAX_ATTEMPTS_CEILING,
+  );
   if (
     typeof v.id !== 'string' ||
     typeof v.sessionId !== 'string' ||
@@ -143,8 +165,7 @@ function parseJob(v: unknown): Job | null {
     !action ||
     !isJobState(v.state) ||
     !isSafeInt(v.nextAt, 0) ||
-    !isSafeInt(v.attempts, 0) ||
-    !isSafeInt(v.maxAttempts, 0) ||
+    !isSafeInt(v.attempts, Number.MIN_SAFE_INTEGER) ||
     !isSafeInt(v.createdAt, 0) ||
     firedCount === null ||
     waitingSince === null
@@ -159,8 +180,8 @@ function parseJob(v: unknown): Job | null {
     action,
     nextAt: v.nextAt,
     state: v.state,
-    attempts: v.attempts,
-    maxAttempts: v.maxAttempts,
+    attempts: clamp(v.attempts, 0, maxAttempts),
+    maxAttempts,
     createdAt: v.createdAt,
     history: parseHistory(v.history),
     ...(firedCount === undefined ? {} : { firedCount }),
@@ -197,7 +218,7 @@ function parseEpisode(v: unknown): LimitEpisode | null {
  * A corrupt or foreign-version file is an EMPTY set, never an error: the next write replaces it.
  * A newer file is empty too, and flagged so the caller never overwrites it.
  */
-export function parseSchedulerFile(blob: string | null, _opts: ParseOpts): SchedulerFile {
+export function parseSchedulerFile(blob: string | null, opts: ParseOpts): SchedulerFile {
   if (blob === null) return emptyFile();
   let parsed: unknown;
   try {
@@ -212,7 +233,9 @@ export function parseSchedulerFile(blob: string | null, _opts: ParseOpts): Sched
   if (!Array.isArray(parsed.jobs) || !Array.isArray(parsed.episodes)) return emptyFile();
   return {
     version: 2,
-    jobs: parsed.jobs.map(parseJob).filter((j): j is Job => j !== null),
+    jobs: capTimeJobs(
+      parsed.jobs.map((j) => parseJob(j, opts.maxAttempts)).filter((j): j is Job => j !== null),
+    ),
     episodes: parsed.episodes.map(parseEpisode).filter((e): e is LimitEpisode => e !== null),
   };
 }
@@ -241,8 +264,8 @@ function keptJobs(jobs: readonly Job[], now: number): Job[] {
   return jobs.filter((j) => keep.has(j.id));
 }
 
-export function serializeSchedulerFile(file: SchedulerFile): string {
-  const jobs = keptJobs(file.jobs, Date.now());
+export function serializeSchedulerFile(file: SchedulerFile, now: number): string {
+  const jobs = keptJobs(file.jobs, now);
   const referenced = new Set(
     jobs.flatMap((j) => (j.trigger.kind === 'limit-reset' ? [j.trigger.episodeId] : [])),
   );
