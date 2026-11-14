@@ -137,10 +137,19 @@ function applyField(
   field: PolicyField,
   value: Access | When | Reach | Move | 'inherit',
 ): Assignment {
+  if (!TOOL_SPECS[tool].fields.includes(field)) return a;
   let next = a;
   if (field === 'when' && a.onScreenOnly) {
     // Clearing onScreenOnly must not move any other tool off 'viewing'.
-    next = { ...a, onScreenOnly: false };
+    next = {
+      ...a,
+      onScreenOnly: false,
+      exceptions: a.exceptions.map((e) =>
+        e.scope.kind !== 'anywhere' && e.rule.when !== undefined
+          ? { ...e, rule: { ...e.rule, when: 'viewing' } }
+          : e,
+      ),
+    };
     for (const other of TOOL_NAMES) {
       if (other === tool) continue;
       const before = ruleAt(state, a, other).when;
@@ -155,10 +164,22 @@ function applyField(
     value === 'inherit' ? legacyPolicyOf(ruleAt(state, lowerA, tool), tool)[field] : value;
   if (wanted === undefined) return next;
   const profileValue = legacyPolicyOf(profileOf(state, next).rules[tool], tool)[field];
-  return editAnywhere(next, tool, (rule) => {
+  const edited = editAnywhere(next, tool, (rule) => {
     if (wanted === profileValue) delete rule[RULE_KEY[field]];
     else Object.assign(rule, { [RULE_KEY[field]]: toRuleValue(wanted) });
   });
+  // The old editors know only anywhere, so this edit is authoritative at every scope.
+  return {
+    ...edited,
+    exceptions: edited.exceptions.flatMap((e) => dropScopedField(e, tool, RULE_KEY[field])),
+  };
+}
+
+function dropScopedField(e: Exception, tool: ToolName, key: keyof ToolRule): Exception[] {
+  if (e.tool !== tool || e.scope.kind === 'anywhere') return [e];
+  const rule: Partial<ToolRule> = { ...e.rule };
+  delete rule[key];
+  return Object.keys(rule).length > 0 ? [{ ...e, rule }] : [];
 }
 
 export function applyLegacyPatch(

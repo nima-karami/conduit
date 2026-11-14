@@ -188,4 +188,86 @@ describe('applyLegacyPatch', () => {
       access: 'on',
     });
   });
+
+  it('clearing onScreenOnly never loosens a scoped when', () => {
+    const scoped: Assignment = {
+      profileId: 'lead',
+      onScreenOnly: true,
+      exceptions: [
+        {
+          tool: 'send_input',
+          scope: { kind: 'folder', path: '/work' },
+          rule: { when: 'always' },
+        },
+      ],
+    };
+    const state = stateOf([[SESSION, scoped]]);
+    const target = { sessionId: null, path: '/work/x', folder: '/work', projectId: null };
+    const next = applyLegacyPatch(state, SESSION, DEFAULT, 'read_screen', { when: 'always' });
+
+    const whenAt = (a: Assignment): ToolRule['when'] =>
+      effectiveRule(profileById(state, a.profileId) ?? WORKER_PROFILE, a, 'send_input', target)
+        .when;
+    expect(next.onScreenOnly).toBe(false);
+    expect(whenAt(scoped)).toBe('viewing');
+    expect(whenAt(next)).toBe('viewing');
+  });
+
+  it("a legacy edit overrides the same tool's scoped exceptions", () => {
+    const state = stateOf([
+      [
+        SESSION,
+        {
+          profileId: 'worker',
+          onScreenOnly: false,
+          exceptions: [
+            {
+              tool: 'send_input',
+              scope: { kind: 'session', sessionId: 's1' },
+              rule: { decision: 'allow' },
+            },
+          ],
+        },
+      ],
+    ]);
+    const next = applyLegacyPatch(state, SESSION, DEFAULT, 'send_input', { access: 'off' });
+    const target = { sessionId: 's1', path: null, folder: null, projectId: null };
+
+    expect(next.exceptions).toEqual([
+      { tool: 'send_input', scope: { kind: 'anywhere' }, rule: { decision: 'deny' } },
+    ]);
+    expect(effectiveRule(WORKER_PROFILE, next, 'send_input', target).decision).toBe('deny');
+  });
+
+  it('a patch field the tool does not have changes nothing', () => {
+    const state = stateOf([[SESSION, LEAD_ONSCREEN]]);
+    const next = applyLegacyPatch(state, SESSION, null, 'list_sessions', { when: 'always' });
+    expect(next).toEqual(LEAD_ONSCREEN);
+  });
+
+  it("a legacy when edit reaches the patched tool's own scoped exception", () => {
+    const scoped: Assignment = {
+      profileId: 'lead',
+      onScreenOnly: true,
+      exceptions: [
+        {
+          tool: 'read_screen',
+          scope: { kind: 'folder', path: '/work' },
+          rule: { when: 'viewing' },
+        },
+      ],
+    };
+    const state = stateOf([[SESSION, scoped]]);
+    const target = { sessionId: null, path: '/work/x', folder: '/work', projectId: null };
+    const next = applyLegacyPatch(state, SESSION, DEFAULT, 'read_screen', { when: 'always' });
+
+    expect(
+      effectiveRule(
+        profileById(state, next.profileId) ?? WORKER_PROFILE,
+        next,
+        'read_screen',
+        target,
+      ).when,
+    ).toBe('always');
+  });
 });
