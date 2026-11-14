@@ -4,7 +4,7 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
-## [Unreleased]
+## [0.64.0] — 2026-11-13
 
 ### Changed
 - Auto-resume after a usage limit is more reliable for Claude Code and Codex. Conduit now learns about the limit and its reset time from the CLI itself (Claude Code's hooks and status line, Codex's session log) instead of only reading the screen. It sends one message a couple of minutes after the reset and checks that the agent really picked up again.
