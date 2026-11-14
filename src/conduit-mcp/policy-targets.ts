@@ -4,15 +4,16 @@ import type { PolicyTarget } from './policy-types';
 import type { ToolName } from './tool-policy';
 import { HUMAN_HANDLE } from './types';
 
-export interface SessionRef {
+export interface TargetSession {
   id: string;
   cwd: string | null;
   projectId: string | null;
 }
 
 export interface TargetDeps {
-  sessionByHandle(h: string): SessionRef | null;
-  childrenOf(sessionId: string): SessionRef[];
+  // Resolves a handle or a session id.
+  sessionByHandle(h: string): TargetSession | null;
+  childrenOf(sessionId: string): TargetSession[];
   realPath(p: string): string | null;
 }
 
@@ -28,14 +29,14 @@ const strings = (v: unknown): string[] =>
 
 const oneString = (v: unknown): string[] => (typeof v === 'string' ? [v] : []);
 
-const sessionTarget = (s: SessionRef): PolicyTarget => ({
+const sessionTarget = (s: TargetSession): PolicyTarget => ({
   sessionId: s.id,
   path: null,
   folder: s.cwd,
   projectId: s.projectId,
 });
 
-function sessionTargets(sessions: readonly SessionRef[]): PolicyTarget[] {
+function sessionTargets(sessions: readonly TargetSession[]): PolicyTarget[] {
   const seen = new Set<string>();
   const out: PolicyTarget[] = [];
   for (const s of sessions) {
@@ -46,8 +47,8 @@ function sessionTargets(sessions: readonly SessionRef[]): PolicyTarget[] {
   return out;
 }
 
-function handleRefs(handles: readonly string[], deps: TargetDeps): SessionRef[] {
-  const found: SessionRef[] = [];
+function handleRefs(handles: readonly string[], deps: TargetDeps): TargetSession[] {
+  const found: TargetSession[] = [];
   for (const h of handles) {
     const s = deps.sessionByHandle(h);
     if (s !== null) found.push(s);
@@ -55,9 +56,8 @@ function handleRefs(handles: readonly string[], deps: TargetDeps): SessionRef[] 
   return found;
 }
 
-// see POL §4.1
 function absolutePath(raw: string, caller: TargetCaller): string | null {
-  if (path.isAbsolute(raw)) return raw;
+  if (path.isAbsolute(raw)) return path.resolve(raw);
   return caller.home === null ? null : path.resolve(caller.home, raw);
 }
 

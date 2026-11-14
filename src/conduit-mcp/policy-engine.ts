@@ -126,7 +126,7 @@ function done(
   reason: Reason,
   rule: ToolRule,
   grantIds: readonly string[] = [],
-  overrideId: string | null = null,
+  overrideIds: readonly string[] = [],
   deniedTarget: PolicyTarget | null = null,
 ): PolicyDecision {
   return {
@@ -135,7 +135,8 @@ function done(
     rule: { when: rule.when, reach: rule.reach, move: rule.move },
     grantId: reason.by === 'grant' ? (grantIds[0] ?? null) : null,
     grantIds,
-    overrideId,
+    overrideId: reason.by === 'override' ? (overrideIds[0] ?? null) : null,
+    overrideIds,
     deniedTarget,
   };
 }
@@ -204,12 +205,12 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
     };
   });
 
-  // One override passes one explicit deny per call; any other explicit deny stays a deny.
+  // see POL §4.3
   const explicit = evaluated.filter((e) => e.explicitDeny);
-  const passing = explicit.find((e) => e.override !== undefined);
-  const unpassed = explicit.find((e) => e !== passing);
-  if (unpassed)
-    return done('deny', { by: 'deny', point }, unpassed.rule, [], null, unpassed.target);
+  const unpassed = explicit.find((e) => e.override === undefined);
+  if (unpassed) return done('deny', { by: 'deny', point }, unpassed.rule, [], [], unpassed.target);
+  const passing = explicit.filter((e) => e.override !== undefined);
+  const overrideIds = [...new Set(passing.flatMap((e) => (e.override ? [e.override.id] : [])))];
 
   const decided = evaluated.map((e) => {
     const grant = e.explicitDeny
@@ -232,13 +233,14 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
     ...new Set(decided.flatMap((e) => (e.grant === undefined ? [] : [e.grant.id]))),
   ];
   if (strictest.effective === 'allow') {
-    if (passing?.override)
+    const first = passing[0];
+    if (first?.override)
       return done(
         'allow',
-        { by: 'override', overrideId: passing.override.id },
-        passing.rule,
+        { by: 'override', overrideId: first.override.id },
+        first.rule,
         grantIds,
-        passing.override.id,
+        overrideIds,
       );
     const granted = decided.find((e) => e.grant !== undefined);
     if (granted?.grant)

@@ -174,7 +174,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       await io.write(text);
     } catch (e) {
       redo();
-      deps.warn(`${name} could not be saved`, e);
+      deps.warn(`${name} could not be saved; will retry`, e);
     }
   }
 
@@ -185,6 +185,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       writes.push(
         save(deps.policyIo, 'policy.json', serializePolicyFile(file), () => {
           policyDirty = true;
+          scheduleWrite();
         }),
       );
     }
@@ -197,6 +198,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
           serializeGrantsFile({ version: 1, grants: grants.all() }),
           () => {
             grantsDirty = true;
+            scheduleWrite();
           },
         ),
       );
@@ -208,13 +210,34 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     return Promise.all(writes).then(() => undefined);
   }
 
+  // Fail closed: an unreadable file never means an empty policy. The pre-upgrade settings
+  // stay in force, read-only, so nothing a user set before the upgrade stops applying.
+  function unreadablePolicy(why: string, e?: unknown): void {
+    policyWritable = false;
+    deps.warn(`${why}; policy is read-only and not saved`, e);
+    file = { ...emptyFile(), ...migrateLegacyPolicy(deps.legacy()) };
+    activity.record({
+      lane: 'note',
+      principal: { handle: null, sessionId: null, machineId: null },
+      cli: null,
+      action: 'policy-unreadable',
+      target: null,
+      summary: 'Permissions file unreadable; using pre-upgrade settings',
+      decision: null,
+      decidedBy: 'conduit',
+      outcome: null,
+      durationMs: null,
+      requestId: null,
+      count: null,
+    });
+  }
+
   function loadPolicy(): void {
     let text: string | null;
     try {
       text = deps.policyIo.read();
     } catch (e) {
-      policyWritable = false;
-      deps.warn('policy.json could not be read; using the built-in defaults and not saving', e);
+      unreadablePolicy('policy.json could not be read', e);
       return;
     }
     if (text === null) {
@@ -242,11 +265,10 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     }
     const parsed = parsePolicyFile(text);
     if (!parsed.ok) {
-      policyWritable = false;
-      deps.warn(
+      unreadablePolicy(
         parsed.reason === 'newer'
-          ? 'policy.json is from a newer version; policy is read-only and not saved'
-          : 'policy.json is unreadable; using the built-in defaults and not saving',
+          ? 'policy.json is from a newer version'
+          : 'policy.json is unreadable',
       );
       return;
     }
@@ -329,9 +351,9 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
         for (const id of decision.grantIds) grants.touch(id);
         markGrants();
       }
-      if (decision.reason.by === 'override') {
-        const used = decision.reason.overrideId;
-        file.overrides = file.overrides.filter((o) => o.id !== used);
+      if (decision.overrideIds.length > 0) {
+        const used = new Set(decision.overrideIds);
+        file.overrides = file.overrides.filter((o) => !used.has(o.id));
         markPolicy();
       }
       return decision;
@@ -414,15 +436,26 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
         const oldest = spent.values().next().value;
         if (oldest !== undefined) spent.delete(oldest);
       }
-      const override: OneUseOverride = {
-        id: deps.newId(),
-        sessionId: rem.sessionId,
-        tool: rem.tool,
-        target: rem.target,
-        createdAt: new Date(deps.now()).toISOString(),
-      };
-      file.overrides = [...file.overrides, override];
-      markPolicy();
+      const duplicate = file.overrides.some(
+        (o) =>
+          o.sessionId === rem.sessionId &&
+          o.tool === rem.tool &&
+          o.target.sessionId === rem.target.sessionId &&
+          o.target.path === rem.target.path,
+      );
+      if (!duplicate) {
+        file.overrides = [
+          ...file.overrides,
+          {
+            id: deps.newId(),
+            sessionId: rem.sessionId,
+            tool: rem.tool,
+            target: rem.target,
+            createdAt: new Date(deps.now()).toISOString(),
+          },
+        ];
+        markPolicy();
+      }
       return { ok: true };
     },
 
@@ -436,12 +469,12 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       for (const [id, rem] of remembered) {
         if (rem.sessionId === sessionId) remembered.delete(id);
       }
-      if (file.assignments.length !== assignments || file.overrides.length !== overrides) {
-        markPolicy();
-      }
-      grants.sessionEnded(sessionId);
-      markGrants();
-      deps.onChanged();
+      const policyChanged =
+        file.assignments.length !== assignments || file.overrides.length !== overrides;
+      if (policyChanged) markPolicy();
+      const endedGrants = grants.sessionEnded(sessionId);
+      if (endedGrants.length > 0) markGrants();
+      if (policyChanged || endedGrants.length > 0) deps.onChanged();
     },
 
     ui(sessions) {

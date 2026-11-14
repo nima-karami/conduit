@@ -678,14 +678,16 @@ describe('decide', () => {
     ).toBe('ask');
   });
 
-  it('a second target needing another override stays denied', () => {
-    const overrides: OneUseOverride[] = ['s2', 's3'].map((sid) => ({
-      id: `o-${sid}`,
-      sessionId: 's1',
-      tool: 'open_session',
-      target: target({ sessionId: sid }),
-      createdAt: iso(NOW),
-    }));
+  it('a denied target with no matching override keeps the call denied', () => {
+    const overrides: OneUseOverride[] = [
+      {
+        id: 'o-s2',
+        sessionId: 's1',
+        tool: 'open_session',
+        target: target({ sessionId: 's2' }),
+        createdAt: iso(NOW),
+      },
+    ];
     const s = state(
       {
         default: assignment('worker', [
@@ -702,8 +704,38 @@ describe('decide', () => {
       }),
     );
     expect(d.decision).toBe('deny');
-    expect(d.overrideId).toBeNull();
+    expect(d.overrideIds).toEqual([]);
+    expect(d.deniedTarget?.sessionId).toBe('s3');
     expect(d.reason).toEqual({ by: 'deny', point: { kind: 'default' } });
+  });
+
+  it('two denied targets each pass with their own override', () => {
+    const folderDeny = (path: string) =>
+      except('open_file', { kind: 'folder', path }, { decision: 'deny' });
+    const override = (id: string, path: string): OneUseOverride => ({
+      id,
+      sessionId: 's1',
+      tool: 'open_file',
+      target: target({ path, folder: path.replace(/\/[^/]+$/, '') }),
+      createdAt: iso(NOW),
+    });
+    const s = state(
+      { default: assignment('worker', [folderDeny('/w/a'), folderDeny('/w/b')]) },
+      { overrides: [override('oa', '/w/a/x.ts'), override('ob', '/w/b/y.ts')] },
+    );
+    const d = decide(
+      s,
+      input({
+        tool: 'open_file',
+        targets: [
+          target({ path: '/w/a/x.ts', folder: '/w/a' }),
+          target({ path: '/w/b/y.ts', folder: '/w/b' }),
+        ],
+      }),
+    );
+    expect(d.decision).toBe('allow');
+    expect(d.overrideIds).toEqual(['oa', 'ob']);
+    expect(d.reason).toEqual({ by: 'override', overrideId: 'oa' });
   });
 
   it('folder scope matches a session target by its folder (cwd)', () => {

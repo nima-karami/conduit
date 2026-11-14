@@ -13,7 +13,7 @@ const SESSIONS: Record<string, { id: string; cwd: string | null; projectId: stri
 const CHILDREN = [{ id: 's-child', cwd: '/w/c', projectId: 'p1' }];
 
 const deps: TargetDeps = {
-  sessionByHandle: (h) => SESSIONS[h] ?? null,
+  sessionByHandle: (h) => SESSIONS[h] ?? Object.values(SESSIONS).find((x) => x.id === h) ?? null,
   childrenOf: () => CHILDREN,
   realPath: (p) => (p === '/link' ? '/real' : p.startsWith('/w/') || p === '/gone' ? p : null),
 };
@@ -73,6 +73,18 @@ describe('resolveTargets', () => {
   it('a relative path with no caller home yields no target', () => {
     const homeless: TargetCaller = { sessionId: 's-caller', home: null };
     expect(resolveTargets('open_file', { path: 'src/x.ts' }, homeless, deps)).toEqual([]);
+  });
+
+  it('an absolute path is normalised before the real path lookup', () => {
+    expect(resolveTargets('open_file', { path: '/w/a/../b/new.ts' }, caller, deps)).toEqual([
+      { sessionId: null, path: '/w/b/new.ts', folder: '/w/b', projectId: null },
+    ]);
+  });
+
+  it('a session referenced by id resolves like a handle', () => {
+    expect(resolveTargets('close_session', { session: 's-beta' }, caller, deps)).toEqual([
+      { sessionId: 's-beta', path: null, folder: '/w/b', projectId: 'p1' },
+    ]);
   });
 
   it('a path that does not resolve keeps its absolute form', () => {

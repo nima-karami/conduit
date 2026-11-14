@@ -20,6 +20,7 @@ import type {
   Principal,
 } from '../../src/conduit-mcp/policy-types';
 import type { RequestsIo } from '../../src/conduit-mcp/request-file-fs';
+import { DEFAULT_TOOL_POLICY } from '../../src/conduit-mcp/tool-policy';
 
 vi.mock('../../src/conduit-mcp/policy-migration', () => ({
   migrateLegacyPolicy: vi.fn(() => ({
@@ -100,18 +101,19 @@ function harness(o: Opts = {}) {
   const policyIo: RequestsIo = {
     read: () => o.policy ?? null,
     write: async (t) => {
-      if (o.writeFails) throw new Error('disk full');
+      if (writeDown) throw new Error('disk full');
       policyWrites.push(t);
     },
   };
   const grantsIo: RequestsIo = {
     read: () => o.grants ?? null,
     write: async (t) => {
-      if (o.writeFails) throw new Error('disk full');
+      if (writeDown) throw new Error('disk full');
       grantWrites.push(t);
     },
   };
   let activityDown = o.activityFails ?? false;
+  let writeDown = o.writeFails ?? false;
   const activityIo: ActivityIo = {
     append: (_day, line) => {
       if (activityDown) throw new Error('activity disk full');
@@ -143,7 +145,7 @@ function harness(o: Opts = {}) {
     },
     legacy: () => {
       legacyCalls += 1;
-      return { global: {} as never, byCli: {}, sessions: [] };
+      return { global: DEFAULT_TOOL_POLICY, byCli: {}, sessions: [] };
     },
     onChanged: () => {
       changed += 1;
@@ -172,6 +174,12 @@ function harness(o: Opts = {}) {
     legacyCalls: () => legacyCalls,
     setActivityDown: (down: boolean) => {
       activityDown = down;
+    },
+    setWriteDown: (down: boolean) => {
+      writeDown = down;
+    },
+    settle: async () => {
+      for (let i = 0; i < 10; i++) await Promise.resolve();
     },
     changed: () => changed,
     advance: (ms: number) => {
@@ -833,5 +841,167 @@ describe('policy service', () => {
     await h.service.stop();
     expect(h.grantWrites).toEqual([]);
     expect(h.warnings.some((m) => m.includes('grants.json'))).toBe(true);
+  });
+
+  it('an unreadable policy.json evaluates the pre-upgrade settings, read-only', async () => {
+    vi.mocked(migrateLegacyPolicy).mockReturnValueOnce({
+      assignments: [
+        {
+          point: { kind: 'session', sessionId: 's1' },
+          assignment: { profileId: 'observer', exceptions: [], onScreenOnly: false },
+        },
+      ],
+      migratedFrom: 'v0.64',
+      notes: { onScreenOnlyOffered: [] },
+    });
+    const h = harness({ policy: '{not json' });
+    h.service.start();
+
+    expect(h.service.ui([sessionRow('s1')]).sessions.s1?.profileId).toBe('observer');
+    expect(h.service.ui([sessionRow('s1')]).readOnly).toBe(true);
+    expect(
+      h.service.decide({
+        principal: session(),
+        tool: 'open_session',
+        targets: [],
+        masterOn: true,
+        toYou: false,
+      }).decision,
+    ).toBe('deny');
+    const notes = h.activityRows().filter((r) => r.action === 'policy-unreadable');
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatchObject({
+      lane: 'note',
+      summary: 'Permissions file unreadable; using pre-upgrade settings',
+    });
+    h.fire(WRITE_MS);
+    await h.service.stop();
+    expect(h.policyWrites).toEqual([]);
+  });
+
+  it('allowOnce does not duplicate an existing override', async () => {
+    const exception: Exception = {
+      tool: 'open_session',
+      scope: { kind: 'anywhere' },
+      rule: { decision: 'deny' },
+    };
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: { profileId: 'worker', exceptions: [exception], onScreenOnly: false },
+          },
+        ],
+      }),
+    });
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_session' as const,
+      targets: [target({ sessionId: 's2' })],
+      masterOn: true,
+      toYou: false,
+    };
+    const first = h.service.activity.record({
+      lane: 'conduit',
+      principal: { handle: 'alpha', sessionId: 's1', machineId: null },
+      cli: null,
+      action: 'open_session',
+      target: null,
+      summary: null,
+      decision: 'deny',
+      decidedBy: 'policy',
+      outcome: 'denied',
+      durationMs: null,
+      requestId: null,
+      count: null,
+    });
+    const second = h.service.activity.record({
+      lane: 'conduit',
+      principal: { handle: 'alpha', sessionId: 's1', machineId: null },
+      cli: null,
+      action: 'open_session',
+      target: null,
+      summary: null,
+      decision: 'deny',
+      decidedBy: 'policy',
+      outcome: 'denied',
+      durationMs: null,
+      requestId: null,
+      count: null,
+    });
+    h.service.noteDecision(first, input, h.service.decide(input));
+    h.service.noteDecision(second, input, h.service.decide(input));
+
+    expect(h.service.allowOnce(first)).toEqual({ ok: true });
+    expect(h.service.allowOnce(second)).toEqual({ ok: true });
+    expect(h.service.allowOnce(second)).toEqual({ ok: false, error: 'not-found' });
+    h.fire(WRITE_MS);
+    await h.service.stop();
+    const saved = parsePolicyFile(h.policyWrites.at(-1) ?? '');
+    expect(saved.ok && saved.file.overrides).toHaveLength(1);
+  });
+
+  it('decide consumes every override the call passed', async () => {
+    const folderDeny = (path: string): Exception => ({
+      tool: 'open_file',
+      scope: { kind: 'folder', path },
+      rule: { decision: 'deny' },
+    });
+    const override = (id: string, path: string): OneUseOverride => ({
+      id,
+      sessionId: 's1',
+      tool: 'open_file',
+      target: target({ path, folder: path.slice(0, path.lastIndexOf('/')) }),
+      createdAt: iso(T0),
+    });
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: {
+              profileId: 'worker',
+              exceptions: [folderDeny('/w/a'), folderDeny('/w/b')],
+              onScreenOnly: false,
+            },
+          },
+        ],
+        overrides: [override('oa', '/w/a/x.ts'), override('ob', '/w/b/y.ts')],
+      }),
+    });
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_file' as const,
+      targets: [
+        target({ path: '/w/a/x.ts', folder: '/w/a' }),
+        target({ path: '/w/b/y.ts', folder: '/w/b' }),
+      ],
+      masterOn: true,
+      toYou: false,
+    };
+    expect(h.service.decide(input)).toMatchObject({ decision: 'allow', overrideIds: ['oa', 'ob'] });
+    expect(h.service.decide(input).decision).toBe('deny');
+    h.fire(WRITE_MS);
+    await h.service.stop();
+    const saved = parsePolicyFile(h.policyWrites.at(-1) ?? '');
+    expect(saved.ok && saved.file.overrides).toEqual([]);
+  });
+
+  it('a failed save is retried until it succeeds', async () => {
+    const h = harness({ writeFails: true });
+    h.service.start();
+    h.service.setAssignment({ kind: 'default' }, 'lead');
+    h.fire(WRITE_MS);
+    await h.settle();
+    expect(h.warnings.filter((m) => m.includes('policy.json'))).toHaveLength(1);
+
+    h.setWriteDown(false);
+    h.fire(WRITE_MS);
+    await h.settle();
+    expect(h.policyWrites).toHaveLength(1);
+    await h.service.stop();
   });
 });
