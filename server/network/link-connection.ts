@@ -15,6 +15,7 @@ import type { NetLog } from './listener';
 
 const SEND_BUFFER_MAX = 4 * 1024 * 1024;
 const HELLO_TIMEOUT_MS = 10_000;
+const END_GRACE_MS = 2_000;
 
 export interface LinkConnection {
   /** False once the socket holds more than 4 MiB unsent: the caller sheds load (pane relay). */
@@ -66,11 +67,16 @@ export function openConnection(
       settled = true;
       resolve(v);
     };
-    const finish = (why: string): void => {
+    /** graceful: our own close, which lets frames already written (bye, revoked) reach the peer. */
+    const finish = (why: string, graceful = false): void => {
       if (closed) return;
       closed = true;
       cancelTicker?.();
-      sock.destroy();
+      if (graceful) {
+        sock.end();
+        // A peer that never reads must not hold the socket open forever.
+        setTimeout(() => sock.destroy(), END_GRACE_MS).unref();
+      } else sock.destroy();
       if (peerHello === null) settle({ error: why === 'timeout' ? 'timeout' : 'closed' });
       else opts.onClose(why);
     };
@@ -85,7 +91,7 @@ export function openConnection(
       send: write,
       bufferedBytes: () => sock.writableLength,
       silentMs: () => opts.now() - lastFrameAt,
-      close: (reason) => finish(reason),
+      close: (reason) => finish(reason, true),
       peerHello: hello,
     });
 
@@ -99,7 +105,7 @@ export function openConnection(
       if (frame.protocol.major !== opts.hello.protocol.major) {
         write({ t: 'bye', reason: 'incompatible' });
         settle({ error: 'incompatible', peerHello: frame });
-        finish('incompatible');
+        finish('incompatible', true);
         return;
       }
       peerHello = frame;
