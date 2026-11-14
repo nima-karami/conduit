@@ -60,7 +60,8 @@ const REQUEST_SCHEMAS: readonly ToolSchema[] = [
         priority: { type: 'string', enum: ['normal', 'urgent'], default: 'normal' },
         expires_in: {
           type: 'string',
-          description: 'A whole number followed by s, m, h or d, such as 30m.',
+          description:
+            'how long until the default applies: a number and s, m, h or d (at most 7d), e.g. 2h',
         },
         default: {
           ...OBJECT,

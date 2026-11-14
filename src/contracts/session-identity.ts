@@ -193,7 +193,7 @@ export const SERVER_FILE_VERSION = {
   'conduit-mcp/bindings.json': 1,
   'conduit-mcp/messages.log': 1,
   'conduit-mcp/requests.json': 1,
-  'conduit-mcp/machine.json': 1,
+  'conduit-mcp/machine-id.json': 1,
   'scrollback-<id>.json': 2,
   'server-exhausted.json': 1,
 } as const;

@@ -49,7 +49,7 @@ renderer mcp:requestAnswer / mcp:setAway ─> host.handleRenderer ┤ answer (fi
 - An ask can be answered only from the window it was sent to (`src/conduit-mcp/window-waits.ts:83-88`), and a reconnecting app gets new window ids. Plan: re-home waiting asks to the session's owner window when a ready window appears (Slice 5).
 - §4.3 "a waiting ask stays in the tray and raises an OS notification": with no app, the only OS surface is the Windows tray helper (`native/tray`). It has no notification message today, and there is no tray helper on Linux. Lead ruling: no app-closed OS notification on this card (see Left for later); the tray count still shows it.
 - §2 "The tray shows N running, M need you": M counts only `needsAttention` sessions (`src/tray-counts.ts:8-15`), not stuck screens, resume issues, asks or messages. Plan: M = open requests to you + waiting asks + needs-you sessions not already covered by an open `attend` or `scheduler` request (Slice 5).
-- §4.1 `machine` "the origin machine id": no machine id exists in the codebase. NET says it derives from a server key that doesn't exist yet. Plan: `m-` + 8 random hex, persisted in `conduit-mcp/machine.json` (Decisions Needed #4).
+- §4.1 `machine` "the origin machine id": no machine id exists in the codebase. NET says it derives from a server key that doesn't exist yet. Plan: `m-` + 8 random hex, persisted in `conduit-mcp/machine-id.json` (Decisions Needed #4).
 - §4.1 `space`: sessions have no `space` field. A space is the project (`src/conduit-mcp/tool-schemas.ts:27-28`). Plan: `space` = `Session.projectId ?? null`.
 - §4.10/F5 scheduler: there is no "try again at reset" or "resume now" action for a limit episode (`src/scheduler.ts:386-388`; `answerOffer` only acts on proposed jobs). CON-15 isn't built. Plan: two options, `Resume now` and `Turn auto-resume on`, plus Skip (Decisions Needed #2).
 - §4.5 "a keystroke ends Away in any window": the server only sees terminal keystrokes (`term.input`). Plan: terminal input and an explicit `mcp:setAway` end Away. CON-20 sends `mcp:setAway {away:false}` for other window input.
@@ -373,7 +373,7 @@ The body is `JSON.stringify({request_id, state, answer: RequestAnswerOut | null}
 | `src/conduit-mcp/request-waits.ts` | create | blocked-call registry C6 |
 | `src/conduit-mcp/request-sources.ts` | create | observed/scheduler/message reconciler C7 |
 | `src/conduit-mcp/request-service.ts` | create | composer + tool handlers + delivery + presence C8 |
-| `src/conduit-mcp/machine-id.ts` | create | the one accessor `loadMachineId(dir)`: load-or-create `conduit-mcp/machine.json` → `m-xxxxxxxx`. Provisional; the comment points to `docs/specs/2026-11-14-conduit-network.md` §4.1 so CON-16 can replace it |
+| `src/conduit-mcp/machine-id.ts` | create | the one accessor `loadMachineId(dir)`: load-or-create `conduit-mcp/machine-id.json` → `m-xxxxxxxx`. Provisional; the comment points to `docs/specs/2026-11-14-conduit-network.md` §4.1 so CON-16 can replace it |
 | `src/conduit-mcp/notice-text.ts`, `src/conduit-mcp/notifier.ts` | modify | the typed answered notice (C9) |
 | `src/conduit-mcp/tool-policy.ts` | modify | `REQUEST_TOOL_NAMES`, group `'requests'`, specs (MESSAGING_SPEC shape); gate change (Slice 5) |
 | `src/conduit-mcp/tool-schemas.ts` | modify | 4 schemas; `CONDUIT_INSTRUCTIONS` names request_input; `list_sessions` human presence wording |
@@ -552,7 +552,7 @@ If a task's assumption turns out wrong (the piece it builds on is misaligned, or
 - [ruled, default accepted] #1 REQ-D21c under default policy: every default ask tool is `when: 'viewing'`, so with no window a new ask is still refused (`window_not_ready`). Only `when: 'always'` asks, and asks already waiting when the app closes, wait out their budget. Default taken: exactly that; policy semantics unchanged.
 - [ruled, default accepted] #2 Scheduler request options: CON-15 isn't built, and no "try at reset" action exists for an unknown reset. Default taken: `Resume now` (send the resume message once) · `Turn auto-resume on` · Skip (= dismiss the episode's needs-you). The request resolves when the resume issue clears.
 - [ruled] #3 No app-closed OS notification on this card (lead): see Left for later.
-- [ruled, default accepted] #4 Machine id: `m-` + 8 random hex, persisted per userData in `conduit-mcp/machine.json`, until NET derives it from a server key. Stored requests keep the old value then.
+- [ruled, default accepted] #4 Machine id: `m-` + 8 random hex, persisted per userData in `conduit-mcp/machine-id.json`, until NET derives it from a server key. Stored requests keep the old value then.
 - [ruled] #5 Late answers are tagged `requestId` and filtered out of the human's views (lead ruling 2; C9).
 - [normal] #6 Caps count `message` rows toward the 5-per-requester limit, but a question row is never refused. The cap only blocks the sender's next `request_input`.
 

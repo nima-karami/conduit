@@ -1,8 +1,8 @@
 // Node-free. Blocked-call registry for the request queue (plan 2026-11-14-request-queue-machinery, C6).
 import type { CallKey } from './window-waits';
 
-export const REQUEST_WAIT_MARGIN_MS = 10_000;
-export const REQUEST_REPLY_MARGIN_MS = 5_000;
+const REQUEST_WAIT_MARGIN_MS = 10_000;
+const REQUEST_REPLY_MARGIN_MS = 5_000;
 export const REQUEST_WAITS_PER_CALLER = 4;
 
 export type WaitEnd = { kind: 'ended' } | { kind: 'timeout' } | { kind: 'cancelled' };

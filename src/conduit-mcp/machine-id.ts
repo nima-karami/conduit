@@ -29,7 +29,7 @@ function readExistingId(file: string): string | null {
 
 // Provisional machine id until CON-16 derives it from the server key (docs/specs/2026-11-14-conduit-network.md §4.1); keep every reader behind this accessor.
 export function loadMachineId(dir: string): string {
-  const file = path.join(dir, 'machine.json');
+  const file = path.join(dir, 'machine-id.json');
   const existing = readExistingId(file);
   if (existing !== null) return existing;
   const id = `m-${randomBytes(4).toString('hex')}`;
