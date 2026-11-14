@@ -1,8 +1,10 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
+import { createRequire } from 'node:module';
 import * as net from 'node:net';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { STATUS_LINE_CASES } from '../helpers/claude-status-line-cases';
 import { onLines } from '../helpers/line-socket';
 import { tempRoots } from '../helpers/temp-roots';
 import { testEndpoint } from '../helpers/test-endpoint';
@@ -17,6 +19,22 @@ const RATE_LIMITS = fixtureText('statusline-rate-limits.json');
 const NODE = process.execPath;
 const printing = (text: string) => `"${NODE}" -e "process.stdout.write('${text}')"`;
 const ECHO = `"${NODE}" -e "process.stdin.pipe(process.stdout)"`;
+
+interface HookModule {
+  statusLineShell(
+    platform: string,
+    env: Record<string, string | undefined>,
+    command: string,
+  ): { file: string; args: string[] };
+}
+const hookModule = createRequire(__filename)(HOOK) as HookModule;
+
+const onDisk = (v: unknown): string =>
+  typeof v === 'string'
+    ? v
+    : JSON.stringify(v, (key, value: unknown) =>
+        key === 'command' && typeof value === 'string' && value !== '' ? printing(value) : value,
+      );
 
 const roots = tempRoots('conduit-hook-');
 const peers: Peer[] = [];
@@ -322,5 +340,71 @@ describe('conduit-hook.cjs statusline', () => {
     expect(r.code).toBe(0);
     expect(r.stdout).toBe(RATE_LIMITS);
     expect(r.ms).toBeLessThan(1000);
+  });
+});
+
+describe('conduit-hook.cjs statusLineShell', () => {
+  const CMD = 'echo a | tr a b';
+
+  it('win32 runs the status line in Git Bash from CLAUDE_CODE_GIT_BASH_PATH when it is set', () => {
+    expect(
+      hookModule.statusLineShell(
+        'win32',
+        { CLAUDE_CODE_GIT_BASH_PATH: 'C:\\Git\\bin\\bash.exe' },
+        CMD,
+      ),
+    ).toEqual({ file: 'C:\\Git\\bin\\bash.exe', args: ['-c', CMD] });
+  });
+
+  it('win32 without it resolves bash from PATH, never cmd.exe', () => {
+    expect(hookModule.statusLineShell('win32', {}, CMD)).toEqual({
+      file: 'bash',
+      args: ['-c', CMD],
+    });
+  });
+
+  it('other platforms run /bin/sh, whatever the Git Bash variable says', () => {
+    const env = { CLAUDE_CODE_GIT_BASH_PATH: 'C:\\Git\\bin\\bash.exe' };
+    expect(hookModule.statusLineShell('linux', env, CMD)).toEqual({
+      file: '/bin/sh',
+      args: ['-c', CMD],
+    });
+    expect(hookModule.statusLineShell('darwin', {}, CMD)).toEqual({
+      file: '/bin/sh',
+      args: ['-c', CMD],
+    });
+  });
+});
+
+describe('conduit-hook.cjs statusline budgets and precedence', () => {
+  it('a server that accepts but never acks does not hold up the user output', async () => {
+    const p = await peer('silent');
+    const config = roots.root();
+    userSettings(config, ECHO);
+    const r = await run(
+      ['statusline'],
+      envFor({ config, endpoint: p.path, token: TOKEN }),
+      RATE_LIMITS,
+    );
+    expect(r.code).toBe(0);
+    expect(r.stdout).toBe(RATE_LIMITS);
+    expect(p.lines).toHaveLength(1);
+    expect(r.ms).toBeLessThan(1000);
+  }, 15_000);
+
+  it.each(STATUS_LINE_CASES)('$name', async (c) => {
+    const config = roots.root();
+    const project = roots.root();
+    fs.mkdirSync(path.join(project, '.claude'));
+    if (c.files.local !== undefined)
+      fs.writeFileSync(path.join(project, '.claude', 'settings.local.json'), onDisk(c.files.local));
+    if (c.files.shared !== undefined)
+      fs.writeFileSync(path.join(project, '.claude', 'settings.json'), onDisk(c.files.shared));
+    if (c.files.user !== undefined)
+      fs.writeFileSync(path.join(config, 'settings.json'), onDisk(c.files.user));
+    const stdin = JSON.stringify({ ...JSON.parse(STARTUP), workspace: { project_dir: project } });
+    const r = await run(['statusline'], envFor({ config }), stdin);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toBe(c.expect ?? '');
   });
 });

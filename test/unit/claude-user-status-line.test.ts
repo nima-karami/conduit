@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { readUserStatusLine } from '../../src/claude-user-status-line';
+import { STATUS_LINE_CASES } from '../helpers/claude-status-line-cases';
 
 const PROJECT = path.join('/work', 'project');
 const CONFIG = path.join('/home', 'u', '.claude');
@@ -34,54 +35,16 @@ function resolve(files: Record<string, unknown>) {
 }
 
 describe('readUserStatusLine', () => {
-  it('returns null when no settings file has a status line', () => {
-    expect(resolve({}).result).toBeNull();
-  });
-
-  it('the project local file wins over the shared project file and the user file', () => {
-    const { result } = resolve({
-      [LOCAL]: statusLine('local'),
-      [SHARED]: statusLine('shared'),
-      [USER]: statusLine('user'),
-    });
-    expect(result).toEqual({ type: 'command', command: 'local' });
-  });
-
-  it('the shared project file wins over the user file', () => {
-    const { result } = resolve({ [SHARED]: statusLine('shared'), [USER]: statusLine('user') });
-    expect(result).toEqual({ type: 'command', command: 'shared' });
-  });
-
-  it('falls back to the user config file', () => {
-    const { result } = resolve({ [USER]: statusLine('user') });
-    expect(result).toEqual({ type: 'command', command: 'user' });
+  it.each(STATUS_LINE_CASES)('$name', (c) => {
+    const files: Record<string, unknown> = {};
+    if (c.files.local !== undefined) files[LOCAL] = c.files.local;
+    if (c.files.shared !== undefined) files[SHARED] = c.files.shared;
+    if (c.files.user !== undefined) files[USER] = c.files.user;
+    expect(resolve(files).result?.command ?? null).toBe(c.expect);
   });
 
   it('reads the three files in precedence order at their joined paths', () => {
-    const { reads } = resolve({});
-    expect(reads).toEqual([LOCAL, SHARED, USER]);
-  });
-
-  it('skips a file whose statusLine is not a command', () => {
-    const { result } = resolve({
-      [LOCAL]: { statusLine: { type: 'other', command: 'x' } },
-      [USER]: statusLine('user'),
-    });
-    expect(result).toEqual({ type: 'command', command: 'user' });
-  });
-
-  it('skips a file whose command is empty', () => {
-    const { result } = resolve({ [LOCAL]: statusLine(''), [USER]: statusLine('user') });
-    expect(result).toEqual({ type: 'command', command: 'user' });
-  });
-
-  it('ignores a command that names conduit-hook.cjs, so a re-read cannot chain the wrapper', () => {
-    const wrapper = "ELECTRON_RUN_AS_NODE=1 '/opt/c' '/opt/conduit-hook.cjs' statusline";
-    expect(resolve({ [LOCAL]: statusLine(wrapper), [USER]: statusLine('user') }).result).toEqual({
-      type: 'command',
-      command: 'user',
-    });
-    expect(resolve({ [LOCAL]: statusLine(wrapper) }).result).toBeNull();
+    expect(resolve({}).reads).toEqual([LOCAL, SHARED, USER]);
   });
 
   it('copies padding, refreshInterval and hideVimModeIndicator when set', () => {
@@ -95,10 +58,5 @@ describe('readUserStatusLine', () => {
       refreshInterval: 5,
       hideVimModeIndicator: true,
     });
-  });
-
-  it('a malformed JSON file is skipped', () => {
-    const { result } = resolve({ [LOCAL]: '{not json', [USER]: statusLine('user') });
-    expect(result).toEqual({ type: 'command', command: 'user' });
   });
 });

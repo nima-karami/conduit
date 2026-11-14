@@ -124,13 +124,25 @@ function readJson(file) {
   }
 }
 
+// see docs/plans/2026-11-13-scheduler-auto-resume.plan.md "Settled decisions"
+function statusLineShell(platform, env, command) {
+  if (platform === 'win32') {
+    return { file: env.CLAUDE_CODE_GIT_BASH_PATH || 'bash', args: ['-c', command] };
+  }
+  return { file: '/bin/sh', args: ['-c', command] };
+}
+
 function runUserStatusLine(input, text) {
   const projectDir = input?.workspace?.project_dir || input?.cwd || null;
   const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
   const command = statusLineCommand(typeof projectDir === 'string' ? projectDir : null, configDir);
   if (!command) return Promise.resolve('');
   return new Promise((resolve) => {
-    const child = spawn(command, { shell: true, stdio: ['pipe', 'pipe', 'ignore'] });
+    const shell = statusLineShell(process.platform, process.env, command);
+    const child = spawn(shell.file, shell.args, {
+      shell: false,
+      stdio: ['pipe', 'pipe', 'ignore'],
+    });
     let out = '';
     let timer = null;
     const done = () => {
@@ -166,8 +178,6 @@ async function statusline() {
   return out;
 }
 
-process.stdout.on('error', () => process.exit(0));
-
 async function main() {
   const [mode, event] = process.argv.slice(2);
   if (mode === 'hook') return hook(event);
@@ -178,4 +188,9 @@ async function main() {
   return undefined;
 }
 
-main().finally(() => process.exit(0));
+module.exports = { statusLineShell };
+
+if (require.main === module) {
+  process.stdout.on('error', () => process.exit(0));
+  main().finally(() => process.exit(0));
+}

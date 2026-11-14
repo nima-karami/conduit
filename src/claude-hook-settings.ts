@@ -1,6 +1,6 @@
 import type { StatusLineSetting } from './claude-user-status-line';
 
-// Claude runs hooks through POSIX sh on Windows too (Git Bash); see spec 2026-11-13-scheduler-auto-resume §3.
+// see docs/plans/2026-11-13-scheduler-auto-resume.plan.md "Settled decisions"
 export function claudeHookSettings(i: {
   execPath: string;
   hookClient: string;

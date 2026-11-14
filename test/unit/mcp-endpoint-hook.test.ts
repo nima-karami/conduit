@@ -10,7 +10,6 @@ import type { TokenRecord } from '../../src/contracts/session-identity';
 import { onLines } from '../helpers/line-socket';
 import { testEndpoint } from '../helpers/test-endpoint';
 
-const noLog = { debug: () => undefined, warn: () => undefined };
 const TOKEN = 'tok_3f9a1c';
 const ACK_OK = '{"conduitHook":1,"ok":true}';
 const ACK_REFUSED = '{"conduitHook":1,"ok":false}';
@@ -38,9 +37,18 @@ const hookLine = (over: Record<string, unknown> = {}): string =>
 const endpoints: McpEndpoint[] = [];
 const sockets: net.Socket[] = [];
 afterEach(async () => {
+  drops.length = 0;
   for (const s of sockets.splice(0)) s.destroy();
   for (const e of endpoints.splice(0)) await e.close();
 });
+
+const drops: string[] = [];
+const dropLog = {
+  debug: (_scope: string, message: string, data?: Record<string, unknown>) => {
+    if (message === 'endpoint connection dropped') drops.push(String(data?.why));
+  },
+  warn: () => undefined,
+};
 
 async function serve(rows: () => TokenRows) {
   const p = testEndpoint();
@@ -48,7 +56,7 @@ async function serve(rows: () => TokenRows) {
   const conns: EndpointConnection[] = [];
   const ep = createShimEndpoint({
     path: p,
-    log: noLog,
+    log: dropLog,
     tokens: { rows },
     onHook,
     onConnection: (c) => {
@@ -157,5 +165,46 @@ describe('hook posts on the MCP endpoint', () => {
     await d.closed;
     expect(d.got).toEqual([]);
     expect(conns).toHaveLength(0);
+  });
+
+  it('a hook post with leading whitespace is still a hook post', async () => {
+    const { p, onHook } = await serve(live);
+    const d = dial(p);
+    d.write(`  \t${hookLine()}`);
+    await d.closed;
+    expect(d.got).toEqual([ACK_OK]);
+    expect(onHook).toHaveBeenCalledTimes(1);
+  });
+
+  it('a hook post over 64 KiB and under the hook cap is still acked', async () => {
+    const { p, onHook } = await serve(live);
+    const d = dial(p);
+    d.write(hookLine({ payload: 'x'.repeat(100_000) }));
+    await d.closed;
+    expect(d.got).toEqual([ACK_OK]);
+    expect(onHook).toHaveBeenCalledTimes(1);
+  });
+
+  it('whitespace past 64 KiB before the hook prefix is capped as a hello', async () => {
+    const { p, onHook } = await serve(live);
+    const d = dial(p);
+    d.write(`${' '.repeat(70_000)}${hookLine()}`);
+    await d.closed;
+    expect(d.got).toEqual([]);
+    expect(onHook).not.toHaveBeenCalled();
+    expect(drops.at(-1)).toBe('hello too large');
+  });
+
+  it('a C6 hello over 64 KiB is refused as too large, with or without leading whitespace', async () => {
+    for (const lead of ['', '  ']) {
+      const { p } = await serve(live);
+      const d = dial(p);
+      d.write(
+        `${lead}${JSON.stringify({ conduit: 2, token: TOKEN, shim: 'x'.repeat(70_000), resume: null })}`,
+      );
+      await d.closed;
+      expect(d.got).toEqual([]);
+      expect(drops.at(-1)).toBe('hello too large');
+    }
   });
 });
