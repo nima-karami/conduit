@@ -146,6 +146,7 @@ describe('hook posts on the MCP endpoint', () => {
     await d.closed;
     expect(d.got).toEqual([]);
     expect(onHook).not.toHaveBeenCalled();
+    expect(drops.at(-1)).toBe('hook post too large');
   });
 
   it('a normal C6 hello still gets its welcome and never reaches onHook', async () => {
@@ -183,6 +184,16 @@ describe('hook posts on the MCP endpoint', () => {
     await d.closed;
     expect(d.got).toEqual([ACK_OK]);
     expect(onHook).toHaveBeenCalledTimes(1);
+  });
+
+  it('a prefix that ends past 64 KiB is capped as a hello, even under 64 KiB of whitespace', async () => {
+    const { p, onHook } = await serve(live);
+    const d = dial(p);
+    d.write(`${' '.repeat(65_530)}${hookLine()}`);
+    await d.closed;
+    expect(d.got).toEqual([]);
+    expect(onHook).not.toHaveBeenCalled();
+    expect(drops.at(-1)).toBe('hello too large');
   });
 
   it('whitespace past 64 KiB before the hook prefix is capped as a hello', async () => {

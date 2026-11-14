@@ -41,17 +41,17 @@ export type EndpointLog = Record<
 const isPipe = (p: string) => p.startsWith('\\\\.\\pipe\\') || p.startsWith('//./pipe/');
 const sha256 = (t: string) => createHash('sha256').update(t).digest('hex');
 
-/**
- * `unknown_token` ends a shim's retries for good, so it follows only a clean load (D21). A missing
- * file with a token presented can only mean the file was lost: every Conduit launch reserved its row
- * on disk before it ran.
- */
 function liveRow(token: string, rows: TokenRows): TokenRecord | undefined {
   if (rows.state !== 'loaded') return undefined;
   const hash = sha256(token);
   return rows.rows.find((r) => r.sha256 === hash && r.state !== 'superseded');
 }
 
+/**
+ * `unknown_token` ends a shim's retries for good, so it follows only a clean load (D21). A missing
+ * file with a token presented can only mean the file was lost: every Conduit launch reserved its row
+ * on disk before it ran.
+ */
 function welcomeFor(hello: { token: string | null }, rows: TokenRows): ShimWelcome {
   if (rows.state === 'unreadable') return { conduit: 2, ok: false, reason: 'draining' };
   if (hello.token === null) return { conduit: 2, ok: true };
@@ -64,20 +64,25 @@ function welcomeFor(hello: { token: string | null }, rows: TokenRows): ShimWelco
 const HOOK_LINE_PREFIX = '{"conduitHook"';
 
 /**
- * Decides from the line's first bytes which cap applies, before the reader counts them: a hook post
- * must show its prefix within the hello cap, otherwise the line is held to that cap as a hello.
+ * Reads a first line's kind from its leading whitespace and its first characters only, so it can be
+ * capped while it streams. A hook post must show its prefix within the hello cap.
  */
-function classifyFirstLine(head: string): 'hook' | 'hello' | undefined {
-  const t = head.trimStart();
-  if (t.length >= HOOK_LINE_PREFIX.length) {
-    const prefixAt = head.length - t.length;
-    return t.startsWith(HOOK_LINE_PREFIX) &&
-      prefixAt + HOOK_LINE_PREFIX.length <= SHIM_HELLO_MAX_BYTES
-      ? 'hook'
-      : 'hello';
+function firstLineKind(
+  state: { lead: number; sig: string },
+  text: string,
+): 'hook' | 'hello' | undefined {
+  for (const ch of text) {
+    if (state.sig === '' && (ch === ' ' || ch === '\t' || ch === '\r')) {
+      state.lead += 1;
+      if (state.lead >= SHIM_HELLO_MAX_BYTES) return 'hello';
+      continue;
+    }
+    if (ch === '\n') return 'hello';
+    state.sig += ch;
+    if (!HOOK_LINE_PREFIX.startsWith(state.sig)) return 'hello';
+    if (state.sig.length === HOOK_LINE_PREFIX.length)
+      return state.lead + HOOK_LINE_PREFIX.length <= SHIM_HELLO_MAX_BYTES ? 'hook' : 'hello';
   }
-  if (head.length >= SHIM_HELLO_MAX_BYTES || t.includes('\n') || !HOOK_LINE_PREFIX.startsWith(t))
-    return 'hello';
   return undefined;
 }
 
@@ -241,7 +246,7 @@ export function createShimEndpoint(opts: {
       open(hello);
     };
 
-    let head = '';
+    const first = { lead: 0, sig: '' };
     let lineKind: 'hook' | 'hello' | undefined;
     const reader = new LineReader(
       () =>
@@ -255,13 +260,18 @@ export function createShimEndpoint(opts: {
         if (deliver) deliver(line);
         else onHello(line);
       },
-      () => drop(deliver ? 'line too large' : 'hello too large'),
+      () =>
+        drop(
+          deliver
+            ? 'line too large'
+            : lineKind === 'hook'
+              ? 'hook post too large'
+              : 'hello too large',
+        ),
     );
     socket.on('data', (chunk: Buffer) => {
-      if (!deliver && lineKind === undefined) {
-        head += chunk.toString('utf8');
-        lineKind = classifyFirstLine(head);
-      }
+      if (!deliver && lineKind === undefined)
+        lineKind = firstLineKind(first, chunk.toString('utf8'));
       // Nothing read after close() reaches the host.
       reader.write(chunk, () => socket.writable && !closing);
     });

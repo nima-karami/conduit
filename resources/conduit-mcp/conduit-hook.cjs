@@ -13,8 +13,8 @@ const POST_MS = 1500;
 const STATUS_POST_MS = 300;
 const USER_STATUS_LINE_MS = 5000;
 
-const envValue = (name) => {
-  const v = process.env[name];
+const envValue = (env, name) => {
+  const v = env[name];
   // An unexpanded ${...} placeholder is a config template, never a real token or endpoint.
   return v && !v.startsWith('${') ? v : null;
 };
@@ -77,9 +77,9 @@ function post(endpoint, token, event, payload, ms) {
   });
 }
 
-async function hook(event) {
-  const endpoint = envValue('CONDUIT_MCP_ENDPOINT');
-  const token = envValue('CONDUIT_SESSION_TOKEN');
+async function hook(event, env) {
+  const endpoint = envValue(env, 'CONDUIT_MCP_ENDPOINT');
+  const token = envValue(env, 'CONDUIT_SESSION_TOKEN');
   if (!endpoint || !token || !event) return;
   const { text, overflow } = await readStdin(HOOK_POST_MAX_BYTES);
   // Nothing to forward: an oversized or non-JSON payload is dropped, since stderr is not allowed.
@@ -132,15 +132,20 @@ function statusLineShell(platform, env, command) {
   return { file: '/bin/sh', args: ['-c', command] };
 }
 
-function runUserStatusLine(input, text) {
+function runUserStatusLine(input, text, platform, env) {
   const projectDir = input?.workspace?.project_dir || input?.cwd || null;
-  const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+  const configDir = env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
   const command = statusLineCommand(typeof projectDir === 'string' ? projectDir : null, configDir);
   if (!command) return Promise.resolve('');
   return new Promise((resolve) => {
-    const shell = statusLineShell(process.platform, process.env, command);
+    const shell = statusLineShell(platform, env, command);
+    // The wrapper's own env marks it as Electron-as-node; the user's process must not inherit that.
+    const childEnv = { ...env };
+    delete childEnv.ELECTRON_RUN_AS_NODE;
     const child = spawn(shell.file, shell.args, {
       shell: false,
+      windowsHide: true,
+      env: childEnv,
       stdio: ['pipe', 'pipe', 'ignore'],
     });
     let out = '';
@@ -165,30 +170,30 @@ function runUserStatusLine(input, text) {
   });
 }
 
-async function statusline() {
-  const { text } = await readStdin(Infinity);
+async function statusLineOutput(text, platform, env) {
   const input = parseObject(text);
-  const endpoint = envValue('CONDUIT_MCP_ENDPOINT');
-  const token = envValue('CONDUIT_SESSION_TOKEN');
+  const endpoint = envValue(env, 'CONDUIT_MCP_ENDPOINT');
+  const token = envValue(env, 'CONDUIT_SESSION_TOKEN');
   const forwarding =
     endpoint && token && input?.rate_limits && typeof input.rate_limits === 'object'
       ? post(endpoint, token, 'StatusLine', { rate_limits: input.rate_limits }, STATUS_POST_MS)
       : Promise.resolve();
-  const [, out] = await Promise.all([forwarding, runUserStatusLine(input, text)]);
+  const [, out] = await Promise.all([forwarding, runUserStatusLine(input, text, platform, env)]);
   return out;
 }
 
 async function main() {
   const [mode, event] = process.argv.slice(2);
-  if (mode === 'hook') return hook(event);
+  if (mode === 'hook') return hook(event, process.env);
   if (mode === 'statusline') {
-    const out = await statusline();
+    const { text } = await readStdin(Infinity);
+    const out = await statusLineOutput(text, process.platform, process.env);
     return new Promise((resolve) => process.stdout.write(out, resolve));
   }
   return undefined;
 }
 
-module.exports = { statusLineShell };
+module.exports = { statusLineShell, statusLineOutput };
 
 if (require.main === module) {
   process.stdout.on('error', () => process.exit(0));

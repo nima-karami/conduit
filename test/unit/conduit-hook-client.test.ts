@@ -21,6 +21,11 @@ const printing = (text: string) => `"${NODE}" -e "process.stdout.write('${text}'
 const ECHO = `"${NODE}" -e "process.stdin.pipe(process.stdout)"`;
 
 interface HookModule {
+  statusLineOutput(
+    text: string,
+    platform: string,
+    env: Record<string, string | undefined>,
+  ): Promise<string>;
   statusLineShell(
     platform: string,
     env: Record<string, string | undefined>,
@@ -126,10 +131,12 @@ function envFor(opts: {
   config: string;
   endpoint?: string;
   token?: string;
+  extra?: Record<string, string>;
 }): Record<string, string> {
   const env: Record<string, string> = {
     PATH: process.env.PATH ?? '',
     CLAUDE_CONFIG_DIR: opts.config,
+    ...opts.extra,
   };
   if (opts.endpoint !== undefined) env.CONDUIT_MCP_ENDPOINT = opts.endpoint;
   if (opts.token !== undefined) env.CONDUIT_SESSION_TOKEN = opts.token;
@@ -259,6 +266,21 @@ describe('conduit-hook.cjs statusline', () => {
     expect(r.code).toBe(0);
     expect(r.stdout).toBe(STARTUP);
     expect(r.stderr).toBe('');
+  });
+
+  it('the user status line never inherits ELECTRON_RUN_AS_NODE from the hook command', async () => {
+    const config = roots.root();
+    userSettings(
+      config,
+      `"${NODE}" -e "process.stdout.write(process.env.ELECTRON_RUN_AS_NODE || 'unset')"`,
+    );
+    const r = await run(
+      ['statusline'],
+      envFor({ config, extra: { ELECTRON_RUN_AS_NODE: '1' } }),
+      STARTUP,
+    );
+    expect(r.code).toBe(0);
+    expect(r.stdout).toBe('unset');
   });
 
   it('prints nothing when the user has no status line', async () => {
@@ -406,5 +428,28 @@ describe('conduit-hook.cjs statusline budgets and precedence', () => {
     const r = await run(['statusline'], envFor({ config }), stdin);
     expect(r.code).toBe(0);
     expect(r.stdout).toBe(c.expect ?? '');
+  });
+});
+
+describe('conduit-hook.cjs statusLineOutput on win32', () => {
+  it('runs the user command as `bash -c <command>` in CLAUDE_CODE_GIT_BASH_PATH and prints its stdout', async () => {
+    const dir = roots.root();
+    const record = path.join(dir, 'argv.txt');
+    const bash = path.join(dir, 'bash-stub');
+    fs.writeFileSync(
+      bash,
+      `#!/bin/sh\nprintf '%s\\n' "$1" "$2" > '${record}'\nprintf 'STUB:%s' "$2"\n`,
+    );
+    fs.chmodSync(bash, 0o755);
+    const config = roots.root();
+    const command = `echo 'it works' "quoted"`;
+    userSettings(config, command);
+    const out = await hookModule.statusLineOutput(STARTUP, 'win32', {
+      PATH: process.env.PATH ?? '',
+      CLAUDE_CONFIG_DIR: config,
+      CLAUDE_CODE_GIT_BASH_PATH: bash,
+    });
+    expect(out).toBe(`STUB:${command}`);
+    expect(fs.readFileSync(record, 'utf8')).toBe(`-c\n${command}\n`);
   });
 });
