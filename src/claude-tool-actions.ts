@@ -1,4 +1,4 @@
-// Claude Code's PostToolUse hook payload. Output (tool_response) is never read: see spec §4.6.
+// see spec 2026-11-14-policy-and-permissions §4.6
 export type ClaudeAction =
   | { kind: 'command'; command: string; cwd: string | null }
   | { kind: 'file-change'; paths: string[] }

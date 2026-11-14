@@ -125,7 +125,6 @@ export type CodexAction =
   | { kind: 'file-change'; paths: string[] }
   | { kind: 'mcp'; server: string; tool: string; durationMs: number | null };
 
-/** Output, aggregated_output, content, arguments and result are never copied: see spec §4.6. */
 const commandText = (argv: unknown): string | null => {
   if (typeof argv === 'string') return argv;
   if (!Array.isArray(argv) || !argv.every((part) => typeof part === 'string')) return null;
@@ -140,6 +139,7 @@ const durationMs = (d: unknown): number | null => {
   return Math.round(duration.secs * 1000 + duration.nanos / 1e6);
 };
 
+/** see spec 2026-11-14-policy-and-permissions §4.6 */
 export function rolloutActions(line: unknown): CodexAction[] {
   const doc = typeof line === 'string' ? parseLine(line) : asRecord(line);
   if (doc?.type !== 'event_msg') return [];

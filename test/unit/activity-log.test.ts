@@ -137,38 +137,78 @@ describe('activity log', () => {
     expect(io.written).toHaveLength(2);
 
     clock.now = Date.parse('2026-11-14T10:59:59.000Z');
-    log.flushCounts();
+    log.flushCounts(false);
     expect(io.written).toHaveLength(2);
 
     clock.now = Date.parse('2026-11-14T11:00:01.000Z');
-    log.flushCounts();
+    log.flushCounts(false);
     const flushed = rows(io).filter((r) => r.decidedBy === 'counted');
     expect(flushed).toHaveLength(2);
-    expect(flushed.find((r) => r.principal.sessionId === 's1')).toMatchObject({
+    expect(flushed.find((r) => r.principal.sessionId === 's1')).toEqual({
+      v: 1,
+      id: 'id-1',
+      at: '2026-11-14T10:00:00.000Z',
       lane: 'conduit',
+      principal: base.principal,
+      cli: 'claude',
       action: 'list_sessions',
+      target: null,
+      summary: null,
       decision: 'allow',
       decidedBy: 'counted',
       outcome: 'ok',
-      count: 3,
-      target: null,
-      summary: null,
       durationMs: null,
       requestId: null,
+      count: 3,
     });
     expect(flushed.find((r) => r.principal.sessionId === 's2')?.count).toBe(1);
     expect(rows(io).filter((r) => r.decision === 'deny')).toHaveLength(1);
 
-    log.flushCounts();
+    log.flushCounts(false);
     expect(io.written).toHaveLength(4);
 
     clock.now = Date.parse('2026-11-14T11:30:00.000Z');
-    log.record(base);
-    log.flushCounts();
+    const counted = log.record(base);
+    log.flushCounts(false);
     expect(io.written).toHaveLength(4);
     clock.now = Date.parse('2026-11-14T12:00:01.000Z');
-    log.flushCounts();
-    expect(rows(io).at(-1)).toMatchObject({ decidedBy: 'counted', count: 1 });
+    log.flushCounts(false);
+    expect(rows(io).at(-1)).toMatchObject({
+      id: counted,
+      at: '2026-11-14T11:00:00.000Z',
+      decidedBy: 'counted',
+      count: 1,
+    });
+  });
+
+  it('counted buckets split by principal, outcome and hour', () => {
+    const io = fakeIo();
+    const { log, clock } = harness(io);
+    log.record({ ...base, principal: { ...base.principal, machineId: 'm2' } });
+    log.record({ ...base, outcome: 'error' });
+    log.record(base);
+    expect(io.written).toHaveLength(0);
+    clock.now = Date.parse('2026-11-14T10:59:00.000Z');
+    log.flushCounts(true);
+    expect(rows(io).map((r) => r.count)).toEqual([1, 1, 1]);
+    expect(
+      rows(io)
+        .map((r) => r.outcome)
+        .sort(),
+    ).toEqual(['error', 'ok', 'ok']);
+  });
+
+  it('flushCounts(true) also writes the current hour', () => {
+    const io = fakeIo();
+    const { log } = harness(io);
+    const id = log.record(base);
+    log.flushCounts(false);
+    expect(io.written).toHaveLength(0);
+    log.flushCounts(true);
+    expect(rows(io)).toEqual([
+      expect.objectContaining({ id, count: 1, at: '2026-11-14T10:00:00.000Z' }),
+    ]);
+    expect(io.written[0]?.day).toBe('2026-11-14');
   });
 
   it('failed append marks unwritable and the next success writes one gap row', () => {
@@ -196,7 +236,7 @@ describe('activity log', () => {
     expect(io.written).toHaveLength(2);
     expect(rows(io)[0]).toEqual({
       v: 1,
-      id: rows(io)[0]?.id,
+      id: 'id-5',
       at: '2026-11-14T10:07:00.000Z',
       lane: 'note',
       principal: { handle: null, sessionId: null, machineId: null },
@@ -211,6 +251,7 @@ describe('activity log', () => {
       requestId: null,
       count: null,
     });
+    expect(id).toBe('id-4');
     expect(rows(io)[1]?.id).toBe(id);
 
     log.record({ ...base, action: 'send_message' });
@@ -218,13 +259,38 @@ describe('activity log', () => {
     expect(rows(io).filter((r) => r.action === 'gap')).toHaveLength(1);
   });
 
-  it('corrupt ask args start empty and warn', () => {
+  it('corrupt ask args are never overwritten', () => {
     const io = fakeIo();
     io.args = '{not json';
+    const { log, clock, warn } = harness(io);
+    log.recordAskArgs('r1', { q: 1 });
+    log.recordAskArgs('r2', { q: 2 });
+    clock.now = T0 + 48 * 3_600_000;
+    log.purge();
+    expect(io.args).toBe('{not json');
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('newer ask args are never overwritten', () => {
+    const io = fakeIo();
+    const newer = JSON.stringify({ version: 2, asks: {} });
+    io.args = newer;
     const { log, warn } = harness(io);
     log.recordAskArgs('r1', { q: 1 });
+    expect(io.args).toBe(newer);
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(io.args ?? 'null')).toMatchObject({ r1: { args: { q: 1 } } });
+  });
+
+  it('unreadable ask args are never overwritten', () => {
+    const io = fakeIo();
+    io.readArgs = () => {
+      throw new Error('EACCES');
+    };
+    const writes = vi.spyOn(io, 'writeArgs');
+    const { log, warn } = harness(io);
+    log.recordAskArgs('r1', { q: 1 });
+    expect(writes).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it('ask args purge after 24 h', () => {
@@ -235,7 +301,8 @@ describe('activity log', () => {
     log.recordAskArgs('r2', { query: 'b' });
     clock.now = T0 + 25 * 3_600_000;
     log.purge();
-    expect(Object.keys(JSON.parse(io.args ?? '{}'))).toEqual(['r2']);
+    expect(JSON.parse(io.args ?? '{}')).toMatchObject({ version: 1 });
+    expect(Object.keys(JSON.parse(io.args ?? '{}').asks)).toEqual(['r2']);
   });
 
   it('purge removes days older than 30 and oldest beyond 50 MB', () => {
