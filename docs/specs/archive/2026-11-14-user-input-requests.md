@@ -1,5 +1,5 @@
 ---
-status: shaped — awaiting owner decisions
+status: implemented
 date: 2026-11-14
 ticket: CON-10
 tier: FULL

@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { AttentionEntry } from '../src/attention';
+import type { HumanPresence } from '../src/conduit-mcp/request-types';
 import type { RightPaneTab } from '../src/settings';
 import type { StatusBarModel } from '../src/status-bar-model';
 import type { UpdateStatus } from './components/update-card';
@@ -16,6 +17,9 @@ export interface WorkbenchChromeContextValue {
   togglePanel(tab: RightPaneTab): void;
   openPanel(tab: RightPaneTab, remember: boolean): void;
   status: StatusBarModel;
+  /** The human's Away state from the server; null before the first state. */
+  presence: HumanPresence | null;
+  setAway(away: boolean, until: string | null): void;
   /** The bound openCommands combo for display; '' when unbound. */
   commandHint: string;
   focusAttention(entry: AttentionEntry): void;

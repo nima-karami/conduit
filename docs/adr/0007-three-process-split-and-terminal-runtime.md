@@ -129,8 +129,10 @@ hc core + holder (userData/runtime/hc)   herdr-core, pinned and unmodified. PTYs
   through a frozen `server.stopAll`. v0.51 and older can't: the release notes say to quit Conduit
   and stop all agents before installing one, and it reads the server keys mirrored in its own
   `settings.json`.
-- **Approvals:** an ask with no app connected for more than 5 s is denied (`ui_unavailable`) and
-  recorded in its thread. Nothing is approved without a person. Server actions (opening and
+- **Approvals:** an ask waits its CLI's full call budget even with no app connected, and a reconnected
+  owner window can answer it; at the budget it ends `approval_timeout`. With no app at all, a
+  `when: always` ask for a server action may also start and wait (REQ-D21c, CON-21; the earlier 5 s
+  `ui_unavailable` deny is gone). Nothing is approved without a person. Server actions (opening and
   closing sessions, attaching folders, messaging) whose policy is `on` run with no window open. A
   close with no window open can't check for unsaved editor buffers, which exist only in an open app;
   with a window it refuses on unsaved changes, as today.

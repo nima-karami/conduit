@@ -8,6 +8,8 @@ export interface StatusBarModel {
   liveCount: number;
   attentionCount: number;
   firstAttention: AttentionEntry | null;
+  /** The soonest deadline of a call blocked on a request (ISO), for the footer's countdown. */
+  waitingUntil: string | null;
   showCommandHint: boolean;
 }
 
@@ -16,6 +18,7 @@ export function buildStatusBarModel(input: {
   sessions: readonly Session[];
   activeId: string | undefined;
   entries: readonly AttentionEntry[];
+  waitingUntil?: string | null;
 }): StatusBarModel {
   const { sessions, entries } = input;
   const active = sessions.find((s) => s.id === input.activeId);
@@ -28,6 +31,7 @@ export function buildStatusBarModel(input: {
     liveCount: sessions.filter((s) => s.status === 'running').length,
     attentionCount: entries.length,
     firstAttention: entries[0] ?? null,
+    waitingUntil: input.waitingUntil ?? null,
     showCommandHint: active !== undefined,
   };
 }

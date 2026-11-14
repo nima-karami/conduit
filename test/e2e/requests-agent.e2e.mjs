@@ -1,6 +1,6 @@
 /**
  * requests-agent: an agent asks the human through request_input, and the answer reaches it
- * (spec docs/specs/2026-11-14-user-input-requests.md §4.3, §9 "A late answer still reaches the agent";
+ * (spec docs/specs/archive/2026-11-14-user-input-requests.md §4.3, §9 "A late answer still reaches the agent";
  * plan docs/plans/2026-11-14-request-queue-machinery.plan.md Slice 2).
  * The test answers through the same renderer path a window uses (`mcp:requestAnswer`).
  *   (a) answered while the call waits → the call returns state answered with the pick.

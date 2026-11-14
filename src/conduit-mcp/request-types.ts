@@ -1,4 +1,4 @@
-// Node-free: the renderer imports these wire types. See docs/specs/2026-11-14-user-input-requests.md §4.1-4.2.
+// Node-free: the renderer imports these wire types. See docs/specs/archive/2026-11-14-user-input-requests.md §4.1-4.2.
 import type { Handle } from './types';
 
 export type RequestSource = 'agent' | 'message' | 'observed' | 'scheduler';

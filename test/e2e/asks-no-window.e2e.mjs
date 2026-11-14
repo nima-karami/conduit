@@ -1,5 +1,5 @@
 /**
- * asks-no-window: a waiting tool-policy ask outlives the app (spec docs/specs/2026-11-14-user-input-requests.md
+ * asks-no-window: a waiting tool-policy ask outlives the app (spec docs/specs/archive/2026-11-14-user-input-requests.md
  * REQ-D21c, §9 "An ask with no window open waits in the tray"; plan Slice 5). The app quits while
  * an attach_folder ask (when: always) waits; the server keeps it past the old 5 s ui_unavailable
  * deny, counts it for the tray (`mcp.waitingAsks`), and the call ends with approval_timeout at its

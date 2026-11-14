@@ -230,6 +230,28 @@ describe('RequestPopup', () => {
     setRequestOpeners(null);
   });
 
+  it('answering the last request closes the pop-up', async () => {
+    const only = view({
+      id: 'a',
+      kind: 'choose',
+      title: 'Only ask',
+      options: [{ label: 'X' }, { label: 'Y' }],
+    });
+    setRequests([only]);
+    await mount();
+    act(() => requestPopup.open('a'));
+    act(() => host.querySelector<HTMLInputElement>('input[data-key]')?.click());
+    act(() => host.querySelector<HTMLButtonElement>('.reqtpl-send__btn')?.click());
+    const answered = { ...only, state: 'answered' as const };
+    emit({ type: 'mcp:requestResult', requestId: 'a', result: { ok: true, request: answered } });
+    setRequests([], [answered]);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 450));
+    });
+    expect(requestPopup.current()).toBeNull();
+    expect(popupEl()).toBeNull();
+  });
+
   it('it closes when the request disappears', async () => {
     const a = view({ id: 'a' });
     setRequests([a, view({ id: 'b' })]);

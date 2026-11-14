@@ -445,7 +445,7 @@ export function gateToolCall(i: {
   if (i.policy.access === 'off') return toolDisabled(i.tool);
   if (isMessagingTool(i.tool) || isRequestTool(i.tool)) return null;
   // REQ-D21c: with no app at all, an always-ask may wait for one, but only for a server action, which
-  // can run once approved without a window (docs/specs/2026-11-14-user-input-requests.md §4.3).
+  // can run once approved without a window (docs/specs/archive/2026-11-14-user-input-requests.md §4.3).
   if (
     !i.appConnected &&
     i.policy.access === 'ask' &&

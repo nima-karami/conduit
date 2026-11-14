@@ -15667,6 +15667,13 @@ button.toggle--on .toggle__knob {
 }
 
 /* Needs you: panel (CON-20) */
+.needs-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 8px;
+  min-height: 0;
+}
 .needs-pane {
   display: flex;
   flex-direction: column;
@@ -16280,6 +16287,228 @@ button.toggle--on .toggle__knob {
 }
 .reqtpl-tab__gone p {
   margin: 0;
+}
+
+/* Needs you: session pill (CON-20) */
+.needs-pill-wrap {
+  position: relative;
+  display: inline-block;
+}
+.needs-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: default;
+}
+.needs-pill:hover,
+.needs-pill[aria-expanded="true"] {
+  background: var(--state-hover-bg);
+  color: var(--text);
+}
+/* The attention ink tier: pure --amber misses 4.5:1 on the panel, so it is mixed toward the
+   theme's text (the .statusbar__attn recipe). */
+.needs-pill--waiting,
+.needs-pill--waiting:hover,
+.needs-pill--waiting[aria-expanded="true"] {
+  color: color-mix(in srgb, var(--amber) 70%, var(--text));
+  border-color: color-mix(in srgb, var(--amber) 55%, var(--border-2));
+}
+.needs-pill__menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: var(--layer-popover);
+  min-width: 240px;
+  max-width: 360px;
+  padding: 4px 0;
+  background: var(--raise);
+  color: var(--text);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  --rest-shadow: var(--elev-3);
+  box-shadow: var(--rest-shadow);
+}
+.needs-pill__item {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+  padding: 5px 12px;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+.needs-pill__item:hover,
+.needs-pill__item:focus-visible {
+  background: var(--state-hover-bg);
+}
+.needs-pill__item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.needs-pill__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.needs-pill__state {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.needs-pill__state--attn {
+  color: color-mix(in srgb, var(--amber) 70%, var(--text));
+}
+
+/* Needs you: thread link (CON-20) */
+.needs-threadlink {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.needs-threadlink:hover {
+  background: var(--state-hover-bg);
+}
+.needs-threadlink:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: 2px;
+}
+
+/* Needs you: status bar Away control (CON-20). The menu opens upward from the footer. */
+.statusbar__awaywrap {
+  position: relative;
+  display: inline-flex;
+}
+.statusbar__awaywrap .needs-away__menu {
+  bottom: calc(100% + 4px);
+  right: 0;
+}
+.statusbar__away--on {
+  color: var(--text);
+}
+
+/* Needs you: Away and digest (CON-20) */
+.needs-away__menu {
+  position: absolute;
+  z-index: var(--layer-popover);
+  min-width: 220px;
+  padding: 4px 0;
+  background: var(--raise);
+  color: var(--text);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-card);
+  box-shadow: var(--elev-3);
+}
+.needs-away__heading {
+  padding: 6px 12px 4px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.needs-away__item {
+  display: block;
+  width: 100%;
+  padding: 5px 12px;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+.needs-away__item:hover,
+.needs-away__item:focus-visible {
+  background: var(--state-hover-bg);
+}
+.needs-away__sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border-2);
+}
+.needs-away__banner,
+.needs-digest {
+  margin: 8px;
+  padding: 10px 12px;
+  background: var(--raise);
+  color: var(--text);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-card);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.needs-away__title {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+.needs-away__text {
+  margin: 0;
+  color: var(--text-dim);
+}
+.needs-away__back,
+.needs-digest__show,
+.needs-digest__dismiss {
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  text-decoration: underline;
+  cursor: default;
+}
+.needs-away__back {
+  margin-top: 6px;
+}
+.needs-digest__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.needs-digest__title {
+  margin: 0;
+  font: inherit;
+  font-weight: 600;
+}
+.needs-digest__window,
+.needs-digest__line {
+  margin: 2px 0 0;
+}
+.needs-digest__window {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.needs-digest__line {
+  margin-top: 4px;
+}
+.needs-digest__show,
+.needs-digest__dismiss {
+  color: var(--text-dim);
+}
+.needs-digest__show:hover,
+.needs-digest__dismiss:hover,
+.needs-away__back:hover {
+  color: var(--text);
 }
 
 /* ═════════ interaction state vocabulary ══════════════════════════════════════

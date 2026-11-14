@@ -323,26 +323,25 @@ await runScenario(
       three.title === '3 need you',
       `first entry after the ask: ${JSON.stringify(three.title)}`,
     );
-    const [first, second] = await page.evaluate(
-      (ids) => (window.__sessions || []).map((s) => s.id).filter((id) => ids.includes(id)),
-      [R, B],
-    );
+    // R's hidden Blocked report raised an attend request (CON-21): the footer opens it, which lands
+    // on R's terminal, and the request stays until R's own prompt clears.
     await statusItem(page, 'attention').click();
     await page.waitForFunction(
       (id) =>
         document
           .querySelector(`[data-agent-tree] .session[data-sessionid="${id}"]`)
           ?.getAttribute('aria-selected') === 'true',
-      first,
+      R,
       { timeout: 5_000 },
     );
-    await waitFooterAttention(page, '2 need you', 'the focused session saw its reason');
-    log('ask → card, then the first reason session, in order ✓');
+    await report(page, R, 'idle');
+    await waitFooterAttention(page, '2 need you', "R's prompt cleared, so its request resolved");
+    log('ask → card, then the request → its terminal, in order ✓');
 
     phase('snooze takes a reason out of the count');
-    await rowMenu(page, second, 'Snooze for 10 minutes');
+    await rowMenu(page, B, 'Snooze for 10 minutes');
     const one = await waitFooterAttention(page, '1 needs you', 'a snoozed reason');
-    const raw = (await sessionOf(page, second))?.attentionReason;
+    const raw = (await sessionOf(page, B))?.attentionReason;
     assert(raw === 'blocked' || raw === 'bell', `snooze changed the server's fact: ${raw}`);
     assert(
       one.title === 'a message for you',
