@@ -97,6 +97,8 @@ const SAMPLES: { [K in LinkFrame['t']]: Extract<LinkFrame, { t: K }> } = {
   'drive.open': { t: 'drive.open', requestId: 'q-1', agentId: 'cli:claude', folder: '/home/me/p' },
   'drive.close': { t: 'drive.close', requestId: 'q-1', sessionId: 's-1' },
   'drive.result': { t: 'drive.result', requestId: 'q-1', ok: true, sessionId: 's-1', error: null },
+  owner: { t: 'owner', publicKey: 'pub', privateKey: 'priv' },
+  'owner.ack': { t: 'owner.ack' },
 };
 
 const FRAME_TYPES = Object.keys(SAMPLES) as LinkFrame['t'][];

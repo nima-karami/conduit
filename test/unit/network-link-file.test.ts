@@ -21,6 +21,8 @@ const link: LinkRecord = {
   capabilities: { messaging: true, monitor: true, drive: false },
   fingerprint: 'ABCD-1234',
   createdAt: ago(1),
+  cert: 'PEM-B',
+  ownerTransfer: null,
 };
 
 const tombstone = (revokedDaysAgo: number) => ({
@@ -28,6 +30,7 @@ const tombstone = (revokedDaysAgo: number) => ({
   machineId: 'm-00000001',
   serverKey: 'old-spki',
   revokedAt: ago(revokedDaysAgo),
+  cert: 'PEM-OLD',
 });
 
 const sample: LinksFile = { version: 1, links: [link], tombstones: [tombstone(1)] };
@@ -57,6 +60,8 @@ describe('links file', () => {
     ['zero version', { ...sample, version: 0 }],
     ['missing version', { links: [], tombstones: [] }],
     ['link missing fingerprint', { ...sample, links: [{ ...link, fingerprint: undefined }] }],
+    ['link missing cert', { ...sample, links: [{ ...link, cert: undefined }] }],
+    ['link with a bad ownerTransfer', { ...sample, links: [{ ...link, ownerTransfer: 'maybe' }] }],
     ['link with bad machineId', { ...sample, links: [{ ...link, machineId: 'm-XYZ' }] }],
     [
       'link capabilities missing drive',

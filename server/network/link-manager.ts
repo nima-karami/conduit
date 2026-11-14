@@ -45,6 +45,8 @@ export interface LinkManagerDeps {
   onFrame(machineId: string, frame: LinkFrame): void;
   /** Fired on any change a view would show. */
   changed(): void;
+  /** The owner private key arrived over this link: verify and store it; false refuses it. */
+  onOwnerKey(pair: { publicKey: string; privateKey: string }): boolean;
   dialTimeoutMs?: number;
   pingMs?: number;
 }
@@ -82,6 +84,10 @@ interface Peer {
 }
 
 const TERMINAL: readonly LinkState[] = ['revoked', 'incompatible', 'identity-changed'];
+
+/** A peer still waiting for the owner key we owe it has none yet; any other mismatch is a change. */
+const ownerMatches = (record: LinkRecord, helloOwner: string | null): boolean =>
+  helloOwner === record.ownerKey || (record.ownerTransfer === 'send' && helloOwner === null);
 const b64 = (b: Buffer): string => b.toString('base64');
 
 export function createLinkManager(deps: LinkManagerDeps): LinkManager {
@@ -169,8 +175,9 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
           await dial({
             address,
             ...deps.tls(),
+            peerCert: p.record.cert,
+            peerMachineId: p.record.machineId,
             expectKeyRaw: expect,
-            purpose: 'link',
             timeoutMs: deps.dialTimeoutMs ?? 5_000,
           })
         ).sock;
@@ -219,7 +226,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     if (
       hello.machineId !== p.record.machineId ||
       hello.serverKey !== p.record.serverKey ||
-      hello.ownerKey !== p.record.ownerKey
+      !ownerMatches(p.record, hello.ownerKey)
     ) {
       opened.close('identity-changed');
       event(p, { kind: 'identity-changed', at: deps.now() });
@@ -248,7 +255,36 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       p.record = deps.store.update(p.record.machineId, { name: hello.selfName }) ?? p.record;
     }
     event(p, { kind: 'up', at: deps.now() });
+    if (p.record.ownerTransfer === 'send') sendOwnerKey(p, opened);
     deps.changed();
+  };
+
+  const sendOwnerKey = (p: Peer, conn: LinkConnection): void => {
+    const owner = deps.identity().ownerKey;
+    if (owner === null) {
+      deps.log.warn('link: no owner key to hand over', { peer: p.record.machineId });
+      return;
+    }
+    conn.send({
+      t: 'owner',
+      publicKey: owner.publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
+      privateKey: owner.privateKey.export({ type: 'pkcs8', format: 'der' }).toString('base64'),
+    });
+  };
+
+  const settleOwner = (
+    p: Peer,
+    conn: LinkConnection,
+    f: { publicKey: string; privateKey: string },
+  ) => {
+    // Only the key both people confirmed at pairing, and only from the side expected to send it.
+    if (p.record.ownerTransfer !== 'receive' || f.publicKey !== p.record.ownerKey) {
+      deps.log.warn('link: unexpected owner key refused', { peer: p.record.machineId });
+      return;
+    }
+    if (!deps.onOwnerKey(f)) return;
+    p.record = deps.store.update(p.record.machineId, { ownerTransfer: null }) ?? p.record;
+    conn.send({ t: 'owner.ack' });
   };
 
   const failed = (p: Peer, error: ConnectionError): void => {
@@ -281,6 +317,13 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
         else conn.close(f.reason);
         return;
       case 'hello':
+        return;
+      case 'owner':
+        settleOwner(p, conn, f);
+        return;
+      case 'owner.ack':
+        if (p.record.ownerTransfer === 'send')
+          p.record = deps.store.update(p.record.machineId, { ownerTransfer: null }) ?? p.record;
         return;
       default:
         deps.onFrame(p.record.machineId, f);

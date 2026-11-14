@@ -6,8 +6,9 @@ import {
   type LinkConnection,
   openConnection,
 } from '../../server/network/link-connection';
-import { dial, type Listener, listen } from '../../server/network/listener';
+import { dial, type Listener, listenLinks } from '../../server/network/listener';
 import type { HelloFrame, LinkFrame } from '../../src/contracts/link-protocol';
+import { deriveMachineId } from '../../src/network/identity-file';
 import { rawEd25519, selfSignedCert } from '../../src/network/self-signed-cert';
 
 const quiet = { debug: () => undefined, warn: () => undefined };
@@ -18,11 +19,14 @@ afterEach(async () => {
   for (const l of open.splice(0)) await l.close();
 });
 
-function server(name: string) {
+function server() {
   const k = generateKeyPairSync('ed25519');
+  const raw = rawEd25519(k.publicKey);
+  const machineId = deriveMachineId(raw);
   return {
-    raw: rawEd25519(k.publicKey),
-    cert: selfSignedCert(k, name),
+    raw,
+    machineId,
+    cert: selfSignedCert(k, machineId),
     key: k.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
   };
 }
@@ -42,31 +46,31 @@ function hello(machineId: string, major = 1): HelloFrame {
 
 /** A pinned TLS pair: resolves with the accepted socket on A and the dialed socket on B. */
 async function socketPair(): Promise<{ a: tls.TLSSocket; b: tls.TLSSocket }> {
-  const A = server('m-aaaaaaaa');
-  const B = server('m-bbbbbbbb');
+  const A = server();
+  const B = server();
   let accepted: (s: tls.TLSSocket) => void = () => undefined;
   const gotA = new Promise<tls.TLSSocket>((r) => {
     accepted = r;
   });
-  const l = await listen({
+  const l = await listenLinks({
     hosts: ['127.0.0.1'],
     port: 0,
     cert: A.cert,
     key: A.key,
-    classify: (k) => (k.equals(B.raw) ? 'link' : 'reject'),
+    trustedCerts: () => [B.cert],
+    knows: (k) => k.equals(B.raw),
     onLink: (sock) => accepted(sock),
-    onPairing: (sock) => sock.destroy(),
     log: quiet,
   });
   open.push(l);
-  const address = l.addresses()[0] ?? '';
   const { sock: b } = await dial({
-    address,
+    address: l.addresses()[0] ?? '',
     cert: B.cert,
     key: B.key,
+    peerCert: A.cert,
+    peerMachineId: A.machineId,
     expectKeyRaw: A.raw,
     timeoutMs: 5000,
-    purpose: 'link',
   });
   return { a: await gotA, b };
 }

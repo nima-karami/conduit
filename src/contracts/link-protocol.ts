@@ -52,6 +52,9 @@ export type LinkFrame =
   | { t: 'pong' }
   | { t: 'bye'; reason: 'duplicate' | 'revoked' | 'incompatible' | 'shutdown' }
   | { t: 'revoked' }
+  /** The owner private key, once, over the first authenticated link (plan decision 10). */
+  | { t: 'owner'; publicKey: string; privateKey: string }
+  | { t: 'owner.ack' }
   | { t: 'caps'; capabilities: Capabilities }
   | { t: 'msg'; message: WireMessage }
   | { t: 'ack'; messageId: string; recipients: WireRecipientOutcome[] }
@@ -162,9 +165,19 @@ export function parseLinkFrame(raw: unknown): LinkFrame | null {
     case 'ping':
     case 'pong':
     case 'revoked':
+    case 'owner.ack':
       return frame(raw, raw.t, [], () => true) ? raw : null;
     case 'bye':
       return frame(raw, 'bye', ['reason'], (r) => oneOf(r.reason, BYE_REASONS)) ? raw : null;
+    case 'owner':
+      return frame(
+        raw,
+        'owner',
+        ['publicKey', 'privateKey'],
+        (r) => str(r.publicKey) && str(r.privateKey),
+      )
+        ? raw
+        : null;
     case 'caps':
       return frame(raw, 'caps', ['capabilities'], (r) => isCapabilities(r.capabilities))
         ? raw

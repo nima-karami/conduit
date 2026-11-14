@@ -39,6 +39,8 @@ function rec(machineId: string, over: Partial<LinkRecord> = {}): LinkRecord {
     capabilities: { messaging: true, monitor: false, drive: false },
     fingerprint: 'fp-1',
     createdAt: '2026-11-14T10:00:00.000Z',
+    cert: `PEM-${machineId}`,
+    ownerTransfer: null,
     ...over,
   };
 }
@@ -98,7 +100,9 @@ describe('link store', () => {
       machineId: a.machineId,
       serverKey: a.serverKey,
       revokedAt: new Date(T0).toISOString(),
+      cert: a.cert,
     });
+    expect(store.trustedCerts()).toContain(a.cert);
     expect(store.get(a.machineId)).toBeNull();
     expect(store.byServerKey(a.serverKey)).toEqual({ tombstone });
   });

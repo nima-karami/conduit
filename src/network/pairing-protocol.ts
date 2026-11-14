@@ -1,15 +1,21 @@
-import { createPrivateKey, createPublicKey, timingSafeEqual } from 'node:crypto';
+import { createPublicKey, timingSafeEqual, X509Certificate } from 'node:crypto';
 import { deriveMachineId } from './identity-file';
 import { commitment, fingerprint, linkIdFor, PAIRING_NONCE_BYTES } from './pairing-transcript';
+import { rawEd25519 } from './self-signed-cert';
 
 // Pure pairing state machines, opener (showed the code) and joiner (typed it). The protocol and
-// its reasons are docs/plans/2026-11-14-conduit-network-machinery.plan.md decisions 3 and 10. Both
-// sides run inside a TLS 1.3 connection whose certificates carry the server keys passed in here.
+// its reasons are docs/plans/2026-11-14-conduit-network-machinery.plan.md decisions 3 and 10.
+// It runs over plain TCP: every message is public, keys travel in the messages, and the human
+// comparing the fingerprint is what authenticates them (numeric comparison). Possession of each
+// key is proven later by the first pinned TLS link handshake, which is also where the owner
+// private key crosses, never here.
 
 const PAIRING_VERSION = 1;
+const KEY_BYTES = 32;
 const MAX_NAME_CHARS = 64;
 const MAX_ADDRESSES = 16;
 const MAX_ADDRESS_CHARS = 255;
+const MAX_CERT_CHARS = 4096;
 
 export interface OwnerKeyPair {
   publicKey: string; // base64 DER spki
@@ -26,8 +32,8 @@ export type PairingFailReason =
   | 'protocol';
 
 export type PairingMsg =
-  | { t: 'pair.hello'; v: number; code: string; commit: string }
-  | { t: 'pair.nonce'; nonce: string }
+  | { t: 'pair.hello'; v: number; code: string; key: string; commit: string }
+  | { t: 'pair.nonce'; nonce: string; key: string }
   | { t: 'pair.reveal'; nonce: string }
   | {
       t: 'pair.id';
@@ -36,10 +42,12 @@ export type PairingMsg =
       selfName: string;
       addresses: string[];
       protocol: { major: number; minor: number };
+      cert: string;
     }
   | { t: 'pair.accept' }
   | { t: 'pair.decline' }
-  | { t: 'pair.owner'; publicKey: string; privateKey: string }
+  /** Only on a first-ever link: the opener's freshly generated owner public key. */
+  | { t: 'pair.owner'; publicKey: string }
   | { t: 'pair.fail'; reason: PairingFailReason };
 
 export type PairingInput =
@@ -51,10 +59,11 @@ export type PairingInput =
 
 export interface PairingPeer {
   machineId: string;
-  serverKey: string; // base64 raw Ed25519, from the TLS certificate
-  ownerKey: string; // base64 DER spki, the owner both servers share after linking
+  serverKey: string; // base64 raw Ed25519
+  ownerKey: string; // base64 DER spki: the owner both servers share once linked
   selfName: string;
   addresses: string[];
+  cert: string; // PEM, verified to carry serverKey and to be self-signed by it
 }
 
 export type PairingOutcome =
@@ -63,8 +72,10 @@ export type PairingOutcome =
       peer: PairingPeer;
       linkId: string;
       fingerprint: string;
-      /** Set when this server must store a new owner key: received, or generated here. */
+      /** A first-ever link: the owner key this opener generated, to store now. */
       ownerKeyToStore: OwnerKeyPair | null;
+      /** Whether the owner private key must still cross the link once it's up, and which way. */
+      ownerTransfer: 'send' | 'receive' | null;
     }
   | {
       kind: 'failed';
@@ -78,12 +89,11 @@ export interface PairingSelf {
   addresses: string[];
   ownerKey: OwnerKeyPair | null;
   protocol: { major: number; minor: number };
+  cert: string;
 }
 
 export interface PairingContext {
   self: PairingSelf;
-  /** The peer's raw Ed25519 key from its TLS certificate, never from a message. */
-  peerKeyRaw: Buffer;
   rand(n: number): Buffer;
 }
 
@@ -105,6 +115,8 @@ type Phase =
 
 interface Shared {
   phase: Phase;
+  /** Learned from the peer's first message; the fingerprint binds it. */
+  peerKeyRaw: Buffer | null;
   nonceOpener: Buffer | null;
   nonceJoiner: Buffer | null;
   peerId: Extract<PairingMsg, { t: 'pair.id' }> | null;
@@ -134,6 +146,7 @@ export interface StepResult<S> {
 
 const shared = (phase: Phase): Shared => ({
   phase,
+  peerKeyRaw: null,
   nonceOpener: null,
   nonceJoiner: null,
   peerId: null,
@@ -146,13 +159,24 @@ export function openerStart(ctx: OpenerContext): OpenerState {
   return { role: 'opener', ctx, commit: null, ...shared('await-hello') };
 }
 
-/** The joiner speaks first: its commitment binds its nonce before it sees the opener's. */
+/** The joiner speaks first: its commitment binds its key and nonce before it sees the opener's. */
 export function joinerStart(ctx: PairingContext, code: string): StepResult<JoinerState> {
   const nonce = ctx.rand(PAIRING_NONCE_BYTES);
   const state: JoinerState = { role: 'joiner', ctx, code, ...shared('await-nonce') };
   state.nonceJoiner = nonce;
-  const commit = commitment(ctx.self.serverKeyRaw, nonce).toString('base64');
-  return { state, out: [{ t: 'pair.hello', v: PAIRING_VERSION, code, commit }] };
+  const key = ctx.self.serverKeyRaw;
+  return {
+    state,
+    out: [
+      {
+        t: 'pair.hello',
+        v: PAIRING_VERSION,
+        code,
+        key: key.toString('base64'),
+        commit: commitment(key, nonce).toString('base64'),
+      },
+    ],
+  };
 }
 
 function b64(s: string, bytes: number): Buffer | null {
@@ -173,17 +197,17 @@ function isEd25519Spki(s: string): boolean {
   }
 }
 
-function privateMatches(pair: OwnerKeyPair): boolean {
+/** The peer's certificate must be the one its link will present: its key, self-signed, its id. */
+function certMatches(pem: string, peerKeyRaw: Buffer, machineId: string): boolean {
   try {
-    const priv = createPrivateKey({
-      key: Buffer.from(pair.privateKey, 'base64'),
-      format: 'der',
-      type: 'pkcs8',
-    });
-    const pub = createPublicKey(priv).export({ type: 'spki', format: 'der' });
-    return pub.toString('base64') === pair.publicKey;
+    const x = new X509Certificate(pem);
+    return (
+      rawEd25519(x.publicKey).equals(peerKeyRaw) &&
+      x.verify(x.publicKey) &&
+      x.subject === `CN=${machineId}`
+    );
   } catch {
-    // An unparseable key is a malformed message; the caller fails the pairing with 'protocol'.
+    // Not a certificate, or not Ed25519: a malformed message, failed with 'protocol'.
     return false;
   }
 }
@@ -198,7 +222,9 @@ function validId(m: Extract<PairingMsg, { t: 'pair.id' }>, peerKeyRaw: Buffer): 
     m.addresses.every((a) => a.length > 0 && a.length <= MAX_ADDRESS_CHARS) &&
     Number.isInteger(m.protocol.major) &&
     Number.isInteger(m.protocol.minor) &&
-    (m.ownerKey === null || isEd25519Spki(m.ownerKey))
+    (m.ownerKey === null || isEd25519Spki(m.ownerKey)) &&
+    m.cert.length <= MAX_CERT_CHARS &&
+    certMatches(m.cert, peerKeyRaw, m.machineId)
   );
 }
 
@@ -210,6 +236,7 @@ function idMsg(self: PairingSelf): PairingMsg {
     selfName: self.selfName,
     addresses: self.addresses,
     protocol: self.protocol,
+    cert: self.cert,
   };
 }
 
@@ -225,7 +252,7 @@ function end<S extends AnyState>(
 const fail = <S extends AnyState>(s: S, reason: PairingFailReason): StepResult<S> =>
   end(s, [{ t: 'pair.fail', reason }], reason);
 
-/** Decision 10: who sends the owner key once both people confirmed. */
+/** Decision 10: which server already holds the owner key and so hands it over on the link. */
 type OwnerPlan = 'none' | 'opener-sends' | 'joiner-sends' | 'opener-generates';
 function ownerPlan(opener: string | null, joiner: string | null): OwnerPlan | 'different' {
   if (opener !== null && joiner !== null) return opener === joiner ? 'none' : 'different';
@@ -240,23 +267,19 @@ function ownerKeys(s: AnyState): { opener: string | null; joiner: string | null 
   return s.role === 'opener' ? { opener: mine, joiner: theirs } : { opener: theirs, joiner: mine };
 }
 
-function keys(s: AnyState): { opener: Buffer; joiner: Buffer } {
-  const mine = s.ctx.self.serverKeyRaw;
-  const theirs = s.ctx.peerKeyRaw;
-  return s.role === 'opener' ? { opener: mine, joiner: theirs } : { opener: theirs, joiner: mine };
-}
-
 function linked<S extends AnyState>(
   s: S,
   out: PairingMsg[],
   ownerPublic: string,
   ownerKeyToStore: OwnerKeyPair | null,
+  ownerTransfer: 'send' | 'receive' | null,
 ): StepResult<S> {
   const id = s.peerId;
   const fp = s.fingerprint;
-  if (id === null || fp === null) return fail(s, 'protocol');
+  const peerKey = s.peerKeyRaw;
+  if (id === null || fp === null || peerKey === null) return fail(s, 'protocol');
   s.phase = 'done';
-  const k = keys(s);
+  const mine = s.ctx.self.serverKeyRaw;
   return {
     state: s,
     out,
@@ -264,49 +287,47 @@ function linked<S extends AnyState>(
       kind: 'linked',
       peer: {
         machineId: id.machineId,
-        serverKey: s.ctx.peerKeyRaw.toString('base64'),
+        serverKey: peerKey.toString('base64'),
         ownerKey: ownerPublic,
         selfName: id.selfName.trim(),
         addresses: id.addresses,
+        cert: id.cert,
       },
-      linkId: linkIdFor(k.opener, k.joiner),
+      linkId: linkIdFor(mine, peerKey),
       fingerprint: fp,
       ownerKeyToStore,
+      ownerTransfer,
     },
   };
 }
 
-/** Both accepted: the side decision 10 names sends the owner key and is done; the other waits. */
+/** Both accepted: settle the owner key per decision 10; the private half crosses the link later. */
 function settle<S extends AnyState>(s: S, out: PairingMsg[]): StepResult<S> {
   if (!s.selfAccepted || !s.peerAccepted) return { state: s, out };
   const owners = ownerKeys(s);
   const plan = ownerPlan(owners.opener, owners.joiner);
   if (plan === 'different') return fail(s, 'different-owner');
-  if (plan === 'none') return linked(s, out, owners.opener ?? '', null);
-  const iSend =
-    (s.role === 'opener' && (plan === 'opener-sends' || plan === 'opener-generates')) ||
-    (s.role === 'joiner' && plan === 'joiner-sends');
-  if (!iSend) {
-    s.phase = 'await-owner';
-    return { state: s, out };
-  }
-  if (plan === 'opener-generates' && s.role === 'opener') {
+  if (plan === 'none') return linked(s, out, owners.opener ?? '', null, null);
+  if (plan === 'opener-generates') {
+    if (s.role === 'joiner') {
+      s.phase = 'await-owner';
+      return { state: s, out };
+    }
     const fresh = s.ctx.generateOwnerKey();
     return linked(
       s,
-      [...out, { t: 'pair.owner', publicKey: fresh.publicKey, privateKey: fresh.privateKey }],
+      [...out, { t: 'pair.owner', publicKey: fresh.publicKey }],
       fresh.publicKey,
       fresh,
+      'send',
     );
   }
-  const own = s.ctx.self.ownerKey;
-  if (own === null) return fail(s, 'protocol');
-  return linked(
-    s,
-    [...out, { t: 'pair.owner', publicKey: own.publicKey, privateKey: own.privateKey }],
-    own.publicKey,
-    null,
-  );
+  const holderIsMe =
+    (plan === 'opener-sends' && s.role === 'opener') ||
+    (plan === 'joiner-sends' && s.role === 'joiner');
+  const ownerPublic = plan === 'opener-sends' ? owners.opener : owners.joiner;
+  if (ownerPublic === null) return fail(s, 'protocol');
+  return linked(s, out, ownerPublic, null, holderIsMe ? 'send' : 'receive');
 }
 
 function onPeerId<S extends AnyState>(
@@ -314,7 +335,7 @@ function onPeerId<S extends AnyState>(
   m: Extract<PairingMsg, { t: 'pair.id' }>,
   out: PairingMsg[],
 ): StepResult<S> {
-  if (!validId(m, s.ctx.peerKeyRaw)) return fail(s, 'protocol');
+  if (s.peerKeyRaw === null || !validId(m, s.peerKeyRaw)) return fail(s, 'protocol');
   if (m.protocol.major !== s.ctx.self.protocol.major) return fail(s, 'incompatible');
   s.peerId = m;
   // Refused before anyone is asked to confirm a fingerprint for a link that can't exist.
@@ -328,12 +349,11 @@ function onOwner<S extends AnyState>(
   s: S,
   m: Extract<PairingMsg, { t: 'pair.owner' }>,
 ): StepResult<S> {
+  // Only the first-ever link sends this, so neither side may have announced an owner key.
   const owners = ownerKeys(s);
-  const announced = s.role === 'opener' ? owners.joiner : owners.opener;
-  // A key the sender announced in pair.id must be the one it hands over; a generated one is new.
-  if (announced !== null && announced !== m.publicKey) return fail(s, 'protocol');
-  if (!isEd25519Spki(m.publicKey) || !privateMatches(m)) return fail(s, 'protocol');
-  return linked(s, [], m.publicKey, { publicKey: m.publicKey, privateKey: m.privateKey });
+  if (owners.opener !== null || owners.joiner !== null || !isEd25519Spki(m.publicKey))
+    return fail(s, 'protocol');
+  return linked(s, [], m.publicKey, null, 'receive');
 }
 
 /** Messages and user actions every phase after the reveal treats the same way. */
@@ -352,10 +372,6 @@ function afterReveal<S extends AnyState>(s: S, input: PairingInput): StepResult<
   if (c) return c;
   if (s.phase === 'await-id' && input.kind === 'msg' && input.msg.t === 'pair.id')
     return onPeerId(s, input.msg, []);
-  if (s.phase === 'await-id' && input.kind === 'msg' && input.msg.t === 'pair.accept') {
-    // The peer may confirm before its id reaches us only if it saw ours first; ids precede accepts.
-    return fail(s, 'protocol');
-  }
   if (s.phase === 'confirm' && input.kind === 'confirm') {
     if (s.selfAccepted) return { state: s, out: [] };
     s.selfAccepted = true;
@@ -381,24 +397,34 @@ export function openerStep(s: OpenerState, input: PairingInput): StepResult<Open
     if (m.v !== PAIRING_VERSION) return fail(s, 'incompatible');
     if (!safeEqualText(m.code, s.ctx.code)) return fail(s, 'wrong-code');
     const commit = b64(m.commit, 32);
-    if (commit === null) return fail(s, 'protocol');
+    const key = b64(m.key, KEY_BYTES);
+    if (commit === null || key === null || key.equals(s.ctx.self.serverKeyRaw))
+      return fail(s, 'protocol');
     s.commit = commit;
+    s.peerKeyRaw = key;
     s.nonceOpener = s.ctx.rand(PAIRING_NONCE_BYTES);
     s.phase = 'await-reveal';
-    return { state: s, out: [{ t: 'pair.nonce', nonce: s.nonceOpener.toString('base64') }] };
+    return {
+      state: s,
+      out: [
+        {
+          t: 'pair.nonce',
+          nonce: s.nonceOpener.toString('base64'),
+          key: s.ctx.self.serverKeyRaw.toString('base64'),
+        },
+      ],
+    };
   }
   if (s.phase === 'await-reveal') {
     const c = common(s, input);
     if (c) return c;
     if (input.kind !== 'msg' || input.msg.t !== 'pair.reveal') return fail(s, 'protocol');
     const nonce = b64(input.msg.nonce, PAIRING_NONCE_BYTES);
-    if (nonce === null || s.commit === null || s.nonceOpener === null) return fail(s, 'protocol');
-    // The commitment is checked against the key in the joiner's TLS certificate: a relay that
-    // re-terminates TLS with its own key can't make this match the joiner's commitment.
-    if (!timingSafeEqual(commitment(s.ctx.peerKeyRaw, nonce), s.commit))
-      return fail(s, 'bad-commit');
+    if (nonce === null || s.commit === null || s.nonceOpener === null || s.peerKeyRaw === null)
+      return fail(s, 'protocol');
+    if (!timingSafeEqual(commitment(s.peerKeyRaw, nonce), s.commit)) return fail(s, 'bad-commit');
     s.nonceJoiner = nonce;
-    s.fingerprint = fingerprint(s.ctx.self.serverKeyRaw, s.ctx.peerKeyRaw, s.nonceOpener, nonce);
+    s.fingerprint = fingerprint(s.ctx.self.serverKeyRaw, s.peerKeyRaw, s.nonceOpener, nonce);
     s.phase = 'await-id';
     return { state: s, out: [idMsg(s.ctx.self)] };
   }
@@ -412,9 +438,12 @@ export function joinerStep(s: JoinerState, input: PairingInput): StepResult<Join
     if (c) return c;
     if (input.kind !== 'msg' || input.msg.t !== 'pair.nonce') return fail(s, 'protocol');
     const nonce = b64(input.msg.nonce, PAIRING_NONCE_BYTES);
-    if (nonce === null || s.nonceJoiner === null) return fail(s, 'protocol');
+    const key = b64(input.msg.key, KEY_BYTES);
+    if (nonce === null || key === null || s.nonceJoiner === null) return fail(s, 'protocol');
+    if (key.equals(s.ctx.self.serverKeyRaw)) return fail(s, 'protocol');
+    s.peerKeyRaw = key;
     s.nonceOpener = nonce;
-    s.fingerprint = fingerprint(s.ctx.peerKeyRaw, s.ctx.self.serverKeyRaw, nonce, s.nonceJoiner);
+    s.fingerprint = fingerprint(key, s.ctx.self.serverKeyRaw, nonce, s.nonceJoiner);
     s.phase = 'await-id';
     return {
       state: s,
@@ -447,7 +476,7 @@ type Rec = Record<string, unknown>;
 const isRec = (v: unknown): v is Rec => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isStr = (v: unknown): v is string => typeof v === 'string';
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
-/** Exactly these keys: the pairing peer is unauthenticated until the fingerprint is confirmed. */
+/** Exactly these keys: nothing from the pairing peer is trusted until the fingerprint matches. */
 const exactly = (r: Rec, keys: readonly string[]): boolean =>
   Object.keys(r).length === keys.length && keys.every((k) => k in r);
 
@@ -456,26 +485,39 @@ export function parsePairingMsg(raw: unknown): PairingMsg | null {
   if (!isRec(raw)) return null;
   switch (raw.t) {
     case 'pair.hello':
-      return exactly(raw, ['t', 'v', 'code', 'commit']) &&
+      return exactly(raw, ['t', 'v', 'code', 'key', 'commit']) &&
         isInt(raw.v) &&
         isStr(raw.code) &&
         raw.code.length <= 200 &&
+        isStr(raw.key) &&
         isStr(raw.commit)
-        ? { t: 'pair.hello', v: raw.v, code: raw.code, commit: raw.commit }
+        ? { t: 'pair.hello', v: raw.v, code: raw.code, key: raw.key, commit: raw.commit }
         : null;
     case 'pair.nonce':
+      return exactly(raw, ['t', 'nonce', 'key']) && isStr(raw.nonce) && isStr(raw.key)
+        ? { t: 'pair.nonce', nonce: raw.nonce, key: raw.key }
+        : null;
     case 'pair.reveal':
       return exactly(raw, ['t', 'nonce']) && isStr(raw.nonce)
-        ? { t: raw.t, nonce: raw.nonce }
+        ? { t: 'pair.reveal', nonce: raw.nonce }
         : null;
     case 'pair.id': {
       const p = raw.protocol;
       const addresses = raw.addresses;
       if (
-        !exactly(raw, ['t', 'machineId', 'ownerKey', 'selfName', 'addresses', 'protocol']) ||
+        !exactly(raw, [
+          't',
+          'machineId',
+          'ownerKey',
+          'selfName',
+          'addresses',
+          'protocol',
+          'cert',
+        ]) ||
         !isStr(raw.machineId) ||
         !(raw.ownerKey === null || isStr(raw.ownerKey)) ||
         !isStr(raw.selfName) ||
+        !isStr(raw.cert) ||
         !Array.isArray(addresses) ||
         !addresses.every(isStr) ||
         !isRec(p) ||
@@ -491,16 +533,15 @@ export function parsePairingMsg(raw: unknown): PairingMsg | null {
         selfName: raw.selfName,
         addresses: addresses.filter(isStr),
         protocol: { major: p.major, minor: p.minor },
+        cert: raw.cert,
       };
     }
     case 'pair.accept':
     case 'pair.decline':
       return exactly(raw, ['t']) ? { t: raw.t } : null;
     case 'pair.owner':
-      return exactly(raw, ['t', 'publicKey', 'privateKey']) &&
-        isStr(raw.publicKey) &&
-        isStr(raw.privateKey)
-        ? { t: 'pair.owner', publicKey: raw.publicKey, privateKey: raw.privateKey }
+      return exactly(raw, ['t', 'publicKey']) && isStr(raw.publicKey)
+        ? { t: 'pair.owner', publicKey: raw.publicKey }
         : null;
     case 'pair.fail': {
       const reason = FAIL_REASONS.find((r) => r === raw.reason);

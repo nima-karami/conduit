@@ -3,7 +3,7 @@ import type { AuditEvent } from '../../server/network/audit-log';
 import { type Identity, loadIdentity } from '../../server/network/identity';
 import { createLinkManager, type LinkManager } from '../../server/network/link-manager';
 import { openLinkStore } from '../../server/network/link-store';
-import { type Listener, listen } from '../../server/network/listener';
+import { type LinkListener, listenLinks } from '../../server/network/listener';
 import { OWN_DEFAULT_CAPABILITIES } from '../../src/contracts/link-protocol';
 import type { LinkRecord } from '../../src/network/link-file';
 import { linkIdFor } from '../../src/network/pairing-transcript';
@@ -41,8 +41,12 @@ const ownerPub = (id: Identity) =>
 
 interface Node {
   id: Identity;
+  cert: string;
   manager: LinkManager;
-  listener: Listener;
+  /** add() the way the composer does it: store the record, then trust its certificate. */
+  link(r: LinkRecord): void;
+  ownerKeys: Array<{ publicKey: string; privateKey: string }>;
+  listener: LinkListener;
   address: string;
   audit: AuditEvent[];
   changes: number;
@@ -56,7 +60,8 @@ async function node(id: Identity, name: string, port = 0): Promise<Node> {
   );
   const key = id.serverPrivateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
   const audit: AuditEvent[] = [];
-  const n = { audit, changes: 0 };
+  const ownerKeys: Array<{ publicKey: string; privateKey: string }> = [];
+  const n = { audit, changes: 0, ownerKeys };
   const manager = createLinkManager({
     identity: () => id,
     selfName: () => name,
@@ -75,22 +80,37 @@ async function node(id: Identity, name: string, port = 0): Promise<Node> {
       n.changes += 1;
     },
     dialTimeoutMs: 2_000,
+    onOwnerKey: (pair) => {
+      n.ownerKeys.push(pair);
+      return true;
+    },
   });
-  const listener = await listen({
+  const listener = await listenLinks({
     hosts: ['127.0.0.1'],
     port,
     cert,
     key,
-    classify: (k) => (manager.knows(k) ? 'link' : 'reject'),
+    trustedCerts: () => store.trustedCerts(),
+    knows: (k) => manager.knows(k),
     onLink: (s, k) => manager.accept(s, k),
-    onPairing: (s) => s.destroy(),
     log: quiet,
   });
   cleanup.push(async () => {
     await manager.stop();
     await listener.close();
   });
-  return Object.assign(n, { id, manager, listener, address: listener.addresses()[0] ?? '' });
+  const link = (r: LinkRecord) => {
+    manager.add(r);
+    listener.refreshTrust();
+  };
+  return Object.assign(n, {
+    id,
+    cert,
+    manager,
+    link,
+    listener,
+    address: listener.addresses()[0] ?? '',
+  });
 }
 
 function record(of: Node, name: string, overrides: Partial<LinkRecord> = {}): LinkRecord {
@@ -105,11 +125,14 @@ function record(of: Node, name: string, overrides: Partial<LinkRecord> = {}): Li
     capabilities: { ...OWN_DEFAULT_CAPABILITIES },
     fingerprint: 'ABCD-1234',
     createdAt: new Date().toISOString(),
+    cert: of.cert,
+    ownerTransfer: null,
     ...overrides,
   };
 }
 
-async function until(check: () => boolean, ms = 5_000): Promise<void> {
+// Generous: the full unit run loads the machine, and these wait on real sockets.
+async function until(check: () => boolean, ms = 20_000): Promise<void> {
   const end = Date.now() + ms;
   while (!check()) {
     if (Date.now() > end) throw new Error('timed out waiting');
@@ -123,8 +146,8 @@ async function linkedPair() {
   const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
   const a = await node(identity(ownerKey), 'linux-box');
   const b = await node(identity(ownerKey), 'win-box');
-  a.manager.add(record(b, 'win-box'));
-  b.manager.add(record(a, 'linux-box'));
+  a.link(record(b, 'win-box'));
+  b.link(record(a, 'linux-box'));
   a.manager.start();
   b.manager.start();
   const state = (n: Node, of: Node) => n.manager.view(of.id.machineId)?.state;
@@ -154,7 +177,7 @@ describe('link manager', () => {
     await b.listener.close();
     await until(() => state(a, b) === 'down' || state(a, b) === 'connecting');
     const b2 = await node(b.id, 'win-box');
-    b2.manager.add(record(a, 'linux-box'));
+    b2.link(record(a, 'linux-box'));
     b2.manager.start();
     a.manager.setAddresses(b.id.machineId, [b2.address]);
     await until(() => state(a, b) === 'up');
@@ -171,10 +194,25 @@ describe('link manager', () => {
     // A's tombstone still lets B's key finish TLS, but only to hear it was revoked.
     expect(a.manager.knows(b.id.serverKeyRaw)).toBe(true);
     const b2 = await node(b.id, 'win-box');
-    b2.manager.add(record(a, 'linux-box'));
+    b2.link(record(a, 'linux-box'));
     b2.manager.start();
     await until(() => b2.manager.view(a.id.machineId)?.state === 'revoked');
     expect(b2.manager.view(a.id.machineId)?.revokedBy).toBe('peer');
+  });
+
+  it('the owner private key crosses the first link once, and both sides clear the transfer', async () => {
+    const owner = identity();
+    const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
+    const a = await node(identity(ownerKey), 'linux-box');
+    const b = await node(identity(), 'win-box');
+    const ownerPublic = ownerPub(a.id);
+    a.link(record(b, 'win-box', { ownerKey: ownerPublic, ownerTransfer: 'send' }));
+    b.link(record(a, 'linux-box', { ownerKey: ownerPublic, ownerTransfer: 'receive' }));
+    a.manager.start();
+    b.manager.start();
+    await until(() => b.ownerKeys.length === 1);
+    expect(b.ownerKeys[0]?.publicKey).toBe(ownerPublic);
+    expect(a.manager.view(b.id.machineId)?.state).toBe('up');
   });
 
   it('a peer whose owner key changed is identity-changed and never up', async () => {
@@ -182,8 +220,8 @@ describe('link manager', () => {
     const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
     const a = await node(identity(ownerKey), 'linux-box');
     const b = await node(identity(ownerKey), 'win-box');
-    a.manager.add(record(b, 'win-box', { ownerKey: 'stale-owner-key' }));
-    b.manager.add(record(a, 'linux-box'));
+    a.link(record(b, 'win-box', { ownerKey: 'stale-owner-key' }));
+    b.link(record(a, 'linux-box'));
     a.manager.start();
     b.manager.start();
     await until(() => a.manager.view(b.id.machineId)?.state === 'identity-changed');

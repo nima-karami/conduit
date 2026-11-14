@@ -25,10 +25,12 @@ export interface LinkStore {
   put(r: LinkRecord): void;
   update(
     machineId: string,
-    patch: Partial<Pick<LinkRecord, 'addresses' | 'capabilities' | 'name'>>,
+    patch: Partial<Pick<LinkRecord, 'addresses' | 'capabilities' | 'name' | 'ownerTransfer'>>,
   ): LinkRecord | null;
   /** Removes the live record and keeps a tombstone for TOMBSTONE_TTL_MS. */
   revoke(machineId: string, at: number): Tombstone | null;
+  /** Certificates of every link and unexpired tombstone: the link listener's trusted CAs. */
+  trustedCerts(): string[];
   readonly writable: boolean;
 }
 
@@ -142,6 +144,10 @@ export function openLinkStore(
       persist();
       return copyLink(next);
     },
+    trustedCerts: () => [
+      ...state.links.map((l) => l.cert),
+      ...state.tombstones.filter(isLive).map((t) => t.cert),
+    ],
     revoke(machineId, at) {
       const found = state.links.find((l) => l.machineId === machineId);
       if (!found) return null;
@@ -150,6 +156,7 @@ export function openLinkStore(
         machineId,
         serverKey: found.serverKey,
         revokedAt: new Date(at).toISOString(),
+        cert: found.cert,
       };
       state = {
         ...state,

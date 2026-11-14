@@ -8,7 +8,7 @@ import {
   loadIdentity,
   setOwnerKey,
 } from '../../server/network/identity';
-import { type Listener, listen } from '../../server/network/listener';
+import { type Listener, listenPairing } from '../../server/network/listener';
 import {
   createPairingService,
   type PairingDeps,
@@ -92,12 +92,12 @@ interface Side {
   timers: ReturnType<typeof manualTimers>;
 }
 
-function side(
-  identity: Identity,
-  selfName: string,
-  ensureListening: () => Promise<string[]>,
-  dialTimeoutMs = 2_000,
-): Side {
+interface Ports {
+  open(): Promise<string[]>;
+  close(): void;
+}
+
+function side(identity: Identity, selfName: string, ports: Ports, dialTimeoutMs = 2_000): Side {
   const timers = manualTimers();
   const linked: Side['linked'] = [];
   const audit: AuditEvent[] = [];
@@ -106,13 +106,14 @@ function side(
     { publicKey: identity.serverPublicKey, privateKey: identity.serverPrivateKey },
     identity.machineId,
   );
-  const key = identity.serverPrivateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
   const holder: { svc: PairingService | null } = { svc: null };
   const deps: PairingDeps = {
     identity: () => identity,
     selfName: () => selfName,
-    tls: () => ({ cert, key }),
-    ensureListening,
+    cert: () => cert,
+    linkAddresses: async () => ['127.0.0.1:47391'],
+    openPairingPort: ports.open,
+    closePairingPort: ports.close,
     onLinked: (outcome, dialedAddress) => {
       linked.push({
         linkId: outcome.linkId,
@@ -137,34 +138,34 @@ function side(
   return { svc, linked, audit, states, timers };
 }
 
-/** The opener's own listener, started on first use; its classify is the window gate. */
+/** The opener's pairing port, opened per window and shut by the service once used. */
 function openerSide(identity: Identity, selfName: string): Side {
-  let listener: Listener | null = null;
-  const s: Side = side(identity, selfName, async () => {
-    if (listener === null) {
-      const cert = selfSignedCert(
-        { publicKey: identity.serverPublicKey, privateKey: identity.serverPrivateKey },
-        identity.machineId,
-      );
-      const key = identity.serverPrivateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
-      listener = await listen({
+  let port: Listener | null = null;
+  const s: Side = side(identity, selfName, {
+    open: async () => {
+      const opened = await listenPairing({
         hosts: ['127.0.0.1'],
         port: 0,
-        cert,
-        key,
-        classify: () => (s.svc.windowOpen() ? 'pairing' : 'reject'),
-        onLink: (sock) => sock.destroy(),
-        onPairing: (sock, peerKey) => s.svc.onPairingSocket(sock, peerKey),
+        onPairing: (sock) => s.svc.onPairingSocket(sock),
         log: quiet,
       });
-      listeners.push(listener);
-    }
-    return listener.addresses();
+      port = opened;
+      listeners.push(opened);
+      return opened.addresses();
+    },
+    close: () => {
+      const p = port;
+      port = null;
+      void p?.close();
+    },
   });
   return s;
 }
 
-const joinerAddresses = async () => ['127.0.0.1:47391'];
+const noPorts: Ports = {
+  open: () => Promise.reject(new Error('the joiner opens no pairing port')),
+  close: () => undefined,
+};
 
 const LIVE: PairingViewState[] = ['showing-code', 'connecting', 'confirm', 'waiting-peer'];
 const stateOf = (s: Side): PairingViewState | null => s.svc.view()?.state ?? null;
@@ -202,7 +203,7 @@ async function rig(opts: { openerOwner?: boolean; joinerOwner?: boolean } = {}) 
   const joiner = side(
     makeIdentity('joiner', opts.joinerOwner ? generateKeyPairSync('ed25519') : null),
     'beta',
-    joinerAddresses,
+    noPorts,
   );
   return { opener, joiner };
 }
@@ -214,7 +215,7 @@ async function startWindow(opener: Side) {
   return { ...w, address };
 }
 
-describe('pairing service over the TLS listener', () => {
+describe('pairing service over its pairing port', () => {
   it('happy path: both confirm the same fingerprint, then both link with one linkId', async () => {
     const { opener, joiner } = await rig();
     const w = await startWindow(opener);

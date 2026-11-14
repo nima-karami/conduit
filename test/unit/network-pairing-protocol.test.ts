@@ -13,17 +13,15 @@ import {
   type PairingInput,
   type PairingMsg,
   type PairingOutcome,
+  type PairingSelf,
   parsePairingMsg,
   shownFingerprint,
 } from '../../src/network/pairing-protocol';
 import { commitment, fingerprint, linkIdFor } from '../../src/network/pairing-transcript';
+import { rawEd25519, selfSignedCert } from '../../src/network/self-signed-cert';
 
 const CODE = 'apple zoo ability';
 
-function serverKey(): Buffer {
-  const { x } = generateKeyPairSync('ed25519').publicKey.export({ format: 'jwk' });
-  return Buffer.from(String(x), 'base64url');
-}
 function ownerKey(): OwnerKeyPair {
   const k = generateKeyPairSync('ed25519');
   return {
@@ -31,14 +29,18 @@ function ownerKey(): OwnerKeyPair {
     privateKey: k.privateKey.export({ type: 'pkcs8', format: 'der' }).toString('base64'),
   };
 }
-function self(key: Buffer, name: string, owner: OwnerKeyPair | null) {
+function self(name: string, owner: OwnerKeyPair | null): PairingSelf {
+  const k = generateKeyPairSync('ed25519');
+  const raw = rawEd25519(k.publicKey);
+  const machineId = deriveMachineId(raw);
   return {
-    serverKeyRaw: key,
-    machineId: deriveMachineId(key),
+    serverKeyRaw: raw,
+    machineId,
     selfName: name,
     addresses: ['127.0.0.1:47391'],
     ownerKey: owner,
     protocol: { major: 1, minor: 0 },
+    cert: selfSignedCert(k, machineId),
   };
 }
 
@@ -50,19 +52,18 @@ interface Pair {
   generated: OwnerKeyPair[];
 }
 
-function setup(o: {
-  openerOwner?: OwnerKeyPair | null;
-  joinerOwner?: OwnerKeyPair | null;
-  code?: string;
-  /** What the opener sees as the joiner's certificate key (a relay substitutes its own). */
-  joinerKeySeenByOpener?: Buffer;
-}): { pair: Pair; first: PairingMsg[] } {
-  const ka = serverKey();
-  const kb = serverKey();
+function setup(
+  o: {
+    openerOwner?: OwnerKeyPair | null;
+    joinerOwner?: OwnerKeyPair | null;
+    code?: string;
+    openerSelf?: PairingSelf;
+    joinerSelf?: PairingSelf;
+  } = {},
+): { pair: Pair; first: PairingMsg[] } {
   const generated: OwnerKeyPair[] = [];
   const octx: OpenerContext = {
-    self: self(ka, 'linux-box', o.openerOwner ?? null),
-    peerKeyRaw: o.joinerKeySeenByOpener ?? kb,
+    self: o.openerSelf ?? self('linux-box', o.openerOwner ?? null),
     rand: (n) => randomBytes(n),
     code: CODE,
     generateOwnerKey: () => {
@@ -72,11 +73,7 @@ function setup(o: {
     },
   };
   const start = joinerStart(
-    {
-      self: self(kb, 'win-box', o.joinerOwner ?? null),
-      peerKeyRaw: ka,
-      rand: (n) => randomBytes(n),
-    },
+    { self: o.joinerSelf ?? self('win-box', o.joinerOwner ?? null), rand: (n) => randomBytes(n) },
     o.code ?? CODE,
   );
   return { pair: { opener: openerStart(octx), joiner: start.state, generated }, first: start.out };
@@ -114,6 +111,16 @@ function act(p: Pair, who: 'opener' | 'joiner', input: PairingInput): void {
     pump(p, r.out);
   }
 }
+function confirmBoth(p: Pair): void {
+  act(p, 'opener', { kind: 'confirm' });
+  act(p, 'joiner', { kind: 'confirm' });
+}
+
+function nth(out: PairingMsg[], i: number): PairingMsg {
+  const m = out[i];
+  if (m === undefined) throw new Error(`no message ${i}`);
+  return m;
+}
 
 function linkedBoth(p: Pair) {
   const a = p.openerDone;
@@ -125,7 +132,7 @@ function linkedBoth(p: Pair) {
 
 describe('pairing transcript', () => {
   it('fingerprint is XXXX-XXXX and depends on every input', () => {
-    const k = [serverKey(), serverKey()];
+    const k = [randomBytes(32), randomBytes(32)];
     const n = [randomBytes(32), randomBytes(32)];
     const fp = fingerprint(k[0], k[1], n[0], n[1]);
     expect(fp).toMatch(/^[0-9A-F]{4}-[0-9A-F]{4}$/);
@@ -133,21 +140,23 @@ describe('pairing transcript', () => {
     expect(fingerprint(k[0], k[1], n[1], n[0])).not.toBe(fp);
   });
   it('linkIdFor is order-independent', () => {
-    const a = serverKey();
-    const b = serverKey();
+    const a = randomBytes(32);
+    const b = randomBytes(32);
     expect(linkIdFor(a, b)).toBe(linkIdFor(b, a));
     expect(linkIdFor(a, b)).toMatch(/^l_[a-z2-7]{16}$/);
   });
   it('rejects wrong-length inputs', () => {
     expect(() => commitment(Buffer.alloc(31), randomBytes(32))).toThrow();
-    expect(() => commitment(serverKey(), Buffer.alloc(16))).toThrow();
+    expect(() => commitment(randomBytes(32), Buffer.alloc(16))).toThrow();
   });
 });
 
 describe('pairing protocol', () => {
-  it('links both sides with the same id and fingerprint after both confirm', () => {
+  it('links both sides with the same id, fingerprint and verified certificates', () => {
     const owner = ownerKey();
-    const { pair, first } = setup({ openerOwner: owner, joinerOwner: owner });
+    const openerSelf = self('linux-box', owner);
+    const joinerSelf = self('win-box', owner);
+    const { pair, first } = setup({ openerSelf, joinerSelf });
     pump(pair, first);
     expect(shownFingerprint(pair.opener)).toMatch(/^[0-9A-F]{4}-[0-9A-F]{4}$/);
     expect(shownFingerprint(pair.opener)).toBe(shownFingerprint(pair.joiner));
@@ -159,9 +168,11 @@ describe('pairing protocol', () => {
     expect(a.fingerprint).toBe(b.fingerprint);
     expect(a.peer.selfName).toBe('win-box');
     expect(b.peer.selfName).toBe('linux-box');
-    expect(a.peer.machineId).toBe(deriveMachineId(Buffer.from(a.peer.serverKey, 'base64')));
+    expect(a.peer.serverKey).toBe(joinerSelf.serverKeyRaw.toString('base64'));
+    expect(a.peer.cert).toBe(joinerSelf.cert);
+    expect(b.peer.cert).toBe(openerSelf.cert);
+    expect([a.ownerTransfer, b.ownerTransfer]).toEqual([null, null]);
     expect(a.ownerKeyToStore).toBeNull();
-    expect(b.ownerKeyToStore).toBeNull();
   });
 
   it('fails both sides on a wrong code, before any fingerprint exists', () => {
@@ -172,15 +183,23 @@ describe('pairing protocol', () => {
     expect(shownFingerprint(pair.opener)).toBeNull();
   });
 
-  it('a relay that re-terminates TLS with its own key fails the commitment', () => {
-    const { pair, first } = setup({ joinerKeySeenByOpener: serverKey() });
-    pump(pair, first);
-    expect(pair.openerDone).toEqual({ kind: 'failed', reason: 'bad-commit' });
-    expect(pair.joinerDone).toEqual({ kind: 'failed', reason: 'bad-commit' });
+  it('a relay running two pairings (A↔M, M↔B) leaves A and B with different fingerprints', () => {
+    const a = self('linux-box', null);
+    const m = self('linux-box', null);
+    const b = self('win-box', null);
+    const left = setup({ openerSelf: a, joinerSelf: m });
+    pump(left.pair, left.first);
+    const right = setup({ openerSelf: m, joinerSelf: b });
+    pump(right.pair, right.first);
+    const seenByA = shownFingerprint(left.pair.opener);
+    const seenByB = shownFingerprint(right.pair.joiner);
+    expect(seenByA).not.toBeNull();
+    expect(seenByB).not.toBeNull();
+    expect(seenByA).not.toBe(seenByB);
   });
 
   it('a reveal that does not match the commitment fails', () => {
-    const { pair, first } = setup({});
+    const { pair, first } = setup();
     const nonce = openerStep(pair.opener, { kind: 'msg', msg: first[0] });
     expect(nonce.out[0]?.t).toBe('pair.nonce');
     const r = openerStep(pair.opener, {
@@ -190,36 +209,44 @@ describe('pairing protocol', () => {
     expect(r.done).toEqual({ kind: 'failed', reason: 'bad-commit' });
   });
 
+  it('a hello whose key is swapped after the commitment fails the commitment', () => {
+    const { pair, first } = setup();
+    const hello = first[0];
+    if (hello?.t !== 'pair.hello') throw new Error('no hello');
+    const swapped = { ...hello, key: randomBytes(32).toString('base64') };
+    const r1 = openerStep(pair.opener, { kind: 'msg', msg: swapped });
+    const r2 = joinerStep(pair.joiner, { kind: 'msg', msg: nth(r1.out, 0) });
+    const r3 = openerStep(pair.opener, { kind: 'msg', msg: nth(r2.out, 0) });
+    expect(r3.done).toEqual({ kind: 'failed', reason: 'bad-commit' });
+  });
+
   it.each([
-    ['opener has K, joiner none: opener sends it', 'K', null, 'joiner'],
-    ['joiner has K, opener none: joiner sends it', null, 'K', 'opener'],
-  ] as const)('%s', (_, o, j, receiver) => {
+    ['opener has K, joiner none', 'K', null, ['send', 'receive']],
+    ['joiner has K, opener none', null, 'K', ['receive', 'send']],
+  ] as const)('%s: the holder sends the private key over the link', (_, o, j, transfers) => {
     const k = ownerKey();
-    const { pair, first } = setup({
-      openerOwner: o ? k : null,
-      joinerOwner: j ? k : null,
-    });
+    const { pair, first } = setup({ openerOwner: o ? k : null, joinerOwner: j ? k : null });
     pump(pair, first);
-    act(pair, 'opener', { kind: 'confirm' });
-    act(pair, 'joiner', { kind: 'confirm' });
+    confirmBoth(pair);
     const { a, b } = linkedBoth(pair);
     expect(a.peer.ownerKey).toBe(k.publicKey);
     expect(b.peer.ownerKey).toBe(k.publicKey);
-    const got = receiver === 'joiner' ? b : a;
-    const sender = receiver === 'joiner' ? a : b;
-    expect(got.ownerKeyToStore).toEqual(k);
-    expect(sender.ownerKeyToStore).toBeNull();
+    expect([a.ownerTransfer, b.ownerTransfer]).toEqual(transfers);
+    expect([a.ownerKeyToStore, b.ownerKeyToStore]).toEqual([null, null]);
   });
 
-  it('neither has an owner key: the opener generates one and both store it', () => {
-    const { pair, first } = setup({});
+  it('neither has an owner key: the opener generates it, stores it, and only its public half crosses', () => {
+    const { pair, first } = setup();
     pump(pair, first);
     act(pair, 'joiner', { kind: 'confirm' });
     act(pair, 'opener', { kind: 'confirm' });
     const { a, b } = linkedBoth(pair);
     expect(pair.generated).toHaveLength(1);
-    expect(a.ownerKeyToStore).toEqual(pair.generated[0]);
-    expect(b.ownerKeyToStore).toEqual(pair.generated[0]);
+    const g = pair.generated[0];
+    expect(a.ownerKeyToStore).toEqual(g);
+    expect(b.ownerKeyToStore).toBeNull();
+    expect(b.peer.ownerKey).toBe(g?.publicKey);
+    expect([a.ownerTransfer, b.ownerTransfer]).toEqual(['send', 'receive']);
   });
 
   it('different owner keys refuse before anyone confirms', () => {
@@ -230,7 +257,7 @@ describe('pairing protocol', () => {
   });
 
   it.each(['opener', 'joiner'] as const)('a decline by the %s ends both as declined', (who) => {
-    const { pair, first } = setup({});
+    const { pair, first } = setup();
     pump(pair, first);
     act(pair, who, { kind: 'decline' });
     expect(pair.openerDone).toEqual({ kind: 'failed', reason: 'declined' });
@@ -238,7 +265,7 @@ describe('pairing protocol', () => {
   });
 
   it('expiry while waiting for the joiner fails the window', () => {
-    const { pair } = setup({});
+    const { pair } = setup();
     expect(openerStep(pair.opener, { kind: 'expire' }).done).toEqual({
       kind: 'failed',
       reason: 'expired',
@@ -246,43 +273,44 @@ describe('pairing protocol', () => {
   });
 
   it('an out-of-order message fails with protocol', () => {
-    const { pair } = setup({});
+    const { pair } = setup();
     const r = openerStep(pair.opener, { kind: 'msg', msg: { t: 'pair.accept' } });
     expect(r.done).toEqual({ kind: 'failed', reason: 'protocol' });
     expect(r.out).toEqual([{ t: 'pair.fail', reason: 'protocol' }]);
   });
 
-  it('a pair.id whose machine id is not derived from the certificate key fails', () => {
-    const { pair, first } = setup({});
-    const r1 = openerStep(pair.opener, { kind: 'msg', msg: first[0] });
-    const r2 = joinerStep(pair.joiner, { kind: 'msg', msg: r1.out[0] });
-    const reveal = r2.out[0];
-    const forged = {
-      ...(r2.out[1] as Extract<PairingMsg, { t: 'pair.id' }>),
-      machineId: 'm-00000000',
-    };
+  it.each([
+    ['a machine id not derived from the key', { machineId: 'm-00000000' }],
+    ['a certificate for another key', { cert: self('x', null).cert }],
+    ['a certificate that is not one', { cert: 'not a certificate' }],
+  ])('a pair.id with %s fails', (_, patch) => {
+    const { pair, first } = setup();
+    const r1 = openerStep(pair.opener, { kind: 'msg', msg: nth(first, 0) });
+    const r2 = joinerStep(pair.joiner, { kind: 'msg', msg: nth(r1.out, 0) });
+    const reveal = nth(r2.out, 0);
+    const id = nth(r2.out, 1);
+    if (id.t !== 'pair.id') throw new Error('no pair.id');
     openerStep(pair.opener, { kind: 'msg', msg: reveal });
-    const r3 = openerStep(pair.opener, { kind: 'msg', msg: forged });
+    const r3 = openerStep(pair.opener, { kind: 'msg', msg: { ...id, ...patch } });
     expect(r3.done).toEqual({ kind: 'failed', reason: 'protocol' });
   });
 
-  it('a handed-over owner key must match the one announced', () => {
+  it('a pair.owner when an owner key was announced fails', () => {
     const k = ownerKey();
     const { pair, first } = setup({ openerOwner: k });
     pump(pair, first);
-    act(pair, 'opener', { kind: 'confirm' });
-    const accept = joinerStep(pair.joiner, { kind: 'confirm' });
-    expect(accept.out).toEqual([{ t: 'pair.accept' }]);
-    const other = ownerKey();
-    const r = joinerStep(pair.joiner, { kind: 'msg', msg: { t: 'pair.owner', ...other } });
+    const r = joinerStep(pair.joiner, {
+      kind: 'msg',
+      msg: { t: 'pair.owner', publicKey: k.publicKey },
+    });
     expect(r.done).toEqual({ kind: 'failed', reason: 'protocol' });
   });
 });
 
 describe('parsePairingMsg', () => {
   const samples: PairingMsg[] = [
-    { t: 'pair.hello', v: 1, code: CODE, commit: 'AAAA' },
-    { t: 'pair.nonce', nonce: 'AAAA' },
+    { t: 'pair.hello', v: 1, code: CODE, key: 'AAAA', commit: 'AAAA' },
+    { t: 'pair.nonce', nonce: 'AAAA', key: 'AAAA' },
     { t: 'pair.reveal', nonce: 'AAAA' },
     {
       t: 'pair.id',
@@ -291,10 +319,11 @@ describe('parsePairingMsg', () => {
       selfName: 'x',
       addresses: ['127.0.0.1:1'],
       protocol: { major: 1, minor: 0 },
+      cert: 'PEM',
     },
     { t: 'pair.accept' },
     { t: 'pair.decline' },
-    { t: 'pair.owner', publicKey: 'a', privateKey: 'b' },
+    { t: 'pair.owner', publicKey: 'a' },
     { t: 'pair.fail', reason: 'used' },
   ];
   it.each(samples)('round-trips $t', (m) => {
@@ -303,12 +332,15 @@ describe('parsePairingMsg', () => {
   it.each(samples)('rejects $t with an extra key', (m) => {
     expect(parsePairingMsg({ ...m, extra: 1 })).toBeNull();
   });
-  it('rejects unknown types, bad fields and unknown fail reasons', () => {
+  it('rejects unknown types, bad fields, a private key and unknown fail reasons', () => {
     expect(parsePairingMsg({ t: 'pair.nope' })).toBeNull();
-    expect(parsePairingMsg({ t: 'pair.hello', v: '1', code: CODE, commit: 'A' })).toBeNull();
+    expect(
+      parsePairingMsg({ t: 'pair.hello', v: '1', code: CODE, key: 'A', commit: 'A' }),
+    ).toBeNull();
+    expect(parsePairingMsg({ t: 'pair.owner', publicKey: 'a', privateKey: 'b' })).toBeNull();
     expect(parsePairingMsg({ t: 'pair.fail', reason: 'whatever' })).toBeNull();
     expect(
-      parsePairingMsg({ t: 'pair.hello', v: 1, code: 'x'.repeat(201), commit: 'A' }),
+      parsePairingMsg({ t: 'pair.hello', v: 1, code: 'x'.repeat(201), key: 'A', commit: 'A' }),
     ).toBeNull();
     expect(parsePairingMsg(null)).toBeNull();
   });

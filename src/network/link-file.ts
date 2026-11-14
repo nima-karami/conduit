@@ -13,6 +13,10 @@ export interface LinkRecord {
   capabilities: Capabilities;
   fingerprint: string;
   createdAt: string;
+  /** The peer's certificate (PEM): the only CA its TLS connection is verified against. */
+  cert: string;
+  /** The owner private key still has to cross this link once it is up (plan decision 10). */
+  ownerTransfer: 'send' | 'receive' | null;
 }
 
 export interface Tombstone {
@@ -20,6 +24,8 @@ export interface Tombstone {
   machineId: string;
   serverKey: string;
   revokedAt: string;
+  /** Kept so the revoked peer's next handshake still verifies, and it hears it was revoked. */
+  cert: string;
 }
 
 export interface LinksFile {
@@ -50,14 +56,17 @@ const isLink = (v: unknown): v is LinkRecord =>
   v.addresses.every(isStr) &&
   isCapabilities(v.capabilities) &&
   isStr(v.fingerprint) &&
-  isStr(v.createdAt);
+  isStr(v.createdAt) &&
+  isStr(v.cert) &&
+  (v.ownerTransfer === 'send' || v.ownerTransfer === 'receive' || v.ownerTransfer === null);
 
 const isTombstone = (v: unknown): v is Tombstone =>
   isObj(v) &&
   isStr(v.linkId) &&
   isMachineId(v.machineId) &&
   isStr(v.serverKey) &&
-  isIsoTime(v.revokedAt);
+  isIsoTime(v.revokedAt) &&
+  isStr(v.cert);
 
 export function parseLinksFile(
   text: string,

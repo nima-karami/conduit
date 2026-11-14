@@ -12,7 +12,13 @@ import { handleNetworkCall } from './c2';
 import { type Identity, setOwnerKey } from './identity';
 import { createLinkManager, type LinkManager } from './link-manager';
 import { openLinkStore } from './link-store';
-import { type Listener, listen, type NetLog } from './listener';
+import {
+  type LinkListener,
+  type Listener,
+  listenLinks,
+  listenPairing,
+  type NetLog,
+} from './listener';
 import { createPairingService, type PairingService } from './pairing-service';
 
 // The one composer for linked machines (plan "Technical decisions" 1): services.ts only builds,
@@ -78,7 +84,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     }, EMIT_COALESCE_MS);
   };
 
-  let listener: Listener | null = null;
+  let listener: LinkListener | null = null;
   let bound: { host: string; port: number } | null = null;
   let listening: Promise<string[]> | null = null;
 
@@ -94,31 +100,27 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     after,
     onFrame: () => undefined,
     changed,
+    onOwnerKey: (pair) => onOwnerKey(pair),
   });
+
+  const hosts = (): string[] => {
+    const s = deps.settings();
+    const found = bindableAddresses((deps.interfaces ?? os.networkInterfaces)(), s.networkBindHost);
+    if (found.length === 0) throw new Error(`no address to listen on for "${s.networkBindHost}"`);
+    return found;
+  };
 
   const ensureListening = (): Promise<string[]> => {
     if (listener) return Promise.resolve(listener.addresses());
     listening ??= (async () => {
       const s = deps.settings();
-      const hosts = bindableAddresses(
-        (deps.interfaces ?? os.networkInterfaces)(),
-        s.networkBindHost,
-      );
-      if (hosts.length === 0) throw new Error(`no address to listen on for "${s.networkBindHost}"`);
-      listener = await listen({
-        hosts,
+      listener = await listenLinks({
+        hosts: hosts(),
         port: s.networkPort,
         ...tlsPair,
-        classify: (k, purpose) =>
-          purpose === 'pair'
-            ? pairing.windowOpen()
-              ? 'pairing'
-              : 'reject'
-            : manager.knows(k)
-              ? 'link'
-              : 'reject',
+        trustedCerts: () => store.trustedCerts(),
+        knows: (k) => manager.knows(k),
         onLink: (sock, k) => manager.accept(sock, k),
-        onPairing: (sock, k) => pairing.onPairingSocket(sock, k),
         log: deps.log,
       });
       bound = { host: s.networkBindHost, port: s.networkPort };
@@ -128,6 +130,50 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       listening = null;
     });
     return listening;
+  };
+
+  let pairingPort: Listener | null = null;
+  const openPairingPort = async (): Promise<string[]> => {
+    closePairingPort();
+    const s = deps.settings();
+    // The pairing port sits next to the link port; an ephemeral link port (tests) gets one too.
+    const port = s.networkPort === 0 ? 0 : s.networkPort + 1;
+    const opened = await listenPairing({
+      hosts: hosts(),
+      port,
+      onPairing: (sock) => pairing.onPairingSocket(sock),
+      log: deps.log,
+    });
+    pairingPort = opened;
+    return opened.addresses();
+  };
+  const closePairingPort = (): void => {
+    const p = pairingPort;
+    pairingPort = null;
+    void p?.close();
+  };
+
+  const onOwnerKey = (pair: { publicKey: string; privateKey: string }): boolean => {
+    try {
+      const privateKey = createPrivateKey({
+        key: Buffer.from(pair.privateKey, 'base64'),
+        format: 'der',
+        type: 'pkcs8',
+      });
+      const publicKey = createPublicKey(privateKey);
+      if (
+        privateKey.asymmetricKeyType !== 'ed25519' ||
+        publicKey.export({ type: 'spki', format: 'der' }).toString('base64') !== pair.publicKey
+      )
+        return false;
+      identity = setOwnerKey(deps.dir, identity, { publicKey, privateKey });
+      return true;
+    } catch (err) {
+      deps.log.warn('owner key refused', {
+        message: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    }
   };
 
   const onLinked = (
@@ -162,7 +208,10 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       capabilities: { ...OWN_DEFAULT_CAPABILITIES },
       fingerprint: outcome.fingerprint,
       createdAt: new Date(now()).toISOString(),
+      cert: outcome.peer.cert,
+      ownerTransfer: outcome.ownerTransfer,
     });
+    listener?.refreshTrust();
     void ensureListening().catch((err: Error) =>
       deps.log.warn('link listener did not start after pairing', { message: err.message }),
     );
@@ -171,8 +220,10 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
   const pairing: PairingService = createPairingService({
     identity: () => identity,
     selfName,
-    tls: () => tlsPair,
-    ensureListening,
+    cert: () => tlsPair.cert,
+    linkAddresses: ensureListening,
+    openPairingPort,
+    closePairingPort,
     onLinked,
     generateOwnerKey: () => {
       const k = generateKeyPairSync('ed25519');
@@ -215,6 +266,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     },
     async stop() {
       emitTimer?.();
+      closePairingPort();
       await manager.stop();
       await closeListener();
     },

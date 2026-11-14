@@ -1,4 +1,4 @@
-import type tls from 'node:tls';
+import type net from 'node:net';
 import { LINK_PROTOCOL, PAIRING_WINDOW_MS } from '../../src/contracts/link-protocol';
 import type { NetworkPairingView, PairingViewState } from '../../src/contracts/network-state';
 import { encodeFrame, FrameDecoder } from '../../src/network/frame-codec';
@@ -21,7 +21,7 @@ import {
 } from '../../src/network/pairing-protocol';
 import type { AuditSink } from './audit-log';
 import type { Identity } from './identity';
-import { dial } from './listener';
+import { dialPairing } from './listener';
 
 // One pairing at a time, driven by the protocol in src/network/pairing-protocol.ts. This file only
 // moves bytes and timers; every decision about a message is the protocol's.
@@ -40,16 +40,21 @@ export interface PairingService {
   cancel(pairingId: string): void;
   /** True only while an opener window shows its code and no joiner has connected yet. */
   windowOpen(): boolean;
-  onPairingSocket(sock: tls.TLSSocket, peerKeyRaw: Buffer): void;
+  onPairingSocket(sock: net.Socket): void;
   view(): NetworkPairingView | null;
 }
 
 export interface PairingDeps {
   identity(): Identity;
   selfName(): string;
-  tls(): { cert: string; key: string };
-  /** Starts the listener if needed and returns its host:port addresses. */
-  ensureListening(): Promise<string[]>;
+  /** This server's certificate (PEM), sent in pair.id so the peer can pin it as the link's CA. */
+  cert(): string;
+  /** Starts the link listener if needed; its host:port addresses go in pair.id. */
+  linkAddresses(): Promise<string[]>;
+  /** Opens the pairing port for a window; its addresses are what the joiner types. */
+  openPairingPort(): Promise<string[]>;
+  /** The window is used or over: nothing more may connect to pair. Idempotent. */
+  closePairingPort(): void;
   onLinked(
     outcome: Extract<PairingOutcome, { kind: 'linked' }>,
     dialedAddress: string | null,
@@ -92,7 +97,7 @@ const FAIL_STATE: Record<PairingFailReason | 'declined' | 'cancelled', PairingVi
 type Proto = { role: 'opener'; s: OpenerState } | { role: 'joiner'; s: JoinerState };
 
 interface Bound {
-  sock: tls.TLSSocket;
+  sock: net.Socket;
   proto: Proto;
   decoder: FrameDecoder;
 }
@@ -123,6 +128,8 @@ export function createPairingService(deps: PairingDeps): PairingService {
 
   const publish = (p: Pairing, patch: Partial<NetworkPairingView>): void => {
     p.view = { ...p.view, ...patch };
+    // One attempt per window: once a joiner connects, or the window ends, the port shuts.
+    if (p.view.role === 'opener' && p.view.state !== 'showing-code') deps.closePairingPort();
     deps.changed();
   };
 
@@ -149,6 +156,7 @@ export function createPairingService(deps: PairingDeps): PairingService {
       addresses,
       ownerKey: id.ownerKey === null ? null : exportPair(id.ownerKey),
       protocol: { major: LINK_PROTOCOL.major, minor: LINK_PROTOCOL.minor },
+      cert: deps.cert(),
     };
   };
 
@@ -158,7 +166,7 @@ export function createPairingService(deps: PairingDeps): PairingService {
 
   const peerOf = (b: Bound): string | null => b.proto.s.peerId?.machineId ?? null;
 
-  function attach(p: Pairing, sock: tls.TLSSocket, proto: Proto): Bound {
+  function attach(p: Pairing, sock: net.Socket, proto: Proto): Bound {
     const b: Bound = { sock, proto, decoder: new FrameDecoder(PAIRING_FRAME_MAX_BYTES) };
     p.bound = b;
     sock.on('data', (chunk: Buffer) => onData(p, b, chunk));
@@ -290,7 +298,8 @@ export function createPairingService(deps: PairingDeps): PairingService {
       const mine = ++seq;
       cancelCurrent();
       const code = newCode(deps.rand);
-      const addresses = await deps.ensureListening();
+      const addresses = await deps.linkAddresses();
+      const shown = await deps.openPairingPort();
       if (mine !== seq) throw new Error('superseded');
       const pairingId = deps.newId();
       const expires = expiresAt();
@@ -314,7 +323,7 @@ export function createPairingService(deps: PairingDeps): PairingService {
       current = p;
       schedule(p);
       deps.changed();
-      return { pairingId, code, addresses, expiresAt: expires };
+      return { pairingId, code, addresses: shown, expiresAt: expires };
     },
 
     async join(codeInput, address) {
@@ -323,7 +332,7 @@ export function createPairingService(deps: PairingDeps): PairingService {
       const mine = ++seq;
       cancelCurrent();
       // Both sides listen after pairing, so the joiner's own addresses are needed in pair.id.
-      const addresses = await deps.ensureListening();
+      const addresses = await deps.linkAddresses();
       if (mine !== seq) throw new Error('superseded');
       const pairingId = deps.newId();
       const p: Pairing = {
@@ -347,17 +356,9 @@ export function createPairingService(deps: PairingDeps): PairingService {
       schedule(p);
       deps.changed();
 
-      const t = deps.tls();
-      let conn: Awaited<ReturnType<typeof dial>>;
+      let conn: net.Socket;
       try {
-        conn = await dial({
-          address,
-          cert: t.cert,
-          key: t.key,
-          expectKeyRaw: null,
-          purpose: 'pair',
-          timeoutMs: dialTimeoutMs,
-        });
+        conn = await dialPairing(address, dialTimeoutMs);
       } catch {
         // Every dial failure reads the same to the person: the other machine can't be reached.
         // The cause is not shown, since it is an address or network detail, not a protocol one.
@@ -366,14 +367,11 @@ export function createPairingService(deps: PairingDeps): PairingService {
       }
       // The pairing may have been cancelled or expired while the socket was connecting.
       if (!isLive(p.view.state)) {
-        conn.sock.destroy();
+        conn.destroy();
         return { pairingId };
       }
-      const started = joinerStart(
-        { self: selfFor(addresses), peerKeyRaw: conn.peerKeyRaw, rand: deps.rand },
-        code,
-      );
-      const b = attach(p, conn.sock, { role: 'joiner', s: started.state });
+      const started = joinerStart({ self: selfFor(addresses), rand: deps.rand }, code);
+      const b = attach(p, conn, { role: 'joiner', s: started.state });
       send(b, started.out);
       return { pairingId };
     },
@@ -399,7 +397,7 @@ export function createPairingService(deps: PairingDeps): PairingService {
 
     windowOpen: () => openWindow() !== null,
 
-    onPairingSocket(sock, peerKeyRaw) {
+    onPairingSocket(sock) {
       const p = openWindow();
       if (p === null) {
         // The refused socket has no pairing state to update, so its error has no consequence.
@@ -409,7 +407,6 @@ export function createPairingService(deps: PairingDeps): PairingService {
       }
       const started = openerStart({
         self: selfFor(p.addresses),
-        peerKeyRaw,
         rand: deps.rand,
         code: p.code,
         generateOwnerKey: deps.generateOwnerKey,

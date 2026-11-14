@@ -21,7 +21,7 @@ describe('encodeFrame', () => {
   });
 
   it('throws when the encoded JSON exceeds LINK_FRAME_MAX_BYTES', () => {
-    const huge: PairingMsg = { t: 'pair.nonce', nonce: 'x'.repeat(LINK_FRAME_MAX_BYTES) };
+    const huge: PairingMsg = { t: 'pair.nonce', key: 'k', nonce: 'x'.repeat(LINK_FRAME_MAX_BYTES) };
     expect(() => encodeFrame(huge)).toThrow();
   });
 });
