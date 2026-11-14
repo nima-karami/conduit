@@ -16041,7 +16041,7 @@ button.toggle--on .toggle__knob {
 }
 .reqtpl-close:hover {
   color: var(--text);
-  background: var(--panel-2);
+  background: var(--state-hover-bg);
 }
 .reqtpl-context,
 .reqtpl-answer,
@@ -16155,7 +16155,7 @@ button.toggle--on .toggle__knob {
 .reqtpl-views__btn[aria-pressed="true"] {
   color: var(--text);
   background: var(--raise);
-  box-shadow: inset 0 0 0 1px var(--border-2);
+  --rest-shadow: inset 0 0 0 1px var(--border-2);
 }
 .reqtpl-original {
   margin: 0;
