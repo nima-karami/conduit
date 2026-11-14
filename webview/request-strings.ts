@@ -90,4 +90,22 @@ export const REQ_STR = {
   followUp: 'Follow up…',
   dismiss: 'Dismiss',
   cantUndo: "A follow-up sends a message. It can't undo an answer that already went.",
+
+  // The request template (CON-20 U3). Added to the shared table so every string the template
+  // shows lives in one place; the keys are scoped under reqTpl so nothing above is touched.
+  reqTpl: {
+    close: 'Close',
+    answerLabel: 'Your answer',
+    draftViews: 'Draft view',
+    editedTab: 'Edited',
+    originalTab: 'Original',
+    changesTab: 'Changes',
+    editedLabel: 'Edited draft',
+    linesChanged: (n: number) => `${countNoun(n, 'line', 'lines')} changed`,
+    changedLines: (list: string) => `Lines ${list}`,
+    noChanges: 'No lines changed',
+    draftTooLong: (maxBytes: number) => `Too long to send: the edited draft is over ${maxBytes} bytes.`,
+    needPick: 'Pick an option to send.',
+    attendLine: 'Answer in its terminal, where the Session is waiting.',
+  },
 };
