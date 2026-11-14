@@ -100,14 +100,16 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     if (listener) return Promise.resolve(listener.addresses());
     listening ??= (async () => {
       const s = deps.settings();
-      const hosts = bindableAddresses((deps.interfaces ?? os.networkInterfaces)(), s.networkBindHost);
+      const hosts = bindableAddresses(
+        (deps.interfaces ?? os.networkInterfaces)(),
+        s.networkBindHost,
+      );
       if (hosts.length === 0) throw new Error(`no address to listen on for "${s.networkBindHost}"`);
       listener = await listen({
         hosts,
         port: s.networkPort,
         ...tlsPair,
-        classify: (k) =>
-          manager.knows(k) ? 'link' : pairing.windowOpen() ? 'pairing' : 'reject',
+        classify: (k) => (manager.knows(k) ? 'link' : pairing.windowOpen() ? 'pairing' : 'reject'),
         onLink: (sock, k) => manager.accept(sock, k),
         onPairing: (sock, k) => pairing.onPairingSocket(sock, k),
         log: deps.log,
@@ -209,8 +211,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       await manager.stop();
       await closeListener();
     },
-    handle: (method, params) =>
-      handleNetworkCall(method, params, { pairing, manager, state }),
+    handle: (method, params) => handleNetworkCall(method, params, { pairing, manager, state }),
     async settingsChanged() {
       const s = deps.settings();
       if (bound && (bound.host !== s.networkBindHost || bound.port !== s.networkPort)) {

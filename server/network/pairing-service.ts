@@ -1,6 +1,5 @@
 import type tls from 'node:tls';
 import {
-  LINK_FRAME_MAX_BYTES,
   LINK_PROTOCOL,
   PAIRING_WINDOW_MS,
 } from '../../src/contracts/link-protocol';
@@ -69,6 +68,9 @@ export interface PairingDeps {
   dialTimeoutMs?: number;
 }
 
+// Pairing messages are small and the peer is unauthenticated until the fingerprint is confirmed,
+// so it may not make us buffer more than this.
+const PAIRING_FRAME_MAX_BYTES = 64 * 1024;
 const LIVE: ReadonlySet<PairingViewState> = new Set([
   'showing-code',
   'connecting',
@@ -160,7 +162,7 @@ export function createPairingService(deps: PairingDeps): PairingService {
   const peerOf = (b: Bound): string | null => b.proto.s.peerId?.machineId ?? null;
 
   function attach(p: Pairing, sock: tls.TLSSocket, proto: Proto): Bound {
-    const b: Bound = { sock, proto, decoder: new FrameDecoder(LINK_FRAME_MAX_BYTES) };
+    const b: Bound = { sock, proto, decoder: new FrameDecoder(PAIRING_FRAME_MAX_BYTES) };
     p.bound = b;
     sock.on('data', (chunk: Buffer) => onData(p, b, chunk));
     // A socket error is followed by close; the first one ends the pairing, the second is a no-op.

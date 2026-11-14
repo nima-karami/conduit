@@ -1,3 +1,4 @@
+import type { Capabilities, LinkFeature, LinkState, MonitorSnapshot } from './link-protocol';
 // The renderer's view of network pairing. Link views are added to this file by later tasks.
 
 export type PairingViewState =
@@ -26,4 +27,31 @@ export interface NetworkPairingView {
   fingerprint: string | null;
   peerName: string | null;
   peerMachineId: string | null;
+}
+
+/** One linked machine as C2 reports it (link.list, network.changed). */
+export interface NetworkLinkView {
+  machineId: string;
+  name: string;
+  trust: 'own';
+  state: LinkState;
+  since: string;
+  /** Set once a revoke happened this run: 'me' here, 'peer' when the other side revoked. */
+  revokedBy: 'me' | 'peer' | null;
+  addresses: string[];
+  capabilities: Capabilities;
+  peerCapabilities: Capabilities | null;
+  unsupported: LinkFeature[];
+  fingerprint: string;
+  lastActivity: string | null;
+  /** The peer's last monitor push (Slice 5); null until one arrives. */
+  snapshot: MonitorSnapshot | null;
+}
+
+export interface NetworkState {
+  machineId: string;
+  selfName: string;
+  listening: string[];
+  links: NetworkLinkView[];
+  pairing: NetworkPairingView | null;
 }

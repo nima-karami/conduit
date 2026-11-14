@@ -6,10 +6,10 @@ import {
   LINK_FEATURES,
   LINK_PING_MS,
   LINK_PROTOCOL,
-  type LinkFeature,
   type LinkFrame,
   type LinkState,
 } from '../../src/contracts/link-protocol';
+import type { NetworkLinkView } from '../../src/contracts/network-state';
 import type { LinkRecord } from '../../src/network/link-file';
 import {
   backoffMs,
@@ -28,20 +28,7 @@ import { dial, type NetLog } from './listener';
 // is already pinned to the stored server key by the listener or by dial; the hello check below adds
 // the owner key and machine id, so a peer whose identity changed never gets a frame through.
 
-export interface LinkView {
-  machineId: string;
-  name: string;
-  state: LinkState;
-  since: string;
-  /** Set once a revoke happened this run: 'me' here, 'peer' when the other side revoked. */
-  revokedBy: 'me' | 'peer' | null;
-  addresses: string[];
-  capabilities: Capabilities;
-  peerCapabilities: Capabilities | null;
-  unsupported: LinkFeature[];
-  fingerprint: string;
-  lastActivity: string | null;
-}
+export type LinkView = Omit<NetworkLinkView, 'trust' | 'snapshot'>;
 
 export interface LinkManagerDeps {
   identity(): Identity;

@@ -90,7 +90,13 @@ export function handleNetworkCall(
         !addresses.every((a) => typeof a === 'string' && parseHostPort(a) !== null)
       )
         throw new RpcFault('invalid', 'Expected host:port addresses');
-      known(d.manager.setAddresses(machineId, addresses.filter((a) => typeof a === 'string')), machineId);
+      known(
+        d.manager.setAddresses(
+          machineId,
+          addresses.filter((a) => typeof a === 'string'),
+        ),
+        machineId,
+      );
       return Promise.resolve({});
     }
     default:
