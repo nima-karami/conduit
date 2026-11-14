@@ -19,6 +19,12 @@ export const NO_FILTERS: RequestFilters = {
   types: [],
   machines: [],
 };
+export interface ShowOnCards {
+  space: boolean;
+  age: boolean;
+  machine: boolean;
+}
+
 export interface SessionInfo {
   name: string;
   handle: string | null;
