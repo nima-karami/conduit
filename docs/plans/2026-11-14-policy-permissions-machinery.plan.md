@@ -240,14 +240,17 @@ export interface ActivityIo { append(day: string, line: string): void; list(): A
 export interface ActivityLog {
   record(e: Omit<ActivityEntry, 'v' | 'id' | 'at'>): string;     // returns id; counted allow rows aggregate per session per hour
   recordAskArgs(requestId: string, args: unknown): void;          // 24 h TTL
-  flushCounts(): void; purge(): void; writable(): boolean;
+  flushCounts(all: boolean): void;   // all=false: finished hours only (timer); all=true: every bucket (service stop)
+  purge(): void; writable(): boolean;
   recentDenies(): ReadonlyMap<string, ActivityEntry>;            // last 200 deny rows by id, for allowOnce
 }
 export function createActivityLog(deps: { io: ActivityIo; now(): number; newId(): string; warn(m: string, e?: unknown): void }): ActivityLog;
 export function createActivityIo(dir: string): ActivityIo;       // <dir>/activity/YYYY-MM-DD.jsonl, ask-args.json
 ```
 - **Write failure.** A failed append sets `writable() === false` and logs one warning. The next append that succeeds first writes a `lane:'note', action:'gap'` row covering the unwritten span.
-- **Retention.** `purge()` deletes day files older than 30 days. It then deletes the oldest files until the total is 50 MB or less.
+- **Counted rows (review S1-C).** A bucket is keyed by the whole principal (handle, sessionId, machineId), the action, the outcome and the UTC hour. Its row is stamped `at` = the start of that hour and written to that hour's day file. `record()` returns the bucket row's id, assigned when the bucket is created.
+- **ask-args.json** is `{version:1; asks: Record<requestId,{at,args}>}`, judged with `judgePersistedVersion('conduit-mcp/activity/ask-args.json')`. If the file is corrupt, newer or unreadable, the ask store is read-only for the process: warn once, never overwrite it.
+- **Retention.** `purge()` deletes day files older than 30 days. It then deletes the oldest files until the total is 50 MB or less. Today's file is never deleted, since it is the one being appended to, so today alone can exceed the cap.
 
 ### C5 Observed parsers (Slice 1, lane C)
 ```ts
