@@ -117,4 +117,20 @@ export const REQ_STR = {
     filtered: (names: string, shown: number, total: number) =>
       `Filtered: ${names} · ${shown} of ${total} shown`,
   },
+  reqTpl: {
+    close: 'Close',
+    answerLabel: 'Your answer',
+    draftViews: 'Draft view',
+    editedTab: 'Edited',
+    originalTab: 'Original',
+    changesTab: 'Changes',
+    editedLabel: 'Edited draft',
+    linesChanged: (n: number) => `${countNoun(n, 'line', 'lines')} changed`,
+    changedLines: (list: string) => `Lines ${list}`,
+    noChanges: 'No lines changed',
+    draftTooLong: (maxBytes: number) =>
+      `Too long to send: the edited draft is over ${maxBytes} bytes.`,
+    needPick: 'Pick an option to send.',
+    attendLine: "Answer in its terminal, where it's waiting.",
+  },
 };
