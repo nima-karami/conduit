@@ -129,7 +129,12 @@ export type Capability = 'messaging' | 'monitor' | 'drive' | 'orchestrate';
 export type Principal =
   | { kind: 'session'; sessionId: string; handle: string; launchedCli: CliKind | null; homeFolder: string | null; projectId: string | null }
   | { kind: 'remote'; handle: string; machineId: string; remoteSessionId: string; trust: 'own'; capabilities: readonly Capability[] };
-export interface PolicyTarget { sessionId: string | null; path: string | null; projectId: string | null }
+export interface PolicyTarget {
+  sessionId: string | null;   // a session target
+  path: string | null;        // the exact file/folder a tool acts on ("this target only")
+  folder: string | null;      // the folder the target lives in: a session's cwd, a file's parent, a folder itself ("this folder")
+  projectId: string | null;
+}
 
 export type GrantWho = { kind: 'session'; sessionId: string } | { kind: 'cli'; cli: CliKind } | { kind: 'peer'; machineId: string };
 export type GrantFor = 'session-end' | '1h' | '24h' | 'until-revoked';
@@ -218,10 +223,19 @@ export interface GrantStore {
   sessionEnded(sessionId: string): Grant[];                 // expires grants whose who.sessionId or anchorSessionId matches
   tick(): Grant[];                                          // expires by expiresAt and 7-day decay ('session-end' only); purges expired > 24 h
 }
-export function grantScopeFor(choice: GrantChoice['on'], target: PolicyTarget, principal: Principal): Scope;
+export function grantScopeFor(choice: GrantChoice['on'], target: PolicyTarget, principal: Principal): Scope | null;  // null: nothing to bind to; never widens
 export function grantWhoFor(choice: GrantChoice['who'], principal: Principal): GrantWho | null;  // null: kind for a non-launched session
 export function isExpiring(g: Grant, now: number): boolean;
 ```
+
+Review rulings for C3 (lane B, 2026-11-14):
+- **Scopes.** `'target'` → session scope if `target.sessionId`, else a path scope on `target.path`, else null. `'folder'` → a folder scope on `target.folder`, else null. Never widens to anywhere.
+- **Ended sessions.** `sessionEnded(id)` also expires active or suspended grants whose `on` is `{kind:'session', sessionId:id}` (spec §5.2).
+- **Missing tools.** A profile in `policy.json` may omit tools; a missing tool's rule is filled from `WORKER_PROFILE` at parse time, and unknown tool keys are dropped.
+- **Unknown fields.** They are ignored everywhere (the reader rule in `session-identity.ts`). A future narrowing field must bump the file version instead.
+- **Expiring.** `isExpiring` also covers a `'session-end'` grant within 10 min of its 7-day decay.
+- **Ended state.** An ended grant (`expired`/`revoked`) must carry `endedAt`.
+- **Engine.** `matchesScope`: a folder scope tests `target.folder`, a path scope tests `target.path`. No-target resolution sets `path = folder = homeFolder`.
 
 ### C4 Activity — `activity-log.ts`, `activity-log-fs.ts` (Slice 1, lane C)
 ```ts
