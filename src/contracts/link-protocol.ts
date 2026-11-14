@@ -158,7 +158,7 @@ export function parseLinkFrame(raw: unknown): LinkFrame | null {
   if (!isRec(raw) || typeof raw.t !== 'string') return null;
   switch (raw.t) {
     case 'hello':
-      return frame(raw, 'hello', HELLO_FIELDS, checkHello) ? raw : null;
+      return parseHello(raw);
     case 'ping':
     case 'pong':
     case 'revoked':
@@ -242,7 +242,7 @@ export function parseLinkFrame(raw: unknown): LinkFrame | null {
         raw,
         'drive.resize',
         ['sessionId', 'cols', 'rows'],
-        (r) => str(r.sessionId) && num(r.cols) && num(r.rows),
+        (r) => str(r.sessionId) && dim(r.cols) && dim(r.rows),
       )
         ? raw
         : null;
@@ -301,20 +301,14 @@ const PRIORITIES: readonly Priority[] = ['fyi', 'normal', 'urgent'];
 const PRESENCES: readonly Presence[] = ['busy', 'idle', 'exited'];
 const ATTENTION_REASONS = ['blocked', 'bell', 'stuck'] as const;
 const CAPABILITY_KEYS: readonly Capability[] = ['messaging', 'monitor', 'drive'];
-const HELLO_FIELDS = [
-  'protocol',
-  'machineId',
-  'serverKey',
-  'ownerKey',
-  'selfName',
-  'features',
-  'capabilities',
-] as const;
 
 const isRec = (v: unknown): v is Rec => typeof v === 'object' && v !== null && !Array.isArray(v);
 const str = (v: unknown): v is string => typeof v === 'string';
 const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const bool = (v: unknown): v is boolean => typeof v === 'boolean';
+/** Sizes and counts from a peer reach the PTY and allocations, so only positive integers pass. */
+const int = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+const dim = (v: unknown): v is number => int(v) && v >= 1 && v <= 10_000;
 const oneOf = <T extends string>(v: unknown, values: readonly T[]): v is T =>
   typeof v === 'string' && (values as readonly string[]).includes(v);
 const nullable = (v: unknown, check: (x: unknown) => boolean): boolean => v === null || check(v);
@@ -345,18 +339,43 @@ function frame<T extends LinkFrame['t']>(
   return v.t === t && hasKeys(v, ['t', ...fields]) && check(v);
 }
 
-function checkHello(r: Rec): boolean {
-  return (
-    hasKeys(r.protocol, ['major', 'minor']) &&
-    num(r.protocol.major) &&
-    num(r.protocol.minor) &&
-    str(r.machineId) &&
-    str(r.serverKey) &&
-    nullable(r.ownerKey, str) &&
-    str(r.selfName) &&
-    arrayOf(r.features, (f) => oneOf(f, LINK_FEATURES)) &&
-    isCapabilities(r.capabilities)
-  );
+/**
+ * hello is the one lenient frame: a newer minor version may add fields and features, and the
+ * receiver must still read the version to show `incompatible` or "doesn't support" instead of
+ * dropping the connection. Unknown keys and features are ignored; every other frame stays strict.
+ */
+function parseHello(r: Rec): HelloFrame | null {
+  const p = r.protocol;
+  const caps = r.capabilities;
+  const listed: unknown[] | null = Array.isArray(r.features) ? r.features : null;
+  const features = listed?.filter(str) ?? null;
+  const ownerKey = r.ownerKey === null ? null : str(r.ownerKey) ? r.ownerKey : undefined;
+  if (
+    !isRec(p) ||
+    !int(p.major) ||
+    !int(p.minor) ||
+    !str(r.machineId) ||
+    !str(r.serverKey) ||
+    ownerKey === undefined ||
+    !str(r.selfName) ||
+    features === null ||
+    features.length !== listed?.length ||
+    !isRec(caps) ||
+    !bool(caps.messaging) ||
+    !bool(caps.monitor) ||
+    !bool(caps.drive)
+  )
+    return null;
+  return {
+    t: 'hello',
+    protocol: { major: p.major, minor: p.minor },
+    machineId: r.machineId,
+    serverKey: r.serverKey,
+    ownerKey,
+    selfName: r.selfName,
+    features: LINK_FEATURES.filter((f) => features.includes(f)),
+    capabilities: { messaging: caps.messaging, monitor: caps.monitor, drive: caps.drive },
+  };
 }
 
 function isCapabilities(v: unknown): boolean {
@@ -364,7 +383,7 @@ function isCapabilities(v: unknown): boolean {
 }
 
 function isSize(v: unknown): boolean {
-  return hasKeys(v, ['cols', 'rows']) && num(v.cols) && num(v.rows);
+  return hasKeys(v, ['cols', 'rows']) && dim(v.cols) && dim(v.rows);
 }
 
 function isWindowsPty(v: unknown): boolean {

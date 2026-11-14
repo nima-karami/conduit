@@ -127,8 +127,37 @@ describe('parseLinkFrame', () => {
     }
   });
 
-  it.each(FRAME_TYPES)('rejects %s with an extra top-level key', (t) => {
-    expect(parseLinkFrame({ ...SAMPLES[t], extra: true })).toBeNull();
+  it.each(FRAME_TYPES.filter((t) => t !== 'hello'))(
+    'rejects %s with an extra top-level key',
+    (t) => {
+      expect(parseLinkFrame({ ...SAMPLES[t], extra: true })).toBeNull();
+    },
+  );
+
+  it('reads a newer hello: extra keys and unknown features are dropped, not fatal', () => {
+    expect(
+      parseLinkFrame({
+        ...SAMPLES.hello,
+        extra: true,
+        protocol: { major: 1, minor: 3, patch: 2 },
+        features: ['telepathy', 'messaging'],
+        capabilities: { ...CAPS, orchestrate: true },
+      }),
+    ).toEqual({
+      ...SAMPLES.hello,
+      protocol: { major: 1, minor: 3 },
+      features: ['messaging'],
+      capabilities: CAPS,
+    });
+  });
+
+  it('rejects a hello whose protocol version is not integers', () => {
+    expect(parseLinkFrame({ ...SAMPLES.hello, protocol: { major: 1.5, minor: 0 } })).toBeNull();
+  });
+
+  it('rejects sizes that are not positive integers', () => {
+    expect(parseLinkFrame({ ...SAMPLES['view.size'], size: { cols: 0, rows: 24 } })).toBeNull();
+    expect(parseLinkFrame({ ...SAMPLES['drive.resize'], cols: 80.5 })).toBeNull();
   });
 
   it('rejects non-object input', () => {
@@ -175,15 +204,8 @@ describe('parseLinkFrame', () => {
     ).toBeNull();
   });
 
-  it('rejects an unknown link feature in hello', () => {
-    expect(parseLinkFrame({ ...SAMPLES.hello, features: ['telepathy'] })).toBeNull();
-  });
-
   it('rejects an extra key inside a nested object', () => {
     expect(parseLinkFrame({ ...SAMPLES.caps, capabilities: { ...CAPS, view: true } })).toBeNull();
-    expect(
-      parseLinkFrame({ ...SAMPLES.hello, protocol: { major: 1, minor: 0, patch: 2 } }),
-    ).toBeNull();
     expect(
       parseLinkFrame({
         t: 'msg',

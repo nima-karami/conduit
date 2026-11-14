@@ -1,8 +1,5 @@
-// replaced by the import from src/contracts/remote-principal (CON-27 T1.1)
-type Capabilities = Record<'messaging' | 'monitor' | 'drive', boolean>;
-
-// replaced by the import from src/contracts/link-protocol (CON-27 T1.1)
-const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60_000;
+import { TOMBSTONE_TTL_MS } from '../contracts/link-protocol';
+import type { Capabilities } from '../contracts/remote-principal';
 
 export interface LinkRecord {
   linkId: string;
