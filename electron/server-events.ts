@@ -177,6 +177,8 @@ export function createServerEventRouter(d: ServerEventRouterDeps): {
     // Before the coalesced timers.changed: the toasts read this pre-fire record.
     'timers.fired': (data) => d.broadcast({ type: 'timer:fired', ...data }),
     'timers.changed': (data) => d.broadcast({ type: 'timer:state', ...data }),
+    // Consumed by the Machines UI (CON-28).
+    'network.changed': (state) => d.broadcast({ type: 'network:state', state }),
     'server.stopping': (data) => {
       d.noteStopping?.(data.reason);
       d.log('info', 'server stopping', { reason: data.reason });

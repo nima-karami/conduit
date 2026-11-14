@@ -9,6 +9,8 @@
 // those payload types is a C2 change; the per-message ownership map is
 // docs/runs/2026-11-01-three-process-design/main-ts-ownership.md.
 
+import type { Capability } from './link-protocol';
+import type { NetworkState } from './network-state';
 import type {
   McpInstallRequest,
   McpInstallResult,
@@ -488,6 +490,25 @@ export interface ServerMethods {
     params: { patch: Partial<ServerSettings> };
     result: { settings: ServerSettings };
   };
+  // Linked machines (docs/plans/2026-11-14-conduit-network-machinery.plan.md "C2 additions").
+  'pairing.start': {
+    params: Record<string, never>;
+    result: { pairingId: string; code: [string, string, string]; addresses: string[]; expiresAt: string };
+  };
+  'pairing.join': { params: { code: string; address: string }; result: { pairingId: string } };
+  'pairing.confirm': { params: { pairingId: string }; result: Record<string, never> };
+  'pairing.decline': { params: { pairingId: string }; result: Record<string, never> };
+  'pairing.cancel': { params: { pairingId: string }; result: Record<string, never> };
+  'link.list': { params: Record<string, never>; result: NetworkState };
+  'link.revoke': { params: { machineId: string }; result: Record<string, never> };
+  'link.setCapability': {
+    params: { machineId: string; capability: Capability; on: boolean };
+    result: Record<string, never>;
+  };
+  'link.setAddresses': {
+    params: { machineId: string; addresses: string[] };
+    result: Record<string, never>;
+  };
 
   // ── UI facts from the app ──
   'ui.presence': { params: { windows: WindowPresence[] }; result: Empty };
@@ -583,6 +604,7 @@ export interface ServerEvents {
   'timers.fired': Reply<'timer:fired'>;
   'timers.changed': Reply<'timer:state'>;
   'server.stopping': { reason: 'update' | 'user' | 'idle' | 'stopAll' };
+  'network.changed': NetworkState;
   /**
    * The app fell behind; call events.subscribe again. `seq` is the first event this peer did not get,
    * and nothing more arrives on this connection until it re-subscribes.
