@@ -1,3 +1,4 @@
+import type { NetworkState } from './contracts/network-state';
 import type { AgentScopeReason } from './add-dir-delivery';
 import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
@@ -616,6 +617,8 @@ export type HostToWebview =
   | { type: 'timer:error'; message: string }
   // Conduit MCP server (docs/specs/archive/2026-10-25-conduit-mcp-server.md §8): one coalesced state
   // broadcast, plus replies to the sender's mcp:* requests.
+  // Linked machines (CON-27 machinery; the Machines UI is CON-28).
+  | { type: 'network:state'; state: NetworkState }
   | { type: 'mcp:state'; state: McpUiState }
   | { type: 'mcp:requestResult'; requestId: string; result: RequestAnswerResult }
   | { type: 'mcp:thread'; requestId: number; thread: McpThreadView | null }

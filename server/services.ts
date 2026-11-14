@@ -26,6 +26,7 @@ import type { ShellCore } from './lifecycle/shell';
 import { type AppEventSink, createMcp, type McpServerDeps, type ServerMcp } from './mcp';
 import { ensureHookClient } from './mcp/hook-client-file';
 import type { PreviousShim } from './mcp/install';
+import { createNetwork, type NetworkService } from './network';
 import { loadIdentity, readOnlyMachineId } from './network/identity';
 import { createRuntimeServices } from './runtime';
 import { RpcFault, type RpcHandler, RpcProtocolFault } from './transport/pipe';
@@ -138,7 +139,10 @@ export function createServices(o: ServicesOptions) {
     }
     o.emit(type, data);
     // Tool lists and waiting asks re-resolve against the new policy.
-    if (type === 'serverSettings.changed') mcp?.refresh();
+    if (type === 'serverSettings.changed') {
+      mcp?.refresh();
+      void network?.settingsChanged();
+    }
   };
 
   const rt = createRuntimeServices({
@@ -212,6 +216,20 @@ export function createServices(o: ServicesOptions) {
     }
     machineId = loaded.identity.machineId;
   }
+  const network: NetworkService | null =
+    loaded.kind === 'newer'
+      ? null
+      : createNetwork({
+          dir: networkDir,
+          identity: loaded.identity,
+          settings: () => domain.settings(),
+          emit: (state) => o.emit('network.changed', state),
+          log: {
+            debug: (msg, data) => log.debug('network', msg, data),
+            warn: (msg, data) => log.warn('network', msg, data),
+            error: (msg, data) => log.error('network', msg, data),
+          },
+        });
 
   mcp = createMcp({
     machineId,
@@ -334,6 +352,7 @@ export function createServices(o: ServicesOptions) {
         // See docs/specs/archive/2026-11-01-three-process-architecture.md F1.4.5-6.
         await server.start();
         mcpStarted = true;
+        await network?.start();
       }
       started = true;
       return runtime.health();
@@ -371,6 +390,12 @@ export function createServices(o: ServicesOptions) {
   const dispatch: RpcHandler = (request, peer) => {
     const owned = domain.handle(request);
     if (owned) return owned;
+    if (request.method.startsWith('pairing.') || request.method.startsWith('link.')) {
+      if (!network)
+        throw new RpcFault('unavailable', 'Linked machines are off: identity.json is from a newer build');
+      const answer = network.handle(request.method, request.params);
+      if (answer) return answer.then((result) => ({ result }));
+    }
     const p = paramsOf(request.params);
     switch (request.method) {
       case 'term.input': {
@@ -440,6 +465,11 @@ export function createServices(o: ServicesOptions) {
         offChange();
         offEdge();
         offHealth();
+        try {
+          await network?.stop();
+        } catch (error) {
+          log.error('network', `stop failed: ${String(error)}`);
+        }
         try {
           await server.stop();
         } catch (error) {
