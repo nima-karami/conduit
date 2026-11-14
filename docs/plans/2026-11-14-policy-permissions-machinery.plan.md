@@ -173,6 +173,7 @@ export interface PolicyDecision {
   grantId: string | null; overrideId: string | null;
   grantIds: readonly string[];            // every grant that allowed a target (S1 review)
   deniedTarget: PolicyTarget | null;      // the resolved target an explicit deny decided on (S2-2 review), for allowOnce
+  overrideIds: readonly string[];         // every one-use override that passed its own target this call (S2-2 re-review); overrideId = overrideIds[0] ?? null
 }
 export type PermissionAnswer =
   | { outcome: 'allowed'; grant?: GrantChoice }
@@ -329,11 +330,12 @@ export interface PolicyService {
   ui(sessions: ReadonlyArray<{ sessionId: string; handleCli: CliKind | null; launchedCli: CliKind | null }>): PolicyUiState;
 }
 // policy-targets.ts
-type TargetSession = { id: string; cwd: string | null; projectId: string | null };
+type TargetSession = { id: string; cwd: string | null; projectId: string | null };   // sessionByHandle resolves a handle OR a session id, exactly as the tools do (app-control-tools.ts ~:385)
 export interface TargetDeps { sessionByHandle(h: string): TargetSession | null; childrenOf(sessionId: string): TargetSession[]; realPath(p: string): string | null }
 export function resolveTargets(tool: ToolName, args: Record<string, unknown>, caller: { sessionId: string; home: string | null }, deps: TargetDeps): PolicyTarget[];
 // review S2-2: close_session children:true → the caller's children; relative paths resolve against caller.home (node:path), never kept raw
 ```
+- **Unreadable policy.json (S2-2 re-review, fails closed).** If `policy.json` is corrupt, newer or unreadable, the service evaluates `migrateLegacyPolicy(deps.legacy())` **in memory** (the frozen pre-upgrade settings), stays read-only, never writes, and records one Activity `note` row: "Permissions file unreadable; using pre-upgrade settings". An empty state (everyone Worker) is never used, because it would widen Observer sessions and drop deny exceptions.
 - **Load and migration.** `start()` reads `policy.json` and `grants.json`. A missing `policy.json` runs `migrateLegacyPolicy(deps.legacy())` and writes it. Legacy keys are never read again and never deleted.
 - **Writes and timers.** Writes are coalesced atomically through `atomicWriteFile` at 250 ms. A 60 s timer runs `grants.tick()` and `activity.flushCounts()`, and once an hour `activity.purge()`.
 
