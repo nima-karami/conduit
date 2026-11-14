@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Conduit frame (v0.64.1)</title>
+<link rel="stylesheet" href="../../kit/wireframe.css">
+</head>
+<body class="wf">
+<div class="wf-frame">
+
+<div class="wf-bar">
+  <span class="wf-h3">▢ Conduit</span>
+  <span class="wf-muted">‹ ›</span>
+  <div class="wf-grow" style="display:flex; justify-content:center;">
+    <span class="wf-input" style="width:420px;">Search sessions, agents, files…</span>
+  </div>
+  <span class="wf-btn">Files</span>
+  <span class="wf-btn">Changes <span class="wf-count">6</span></span>
+  <span class="wf-btn">Messages <span class="wf-count">14</span></span>
+  <span class="wf-muted">— ▢ ✕</span>
+</div>
+
+<div class="wf-body" style="grid-template-columns:264px 1fr 340px;">
+
+<!-- wf-locked:sidebar -->
+<div class="wf-region wf-panel wf-pad-s" style="display:flex; flex-direction:column; gap:12px;">
+  <div class="wf-spread"><span class="wf-label">Spaces</span><span class="wf-muted">+ ⋯</span></div>
+  <div class="wf-list">
+    <div class="is-selected wf-spread"><span>▦ All</span><span class="wf-small wf-muted">8 agents</span></div>
+    <div class="wf-spread"><span>C Conduit</span><span class="wf-small wf-muted">main</span></div>
+    <div class="wf-spread"><span>N Nimbus</span><span class="wf-small wf-muted">main</span></div>
+    <div class="wf-spread"><span>No space</span><span class="wf-small wf-muted"></span></div>
+  </div>
+  <div class="wf-spread"><span class="wf-label">Agents · 8 live</span><span class="wf-muted">⌕ + ⋯</span></div>
+  <div class="wf-stack-s">
+    <span class="wf-label">Needs you</span>
+    <div class="wf-spread"><span>Three-process lead <span class="wf-small wf-muted">· Conduit</span></span><span class="wf-small">12m ◉</span></div>
+    <div class="wf-spread" style="padding-left:16px;"><span>app lane</span><span class="wf-small">1m ◉</span></div>
+    <span class="wf-label">Done</span>
+    <div class="wf-spread"><span>Release notes</span><span class="wf-small">3m ◎</span></div>
+    <span class="wf-label">Working</span>
+    <div class="wf-spread"><span>api-server <span class="wf-small wf-muted">· Nimbus</span></span><span class="wf-small">31m ●</span></div>
+    <div class="wf-spread" style="padding-left:16px;"><span>server lane</span><span class="wf-small">8m ●</span></div>
+    <span class="wf-label">Idle</span>
+    <div class="wf-spread"><span>scratch</span><span class="wf-small">1h ○</span></div>
+    <span class="wf-label">Stopped (2) ›</span>
+  </div>
+  <div class="wf-grow"></div>
+  <span class="wf-small">⚙ Settings</span>
+</div>
+<!-- /wf-locked:sidebar -->
+
+<div class="wf-region" style="display:grid; grid-template-rows:auto auto 1fr;">
+  <div class="wf-tabs wf-pad-s" style="padding-bottom:0;">
+    <span class="wf-tab is-active">▸ Three-process lead</span>
+    <span class="wf-tab">agent-row.tsx</span>
+    <span class="wf-tab">Review: working tree</span>
+  </div>
+  <div class="wf-spread wf-pad-s"><span class="wf-small"><b>Three-process lead</b> · Claude Code · ~/projects/conduit</span><span class="wf-small wf-muted">⎇ feat/three-process</span></div>
+  <div class="wf-pad wf-mono wf-stack-s">
+    <span>✻ Claude Code · Three-process lead</span>
+    <span class="wf-muted">cwd ~/projects/conduit</span>
+    <span>› wire the agent tree into the sidebar and keep drag-reorder working</span>
+    <span>● Update(src/agent-tree.ts) · Added 71 lines</span>
+    <span>● Bash(npm run verify) · Running…</span>
+    <span class="wf-box">› _</span>
+  </div>
+</div>
+
+<div class="wf-region wf-pad wf-stack">
+  <div class="wf-spread"><span class="wf-h3">Changes</span><span class="wf-small wf-muted">feat/three-process · 6 files</span></div>
+  <div class="wf-list wf-small">
+    <div>M src/agent-tree.ts</div>
+    <div>M webview/components/sidebar.tsx</div>
+    <div>A src/session-groups.test.ts</div>
+    <div>M webview/styles.css</div>
+    <div>M CHANGELOG.md</div>
+    <div>D src/flat-order.ts</div>
+  </div>
+</div>
+
+</div>
+
+<div class="wf-status">
+  <span>▭ This computer</span><span>⎇ feat/three-process</span><span>worktree tp-main</span><span>● 8 agents</span>
+  <span class="wf-tag is-solid">2 need you</span>
+  <span class="wf-grow"></span><span>Ctrl+Shift+P commands</span>
+</div>
+
+</div>
+</body>
+</html>
