@@ -496,6 +496,8 @@ durations → POL-D7; waiting-ask caps → POL §4.5 · remote principal in MVP 
   - Re-check every "Source" row in §2.
 
 ## 13. Decisions Needed
+
+**Locked by the owner (2026-11-14, CON-27 build):** NET-D1 one mechanism, two trust levels · NET-D2 owner key at pairing · NET-D3 direct over LAN/tailnet, no relay · NET-D4 own links: messaging + monitor by default, `drive` and `orchestrate` each one opt-in · NET-D18 `drive` in MVP, opt-in per link · NET-D19 Kiro only after measuring its Windows MCP setup. Guest decisions (NET-D6, D7, D8, D17, D21) belong to CON-17 and stay open.
 Format: options → **default** → why.
 
 - **NET-D1 [high] One feature or two?** (a) one mechanism, two trust levels, two slices; (b) two
