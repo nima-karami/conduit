@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { judgePersistedVersion } from '../contracts/session-identity';
 
 export interface IdentityFile {
   version: 1;
@@ -13,13 +14,6 @@ const isStr = (v: unknown): v is string => typeof v === 'string';
 const isKeyPair = (v: unknown): v is { publicKey: string; privateKey: string } =>
   isObj(v) && isStr(v.publicKey) && isStr(v.privateKey);
 
-// Mirrors judgePersistedVersion (src/contracts/session-identity.ts). Not registered in
-// SERVER_FILE_VERSION yet: a later serial task adds network/identity.json there.
-function judgeVersion(found: unknown): 'read' | 'newer' | 'invalid' {
-  if (typeof found !== 'number' || !Number.isInteger(found) || found < 1) return 'invalid';
-  return found > 1 ? 'newer' : 'read';
-}
-
 export function parseIdentityFile(
   text: string,
 ): { kind: 'ok'; file: IdentityFile } | { kind: 'newer' } | { kind: 'corrupt' } {
@@ -30,7 +24,7 @@ export function parseIdentityFile(
     return { kind: 'corrupt' };
   }
   if (!isObj(raw)) return { kind: 'corrupt' };
-  const verdict = judgeVersion(raw.version);
+  const verdict = judgePersistedVersion('network/identity.json', raw.version);
   if (verdict === 'newer') return { kind: 'newer' };
   if (verdict === 'invalid') return { kind: 'corrupt' };
   if (!isKeyPair(raw.serverKey)) return { kind: 'corrupt' };

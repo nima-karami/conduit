@@ -1,5 +1,6 @@
 import { TOMBSTONE_TTL_MS } from '../contracts/link-protocol';
 import type { Capabilities } from '../contracts/remote-principal';
+import { judgePersistedVersion } from '../contracts/session-identity';
 
 export interface LinkRecord {
   linkId: string;
@@ -58,13 +59,6 @@ const isTombstone = (v: unknown): v is Tombstone =>
   isStr(v.serverKey) &&
   isIsoTime(v.revokedAt);
 
-// Mirrors judgePersistedVersion (src/contracts/session-identity.ts). Not registered in
-// SERVER_FILE_VERSION yet: a later serial task adds network/links.json there.
-function judgeVersion(found: unknown): 'read' | 'newer' | 'invalid' {
-  if (typeof found !== 'number' || !Number.isInteger(found) || found < 1) return 'invalid';
-  return found > 1 ? 'newer' : 'read';
-}
-
 export function parseLinksFile(
   text: string,
   now: number,
@@ -76,7 +70,7 @@ export function parseLinksFile(
     return { kind: 'corrupt' };
   }
   if (!isObj(raw)) return { kind: 'corrupt' };
-  const verdict = judgeVersion(raw.version);
+  const verdict = judgePersistedVersion('network/links.json', raw.version);
   if (verdict === 'newer') return { kind: 'newer' };
   if (verdict === 'invalid') return { kind: 'corrupt' };
   if (!Array.isArray(raw.links) || !raw.links.every(isLink)) return { kind: 'corrupt' };

@@ -26,6 +26,7 @@ import type { ShellCore } from './lifecycle/shell';
 import { type AppEventSink, createMcp, type McpServerDeps, type ServerMcp } from './mcp';
 import { ensureHookClient } from './mcp/hook-client-file';
 import type { PreviousShim } from './mcp/install';
+import { loadIdentity, readOnlyMachineId } from './network/identity';
 import { createRuntimeServices } from './runtime';
 import { RpcFault, type RpcHandler, RpcProtocolFault } from './transport/pipe';
 
@@ -191,7 +192,24 @@ export function createServices(o: ServicesOptions) {
     log,
   });
 
+  const networkDir = path.join(o.userData, 'network');
+  const identity = loadIdentity(networkDir);
+  let machineId: string;
+  if ('error' in identity) {
+    log.error('network', 'identity.json is from a newer build; networking is off', {});
+    const readOnly = readOnlyMachineId(networkDir);
+    if (readOnly === null) {
+      throw new Error(
+        `${path.join(networkDir, 'identity.json')} is unreadable; no server identity`,
+      );
+    }
+    machineId = readOnly;
+  } else {
+    machineId = identity.machineId;
+  }
+
   mcp = createMcp({
+    machineId,
     sessions: domain.sessions,
     domain: domain.domain,
     attention,

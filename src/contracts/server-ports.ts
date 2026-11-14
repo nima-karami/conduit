@@ -341,4 +341,6 @@ export interface McpHostDeps {
   tokens: TokenStorePort;
   runtime: Pick<TerminalRuntime, 'get' | 'screen' | 'on'>;
   emit: ServerEventSink;
+  /** The server's identity (network/identity.json); requests are stamped with it. */
+  machineId: string;
 }
