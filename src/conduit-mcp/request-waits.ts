@@ -5,7 +5,7 @@ const REQUEST_WAIT_MARGIN_MS = 10_000;
 const REQUEST_REPLY_MARGIN_MS = 5_000;
 export const REQUEST_WAITS_PER_CALLER = 4;
 
-export type WaitEnd = { kind: 'ended' } | { kind: 'timeout' } | { kind: 'cancelled' };
+type WaitEnd = { kind: 'ended' } | { kind: 'timeout' } | { kind: 'cancelled' };
 
 export interface RequestWaits {
   open(w: {
