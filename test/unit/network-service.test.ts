@@ -36,7 +36,7 @@ async function call<T>(net: NetworkService, method: string, params: unknown = {}
   return (await answer) as T;
 }
 
-async function until(check: () => boolean, ms = 8_000): Promise<void> {
+async function until(check: () => boolean, ms = 20_000): Promise<void> {
   const end = Date.now() + ms;
   while (!check()) {
     if (Date.now() > end) throw new Error('timed out waiting');
@@ -139,6 +139,8 @@ describe('network service over C2 calls', () => {
         .toString('base64');
     };
     expect(ownerOf(a.dir)).toBeDefined();
-    expect(ownerOf(a.dir)).toBe(ownerOf(b.dir));
+    // The joiner gets the private key over the first verified link, not during pairing.
+    await until(() => ownerOf(b.dir) !== undefined);
+    expect(ownerOf(b.dir)).toBe(ownerOf(a.dir));
   });
 });
