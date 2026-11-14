@@ -24,12 +24,19 @@ export function createActivityIo(dir: string): ActivityIo {
         if (isNotFound(error)) return [];
         throw error;
       }
-      return names
-        .filter((name) => DAY_FILE.test(name))
-        .map((name) => ({
-          day: name.slice(0, -'.jsonl'.length),
-          bytes: fs.statSync(path.join(activityDir, name)).size,
-        }));
+      const days: Array<{ day: string; bytes: number }> = [];
+      for (const name of names) {
+        if (!DAY_FILE.test(name)) continue;
+        try {
+          days.push({
+            day: name.slice(0, -'.jsonl'.length),
+            bytes: fs.statSync(path.join(activityDir, name)).size,
+          });
+        } catch (error) {
+          if (!isNotFound(error)) throw error;
+        }
+      }
+      return days;
     },
     remove(day) {
       fs.unlinkSync(dayFile(day));

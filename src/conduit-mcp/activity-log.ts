@@ -251,7 +251,7 @@ export function createActivityLog(deps: {
             id: deps.newId(),
             hour,
             action: e.action,
-            principal: e.principal,
+            principal: { ...e.principal },
             cli: e.cli,
             outcome: e.outcome,
             count: 0,

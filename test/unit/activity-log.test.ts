@@ -198,6 +198,29 @@ describe('activity log', () => {
     ).toEqual(['error', 'ok', 'ok']);
   });
 
+  it('a counted bucket flushed after midnight lands in its own day file', () => {
+    const io = fakeIo();
+    const { log, clock } = harness(io);
+    clock.now = Date.parse('2026-11-14T23:30:00.000Z');
+    log.record(base);
+    clock.now = Date.parse('2026-11-15T00:00:01.000Z');
+    log.flushCounts(false);
+    expect(io.written).toHaveLength(1);
+    expect(io.written[0]?.day).toBe('2026-11-14');
+    expect(rows(io)[0]).toMatchObject({ at: '2026-11-14T23:00:00.000Z', count: 1 });
+  });
+
+  it('a counted bucket keeps its own copy of the principal', () => {
+    const io = fakeIo();
+    const { log, clock } = harness(io);
+    const principal = { handle: 'claude-3', sessionId: 's1', machineId: null };
+    log.record({ ...base, principal });
+    principal.handle = 'changed';
+    clock.now = Date.parse('2026-11-14T11:00:01.000Z');
+    log.flushCounts(false);
+    expect(rows(io)[0]?.principal.handle).toBe('claude-3');
+  });
+
   it('flushCounts(true) also writes the current hour', () => {
     const io = fakeIo();
     const { log } = harness(io);

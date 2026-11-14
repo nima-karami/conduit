@@ -169,6 +169,8 @@ export function rolloutActions(line: unknown): CodexAction[] {
     }
     case 'McpToolCall': {
       if (typeof item.server !== 'string' || typeof item.tool !== 'string') return [];
+      // Conduit's own calls already get an activity row (see claude-tool-actions.ts).
+      if (item.server === 'conduit') return [];
       return [
         {
           kind: 'mcp',

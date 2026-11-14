@@ -54,6 +54,22 @@ describe('rolloutActions', () => {
     ]);
   });
 
+  it('codex mcp calls to the conduit server are dropped', () => {
+    const line = {
+      type: 'event_msg',
+      payload: {
+        type: 'item_completed',
+        item: {
+          type: 'McpToolCall',
+          server: 'conduit',
+          tool: 'send_message',
+          duration: { secs: 0, nanos: 0 },
+        },
+      },
+    };
+    expect(rolloutActions(line)).toEqual([]);
+  });
+
   it('ignores non-item lines and malformed items without throwing', () => {
     expect(rolloutActions(ACTIONS[0])).toEqual([]);
     expect(rolloutActions(ACTIONS[4])).toEqual([]);
