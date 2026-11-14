@@ -5,7 +5,7 @@ import type { AnsweredBy, RequestAnswerResult, RequestRecord, RequestView } from
 import { type Handle, type ToolError, toolError } from './types';
 
 export const CAP_OPEN_PER_REQUESTER = 5;
-export const CAP_URGENT_PER_10MIN = 1;
+const CAP_URGENT_PER_10MIN = 1;
 export const CAP_CREATED_PER_HOUR = 20;
 export const CAP_OPEN_PER_SERVER = 50;
 export const HISTORY_MS = 30 * 86_400_000;
