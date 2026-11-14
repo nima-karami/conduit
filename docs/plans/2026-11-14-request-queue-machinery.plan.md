@@ -34,7 +34,7 @@ renderer mcp:requestAnswer / mcp:setAway ─> host.handleRenderer ┤ answer (fi
          request-waits         inbox delivery              scheduler action        host.scheduleBroadcast
    (a waiting call returns)  (store.append from 'you',    (deps.limit.resumeNow /    → mcp:state {requests,
                               request_id, when no call     dismissIssue)               presence} → app → renderer
-                              was waiting)                                           → tray-channel (counts, notify)
+                              was waiting)                                           → tray-channel (counts)   
 ```
 
 ## Settled decisions — do not re-litigate
@@ -47,7 +47,7 @@ renderer mcp:requestAnswer / mcp:setAway ─> host.handleRenderer ┤ answer (fi
 ## Spec staleness
 - §2 "With no app window connected, waiting asks are denied 5 s after the last app disconnects": true (`server/mcp/index.ts:41,320-327`). But **a new ask cannot start with no ready window at all**: the gate returns `window_not_ready` (`src/conduit-mcp/tool-policy.ts:428-430`). Every default ask tool is also `when: 'viewing'` (`tool-policy.ts:139-181`), which needs the session on screen. So the §9 scenario "no window open, a tool whose policy is ask, not denied before its budget" only holds for a policy with `when: 'always'`, or for an ask already waiting when the app goes away. Plan: implement exactly that (Slice 5), and report it as Decisions Needed #1.
 - An ask can be answered only from the window it was sent to (`src/conduit-mcp/window-waits.ts:83-88`), and a reconnecting app gets new window ids. Plan: re-home waiting asks to the session's owner window when a ready window appears (Slice 5).
-- §4.3 "a waiting ask stays in the tray and raises an OS notification": with no app, the only OS surface is the Windows tray helper (`native/tray`). It has no notification message today, and there is no tray helper on Linux. Plan: add a `notify` message to the tray protocol, shown as a Windows balloon. On Linux, no OS notification while the app is closed (Decisions Needed #3).
+- §4.3 "a waiting ask stays in the tray and raises an OS notification": with no app, the only OS surface is the Windows tray helper (`native/tray`). It has no notification message today, and there is no tray helper on Linux. Lead ruling: no app-closed OS notification on this card (see Left for later); the tray count still shows it.
 - §2 "The tray shows N running, M need you": M counts only `needsAttention` sessions (`src/tray-counts.ts:8-15`), not stuck screens, resume issues, asks or messages. Plan: M = open requests to you + waiting asks + needs-you sessions not already covered by an open `attend` or `scheduler` request (Slice 5).
 - §4.1 `machine` "the origin machine id": no machine id exists in the codebase. NET says it derives from a server key that doesn't exist yet. Plan: `m-` + 8 random hex, persisted in `conduit-mcp/machine.json` (Decisions Needed #4).
 - §4.1 `space`: sessions have no `space` field. A space is the project (`src/conduit-mcp/tool-schemas.ts:27-28`). Plan: `space` = `Session.projectId ?? null`.
@@ -320,7 +320,16 @@ export interface RequestService {
 A `null` from a tool means the client cancelled, so the host sends no reply (the existing `callTool` contract). Withdrawing someone else's request, or a non-open one → `not_found` (own open requests only).
 
 ### C9 Late-answer inbox message (deliver)
-`store.append` a `MessageRecord` with `from: 'you'`, `to: [requester]`, `kind: 'inform'`, `priority: 'normal'`, `subject: 'Answer to your request ' + id` (Conduit-written), `requestId: id`, `threadId: r.thread ?? new 't'` id. The body is `JSON.stringify({request_id, state, answer: RequestAnswerOut | null})`. It is sent when an agent-source request ends `answered` or `expired` and no call was waiting at that moment. The ordinary notifier then types the existing `[conduit] New messages for you…` notice. `MessageRecord` gains `requestId?: string`, and `InboxMessageOut` gains `request_id?: string`.
+`store.append` a `MessageRecord` with:
+- `from: 'you'`, `to: [requester]`, `kind: 'inform'`, `priority: 'normal'`
+- `subject: 'Answer to your request ' + id` (Conduit-written)
+- `requestId: id`, and **always a new thread** (never `r.thread`), so the human's views can filter it whole
+
+The body is `JSON.stringify({request_id, state, answer: RequestAnswerOut | null})`. It is sent when an agent-source request ends `answered` or `expired` and no call was waiting at that moment. `MessageRecord` gains `requestId?: string`, and `InboxMessageOut` gains `request_id?: string`.
+
+**Kept out of the human's Messages (lead ruling 2):** `uiState()` excludes every message with `requestId` from `threads`, `youUnread*` and `attention`, and the `mcp:thread` view does the same. A thread whose messages all carry `requestId` is omitted. The store contract only gains the optional field.
+
+**Typed notice:** `composeNotice(urgent: boolean, answered: boolean)` (`src/conduit-mcp/notice-text.ts`). When any due message carries `requestId`, the notifier types `[conduit] A request you made was answered. Use the conduit read_inbox tool.`, a fixed ASCII line with no peer text.
 
 ### C10 Renderer/server messages — `src/protocol.ts`
 - `WebviewToHost`: `{type:'mcp:requestAnswer'; requestId: string; answer: AnswerInput}` · `{type:'mcp:setAway'; away: boolean; until: string | null}`.
@@ -334,8 +343,8 @@ A `null` from a tool means the client cancelled, so the host sends no reply (the
 ### C12 Limit monitor actions — `server/domain/limit-monitor.ts`
 `resumeNow(sessionId: string): boolean`: when an episode is open, send the session's resume message once via `scheduler.sendOnce`, and leave the episode to its normal verify path. `dismissIssue(sessionId: string): void`: `closeEpisode(sessionId, 'closed')`, which clears the resume issue. `autoResumeOn` = the existing `scheduler.setSessionAutoResume(sessionId, 'on')` path (`server/domain/index.ts:1579-1586`). All three are exposed through the domain to `server/mcp/index.ts` as `deps.limit`.
 
-### C13 Tray — `src/contracts/tray-protocol.ts`
-`ServerToSupervisor` gains `{type:'notify'; title: 'Conduit'; body: string}`, and `SupervisorToHelper` gains the same. The body is Conduit's words only: "claude-3 needs your approval", "claude-3 asks you to choose", "codex-2 is waiting at a prompt", or "N need you" when coalesced. The helper shows a balloon (`Shell_NotifyIconW` `NIF_INFO`). At most one notify per 10 s, sent only while no app is connected, and held while Away unless urgent.
+### C13 Tray count — `src/tray-counts.ts`
+`trayCounts(sessions, health, stopping, needs: { openRequests: readonly RequestView[]; waitingAsks: number })`. There is no tray-protocol change.
 
 ## Producer/consumer map
 | Behavior changed | Produced by | Consumed by | Sides touched |
@@ -348,7 +357,9 @@ A `null` from a tool means the client cancelled, so the host sends no reply (the
 | question messages | message store | request-sources (via host) | consumer added; store gains only `requestId` |
 | ask lifetime with no app | server/mcp/index.ts (grace removed), call-flow | tool callers (no more `ui_unavailable`) | both. Callers of `ui_unavailable`: `src/conduit-mcp/types.ts:52`, `webview/conduit-mcp-strings.ts:229`, `test/unit/server-mcp-wiring.test.ts:477,701-750`, `src/conduit-mcp/host.ts:2129-2137`, `src/conduit-mcp/call-flow.ts:209,294-298,493-502` |
 | tray M | `src/tray-counts.ts` | `src/tray-view.ts` text and icon | both |
-| OS notification | host `onNew` → `attention.edge` kind `'request'`; tray-channel notify | `electron/server-events.ts` → `notifyAttention`; tray helper balloon | both |
+| OS notification (a window exists) | host `onNew` → `attention.edge` kind `'request'` | `electron/server-events.ts` → `notifyAttention` | both |
+| message-to-you attention item for a question covered by a `message` request | host `uiState` (`youAttention`) | renderer chip; tray (requests only) | producer: the item is dropped while an open message request covers every unread-for-you message of that thread (lead ruling 6) |
+| late-answer messages in the human's views | host `uiState` / `mcp:thread` | renderer Messages | producer filters `requestId` messages (lead ruling 2) |
 | `list_sessions.human` | tools.ts | agents (wire); `tool-schemas.ts` description | both |
 
 ## File map
@@ -362,7 +373,8 @@ A `null` from a tool means the client cancelled, so the host sends no reply (the
 | `src/conduit-mcp/request-waits.ts` | create | blocked-call registry C6 |
 | `src/conduit-mcp/request-sources.ts` | create | observed/scheduler/message reconciler C7 |
 | `src/conduit-mcp/request-service.ts` | create | composer + tool handlers + delivery + presence C8 |
-| `src/conduit-mcp/machine-id.ts` | create | load-or-create `conduit-mcp/machine.json` → `m-xxxxxxxx` |
+| `src/conduit-mcp/machine-id.ts` | create | the one accessor `loadMachineId(dir)`: load-or-create `conduit-mcp/machine.json` → `m-xxxxxxxx`. Provisional; the comment points to `docs/specs/2026-11-14-conduit-network.md` §4.1 so CON-16 can replace it |
+| `src/conduit-mcp/notice-text.ts`, `src/conduit-mcp/notifier.ts` | modify | the typed answered notice (C9) |
 | `src/conduit-mcp/tool-policy.ts` | modify | `REQUEST_TOOL_NAMES`, group `'requests'`, specs (MESSAGING_SPEC shape); gate change (Slice 5) |
 | `src/conduit-mcp/tool-schemas.ts` | modify | 4 schemas; `CONDUIT_INSTRUCTIONS` names request_input; `list_sessions` human presence wording |
 | `webview/conduit-mcp-strings.ts` | modify | tool descriptions, `requests` group label; drop `ui_unavailable` |
@@ -382,11 +394,7 @@ A `null` from a tool means the client cancelled, so the host sends no reply (the
 | `src/conduit-mcp/call-flow.ts` | modify | no-app ask path; `rehome`; delete `denyUnavailable`/`unavailable` |
 | `src/conduit-mcp/window-waits.ts` | modify | `retarget(id, windowId)` |
 | `src/tray-counts.ts` | modify | M = requests + asks + uncovered sessions |
-| `server/tray-channel.ts` | modify | tap `mcp:state`; notify coalescing; `appConnected()` option |
-| `src/contracts/tray-protocol.ts` | modify | `notify` messages C13 |
-| `server/tray/relay.ts` | modify | forward notify to the helper |
-| `native/tray/src/protocol.rs`, `native/tray/src/win/icon.rs`, `native/tray/src/main.rs` | modify | parse + show the balloon |
-| `test/fixtures/tray-protocol/*` | modify/create | a notify fixture shared by the TS and Rust tests |
+| `server/tray-channel.ts` | modify | tap `mcp:state` for the count |
 | `src/contracts/server-protocol.ts` | modify | `attention.edge.kind` += `'request'`, plus `requestKind?`/`handle?` fields |
 | `electron/server-events.ts`, `electron/main.ts` | modify | the `'request'` edge → notifyAttention with Conduit words; 10 s burst coalescing |
 | `test/unit/request-*.test.ts`, `test/unit/machine-id.test.ts` | create | per-module unit tests |
@@ -468,6 +476,7 @@ None. Every repeated edit is a type-checked registration, not a text pattern.
 - `budgetMs = askBudgetMs(cliKindOfHandle(handle), wiredAtLaunch(sessionId))`.
 - `stampOf` walks `openedBy` through `deps.sessions.list()` (stop at a missing opener, and guard cycles with a visited set).
 - `requests.json` lives in `deps.dir`, and the machine id in `deps.dir`.
+- Lead ruling 2 (C9): filter `requestId` messages out of `uiState()` (threads, youUnread*, attention) and the `mcp:thread` view. Typed notice: `composeNotice(urgent, answered)` in `src/conduit-mcp/notice-text.ts`, chosen in `src/conduit-mcp/notifier.ts` when any due message has `requestId`. Add both files to this task's Files.
 **Steps:** failing host tests: 'request_input answered from the renderer returns answered', 'late answer lands in read_inbox with request_id', 'cancel then repeat attaches', 'a second window's answer gets already_ended', 'uiState carries requests'. Implement.
 
 #### Task 2.5: e2e (orchestrator)
@@ -497,11 +506,11 @@ None. Every repeated edit is a type-checked registration, not a text pattern.
 **Steps:** failing tests 'resumeNow sends the resume message once via sendOnce when an episode is open; false with none', 'dismissIssue closes the episode and clears the resume issue'. Implement.
 
 #### Task 4.4: Wiring (serial, orchestrator or one Haiku with the full claim set)
-Service gains `onAttention`/`onQuestions` (calls `reconcile*`, applies `createSystem`/`resolve`). The answer of a scheduler request maps `Resume now` → `deps.scheduler.resumeNow`, `Turn auto-resume on` → `autoResumeOn`, and `dismissed` → `dismiss`. A `message` answer with text → `replyToQuestion`. Host calls `onAttention(deps.attention.needsYouFacts())` on `attention.onChange`, and `onQuestions(...)` from store changes (unread question messages to `you`). `server/domain/index.ts` exposes `limit`, and `server/services.ts` → `server/mcp/index.ts` → host deps carry it. Then the e2e.
+Service gains `onAttention`/`onQuestions` (calls `reconcile*`, applies `createSystem`/`resolve`). The answer of a scheduler request maps `Resume now` → `deps.scheduler.resumeNow`, `Turn auto-resume on` → `autoResumeOn`, and `dismissed` → `dismiss`. A `message` answer with text → `replyToQuestion`. Host calls `onAttention(deps.attention.needsYouFacts())` on `attention.onChange`, and `onQuestions(...)` from store changes (unread question messages to `you`). Lead ruling 6: in `uiState()`, drop a thread's `message-to-you` attention item while every unread-for-you message in that thread is a question covered by an open `message` request. The question is then counted once, as the request. `server/domain/index.ts` exposes `limit`, and `server/services.ts` → `server/mcp/index.ts` → host deps carry it. Then the e2e.
 
-### Slice 5: No-window asks, tray, OS notification
-**Check:** unit tests green; `npm run verify` (includes `tray:check`: Rust fmt, clippy host + msvc, test); `npm run e2e:remote -- asks-no-window requests-agent`.
-**Parallel groups:** G1: T5.1 · G2: T5.2 · G3: T5.3 · Serial: T5.4
+### Slice 5: No-window asks, tray count, in-app OS notification
+**Check:** unit tests green; `npm run verify`; `npm run e2e:remote -- asks-no-window requests-agent`.
+**Parallel groups:** G1: T5.1 · G2: T5.2 · Serial: T5.4
 **Claims (serial lane):** `server/mcp/index.ts`, `src/conduit-mcp/host.ts`, `src/contracts/server-protocol.ts`, `electron/server-events.ts`, `electron/main.ts`
 
 #### Task 5.1: Asks outlive the app
@@ -515,23 +524,18 @@ Rules:
 - Delete `denyUnavailable` and `unavailable`.
 **Steps:** failing tests 'ask with no app and when always waits its budget then approval_timeout', 'rehome makes the ask answerable from the new window', 'when viewing with no app → window_not_ready'. Implement.
 
-#### Task 5.2: Tray counts and notify (TS side)
-**Files:** Modify `src/tray-counts.ts`, `server/tray-channel.ts`, `src/contracts/tray-protocol.ts`, `server/tray/relay.ts`, `test/fixtures/tray-protocol/` (add `notify.json` in the existing fixture style), tests `test/unit/tray-counts.test.ts`, `test/unit/tray-channel.test.ts` (existing names: check with `ls test/unit | grep tray`).
-**Interfaces:**
-- `trayCounts(sessions, health, stopping, needs: { openRequests: RequestView[]; waitingAsks: number })` → `needsYou = openRequests.length + waitingAsks + attentionSessions(running).filter(s => !openRequests.some(r => r.session === s.id && (r.source === 'observed' || r.source === 'scheduler'))).length`.
-- tray-channel taps `ui.post` whose `message.type === 'mcp:state'`, and takes a new option `appConnected(): boolean`.
-- Notify fires when the open request count or the waiting-ask count grows, `!appConnected()`, and not (Away and nothing urgent), with at most one per 10 s. The body follows C13.
-**Steps:** failing tests 'M counts requests and asks and doesn't double-count attend', 'notify only with no app, coalesced to one per 10 s', 'Away holds non-urgent notify'. Implement.
-
-#### Task 5.3: Tray helper balloon (Rust)
-**Files:** Modify `native/tray/src/protocol.rs` (parse `notify`), `native/tray/src/win/icon.rs` (`fn notify(&mut self, title: &str, body: &str)` via `NIM_MODIFY` + `NIF_INFO`, `szInfoTitle`/`szInfo` truncated to their buffer sizes), `native/tray/src/main.rs` (dispatch), `native/tray/tests/fixtures.rs` (the new fixture parses).
-**Steps:** failing fixture test 'notify fixture parses to Notify{title, body}'. Implement. `npm run tray:check` is green (msvc clippy included).
+#### Task 5.2: Tray count (TS side)
+**Files:** Modify `src/tray-counts.ts`, `server/tray-channel.ts`; tests `test/unit/tray-counts.test.ts`, `test/unit/tray-channel.test.ts` (check the existing names with `ls test/unit | grep tray`).
+**Interfaces:** C13.
+- `needsYou = openRequests.length + waitingAsks + attentionSessions(running).filter(s => !openRequests.some(r => r.session === s.id && (r.source === 'observed' || r.source === 'scheduler'))).length`.
+- tray-channel taps `ui.post` whose `message.type === 'mcp:state'`, reading `state.requests.open` and `state.awaitingApproval`. The waiting-ask count is the sum of open asks: add `waitingAsks: number` to `McpUiState` in T5.4 if `awaitingApproval` (session ids) undercounts. T5.2 reads a `waitingAsks` field, and T5.4 adds it.
+**Steps:** failing tests 'M counts requests and asks and doesn't double-count attend/scheduler sessions', 'a question message row counts once'. Implement.
 
 #### Task 5.4: Wiring + in-app OS notification (serial, orchestrator)
 - `server/mcp/index.ts`: delete `APP_GRACE_MS`, `graceTimer` and `appDisconnected`'s timer. Pass `appConnected: presence.connected()` into the host gate. Call `flow.rehome` on `presence` when a ready window appears.
 - Host `onNew(r)` emits `attention.edge {kind:'request', sessionId: r.session, requestKind: r.kind, handle: r.requester}`, unless Away and not urgent.
 - `electron/server-events.ts` routes it to `notifyAttention`, and `electron/main.ts` writes the body in Conduit's words, coalesced to one per 10 s ("4 new requests from 3 agents").
-- `server/main.ts`/`server/services.ts` pass `appConnected` to tray-channel.
+- `McpUiState.waitingAsks: number` (count of waiting asks) for T5.2.
 - e2e `asks-no-window` (pattern: `test/e2e/auto-resume-works-with-no-window.e2e.mjs`).
 - `test/unit/server-mcp-wiring.test.ts:701-750` grace tests are replaced by 'asks survive app disconnect until their budget'.
 
@@ -545,9 +549,12 @@ Rules:
 If a task's assumption turns out wrong (the piece it builds on is misaligned, or a locked signature doesn't fit reality), that task **stops**, and fixing the misaligned piece becomes the work. Never a shim, a second copy, a special case, a widened type, a fallback, or an override patched in place of its semantic source. A Haiku lane reports back instead of improvising, and the report leads with the fix that keeps the locked decision.
 
 ## Decisions Needed
-- [high] #1 REQ-D21c under default policy: every default ask tool is `when: 'viewing'`, so with no window a new ask is still refused (`window_not_ready`). Only `when: 'always'` asks, and asks already waiting when the app closes, wait out their budget. Default taken: exactly that; policy semantics unchanged.
-- [high] #2 Scheduler request options: CON-15 isn't built, and no "try at reset" action exists for an unknown reset. Default taken: `Resume now` (send the resume message once) · `Turn auto-resume on` · Skip (= dismiss the episode's needs-you). The request resolves when the resume issue clears.
-- [normal] #3 With no app on Linux there is no tray helper, so no OS notification. Windows gets a tray balloon. Default taken: accept the Linux gap.
-- [normal] #4 Machine id: `m-` + 8 random hex, persisted per userData in `conduit-mcp/machine.json`, until NET derives it from a server key. Stored requests keep the old value then.
-- [normal] #5 A late answer is delivered as a message from `you`, so it also shows in the human's Messages thread as sent by them. Default taken: accept it (it's the honest record); CON-20 can style `requestId` messages.
+- [ruled, default accepted] #1 REQ-D21c under default policy: every default ask tool is `when: 'viewing'`, so with no window a new ask is still refused (`window_not_ready`). Only `when: 'always'` asks, and asks already waiting when the app closes, wait out their budget. Default taken: exactly that; policy semantics unchanged.
+- [ruled, default accepted] #2 Scheduler request options: CON-15 isn't built, and no "try at reset" action exists for an unknown reset. Default taken: `Resume now` (send the resume message once) · `Turn auto-resume on` · Skip (= dismiss the episode's needs-you). The request resolves when the resume issue clears.
+- [ruled] #3 No app-closed OS notification on this card (lead): see Left for later.
+- [ruled, default accepted] #4 Machine id: `m-` + 8 random hex, persisted per userData in `conduit-mcp/machine.json`, until NET derives it from a server key. Stored requests keep the old value then.
+- [ruled] #5 Late answers are tagged `requestId` and filtered out of the human's views (lead ruling 2; C9).
 - [normal] #6 Caps count `message` rows toward the 5-per-requester limit, but a question row is never refused. The cap only blocks the sender's next `request_input`.
+
+## Left for later
+- **App-closed OS notification (Windows and Linux).** With no app running, a waiting ask or a new request shows only in the tray count. A notification surface is needed: a tray-helper balloon on Windows, and on Linux something that exists without the Electron app (no tray helper there today). The lead files it as a card. Removed from this card: the `notify` tray-protocol message and the Rust balloon.
