@@ -88,7 +88,7 @@ describe('migrateLegacyPolicy', () => {
     }
   });
 
-  it('partial override becomes Worker + one exception per changed tool', () => {
+  it('partial override becomes Worker + one exception per changed field', () => {
     const out = migrateLegacyPolicy({
       global: DEFAULT_TOOL_POLICY,
       byCli: {},

@@ -270,4 +270,72 @@ describe('applyLegacyPatch', () => {
       ).when,
     ).toBe('always');
   });
+
+  it('inherit equals lower at every scope', () => {
+    const lower: Assignment = {
+      profileId: 'worker',
+      onScreenOnly: false,
+      exceptions: [
+        { tool: 'send_input', scope: { kind: 'anywhere' }, rule: { decision: 'allow' } },
+        {
+          tool: 'send_input',
+          scope: { kind: 'folder', path: '/secrets' },
+          rule: { decision: 'deny' },
+        },
+      ],
+    };
+    const targets = [
+      null,
+      { sessionId: null, path: '/secrets/x', folder: '/secrets', projectId: null },
+      { sessionId: null, path: '/other/x', folder: '/other', projectId: null },
+    ];
+    const resolvedAt = (state: PolicyState, a: Assignment, target: (typeof targets)[number]) =>
+      effectiveRule(profileById(state, a.profileId) ?? WORKER_PROFILE, a, 'send_input', target);
+
+    const fresh = stateOf([[DEFAULT, lower]]);
+    const freshNext = applyLegacyPatch(fresh, SESSION, DEFAULT, 'send_input', {
+      access: 'inherit',
+    });
+    const withLead = stateOf([
+      [DEFAULT, lower],
+      [SESSION, LEAD_ONSCREEN],
+    ]);
+    const leadNext = applyLegacyPatch(withLead, SESSION, DEFAULT, 'send_input', {
+      access: 'inherit',
+    });
+
+    const withOwnScoped = stateOf([
+      [DEFAULT, lower],
+      [
+        SESSION,
+        {
+          profileId: 'worker',
+          onScreenOnly: false,
+          exceptions: [
+            {
+              tool: 'send_input',
+              scope: { kind: 'folder', path: '/other' },
+              rule: { decision: 'deny' },
+            },
+          ],
+        },
+      ],
+    ]);
+    const ownNext = applyLegacyPatch(withOwnScoped, SESSION, DEFAULT, 'send_input', {
+      access: 'inherit',
+    });
+
+    for (const target of targets) {
+      const label = JSON.stringify(target);
+      expect(resolvedAt(fresh, freshNext, target), `fresh ${label}`).toEqual(
+        resolvedAt(fresh, lower, target),
+      );
+      expect(resolvedAt(withLead, leadNext, target), `lead ${label}`).toEqual(
+        resolvedAt(fresh, lower, target),
+      );
+      expect(resolvedAt(withOwnScoped, ownNext, target), `own ${label}`).toEqual(
+        resolvedAt(fresh, lower, target),
+      );
+    }
+  });
 });

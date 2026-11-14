@@ -1,4 +1,5 @@
 // see POL §4.2 and C6
+import { folderKey } from '../folder-key';
 import {
   DECISION_OF_ACCESS,
   effectiveRule,
@@ -13,6 +14,7 @@ import type {
   Exception,
   PolicyState,
   Profile,
+  Scope,
   ToolRule,
 } from './policy-types';
 import {
@@ -67,9 +69,6 @@ const ruleAt = (state: PolicyState, a: Assignment, tool: ToolName): ToolRule =>
 const assignmentOrWorker = (state: PolicyState, point: AssignmentPoint | null): Assignment =>
   (point === null ? undefined : state.assignments.get(pointKey(point))) ?? plainWorker();
 
-const isAnywhereFor = (tool: ToolName) => (e: Exception) =>
-  e.tool === tool && e.scope.kind === 'anywhere';
-
 const copyException = (e: Exception): Exception => ({
   tool: e.tool,
   scope: { ...e.scope },
@@ -104,23 +103,80 @@ export function projectLegacyLayer(
   return layer;
 }
 
-function editAnywhere(
+function sameScope(x: Scope, y: Scope): boolean {
+  switch (x.kind) {
+    case 'anywhere':
+      return y.kind === 'anywhere';
+    case 'space':
+      return y.kind === 'space' && y.projectId === x.projectId;
+    case 'folder':
+      return y.kind === 'folder' && folderKey(y.path) === folderKey(x.path);
+    case 'path':
+      return y.kind === 'path' && folderKey(y.path) === folderKey(x.path);
+    case 'session':
+      return y.kind === 'session' && y.sessionId === x.sessionId;
+  }
+}
+
+function editException(
   a: Assignment,
   tool: ToolName,
+  scope: Scope,
   edit: (rule: Partial<ToolRule>) => void,
 ): Assignment {
-  const current = a.exceptions.find(isAnywhereFor(tool));
+  const current = a.exceptions.find((e) => e.tool === tool && sameScope(e.scope, scope));
   const rule: Partial<ToolRule> = { ...current?.rule };
   edit(rule);
   if (Object.keys(rule).length === 0) {
     return { ...a, exceptions: a.exceptions.filter((e) => e !== current) };
   }
-  const updated: Exception = { tool, scope: { kind: 'anywhere' }, rule };
+  const updated: Exception = { tool, scope: { ...scope }, rule };
   const exceptions =
     current === undefined
       ? [...a.exceptions, updated]
       : a.exceptions.map((e) => (e === current ? updated : e));
   return { ...a, exceptions };
+}
+
+const editAnywhere = (
+  a: Assignment,
+  tool: ToolName,
+  edit: (rule: Partial<ToolRule>) => void,
+): Assignment => editException(a, tool, { kind: 'anywhere' }, edit);
+
+function inheritField(
+  state: PolicyState,
+  lowerA: Assignment,
+  a: Assignment,
+  tool: ToolName,
+  field: PolicyField,
+): Assignment {
+  const key = RULE_KEY[field];
+  let next: Assignment = {
+    ...a,
+    exceptions: a.exceptions.flatMap((e) => (e.tool === tool ? withoutField(e, key) : [e])),
+  };
+  for (const inherited of lowerA.exceptions) {
+    if (inherited.tool !== tool || inherited.scope.kind === 'anywhere') continue;
+    const value = inherited.rule[key];
+    if (value === undefined) continue;
+    next = editException(next, tool, inherited.scope, (rule) => {
+      Object.assign(rule, { [key]: value });
+    });
+  }
+  const lowerValue = legacyPolicyOf(ruleAt(state, lowerA, tool), tool)[field];
+  if (lowerValue === undefined) return next;
+  const profileValue = legacyPolicyOf(profileOf(state, next).rules[tool], tool)[field];
+  return editAnywhere(next, tool, (rule) => {
+    if (lowerValue === profileValue) delete rule[key];
+    else Object.assign(rule, { [key]: toRuleValue(lowerValue) });
+  });
+}
+
+function withoutField(e: Exception, key: keyof ToolRule): Exception[] {
+  const rule: Partial<ToolRule> = { ...e.rule };
+  delete rule[key];
+  return Object.keys(rule).length > 0 ? [{ ...e, rule }] : [];
 }
 
 const isAccess = (v: Access | When | Reach | Move): v is Access =>
@@ -160,13 +216,11 @@ function applyField(
       }
     }
   }
-  const wanted =
-    value === 'inherit' ? legacyPolicyOf(ruleAt(state, lowerA, tool), tool)[field] : value;
-  if (wanted === undefined) return next;
+  if (value === 'inherit') return inheritField(state, lowerA, next, tool, field);
   const profileValue = legacyPolicyOf(profileOf(state, next).rules[tool], tool)[field];
   const edited = editAnywhere(next, tool, (rule) => {
-    if (wanted === profileValue) delete rule[RULE_KEY[field]];
-    else Object.assign(rule, { [RULE_KEY[field]]: toRuleValue(wanted) });
+    if (value === profileValue) delete rule[RULE_KEY[field]];
+    else Object.assign(rule, { [RULE_KEY[field]]: toRuleValue(value) });
   });
   // The old editors know only anywhere, so this edit is authoritative at every scope.
   return {
@@ -177,9 +231,7 @@ function applyField(
 
 function dropScopedField(e: Exception, tool: ToolName, key: keyof ToolRule): Exception[] {
   if (e.tool !== tool || e.scope.kind === 'anywhere') return [e];
-  const rule: Partial<ToolRule> = { ...e.rule };
-  delete rule[key];
-  return Object.keys(rule).length > 0 ? [{ ...e, rule }] : [];
+  return withoutField(e, key);
 }
 
 export function applyLegacyPatch(
