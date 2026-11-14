@@ -10,7 +10,6 @@ import {
   formatDuration,
   LATE_GRACE_MS,
   MAX_CLOCK_AHEAD_MS,
-  MAX_MESSAGE_CHARS,
   MAX_PER_SESSION,
   MAX_TOTAL,
   markWaiting,
@@ -58,8 +57,8 @@ describe('sanitizeMessage', () => {
   });
 
   it('trims and caps at 2000 characters', () => {
-    const long = sanitizeMessage(`  ${'x'.repeat(MAX_MESSAGE_CHARS + 500)}  `);
-    expect(long.length).toBe(MAX_MESSAGE_CHARS);
+    const long = sanitizeMessage(`  ${'x'.repeat(2_500)}  `);
+    expect(long.length).toBe(2_000);
     expect(long.startsWith('x')).toBe(true);
   });
 

@@ -67,7 +67,8 @@ export interface TimedMessageInput {
   origin?: TimedMessageOrigin;
 }
 
-export const MAX_MESSAGE_CHARS = 2000;
+/** The pre-CON-11 cap, kept only for reading old files until sanitizeMessage retires (plan E.6). */
+const LEGACY_MESSAGE_CHARS = 2000;
 export const MAX_PER_SESSION = 3;
 export const MAX_TOTAL = 20;
 export const MIN_DELAY_MS = 30_000;
@@ -113,7 +114,7 @@ export function sanitizeMessage(raw: string): string {
     if (c >= 0x80 && c <= 0x9f) continue; // C1
     out += ch;
   }
-  return out.replace(/\s+/g, ' ').trim().slice(0, MAX_MESSAGE_CHARS).trimEnd();
+  return out.replace(/\s+/g, ' ').trim().slice(0, LEGACY_MESSAGE_CHARS).trimEnd();
 }
 
 export function newTimedMessageId(
