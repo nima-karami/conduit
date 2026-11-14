@@ -218,6 +218,13 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       failed(p, opened.error);
       return;
     }
+    // The handshake takes time: a revoke or stop that landed meanwhile must win over this socket,
+    // or a revoked link would keep a live connection the peer still believes in.
+    if (stopped || terminal(p)) {
+      if (p.sm.state === 'revoked') opened.send({ t: 'revoked' });
+      opened.close(stopped ? 'shutdown' : p.sm.state);
+      return;
+    }
     const hello = opened.peerHello;
     if (
       hello.machineId !== p.record.machineId ||
