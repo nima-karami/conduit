@@ -1,10 +1,12 @@
 // Precedence is POL §4.3: floors, explicit denies, grants, then the most specific assignment.
 import type { Capability } from '../contracts/remote-principal';
+import { folderKey } from '../folder-key';
 import {
   effectiveRule,
   matchesScope,
   pointKey,
   profileById,
+  STRICTNESS,
   WORKER_PROFILE,
 } from './policy-profiles';
 import type {
@@ -20,6 +22,7 @@ import type {
   PolicyState,
   PolicyTarget,
   Principal,
+  Profile,
   ProfileId,
   Reason,
   ToolRule,
@@ -53,12 +56,13 @@ const CAPABILITY_OF: Record<ToolName, Capability | 'orchestrate'> = {
   read_screen: 'orchestrate',
 };
 
+// see NET §4.1 (R21)
 const ORCHESTRATE_ASK: readonly ToolName[] = [
   'open_session',
   'open_terminal',
-  'send_input',
   'close_session',
-  'attach_folder',
+  'send_input',
+  'read_screen',
 ];
 const OWN_PEER_ASSIGNMENT: Assignment = {
   profileId: 'worker',
@@ -71,7 +75,6 @@ const OWN_PEER_ASSIGNMENT: Assignment = {
 };
 const DEFAULT_ASSIGNMENT: Assignment = { profileId: 'worker', exceptions: [], onScreenOnly: false };
 const ALLOW: Decision = 'allow';
-const STRICTNESS: Record<Decision, number> = { allow: 0, ask: 1, deny: 2 };
 const FLOOR_TEXT: Record<FloorId, string> = {
   'master-off': 'Conduit tools are off',
   'remote-capability': 'not allowed on this link',
@@ -80,15 +83,25 @@ const FLOOR_TEXT: Record<FloorId, string> = {
 
 function noTarget(principal: Principal): PolicyTarget {
   if (principal.kind === 'session')
-    return { sessionId: null, path: principal.homeFolder, projectId: principal.projectId };
-  return { sessionId: null, path: null, projectId: null };
+    return {
+      sessionId: null,
+      path: principal.homeFolder,
+      folder: principal.homeFolder,
+      projectId: principal.projectId,
+    };
+  return { sessionId: null, path: null, folder: null, projectId: null };
 }
 
 // An action with no target matches the caller's home folder (spec §4.1).
 function resolveTargets(targets: readonly PolicyTarget[], principal: Principal): PolicyTarget[] {
   if (targets.length === 0) return [noTarget(principal)];
-  return targets.map((t) => (t.sessionId === null && t.path === null ? noTarget(principal) : t));
+  return targets.map((t) =>
+    t.sessionId === null && t.path === null && t.folder === null ? noTarget(principal) : t,
+  );
 }
+
+const samePath = (a: string | null, b: string | null): boolean =>
+  a === null || b === null ? a === b : folderKey(a) === folderKey(b);
 
 function remoteAllows(principal: Extract<Principal, { kind: 'remote' }>, tool: ToolName): boolean {
   const cap = CAPABILITY_OF[tool];
@@ -180,7 +193,7 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
             o.sessionId === principal.sessionId &&
             o.tool === tool &&
             o.target.sessionId === t.sessionId &&
-            o.target.path === t.path,
+            samePath(o.target.path, t.path),
         )
       : undefined;
 
@@ -227,16 +240,30 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
   return done(strictest.effective, reason, strictest.rule);
 }
 
-export function visibleTools(
+export function visibleTools(state: PolicyState, principal: Principal, now: number): ToolName[] {
+  const { assignment } = assignmentFor(state, principal);
+  const profile = profileById(state, assignment.profileId) ?? WORKER_PROFILE;
+  return TOOL_NAMES.filter(
+    (tool) => !isDeniedForEveryTarget(state, principal, profile, assignment, tool, now),
+  );
+}
+
+function isDeniedForEveryTarget(
   state: PolicyState,
   principal: Principal,
-  masterOn: boolean,
+  profile: Profile,
+  assignment: Assignment,
+  tool: ToolName,
   now: number,
-): ToolName[] {
-  return TOOL_NAMES.filter(
-    (tool) =>
-      decide(state, { principal, tool, targets: [], masterOn, toYou: false, now }).decision !==
-      'deny',
+): boolean {
+  if (principal.kind === 'remote' && !remoteAllows(principal, tool)) return true;
+  if (profile.rules[tool].decision !== 'deny') return false;
+  const settingExceptions = assignment.exceptions.filter(
+    (e) => e.tool === tool && e.rule.decision !== undefined,
+  );
+  if (settingExceptions.some((e) => e.rule.decision !== 'deny')) return false;
+  return !state.grants.some(
+    (g) => isLiveGrant(g, now) && g.tool === tool && whoMatches(g.who, principal),
   );
 }
 

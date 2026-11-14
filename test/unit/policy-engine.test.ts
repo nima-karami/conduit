@@ -5,7 +5,11 @@ import {
   reasonText,
   visibleTools,
 } from '../../src/conduit-mcp/policy-engine';
-import { matchesScope, profileById } from '../../src/conduit-mcp/policy-profiles';
+import {
+  BUILT_IN_PROFILES,
+  matchesScope,
+  profileById,
+} from '../../src/conduit-mcp/policy-profiles';
 import type {
   Assignment,
   Exception,
@@ -44,6 +48,7 @@ const remote = (capabilities: Capabilities = ALL_CAPS): Principal => ({
 const target = (over: Partial<PolicyTarget> = {}): PolicyTarget => ({
   sessionId: null,
   path: null,
+  folder: null,
   projectId: null,
   ...over,
 });
@@ -307,11 +312,11 @@ describe('decide', () => {
       ]),
     });
     expect(
-      decide(folders, input({ tool: 'open_session', targets: [target({ path: '/work/x' })] }))
+      decide(folders, input({ tool: 'open_session', targets: [target({ folder: '/work/x' })] }))
         .decision,
     ).toBe('allow');
     expect(
-      decide(folders, input({ tool: 'open_session', targets: [target({ path: '/elsewhere' })] }))
+      decide(folders, input({ tool: 'open_session', targets: [target({ folder: '/elsewhere' })] }))
         .decision,
     ).toBe('deny');
 
@@ -322,8 +327,10 @@ describe('decide', () => {
       ]),
     });
     expect(
-      decide(nested, input({ tool: 'open_session', targets: [target({ path: '/work/app/src' })] }))
-        .decision,
+      decide(
+        nested,
+        input({ tool: 'open_session', targets: [target({ folder: '/work/app/src' })] }),
+      ).decision,
     ).toBe('deny');
 
     const tie = state({
@@ -333,7 +340,8 @@ describe('decide', () => {
       ]),
     });
     expect(
-      decide(tie, input({ tool: 'open_session', targets: [target({ path: '/work/x' })] })).decision,
+      decide(tie, input({ tool: 'open_session', targets: [target({ folder: '/work/x' })] }))
+        .decision,
     ).toBe('ask');
   });
 
@@ -347,7 +355,7 @@ describe('decide', () => {
       s,
       input({
         tool: 'open_session',
-        targets: [target({ path: '/work/app/a' }), target({ path: '/elsewhere' })],
+        targets: [target({ folder: '/work/app/a' }), target({ folder: '/elsewhere' })],
       }),
     );
     expect(d.decision).toBe('ask');
@@ -361,11 +369,23 @@ describe('decide', () => {
     expect(d.decision).toBe('ask');
     expect(d.rule.when).toBe('always');
     expect(d.reason).toEqual({
-      by: 'exception',
+      by: 'profile',
       point: { kind: 'peer', machineId: 'm-0000000a' },
       profileId: 'worker',
     });
     expect(decide(s, input({ principal: r, tool: 'focus_session' })).rule.reach).toBe('opened');
+  });
+
+  it('own peer default asks exactly on the NET orchestrate set', () => {
+    const own = assignmentFor(state({}), remote()).assignment;
+    expect(own.exceptions.map((e) => e.tool)).toEqual([
+      'open_session',
+      'open_terminal',
+      'close_session',
+      'send_input',
+      'read_screen',
+    ]);
+    expect(own.exceptions.every((e) => e.rule.decision === 'ask')).toBe(true);
   });
 
   it('remote principal: orchestrate tools always denied, drive tool denied when drive is false, messaging allowed when true', () => {
@@ -483,12 +503,21 @@ describe('decide', () => {
   });
 
   it('folder scope respects the separator boundary', () => {
-    expect(matchesScope({ kind: 'folder', path: '/a/b' }, target({ path: '/a/bc' }))).toBe(false);
-    expect(matchesScope({ kind: 'folder', path: '/a/b' }, target({ path: '/a/b/c' }))).toBe(true);
-    expect(matchesScope({ kind: 'folder', path: '/a/b' }, target({ path: '/a/b' }))).toBe(true);
+    expect(matchesScope({ kind: 'folder', path: '/a/b' }, target({ folder: '/a/bc' }))).toBe(false);
+    expect(matchesScope({ kind: 'folder', path: '/a/b' }, target({ folder: '/a/b/c' }))).toBe(true);
+    expect(matchesScope({ kind: 'folder', path: '/a/b' }, target({ folder: '/a/b' }))).toBe(true);
     expect(
-      matchesScope({ kind: 'folder', path: 'C:/work/app' }, target({ path: 'C:\\work\\app\\src' })),
+      matchesScope(
+        { kind: 'folder', path: 'C:/work/app' },
+        target({ folder: 'C:\\work\\app\\src' }),
+      ),
     ).toBe(true);
+    expect(
+      matchesScope({ kind: 'folder', path: 'C:\\Work' }, target({ folder: 'c:/work/app' })),
+    ).toBe(true);
+    expect(
+      matchesScope({ kind: 'folder', path: 'C:\\Work' }, target({ folder: 'c:/workapp' })),
+    ).toBe(false);
     expect(matchesScope({ kind: 'path', path: '/a/b' }, target({ path: '/a/b/c' }))).toBe(false);
     expect(matchesScope({ kind: 'session', sessionId: 's2' }, target({ sessionId: 's2' }))).toBe(
       true,
@@ -501,61 +530,109 @@ describe('decide', () => {
     );
   });
 
-  it('every decision has exactly one reason', () => {
-    const scenarios: PolicyInput[] = [];
-    const reasonKeys = new Set(['floor', 'deny', 'override', 'grant', 'exception', 'profile']);
+  it('folder scope matches a session target by its folder (cwd)', () => {
+    expect(
+      matchesScope(
+        { kind: 'folder', path: '/work/app' },
+        target({ sessionId: 's2', folder: '/work/app' }),
+      ),
+    ).toBe(true);
+    expect(
+      matchesScope(
+        { kind: 'folder', path: '/work/app' },
+        target({ sessionId: 's2', folder: '/other' }),
+      ),
+    ).toBe(false);
+  });
+
+  it('one-use override matches its path through folderKey', () => {
+    const override: OneUseOverride = {
+      id: 'o1',
+      sessionId: 's1',
+      tool: 'open_session',
+      target: target({ path: 'C:\\Work\\app' }),
+      createdAt: iso(NOW),
+    };
     const s = state(
       {
         default: assignment('worker', [
-          except('read_screen', { kind: 'anywhere' }, { decision: 'deny' }),
+          except('open_session', { kind: 'anywhere' }, { decision: 'deny' }),
         ]),
       },
-      { grants: [grant()] },
+      { overrides: [override] },
     );
-    for (const tool of TOOL_NAMES) {
-      scenarios.push(
-        input({ tool }),
-        input({ tool, masterOn: false }),
-        input({ tool, principal: remote({ messaging: true, monitor: false, drive: false }) }),
-      );
+    const d = decide(
+      s,
+      input({ tool: 'open_session', targets: [target({ path: 'c:/work/app' })] }),
+    );
+    expect(d.decision).toBe('allow');
+    expect(d.reason).toEqual({ by: 'override', overrideId: 'o1' });
+  });
+
+  it('reason and ids agree: grantId set iff grant, overrideId set iff override', () => {
+    const denyOpen = assignment('worker', [
+      except('open_session', { kind: 'anywhere' }, { decision: 'deny' }),
+    ]);
+    const override: OneUseOverride = {
+      id: 'o1',
+      sessionId: 's1',
+      tool: 'open_session',
+      target: target({ sessionId: 's2' }),
+      createdAt: iso(NOW),
+    };
+    const scenarios: { s: PolicyState; i: PolicyInput }[] = [
+      { s: state(worker), i: input({ tool: 'open_session' }) },
+      { s: state(worker, { grants: [grant()] }), i: input({ tool: 'open_session' }) },
+      {
+        s: state({ default: denyOpen }, { overrides: [override] }),
+        i: input({ tool: 'open_session', targets: [target({ sessionId: 's2' })] }),
+      },
+      {
+        s: state({ default: denyOpen }, { overrides: [override], grants: [grant()] }),
+        i: input({ tool: 'open_session', targets: [target({ sessionId: 's2' })] }),
+      },
+      { s: state({ default: denyOpen }), i: input({ tool: 'open_session' }) },
+    ];
+    const reasons = new Set<string>();
+    for (const { s: st, i } of scenarios) {
+      const d = decide(st, i);
+      reasons.add(d.reason.by);
+      expect(d.grantId !== null, d.reason.by).toBe(d.reason.by === 'grant');
+      expect(d.overrideId !== null, d.reason.by).toBe(d.reason.by === 'override');
     }
-    for (const sc of scenarios) {
-      const d = decide(s, sc);
-      expect(reasonKeys.has(d.reason.by), sc.tool).toBe(true);
-      expect(d.grantId === null || d.reason.by === 'grant', sc.tool).toBe(true);
-      expect(d.overrideId === null || d.reason.by === 'override', sc.tool).toBe(true);
-    }
+    expect(reasons).toEqual(new Set(['profile', 'grant', 'override', 'deny']));
   });
 });
 
 describe('visibleTools', () => {
-  it('hides unconditional denies only', () => {
-    const visible = visibleTools(state(worker), session(), true, NOW);
+  it('visibleTools hides an unconditional deny', () => {
+    const visible = visibleTools(state(worker), session(), NOW);
     expect(visible).toContain('open_session');
     expect(visible).not.toContain('open_terminal');
-    const scoped = visibleTools(
-      state({
-        default: assignment('worker', [
-          except('read_screen', { kind: 'folder', path: '/x' }, { decision: 'deny' }),
-        ]),
-      }),
-      session(),
-      true,
-      NOW,
-    );
-    expect(scoped).toContain('read_screen');
-    const anywhere = visibleTools(
-      state({
-        default: assignment('worker', [
-          except('read_screen', { kind: 'anywhere' }, { decision: 'deny' }),
-        ]),
-      }),
-      session(),
-      true,
-      NOW,
-    );
-    expect(anywhere).not.toContain('read_screen');
-    expect(visibleTools(state(worker), session(), false, NOW)).toEqual(['list_agents']);
+  });
+
+  it('visibleTools keeps a profile-denied tool that has a scoped allow exception', () => {
+    const s = state({
+      default: assignment('worker', [
+        except('open_terminal', { kind: 'folder', path: '/other' }, { decision: 'allow' }),
+      ]),
+    });
+    expect(visibleTools(s, session(), NOW)).toContain('open_terminal');
+  });
+
+  it('visibleTools keeps a tool denied only for the home folder', () => {
+    const s = state({
+      default: assignment('worker', [
+        except('open_file', { kind: 'folder', path: '/work/app' }, { decision: 'deny' }),
+      ]),
+    });
+    expect(visibleTools(s, session(), NOW)).toContain('open_file');
+  });
+
+  it('visibleTools lists every tool with the master switch off', () => {
+    const profile = BUILT_IN_PROFILES.find((p) => p.id === 'worker');
+    const expected = TOOL_NAMES.filter((t) => profile?.rules[t].decision !== 'deny');
+    expect(visibleTools(state(worker), session(), NOW)).toEqual(expected);
   });
 
   it('visibleTools uses the given now for grant expiry', () => {
@@ -563,8 +640,8 @@ describe('visibleTools', () => {
       { default: assignment('observer') },
       { grants: [grant({ tool: 'open_terminal', expiresAt: iso(NOW + 3_600_000) })] },
     );
-    expect(visibleTools(s, session(), true, NOW)).toContain('open_terminal');
-    expect(visibleTools(s, session(), true, NOW + 7_200_000)).not.toContain('open_terminal');
+    expect(visibleTools(s, session(), NOW)).toContain('open_terminal');
+    expect(visibleTools(s, session(), NOW + 7_200_000)).not.toContain('open_terminal');
   });
 });
 

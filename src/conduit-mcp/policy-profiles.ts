@@ -1,6 +1,7 @@
 // Built-ins are derived from TOOL_SPECS so Worker cannot drift from the access defaults.
 // see POL §4.2
 
+import { folderKey } from '../folder-key';
 import type {
   Assignment,
   AssignmentPoint,
@@ -108,15 +109,8 @@ export function pointKey(p: AssignmentPoint): string {
   }
 }
 
-// Folder comparisons are string-level on both separators so the result never depends on the
-// host platform; CI runs on ubuntu and the same answer must come out on win32.
-const normPath = (p: string): string => {
-  const slashed = p.replace(/\\/g, '/');
-  return slashed.length > 1 ? slashed.replace(/\/+$/, '') : slashed;
-};
-
 const isUnder = (path: string, base: string): boolean =>
-  path === base || path.startsWith(base === '/' ? '/' : `${base}/`);
+  path === base || path.startsWith(base.endsWith('/') ? base : `${base}/`);
 
 export function matchesScope(scope: Scope, target: PolicyTarget | null): boolean {
   if (scope.kind === 'anywhere') return true;
@@ -125,9 +119,9 @@ export function matchesScope(scope: Scope, target: PolicyTarget | null): boolean
     case 'space':
       return target.projectId === scope.projectId;
     case 'folder':
-      return target.path !== null && isUnder(normPath(target.path), normPath(scope.path));
+      return target.folder !== null && isUnder(folderKey(target.folder), folderKey(scope.path));
     case 'path':
-      return target.path !== null && normPath(target.path) === normPath(scope.path);
+      return target.path !== null && folderKey(target.path) === folderKey(scope.path);
     case 'session':
       return target.sessionId !== null && target.sessionId === scope.sessionId;
   }
@@ -141,14 +135,14 @@ function specificity(scope: Scope): readonly [number, number] {
     case 'space':
       return [1, 0];
     case 'folder':
-      return [2, normPath(scope.path).length];
+      return [2, folderKey(scope.path).length];
     case 'path':
     case 'session':
       return [3, 0];
   }
 }
 
-const STRICTNESS: Record<Decision, number> = { allow: 0, ask: 1, deny: 2 };
+export const STRICTNESS: Record<Decision, number> = { allow: 0, ask: 1, deny: 2 };
 const decisionStrictness = (e: Exception): number =>
   e.rule.decision === undefined ? -1 : STRICTNESS[e.rule.decision];
 
