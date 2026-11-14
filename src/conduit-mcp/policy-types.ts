@@ -1,5 +1,6 @@
 // Node-free: the renderer imports these. See spec 2026-11-14-policy-and-permissions §4.
 import type { CliKind, Move, Reach, ToolName, When } from './tool-policy';
+import type { Capabilities, RemotePrincipal } from '../contracts/remote-principal';
 
 export type Decision = 'allow' | 'ask' | 'deny';
 export type BuiltInProfileId = 'observer' | 'worker' | 'lead';
@@ -45,8 +46,6 @@ export type AssignmentPoint =
   | { kind: 'cli'; cli: CliKind }
   | { kind: 'default' };
 
-export type Capability = 'messaging' | 'monitor' | 'drive' | 'orchestrate';
-
 export type Principal =
   | {
       kind: 'session';
@@ -56,14 +55,7 @@ export type Principal =
       homeFolder: string | null;
       projectId: string | null;
     }
-  | {
-      kind: 'remote';
-      handle: string;
-      machineId: string;
-      remoteSessionId: string;
-      trust: 'own';
-      capabilities: readonly Capability[];
-    };
+  | (RemotePrincipal & { capabilities: Capabilities });
 
 export interface PolicyTarget {
   sessionId: string | null;

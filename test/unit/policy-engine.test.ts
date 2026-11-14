@@ -2,14 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   assignmentFor,
   decide,
-  matchesScope,
   reasonText,
   visibleTools,
 } from '../../src/conduit-mcp/policy-engine';
-import { profileById } from '../../src/conduit-mcp/policy-profiles';
+import { matchesScope, profileById } from '../../src/conduit-mcp/policy-profiles';
 import type {
   Assignment,
-  Capability,
   Exception,
   Grant,
   OneUseOverride,
@@ -21,10 +19,11 @@ import type {
   Reason,
 } from '../../src/conduit-mcp/policy-types';
 import { TOOL_NAMES, type ToolName } from '../../src/conduit-mcp/tool-policy';
+import { type Capabilities, principalAddress } from '../../src/contracts/remote-principal';
 
 const NOW = Date.parse('2026-11-14T12:00:00Z');
 const iso = (ms: number) => new Date(ms).toISOString();
-const ALL_CAPS: readonly Capability[] = ['messaging', 'monitor', 'drive', 'orchestrate'];
+const ALL_CAPS: Capabilities = { messaging: true, monitor: true, drive: true };
 
 const session = (over: Partial<Extract<Principal, { kind: 'session' }>> = {}): Principal => ({
   kind: 'session',
@@ -35,11 +34,10 @@ const session = (over: Partial<Extract<Principal, { kind: 'session' }>> = {}): P
   projectId: 'p1',
   ...over,
 });
-const remote = (capabilities: readonly Capability[] = ALL_CAPS): Principal => ({
+const remote = (capabilities: Capabilities = ALL_CAPS): Principal => ({
   kind: 'remote',
-  handle: 'x@m2',
-  machineId: 'm2',
-  remoteSessionId: 'r1',
+  handle: 'claude-3',
+  machineId: 'm-0000000a',
   trust: 'own',
   capabilities,
 });
@@ -356,31 +354,64 @@ describe('decide', () => {
     expect(d.reason).toEqual({ by: 'profile', point: { kind: 'default' }, profileId: 'worker' });
   });
 
-  it('remote own peer with no assignment asks on orchestrate and never applies when', () => {
+  it('remote own peer with no assignment asks on attach_folder and never applies when', () => {
     const r = remote();
     const s = state({});
+    const d = decide(s, input({ principal: r, tool: 'attach_folder' }));
+    expect(d.decision).toBe('ask');
+    expect(d.rule.when).toBe('always');
+    expect(d.reason).toEqual({
+      by: 'exception',
+      point: { kind: 'peer', machineId: 'm-0000000a' },
+      profileId: 'worker',
+    });
+    expect(decide(s, input({ principal: r, tool: 'focus_session' })).rule.reach).toBe('opened');
+  });
+
+  it('remote principal: orchestrate tools always denied, drive tool denied when drive is false, messaging allowed when true', () => {
     for (const tool of [
       'open_session',
       'open_terminal',
-      'send_input',
       'close_session',
-      'attach_folder',
+      'send_input',
+      'read_screen',
     ] as const) {
-      const d = decide(s, input({ principal: r, tool }));
-      expect(d.decision, tool).toBe('ask');
-      expect(d.rule.when, tool).toBe('always');
-      expect(d.reason).toEqual({
-        by: 'exception',
-        point: { kind: 'peer', machineId: 'm2' },
-        profileId: 'worker',
+      expect(decide(state(worker), input({ principal: remote(), tool })), tool).toMatchObject({
+        decision: 'deny',
+        reason: { by: 'floor', floor: 'remote-capability' },
       });
     }
-    expect(decide(s, input({ principal: r, tool: 'close_session' })).rule.reach).toBe('opened');
+    const noDrive = remote({ messaging: true, monitor: true, drive: false });
+    expect(decide(state(worker), input({ principal: noDrive, tool: 'open_file' })).reason).toEqual({
+      by: 'floor',
+      floor: 'remote-capability',
+    });
+    expect(decide(state(worker), input({ principal: remote(), tool: 'open_file' })).decision).toBe(
+      'allow',
+    );
+    expect(
+      decide(
+        state(worker),
+        input({
+          principal: remote({ messaging: true, monitor: false, drive: false }),
+          tool: 'send_message',
+        }),
+      ).decision,
+    ).toBe('allow');
+    expect(
+      decide(
+        state(worker),
+        input({
+          principal: remote({ messaging: false, monitor: true, drive: true }),
+          tool: 'send_message',
+        }),
+      ).reason,
+    ).toEqual({ by: 'floor', floor: 'remote-capability' });
   });
 
   it('remote principal without the capability is denied with floor remote-capability', () => {
-    const r = remote(['messaging']);
-    expect(decide(state(worker), input({ principal: r, tool: 'open_session' }))).toMatchObject({
+    const r = remote({ messaging: true, monitor: false, drive: false });
+    expect(decide(state(worker), input({ principal: r, tool: 'list_agents' }))).toMatchObject({
       decision: 'deny',
       reason: { by: 'floor', floor: 'remote-capability' },
     });
@@ -408,34 +439,64 @@ describe('decide', () => {
       input({ tool: 'open_session' }),
     );
     expect(elsewhere.decision).toBe('ask');
-    expect(matchesScope({ kind: 'folder', path: '/work/app' }, target(), session())).toBe(true);
-    expect(matchesScope({ kind: 'folder', path: '/work/app' }, target(), remote())).toBe(false);
+  });
+
+  it('no-target action applies a home-folder folder exception', () => {
+    const home = state({
+      default: assignment('worker', [
+        except('open_session', { kind: 'folder', path: '/work/app' }, { decision: 'deny' }),
+      ]),
+    });
+    expect(decide(home, input({ tool: 'open_session' })).reason).toEqual({
+      by: 'deny',
+      point: { kind: 'default' },
+    });
+    const elsewhere = state({
+      default: assignment('worker', [
+        except('open_session', { kind: 'folder', path: '/other' }, { decision: 'deny' }),
+      ]),
+    });
+    expect(decide(elsewhere, input({ tool: 'open_session' })).decision).toBe('ask');
+  });
+
+  it('no-target action matches a space exception via the principal projectId', () => {
+    const s = state({
+      default: assignment('worker', [
+        except('open_session', { kind: 'space', projectId: 'p1' }, { decision: 'deny' }),
+      ]),
+    });
+    expect(decide(s, input({ tool: 'open_session' })).decision).toBe('deny');
+    expect(
+      decide(s, input({ tool: 'open_session', principal: session({ projectId: 'p2' }) })).decision,
+    ).toBe('ask');
+  });
+
+  it('remote address is handle@machineId', () => {
+    expect(
+      principalAddress({
+        kind: 'remote',
+        handle: 'claude-3',
+        machineId: 'm-0000000a',
+        trust: 'own',
+      }),
+    ).toBe('claude-3@m-0000000a');
   });
 
   it('folder scope respects the separator boundary', () => {
-    const p = session();
-    expect(matchesScope({ kind: 'folder', path: '/a/b' }, target({ path: '/a/bc' }), p)).toBe(
-      false,
-    );
-    expect(matchesScope({ kind: 'folder', path: '/a/b' }, target({ path: '/a/b/c' }), p)).toBe(
-      true,
-    );
-    expect(matchesScope({ kind: 'folder', path: '/a/b' }, target({ path: '/a/b' }), p)).toBe(true);
+    expect(matchesScope({ kind: 'folder', path: '/a/b' }, target({ path: '/a/bc' }))).toBe(false);
+    expect(matchesScope({ kind: 'folder', path: '/a/b' }, target({ path: '/a/b/c' }))).toBe(true);
+    expect(matchesScope({ kind: 'folder', path: '/a/b' }, target({ path: '/a/b' }))).toBe(true);
     expect(
-      matchesScope(
-        { kind: 'folder', path: 'C:/work/app' },
-        target({ path: 'C:\\work\\app\\src' }),
-        p,
-      ),
+      matchesScope({ kind: 'folder', path: 'C:/work/app' }, target({ path: 'C:\\work\\app\\src' })),
     ).toBe(true);
-    expect(matchesScope({ kind: 'path', path: '/a/b' }, target({ path: '/a/b/c' }), p)).toBe(false);
-    expect(matchesScope({ kind: 'session', sessionId: 's2' }, target({ sessionId: 's2' }), p)).toBe(
+    expect(matchesScope({ kind: 'path', path: '/a/b' }, target({ path: '/a/b/c' }))).toBe(false);
+    expect(matchesScope({ kind: 'session', sessionId: 's2' }, target({ sessionId: 's2' }))).toBe(
       true,
     );
-    expect(matchesScope({ kind: 'space', projectId: 'p1' }, target({ projectId: 'p1' }), p)).toBe(
+    expect(matchesScope({ kind: 'space', projectId: 'p1' }, target({ projectId: 'p1' }))).toBe(
       true,
     );
-    expect(matchesScope({ kind: 'space', projectId: 'p1' }, target({ projectId: 'p2' }), p)).toBe(
+    expect(matchesScope({ kind: 'space', projectId: 'p1' }, target({ projectId: 'p2' }))).toBe(
       false,
     );
   });
@@ -455,7 +516,7 @@ describe('decide', () => {
       scenarios.push(
         input({ tool }),
         input({ tool, masterOn: false }),
-        input({ tool, principal: remote(['messaging']) }),
+        input({ tool, principal: remote({ messaging: true, monitor: false, drive: false }) }),
       );
     }
     for (const sc of scenarios) {
@@ -469,7 +530,7 @@ describe('decide', () => {
 
 describe('visibleTools', () => {
   it('hides unconditional denies only', () => {
-    const visible = visibleTools(state(worker), session(), true);
+    const visible = visibleTools(state(worker), session(), true, NOW);
     expect(visible).toContain('open_session');
     expect(visible).not.toContain('open_terminal');
     const scoped = visibleTools(
@@ -480,6 +541,7 @@ describe('visibleTools', () => {
       }),
       session(),
       true,
+      NOW,
     );
     expect(scoped).toContain('read_screen');
     const anywhere = visibleTools(
@@ -490,9 +552,19 @@ describe('visibleTools', () => {
       }),
       session(),
       true,
+      NOW,
     );
     expect(anywhere).not.toContain('read_screen');
-    expect(visibleTools(state(worker), session(), false)).toEqual(['list_agents']);
+    expect(visibleTools(state(worker), session(), false, NOW)).toEqual(['list_agents']);
+  });
+
+  it('visibleTools uses the given now for grant expiry', () => {
+    const s = state(
+      { default: assignment('observer') },
+      { grants: [grant({ tool: 'open_terminal', expiresAt: iso(NOW + 3_600_000) })] },
+    );
+    expect(visibleTools(s, session(), true, NOW)).toContain('open_terminal');
+    expect(visibleTools(s, session(), true, NOW + 7_200_000)).not.toContain('open_terminal');
   });
 });
 
@@ -533,7 +605,7 @@ describe('reasonText', () => {
     expect(reasonText({ by: 'grant', grantId: 'g1' }, 'allow', names)).toBe('allowed by grant');
     expect(reasonText({ by: 'override', overrideId: 'o1' }, 'allow', names)).toBe('allowed once');
     expect(
-      reasonText({ by: 'deny', point: { kind: 'peer', machineId: 'm2' } }, 'deny', names),
+      reasonText({ by: 'deny', point: { kind: 'peer', machineId: 'm-0000000a' } }, 'deny', names),
     ).toBe('denied by exception (machine)');
   });
 });

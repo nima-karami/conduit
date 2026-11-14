@@ -1,15 +1,15 @@
 // Precedence is POL §4.3: floors, explicit denies, grants, then the most specific assignment.
+import type { Capability } from '../contracts/remote-principal';
 import {
   effectiveRule,
+  matchesScope,
   pointKey,
   profileById,
-  scopeCovers,
   WORKER_PROFILE,
 } from './policy-profiles';
 import type {
   Assignment,
   AssignmentPoint,
-  Capability,
   Decision,
   FloorId,
   Grant,
@@ -22,35 +22,35 @@ import type {
   Principal,
   ProfileId,
   Reason,
-  Scope,
   ToolRule,
 } from './policy-types';
 import { type CliKind, TOOL_NAMES, type ToolName } from './tool-policy';
 
-const CAPABILITY_OF: Record<ToolName, Capability> = {
+// see NET §4.1 (R21)
+const CAPABILITY_OF: Record<ToolName, Capability | 'orchestrate'> = {
   list_sessions: 'messaging',
+  send_message: 'messaging',
   read_inbox: 'messaging',
   read_attachment: 'messaging',
-  send_message: 'messaging',
   request_input: 'messaging',
   wait_request: 'messaging',
   withdraw_request: 'messaging',
   list_requests: 'messaging',
-  wait_sessions: 'monitor',
   list_agents: 'monitor',
-  read_screen: 'monitor',
-  send_input: 'drive',
-  focus_session: 'drive',
+  wait_sessions: 'monitor',
   open_file: 'drive',
   close_files: 'drive',
   open_review: 'drive',
   open_diff: 'drive',
   open_git_history: 'drive',
   open_url: 'drive',
+  focus_session: 'drive',
+  attach_folder: 'drive',
   open_session: 'orchestrate',
   open_terminal: 'orchestrate',
   close_session: 'orchestrate',
-  attach_folder: 'orchestrate',
+  send_input: 'orchestrate',
+  read_screen: 'orchestrate',
 };
 
 const ORCHESTRATE_ASK: readonly ToolName[] = [
@@ -71,7 +71,6 @@ const OWN_PEER_ASSIGNMENT: Assignment = {
 };
 const DEFAULT_ASSIGNMENT: Assignment = { profileId: 'worker', exceptions: [], onScreenOnly: false };
 const ALLOW: Decision = 'allow';
-const NO_TARGET: PolicyTarget = { sessionId: null, path: null, projectId: null };
 const STRICTNESS: Record<Decision, number> = { allow: 0, ask: 1, deny: 2 };
 const FLOOR_TEXT: Record<FloorId, string> = {
   'master-off': 'Conduit tools are off',
@@ -79,10 +78,21 @@ const FLOOR_TEXT: Record<FloorId, string> = {
   'local-to-you': 'always allowed to you',
 };
 
-function resolveTarget(t: PolicyTarget, principal: Principal): PolicyTarget {
-  if (principal.kind === 'session' && t.sessionId === null && t.path === null)
-    return { ...t, path: principal.homeFolder };
-  return t;
+function noTarget(principal: Principal): PolicyTarget {
+  if (principal.kind === 'session')
+    return { sessionId: null, path: principal.homeFolder, projectId: principal.projectId };
+  return { sessionId: null, path: null, projectId: null };
+}
+
+// An action with no target matches the caller's home folder (spec §4.1).
+function resolveTargets(targets: readonly PolicyTarget[], principal: Principal): PolicyTarget[] {
+  if (targets.length === 0) return [noTarget(principal)];
+  return targets.map((t) => (t.sessionId === null && t.path === null ? noTarget(principal) : t));
+}
+
+function remoteAllows(principal: Extract<Principal, { kind: 'remote' }>, tool: ToolName): boolean {
+  const cap = CAPABILITY_OF[tool];
+  return cap !== 'orchestrate' && principal.capabilities[cap];
 }
 
 function forPrincipal(principal: Principal, rule: ToolRule): ToolRule {
@@ -143,22 +153,18 @@ export function assignmentFor(
   return { point: { kind: 'default' }, assignment: DEFAULT_ASSIGNMENT };
 }
 
-export function matchesScope(scope: Scope, target: PolicyTarget, principal: Principal): boolean {
-  return scopeCovers(scope, resolveTarget(target, principal));
-}
-
 export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
   const { principal, tool, masterOn, toYou, now } = input;
   const { point, assignment } = assignmentFor(state, principal);
   const profile = profileById(state, assignment.profileId) ?? WORKER_PROFILE;
-  const targets = input.targets.map((t) => resolveTarget(t, principal));
-  const primary = targets[0] ?? null;
-  const ruleFor = (t: PolicyTarget | null): ToolRule =>
+  const targets = resolveTargets(input.targets, principal);
+  const primary = targets[0];
+  const ruleFor = (t: PolicyTarget): ToolRule =>
     forPrincipal(principal, effectiveRule(profile, assignment, tool, t));
 
   if (!masterOn && tool !== 'list_agents')
     return done('deny', { by: 'floor', floor: 'master-off' }, ruleFor(primary));
-  if (principal.kind === 'remote' && !principal.capabilities.includes(CAPABILITY_OF[tool]))
+  if (principal.kind === 'remote' && !remoteAllows(principal, tool))
     return done('deny', { by: 'floor', floor: 'remote-capability' }, ruleFor(primary));
   if (
     principal.kind === 'session' &&
@@ -167,8 +173,8 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
   )
     return done('allow', { by: 'floor', floor: 'local-to-you' }, ruleFor(primary));
 
-  const overrideFor = (t: PolicyTarget | null): OneUseOverride | undefined =>
-    principal.kind === 'session' && t !== null
+  const overrideFor = (t: PolicyTarget): OneUseOverride | undefined =>
+    principal.kind === 'session'
       ? state.overrides.find(
           (o) =>
             o.sessionId === principal.sessionId &&
@@ -178,14 +184,13 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
         )
       : undefined;
 
-  const evaluated = (targets.length > 0 ? targets : [null]).map((t) => {
+  const evaluated = targets.map((t) => {
     const rule = ruleFor(t);
     const fromException = assignment.exceptions.some(
-      (e) => e.tool === tool && e.rule.decision !== undefined && scopeCovers(e.scope, t),
+      (e) => e.tool === tool && e.rule.decision !== undefined && matchesScope(e.scope, t),
     );
     const explicitDeny = rule.decision === 'deny' && fromException;
     return {
-      target: t,
       rule,
       fromException,
       override: explicitDeny ? overrideFor(t) : undefined,
@@ -196,13 +201,12 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
   const blocked = evaluated.find((e) => e.explicitDeny && e.override === undefined);
   if (blocked) return done('deny', { by: 'deny', point }, blocked.rule);
 
-  const grantTargets = targets.length > 0 ? targets : [NO_TARGET];
   const grant = state.grants.find(
     (g) =>
       isLiveGrant(g, now) &&
       g.tool === tool &&
       whoMatches(g.who, principal) &&
-      grantTargets.every((t) => matchesScope(g.on, t, principal)),
+      targets.every((t) => matchesScope(g.on, t)),
   );
   if (grant) return done('allow', { by: 'grant', grantId: grant.id }, ruleFor(primary), grant.id);
 
@@ -227,11 +231,12 @@ export function visibleTools(
   state: PolicyState,
   principal: Principal,
   masterOn: boolean,
+  now: number,
 ): ToolName[] {
   return TOOL_NAMES.filter(
     (tool) =>
-      decide(state, { principal, tool, targets: [], masterOn, toYou: false, now: Date.now() })
-        .decision !== 'deny',
+      decide(state, { principal, tool, targets: [], masterOn, toYou: false, now }).decision !==
+      'deny',
   );
 }
 

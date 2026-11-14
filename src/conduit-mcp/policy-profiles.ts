@@ -118,8 +118,7 @@ const normPath = (p: string): string => {
 const isUnder = (path: string, base: string): boolean =>
   path === base || path.startsWith(base === '/' ? '/' : `${base}/`);
 
-/** A null target matches only 'anywhere'; the engine resolves home-folder targets before calling. */
-export function scopeCovers(scope: Scope, target: PolicyTarget | null): boolean {
+export function matchesScope(scope: Scope, target: PolicyTarget | null): boolean {
   if (scope.kind === 'anywhere') return true;
   if (target === null) return false;
   switch (scope.kind) {
@@ -169,7 +168,7 @@ export function effectiveRule(
 ): ToolRule {
   const rule: ToolRule = { ...profile.rules[tool] };
   const applicable = a.exceptions
-    .filter((e) => e.tool === tool && scopeCovers(e.scope, target))
+    .filter((e) => e.tool === tool && matchesScope(e.scope, target))
     .sort(applyOrder);
   for (const e of applicable) {
     if (e.rule.decision !== undefined) rule.decision = e.rule.decision;
