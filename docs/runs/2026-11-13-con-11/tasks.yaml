@@ -8,25 +8,40 @@
   status: done
   gates: ["npm run verify"]
   evidence: [docs/runs/2026-11-13-con-11/evidence/verify-s0.log]
-  commit: ""   # set after commit
+  commit: 428e18a9
 - id: lane-A-scheduler
-  status: todo
+  status: re-review
+  commit_lane_fix: b81ce3e8
+  notes: "review#1 REVISE 2 blockers (deferred job stranded on PTY loss; armResume keeps job waiting → no timer/early delivery) + 6 should-fix; rulings: parse(blob,{maxAttempts}) clamps; serialize(file, now); limit onFired; projection; sendOnce propagates. retry 1/2 sent"
+  commit_lane: e3db4857 (+ b913fbe7 R13 contract cherry-pick)
   topology: delegated (Haiku, worktree)
   deps: [S0-contracts]
 - id: lane-B-delivery
-  status: todo
+  status: re-review
+  commit_lane_fix2: 81afea76
+  review2: "REVISE 3 blockers (over-limit close skips discard confirm; constants self-compared — conductor-caused; sequence quiet not proven awaited); retry 2/2 sent"
+  commit_lane_fix: a2791e37
+  commit_lane: cad64f17
+  notes: "review#1 REVISE 2 blockers (unbound runtime.on breaks createRuntimeServices — reproduced; floor test cannot fail) + 4 should-fix; retry 1/2 sent. Conductor-owned: conduit-mcp-gate.e2e.mjs budget uses SUBMIT_GAP_MS=120, fix in E"
   topology: delegated (Haiku, worktree)
   deps: [S0-contracts]
 - id: lane-C-claude
-  status: todo
+  status: re-review
+  commit_lane_fix: dfb4afd5
+  commit_lane: 0be2d3e4
+  notes: "review#1 REVISE 1 blocker = plan defect (shell:true → cmd.exe on win32; plan corrected to statusLineShell POSIX) + 3 should-fix + 3 nit; retry 1/2 sent"
   topology: delegated (Haiku, worktree)
   deps: [S0-contracts]
 - id: lane-D-codex-rules
-  status: todo
+  status: re-review
+  commit_lane_fix: 87956382
+  commit_lane: 36a21488
+  notes: "review#1 REVISE 3 blockers (zone-math copy; Codex rule cannot capture a date; oldest notice wins) + 6 should-fix; map widened: timed-messages.ts exports wallTimeToInstant/wallDateIn; matchStuckRule replaces findRuleMatch. retry 1/2 sent"
   topology: delegated (Haiku, worktree)
   deps: [S0-contracts]
 - id: E-integration
-  status: todo
+  status: in_progress
+  notes: "E.1 settings, E.2 session override, E.3 attention setResumeIssue, E.4 limit-monitor (+R13) written uncommitted in main worktree; monitor tests await lane A"
   topology: solo (conductor)
   deps: [lane-A-scheduler, lane-B-delivery, lane-C-claude, lane-D-codex-rules]
 - id: E7-e2e
@@ -35,3 +50,5 @@
 - id: report
   status: todo
   deps: [E7-e2e]
+
+# lane worktrees: /tmp/claude-1000/-home-namemenima-projects--wt-conduit-CON-11/6af92499-c391-459b-8c04-ceb0878cb91d/scratchpad/lanes/{A,B,C,D} on branches CON-11-lane-{A..D}, base 428e18a9, node_modules symlinked

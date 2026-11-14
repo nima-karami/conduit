@@ -491,8 +491,9 @@ Behaviour:
 - `statusline`: read stdin JSON; in parallel (a) if `rate_limits` present, post
   `{event:'StatusLine', payload:{rate_limits}}` with a 300 ms budget, (b) resolve the user's status
   line with the same precedence as `readUserStatusLine` (projectDir = `workspace.project_dir` ||
-  `cwd`; configDir = `CLAUDE_CONFIG_DIR` || `~/.claude`), run it with `child_process.spawn(cmd,
-  {shell: true})`, stdin = the same JSON, 5 s timeout; print its stdout unchanged. No user command
+  `cwd`; configDir = `CLAUDE_CONFIG_DIR` || `~/.claude`), run it through the POSIX shell Claude
+  uses (`statusLineShell`: win32 → `CLAUDE_CODE_GIT_BASH_PATH` || `bash` `-c`; else `/bin/sh -c`;
+  never cmd.exe — corrected after review), stdin = the same JSON, 5 s timeout; print its stdout unchanged. No user command
   → print nothing. Server unreachable → still prints the user's output. Exit 0 always.
 **Steps:** failing tests 'hook posts one line and exits 0', 'no token exits 0 without connecting',
 'unreachable endpoint exits 0 within 2 s', 'hook prints nothing', 'statusline prints the user
@@ -660,6 +661,12 @@ doesn't fit reality — that task **stops** and fixing the misaligned piece beco
 a shim, second copy, special case, widened type, fallback, or an override patched in place of its
 semantic source. An executor that hits this reports to the conductor with the fix that keeps the
 locked decision, and does not edit outside its `Files:`.
+
+## Amendments after review (conductor, 2026-11-14)
+- B: map widened by two construction-site test edits (conduit-mcp-host.test.ts, server-runtime-spawn.test.ts); dialog count over the limit shows the raw length.
+- A: `parseSchedulerFile(blob, { maxAttempts })` clamps (no `now`); `serializeSchedulerFile(file, now)`; limit deliveries emit `onFired`; `toTimedMessage` maps limit jobs (proposed/skipped/failed/cancelled → null; in-flight/done → done, firedCount 1); `sendOnce` propagates a rejected deliver; R13 `recheck(jobId)` and `{go:'wait'}`.
+- C: the user's status line runs through `statusLineShell(platform, env, command)` (win32 → Git Bash `bash -c`; else `/bin/sh -c`), never cmd.exe; the TS and .cjs precedence share one case table at `test/helpers/claude-status-line-cases.ts`; the endpoint keeps the 64 KiB cap for any first line that has not shown the `{"conduitHook"` prefix within 64 KiB.
+- D: `src/timed-messages.ts` exports `wallTimeToInstant` and `wallDateIn` (wrappers over the existing private zone helpers); `limit-rules.ts` exports `matchStuckRule(compiled, cli, rows)` for `detectStuckScreen`; rules take the LAST match on screen; the Codex reset group also accepts an optional IANA zone suffix; `parseLimitRulesFile` returns `version: 'read' | 'newer'` and throws on corrupt or unusable files.
 
 ## Decisions Needed
 - [normal] `SignalSource` gains `'attention'` and `'human-input'` (R3/R4 name them) — default taken: add.

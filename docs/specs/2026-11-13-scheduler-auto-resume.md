@@ -279,6 +279,15 @@ interface LimitRule {
   matchers `quota_auto_resume_fired|stale|disabled` exist, and the statusLine JSON field names
   (from a startup render, or from the docs if no render happens without a request). Anything not
   confirmable is built from fixtures and listed in the run report.
+- **R13 Busy is not a resume (replaces R3's busy edge and R4's busy-skip; lead ruling 2026-11-14).**
+  Attention's `busy` means "any output in 1.5 s", so a repaint looks like a turn. (1) The attention
+  busy edge emits `resumed` only for a session with no live structured adapter (rules-only CLIs, a
+  Codex session not yet bound), and only when busy holds continuously for ≥ 2 s. Claude sessions
+  and bound Codex sessions resume only from structured signals or human input (R4). (2) Busy at fire
+  time never skips: the job goes `waiting` ("session busy"), is re-checked once output has been
+  quiet for 3 s, for at most 2 min; on quiet the full pre-fire check runs again and delivers if it
+  passes; busy for the whole 2 min → skipped "session kept working", episode resumed. Each outcome
+  goes in the job history.
 
 ## 4. Edge cases & failure modes
 
