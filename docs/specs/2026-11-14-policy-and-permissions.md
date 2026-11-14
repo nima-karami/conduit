@@ -213,8 +213,10 @@ A = allow, ? = ask, – = deny. Reach and conditions are today's unless shown.
      its link enables. The mapping of all 25 tools to capabilities is NET §4.1 (R21);
    - (e) `answer_request` / `escalate_request` only by an ancestor in the requester's `opened_by`
      chain (REQ's max depth applies), never a sibling or descendant (R19).
-2. **Explicit denies** (an exception or rule with deny). No ask is raised, and no ordinary grant
-   passes it. **One-use override (POL-D16):** made from that deny's own Why panel, it passes once,
+2. **Explicit denies** (a deny exception; v1 user-made rules with deny). No ask is raised, and no
+   ordinary grant passes it. **A profile deny is not an explicit deny:** it is decided at step 4, so
+   a grant can pass it — that is the point of grants (a Share passes the Guest profile). Only
+   floors and exception denies sit above grants. **One-use override (POL-D16):** made from that deny's own Why panel, it passes once,
    for that principal, action and target. Never for floors or guests.
 3. **Grants** matching principal, action, target scope and time (not suspended).
 4. **The most specific assignment:** session > peer > agent kind > default. Within it, its exceptions
