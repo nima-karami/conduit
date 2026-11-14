@@ -117,6 +117,11 @@ export const REQ_STR = {
     filtered: (names: string, shown: number, total: number) =>
       `Filtered: ${names} · ${shown} of ${total} shown`,
   },
+  reqTab: {
+    title: 'Request',
+    gone: 'This request no longer exists',
+    goneHint: 'It was answered or closed. Find it under History in Needs you.',
+  },
   reqTpl: {
     close: 'Close',
     answerLabel: 'Your answer',
