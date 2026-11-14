@@ -34,7 +34,7 @@ export interface ListenOptions {
 const HANDSHAKE_TIMEOUT_MS = 10_000;
 
 /** Shared by both ends: TLS 1.3 only, mutual certificates, no CA (the pin replaces it). */
-export function tlsOptions(cert: string, key: string) {
+function tlsOptions(cert: string, key: string) {
   return {
     cert,
     key,
@@ -45,7 +45,7 @@ export function tlsOptions(cert: string, key: string) {
 }
 
 /** The peer's raw Ed25519 key from its certificate, or null for none or another key type. */
-export function peerKeyOf(sock: tls.TLSSocket): Buffer | null {
+function peerKeyOf(sock: tls.TLSSocket): Buffer | null {
   const cert = sock.getPeerX509Certificate();
   if (!cert) return null;
   try {
