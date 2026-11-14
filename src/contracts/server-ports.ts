@@ -9,6 +9,7 @@
 import type { StuckScreen } from '../cli-stuck-screens';
 import type { ControlDeps, McpOpenRequest } from '../conduit-mcp/control-tools';
 import type { AgentCli, UserInstallState } from '../conduit-mcp/install-types';
+import type { BlockedKind } from '../conduit-mcp/request-types';
 import type { CliPolicyLayers, GlobalPolicy } from '../conduit-mcp/tool-policy';
 import type { CompiledRules } from '../limit-rules';
 import type { PtyWriter } from '../pty-writer';
@@ -156,6 +157,18 @@ export type AttentionEdge = ServerEvents['attention.edge'];
  */
 /** The legacy flags plus the new Needs-you reason and completion counter. */
 export type ServerAttentionSnapshot = ActivitySnapshot & SessionAttentionFacts;
+
+/**
+ * What the request queue needs to raise or resolve `attend` and `scheduler` requests
+ * (docs/specs/2026-11-14-user-input-requests.md §4.1, REQ-D9 measured in docs/runs/2026-11-14-CON-21/osc7501.md).
+ * `blocked` is false unless the program's own OSC 7501 report is `blocked`.
+ */
+export interface NeedsYouFact {
+  sessionId: string;
+  blocked: BlockedKind | false;
+  visible: boolean;
+  resumeIssue: string | null;
+}
 
 export interface AttentionPort
   extends Pick<SessionActivity, 'lastOutputAt' | 'setVisible' | 'dropWindow'> {
