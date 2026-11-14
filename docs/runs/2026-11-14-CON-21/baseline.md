@@ -1,0 +1,22 @@
+# CON-21 baseline
+
+Base commit: 73ffc4694ef61a54382f875659d565d4362ebbcc (before any CON-21 code).
+Gate: `npm run verify` → exit 0. Test Files 753 passed; Tests 11630 passed, 2 skipped. No failures.
+
+## Gate-definition hashes (sha256)
+```
+5be19e446696e69fa681b041d004f8a599ab03fb943889244ea710f092fadda9  package.json
+9b3368072848f3d317de3ff41acf172e959e81ab13561404a6f98744597cfe3a  vitest.config.ts
+4ade99cbd9fd6d3871622b1870fe2d41eb5857d2b4b22b38e14a50c25c9c8eba  biome.json
+d0f7be6c047caa7287cb5087ba9e3abe52ce90b31d0b412b4415a1c59062cb41  tsconfig.json
+e56383fff09ac3dc6db1865ccdfe7660225b2fe5d308cc24143a526e0d37b43d  tsconfig.webview.json
+29325dd927cc30ca9f1da663c6cc686669f7449b0649a3b9f2af3ddf98965f8f  tools/verify-quick.mjs
+f9874528b7c608c95d04d1ba5a5833c53de13ea4f4e3c41f0c7f9403839af5e6  tools/tray-check.mjs
+d3916f90d1f603c3620df074634085666d4ebc909bed17dbed3b63a050e686fe  tools/check-e2e-sleeps.mjs
+e2b7c9733375d7182af2033bda9a7d2a05d0db5eef5be53d26eb7b5f3df8fbc3  .husky/pre-commit
+524eca2f359cde72bca931cacf3708e2d982baf62bcec49d8837d04517d5d814  .github/workflows/build-mac.yml
+9b59450ffb388052541bd9afe798f81a0cfc4f730c13bb862bd4f21a3b67431a  .github/workflows/e2e.yml
+482390416cc3c41a5ff23a708893cec22a89678d652552a832c6a2d8189bb90b  .github/workflows/release.yml
+17bfcd8fb883cbbaa1fdc5094484a06ec295c6baf274ab01b5a1c4b7fb415572  .github/workflows/verify.yml
+test/unit tree: 3fc574e51a9896837318263d9ee22405ee3beff9f24317d608e5630539a5522c
+```
