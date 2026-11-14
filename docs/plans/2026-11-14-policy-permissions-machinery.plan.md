@@ -292,7 +292,7 @@ export interface LegacyPolicy { global: GlobalPolicy; byCli: CliPolicyLayers; se
 export function migrateLegacyPolicy(legacy: LegacyPolicy): Pick<PolicyFile, 'assignments' | 'migratedFrom' | 'notes'>;
 // policy-projection.ts
 export function projectLegacyLayer(state: PolicyState, point: AssignmentPoint, lower: AssignmentPoint | null): PolicyLayer;
-export function applyLegacyPatch(state: PolicyState, point: AssignmentPoint, lower: AssignmentPoint | null, tool: ToolName, patch: ToolPolicyPatch): Assignment;
+export function applyLegacyPatch(state: PolicyState, point: AssignmentPoint, lower: AssignmentPoint | null, tool: ToolName, patch: ToolPolicyPatch): Assignment | null;  // null: refused, a scoped exception is present
 ```
 - **Migration is exact by construction.** For each layer it first tries Lead with `onScreenOnly: true` and no exceptions. It keeps that only if `effectiveRule` equals today's `resolvePolicy` result for all 23 tools and every field. Otherwise it writes Worker plus one anywhere-scoped exception per field that differs.
 - **What "today" means for each layer.** Today's value for a session is `resolvePolicy(tool, {session: layer, cli: byCli[cli], global})`. For a kind it is `resolvePolicy(tool, {cli: byCli[k], global})`, and for the default `resolvePolicy(tool, {global})`. The migrated assignment's effective rules (anywhere scope) must equal those for every tool and field, because an assignment replaces the lower points wholesale.
@@ -304,7 +304,7 @@ export function applyLegacyPatch(state: PolicyState, point: AssignmentPoint, low
   - The tool's anywhere exception then holds the field only if the profile's value differs from the target; otherwise the field is removed. Empty exceptions are dropped.
   - A point with no assignment starts as a full copy of `lower`'s assignment: same profile, **all** exceptions including scoped ones, same `onScreenOnly`.
   - The access↔decision map lives once, in `policy-profiles.ts`.
-  - **Scopes (re-review S2-1).** The old editors know only "anywhere", so a legacy edit of (tool, field) is authoritative at every scope: it also removes that field from every scoped exception of that tool. Clearing `onScreenOnly` sets `when:'viewing'` on every scoped exception that carries a `when`, for every tool, so no target loosens. A patch for a field the tool doesn't have (`TOOL_SPECS[tool].fields`) is skipped. **Inherit (re-review 2):** `'inherit'` makes the point equal `lower` for that (tool, field) at every scope. The field is removed from all of the point's exceptions for that tool, then each of `lower`'s exceptions for that tool that carries the field is copied, same scope, field only. The anywhere value is then set from `lower`'s effective value where the point's profile differs. A set value stays authoritative at every scope.
+  - **Scoped exceptions: refused (decision after three review rounds).** The old editors cannot represent scopes, and nothing in this build creates a scoped exception: migration writes anywhere exceptions only, and CON-25 adds scoped ones later. So `applyLegacyPatch` returns `null` (refused) when the point's assignment or `lower`'s assignment has any exception whose scope is not anywhere, and the service answers `{ok:false, error:'scoped'}`. The editor then shows its existing failed-save state. With scopes out, set and inherit are reasoned at target null only, which reviews verified exact. A patch for a field the tool doesn't have (`TOOL_SPECS[tool].fields`) is skipped.
 - **What gets migrated.** The global layer migrates to the default assignment only when it differs from the defaults. The CLI layers become kind assignments, and the session layers become session assignments.
 - **The on-screen offer.** `notes.onScreenOnlyOffered` lists the session ids that got Lead with `onScreenOnly`. CON-25 shows the one-time offer from it.
 
@@ -321,7 +321,7 @@ export interface PolicyService {
   noteDecision(activityId: string, input: Omit<PolicyInput, 'now'>, decision: PolicyDecision): void;  // remembers explicit denies for allowOnce
   visibleTools(p: Principal): ToolName[];
   setAssignment(point: AssignmentPoint, profileId: ProfileId | null): { ok: true } | { ok: false; error: 'unknown-profile' | 'read-only' };
-  applyLegacyPatch(point: AssignmentPoint, lower: AssignmentPoint | null, tool: ToolName, patch: ToolPolicyPatch): { ok: true } | { ok: false; error: 'read-only' };
+  applyLegacyPatch(point: AssignmentPoint, lower: AssignmentPoint | null, tool: ToolName, patch: ToolPolicyPatch): { ok: true } | { ok: false; error: 'read-only' | 'scoped' };
   createGrant(choice: GrantChoice, p: Principal, tool: ToolName, target: PolicyTarget, requestId: string | null): Grant | null;
   revokeGrant(id: string): boolean;
   allowOnce(activityId: string): { ok: true } | { ok: false; error: 'not-found' | 'not-overridable' };
