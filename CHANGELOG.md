@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.64.1] — 2026-11-14
+
 ### Fixed
 - A "JavaScript error occurred in the main process" box no longer appears, and headless runs no longer crash, when git quits before reading the input Conduit gives it (for example, checking ignored files in a folder that isn't a git repository).
 
