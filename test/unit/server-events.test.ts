@@ -58,7 +58,7 @@ function rig(over: Partial<ServerEventRouterDeps> = {}) {
     onRuntime: () => {},
     osAttention: () => osAttention,
     anyWindowFocused: () => false,
-    notifyAttention: (id, kind) => trace.push(`notify:${id}:${kind}`),
+    notifyAttention: (id, edge) => trace.push(`notify:${id}:${edge.kind}`),
     flash: (id) => trace.push(`flash:${id}`),
     place: (e) => {
       owners.set(e.sessionId, 2);
@@ -202,6 +202,24 @@ describe('server-events router', () => {
     r.setOsAttention(true);
     r.router.event(ev('attention.edge', { sessionId: 's1', kind: 'bell' }));
     expect(r.trace).toEqual(['notify:s1:bell']);
+  });
+
+  it('a request edge reaches notifyAttention with its kind and count', () => {
+    const seen: Array<{ id: string; edge: unknown }> = [];
+    const r = rig({
+      notifyAttention: (id, edge) => {
+        seen.push({ id, edge });
+      },
+    });
+    r.router.event(
+      ev('attention.edge', { sessionId: 's1', kind: 'request', requestKind: 'review', count: 4 }),
+    );
+    expect(seen).toEqual([
+      {
+        id: 's1',
+        edge: { sessionId: 's1', kind: 'request', requestKind: 'review', count: 4 },
+      },
+    ]);
   });
 
   it('a snapshot re-posts pending asks to their owners', () => {

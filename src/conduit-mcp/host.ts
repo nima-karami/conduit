@@ -79,6 +79,7 @@ import {
 import { composeUnreadBanner } from './notice-text';
 import { type AttentionRaise, bannerCandidates, createNotifier, type Notifier } from './notifier';
 import { createRequestsIo } from './request-file-fs';
+import { createRequestNotices } from './request-notices';
 import { createRequestService, type RequestService } from './request-service';
 import type { QuestionMessage, SessionNeedsYou } from './request-sources';
 import { createScreenToolHandlers } from './screen-tools';
@@ -625,14 +626,24 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   const answerOnly = (t: ThreadSummary): boolean =>
     t.messageCount === 1 && store.thread(t.threadId).every((m) => m.requestId !== undefined);
 
+  const requestTimers = {
+    setTimer: deps.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms)),
+    clearTimer:
+      deps.clearTimer ??
+      ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout> | undefined)),
+  };
+  const notices = createRequestNotices({
+    ...requestTimers,
+    away: () => requestService.presence().state === 'away',
+    emit: (e) => deps.emit('attention.edge', e),
+  });
+
   const requestService: RequestService = createRequestService({
     io: createRequestsIo(path.join(deps.dir, 'requests.json')),
     machineId: loadMachineId(deps.dir),
     now,
     newId: () => `r_${base32(randomBytes(8))}`,
-    setTimer: deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms)),
-    clearTimer:
-      deps.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout> | undefined)),
+    ...requestTimers,
     warn: (message, data) =>
       deps.log.warn('conduit-mcp', message, {
         detail: data instanceof Error ? String(data) : data,
@@ -697,6 +708,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       return true;
     },
     onChanged: () => scheduleBroadcast(),
+    onNew: (r) => notices.added(r),
     scheduler: deps.domain.limit,
     replyToQuestion: async (r, text) => {
       const sent = await tools.sendMessage(
@@ -2477,6 +2489,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       sessionWaits.dispose();
       flow.dispose();
       for (const c of conns.values()) c.close();
+      notices.dispose();
       await requestService.stop();
       const storeStopped = store.stop();
       await endpoint?.close();

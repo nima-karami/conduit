@@ -76,6 +76,7 @@ interface Harness {
   warnings: string[];
   deliver: ReturnType<typeof vi.fn<(r: RequestRecord) => Promise<boolean>>>;
   reply: ReturnType<typeof vi.fn<(r: RequestRecord, text: string) => Promise<boolean>>>;
+  onNew: ReturnType<typeof vi.fn<(r: RequestRecord) => void>>;
   scheduler: {
     resumeNow: ReturnType<typeof vi.fn<(sessionId: string) => Promise<boolean>>>;
     autoResumeOn: ReturnType<typeof vi.fn<(sessionId: string) => boolean>>;
@@ -90,6 +91,7 @@ function harness(opts: { initial?: string | null; budgetMs?: number } = {}): Har
   let seq = 0;
   const deliver = vi.fn(async (_r: RequestRecord) => true);
   const reply = vi.fn(async (_r: RequestRecord, _text: string) => true);
+  const onNew = vi.fn((_r: RequestRecord) => undefined);
   const scheduler = {
     resumeNow: vi.fn(async (_sessionId: string) => true),
     autoResumeOn: vi.fn((_sessionId: string) => true),
@@ -109,11 +111,12 @@ function harness(opts: { initial?: string | null; budgetMs?: number } = {}): Har
     budgetMs: () => opts.budgetMs ?? 300_000,
     deliver,
     onChanged: () => {},
+    onNew,
     replyToQuestion: reply,
     scheduler,
   });
   service.start();
-  return { c, service, store, warnings, deliver, reply, scheduler };
+  return { c, service, store, warnings, deliver, reply, onNew, scheduler };
 }
 
 const aliceFact = (over: Partial<SessionNeedsYou> = {}): SessionNeedsYou => ({
@@ -266,6 +269,28 @@ describe('request service: waits and answers', () => {
       ok: false,
       error: { code: 'not_in_session' },
     });
+  });
+});
+
+describe('request service: onNew', () => {
+  it('onNew fires for a new request and not for an attached repeat', () => {
+    const h = harness();
+    void h.service.tools.requestInput(alice, ask(), key(1));
+    const id = onlyOpenId(h.service);
+    h.service.cancelCalls(() => true);
+    void h.service.tools.requestInput(alice, ask(), key(2));
+    expect(h.service.ui().open[0]?.id).toBe(id);
+    expect(h.onNew).toHaveBeenCalledTimes(1);
+    expect(h.onNew).toHaveBeenCalledWith(expect.objectContaining({ id, session: 's-alice' }));
+  });
+
+  it('onNew fires for a system request', () => {
+    const h = harness();
+    h.service.onAttention([aliceFact({ blocked: 'permission' })]);
+    expect(h.onNew).toHaveBeenCalledTimes(1);
+    expect(h.onNew).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'attend', source: 'observed' }),
+    );
   });
 });
 

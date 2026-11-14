@@ -51,6 +51,7 @@ export interface RequestServiceDeps {
   budgetMs(caller: Caller): number;
   deliver(r: RequestRecord): Promise<boolean>;
   onChanged(): void;
+  onNew(r: RequestRecord): void;
   replyToQuestion(r: RequestRecord, text: string): Promise<boolean>;
   scheduler: {
     resumeNow(sessionId: string): Promise<boolean>;
@@ -320,6 +321,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     const stamp: Stamp = { requester: caller.handle, ...deps.stampOf(sessionId) };
     const outcome = queue.createAgent(stamp, input);
     if (outcome.kind === 'refused') return { ok: false, error: outcome.error };
+    if (outcome.kind === 'created') deps.onNew(outcome.request);
     return awaitRequest(caller, sessionId, outcome.request.id, input.waitS, key);
   };
 
@@ -402,7 +404,9 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
         a.sessionId === null
           ? { session: null, space: null, lead: null }
           : deps.stampOf(a.sessionId);
-      queue.createSystem({ requester: a.requester, ...place }, { source: a.source, ...a.fields });
+      deps.onNew(
+        queue.createSystem({ requester: a.requester, ...place }, { source: a.source, ...a.fields }),
+      );
     }
   };
 

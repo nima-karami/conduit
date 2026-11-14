@@ -33,7 +33,7 @@ export interface ServerEventRouterDeps {
   /** The UI key that gates OS attention (D9): the server emits edges unconditionally. */
   osAttention(): boolean;
   anyWindowFocused(): boolean;
-  notifyAttention(sessionId: string, kind: ServerEvents['attention.edge']['kind']): void;
+  notifyAttention(sessionId: string, edge: ServerEvents['attention.edge']): void;
   flash(sessionId: string): void;
   /** Before the `sessions.changed` that first lists the session (C2 sessions.opened). */
   place(e: ServerEvents['sessions.opened']): void;
@@ -166,7 +166,7 @@ export function createServerEventRouter(d: ServerEventRouterDeps): {
           enabled: d.osAttention(),
         })
       )
-        d.notifyAttention(data.sessionId, data.kind);
+        d.notifyAttention(data.sessionId, data);
     },
     'attention.flash': (data) => {
       if (d.osAttention()) d.flash(data.sessionId);
