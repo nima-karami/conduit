@@ -184,7 +184,12 @@ export function harness(opts: HarnessOptions = {}) {
   const lastSizes = new Map<string, TermGeometry>();
   const written: { sessionId: string; data: string; generation?: number }[] = [];
   const drafts: { sessionId: string; data: string }[] = [];
-  const submitted: { sessionId: string; text: string; bracketed?: boolean }[] = [];
+  const submitted: {
+    sessionId: string;
+    text: string;
+    bracketed?: boolean;
+    settle?: 'gap' | 'quiet';
+  }[] = [];
   const resumeIssues = new Map<string, string | null>();
   const attentionListeners = new Set<() => void>();
   const state = {
@@ -266,6 +271,7 @@ export function harness(opts: HarnessOptions = {}) {
           sessionId,
           text,
           ...(o?.bracketed === undefined ? {} : { bracketed: o.bracketed }),
+          ...(o?.settle === undefined ? {} : { settle: o.settle }),
         });
         return 'submitted';
       },

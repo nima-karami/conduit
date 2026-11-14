@@ -33,6 +33,10 @@
 - D9 (conductor): bracketed-paste mode is read from hc's paint events too (a CLI that enables it at
   startup shows it only there) — found by the claude-resumes-after-reset e2e.
 
+- D10 (lead 2026-11-14, R5 amended): `outputQuiet` is opt-in (`settle: 'quiet'`), Scheduler deliveries
+  only; notices and every other submit keep the fixed 120 ms gap. Cause: remote --full run 43553416254
+  failed `conduit-mcp-midturn` deterministically (2/2) — a notice into a busy session waited 5 s.
+
 ## User decisions
 - Executors are Haiku subagents (human, via lead). Risk: weak on slow/flaky suites and diagnosis.
 

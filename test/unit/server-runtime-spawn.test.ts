@@ -317,7 +317,7 @@ describe('TerminalRuntime spawn', () => {
       .toEqual(['x', 'hi', '\r']);
   });
 
-  it('a session output event delays Enter until the output is quiet', async () => {
+  it("with settle 'quiet' a session output event delays Enter until the output is quiet", async () => {
     await started();
     h.fake.paint = Buffer.from('PAINT');
     await spawned();
@@ -328,7 +328,7 @@ describe('TerminalRuntime spawn', () => {
       h.fake.frames
         .filter((f) => f.channel === channel && f.kind === FrameKind.Data)
         .map((f) => Buffer.from(f.payload).toString());
-    const done = typing.submit('s1', 'hi');
+    const done = typing.submit('s1', 'hi', { settle: 'quiet' });
     await expect.poll(() => written()).toEqual(['hi']);
     // The echo must land inside the quiet window, or the test proves nothing.
     expect(written()).not.toContain('\r');

@@ -18,6 +18,12 @@ export interface SubmitEnterOptions {
 
 export interface SubmitOptions extends SubmitHooks {
   bracketed?: boolean;
+  /**
+   * When the Enter follows the text. `gap` (default): the fixed ENTER_FLOOR_MS, as notices and every
+   * other host write always had. `quiet`: also wait for the echo to settle — Scheduler deliveries
+   * only, whose long pastes a TUI may still be drawing (spec 2026-11-13 R5, amended).
+   */
+  settle?: 'gap' | 'quiet';
 }
 
 export interface PtyWriterDeps {
@@ -65,11 +71,13 @@ async function hookAllows(hook: (() => boolean | Promise<boolean>) | undefined):
 export function createPtyWriter(deps: PtyWriterDeps): PtyWriter {
   const chains = new Map<string, Promise<unknown>>();
 
-  const echoSettled = (sessionId: string) =>
-    Promise.all([
-      deps.sleep(ENTER_FLOOR_MS),
-      deps.outputQuiet(sessionId, ECHO_QUIET_MS, ECHO_MAX_MS),
-    ]);
+  const beforeEnter = (sessionId: string, settle: SubmitOptions['settle']) =>
+    settle === 'quiet'
+      ? Promise.all([
+          deps.sleep(ENTER_FLOOR_MS),
+          deps.outputQuiet(sessionId, ECHO_QUIET_MS, ECHO_MAX_MS),
+        ])
+      : deps.sleep(ENTER_FLOOR_MS);
 
   const run = async (
     sessionId: string,
@@ -83,7 +91,7 @@ export function createPtyWriter(deps: PtyWriterDeps): PtyWriter {
     if (deps.generation(sessionId) !== gen) return 'generation-changed';
     const payload = opts.bracketed ? `${PASTE_START}${text}${PASTE_END}` : text;
     if (!deps.input(sessionId, payload)) return 'write-failed';
-    await echoSettled(sessionId);
+    await beforeEnter(sessionId, opts.settle);
     if (deps.generation(sessionId) !== gen) return 'generation-changed';
     if (!(await hookAllows(opts.beforeEnter))) return 'withheld';
     // beforeEnter may wait out a slow echo: a respawn meanwhile must not get the Enter either.
@@ -137,7 +145,7 @@ export function createPtyWriter(deps: PtyWriterDeps): PtyWriter {
           if (gen === undefined) return 'no-pty';
           if (!write()) return 'write-failed';
           if (!opts.submit) return 'submitted';
-          await echoSettled(sessionId);
+          await beforeEnter(sessionId, 'gap');
           if (deps.generation(sessionId) !== gen) return 'generation-changed';
           if (!(await hookAllows(opts.beforeEnter))) return 'withheld';
           if (deps.generation(sessionId) !== gen) return 'generation-changed';

@@ -63,7 +63,7 @@ describe('server domain: event order', () => {
     const fired = h.types().indexOf('timers.fired');
     expect(fired).toBeGreaterThanOrEqual(0);
     expect(fired).toBeLessThan(h.events.findIndex(showsFire));
-    expect(h.submitted).toEqual([{ sessionId: id, text: 'go', bracketed: false }]);
+    expect(h.submitted).toEqual([{ sessionId: id, text: 'go', bracketed: false, settle: 'quiet' }]);
   });
 
   it('refuses timers.test unless started for e2e', async () => {
@@ -85,7 +85,9 @@ describe('server domain: event order', () => {
     await h.call('system.resumed');
     // Microtasks only: advancing the fake clock would run the armed timeout and prove nothing.
     for (let i = 0; i < 20; i++) await Promise.resolve();
-    expect(h.submitted).toEqual([{ sessionId: id, text: 'wake', bracketed: false }]);
+    expect(h.submitted).toEqual([
+      { sessionId: id, text: 'wake', bracketed: false, settle: 'quiet' },
+    ]);
   });
 });
 

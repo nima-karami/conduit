@@ -639,7 +639,7 @@ export function createDomain(deps: DomainDeps): Domain {
       if (!check.ok) return { ok: false, reason: check.error };
       const bracketed = !!pasteModes.get(job.sessionId)?.on;
       const { text, joined } = deliverableText(check.message, bracketed);
-      const outcome = await deps.typing.submit(job.sessionId, text, { bracketed });
+      const outcome = await deps.typing.submit(job.sessionId, text, { bracketed, settle: 'quiet' });
       return outcome === 'submitted' ? { ok: true, joined } : { ok: false, reason: outcome };
     },
     onChange: () => {

@@ -364,8 +364,9 @@ function harness(
       else output(id, data);
       return true;
     },
-    sleep: () => Promise.resolve(),
-    outputQuiet: () => (opts.holdGaps ? new Promise<void>((r) => gaps.push(r)) : Promise.resolve()),
+    // Notices use the fixed gap (settle 'gap'): the sleep is the gap the tests hold.
+    sleep: () => (opts.holdGaps ? new Promise<void>((r) => gaps.push(r)) : Promise.resolve()),
+    outputQuiet: () => Promise.resolve(),
   });
   const sessionStore: McpHostDeps['sessions'] = {
     get: (id: string) => sessions.get(id),

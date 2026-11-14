@@ -121,9 +121,21 @@ describe('createPtyWriter', () => {
     expect(await p).toBe('submitted');
   });
 
-  it('waits for outputQuiet and the 120 ms floor before Enter', async () => {
+  // see spec 2026-11-13-scheduler-auto-resume R5 (amended): the quiet wait is opt-in.
+  it('a notice (default settle) enters after the fixed gap even while output never goes quiet', async () => {
     const h = harness();
     const p = h.writer.submit('a', 'hi');
+    await h.flush();
+    expect(h.gaps.map((g) => g.ms)).toEqual([ENTER_FLOOR_MS]);
+    expect(h.quiets).toEqual([]);
+    await h.releaseSleep();
+    expect(await p).toBe('submitted');
+    expect(writes(h.log, 'a')).toEqual(['hi', '\r']);
+  });
+
+  it("settle 'quiet' (a Scheduler delivery) waits for outputQuiet and the 120 ms floor before Enter", async () => {
+    const h = harness();
+    const p = h.writer.submit('a', 'hi', { settle: 'quiet' });
     await h.flush();
     expect(h.gaps.map((g) => g.ms)).toEqual([ENTER_FLOOR_MS]);
     expect(h.quiets.map((q) => [q.sessionId, q.quietMs, q.maxMs])).toEqual([
@@ -138,7 +150,7 @@ describe('createPtyWriter', () => {
 
   it('generation change during the quiet wait withholds Enter', async () => {
     const h = harness();
-    const p = h.writer.submit('a', 'x');
+    const p = h.writer.submit('a', 'x', { settle: 'quiet' });
     await h.flush();
     await h.releaseSleep();
     h.gens.set('a', 2);
@@ -304,7 +316,7 @@ describe('createPtyWriter', () => {
     expect(writes(h.log, 'a')).toEqual(['text', '\r']);
   });
 
-  it('sequence waits outputQuiet as well before Enter', async () => {
+  it('sequence keeps the fixed gap and never waits for the echo to settle', async () => {
     const h = harness();
     const p = h.writer.sequence(
       'a',
@@ -316,32 +328,11 @@ describe('createPtyWriter', () => {
     );
     await h.flush();
     expect(h.gaps.map((g) => g.ms)).toEqual([ENTER_FLOOR_MS]);
-    expect(h.quiets.map((q) => [q.sessionId, q.quietMs, q.maxMs])).toEqual([
-      ['a', ECHO_QUIET_MS, ECHO_MAX_MS],
-    ]);
-    await h.releaseSleep();
+    expect(h.quiets).toEqual([]);
     expect(writes(h.log, 'a')).toEqual(['text']);
-    await h.releaseQuiet();
+    await h.releaseSleep();
     expect(await p).toBe('submitted');
     expect(writes(h.log, 'a')).toEqual(['text', '\r']);
-  });
-
-  it('sequence: a respawn during the quiet wait withholds Enter', async () => {
-    const h = harness();
-    const p = h.writer.sequence(
-      'a',
-      () => {
-        h.log.push(['a', 'text']);
-        return true;
-      },
-      { submit: true },
-    );
-    await h.flush();
-    await h.releaseSleep();
-    h.gens.set('a', 2);
-    await h.releaseQuiet();
-    expect(await p).toBe('generation-changed');
-    expect(writes(h.log, 'a')).toEqual(['text']);
   });
 
   it('pins the R5 timing values', () => {
