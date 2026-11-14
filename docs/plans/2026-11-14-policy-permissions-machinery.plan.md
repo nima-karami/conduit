@@ -632,3 +632,33 @@ If a task's assumption turns out wrong (the piece it builds on is misaligned, or
 - **DN-7:** revoke and remote-lead scenarios are covered by engine unit tests only; `revokePeer` is left for NET.
 - **DN-8:** matcher plus measurement. **If the hook adds more than about 20 ms per call at the median, stop and report to the lead before S4 ships.**
 - **DN-9:** the own-permissions box is not built.
+
+## Run state and next steps (hand-over, 2026-11-14 23:58 UTC)
+
+So a Codex orchestrator can take over if Claude stops. The lead (claude-3) receives reports via Conduit `send_message`.
+
+**Done.**
+- Slice 0.
+- Slice 1, merged: lanes A, B and C at b92f7411. Local verify exit 0; CI verify passed in e2e:remote run 43653097733 (flaky: `role-brief`; `scrollback-inrun` quarantined).
+- CON-21 tip 9ba00fe9 merged at 55a70bb5. Its verify has not been run yet; run it before the next merge.
+
+**In flight. Lane worktrees are under the CON-24 session scratchpad: `/tmp/claude-1000/-home-namemenima-projects--wt-conduit-CON-24/4344d38f-77e3-4aed-916f-805841433cf8/scratchpad/lanes/`.**
+- `s2-1` (branch con24-s2-1): T2.1 migration and projection. Round 5 makes legacy patches refuse scoped exceptions (C6 "Scoped exceptions: refused"). Approve it after a fresh review of that commit.
+- `s2-2` (branch con24-s2-2): T2.2 service and targets. Approved; a follow-up (40581eff) is under review.
+  - After s2-1 lands, adapt the service: `applyLegacyPatch` returning `null` maps to `{ok:false, error:'scoped'}`.
+  - Merge s2-1 into s2-2 for that adaptation.
+
+**Merge order:** s2-1, then s2-2 (which contains s2-1). Run `npm run verify; echo "exit=$?"` after each, with nothing else running on the machine, and check `df -h /tmp` first because of the shared /tmp quota.
+
+**Then:**
+1. T2.3 host wiring (serial; claims listed in Slice 2).
+2. T2.4 editors read the projection; the `scoped` error shows as the editors' failed-save state.
+3. `test/e2e/policy-profiles.e2e.mjs`.
+4. `npm run e2e:remote -- policy-profiles conduit-mcp-policy conduit-mcp-policy-migrate conduit-mcp-refusals conduit-mcp-control conduit-mcp-control-terminal`, then `--affected`. CI's verify job must pass.
+5. Slices 3, 4 and 5 as planned.
+
+**Lanes from now on (lead order, 23:55).**
+- Lanes are Conduit sessions, not Claude subagents: `open_session` with agent `codex` (model `gpt-6.1-terra`, or `gpt-6-luna` for mechanical lanes), or `cursor-agent` (model `composer-2.5`), path = the lane worktree, `focus:false`.
+- Check the new lane with `read_screen` (Codex asks once to trust the folder; Enter accepts).
+- Send the brief, built from `brief-common.md` in the scratchpad plus the task text, and require a `send_message` report.
+- Reviews also run in a fresh Codex session with the code-review brief.
