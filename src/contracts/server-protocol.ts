@@ -193,6 +193,9 @@ export const SERVER_SETTINGS_KEYS = [
   'restoreSessions',
   'scrollbackPersistence',
   'trackCwd',
+  'networkBindHost',
+  'networkPort',
+  'networkSelfName',
 ] as const satisfies readonly (keyof AppSettings)[];
 export type ServerSettings = Pick<AppSettings, (typeof SERVER_SETTINGS_KEYS)[number]>;
 
