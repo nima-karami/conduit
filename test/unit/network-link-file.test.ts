@@ -64,7 +64,10 @@ describe('links file', () => {
     ],
     ['link trust not own', { ...sample, links: [{ ...link, trust: 'peer' }] }],
     ['tombstones not an array', { ...sample, tombstones: null }],
-    ['tombstone missing revokedAt', { ...sample, tombstones: [{ ...tombstone(1), revokedAt: undefined }] }],
+    [
+      'tombstone missing revokedAt',
+      { ...sample, tombstones: [{ ...tombstone(1), revokedAt: undefined }] },
+    ],
   ])('%s is corrupt', (_name, value) => {
     expect(parseLinksFile(JSON.stringify(value), NOW)).toEqual({ kind: 'corrupt' });
   });
