@@ -95,6 +95,7 @@ export function TimedMessageDialog({
   const titleId = useId();
   const messageId = useId();
   const hintId = useId();
+  const countId = useId();
   const sendReasonId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const messageRef = useRef<HTMLTextAreaElement>(null);
@@ -159,7 +160,7 @@ export function TimedMessageDialog({
   const checked = normalizeMessage(message);
   const tooLong = !checked.ok && checked.error === MESSAGE_TOO_LONG;
   const sanitized = checked.ok ? checked.message : '';
-  const charCount = (checked.ok ? checked.message : message).length;
+  const charCount = checked.ok ? checked.message.length : tooLong ? message.length : 0;
   // The host re-checks and would reject with a toast; showing it here is what §8 asks for — the
   // reason sits next to the disabled button instead of arriving after the click.
   const capped = capError(snap.schedules, session.id, editingId ?? undefined);
@@ -244,9 +245,10 @@ export function TimedMessageDialog({
     // button says. Cancel, Send now, ×, and every row control are all buttons, and arming from
     // any of them is a wrong, unattended write.
     const target = e.target as HTMLElement;
+    const newlineKey = target === messageRef.current;
     if (
       e.key === 'Enter' &&
-      (e.ctrlKey || e.metaKey) &&
+      (!newlineKey || e.ctrlKey || e.metaKey) &&
       canArm &&
       target.tagName !== 'BUTTON' &&
       !target.closest('.tmdlg__row')
@@ -260,7 +262,7 @@ export function TimedMessageDialog({
     if (!root) return;
     const focusables = [
       ...root.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
       ),
     ].filter((el) => el.offsetParent !== null);
     if (focusables.length === 0) return;
@@ -330,10 +332,11 @@ export function TimedMessageDialog({
             rows={3}
             autoFocus
             value={message}
-            aria-describedby={hintId}
+            aria-describedby={`${countId} ${hintId}`}
+            aria-keyshortcuts="Control+Enter Meta+Enter"
             onChange={(e) => setMessage(e.target.value)}
           />
-          <p className={tooLong ? 'tmdlg__hint tmdlg__hint--error' : 'tmdlg__hint'}>
+          <p id={countId} className={tooLong ? 'tmdlg__hint tmdlg__hint--error' : 'tmdlg__hint'}>
             {`${charCount.toLocaleString('en-US')} / ${MAX_MESSAGE_CHARS.toLocaleString('en-US')}`}
           </p>
           <div className="tmdlg__quick">
@@ -452,7 +455,7 @@ export function TimedMessageDialog({
               type="button"
               className="btn btn--primary"
               disabled={!canArm}
-              aria-keyshortcuts="Control+Enter Meta+Enter"
+              aria-keyshortcuts="Enter"
               onClick={arm}
             >
               {editingId ? 'Save' : 'Arm'}

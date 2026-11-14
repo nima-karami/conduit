@@ -14165,7 +14165,7 @@ button.toggle--on .toggle__knob {
 .tmdlg__hint--error {
   color: var(--danger);
 }
-textarea.tmdlg__input {
+.tmdlg__input {
   display: block;
   width: 100%;
   box-sizing: border-box;

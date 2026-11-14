@@ -15,7 +15,7 @@ export function createTyping(
   const outputQuiet =
     opts.outputQuiet ??
     createOutputQuiet({
-      on: runtime.on,
+      on: (listener) => runtime.on(listener),
       now: () => Date.now(),
       setTimer: (ms, fn) => setTimeout(fn, ms),
       clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),

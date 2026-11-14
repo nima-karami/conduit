@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { createPtyWriter, type PtyWriterDeps } from '../../src/pty-writer';
+import {
+  createPtyWriter,
+  ECHO_MAX_MS,
+  ECHO_QUIET_MS,
+  ENTER_FLOOR_MS,
+  type PtyWriterDeps,
+} from '../../src/pty-writer';
 
 interface Gap {
   ms: number;
@@ -90,7 +96,7 @@ describe('createPtyWriter', () => {
     const p = h.writer.submit('a', 'hi');
     await h.flush();
     expect(writes(h.log, 'a')).toEqual(['hi']);
-    expect(h.gaps.map((g) => g.ms)).toEqual([120]);
+    expect(h.gaps.map((g) => g.ms)).toEqual([ENTER_FLOOR_MS]);
     await h.releaseGap();
     expect(await p).toBe('submitted');
     expect(writes(h.log, 'a')).toEqual(['hi', '\r']);
@@ -119,10 +125,13 @@ describe('createPtyWriter', () => {
     const h = harness();
     const p = h.writer.submit('a', 'hi');
     await h.flush();
-    expect(h.quiets.map((q) => [q.sessionId, q.quietMs, q.maxMs])).toEqual([['a', 300, 5000]]);
-    await h.releaseSleep();
-    expect(writes(h.log, 'a')).toEqual(['hi']);
+    expect(h.gaps.map((g) => g.ms)).toEqual([ENTER_FLOOR_MS]);
+    expect(h.quiets.map((q) => [q.sessionId, q.quietMs, q.maxMs])).toEqual([
+      ['a', ECHO_QUIET_MS, ECHO_MAX_MS],
+    ]);
     await h.releaseQuiet();
+    expect(writes(h.log, 'a')).toEqual(['hi']);
+    await h.releaseSleep();
     expect(await p).toBe('submitted');
     expect(writes(h.log, 'a')).toEqual(['hi', '\r']);
   });
@@ -289,7 +298,7 @@ describe('createPtyWriter', () => {
     );
     await h.flush();
     expect(writes(h.log, 'a')).toEqual(['text']);
-    expect(h.gaps.map((g) => g.ms)).toEqual([120]);
+    expect(h.gaps.map((g) => g.ms)).toEqual([ENTER_FLOOR_MS]);
     await h.releaseGap();
     expect(await p).toBe('submitted');
     expect(writes(h.log, 'a')).toEqual(['text', '\r']);
@@ -306,10 +315,13 @@ describe('createPtyWriter', () => {
       { submit: true },
     );
     await h.flush();
-    expect(h.quiets.map((q) => [q.sessionId, q.quietMs, q.maxMs])).toEqual([['a', 300, 5000]]);
-    await h.releaseSleep();
-    expect(writes(h.log, 'a')).toEqual(['text']);
+    expect(h.gaps.map((g) => g.ms)).toEqual([ENTER_FLOOR_MS]);
+    expect(h.quiets.map((q) => [q.sessionId, q.quietMs, q.maxMs])).toEqual([
+      ['a', ECHO_QUIET_MS, ECHO_MAX_MS],
+    ]);
     await h.releaseQuiet();
+    expect(writes(h.log, 'a')).toEqual(['text']);
+    await h.releaseSleep();
     expect(await p).toBe('submitted');
     expect(writes(h.log, 'a')).toEqual(['text', '\r']);
   });

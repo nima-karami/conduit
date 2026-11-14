@@ -136,10 +136,27 @@ describe('TimedMessageDialog composer', () => {
     });
   });
 
+  it('plain Enter in the delay field arms', async () => {
+    await render();
+    const delay = q<HTMLInputElement>('input[aria-label="Delay"]');
+    expect(await key(delay, 'Enter')).toBe(false);
+    expect(vi.mocked(armTimedMessage)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(armTimedMessage).mock.calls[0][0]).toMatchObject({
+      sessionId: 's1',
+      message: 'Continue',
+    });
+  });
+
   it('shows n / 16,000 under the message', async () => {
     await render();
     await typeInto(messageBox(), 'abc');
     expect(document.body.textContent).toContain('3 / 16,000');
+  });
+
+  it('a whitespace-only message counts as 0', async () => {
+    await render();
+    await typeInto(messageBox(), '   ');
+    expect(document.body.textContent).toContain('0 / 16,000');
   });
 
   it('over the limit disables Arm and shows the hint', async () => {
@@ -147,9 +164,13 @@ describe('TimedMessageDialog composer', () => {
     const box = messageBox();
     await typeInto(box, 'a'.repeat(16_001));
     expect(armButton().disabled).toBe(true);
-    const hint = document.getElementById(box.getAttribute('aria-describedby') ?? '');
+    const [countRef, hintRef] = (box.getAttribute('aria-describedby') ?? '').split(' ');
+    const hint = document.getElementById(hintRef ?? '');
     expect(hint?.textContent).toBe(MESSAGE_TOO_LONG);
     expect(hint?.classList.contains('tmdlg__hint--error')).toBe(true);
+    const count = document.getElementById(countRef ?? '');
+    expect(count?.textContent).toBe('16,001 / 16,000');
+    expect(count?.classList.contains('tmdlg__hint--error')).toBe(true);
     await key(box, 'Enter', { ctrlKey: true });
     expect(armTimedMessage).not.toHaveBeenCalled();
   });
