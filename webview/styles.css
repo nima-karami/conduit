@@ -16389,6 +16389,108 @@ button.toggle--on .toggle__knob {
   outline-offset: 2px;
 }
 
+/* Needs you: Away and digest (CON-20) */
+.needs-away__menu {
+  position: absolute;
+  z-index: var(--layer-popover);
+  min-width: 220px;
+  padding: 4px 0;
+  background: var(--raise);
+  color: var(--text);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-card);
+  box-shadow: var(--elev-3);
+}
+.needs-away__heading {
+  padding: 6px 12px 4px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.needs-away__item {
+  display: block;
+  width: 100%;
+  padding: 5px 12px;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+.needs-away__item:hover,
+.needs-away__item:focus-visible {
+  background: var(--state-hover-bg);
+}
+.needs-away__sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border-2);
+}
+.needs-away__banner,
+.needs-digest {
+  margin: 8px;
+  padding: 10px 12px;
+  background: var(--raise);
+  color: var(--text);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-card);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.needs-away__title {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+.needs-away__text {
+  margin: 0;
+  color: var(--text-dim);
+}
+.needs-away__back,
+.needs-digest__show,
+.needs-digest__dismiss {
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  text-decoration: underline;
+  cursor: default;
+}
+.needs-away__back {
+  margin-top: 6px;
+}
+.needs-digest__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.needs-digest__title {
+  margin: 0;
+  font: inherit;
+  font-weight: 600;
+}
+.needs-digest__window,
+.needs-digest__line {
+  margin: 2px 0 0;
+}
+.needs-digest__window {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.needs-digest__line {
+  margin-top: 4px;
+}
+.needs-digest__show,
+.needs-digest__dismiss {
+  color: var(--text-dim);
+}
+.needs-digest__show:hover,
+.needs-digest__dismiss:hover,
+.needs-away__back:hover {
+  color: var(--text);
+}
+
 /* ═════════ interaction state vocabulary ══════════════════════════════════════
    docs/specs/archive/2026-08-01-interaction-state-vocabulary.md. Read it before touching
    a value here; test/unit/state-vocabulary.test.ts holds the line.
