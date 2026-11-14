@@ -1,0 +1,91 @@
+import type {
+  Capabilities,
+  LinkFrame,
+  LinkState,
+  MonitorSession,
+  MonitorSnapshot,
+} from '../../src/contracts/link-protocol';
+
+// Pushes this server's sessions, attention and asks to each linked peer (plan T5.3). What a peer
+// gets follows what *I* enable on its link (NET §4.1): session rows for messaging or monitor,
+// asks/unread/presence for monitor, the agent list for drive. Nothing for neither.
+
+export interface MonitorSource {
+  sessions(): MonitorSession[];
+  requests(): MonitorSnapshot['requests'];
+  youUnread(): number;
+  ownerPresence(): 'here' | 'away';
+  agents(): MonitorSnapshot['agents'];
+}
+
+export interface PublisherLink {
+  machineId: string;
+  state: LinkState;
+  capabilities: Capabilities;
+}
+
+export interface MonitorPublisherDeps {
+  source: MonitorSource;
+  links(): PublisherLink[];
+  send(machineId: string, frame: LinkFrame): boolean | null;
+  /** Runs fn after ms; returns its cancel. */
+  after(fn: () => void, ms: number): () => void;
+  coalesceMs?: number;
+}
+
+export interface MonitorPublisher {
+  /** Something local changed: push to every up link, coalesced. */
+  changed(): void;
+  /** A link just came up or its capabilities changed: push to it now. */
+  pushTo(machineId: string): void;
+  stop(): void;
+}
+
+const COALESCE_MS = 500;
+const live = (s: LinkState) => s === 'up' || s === 'degraded';
+
+export function snapshotFor(
+  caps: Capabilities,
+  source: MonitorSource,
+  seq: number,
+): MonitorSnapshot | null {
+  if (!caps.messaging && !caps.monitor) return null;
+  return {
+    seq,
+    sessions: source.sessions(),
+    requests: caps.monitor ? source.requests() : [],
+    youUnread: caps.monitor ? source.youUnread() : 0,
+    ownerPresence: caps.monitor ? source.ownerPresence() : 'here',
+    agents: caps.drive ? source.agents() : [],
+  };
+}
+
+export function createMonitorPublisher(deps: MonitorPublisherDeps): MonitorPublisher {
+  let seq = 0;
+  let cancel: (() => void) | null = null;
+
+  const push = (link: PublisherLink): void => {
+    if (!live(link.state)) return;
+    seq += 1;
+    const snapshot = snapshotFor(link.capabilities, deps.source, seq);
+    if (snapshot) deps.send(link.machineId, { t: 'snapshot', snapshot });
+  };
+
+  return {
+    changed() {
+      if (cancel) return;
+      cancel = deps.after(() => {
+        cancel = null;
+        for (const link of deps.links()) push(link);
+      }, deps.coalesceMs ?? COALESCE_MS);
+    },
+    pushTo(machineId) {
+      const link = deps.links().find((l) => l.machineId === machineId);
+      if (link) push(link);
+    },
+    stop() {
+      cancel?.();
+      cancel = null;
+    },
+  };
+}
