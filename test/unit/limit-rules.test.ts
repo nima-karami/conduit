@@ -4,6 +4,7 @@ import {
   compileLimitRules,
   DEFAULT_LIMIT_RULES,
   matchLimitRules,
+  matchStuckRule,
   parseLimitRulesFile,
 } from '../../src/limit-rules';
 
@@ -99,6 +100,41 @@ describe('default rules', () => {
   });
 });
 
+describe('default rules — exact instants and last match', () => {
+  it('resolves a dated Codex "try again at" to the exact instant in its zone', () => {
+    const rows = [
+      '■ You’ve hit your usage limit. Upgrade to Pro, or try again at Nov 18th, 2026 3:45 PM (America/Toronto).',
+    ];
+    const match = matchLimitRules(DEFAULTS, 'codex', rows, NOV13_1500_TORONTO);
+    expect(match?.resetText).toBe('Nov 18th, 2026 3:45 PM (America/Toronto)');
+    expect(match?.resetAt).toBe(Date.UTC(2026, 10, 18, 20, 45));
+  });
+
+  it('takes the LAST matching line when the footer redraws', () => {
+    const rows = [
+      'limit reached, resets 10:00pm (America/Toronto)',
+      'still working',
+      'usage limit reached, resets 11:10pm (America/Toronto)',
+    ];
+    const match = matchLimitRules(DEFAULTS, 'claude', rows, NOV13_1500_TORONTO);
+    expect(match?.resetText).toBe('11:10pm (America/Toronto)');
+    expect(match?.resetAt).toBe(Date.UTC(2026, 10, 14, 4, 10));
+  });
+});
+
+describe('matchStuckRule', () => {
+  it('returns the kind-carrying rule and ignores resume-only rules', () => {
+    const compiled = compileLimitRules([
+      rule({ id: 'resume', match: 'usage limit', reason: 'resume only' }),
+      rule({ id: 'stuck', match: 'usage limit', kind: 'usage-limit', reason: 'stuck one' }),
+    ]);
+    expect(matchStuckRule(compiled, 'claude', ['usage limit reached'])).toEqual({
+      kind: 'usage-limit',
+      reason: 'stuck one',
+    });
+  });
+});
+
 describe('compileLimitRules and parseLimitRulesFile', () => {
   it('excludes an invalid regex and loads the others', () => {
     const compiled = compileLimitRules([
@@ -165,8 +201,14 @@ describe('compileLimitRules and parseLimitRulesFile', () => {
     expect(parsed.invalid.map((i) => i.id)).toEqual(['bad-kind']);
   });
 
-  it('throws on corrupt JSON and on a foreign version so the caller can fall back', () => {
+  it('throws on corrupt JSON, a missing rules array, or no usable version', () => {
     expect(() => parseLimitRulesFile('{not json')).toThrow();
-    expect(() => parseLimitRulesFile(JSON.stringify({ version: 2, rules: [] }))).toThrow();
+    expect(() => parseLimitRulesFile(JSON.stringify({ version: 1 }))).toThrow();
+    expect(() => parseLimitRulesFile(JSON.stringify({ rules: [] }))).toThrow();
+  });
+
+  it('reports a newer version without throwing, so the caller can keep its rules', () => {
+    expect(parseLimitRulesFile(JSON.stringify({ version: 9, rules: [] })).version).toBe('newer');
+    expect(parseLimitRulesFile(JSON.stringify({ version: 1, rules: [] })).version).toBe('read');
   });
 });

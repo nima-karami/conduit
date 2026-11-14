@@ -7,6 +7,7 @@ import {
   RULE_SCAN_ROWS,
   type RuleMatch,
 } from './contracts/auto-resume';
+import { judgePersistedVersion } from './contracts/session-identity';
 import { parseResetText } from './reset-time';
 
 export interface CompiledRules {
@@ -55,7 +56,7 @@ export const DEFAULT_LIMIT_RULES: readonly LimitRule[] = [
     cli: 'codex',
     enabled: true,
     match:
-      "^[ \\t]*■ You[’']ve hit your usage limit[\\s\\S]*?try again at (?<reset>[0-9:]+\\s*[AP]M)",
+      "^[ \\t]*■ You[’']ve hit your usage limit[\\s\\S]*?try again at (?<reset>(?:[A-Za-z]{3,9}\\.? \\d{1,2}(?:st|nd|rd|th)?,? (?:\\d{4} )?)?[0-9:]+\\s*[AP]M(?:\\s*\\([A-Za-z_]+(?:\\/[A-Za-z0-9_+-]+)+\\))?)",
     reset: { group: 'reset', format: 'clock-or-date' },
     kind: 'usage-limit',
     reason: 'Codex usage limit reached — try again at {reset}',
@@ -104,13 +105,14 @@ export const DEFAULT_LIMIT_RULES: readonly LimitRule[] = [
   },
 ];
 
+const PATTERN_FLAGS = 'gmi';
 const patterns = new WeakMap<CompiledRules, ReadonlyMap<LimitRule, RegExp>>();
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
 function namedGroups(match: string): string[] {
-  const groups = new RegExp(`(?:${match})|`, 'mi').exec('')?.groups ?? {};
+  const groups = new RegExp(`(?:${match})|`, PATTERN_FLAGS).exec('')?.groups ?? {};
   return Object.keys(groups);
 }
 
@@ -122,7 +124,7 @@ function problemWith(rule: LimitRule): { error: string } | { pattern: RegExp } {
   }
   let pattern: RegExp;
   try {
-    pattern = new RegExp(rule.match, 'mi');
+    pattern = new RegExp(rule.match, PATTERN_FLAGS);
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
   }
@@ -202,15 +204,18 @@ function readRule(
   return { rule };
 }
 
-/** Throws on corrupt JSON or a foreign version; the caller reports it and serves the defaults. */
+/** Throws on corrupt JSON, a missing rules array or no usable version: the caller falls back. */
 export function parseLimitRulesFile(blob: string): {
+  version: 'read' | 'newer';
   rules: LimitRule[];
   invalid: { id: string; error: string }[];
 } {
   const doc: unknown = JSON.parse(blob);
-  if (!isRecord(doc) || doc.version !== 1 || !Array.isArray(doc.rules)) {
-    throw new Error('limit-rules.json must be {"version": 1, "rules": [...]}');
+  if (!isRecord(doc) || !Array.isArray(doc.rules)) {
+    throw new Error('limit-rules.json must hold a rules array');
   }
+  const version = judgePersistedVersion('limit-rules.json', doc.version);
+  if (version === 'invalid') throw new Error('limit-rules.json has no usable version');
   const rules: LimitRule[] = [];
   const invalid: { id: string; error: string }[] = [];
   doc.rules.forEach((raw: unknown, index: number) => {
@@ -218,7 +223,7 @@ export function parseLimitRulesFile(blob: string): {
     if ('rule' in outcome) rules.push(outcome.rule);
     else invalid.push(outcome);
   });
-  return { rules, invalid };
+  return { version, rules, invalid };
 }
 
 function scanText(rows: readonly string[]): string {
@@ -228,7 +233,7 @@ function scanText(rows: readonly string[]): string {
     .join('\n');
 }
 
-export function findRuleMatch(
+function findRuleMatch(
   compiled: CompiledRules,
   cli: CliKind,
   rows: readonly string[],
@@ -240,9 +245,11 @@ export function findRuleMatch(
   for (const rule of compiled.rules) {
     if (!rule.enabled || (rule.cli !== '*' && rule.cli !== cli) || !accept(rule)) continue;
     const pattern = compiledPatterns.get(rule);
-    const m = pattern?.exec(text);
-    if (!m) continue;
-    const resetText = rule.reset ? m.groups?.[rule.reset.group] || null : null;
+    if (!pattern) continue;
+    let last: RegExpMatchArray | null = null;
+    for (const m of text.matchAll(pattern)) last = m;
+    if (!last) continue;
+    const resetText = rule.reset ? last.groups?.[rule.reset.group] || null : null;
     const template = rule.reason ?? rule.id;
     const reason = template
       .split(RESET_PLACEHOLDER)
@@ -251,6 +258,16 @@ export function findRuleMatch(
     return { rule, resetText, reason };
   }
   return null;
+}
+
+export function matchStuckRule(
+  compiled: CompiledRules,
+  cli: CliKind,
+  rows: readonly string[],
+): { kind: StuckKind; reason: string } | null {
+  const hit = findRuleMatch(compiled, cli, rows, (rule) => rule.kind !== undefined);
+  if (!hit?.rule.kind) return null;
+  return { kind: hit.rule.kind, reason: hit.reason };
 }
 
 export function matchLimitRules(

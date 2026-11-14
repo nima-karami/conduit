@@ -76,7 +76,7 @@ function harness() {
       warn: (msg) => warnings.push(msg),
     },
   };
-  const emit = (dir: string, name: string) => live.get(dir)?.onEvent('rename', name);
+  const emit = (dir: string, name: string | null) => live.get(dir)?.onEvent('rename', name);
   return { deps, files, dirs, live, opened, signals, warnings, emit };
 }
 
@@ -225,5 +225,36 @@ describe('codex rollout watch', () => {
     await flush();
     expect(watch.boundFile('s2')).toBe(FILE_B);
     expect(watch.boundFile('s1')).toBe(FILE_A);
+  });
+
+  it('re-reads a first line that did not parse yet, instead of caching the miss', async () => {
+    const h = harness();
+    const watch = createCodexRolloutWatch(h.deps);
+    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    await flush();
+    h.files.set(FILE_A, `${PRIMARY.slice(0, 40)}\n`);
+    h.emit(DAY12, 'rollout-a.jsonl');
+    await flush();
+    expect(watch.boundFile('s1')).toBeNull();
+
+    h.files.set(FILE_A, `${PRIMARY}\n`);
+    h.emit(DAY12, 'rollout-a.jsonl');
+    await flush();
+    expect(watch.boundFile('s1')).toBe(FILE_A);
+  });
+
+  it('reads every bound file in a folder when the event names no file', async () => {
+    const h = harness();
+    h.files.set(FILE_A, `${PRIMARY}\n`);
+    const watch = createCodexRolloutWatch(h.deps);
+    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    await flush();
+    expect(watch.boundFile('s1')).toBe(FILE_A);
+
+    h.files.set(FILE_A, `${PRIMARY}\n${LIMIT_TASK_COMPLETE}\n`);
+    h.emit(DAY12, null);
+    vi.advanceTimersByTime(250);
+    await flush();
+    expect(h.signals.map((x) => x.kind)).toEqual(['limited']);
   });
 });

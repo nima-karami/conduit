@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createLimitRulesSource } from '../../server/domain/limit-rules-file';
+import { SERVER_FILE_VERSION } from '../../src/contracts/session-identity';
 import { DEFAULT_LIMIT_RULES } from '../../src/limit-rules';
 
 const USER_DATA = '/userdata';
@@ -116,6 +117,51 @@ describe('limit rules file', () => {
     vi.advanceTimersByTime(1);
     expect(h.onChange).toHaveBeenCalledTimes(1);
     expect(ruleIds(h.source.current().rules)).toEqual(['fresh']);
+  });
+
+  it('seeds the file with the registered version', () => {
+    const h = harness(null);
+    expect(JSON.parse(h.files.get(FILE) ?? '{}').version).toBe(
+      SERVER_FILE_VERSION['limit-rules.json'],
+    );
+  });
+
+  it('keeps the current rules and logs one line when the file goes missing on reload', () => {
+    const fresh = JSON.stringify({
+      version: 1,
+      rules: [{ id: 'fresh', cli: 'codex', enabled: true, match: 'quota' }],
+    });
+    const h = harness(fresh);
+    h.files.delete(FILE);
+    h.writes.length = 0;
+    h.live[0]?.onEvent('rename', 'limit-rules.json');
+    vi.advanceTimersByTime(250);
+    expect(ruleIds(h.source.current().rules)).toEqual(['fresh']);
+    expect(h.warnings).toHaveLength(1);
+    expect(h.writes).toEqual([]);
+    expect(h.onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the current rules on a reload that finds the file corrupt', () => {
+    const fresh = JSON.stringify({
+      version: 1,
+      rules: [{ id: 'fresh', cli: 'codex', enabled: true, match: 'quota' }],
+    });
+    const h = harness(fresh);
+    h.files.set(FILE, '{not json');
+    h.live[0]?.onEvent('rename', 'limit-rules.json');
+    vi.advanceTimersByTime(250);
+    expect(ruleIds(h.source.current().rules)).toEqual(['fresh']);
+    expect(h.warnings).toHaveLength(1);
+  });
+
+  it('warns about a newer version on its own line and leaves the file alone', () => {
+    const newer = JSON.stringify({ version: 99, rules: [] });
+    const h = harness(newer);
+    expect(ruleIds(h.source.current().rules)).toEqual(ruleIds(DEFAULT_LIMIT_RULES));
+    expect(h.files.get(FILE)).toBe(newer);
+    expect(h.warnings).toHaveLength(1);
+    expect(h.warnings[0]).toMatch(/newer/);
   });
 
   it('closes its watch on dispose', () => {

@@ -1,5 +1,5 @@
 import type { ResetFormat } from './contracts/auto-resume';
-import { resolveClockTime } from './timed-messages';
+import { resolveClockTime, wallDateIn, wallTimeToInstant } from './timed-messages';
 
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
@@ -18,63 +18,6 @@ const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', '
 const DURATION_TEXT = /^\s*(?:\d+\s*(?:hours?|hrs?|h|minutes?|mins?|m)\b[\s,]*(?:and\s+)?)+$/i;
 const DURATION_UNIT = /(\d+)\s*(hours?|hrs?|h|minutes?|mins?|m)\b/gi;
 const HOUR_MINUTE = /^\s*(\d{1,3}):([0-5]\d)\s*$/;
-
-interface Wall {
-  y: number;
-  mo: number;
-  d: number;
-  h: number;
-  mi: number;
-}
-
-function formatterFor(zone: string | undefined): Intl.DateTimeFormat {
-  const options: Intl.DateTimeFormatOptions = {
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: 'numeric',
-    hourCycle: 'h23',
-  };
-  if (zone) {
-    try {
-      return new Intl.DateTimeFormat('en-US', { ...options, timeZone: zone });
-    } catch {
-      // an abbreviation such as EDT is not an IANA id; the machine zone applies, as resolveClockTime does
-    }
-  }
-  return new Intl.DateTimeFormat('en-US', options);
-}
-
-function wallAt(fmt: Intl.DateTimeFormat, at: number): Wall {
-  const parts: Record<string, string> = {};
-  for (const p of fmt.formatToParts(new Date(at))) parts[p.type] = p.value;
-  return {
-    y: Number(parts.year),
-    mo: Number(parts.month),
-    d: Number(parts.day),
-    h: Number(parts.hour),
-    mi: Number(parts.minute),
-  };
-}
-
-function offsetMs(fmt: Intl.DateTimeFormat, at: number): number {
-  const w = wallAt(fmt, at);
-  return Date.UTC(w.y, w.mo - 1, w.d, w.h, w.mi) - Math.floor(at / MINUTE_MS) * MINUTE_MS;
-}
-
-function instantFor(
-  fmt: Intl.DateTimeFormat,
-  y: number,
-  mo: number,
-  d: number,
-  h: number,
-  mi: number,
-): number {
-  const target = Date.UTC(y, mo - 1, d, h, mi);
-  const first = target - offsetMs(fmt, target);
-  return target - offsetMs(fmt, first);
-}
 
 const pad = (n: number): string => String(n).padStart(2, '0');
 
@@ -105,12 +48,12 @@ function dateInstant(text: string, zone: string | undefined, now: number): numbe
   const day = Number(m[2]);
   const clock = clockOf(text.slice(m.index + m[0].length));
   if (month === 0 || clock === null) return null;
-  const [h, mi] = clock.split(':').map(Number) as [number, number];
-  const fmt = formatterFor(zone);
-  if (m[3]) return instantFor(fmt, Number(m[3]), month, day, h, mi);
-  const thisYear = wallAt(fmt, now).y;
+  const h = Number(clock.slice(0, 2));
+  const mi = Number(clock.slice(3));
+  if (m[3]) return wallTimeToInstant(zone, { y: Number(m[3]), mo: month, d: day, h, mi });
+  const thisYear = wallDateIn(zone, now).y;
   for (const y of [thisYear, thisYear + 1]) {
-    const at = instantFor(fmt, y, month, day, h, mi);
+    const at = wallTimeToInstant(zone, { y, mo: month, d: day, h, mi });
     if (at >= now - MAX_BEHIND_MS) return at;
   }
   return null;

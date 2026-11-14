@@ -3,7 +3,7 @@ import {
   type CompiledRules,
   compileLimitRules,
   DEFAULT_LIMIT_RULES,
-  findRuleMatch,
+  matchStuckRule,
 } from './limit-rules';
 
 export type StuckKind = 'usage-limit' | 'rate-limit-prompt' | 'provider-error' | 'update-prompt';
@@ -21,7 +21,5 @@ export function detectStuckScreen(
   rows: readonly string[],
   rules: CompiledRules = DEFAULT_RULES,
 ): StuckScreen | null {
-  const hit = findRuleMatch(rules, cli, rows, (rule) => rule.kind !== undefined);
-  if (!hit?.rule.kind) return null;
-  return { kind: hit.rule.kind, reason: hit.reason };
+  return matchStuckRule(rules, cli, rows);
 }

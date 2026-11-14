@@ -148,6 +148,9 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
 
   const onFolderEvent = (dir: string, name: string | null): void => {
     if (name === null) {
+      for (const [id, s] of sessions) {
+        if (s.boundFile !== null && dirname(s.boundFile) === dir) scheduleRead(id);
+      }
       void examineFolder(dir);
       return;
     }
@@ -157,17 +160,20 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
     else if (isRolloutFile(name)) void examine(file);
   };
 
+  const readMeta = async (file: string): Promise<RolloutMeta | null> => {
+    const line = await deps.fs.readFirstLine(file);
+    if (line === null) return null;
+    const meta = parseRolloutMeta(line);
+    // a miss is not cached: the file may still be being written, so the next event reads it again
+    if (meta) metas.set(file, meta);
+    return meta;
+  };
+
   const examine = async (file: string): Promise<void> => {
     if (decided.has(file) || inspecting.has(file)) return;
     inspecting.add(file);
     try {
-      let meta = metas.get(file);
-      if (meta === undefined) {
-        const line = await deps.fs.readFirstLine(file);
-        if (line === null) return;
-        meta = parseRolloutMeta(line);
-        metas.set(file, meta);
-      }
+      const meta = metas.get(file) ?? (await readMeta(file));
       if (!meta) return;
       const candidates = [...sessions]
         .filter(([, s]) => s.boundFile === null && bindsTo(meta, s, deps.samePath))

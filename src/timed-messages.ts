@@ -256,6 +256,25 @@ export function resolveClockTime(
   return null;
 }
 
+/** The instant a wall time in `zone` (absent or unusable → the machine's) denotes, spring-forward handled. */
+export function wallTimeToInstant(
+  zone: string | undefined,
+  w: { y: number; mo: number; d: number; h: number; mi: number },
+): number {
+  const fmt = (zone ? zoneFormatter(zone) : null) ?? localFormatter();
+  return instantFor(fmt, w.y, w.mo, w.d, w.h, w.mi);
+}
+
+/** The calendar date `at` falls on in `zone` (same fallback). */
+export function wallDateIn(
+  zone: string | undefined,
+  at: number,
+): { y: number; mo: number; d: number } {
+  const fmt = (zone ? zoneFormatter(zone) : null) ?? localFormatter();
+  const w = wallClockIn(fmt, at);
+  return { y: w.y, mo: w.mo, d: w.d };
+}
+
 export function nextFireAt(trigger: TriggerInput, now: number): number | null {
   if (trigger.kind === 'at') return resolveClockTime(trigger.clock, trigger.zone, now);
   if (trigger.kind === 'in') return now + trigger.delayMs;

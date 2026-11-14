@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import type { watchDir } from '../../electron/watch-dir';
+import { SERVER_FILE_VERSION } from '../../src/contracts/session-identity';
 import {
   type CompiledRules,
   compileLimitRules,
@@ -26,10 +27,26 @@ export function createLimitRulesSource(deps: {
   const defaults = (): CompiledRules => compileLimitRules(DEFAULT_LIMIT_RULES);
   let compiled = defaults();
 
-  const load = (): void => {
-    const text = deps.fs.read(file);
+  // Only the first load may fall back to the defaults. A reload keeps the rules the user already
+  // has when the file goes bad, so an editing slip never silently drops them.
+  const load = (initial: boolean): void => {
+    const reject = (message: string, data: object): void => {
+      deps.log.warn(message, { file, ...data });
+      if (initial) compiled = defaults();
+    };
+    let text: string | null;
+    try {
+      text = deps.fs.read(file);
+    } catch (err) {
+      reject('limit rules file is unreadable', { error: String(err) });
+      return;
+    }
     if (text === null) {
-      const seed = `${JSON.stringify({ version: 1, rules: DEFAULT_LIMIT_RULES }, null, 2)}\n`;
+      if (!initial) {
+        reject('limit rules file is missing; keeping the current rules', {});
+        return;
+      }
+      const seed = `${JSON.stringify({ version: SERVER_FILE_VERSION[FILE_NAME], rules: DEFAULT_LIMIT_RULES }, null, 2)}\n`;
       try {
         deps.fs.writeAtomic(file, seed);
         deps.log.info('created limit rules file', { file });
@@ -46,12 +63,11 @@ export function createLimitRulesSource(deps: {
     try {
       parsed = parseLimitRulesFile(text);
     } catch (err) {
-      // the file is the user's to fix; it is left as written and the defaults serve in the meantime
-      deps.log.warn('limit rules file is unreadable; using the defaults', {
-        file,
-        error: String(err),
-      });
-      compiled = defaults();
+      reject('limit rules file is corrupt', { error: String(err) });
+      return;
+    }
+    if (parsed.version === 'newer') {
+      reject('limit rules file was written by a newer version; the file is left as it is', {});
       return;
     }
     for (const rule of parsed.invalid) {
@@ -63,7 +79,7 @@ export function createLimitRulesSource(deps: {
     }
   };
 
-  load();
+  load(true);
 
   let timer: ReturnType<typeof setTimeout> | null = null;
   const watch = deps.watchDir(
@@ -74,7 +90,7 @@ export function createLimitRulesSource(deps: {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = null;
-        load();
+        load(false);
         deps.onChange();
       }, RELOAD_DEBOUNCE_MS);
     },

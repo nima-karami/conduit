@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseResetText } from '../../src/reset-time';
+import { resolveClockTime } from '../../src/timed-messages';
 
 const NOV13_1500_TORONTO = Date.UTC(2026, 10, 13, 20, 0, 0);
 const MIN = 60_000;
@@ -116,5 +117,47 @@ describe('parseResetText — countdown', () => {
 
   it('refuses a duration beyond eight days', () => {
     expect(parseResetText('300 hours', 'countdown', NOV13_1500_TORONTO)).toBeNull();
+  });
+});
+
+describe('parseResetText — ported clock forms (limit-notice parseResetClock)', () => {
+  it('reads a.m. with minutes', () => {
+    expect(parseResetText('7:05 a.m. (America/Toronto)', 'clock', NOV13_1500_TORONTO)).toBe(
+      Date.UTC(2026, 10, 14, 12, 5),
+    );
+  });
+
+  it('reads a bare 12-hour hour', () => {
+    expect(parseResetText('11pm (America/Toronto)', 'clock', NOV13_1500_TORONTO)).toBe(
+      Date.UTC(2026, 10, 14, 4, 0),
+    );
+  });
+
+  it('reads a zero-padded 24-hour clock', () => {
+    expect(parseResetText('07:05 (America/Toronto)', 'clock', NOV13_1500_TORONTO)).toBe(
+      Date.UTC(2026, 10, 14, 12, 5),
+    );
+  });
+
+  it('honours a multi-part IANA zone', () => {
+    expect(
+      parseResetText('23:10 (America/Argentina/Buenos_Aires)', 'clock', NOV13_1500_TORONTO),
+    ).toBe(Date.UTC(2026, 10, 14, 2, 10));
+  });
+
+  it('returns null for text that carries no time', () => {
+    expect(parseResetText('resets when the window ends', 'clock', NOV13_1500_TORONTO)).toBeNull();
+    expect(parseResetText('', 'clock-or-date', NOV13_1500_TORONTO)).toBeNull();
+  });
+});
+
+describe('parseResetText — DST', () => {
+  it('resolves a spring-forward gap time exactly as resolveClockTime does', () => {
+    const now = Date.UTC(2026, 2, 8, 5, 0, 0);
+    const fromResolver = resolveClockTime('02:30', 'America/New_York', now);
+    expect(fromResolver).toBe(Date.UTC(2026, 2, 8, 7, 0, 0));
+    expect(parseResetText('Mar 8, 2:30am (America/New_York)', 'clock-or-date', now)).toBe(
+      fromResolver,
+    );
   });
 });
