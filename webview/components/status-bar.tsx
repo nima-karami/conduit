@@ -1,10 +1,26 @@
 import { Monitor } from 'lucide-react';
 import type React from 'react';
+import { useEffect, useState } from 'react';
 import type { AttentionEntry } from '../../src/attention';
+import { awayLabel } from '../away-view-model';
 import { CHROME_STR, clampPercent } from '../chrome-strings';
 import { MCP_STR } from '../conduit-mcp-strings';
 import { IconBranch, IconDownload, IconWorktree } from '../icons';
+import { REQ_STR } from '../request-strings';
 import { useWorkbenchChromeState } from '../workbench-chrome-state';
+import { AwayMenu } from './away-menu';
+
+/** Seconds left until `until`, ticking once a second only while there is a deadline. */
+function useSecondsLeft(until: string | null): number | null {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (until === null) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [until]);
+  if (until === null) return null;
+  return Math.max(0, Math.ceil((Date.parse(until) - now) / 1000));
+}
 
 /** The first entry's own reason, as the old header chip titled it; null when it has none. */
 function attentionReason(entry: AttentionEntry | null): string | null {
@@ -19,7 +35,16 @@ function attentionReason(entry: AttentionEntry | null): string | null {
  * the sidebar's Space/search/folds; the need-you button routes to the first projected entry.
  */
 export function StatusBar(): React.JSX.Element {
-  const { status, commandHint, focusAttention, update } = useWorkbenchChromeState();
+  const { status, commandHint, focusAttention, update, presence, setAway } =
+    useWorkbenchChromeState();
+  const secondsLeft = useSecondsLeft(status.waitingUntil);
+  const [awayOpen, setAwayOpen] = useState(false);
+  const away = presence?.state === 'away';
+  const awayText = away
+    ? presence.until
+      ? REQ_STR.awayUntil(awayLabel(presence.until))
+      : CHROME_STR.away
+    : CHROME_STR.away;
   const updateLabel =
     update.status?.status === 'downloading'
       ? CHROME_STR.update.statusDownloading(clampPercent(update.status.percent))
@@ -63,7 +88,30 @@ export function StatusBar(): React.JSX.Element {
         >
           <span className="statusbar__dot statusbar__dot--attn" aria-hidden />
           {needYou}
+          {secondsLeft !== null && ` · ${REQ_STR.waiting(secondsLeft)}`}
         </button>
+      )}
+      {presence && (
+        <span className="statusbar__awaywrap">
+          <button
+            type="button"
+            className={`statusbar__item statusbar__away${away ? ' statusbar__away--on' : ''}`}
+            data-status-item="away"
+            aria-haspopup="menu"
+            aria-expanded={awayOpen}
+            onClick={() => setAwayOpen((o) => !o)}
+          >
+            {awayText}
+          </button>
+          {awayOpen && (
+            <AwayMenu
+              presence={presence}
+              now={Date.now()}
+              onSetAway={setAway}
+              onClose={() => setAwayOpen(false)}
+            />
+          )}
+        </span>
       )}
       {updateLabel && (
         <button

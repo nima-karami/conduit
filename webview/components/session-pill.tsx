@@ -1,7 +1,9 @@
 import { type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { RequestView } from '../../src/conduit-mcp/request-types';
+import { openRequest } from '../request-open';
 import { REQ_STR } from '../request-strings';
 import { cardsOf, type SessionInfo, shortestWaiting, sortRequests } from '../request-view-model';
+import { useConduitMcp } from '../use-conduit-mcp';
 
 const NO_SESSIONS: ReadonlyMap<string, SessionInfo> = new Map();
 const NO_SPACES: ReadonlyMap<string, string> = new Map();
@@ -163,5 +165,32 @@ export function SessionPill({
         </div>
       )}
     </div>
+  );
+}
+
+const NO_REQUESTS: readonly RequestView[] = [];
+
+/**
+ * The pill for the shown session, reading the live request state itself: it ticks once a second
+ * only while one of its requests is waiting, so the tab strip never re-renders for a countdown.
+ */
+export function LiveSessionPill({ sessionId }: { sessionId: string }): React.JSX.Element | null {
+  const open = useConduitMcp().state?.requests?.open ?? NO_REQUESTS;
+  const ticking = open.some((r) => r.session === sessionId && r.waiting);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!ticking) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [ticking]);
+  return (
+    <SessionPill
+      sessionId={sessionId}
+      requests={open}
+      now={now}
+      onOpen={(id) => {
+        openRequest(id);
+      }}
+    />
   );
 }

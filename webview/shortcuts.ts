@@ -45,6 +45,12 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     defaultCombo: 'Mod+Shift+B',
   },
   {
+    id: 'openSoonestRequest',
+    description: 'Open the request that needs you soonest',
+    group: 'Navigation',
+    defaultCombo: 'Mod+Shift+Y',
+  },
+  {
     id: 'openArchitecture',
     description: 'Open architecture canvas',
     group: 'Navigation',

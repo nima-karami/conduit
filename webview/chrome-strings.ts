@@ -26,6 +26,7 @@ export const CHROME_STR = {
   maximize: 'Maximize',
   restore: 'Restore',
   close: 'Close',
+  away: 'Away',
   view: {
     needs: 'Needs you',
     files: 'Files',

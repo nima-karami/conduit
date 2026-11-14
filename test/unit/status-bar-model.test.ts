@@ -37,6 +37,7 @@ describe('buildStatusBarModel', () => {
       attentionCount: 0,
       firstAttention: null,
       showCommandHint: true,
+      waitingUntil: null,
     });
   });
 
@@ -75,6 +76,7 @@ describe('buildStatusBarModel', () => {
       attentionCount: 1,
       firstAttention: entry('x'),
       showCommandHint: false,
+      waitingUntil: null,
     });
     expect(buildStatusBarModel({ sessions, activeId: 'gone', entries: [] }).showCommandHint).toBe(
       false,
@@ -90,5 +92,13 @@ describe('buildStatusBarModel', () => {
     });
     expect(m).toMatchObject({ liveCount: 2, attentionCount: 2 });
     expect(m.firstAttention?.key).toBe('first');
+  });
+
+  it('carries the soonest waiting deadline for the footer countdown', () => {
+    const until = '2026-11-14T10:00:58.000Z';
+    expect(
+      buildStatusBarModel({ sessions: [], activeId: undefined, entries: [], waitingUntil: until })
+        .waitingUntil,
+    ).toBe(until);
   });
 });

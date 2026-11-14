@@ -69,6 +69,7 @@ export function RightPane({
   searchScope,
   mcp,
   sessions,
+  spaceNames,
   sidebarSelection,
   sidebarSpaceName,
   selectedAgentHandle,

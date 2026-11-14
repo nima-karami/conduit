@@ -45,8 +45,11 @@ function chrome(update: WorkbenchChromeContextValue['update']): WorkbenchChromeC
       attentionCount: 0,
       firstAttention: null,
       showCommandHint: false,
+      waitingUntil: null,
     },
     commandHint: '',
+    presence: null,
+    setAway: () => {},
     focusAttention: noop,
     update,
   };

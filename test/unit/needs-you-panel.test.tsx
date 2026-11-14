@@ -125,7 +125,7 @@ function render(api: ConduitMcpApi): HTMLDivElement {
   host = document.createElement('div');
   document.body.appendChild(host);
   root = createRoot(host);
-  act(() => root?.render(<NeedsYouPanel mcp={api} sessions={SESSIONS} />));
+  act(() => root?.render(<NeedsYouPanel mcp={api} sessions={SESSIONS} spaceNames={new Map()} />));
   return host;
 }
 

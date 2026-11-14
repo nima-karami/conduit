@@ -15667,6 +15667,13 @@ button.toggle--on .toggle__knob {
 }
 
 /* Needs you: panel (CON-20) */
+.needs-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 8px;
+  min-height: 0;
+}
 .needs-pane {
   display: flex;
   flex-direction: column;
@@ -16387,6 +16394,19 @@ button.toggle--on .toggle__knob {
 .needs-threadlink:focus-visible {
   outline: var(--focus-outline);
   outline-offset: 2px;
+}
+
+/* Needs you: status bar Away control (CON-20). The menu opens upward from the footer. */
+.statusbar__awaywrap {
+  position: relative;
+  display: inline-flex;
+}
+.statusbar__awaywrap .needs-away__menu {
+  bottom: calc(100% + 4px);
+  right: 0;
+}
+.statusbar__away--on {
+  color: var(--text);
 }
 
 /* Needs you: Away and digest (CON-20) */
