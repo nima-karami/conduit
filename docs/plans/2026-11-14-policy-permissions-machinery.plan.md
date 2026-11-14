@@ -527,6 +527,7 @@ Failing tests:
 1. Worker codex-2 `close_session(claude-4)` with no answer → `approval_timeout`, and claude-4 is still open.
 2. `mcp:permissionAnswer {outcome:'allowed', grant:{who:'session', on:'target', for:'1h'}}` → retry closes claude-4, and the Activity row's `decidedBy` starts "allowed by grant".
 3. An exception `close_session: deny` on codex-4 refuses → `mcp:allowOnce(rowId)` → the retry closes claude-5, and a second target is refused.
+4. `mcp:revokeGrant` on step 2's grant → its state is `revoked` in `McpUiState.policy.grants`, and the next close asks again.
 
 ### Slice 4: Observed lane
 **Check:** `npm run verify` exits 0. `npm run e2e:remote -- activity-observed auto-resume-codex-session-log auto-resume-claude-resumes-after-reset`, then `--affected`, PASS.
