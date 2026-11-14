@@ -44,6 +44,7 @@ import type {
   RuntimeEvent,
   RuntimeTerminal,
 } from '../../src/contracts/terminal-runtime';
+import { compileLimitRules, DEFAULT_LIMIT_RULES } from '../../src/limit-rules';
 import type { HostToWebview } from '../../src/protocol';
 import { createPtyWriter } from '../../src/pty-writer';
 import { COMMAND_AGENT_ID, commandDef } from '../../src/session-command';
@@ -135,6 +136,8 @@ interface Harness {
   writer: ReturnType<typeof createPtyWriter>;
   /** Gap releases, when the harness holds submit gaps. */
   gaps: Array<() => void>;
+  /** Calls to the writer's echo-quiet wait; notices must never make one (spec R5 amended). */
+  quietCalls: () => number;
   /** Late-echo poll sleeps, when the harness holds them so cancel can be observed alive. */
   lateEchoSleeps: Array<{ ms: number; release(): void }>;
   releaseLateEcho(): Promise<void>;
@@ -234,6 +237,8 @@ function harness(
     bracketedPaste?: () => boolean;
     /** Timers fire only through advance(); otherwise asks and UI waits never expire. */
     manualTimers?: boolean;
+    hookClientPath?: string | null;
+    gitBashPath?: () => string | undefined;
   } = {},
 ): Harness {
   const dir = opts.dir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'cmcp-host-'));
@@ -348,6 +353,7 @@ function harness(
     notifyAttention();
   };
   let submitEnterCalls = 0;
+  let quietCalls = 0;
   const writer = createPtyWriter({
     generation: (id) => gens.get(id),
     input: (id, data) => {
@@ -361,8 +367,13 @@ function harness(
       else output(id, data);
       return true;
     },
+    // Notices use the fixed gap (settle 'gap'): the sleep is the gap the tests hold. A notice that
+    // opted into the echo-quiet wait would hang here and fail its test (spec R5 amended).
     sleep: () => (opts.holdGaps ? new Promise<void>((r) => gaps.push(r)) : Promise.resolve()),
-    gapMs: 0,
+    outputQuiet: () => {
+      quietCalls += 1;
+      return new Promise<void>(() => {});
+    },
   });
   const sessionStore: McpHostDeps['sessions'] = {
     get: (id: string) => sessions.get(id),
@@ -407,6 +418,7 @@ function harness(
   const registry = opts.registry ?? new AgentRegistry(DEFS);
   const domain: McpHostDeps['domain'] = {
     bracketedPaste: opts.bracketedPaste ?? (() => false),
+    limitRules: () => compileLimitRules(DEFAULT_LIMIT_RULES),
     homeOf: (id: string) => sessions.get(id)?.home,
     resolvePath: (h: string, rel: string) => (rel.startsWith('/') ? rel : `${h}/${rel}`),
     kindOf: opts.kindOf ?? (async (abs: string) => opts.kinds?.[abs] ?? 'missing'),
@@ -471,6 +483,7 @@ function harness(
         completions: completions.get(id) ?? 0,
       };
     },
+    setResumeIssue: () => undefined,
     setStuck: (id, next) => {
       stuckCalls.push([id, next]);
       if (next) stuck.set(id, next);
@@ -526,6 +539,8 @@ function harness(
   };
   host = createConduitMcpHost({
     dir,
+    hookClientPath: opts.hookClientPath ?? null,
+    gitBashPath: opts.gitBashPath ?? (() => undefined),
     homeDir: dir,
     endpointPath: ep,
     execPath: '/opt/conduit/conduit',
@@ -640,6 +655,7 @@ function harness(
     gens,
     writer,
     gaps,
+    quietCalls: () => quietCalls,
     lateEchoSleeps,
     releaseLateEcho,
     failEnter,
@@ -892,6 +908,55 @@ describe('createConduitMcpHost — launch', () => {
     expect(cfg).not.toContain('tok1');
     expect(JSON.parse(cfg).mcpServers.conduit.env).toEqual({ ELECTRON_RUN_AS_NODE: '1' });
     expect(h.sessions.get('s1')?.mcpHandle).toBe('fake-1');
+  });
+
+  // see spec 2026-11-13-scheduler-auto-resume §3 "Claude Code adapter" and blockers D6.
+  it('prepareLaunch for Claude writes the --settings file beside the MCP config and removes both on delete', async () => {
+    const h = harness({ hookClientPath: '/data/conduit-mcp/hooks/conduit-hook-abc.cjs' });
+    await h.host.start();
+    h.sessions.set('c1', session('c1'));
+    const out = await h.prepareLaunch('c1', CLAUDE, { ...spec(), command: '/usr/bin/claude' });
+    const settingsPath = path.join(h.dir, 'launch', 'c1.settings.json');
+    const i = out.args.indexOf('--settings');
+    expect(out.args[i + 1]).toBe(settingsPath);
+    expect(i).toBeLessThan(out.args.indexOf('--mcp-config'));
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    expect(Object.keys(settings.hooks)).toEqual([
+      'StopFailure',
+      'UserPromptSubmit',
+      'Stop',
+      'Notification',
+    ]);
+    expect(settings.statusLine.command).toContain('conduit-hook-abc.cjs');
+    await h.host.onSessionDeleted('c1');
+    await vi.waitFor(() => expect(fs.existsSync(settingsPath)).toBe(false));
+  });
+
+  it('on Windows without Git Bash the hooks go in but the status line is left alone, and it is logged', async () => {
+    const rec = recordingLog();
+    const h = harness({
+      platform: 'win32',
+      hookClientPath: 'C:\\data\\conduit-hook-abc.cjs',
+      gitBashPath: () => undefined,
+      log: rec.log,
+    });
+    await h.host.start();
+    h.sessions.set('c1', session('c1'));
+    await h.prepareLaunch('c1', CLAUDE, { ...spec(), command: '/usr/bin/claude', env: {} });
+    const settings = JSON.parse(
+      fs.readFileSync(path.join(h.dir, 'launch', 'c1.settings.json'), 'utf8'),
+    );
+    expect('statusLine' in settings).toBe(false);
+    expect(Object.keys(settings.hooks)).toHaveLength(4);
+    expect(rec.of('status line not wrapped')).toHaveLength(1);
+  });
+
+  it('without a hook client no --settings is passed', async () => {
+    const h = harness({ hookClientPath: null });
+    await h.host.start();
+    h.sessions.set('c1', session('c1'));
+    const out = await h.prepareLaunch('c1', CLAUDE, { ...spec(), command: '/usr/bin/claude' });
+    expect(out.args).not.toContain('--settings');
   });
 
   it('async prepareLaunch reserves the token row with the caller allocated launch ids', async () => {
@@ -1548,6 +1613,7 @@ describe('createConduitMcpHost — notices', () => {
       expect((await cb.call('list_sessions')).content).toHaveLength(2);
       await h.host.tick();
       expect(writesTo(h, 's2')).toEqual([composeNotice(false), '\r']);
+      expect(h.quietCalls()).toBe(0);
     });
 
     it('an urgent message to a busy recipient still raises urgent-waiting while the banner shows', async () => {

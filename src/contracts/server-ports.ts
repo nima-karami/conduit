@@ -10,6 +10,7 @@ import type { StuckScreen } from '../cli-stuck-screens';
 import type { ControlDeps, McpOpenRequest } from '../conduit-mcp/control-tools';
 import type { AgentCli, UserInstallState } from '../conduit-mcp/install-types';
 import type { CliPolicyLayers, GlobalPolicy } from '../conduit-mcp/tool-policy';
+import type { CompiledRules } from '../limit-rules';
 import type { PtyWriter } from '../pty-writer';
 import type { ActivitySnapshot, SessionActivity } from '../session-activity';
 import type { SessionManager } from '../session-manager';
@@ -115,6 +116,8 @@ export interface DomainPort
   /** The CLI's user-scope install state, shown with a not-connected session. */
   installState(cli: AgentCli): UserInstallState;
   bracketedPaste(sessionId: string): boolean;
+  /** The loaded limit rule set; CON-151's stuck screens read it (spec R6). */
+  limitRules(): CompiledRules;
   messagingOn(): boolean;
   /** ServerSettings.mcpToolPolicy and mcpToolPolicyByCli, read per call. */
   toolPolicy(): { global: GlobalPolicy; byCli: CliPolicyLayers };
@@ -149,7 +152,7 @@ export type AttentionEdge = ServerEvents['attention.edge'];
  * records it. Visibility acknowledges watched sessions and suppresses episodes, so W5 forwards every
  * `ui.presence` here and calls `clearAll` when the app disconnects: no window is watching then. A
  * program's OSC 7501 report outranks the output heuristics wherever it reports (D34). Activity and
- * attention only: the limit-notice scan is W4's.
+ * attention only: the Limit monitor's rules scan is W4's.
  */
 /** The legacy flags plus the new Needs-you reason and completion counter. */
 export type ServerAttentionSnapshot = ActivitySnapshot & SessionAttentionFacts;
@@ -162,6 +165,11 @@ export interface AttentionPort
    * Outranks the program's own status while set; exit clears it.
    */
   setStuck(sessionId: string, stuck: StuckScreen | null): void;
+  /**
+   * The Limit monitor's "needs you" reason (auto-resume can't proceed), or null once resolved.
+   * Outranks `setStuck`'s reason; survives a PTY exit; forgetSession clears it.
+   */
+  setResumeIssue(sessionId: string, reason: string | null): void;
   recordInput(sessionId: string, now: number): void;
   clearAll(): void;
   onEdge(listener: (edge: AttentionEdge) => void): () => void;
@@ -178,8 +186,11 @@ export interface DraftPort {
   noteHostInput(sessionId: string, data: string): void;
 }
 
-/** What W4 reads of attention: runAddDir's not-busy gate. W4 never feeds attention. */
-export type AttentionStatusRead = Pick<AttentionPort, 'statusOf'>;
+/**
+ * What W4 uses of attention: runAddDir's not-busy gate, and for the Limit monitor the busy edge
+ * and its "needs you" fact (spec 2026-11-13-scheduler-auto-resume R3, R4).
+ */
+export type AttentionStatusRead = Pick<AttentionPort, 'statusOf' | 'onChange' | 'setResumeIssue'>;
 
 export interface TypingWriteOptions {
   /** A stale generation drops the write. */

@@ -15,14 +15,18 @@ const serverPart = (all: AppSettings): ServerSettings =>
   Object.fromEntries(SERVER_SETTINGS_KEYS.map((k) => [k, all[k]])) as ServerSettings;
 const pick = (raw: Record<string, unknown>): ServerSettings => serverPart(coerceSettings(raw));
 
-const serverKeysOf = (raw: unknown): Record<string, unknown> =>
+/**
+ * Retired server keys a stored file may still hold. They reach coerceSettings on read so it can
+ * migrate them (autoResumeOnLimit → autoResume, spec 2026-11-13 §3 "Settings"), and are never
+ * written back.
+ */
+const LEGACY_READ_KEYS: readonly string[] = ['autoResumeOnLimit'];
+
+const keysOf = (raw: unknown, keep: readonly string[]): Record<string, unknown> =>
   typeof raw === 'object' && raw !== null
-    ? Object.fromEntries(
-        Object.entries(raw).filter(([k]) =>
-          (SERVER_SETTINGS_KEYS as readonly string[]).includes(k),
-        ),
-      )
+    ? Object.fromEntries(Object.entries(raw).filter(([k]) => keep.includes(k)))
     : {};
+const serverKeysOf = (raw: unknown): Record<string, unknown> => keysOf(raw, SERVER_SETTINGS_KEYS);
 
 /** The sole writer of server-settings.json (D7); the app's settings.json is only ever read, once. */
 export class ServerSettingsStore {
@@ -45,7 +49,7 @@ export class ServerSettingsStore {
     const judged = judgePersistedVersion(FILE, parsed?.version);
     if (judged === 'read') {
       this.writable = true;
-      this.value = pick(serverKeysOf(parsed?.settings));
+      this.value = pick(keysOf(parsed?.settings, [...SERVER_SETTINGS_KEYS, ...LEGACY_READ_KEYS]));
       return;
     }
     this.writable = judged !== 'newer' && (blob === undefined || this.backUp(userData, blob));

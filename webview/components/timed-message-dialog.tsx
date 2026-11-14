@@ -15,6 +15,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
+import { MAX_MESSAGE_CHARS, MESSAGE_TOO_LONG, normalizeMessage } from '../../src/message-text';
 import {
   buildSchedule,
   capError,
@@ -23,7 +24,6 @@ import {
   describeNext,
   formatDuration,
   MAX_REPEATS,
-  sanitizeMessage,
   type TimedMessage,
   type TriggerInput,
 } from '../../src/timed-messages';
@@ -95,9 +95,10 @@ export function TimedMessageDialog({
   const titleId = useId();
   const messageId = useId();
   const hintId = useId();
+  const countId = useId();
   const sendReasonId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
-  const messageRef = useRef<HTMLInputElement>(null);
+  const messageRef = useRef<HTMLTextAreaElement>(null);
   // Whatever opened this — the chip, the stale card's line, or whatever had focus when the
   // palette ran. compare-dialog.tsx is the precedent; without it focus lands on <body> and a
   // keyboard user restarts from the top of the document (§10 "Focus").
@@ -156,13 +157,17 @@ export function TimedMessageDialog({
     [session.id, message, trigger, editingId],
   );
 
-  const sanitized = sanitizeMessage(message);
+  const checked = normalizeMessage(message);
+  const tooLong = !checked.ok && checked.error === MESSAGE_TOO_LONG;
+  const sanitized = checked.ok ? checked.message : '';
+  const charCount = checked.ok ? checked.message.length : tooLong ? message.length : 0;
   // The host re-checks and would reject with a toast; showing it here is what §8 asks for — the
   // reason sits next to the disabled button instead of arriving after the click.
   const capped = capError(snap.schedules, session.id, editingId ?? undefined);
   const canArm = preview.ok && sanitized.length > 0 && snap.loaded && !capped;
 
   const hint = (() => {
+    if (tooLong) return MESSAGE_TOO_LONG;
     if (!sanitized) return 'Type a message.';
     if (capped) return capped;
     if (!preview.ok) return preview.error;
@@ -187,7 +192,8 @@ export function TimedMessageDialog({
   const edit = (s: TimedMessage) => {
     setEditingId(s.id);
     setMessage(s.message);
-    seededRef.current = sanitizeMessage(s.message);
+    const seeded = normalizeMessage(s.message);
+    seededRef.current = seeded.ok ? seeded.message : '';
     if (s.kind === 'interval') {
       setKind('every');
       setEvery(Math.max(Math.round((s.everyMs ?? UNIT_MS.hours) / UNIT_MS.hours), 1));
@@ -217,16 +223,18 @@ export function TimedMessageDialog({
   };
 
   /** Dirty = the composer holds something other than what it was last seeded with. */
-  const dirty = sanitized.length > 0 && sanitized !== seededRef.current;
+  const dirty = tooLong || (sanitized.length > 0 && sanitized !== seededRef.current);
 
   const requestClose = () => {
     if (!dirty) {
       onClose();
       return;
     }
+    const source = sanitized || message.trimStart();
+    const quote = source.length > 40 ? `${source.slice(0, 40)}…` : source;
     requestConfirm({
       title: 'Discard this message',
-      message: `Close without arming "${sanitized}"?`,
+      message: `Close without arming "${quote}"?`,
       confirmLabel: 'Discard',
       danger: true,
       focusCancel: true,
@@ -235,12 +243,14 @@ export function TimedMessageDialog({
   };
 
   const onRootKeyDown = (e: React.KeyboardEvent) => {
-    // Enter is the composer's shortcut, not the whole dialog's: on a button it must do what the
-    // button says. Cancel, Send now, ×, and every row control are all buttons, and arming from
-    // any of them is a wrong, unattended write.
+    // Enter arms from the fields, but a button keeps its own Enter: arming from Cancel, Send now,
+    // × or a row control would be an unattended write. In the message textarea Enter is a newline,
+    // so only Ctrl/Cmd+Enter arms there.
     const target = e.target as HTMLElement;
+    const newlineKey = target === messageRef.current;
     if (
       e.key === 'Enter' &&
+      (!newlineKey || e.ctrlKey || e.metaKey) &&
       canArm &&
       target.tagName !== 'BUTTON' &&
       !target.closest('.tmdlg__row')
@@ -254,7 +264,7 @@ export function TimedMessageDialog({
     if (!root) return;
     const focusables = [
       ...root.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
       ),
     ].filter((el) => el.offsetParent !== null);
     if (focusables.length === 0) return;
@@ -317,15 +327,20 @@ export function TimedMessageDialog({
           <label className="tmdlg__label" htmlFor={messageId}>
             Message
           </label>
-          <input
+          <textarea
             id={messageId}
             ref={messageRef}
             className="tmdlg__input"
+            rows={3}
             autoFocus
             value={message}
-            aria-describedby={hintId}
+            aria-describedby={`${countId} ${hintId}`}
+            aria-keyshortcuts="Control+Enter Meta+Enter"
             onChange={(e) => setMessage(e.target.value)}
           />
+          <p id={countId} className={tooLong ? 'tmdlg__hint tmdlg__hint--error' : 'tmdlg__hint'}>
+            {`${charCount.toLocaleString('en-US')} / ${MAX_MESSAGE_CHARS.toLocaleString('en-US')}`}
+          </p>
           <div className="tmdlg__quick">
             {QUICK_MESSAGES.map((q) => (
               <button key={q} type="button" className="tmdlg__chip" onClick={() => setMessage(q)}>
@@ -442,7 +457,7 @@ export function TimedMessageDialog({
               type="button"
               className="btn btn--primary"
               disabled={!canArm}
-              aria-keyshortcuts="Enter"
+              aria-keyshortcuts="Enter Control+Enter Meta+Enter"
               onClick={arm}
             >
               {editingId ? 'Save' : 'Arm'}

@@ -5,6 +5,7 @@ import {
   type ToolPolicyPatch,
   withPolicyPatch,
 } from './conduit-mcp/tool-policy';
+import type { SessionAutoResume } from './contracts/scheduler';
 import { folderKey } from './folder-key';
 import { COMMAND_AGENT_ID, effectiveDef } from './session-command';
 import { iconKindFromText } from './session-icon';
@@ -305,6 +306,17 @@ export class SessionManager {
     if (!s) return false;
     if ('mcpHandle' in patch) s.mcpHandle = patch.mcpHandle;
     if ('mcpNoticesPaused' in patch) s.mcpNoticesPaused = patch.mcpNoticesPaused;
+    this.emit();
+    return true;
+  }
+
+  /** `inherit` removes the override; false for an unknown id. */
+  setAutoResume(id: string, mode: SessionAutoResume): boolean {
+    const s = this.sessions.get(id);
+    if (!s) return false;
+    if ((s.autoResume ?? 'inherit') === mode) return true;
+    if (mode === 'inherit') delete s.autoResume;
+    else s.autoResume = mode;
     this.emit();
     return true;
   }

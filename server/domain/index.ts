@@ -2,13 +2,20 @@ import { randomBytes } from 'node:crypto';
 import { copyFileSync, existsSync, promises as fsp, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { join, resolve } from 'node:path';
+import { watchDir, watchDirWhilePresent } from '../../electron/watch-dir';
 import { runAddDir } from '../../src/add-dir-delivery';
 import { AgentRegistry } from '../../src/agent-registry';
 import { scopeFromSpawnArgs } from '../../src/agent-scope';
 import { AgentScopeTracker } from '../../src/agent-scope-tracker';
 import { atomicWriteFile, atomicWriteFileSync } from '../../src/atomic-write';
+import { claudeSettingsFileOf } from '../../src/claude-hook-settings';
+import { claudeSignalsFromHook } from '../../src/claude-signals';
+import { adapterFor } from '../../src/conduit-mcp/adapters';
 import type { McpOpenRequest } from '../../src/conduit-mcp/control-tools';
+import { CLI_KINDS, type CliKind } from '../../src/conduit-mcp/tool-policy';
 import { type AgentsConfig, loadAgentsConfig, readBlob, readFileState } from '../../src/config';
+import type { HookPost } from '../../src/contracts/hook-protocol';
+import type { SessionAutoResume } from '../../src/contracts/scheduler';
 import type {
   AttentionStatusRead,
   DomainOpenOutcome,
@@ -58,20 +65,21 @@ import { previewLaunch } from '../../src/launch-preview';
 import { buildLaunchSpec, sanitizeChildEnv } from '../../src/launch-spec';
 import { LauncherHost } from '../../src/launcher-host';
 import type { LauncherKind } from '../../src/launchers';
-import {
-  decideLimitAction,
-  type LimitEpisode,
-  looksLikeLimitLine,
-  scanLimitNotice,
-  TAIL_LINES,
-} from '../../src/limit-notice';
+import { matchLimitRules } from '../../src/limit-rules';
 import type { HostPlatform } from '../../src/lsp-binary';
+import { deliverableText, normalizeMessage } from '../../src/message-text';
 import { CwdScanner } from '../../src/osc-cwd';
 import { userRootsOf } from '../../src/path-link-roots';
 import { parseSessions, serializeSessions } from '../../src/persistence';
 import { ProjectStore, parseProjects, serializeProjects } from '../../src/project-store';
-import type { LimitOffer, TermGeometry } from '../../src/protocol';
+import type { TermGeometry } from '../../src/protocol';
 import { briefKeepIds, createRoleBriefHost, parseBriefRequest } from '../../src/role-brief-host';
+import { Scheduler, toTimedMessage } from '../../src/scheduler';
+import {
+  migrateTimedMessagesV1,
+  parseSchedulerFile,
+  serializeSchedulerFile,
+} from '../../src/scheduler-store';
 import { scrollbackReplayPadding, spawnPrelude } from '../../src/scrollback-persistence';
 import {
   COMMAND_AGENT_ID,
@@ -89,13 +97,7 @@ import {
   type PasteModeState,
   trackBracketedPaste,
 } from '../../src/terminal-output';
-import {
-  MIN_DELAY_MS,
-  MIN_INTERVAL_MS,
-  parseTimedMessagesFile,
-  serializeTimedMessagesFile,
-} from '../../src/timed-messages';
-import { TimerScheduler } from '../../src/timer-scheduler';
+import { MIN_DELAY_MS, MIN_INTERVAL_MS, parseTimedMessagesFile } from '../../src/timed-messages';
 import type {
   AgentDefinition,
   AgentSource,
@@ -108,7 +110,11 @@ import type {
 } from '../../src/types';
 import { HC_XDG_ISOLATED_ENV } from '../hc-cli';
 import { type RpcAnswer, RpcFault, type RpcRequest } from '../transport/pipe';
+import { createRolloutFs } from './codex-rollout-fs';
+import { createCodexRolloutWatch } from './codex-rollout-watch';
 import { ServerFolderHealth } from './folder-health';
+import { createLimitMonitor } from './limit-monitor';
+import { createLimitRulesSource } from './limit-rules-file';
 import { ServerSettingsStore } from './server-settings';
 
 export type DomainLogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -172,6 +178,10 @@ export interface Domain {
   snapshot(): DomainSnapshot;
   settings(): ServerSettings;
   pendingTimers(): boolean;
+  /** A Claude Code hook post the MCP endpoint authenticated (spec §3 "Claude Code adapter"). */
+  hookPost(sessionId: string, post: HookPost): void;
+  /** A keystroke from the window path (`term.input`), never Conduit's own writer (spec R4). */
+  humanInput(sessionId: string): void;
   persist(): Promise<void>;
   dispose(): Promise<void>;
 }
@@ -184,6 +194,7 @@ type DomainMethod = Extract<
   | `launchers.${string}`
   | `briefs.${string}`
   | `timers.${string}`
+  | `scheduler.${string}`
   | 'serverSettings.patch'
 >;
 type Handler<R> = (p: Record<string, unknown>) => R | Promise<R>;
@@ -393,8 +404,6 @@ export function createDomain(deps: DomainDeps): Domain {
   const exitCodes = new Map<string, number | null>();
   const pasteModes = new Map<string, PasteModeState>();
   const cwdScanners = new Map<string, CwdScanner>();
-  const limitEpisodes = new Map<string, LimitEpisode>();
-  let limitOffer: LimitOffer | null = null;
 
   let reconciled = false;
   let markReconciled: () => void = () => {};
@@ -433,14 +442,17 @@ export function createDomain(deps: DomainDeps): Domain {
     // Unloaded (restore off, before reconcile) the in-memory list is empty, not the file's.
     timers: () =>
       timersWritable && timersLoaded
-        ? serializeTimedMessagesFile({ version: 1, schedules: timers.list() })
+        ? serializeSchedulerFile(
+            { version: 2, jobs: timers.list(), episodes: monitor.episodes() },
+            Date.now(),
+          )
         : null,
     projects: () =>
       projectsWritable && projectsDirty ? serializeProjects(projectStore.list()) : null,
   };
   const fileOf = {
     sessions: 'sessions.json',
-    timers: 'timed-messages.json',
+    timers: 'scheduler.json',
     projects: 'projects.json',
   };
   const schedulePersist = (what: keyof typeof writers) => {
@@ -460,7 +472,15 @@ export function createDomain(deps: DomainDeps): Domain {
     queueMicrotask(() => deps.emit('sessions.changed', { sessions: views() }));
   }
   let timersChangedTimer: ReturnType<typeof setTimeout> | undefined;
-  const timersState = () => ({ schedules: timers.list(), offer: limitOffer });
+  const timersState = () => ({
+    schedules: timers.list().flatMap((j) => {
+      const m = toTimedMessage(j);
+      return m ? [m] : [];
+    }),
+    offer: monitor.offer(),
+    jobs: timers.list(),
+    episodes: monitor.episodes(),
+  });
   const timersChanged = () => {
     if (timersChangedTimer) return;
     timersChangedTimer = setTimeout(() => {
@@ -557,35 +577,141 @@ export function createDomain(deps: DomainDeps): Domain {
     healthChanged: (id) => scopes.recompute(id),
   });
 
-  const timedParse = parseTimedMessagesFile(readBlob(file('timed-messages.json')));
-  const timersWritable = timedParse.kind !== 'newer';
-  const timers = new TimerScheduler({
+  // see spec 2026-11-13-scheduler-auto-resume §3 "Job (persisted)": the first start migrates
+  // timed-messages.json v1 and leaves it untouched for a downgrade.
+  const schedulerBlob = readBlob(file('scheduler.json')) ?? null;
+  const schedulerParse = (() => {
+    const maxAttempts = settings().autoResumeMaxAttempts;
+    if (schedulerBlob === null) {
+      const v1 = parseTimedMessagesFile(readBlob(file('timed-messages.json')));
+      const migrated = migrateTimedMessagesV1(v1, { maxAttempts });
+      if (migrated.jobs.length > 0)
+        log.info('scheduler', 'migrated timed-messages.json', { jobs: migrated.jobs.length });
+      return { version: 2 as const, ...migrated };
+    }
+    const parsed = parseSchedulerFile(schedulerBlob, { maxAttempts });
+    if (parsed.kind === 'newer')
+      log.warn('scheduler', 'scheduler.json is from a newer build; not written');
+    else if (
+      parsed.jobs.length === 0 &&
+      parsed.episodes.length === 0 &&
+      schedulerBlob.trim() !== ''
+    )
+      log.warn('scheduler', 'scheduler.json unreadable or empty; starting with no jobs');
+    return parsed;
+  })();
+  const timersWritable = schedulerParse.kind !== 'newer';
+
+  const cliOf = (id: string): CliKind | null => {
+    const s = mgr.get(id);
+    const def = s ? effectiveDef(s, registry) : undefined;
+    const a = def ? adapterFor(def, { e2e: deps.e2e }) : undefined;
+    return a && (CLI_KINDS as readonly string[]).includes(a.id) ? (a.id as CliKind) : null;
+  };
+  const schedulerLog = {
+    info: (msg: string, data?: object) => log.info('scheduler', msg, data && { ...data }),
+    debug: (msg: string, data?: object) => log.debug('scheduler', msg, data && { ...data }),
+    warn: (msg: string, data?: object) => log.warn('scheduler', msg, data && { ...data }),
+  };
+  const rules = createLimitRulesSource({
+    userData: deps.userData,
+    watchDirWhilePresent,
+    fs: {
+      read: (p) => readBlob(p) ?? null,
+      writeAtomic: (p, data) => atomicWriteFileSync(p, data),
+    },
+    onChange: () => log.info('scheduler', 'limit rules reloaded'),
+    log: schedulerLog,
+  });
+
+  // The Scheduler asks the monitor before every resume; the monitor arms through the Scheduler.
+  let monitor: ReturnType<typeof createLimitMonitor>;
+  const timers = new Scheduler({
     now: () => Date.now(),
     setTimer: (ms, fn) => setTimeout(fn, ms),
     clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
     isAlive: isLive,
-    // The bare writer: timed messages submit with no gate (F8).
-    deliver: (id, message) => deps.typing.submit(id, message).then((o) => o === 'submitted'),
     sessionExists: (id) => !!mgr.get(id),
+    preFire: (job) => monitor.preFire(job),
+    // The bare writer: timed messages submit with no gate (F8). see spec R5 for `bracketed`.
+    deliver: async (job) => {
+      const check = normalizeMessage(job.action.message);
+      if (!check.ok) return { ok: false, reason: check.error };
+      const bracketed = !!pasteModes.get(job.sessionId)?.on;
+      const { text, joined } = deliverableText(check.message, bracketed);
+      const outcome = await deps.typing.submit(job.sessionId, text, { bracketed, settle: 'quiet' });
+      return outcome === 'submitted' ? { ok: true, joined } : { ok: false, reason: outcome };
+    },
     onChange: () => {
       schedulePersist('timers');
       timersChanged();
     },
     onFired: (ev) => {
-      log.info('timer', 'fired', { ...ev });
+      log.info('scheduler', 'fired', { ...ev });
       deps.emit('timers.fired', ev);
     },
+    onJobFailed: (job, reason) => {
+      log.warn('scheduler', 'job failed', { jobId: job.id, sessionId: job.sessionId, reason });
+      monitor.onJobFailed(job, reason);
+    },
+    verifyMs: () => settings().autoResumeVerifyMs,
     minDelayMs: deps.e2e ? 0 : MIN_DELAY_MS,
     minIntervalMs: deps.e2e ? 0 : MIN_INTERVAL_MS,
   });
-
+  monitor = createLimitMonitor({
+    now: () => Date.now(),
+    setTimer: (ms, fn) => {
+      const t = setTimeout(fn, ms);
+      t.unref?.();
+      return t;
+    },
+    clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    scheduler: timers,
+    settings: () => settings(),
+    sessionMode: (id) => mgr.get(id)?.autoResume,
+    cliOf,
+    isBusy: (id) => deps.attention.statusOf(id).busy,
+    screen: async (id) => (await runtime.screen(id))?.lines ?? null,
+    scanRules: (cli, rows, now) => matchLimitRules(rules.current(), cli, rows, now),
+    setResumeIssue: (id, reason) => deps.attention.setResumeIssue(id, reason),
+    onChange: () => {
+      schedulePersist('timers');
+      timersChanged();
+    },
+    log: schedulerLog,
+  });
+  const codexHome = deps.env.CODEX_HOME || join(deps.homeDir, '.codex');
+  const metaCapWarned = new Set<string>();
+  const codexWatch = createCodexRolloutWatch({
+    sessionsRoot: join(codexHome, 'sessions'),
+    now: () => Date.now(),
+    localDate: (ms) => {
+      const d = new Date(ms);
+      return { y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate() };
+    },
+    watchDir,
+    fs: createRolloutFs({
+      onFirstLineTooLong: (file) => {
+        if (metaCapWarned.has(file)) return;
+        metaCapWarned.add(file);
+        log.warn('scheduler', 'rollout first line over the read cap; not bound', { file });
+      },
+    }),
+    samePath: (a, b) => folderKey(a) === folderKey(b),
+    episodeOpen: (id) => monitor.episodes().some((e) => e.sessionId === id && e.state === 'open'),
+    onSignal: (signal) => monitor.signal(signal),
+    onBound: (id) => monitor.onAdapterLive(id),
+    log: schedulerLog,
+  });
   const settingsAtLoad = settings();
   // With restore off, records wait for reconcile: only a live or unconfirmed one reopens (D40).
   let held: Session[] = [];
   let timersLoaded = false;
   const loadTimers = () => {
-    // After the session set: a schedule whose session is gone is dropped at load.
-    timers.load(timedParse.schedules);
+    // After the session set: a job whose session is gone is dropped at load. Episodes first, so
+    // the pre-fire check of an overdue resume sees them (spec R1).
+    monitor.load(schedulerParse.episodes.filter((e) => !!mgr.get(e.sessionId)));
+    timers.load(schedulerParse.jobs);
     timersLoaded = true;
   };
   if (settingsAtLoad.restoreSessions) {
@@ -626,6 +752,9 @@ export function createDomain(deps: DomainDeps): Domain {
           lastSize: t.size,
         });
         mgr.setStatus(t.sessionId, 'running');
+        // A job loaded before reconcile saw no live PTY and is waiting: an adopted terminal is
+        // its PTY coming back (spec §4 "Server restarted between arm and fire").
+        timers.onPtyStart(t.sessionId);
       } else mgr.setStatus(t.sessionId, 'exited');
     }
     reconciled = true;
@@ -652,53 +781,20 @@ export function createDomain(deps: DomainDeps): Domain {
     cwdScanners.delete(id);
     cwdGate.drop(id);
     pasteModes.delete(id);
-    // The episode described a live moment; a dead child is not asking to be resumed.
-    limitEpisodes.delete(id);
-  };
-
-  /** Reads the session's trailing lines, not the chunk: a notice that scrolled past is no match. */
-  const scanForLimitNotice = (id: string, tail: readonly string[]) => {
-    const at = Date.now();
-    const notice = scanLimitNotice(tail, at);
-    if (!notice) {
-      const last = tail[tail.length - 1];
-      if (last && looksLikeLimitLine(last))
-        log.debug('timer', 'limit-notice-unparsed', { sessionId: id, line: last });
-      return;
-    }
-    const action = decideLimitAction(
-      limitEpisodes.get(id),
-      notice,
-      settings().autoResumeOnLimit,
-      at,
-    );
-    if (action === 'ignore') return;
-    limitEpisodes.set(id, { resetAt: notice.resetAt, resolved: action === 'arm', at });
-    if (action === 'arm') {
-      const armed = timers.armLimit(id, notice.resetAt);
-      log.info('timer', armed ? 'limit-armed' : 'limit-arm-refused', {
-        sessionId: id,
-        resetAt: notice.resetAt,
-      });
-      return;
-    }
-    limitOffer = { sessionId: id, resetAt: notice.resetAt, line: notice.line };
-    timersChanged();
   };
 
   const onData = (id: string, chunk: string) => {
     if (!mgr.get(id)) return;
-    const tail = runtime.tailLines(id, TAIL_LINES);
+    const tail = runtime.tailLines(id, 1);
     const line = lastNonEmptyLine(tail.at(-1) ?? '');
     if (lastLines.get(id) !== line) {
       lastLines.set(id, line);
       changed(false);
     }
-    if (scopes.tracks(id)) {
-      pasteModes.set(id, trackBracketedPaste(pasteModes.get(id) ?? PASTE_MODE_OFF, chunk));
-      scopes.output(id, chunk);
-    }
-    if (settings().autoResumeOnLimit !== 'off') scanForLimitNotice(id, tail);
+    // see spec R2: every session, so a scheduled paste knows whether to bracket.
+    pasteModes.set(id, trackBracketedPaste(pasteModes.get(id) ?? PASTE_MODE_OFF, chunk));
+    if (scopes.tracks(id)) scopes.output(id, chunk);
+    monitor.onData(id);
     if (settings().trackCwd) {
       let scanner = cwdScanners.get(id);
       if (!scanner) {
@@ -716,6 +812,16 @@ export function createDomain(deps: DomainDeps): Domain {
     switch (e.type) {
       case 'data':
         if (current(e.sessionId, e.generation)) onData(e.sessionId, e.data);
+        return;
+      // hc's synthetic screen carries the program's modes: a CLI that switched bracketed paste
+      // on at startup, or before a server restart, says so only here (spec R2).
+      case 'paint':
+        if (current(e.sessionId, e.generation))
+          pasteModes.set(
+            e.sessionId,
+            // A paint is a full synthetic screen (terminal-runtime.ts): its modes are the truth.
+            trackBracketedPaste(PASTE_MODE_OFF, e.data),
+          );
         return;
       case 'spawned':
         setFacts(e.sessionId, { generation: e.generation, spawn: 'live', lastSize: e.size });
@@ -749,6 +855,8 @@ export function createDomain(deps: DomainDeps): Domain {
         }
         endEpisode(e.sessionId);
         scopes.ended(e.sessionId);
+        monitor.onPtyExit(e.sessionId, e.reason);
+        if (e.reason === 'exited') codexWatch.untrack(e.sessionId);
         // Only a program that quit on its own: a kill from Conduit's own stop must not delete it.
         if (e.reason === 'exited' && mgr.get(e.sessionId)?.closeWhenDone) {
           deps.closeWhenDone(e.sessionId).catch((err: unknown) =>
@@ -773,6 +881,11 @@ export function createDomain(deps: DomainDeps): Domain {
     }
   };
   const unsubscribe = runtime.on(onRuntime);
+  // see spec R3 / R13: the monitor decides whether a busy edge counts as a resumed turn.
+  const unwatchBusy = deps.attention.onChange(() => {
+    for (const session of mgr.list())
+      monitor.onBusy(session.id, deps.attention.statusOf(session.id).busy);
+  });
 
   /** The single producer; persisted before the run, so a restart never reuses a generation. */
   function allocateLaunch(id: string): LaunchIds {
@@ -968,6 +1081,7 @@ export function createDomain(deps: DomainDeps): Domain {
     // A refused spawn leaves it there too, and every refusal below returns it in the prelude, so
     // ring and pane agree (lead decision, w4 round 3 SF2).
     if (marker) scrollback.record(id, marker);
+    const launchAt = Date.now();
     const result = await runtime.spawn(id, spec, labels, ids);
     brief.commit(result.ok && 'terminal' in result);
     if (!(result.ok && 'terminal' in result)) scopes.ended(id);
@@ -1027,6 +1141,21 @@ export function createDomain(deps: DomainDeps): Domain {
     mgr.touch(id);
     // A message written into a shell that has not printed its prompt is lost: settle first.
     timers.onPtyStart(id);
+    const cli = cliOf(id);
+    if (cli === 'codex') {
+      codexWatch.untrack(id);
+      codexWatch.track(id, { cwd: spec.cwd, launchAt });
+    }
+    // The host injected Claude's hooks for this launch (its own settings file, not a user's
+    // --settings): they speak for the session (spec R13).
+    monitor.onLaunch(id);
+    const settingsAt = spec.args.indexOf('--settings');
+    if (
+      cli === 'claude' &&
+      settingsAt >= 0 &&
+      spec.args[settingsAt + 1] === claudeSettingsFileOf(join(userData, 'conduit-mcp'), id)
+    )
+      monitor.onAdapterLive(id);
     return {
       ok: true,
       target: terminal.target,
@@ -1213,10 +1342,8 @@ export function createDomain(deps: DomainDeps): Domain {
       m.delete(id);
     pendingRelaunchMarker.delete(id);
     timers.onSessionDisposed(id);
-    if (limitOffer?.sessionId === id) {
-      limitOffer = null;
-      timersChanged();
-    }
+    monitor.onSessionClosed(id);
+    codexWatch.untrack(id);
     scrollback.forget(id);
     changed();
     return { ok: true };
@@ -1235,6 +1362,7 @@ export function createDomain(deps: DomainDeps): Domain {
       await runtime.retire(id);
       setFacts(id, { spawn: 'none' });
       endEpisode(id);
+      monitor.onSessionClosed(id);
       scopes.ended(id);
       restartSeq.set(id, (restartSeq.get(id) ?? 0) + 1);
     }
@@ -1435,24 +1563,32 @@ export function createDomain(deps: DomainDeps): Domain {
     'briefs.agentPreview': (p) =>
       roleBriefs.agentPreview(typeof p.agentId === 'string' ? registry.get(p.agentId) : undefined),
     'timers.set': (p) => {
-      const res = timers.set(p.schedule as Parameters<TimerScheduler['set']>[0]);
+      const res = timers.set(p.schedule as Parameters<Scheduler['set']>[0]);
       return res.ok ? {} : { error: { message: res.error } };
     },
     'timers.offer': (p) => {
       // Resolved once, here: two windows answering one offer produce one schedule.
-      const id = str(p, 'sessionId');
-      const episode = limitEpisodes.get(id);
-      if (!episode || episode.resolved) return {};
-      limitEpisodes.set(id, { ...episode, resolved: true, at: Date.now() });
-      if (limitOffer?.sessionId === id) limitOffer = null;
-      if (p.action === 'arm') timers.armLimit(id, episode.resetAt);
+      monitor.answerOffer(str(p, 'sessionId'), p.action === 'arm' ? 'arm' : 'dismiss');
       timersChanged();
       return {};
     },
     'timers.cancel': (p) => {
-      timers.cancel(str(p, 'id'));
+      timers.cancel(str(p, 'id'), 'cancelled by the human');
       return {};
     },
+    'scheduler.setSessionAutoResume': (p) => {
+      const mode = p.mode;
+      if (mode !== 'inherit' && mode !== 'on' && mode !== 'off')
+        throw new RpcFault('refused', 'mode must be inherit, on or off');
+      if (!mgr.setAutoResume(str(p, 'sessionId'), mode as SessionAutoResume))
+        throw new RpcFault('not_found', 'Session no longer exists');
+      monitor.onModeChanged();
+      return {};
+    },
+    'scheduler.history': (p) => ({
+      jobs: timers.history(str(p, 'sessionId')),
+      episodes: monitor.episodes().filter((e) => e.sessionId === str(p, 'sessionId')),
+    }),
     'timers.renew': (p) => {
       const res = timers.renewSchedule(str(p, 'id'));
       if (!res.ok) throw new RpcFault('refused', res.error);
@@ -1479,6 +1615,7 @@ export function createDomain(deps: DomainDeps): Domain {
     'serverSettings.patch': (p) => {
       if (settingsStore.patch(p.patch)) {
         deps.emit('serverSettings.changed', { settings: settings() });
+        monitor.onModeChanged();
         // A setting decides what D40 writes.
         schedulePersist('sessions');
       }
@@ -1527,6 +1664,7 @@ export function createDomain(deps: DomainDeps): Domain {
 
   const domain: DomainPort = {
     bracketedPaste: (id) => !!pasteModes.get(id)?.on,
+    limitRules: () => rules.current(),
     homeOf: (id) => mgr.get(id)?.home,
     resolvePath: (home, target) => resolve(home, target),
     kindOf: (target) =>
@@ -1598,7 +1736,20 @@ export function createDomain(deps: DomainDeps): Domain {
       timers: timersState(),
     }),
     settings,
-    pendingTimers: () => timers.list().some((s) => s.state === 'armed'),
+    // A verify window must outlive an idle shutdown too; a proposal waits on a human, not a timer.
+    pendingTimers: () =>
+      timers
+        .list()
+        .some(
+          (j) =>
+            ['armed', 'checking', 'sending', 'verifying'].includes(j.state) ||
+            (j.state === 'waiting' && isLive(j.sessionId)),
+        ),
+    hookPost: (sessionId: string, post: HookPost) => {
+      for (const signal of claudeSignalsFromHook(sessionId, post.event, post.payload, Date.now()))
+        monitor.signal(signal);
+    },
+    humanInput: (sessionId: string) => monitor.onHumanInput(sessionId),
     persist: async () => {
       flush('sessions');
       flush('timers');
@@ -1609,6 +1760,10 @@ export function createDomain(deps: DomainDeps): Domain {
     dispose: async () => {
       unsubscribe();
       timers.stop();
+      monitor.dispose();
+      codexWatch.dispose();
+      rules.dispose();
+      unwatchBusy();
       folders.dispose();
       clearTimeout(timersChangedTimer);
       for (const t of persistTimers.values()) clearTimeout(t);

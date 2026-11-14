@@ -123,7 +123,7 @@ export type RuntimeEvent =
   /**
    * Output the program wrote. Exactly one subscriber per concern (§Internal subscribers): W6 inside
    * the runtime (ring, screen model, activity and attention incl. bells and the inert scan); W4 on
-   * this event (lastLine from tailLines, the limit-notice scan, bracketed-paste tracking, scopes).
+   * this event (lastLine from tailLines, the Limit monitor scan, bracketed-paste tracking, scopes).
    */
   | { type: 'data'; sessionId: string; generation: number; data: string }
   /**
@@ -257,7 +257,7 @@ export interface TerminalRuntime {
    * `paint`, and the notice gate fails closed meanwhile (F8).
    */
   screen(sessionId: string): Promise<ScreenSnapshot | null>;
-  /** Last ≤4 KiB of output as lines; W4 reads it on `data` for lastLine and the limit-notice scan. */
+  /** Last ≤4 KiB of output as lines; W4 reads it on `data` for lastLine. */
   tailLines(sessionId: string, n: number): string[];
   /** Kill; the matching `exit` event is still emitted. */
   kill(sessionId: string): Promise<void>;

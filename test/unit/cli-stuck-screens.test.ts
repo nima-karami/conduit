@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { detectStuckScreen } from '../../src/cli-stuck-screens';
+import { compileLimitRules } from '../../src/limit-rules';
 
 const rows = (text: string): string[] => text.split('\n');
 
@@ -192,5 +193,36 @@ describe('detectStuckScreen', () => {
         rows("  const s = 'Your usage limits will reset when your monthly cycle ends';"),
       ),
     ).toBeNull();
+  });
+});
+
+describe('detectStuckScreen with a rule set', () => {
+  it('reads the rule set it is given instead of the defaults', () => {
+    const custom = compileLimitRules([
+      {
+        id: 'custom:boom',
+        cli: 'codex',
+        enabled: true,
+        match: 'BOOM',
+        kind: 'provider-error',
+        reason: 'custom needs you',
+      },
+    ]);
+    expect(detectStuckScreen('codex', rows('BOOM'), custom)).toEqual({
+      kind: 'provider-error',
+      reason: 'custom needs you',
+    });
+    expect(detectStuckScreen('codex', CODEX_USAGE_LIMIT_ONLY, custom)).toBeNull();
+  });
+
+  it('does not flag a screen for a rule that has no kind', () => {
+    const resumeOnly = compileLimitRules([
+      { id: 'resume:claude', cli: 'claude', enabled: true, match: 'usage limit reached' },
+    ]);
+    expect(detectStuckScreen('claude', rows('Claude usage limit reached'), resumeOnly)).toBeNull();
+  });
+
+  it('flags nothing when the rule set is empty', () => {
+    expect(detectStuckScreen('codex', CODEX_USAGE_LIMIT_ONLY, compileLimitRules([]))).toBeNull();
   });
 });

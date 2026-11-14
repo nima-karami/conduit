@@ -26,7 +26,8 @@ describe('server domain: server settings', () => {
     const file = json(h.userData, 'server-settings.json');
     expect(file.version).toBe(1);
     expect(file.settings.trackCwd).toBe(false);
-    expect(file.settings.autoResumeOnLimit).toBe('offer');
+    // The pre-CON-11 key migrates on the way in (spec 2026-11-13 §3 "Settings").
+    expect(file.settings.autoResume).toBe('ask');
     expect('theme' in file.settings).toBe(false);
 
     // Seeded once: a later settings.json never overrides the server's own file.
@@ -36,13 +37,36 @@ describe('server domain: server settings', () => {
     expect(again.domain.settings().trackCwd).toBe(false);
   });
 
+  it('migrates autoResumeOnLimit from an existing server-settings.json, and keeps it through a patch', async () => {
+    for (const [legacy, expected] of [
+      ['off', 'off'],
+      ['offer', 'ask'],
+      ['arm', 'on'],
+    ] as const) {
+      const h = harness({
+        files: {
+          'server-settings.json': JSON.stringify({
+            version: 1,
+            settings: { autoResumeOnLimit: legacy, trackCwd: true },
+          }),
+        },
+      });
+      expect(h.domain.settings().autoResume).toBe(expected);
+      await h.call('serverSettings.patch', { patch: { trackCwd: false } });
+      expect(h.domain.settings().autoResume).toBe(expected);
+      const stored = json(h.userData, 'server-settings.json').settings;
+      expect(stored.autoResume).toBe(expected);
+      expect('autoResumeOnLimit' in stored).toBe(false);
+    }
+  });
+
   it('patches key-scoped and coerced, writes the file and emits serverSettings.changed', async () => {
     const h = harness();
     const r = (await h.call('serverSettings.patch', {
-      patch: { trackCwd: false, theme: 'dark', autoResumeOnLimit: 'bogus' },
+      patch: { trackCwd: false, theme: 'dark', autoResume: 'bogus' },
     })) as { settings: ServerSettings };
     expect(r.settings.trackCwd).toBe(false);
-    expect(r.settings.autoResumeOnLimit).toBe('arm');
+    expect(r.settings.autoResume).toBe('on');
     expect('theme' in r.settings).toBe(false);
     expect(json(h.userData, 'server-settings.json').settings.trackCwd).toBe(false);
     const changed = h.events.filter((e) => e.type === 'serverSettings.changed');
@@ -121,6 +145,59 @@ describe('server domain: persisted formats', () => {
     );
     await h.domain.persist();
     for (const [name, text] of Object.entries(files)) expect(read(h.userData, name)).toBe(text);
+  });
+
+  // see spec 2026-11-13-scheduler-auto-resume §3 "Job (persisted)" and R9.
+  it('migrates timed-messages.json v1 into scheduler.json v2 and leaves the old file untouched', async () => {
+    const first = harness();
+    const id = await first.create();
+    await first.domain.persist();
+    await first.domain.dispose();
+    const v1 = JSON.stringify({
+      version: 1,
+      schedules: [
+        {
+          id: 'tm-1',
+          sessionId: id,
+          message: 'hello',
+          kind: 'once',
+          nextAt: Date.now() + 3_600_000,
+          maxRepeats: 1,
+          firedCount: 0,
+          state: 'armed',
+          origin: 'manual',
+          createdAt: Date.now(),
+        },
+      ],
+    });
+    // A pre-CON-11 tree: sessions.json and timed-messages.json, no scheduler.json yet.
+    rmSync(join(first.userData, 'scheduler.json'), { force: true });
+    writeFileSync(join(first.userData, 'timed-messages.json'), v1);
+    const h = harness({ userData: first.userData });
+    h.domain.adopted([]);
+    await vi.waitFor(() =>
+      expect(h.domain.snapshot().timers.jobs?.map((j) => j.id)).toEqual(['tm-1']),
+    );
+    await h.call('timers.set', {
+      schedule: { sessionId: id, message: 'x', trigger: { kind: 'in', delayMs: 7_200_000 } },
+    });
+    await h.domain.persist();
+    expect(read(h.userData, 'timed-messages.json')).toBe(v1);
+    const v2 = json(h.userData, 'scheduler.json');
+    expect(v2.version).toBe(2);
+    expect(v2.jobs.map((j: { id: string }) => j.id)).toContain('tm-1');
+  });
+
+  it('never overwrites a newer scheduler.json', async () => {
+    const newer = JSON.stringify({ version: 99, jobs: [], episodes: [] });
+    const h = harness({ files: { 'scheduler.json': newer } });
+    h.domain.adopted([]);
+    const id = await h.create();
+    await h.call('timers.set', {
+      schedule: { sessionId: id, message: 'x', trigger: { kind: 'in', delayMs: 3_600_000 } },
+    });
+    await h.domain.persist();
+    expect(read(h.userData, 'scheduler.json')).toBe(newer);
   });
 
   it('blocks launcher writes on a newer launchers.json', async () => {

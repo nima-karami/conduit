@@ -250,10 +250,14 @@ describe('compose: sessions.changed carries attention', () => {
       completions: 0,
     });
     const before = of(h.sent, 'sessions.changed').length;
-    const changed = onChange.mock.calls[0]?.[0];
-    expect(changed).toBeDefined();
-    changed?.();
-    changed?.();
+    // Every subscriber (the domain's Limit monitor reads busy edges too, spec R3).
+    const listeners = onChange.mock.calls.map(([l]) => l);
+    expect(listeners.length).toBeGreaterThan(0);
+    const changed = () => {
+      for (const l of listeners) l();
+    };
+    changed();
+    changed();
     // Coalesced: two flips within the window are one re-send.
     await vi.waitFor(() => expect(of(h.sent, 'sessions.changed').length).toBe(before + 1));
   });
@@ -277,11 +281,14 @@ describe('compose: sessions.changed carries attention', () => {
     });
     await vi.waitFor(() => expect(of(h.sent, 'sessions.changed').length).toBeGreaterThan(0));
     const before = of(h.sent, 'sessions.changed').length;
-    const changed = onChange.mock.calls[0]?.[0];
+    const listeners = onChange.mock.calls.map(([l]) => l);
+    const changed = () => {
+      for (const l of listeners) l();
+    };
     status.mockReturnValue(facts(1));
-    changed?.();
+    changed();
     status.mockReturnValue(facts(2));
-    changed?.();
+    changed();
     await vi.waitFor(() => expect(of(h.sent, 'sessions.changed').length).toBe(before + 1));
     expect(
       of(h.sent, 'sessions.changed')
@@ -292,6 +299,30 @@ describe('compose: sessions.changed carries attention', () => {
 });
 
 describe('compose: dispatch routing', () => {
+  // see spec 2026-11-13-scheduler-auto-resume R4.
+  it('term.input counts as human input only when delivered and not a terminal reply', async () => {
+    const h = await harness();
+    const { domain, mcp } = h.services;
+    const peer: Peer = { subscribed: true };
+    const human = vi.spyOn(domain, 'humanInput');
+    const termInput = vi.spyOn(mcp, 'termInput');
+    termInput.mockReturnValue(true);
+    await answer(h.services, 'term.input', { sessionId: 's', generation: 1, data: '\x1b[I' }, peer);
+    await answer(
+      h.services,
+      'term.input',
+      { sessionId: 's', generation: 1, data: '\x1b[?1;2c' },
+      peer,
+    );
+    expect(human).not.toHaveBeenCalled();
+    await answer(h.services, 'term.input', { sessionId: 's', generation: 1, data: 'y' }, peer);
+    expect(human).toHaveBeenCalledWith('s');
+    human.mockClear();
+    termInput.mockReturnValue(false);
+    await answer(h.services, 'term.input', { sessionId: 's', generation: 9, data: 'y' }, peer);
+    expect(human).not.toHaveBeenCalled();
+  });
+
   it('routes term, ui and mcp traffic to the right service, and refuses the rest', async () => {
     const h = await harness();
     const { runtime, domain, mcp } = h.services;

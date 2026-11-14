@@ -1,0 +1,21 @@
+base: 428e18a999d7ed798da91437d93785d29bf8ee4f
+gate at base: npm run verify exit=0 (evidence/verify-s0.log, run on this tree before commit 428e18a9; lint-staged changed nothing)
+failure set at base: none
+## gate-definition hashes
+490be0be72ba4f7a415a7629b237f5a8c489c62b1e63f3114b11cef9bb0be86a  package.json
+4ade99cbd9fd6d3871622b1870fe2d41eb5857d2b4b22b38e14a50c25c9c8eba  biome.json
+35f614dafc4251d407422aa49efb96a8f1ef8c5ddda3f530928236602e3052f1  .fallowrc.json
+9b3368072848f3d317de3ff41acf172e959e81ab13561404a6f98744597cfe3a  vitest.config.ts
+d0f7be6c047caa7287cb5087ba9e3abe52ce90b31d0b412b4415a1c59062cb41  tsconfig.json
+e56383fff09ac3dc6db1865ccdfe7660225b2fe5d308cc24143a526e0d37b43d  tsconfig.webview.json
+502a5206376210f86152dd04a9417ec3fc83ff80bedc388ddeec7c2d4630c9ab  .lintstagedrc.json
+d3916f90d1f603c3620df074634085666d4ebc909bed17dbed3b63a050e686fe  tools/check-e2e-sleeps.mjs
+283f1b61c9b5ca1e1cee2b7478b6baea49a844d5a24d6e5ced08a33c0821df29  test/e2e/sleep-baseline.json
+8fa54cadcb93cf98ea686e6cbfad41953a56c1a38d51f61bdcec9009931a5de6  test/e2e/quarantine.json
+524eca2f359cde72bca931cacf3708e2d982baf62bcec49d8837d04517d5d814  .github/workflows/build-mac.yml
+9b59450ffb388052541bd9afe798f81a0cfc4f730c13bb862bd4f21a3b67431a  .github/workflows/e2e.yml
+482390416cc3c41a5ff23a708893cec22a89678d652552a832c6a2d8189bb90b  .github/workflows/release.yml
+17bfcd8fb883cbbaa1fdc5094484a06ec295c6baf274ab01b5a1c4b7fb415572  .github/workflows/verify.yml
+## existing unit test files (count, combined hash)
+738
+4ff60554399f3afc2454da41cf51b8aa8bce18583dcd54c1097fe51c634cdd3f  -

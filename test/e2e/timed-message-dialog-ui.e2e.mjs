@@ -21,13 +21,17 @@
  * every trigger tab, and prove it never needs to scroll in either axis, and that the
  * Neon chamfer is actually drawn (not just present in CSS) once that's true.
  *
+ * The message field is a multi-line <textarea> (spec 2026-11-13-scheduler-auto-resume §6): Enter adds
+ * a line, only Ctrl/Cmd+Enter arms, a count `n / 16,000` sits under it and turns to the error
+ * style over the limit, where Arm is disabled. The last stage drives exactly that.
+ *
  * Windows only, real app — see CLAUDE.md (run alone on a quiet machine).
  */
 
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openSession, pollUntil, runScenario } from './harness.mjs';
 
 const TRIGGERS = ['In', 'At', 'Every'];
 
@@ -122,6 +126,76 @@ async function openDialogViaChip(page) {
   await page.locator('.tmdlg').first().waitFor({ state: 'visible', timeout: 10000 });
 }
 
+/** The message field's count line: the element its aria-describedby names first. */
+const countText = (page) =>
+  page.evaluate(() => {
+    const field = document.querySelector('.tmdlg__input');
+    const id = field?.getAttribute('aria-describedby')?.split(' ')[0];
+    const el = id ? document.getElementById(id) : null;
+    return el
+      ? { text: el.textContent?.trim(), error: el.classList.contains('tmdlg__hint--error') }
+      : null;
+  });
+
+/** The textarea: a line break on Enter (never an arm), the count, the over-limit state, Ctrl+Enter. */
+async function assertMessageField(page, sid) {
+  await openDialogViaChip(page);
+  const field = page.locator('.tmdlg__input');
+  assert(
+    (await field.evaluate((el) => el.tagName)) === 'TEXTAREA',
+    'the message field must be a <textarea>',
+  );
+
+  await field.fill('first line');
+  await field.press('Enter');
+  await field.pressSequentially('second line');
+  assert(
+    (await field.inputValue()) === 'first line\nsecond line',
+    `Enter must add a line break, got ${JSON.stringify(await field.inputValue())}`,
+  );
+  assert(
+    await page.locator('.tmdlg').first().isVisible(),
+    'a bare Enter in the message field must not arm and close the dialog',
+  );
+  const count = await countText(page);
+  assert(
+    count?.text === '22 / 16,000' && !count.error,
+    `the count must read "22 / 16,000", got ${JSON.stringify(count)}`,
+  );
+
+  await field.fill('x'.repeat(16_001));
+  const over = await countText(page);
+  assert(
+    over?.text === '16,001 / 16,000' && over.error,
+    `an over-limit count must read 16,001 / 16,000 in the error style, got ${JSON.stringify(over)}`,
+  );
+  assert(
+    await page.locator('.tmdlg button', { hasText: /^Arm$/ }).isDisabled(),
+    'Arm must be disabled over the limit',
+  );
+  await field.press('Control+Enter');
+  assert(
+    await page.locator('.tmdlg').first().isVisible(),
+    'Ctrl+Enter over the limit must not arm',
+  );
+
+  await field.fill('first line\nsecond line');
+  await field.press('Control+Enter');
+  await page.locator('.tmdlg').first().waitFor({ state: 'hidden', timeout: 5000 });
+  const armed = await pollUntil(
+    () =>
+      page.evaluate(
+        ([id, message]) =>
+          (window.__timers?.schedules ?? []).some(
+            (t) => t.sessionId === id && t.message === message,
+          ),
+        [sid, 'first line\nsecond line'],
+      ),
+    10_000,
+  );
+  assert(armed, 'Ctrl+Enter did not arm the two-line message');
+}
+
 async function closeDialog(page) {
   await page.keyboard.press('Escape');
   await page.locator('.tmdlg').first().waitFor({ state: 'hidden', timeout: 5000 });
@@ -131,6 +205,14 @@ runScenario('timed-message-dialog-ui', async ({ page, log }) => {
   const workDir = mkdtempSync(join(tmpdir(), 'conduit-tmdlg-ui-'));
   const sid = await openSession(page, { path: workDir.replace(/\\/g, '/') });
   log('session running:', sid);
+
+  await page.evaluate(() => {
+    window.__timers = null;
+    window.agentDeck.subscribe((m) => {
+      if (m.type === 'timer:state') window.__timers = m;
+    });
+    window.agentDeck.post({ type: 'ready' });
+  });
 
   // Arm ONCE — MAX_PER_SESSION is 3, and this scenario opens/closes the dialog repeatedly
   // (once per theme) rather than re-arming, which would exhaust the cap.
@@ -174,4 +256,7 @@ runScenario('timed-message-dialog-ui', async ({ page, log }) => {
 
     await closeDialog(page);
   }
+
+  await assertMessageField(page, sid);
+  log('message field: textarea, Enter adds a line, count, over-limit, Ctrl+Enter arms ✓');
 });

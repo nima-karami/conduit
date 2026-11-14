@@ -1,0 +1,82 @@
+- id: spike
+  status: done
+  evidence: [docs/runs/2026-11-13-con-11/spike.md, docs/runs/2026-11-13-con-11/evidence/s1/]
+- id: plan
+  status: done
+  evidence: [docs/plans/2026-11-13-scheduler-auto-resume.plan.md]
+- id: S0-contracts
+  status: done
+  gates: ["npm run verify"]
+  evidence: [docs/runs/2026-11-13-con-11/evidence/verify-s0.log]
+  commit: 428e18a9
+- id: lane-A-scheduler
+  status: done
+  commit: 31acc345 (merge) + 3daa3315 (conductor fixes, APPROVE) ; gated with E at d30afb9f
+  review2: "REVISE 1 blocker (projection drops lastFire) + 4 should-fix; retry 2/2 sent"
+  commit_lane_fix: b81ce3e8
+  notes: "review#1 REVISE 2 blockers (deferred job stranded on PTY loss; armResume keeps job waiting → no timer/early delivery) + 6 should-fix; rulings: parse(blob,{maxAttempts}) clamps; serialize(file, now); limit onFired; projection; sendOnce propagates. retry 1/2 sent"
+  commit_lane: e3db4857 (+ b913fbe7 R13 contract cherry-pick)
+  topology: delegated (Haiku, worktree)
+  deps: [S0-contracts]
+- id: lane-B-delivery
+  status: done
+  commit: 51a19d68 (merge) + d6dde3b8 (fallow fix)
+  gate: "npm run verify exit=0 at d6dde3b8 (evidence/verify-merge-B.log)"
+  review3: "APPROVE 0 blockers; should-fix: SUBMIT_GAP_MS dead (fixed in merge), spawn test timing (conductor fix in merge); nits hint colour, confirm excerpt (conductor)"
+  commit_lane_fix2: 81afea76
+  review2: "REVISE 3 blockers (over-limit close skips discard confirm; constants self-compared — conductor-caused; sequence quiet not proven awaited); retry 2/2 sent"
+  commit_lane_fix: a2791e37
+  commit_lane: cad64f17
+  notes: "review#1 REVISE 2 blockers (unbound runtime.on breaks createRuntimeServices — reproduced; floor test cannot fail) + 4 should-fix; retry 1/2 sent. Conductor-owned: conduit-mcp-gate.e2e.mjs budget uses SUBMIT_GAP_MS=120, fix in E"
+  topology: delegated (Haiku, worktree)
+  deps: [S0-contracts]
+- id: lane-C-claude
+  status: done
+  commit: 36fceb35 (merge); verify exit 0 (evidence/verify-merge-C.log)
+  review3: "APPROVE; should-fix: win32 bare bash on PATH may be WSL (conductor: resolve Git Bash at launch), cwd fallback untested; nits → conductor in merge; integration: prepare.ts must copy conduit-hook.cjs"
+  commit_lane_fix2: 472efc82
+  review2: "REVISE 1 blocker (ELECTRON_RUN_AS_NODE leaks to user status line) + 2 should-fix; retry 2/2 sent"
+  commit_lane_fix: dfb4afd5
+  commit_lane: 0be2d3e4
+  notes: "review#1 REVISE 1 blocker = plan defect (shell:true → cmd.exe on win32; plan corrected to statusLineShell POSIX) + 3 should-fix + 3 nit; retry 1/2 sent"
+  topology: delegated (Haiku, worktree)
+  deps: [S0-contracts]
+- id: lane-D-codex-rules
+  status: done
+  commit: c0823e5f (merge); verify exit 0 (evidence/verify-merge-D.log)
+  review_followup: "REVISE 1 blocker (hand copy of watchDirWhilePresent); plan amended to inject it; retry 2/2 sent"
+  commit_lane_followup: c367b6bc
+  review2: "APPROVE 0 blockers, 6 should-fix → follow-up commit requested before merge"
+  commit_lane_fix: 87956382
+  commit_lane: 36a21488
+  notes: "review#1 REVISE 3 blockers (zone-math copy; Codex rule cannot capture a date; oldest notice wins) + 6 should-fix; map widened: timed-messages.ts exports wallTimeToInstant/wallDateIn; matchStuckRule replaces findRuleMatch. retry 1/2 sent"
+  topology: delegated (Haiku, worktree)
+  deps: [S0-contracts]
+- id: E-integration
+  status: done
+  review3: "APPROVE (round 3); follow-ups 07ad1e8b; verify exit 0 at 07ad1e8b (evidence/verify-E4.log)"
+  review1: "monitor REVISE 4 blockers; wiring REVISE 1 blocker (legacy autoResumeOnLimit dropped) — fixed in f073a0d3, verify exit 0 (evidence/verify-E2.log); re-review dispatched"
+  commit: d30afb9f
+  gate: "npm run verify exit=0 at d30afb9f (evidence/verify-E.log)"
+  notes: "E.1 settings, E.2 session override, E.3 attention setResumeIssue, E.4 limit-monitor (+R13) written uncommitted in main worktree; monitor tests await lane A"
+  topology: solo (conductor)
+  deps: [lane-A-scheduler, lane-B-delivery, lane-C-claude, lane-D-codex-rules]
+- id: E7-e2e
+  status: done
+  remote_runs: "43553416254 at 07ad1e8b (265 pass, 1 fail midturn → R5 amended); 43555129096 at f19e3ed1 (31/31 pass)"
+  local: "all 10 PASS on Linux headless at head code (logs scratchpad/e2e-l-*.log)"
+  remote: "lead running --full at 07ad1e8b (human-approved in lead session)"
+  commit: 9d10f508
+  notes: "9 scenarios + dialog (Sonnet author, not run locally: hc binary absent). Remote named run started from a clean detached worktree (claude/ lock dir pre-existing, not ours)"
+  deps: [E-integration]
+- id: R5-amend
+  status: done
+  commit: f19e3ed1
+  gate: "verify exit 0 (evidence/verify-E5.log); conduit-mcp-midturn local PASS; review APPROVE (4 nits held)"
+- id: report
+  status: done
+  head: c5fe2e59 (verify exit 0, evidence/verify-final.log)
+  path: docs/runs/2026-11-13-con-11/report.md (uncommitted until remote results; head stays 07ad1e8b)
+  deps: [E7-e2e]
+
+# lane worktrees: /tmp/claude-1000/-home-namemenima-projects--wt-conduit-CON-11/6af92499-c391-459b-8c04-ceb0878cb91d/scratchpad/lanes/{A,B,C,D} on branches CON-11-lane-{A..D}, base 428e18a9, node_modules symlinked

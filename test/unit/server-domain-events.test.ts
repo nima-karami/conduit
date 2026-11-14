@@ -8,6 +8,7 @@ import {
   isFault,
   type RecordedEvent,
 } from '../../server/domain/testing/fakes';
+import { claudeSettingsFileOf } from '../../src/claude-hook-settings';
 import type { SessionView } from '../../src/contracts/server-protocol';
 import type { TimedMessage } from '../../src/timed-messages';
 
@@ -62,7 +63,7 @@ describe('server domain: event order', () => {
     const fired = h.types().indexOf('timers.fired');
     expect(fired).toBeGreaterThanOrEqual(0);
     expect(fired).toBeLessThan(h.events.findIndex(showsFire));
-    expect(h.submitted).toEqual([{ sessionId: id, text: 'go' }]);
+    expect(h.submitted).toEqual([{ sessionId: id, text: 'go', bracketed: false, settle: 'quiet' }]);
   });
 
   it('refuses timers.test unless started for e2e', async () => {
@@ -84,7 +85,9 @@ describe('server domain: event order', () => {
     await h.call('system.resumed');
     // Microtasks only: advancing the fake clock would run the armed timeout and prove nothing.
     for (let i = 0; i < 20; i++) await Promise.resolve();
-    expect(h.submitted).toEqual([{ sessionId: id, text: 'wake' }]);
+    expect(h.submitted).toEqual([
+      { sessionId: id, text: 'wake', bracketed: false, settle: 'quiet' },
+    ]);
   });
 });
 
@@ -98,17 +101,203 @@ describe('server domain: internal subscribers on C1 data', () => {
     expect(line.length).toBe(120);
   });
 
-  it('arms a limit timer from the trailing lines per autoResumeOnLimit', async () => {
+  // see spec 2026-11-13-scheduler-auto-resume R6: rules read the rendered screen, not the tail.
+  it('arms one resume job from a limit notice on the rendered screen, per autoResume', async () => {
+    const h = harness();
+    const notice = [
+      "You've hit your session limit · resets 11:10pm (America/Toronto)",
+      'line under it',
+      'another',
+      'and a third',
+    ];
+    const id = await live(h, { agentId: 'claude' });
+    h.runtime.screens.set(id, notice);
+    data(h, id, 'x');
+    const resumeJobs = (sid: string) =>
+      (h.domain.snapshot().timers.jobs ?? []).filter(
+        (j) => j.sessionId === sid && j.trigger.kind === 'limit-reset',
+      );
+    await vi.waitFor(() => expect(resumeJobs(id)).toHaveLength(1), { timeout: 3000 });
+
+    await h.call('serverSettings.patch', { patch: { autoResume: 'off' } });
+    const other = await live(h, { agentId: 'claude' });
+    h.runtime.screens.set(other, notice);
+    data(h, other, 'x');
+    await vi.waitFor(
+      () =>
+        expect(h.domain.snapshot().timers.episodes?.some((e) => e.sessionId === other)).toBe(true),
+      { timeout: 3000 },
+    );
+    expect(resumeJobs(other)).toHaveLength(0);
+    expect(h.resumeIssues.get(other)).toMatch(/auto-resume is off/);
+  });
+
+  it('a Claude StopFailure hook with a status-line reset arms one job; human input resolves the episode', async () => {
+    const h = harness();
+    const id = await live(h, { agentId: 'claude' });
+    const resetSec = Math.floor(Date.now() / 1000) + 3600;
+    h.domain.hookPost(id, {
+      conduitHook: 1,
+      token: 't',
+      event: 'StatusLine',
+      payload: { rate_limits: { five_hour: { used_percentage: 100, resets_at: resetSec } } },
+    });
+    h.domain.hookPost(id, {
+      conduitHook: 1,
+      token: 't',
+      event: 'StopFailure',
+      payload: { hook_event_name: 'StopFailure', error: 'rate_limit' },
+    });
+    const jobs = (h.domain.snapshot().timers.jobs ?? []).filter((j) => j.sessionId === id);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]?.nextAt).toBe(resetSec * 1000 + 120_000);
+    h.domain.humanInput(id);
+    expect(h.domain.snapshot().timers.episodes?.find((e) => e.sessionId === id)?.state).toBe(
+      'resumed',
+    );
+  });
+
+  it('scheduler.setSessionAutoResume off cancels an armed resume; history lists it; on re-arms', async () => {
+    const h = harness();
+    const id = await live(h, { agentId: 'claude' });
+    const resetSec = Math.floor(Date.now() / 1000) + 3600;
+    h.domain.hookPost(id, {
+      conduitHook: 1,
+      token: 't',
+      event: 'StatusLine',
+      payload: { rate_limits: { five_hour: { used_percentage: 100, resets_at: resetSec } } },
+    });
+    h.domain.hookPost(id, {
+      conduitHook: 1,
+      token: 't',
+      event: 'StopFailure',
+      payload: { error: 'rate_limit' },
+    });
+    await h.call('scheduler.setSessionAutoResume', { sessionId: id, mode: 'off' });
+    const history = (await h.call('scheduler.history', { sessionId: id })) as {
+      jobs: { state: string }[];
+      episodes: { state: string }[];
+    };
+    expect(history.jobs.map((j) => j.state)).toEqual(['cancelled']);
+    expect(history.episodes.map((e) => e.state)).toEqual(['open']);
+    await h.call('scheduler.setSessionAutoResume', { sessionId: id, mode: 'inherit' });
+    const live2 = (h.domain.snapshot().timers.jobs ?? []).filter(
+      (j) => j.sessionId === id && j.state === 'armed',
+    );
+    expect(live2).toHaveLength(1);
+    await expect(
+      h.call('scheduler.setSessionAutoResume', { sessionId: id, mode: 'sometimes' }),
+    ).rejects.toSatisfy((e: unknown) => isFault(e, 'refused'));
+  });
+
+  it('turning auto-resume off globally cancels an armed resume', async () => {
+    const h = harness();
+    const id = await live(h, { agentId: 'claude' });
+    h.domain.hookPost(id, {
+      conduitHook: 1,
+      token: 't',
+      event: 'StatusLine',
+      payload: {
+        rate_limits: {
+          five_hour: { used_percentage: 100, resets_at: Math.floor(Date.now() / 1000) + 3600 },
+        },
+      },
+    });
+    h.domain.hookPost(id, {
+      conduitHook: 1,
+      token: 't',
+      event: 'StopFailure',
+      payload: { error: 'rate_limit' },
+    });
+    await h.call('serverSettings.patch', { patch: { autoResume: 'off' } });
+    expect(
+      (h.domain.snapshot().timers.jobs ?? []).filter((j) => j.sessionId === id)[0]?.state,
+    ).toBe('cancelled');
+  });
+
+  it('reads bracketed paste from the attach paint, where a CLI that set it at startup shows it', async () => {
     const h = harness();
     const id = await live(h);
-    data(h, id, 'x', ["You've hit your session limit · resets 11:10pm (America/Toronto)"]);
-    const { schedules } = h.domain.snapshot().timers;
-    expect(schedules.filter((s) => s.sessionId === id && s.origin === 'limit')).toHaveLength(1);
+    h.runtime.fire({
+      type: 'paint',
+      sessionId: id,
+      generation: 1,
+      data: `${ESC}[?2004hprompt> `,
+      size: { cols: 80, rows: 24 },
+      cause: 'attach',
+    });
+    expect(h.domain.domain.bracketedPaste(id)).toBe(true);
+    h.runtime.fire({
+      type: 'paint',
+      sessionId: id,
+      generation: 1,
+      data: 'repaint without modes',
+      size: { cols: 80, rows: 24 },
+      cause: 'gap',
+    });
+    // Every paint is the full screen, modes included: one without ?2004h means off.
+    expect(h.domain.domain.bracketedPaste(id)).toBe(false);
+  });
 
-    await h.call('serverSettings.patch', { patch: { autoResumeOnLimit: 'off' } });
-    const other = await live(h);
-    data(h, other, 'x', ["You've hit your session limit · resets 11:10pm (America/Toronto)"]);
-    expect(h.domain.snapshot().timers.schedules.some((s) => s.sessionId === other)).toBe(false);
+  it('a Claude launch with injected hooks is structured from the start (R13)', async () => {
+    const notice = [
+      "You've hit your session limit · resets 11:10pm (America/Toronto)",
+      'a',
+      'b',
+      'c',
+    ];
+    // Without hooks: rules open the episode, and a sustained busy edge resumes it.
+    const plain = harness();
+    const p = await live(plain, { agentId: 'claude' });
+    plain.runtime.screens.set(p, notice);
+    data(plain, p, 'x');
+    const ep = (h: typeof plain, id: string) =>
+      h.domain.snapshot().timers.episodes?.find((e) => e.sessionId === id);
+    await vi.waitFor(() => expect(ep(plain, p)?.state).toBe('open'), { timeout: 3000 });
+    plain.state.busy = true;
+    plain.attentionChanged();
+    await vi.waitFor(() => expect(ep(plain, p)?.state).toBe('resumed'), { timeout: 4000 });
+
+    // With hooks: the same notice opens nothing (the hooks speak), and a hook-opened episode
+    // survives a sustained busy edge.
+    const hooked = harness({
+      launchArgs: (sid, userData) => [
+        '--settings',
+        claudeSettingsFileOf(join(userData, 'conduit-mcp'), sid),
+      ],
+    });
+    const id = await live(hooked, { agentId: 'claude' });
+    hooked.runtime.screens.set(id, notice);
+    data(hooked, id, 'x');
+    await new Promise((r) => setTimeout(r, 1_500));
+    expect(ep(hooked, id)).toBeUndefined();
+    hooked.domain.hookPost(id, {
+      conduitHook: 1,
+      token: 't',
+      event: 'StopFailure',
+      payload: { error: 'rate_limit' },
+    });
+    expect(ep(hooked, id)?.state).toBe('open');
+    hooked.state.busy = true;
+    hooked.attentionChanged();
+    await new Promise((r) => setTimeout(r, 2_300));
+    expect(ep(hooked, id)?.state).toBe('open');
+
+    // A user's own --settings is not Conduit's hooks: rules still speak for that session.
+    const own = harness({ launchArgs: () => ['--settings', '/home/u/my-settings.json'] });
+    const o = await live(own, { agentId: 'claude' });
+    own.runtime.screens.set(o, notice);
+    data(own, o, 'x');
+    await vi.waitFor(() => expect(ep(own, o)?.state).toBe('open'), { timeout: 3000 });
+  }, 25_000);
+
+  it('tracks bracketed paste for every session, not only scoped ones (spec R2)', async () => {
+    const h = harness();
+    const id = await live(h);
+    data(h, id, `${ESC}[?2004h`);
+    expect(h.domain.domain.bracketedPaste(id)).toBe(true);
+    data(h, id, `${ESC}[?2004l`);
+    expect(h.domain.domain.bracketedPaste(id)).toBe(false);
   });
 
   it('tracks bracketed paste for runAddDir and notes the paste as a draft before writing', async () => {

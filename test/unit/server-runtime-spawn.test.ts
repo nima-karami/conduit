@@ -11,6 +11,7 @@ import { createTyping } from '../../server/runtime/typing';
 import { FrameKind } from '../../src/contracts/frames';
 import type { HcTerminal } from '../../src/contracts/hc';
 import { FakeRpcError } from '../../src/hc-client/testing/fake-hc';
+import { ECHO_QUIET_MS } from '../../src/pty-writer';
 
 let h: Harness;
 afterEach(async () => {
@@ -299,7 +300,10 @@ describe('TerminalRuntime spawn', () => {
   it('TypingPort writes through input at the live generation', async () => {
     await started();
     await spawned();
-    const typing = createTyping(h.runtime, { gapMs: 0 });
+    const typing = createTyping(h.runtime, {
+      sleep: () => Promise.resolve(),
+      outputQuiet: { wait: () => Promise.resolve(), dispose: () => {} },
+    });
     expect(typing.write('s1', 'x')).toBe(true);
     expect(typing.write('s1', 'y', { generation: 0 })).toBe(false);
     await expect(typing.submit('s1', 'hi')).resolves.toBe('submitted');
@@ -311,6 +315,32 @@ describe('TerminalRuntime spawn', () => {
           .map((f) => Buffer.from(f.payload).toString()),
       )
       .toEqual(['x', 'hi', '\r']);
+  });
+
+  it("with settle 'quiet' a session output event delays Enter until the output is quiet", async () => {
+    await started();
+    h.fake.paint = Buffer.from('PAINT');
+    await spawned();
+    await expect.poll(() => h.events.find((e) => e.type === 'paint')).toBeDefined();
+    const typing = createTyping(h.runtime, { sleep: () => Promise.resolve() });
+    const channel = h.attachChannels.at(-1);
+    const written = () =>
+      h.fake.frames
+        .filter((f) => f.channel === channel && f.kind === FrameKind.Data)
+        .map((f) => Buffer.from(f.payload).toString());
+    const done = typing.submit('s1', 'hi', { settle: 'quiet' });
+    await expect.poll(() => written()).toEqual(['hi']);
+    // The echo must land inside the quiet window, or the test proves nothing.
+    expect(written()).not.toContain('\r');
+    const dataAt = Date.now();
+    h.fake.send(h.attachChannels.at(-1) ?? -1, Buffer.from('echo'));
+    for (let i = 0; i < 400 && !written().includes('\r'); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const enterAt = Date.now();
+    await expect(done).resolves.toBe('submitted');
+    expect(written()).toEqual(['hi', '\r']);
+    expect(enterAt - dataAt).toBeGreaterThanOrEqual(ECHO_QUIET_MS - 20);
   });
 
   it('the first paint is `paint{attach}`, later bytes are `data`; both reach the ring and grant credit', async () => {

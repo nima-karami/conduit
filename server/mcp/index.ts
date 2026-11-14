@@ -9,6 +9,7 @@ import {
 import type { GateRow, McpInstallDeps } from '../../src/conduit-mcp/install';
 import type { McpInstallResult, McpInstallStatus } from '../../src/conduit-mcp/install-types';
 import type { McpUiState } from '../../src/conduit-mcp/ui-types';
+import type { HookPost } from '../../src/contracts/hook-protocol';
 import type {
   DraftPort,
   LaunchPort,
@@ -67,6 +68,11 @@ export interface McpServerDeps extends Omit<McpHostDeps, 'tokens'> {
   endpointPath: string;
   /** The write-once runtime/shim/ node and script every CLI entry and launch argv points at (D2b). */
   shim: { execPath: string; shimPath: string };
+  /** The copied Claude hook client; null = no hooks injected (spec 2026-11-13 §3). */
+  hookClientPath: string | null;
+  gitBashPath: () => string | undefined;
+  /** A hook post the endpoint authenticated. */
+  onHook: (sessionId: string, post: HookPost) => void;
   homeDir: string;
   platform: HostPlatform;
   e2e: boolean;
@@ -96,7 +102,8 @@ export interface ServerMcp {
   stop(): Promise<void>;
   tick(): Promise<void>;
   /** C2 `term.input`: the host's bookkeeping runs before the TypingPort write (F8). */
-  termInput(n: ServerNotifications['term.input']): void;
+  /** false when the write was dropped (a stale generation): the bytes never reached the program. */
+  termInput(n: ServerNotifications['term.input']): boolean;
   /** C2 `ui.presence` from one app connection. */
   presence(conn: AppConnection, windows: readonly WindowPresence[]): void;
   appDisconnected(conn: AppConnection): void;
@@ -251,6 +258,8 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
     endpointPath: deps.endpointPath,
     execPath: deps.shim.execPath,
     shimPath: deps.shim.shimPath,
+    hookClientPath: deps.hookClientPath,
+    gitBashPath: deps.gitBashPath,
     homeDir: deps.homeDir,
     platform: deps.platform,
     e2e: deps.e2e,
@@ -258,7 +267,7 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
     ownerWindowOf: presence.ownerWindowOf,
     windowReady: presence.windowReady,
     onScreen: presence.onScreen,
-    createEndpoint: (o) => createShimEndpoint({ ...o, tokens }),
+    createEndpoint: (o) => createShimEndpoint({ ...o, tokens, onHook: deps.onHook }),
     onBindingChanged: (sessionId, binding) => {
       if (binding) bindings.set({ sessionId, ...binding });
       else bindings.delete(sessionId);
@@ -296,11 +305,11 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
 
     termInput({ sessionId, generation, data }) {
       // A stale generation's write is dropped, so its bytes never reached this program.
-      if (deps.runtime.get(sessionId)?.generation !== generation) return;
+      if (deps.runtime.get(sessionId)?.generation !== generation) return false;
       h.onRendererInput(sessionId, data);
       deps.attention.recordInput(sessionId, now());
       deps.sessions.touch(sessionId, INPUT_TOUCH_INTERVAL_MS);
-      deps.typing.write(sessionId, data, { generation });
+      return deps.typing.write(sessionId, data, { generation });
     },
 
     presence(conn, windows) {

@@ -30,14 +30,16 @@ import { assert, runScenario, statusItem, typeLine } from './harness.mjs';
 
 // Test budgets, derived from the product's clocks rather than guessed: once B's output stops, the
 // activity tracker reads idle after its busy window (1.5 s), the gate wants 3 s of output quiet
-// (IDLE_QUIET_MS), the notifier ticks every 0.5 s, and the notice is text + 120 ms gap + Enter.
+// (IDLE_QUIET_MS), the notifier ticks every 0.5 s, and the notice is text, then Enter once the echo
+// is quiet (src/pty-writer.ts ECHO_MAX_MS at most).
 // The slack covers the scenario's own polling and a loaded runner.
 const BUSY_WINDOW_MS = 1_500;
 const IDLE_QUIET_MS = 3_000;
 const TICK_MS = 500;
-const SUBMIT_GAP_MS = 120;
+const SUBMIT_ENTER_MAX_MS = 5_000;
 const SLACK_MS = 5_000;
-const NOTICE_AFTER_IDLE_MS = BUSY_WINDOW_MS + IDLE_QUIET_MS + TICK_MS + SUBMIT_GAP_MS + SLACK_MS;
+const NOTICE_AFTER_IDLE_MS =
+  BUSY_WINDOW_MS + IDLE_QUIET_MS + TICK_MS + SUBMIT_ENTER_MAX_MS + SLACK_MS;
 /** Long enough that the urgent send and its attention item land well inside the busy run. */
 const BUSY_MS = 20_000;
 

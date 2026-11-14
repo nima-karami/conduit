@@ -16,15 +16,29 @@ export interface SubmitEnterOptions {
   beforeEnter?: () => boolean | Promise<boolean>;
 }
 
+export interface SubmitOptions extends SubmitHooks {
+  bracketed?: boolean;
+  // see spec 2026-11-13-scheduler-auto-resume "R5 amended"
+  settle?: 'gap' | 'quiet';
+}
+
 export interface PtyWriterDeps {
   generation(sessionId: string): number | undefined;
   input(sessionId: string, data: string): boolean;
   sleep(ms: number): Promise<void>;
-  gapMs: number;
+  outputQuiet(sessionId: string, quietMs: number, maxMs: number): Promise<void>;
 }
 
+// see spec 2026-11-13-scheduler-auto-resume R5
+export const ENTER_FLOOR_MS = 120;
+export const ECHO_QUIET_MS = 300;
+export const ECHO_MAX_MS = 5_000;
+
+const PASTE_START = '\x1b[200~';
+const PASTE_END = '\x1b[201~';
+
 export interface PtyWriter {
-  submit(sessionId: string, text: string, hooks?: SubmitHooks): Promise<SubmitOutcome>;
+  submit(sessionId: string, text: string, opts?: SubmitOptions): Promise<SubmitOutcome>;
   submitEnter(sessionId: string, opts?: SubmitEnterOptions): Promise<SubmitOutcome>;
   sequence(
     sessionId: string,
@@ -53,20 +67,29 @@ async function hookAllows(hook: (() => boolean | Promise<boolean>) | undefined):
 export function createPtyWriter(deps: PtyWriterDeps): PtyWriter {
   const chains = new Map<string, Promise<unknown>>();
 
+  const settleBeforeEnter = (sessionId: string, settle: SubmitOptions['settle']) =>
+    settle === 'quiet'
+      ? Promise.all([
+          deps.sleep(ENTER_FLOOR_MS),
+          deps.outputQuiet(sessionId, ECHO_QUIET_MS, ECHO_MAX_MS),
+        ])
+      : deps.sleep(ENTER_FLOOR_MS);
+
   const run = async (
     sessionId: string,
     text: string,
-    hooks: SubmitHooks,
+    opts: SubmitOptions,
   ): Promise<SubmitOutcome> => {
     const gen = deps.generation(sessionId);
     if (gen === undefined) return 'no-pty';
-    if (!(await hookAllows(hooks.beforeText))) return 'gate-closed';
+    if (!(await hookAllows(opts.beforeText))) return 'gate-closed';
     // The hook awaited (a screen snapshot): the PTY may have been respawned meanwhile.
     if (deps.generation(sessionId) !== gen) return 'generation-changed';
-    if (!deps.input(sessionId, text)) return 'write-failed';
-    await deps.sleep(deps.gapMs);
+    const payload = opts.bracketed ? `${PASTE_START}${text}${PASTE_END}` : text;
+    if (!deps.input(sessionId, payload)) return 'write-failed';
+    await settleBeforeEnter(sessionId, opts.settle);
     if (deps.generation(sessionId) !== gen) return 'generation-changed';
-    if (!(await hookAllows(hooks.beforeEnter))) return 'withheld';
+    if (!(await hookAllows(opts.beforeEnter))) return 'withheld';
     // beforeEnter may wait out a slow echo: a respawn meanwhile must not get the Enter either.
     if (deps.generation(sessionId) !== gen) return 'generation-changed';
     return deps.input(sessionId, '\r') ? 'submitted' : 'write-failed';
@@ -83,9 +106,9 @@ export function createPtyWriter(deps: PtyWriterDeps): PtyWriter {
   };
 
   return {
-    submit(sessionId, text, hooks = {}) {
+    submit(sessionId, text, opts = {}) {
       const next = (chains.get(sessionId) ?? Promise.resolve()).then(() =>
-        run(sessionId, text, hooks),
+        run(sessionId, text, opts),
       );
       // The caller still sees a rejection from `next`; the chain only orders slots, so a throwing
       // dep must not wedge every later submit for the session.
@@ -118,7 +141,7 @@ export function createPtyWriter(deps: PtyWriterDeps): PtyWriter {
           if (gen === undefined) return 'no-pty';
           if (!write()) return 'write-failed';
           if (!opts.submit) return 'submitted';
-          await deps.sleep(deps.gapMs);
+          await settleBeforeEnter(sessionId, 'gap');
           if (deps.generation(sessionId) !== gen) return 'generation-changed';
           if (!(await hookAllows(opts.beforeEnter))) return 'withheld';
           if (deps.generation(sessionId) !== gen) return 'generation-changed';

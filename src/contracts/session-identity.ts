@@ -187,6 +187,8 @@ export const SERVER_FILE_VERSION = {
   'projects.json': 1,
   'launchers.json': 1,
   'timed-messages.json': 1,
+  'scheduler.json': 2,
+  'limit-rules.json': 1,
   'conduit-mcp/tokens.json': 1,
   'conduit-mcp/bindings.json': 1,
   'conduit-mcp/messages.log': 1,

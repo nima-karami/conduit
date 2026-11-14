@@ -15,6 +15,7 @@ import type {
 } from './conduit-mcp/ui-types';
 import type { SearchFileResult, SearchQuery, TruncatedBy } from './content-search';
 import type { DisplayFacts } from './contracts/frames';
+import type { Job, LimitEpisode } from './contracts/scheduler';
 import type { RuntimeHealth, ServerSettings } from './contracts/server-protocol';
 import type { DroppedRoot, SessionOpReason as FolderSessionOpReason } from './folder-validation';
 import type { GitFailure } from './git-exec';
@@ -343,7 +344,7 @@ export type {
 } from './timed-messages';
 
 /**
- * A pending "resume when the limit resets?" question, under `autoResumeOnLimit: 'offer'`.
+ * A pending "resume when the limit resets?" question, under `autoResume: 'ask'`.
  * Resolved ONCE in the host, so two windows produce one schedule; the offer LEAVING
  * `timer:state` is what dismisses the sibling window's toast (§2 "Limit-aware", §4).
  */
@@ -590,7 +591,14 @@ export type HostToWebview =
   // Every schedule the host holds plus the pending limit offer, BROADCAST to every window —
   // the renderer keeps no other copy (§3). An empty list is a real answer: it is what opens the
   // renderer's load gate.
-  | { type: 'timer:state'; schedules: TimedMessage[]; offer: LimitOffer | null }
+  | {
+      type: 'timer:state';
+      schedules: TimedMessage[];
+      offer: LimitOffer | null;
+      /** The Scheduler's own jobs and episodes (spec 2026-11-13 §3 "Server protocol"); the UI pass reads them. */
+      jobs?: Job[];
+      episodes?: LimitEpisode[];
+    }
   // One fire. `delivered` is DERIVED from pty.input's return, never assumed, and timer:state
   // alone cannot tell a fire from an edit — hence a second message rather than a flag.
   | {

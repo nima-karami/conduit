@@ -431,6 +431,44 @@ describe('ServerAttention — review round (authority switch, bell latch)', () =
   });
 });
 
+describe('ServerAttention — resume issue (CON-11)', () => {
+  const fact = () => {
+    const s = attention.statusOf('a');
+    return { attentionReason: s.attentionReason, stuckReason: s.stuckReason };
+  };
+  const USAGE = { kind: 'usage-limit' as const, reason: 'Codex usage limit reached' };
+
+  it('is needs-you with its reason, and outranks a stuck screen', () => {
+    setup();
+    attention.setStuck('a', USAGE);
+    attention.setResumeIssue('a', 'Auto-resume: still limited');
+    expect(fact()).toEqual({ attentionReason: 'stuck', stuckReason: 'Auto-resume: still limited' });
+  });
+
+  it('survives the host clearing the stuck screen and a PTY exit', () => {
+    setup();
+    attention.setResumeIssue('a', 'limit reached, reset time unknown');
+    attention.setStuck('a', null);
+    emit({ type: 'exit', sessionId: 'a', generation: 1, code: 0, reason: 'exited' });
+    expect(fact().stuckReason).toBe('limit reached, reset time unknown');
+  });
+
+  it('clears on null and on forgetSession, and changes fire once per change', () => {
+    setup();
+    let changes = 0;
+    attention.onChange(() => changes++);
+    attention.setResumeIssue('a', 'no response');
+    attention.setResumeIssue('a', 'no response');
+    attention.setResumeIssue('a', null);
+    attention.setResumeIssue('a', null);
+    expect(changes).toBe(2);
+    expect(fact()).toEqual({ attentionReason: null, stuckReason: undefined });
+    attention.setResumeIssue('a', 'no response');
+    attention.forgetSession('a');
+    expect(fact().stuckReason).toBeUndefined();
+  });
+});
+
 describe('ServerAttention — stuck screens (CON-151)', () => {
   const stuckFact = () => {
     const s = attention.statusOf('a');

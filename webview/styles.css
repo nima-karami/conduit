@@ -14162,6 +14162,15 @@ button.toggle--on .toggle__knob {
 .tmdlg__hint--muted {
   color: var(--text-faint);
 }
+.tmdlg__hint--error {
+  color: var(--danger);
+}
+.tmdlg__input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+}
 .tmdlg__offer {
   display: flex;
   flex-direction: column;

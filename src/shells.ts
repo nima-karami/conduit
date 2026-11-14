@@ -72,6 +72,12 @@ function toDef(c: Candidate): AgentDefinition | undefined {
   return terminalDef(c.id, c.label, command, c.args ?? []);
 }
 
+/** Git Bash on Windows from its install paths only: `bash.exe` on PATH can be WSL's launcher. */
+export function gitBashPath(): string | undefined {
+  const c = winCandidates().find((x) => x.id === 'shell:gitbash');
+  return c ? firstExisting(c.paths ?? []) : undefined;
+}
+
 function winCandidates(): Candidate[] {
   const sysRoot = process.env.SystemRoot || 'C:\\Windows';
   const sys32 = path.join(sysRoot, 'System32');
