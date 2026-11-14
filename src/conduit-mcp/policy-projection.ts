@@ -1,5 +1,4 @@
 // see POL §4.2 and C6
-import { folderKey } from '../folder-key';
 import {
   DECISION_OF_ACCESS,
   effectiveRule,
@@ -14,7 +13,6 @@ import type {
   Exception,
   PolicyState,
   Profile,
-  Scope,
   ToolRule,
 } from './policy-types';
 import {
@@ -103,80 +101,23 @@ export function projectLegacyLayer(
   return layer;
 }
 
-function sameScope(x: Scope, y: Scope): boolean {
-  switch (x.kind) {
-    case 'anywhere':
-      return y.kind === 'anywhere';
-    case 'space':
-      return y.kind === 'space' && y.projectId === x.projectId;
-    case 'folder':
-      return y.kind === 'folder' && folderKey(y.path) === folderKey(x.path);
-    case 'path':
-      return y.kind === 'path' && folderKey(y.path) === folderKey(x.path);
-    case 'session':
-      return y.kind === 'session' && y.sessionId === x.sessionId;
-  }
-}
-
-function editException(
+function editAnywhere(
   a: Assignment,
   tool: ToolName,
-  scope: Scope,
   edit: (rule: Partial<ToolRule>) => void,
 ): Assignment {
-  const current = a.exceptions.find((e) => e.tool === tool && sameScope(e.scope, scope));
+  const current = a.exceptions.find((e) => e.tool === tool && e.scope.kind === 'anywhere');
   const rule: Partial<ToolRule> = { ...current?.rule };
   edit(rule);
   if (Object.keys(rule).length === 0) {
     return { ...a, exceptions: a.exceptions.filter((e) => e !== current) };
   }
-  const updated: Exception = { tool, scope: { ...scope }, rule };
+  const updated: Exception = { tool, scope: { kind: 'anywhere' }, rule };
   const exceptions =
     current === undefined
       ? [...a.exceptions, updated]
       : a.exceptions.map((e) => (e === current ? updated : e));
   return { ...a, exceptions };
-}
-
-const editAnywhere = (
-  a: Assignment,
-  tool: ToolName,
-  edit: (rule: Partial<ToolRule>) => void,
-): Assignment => editException(a, tool, { kind: 'anywhere' }, edit);
-
-function inheritField(
-  state: PolicyState,
-  lowerA: Assignment,
-  a: Assignment,
-  tool: ToolName,
-  field: PolicyField,
-): Assignment {
-  const key = RULE_KEY[field];
-  let next: Assignment = {
-    ...a,
-    exceptions: a.exceptions.flatMap((e) => (e.tool === tool ? withoutField(e, key) : [e])),
-  };
-  for (const inherited of lowerA.exceptions) {
-    if (inherited.tool !== tool || inherited.scope.kind === 'anywhere') continue;
-    const value = inherited.rule[key];
-    if (value === undefined) continue;
-    next = editException(next, tool, inherited.scope, (rule) => {
-      Object.assign(rule, { [key]: value });
-    });
-  }
-  const lowerValue = legacyPolicyOf(ruleAt(state, lowerA, tool), tool)[field];
-  if (lowerValue === undefined) return next;
-  const profileValue = legacyPolicyOf(profileOf(state, next).rules[tool], tool)[field];
-  return editAnywhere(next, tool, (rule) => {
-    if (lowerValue === profileValue) delete rule[key];
-    else Object.assign(rule, { [key]: toRuleValue(lowerValue) });
-  });
-}
-
-function withoutField(e: Exception, key: keyof ToolRule): Exception[] {
-  const rule: Partial<ToolRule> = { ...e.rule };
-  delete rule[key];
-  return Object.keys(rule).length > 0 ? [{ ...e, rule }] : [];
 }
 
 const isAccess = (v: Access | When | Reach | Move): v is Access =>
@@ -197,15 +138,7 @@ function applyField(
   let next = a;
   if (field === 'when' && a.onScreenOnly) {
     // Clearing onScreenOnly must not move any other tool off 'viewing'.
-    next = {
-      ...a,
-      onScreenOnly: false,
-      exceptions: a.exceptions.map((e) =>
-        e.scope.kind !== 'anywhere' && e.rule.when !== undefined
-          ? { ...e, rule: { ...e.rule, when: 'viewing' } }
-          : e,
-      ),
-    };
+    next = { ...a, onScreenOnly: false };
     for (const other of TOOL_NAMES) {
       if (other === tool) continue;
       const before = ruleAt(state, a, other).when;
@@ -216,34 +149,34 @@ function applyField(
       }
     }
   }
-  if (value === 'inherit') return inheritField(state, lowerA, next, tool, field);
+  const wanted =
+    value === 'inherit' ? legacyPolicyOf(ruleAt(state, lowerA, tool), tool)[field] : value;
+  if (wanted === undefined) return next;
   const profileValue = legacyPolicyOf(profileOf(state, next).rules[tool], tool)[field];
-  const edited = editAnywhere(next, tool, (rule) => {
-    if (value === profileValue) delete rule[RULE_KEY[field]];
-    else Object.assign(rule, { [RULE_KEY[field]]: toRuleValue(value) });
+  return editAnywhere(next, tool, (rule) => {
+    if (wanted === profileValue) delete rule[RULE_KEY[field]];
+    else Object.assign(rule, { [RULE_KEY[field]]: toRuleValue(wanted) });
   });
-  // The old editors know only anywhere, so this edit is authoritative at every scope.
-  return {
-    ...edited,
-    exceptions: edited.exceptions.flatMap((e) => dropScopedField(e, tool, RULE_KEY[field])),
-  };
 }
 
-function dropScopedField(e: Exception, tool: ToolName, key: keyof ToolRule): Exception[] {
-  if (e.tool !== tool || e.scope.kind === 'anywhere') return [e];
-  return withoutField(e, key);
-}
-
+// The old editors cannot express a scope, so a point or lower holding one is refused, not guessed at.
 export function applyLegacyPatch(
   state: PolicyState,
   point: AssignmentPoint,
   lower: AssignmentPoint | null,
   tool: ToolName,
   patch: ToolPolicyPatch,
-): Assignment {
+): Assignment | null {
   const lowerA = assignmentOrWorker(state, lower);
   const existing = state.assignments.get(pointKey(point));
-  let next = copyAssignment(existing ?? lowerA);
+  const base = copyAssignment(existing ?? lowerA);
+  const applies = (field: PolicyField): boolean =>
+    patch[field] !== undefined && TOOL_SPECS[tool].fields.includes(field);
+  if (!(['access', 'when', 'reach', 'move'] as const).some(applies)) return base;
+  const scoped = (a: Assignment | undefined): boolean =>
+    a?.exceptions.some((e) => e.scope.kind !== 'anywhere') ?? false;
+  if (scoped(existing) || scoped(lowerA)) return null;
+  let next = base;
   if (patch.access !== undefined)
     next = applyField(state, lowerA, next, tool, 'access', patch.access);
   if (patch.when !== undefined) next = applyField(state, lowerA, next, tool, 'when', patch.when);
