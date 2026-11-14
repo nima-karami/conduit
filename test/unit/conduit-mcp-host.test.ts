@@ -548,6 +548,7 @@ function harness(
   };
   host = createConduitMcpHost({
     dir,
+    machineId: 'm-00000000',
     hookClientPath: opts.hookClientPath ?? null,
     gitBashPath: opts.gitBashPath ?? (() => undefined),
     homeDir: dir,

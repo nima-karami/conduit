@@ -65,7 +65,6 @@ import {
   type ToolCallContext,
   type ToolCallResult,
 } from './json-rpc';
-import { loadMachineId } from './machine-id';
 import {
   awaitEnterVerdict,
   ECHO_POLL_MS,
@@ -640,7 +639,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
   const requestService: RequestService = createRequestService({
     io: createRequestsIo(path.join(deps.dir, 'requests.json')),
-    machineId: loadMachineId(deps.dir),
+    machineId: deps.machineId,
     now,
     newId: () => `r_${base32(randomBytes(8))}`,
     ...requestTimers,

@@ -240,6 +240,7 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
     runtime: deps.runtime,
     tokens,
     emit,
+    machineId: deps.machineId,
     dir: deps.dir,
     endpointPath: deps.endpointPath,
     execPath: deps.shim.execPath,
