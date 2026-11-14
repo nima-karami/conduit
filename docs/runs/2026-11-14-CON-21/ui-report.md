@@ -29,7 +29,13 @@ On hold by the lead's ruling: the floating waiting notice. The pill and the stat
   - `popup-choose-waiting.png`: the pop-up over the editor with its countdown, the card in the panel, "1 needs you · 0:16 waiting" in the status bar, and the pill.
   - `popup-after-send-before-fix.png`: the bug the e2e caught.
 
-  The full set of comparison scenes (`CONDUIT_SHOTS_DIR` on a local `requests-ui` run) waits for a quiet machine, since the local load average was over 15 on 12 cores during the run.
+- **Local screenshot pass** (Linux, headless, `CONDUIT_SHOTS_DIR` on `requests-ui`, PASS), compared with iter-7, iter-6 13 and iter-5 14/15:
+  - `needs-list.png` vs iter-7/01 and iter-6/13: matches. Card (type icon, session, handle, `0:17 waiting` chip, ask), Open · 1 / History, sort label, ⋯; pill "Waiting on you · 0:17" at the tab bar's right end; status bar "1 needs you · 0:17 waiting".
+  - `reqtpl-popup.png` vs iter-7/09, 12: matches the four sections. Plain Send, footer zones Open as tab / Open terminal | Skip.
+  - `reqtpl-review-tab.png` vs iter-7/21: layout matches (draft with Edited / Original / Changes left; three options, note and Send right; Open terminal | Skip). Gaps: the tab title is the generic "Request", not "Review: {title}"; the draft has no line numbers.
+  - `needs-away.png` vs iter-5/14: banner matches. Found a bug: the status-bar Away button was unreadable while away (no button reset). Fixed in c96236d5.
+  - `needs-digest.png` vs iter-5/15: the "While you were away" card with window, duration, counts and Dismiss matches. Found a bug: an answered review tab stayed open. Fixed in c96236d5 (a tab answered there closes; one withdrawn elsewhere keeps its ending banner).
+  - The two fixes are not re-shot (load was over 20 again); they are covered by unit tests and the remote `requests-ui` run.
 
 ## Deviations
 - Request tabs are excluded from persistence by an explicit rule. The plan's "like review" was wrong: review tabs are persisted.
