@@ -442,6 +442,12 @@ Copy is English-only like the rest of the dialog.
 - [normal] Leaving `timed-messages.json` untouched after migration means a downgrade shows old
   timers that already fired. Accepted for a clean downgrade path.
 
+- **Outcome (spike 2026-11-13, `docs/runs/2026-11-13-con-11/spike.md`, approved by the lead):** S1 hooks
+  merge, `statusLine` replaces → **chain** (wrapper forwards `rate_limits`, then runs the user's effective
+  status line; never blocks or blanks it). S3 → Codex adapter **enabled** with the `session_meta` binding
+  rule (rules cover the pre-bind window, no duplicate episode on a late bind). R10 refined: a bound session
+  watches its file's own folder.
+
 ## 14. Open questions
 None that block the build; the two `high` items above have safe defaults and are settled by the spike.
 
