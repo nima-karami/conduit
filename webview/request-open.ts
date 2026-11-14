@@ -3,12 +3,12 @@ import type { RequestView } from '../src/conduit-mcp/request-types';
 import { type OpenAs, openAsOf } from './request-view-model';
 import { getRequestsSnapshot } from './use-conduit-mcp';
 
-export interface RequestOpeners {
+interface RequestOpeners {
   openTab(r: RequestView): void;
   openTerminal(sessionId: string): void;
 }
 
-export interface RequestPopupStore {
+interface RequestPopupStore {
   open(id: string): void;
   close(): void;
   current(): string | null;
