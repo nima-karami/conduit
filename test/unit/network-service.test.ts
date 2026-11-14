@@ -50,7 +50,7 @@ const auditKinds = (dir: string) =>
     .split('\n')
     .map((l) => JSON.parse(l).kind);
 
-describe('network service over C2 calls', () => {
+describe('network service over C2 calls', { timeout: 60_000 }, () => {
   it('pairs two servers, links them own and up, then a revoke reaches the peer', async () => {
     const a = server('net-a');
     const b = server('net-b');

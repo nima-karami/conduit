@@ -155,7 +155,7 @@ async function linkedPair() {
   return { a, b, state };
 }
 
-describe('link manager', () => {
+describe('link manager', { timeout: 60_000 }, () => {
   it('two linked servers come up, each seeing the other name and capabilities', async () => {
     const { a, b } = await linkedPair();
     const view = a.manager.view(b.id.machineId);

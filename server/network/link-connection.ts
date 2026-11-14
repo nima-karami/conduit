@@ -24,13 +24,17 @@ export interface LinkConnection {
   /** Milliseconds since the peer last sent anything; the manager shows `degraded` from it. */
   silentMs(): number;
   close(reason: string): void;
+  /**
+   * Begins delivery. Frames and a close that arrived before this are queued and handed over now,
+   * so a frame sent right behind the hello (a revoked notice, say) can't slip past an owner that
+   * was still deciding what to do with the connection.
+   */
+  start(handlers: { onFrame(frame: LinkFrame): void; onClose(why: string): void }): void;
   readonly peerHello: HelloFrame;
 }
 
 export interface ConnectionOptions {
   hello: HelloFrame;
-  onFrame(frame: LinkFrame): void;
-  onClose(why: string): void;
   now(): number;
   log: NetLog;
   pingMs?: number;
@@ -59,6 +63,13 @@ export function openConnection(
   let closed = false;
   let cancelTicker: (() => void) | null = null;
   let peerHello: HelloFrame | null = null;
+  let handlers: { onFrame(frame: LinkFrame): void; onClose(why: string): void } | null = null;
+  const queued: LinkFrame[] = [];
+  let closedWhy: string | null = null;
+  const deliver = (frame: LinkFrame): void => {
+    if (handlers) handlers.onFrame(frame);
+    else queued.push(frame);
+  };
 
   return new Promise((resolve) => {
     let settled = false;
@@ -78,7 +89,8 @@ export function openConnection(
         setTimeout(() => sock.destroy(), END_GRACE_MS).unref();
       } else sock.destroy();
       if (peerHello === null) settle({ error: why === 'timeout' ? 'timeout' : 'closed' });
-      else opts.onClose(why);
+      else if (handlers) handlers.onClose(why);
+      else closedWhy = why;
     };
     const write = (frame: LinkFrame): boolean => {
       if (closed) return false;
@@ -92,6 +104,12 @@ export function openConnection(
       bufferedBytes: () => sock.writableLength,
       silentMs: () => opts.now() - lastFrameAt,
       close: (reason) => finish(reason, true),
+      start: (h) => {
+        if (handlers) return;
+        handlers = h;
+        for (const f of queued.splice(0)) h.onFrame(f);
+        if (closedWhy !== null) h.onClose(closedWhy);
+      },
       peerHello: hello,
     });
 
@@ -133,7 +151,7 @@ export function openConnection(
           continue;
         }
         if (frame.t === 'ping') write({ t: 'pong' });
-        else if (frame.t !== 'pong') opts.onFrame(frame);
+        else if (frame.t !== 'pong') deliver(frame);
       }
       if (error !== null) {
         opts.log.warn('link: framing error', { error });

@@ -75,14 +75,18 @@ async function socketPair(): Promise<{ a: tls.TLSSocket; b: tls.TLSSocket }> {
   return { a: await gotA, b };
 }
 
-function base(h: HelloFrame, frames: LinkFrame[], closes: string[]): ConnectionOptions {
-  return {
-    hello: h,
-    onFrame: (f) => frames.push(f),
-    onClose: (why) => closes.push(why),
-    now: () => Date.now(),
-    log: quiet,
-  };
+type Opts = ConnectionOptions & { frames: LinkFrame[]; closes: string[] };
+
+function base(h: HelloFrame, frames: LinkFrame[], closes: string[]): Opts {
+  return { hello: h, now: () => Date.now(), log: quiet, frames, closes };
+}
+
+/** Opens and starts delivery at once, as the link manager does once it adopts a connection. */
+async function openStarted(sock: tls.TLSSocket, o: Opts) {
+  const { frames, closes, ...opts } = o;
+  const c = await openConnection(sock, opts);
+  if (!('error' in c)) c.start({ onFrame: (f) => frames.push(f), onClose: (w) => closes.push(w) });
+  return c;
 }
 
 async function until(check: () => boolean, ms = 3000): Promise<void> {
@@ -99,8 +103,8 @@ describe('link connection', () => {
     const fa: LinkFrame[] = [];
     const fb: LinkFrame[] = [];
     const [ca, cb] = await Promise.all([
-      openConnection(a, base(hello('m-aaaaaaaa'), fa, [])),
-      openConnection(b, base(hello('m-bbbbbbbb'), fb, [])),
+      openStarted(a, base(hello('m-aaaaaaaa'), fa, [])),
+      openStarted(b, base(hello('m-bbbbbbbb'), fb, [])),
     ]);
     if ('error' in ca || 'error' in cb) throw new Error('connection failed');
     conns.push(ca, cb);
@@ -113,11 +117,28 @@ describe('link connection', () => {
     expect(fa).toEqual([{ t: 'revoked' }]);
   });
 
+  it('frames that arrive before start are queued and delivered on start, in order', async () => {
+    const { a, b } = await socketPair();
+    const fa: LinkFrame[] = [];
+    const [ca, cb] = await Promise.all([
+      openConnection(a, { hello: hello('m-aaaaaaaa'), now: () => Date.now(), log: quiet }),
+      openStarted(b, base(hello('m-bbbbbbbb'), [], [])),
+    ]);
+    if ('error' in ca || 'error' in cb) throw new Error('connection failed');
+    conns.push(ca, cb);
+    cb.send({ t: 'revoked' });
+    cb.send({ t: 'view.close', viewId: 'v2' });
+    // Give the frames time to land while nobody is listening yet.
+    await new Promise((r) => setTimeout(r, 100));
+    ca.start({ onFrame: (f) => fa.push(f), onClose: () => undefined });
+    expect(fa).toEqual([{ t: 'revoked' }, { t: 'view.close', viewId: 'v2' }]);
+  });
+
   it('a different protocol major is incompatible on both sides', async () => {
     const { a, b } = await socketPair();
     const [ca, cb] = await Promise.all([
-      openConnection(a, base(hello('m-aaaaaaaa', 1), [], [])),
-      openConnection(b, base(hello('m-bbbbbbbb', 2), [], [])),
+      openStarted(a, base(hello('m-aaaaaaaa', 1), [], [])),
+      openStarted(b, base(hello('m-bbbbbbbb', 2), [], [])),
     ]);
     expect('error' in ca && ca.error).toBe('incompatible');
     expect('error' in cb && cb.error).toBe('incompatible');
@@ -125,7 +146,7 @@ describe('link connection', () => {
 
   it('a first frame that is not a hello is bad-hello', async () => {
     const { a, b } = await socketPair();
-    const pending = openConnection(a, base(hello('m-aaaaaaaa'), [], []));
+    const pending = openStarted(a, base(hello('m-aaaaaaaa'), [], []));
     const { encodeFrame } = await import('../../src/network/frame-codec');
     b.write(encodeFrame({ t: 'ping' }));
     b.resume();
@@ -139,7 +160,7 @@ describe('link connection', () => {
     const tickA: Array<() => void> = [];
     const closes: string[] = [];
     const [ca, cb] = await Promise.all([
-      openConnection(a, {
+      openStarted(a, {
         ...base(hello('m-aaaaaaaa'), [], closes),
         now: () => now,
         every: (fn) => {
@@ -147,7 +168,7 @@ describe('link connection', () => {
           return () => undefined;
         },
       }),
-      openConnection(b, base(hello('m-bbbbbbbb'), [], [])),
+      openStarted(b, base(hello('m-bbbbbbbb'), [], [])),
     ]);
     if ('error' in ca || 'error' in cb) throw new Error('connection failed');
     conns.push(cb);
@@ -164,8 +185,8 @@ describe('link connection', () => {
     const { a, b } = await socketPair();
     const closes: string[] = [];
     const [ca, cb] = await Promise.all([
-      openConnection(a, base(hello('m-aaaaaaaa'), [], closes)),
-      openConnection(b, base(hello('m-bbbbbbbb'), [], [])),
+      openStarted(a, base(hello('m-aaaaaaaa'), [], closes)),
+      openStarted(b, base(hello('m-bbbbbbbb'), [], [])),
     ]);
     if ('error' in ca || 'error' in cb) throw new Error('connection failed');
     cb.close('shutdown');

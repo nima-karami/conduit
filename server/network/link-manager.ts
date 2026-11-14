@@ -208,11 +208,8 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       sock.destroy();
       return;
     }
-    let conn: LinkConnection | null = null;
     const opened = await openConnection(sock, {
       hello: ownHello(p.record.capabilities),
-      onFrame: (f) => onFrame(p, conn, f),
-      onClose: () => onClose(p, conn),
       now: deps.now,
       log: deps.log,
       pingMs: deps.pingMs,
@@ -221,7 +218,6 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       failed(p, opened.error);
       return;
     }
-    conn = opened;
     const hello = opened.peerHello;
     if (
       hello.machineId !== p.record.machineId ||
@@ -255,6 +251,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       p.record = deps.store.update(p.record.machineId, { name: hello.selfName }) ?? p.record;
     }
     event(p, { kind: 'up', at: deps.now() });
+    opened.start({ onFrame: (f) => onFrame(p, opened, f), onClose: () => onClose(p, opened) });
     if (p.record.ownerTransfer === 'send') sendOwnerKey(p, opened);
     deps.changed();
   };
@@ -299,9 +296,9 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     }
   };
 
-  const onFrame = (p: Peer, conn: LinkConnection | null, f: LinkFrame): void => {
+  const onFrame = (p: Peer, conn: LinkConnection, f: LinkFrame): void => {
     // Frames from a connection that lost a duplicate race, or arrive after revoke, are dropped.
-    if (conn === null || p.conn !== conn || terminal(p)) return;
+    if (p.conn !== conn || terminal(p)) return;
     p.lastActivity = deps.now();
     if (p.sm.state === 'degraded') event(p, { kind: 'frame', at: deps.now() });
     switch (f.t) {
@@ -330,8 +327,8 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     }
   };
 
-  const onClose = (p: Peer, conn: LinkConnection | null): void => {
-    if (conn === null || p.conn !== conn) return;
+  const onClose = (p: Peer, conn: LinkConnection): void => {
+    if (p.conn !== conn) return;
     p.conn = null;
     p.dialer = null;
     if (terminal(p)) return;
@@ -427,8 +424,6 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
         const machineId = found.tombstone.machineId;
         void openConnection(sock, {
           hello: ownHello({ messaging: false, monitor: false, drive: false }),
-          onFrame: () => undefined,
-          onClose: () => undefined,
           now: deps.now,
           log: deps.log,
         }).then((c) => {
