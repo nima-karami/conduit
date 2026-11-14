@@ -90,4 +90,12 @@ export const REQ_STR = {
   followUp: 'Follow up…',
   dismiss: 'Dismiss',
   cantUndo: "A follow-up sends a message. It can't undo an answer that already went.",
+  needsMenu: {
+    trigger: 'Sort, filter and show',
+    sortHeading: 'Sort',
+    filterHeading: 'Filter',
+    showHeading: 'Show on cards',
+    defaultSort: 'default',
+    all: 'All',
+  },
 };
