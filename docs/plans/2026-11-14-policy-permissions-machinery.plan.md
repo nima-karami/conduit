@@ -285,13 +285,17 @@ Neither parser ever copies output, `aggregated_output`, `content`, `tool_respons
 ### C6 Migration and editor projection (Slice 2, T2.1)
 ```ts
 // policy-migration.ts
-export interface LegacyPolicy { global: GlobalPolicy; byCli: CliPolicyLayers; sessions: Array<{ sessionId: string; layer: PolicyLayer }> }
+export interface LegacyPolicy { global: GlobalPolicy; byCli: CliPolicyLayers; sessions: Array<{ sessionId: string; layer: PolicyLayer; cli: CliKind | null }> }  // cli = cliKindOfHandle(handle), today's layer key
 export function migrateLegacyPolicy(legacy: LegacyPolicy): Pick<PolicyFile, 'assignments' | 'migratedFrom' | 'notes'>;
 // policy-projection.ts
-export function projectLegacyLayer(state: PolicyState, point: AssignmentPoint): PolicyLayer;
-export function applyLegacyPatch(state: PolicyState, point: AssignmentPoint, tool: ToolName, patch: ToolPolicyPatch): Assignment;
+export function projectLegacyLayer(state: PolicyState, point: AssignmentPoint, lower: AssignmentPoint | null): PolicyLayer;
+export function applyLegacyPatch(state: PolicyState, point: AssignmentPoint, lower: AssignmentPoint | null, tool: ToolName, patch: ToolPolicyPatch): Assignment;
 ```
 - **Migration is exact by construction.** For each layer it first tries Lead with `onScreenOnly: true` and no exceptions. It keeps that only if `effectiveRule` equals today's `resolvePolicy` result for all 23 tools and every field. Otherwise it writes Worker plus one anywhere-scoped exception per field that differs.
+- **What "today" means for each layer.** Today's value for a session is `resolvePolicy(tool, {session: layer, cli: byCli[cli], global})`. For a kind it is `resolvePolicy(tool, {cli: byCli[k], global})`, and for the default `resolvePolicy(tool, {global})`. The migrated assignment's effective rules (anywhere scope) must equal those for every tool and field, because an assignment replaces the lower points wholesale.
+- **Exceptions.** There is one exception object per tool, holding every field that differs (an exception is per action, §4.1). The label counts exception objects, plus 1 for `onScreenOnly`.
+- **Projection (DN-2).** `projectLegacyLayer(state, point, lower)` returns, per tool and field, the effective value at `point` only where it differs from the effective value at `lower`. Access is mapped allow→on, ask→ask, deny→off. Below `lower = null` sit Worker's rules. For a session, `lower` is the `cli:<handle kind>` point if it has an assignment, else default; for a kind it is default; for the default it is null. This reproduces today's field-by-field "inherit" display.
+- **Legacy patches.** `applyLegacyPatch`: a value sets that field in the tool's anywhere exception. `'inherit'` removes the field, and an empty exception is removed. A point with no assignment yet starts as a copy of `lower`'s assignment (same profile, anywhere exceptions, `onScreenOnly`), so only the patched field changes.
 - **What gets migrated.** The global layer migrates to the default assignment only when it differs from the defaults. The CLI layers become kind assignments, and the session layers become session assignments.
 - **The on-screen offer.** `notes.onScreenOnlyOffered` lists the session ids that got Lead with `onScreenOnly`. CON-25 shows the one-time offer from it.
 
