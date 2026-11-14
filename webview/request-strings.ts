@@ -74,6 +74,13 @@ export const REQ_STR = {
   notice: (handle: string, kind: 'approve' | 'answer') =>
     `${handle} is waiting for your ${kind === 'approve' ? 'approval' : 'answer'}`,
 
+  pillStr: {
+    count: (n: number) => countNoun(n, 'request', 'requests'),
+    waiting: (secondsLeft: number, n: number) =>
+      `◉ Waiting on you · ${mmss(secondsLeft)}${n > 1 ? ` · ${countNoun(n, 'request', 'requests')}` : ''}`,
+    menu: 'Requests from this session',
+  },
+
   forOneHour: 'For 1 hour',
   untilTomorrow: (time: string) => `Until ${time} tomorrow`,
   untilBack: "Until I'm back",
