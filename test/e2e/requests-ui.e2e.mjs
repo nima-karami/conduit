@@ -69,7 +69,7 @@ await runScenario(
     await popup.locator('input[data-key]').first().check();
     // The template ignores presses for 400 ms after a request appears (its swap guard), so a
     // human-speed Send waits for that, as a person reading the question would.
-    const send = popup.locator('.reqtpl-send');
+    const send = popup.locator('.reqtpl-send__btn');
     assert(
       await until(async () => (await send.getAttribute('aria-disabled')) !== 'true', 5_000),
       'Send stayed guarded',
@@ -97,7 +97,7 @@ await runScenario(
     await tab.waitFor({ timeout: 10_000 });
     await shot(page, 'reqtpl-review-tab');
     await tab.locator('.reqtpl-option', { hasText: 'Approve as written' }).click();
-    const tabSend = tab.locator('.reqtpl-send');
+    const tabSend = tab.locator('.reqtpl-send__btn');
     assert(
       await until(async () => (await tabSend.getAttribute('aria-disabled')) !== 'true', 5_000),
       'the tab Send stayed guarded',
