@@ -423,6 +423,28 @@ observe(sessionId: string, events: { data(data: string): void; size(size: TermGe
    (Slice 4). Whichever branch lands second wires it to POL `peerRevoked(machineId)` and REQ
    withdrawal (`withdrawnBy: 'conduit'`, reason "link revoked").
 
+## As built (slices 1–4)
+- **Purpose in ALPN.** Every connection declares `conduit-link/1` or `conduit-pair/1`. Classifying
+  by key alone sent a linked peer's pairing attempt down the link path, so a known peer could never
+  pair again (NET §4.2). Now `pair` connections only go into an open window, and `link` connections
+  only for a known or tombstoned key. `dial` takes `purpose`.
+- **`src/contracts/network-state.ts`** holds `NetworkPairingView`, `NetworkLinkView` and
+  `NetworkState`. `server-protocol.ts` and `src/protocol.ts` import them from there. The link
+  manager's `LinkView` is `Omit<NetworkLinkView, 'trust' | 'snapshot'>`.
+- **Pairing view states** are `wrong-code` (not `mismatch`) for a bad code, and `mismatch` only
+  for a failed commitment. A revoked link stays listed with `state: 'revoked'` and
+  `revokedBy: 'me' | 'peer'`.
+- **Link store:** `byServerKey` replaces `byLinkId`, and `openLinkStore`/`openAuditLog` take
+  options objects.
+- **Pairing frames are capped at 64 KiB:** the peer is unauthenticated until the fingerprint is
+  confirmed.
+- **No new `ServerErrorKind`:** pairing and link errors map to `invalid` / `not_found` /
+  `unavailable`.
+- **`createNetwork` deps are only what Slice 4 needs.** `services.ts` adds the MCP, runtime and
+  drive deps in later slices instead of fixing them early.
+- **A local close is graceful** (`end`, then destroy after 2 s), so a final `bye`/`revoked` reaches
+  the peer.
+
 ## Producer / consumer scan
 | Behaviour changed | Producer | Consumer | Plan touches |
 |---|---|---|---|
