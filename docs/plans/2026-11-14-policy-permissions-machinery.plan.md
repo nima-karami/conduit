@@ -332,6 +332,12 @@ export interface PolicyUiState {
   - A new deny withdraws the request (`withdrawnBy: 'conduit'`, reason = `reasonText`), and the call returns `tool_disabled` with that reason.
   - A late answer with a grant creates the grant, calls `answerLate`, and appends the notice "You can retry <tool> now" to the requester's inbox through the CON-21 hidden late-answer thread path. It never runs the call.
 
+## Seams with CON-27 (agreed with claude-22, lead-approved, 2026-11-14)
+1. `src/contracts/remote-principal.ts` is created **byte-identical** on both branches: `Capability = 'messaging'|'monitor'|'drive'`, `Capabilities`, `RemotePrincipal {kind:'remote'; handle; machineId; trust:'own'}`, `principalAddress`. C1's remote principal becomes `RemotePrincipal & { capabilities: Capabilities }`; C1 drops its own `Capability` type and `remoteSessionId`. Orchestrate tools are denied to remote principals until `orchestrate` joins `Capability` (v1).
+2. NET enforces the capability floor at its inbound boundary. POL's floor (d) stays as a second check on `principal.capabilities`, which the composer fills from NET's `capabilitiesOf(machineId)`; null or false means deny.
+3. NET's `AuditSink.record` takes a closed union of its 11 kinds. The branch that lands second adds `activityAuditSink(log: ActivityLog): AuditSink`, which writes Activity `note` rows with no bodies or keystrokes, and swaps it into NET's composer.
+4. NET's `onRevoked(machineId)` hook: the branch that lands second wires it to `GrantStore.peerRevoked(machineId)` (grants → revoked) and to REQ withdrawing that peer's open requests (`withdrawnBy:'conduit'`, "link revoked").
+
 ## Producer/consumer map
 | Behaviour changed | Produced by | Consumed by | Sides this plan touches |
 |---|---|---|---|
