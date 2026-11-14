@@ -530,6 +530,72 @@ describe('decide', () => {
     );
   });
 
+  it('a drive-root folder scope covers paths on that drive', () => {
+    expect(matchesScope({ kind: 'folder', path: 'C:\\' }, target({ folder: 'c:\\work' }))).toBe(
+      true,
+    );
+    expect(matchesScope({ kind: 'folder', path: 'C:\\' }, target({ folder: 'd:\\work' }))).toBe(
+      false,
+    );
+  });
+
+  it('a posix root folder scope covers every absolute path', () => {
+    expect(matchesScope({ kind: 'folder', path: '/' }, target({ folder: '/work' }))).toBe(true);
+    expect(matchesScope({ kind: 'folder', path: '/' }, target({ folder: '/' }))).toBe(true);
+    expect(matchesScope({ kind: 'folder', path: '/' }, target({ folder: 'c:/work' }))).toBe(false);
+  });
+
+  it('deny + override + grant reports the override', () => {
+    const override: OneUseOverride = {
+      id: 'o1',
+      sessionId: 's1',
+      tool: 'open_session',
+      target: target({ sessionId: 's2' }),
+      createdAt: iso(NOW),
+    };
+    const s = state(
+      {
+        default: assignment('worker', [
+          except('open_session', { kind: 'anywhere' }, { decision: 'deny' }),
+        ]),
+      },
+      { overrides: [override], grants: [grant()] },
+    );
+    const d = decide(s, input({ tool: 'open_session', targets: [target({ sessionId: 's2' })] }));
+    expect(d.decision).toBe('allow');
+    expect(d.reason).toEqual({ by: 'override', overrideId: 'o1' });
+    expect(d.overrideId).toBe('o1');
+    expect(d.grantId).toBeNull();
+  });
+
+  it('a second target needing another override stays denied', () => {
+    const overrides: OneUseOverride[] = ['s2', 's3'].map((sid) => ({
+      id: `o-${sid}`,
+      sessionId: 's1',
+      tool: 'open_session',
+      target: target({ sessionId: sid }),
+      createdAt: iso(NOW),
+    }));
+    const s = state(
+      {
+        default: assignment('worker', [
+          except('open_session', { kind: 'anywhere' }, { decision: 'deny' }),
+        ]),
+      },
+      { overrides },
+    );
+    const d = decide(
+      s,
+      input({
+        tool: 'open_session',
+        targets: [target({ sessionId: 's2' }), target({ sessionId: 's3' })],
+      }),
+    );
+    expect(d.decision).toBe('deny');
+    expect(d.overrideId).toBeNull();
+    expect(d.reason).toEqual({ by: 'deny', point: { kind: 'default' } });
+  });
+
   it('folder scope matches a session target by its folder (cwd)', () => {
     expect(
       matchesScope(
@@ -600,6 +666,7 @@ describe('decide', () => {
       expect(d.grantId !== null, d.reason.by).toBe(d.reason.by === 'grant');
       expect(d.overrideId !== null, d.reason.by).toBe(d.reason.by === 'override');
     }
+    expect(decide(scenarios[3].s, scenarios[3].i).reason.by).toBe('override');
     expect(reasons).toEqual(new Set(['profile', 'grant', 'override', 'deny']));
   });
 });
@@ -629,7 +696,7 @@ describe('visibleTools', () => {
     expect(visibleTools(s, session(), NOW)).toContain('open_file');
   });
 
-  it('visibleTools lists every tool with the master switch off', () => {
+  it("visibleTools hides exactly Worker's profile denies", () => {
     const profile = BUILT_IN_PROFILES.find((p) => p.id === 'worker');
     const expected = TOOL_NAMES.filter((t) => profile?.rules[t].decision !== 'deny');
     expect(visibleTools(state(worker), session(), NOW)).toEqual(expected);

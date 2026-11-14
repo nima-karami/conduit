@@ -211,28 +211,33 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
     };
   });
 
-  const blocked = evaluated.find((e) => e.explicitDeny && e.override === undefined);
-  if (blocked) return done('deny', { by: 'deny', point }, blocked.rule);
+  // One override passes one explicit deny per call; any other explicit deny stays a deny.
+  const explicit = evaluated.filter((e) => e.explicitDeny);
+  const passing = explicit.find((e) => e.override !== undefined);
+  const unpassed = explicit.find((e) => e !== passing);
+  if (unpassed) return done('deny', { by: 'deny', point }, unpassed.rule);
 
-  const grant = state.grants.find(
-    (g) =>
-      isLiveGrant(g, now) &&
-      g.tool === tool &&
-      whoMatches(g.who, principal) &&
-      targets.every((t) => matchesScope(g.on, t)),
-  );
-  if (grant) return done('allow', { by: 'grant', grantId: grant.id }, ruleFor(primary), grant.id);
+  if (!passing) {
+    const grant = state.grants.find(
+      (g) =>
+        isLiveGrant(g, now) &&
+        g.tool === tool &&
+        whoMatches(g.who, principal) &&
+        targets.every((t) => matchesScope(g.on, t)),
+    );
+    if (grant) return done('allow', { by: 'grant', grantId: grant.id }, ruleFor(primary), grant.id);
+  }
 
   const strictest = evaluated
     .map((e) => ({ ...e, effective: e.override ? ALLOW : e.rule.decision }))
     .reduce((best, e) => (STRICTNESS[e.effective] > STRICTNESS[best.effective] ? e : best));
-  if (strictest.override)
+  if (passing && strictest.effective === 'allow' && passing.override)
     return done(
       'allow',
-      { by: 'override', overrideId: strictest.override.id },
-      strictest.rule,
+      { by: 'override', overrideId: passing.override.id },
+      passing.rule,
       null,
-      strictest.override.id,
+      passing.override.id,
     );
   const reason: Reason = strictest.fromException
     ? { by: 'exception', point, profileId: profile.id }
