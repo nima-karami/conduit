@@ -2,6 +2,7 @@ import type { StuckScreen } from '../../src/cli-stuck-screens';
 import type {
   AttentionEdge,
   AttentionPort,
+  NeedsYouFact,
   ServerAttentionSnapshot,
 } from '../../src/contracts/server-ports';
 import type {
@@ -87,6 +88,19 @@ export class ServerAttention implements AttentionPort {
     };
   }
 
+  needsYouFacts(): NeedsYouFact[] {
+    const ids = new Set<string>([...this.reported.keys(), ...this.resumeIssues.keys()]);
+    return [...ids].map((sessionId) => {
+      const status = this.reported.get(sessionId)?.status;
+      return {
+        sessionId,
+        blocked: status?.state === 'blocked' ? status.kind : false,
+        visible: this.activity.isVisible(sessionId),
+        resumeIssue: this.resumeIssues.get(sessionId) ?? null,
+      };
+    });
+  }
+
   lastOutputAt(sessionId: string): number | undefined {
     return this.activity.lastOutputAt(sessionId);
   }
@@ -105,18 +119,21 @@ export class ServerAttention implements AttentionPort {
 
   setVisible(windowId: number, ids: readonly string[]): boolean {
     this.windows.add(windowId);
+    const factBefore = this.factKey();
     let changed = this.activity.setVisible(windowId, ids);
     for (const id of ids) {
       if (this.acknowledgeReported(id)) changed = true;
       if (this.reasons.delete(id)) changed = true;
     }
-    if (changed) this.changed();
+    if (changed || factBefore !== this.factKey()) this.changed();
     return changed;
   }
 
   dropWindow(windowId: number): void {
+    const factBefore = this.factKey();
     this.windows.delete(windowId);
     this.activity.dropWindow(windowId);
+    if (factBefore !== this.factKey()) this.changed();
   }
 
   /**
@@ -156,10 +173,12 @@ export class ServerAttention implements AttentionPort {
   }
 
   forgetSession(sessionId: string): void {
+    const factBefore = this.factKey();
     this.reset(sessionId);
     this.resumeIssues.delete(sessionId);
     this.completions.delete(sessionId);
     this.activity.forget(sessionId);
+    if (factBefore !== this.factKey()) this.changed();
   }
 
   sweep(): void {
@@ -215,15 +234,22 @@ export class ServerAttention implements AttentionPort {
 
   private status(sessionId: string, status: ReportedStatus): void {
     const before = this.statusOf(sessionId);
+    const factBefore = this.factKey();
     this.applyStatus(sessionId, status);
     const after = this.statusOf(sessionId);
     if (
       before.busy !== after.busy ||
       before.needsAttention !== after.needsAttention ||
       before.attentionReason !== after.attentionReason ||
-      before.completions !== after.completions
+      before.completions !== after.completions ||
+      factBefore !== this.factKey()
     )
       this.changed();
+  }
+
+  /** Compared, not tracked per path: visibility and membership move through several paths. */
+  private factKey(): string {
+    return JSON.stringify(this.needsYouFacts());
   }
 
   private applyStatus(sessionId: string, status: ReportedStatus): void {

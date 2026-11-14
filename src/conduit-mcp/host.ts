@@ -80,6 +80,7 @@ import { composeUnreadBanner } from './notice-text';
 import { type AttentionRaise, bannerCandidates, createNotifier, type Notifier } from './notifier';
 import { createRequestsIo } from './request-file-fs';
 import { createRequestService, type RequestService } from './request-service';
+import type { QuestionMessage, SessionNeedsYou } from './request-sources';
 import { createScreenToolHandlers } from './screen-tools';
 import { type ScreenSnapshot, screenVerdict } from './screen-verdict';
 import { assignHandle, createSessionRegistry } from './session-registry';
@@ -156,7 +157,10 @@ type HostLog = Record<
 >;
 
 export interface ConduitMcpHostDeps extends Omit<McpHostDeps, 'attention'> {
-  attention: Pick<McpHostDeps['attention'], 'statusOf' | 'lastOutputAt' | 'onChange' | 'setStuck'>;
+  attention: Pick<
+    McpHostDeps['attention'],
+    'statusOf' | 'lastOutputAt' | 'onChange' | 'setStuck' | 'needsYouFacts'
+  >;
   dir: string;
   endpointPath: string;
   execPath: string;
@@ -555,7 +559,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     deriveAttentionFromStore();
     scheduleBroadcast();
     sessionWaits.notify();
-    if (store.available()) requestService.retryDeliveries();
+    if (store.available()) {
+      requestService.retryDeliveries();
+      requestService.onQuestions(unreadQuestions());
+    }
   });
   // Set by start: a host that never listened has no connections, so no waits to wake.
   let stopAttentionWatch: (() => void) | undefined;
@@ -691,7 +698,55 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       return true;
     },
     onChanged: () => scheduleBroadcast(),
+    scheduler: deps.domain.limit,
+    replyToQuestion: async (r, text) => {
+      const sent = await tools.sendMessage(
+        { handle: HUMAN_HANDLE, sessionId: null },
+        {
+          to: [r.requester],
+          body: text,
+          ...(r.thread === null ? {} : { thread_id: r.thread }),
+          kind: 'inform',
+          priority: 'normal',
+        },
+      );
+      if (!sent.ok) {
+        deps.log.warn('conduit-mcp', 'reply to question not sent', {
+          requestId: r.id,
+          code: sent.error.code,
+        });
+        return false;
+      }
+      if (r.messageId === null) return true;
+      const read = await store.setStatus(r.messageId, HUMAN_HANDLE, 'read');
+      // The reply went out: reporting failure now would invite a retry and a second reply.
+      if (!read.ok)
+        deps.log.warn('conduit-mcp', 'question not marked read after its reply', {
+          requestId: r.id,
+          code: read.error.code,
+        });
+      return true;
+    },
   });
+
+  const factsWithHandles = (): SessionNeedsYou[] =>
+    deps.attention.needsYouFacts().map((f) => ({ ...f, handle: handleOf(f.sessionId) ?? null }));
+
+  const unreadQuestions = (): QuestionMessage[] =>
+    store.available()
+      ? store
+          .pending(HUMAN_HANDLE)
+          .filter((m) => m.kind === 'question' && m.requestId === undefined)
+          .map((m) => ({
+            messageId: m.messageId,
+            threadId: m.threadId,
+            from: m.from,
+            fromSession: sessionOfHandle(m.from),
+            subject: m.subject,
+            body: m.body,
+            sentAt: m.sentAt,
+          }))
+      : [];
 
   // ---- gate -------------------------------------------------------------------------------
 
@@ -1677,6 +1732,16 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const youPending = store.available()
       ? store.pending(HUMAN_HANDLE).filter((m) => m.requestId === undefined)
       : [];
+    const openQuestionIds = new Set(
+      requestService
+        .ui()
+        .open.flatMap((r) => (r.source === 'message' && r.messageId !== null ? [r.messageId] : [])),
+    );
+    const requestOnlyThreads = new Set(youPending.map((m) => m.threadId));
+    for (const m of youPending) {
+      if (!(m.kind === 'question' && openQuestionIds.has(m.messageId)))
+        requestOnlyThreads.delete(m.threadId);
+    }
     const participantsByThread = new Map(
       all.map((thread) => [thread.threadId, thread.participants]),
     );
@@ -1689,7 +1754,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       loading,
       sessions,
       threads,
-      attention: [...attention, ...youAttention(all, new Date(now()).toISOString())],
+      attention: [
+        ...attention,
+        ...youAttention(
+          all.filter((t) => !requestOnlyThreads.has(t.threadId)),
+          new Date(now()).toISOString(),
+        ),
+      ],
       youUnread: youPending.length,
       youUrgent: youPending.filter((m) => m.priority === 'urgent').length,
       youUnreadByThread: [...youUnreadByThread].flatMap(([threadId, count]) => {
@@ -1961,7 +2032,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   return {
     async start() {
       if (stopped) return;
-      stopAttentionWatch = deps.attention.onChange(() => sessionWaits.notify());
+      stopAttentionWatch = deps.attention.onChange(() => {
+        sessionWaits.notify();
+        requestService.onAttention(factsWithHandles());
+      });
       startupSweep = (async () => {
         try {
           // Configs left by a crash: they name a dead session and can't be reused.
@@ -1993,7 +2067,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       if (stopped) return;
       scheduleBroadcast();
       requestService.start();
+      requestService.onAttention(factsWithHandles());
       await loadStore();
+      requestService.onQuestions(unreadQuestions());
       requestService.retryDeliveries();
       notifier = makeNotifier();
       const tickMs = deps.tickMs ?? TICK_MS;

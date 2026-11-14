@@ -1457,6 +1457,12 @@ export function createDomain(deps: DomainDeps): Domain {
     return true;
   };
 
+  const setSessionAutoResume = (sessionId: string, mode: SessionAutoResume): boolean => {
+    if (!mgr.setAutoResume(sessionId, mode)) return false;
+    monitor.onModeChanged();
+    return true;
+  };
+
   const methods: Handlers = {
     'sessions.create': (p) => createFromApp(p),
     'sessions.start': (p) =>
@@ -1580,9 +1586,8 @@ export function createDomain(deps: DomainDeps): Domain {
       const mode = p.mode;
       if (mode !== 'inherit' && mode !== 'on' && mode !== 'off')
         throw new RpcFault('refused', 'mode must be inherit, on or off');
-      if (!mgr.setAutoResume(str(p, 'sessionId'), mode as SessionAutoResume))
+      if (!setSessionAutoResume(str(p, 'sessionId'), mode as SessionAutoResume))
         throw new RpcFault('not_found', 'Session no longer exists');
-      monitor.onModeChanged();
       return {};
     },
     'scheduler.history': (p) => ({
@@ -1706,6 +1711,11 @@ export function createDomain(deps: DomainDeps): Domain {
     installState: (cli) => deps.installState(cli),
     messagingOn: () => settings().conduitMcp,
     toolPolicy: () => ({ global: settings().mcpToolPolicy, byCli: settings().mcpToolPolicyByCli }),
+    limit: {
+      resumeNow: (id) => monitor.resumeNow(id),
+      autoResumeOn: (id) => setSessionAutoResume(id, 'on'),
+      dismissIssue: (id) => monitor.dismissIssue(id),
+    },
   };
 
   const flush = (what: keyof typeof writers) => {

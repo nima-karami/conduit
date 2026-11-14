@@ -38,7 +38,7 @@ import {
   withPolicyPatch,
 } from '../../src/conduit-mcp/tool-policy';
 import { toolError } from '../../src/conduit-mcp/types';
-import type { McpHostDeps, TokenStorePort } from '../../src/contracts/server-ports';
+import type { McpHostDeps, NeedsYouFact, TokenStorePort } from '../../src/contracts/server-ports';
 import type { ServerEvents } from '../../src/contracts/server-protocol';
 import type {
   LaunchIds,
@@ -172,6 +172,7 @@ interface Harness {
   finishTurn(sessionId: string): void;
   /** Flips the session needs-you reason, as the server attention does. */
   setNeedsYou(sessionId: string, on: boolean): void;
+  setNeedsYouFacts(facts: NeedsYouFact[]): void;
   /** Host timers armed and not yet fired or cleared. */
   readonly pendingTimers: number;
   /** Every stuck-screen verdict the host handed to attention, in order. */
@@ -461,6 +462,11 @@ function harness(
     installState: opts.installState ?? (() => 'not-installed' as const),
     messagingOn: opts.messagingOn ?? (() => true),
     toolPolicy: opts.toolPolicy ?? (() => ({ global: DEFAULT_TOOL_POLICY, byCli: {} })),
+    limit: {
+      resumeNow: async () => false,
+      autoResumeOn: () => true,
+      dismissIssue: () => undefined,
+    },
   };
   const attentionListeners = new Set<Parameters<McpHostDeps['attention']['onEdge']>[0]>();
   const completions = new Map<string, number>();
@@ -472,6 +478,7 @@ function harness(
   const notifyAttention = () => {
     for (const l of changeListeners) l();
   };
+  const needsYou: NeedsYouFact[] = [];
   const attention: McpHostDeps['attention'] = {
     statusOf: (id) => {
       const s = stuck.get(id);
@@ -485,6 +492,7 @@ function harness(
       };
     },
     setResumeIssue: () => undefined,
+    needsYouFacts: () => [...needsYou],
     setStuck: (id, next) => {
       stuckCalls.push([id, next]);
       if (next) stuck.set(id, next);
@@ -690,6 +698,10 @@ function harness(
     setNeedsYou(id, on) {
       if (on) needing.add(id);
       else needing.delete(id);
+      notifyAttention();
+    },
+    setNeedsYouFacts(facts: NeedsYouFact[]) {
+      needsYou.splice(0, needsYou.length, ...facts);
       notifyAttention();
     },
     get pendingTimers() {
@@ -4978,6 +4990,63 @@ describe('createConduitMcpHost — requests', () => {
       requester: 'fake-1',
     });
     expect(state.requests.presence).toMatchObject({ state: 'here', until: null, lastAway: null });
+  });
+
+  it('a question to you becomes one message request and the chip item is dropped', async () => {
+    const h = harness();
+    const ca = await pairForRequests(h);
+    await ca.call('send_message', { to: ['you'], body: 'Which branch?', kind: 'question' });
+    await expect.poll(() => openIds(h).length).toBe(1);
+    expect(h.host.uiState().requests.open[0]).toMatchObject({
+      source: 'message',
+      kind: 'text',
+      requester: 'fake-1',
+      title: 'fake-1 asked you a question',
+    });
+    expect(h.host.uiState().attention.filter((a) => a.reason === 'message-to-you')).toEqual([]);
+  });
+
+  it('answering the question request posts a thread reply and marks it read', async () => {
+    const h = harness();
+    const ca = await pairForRequests(h);
+    const sent = await ca.call('send_message', {
+      to: ['you'],
+      body: 'Which branch?',
+      kind: 'question',
+    });
+    await expect.poll(() => openIds(h).length).toBe(1);
+    const [requestId] = openIds(h);
+    const replies = await answerFrom(h, requestId, { outcome: 'answered', text: 'main, please' });
+    expect(replies).toEqual([
+      { type: 'mcp:requestResult', requestId, result: expect.objectContaining({ ok: true }) },
+    ]);
+    const inbox = await ca.call('read_inbox', {});
+    expect(inbox.body.messages[0]).toMatchObject({
+      thread_id: sent.body.thread_id,
+      from: 'you',
+      body: expect.stringContaining('main, please'),
+    });
+    expect(h.host.uiState().youUnread).toBe(0);
+    expect(openIds(h)).toEqual([]);
+  });
+
+  it('a blocked hidden session from needsYouFacts appears as an attend request', async () => {
+    const h = harness();
+    await pairForRequests(h);
+    h.setNeedsYouFacts([
+      { sessionId: 's1', blocked: 'permission', visible: false, resumeIssue: null },
+    ]);
+    expect(h.host.uiState().requests.open).toMatchObject([
+      {
+        source: 'observed',
+        kind: 'attend',
+        session: 's1',
+        requester: 'fake-1',
+        blocked: 'permission',
+      },
+    ]);
+    h.setNeedsYouFacts([]);
+    expect(openIds(h)).toEqual([]);
   });
 
   it('list_sessions shows human presence', async () => {

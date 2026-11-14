@@ -4,6 +4,7 @@ import {
   PERSIST_COALESCE_MS,
   type RequestService,
 } from '../../src/conduit-mcp/request-service';
+import type { QuestionMessage, SessionNeedsYou } from '../../src/conduit-mcp/request-sources';
 import type { RequestRecord } from '../../src/conduit-mcp/request-types';
 import type { Caller } from '../../src/conduit-mcp/tools';
 import type { CallKey } from '../../src/conduit-mcp/window-waits';
@@ -74,6 +75,12 @@ interface Harness {
   store: ReturnType<typeof memoryIo>;
   warnings: string[];
   deliver: ReturnType<typeof vi.fn<(r: RequestRecord) => Promise<boolean>>>;
+  reply: ReturnType<typeof vi.fn<(r: RequestRecord, text: string) => Promise<boolean>>>;
+  scheduler: {
+    resumeNow: ReturnType<typeof vi.fn<(sessionId: string) => Promise<boolean>>>;
+    autoResumeOn: ReturnType<typeof vi.fn<(sessionId: string) => boolean>>;
+    dismissIssue: ReturnType<typeof vi.fn<(sessionId: string) => void>>;
+  };
 }
 
 function harness(opts: { initial?: string | null; budgetMs?: number } = {}): Harness {
@@ -82,6 +89,12 @@ function harness(opts: { initial?: string | null; budgetMs?: number } = {}): Har
   const warnings: string[] = [];
   let seq = 0;
   const deliver = vi.fn(async (_r: RequestRecord) => true);
+  const reply = vi.fn(async (_r: RequestRecord, _text: string) => true);
+  const scheduler = {
+    resumeNow: vi.fn(async (_sessionId: string) => true),
+    autoResumeOn: vi.fn((_sessionId: string) => true),
+    dismissIssue: vi.fn((_sessionId: string) => undefined),
+  };
   const service = createRequestService({
     io: store.io,
     machineId: 'm-00000001',
@@ -96,10 +109,32 @@ function harness(opts: { initial?: string | null; budgetMs?: number } = {}): Har
     budgetMs: () => opts.budgetMs ?? 300_000,
     deliver,
     onChanged: () => {},
+    replyToQuestion: reply,
+    scheduler,
   });
   service.start();
-  return { c, service, store, warnings, deliver };
+  return { c, service, store, warnings, deliver, reply, scheduler };
 }
+
+const aliceFact = (over: Partial<SessionNeedsYou> = {}): SessionNeedsYou => ({
+  sessionId: 's-alice',
+  blocked: false,
+  visible: false,
+  resumeIssue: null,
+  handle: 'alice',
+  ...over,
+});
+
+const aliceQuestion = (over: Partial<QuestionMessage> = {}): QuestionMessage => ({
+  messageId: 'msg-1',
+  threadId: 'th-1',
+  from: 'alice',
+  fromSession: 's-alice',
+  subject: '',
+  body: 'Which branch?',
+  sentAt: '2026-11-14T09:59:00.000Z',
+  ...over,
+});
 
 function onlyOpenId(service: RequestService): string {
   const [first] = service.ui().open;
@@ -384,5 +419,216 @@ describe('request service: persistence', () => {
     expect(h.service.ui().ended[0]).toMatchObject({ id, state: 'orphaned', waiting: false });
     await flush();
     expect(h.deliver).not.toHaveBeenCalled();
+  });
+});
+
+describe('request service: needs-you sources', () => {
+  it('onAttention raises one attend request for a hidden blocked session and resolves it when the prompt clears', () => {
+    const h = harness();
+    const blocked = aliceFact({ blocked: 'permission' });
+    h.service.onAttention([blocked]);
+    h.service.onAttention([blocked]);
+    expect(h.service.ui().open).toHaveLength(1);
+    expect(h.service.ui().open[0]).toMatchObject({
+      source: 'observed',
+      kind: 'attend',
+      session: 's-alice',
+      requester: 'alice',
+      blocked: 'permission',
+      state: 'open',
+    });
+    h.service.onAttention([aliceFact({ blocked: false })]);
+    expect(h.service.ui().open).toHaveLength(0);
+    expect(h.service.ui().ended[0]).toMatchObject({ source: 'observed', state: 'resolved' });
+  });
+
+  it('a scheduler answer Resume now calls resumeNow and is not raised again while the issue persists', async () => {
+    const h = harness();
+    const limited = aliceFact({ resumeIssue: 'usage limit, no reset time' });
+    h.service.onAttention([limited]);
+    const [request] = h.service.ui().open;
+    expect(request).toMatchObject({
+      source: 'scheduler',
+      kind: 'choose',
+      session: 's-alice',
+      body: 'usage limit, no reset time',
+      options: [{ label: 'Resume now' }, { label: 'Turn auto-resume on' }],
+    });
+    if (request === undefined) throw new Error('no scheduler request');
+    const result = await h.service.answerFromRenderer(
+      request.id,
+      { outcome: 'chosen', values: ['Resume now'] },
+      1,
+    );
+    expect(result).toMatchObject({ ok: true, request: { state: 'answered' } });
+    expect(h.scheduler.resumeNow).toHaveBeenCalledWith('s-alice');
+    h.service.onAttention([limited]);
+    expect(h.service.ui().open).toHaveLength(0);
+  });
+
+  it('the issue clearing lets a later issue raise again', async () => {
+    const h = harness();
+    h.service.onAttention([aliceFact({ resumeIssue: 'first limit' })]);
+    const [first] = h.service.ui().open;
+    if (first === undefined) throw new Error('no scheduler request');
+    await h.service.answerFromRenderer(first.id, { outcome: 'chosen', values: ['Resume now'] }, 1);
+    h.service.onAttention([aliceFact({ resumeIssue: null })]);
+    h.service.onAttention([aliceFact({ resumeIssue: 'second limit' })]);
+    expect(h.service.ui().open).toHaveLength(1);
+    expect(h.service.ui().open[0]).toMatchObject({ source: 'scheduler', body: 'second limit' });
+  });
+
+  it('Turn auto-resume on calls autoResumeOn', async () => {
+    const h = harness();
+    const limited = aliceFact({ resumeIssue: 'usage limit' });
+    h.service.onAttention([limited]);
+    const [request] = h.service.ui().open;
+    if (request === undefined) throw new Error('no scheduler request');
+    await h.service.answerFromRenderer(
+      request.id,
+      { outcome: 'chosen', values: ['Turn auto-resume on'] },
+      1,
+    );
+    expect(h.scheduler.autoResumeOn).toHaveBeenCalledWith('s-alice');
+    expect(h.scheduler.resumeNow).not.toHaveBeenCalled();
+    h.service.onAttention([limited]);
+    expect(h.service.ui().open).toHaveLength(0);
+  });
+
+  it('an answer that re-raises the same issue synchronously does not ask again', async () => {
+    const h = harness();
+    const limited = aliceFact({ resumeIssue: 'usage limit' });
+    h.service.onAttention([limited]);
+    const [request] = h.service.ui().open;
+    if (request === undefined) throw new Error('no scheduler request');
+    h.scheduler.autoResumeOn.mockImplementationOnce(() => {
+      h.service.onAttention([limited]);
+      return true;
+    });
+    await h.service.answerFromRenderer(
+      request.id,
+      { outcome: 'chosen', values: ['Turn auto-resume on'] },
+      1,
+    );
+    expect(h.service.ui().open).toHaveLength(0);
+  });
+
+  it('Skip on a scheduler request calls dismissIssue', async () => {
+    const h = harness();
+    h.service.onAttention([aliceFact({ resumeIssue: 'usage limit' })]);
+    const [request] = h.service.ui().open;
+    if (request === undefined) throw new Error('no scheduler request');
+    await h.service.answerFromRenderer(request.id, { outcome: 'dismissed' }, 1);
+    expect(h.scheduler.dismissIssue).toHaveBeenCalledWith('s-alice');
+    expect(h.scheduler.resumeNow).not.toHaveBeenCalled();
+  });
+
+  it('answering a question replies in its thread then answers; a failed reply leaves it open', async () => {
+    const h = harness();
+    h.service.onQuestions([aliceQuestion()]);
+    const [request] = h.service.ui().open;
+    if (request === undefined) throw new Error('no message request');
+    expect(request).toMatchObject({
+      source: 'message',
+      kind: 'text',
+      thread: 'th-1',
+      messageId: 'msg-1',
+      title: 'alice asked you a question',
+    });
+
+    h.reply.mockResolvedValueOnce(false);
+    const failed = await h.service.answerFromRenderer(
+      request.id,
+      { outcome: 'answered', text: 'main' },
+      1,
+    );
+    expect(failed).toMatchObject({
+      ok: false,
+      reason: 'not_answerable',
+      message: 'the reply could not be sent; try again',
+      request: { id: request.id, state: 'open' },
+    });
+    expect(h.service.ui().open).toHaveLength(1);
+
+    let openWhileReplying = 0;
+    h.reply.mockImplementationOnce(async () => {
+      openWhileReplying = h.service.ui().open.length;
+      return true;
+    });
+    const sent = await h.service.answerFromRenderer(
+      request.id,
+      { outcome: 'answered', text: 'main' },
+      1,
+    );
+    expect(openWhileReplying).toBe(1);
+    expect(sent).toMatchObject({ ok: true, request: { state: 'answered' } });
+    expect(h.reply).toHaveBeenCalledTimes(2);
+    expect(h.reply).toHaveBeenLastCalledWith(expect.objectContaining({ id: request.id }), 'main');
+    expect(h.service.ui().open).toHaveLength(0);
+  });
+
+  it('marking the question read during its reply does not resolve the request being answered', async () => {
+    const h = harness();
+    h.service.onQuestions([aliceQuestion()]);
+    const [request] = h.service.ui().open;
+    if (request === undefined) throw new Error('no message request');
+    h.reply.mockImplementationOnce(async () => {
+      h.service.onQuestions([]);
+      return true;
+    });
+    const sent = await h.service.answerFromRenderer(
+      request.id,
+      { outcome: 'answered', text: 'main' },
+      1,
+    );
+    expect(sent).toMatchObject({ ok: true, request: { state: 'answered' } });
+    expect(h.service.ui().ended.find((r) => r.id === request.id)).toMatchObject({
+      state: 'answered',
+    });
+  });
+
+  it('a second answer while the first reply is in flight does not send a second reply', async () => {
+    const h = harness();
+    h.service.onQuestions([aliceQuestion()]);
+    const [request] = h.service.ui().open;
+    if (request === undefined) throw new Error('no message request');
+    let release: (sent: boolean) => void = () => undefined;
+    h.reply.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const first = h.service.answerFromRenderer(request.id, { outcome: 'answered', text: 'a' }, 1);
+    const second = await h.service.answerFromRenderer(
+      request.id,
+      { outcome: 'answered', text: 'b' },
+      2,
+    );
+    expect(second).toMatchObject({ ok: false, reason: 'not_answerable' });
+    release(true);
+    expect(await first).toMatchObject({ ok: true, request: { state: 'answered' } });
+    expect(h.reply).toHaveBeenCalledTimes(1);
+  });
+
+  it('a dismissed question is not raised again', async () => {
+    const h = harness();
+    h.service.onQuestions([aliceQuestion()]);
+    const [request] = h.service.ui().open;
+    if (request === undefined) throw new Error('no message request');
+    await h.service.answerFromRenderer(request.id, { outcome: 'dismissed' }, 1);
+    expect(h.reply).not.toHaveBeenCalled();
+    h.service.onQuestions([aliceQuestion()]);
+    expect(h.service.ui().open).toHaveLength(0);
+  });
+
+  it('an answered question that is still unread is not raised again', async () => {
+    const h = harness();
+    h.service.onQuestions([aliceQuestion()]);
+    const [request] = h.service.ui().open;
+    if (request === undefined) throw new Error('no message request');
+    await h.service.answerFromRenderer(request.id, { outcome: 'answered', text: 'yes' }, 1);
+    h.service.onQuestions([aliceQuestion()]);
+    expect(h.service.ui().open).toHaveLength(0);
   });
 });
