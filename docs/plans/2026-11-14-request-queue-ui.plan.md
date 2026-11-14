@@ -133,7 +133,7 @@ Every surface calls this: row, pill, notice, thread link and shortcut.
 
 ### UC6 Attention entries (`src/attention.ts`)
 - `AttentionEntry.kind` gains `'request'`.
-- `needYouEntries` puts open requests first (soonest-needed order) and drops session entries already covered by an open request. This mirrors the tray rule merged in CON-21 T5.2.
+- `needYouEntries` keeps waiting asks first (a call is blocked on each), then open requests (soonest-needed order), and drops session entries already covered by an open request. Corrected during the build: `status-bar.e2e` showed requests ahead of a waiting ask. This mirrors the tray rule merged in CON-21 T5.2.
 - `routeAttention` (`src/attention-route.ts:27`) routes `'request'` to `openRequest`.
 
 ## Producer/consumer map

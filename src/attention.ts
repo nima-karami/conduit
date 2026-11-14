@@ -195,8 +195,8 @@ export function needYouEntries<
       ? { ...s, needsAttention: true, busy: false }
       : { ...s, needsAttention: false },
   );
-  // Requests lead; a session that already has an open request is counted by it, never twice
-  // (the same rule as the tray, src/tray-counts.ts).
+  // Asks lead (a call is waiting on each), then requests; a session that already has an open
+  // request is counted by it, never twice (the same rule as the tray, src/tray-counts.ts).
   const asking = new Set(requests.flatMap((r) => (r.session === null ? [] : [r.session])));
   const fromRequests: AttentionEntry[] = requests.map((r) => ({
     key: `request:${r.id}`,
@@ -210,5 +210,6 @@ export function needYouEntries<
   const rest = attentionEntries(projected, items, snoozed, now, asks).filter(
     (e) => !(e.kind === 'session' && e.sessionId !== null && asking.has(e.sessionId)),
   );
-  return [...fromRequests, ...rest];
+  const fromAsks = rest.filter((e) => e.kind === 'ask');
+  return [...fromAsks, ...fromRequests, ...rest.filter((e) => e.kind !== 'ask')];
 }
