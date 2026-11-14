@@ -42,10 +42,11 @@ function view(over: Partial<RequestView> & Pick<RequestView, 'id'>): RequestView
 function harness(kinds: Record<string, OpenAs>, requests: RequestView[]) {
   const openTab = vi.fn();
   const openTerminal = vi.fn();
+  const closeTab = vi.fn();
   const openAs = vi.fn((r: RequestView) => kinds[r.id] ?? 'popup');
   const api = createRequestOpen({ openAs, requests: () => requests });
-  api.setRequestOpeners({ openTab, openTerminal });
-  return { ...api, openTab, openTerminal, openAs };
+  api.setRequestOpeners({ openTab, openTerminal, closeTab });
+  return { ...api, openTab, openTerminal, closeTab, openAs };
 }
 
 describe('openRequest', () => {
@@ -106,5 +107,13 @@ describe('openSessionTerminal', () => {
   it('returns false when no openers are registered', () => {
     const api = createRequestOpen({ openAs: () => 'popup', requests: () => [] });
     expect(api.openSessionTerminal('sess-9')).toBe(false);
+  });
+
+  it('closeRequestTab calls the registered closer, and is false without openers', () => {
+    const h = harness({}, []);
+    expect(h.closeRequestTab('r1')).toBe(true);
+    expect(h.closeTab).toHaveBeenCalledWith('r1');
+    h.setRequestOpeners(null);
+    expect(h.closeRequestTab('r1')).toBe(false);
   });
 });

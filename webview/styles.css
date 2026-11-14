@@ -16405,8 +16405,16 @@ button.toggle--on .toggle__knob {
   bottom: calc(100% + 4px);
   right: 0;
 }
+.statusbar__away {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  cursor: pointer;
+}
 .statusbar__away--on {
-  color: var(--text);
+  color: color-mix(in srgb, var(--amber) 70%, var(--text));
 }
 
 /* Needs you: Away and digest (CON-20) */
