@@ -1,0 +1,575 @@
+# Policy and permissions machinery (CON-24) — implementation plan
+
+**Spec:** `docs/specs/2026-11-14-policy-and-permissions.md` (POL, MVP locked in §15)  **Tier:** FULL
+**Builds on:** CON-21's queue (`docs/runs/2026-11-14-CON-21/report.md`), branch cut at `1fc7e690`.
+
+## Goal
+Replace the per-field tool policy with profiles, exceptions and grants decided by one engine. Every
+Conduit decision and the native actions of Claude and Codex go to an Activity log. Asks become REQ
+`permission` requests. No new UI: CON-25 draws it from the state and channels built here.
+
+## Architecture
+The engine is a pure function over a policy state (profiles, assignments, grants, one-use
+overrides). It lives in flat `src/conduit-mcp/policy-*.ts` modules beside `tool-policy.ts`, which
+keeps the tool catalogue, field model and gate. One composer, `policy-service.ts`, owns persistence
+(`policy.json`, `grants.json`), the v0.64 migration, the Activity sink and grant timers. `host.ts`
+only builds the principal and targets, calls `policyService.decide`, and routes renderer messages.
+`call-flow.ts` turns an `ask` into a `permission` request and re-decides at answer time. The approval
+card becomes a view of open `permission` requests.
+
+The observed lane enters the same Activity sink:
+- Claude through a new `PostToolUse` hook on the existing hook socket.
+- Codex through a new action parser on the rollout tail the domain already runs.
+
+## Data flow
+```
+agent ──tools/call──> host.callTool ── principal{sessionId, handle, launchedCli} + targets[]
+                          │
+                          v
+                 policyService.decide(input) ── engine: floors → denies(+override) → grants → assignment
+                          │  {decision, reason, rule{when,reach,move}}          │
+                          │                                                     └─> activity.record(row)
+          allow ──> gateToolCall(rule: window/on-screen) ──> tool runs ──> activity outcome
+          deny  ──> tool_disabled (+reason)                          
+          ask   ──> callFlow.ask ──> requestService.createPermission(expiresAt = call budget)
+                                         │                     │
+                     approval card <── mcp:ask/asksSnapshot   McpUiState.requests (decision DN-3)
+                     (askId = requestId)                        │
+       mcp:askAnswer ─┐                    mcp:permissionAnswer ┘
+                      v
+          callFlow.answerPermission ── re-decide now: deny? → withdraw(conduit, reason)
+                      │                 else allowed → [grant] → run · denied → denied
+                      └─ request expired + grant → grant only, retry notice (never runs)
+
+Claude PostToolUse ─hook socket─> endpoint ─> domain.hookPost ─┐
+Codex rollout item_completed ──> codexWatch.onAction ──────────┴─> services → host.recordObserved → activity
+```
+
+## Settled decisions — do not re-litigate
+- POL-D1 profiles over rules + Activity. POL-D2 (a): observe only, no native deciding.
+- **POL-D3 allow**: Lead allows `open_terminal` and `open_session` with no ask.
+- POL-D4: Lead acts off screen (`when: 'always'` in the Lead profile).
+- POL-D5: kind assignments and kind grants apply only to sessions Conduit launched with a known adapter.
+- POL-D6: if the Activity store fails, local principals go ahead with a gap marker. The engine takes `auditWritable` so that guests fail closed later; there are no guests in MVP.
+- POL-D7: picker defaults by principal; a "until this session ends" grant also expires after 7 days unused.
+- POL-D8: Activity is human-only and never readable through MCP. POL-D9: allow/ask/deny. POL-D14: observed lane for Claude and Codex.
+- POL-D16: one-use override, local only, never past a floor. POL-D17: one Activity row per raised request, linked by `requestId`.
+- POL-D13 (native posture) and POL-D15 (outbound to guests) are v1: not built. Migration never touches launch flags.
+- Lead brief: no new UI; the approval card keeps working; the remote principal is a data model only; stop at the spec's MVP.
+- REQ-D15: a `permission` request never gets a default and is never routed to a lead.
+
+## Spec staleness
+Each line gives the claim, what was measured, and how the plan proceeds.
+- **§2.1 "19 tools".** There are 23 (`src/conduit-mcp/tool-policy.ts:37,46`). CON-21 added a `requests` group: `request_input`, `wait_request`, `withdraw_request`, `list_requests`. Their spec is access off/on with no ask (`tool-policy.ts:145-148`), and they skip the gate (`:446`). Migration's "all on" test covers the 14 session and editor tools, plus the messaging and request tools not being off.
+- **§4.2 table: Lead `open_terminal` "?".** POL-D3 (locked) makes it **allow**. That turns the migration exception "open_terminal: allow" into a no-op, so an all-on override migrates to **Lead +1** ("only while on screen"), not Lead +2. The acceptance scenario's "Lead +2" text is stale. Reported as DN-1.
+- **§4.2 "only while on screen" as one exception.** An exception is per tool (§4.1), but this condition covers every tool with a `when` field. Plan: `Assignment.onScreenOnly: boolean`, counted as one exception in the label.
+- **§4.3 floor (e) and the acceptance scenario "Escalation stays on the opener chain".** `answer_request` and `escalate_request` exist nowhere in the tree. REQ §4.8 marks escalation v1 (REQ-D18). Plan: floor (e) has no tool to guard, so it is not built. Reported as DN-4.
+- **§4.4 "the answer is `{outcome, grant?, reason?}`" with `allowed`/`denied`.** `RequestOutcome` has neither value, and `AnswerInput` has no `grant` (`src/conduit-mcp/request-types.ts:15,30`). `createSystem` takes no expiry (`request-queue.ts:~268`). Plan: Slice 3 adds them.
+- **§2.1 "the kind is the handle prefix".** True (`src/conduit-mcp/handles.ts:49`). Proof of launch exists only in memory: `runtime.defAdapter` (`host.ts:1318` `wiredAtLaunch`). Plan: `launchedCli` = the adapter's CLI kind when `defAdapter` is set, otherwise null.
+- **§2.1 the Codex "measured" item names.** Re-measured from `~/.codex/sessions/2026/11/*/rollout-*.jsonl`. Lines are `{type:'event_msg', payload:{type:'item_completed', item}}`:
+  - `CommandExecution{command: string[], cwd, exit_code, duration:{secs,nanos}, aggregated_output}`
+  - `FileChange{changes: Record<path,{type,content}>}`
+  - `McpToolCall{server, tool, arguments, result, duration}`
+
+  Today's parser skips all of them (`src/codex-rollout.ts:100-101`).
+- **§2.3 Claude PostToolUse shape "UNVERIFIED".** No fixture exists (`test/fixtures/claude-hooks/`). The hook client drops any stdin over 256 KiB (`resources/conduit-mcp/conduit-hook.cjs:80-90`, `src/contracts/hook-protocol.ts:16`), and PostToolUse carries `tool_response` with file contents. Plan: T0.2 records a real payload, and T4.1 strips content in the client.
+- **§4.6 "30 days / 50 MB" shared with History.** The queue implements only the 30 days (`request-queue.ts:12`). Plan: Activity enforces both. Changing History's size cap is REQ's job and is left out (noted in the report).
+
+## Global constraints
+- **Gate.** `npm run verify` on every merged tree, exit code captured directly: `npm run verify; echo "exit=$?"`. Never through a pipe. Inner loop: `npm run verify:quick`. Never narrow, skip or ignore a check.
+- **Unit tests.** `test/unit/<kebab-name>.test.ts`, vitest, node environment. Run one with `npx vitest run test/unit/<file>`. Use injected `now`, timers and fs. No real waits, and no win32 behaviour: compare paths through the existing folder-key helper (`folderKey`), never raw `\`.
+- **Naming.** Kebab-case files. `camelCase` functions, `PascalCase` types, `SCREAMING_SNAKE` constants. Wire args are snake_case. Internal records are camelCase.
+- **Node-free modules.** `policy-types.ts` and anything the renderer imports stay Node-free, with type-only imports.
+- **Comments explain WHY only.** Prefer a pointer: `// see POL §4.3`.
+- **No band-aids.** No `as any`, no `@ts-ignore`, no swallowed errors (log via `deps.warn`), no compatibility shims around a misfit seam.
+- **Git and filesystem.** Spawn git only via `runGitBin`; watch directories only via `watchDir`. Neither is expected here.
+- **Persisted files.** Every new persisted file gets an entry in `SERVER_FILE_VERSION` (`src/contracts/session-identity.ts:186-197`). A newer or corrupt file makes the store read-only and is never overwritten (the `request-file.ts` precedent).
+- **Activity privacy.** Never store a message body, typed text, file contents or command output. Store lengths and paths only. Raw arguments are kept only for asks, in `activity/ask-args.json`, purged at 24 h.
+- **User-facing strings.** New ones use the owner's words (UX.md §8). Existing strings are not renamed; the card's "Always for this session" label stays.
+- **CHANGELOG.** Every user-facing change gets a line under Unreleased.
+- **Commits.** `git -c user.name="$(git log main -1 --format=%an)" -c user.email="$(git log main -1 --format=%ae)" commit`. The message ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Never `--no-verify`.
+- **Apps tested on this machine stay hidden.** Any Electron or browser launched for testing uses `--ozone-platform=headless`. If hiding can't be guaranteed, don't launch. This line goes into every lane brief.
+- **Haiku lanes.** They write code and unit tests only, in a worktree under the orchestrator's scratchpad. They never run e2e, never merge, never edit outside their task's `Files:`, and never run `npm install`. `node_modules` is a symlink.
+
+## Out of scope
+- All UI: panels, badge rendering, Grants list, Activity view, Allow… picker, Why drawer.
+- Exception: the two policy editors switch their data source (T2.4, DN-2).
+- Native posture (D13) and guests: Guest profile, Share, guest caps, outbound-to-guest asks (D15), the "after a guest message" condition.
+- Remote orchestrate (S8) and any link, peer transport or revoke trigger (NET). The remote principal and peer assignment exist as data and engine branches only.
+- `answer_request`, `escalate_request`, floor (e) (DN-4). Deciding native approvals (D2 b/c). Activity export. History's 50 MB cap.
+
+## Contracts
+
+### C1 `src/conduit-mcp/policy-types.ts` — written by the orchestrator in T0.1, frozen after
+```ts
+import type { CliKind, Move, Reach, ToolName, When } from './tool-policy';
+
+export type Decision = 'allow' | 'ask' | 'deny';
+export type BuiltInProfileId = 'observer' | 'worker' | 'lead';
+export type ProfileId = BuiltInProfileId | `p-${string}`;          // p- = a human-made copy
+/** null = the tool has no such field (TOOL_SPECS). */
+export interface ToolRule { decision: Decision; when: When | null; reach: Reach | null; move: Move | null }
+export interface Profile { id: ProfileId; name: string; builtIn: boolean; rules: Record<ToolName, ToolRule> }
+
+export type Scope =
+  | { kind: 'anywhere' }
+  | { kind: 'space'; projectId: string }
+  | { kind: 'folder'; path: string }        // real path, matches the folder and below
+  | { kind: 'path'; path: string }          // "this target only" for a folder/file target
+  | { kind: 'session'; sessionId: string }; // "this target only" for a session target
+export interface Exception { tool: ToolName; scope: Scope; rule: Partial<ToolRule> }
+export interface Assignment { profileId: ProfileId; exceptions: Exception[]; onScreenOnly: boolean }
+export type AssignmentPoint =
+  | { kind: 'session'; sessionId: string }
+  | { kind: 'peer'; machineId: string }
+  | { kind: 'cli'; cli: CliKind }
+  | { kind: 'default' };
+
+export type Capability = 'messaging' | 'monitor' | 'drive' | 'orchestrate';
+export type Principal =
+  | { kind: 'session'; sessionId: string; handle: string; launchedCli: CliKind | null; homeFolder: string | null; projectId: string | null }
+  | { kind: 'remote'; handle: string; machineId: string; remoteSessionId: string; trust: 'own'; capabilities: readonly Capability[] };
+export interface PolicyTarget { sessionId: string | null; path: string | null; projectId: string | null }
+
+export type GrantWho = { kind: 'session'; sessionId: string } | { kind: 'cli'; cli: CliKind } | { kind: 'peer'; machineId: string };
+export type GrantFor = 'session-end' | '1h' | '24h' | 'until-revoked';
+export type GrantState = 'active' | 'suspended' | 'expired' | 'revoked';
+export interface Grant {
+  id: string; who: GrantWho; tool: ToolName; on: Scope; for: GrantFor;
+  anchorSessionId: string | null;            // the requester session whose end expires a 'session-end' grant
+  createdAt: string; expiresAt: string | null; lastUsedAt: string | null;
+  state: GrantState; endedAt: string | null; requestId: string | null;
+}
+export interface GrantChoice { who: GrantWho['kind']; on: 'target' | 'folder' | 'anywhere'; for: GrantFor }
+export interface OneUseOverride { id: string; sessionId: string; tool: ToolName; target: PolicyTarget; createdAt: string }
+
+export type FloorId = 'master-off' | 'remote-capability' | 'local-to-you';
+export type Reason =
+  | { by: 'floor'; floor: FloorId }
+  | { by: 'deny'; point: AssignmentPoint }
+  | { by: 'override'; overrideId: string }
+  | { by: 'grant'; grantId: string }
+  | { by: 'exception'; point: AssignmentPoint; profileId: ProfileId }
+  | { by: 'profile'; point: AssignmentPoint; profileId: ProfileId };
+
+export interface PolicyState {
+  profiles: readonly Profile[];               // human copies only; built-ins come from policy-profiles.ts
+  assignments: ReadonlyMap<string, Assignment>; // key = pointKey(point)
+  grants: readonly Grant[];
+  overrides: readonly OneUseOverride[];
+}
+export interface PolicyInput {
+  principal: Principal; tool: ToolName; targets: readonly PolicyTarget[];
+  masterOn: boolean; auditWritable: boolean; toYou: boolean; now: number;
+}
+export interface PolicyDecision {
+  decision: Decision; reason: Reason;
+  rule: { when: When | null; reach: Reach | null; move: Move | null };
+  grantId: string | null; overrideId: string | null;
+}
+export type PermissionAnswer =
+  | { outcome: 'allowed'; grant?: GrantChoice }
+  | { outcome: 'denied'; reason?: string };
+```
+
+### C2 Built-ins and engine — `policy-profiles.ts`, `policy-engine.ts` (Slice 1, lane A)
+```ts
+// policy-profiles.ts
+export const BUILT_IN_PROFILES: readonly Profile[];              // observer, worker, lead; §4.2 with DN-1
+export function profileById(state: PolicyState, id: ProfileId): Profile | null;
+export function pointKey(p: AssignmentPoint): string;            // 'session:<id>' | 'peer:<m>' | 'cli:<k>' | 'default'
+export function effectiveRule(profile: Profile, a: Assignment, tool: ToolName, target: PolicyTarget | null): ToolRule;
+// policy-engine.ts
+export function decide(state: PolicyState, input: PolicyInput): PolicyDecision;
+export function visibleTools(state: PolicyState, principal: Principal, masterOn: boolean): ToolName[];
+export function assignmentFor(state: PolicyState, p: Principal): { point: AssignmentPoint; assignment: Assignment };
+export function matchesScope(scope: Scope, target: PolicyTarget, principal: Principal): boolean;
+export function reasonText(reason: Reason, decision: Decision, names: { profileName(id: ProfileId): string; cliName(k: CliKind): string }): string;
+```
+- **Worker.** Worker's rules are built from `TOOL_SPECS[*].defaults` (`tool-policy.ts:131-202`), mapping off→deny, ask→ask, on→allow. Worker equals today by construction.
+- **Lead.** Lead is Worker with `decision: 'allow'` on `open_session`, `open_terminal`, `send_input`, `close_session` and `attach_folder`, and `when: 'always'` on every tool that has a `when`. Reach and move are unchanged.
+- **Observer.** Observer is "deny" except `list_sessions`, `read_inbox`, `read_attachment`, `send_message`, `wait_sessions`, `list_agents` and the four request tools.
+
+Engine invariants:
+- **Precedence is exactly POL §4.3:** floors (a, d, c), then explicit denies (passable only by a matching one-use override, never a floor), then active, unexpired, unsuspended grants matching who × tool × scope, then the most specific assignment.
+- **Assignment specificity.** A session beats a peer, which beats a kind, which beats the default. Kind is used only when `launchedCli !== null`. A remote principal uses its peer assignment; with none, an own peer is Worker with `open_session`, `open_terminal`, `send_input`, `close_session` and `attach_folder` at ask.
+- **Within an assignment.** An exception beats the profile, and a narrower scope beats a wider one. On an exact tie the stricter decision wins (deny > ask > allow).
+- **Several targets.** The strictest per-target decision wins, and its reason is reported.
+- **Remote principals.** `when` is forced to `'always'`, and `reach: 'window'` becomes `'opened'`.
+- **`onScreenOnly`.** It forces `when: 'viewing'` on every tool whose rule has a `when`.
+- **Defaults.** A target with no session or path matches the caller's `homeFolder`. Floor (c): a local session with `toYou` on `send_message` or `request_input` is always allowed.
+- **Every result carries exactly one `Reason`.**
+
+### C3 Stores — `policy-file.ts`, `grant-store.ts` (Slice 1, lane B)
+```ts
+// policy-file.ts  → <dir>/policy.json
+export interface PolicyFile { version: 1; profiles: Profile[]; assignments: Array<{ point: AssignmentPoint; assignment: Assignment }>;
+  overrides: OneUseOverride[]; migratedFrom: 'v0.64' | null; notes: { onScreenOnlyOffered: string[] } }
+export function parsePolicyFile(text: string): { ok: true; file: PolicyFile } | { ok: false; reason: 'corrupt' | 'newer' };
+export function serializePolicyFile(f: PolicyFile): string;
+// grant-store.ts  (pure, injected clock/ids; persisted by the service as <dir>/grants.json {version:1; grants})
+export const GRANT_DECAY_MS = 7 * 86_400_000; export const GRANT_EXPIRING_MS = 10 * 60_000; export const GRANT_KEEP_EXPIRED_MS = 86_400_000;
+export interface GrantStore {
+  load(grants: Grant[]): void; all(): Grant[];
+  create(who: GrantWho, tool: ToolName, on: Scope, forDur: GrantFor, anchorSessionId: string | null, requestId: string | null): Grant;
+  touch(id: string): void;                                  // lastUsedAt = now
+  revoke(id: string): Grant | null;
+  sessionEnded(sessionId: string): Grant[];                 // expires grants whose who.sessionId or anchorSessionId matches
+  tick(): Grant[];                                          // expires by expiresAt and 7-day decay ('session-end' only); purges expired > 24 h
+}
+export function grantScopeFor(choice: GrantChoice['on'], target: PolicyTarget, principal: Principal): Scope;
+export function grantWhoFor(choice: GrantChoice['who'], principal: Principal): GrantWho | null;  // null: kind for a non-launched session
+export function isExpiring(g: Grant, now: number): boolean;
+```
+
+### C4 Activity — `activity-log.ts`, `activity-log-fs.ts` (Slice 1, lane C)
+```ts
+export type ActivityLane = 'conduit' | 'observed' | 'note';
+export type ActivityOutcome = 'ok' | 'error' | 'denied' | 'expired' | 'withdrawn' | 'asked' | null;
+export interface ActivityEntry {
+  v: 1; id: string; at: string; lane: ActivityLane;
+  principal: { handle: string | null; sessionId: string | null; machineId: string | null };
+  cli: CliKind | null; action: string; target: string | null; summary: string | null;
+  decision: Decision | null; decidedBy: string; outcome: ActivityOutcome; durationMs: number | null;
+  requestId: string | null; count: number | null;          // count: hourly bucket rows only
+}
+export const COUNTED_TOOLS: readonly ToolName[];             // list_sessions, list_agents, wait_sessions, read_inbox
+export const ACTIVITY_RETENTION_MS = 30 * 86_400_000; export const ACTIVITY_MAX_BYTES = 50 * 1024 * 1024;
+export interface ActivityIo { append(day: string, line: string): void; list(): Array<{ day: string; bytes: number }>; remove(day: string): void;
+  readArgs(): string | null; writeArgs(text: string): void }
+export interface ActivityLog {
+  record(e: Omit<ActivityEntry, 'v' | 'id' | 'at'>): string;     // returns id; counted allow rows aggregate per session per hour
+  recordAskArgs(requestId: string, args: unknown): void;          // 24 h TTL
+  flushCounts(): void; purge(): void; writable(): boolean;
+  recentDenies(): ReadonlyMap<string, ActivityEntry>;            // last 200 deny rows by id, for allowOnce
+}
+export function createActivityLog(deps: { io: ActivityIo; now(): number; newId(): string; warn(m: string, e?: unknown): void }): ActivityLog;
+export function createActivityIo(dir: string): ActivityIo;       // <dir>/activity/YYYY-MM-DD.jsonl, ask-args.json
+```
+- **Write failure.** A failed append sets `writable() === false` and logs one warning. The next append that succeeds first writes a `lane:'note', action:'gap'` row covering the unwritten span.
+- **Retention.** `purge()` deletes day files older than 30 days. It then deletes the oldest files until the total is 50 MB or less.
+
+### C5 Observed parsers (Slice 1, lane C)
+```ts
+// src/codex-rollout.ts (add)
+export type CodexAction = { kind: 'command'; command: string; cwd: string; exitCode: number | null; durationMs: number | null }
+  | { kind: 'file-change'; paths: string[] } | { kind: 'mcp'; server: string; tool: string; durationMs: number | null };
+export function rolloutActions(line: unknown): CodexAction[];
+// src/claude-tool-actions.ts (create)
+export type ClaudeAction = { kind: 'command'; command: string; cwd: string | null } | { kind: 'file-change'; paths: string[] }
+  | { kind: 'mcp'; server: string; tool: string };
+export function claudeActionsFromPostToolUse(payload: Record<string, unknown>): ClaudeAction[];  // drops mcp__conduit__* (already a Conduit row)
+```
+Neither parser ever copies output, `aggregated_output`, `content`, `tool_response` or arguments.
+
+### C6 Migration and editor projection (Slice 2, T2.1)
+```ts
+// policy-migration.ts
+export interface LegacyPolicy { global: GlobalPolicy; byCli: CliPolicyLayers; sessions: Array<{ sessionId: string; layer: PolicyLayer }> }
+export function migrateLegacyPolicy(legacy: LegacyPolicy): Pick<PolicyFile, 'assignments' | 'migratedFrom' | 'notes'>;
+// policy-projection.ts
+export function projectLegacyLayer(state: PolicyState, point: AssignmentPoint): PolicyLayer;
+export function applyLegacyPatch(state: PolicyState, point: AssignmentPoint, tool: ToolName, patch: ToolPolicyPatch): Assignment;
+```
+- **Migration is exact by construction.** For each layer it first tries Lead with `onScreenOnly: true` and no exceptions. It keeps that only if `effectiveRule` equals today's `resolvePolicy` result for all 23 tools and every field. Otherwise it writes Worker plus one anywhere-scoped exception per field that differs.
+- **What gets migrated.** The global layer migrates to the default assignment only when it differs from the defaults. The CLI layers become kind assignments, and the session layers become session assignments.
+- **The on-screen offer.** `notes.onScreenOnlyOffered` lists the session ids that got Lead with `onScreenOnly`. CON-25 shows the one-time offer from it.
+
+### C7 Composer — `policy-service.ts` (Slice 2, T2.2)
+```ts
+export interface PolicyServiceDeps { dir: string; now(): number; newId(): string; setTimer(fn: () => void, ms: number): unknown;
+  clearTimer(t: unknown): void; warn(m: string, e?: unknown): void; legacy(): LegacyPolicy; onChanged(): void }
+export interface PolicyService {
+  start(): void; stop(): Promise<void>;
+  decide(input: Omit<PolicyInput, 'auditWritable' | 'now'>): PolicyDecision;   // also touches a matched grant, consumes a matched override
+  visibleTools(p: Principal, masterOn: boolean): ToolName[];
+  setAssignment(point: AssignmentPoint, profileId: ProfileId | null): { ok: true } | { ok: false; error: 'unknown-profile' | 'read-only' };
+  applyLegacyPatch(point: AssignmentPoint, tool: ToolName, patch: ToolPolicyPatch): { ok: true } | { ok: false; error: 'read-only' };
+  createGrant(choice: GrantChoice, p: Principal, tool: ToolName, target: PolicyTarget, requestId: string | null): Grant | null;
+  revokeGrant(id: string): boolean;
+  allowOnce(activityId: string): { ok: true } | { ok: false; error: 'not-found' | 'not-overridable' };
+  sessionEnded(sessionId: string): void;
+  activity: ActivityLog;
+  ui(): PolicyUiState;
+}
+```
+- **Load and migration.** `start()` reads `policy.json` and `grants.json`. A missing `policy.json` runs `migrateLegacyPolicy(deps.legacy())` and writes it. Legacy keys are never read again and never deleted.
+- **Writes and timers.** Writes are coalesced atomically through `atomicWriteFile` at 250 ms. A 60 s timer runs `grants.tick()` and `activity.flushCounts()`, and once an hour `activity.purge()`.
+
+### C8 Renderer seams (Slice 2/3, serial claims)
+`src/conduit-mcp/ui-types.ts` adds `policy: PolicyUiState` to `McpUiState`:
+```ts
+export interface PolicyUiState {
+  profiles: Array<{ id: ProfileId; name: string; builtIn: boolean }>;
+  sessions: Record<string, { profileId: ProfileId; profileName: string; exceptions: number; source: 'session' | 'cli' | 'default'; label: string | null }>; // label "Lead +1" when non-default
+  grants: Array<Grant & { expiring: boolean }>;
+  legacy: { global: PolicyLayer; byCli: CliPolicyLayers; sessions: Record<string, PolicyLayer> };   // DN-2 projection
+  readOnly: boolean;
+}
+```
+`src/protocol.ts` additions. Each is forwarded by `electron/main.ts:4085-4097` and accepted by `isMcpMessage` (`server/services.ts:382-388`):
+- `{type:'mcp:setAssignment'; requestId; point: AssignmentPoint; profileId: ProfileId | null}`, answered by `{type:'mcp:policyResult'; requestId; ok: true} | {…; ok: false; error: string}`
+- `{type:'mcp:setPointPolicy'; requestId; point: {kind:'default'} | {kind:'cli'; cli: CliKind}; tool: string; patch: unknown}`, answered by `mcp:policyResult`
+- `{type:'mcp:revokeGrant'; requestId; grantId}` and `{type:'mcp:allowOnce'; requestId; activityId}`, both answered by `mcp:policyResult`
+- `{type:'mcp:permissionAnswer'; requestId: string; answer: PermissionAnswer}`, answered by the existing `mcp:requestResult`
+- Existing `mcp:setToolPolicy` keeps its shape and result. It now routes to `applyLegacyPatch({kind:'session'})`.
+
+### C9 Permission requests (Slice 3)
+- **Types** (`request-types.ts`): `RequestKind` gains `'permission'`, `RequestSource` gains `'policy'`, and `RequestOutcome` gains `'allowed' | 'denied'`. `AnswerInput` gains `grant?: GrantChoice`. `RequestRecord` gains `permission: { tool: ToolName; why: string; targets: PolicyTarget[]; lateGrant: Grant['id'] | null } | null`.
+- **Queue** (`request-queue.ts`):
+  - `createBound(stamp: Stamp, fields: Pick<RequestRecord,'title'|'body'|'permission'>, expiresAt: string): RequestRecord` is uncapped and has no default.
+  - `answerLate(id: string, grantId: string): RequestAnswerResult` works only on an `expired` permission. It records `permission.lateGrant` and never changes the state.
+  - `validateAnswer` accepts `allowed` with an optional `grant`, or `denied` with an optional `reason`, for `permission` only.
+- **Service** (`request-service.ts`):
+  - `createPermission(sessionId, fields, expiresAt): RequestRecord`
+  - `endPermission(id, end: 'answered' | 'expired' | 'withdrawn', answer: AnswerInput | null, reason: string | null): void`
+  - `onPermissionAnswer` dep: `(r: RequestRecord, a: PermissionAnswer, by: AnsweredBy) => Promise<RequestAnswerResult>`. `answerFromRenderer` hands `permission` records to it instead of answering directly.
+- **call-flow** (`call-flow.ts`). `ask()` creates the request (askId = requestId) and still emits `mcp:ask` and `mcp:askClosed` exactly as today. The card is unchanged. Card answers map as follows:
+  - `approve` → `allowed`
+  - `deny` → `denied`
+  - `always` → `allowed` + grant `{who:'session', on:'anywhere', for:'session-end'}`
+- **Re-decide at answer time.** `decide()` runs again before anything executes:
+  - A new deny withdraws the request (`withdrawnBy: 'conduit'`, reason = `reasonText`), and the call returns `tool_disabled` with that reason.
+  - A late answer with a grant creates the grant, calls `answerLate`, and appends the notice "You can retry <tool> now" to the requester's inbox through the CON-21 hidden late-answer thread path. It never runs the call.
+
+## Producer/consumer map
+| Behaviour changed | Produced by | Consumed by | Sides this plan touches |
+|---|---|---|---|
+| Tool decision | `policyService.decide` (new) | `host.callTool` → `gateToolCall` → `callFlow.runControl`; tool lists (`syncToolLists`) | both |
+| Resolved `when/reach/move` | engine `rule` | `gateToolCall` (when), `inReach` in `app-control-tools.ts:181` & `screen-tools.ts:43` via `ControlCallContext` | both. `inReach` keeps reading `ctx.reach` and is unchanged |
+| Policy edits | `mcp:setToolPolicy` (dialog), `mcp:setPointPolicy` (settings, replaces `updateServerSettings{mcpToolPolicy*}`), `mcp:setAssignment` | `policyService` | both: T2.4 switches the producers |
+| Legacy layers | sessions.json `mcpToolPolicy`, server-settings `mcpToolPolicy(ByCli)` | migration once; editors **today** | both: editors move to `McpUiState.policy.legacy`, migration reads once. Writers stay (dialog no longer calls them). `setMcpToolPolicy` in `session-manager.ts:325` loses its last caller and is deleted in T2.3 |
+| Ask lifecycle | `callFlow.ask` → `requestService.createPermission` | card (`mcp:ask`, `asksSnapshot`, `askClosed` via `server/mcp/index.ts:155-168`), `McpUiState.requests` (DN-3), Activity | both |
+| Answers | card `mcp:askAnswer`, new `mcp:permissionAnswer` | `callFlow.answerPermission` | both |
+| Grants | `policyService.createGrant` (answers) | engine step 3, `PolicyUiState.grants` | both. Share and peer grants are NET's producer, out |
+| Session end | `host.onSessionDeleted` (`host.ts:2270-2285`) | `policyService.sessionEnded` → grants expire, session assignment removed | both |
+| Activity rows | host (calls, answers), service (grants, overrides), domain → services → host (observed) | disk only (no reader in MVP; e2e reads files; CON-25 adds the view) | producer only. The consumer is CON-25's, and this is stated, not assumed |
+| Codex actions | rollout file (Codex) | `codexWatch.onAction` (new dep beside `onSignal`, `codex-rollout-watch.ts:27`) | consumer only. The producer is not ours: an ambiguous or no bind gives a `note` row "Feed unavailable" for that session |
+| Claude actions | Claude Code PostToolUse hook | `endpoint.ts` allow-list → `domain.hookPost` → services → host | consumer plus our hook client. A launch without wiring (`host.ts:2140-2160`) gives "No activity feed" |
+| `cliKindOfHandle` kind | handle prefix | today's CLI layer | the CLI layer stops using it. Kind now comes from `launchedCli` (POL-D5, DN-5) |
+
+## File map
+| Path | Action | Responsibility |
+|---|---|---|
+| `src/conduit-mcp/policy-types.ts` | create | C1 shared types, Node-free |
+| `src/conduit-mcp/policy-profiles.ts` | create | built-in profiles, `pointKey`, `effectiveRule` |
+| `src/conduit-mcp/policy-engine.ts` | create | `decide`, `visibleTools`, `assignmentFor`, `matchesScope`, `reasonText` |
+| `src/conduit-mcp/policy-file.ts` | create | `policy.json` parse/serialize |
+| `src/conduit-mcp/grant-store.ts` | create | grant lifecycle, decay, expiry |
+| `src/conduit-mcp/activity-log.ts` | create | rows, hourly counts, gap marker, recent denies, retention |
+| `src/conduit-mcp/activity-log-fs.ts` | create | day-file JSONL io, ask-args file |
+| `src/codex-rollout.ts` | modify | add `CodexAction`, `rolloutActions` |
+| `src/claude-tool-actions.ts` | create | PostToolUse → `ClaudeAction[]` |
+| `src/conduit-mcp/policy-migration.ts` | create | v0.64 layers → assignments |
+| `src/conduit-mcp/policy-projection.ts` | create | assignment ⇄ legacy layer for the old editors |
+| `src/conduit-mcp/policy-service.ts` | create | composer: load, migrate, persist, decide, grants, activity, ui |
+| `src/conduit-mcp/tool-policy.ts` | modify | `gateToolCall` takes `{decision, rule}`. `resolvePolicy` callers are replaced; `resolvePolicy` stays for migration |
+| `src/conduit-mcp/host.ts` | modify | principal and targets, service wiring, activity on every call, renderer routes, session end |
+| `src/conduit-mcp/policy-targets.ts` | create | tool args → `PolicyTarget[]` (real paths via injected resolver) |
+| `src/conduit-mcp/ui-types.ts` | modify | `PolicyUiState`, `McpUiState.policy` |
+| `src/protocol.ts` | modify | C8 messages |
+| `electron/main.ts` | modify | forward C8 messages (case list only) |
+| `server/services.ts` | modify | `isMcpMessage`, domain → mcp observed forwarding |
+| `src/contracts/session-identity.ts` | modify | `SERVER_FILE_VERSION` entries |
+| `src/session-manager.ts`, `server/domain/index.ts` | modify | delete `setMcpToolPolicy` path (last caller gone) |
+| `webview/components/mcp-tools-dialog.tsx`, `webview/components/settings-modal.tsx`, `webview/app.tsx` | modify | read `mcp.state.policy.legacy`; settings posts `mcp:setPointPolicy` |
+| `webview/use-conduit-mcp.ts` | modify | `setPointPolicy`, `setAssignment`, `answerPermission` posts |
+| `src/conduit-mcp/request-types.ts`, `request-args.ts`, `request-file.ts`, `request-queue.ts`, `request-service.ts` | modify | C9 |
+| `src/conduit-mcp/call-flow.ts` | modify | ask → permission request, re-decide, late grant |
+| `src/contracts/hook-protocol.ts`, `server/mcp/endpoint.ts`, `src/claude-hook-settings.ts`, `src/claude-signals.ts`, `resources/conduit-mcp/conduit-hook.cjs` | modify | PostToolUse event; the client strips `tool_response`/contents and reads up to 4 MiB for this event only |
+| `server/domain/codex-rollout-watch.ts`, `server/domain/index.ts` | modify | `onAction` dep, skip replay, forward observed |
+| `test/fixtures/claude-hooks/post-tool-use-*.json`, `test/fixtures/codex-rollout/actions.jsonl` | create | measured, scrubbed fixtures (T0.2) |
+| `test/unit/policy-*.test.ts`, `grant-store.test.ts`, `activity-log*.test.ts`, `claude-tool-actions.test.ts`, `codex-rollout-actions.test.ts` | create | per task |
+| `test/e2e/policy-profiles.e2e.mjs`, `policy-permission-requests.e2e.mjs`, `activity-observed.e2e.mjs` | create | host/IPC proof |
+| `test/e2e/conduit-mcp-policy.e2e.mjs`, `conduit-mcp-policy-migrate.e2e.mjs` | modify | "Always" now a grant; migration to profiles |
+| `CHANGELOG.md` | modify | Unreleased lines |
+
+## Scripts
+None. Nothing repeats enough to be worth a script; the fixture scrub in T0.2 is a one-off done by hand.
+
+## Slices
+
+### Slice 0: Contracts and fixtures (orchestrator)
+**Check:** `npx tsc --noEmit -p .` exits 0. Fixtures parse as JSON.
+- T0.1: merge the CON-21 tip, write `policy-types.ts` (C1), commit.
+- T0.2: record a real Claude Code 2.1.325 PostToolUse payload. Run `claude -p` in a scratch folder with a `--settings` hook that tees stdin; this is a CLI, no GUI. Capture Bash, Edit and an MCP call, scrub them, and save as `test/fixtures/claude-hooks/post-tool-use-{bash,edit,mcp}.json`. Also write a scrubbed 6-line Codex `actions.jsonl` covering CommandExecution, FileChange and McpToolCall. If the PostToolUse shape doesn't carry `tool_name`/`tool_input`, stop and report to the lead before Slice 1 lane C.
+
+### Slice 1: Pure core
+**Check:** `npx vitest run test/unit/policy-engine.test.ts test/unit/policy-profiles.test.ts test/unit/policy-file.test.ts test/unit/grant-store.test.ts test/unit/activity-log.test.ts test/unit/activity-log-fs.test.ts test/unit/codex-rollout-actions.test.ts test/unit/claude-tool-actions.test.ts` passes, and so does `npx tsc --noEmit`. `npm run verify` is expected to be red only on fallow unused exports until Slice 2 wires them; the exit code is reported either way.
+**Parallel groups:** G1: T1.1 · G2: T1.2 · G3: T1.3
+
+#### Task 1.1 (lane A): built-in profiles and engine
+**Files:** create `policy-profiles.ts`, `policy-engine.ts`; test `test/unit/policy-profiles.test.ts`, `test/unit/policy-engine.test.ts`.
+**Produces:** C2. **Consumes:** C1; `TOOL_SPECS`, `TOOL_NAMES`, `CliKind` from `tool-policy.ts`.
+
+Failing tests first:
+- 'worker equals today's defaults': for every tool, Worker's rule equals `TOOL_SPECS` defaults mapped.
+- 'lead allows open_terminal off screen (POL-D3/D4)': `decide` gives `allow` with `rule.when === 'always'`.
+- 'master off denies everything with floor master-off'.
+- 'local to-you send_message passes an observer deny (floor c)'.
+- 'explicit deny beats a matching grant'.
+- 'one-use override passes a deny once for its exact target' and 'override never passes a floor'.
+- 'grant beats assignment ask'; 'suspended or expired grant is ignored'.
+- 'session assignment beats kind beats default'; 'kind assignment ignored when launchedCli is null'.
+- 'narrower scope wins; exact tie goes stricter'.
+- 'multi-target takes strictest'.
+- 'remote own peer with no assignment asks on orchestrate and never applies when'.
+- 'remote principal without the capability is denied with floor remote-capability'.
+- 'onScreenOnly forces viewing'.
+- 'no-target action matches home folder scope'.
+- 'every decision has exactly one reason'.
+- 'visibleTools hides unconditional denies only'.
+- 'reasonText reads "allowed by Lead (session)" and "Ask: Worker (default for codex)"'.
+
+#### Task 1.2 (lane B): policy file and grant store
+**Files:** create `policy-file.ts`, `grant-store.ts`; test `test/unit/policy-file.test.ts`, `test/unit/grant-store.test.ts`.
+**Produces:** C3. **Consumes:** C1.
+
+Failing tests:
+- 'round-trips a policy file'; 'corrupt → corrupt, version 2 → newer'.
+- 'session-end grant expires at sessionEnded and after 7 days unused'; 'touch resets decay'.
+- '1h grant expires at its time'; 'revoke sets revoked and endedAt'.
+- 'tick purges expired after 24 h'; 'isExpiring under 10 min'.
+- 'grantWhoFor cli returns null for a non-launched session'.
+- 'grantScopeFor target picks session scope for a session target and path scope otherwise'.
+
+#### Task 1.3 (lane C): Activity log and observed parsers
+**Files:** create `activity-log.ts`, `activity-log-fs.ts`, `src/claude-tool-actions.ts`; modify `src/codex-rollout.ts` (add only); test `activity-log.test.ts`, `activity-log-fs.test.ts`, `codex-rollout-actions.test.ts`, `claude-tool-actions.test.ts`.
+**Produces:** C4, C5. **Consumes:** C1; fixtures from T0.2.
+
+Failing tests:
+- 'counted tools aggregate per session per hour, denies still get rows'.
+- 'failed append marks unwritable and the next success writes one gap row'.
+- 'ask args purge after 24 h'.
+- 'purge removes days older than 30 and oldest beyond 50 MB'.
+- 'recentDenies keeps the last 200'.
+- 'codex command row has the joined command, cwd, exit code, no output'.
+- 'codex file change lists paths only'.
+- 'claude Bash gives the command; Edit gives the path; mcp__conduit__ is dropped'.
+- 'no parser output contains any fixture content or output string' (searches the serialized result for the fixture's content values).
+
+### Slice 2: Engine in the host; migration; editors
+**Check:** `npm run verify` exits 0. `npm run e2e:remote -- policy-profiles conduit-mcp-policy conduit-mcp-policy-migrate conduit-mcp-refusals conduit-mcp-control conduit-mcp-control-terminal`, then `--affected`, all PASS.
+**Parallel groups:** G1: T2.1 · G2: T2.2 · Serial: T2.3, then T2.4
+**Claims (serial lane):** `src/conduit-mcp/host.ts`, `src/conduit-mcp/tool-policy.ts`, `src/conduit-mcp/ui-types.ts`, `src/protocol.ts`, `electron/main.ts`, `server/services.ts`, `src/contracts/session-identity.ts`, `src/session-manager.ts`, `server/domain/index.ts`, `webview/use-conduit-mcp.ts`
+
+#### Task 2.1: migration and projection
+**Files:** create `policy-migration.ts`, `policy-projection.ts`; tests `test/unit/policy-migration.test.ts`, `test/unit/policy-projection.test.ts`.
+**Consumes:** C2 `effectiveRule`, `BUILT_IN_PROFILES`; `resolvePolicy`, `PolicyLayer`, `GlobalPolicy`, `CliPolicyLayers`, `ToolPolicyPatch` from `tool-policy.ts`. **Produces:** C6.
+
+Failing tests:
+- 'all-on override becomes Lead with onScreenOnly and resolves identically for all 23 tools' (the core of acceptance "Upgrade keeps behaviour").
+- 'partial override becomes Worker + one exception per changed field'.
+- 'default-equal global layer writes no default assignment'.
+- 'CLI layer becomes a kind assignment'.
+- 'projection of Lead+onScreenOnly reproduces the original all-on layer'.
+- 'applyLegacyPatch inherit removes the exception'.
+
+#### Task 2.2: policy service
+**Files:** create `policy-service.ts`, `policy-targets.ts`; tests `test/unit/policy-service.test.ts`, `test/unit/policy-targets.test.ts`.
+**Consumes:** C1–C6 (signatures repeated in the brief). **Produces:** C7, plus `resolveTargets(tool: ToolName, args: Record<string, unknown>, deps: { sessionById(id): {id; cwd: string | null; projectId: string | null} | null; realPath(p: string): string | null; handleToId(h: string): string | null }): PolicyTarget[]`.
+
+Failing tests:
+- 'missing policy.json migrates from legacy and persists once'.
+- 'newer policy.json → readOnly, never written'.
+- 'decide touches a matched grant and consumes an override'.
+- 'sessionEnded expires grants and drops the session assignment'.
+- 'allowOnce on a floor deny → not-overridable'.
+- 'activity write failure keeps local decisions working'.
+- 'resolveTargets: close_session(handles) → one target per session; attach_folder → real path; open_url → []'.
+
+#### Task 2.3 (serial): host wiring
+**Files:** modify `host.ts`, `tool-policy.ts`, `ui-types.ts`, `protocol.ts`, `electron/main.ts` (case list), `server/services.ts` (`isMcpMessage`), `session-identity.ts`, `session-manager.ts` + `server/domain/index.ts` (delete `setMcpToolPolicy`); tests: update `conduit-mcp-host.test.ts`, `conduit-mcp-tool-policy.test.ts`, `session-manager.test.ts`, `server-mcp-wiring.test.ts`.
+**Call sites changed:**
+- `resolveFor` (`host.ts:1217-1228`) → `policyService.decide`.
+- `gateToolCall` (`tool-policy.ts:429`, sole caller `host.ts:1356`).
+- `setSessionPolicy` callers `host.ts:1247` (card "always", replaced in Slice 3; until then it calls `createGrant`) and `host.ts:2419`.
+- `syncToolLists` (`host.ts:1691`) → `visibleTools`.
+
+Every tool call writes one Activity row with the decision, `reasonText`, outcome and duration. `request_input` rows carry `requestId` (POL-D17). Build the principal from `runtime.defAdapter` (`launchedCli`), `Session.cwd` and `Session.projectId`.
+
+#### Task 2.4 (serial): editors read the projection (DN-2)
+**Files:** modify `mcp-tools-dialog.tsx`, `settings-modal.tsx`, `app.tsx` (props at `:5564-5572`), `use-conduit-mcp.ts`; tests: update `mcp-tools-dialog.test.tsx`, `settings-mcp-tools.test.tsx`.
+- The dialog's `session.mcpToolPolicy` → `mcp.state.policy.legacy.sessions[id]`.
+- `global`/`byCli` → `policy.legacy.global` / `byCli`.
+- Settings edits post `mcp:setPointPolicy` instead of `update({mcpToolPolicy…})`.
+- No visual change.
+
+**e2e** `test/e2e/policy-profiles.e2e.mjs` (orchestrator writes):
+1. Seed `sessions.json` with an all-on v0.64 override. `McpUiState.policy.sessions[id].label === 'Lead +1'` (DN-1). A Worker-equal tool call resolves as before.
+2. `mcp:setAssignment` Lead on claude-3. It opens a session with `focus:false` while off screen: no ask, an Activity row "allowed by Lead (session)", and the new session has `label === null`.
+
+### Slice 3: Permission requests
+**Check:** `npm run verify` exits 0. `npm run e2e:remote -- policy-permission-requests conduit-mcp-policy asks-no-window requests-agent`, then `--affected`, PASS.
+**Parallel groups:** G1: T3.1 · Serial: T3.2
+**Claims:** `call-flow.ts`, `host.ts`, `request-service.ts`
+
+#### Task 3.1: queue knows `permission`
+**Files:** `request-types.ts`, `request-args.ts`, `request-file.ts`, `request-queue.ts`; tests `request-queue.test.ts`, `request-args.test.ts`, `request-file.test.ts` (existing names).
+Failing tests:
+- 'createBound expires at its time to expired, never a default'.
+- 'answerLate only on an expired permission'.
+- 'allowed/denied valid only for permission'.
+- 'permission record round-trips the file'.
+
+#### Task 3.2 (serial): ask becomes a request
+**Files:** `call-flow.ts`, `request-service.ts`, `host.ts`, `use-conduit-mcp.ts` (`answerPermission`); tests `conduit-mcp-call-flow.test.ts`, `request-service.test.ts`.
+Failing tests:
+- 'ask creates one permission request whose id is the askId'.
+- 'card always → session-end anywhere grant'.
+- 'policy turned deny while waiting → withdrawn by conduit, call tool_disabled'.
+- 'policy turned allow while waiting does not run until answered'.
+- 'late allowed+grant creates the grant, posts a retry notice and never runs'.
+- 'cap 3 waiting asks per caller unchanged'.
+- 'ask and answer each write an Activity row; raw args only in ask-args'.
+
+**e2e** `test/e2e/policy-permission-requests.e2e.mjs`:
+1. Worker codex-2 `close_session(claude-4)` with no answer → `approval_timeout`, and claude-4 is still open.
+2. `mcp:permissionAnswer {outcome:'allowed', grant:{who:'session', on:'target', for:'1h'}}` → retry closes claude-4, and the Activity row's `decidedBy` starts "allowed by grant".
+3. An exception `close_session: deny` on codex-4 refuses → `mcp:allowOnce(rowId)` → the retry closes claude-5, and a second target is refused.
+
+### Slice 4: Observed lane
+**Check:** `npm run verify` exits 0. `npm run e2e:remote -- activity-observed auto-resume-codex-session-log auto-resume-claude-resumes-after-reset`, then `--affected`, PASS.
+**Parallel groups:** G1: T4.1 · G2: T4.2 · Serial: T4.3
+**Claims:** `server/domain/index.ts`, `server/services.ts`, `host.ts`
+
+- **T4.1 Claude hook.**
+  - Files: `hook-protocol.ts`, `endpoint.ts` (`HOOK_EVENTS`), `claude-hook-settings.ts` (PostToolUse, matcher `Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*`), `claude-signals.ts` (case → `[]`), `conduit-hook.cjs` (for PostToolUse only: read ≤ 4 MiB, drop `tool_response` and every `content`/`new_string`/`old_string` field, then post). Update `claude-hook-settings.test.ts`.
+  - Failing tests: 'PostToolUse is allowed by the endpoint'; 'hook client strips tool_response and contents' (`test/unit/conduit-hook-client.test.ts`).
+- **T4.2 Codex watch.**
+  - Files: `codex-rollout-watch.ts` (`onAction(sessionId, CodexAction)` dep, skips the replay read, reports `onFeed(sessionId, 'unavailable')` on an ambiguous or no bind after the 30 s bind window); test `codex-rollout-watch.test.ts`.
+  - Failing tests: 'replay emits no actions'; 'new item_completed emits one action'; 'ambiguous bind reports unavailable'.
+- **T4.3 (serial) wiring.**
+  - `server/domain/index.ts` passes `onAction`/`onFeed` and a PostToolUse branch in `hookPost`, then forwards through `server/services.ts` to `host.recordObserved(sessionId, action | {feed:'unavailable'})`. The row reads `lane:'observed'`, `decidedBy:'observed: decided by <CLI>, not Conduit'`.
+
+**e2e** `test/e2e/activity-observed.e2e.mjs`:
+1. A Conduit-launched fake codex appends CommandExecution and FileChange items to its rollout (the `auto-resume-codex-session-log` helper pattern). Two observed rows show the command and the path, and the activity files contain neither the output nor the contents.
+2. A fake Claude posts a PostToolUse through the hook client → one observed row.
+
+### Slice 5: Close-out (orchestrator)
+- **CHANGELOG** (Unreleased):
+  - Profiles replace per-tool overrides; existing leads become "Lead +1" with no behaviour change.
+  - "Always for this session" now creates a grant that ends with the session or after 7 days unused.
+  - Activity log.
+- **Run report** at `docs/runs/2026-11-14-CON-24/report.md`.
+
+## Verification
+- **Per task:** the lane's named unit tests, red first, then `npm run verify:quick` in the lane worktree.
+- **Per merge** (one lane at a time): `npm run verify; echo "exit=$?"` on the merged tree.
+- **Per slice:** the slice's remote e2e names, then `--affected`. Run ids go to the lead.
+- **Locally:** at most one scenario by exact name, only on a quiet machine.
+
+## Deviation rule
+If a task's assumption turns out wrong (the piece it builds on is misaligned, or a locked signature doesn't fit reality), that task **stops**, and fixing the misaligned piece becomes the work. Never a shim, second copy, special case, widened type, fallback, or an override patched in place of its semantic source. A lane reports to the orchestrator, which fixes the contract. A change to C1 or a locked decision goes to the lead first.
+
+## Decisions Needed
+- **[high] DN-1 Lead +2 → Lead +1.** POL-D3 makes "open_terminal: allow" a no-op on Lead, so a migrated all-on lead shows "Lead +1". Default taken: Lead +1 (an empty exception would be noise). The spec's acceptance text needs the same edit.
+- **[high] DN-2 the old policy editors.** They read `session.mcpToolPolicy` and `settings.mcpToolPolicy*` directly (`mcp-tools-dialog.tsx:64`, `settings-modal.tsx:906-944`). After migration those keys are frozen.
+  - Default taken: the editors read a projection (`McpUiState.policy.legacy`), and their edits become exceptions. That changes two components' data source, with no visual change.
+  - Alternatives: (b) hide both editors until CON-25; (c) a two-way sync into the legacy keys, rejected as a second source of truth with write loops.
+- **[high] DN-3 `permission` requests in CON-20's Needs-you UI.** The pop-up has no `permission` template. Default taken: `RequestsUiState` leaves out `permission` until CON-25, and the card stays the only answer surface. The requests stay in the queue, `requests.json` and History data.
+- **[high] DN-4 floor (e) and escalation.** `answer_request` and `escalate_request` don't exist (REQ v1). Default taken: not built; the acceptance scenario "Escalation stays on the opener chain" moves to REQ v1.
+- **[normal] DN-5 POL-D5 vs today's CLI layer.** Today a CLI layer applies to any session whose handle has the prefix, shells included. After migration it applies only to Conduit-launched sessions. The CLI layer on this machine is measured empty (spec §2.1). Default taken: apply POL-D5, and write one `note` Activity row per migrated kind assignment saying so.
+- **[normal] DN-6 "until this session ends".** Default taken: the session is deleted (closed). A PTY exit or relaunch of the same session keeps the grant, and 7-day decay still applies.
+- **[normal] DN-7 Revoke and remote acceptance scenarios.** "Revoke ends a peer's grants" and "Remote own lead is asked" need NET's link. Default taken: covered by engine unit tests (remote principal, own-peer default, capability floor). `GrantStore.revokePeer` is left for NET (no caller here).
+- **[normal] DN-8 hook cost.** Each matched Claude tool call spawns the hook client (Electron as Node, 5 s timeout). Default taken: the matcher limits it to Bash, edits and MCP; latency is measured in T0.2 and reported.
