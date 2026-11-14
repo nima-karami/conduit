@@ -67,7 +67,14 @@ export interface SchedulerFile {
   kind?: 'newer';
 }
 
-export type PreFireVerdict = { go: true } | { go: false; reason: string };
+/**
+ * `wait` (R13): the session is busy at fire time; the job goes `waiting` with the reason and the
+ * Limit monitor calls `Scheduler.recheck` once output has been quiet, or when it gives up.
+ */
+export type PreFireVerdict =
+  | { go: true }
+  | { go: false; reason: string }
+  | { go: 'wait'; reason: string };
 export type DeliveryResult = { ok: true; joined: boolean } | { ok: false; reason: string };
 export type AutoResumeMode = 'on' | 'ask' | 'off';
 export type SessionAutoResume = 'inherit' | 'on' | 'off';
