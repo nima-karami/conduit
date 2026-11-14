@@ -96,8 +96,6 @@ export const LIMIT_PADDING_MS = 60_000;
 export const LIMIT_MESSAGE = 'Continue';
 /** A message written into a shell that has not printed its prompt yet is lost (§2). */
 export const PTY_SETTLE_MS = 3_000;
-/** Two writes, not one: a TUI coalescing a single read keeps a trailing CR as literal text. */
-export const SUBMIT_GAP_MS = 120;
 
 /**
  * One line, no control characters. This is what makes "always press Enter" safe to specify

@@ -1,8 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { createPtyWriter, type PtyWriterDeps } from '../../src/pty-writer';
+import {
+  createPtyWriter,
+  ECHO_MAX_MS,
+  ECHO_QUIET_MS,
+  ENTER_FLOOR_MS,
+  type PtyWriterDeps,
+} from '../../src/pty-writer';
 
 interface Gap {
   ms: number;
+  release(): void;
+}
+
+interface Quiet {
+  sessionId: string;
+  quietMs: number;
+  maxMs: number;
   release(): void;
 }
 
@@ -13,6 +26,7 @@ function harness() {
     ['b', 1],
   ]);
   const gaps: Gap[] = [];
+  const quiets: Quiet[] = [];
   let failWrites = false;
   const deps: PtyWriterDeps = {
     generation: (id) => gens.get(id),
@@ -25,19 +39,36 @@ function harness() {
       new Promise<void>((resolve) => {
         gaps.push({ ms, release: resolve });
       }),
-    gapMs: 120,
+    outputQuiet: (sessionId, quietMs, maxMs) =>
+      new Promise<void>((resolve) => {
+        quiets.push({ sessionId, quietMs, maxMs, release: resolve });
+      }),
   };
   const writer = createPtyWriter(deps);
   /** Let every queued microtask (slot hand-offs, hook awaits) run. */
   const flush = async () => {
     for (let i = 0; i < 20; i += 1) await Promise.resolve();
   };
-  /** Release the oldest pending gap, then flush. */
+  const releaseSleep = async () => {
+    await flush();
+    const g = gaps.shift();
+    if (!g) throw new Error('no pending gap');
+    g.release();
+    await flush();
+  };
+  const releaseQuiet = async () => {
+    await flush();
+    const q = quiets.shift();
+    if (!q) throw new Error('no pending quiet wait');
+    q.release();
+    await flush();
+  };
   const releaseGap = async () => {
     await flush();
     const g = gaps.shift();
     if (!g) throw new Error('no pending gap');
     g.release();
+    quiets.shift()?.release();
     await flush();
   };
   return {
@@ -45,7 +76,10 @@ function harness() {
     log,
     gens,
     gaps,
+    quiets,
     flush,
+    releaseSleep,
+    releaseQuiet,
     releaseGap,
     failWrites: () => {
       failWrites = true;
@@ -62,10 +96,55 @@ describe('createPtyWriter', () => {
     const p = h.writer.submit('a', 'hi');
     await h.flush();
     expect(writes(h.log, 'a')).toEqual(['hi']);
-    expect(h.gaps.map((g) => g.ms)).toEqual([120]);
+    expect(h.gaps.map((g) => g.ms)).toEqual([ENTER_FLOOR_MS]);
     await h.releaseGap();
     expect(await p).toBe('submitted');
     expect(writes(h.log, 'a')).toEqual(['hi', '\r']);
+  });
+
+  it('wraps a bracketed paste in one write', async () => {
+    const h = harness();
+    const p = h.writer.submit('a', 'l1\nl2', { bracketed: true });
+    await h.flush();
+    expect(writes(h.log, 'a')).toEqual(['\x1b[200~l1\nl2\x1b[201~']);
+    await h.releaseGap();
+    expect(await p).toBe('submitted');
+    expect(writes(h.log, 'a')).toEqual(['\x1b[200~l1\nl2\x1b[201~', '\r']);
+  });
+
+  it('unbracketed writes the text as is', async () => {
+    const h = harness();
+    const p = h.writer.submit('a', 'l1\nl2', { bracketed: false });
+    await h.flush();
+    expect(writes(h.log, 'a')).toEqual(['l1\nl2']);
+    await h.releaseGap();
+    expect(await p).toBe('submitted');
+  });
+
+  it('waits for outputQuiet and the 120 ms floor before Enter', async () => {
+    const h = harness();
+    const p = h.writer.submit('a', 'hi');
+    await h.flush();
+    expect(h.gaps.map((g) => g.ms)).toEqual([ENTER_FLOOR_MS]);
+    expect(h.quiets.map((q) => [q.sessionId, q.quietMs, q.maxMs])).toEqual([
+      ['a', ECHO_QUIET_MS, ECHO_MAX_MS],
+    ]);
+    await h.releaseQuiet();
+    expect(writes(h.log, 'a')).toEqual(['hi']);
+    await h.releaseSleep();
+    expect(await p).toBe('submitted');
+    expect(writes(h.log, 'a')).toEqual(['hi', '\r']);
+  });
+
+  it('generation change during the quiet wait withholds Enter', async () => {
+    const h = harness();
+    const p = h.writer.submit('a', 'x');
+    await h.flush();
+    await h.releaseSleep();
+    h.gens.set('a', 2);
+    await h.releaseQuiet();
+    expect(await p).toBe('generation-changed');
+    expect(writes(h.log, 'a')).toEqual(['x']);
   });
 
   it('two submits on one session never interleave', async () => {
@@ -219,11 +298,56 @@ describe('createPtyWriter', () => {
     );
     await h.flush();
     expect(writes(h.log, 'a')).toEqual(['text']);
-    expect(h.gaps.map((g) => g.ms)).toEqual([120]);
+    expect(h.gaps.map((g) => g.ms)).toEqual([ENTER_FLOOR_MS]);
     await h.releaseGap();
     expect(await p).toBe('submitted');
     expect(writes(h.log, 'a')).toEqual(['text', '\r']);
   });
+
+  it('sequence waits outputQuiet as well before Enter', async () => {
+    const h = harness();
+    const p = h.writer.sequence(
+      'a',
+      () => {
+        h.log.push(['a', 'text']);
+        return true;
+      },
+      { submit: true },
+    );
+    await h.flush();
+    expect(h.gaps.map((g) => g.ms)).toEqual([ENTER_FLOOR_MS]);
+    expect(h.quiets.map((q) => [q.sessionId, q.quietMs, q.maxMs])).toEqual([
+      ['a', ECHO_QUIET_MS, ECHO_MAX_MS],
+    ]);
+    await h.releaseSleep();
+    expect(writes(h.log, 'a')).toEqual(['text']);
+    await h.releaseQuiet();
+    expect(await p).toBe('submitted');
+    expect(writes(h.log, 'a')).toEqual(['text', '\r']);
+  });
+
+  it('sequence: a respawn during the quiet wait withholds Enter', async () => {
+    const h = harness();
+    const p = h.writer.sequence(
+      'a',
+      () => {
+        h.log.push(['a', 'text']);
+        return true;
+      },
+      { submit: true },
+    );
+    await h.flush();
+    await h.releaseSleep();
+    h.gens.set('a', 2);
+    await h.releaseQuiet();
+    expect(await p).toBe('generation-changed');
+    expect(writes(h.log, 'a')).toEqual(['text']);
+  });
+
+  it('pins the R5 timing values', () => {
+    expect([ENTER_FLOOR_MS, ECHO_QUIET_MS, ECHO_MAX_MS]).toEqual([120, 300, 5000]);
+  });
+
   it('keeps a queued sequence outside another submit and drops a stale Enter', async () => {
     const h = harness();
     const first = h.writer.submit('a', 'first');
