@@ -171,6 +171,8 @@ export interface PolicyDecision {
   decision: Decision; reason: Reason;
   rule: { when: When | null; reach: Reach | null; move: Move | null };
   grantId: string | null; overrideId: string | null;
+  grantIds: readonly string[];            // every grant that allowed a target (S1 review)
+  deniedTarget: PolicyTarget | null;      // the resolved target an explicit deny decided on (S2-2 review), for allowOnce
 }
 export type PermissionAnswer =
   | { outcome: 'allowed'; grant?: GrantChoice }
@@ -326,14 +328,16 @@ export interface PolicyService {
   ui(sessions: ReadonlyArray<{ sessionId: string; handleCli: CliKind | null; launchedCli: CliKind | null }>): PolicyUiState;
 }
 // policy-targets.ts
-export interface TargetDeps { sessionByHandle(h: string): { id: string; cwd: string | null; projectId: string | null } | null; realPath(p: string): string | null }
-export function resolveTargets(tool: ToolName, args: Record<string, unknown>, deps: TargetDeps): PolicyTarget[];
+type TargetSession = { id: string; cwd: string | null; projectId: string | null };
+export interface TargetDeps { sessionByHandle(h: string): TargetSession | null; childrenOf(sessionId: string): TargetSession[]; realPath(p: string): string | null }
+export function resolveTargets(tool: ToolName, args: Record<string, unknown>, caller: { sessionId: string; home: string | null }, deps: TargetDeps): PolicyTarget[];
+// review S2-2: close_session children:true → the caller's children; relative paths resolve against caller.home (node:path), never kept raw
 ```
 - **Load and migration.** `start()` reads `policy.json` and `grants.json`. A missing `policy.json` runs `migrateLegacyPolicy(deps.legacy())` and writes it. Legacy keys are never read again and never deleted.
 - **Writes and timers.** Writes are coalesced atomically through `atomicWriteFile` at 250 ms. A 60 s timer runs `grants.tick()` and `activity.flushCounts()`, and once an hour `activity.purge()`.
 
 ### C8 Renderer seams (Slice 2/3, serial claims)
-`src/conduit-mcp/ui-types.ts` adds `policy: PolicyUiState` to `McpUiState`:
+`PolicyUiState` lives in `policy-types.ts` (Node-free, the renderer's home for policy types; ruling S2-2). `src/conduit-mcp/ui-types.ts` adds `policy: PolicyUiState` to `McpUiState`:
 ```ts
 export interface PolicyUiState {
   profiles: Array<{ id: ProfileId; name: string; builtIn: boolean }>;
