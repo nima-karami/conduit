@@ -15957,6 +15957,267 @@ button.toggle--on .toggle__knob {
   border: 0;
 }
 
+/* Needs you: request template (CON-20) */
+.needs-quote {
+  border-left: 2px solid var(--border-2);
+  padding: 2px 0 2px 12px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.reqtpl {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  background: var(--raise);
+  color: var(--text);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-card);
+}
+.reqtpl-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.reqtpl-head__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.reqtpl-head__line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.reqtpl-head__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.reqtpl-head__meta {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.reqtpl-head__time {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.reqtpl-head__time--wait {
+  color: var(--amber);
+  font-weight: 600;
+}
+.reqtpl-chip {
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--bg);
+  background: var(--text);
+  border-radius: var(--r-sm);
+}
+.reqtpl-urgent {
+  padding: 0 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--danger);
+  border: 1px solid currentColor;
+  border-radius: var(--r-sm);
+}
+.reqtpl-close {
+  padding: 2px 6px;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.reqtpl-close:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+.reqtpl-context,
+.reqtpl-answer,
+.reqtpl-review {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.reqtpl-title {
+  margin: 0 0 4px;
+  font-weight: 700;
+}
+.reqtpl-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.reqtpl-ended {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+.reqtpl-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.reqtpl-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+.reqtpl-option--picked {
+  border-color: var(--accent);
+}
+.reqtpl-option input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+.reqtpl-option__num {
+  min-width: 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.reqtpl-option__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.reqtpl-option__label {
+  font-weight: 600;
+}
+.reqtpl-option__desc {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.reqtpl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.reqtpl-field__label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.reqtpl-field__input,
+.reqtpl-edit {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  resize: vertical;
+}
+.reqtpl-edit {
+  min-height: 160px;
+  font-family: ui-monospace, monospace;
+}
+.reqtpl-views {
+  display: inline-flex;
+  gap: 2px;
+  width: max-content;
+  padding: 2px;
+  background: var(--panel-2);
+  border-radius: var(--r-sm);
+}
+.reqtpl-views__btn {
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.reqtpl-views__btn[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--raise);
+  box-shadow: inset 0 0 0 1px var(--border-2);
+}
+.reqtpl-original {
+  margin: 0;
+  padding: 8px 10px;
+  font-family: ui-monospace, monospace;
+  white-space: pre-wrap;
+  background: var(--panel-2);
+  border-radius: var(--r-sm);
+}
+.reqtpl-changes {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.reqtpl-changes p {
+  margin: 0;
+}
+.reqtpl-send {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.reqtpl-reason,
+.reqtpl-receipt {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.reqtpl-receipt {
+  min-height: 1em;
+}
+.reqtpl-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger);
+}
+.reqtpl-attend {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.reqtpl-attend p {
+  margin: 0;
+  color: var(--text-dim);
+}
+.reqtpl-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.reqtpl-footer__this,
+.reqtpl-footer__queue {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
 /* ═════════ interaction state vocabulary ══════════════════════════════════════
    docs/specs/archive/2026-08-01-interaction-state-vocabulary.md. Read it before touching
    a value here; test/unit/state-vocabulary.test.ts holds the line.
