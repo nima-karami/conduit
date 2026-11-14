@@ -14,10 +14,12 @@
 | U3 | Header · Context · Answer · Footer template; non-modal pop-up with focus trap; `DocKind 'request'` tab (never persisted) | 1fc7e690 | **0** |
 | U4/U5 | status-bar count with "· 0:58 waiting", session pill in the tab bar, thread link, Mod+Shift+Y, space names; Away menu, away banner, return digest | 909276ef | **0** |
 | fix | pop-up closes after its last request is answered (found by e2e) | 20377d55 | **0** |
+| fix | waiting asks stay first in the footer; `status-bar.e2e` follows attend requests | 7591622c | **0** |
 
 On hold by the lead's ruling: the floating waiting notice. The pill and the status bar are the waiting signal until the owner decides.
 
 ## Runtime proof
+- **Full suite (`--affected`) on the final tip:** 270 PASS, 9 EXCLUDED, 1 SKIP, and the known quarantined scrollback-inrun (run 43652942374). `status-bar`, `requests-ui` and `requests-sources` also PASS in run 43652443332.
 - **e2e `requests-ui`:** PASS, run 43650055429. It drives the real app headless and covers:
   - card, status-bar countdown and session pill;
   - Enter opens the pop-up with the title focused, and Send answers the agent's waiting call;
