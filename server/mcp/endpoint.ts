@@ -4,7 +4,14 @@ import * as net from 'node:net';
 import * as path from 'node:path';
 import type { EndpointConnection, McpEndpoint } from '../../src/conduit-mcp/host';
 import { type Result, toolError } from '../../src/conduit-mcp/types';
+import {
+  HOOK_POST_MAX_BYTES,
+  type HookAck,
+  type HookEvent,
+  type HookPost,
+} from '../../src/contracts/hook-protocol';
 import type { TokenRows, TokenStorePort } from '../../src/contracts/server-ports';
+import type { TokenRecord } from '../../src/contracts/session-identity';
 import {
   parseShimHello,
   RESUME_NOTIFICATION,
@@ -34,6 +41,12 @@ export type EndpointLog = Record<
 const isPipe = (p: string) => p.startsWith('\\\\.\\pipe\\') || p.startsWith('//./pipe/');
 const sha256 = (t: string) => createHash('sha256').update(t).digest('hex');
 
+function liveRow(token: string, rows: TokenRows): TokenRecord | undefined {
+  if (rows.state !== 'loaded') return undefined;
+  const hash = sha256(token);
+  return rows.rows.find((r) => r.sha256 === hash && r.state !== 'superseded');
+}
+
 /**
  * `unknown_token` ends a shim's retries for good, so it follows only a clean load (D21). A missing
  * file with a token presented can only mean the file was lost: every Conduit launch reserved its row
@@ -43,10 +56,52 @@ function welcomeFor(hello: { token: string | null }, rows: TokenRows): ShimWelco
   if (rows.state === 'unreadable') return { conduit: 2, ok: false, reason: 'draining' };
   if (hello.token === null) return { conduit: 2, ok: true };
   if (rows.state === 'missing') return { conduit: 2, ok: false, reason: 'draining' };
-  const hash = sha256(hello.token);
-  return rows.rows.some((r) => r.sha256 === hash && r.state !== 'superseded')
+  return liveRow(hello.token, rows)
     ? { conduit: 2, ok: true }
     : { conduit: 2, ok: false, reason: 'unknown_token' };
+}
+
+const HOOK_LINE_PREFIX = '{"conduitHook"';
+
+/**
+ * Reads a first line's kind from its leading whitespace and its first characters only, so it can be
+ * capped while it streams. A hook post must show its prefix within the hello cap.
+ */
+function firstLineKind(
+  state: { lead: number; sig: string },
+  text: string,
+): 'hook' | 'hello' | undefined {
+  for (const ch of text) {
+    if (state.sig === '' && (ch === ' ' || ch === '\t' || ch === '\r')) {
+      state.lead += 1;
+      if (state.lead >= SHIM_HELLO_MAX_BYTES) return 'hello';
+      continue;
+    }
+    if (ch === '\n') return 'hello';
+    state.sig += ch;
+    if (!HOOK_LINE_PREFIX.startsWith(state.sig)) return 'hello';
+    if (state.sig.length === HOOK_LINE_PREFIX.length)
+      return state.lead + HOOK_LINE_PREFIX.length <= SHIM_HELLO_MAX_BYTES ? 'hook' : 'hello';
+  }
+  return undefined;
+}
+
+const HOOK_EVENTS: Record<HookEvent, true> = {
+  StopFailure: true,
+  UserPromptSubmit: true,
+  Stop: true,
+  Notification: true,
+  StatusLine: true,
+};
+const isHookEvent = (v: unknown): v is HookEvent =>
+  typeof v === 'string' && Object.hasOwn(HOOK_EVENTS, v);
+
+const ack = (ok: boolean): HookAck => ({ conduitHook: 1, ok });
+
+function parseHookPost(obj: Record<string, unknown>): HookPost | null {
+  const { token, event } = obj;
+  if (typeof token !== 'string' || !isHookEvent(event)) return null;
+  return { conduitHook: 1, token, event, payload: obj.payload };
 }
 
 const parseObject = (line: string): Record<string, unknown> | null => {
@@ -76,6 +131,7 @@ const isResumeReply = (line: string): boolean =>
 export function createShimEndpoint(opts: {
   path: string;
   onConnection(conn: EndpointConnection): void;
+  onHook?: (sessionId: string, post: HookPost) => void;
   log: EndpointLog;
   tokens: Pick<TokenStorePort, 'rows'>;
   closeFlushMs?: number;
@@ -160,7 +216,22 @@ export function createShimEndpoint(opts: {
       if (resume?.initialized) replay();
     };
 
+    const onHookPost = (obj: Record<string, unknown>) => {
+      const post = parseHookPost(obj);
+      const row = post ? liveRow(post.token, opts.tokens.rows()) : undefined;
+      if (!post || !row) {
+        opts.log.debug('conduit-mcp', 'hook post refused', { id });
+        write(JSON.stringify(ack(false)));
+        return close();
+      }
+      opts.onHook?.(row.sessionId, post);
+      write(JSON.stringify(ack(true)));
+      close();
+    };
+
     const onHello = (line: string) => {
+      const obj = parseObject(line);
+      if (obj?.conduitHook === 1) return onHookPost(obj);
       const parsed = parseShimHello(line);
       if (!parsed) return drop('malformed hello');
       if (!parsed.ok) {
@@ -176,19 +247,35 @@ export function createShimEndpoint(opts: {
       open(hello);
     };
 
+    const first = { lead: 0, sig: '' };
+    let lineKind: 'hook' | 'hello' | undefined;
     const reader = new LineReader(
-      () => (deliver ? INBOUND_LINE_MAX_BYTES : SHIM_HELLO_MAX_BYTES),
+      () =>
+        deliver
+          ? INBOUND_LINE_MAX_BYTES
+          : lineKind === 'hello'
+            ? SHIM_HELLO_MAX_BYTES
+            : HOOK_POST_MAX_BYTES,
       (raw) => {
         const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
         if (deliver) deliver(line);
         else onHello(line);
       },
-      () => drop(deliver ? 'line too large' : 'hello too large'),
+      () =>
+        drop(
+          deliver
+            ? 'line too large'
+            : lineKind === 'hook'
+              ? 'hook post too large'
+              : 'hello too large',
+        ),
     );
-    socket.on('data', (chunk: Buffer) =>
+    socket.on('data', (chunk: Buffer) => {
+      if (!deliver && lineKind === undefined)
+        lineKind = firstLineKind(first, chunk.toString('utf8'));
       // Nothing read after close() reaches the host.
-      reader.write(chunk, () => socket.writable && !closing),
-    );
+      reader.write(chunk, () => socket.writable && !closing);
+    });
     socket.on('error', (err) =>
       opts.log.debug('conduit-mcp', 'endpoint socket error', { id, err: String(err) }),
     );
