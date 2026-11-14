@@ -74,6 +74,8 @@ interface Peer {
   attempt: number;
   cancelRetry: (() => void) | null;
   dialing: boolean;
+  /** An address edit landed during a dial: retry at once when it ends, not after backoff. */
+  redial: boolean;
   peerHello: HelloFrame | null;
   revokedBy: 'me' | 'peer' | null;
   lastActivity: number | null;
@@ -134,6 +136,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       attempt: 0,
       cancelRetry: null,
       dialing: false,
+      redial: false,
       peerHello: null,
       revokedBy: null,
       lastActivity: null,
@@ -180,10 +183,12 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       }
     }
     p.dialing = false;
+    const redial = p.redial;
+    p.redial = false;
     if (sock === null) {
       if (!terminal(p) && !p.conn) event(p, { kind: 'closed', at: deps.now() });
-      p.attempt += 1;
-      scheduleDial(p, false);
+      p.attempt = redial ? 0 : p.attempt + 1;
+      scheduleDial(p, redial);
       return;
     }
     await adopt(p, sock, deps.identity().machineId);
@@ -425,7 +430,8 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       deps.changed();
       if (!p.conn) {
         p.attempt = 0;
-        scheduleDial(p, true);
+        if (p.dialing) p.redial = true;
+        else scheduleDial(p, true);
       }
       return true;
     },
