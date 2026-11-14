@@ -10,14 +10,18 @@
   evidence: [docs/runs/2026-11-13-con-11/evidence/verify-s0.log]
   commit: 428e18a9
 - id: lane-A-scheduler
-  status: re-review
+  status: revise
+  review2: "REVISE 1 blocker (projection drops lastFire) + 4 should-fix; retry 2/2 sent"
   commit_lane_fix: b81ce3e8
   notes: "review#1 REVISE 2 blockers (deferred job stranded on PTY loss; armResume keeps job waiting → no timer/early delivery) + 6 should-fix; rulings: parse(blob,{maxAttempts}) clamps; serialize(file, now); limit onFired; projection; sendOnce propagates. retry 1/2 sent"
   commit_lane: e3db4857 (+ b913fbe7 R13 contract cherry-pick)
   topology: delegated (Haiku, worktree)
   deps: [S0-contracts]
 - id: lane-B-delivery
-  status: re-review
+  status: done
+  commit: 51a19d68 (merge) + d6dde3b8 (fallow fix)
+  gate: "npm run verify exit=0 at d6dde3b8 (evidence/verify-merge-B.log)"
+  review3: "APPROVE 0 blockers; should-fix: SUBMIT_GAP_MS dead (fixed in merge), spawn test timing (conductor fix in merge); nits hint colour, confirm excerpt (conductor)"
   commit_lane_fix2: 81afea76
   review2: "REVISE 3 blockers (over-limit close skips discard confirm; constants self-compared — conductor-caused; sequence quiet not proven awaited); retry 2/2 sent"
   commit_lane_fix: a2791e37
@@ -26,14 +30,20 @@
   topology: delegated (Haiku, worktree)
   deps: [S0-contracts]
 - id: lane-C-claude
-  status: re-review
+  status: approved
+  review3: "APPROVE; should-fix: win32 bare bash on PATH may be WSL (conductor: resolve Git Bash at launch), cwd fallback untested; nits → conductor in merge; integration: prepare.ts must copy conduit-hook.cjs"
+  commit_lane_fix2: 472efc82
+  review2: "REVISE 1 blocker (ELECTRON_RUN_AS_NODE leaks to user status line) + 2 should-fix; retry 2/2 sent"
   commit_lane_fix: dfb4afd5
   commit_lane: 0be2d3e4
   notes: "review#1 REVISE 1 blocker = plan defect (shell:true → cmd.exe on win32; plan corrected to statusLineShell POSIX) + 3 should-fix + 3 nit; retry 1/2 sent"
   topology: delegated (Haiku, worktree)
   deps: [S0-contracts]
 - id: lane-D-codex-rules
-  status: re-review
+  status: revise
+  review_followup: "REVISE 1 blocker (hand copy of watchDirWhilePresent); plan amended to inject it; retry 2/2 sent"
+  commit_lane_followup: c367b6bc
+  review2: "APPROVE 0 blockers, 6 should-fix → follow-up commit requested before merge"
   commit_lane_fix: 87956382
   commit_lane: 36a21488
   notes: "review#1 REVISE 3 blockers (zone-math copy; Codex rule cannot capture a date; oldest notice wins) + 6 should-fix; map widened: timed-messages.ts exports wallTimeToInstant/wallDateIn; matchStuckRule replaces findRuleMatch. retry 1/2 sent"
