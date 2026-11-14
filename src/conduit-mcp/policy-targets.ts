@@ -55,8 +55,7 @@ function handleRefs(handles: readonly string[], deps: TargetDeps): SessionRef[] 
   return found;
 }
 
-// A relative path is relative to the caller's home, as the tool descriptions state. A relative
-// path with no home cannot be placed, so it yields no target: the engine then uses the home.
+// see POL §4.1
 function absolutePath(raw: string, caller: TargetCaller): string | null {
   if (path.isAbsolute(raw)) return raw;
   return caller.home === null ? null : path.resolve(caller.home, raw);
