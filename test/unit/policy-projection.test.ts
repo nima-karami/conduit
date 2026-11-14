@@ -1,8 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { pointKey } from '../../src/conduit-mcp/policy-profiles';
+import {
+  effectiveRule,
+  pointKey,
+  profileById,
+  WORKER_PROFILE,
+} from '../../src/conduit-mcp/policy-profiles';
 import { applyLegacyPatch, projectLegacyLayer } from '../../src/conduit-mcp/policy-projection';
-import type { Assignment, AssignmentPoint, PolicyState } from '../../src/conduit-mcp/policy-types';
-import { TOOL_GROUPS, TOOL_SPECS } from '../../src/conduit-mcp/tool-policy';
+import type {
+  Assignment,
+  AssignmentPoint,
+  PolicyState,
+  ToolRule,
+} from '../../src/conduit-mcp/policy-types';
+import {
+  TOOL_GROUPS,
+  TOOL_NAMES,
+  TOOL_SPECS,
+  type ToolName,
+} from '../../src/conduit-mcp/tool-policy';
 
 const SESSION: AssignmentPoint = { kind: 'session', sessionId: 's1' };
 const DEFAULT: AssignmentPoint = { kind: 'default' };
@@ -16,9 +31,13 @@ const stateOf = (entries: Array<[AssignmentPoint, Assignment]>): PolicyState => 
   overrides: [],
 });
 
+const ruleAt = (state: PolicyState, a: Assignment, tool: ToolName): ToolRule =>
+  effectiveRule(profileById(state, a.profileId) ?? WORKER_PROFILE, a, tool, null);
+
 const sessionAndEditor = TOOL_GROUPS.filter(
   (g) => g.group === 'sessions' || g.group === 'editor',
 ).flatMap((g) => g.tools);
+const WHEN_TOOLS = TOOL_NAMES.filter((t) => TOOL_SPECS[t].fields.includes('when'));
 
 describe('projectLegacyLayer', () => {
   it('projection of Lead+onScreenOnly reproduces the original all-on layer', () => {
@@ -83,10 +102,10 @@ describe('applyLegacyPatch', () => {
     expect(state).toEqual(before);
   });
 
-  it('applyLegacyPatch seeds a fresh point with only the lower anywhere exceptions', () => {
+  it('applyLegacyPatch seeds a fresh point with a full copy of the lower assignment', () => {
     const lower: Assignment = {
-      profileId: 'worker',
-      onScreenOnly: false,
+      profileId: 'lead',
+      onScreenOnly: true,
       exceptions: [
         { tool: 'open_terminal', scope: { kind: 'anywhere' }, rule: { decision: 'allow' } },
         {
@@ -99,10 +118,15 @@ describe('applyLegacyPatch', () => {
     const next = applyLegacyPatch(stateOf([[DEFAULT, lower]]), SESSION, DEFAULT, 'open_file', {
       access: 'off',
     });
-    expect(next.exceptions).toEqual([
-      { tool: 'open_terminal', scope: { kind: 'anywhere' }, rule: { decision: 'allow' } },
-      { tool: 'open_file', scope: { kind: 'anywhere' }, rule: { decision: 'deny' } },
-    ]);
+    expect(next).toEqual({
+      profileId: 'lead',
+      onScreenOnly: true,
+      exceptions: [
+        ...lower.exceptions,
+        { tool: 'open_file', scope: { kind: 'anywhere' }, rule: { decision: 'deny' } },
+      ],
+    });
+    expect(next.exceptions[0]).not.toBe(lower.exceptions[0]);
   });
 
   it('applyLegacyPatch inherit removes the exception', () => {
@@ -120,5 +144,48 @@ describe('applyLegacyPatch', () => {
     ]);
     const next = applyLegacyPatch(state, SESSION, null, 'open_session', { access: 'inherit' });
     expect(next).toEqual({ profileId: 'worker', onScreenOnly: false, exceptions: [] });
+  });
+
+  it('a when patch on a Lead+1 session shows in the projection and keeps the other tools on screen', () => {
+    const state = stateOf([[SESSION, LEAD_ONSCREEN]]);
+    const next = applyLegacyPatch(state, SESSION, DEFAULT, 'read_screen', { when: 'always' });
+    const after = stateOf([[SESSION, next]]);
+
+    expect(next.onScreenOnly).toBe(false);
+    expect(projectLegacyLayer(after, SESSION, DEFAULT).read_screen).toEqual({ when: 'always' });
+    for (const tool of WHEN_TOOLS.filter((t) => t !== 'read_screen')) {
+      expect(ruleAt(after, next, tool).when, tool).toBe('viewing');
+      expect(projectLegacyLayer(after, SESSION, DEFAULT)[tool]?.when, tool).toBeUndefined();
+    }
+  });
+
+  it('inherit on a profile-overridden field removes it from the projection', () => {
+    const state = stateOf([[SESSION, LEAD_ONSCREEN]]);
+    const next = applyLegacyPatch(state, SESSION, DEFAULT, 'send_input', { access: 'inherit' });
+    const after = stateOf([[SESSION, next]]);
+
+    expect(projectLegacyLayer(after, SESSION, DEFAULT).send_input).toBeUndefined();
+    expect(ruleAt(after, next, 'send_input')).toEqual(WORKER_PROFILE.rules.send_input);
+  });
+
+  it('a set value equal to the profile clears the exception field', () => {
+    const state = stateOf([
+      [
+        SESSION,
+        {
+          profileId: 'lead',
+          onScreenOnly: true,
+          exceptions: [
+            { tool: 'send_input', scope: { kind: 'anywhere' }, rule: { decision: 'deny' } },
+          ],
+        },
+      ],
+    ]);
+    const next = applyLegacyPatch(state, SESSION, DEFAULT, 'send_input', { access: 'on' });
+
+    expect(next.exceptions).toEqual([]);
+    expect(projectLegacyLayer(stateOf([[SESSION, next]]), SESSION, DEFAULT).send_input).toEqual({
+      access: 'on',
+    });
   });
 });

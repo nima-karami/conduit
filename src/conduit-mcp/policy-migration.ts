@@ -1,7 +1,12 @@
 // see POL §4.2 "Migration (exact)" and C6
 import type { PolicyFile } from './policy-file';
-import { BUILT_IN_PROFILES, effectiveRule, WORKER_PROFILE } from './policy-profiles';
-import { decisionOfAccess, legacyPolicyOf } from './policy-projection';
+import {
+  BUILT_IN_PROFILES,
+  DECISION_OF_ACCESS,
+  effectiveRule,
+  WORKER_PROFILE,
+} from './policy-profiles';
+import { legacyPolicyOf } from './policy-projection';
 import type { Assignment, Exception, Profile, ToolRule } from './policy-types';
 import {
   CLI_KINDS,
@@ -51,7 +56,7 @@ function assignmentFor(today: TodayOf): Assignment {
     const worker = legacyPolicyOf(WORKER_PROFILE.rules[tool], tool);
     const want = today(tool);
     const rule: Partial<ToolRule> = {};
-    if (want.access !== worker.access) rule.decision = decisionOfAccess(want.access);
+    if (want.access !== worker.access) rule.decision = DECISION_OF_ACCESS[want.access];
     if (want.when !== worker.when && want.when !== undefined) rule.when = want.when;
     if (want.reach !== worker.reach && want.reach !== undefined) rule.reach = want.reach;
     if (want.move !== worker.move && want.move !== undefined) rule.move = want.move;

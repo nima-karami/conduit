@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { migrateLegacyPolicy } from '../../src/conduit-mcp/policy-migration';
+import { type LegacyPolicy, migrateLegacyPolicy } from '../../src/conduit-mcp/policy-migration';
 import {
+  DECISION_OF_ACCESS,
   effectiveRule,
   pointKey,
   profileById,
@@ -9,14 +10,14 @@ import {
 import type {
   Assignment,
   AssignmentPoint,
-  Decision,
   PolicyState,
   ToolRule,
 } from '../../src/conduit-mcp/policy-types';
 import {
-  type Access,
   DEFAULT_TOOL_POLICY,
+  type GlobalPolicy,
   type PolicyLayer,
+  type PolicyLayers,
   resolvePolicy,
   TOOL_GROUPS,
   TOOL_NAMES,
@@ -24,9 +25,8 @@ import {
   type ToolPolicy,
 } from '../../src/conduit-mcp/tool-policy';
 
-const DECISION_OF: Record<Access, Decision> = { off: 'deny', ask: 'ask', on: 'allow' };
 const todayRule = (p: ToolPolicy): ToolRule => ({
-  decision: DECISION_OF[p.access],
+  decision: DECISION_OF_ACCESS[p.access],
   when: p.when ?? null,
   reach: p.reach ?? null,
   move: p.move ?? null,
@@ -187,5 +187,41 @@ describe('migrateLegacyPolicy', () => {
       ],
     });
     expect(out.notes.onScreenOnlyOffered).toEqual(['s1', 's3']);
+  });
+});
+
+describe('exactness with a non-default global', () => {
+  const global: GlobalPolicy = structuredClone(DEFAULT_TOOL_POLICY);
+  global.read_screen.reach = 'any';
+  global.focus_session.move = 'no';
+  global.send_message.access = 'off';
+  global.open_file.when = 'always';
+  const claudeLayer: PolicyLayer = { send_input: { reach: 'self' } };
+  const sessionLayer: PolicyLayer = { open_session: { access: 'on' } };
+  const legacy: LegacyPolicy = {
+    global,
+    byCli: { claude: claudeLayer },
+    sessions: [{ sessionId: 's1', layer: sessionLayer, cli: 'claude' }],
+  };
+
+  const points: Array<{ point: AssignmentPoint; layers: PolicyLayers }> = [
+    { point: { kind: 'default' }, layers: { global } },
+    { point: { kind: 'cli', cli: 'claude' }, layers: { cli: claudeLayer, global } },
+    {
+      point: { kind: 'session', sessionId: 's1' },
+      layers: { session: sessionLayer, cli: claudeLayer, global },
+    },
+  ];
+
+  it('every point resolves every tool and field exactly as today', () => {
+    const out = migrateLegacyPolicy(legacy);
+    const state = stateOf(points.map(({ point }) => [point, assignmentAt(out, point)]));
+    for (const { point, layers } of points) {
+      for (const tool of TOOL_NAMES) {
+        expect(effectiveAt(state, point, tool), `${pointKey(point)} ${tool}`).toEqual(
+          todayRule(resolvePolicy(tool, layers).policy),
+        );
+      }
+    }
   });
 });
