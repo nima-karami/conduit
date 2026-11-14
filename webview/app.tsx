@@ -297,7 +297,8 @@ import { clearReveal, fileUri, peekReveal, setDefinitionOpener, setReveal } from
 import { createQuitResponder } from './quit-responder';
 import { quitStopFailureDialog } from './quit-stop-dialog';
 import { pushRecentDoc, type RecentDoc, recentPaletteId, recentSubtitle } from './recent-docs';
-import { setRequestOpeners } from './request-open';
+import { openRequest, setRequestOpeners } from './request-open';
+import { sortRequests } from './request-view-model';
 import { resolveModuleOnDemand } from './resolve-module';
 import { subscribeNoteTarget } from './review-note-target';
 import { loadNotesFor } from './review-notes-store';
@@ -1483,6 +1484,8 @@ export function App() {
   // Nav back/forward (modal-guarded) are declared after useNavHistory below; actionMap
   // reaches them through refs to avoid the same ordering problem as undo/redo.
   const navBackRef = useRef<() => void>(() => {});
+  // The shortcut table is built above the request state it reads, so it calls through a ref.
+  const openSoonestRequestRef = useRef<() => void>(() => {});
   const navForwardRef = useRef<() => void>(() => {});
   const openShellRef = useRef<() => void>(() => {});
   const reopenLastRef = useRef<() => void>(() => {});
@@ -1626,6 +1629,7 @@ export function App() {
       // mapping has a single, unit-tested source of truth (no inline drift).
       openBoard: () => openView('openBoard'),
       openArchitecture: () => openView('openArchitecture'),
+      openSoonestRequest: () => openSoonestRequestRef.current(),
       openReview: openReviewTab,
       openGitHistory: () => openGitHistoryTab(),
       openEditor: () => openView('openEditor'),
@@ -2113,13 +2117,45 @@ export function App() {
   );
 
   // The footer reads only the reason projection (spec §4), never the legacy aggregator.
+  const requestSessions = useMemo(
+    () =>
+      new Map(
+        sessions.map((s) => [
+          s.id,
+          { name: s.name, handle: mcp.state?.sessions[s.id]?.handle ?? null },
+        ]),
+      ),
+    [sessions, mcp.state],
+  );
+  const openRequests = useMemo(
+    () => sortRequests(mcp.state?.requests?.open ?? [], 'soonest', requestSessions),
+    [mcp.state, requestSessions],
+  );
+  const spaceNames = useMemo(
+    () => new Map((state?.projects ?? []).map((p) => [p.id, p.name])),
+    [state?.projects],
+  );
   const needYou = useMemo(
-    () => needYouEntries(hostSessions, mcp.state?.attention ?? [], snoozed, Date.now(), asks),
-    [hostSessions, mcp.state, snoozed, asks],
+    () =>
+      needYouEntries(
+        hostSessions,
+        mcp.state?.attention ?? [],
+        snoozed,
+        Date.now(),
+        asks,
+        openRequests.map((r) => ({ id: r.id, session: r.session })),
+      ),
+    [hostSessions, mcp.state, snoozed, asks, openRequests],
   );
   const statusModel = useMemo(
-    () => buildStatusBarModel({ sessions, activeId, entries: needYou }),
-    [sessions, activeId, needYou],
+    () =>
+      buildStatusBarModel({
+        sessions,
+        activeId,
+        entries: needYou,
+        waitingUntil: openRequests.find((r) => r.waitingUntil !== null)?.waitingUntil ?? null,
+      }),
+    [sessions, activeId, needYou, openRequests],
   );
   const selectAgent = useCallback((sessionId: string) => {
     setActiveId(sessionId);
@@ -2159,9 +2195,21 @@ export function App() {
         focusAsk: requestAskFocus,
         openThread: (threadId) => openMessages(null, threadId),
         focusSession: goToTerminal,
+        openRequest: (requestId) => {
+          openRequest(requestId);
+        },
       }),
     [openMessages, goToTerminal],
   );
+  // REQ-D13 (Mod+Shift+Y): the soonest waiting request, else the Needs you panel.
+  const openSoonestRequest = useCallback(() => {
+    const waiting = openRequests.find((r) => r.waiting);
+    if (waiting) openRequest(waiting.id);
+    else openPanel('needs', true);
+  }, [openRequests, openPanel]);
+  useEffect(() => {
+    openSoonestRequestRef.current = openSoonestRequest;
+  }, [openSoonestRequest]);
   const chrome = useMemo<WorkbenchChromeContextValue>(
     () => ({
       rightOpen: !settings.explorerCollapsed,
@@ -2169,6 +2217,8 @@ export function App() {
       togglePanel: toggleRightView,
       openPanel,
       status: statusModel,
+      presence: mcp.state?.requests?.presence ?? null,
+      setAway: mcp.setAway,
       commandHint: comboLabel('openCommands', settings.shortcuts) ?? '',
       focusAttention,
       update: {
@@ -2194,6 +2244,8 @@ export function App() {
       },
     }),
     [
+      mcp.state?.requests?.presence,
+      mcp.setAway,
       settings.explorerCollapsed,
       settings.shortcuts,
       rightTab,
@@ -5330,6 +5382,7 @@ export function App() {
           paneRef={rightPaneRef}
           mcp={mcp}
           sessions={sessions}
+          spaceNames={spaceNames}
           sidebarSelection={sidebarUi.selection}
           sidebarSpaceName={sidebarSpaceName}
           selectedAgentHandle={active ? (mcp.state?.sessions[active.id]?.handle ?? null) : null}

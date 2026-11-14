@@ -46,6 +46,7 @@ import type { DockHandlers } from './panel-frame';
 import { RequestPopup } from './request-popup';
 import { RequestTab } from './request-tab';
 import { ReviewView } from './review-view';
+import { LiveSessionPill } from './session-pill';
 import { TerminalPane } from './terminal-pane';
 import { TrustPrompt } from './trust-prompt';
 import { WebView } from './web-view';
@@ -550,6 +551,7 @@ export function CenterPane({
             groupActive={layout.activeGroup === g}
             showTerminal={g === 1}
             terminalFocusKey={g === 1 && activeId ? terminalTabFocusKey(activeId) : undefined}
+            trailing={g === 1 && activeId ? <LiveSessionPill sessionId={activeId} /> : undefined}
             split={{
               // Group 1's button splits group 1's shown doc even while group 2 is active (spec §2.4
               // flow 2), with or without a pointer-down focusing group 1 first.

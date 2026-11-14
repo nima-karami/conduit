@@ -50,8 +50,11 @@ function chrome(over: Partial<WorkbenchChromeContextValue> = {}): WorkbenchChrom
       attentionCount: 0,
       firstAttention: null,
       showCommandHint: false,
+      waitingUntil: null,
     },
     commandHint: '',
+    presence: null,
+    setAway: () => {},
     focusAttention: vi.fn(),
     update: { status: null, dismissed: false, dismiss: noop, reveal: noop, openNotes: noop },
     ...over,
@@ -264,6 +267,7 @@ function rightPane(
       setAway: () => {},
     },
     sessions: [],
+    spaceNames: new Map(),
     onOpenSettings: noop,
   });
 }
@@ -400,6 +404,7 @@ describe('status bar (selector contract: Footer)', () => {
           attentionCount: 2,
           firstAttention: entry(),
           showCommandHint: true,
+          waitingUntil: null,
         },
         commandHint: 'Ctrl+Shift+P',
       }),
@@ -428,6 +433,7 @@ describe('status bar (selector contract: Footer)', () => {
         attentionCount: 1,
         firstAttention: first,
         showCommandHint: true,
+        waitingUntil: null,
       },
     });
     await render(value, createElement(StatusBar));
@@ -447,6 +453,7 @@ describe('status bar (selector contract: Footer)', () => {
           attentionCount: 0,
           firstAttention: null,
           showCommandHint: false,
+          waitingUntil: null,
         },
         commandHint: 'Ctrl+Shift+P',
       }),
@@ -466,8 +473,11 @@ describe('status bar (selector contract: Footer)', () => {
           attentionCount: 0,
           firstAttention: null,
           showCommandHint: true,
+          waitingUntil: null,
         },
         commandHint: '',
+        presence: null,
+        setAway: () => {},
       }),
       createElement(StatusBar),
     );

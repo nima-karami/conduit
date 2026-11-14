@@ -245,6 +245,23 @@ describe('needYouEntries (sidebar-agent-tree spec §4 footer projection)', () =>
     expect(entries[0]).toMatchObject({ kind: 'ask', sessionId: 'c', handle: 'fake-1' });
   });
 
+  it('requests lead, and a session with an open request is not counted again', () => {
+    const sessions = [s('a', { attentionReason: 'blocked' }), s('b', { attentionReason: 'bell' })];
+    const entries = needYouEntries(
+      sessions,
+      [],
+      new Map(),
+      NOW,
+      [ask],
+      [
+        { id: 'r1', session: 'a' },
+        { id: 'r2', session: null },
+      ],
+    );
+    expect(entries.map((e) => e.key)).toEqual(['request:r1', 'request:r2', 'ask:k1', 'session:b']);
+    expect(entries[0]).toMatchObject({ kind: 'request', requestId: 'r1', sessionId: 'a' });
+  });
+
   it('an ask alone adds no session entry', () => {
     const entries = needYouEntries([s('c')], [], new Map(), NOW, [ask]);
     expect(entries.map((e) => e.key)).toEqual(['ask:k1']);

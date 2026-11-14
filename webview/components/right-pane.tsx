@@ -69,6 +69,7 @@ export function RightPane({
   searchScope,
   mcp,
   sessions,
+  spaceNames,
   sidebarSelection,
   sidebarSpaceName,
   selectedAgentHandle,
@@ -118,6 +119,8 @@ export function RightPane({
   /** Messaging state and requests; the Messages tab is app-wide, not per session. */
   mcp: ConduitMcpApi;
   sessions: readonly Session[];
+  /** Space id → name, for the Needs you panel's space filter and card details. */
+  spaceNames: ReadonlyMap<string, string>;
   sidebarSelection: SpaceSelection;
   sidebarSpaceName: string | null;
   selectedAgentHandle: Handle | null;
@@ -197,7 +200,7 @@ export function RightPane({
         {statusText}
       </span>
       {tab === 'needs' ? (
-        <NeedsYouPanel mcp={mcp} sessions={sessions} />
+        <NeedsYouPanel mcp={mcp} sessions={sessions} spaceNames={spaceNames} />
       ) : tab === 'messages' ? (
         <MessagesPane
           key={messagesNav.seq}

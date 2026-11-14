@@ -39,6 +39,8 @@ export interface NeedsYouPaneProps {
   onOpen(requestId: string): void;
   onOpenTerminal(sessionId: string): void;
   now: number;
+  /** Bumped to switch the list to History (the return digest's "show"). */
+  historySignal?: number;
 }
 
 const ANNOUNCE_EVERY_MS = 5_000;
@@ -152,6 +154,9 @@ export function NeedsYouPane(p: NeedsYouPaneProps): JSX.Element {
   const { requests, sessions, spaceNames, sort, filters, show, now } = p;
   const baseId = useId();
   const [view, setView] = useState<'open' | 'history'>('open');
+  useEffect(() => {
+    if (p.historySignal) setView('history');
+  }, [p.historySignal]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const announcement = useArrivalAnnouncer(requests);
 
