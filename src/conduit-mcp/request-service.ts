@@ -4,10 +4,18 @@ import {
   parseRequestInput,
   parseWaitRequest,
   parseWithdrawRequest,
+  validateAnswer,
 } from './request-args';
 import { emptyPresence, parseRequestsFile, serializeRequestsFile } from './request-file';
 import type { RequestsIo } from './request-file-fs';
 import { createRequestQueue, ENDED_IN_UI, type RequestQueue, type Stamp } from './request-queue';
+import {
+  type QuestionMessage,
+  reconcileAttention,
+  reconcileQuestions,
+  type SessionNeedsYou,
+  type SourceAction,
+} from './request-sources';
 import type {
   HumanPresence,
   ListRequestsOutput,
@@ -43,11 +51,19 @@ export interface RequestServiceDeps {
   budgetMs(caller: Caller): number;
   deliver(r: RequestRecord): Promise<boolean>;
   onChanged(): void;
+  replyToQuestion(r: RequestRecord, text: string): Promise<boolean>;
+  scheduler: {
+    resumeNow(sessionId: string): Promise<boolean>;
+    autoResumeOn(sessionId: string): boolean;
+    dismissIssue(sessionId: string): void;
+  };
 }
 
 export interface RequestService {
   start(): void;
   stop(): Promise<void>;
+  onAttention(facts: readonly SessionNeedsYou[]): void;
+  onQuestions(unread: readonly QuestionMessage[]): void;
   tools: {
     requestInput(
       caller: Caller,
@@ -371,7 +387,74 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     return { ok: true, value: { requests } };
   };
 
+  const handledIssues = new Map<string, string>();
+  // Marking the question read during its reply fires the question source; it must not resolve the
+  // request that is being answered, or the answer below would be refused as already ended.
+  const replying = new Set<string>();
+
+  const applyActions = (actions: readonly SourceAction[]): void => {
+    for (const a of actions) {
+      if (a.kind === 'resolve') {
+        queue.resolve(a.id);
+        continue;
+      }
+      const place =
+        a.sessionId === null
+          ? { session: null, space: null, lead: null }
+          : deps.stampOf(a.sessionId);
+      queue.createSystem({ requester: a.requester, ...place }, { source: a.source, ...a.fields });
+    }
+  };
+
+  // Every answered question, not only dismissed ones: a reply whose mark-read failed leaves the
+  // message unread, and it must not be asked again.
+  const handledQuestions = (): Set<string> => {
+    const ids = new Set<string>();
+    for (const r of queue.records()) {
+      if (r.source === 'message' && r.state === 'answered' && r.messageId !== null) {
+        ids.add(r.messageId);
+      }
+    }
+    return ids;
+  };
+
+  const actOnScheduler = (r: RequestView, sessionId: string): void => {
+    const answer = r.answer;
+    if (answer === null) return;
+    if (answer.outcome === 'dismissed') {
+      deps.scheduler.dismissIssue(sessionId);
+      return;
+    }
+    if (answer.values?.[0] === 'Resume now') {
+      void deps.scheduler.resumeNow(sessionId).then(
+        (ok) => {
+          if (!ok)
+            deps.warn('resume now did not send: the session has no open limit', { sessionId });
+        },
+        (e: unknown) => deps.warn('resume now failed', e),
+      );
+      return;
+    }
+    if (answer.values?.[0] === 'Turn auto-resume on' && !deps.scheduler.autoResumeOn(sessionId)) {
+      deps.warn('auto-resume could not be turned on: the session is gone', { sessionId });
+    }
+  };
+
   return {
+    onAttention(facts) {
+      for (const [sessionId, issue] of handledIssues) {
+        const f = facts.find((x) => x.sessionId === sessionId);
+        if (f === undefined || f.resumeIssue !== issue) handledIssues.delete(sessionId);
+      }
+      applyActions(reconcileAttention(queue.open(), facts, handledIssues));
+    },
+
+    onQuestions(unread) {
+      const open = queue.open().filter((r) => r.messageId === null || !replying.has(r.messageId));
+      const pending = unread.filter((q) => !replying.has(q.messageId));
+      applyActions(reconcileQuestions(open, pending, handledQuestions()));
+    },
+
     start() {
       let parsed: ReturnType<typeof parseRequestsFile>;
       try {
@@ -425,12 +508,58 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     },
 
     async answerFromRenderer(requestId, answer, windowId) {
+      const record = queue.get(requestId);
+      if (record !== undefined && record.source === 'message' && record.state === 'open') {
+        const checked = validateAnswer(record, answer);
+        if (!checked.ok) {
+          return {
+            ok: false,
+            reason: 'invalid_answer',
+            message: checked.error.message,
+            request: view(record),
+          };
+        }
+        const { outcome, text } = checked.value;
+        if (outcome === 'answered' && text !== undefined) {
+          if (record.messageId !== null && replying.has(record.messageId)) {
+            return {
+              ok: false,
+              reason: 'not_answerable',
+              message: 'the reply is already being sent',
+              request: view(record),
+            };
+          }
+          if (record.messageId !== null) replying.add(record.messageId);
+          let sent: boolean;
+          try {
+            sent = await deps.replyToQuestion(record, text);
+          } finally {
+            if (record.messageId !== null) replying.delete(record.messageId);
+          }
+          if (!sent) {
+            return {
+              ok: false,
+              reason: 'not_answerable',
+              message: 'the reply could not be sent; try again',
+              request: view(record),
+            };
+          }
+        }
+      }
+
       const result = queue.answer(requestId, answer, { kind: 'you', windowId });
-      if (result.ok) return { ok: true, request: view(result.request) };
-      return {
-        ...result,
-        request: result.request === null ? null : view(result.request),
-      };
+      if (!result.ok) {
+        return {
+          ...result,
+          request: result.request === null ? null : view(result.request),
+        };
+      }
+      if (result.request.source === 'scheduler' && result.request.session !== null) {
+        // Before acting: acting can re-enter onAttention synchronously while the issue persists.
+        handledIssues.set(result.request.session, result.request.body);
+        actOnScheduler(result.request, result.request.session);
+      }
+      return { ok: true, request: view(result.request) };
     },
 
     setAway,

@@ -139,6 +139,11 @@ function harness(opts: { manualTimers?: boolean } = {}) {
       installState: () => 'not-installed' as const,
       messagingOn: () => true,
       toolPolicy: () => ({ global: DEFAULT_TOOL_POLICY, byCli: {} }),
+      limit: {
+        resumeNow: async () => false,
+        autoResumeOn: () => true,
+        dismissIssue: () => undefined,
+      },
     },
     attention: {
       statusOf: () => ({

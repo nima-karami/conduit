@@ -122,6 +122,12 @@ export interface DomainPort
   messagingOn(): boolean;
   /** ServerSettings.mcpToolPolicy and mcpToolPolicyByCli, read per call. */
   toolPolicy(): { global: GlobalPolicy; byCli: CliPolicyLayers };
+  /** The human's answer to a usage-limit request (CON-21): docs/plans/2026-11-14-request-queue-machinery.plan.md C12. */
+  limit: {
+    resumeNow(sessionId: string): Promise<boolean>;
+    autoResumeOn(sessionId: string): boolean;
+    dismissIssue(sessionId: string): void;
+  };
 }
 
 /**
