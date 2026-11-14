@@ -100,7 +100,10 @@ await runScenario(
       ),
       'read_inbox never carried the late answer',
     );
-    const body = JSON.parse(inbox.body.slice(inbox.body.indexOf('{')));
+    // The inbox frames every body between a provenance header and footer line.
+    const body = JSON.parse(
+      inbox.body.slice(inbox.body.indexOf('{'), inbox.body.lastIndexOf('}') + 1),
+    );
     assert(
       body.answer?.outcome === 'chosen' && body.answer.values?.[0] === 'In place',
       `the late answer body is wrong: ${inbox.body}`,
