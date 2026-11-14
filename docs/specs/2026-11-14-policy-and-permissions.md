@@ -34,7 +34,7 @@ Wireframes: `docs/design-handoff/2026-11-14-shaping/CON-18/`. CLI research with 
   lane shows what Claude and Codex agents did natively.
 
 **Before → after:** claude-3 and claude-6 each carry 19 hand-set overrides today (measured). After,
-each is one choice, "Lead". Migrated leads show "Lead +2" so nothing changes silently. In v1 the
+each is one choice, "Lead". Migrated leads show "Lead +1" so nothing changes silently. In v1 the
 choice can also set the CLI's own launch posture.
 
 **What Conduit can't control:** shell commands and file edits are approved by each agent's own CLI.
@@ -194,7 +194,8 @@ A = allow, ? = ask, – = deny. Reach and conditions are today's unless shown.
   - Deleting a profile in use requires choosing a replacement.
 - **Migration** (exact):
   - Each v0.64 override becomes Worker plus one exception per changed field.
-  - An all-`on` override becomes **Lead +2**: "open_terminal: allow" and "only while on screen".
+  - An all-`on` override becomes **Lead +1**: "only while on screen" (an assignment-wide condition,
+    counted as one exception). POL-D3 = allow makes the former "open_terminal: allow" exception a no-op.
     A one-time note offers to remove the second.
   - The CLI layer becomes kind assignments.
   - off → deny, on → allow.
@@ -315,7 +316,7 @@ Every decision carries one **reason**. An unconditional deny hides the tool from
 | Permission request body (in REQ's card) | why line · summary · raw args · Allow once · Deny (+ reason) · Allow… (who × on × for) |
 | Activity | timeline · filters · Why drawer |
 | Machine page → Permissions | own (MVP): the peer's profile + exceptions + Activity. v1: capabilities, guest grants, Share |
-| Session badge | non-default profile ("Lead +2"); machine badge for remote |
+| Session badge | non-default profile ("Lead +1"); machine badge for remote |
 
 ## 5. Behaviour and flows
 
@@ -436,7 +437,7 @@ Feature: Policy and permissions
   Scenario: Upgrade keeps behaviour
     Given a v0.64 override with access "on" for all 19 tools
     When Conduit starts after the upgrade
-    Then the session shows "Lead +2" (open_terminal allow; only while on screen)
+    Then the session shows "Lead +1" (only while on screen)
     And every tool resolves as before and no native launch flag changes
 
   Scenario: A lead acts off screen
@@ -480,6 +481,7 @@ Feature: Policy and permissions
     When the link to win-box is revoked
     Then the grant shows "revoked" and win-box's open requests are withdrawn by Conduit
 
+  # REQ v1 (REQ-D18): answer_request / escalate_request and floor (e) are not built in the CON-24 MVP.
   Scenario: Escalation stays on the opener chain
     Given claude-3 opened codex-2 and codex-2 opened codex-5
     When codex-5's request is escalated to claude-3
@@ -538,7 +540,7 @@ Feature: Policy and permissions
 
 ## 15. Decisions Needed
 
-**Locked by the owner (2026-11-14, CON-24 build):** POL-D1 profiles over rules + Activity · POL-D2 not yet (observed lane only) · **POL-D3 allow**: a Lead opens other sessions *and* plain terminals without asking ("if it has to ask every time, it's not a lead anymore"); a plain terminal runs commands outside any CLI's own approval, which is the accepted cost · POL-D4 yes, a Lead acts off screen · POL-D5, POL-D6, POL-D7 at their defaults · POL-D14 observed lane in MVP for Claude and Codex. POL-D13 and POL-D15 are v1 and stay open.
+**Locked by the owner (2026-11-14, CON-24 build):** POL-D1 profiles over rules + Activity · POL-D2 not yet (observed lane only) · **POL-D3 allow**: a Lead opens other sessions *and* plain terminals without asking ("if it has to ask every time, it's not a lead anymore"); a plain terminal runs commands outside any CLI's own approval, which is the accepted cost · POL-D4 yes, a Lead acts off screen · POL-D5, POL-D6, POL-D7 at their defaults · POL-D14 observed lane in MVP for Claude and Codex. POL-D13 and POL-D15 are v1 and stay open. **CON-24 plan rulings (lead, 2026-11-14):** Lead +1 replaces Lead +2 (POL-D3 made the open_terminal exception a no-op); floor (e) and `answer_request`/`escalate_request` move to REQ v1 with escalation; POL-D5 applies to migrated CLI layers, with an Activity note.
 
 - **[high] POL-D1, shape:** **profiles over rules + Activity, D in v1 (default)** / A / B / C.
 - **[high] POL-D2, decide native approvals:**
@@ -551,7 +553,7 @@ Feature: Policy and permissions
 - **[high] POL-D3, Lead's `open_terminal`:** **ask (default)** / allow.
 - **[high] POL-D4, Lead off screen:** **yes (default)** / keep "while on screen". Measured:
   claude-3 made no off-screen act calls; its off-screen work was messaging. But Lead is opt-in trust,
-  "on screen" is meaningless remotely, and migration stays exact (Lead +2).
+  "on screen" is meaningless remotely, and migration stays exact (Lead +1).
 - **[high] POL-D5, self-asserted kinds:** **kind assignments and grants apply only to sessions
   Conduit launched (default)** / anyone claiming the kind.
 - **[high] POL-D6, audit store failure:** **local fails open with a warning, guests fail closed

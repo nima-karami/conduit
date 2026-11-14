@@ -391,11 +391,11 @@ None. Nothing repeats enough to be worth a script; the fixture scrub in T0.2 is 
 
 ### Slice 0: Contracts and fixtures (orchestrator)
 **Check:** `npx tsc --noEmit -p .` exits 0. Fixtures parse as JSON.
-- T0.1: merge the CON-21 tip, write `policy-types.ts` (C1), commit.
-- T0.2: record a real Claude Code 2.1.325 PostToolUse payload. Run `claude -p` in a scratch folder with a `--settings` hook that tees stdin; this is a CLI, no GUI. Capture Bash, Edit and an MCP call, scrub them, and save as `test/fixtures/claude-hooks/post-tool-use-{bash,edit,mcp}.json`. Also write a scrubbed 6-line Codex `actions.jsonl` covering CommandExecution, FileChange and McpToolCall. If the PostToolUse shape doesn't carry `tool_name`/`tool_input`, stop and report to the lead before Slice 1 lane C.
+- T0.1: merge the CON-21 tip. Write `policy-types.ts` (C1 minus `GrantChoice` and `PermissionAnswer`) on the lane base branch `con24-s1-base`.
+- T0.2: fixtures are **scrubbed of home paths, tokens, account and user ids, and file contents** before commit; grep the files for `/home/`, `namemenima`, `account`, `token` and `creator_` before staging. Record a real Claude Code 2.1.325 PostToolUse payload. Run `claude -p` in a scratch folder with a `--settings` hook that tees stdin; this is a CLI, no GUI. Capture Bash, Edit and an MCP call, scrub them, and save as `test/fixtures/claude-hooks/post-tool-use-{bash,edit,mcp}.json`. Also write a scrubbed 6-line Codex `actions.jsonl` covering CommandExecution, FileChange and McpToolCall. If the PostToolUse shape doesn't carry `tool_name`/`tool_input`, stop and report to the lead before Slice 1 lane C.
 
 ### Slice 1: Pure core
-**Check:** `npx vitest run test/unit/policy-engine.test.ts test/unit/policy-profiles.test.ts test/unit/policy-file.test.ts test/unit/grant-store.test.ts test/unit/activity-log.test.ts test/unit/activity-log-fs.test.ts test/unit/codex-rollout-actions.test.ts test/unit/claude-tool-actions.test.ts` passes, and so does `npx tsc --noEmit`. `npm run verify` is expected to be red only on fallow unused exports until Slice 2 wires them; the exit code is reported either way.
+**Check:** `npx vitest run test/unit/policy-engine.test.ts test/unit/policy-profiles.test.ts test/unit/policy-file.test.ts test/unit/grant-store.test.ts test/unit/activity-log.test.ts test/unit/activity-log-fs.test.ts test/unit/codex-rollout-actions.test.ts test/unit/claude-tool-actions.test.ts` passes, and so does `npx tsc --noEmit`. `npm run verify` exits 0 after each lane merge (fallow-safe placement, see Verification).
 **Parallel groups:** G1: T1.1 · G2: T1.2 · G3: T1.3
 
 #### Task 1.1 (lane A): built-in profiles and engine
@@ -521,6 +521,7 @@ Failing tests:
 - 'policy turned allow while waiting does not run until answered'.
 - 'late allowed+grant creates the grant, posts a retry notice and never runs'.
 - 'cap 3 waiting asks per caller unchanged'.
+- 'a waiting permission ask counts once in waitingAsks/awaitingApproval and the tray count while absent from requests.open' (DN-3).
 - 'ask and answer each write an Activity row; raw args only in ask-args'.
 
 **e2e** `test/e2e/policy-permission-requests.e2e.mjs`:
@@ -555,6 +556,11 @@ Failing tests:
 - **Run report** at `docs/runs/2026-11-14-CON-24/report.md`.
 
 ## Verification
+- **Fallow-safe placement (lead process note 1).** Test files are fallow entry points (`.fallowrc.json`), so an export is flagged only when nothing references it, not even a test. Two consequences:
+  - Every lane must leave **each new export referenced** by its own tests or by merged code. The lane runs `npm run fallow:check` before handing back.
+  - A type lives with its first consumer. `GrantChoice` lives in `grant-store.ts` (S1-B), `PermissionAnswer` in `request-types.ts` (S3), `PolicyUiState` in `ui-types.ts` (S2).
+- **`policy-types.ts` placement.** It contains only what the engine consumes. It is committed on a lane base branch `con24-s1-base`, not on the feature branch. Lanes A, B and C fork from that base, and lane A's merge carries it.
+- **Merge order in S1:** A first, then B and C. Each merge must reach verify exit 0. A red verify stops the slice.
 - **Per task:** the lane's named unit tests, red first, then `npm run verify:quick` in the lane worktree.
 - **Per merge** (one lane at a time): `npm run verify; echo "exit=$?"` on the merged tree.
 - **Per slice:** the slice's remote e2e names, then `--affected`. Run ids go to the lead.
@@ -563,14 +569,13 @@ Failing tests:
 ## Deviation rule
 If a task's assumption turns out wrong (the piece it builds on is misaligned, or a locked signature doesn't fit reality), that task **stops**, and fixing the misaligned piece becomes the work. Never a shim, second copy, special case, widened type, fallback, or an override patched in place of its semantic source. A lane reports to the orchestrator, which fixes the contract. A change to C1 or a locked decision goes to the lead first.
 
-## Decisions Needed
-- **[high] DN-1 Lead +2 → Lead +1.** POL-D3 makes "open_terminal: allow" a no-op on Lead, so a migrated all-on lead shows "Lead +1". Default taken: Lead +1 (an empty exception would be noise). The spec's acceptance text needs the same edit.
-- **[high] DN-2 the old policy editors.** They read `session.mcpToolPolicy` and `settings.mcpToolPolicy*` directly (`mcp-tools-dialog.tsx:64`, `settings-modal.tsx:906-944`). After migration those keys are frozen.
-  - Default taken: the editors read a projection (`McpUiState.policy.legacy`), and their edits become exceptions. That changes two components' data source, with no visual change.
-  - Alternatives: (b) hide both editors until CON-25; (c) a two-way sync into the legacy keys, rejected as a second source of truth with write loops.
-- **[high] DN-3 `permission` requests in CON-20's Needs-you UI.** The pop-up has no `permission` template. Default taken: `RequestsUiState` leaves out `permission` until CON-25, and the card stays the only answer surface. The requests stay in the queue, `requests.json` and History data.
-- **[high] DN-4 floor (e) and escalation.** `answer_request` and `escalate_request` don't exist (REQ v1). Default taken: not built; the acceptance scenario "Escalation stays on the opener chain" moves to REQ v1.
-- **[normal] DN-5 POL-D5 vs today's CLI layer.** Today a CLI layer applies to any session whose handle has the prefix, shells included. After migration it applies only to Conduit-launched sessions. The CLI layer on this machine is measured empty (spec §2.1). Default taken: apply POL-D5, and write one `note` Activity row per migrated kind assignment saying so.
-- **[normal] DN-6 "until this session ends".** Default taken: the session is deleted (closed). A PTY exit or relaunch of the same session keeps the grant, and 7-day decay still applies.
-- **[normal] DN-7 Revoke and remote acceptance scenarios.** "Revoke ends a peer's grants" and "Remote own lead is asked" need NET's link. Default taken: covered by engine unit tests (remote principal, own-peer default, capability floor). `GrantStore.revokePeer` is left for NET (no caller here).
-- **[normal] DN-8 hook cost.** Each matched Claude tool call spawns the hook client (Electron as Node, 5 s timeout). Default taken: the matcher limits it to Bash, edits and MCP; latency is measured in T0.2 and reported.
+## Decisions (resolved by the lead, 2026-11-14)
+- **DN-1:** Lead +1. The spec's text is fixed on this branch.
+- **DN-2:** projection via `McpUiState.policy.legacy`. Editor edits become exceptions, with no visual change, and the editors stay visible.
+- **DN-3:** `permission` stays out of `RequestsUiState` (the Needs you panel) until CON-25. **Waiting permission asks still count** in the status bar's Needs you count and in the tray, through `McpUiState.waitingAsks`/`awaitingApproval` and the CON-21 tray count. Nothing may drop out of a count; T3.2 has the test.
+- **DN-4:** floor (e), `answer_request` and `escalate_request` move to REQ v1. Noted in the spec.
+- **DN-5:** apply POL-D5, plus one `note` Activity row per migrated kind assignment.
+- **DN-6:** a relaunch keeps the grant; only closing or deleting the session ends it.
+- **DN-7:** revoke and remote-lead scenarios are covered by engine unit tests only; `revokePeer` is left for NET.
+- **DN-8:** matcher plus measurement. **If the hook adds more than about 20 ms per call at the median, stop and report to the lead before S4 ships.**
+- **DN-9:** the own-permissions box is not built.
