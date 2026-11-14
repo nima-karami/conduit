@@ -173,6 +173,8 @@ export interface NeedsYouFact {
 export interface AttentionPort
   extends Pick<SessionActivity, 'lastOutputAt' | 'setVisible' | 'dropWindow'> {
   statusOf(sessionId: string): ServerAttentionSnapshot;
+  /** Every session with a reported status or a resume issue, for the request queue's sources. */
+  needsYouFacts(): NeedsYouFact[];
   /**
    * The screen the host read as stuck (cli-stuck-screens), or null once it reads as recovered.
    * Outranks the program's own status while set; exit clears it.

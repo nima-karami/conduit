@@ -469,6 +469,86 @@ describe('ServerAttention — resume issue (CON-11)', () => {
   });
 });
 
+describe('ServerAttention — needs-you facts (CON-21 C11)', () => {
+  it('needsYouFacts reports a hidden permission block', () => {
+    setup();
+    at(10_000);
+    status({ state: 'blocked', kind: 'permission' });
+    expect(attention.needsYouFacts()).toEqual([
+      { sessionId: 'a', blocked: 'permission', visible: false, resumeIssue: null },
+    ]);
+  });
+
+  it('needsYouFacts reports false once the block clears', () => {
+    setup();
+    status({ state: 'blocked', kind: 'question' });
+    status({ state: 'working' });
+    expect(attention.needsYouFacts()).toEqual([
+      { sessionId: 'a', blocked: false, visible: false, resumeIssue: null },
+    ]);
+  });
+
+  it('needsYouFacts reports visible true for a shown session', () => {
+    setup();
+    status({ state: 'blocked', kind: 'auth' });
+    attention.setVisible(1, ['a']);
+    expect(attention.needsYouFacts()).toEqual([
+      { sessionId: 'a', blocked: 'auth', visible: true, resumeIssue: null },
+    ]);
+  });
+
+  it('needsYouFacts carries the resume issue and drops it when cleared', () => {
+    setup();
+    attention.setResumeIssue('a', 'no response');
+    expect(attention.needsYouFacts()).toEqual([
+      { sessionId: 'a', blocked: false, visible: false, resumeIssue: 'no response' },
+    ]);
+    attention.setResumeIssue('a', null);
+    expect(attention.needsYouFacts()).toEqual([]);
+  });
+
+  it('entering blocked while visible still fires onChange', () => {
+    setup();
+    attention.setVisible(1, ['a']);
+    let changes = 0;
+    attention.onChange(() => changes++);
+    status({ state: 'blocked', kind: 'permission' });
+    expect(changes).toBe(1);
+  });
+
+  it('a block changing kind fires onChange; a repeated kind does not', () => {
+    setup();
+    status({ state: 'blocked', kind: 'permission' });
+    let changes = 0;
+    attention.onChange(() => changes++);
+    status({ state: 'blocked', kind: 'question' });
+    status({ state: 'blocked', kind: 'question' });
+    expect(changes).toBe(1);
+  });
+
+  it('a visibility change alone fires onChange, including a window closing', () => {
+    setup();
+    status({ state: 'blocked', kind: 'permission' });
+    let changes = 0;
+    attention.onChange(() => changes++);
+    attention.setVisible(1, ['a']);
+    expect(changes).toBe(1);
+    attention.dropWindow(1);
+    expect(changes).toBe(2);
+    expect(attention.needsYouFacts()[0]?.visible).toBe(false);
+  });
+
+  it('forgetting a session with a fact fires onChange and removes it', () => {
+    setup();
+    attention.setResumeIssue('a', 'no response');
+    let changes = 0;
+    attention.onChange(() => changes++);
+    attention.forgetSession('a');
+    expect(changes).toBe(1);
+    expect(attention.needsYouFacts()).toEqual([]);
+  });
+});
+
 describe('ServerAttention — stuck screens (CON-151)', () => {
   const stuckFact = () => {
     const s = attention.statusOf('a');
