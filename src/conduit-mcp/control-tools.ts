@@ -13,6 +13,7 @@ import {
   type MESSAGING_TOOL_NAMES,
   type Move,
   NOT_IN_SESSION_HINT,
+  type REQUEST_TOOL_NAMES,
   type Reach,
   TOOL_SPECS,
   type ToolName,
@@ -441,8 +442,11 @@ class Budget {
   }
 }
 
-/** Every non-messaging tool. */
-export type ControlTool = Exclude<ToolName, (typeof MESSAGING_TOOL_NAMES)[number]>;
+/** Every tool that runs through the control flow: neither messaging nor requests. */
+export type ControlTool = Exclude<
+  ToolName,
+  (typeof MESSAGING_TOOL_NAMES)[number] | (typeof REQUEST_TOOL_NAMES)[number]
+>;
 
 export function createControlHandlers(deps: ControlDeps): ControlHandlers {
   const budgets = {
