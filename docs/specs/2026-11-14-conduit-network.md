@@ -338,6 +338,24 @@ Also checked: OpenAI (https://openai.com/policies/terms-of-use, UNVERIFIED), Ope
 | Impersonation | ✓ | ✓ | Identity is the key; addresses carry the machine id |
 | Local pipe exposure (M28) | ✓ | ✓ | Separate authenticated link endpoint; C2/MCP stay local |
 
+### 6.5 As built: pairing and link security (CON-27, lead-approved 2026-11-14)
+- **Pairing is numeric comparison, not a PAKE.** Each server sends its Ed25519 key and
+  certificate in plain-TCP messages on a pairing port. That port is open only for the 10-minute
+  window and only for one attempt. The joiner commits to its key and nonce before it sees the
+  opener's, so a man in the middle gets one 2⁻³² guess at the 32-bit fingerprint per window. The
+  person comparing fingerprints on both screens is the authentication.
+- **Residual: a person who confirms without comparing.** An attacker on the path during the window
+  can then pair. CPace would have stopped that, but it was ruled out to avoid owning PAKE code.
+- **Residual: passive observers during a window.** Someone watching the LAN during a window sees the
+  three words, both self-names, the listen addresses and both public keys. The code is single-use
+  and burns on the first connection. A hijacked join shows a fingerprint that won't match.
+- **Links use verified TLS.** Each link is TLS 1.3 with mutual certificates, and the only trusted CA
+  is the peer's own certificate, pinned at pairing (SAN = machine id). `rejectUnauthorized` stays
+  on, and a raw-key pin is checked as well. A revoked peer's certificate stays trusted for 30 days,
+  only so its next handshake can be told `revoked`.
+- **The owner private key never travels in pairing.** It crosses the first verified link once, and
+  the receiver accepts it only if it matches the public owner key both people confirmed.
+
 ## 7. Acceptance criteria
 EARS (MVP unless tagged):
 - When both people confirm the same fingerprint, the system shall store the link with the chosen trust
