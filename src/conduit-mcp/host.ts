@@ -173,6 +173,7 @@ export interface ConduitMcpHostDeps extends Omit<McpHostDeps, 'attention'> {
   platform: HostPlatform;
   e2e: boolean;
   ownerWindowOf(sessionId: string): number | null;
+  appConnected(): boolean;
   windowReady(windowId: number): boolean;
   onScreen(windowId: number, sessionId: string): boolean;
   detectGraceMs?: number;
@@ -229,8 +230,6 @@ export interface ConduitMcpHost extends LaunchPort, DraftPort {
     ids: LaunchIds,
     binding: CliBindingRecord | null,
   ): void;
-  /** No app for the grace (D8): every waiting ask ends `ui_unavailable`. */
-  denyAsksUnavailable(): void;
   refresh(): void;
   uiState(): McpUiState;
   /** `senderId`: the window the message came from; an ask answer counts only from its own window. */
@@ -1227,6 +1226,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       const w = deps.ownerWindowOf(sessionId);
       return w !== null && deps.windowReady(w) ? w : null;
     },
+    appConnected: () => deps.appConnected(),
     sendToOwner: (sessionId, msg) => sendToOwner(sessionId, msg),
     flashOwner: (sessionId) => flashOwner(sessionId),
     resolve: (sessionId, tool) =>
@@ -1343,6 +1343,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           policy: resolved.policy,
           ownerReady: () => windowId !== null && deps.windowReady(windowId),
           onScreen: () => windowId !== null && deps.onScreen(windowId, sessionId),
+          appConnected: deps.appConnected(),
         });
         if (refused) return { ok: false, error: refused };
         const caller = { handle, sessionId };
@@ -2319,16 +2320,6 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           ? binding
           : undefined;
       scheduleBroadcast();
-    },
-
-    denyAsksUnavailable() {
-      for (const ask of flow.denyUnavailable())
-        deps.log.info('conduit-mcp', 'ask denied: no app', {
-          askId: ask.askId,
-          sessionId: ask.sessionId,
-          tool: ask.tool,
-          code: 'ui_unavailable',
-        });
     },
 
     refresh() {

@@ -6,7 +6,7 @@ export type AppConnection = object;
 
 export interface PresenceMirror {
   update(conn: AppConnection, windows: readonly WindowPresence[]): void;
-  /** An app disconnect is not a window reset: its asks wait out the grace (F7 step 3). */
+  /** An app disconnect is not a window reset: its asks wait out their budget (REQ-D21c). */
   disconnect(conn: AppConnection): void;
   ownerWindowOf(sessionId: string): number | null;
   windowReady(windowId: number): boolean;

@@ -244,6 +244,7 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
           policy: { access: 'on', when: 'viewing' },
           ownerReady: () => false,
           onScreen: () => false,
+          appConnected: true,
         }),
       ).toBeNull();
     },
@@ -256,6 +257,7 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
     policy: on,
     ownerReady: () => true,
     onScreen: () => true,
+    appConnected: true,
   };
   const throws = () => {
     throw new Error('thunk ran');
@@ -301,9 +303,46 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
           policy: { access: 'on' },
           ownerReady: () => false,
           onScreen: () => false,
+          appConnected: true,
         }),
       ).toBeNull();
     }
+  });
+
+  it('gate lets an always ask through with no app', () => {
+    expect(
+      gateToolCall({
+        ...base,
+        tool: 'open_session',
+        policy: { access: 'ask', when: 'always' },
+        ownerReady: () => false,
+        appConnected: false,
+      }),
+    ).toBeNull();
+  });
+
+  it('gate refuses an always ask for a window tool with no app', () => {
+    expect(
+      gateToolCall({
+        ...base,
+        tool: 'open_file',
+        policy: { access: 'ask', when: 'always' },
+        ownerReady: () => false,
+        appConnected: false,
+      })?.code,
+    ).toBe('window_not_ready');
+  });
+
+  it('gate still refuses a viewing ask with no app', () => {
+    expect(
+      gateToolCall({
+        ...base,
+        tool: 'open_session',
+        policy: { access: 'ask', when: 'viewing' },
+        ownerReady: () => false,
+        appConnected: false,
+      })?.code,
+    ).toBe('window_not_ready');
   });
 
   it('on server actions run without a ready owner window, while viewing still checks visibility', () => {
