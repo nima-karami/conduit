@@ -240,7 +240,7 @@ interface LimitRule {
   (`server/services.ts` ~321 → MCP host `termInput`) after the episode began; Conduit's own
   writer and MCP `send_input` don't count. The Limit monitor records it as
   `resumed{by:'human-input'}` (producer: that path; consumer: the Limit monitor).
-- **R5 Delivery location.** The change lives in `src/pty-writer.ts`: `submit(sessionId, text,
+- **R5 Delivery location** (amended below: the quiet wait is for Scheduler deliveries only). The change lives in `src/pty-writer.ts`: `submit(sessionId, text,
   {bracketed})` wraps the paste itself, and the fixed `gapMs` becomes a wait on a new dep
   `outputQuiet(sessionId, quietMs=300, maxMs=5000): Promise<void>` supplied by
   `server/runtime/typing.ts` from the runtime's output events, with a 120 ms floor. `beforeText`

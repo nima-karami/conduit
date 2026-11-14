@@ -18,11 +18,7 @@ export interface SubmitEnterOptions {
 
 export interface SubmitOptions extends SubmitHooks {
   bracketed?: boolean;
-  /**
-   * When the Enter follows the text. `gap` (default): the fixed ENTER_FLOOR_MS, as notices and every
-   * other host write always had. `quiet`: also wait for the echo to settle — Scheduler deliveries
-   * only, whose long pastes a TUI may still be drawing (spec 2026-11-13 R5, amended).
-   */
+  // see spec 2026-11-13-scheduler-auto-resume "R5 amended"
   settle?: 'gap' | 'quiet';
 }
 
@@ -71,7 +67,7 @@ async function hookAllows(hook: (() => boolean | Promise<boolean>) | undefined):
 export function createPtyWriter(deps: PtyWriterDeps): PtyWriter {
   const chains = new Map<string, Promise<unknown>>();
 
-  const beforeEnter = (sessionId: string, settle: SubmitOptions['settle']) =>
+  const settleBeforeEnter = (sessionId: string, settle: SubmitOptions['settle']) =>
     settle === 'quiet'
       ? Promise.all([
           deps.sleep(ENTER_FLOOR_MS),
@@ -91,7 +87,7 @@ export function createPtyWriter(deps: PtyWriterDeps): PtyWriter {
     if (deps.generation(sessionId) !== gen) return 'generation-changed';
     const payload = opts.bracketed ? `${PASTE_START}${text}${PASTE_END}` : text;
     if (!deps.input(sessionId, payload)) return 'write-failed';
-    await beforeEnter(sessionId, opts.settle);
+    await settleBeforeEnter(sessionId, opts.settle);
     if (deps.generation(sessionId) !== gen) return 'generation-changed';
     if (!(await hookAllows(opts.beforeEnter))) return 'withheld';
     // beforeEnter may wait out a slow echo: a respawn meanwhile must not get the Enter either.
@@ -145,7 +141,7 @@ export function createPtyWriter(deps: PtyWriterDeps): PtyWriter {
           if (gen === undefined) return 'no-pty';
           if (!write()) return 'write-failed';
           if (!opts.submit) return 'submitted';
-          await beforeEnter(sessionId, 'gap');
+          await settleBeforeEnter(sessionId, 'gap');
           if (deps.generation(sessionId) !== gen) return 'generation-changed';
           if (!(await hookAllows(opts.beforeEnter))) return 'withheld';
           if (deps.generation(sessionId) !== gen) return 'generation-changed';

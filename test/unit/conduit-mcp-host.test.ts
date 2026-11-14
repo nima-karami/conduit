@@ -136,6 +136,8 @@ interface Harness {
   writer: ReturnType<typeof createPtyWriter>;
   /** Gap releases, when the harness holds submit gaps. */
   gaps: Array<() => void>;
+  /** Calls to the writer's echo-quiet wait; notices must never make one (spec R5 amended). */
+  quietCalls: () => number;
   /** Late-echo poll sleeps, when the harness holds them so cancel can be observed alive. */
   lateEchoSleeps: Array<{ ms: number; release(): void }>;
   releaseLateEcho(): Promise<void>;
@@ -351,6 +353,7 @@ function harness(
     notifyAttention();
   };
   let submitEnterCalls = 0;
+  let quietCalls = 0;
   const writer = createPtyWriter({
     generation: (id) => gens.get(id),
     input: (id, data) => {
@@ -364,9 +367,13 @@ function harness(
       else output(id, data);
       return true;
     },
-    // Notices use the fixed gap (settle 'gap'): the sleep is the gap the tests hold.
+    // Notices use the fixed gap (settle 'gap'): the sleep is the gap the tests hold. A notice that
+    // opted into the echo-quiet wait would hang here and fail its test (spec R5 amended).
     sleep: () => (opts.holdGaps ? new Promise<void>((r) => gaps.push(r)) : Promise.resolve()),
-    outputQuiet: () => Promise.resolve(),
+    outputQuiet: () => {
+      quietCalls += 1;
+      return new Promise<void>(() => {});
+    },
   });
   const sessionStore: McpHostDeps['sessions'] = {
     get: (id: string) => sessions.get(id),
@@ -648,6 +655,7 @@ function harness(
     gens,
     writer,
     gaps,
+    quietCalls: () => quietCalls,
     lateEchoSleeps,
     releaseLateEcho,
     failEnter,
@@ -1605,6 +1613,7 @@ describe('createConduitMcpHost — notices', () => {
       expect((await cb.call('list_sessions')).content).toHaveLength(2);
       await h.host.tick();
       expect(writesTo(h, 's2')).toEqual([composeNotice(false), '\r']);
+      expect(h.quietCalls()).toBe(0);
     });
 
     it('an urgent message to a busy recipient still raises urgent-waiting while the banner shows', async () => {
