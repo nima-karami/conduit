@@ -247,9 +247,14 @@ export class ServerAttention implements AttentionPort {
       this.changed();
   }
 
-  /** Compared, not tracked per path: visibility and membership move through several paths. */
+  /**
+   * Compared, not tracked per path: visibility and membership move through several paths. Only
+   * facts that can raise or resolve a request count, so a plain idle/working report stays quiet.
+   */
   private factKey(): string {
-    return JSON.stringify(this.needsYouFacts());
+    return JSON.stringify(
+      this.needsYouFacts().filter((f) => f.blocked !== false || f.resumeIssue !== null),
+    );
   }
 
   private applyStatus(sessionId: string, status: ReportedStatus): void {
