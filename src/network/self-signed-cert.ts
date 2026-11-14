@@ -29,6 +29,14 @@ const VALIDITY = sequence(
   tlv(0x18, Buffer.from('99991231235959Z', 'ascii')),
 );
 
+const SAN_OID = Buffer.from([0x06, 0x03, 0x55, 0x1d, 0x11]);
+
+/** [3] extensions with one SAN dNSName, so Node's default host check passes for servername=CN. */
+function subjectAltName(dnsName: string): Buffer {
+  const names = sequence(tlv(0x82, Buffer.from(dnsName, 'ascii')));
+  return tlv(0xa3, sequence(sequence(SAN_OID, tlv(0x04, names))));
+}
+
 export function rawEd25519(publicKey: KeyObject): Buffer {
   if (publicKey.asymmetricKeyType !== 'ed25519') throw new Error('expected an Ed25519 key');
   const { x } = publicKey.export({ format: 'jwk' });
@@ -50,6 +58,7 @@ export function selfSignedCert(
     VALIDITY,
     subject,
     keys.publicKey.export({ type: 'spki', format: 'der' }),
+    subjectAltName(commonName),
   );
   const signature = sign(null, tbs, keys.privateKey);
   const der = sequence(

@@ -13,6 +13,8 @@ describe('selfSignedCert', () => {
     expect(x.verify(k.publicKey)).toBe(true);
     expect(x.subject).toBe('CN=m-0123abcd');
     expect(x.issuer).toBe('CN=m-0123abcd');
+    expect(x.subjectAltName).toBe('DNS:m-0123abcd');
+    expect(x.checkHost('m-0123abcd')).toBe('m-0123abcd');
     expect(rawEd25519(x.publicKey).equals(rawEd25519(k.publicKey))).toBe(true);
   });
 
