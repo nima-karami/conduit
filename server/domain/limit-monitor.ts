@@ -17,6 +17,9 @@ const EPISODE_EXPIRY_MS = 24 * 60 * 60_000;
 const MAX_RESET_AHEAD_MS = 8 * 24 * 60 * 60_000;
 const OFFER_SUPPRESS_MS = 30 * 60_000;
 const SWEEP_MS = 10 * 60_000;
+/** An in-flight delivery waits at most ECHO_MAX_MS (src/pty-writer.ts) before Enter. */
+const OUTCOME_POLL_MS = 250;
+const OUTCOME_TRIES = 40;
 /** R13: how long busy must hold before a rules-only session counts as resumed. */
 export const BUSY_RESUME_MS = 2_000;
 /** R13: a busy session at fire time is re-checked after this much output quiet… */
@@ -55,7 +58,6 @@ export interface LimitMonitorDeps {
   onChange(): void;
   log: {
     info(msg: string, data?: object): void;
-    debug(msg: string, data?: object): void;
     warn(msg: string, data?: object): void;
   };
 }
@@ -64,6 +66,8 @@ export interface LimitMonitor {
   signal(s: LimitSignal): void;
   /** A structured adapter speaks for the session (Claude launched with hooks, Codex bound): R13. */
   onAdapterLive(sessionId: string): void;
+  /** The effective auto-resume mode may have changed (global setting or the session's override). */
+  onModeChanged(): void;
   /** PTY output arrived: schedule a trailing-edge rules scan (R6). */
   onData(sessionId: string): void;
   /** Attention's busy flag for the session, read on every attention change (R3, R13). */
@@ -96,20 +100,38 @@ const isStructured = (source: SignalSource): boolean => !source.startsWith('rule
 
 export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
   const episodes = new Map<string, LimitEpisode>();
-  const resetInfo = new Map<string, { at: number; windows: ResetWindows }>();
+  const resetInfo = new Map<string, ResetWindows>();
   /** Sessions that delivered a structured signal: their rules only supply a reset time (§3). */
   const structured = new Set<string>();
   const scans = new Map<string, RuleScanState>();
-  /** The rule match that resolved the last episode: a notice still on screen must not reopen it. */
+  /**
+   * Rule matches are keyed by rule id + the matched reset TEXT, never the parsed instant: a clock
+   * read after its time rolls to tomorrow, so the same notice would look new (review B4).
+   */
   const resolvedRuleKey = new Map<string, string>();
+  /** The key of the rule match the open episode came from or was last confirmed by. */
+  const episodeRuleKey = new Map<string, string>();
+  /** Per session: a scan has not matched since the last delivery started (§2 step 5). */
+  const ruleAbsentSinceSend = new Map<string, boolean>();
   const ruleMessage = new Map<string, string>();
+  /** An outcome that arrived while the resume was in flight, applied once it is verifying. */
+  const pendingOutcome = new Map<
+    string,
+    {
+      outcome: { kind: 'resumed' } | { kind: 'limited'; resetAt: number };
+      tries: number;
+      timer: unknown;
+    }
+  >();
   const dismissed = new Map<string, { resetAt: number | null; at: number }>();
-  const busy = new Map<string, { on: boolean; timer: unknown }>();
+  const busy = new Map<string, { on: boolean; timer: unknown; episodeId: string | null }>();
   /** R13: resume jobs deferred because the session was busy at fire time, by job id. */
   const deferred = new Map<
     string,
-    { sessionId: string; since: number; quiet: unknown; giveUp: unknown; expired: boolean }
+    { sessionId: string; nextAt: number; quiet: unknown; giveUp: unknown; expired: boolean }
   >();
+  /** Sessions with a live proposed job whose offer is not shown yet (one offer slot). */
+  const offerQueue: LimitOffer[] = [];
   let pendingOffer: LimitOffer | null = null;
   let seq = 0;
 
@@ -148,24 +170,48 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
 
   /** §3 "Signals": the window at ≥100 % (the later one if several), else the soonest. */
   const fromResetInfo = (sessionId: string, now: number): number | null => {
-    const info = resetInfo.get(sessionId);
-    if (!info) return null;
-    const live = info.windows.filter((w) => plausible(w.resetAt, now) !== null);
+    const windows = resetInfo.get(sessionId);
+    if (!windows) return null;
+    const live = windows.filter((w) => plausible(w.resetAt, now) !== null);
     const full = live.filter((w) => (w.usedPct ?? 0) >= 100);
     if (full.length > 0) return Math.max(...full.map((w) => w.resetAt));
     if (live.length === 0) return null;
     return Math.min(...live.map((w) => w.resetAt));
   };
 
-  const setOffer = (offer: LimitOffer | null): void => {
-    pendingOffer = offer;
+  const setOffer = (offer: LimitOffer): void => {
+    if (pendingOffer && pendingOffer.sessionId !== offer.sessionId) {
+      const i = offerQueue.findIndex((o) => o.sessionId === offer.sessionId);
+      if (i >= 0) offerQueue[i] = offer;
+      else offerQueue.push(offer);
+    } else pendingOffer = offer;
     deps.onChange();
+  };
+
+  /** The next queued offer whose session still has a proposed job. */
+  const nextOffer = (): void => {
+    pendingOffer = null;
+    while (offerQueue.length > 0) {
+      const o = offerQueue.shift();
+      if (o && liveResumeJob(o.sessionId)?.state === 'proposed') {
+        pendingOffer = o;
+        return;
+      }
+    }
+  };
+
+  const dropOffer = (sessionId: string): void => {
+    const i = offerQueue.findIndex((o) => o.sessionId === sessionId);
+    if (i >= 0) offerQueue.splice(i, 1);
+    if (pendingOffer?.sessionId === sessionId) nextOffer();
   };
 
   const closeEpisode = (ep: LimitEpisode, state: LimitEpisode['state'], why: string): void => {
     ep.state = state;
     deps.setResumeIssue(ep.sessionId, null);
-    if (pendingOffer?.sessionId === ep.sessionId) pendingOffer = null;
+    dropOffer(ep.sessionId);
+    episodeRuleKey.delete(ep.sessionId);
+    ruleMessage.delete(ep.sessionId);
     deps.log.info('episode ended', { sessionId: ep.sessionId, episodeId: ep.id, state, why });
     deps.onChange();
   };
@@ -185,6 +231,8 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
     const existing = liveResumeJob(ep.sessionId);
     // A delivery in flight answers through resolveVerify, never a second arm (§2 step 5).
     if (existing && ['checking', 'sending', 'verifying'].includes(existing.state)) return;
+    // A re-arm moves the fire time: a busy deferral of the old time no longer applies.
+    if (existing) clearDeferral(existing.id);
     const proposed = mode === 'ask' && existing?.state !== 'armed' && existing?.state !== 'waiting';
     if (proposed) {
       const d = dismissed.get(ep.sessionId);
@@ -213,7 +261,31 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
     }
   };
 
-  const onLimited = (s: Extract<LimitSignal, { kind: 'limited' }>): void => {
+  /** §2 step 5 outcome for a job still in checking/sending: held until it reaches verifying. */
+  const applyWhenVerifying = (
+    sessionId: string,
+    outcome: { kind: 'resumed' } | { kind: 'limited'; resetAt: number },
+  ): void => {
+    const prev = pendingOutcome.get(sessionId);
+    if (prev) deps.clearTimer(prev.timer);
+    const attempt = (tries: number): void => {
+      pendingOutcome.delete(sessionId);
+      const job = liveResumeJob(sessionId);
+      if (job?.state === 'verifying') {
+        deps.scheduler.resolveVerify(sessionId, outcome);
+        return;
+      }
+      if (!job || !['checking', 'sending'].includes(job.state) || tries >= OUTCOME_TRIES) return;
+      pendingOutcome.set(sessionId, {
+        outcome,
+        tries,
+        timer: deps.setTimer(OUTCOME_POLL_MS, () => attempt(tries + 1)),
+      });
+    };
+    attempt(0);
+  };
+
+  const onLimited = (s: Extract<LimitSignal, { kind: 'limited' }>, ruleKey?: string): void => {
     const now = deps.now();
     const fromRule = !isStructured(s.source);
     if (!fromRule) structured.add(s.sessionId);
@@ -222,44 +294,49 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
     const open = ep?.state === 'open' ? ep : undefined;
 
     if (fromRule) {
-      const key = `${s.source}@${s.resetAt ?? 'unknown'}`;
-      if (!open && resolvedRuleKey.get(s.sessionId) === key) return;
+      if (!open && ruleKey !== undefined && resolvedRuleKey.get(s.sessionId) === ruleKey) return;
       // A structured adapter is speaking for this session: the rule may only fill in the time.
       if (structured.has(s.sessionId) && !(open && open.resetAt === null && resetAt !== null)) {
         return;
       }
     }
 
-    const verifying = liveResumeJob(s.sessionId);
-    if (open && verifying?.state === 'verifying') {
-      // §2 step 5. A rule's notice can linger on screen after delivery, so only a later reset
-      // counts from a rule; a structured limit is a fresh event.
-      if (fromRule && !(resetAt !== null && open.resetAt !== null && resetAt > open.resetAt)) {
-        return;
+    const job = liveResumeJob(s.sessionId);
+    if (open && job && ['checking', 'sending', 'verifying'].includes(job.state)) {
+      // §2 step 5. A notice lingering on screen after delivery is not "limited again": a rule
+      // counts only when its notice came back (absent since the send) or changed.
+      if (fromRule) {
+        const back = ruleAbsentSinceSend.get(s.sessionId) === true;
+        const changed = ruleKey !== undefined && ruleKey !== episodeRuleKey.get(s.sessionId);
+        if (!back && !changed) return;
+        if (ruleKey !== undefined) episodeRuleKey.set(s.sessionId, ruleKey);
+        ruleAbsentSinceSend.set(s.sessionId, false);
       }
       const next = resetAt ?? open.resetAt;
       if (next === null) {
-        deps.scheduler.cancel(verifying.id, 'still limited, reset time unknown');
+        deps.scheduler.cancel(job.id, 'still limited, reset time unknown');
         deps.setResumeIssue(s.sessionId, ISSUE_RESET_UNKNOWN);
         return;
       }
       open.resetAt = Math.max(next, now);
       deps.onChange();
-      deps.scheduler.resolveVerify(s.sessionId, { kind: 'limited', resetAt: open.resetAt });
+      applyWhenVerifying(s.sessionId, { kind: 'limited', resetAt: open.resetAt });
       return;
     }
 
     if (open) {
+      if (fromRule && ruleKey !== undefined) episodeRuleKey.set(s.sessionId, ruleKey);
       const upgraded = fromRule ? open.source : s.source;
       const nextReset = resetAt ?? open.resetAt;
       if (upgraded === open.source && nextReset === open.resetAt) {
         if (open.resetAt === null) deps.setResumeIssue(s.sessionId, ISSUE_RESET_UNKNOWN);
         return;
       }
+      const resetChanged = nextReset !== open.resetAt;
       open.source = upgraded;
       open.resetAt = nextReset;
       deps.onChange();
-      armOrPropose(open, s.detail);
+      if (resetChanged) armOrPropose(open, s.detail);
       return;
     }
 
@@ -273,6 +350,7 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
       state: 'open',
     };
     episodes.set(s.sessionId, ep);
+    if (fromRule && ruleKey !== undefined) episodeRuleKey.set(s.sessionId, ruleKey);
     const st = scans.get(s.sessionId);
     if (st) st.misses = 0;
     deps.log.info('episode opened', {
@@ -287,7 +365,7 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
 
   const onResetInfo = (s: Extract<LimitSignal, { kind: 'reset-info' }>): void => {
     structured.add(s.sessionId);
-    resetInfo.set(s.sessionId, { at: s.at, windows: s.windows });
+    resetInfo.set(s.sessionId, s.windows);
     const open = episodes.get(s.sessionId);
     if (open?.state !== 'open' || open.resetAt !== null) return;
     const resetAt = fromResetInfo(s.sessionId, deps.now());
@@ -302,12 +380,12 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
       structured.add(s.sessionId);
     }
     const job = liveResumeJob(s.sessionId);
-    if (job?.state === 'verifying') deps.scheduler.resolveVerify(s.sessionId, { kind: 'resumed' });
+    if (job && ['checking', 'sending', 'verifying'].includes(job.state))
+      applyWhenVerifying(s.sessionId, { kind: 'resumed' });
     const open = episodes.get(s.sessionId);
     if (open?.state !== 'open') return;
-    if (!isStructured(open.source)) {
-      resolvedRuleKey.set(s.sessionId, `${open.source}@${open.resetAt ?? 'unknown'}`);
-    }
+    const key = episodeRuleKey.get(s.sessionId);
+    if (key !== undefined) resolvedRuleKey.set(s.sessionId, key);
     if (job?.state === 'proposed') deps.scheduler.cancel(job.id, 'already resumed');
     closeEpisode(open, 'resumed', `resumed by ${s.by} (${s.source})`);
   };
@@ -325,6 +403,8 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
       deps.log.warn('rules scan: screen read failed', { sessionId, err: String(err) });
     }
     st.running = false;
+    // The session was closed or restarted while the screen was read: these rows are stale.
+    if (scans.get(sessionId) !== st) return;
     if (rows === null) return;
     const now = deps.now();
     const match = deps.scanRules(cli, rows, now);
@@ -332,16 +412,28 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
     const open = episodes.get(sessionId);
     if (counts && match) {
       st.misses = 0;
-      if (match.rule.message) ruleMessage.set(sessionId, match.rule.message);
-      onLimited({
-        kind: 'limited',
-        sessionId,
-        at: now,
-        ...(match.resetAt !== null ? { resetAt: match.resetAt } : {}),
-        source: `rule:${match.rule.id}`,
-        detail: match.reason,
-      });
-    } else if (open?.state === 'open' && !isStructured(open.source) && !structured.has(sessionId)) {
+      const structuredNow = structured.has(sessionId);
+      if (match.rule.message && !structuredNow) ruleMessage.set(sessionId, match.rule.message);
+      onLimited(
+        {
+          kind: 'limited',
+          sessionId,
+          at: now,
+          ...(match.resetAt !== null ? { resetAt: match.resetAt } : {}),
+          source: `rule:${match.rule.id}`,
+          detail: match.reason,
+        },
+        `${match.rule.id}@${match.resetText ?? ''}`,
+      );
+    } else if (counts === false || match === null) {
+      ruleAbsentSinceSend.set(sessionId, true);
+    }
+    if (
+      !(counts && match) &&
+      open?.state === 'open' &&
+      !isStructured(open.source) &&
+      !structured.has(sessionId)
+    ) {
       st.misses++;
       if (st.misses >= RULE_CLEAR_SCANS) {
         onResumed({ kind: 'resumed', sessionId, at: now, by: 'turn', source: open.source });
@@ -385,7 +477,7 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
     if (!d) {
       d = {
         sessionId: job.sessionId,
-        since: deps.now(),
+        nextAt: job.nextAt,
         quiet: null,
         giveUp: null,
         expired: false,
@@ -410,8 +502,14 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
     resetInfo.delete(sessionId);
     structured.delete(sessionId);
     resolvedRuleKey.delete(sessionId);
+    episodeRuleKey.delete(sessionId);
+    ruleAbsentSinceSend.delete(sessionId);
     ruleMessage.delete(sessionId);
     dismissed.delete(sessionId);
+    dropOffer(sessionId);
+    const po = pendingOutcome.get(sessionId);
+    if (po) deps.clearTimer(po.timer);
+    pendingOutcome.delete(sessionId);
     const b = busy.get(sessionId);
     if (b?.timer) deps.clearTimer(b.timer);
     busy.delete(sessionId);
@@ -449,19 +547,22 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
       schedule(sessionId, st);
     },
     onBusy(sessionId, isBusy) {
-      const st = busy.get(sessionId) ?? { on: false, timer: null };
+      const st = busy.get(sessionId) ?? { on: false, timer: null, episodeId: null };
       busy.set(sessionId, st);
       if (st.on === isBusy) return;
       st.on = isBusy;
-      if (structured.has(sessionId)) return;
-      if (!isBusy) {
-        if (st.timer !== null) deps.clearTimer(st.timer);
-        st.timer = null;
-        return;
-      }
+      if (st.timer !== null) deps.clearTimer(st.timer);
+      st.timer = null;
+      st.episodeId = null;
+      // R13: only a rules-only session, only an edge AFTER its episode opened, held ≥ 2 s.
+      const open = episodes.get(sessionId);
+      if (!isBusy || structured.has(sessionId) || open?.state !== 'open') return;
+      st.episodeId = open.id;
       st.timer = deps.setTimer(BUSY_RESUME_MS, () => {
         st.timer = null;
-        if (!st.on) return;
+        const still = episodes.get(sessionId);
+        if (!st.on || structured.has(sessionId) || still?.state !== 'open') return;
+        if (still.id !== st.episodeId) return;
         onResumed({ kind: 'resumed', sessionId, at: deps.now(), by: 'turn', source: 'attention' });
       });
     },
@@ -484,6 +585,8 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
       deps.onChange();
     },
     onPtyExit(sessionId, reason) {
+      // A dead PTY is not "still working": its busy deferral must not expire into a skip.
+      for (const [jobId, d] of deferred) if (d.sessionId === sessionId) clearDeferral(jobId);
       if (reason !== 'exited') return;
       const ep = episodes.get(sessionId);
       if (ep?.state !== 'open') return;
@@ -507,13 +610,19 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
         clearDeferral(job.id);
         return { go: false, reason: `episode ${ep.state}` };
       }
-      if (d?.expired) {
+      if (modeOf(job.sessionId) === 'off') {
+        clearDeferral(job.id);
+        return { go: false, reason: 'auto-resume is off' };
+      }
+      if (d && d.nextAt !== job.nextAt) clearDeferral(job.id);
+      if (d?.expired && deferred.has(job.id)) {
         clearDeferral(job.id);
         closeEpisode(ep, 'resumed', 'session kept working');
         return { go: false, reason: 'session kept working' };
       }
       if (deps.isBusy(job.sessionId)) return defer(job);
       clearDeferral(job.id);
+      ruleAbsentSinceSend.set(job.sessionId, false);
       return { go: true };
     },
     onJobFailed(job, reason) {
@@ -523,7 +632,7 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
     answerOffer(sessionId, action) {
       const job = liveResumeJob(sessionId);
       if (job?.state !== 'proposed') return false;
-      if (pendingOffer?.sessionId === sessionId) pendingOffer = null;
+      dropOffer(sessionId);
       if (action === 'arm') {
         deps.scheduler.accept(job.id);
       } else {
@@ -537,13 +646,41 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
     offer: () => pendingOffer,
     episodes: () => [...episodes.values()],
     load(list) {
-      for (const ep of list) episodes.set(ep.sessionId, { ...ep });
+      for (const ep of list) {
+        episodes.set(ep.sessionId, { ...ep });
+        if (ep.state !== 'open') continue;
+        // In-memory facts a restart lost (review B1 / S2): who speaks for the session, and why
+        // it needs you.
+        if (isStructured(ep.source)) structured.add(ep.sessionId);
+        if (ep.resetAt === null) deps.setResumeIssue(ep.sessionId, ISSUE_RESET_UNKNOWN);
+        else if (modeOf(ep.sessionId) === 'off')
+          deps.setResumeIssue(ep.sessionId, ISSUE_AUTO_RESUME_OFF);
+      }
+    },
+    onModeChanged() {
+      for (const ep of episodes.values()) {
+        if (ep.state !== 'open') continue;
+        const job = liveResumeJob(ep.sessionId);
+        if (modeOf(ep.sessionId) === 'off') {
+          if (job && ['proposed', 'armed', 'waiting'].includes(job.state)) {
+            clearDeferral(job.id);
+            deps.scheduler.cancel(job.id, 'auto-resume turned off');
+          }
+          dropOffer(ep.sessionId);
+          if (ep.resetAt !== null) deps.setResumeIssue(ep.sessionId, ISSUE_AUTO_RESUME_OFF);
+        } else if (!job) {
+          armOrPropose(ep, undefined);
+        }
+      }
+      deps.onChange();
     },
     dispose() {
       deps.clearTimer(sweepTimer);
       for (const st of scans.values()) if (st.timer) deps.clearTimer(st.timer);
       for (const b of busy.values()) if (b.timer) deps.clearTimer(b.timer);
       for (const jobId of [...deferred.keys()]) clearDeferral(jobId);
+      for (const po of pendingOutcome.values()) deps.clearTimer(po.timer);
+      pendingOutcome.clear();
       scans.clear();
       busy.clear();
     },

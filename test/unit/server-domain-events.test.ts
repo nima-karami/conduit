@@ -154,6 +154,64 @@ describe('server domain: internal subscribers on C1 data', () => {
     );
   });
 
+  it('scheduler.setSessionAutoResume off cancels an armed resume; history lists it; on re-arms', async () => {
+    const h = harness();
+    const id = await live(h, { agentId: 'claude' });
+    const resetSec = Math.floor(Date.now() / 1000) + 3600;
+    h.domain.hookPost(id, {
+      conduitHook: 1,
+      token: 't',
+      event: 'StatusLine',
+      payload: { rate_limits: { five_hour: { used_percentage: 100, resets_at: resetSec } } },
+    });
+    h.domain.hookPost(id, {
+      conduitHook: 1,
+      token: 't',
+      event: 'StopFailure',
+      payload: { error: 'rate_limit' },
+    });
+    await h.call('scheduler.setSessionAutoResume', { sessionId: id, mode: 'off' });
+    const history = (await h.call('scheduler.history', { sessionId: id })) as {
+      jobs: { state: string }[];
+      episodes: { state: string }[];
+    };
+    expect(history.jobs.map((j) => j.state)).toEqual(['cancelled']);
+    expect(history.episodes.map((e) => e.state)).toEqual(['open']);
+    await h.call('scheduler.setSessionAutoResume', { sessionId: id, mode: 'inherit' });
+    const live2 = (h.domain.snapshot().timers.jobs ?? []).filter(
+      (j) => j.sessionId === id && j.state === 'armed',
+    );
+    expect(live2).toHaveLength(1);
+    await expect(
+      h.call('scheduler.setSessionAutoResume', { sessionId: id, mode: 'sometimes' }),
+    ).rejects.toSatisfy((e: unknown) => isFault(e, 'refused'));
+  });
+
+  it('turning auto-resume off globally cancels an armed resume', async () => {
+    const h = harness();
+    const id = await live(h, { agentId: 'claude' });
+    h.domain.hookPost(id, {
+      conduitHook: 1,
+      token: 't',
+      event: 'StatusLine',
+      payload: {
+        rate_limits: {
+          five_hour: { used_percentage: 100, resets_at: Math.floor(Date.now() / 1000) + 3600 },
+        },
+      },
+    });
+    h.domain.hookPost(id, {
+      conduitHook: 1,
+      token: 't',
+      event: 'StopFailure',
+      payload: { error: 'rate_limit' },
+    });
+    await h.call('serverSettings.patch', { patch: { autoResume: 'off' } });
+    expect(
+      (h.domain.snapshot().timers.jobs ?? []).filter((j) => j.sessionId === id)[0]?.state,
+    ).toBe('cancelled');
+  });
+
   it('tracks bracketed paste for every session, not only scoped ones (spec R2)', async () => {
     const h = harness();
     const id = await live(h);

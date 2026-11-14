@@ -283,6 +283,9 @@ const str = (p: Record<string, unknown>, key: string): string => {
 };
 
 /** The W4 row of the program: everything the server owns about sessions and its stores. */
+/** Cap on a Codex rollout's first line (session_meta) read for binding. */
+const CODEX_META_MAX_BYTES = 1024 * 1024;
+
 export function createDomain(deps: DomainDeps): Domain {
   const { userData, runtime, scrollback, log } = deps;
   const file = (name: string) => join(userData, name);
@@ -679,6 +682,7 @@ export function createDomain(deps: DomainDeps): Domain {
     log: schedulerLog,
   });
   const codexHome = deps.env.CODEX_HOME || join(deps.homeDir, '.codex');
+  const metaCapWarned = new Set<string>();
   const codexWatch = createCodexRolloutWatch({
     sessionsRoot: join(codexHome, 'sessions'),
     now: () => Date.now(),
@@ -689,15 +693,31 @@ export function createDomain(deps: DomainDeps): Domain {
     watchDir,
     fs: {
       readdir: (p) => fsp.readdir(p),
+      // Real session_meta lines measured 19–23 KiB (spike.md addendum); 1 MiB leaves headroom.
       readFirstLine: async (p) => {
         const h = await fsp.open(p, 'r').catch(() => null);
         if (!h) return null;
         try {
-          const buf = Buffer.alloc(64 * 1024);
-          const { bytesRead } = await h.read(buf, 0, buf.length, 0);
-          const text = buf.subarray(0, bytesRead).toString('utf8');
-          const nl = text.indexOf('\n');
-          return nl < 0 ? null : text.slice(0, nl);
+          const chunks: Buffer[] = [];
+          let total = 0;
+          while (total < CODEX_META_MAX_BYTES) {
+            const buf = Buffer.alloc(64 * 1024);
+            const { bytesRead } = await h.read(buf, 0, buf.length, total);
+            if (bytesRead === 0) return null;
+            const chunk = buf.subarray(0, bytesRead);
+            const nl = chunk.indexOf(0x0a);
+            if (nl >= 0) {
+              chunks.push(chunk.subarray(0, nl));
+              return Buffer.concat(chunks).toString('utf8');
+            }
+            chunks.push(chunk);
+            total += bytesRead;
+          }
+          if (!metaCapWarned.has(p)) {
+            metaCapWarned.add(p);
+            log.warn('scheduler', 'rollout first line over the read cap; not bound', { file: p });
+          }
+          return null;
         } finally {
           await h.close();
         }
@@ -723,6 +743,7 @@ export function createDomain(deps: DomainDeps): Domain {
     samePath: (a, b) => folderKey(a) === folderKey(b),
     episodeOpen: (id) => monitor.episodes().some((e) => e.sessionId === id && e.state === 'open'),
     onSignal: (signal) => monitor.signal(signal),
+    onBound: (id) => monitor.onAdapterLive(id),
     log: schedulerLog,
   });
   const settingsAtLoad = settings();
@@ -1150,7 +1171,13 @@ export function createDomain(deps: DomainDeps): Domain {
     mgr.touch(id);
     // A message written into a shell that has not printed its prompt is lost: settle first.
     timers.onPtyStart(id);
-    if (cliOf(id) === 'codex') codexWatch.track(id, { cwd: spec.cwd, launchAt });
+    const cli = cliOf(id);
+    if (cli === 'codex') {
+      codexWatch.untrack(id);
+      codexWatch.track(id, { cwd: spec.cwd, launchAt });
+    }
+    // The host injected Claude's hooks for this launch: they speak for the session (spec R13).
+    if (cli === 'claude' && spec.args.includes('--settings')) monitor.onAdapterLive(id);
     return {
       ok: true,
       target: terminal.target,
@@ -1577,6 +1604,7 @@ export function createDomain(deps: DomainDeps): Domain {
         throw new RpcFault('refused', 'mode must be inherit, on or off');
       if (!mgr.setAutoResume(str(p, 'sessionId'), mode as SessionAutoResume))
         throw new RpcFault('not_found', 'Session no longer exists');
+      monitor.onModeChanged();
       return {};
     },
     'scheduler.history': (p) => ({
@@ -1609,6 +1637,7 @@ export function createDomain(deps: DomainDeps): Domain {
     'serverSettings.patch': (p) => {
       if (settingsStore.patch(p.patch)) {
         deps.emit('serverSettings.changed', { settings: settings() });
+        monitor.onModeChanged();
         // A setting decides what D40 writes.
         schedulePersist('sessions');
       }
@@ -1729,7 +1758,11 @@ export function createDomain(deps: DomainDeps): Domain {
       timers: timersState(),
     }),
     settings,
-    pendingTimers: () => timers.list().some((j) => j.state === 'armed' || j.state === 'waiting'),
+    // A verify window must outlive an idle shutdown too; a proposal waits on a human, not a timer.
+    pendingTimers: () =>
+      timers
+        .list()
+        .some((j) => !['done', 'skipped', 'failed', 'cancelled', 'proposed'].includes(j.state)),
     hookPost: (sessionId: string, post: HookPost) => {
       for (const signal of claudeSignalsFromHook(sessionId, post.event, post.payload, Date.now()))
         monitor.signal(signal);

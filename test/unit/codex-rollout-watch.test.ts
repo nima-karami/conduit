@@ -33,6 +33,7 @@ function harness() {
   const live = new Map<string, Live>();
   const failWatch = new Set<string>();
   const opened: string[] = [];
+  const bound: string[] = [];
   const signals: LimitSignal[] = [];
   const warnings: string[] = [];
   const deps: CodexWatchDeps = {
@@ -73,13 +74,14 @@ function harness() {
     samePath: (a, b) => a === b,
     episodeOpen: () => false,
     onSignal: (s) => signals.push(s),
+    onBound: (id) => bound.push(id),
     log: {
       debug: () => {},
       warn: (msg) => warnings.push(msg),
     },
   };
   const emit = (dir: string, name: string | null) => live.get(dir)?.onEvent('rename', name);
-  return { deps, files, dirs, live, failWatch, opened, signals, warnings, emit };
+  return { deps, files, dirs, live, failWatch, opened, signals, warnings, emit, bound };
 }
 
 async function flush(): Promise<void> {
@@ -149,6 +151,27 @@ describe('codex rollout watch', () => {
     await flush();
     expect(watch.boundFile('s1')).toBe(FILE_A);
     expect(h.signals.map((s) => s.kind)).toEqual(['limited']);
+    expect(h.bound).toEqual(['s1']);
+  });
+
+  it('a late bind replays only the end state: no old turn as resumed, limit only if still current', async () => {
+    const turn = fixture('turn.jsonl').split('\n');
+    const limit = fixture('limit.jsonl').split('\n');
+    const h = harness();
+    // An earlier finished turn, then the turn that ended in the limit.
+    h.files.set(FILE_A, [PRIMARY, ...turn, ...limit].join('\n') + '\n');
+    const watch = createCodexRolloutWatch(h.deps);
+    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    await flush();
+    expect(h.signals.map((s) => s.kind)).toEqual(['reset-info', 'limited']);
+
+    const g = harness();
+    // The limit, then a later turn started: the limit is history.
+    g.files.set(FILE_A, [PRIMARY, ...limit, turn[0]].join('\n') + '\n');
+    const w2 = createCodexRolloutWatch(g.deps);
+    w2.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    await flush();
+    expect(g.signals.map((s) => s.kind)).toEqual(['reset-info']);
   });
 
   it('holds a partial last line back until its newline arrives', async () => {

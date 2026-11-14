@@ -102,3 +102,8 @@ renders the footer identically to no statusLine at all. So the Conduit wrapper i
 every Claude launch (needed for `reset-info`), whether or not the user has a status line.
 Also from the binary: `statusLine` carries `padding`, `refreshInterval`, `hideVimModeIndicator`;
 the wrapper entry copies them from the user's effective status line at launch.
+
+## Addendum (integration review, 2026-11-14) — session_meta size
+The real `session_meta` first lines on this machine measure 19,655–22,614 bytes (10 files, sizes
+only). Binding reads the first line in 64 KiB chunks up to 1 MiB and logs once when a line exceeds
+that; the redacted fixtures (~500 bytes) do not exercise the size.

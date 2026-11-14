@@ -91,8 +91,6 @@ export const CATCHUP_MS: Record<TimedMessageOrigin, number> = {
 };
 /** Past this much overdue a fire is reported as late. An on-time fire is always a few ms out. */
 export const LATE_GRACE_MS = 30_000;
-/** The ONLY message the app composes for itself — never anything parsed from output (§2). */
-export const LIMIT_MESSAGE = 'Continue';
 /** A message written into a shell that has not printed its prompt yet is lost (§2). */
 export const PTY_SETTLE_MS = 3_000;
 
@@ -353,69 +351,12 @@ export function capError(
   return null;
 }
 
-export interface DueDecision {
-  action: 'wait' | 'fire' | 'skip';
-  late: boolean;
-  /** Interval slots this fire consumes — several collapse into ONE delivery (§2). */
-  slots: number;
-  overdueMs: number;
-}
-
-/**
- * What to do with a schedule at `now`. Applied at the moment it becomes deliverable, which for
- * a `waiting` schedule is when its PTY comes back — that is why the window is measured here
- * and not when it first came due (§4).
- */
-export function catchUp(s: TimedMessage, now: number): DueDecision {
-  const overdueMs = now - s.nextAt;
-  const remaining = Math.max(s.maxRepeats - s.firedCount, 0);
-  if (s.state === 'done' || remaining === 0 || overdueMs < 0) {
-    return { action: 'wait', late: false, slots: 0, overdueMs };
-  }
-  const every = s.kind === 'interval' ? Math.max(s.everyMs ?? MIN_INTERVAL_MS, 1) : 0;
-  const elapsed = every > 0 ? 1 + Math.floor(overdueMs / every) : 1;
-  const slots = Math.min(elapsed, remaining);
-  if (overdueMs > CATCHUP_MS[s.origin]) return { action: 'skip', late: true, slots, overdueMs };
-  // A schedule that had to wait for its PTY is late however briefly it waited: the message
-  // did not land when it was scheduled to, and the toast says so (spec 2026-08-28 §2 "Waiting").
-  const late = s.state === 'waiting' || overdueMs > LATE_GRACE_MS;
-  return { action: 'fire', late, slots, overdueMs };
-}
-
 /** A schedule that just fired or was renewed is no longer waiting on anything. */
 function withoutWaiting(s: TimedMessage): TimedMessage {
   if (s.waitingSince === undefined) return s;
   const next = { ...s };
   delete next.waitingSince;
   return next;
-}
-
-export function advanceAfterFire(
-  s: TimedMessage,
-  now: number,
-  outcome: { slots: number; late: boolean; delivered: boolean; reason?: FireFailure },
-): TimedMessage {
-  const firedCount = Math.min(s.firedCount + outcome.slots, s.maxRepeats);
-  const done = firedCount >= s.maxRepeats;
-  const every = s.everyMs ?? 0;
-  return {
-    ...withoutWaiting(s),
-    firedCount,
-    state: done ? 'done' : 'armed',
-    // `slots` is 1 + the elapsed intervals, so the new nextAt is always in the future.
-    nextAt: done || s.kind === 'once' ? s.nextAt : s.nextAt + outcome.slots * every,
-    lastFire: {
-      at: now,
-      late: outcome.late,
-      delivered: outcome.delivered,
-      ...(outcome.reason ? { reason: outcome.reason } : {}),
-    },
-  };
-}
-
-/** Came due with no live PTY. `nextAt` is HELD — nothing was delivered (§2 "Lifecycle"). */
-export function markWaiting(s: TimedMessage, at: number): TimedMessage {
-  return s.state === 'waiting' ? s : { ...s, state: 'waiting', waitingSince: at };
 }
 
 /**
@@ -516,14 +457,4 @@ export function parseTimedMessagesFile(blob: string | undefined): TimedMessagesF
       .map((s) => ({ ...s, message: sanitizeMessage(s.message) }))
       .slice(0, MAX_TOTAL),
   };
-}
-
-/** `done` schedules stay listed for the rest of the run so Renew is reachable, but they are
- *  not written — the next launch has nothing to renew (§2 "After a fire"). */
-export function serializeTimedMessagesFile(file: TimedMessagesFile): string {
-  return JSON.stringify(
-    { version: 1, schedules: file.schedules.filter((s) => s.state !== 'done') },
-    null,
-    2,
-  );
 }

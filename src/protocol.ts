@@ -344,7 +344,7 @@ export type {
 } from './timed-messages';
 
 /**
- * A pending "resume when the limit resets?" question, under `autoResumeOnLimit: 'offer'`.
+ * A pending "resume when the limit resets?" question, under `autoResume: 'ask'`.
  * Resolved ONCE in the host, so two windows produce one schedule; the offer LEAVING
  * `timer:state` is what dismisses the sibling window's toast (§2 "Limit-aware", §4).
  */

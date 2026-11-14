@@ -1941,6 +1941,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       const unavailable = async (reason: McpUnavailableReason) => {
         r.unavailable = reason;
         scheduleBroadcast();
+        // Claude's limit hooks ride on this wiring: say so, since auto-resume falls back to rules.
+        if (adapter.wiring === 'mcp-config-flag')
+          deps.log.info('conduit-mcp', 'Claude hooks not injected', { sessionId, reason });
         return spec;
       };
       if (!deps.domain.messagingOn()) return unavailable('messaging-off');

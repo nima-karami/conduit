@@ -8,13 +8,9 @@ import {
   type SchedulerDeps,
   toTimedMessage,
 } from '../../src/scheduler';
-import {
-  CATCHUP_MS,
-  LIMIT_MESSAGE,
-  PTY_SETTLE_MS,
-  type TimedMessageInput,
-} from '../../src/timed-messages';
+import { CATCHUP_MS, PTY_SETTLE_MS, type TimedMessageInput } from '../../src/timed-messages';
 
+const LIMIT_MESSAGE = 'Continue';
 const HOUR = 3_600_000;
 const NOW = Date.UTC(2026, 7, 28, 15, 0, 0);
 const VERIFY_MS = 120_000;

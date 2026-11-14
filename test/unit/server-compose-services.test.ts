@@ -299,6 +299,30 @@ describe('compose: sessions.changed carries attention', () => {
 });
 
 describe('compose: dispatch routing', () => {
+  // see spec 2026-11-13-scheduler-auto-resume R4.
+  it('term.input counts as human input only when delivered and not a terminal reply', async () => {
+    const h = await harness();
+    const { domain, mcp } = h.services;
+    const peer: Peer = { subscribed: true };
+    const human = vi.spyOn(domain, 'humanInput');
+    const termInput = vi.spyOn(mcp, 'termInput');
+    termInput.mockReturnValue(true);
+    await answer(h.services, 'term.input', { sessionId: 's', generation: 1, data: '\x1b[I' }, peer);
+    await answer(
+      h.services,
+      'term.input',
+      { sessionId: 's', generation: 1, data: '\x1b[?1;2c' },
+      peer,
+    );
+    expect(human).not.toHaveBeenCalled();
+    await answer(h.services, 'term.input', { sessionId: 's', generation: 1, data: 'y' }, peer);
+    expect(human).toHaveBeenCalledWith('s');
+    human.mockClear();
+    termInput.mockReturnValue(false);
+    await answer(h.services, 'term.input', { sessionId: 's', generation: 9, data: 'y' }, peer);
+    expect(human).not.toHaveBeenCalled();
+  });
+
   it('routes term, ui and mcp traffic to the right service, and refuses the rest', async () => {
     const h = await harness();
     const { runtime, domain, mcp } = h.services;

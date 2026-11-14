@@ -37,6 +37,29 @@ describe('server domain: server settings', () => {
     expect(again.domain.settings().trackCwd).toBe(false);
   });
 
+  it('migrates autoResumeOnLimit from an existing server-settings.json, and keeps it through a patch', async () => {
+    for (const [legacy, expected] of [
+      ['off', 'off'],
+      ['offer', 'ask'],
+      ['arm', 'on'],
+    ] as const) {
+      const h = harness({
+        files: {
+          'server-settings.json': JSON.stringify({
+            version: 1,
+            settings: { autoResumeOnLimit: legacy, trackCwd: true },
+          }),
+        },
+      });
+      expect(h.domain.settings().autoResume).toBe(expected);
+      await h.call('serverSettings.patch', { patch: { trackCwd: false } });
+      expect(h.domain.settings().autoResume).toBe(expected);
+      const stored = json(h.userData, 'server-settings.json').settings;
+      expect(stored.autoResume).toBe(expected);
+      expect('autoResumeOnLimit' in stored).toBe(false);
+    }
+  });
+
   it('patches key-scoped and coerced, writes the file and emits serverSettings.changed', async () => {
     const h = harness();
     const r = (await h.call('serverSettings.patch', {

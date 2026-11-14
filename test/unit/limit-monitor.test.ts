@@ -113,7 +113,7 @@ function harness(over: Partial<LimitMonitorDeps> = {}) {
       issues.set(id, reason);
     },
     onChange: () => {},
-    log: { info: () => {}, debug: () => {}, warn: () => {} },
+    log: { info: () => {}, warn: () => {} },
     ...over,
   };
   const monitor = createLimitMonitor(deps);
@@ -619,5 +619,260 @@ describe('limit monitor — rules scan (R6, R3)', () => {
     h.monitor.onData('s');
     await h.advance(RULE_SCAN_INTERVAL_MS * 2);
     expect(reads).toBe(0);
+  });
+});
+
+const textMatch = (resetAt: number | null, resetText: string, over: Partial<LimitRule> = {}) => ({
+  ...match(resetAt, over),
+  resetText,
+});
+
+describe('limit monitor — review fixes on d30afb9f', () => {
+  it('B1: after a restart a restored structured episode ignores a repaint busy edge', async () => {
+    const h = harness();
+    h.monitor.load([
+      {
+        id: 'ep-1',
+        sessionId: 's',
+        cli: 'claude',
+        startedAt: T0,
+        resetAt: T0 + HOUR,
+        source: 'claude-hook',
+        state: 'open',
+      },
+    ]);
+    h.monitor.onBusy('s', true);
+    await h.advance(BUSY_RESUME_MS * 2);
+    expect(h.monitor.episodes()[0]?.state).toBe('open');
+  });
+
+  it('B1: a session whose adapter is live ignores busy edges before its first signal', async () => {
+    const h = harness({ cliOf: () => 'claude' });
+    h.monitor.onAdapterLive('s');
+    h.setScreen(['limit'], match(T0 + HOUR));
+    h.monitor.onData('s');
+    await h.advance(0);
+    expect(h.monitor.episodes()).toHaveLength(0);
+  });
+
+  it('B1: a restored episode with no reset time raises its needs-you again', () => {
+    const h = harness();
+    h.monitor.load([
+      {
+        id: 'ep-1',
+        sessionId: 's',
+        cli: 'codex',
+        startedAt: T0,
+        resetAt: null,
+        source: 'codex-rollout',
+        state: 'open',
+      },
+    ]);
+    expect(h.issues.get('s')).toBe(ISSUE_RESET_UNKNOWN);
+  });
+
+  it('B2: a busy edge from before the episode opened does not close it', async () => {
+    const h = harness({ cliOf: () => 'cursor' });
+    h.monitor.onBusy('s', true);
+    await h.advance(1_000);
+    h.monitor.signal({
+      kind: 'limited',
+      sessionId: 's',
+      at: T0,
+      resetAt: T0 + HOUR,
+      source: 'rule:x',
+    });
+    await h.advance(BUSY_RESUME_MS * 2);
+    expect(h.monitor.episodes()[0]?.state).toBe('open');
+  });
+
+  it('B3: a structured limit upgrades the rule-opened episode in place (same id, one arm)', async () => {
+    const h = harness({ cliOf: () => 'codex' });
+    h.setScreen(['limit'], match(T0 + HOUR, { id: 'default:codex:try-again', cli: 'codex' }));
+    h.monitor.onData('s');
+    await h.advance(0);
+    const id = h.monitor.episodes()[0]?.id;
+    h.monitor.signal({
+      kind: 'limited',
+      sessionId: 's',
+      at: T0,
+      resetAt: T0 + HOUR,
+      source: 'codex-rollout',
+    });
+    expect(h.monitor.episodes()[0]?.id).toBe(id);
+    expect(h.monitor.episodes()[0]?.state).toBe('open');
+    expect(h.armed).toHaveLength(1);
+  });
+
+  it('B4: the same notice read after its clock rolled to tomorrow is not "limited again"', async () => {
+    const h = harness({ cliOf: () => 'cursor' });
+    h.setScreen(['limit'], textMatch(T0 + HOUR, '3:45 PM'));
+    h.monitor.onData('s');
+    await h.advance(0);
+    const job = h.jobs[0] as Job;
+    expect(h.monitor.preFire(job)).toEqual({ go: true });
+    job.state = 'verifying';
+    h.setScreen(['limit'], textMatch(T0 + 25 * HOUR, '3:45 PM'));
+    h.monitor.onData('s');
+    await h.advance(RULE_SCAN_INTERVAL_MS);
+    expect(h.verifies).toEqual([]);
+  });
+
+  it('B4: a notice that went away after the send and came back is "limited again"', async () => {
+    const h = harness({ cliOf: () => 'cursor' });
+    h.setScreen(['limit'], textMatch(T0 + HOUR, '3:45 PM'));
+    h.monitor.onData('s');
+    await h.advance(0);
+    const job = h.jobs[0] as Job;
+    h.monitor.preFire(job);
+    job.state = 'verifying';
+    h.setScreen(['working'], null);
+    h.monitor.onData('s');
+    await h.advance(RULE_SCAN_INTERVAL_MS);
+    h.setScreen(['limit'], textMatch(T0 + 2 * HOUR, '5:45 PM'));
+    h.monitor.onData('s');
+    await h.advance(RULE_SCAN_INTERVAL_MS);
+    expect(h.verifies).toEqual([
+      { sessionId: 's', outcome: { kind: 'limited', resetAt: T0 + 2 * HOUR } },
+    ]);
+  });
+
+  it('B4: a resolved notice still on screen does not reopen even when its parse rolled over', async () => {
+    const h = harness({ cliOf: () => 'cursor' });
+    h.setScreen(['limit'], textMatch(T0 + HOUR, '3:45 PM'));
+    h.monitor.onData('s');
+    await h.advance(0);
+    h.monitor.onHumanInput('s');
+    h.setScreen(['limit'], textMatch(T0 + 25 * HOUR, '3:45 PM'));
+    h.monitor.onData('s');
+    await h.advance(RULE_SCAN_INTERVAL_MS);
+    expect(h.monitor.episodes()[0]?.state).toBe('resumed');
+    expect(h.armed).toHaveLength(1);
+  });
+
+  it('S1: a re-arm drops the busy deferral, so the next fire is checked afresh', async () => {
+    const h = harness();
+    h.monitor.signal({
+      kind: 'limited',
+      sessionId: 's',
+      at: T0,
+      resetAt: T0 + HOUR,
+      source: 'claude-hook',
+    });
+    const job = h.jobs[0] as Job;
+    h.busyNow.set('s', true);
+    expect(h.monitor.preFire(job)).toMatchObject({ go: 'wait' });
+    h.monitor.signal({
+      kind: 'limited',
+      sessionId: 's',
+      at: T0,
+      resetAt: T0 + 2 * HOUR,
+      source: 'claude-hook',
+    });
+    await h.advance(FIRE_DEFER_MAX_MS + 1);
+    h.busyNow.set('s', false);
+    expect(h.monitor.preFire(job)).toEqual({ go: true });
+  });
+
+  it('S1: a PTY exit drops the busy deferral', async () => {
+    const h = harness();
+    h.monitor.signal({
+      kind: 'limited',
+      sessionId: 's',
+      at: T0,
+      resetAt: T0 + HOUR,
+      source: 'claude-hook',
+    });
+    const job = h.jobs[0] as Job;
+    h.busyNow.set('s', true);
+    h.monitor.preFire(job);
+    h.monitor.onPtyExit('s', 'killed');
+    await h.advance(FIRE_DEFER_MAX_MS + 1);
+    h.busyNow.set('s', false);
+    expect(h.monitor.preFire(job)).toEqual({ go: true });
+  });
+
+  it('S3: a resume seen while the job is sending is applied once it reaches verifying', async () => {
+    const h = harness();
+    h.monitor.signal({
+      kind: 'limited',
+      sessionId: 's',
+      at: T0,
+      resetAt: T0 + HOUR,
+      source: 'claude-hook',
+    });
+    const job = h.jobs[0] as Job;
+    job.state = 'sending';
+    h.monitor.signal({
+      kind: 'resumed',
+      sessionId: 's',
+      at: T0,
+      by: 'turn',
+      source: 'claude-hook',
+    });
+    expect(h.verifies).toEqual([]);
+    job.state = 'verifying';
+    await h.advance(1_000);
+    expect(h.verifies).toEqual([{ sessionId: 's', outcome: { kind: 'resumed' } }]);
+  });
+
+  it('S4: a scan that finishes after the session closed does not reopen an episode', async () => {
+    let release: (rows: readonly string[]) => void = () => {};
+    const h = harness({
+      cliOf: () => 'cursor',
+      screen: () =>
+        new Promise((r) => {
+          release = r;
+        }),
+    });
+    h.setScreen(['limit'], match(T0 + HOUR));
+    h.monitor.onData('s');
+    await h.advance(0);
+    h.monitor.onSessionClosed('s');
+    release(['limit']);
+    await h.advance(0);
+    expect(h.monitor.episodes()).toHaveLength(0);
+  });
+
+  it('turning auto-resume off cancels the armed job and pre-fire refuses; on arms again', () => {
+    const h = harness();
+    h.monitor.signal({
+      kind: 'limited',
+      sessionId: 's',
+      at: T0,
+      resetAt: T0 + HOUR,
+      source: 'claude-hook',
+    });
+    const job = h.jobs[0] as Job;
+    h.modes.set('s', 'off');
+    expect(h.monitor.preFire(job)).toEqual({ go: false, reason: 'auto-resume is off' });
+    h.monitor.onModeChanged();
+    expect(job.state).toBe('cancelled');
+    expect(h.issues.get('s')).toBe(ISSUE_AUTO_RESUME_OFF);
+    h.modes.set('s', 'on');
+    h.monitor.onModeChanged();
+    expect(h.jobs.filter((j) => j.state === 'armed')).toHaveLength(1);
+  });
+
+  it('two ask-mode sessions: answering the first offer shows the second', () => {
+    const h = harness();
+    h.settings.autoResume = 'ask';
+    h.monitor.signal({
+      kind: 'limited',
+      sessionId: 'a',
+      at: T0,
+      resetAt: T0 + HOUR,
+      source: 'claude-hook',
+    });
+    h.monitor.signal({
+      kind: 'limited',
+      sessionId: 'b',
+      at: T0,
+      resetAt: T0 + HOUR,
+      source: 'claude-hook',
+    });
+    expect(h.monitor.offer()?.sessionId).toBe('a');
+    h.monitor.answerOffer('a', 'arm');
+    expect(h.monitor.offer()?.sessionId).toBe('b');
   });
 });

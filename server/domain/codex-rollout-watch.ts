@@ -25,6 +25,8 @@ export interface CodexWatchDeps {
   samePath(a: string, b: string): boolean;
   episodeOpen(sessionId: string): boolean;
   onSignal(s: LimitSignal): void;
+  /** A session got its rollout file: a structured adapter speaks for it from now on (spec R13). */
+  onBound(sessionId: string): void;
   log: { debug(msg: string, data?: object): void; warn(msg: string, data?: object): void };
 }
 
@@ -43,6 +45,8 @@ interface Tracked {
   splitter: LineSplitter;
   reading: boolean;
   readAgain: boolean;
+  /** The first read after a bind is history, not news (see readBound). */
+  replayed: boolean;
   debounce: ReturnType<typeof setTimeout> | null;
 }
 
@@ -211,6 +215,8 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
     s.boundFile = file;
     s.offset = 0;
     s.splitter = new LineSplitter();
+    s.replayed = false;
+    deps.onBound(sessionId);
     deps.log.debug('codex rollout bound', { sessionId, file });
     reconcile();
     void readBound(sessionId);
@@ -226,6 +232,23 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
     }, READ_DEBOUNCE_MS);
   };
 
+  /** The newest reset-info, and the limit only when no turn started after it. */
+  const replayState = (sessionId: string, lines: readonly string[]): LimitSignal[] => {
+    let reset: LimitSignal | null = null;
+    let limited: LimitSignal | null = null;
+    for (const line of lines) {
+      for (const signal of rolloutSignals(sessionId, line, true, deps.now())) {
+        if (signal.kind === 'reset-info') reset = signal;
+        else if (signal.kind === 'limited') limited = signal;
+        else if (signal.kind === 'resumed') limited = null;
+      }
+    }
+    const out: LimitSignal[] = [];
+    if (reset) out.push(reset);
+    if (limited) out.push(limited);
+    return out;
+  };
+
   const readBound = async (sessionId: string): Promise<void> => {
     const s = sessions.get(sessionId);
     if (!s?.boundFile) return;
@@ -238,10 +261,20 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
     try {
       const { data, size } = await deps.fs.readFrom(file, s.offset);
       s.offset = size;
-      for (const line of s.splitter.push(data)) {
-        if (sessions.get(sessionId) !== s) break;
-        const signals = rolloutSignals(sessionId, line, deps.episodeOpen(sessionId), deps.now());
-        for (const signal of signals) deps.onSignal(signal);
+      const lines = s.splitter.push(data);
+      if (!s.replayed) {
+        // A late bind replays the whole file: only its END state is news. Replaying an old
+        // task_started as `resumed` would close the rule-opened episode and open a duplicate
+        // (blockers D2, review of d30afb9f B3).
+        s.replayed = true;
+        if (sessions.get(sessionId) === s)
+          for (const signal of replayState(sessionId, lines)) deps.onSignal(signal);
+      } else {
+        for (const line of lines) {
+          if (sessions.get(sessionId) !== s) break;
+          const signals = rolloutSignals(sessionId, line, deps.episodeOpen(sessionId), deps.now());
+          for (const signal of signals) deps.onSignal(signal);
+        }
       }
     } catch (err) {
       deps.log.warn('rollout read failed', { file, error: String(err) });
@@ -257,6 +290,8 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
   return {
     track(sessionId, s) {
       if (disposed) return;
+      const prev = sessions.get(sessionId);
+      if (prev?.debounce) clearTimeout(prev.debounce);
       sessions.set(sessionId, {
         cwd: s.cwd,
         launchAt: s.launchAt,
@@ -265,6 +300,7 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
         splitter: new LineSplitter(),
         reading: false,
         readAgain: false,
+        replayed: false,
         debounce: null,
       });
       reconcile();

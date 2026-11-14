@@ -102,7 +102,8 @@ export interface ServerMcp {
   stop(): Promise<void>;
   tick(): Promise<void>;
   /** C2 `term.input`: the host's bookkeeping runs before the TypingPort write (F8). */
-  termInput(n: ServerNotifications['term.input']): void;
+  /** false when the write was dropped (a stale generation): the bytes never reached the program. */
+  termInput(n: ServerNotifications['term.input']): boolean;
   /** C2 `ui.presence` from one app connection. */
   presence(conn: AppConnection, windows: readonly WindowPresence[]): void;
   appDisconnected(conn: AppConnection): void;
@@ -304,11 +305,11 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
 
     termInput({ sessionId, generation, data }) {
       // A stale generation's write is dropped, so its bytes never reached this program.
-      if (deps.runtime.get(sessionId)?.generation !== generation) return;
+      if (deps.runtime.get(sessionId)?.generation !== generation) return false;
       h.onRendererInput(sessionId, data);
       deps.attention.recordInput(sessionId, now());
       deps.sessions.touch(sessionId, INPUT_TOUCH_INTERVAL_MS);
-      deps.typing.write(sessionId, data, { generation });
+      return deps.typing.write(sessionId, data, { generation });
     },
 
     presence(conn, windows) {

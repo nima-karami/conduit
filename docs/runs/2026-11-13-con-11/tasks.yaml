@@ -10,7 +10,8 @@
   evidence: [docs/runs/2026-11-13-con-11/evidence/verify-s0.log]
   commit: 428e18a9
 - id: lane-A-scheduler
-  status: revise
+  status: done
+  commit: 31acc345 (merge) + 3daa3315 (conductor fixes, APPROVE) ; gated with E at d30afb9f
   review2: "REVISE 1 blocker (projection drops lastFire) + 4 should-fix; retry 2/2 sent"
   commit_lane_fix: b81ce3e8
   notes: "review#1 REVISE 2 blockers (deferred job stranded on PTY loss; armResume keeps job waiting → no timer/early delivery) + 6 should-fix; rulings: parse(blob,{maxAttempts}) clamps; serialize(file, now); limit onFired; projection; sendOnce propagates. retry 1/2 sent"
@@ -30,7 +31,8 @@
   topology: delegated (Haiku, worktree)
   deps: [S0-contracts]
 - id: lane-C-claude
-  status: approved
+  status: done
+  commit: 36fceb35 (merge); verify exit 0 (evidence/verify-merge-C.log)
   review3: "APPROVE; should-fix: win32 bare bash on PATH may be WSL (conductor: resolve Git Bash at launch), cwd fallback untested; nits → conductor in merge; integration: prepare.ts must copy conduit-hook.cjs"
   commit_lane_fix2: 472efc82
   review2: "REVISE 1 blocker (ELECTRON_RUN_AS_NODE leaks to user status line) + 2 should-fix; retry 2/2 sent"
@@ -40,7 +42,8 @@
   topology: delegated (Haiku, worktree)
   deps: [S0-contracts]
 - id: lane-D-codex-rules
-  status: revise
+  status: done
+  commit: c0823e5f (merge); verify exit 0 (evidence/verify-merge-D.log)
   review_followup: "REVISE 1 blocker (hand copy of watchDirWhilePresent); plan amended to inject it; retry 2/2 sent"
   commit_lane_followup: c367b6bc
   review2: "APPROVE 0 blockers, 6 should-fix → follow-up commit requested before merge"
@@ -50,7 +53,9 @@
   topology: delegated (Haiku, worktree)
   deps: [S0-contracts]
 - id: E-integration
-  status: in_progress
+  status: in_review
+  commit: d30afb9f
+  gate: "npm run verify exit=0 at d30afb9f (evidence/verify-E.log)"
   notes: "E.1 settings, E.2 session override, E.3 attention setResumeIssue, E.4 limit-monitor (+R13) written uncommitted in main worktree; monitor tests await lane A"
   topology: solo (conductor)
   deps: [lane-A-scheduler, lane-B-delivery, lane-C-claude, lane-D-codex-rules]

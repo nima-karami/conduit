@@ -354,9 +354,9 @@ export function createServices(o: ServicesOptions) {
         const data = p.data;
         if (typeof data !== 'string') throw new RpcFault('invalid', 'Expected data');
         const sessionId = str(p, 'sessionId');
-        server.termInput({ sessionId, generation: int(p, 'generation'), data });
-        // see spec R4: a real keystroke from a window, not a terminal's own reply.
-        if (isCountedInput(data)) domain.humanInput(sessionId);
+        const delivered = server.termInput({ sessionId, generation: int(p, 'generation'), data });
+        // see spec R4: a real keystroke that reached the program, not a terminal's own reply.
+        if (delivered && isCountedInput(data)) domain.humanInput(sessionId);
         return { result: {} };
       }
       case 'term.resize': {

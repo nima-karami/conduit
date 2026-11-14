@@ -1,25 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import {
-  advanceAfterFire,
   buildSchedule,
   CATCHUP_MS,
   CLOCK_GRACE_MS,
   capError,
-  catchUp,
   describeNext,
   formatDuration,
   LATE_GRACE_MS,
   MAX_CLOCK_AHEAD_MS,
   MAX_PER_SESSION,
   MAX_TOTAL,
-  markWaiting,
   newTimedMessageId,
   nextFireAt,
   parseTimedMessagesFile,
   renew,
   resolveClockTime,
   sanitizeMessage,
-  serializeTimedMessagesFile,
   type TimedMessage,
 } from '../../src/timed-messages';
 
@@ -308,146 +304,6 @@ describe('capError', () => {
   });
 });
 
-describe('catchUp', () => {
-  it('waits while nextAt is still ahead', () => {
-    expect(catchUp(schedule({ nextAt: NOW + 60_000 }), NOW)).toMatchObject({ action: 'wait' });
-  });
-
-  it('fires on time without marking late, right up to the grace', () => {
-    expect(catchUp(schedule({ nextAt: NOW - 5 }), NOW)).toMatchObject({
-      action: 'fire',
-      late: false,
-      slots: 1,
-    });
-    expect(catchUp(schedule({ nextAt: NOW - LATE_GRACE_MS }), NOW).late).toBe(false);
-    expect(catchUp(schedule({ nextAt: NOW - LATE_GRACE_MS - 1 }), NOW).late).toBe(true);
-  });
-
-  it('fires late inside the manual window', () => {
-    const d = catchUp(schedule({ nextAt: NOW - 5 * HOUR }), NOW);
-    expect(d).toMatchObject({ action: 'fire', late: true, slots: 1 });
-  });
-
-  it('skips a manual schedule past its 6 hour window', () => {
-    const d = catchUp(schedule({ nextAt: NOW - CATCHUP_MS.manual - 1 }), NOW);
-    expect(d.action).toBe('skip');
-  });
-
-  it('delivers the lid-closed-overnight limit case and skips the same delay for manual', () => {
-    const overnight = 10 * HOUR;
-    expect(catchUp(schedule({ origin: 'limit', nextAt: NOW - overnight }), NOW)).toMatchObject({
-      action: 'fire',
-      late: true,
-    });
-    expect(catchUp(schedule({ origin: 'manual', nextAt: NOW - overnight }), NOW).action).toBe(
-      'skip',
-    );
-  });
-
-  it('skips a limit schedule past its 24 hour window', () => {
-    expect(
-      catchUp(schedule({ origin: 'limit', nextAt: NOW - CATCHUP_MS.limit - 1 }), NOW).action,
-    ).toBe('skip');
-  });
-
-  it('collapses several elapsed interval slots into one delivery', () => {
-    const s = schedule({
-      kind: 'interval',
-      everyMs: HOUR,
-      maxRepeats: 10,
-      nextAt: NOW - 3 * HOUR - 1,
-    });
-    expect(catchUp(s, NOW)).toMatchObject({ action: 'fire', slots: 4, late: true });
-  });
-
-  it('caps the collapsed slots at the repeats that remain', () => {
-    const s = schedule({
-      kind: 'interval',
-      everyMs: HOUR,
-      maxRepeats: 3,
-      firedCount: 1,
-      nextAt: NOW - 5 * HOUR,
-    });
-    expect(catchUp(s, NOW).slots).toBe(2);
-  });
-
-  it('never fires a schedule with no repeats left or one already done', () => {
-    expect(catchUp(schedule({ maxRepeats: 1, firedCount: 1, nextAt: NOW - 1 }), NOW).action).toBe(
-      'wait',
-    );
-    expect(catchUp(schedule({ state: 'done', nextAt: NOW - 1 }), NOW).action).toBe('wait');
-  });
-
-  it('marks a waiting schedule late however briefly it waited', () => {
-    const s = schedule({ state: 'waiting', waitingSince: NOW - 1, nextAt: NOW - 1 });
-    expect(catchUp(s, NOW)).toMatchObject({ action: 'fire', late: true });
-  });
-
-  it('treats a waiting schedule as due — the window is applied when it becomes deliverable', () => {
-    const s = schedule({ state: 'waiting', waitingSince: NOW - HOUR, nextAt: NOW - HOUR });
-    expect(catchUp(s, NOW)).toMatchObject({ action: 'fire', late: true });
-  });
-});
-
-describe('advanceAfterFire', () => {
-  it('marks a once schedule done and records the fire', () => {
-    const next = advanceAfterFire(schedule(), NOW, { slots: 1, late: false, delivered: true });
-    expect(next).toMatchObject({ firedCount: 1, state: 'done' });
-    expect(next.lastFire).toEqual({ at: NOW, late: false, delivered: true });
-  });
-
-  it('re-arms an interval at nextAt + slots * everyMs', () => {
-    const s = schedule({ kind: 'interval', everyMs: HOUR, maxRepeats: 3, nextAt: NOW - 2 * HOUR });
-    const next = advanceAfterFire(s, NOW, { slots: 3, late: true, delivered: true });
-    // 3 slots consumed of 3 → done, and nextAt is never moved past the end.
-    expect(next).toMatchObject({ firedCount: 3, state: 'done' });
-
-    const partial = advanceAfterFire(
-      schedule({ kind: 'interval', everyMs: HOUR, maxRepeats: 5, nextAt: NOW - 1 }),
-      NOW,
-      { slots: 1, late: false, delivered: true },
-    );
-    expect(partial).toMatchObject({ firedCount: 1, state: 'armed', nextAt: NOW - 1 + HOUR });
-  });
-
-  it('advances past NOW when several slots elapsed, so it cannot re-fire immediately', () => {
-    const s = schedule({
-      kind: 'interval',
-      everyMs: HOUR,
-      maxRepeats: 10,
-      nextAt: NOW - 3 * HOUR - 1,
-    });
-    const next = advanceAfterFire(s, NOW, { slots: 4, late: true, delivered: true });
-    expect(next.nextAt).toBeGreaterThan(NOW);
-  });
-
-  it('records a failure reason and clears the waiting marker', () => {
-    const s = schedule({ state: 'waiting', waitingSince: NOW - HOUR });
-    const next = advanceAfterFire(s, NOW, {
-      slots: 1,
-      late: true,
-      delivered: false,
-      reason: 'noSession',
-    });
-    expect(next.lastFire).toEqual({ at: NOW, late: true, delivered: false, reason: 'noSession' });
-    expect(next.waitingSince).toBeUndefined();
-    expect(next.state).toBe('done');
-  });
-});
-
-describe('markWaiting', () => {
-  it('stamps waitingSince with the missed nextAt', () => {
-    const s = schedule({ nextAt: NOW - HOUR });
-    const w = markWaiting(s, s.nextAt);
-    expect(w).toMatchObject({ state: 'waiting', waitingSince: NOW - HOUR, nextAt: NOW - HOUR });
-  });
-
-  it('is idempotent, so a re-evaluation raises no change', () => {
-    const w = markWaiting(schedule(), NOW);
-    expect(markWaiting(w, NOW)).toBe(w);
-  });
-});
-
 describe('renew', () => {
   it('re-resolves the stored wall clock for an At schedule rather than adding an offset', () => {
     const s = schedule({
@@ -524,23 +380,6 @@ describe('formatDuration / describeNext', () => {
 });
 
 describe('the persisted file', () => {
-  it('round-trips armed and waiting schedules', () => {
-    const file = {
-      version: 1 as const,
-      schedules: [schedule(), schedule({ id: 'tm-2', state: 'waiting' as const })],
-    };
-    expect(parseTimedMessagesFile(serializeTimedMessagesFile(file)).schedules).toHaveLength(2);
-  });
-
-  it('drops done schedules on write — they exist only for the rest of the run', () => {
-    const file = {
-      version: 1 as const,
-      schedules: [schedule(), schedule({ id: 'tm-2', state: 'done' as const })],
-    };
-    const back = parseTimedMessagesFile(serializeTimedMessagesFile(file));
-    expect(back.schedules.map((s) => s.id)).toEqual(['tm-1']);
-  });
-
   it('treats absent and corrupt files as empty, and explicitly refuses newer versions', () => {
     expect(parseTimedMessagesFile(undefined).schedules).toEqual([]);
     expect(parseTimedMessagesFile('{oops').schedules).toEqual([]);
