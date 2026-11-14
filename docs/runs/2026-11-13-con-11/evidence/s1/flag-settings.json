@@ -1,0 +1,2 @@
+{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo flag-hook >> /tmp/claude-1000/-home-namemenima-projects--wt-conduit-CON-11/6af92499-c391-459b-8c04-ceb0878cb91d/scratchpad/s1/out"}]}]},
+ "statusLine":{"type":"command","command":"echo flag-sl >> /tmp/claude-1000/-home-namemenima-projects--wt-conduit-CON-11/6af92499-c391-459b-8c04-ceb0878cb91d/scratchpad/s1/out; cat > /tmp/claude-1000/-home-namemenima-projects--wt-conduit-CON-11/6af92499-c391-459b-8c04-ceb0878cb91d/scratchpad/s1/flag-sl.json; echo FLAG_STATUS"}}

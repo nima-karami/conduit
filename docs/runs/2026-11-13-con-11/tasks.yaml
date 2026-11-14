@@ -1,0 +1,4 @@
+- id: spike
+  status: done
+  outcome: "spike.md settles S1, S3/S4, S5; §13 defaults applied where unconfirmed"
+  evidence: [docs/runs/2026-11-13-con-11/spike.md, docs/runs/2026-11-13-con-11/evidence/s1/]
