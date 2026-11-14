@@ -41,14 +41,14 @@ const remote: Principal = {
   kind: 'remote',
   handle: 'r',
   machineId: 'm-1',
-  remoteSessionId: 'rs',
   trust: 'own',
-  capabilities: [],
+  capabilities: { messaging: false, monitor: false, drive: false },
 };
 
 const target = (over: Partial<PolicyTarget> = {}): PolicyTarget => ({
   sessionId: null,
   path: null,
+  folder: null,
   projectId: null,
   ...over,
 });
@@ -264,19 +264,77 @@ describe('grant store', () => {
       kind: 'path',
       path: '/w/a.ts',
     });
-    expect(grantScopeFor('target', target(), p)).toEqual({ kind: 'path', path: '/home/u/proj' });
-    expect(grantScopeFor('target', target(), session({ homeFolder: null }))).toEqual(ANYWHERE);
     expect(grantScopeFor('target', target({ path: '/w/a.ts' }), remote)).toEqual({
       kind: 'path',
       path: '/w/a.ts',
     });
-    expect(grantScopeFor('folder', target({ path: '/w/a.ts' }), p)).toEqual({
-      kind: 'folder',
-      path: '/w/a.ts',
-    });
-    expect(grantScopeFor('folder', target(), p)).toEqual({ kind: 'folder', path: '/home/u/proj' });
-    expect(grantScopeFor('folder', target(), remote)).toEqual(ANYWHERE);
+  });
+
+  it('grantScopeFor returns null instead of widening', () => {
+    const p = session();
+    expect(grantScopeFor('target', target(), p)).toBeNull();
+    expect(grantScopeFor('folder', target(), p)).toBeNull();
+    expect(grantScopeFor('folder', target({ path: '/w/a.ts' }), p)).toBeNull();
     expect(grantScopeFor('anywhere', target({ sessionId: 's9' }), p)).toEqual(ANYWHERE);
+  });
+
+  it("grantScopeFor folder uses the target folder (a file's parent, a session's cwd)", () => {
+    const p = session();
+    expect(grantScopeFor('folder', target({ path: '/w/a.ts', folder: '/w' }), p)).toEqual({
+      kind: 'folder',
+      path: '/w',
+    });
+    expect(grantScopeFor('folder', target({ sessionId: 's9', folder: '/cwd/s9' }), p)).toEqual({
+      kind: 'folder',
+      path: '/cwd/s9',
+    });
+    expect(grantScopeFor('folder', target({ folder: '/w' }), remote)).toEqual({
+      kind: 'folder',
+      path: '/w',
+    });
+  });
+
+  it('sessionEnded also expires a grant on the ended session', () => {
+    const onSession = store.create(
+      { kind: 'cli', cli: 'claude' },
+      'send_message',
+      { kind: 'session', sessionId: 's7' },
+      'until-revoked',
+      null,
+      null,
+    );
+    const elsewhere = store.create(
+      { kind: 'cli', cli: 'claude' },
+      'send_message',
+      { kind: 'session', sessionId: 's8' },
+      'until-revoked',
+      null,
+      null,
+    );
+    expect(store.sessionEnded('s7').map((g) => g.id)).toEqual([onSession.id]);
+    expect(store.all().find((g) => g.id === elsewhere.id)?.state).toBe('active');
+  });
+
+  it('isExpiring also flags a session-end grant nearing its decay', () => {
+    const g = store.create(
+      { kind: 'cli', cli: 'claude' },
+      'read_inbox',
+      ANYWHERE,
+      'session-end',
+      null,
+      null,
+    );
+    const decayAt = T0 + GRANT_DECAY_MS;
+    expect(isExpiring(g, decayAt - GRANT_EXPIRING_MS)).toBe(false);
+    expect(isExpiring(g, decayAt - GRANT_EXPIRING_MS + 1)).toBe(true);
+    expect(isExpiring(g, decayAt)).toBe(false);
+
+    t += DAY;
+    store.touch(g.id);
+    const touched = store.all()[0];
+    const touchedDecayAt = T0 + DAY + GRANT_DECAY_MS;
+    expect(isExpiring(touched, touchedDecayAt - GRANT_EXPIRING_MS + 1)).toBe(true);
+    expect(isExpiring(touched, decayAt - GRANT_EXPIRING_MS + 1)).toBe(false);
   });
 
   it('all() returns copies the caller cannot use to mutate the store', () => {

@@ -7,6 +7,7 @@ import {
   serializeGrantsFile,
   serializePolicyFile,
 } from '../../src/conduit-mcp/policy-file';
+import { WORKER_PROFILE } from '../../src/conduit-mcp/policy-profiles';
 import type { Decision, ToolRule } from '../../src/conduit-mcp/policy-types';
 import { TOOL_NAMES, type ToolName } from '../../src/conduit-mcp/tool-policy';
 
@@ -63,7 +64,7 @@ const validFile = (): PolicyFile => ({
       id: 'o1',
       sessionId: 's1',
       tool: 'open_file',
-      target: { sessionId: null, path: '/w/a.ts', projectId: null },
+      target: { sessionId: null, path: '/w/override.ts', folder: '/w', projectId: null },
       createdAt: '2026-11-14T12:00:00.000Z',
     },
   ],
@@ -103,8 +104,9 @@ describe('policy file', () => {
       ['override tool', '"tool": "open_file"', '"tool": "open_terminal_now"'],
       ['migratedFrom', '"migratedFrom": "v0.64"', '"migratedFrom": "v0.9"'],
       ['onScreenOnly type', '"onScreenOnly": true', '"onScreenOnly": "yes"'],
-      ['override path type', '"path": "/w/a.ts"', '"path": 5'],
-      ['unknown top-level key', '"version": 1,', '"version": 1,\n  "extra": true,'],
+      ['override path type', '"path": "/w/override.ts"', '"path": 5'],
+      ['override folder type', '"folder": "/w"', '"folder": 5'],
+      ['override createdAt', '"createdAt": "2026-11-14T12:00:00.000Z"', '"createdAt": "yesterday"'],
     ];
     for (const [label, from, to] of mutations) {
       const text = valid.replace(from, to);
@@ -180,7 +182,7 @@ describe('policy file', () => {
       ['requestId type', '"requestId": "r1"', '"requestId": 4'],
       ['endedAt', '"endedAt": "2026-11-14T13:00:00.000Z"', '"endedAt": "later"'],
       ['who cli value', '"cli": "codex"', '"cli": "vim"'],
-      ['unknown key', '"requestId": "r1"', '"requestId": "r1", "extra": true'],
+      ['ended grant with null endedAt', '"endedAt": "2026-11-14T13:00:00.000Z"', '"endedAt": null'],
     ];
     for (const [label, from, to] of mutations) {
       const text = valid.replace(from, to);
@@ -191,5 +193,33 @@ describe('policy file', () => {
       ok: false,
       reason: 'newer',
     });
+  });
+
+  it('an unknown field is ignored', () => {
+    const policy = serializePolicyFile(validFile());
+    const policyExtras = [
+      ['"version": 1,', '"version": 1,\n  "extra": true,'],
+      ['"id": "p-1"', '"id": "p-1", "futureField": 1'],
+      ['"onScreenOnly": true', '"onScreenOnly": true, "futureField": "x"'],
+    ];
+    for (const [from, to] of policyExtras) {
+      expect(parsePolicyFile(policy.replace(from, to)).ok, from).toBe(true);
+    }
+    const grants = serializeGrantsFile(validGrants());
+    expect(
+      parseGrantsFile(grants.replace('"requestId": "r1"', '"requestId": "r1", "extra": 1')).ok,
+    ).toBe(true);
+  });
+
+  it('a profile missing a newer tool parses with that tool at Worker', () => {
+    const raw = JSON.parse(serializePolicyFile(validFile()));
+    delete raw.profiles[0].rules.open_file;
+    raw.profiles[0].rules.future_tool = { decision: 'deny', when: null, reach: null, move: null };
+    const parsed = parsePolicyFile(JSON.stringify(raw));
+    const rules = parsed.ok ? parsed.file.profiles[0].rules : null;
+    expect(rules?.open_file).toEqual(WORKER_PROFILE.rules.open_file);
+    expect(rules?.open_file.decision).not.toBe('ask');
+    expect(rules?.list_sessions).toEqual(rulesFor('ask').list_sessions);
+    expect(rules && 'future_tool' in rules).toBe(false);
   });
 });

@@ -100,8 +100,9 @@ export function createGrantStore(deps: GrantStoreDeps): GrantStore {
       for (const g of grants.values()) {
         if (g.state !== 'active' && g.state !== 'suspended') continue;
         const ownedBy = g.who.kind === 'session' && g.who.sessionId === sessionId;
+        const onSession = g.on.kind === 'session' && g.on.sessionId === sessionId;
         const anchored = g.anchorSessionId === sessionId && g.for === 'session-end';
-        if (!ownedBy && !anchored) continue;
+        if (!ownedBy && !onSession && !anchored) continue;
         end(g, 'expired', now);
         changed.push(copyGrant(g));
       }
@@ -131,22 +132,16 @@ export function createGrantStore(deps: GrantStoreDeps): GrantStore {
   };
 }
 
-const homeFolderOf = (p: Principal): string | null => (p.kind === 'session' ? p.homeFolder : null);
-
+// Never widens: a target with no session, path or folder yields null, and the caller refuses.
 export function grantScopeFor(
   choice: GrantChoice['on'],
   target: PolicyTarget,
-  principal: Principal,
-): Scope {
+  _principal: Principal,
+): Scope | null {
   if (choice === 'anywhere') return { kind: 'anywhere' };
-  const home = homeFolderOf(principal);
-  if (choice === 'target') {
-    if (target.sessionId) return { kind: 'session', sessionId: target.sessionId };
-    if (target.path) return { kind: 'path', path: target.path };
-    return home ? { kind: 'path', path: home } : { kind: 'anywhere' };
-  }
-  if (target.path) return { kind: 'folder', path: target.path };
-  return home ? { kind: 'folder', path: home } : { kind: 'anywhere' };
+  if (choice === 'folder') return target.folder ? { kind: 'folder', path: target.folder } : null;
+  if (target.sessionId) return { kind: 'session', sessionId: target.sessionId };
+  return target.path ? { kind: 'path', path: target.path } : null;
 }
 
 export function grantWhoFor(choice: GrantChoice['who'], principal: Principal): GrantWho | null {
@@ -163,8 +158,15 @@ export function grantWhoFor(choice: GrantChoice['who'], principal: Principal): G
   return principal.kind === 'remote' ? { kind: 'peer', machineId: principal.machineId } : null;
 }
 
-export function isExpiring(g: Grant, now: number): boolean {
-  if (g.state !== 'active' || g.expiresAt === null) return false;
-  const left = Date.parse(g.expiresAt) - now;
+const within = (deadline: number, now: number): boolean => {
+  const left = deadline - now;
   return left > 0 && left < GRANT_EXPIRING_MS;
+};
+
+export function isExpiring(g: Grant, now: number): boolean {
+  if (g.state !== 'active') return false;
+  if (g.expiresAt !== null && within(Date.parse(g.expiresAt), now)) return true;
+  return (
+    g.for === 'session-end' && within(Date.parse(g.lastUsedAt ?? g.createdAt) + GRANT_DECAY_MS, now)
+  );
 }
