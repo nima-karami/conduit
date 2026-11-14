@@ -45,7 +45,7 @@ s4-wire f9074b7a 1 · s4 tip afaff863 0 · s5-asks d8305d2b 0 · s5-tray 6d6394a
 - **App-closed OS notification (Windows and Linux).** Lead ruling 1; the lead files the card.
 - **Docs still describing the removed 5 s `ui_unavailable` rule:**
   - `docs/adr/0007-three-process-split-and-terminal-runtime.md:132`
-  - `docs/specs/2026-11-14-user-input-requests.md:83`
+  - `docs/specs/archive/2026-11-14-user-input-requests.md:83`
   - `docs/specs/2026-11-14-policy-and-permissions.md:527`
   - `docs/specs/2026-11-14-conduit-network.md:70`
 

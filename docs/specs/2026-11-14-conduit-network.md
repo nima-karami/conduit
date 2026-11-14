@@ -4,7 +4,7 @@
 link state and remote monitoring (§8) · **Status:** `status: shaped — awaiting owner decisions` (v4, 2026-11-14, spec-network). No
 implementation plan, by design.
 **Siblings:** POL = `2026-11-14-policy-and-permissions.md` (CON-18) · REQ =
-`2026-11-14-user-input-requests.md` (CON-10). Rulings: `docs/runs/2026-11-14-shaping/rulings.md`.
+`archive/2026-11-14-user-input-requests.md` (CON-10). Rulings: `docs/runs/2026-11-14-shaping/rulings.md`.
 
 > **For the user (read this first)**
 >
@@ -67,7 +67,7 @@ spike or this session observed it. Policy and request internals: POL §2, REQ §
 | C2 is unauthenticated (`hello.auth` is reserved). The Windows pipe accepts same-user/admin SMB clients and is world-readable | `src/contracts/server-protocol.ts:349-353`; ADR 0007 §As built | Measured (spike M28) |
 | The session token sits in the PTY env and is stored as SHA-256. Handles are `<cli>-<n>` per server, never reused, **not namespaced by machine**, and easy to guess | `server/mcp/token-file.ts:133`; `src/conduit-mcp/handles.ts:17-24` | Source |
 | Messaging tools are off/on only, with no ask. A thread pauses after 20 agent messages | `tool-policy.ts:101-107`; `types.ts:7-8` | Source |
-| Waiting asks are denied `ui_unavailable` 5 s after the **last app disconnects**. An app counts only if it has a ready window | `server/mcp/index.ts:41,315-327` | Source |
+| Waiting asks wait their full CLI budget after the **last app disconnects**; the reconnected owner window answers them (the 5 s `ui_unavailable` deny was removed by CON-21, REQ-D21c) | `server/mcp/index.ts`, `src/conduit-mcp/call-flow.ts` (`NO_OWNER_WINDOW`) | Source |
 | The pinned hc protocol defines ssh/`via` **machines** (`machine.add`, `machine/t7`, `ephemeral`, `file.read`). Unknown whether the pinned build implements them | `src/contracts/hc/hc.openrpc.json:328-460,3126-3315` | Protocol text |
 | There is no Kiro MCP install target. Kiro can be opened, and it would join messaging only as a generic `agent` with a hand-set entry | `tool-schemas.ts:149`; `agent-resolve.ts:126` | Source |
 | The server runs on Linux (this run) and Windows (its primary target) | `list_sessions` here; ADR 0007 | Measured / Source |

@@ -111,7 +111,7 @@ export interface AttentionEntry {
   handle: Handle | null;
   /** A session entry's own words for why it needs you, when the server gives them (stuck screens). */
   detail?: string;
-  /** A request entry's id (docs/specs/2026-11-14-user-input-requests.md §4.4). */
+  /** A request entry's id (docs/specs/archive/2026-11-14-user-input-requests.md §4.4). */
   requestId?: string;
 }
 

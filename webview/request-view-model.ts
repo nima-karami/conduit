@@ -51,7 +51,7 @@ export interface CardView {
 }
 
 const MIN_MS = 60_000;
-// see docs/specs/2026-11-14-user-input-requests.md §4.4
+// see docs/specs/archive/2026-11-14-user-input-requests.md §4.4
 const POPUP_MAX_CHARS = 600;
 const POPUP_MAX_LINES = 8;
 const POPUP_MAX_OPTIONS = 4;

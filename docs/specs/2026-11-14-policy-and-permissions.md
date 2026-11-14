@@ -16,7 +16,7 @@ CON-16's machines acting as one.
 
 **Siblings:**
 - NET = [conduit-network](2026-11-14-conduit-network.md): links, peers, revoke, link caps.
-- REQ = [user-input-requests](2026-11-14-user-input-requests.md): the request object, its lifecycle,
+- REQ = [user-input-requests](archive/2026-11-14-user-input-requests.md): the request object, its lifecycle,
   the queue and History.
 
 Wireframes: `docs/design-handoff/2026-11-14-shaping/CON-18/`. CLI research with URLs:
@@ -524,7 +524,7 @@ Feature: Policy and permissions
 - **H2:** NET's four capabilities. Guests never get drive and get no orchestrate in v1.
 - **H1:** a link over a local transport, so nothing extra. **H6:** untouched.
 - **Owned elsewhere** (cited, not decided here):
-  - REQ: REQ-D21 (attention across machines, `ui_unavailable`), REQ §4.3 (remote-ask timing),
+  - REQ: REQ-D21 (attention across machines; the 5 s `ui_unavailable` deny, removed by CON-21), REQ §4.3 (remote-ask timing),
     REQ §4.2 (lifecycle).
   - NET: NET-D4 (own-link drive/orchestrate opt-in), NET-D20 (identity-changed suspends grants),
     NET-D21 (guest bootstrap), link caps (NET §5), NET-D19 (Kiro on Windows), revoke-everywhere and key rotation (v1).

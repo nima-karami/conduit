@@ -1,6 +1,6 @@
 # Request queue machinery (CON-21) — implementation plan
 
-**Spec:** `docs/specs/2026-11-14-user-input-requests.md` (v4.5)  **Tier:** FULL
+**Spec:** `docs/specs/archive/2026-11-14-user-input-requests.md` (v4.5)  **Tier:** FULL
 **Gate evidence:** `docs/runs/2026-11-14-CON-21/osc7501.md` (REQ-D9, measured)
 
 ## Goal

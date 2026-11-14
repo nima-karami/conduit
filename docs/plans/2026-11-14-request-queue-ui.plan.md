@@ -1,6 +1,6 @@
 # Request queue UI (CON-20) — implementation plan
 
-**Spec:** `docs/specs/2026-11-14-user-input-requests.md` v4.5 §4.4, §4.5, §11  **Tier:** FULL
+**Spec:** `docs/specs/archive/2026-11-14-user-input-requests.md` v4.5 §4.4, §4.5, §11  **Tier:** FULL
 **Design (approved, final):** `docs/design-handoff/2026-11-14-shaping/CON-10/` on branch `shaping-2026-11-14`
 (README, `iter-7/` screens and `critique.md` incl. "cut the repetition", iter-6's empty / caught-up / session
 pill / waiting notice, `../shared-frame.md`). Read it from `/home/namemenima/projects/.wt/conduit/shaping/…`;
