@@ -1055,3 +1055,51 @@ GROUPS: 10
 CLAIMS: src/contracts/session-identity.ts, src/conduit-mcp/host.ts, src/conduit-mcp/tools.ts, src/conduit-mcp/types.ts, src/conduit-mcp/store.ts, src/contracts/server-ports.ts, server/mcp/index.ts, server/services.ts, src/contracts/server-protocol.ts, src/settings.ts, electron/server-client.ts, electron/server-events.ts, src/protocol.ts, src/contracts/terminal-runtime.ts, server/runtime/runtime.ts, THIRD_PARTY_NOTICES.txt, CHANGELOG.md
 SCRIPT_CANDIDATES: 2
 ```
+
+## Handover state (2026-11-14, end of Claude session; read this first)
+- **Branch** `CON-27-cross-machine-machinery`, head after this note. Slices 1–5 are merged.
+  - Local `npm run verify` exit 0.
+  - CI run 43655202582 at 9676e582: verify job green (semgrep and gitleaks), `net-pairing` passes on Windows.
+- **In flight:**
+  1. **Lane T6.2.** Branch `lane/CON-27-s6-t62`, worktree
+     `/tmp/claude-1000/-home-namemenima-projects--wt-conduit-CON-27/b4972850-744e-4154-9f27-0107c45f4dd2/scratchpad/lanes/s6-t62`.
+     - MCP side of messaging: send to `x@m-…`; `McpNetworkPort` gains `hasMessage`,
+       `deliverInbound`, `setRemoteStatus`, `onLocalStatus`.
+     - `store.onChange` gets `{messageId, handle, status}`.
+     - `MessageRecord.originHuman`.
+  2. **WIP branch `wip/CON-27-s6-network`** (81a6cea7). Network side, which compiles only after T6.2:
+     - `server/network/messaging.ts`: outbox store, inbound with dedupe via `hasMessage`, receipts
+       held while down, non-transitive refusal;
+     - `index.ts` wiring: remote directory, monitor publisher, `NetworkPort`, `setMcp`,
+       `localChanged`;
+     - `services.ts` wiring: monitor source, local-change triggers, port into `createMcp`;
+     - `test/e2e/net-helpers.mjs`: `startAgent`, `callTool`, `agentRecords`,
+       `LinkProxy.dropReplies`, and `work` on the server object.
+- **Next steps, in order:**
+  1. Review and merge T6.2. Then merge `wip/CON-27-s6-network` and fix compile gaps. The
+     `McpNetworkPort` member names in `messaging.ts` must match T6.2's.
+  2. Add unit tests for `messaging.ts`:
+     - enqueue → flush on up;
+     - ack refused → `undelivered`;
+     - expire;
+     - revoke;
+     - inbound capability_off;
+     - dedupe;
+     - non-transitive refusal;
+     - receipts held while down.
+  3. Write `test/e2e/net-messaging.e2e.mjs`:
+     - **A:** B's agent is listed on A with its address.
+     - **B:** A sends, B reads it once.
+     - **Drop:** restart B (`server.restart`, then reattach C2 the way `server-standalone.e2e.mjs`
+       does). Point B's address for A at an unreachable port, and A's address for B at a
+       `LinkProxy`. Turn `dropReplies` on, send, then cut and resume. B must have the message once.
+     - **Revoke while queued:** A's status becomes `undelivered`.
+  4. Gate: `npm run verify`, then `npm run e2e -- net-messaging` locally with
+     `CONDUIT_HC_BINARY=/home/namemenima/projects/conduit/build/vendor/hc/conduit-hc`, after
+     `npm run build`. Then `npm run e2e:remote -- net-messaging net-pairing`. Call it green only
+     when CI's verify is green (semgrep and gitleaks don't run locally).
+  5. Slice 7 (pane relay, remote waits), Slice 8 (drive: human-only remote open/close), Slice 9
+     (Tier 2 VM run, CHANGELOG, run report) as specified above.
+- **Lanes from now on are Conduit sessions** (`open_session`: codex with gpt-6.1-terra, or
+  cursor-agent with composer-2.5), not Claude subagents. Remove each lane worktree right after
+  merging it, because /tmp is a shared quota.
