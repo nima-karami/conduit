@@ -128,6 +128,13 @@ async function render(
               pause: noop,
               retry: noop,
               setToolPolicy: async () => true,
+              answerRequest: async () => ({
+                ok: false as const,
+                reason: 'not_found' as const,
+                message: '',
+                request: null,
+              }),
+              setAway: () => {},
             },
             sessions: [],
             sidebarSelection: { kind: 'all' },
