@@ -3,8 +3,13 @@ import { attentionChipLabel } from '../../src/attention';
 import { CHROME_STR, clampPercent } from '../../webview/chrome-strings';
 
 describe('CHROME_STR', () => {
-  it('names the three views exactly as the selector contract does', () => {
-    expect(CHROME_STR.view).toEqual({ files: 'Files', changes: 'Changes', messages: 'Messages' });
+  it('names the four panels exactly as the selector contract does', () => {
+    expect(CHROME_STR.view).toEqual({
+      needs: 'Needs you',
+      files: 'Files',
+      changes: 'Changes',
+      messages: 'Messages',
+    });
   });
 
   it('pluralises counts for 0, 1 and many', () => {
