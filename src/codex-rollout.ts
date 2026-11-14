@@ -113,3 +113,72 @@ export class LineSplitter {
       .filter((line) => line !== '');
   }
 }
+
+export type CodexAction =
+  | {
+      kind: 'command';
+      command: string;
+      cwd: string;
+      exitCode: number | null;
+      durationMs: number | null;
+    }
+  | { kind: 'file-change'; paths: string[] }
+  | { kind: 'mcp'; server: string; tool: string; durationMs: number | null };
+
+/** Output, aggregated_output, content, arguments and result are never copied: see spec §4.6. */
+const commandText = (argv: unknown): string | null => {
+  if (typeof argv === 'string') return argv;
+  if (!Array.isArray(argv) || !argv.every((part) => typeof part === 'string')) return null;
+  const parts = argv as string[];
+  if (parts.length === 3 && (parts[1] === '-c' || parts[1] === '-lc')) return parts[2] ?? null;
+  return parts.join(' ');
+};
+
+const durationMs = (d: unknown): number | null => {
+  const duration = asRecord(d);
+  if (typeof duration?.secs !== 'number' || typeof duration.nanos !== 'number') return null;
+  return Math.round(duration.secs * 1000 + duration.nanos / 1e6);
+};
+
+export function rolloutActions(line: unknown): CodexAction[] {
+  const doc = typeof line === 'string' ? parseLine(line) : asRecord(line);
+  if (doc?.type !== 'event_msg') return [];
+  const payload = asRecord(doc.payload);
+  if (payload?.type !== 'item_completed') return [];
+  const item = asRecord(payload.item);
+  if (!item) return [];
+  switch (item.type) {
+    case 'CommandExecution': {
+      const command = commandText(item.command);
+      if (command === null || typeof item.cwd !== 'string') return [];
+      const exitCode = typeof item.exit_code === 'number' ? item.exit_code : null;
+      return [
+        {
+          kind: 'command',
+          command,
+          cwd: item.cwd,
+          exitCode,
+          durationMs: durationMs(item.duration),
+        },
+      ];
+    }
+    case 'FileChange': {
+      const changes = asRecord(item.changes);
+      if (!changes) return [];
+      return [{ kind: 'file-change', paths: Object.keys(changes) }];
+    }
+    case 'McpToolCall': {
+      if (typeof item.server !== 'string' || typeof item.tool !== 'string') return [];
+      return [
+        {
+          kind: 'mcp',
+          server: item.server,
+          tool: item.tool,
+          durationMs: durationMs(item.duration),
+        },
+      ];
+    }
+    default:
+      return [];
+  }
+}
