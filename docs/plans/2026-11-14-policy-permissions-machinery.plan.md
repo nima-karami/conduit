@@ -179,11 +179,12 @@ export const BUILT_IN_PROFILES: readonly Profile[];              // observer, wo
 export function profileById(state: PolicyState, id: ProfileId): Profile | null;
 export function pointKey(p: AssignmentPoint): string;            // 'session:<id>' | 'peer:<m>' | 'cli:<k>' | 'default'
 export function effectiveRule(profile: Profile, a: Assignment, tool: ToolName, target: PolicyTarget | null): ToolRule;
+export function matchesScope(scope: Scope, target: PolicyTarget | null): boolean;   // the one scope matcher; decide() resolves no-target calls first
+export const WORKER_PROFILE: Profile;                // fallback for an unknown profileId
 // policy-engine.ts
 export function decide(state: PolicyState, input: PolicyInput): PolicyDecision;
-export function visibleTools(state: PolicyState, principal: Principal, masterOn: boolean): ToolName[];
+export function visibleTools(state: PolicyState, principal: Principal, masterOn: boolean, now: number): ToolName[];
 export function assignmentFor(state: PolicyState, p: Principal): { point: AssignmentPoint; assignment: Assignment };
-export function matchesScope(scope: Scope, target: PolicyTarget, principal: Principal): boolean;
 export function reasonText(reason: Reason, decision: Decision, names: { profileName(id: ProfileId): string; cliName(k: CliKind): string }): string;
 ```
 - **Worker.** Worker's rules are built from `TOOL_SPECS[*].defaults` (`tool-policy.ts:131-202`), mapping off→deny, ask→ask, on→allow. Worker equals today by construction.
