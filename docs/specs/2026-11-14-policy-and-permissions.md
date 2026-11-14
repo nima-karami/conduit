@@ -1,5 +1,5 @@
 ---
-status: shaped — awaiting owner decisions
+status: building (CON-24) — MVP decisions locked
 date: 2026-11-14
 ticket: CON-18 (carries CON-17's policy demand and CON-16's remote machines)
 ---
@@ -537,6 +537,8 @@ Feature: Policy and permissions
   it's visible per turn (measured). Mirrored in POL-D12.
 
 ## 15. Decisions Needed
+
+**Locked by the owner (2026-11-14, CON-24 build):** POL-D1 profiles over rules + Activity · POL-D2 not yet (observed lane only) · **POL-D3 allow**: a Lead opens other sessions *and* plain terminals without asking ("if it has to ask every time, it's not a lead anymore"); a plain terminal runs commands outside any CLI's own approval, which is the accepted cost · POL-D4 yes, a Lead acts off screen · POL-D5, POL-D6, POL-D7 at their defaults · POL-D14 observed lane in MVP for Claude and Codex. POL-D13 and POL-D15 are v1 and stay open.
 
 - **[high] POL-D1, shape:** **profiles over rules + Activity, D in v1 (default)** / A / B / C.
 - **[high] POL-D2, decide native approvals:**
