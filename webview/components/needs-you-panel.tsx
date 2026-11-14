@@ -13,14 +13,15 @@ import { NeedsYouMenu } from './needs-you-menu';
 import { NeedsYouPane } from './needs-you-pane';
 
 // The right pane is not handed the sidebar's project list, so cards show no space names yet.
-const NO_SPACE_NAMES: ReadonlyMap<string, string> = new Map();
 
 export function NeedsYouPanel({
   mcp,
   sessions,
+  spaceNames,
 }: {
   mcp: ConduitMcpApi;
   sessions: readonly Session[];
+  spaceNames: ReadonlyMap<string, string>;
 }) {
   const [view, setView] = useNeedsYouView();
   // Filters are per visit: a remount starts unfiltered.
@@ -52,7 +53,7 @@ export function NeedsYouPanel({
       onFilters={setFilters}
       options={filterOptions(requests?.open ?? [], {
         sessions: sessionInfo,
-        spaces: NO_SPACE_NAMES,
+        spaces: spaceNames,
       })}
       show={view.show}
       onShow={(show) => setView({ ...view, show })}
@@ -64,7 +65,7 @@ export function NeedsYouPanel({
     <NeedsYouPane
       requests={requests}
       sessions={sessions}
-      spaceNames={NO_SPACE_NAMES}
+      spaceNames={spaceNames}
       sort={view.sort}
       filters={filters}
       show={view.show}
