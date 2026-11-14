@@ -7,9 +7,9 @@ import {
   joinerStep,
   type OpenerContext,
   type OpenerState,
+  type OwnerKeyPair,
   openerStart,
   openerStep,
-  type OwnerKeyPair,
   type PairingInput,
   type PairingMsg,
   type PairingOutcome,
@@ -71,7 +71,11 @@ function setup(o: {
     },
   };
   const start = joinerStart(
-    { self: self(kb, 'win-box', o.joinerOwner ?? null), peerKeyRaw: ka, rand: (n) => randomBytes(n) },
+    {
+      self: self(kb, 'win-box', o.joinerOwner ?? null),
+      peerKeyRaw: ka,
+      rand: (n) => randomBytes(n),
+    },
     o.code ?? CODE,
   );
   return { pair: { opener: openerStart(octx), joiner: start.state, generated }, first: start.out };
@@ -113,7 +117,8 @@ function act(p: Pair, who: 'opener' | 'joiner', input: PairingInput): void {
 function linkedBoth(p: Pair) {
   const a = p.openerDone;
   const b = p.joinerDone;
-  if (a?.kind !== 'linked' || b?.kind !== 'linked') throw new Error(`not linked: ${JSON.stringify([a, b])}`);
+  if (a?.kind !== 'linked' || b?.kind !== 'linked')
+    throw new Error(`not linked: ${JSON.stringify([a, b])}`);
   return { a, b };
 }
 
@@ -251,7 +256,10 @@ describe('pairing protocol', () => {
     const r1 = openerStep(pair.opener, { kind: 'msg', msg: first[0] });
     const r2 = joinerStep(pair.joiner, { kind: 'msg', msg: r1.out[0] });
     const reveal = r2.out[0];
-    const forged = { ...(r2.out[1] as Extract<PairingMsg, { t: 'pair.id' }>), machineId: 'm-00000000' };
+    const forged = {
+      ...(r2.out[1] as Extract<PairingMsg, { t: 'pair.id' }>),
+      machineId: 'm-00000000',
+    };
     openerStep(pair.opener, { kind: 'msg', msg: reveal });
     const r3 = openerStep(pair.opener, { kind: 'msg', msg: forged });
     expect(r3.done).toEqual({ kind: 'failed', reason: 'protocol' });
