@@ -405,6 +405,24 @@ observe(sessionId: string, events: { data(data: string): void; size(size: TermGe
 **Delete**
 - `src/conduit-mcp/machine-id.ts` (+ its unit test, if any).
 
+### Seams with CON-24 (agreed in writing with claude-21, lead CC'd, 2026-11-14)
+1. **`src/contracts/remote-principal.ts`** is byte-identical on both branches: `Capability`,
+   `Capabilities`, `RemotePrincipal {kind:'remote', handle, machineId, trust:'own'}`,
+   `principalAddress`. `link-protocol.ts` re-exports `Capability`/`Capabilities` from it. POL's
+   remote principal is `RemotePrincipal & { capabilities: Capabilities }`.
+2. **Capability floor:** NET's inbound boundary is the gate. POL keeps floor (d) as a second check
+   on the `capabilities` its composer fills from `NetworkPort.capabilitiesOf(machineId):
+   Capabilities | null` (null or false → deny). NET adds `capabilitiesOf` to `NetworkPort` (Slice 5).
+3. **`AuditSink`:** `record(e: AuditEvent)`, where `AuditEvent.kind` is the closed union
+   `'pairing.linked' | 'pairing.failed' | 'link.state' | 'link.revoked' | 'link.capability' |
+   'message.in' | 'message.out' | 'message.refused' | 'drive.start' | 'drive.stop' |
+   'drive.refused'`, plus `peer: string | null` and `principal?: string`. It never carries a body or
+   keystroke. Whichever branch merges second writes `activityAuditSink(log)` and swaps it into
+   `createNetwork`'s deps.
+4. **Revoke hook:** `NetworkService.onRevoked(listener: (machineId: string) => void): () => void`
+   (Slice 4). Whichever branch lands second wires it to POL `peerRevoked(machineId)` and REQ
+   withdrawal (`withdrawnBy: 'conduit'`, reason "link revoked").
+
 ## Producer / consumer scan
 | Behaviour changed | Producer | Consumer | Plan touches |
 |---|---|---|---|
@@ -630,7 +648,9 @@ VM; **3** = needs Linux ↔ Windows (owner setup).
       put(r: LinkRecord): void; update(machineId: string, patch: Partial<Pick<LinkRecord, 'addresses' | 'capabilities' | 'name'>>): void;
       revoke(machineId: string, at: number): Tombstone | null; writable: boolean }
     export function openLinkStore(file: string, now: () => number, log: NetLog): LinkStore; // atomicWriteFileSync + chmod 0600; newer → read-only, writable=false
-    export interface AuditSink { record(e: { kind: string; peer: string | null; [k: string]: unknown }): void }
+    export type AuditKind = 'pairing.linked' | 'pairing.failed' | 'link.state' | 'link.revoked' | 'link.capability' | 'message.in' | 'message.out' | 'message.refused' | 'drive.start' | 'drive.stop' | 'drive.refused';
+    export interface AuditEvent { kind: AuditKind; peer: string | null; principal?: string; detail?: Record<string, string | number | boolean | null> }
+    export interface AuditSink { record(e: AuditEvent): void }
     export function openAuditLog(file: string, now: () => number): AuditSink; // appendFileSync line, {v:1, at, ...}
     ```
   - **Tests:**
