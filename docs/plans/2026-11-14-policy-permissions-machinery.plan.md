@@ -303,6 +303,7 @@ export function applyLegacyPatch(state: PolicyState, point: AssignmentPoint, low
   - The tool's anywhere exception then holds the field only if the profile's value differs from the target; otherwise the field is removed. Empty exceptions are dropped.
   - A point with no assignment starts as a full copy of `lower`'s assignment: same profile, **all** exceptions including scoped ones, same `onScreenOnly`.
   - The access↔decision map lives once, in `policy-profiles.ts`.
+  - **Scopes (re-review S2-1).** The old editors know only "anywhere", so a legacy edit of (tool, field) is authoritative at every scope: it also removes that field from every scoped exception of that tool. Clearing `onScreenOnly` sets `when:'viewing'` on every scoped exception that carries a `when`, for every tool, so no target loosens. A patch for a field the tool doesn't have (`TOOL_SPECS[tool].fields`) is skipped.
 - **What gets migrated.** The global layer migrates to the default assignment only when it differs from the defaults. The CLI layers become kind assignments, and the session layers become session assignments.
 - **The on-screen offer.** `notes.onScreenOnlyOffered` lists the session ids that got Lead with `onScreenOnly`. CON-25 shows the one-time offer from it.
 
