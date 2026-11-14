@@ -4,6 +4,11 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Fixed
+- A "JavaScript error occurred in the main process" box no longer appears, and headless runs no longer crash, when git quits before reading the input Conduit gives it (for example, checking ignored files in a folder that isn't a git repository).
+
 ## [0.64.0] — 2026-11-13
 
 ### Changed
