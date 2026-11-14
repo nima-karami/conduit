@@ -1,0 +1,214 @@
+import { describe, expect, it } from 'vitest';
+import {
+  type LinkFrame,
+  type MonitorSession,
+  type MonitorSnapshot,
+  OWN_DEFAULT_CAPABILITIES,
+  parseLinkFrame,
+  type WireMessage,
+} from '../../src/contracts/link-protocol';
+
+const CAPS = { messaging: true, monitor: true, drive: false };
+const SIZE = { cols: 120, rows: 40 };
+const MESSAGE: WireMessage = {
+  messageId: 'msg-1',
+  threadId: 'th-1',
+  from: 'claude-3',
+  to: ['you'],
+  subject: 'hi',
+  kind: 'request',
+  priority: 'normal',
+  sentAt: '2026-11-14T10:00:00.000Z',
+  body: 'hello',
+  attachments: [{ name: 'a.txt', mime: 'text/plain', data: 'aGk=' }],
+};
+const SESSION: MonitorSession = {
+  sessionId: 's-1',
+  handle: 'claude-3',
+  label: 'Claude',
+  agent: 'cli:claude',
+  presence: 'busy',
+  messaging: 'connected',
+  messageable: true,
+  notices: 'typed',
+  home: '/home/me/p',
+  roots: ['/home/me/p'],
+  attention: { attentionReason: 'blocked', completions: 2 },
+  completions: 2,
+  limit: null,
+  status: 'running',
+};
+const SNAPSHOT: MonitorSnapshot = {
+  seq: 7,
+  sessions: [SESSION],
+  requests: [
+    {
+      requestId: 'r-1',
+      type: 'approval',
+      summary: 'run tests',
+      sessionHandle: 'claude-3',
+      createdAt: '2026-11-14T10:00:00.000Z',
+    },
+  ],
+  youUnread: 1,
+  ownerPresence: 'here',
+  agents: [{ id: 'cli:claude', label: 'Claude' }],
+};
+
+/** One valid sample per frame `t`; the mapped type fails to compile if a frame is missing. */
+const SAMPLES: { [K in LinkFrame['t']]: Extract<LinkFrame, { t: K }> } = {
+  hello: {
+    t: 'hello',
+    protocol: { major: 1, minor: 0 },
+    machineId: 'm-0a1b2c3d',
+    serverKey: 'c2VydmVy',
+    ownerKey: null,
+    selfName: 'laptop',
+    features: ['messaging', 'monitor'],
+    capabilities: CAPS,
+  },
+  ping: { t: 'ping' },
+  pong: { t: 'pong' },
+  bye: { t: 'bye', reason: 'duplicate' },
+  revoked: { t: 'revoked' },
+  caps: { t: 'caps', capabilities: CAPS },
+  msg: { t: 'msg', message: MESSAGE },
+  ack: {
+    t: 'ack',
+    messageId: 'msg-1',
+    recipients: [{ handle: 'claude-3', status: 'refused', reason: 'capability_off' }],
+  },
+  receipt: { t: 'receipt', messageId: 'msg-1', handle: 'claude-3', status: 'read' },
+  snapshot: { t: 'snapshot', snapshot: SNAPSHOT },
+  'view.open': { t: 'view.open', viewId: 'v-1', sessionId: 's-1' },
+  'view.opened': {
+    t: 'view.opened',
+    viewId: 'v-1',
+    firstPaint: 'Zmlyc3Q=',
+    size: SIZE,
+    windowsPty: { backend: 'conpty', buildNumber: 22631 },
+  },
+  'view.data': { t: 'view.data', viewId: 'v-1', data: 'aGk=' },
+  'view.size': { t: 'view.size', viewId: 'v-1', size: SIZE },
+  'view.end': { t: 'view.end', viewId: 'v-1', reason: 'exited', exitCode: 0 },
+  'view.close': { t: 'view.close', viewId: 'v-1' },
+  'drive.input': { t: 'drive.input', sessionId: 's-1', data: 'ls\r' },
+  'drive.resize': { t: 'drive.resize', sessionId: 's-1', cols: 120, rows: 40 },
+  'drive.open': { t: 'drive.open', requestId: 'q-1', agentId: 'cli:claude', folder: '/home/me/p' },
+  'drive.close': { t: 'drive.close', requestId: 'q-1', sessionId: 's-1' },
+  'drive.result': { t: 'drive.result', requestId: 'q-1', ok: true, sessionId: 's-1', error: null },
+};
+
+const FRAME_TYPES = Object.keys(SAMPLES) as LinkFrame['t'][];
+
+describe('parseLinkFrame', () => {
+  it.each(FRAME_TYPES)('accepts a valid %s frame unchanged', (t) => {
+    const sample = SAMPLES[t];
+    expect(parseLinkFrame(structuredClone(sample))).toEqual(sample);
+  });
+
+  it.each(FRAME_TYPES)('rejects an unknown t in place of %s', (t) => {
+    expect(parseLinkFrame({ ...SAMPLES[t], t: 'not-a-frame' })).toBeNull();
+  });
+
+  it.each(FRAME_TYPES)('rejects %s with any single top-level field missing', (t) => {
+    const sample = SAMPLES[t] as Record<string, unknown>;
+    for (const key of Object.keys(sample)) {
+      const { [key]: _omitted, ...rest } = sample;
+      expect(parseLinkFrame(rest), `${t} without ${key}`).toBeNull();
+    }
+  });
+
+  it.each(FRAME_TYPES)('rejects %s with any single top-level field of the wrong type', (t) => {
+    const sample = SAMPLES[t] as Record<string, unknown>;
+    for (const key of Object.keys(sample)) {
+      if (key === 't') continue;
+      expect(parseLinkFrame({ ...sample, [key]: {} }), `${t}.${key}={}`).toBeNull();
+    }
+  });
+
+  it.each(FRAME_TYPES)('rejects %s with an extra top-level key', (t) => {
+    expect(parseLinkFrame({ ...SAMPLES[t], extra: true })).toBeNull();
+  });
+
+  it('rejects non-object input', () => {
+    for (const raw of [null, undefined, 'ping', 1, [], ['ping']]) {
+      expect(parseLinkFrame(raw)).toBeNull();
+    }
+  });
+
+  it('rejects a frame whose t is not a string', () => {
+    expect(parseLinkFrame({ t: 1 })).toBeNull();
+  });
+
+  it('accepts a null windowsPty on view.opened', () => {
+    const frame = { ...SAMPLES['view.opened'], windowsPty: null };
+    expect(parseLinkFrame(frame)).toEqual(frame);
+  });
+
+  it('accepts a session with stuckReason present and rejects a non-string one', () => {
+    const stuck = {
+      ...SNAPSHOT,
+      sessions: [
+        {
+          ...SESSION,
+          attention: { attentionReason: 'stuck', completions: 0, stuckReason: 'waiting on CI' },
+        },
+      ],
+    };
+    expect(parseLinkFrame({ t: 'snapshot', snapshot: stuck })).not.toBeNull();
+    const bad = {
+      ...SNAPSHOT,
+      sessions: [
+        { ...SESSION, attention: { attentionReason: 'stuck', completions: 0, stuckReason: 3 } },
+      ],
+    };
+    expect(parseLinkFrame({ t: 'snapshot', snapshot: bad })).toBeNull();
+  });
+
+  it('rejects an unknown enum value', () => {
+    expect(parseLinkFrame({ t: 'bye', reason: 'bored' })).toBeNull();
+    expect(parseLinkFrame({ ...SAMPLES.receipt, status: 'seen' })).toBeNull();
+    expect(parseLinkFrame({ ...SAMPLES['view.end'], reason: 'lost' })).toBeNull();
+    expect(
+      parseLinkFrame({ ...SAMPLES['view.opened'], windowsPty: { backend: 'pty', buildNumber: 1 } }),
+    ).toBeNull();
+  });
+
+  it('rejects an unknown link feature in hello', () => {
+    expect(parseLinkFrame({ ...SAMPLES.hello, features: ['telepathy'] })).toBeNull();
+  });
+
+  it('rejects an extra key inside a nested object', () => {
+    expect(parseLinkFrame({ ...SAMPLES.caps, capabilities: { ...CAPS, view: true } })).toBeNull();
+    expect(
+      parseLinkFrame({ ...SAMPLES.hello, protocol: { major: 1, minor: 0, patch: 2 } }),
+    ).toBeNull();
+    expect(
+      parseLinkFrame({
+        t: 'msg',
+        message: { ...MESSAGE, attachments: [{ name: 'a', mime: 'b', data: 'c', size: 1 }] },
+      }),
+    ).toBeNull();
+    expect(
+      parseLinkFrame({
+        t: 'snapshot',
+        snapshot: { ...SNAPSHOT, sessions: [{ ...SESSION, extra: 1 }] },
+      }),
+    ).toBeNull();
+  });
+
+  it('rejects a recipient outcome with a reason outside its union', () => {
+    const frame = {
+      ...SAMPLES.ack,
+      recipients: [{ handle: 'x', status: 'refused', reason: 'bogus' }],
+    };
+    expect(parseLinkFrame(frame)).toBeNull();
+  });
+});
+
+describe('OWN_DEFAULT_CAPABILITIES', () => {
+  it('enables messaging and monitor, leaves drive off', () => {
+    expect(OWN_DEFAULT_CAPABILITIES).toEqual({ messaging: true, monitor: true, drive: false });
+  });
+});
