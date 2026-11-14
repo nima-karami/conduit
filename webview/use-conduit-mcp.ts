@@ -1,4 +1,9 @@
 import { useMemo, useSyncExternalStore } from 'react';
+import type {
+  AnswerInput,
+  RequestAnswerResult,
+  RequestsUiState,
+} from '../src/conduit-mcp/request-types';
 import type { ToolName, ToolPolicyPatch } from '../src/conduit-mcp/tool-policy';
 import type { ToolErrorCode } from '../src/conduit-mcp/types';
 import type {
@@ -29,6 +34,8 @@ export interface ConduitMcpApi {
   retry(): void;
   /** False when the host refused it or didn't answer: the caller reverts. */
   setToolPolicy(sessionId: string, tool: ToolName, patch: ToolPolicyPatch): Promise<boolean>;
+  answerRequest(requestId: string, answer: AnswerInput): Promise<RequestAnswerResult>;
+  setAway(away: boolean, until: string | null): void;
 }
 
 // A module singleton, like timer-store.ts: the host answers `ready` once, possibly before any
@@ -49,6 +56,11 @@ const subscribeState = (cb: () => void) => {
   };
 };
 const getState = () => snapshot;
+
+/** Read by request-open.ts outside React, where the hook is not available. */
+export function getRequestsSnapshot(): RequestsUiState | null {
+  return snapshot?.requests ?? null;
+}
 
 const api: Omit<ConduitMcpApi, 'state'> = {
   async getThread(threadId) {
@@ -95,6 +107,35 @@ const api: Omit<ConduitMcpApi, 'state'> = {
       REQUEST_TIMEOUT_MS,
     );
     return r?.ok === true;
+  },
+  answerRequest(requestId, answer) {
+    // Not requestHost: it correlates by the numeric id it mints, and this reply carries the
+    // request's own id.
+    return new Promise((resolve) => {
+      const settle = (result: RequestAnswerResult) => {
+        clearTimeout(timer);
+        unsubscribe();
+        resolve(result);
+      };
+      const unsubscribe = subscribe((m) => {
+        if (m.type === 'mcp:requestResult' && m.requestId === requestId) settle(m.result);
+      });
+      // Armed before post so a reply that lands synchronously still finds both handles set.
+      const timer = setTimeout(
+        () =>
+          settle({
+            ok: false,
+            reason: 'not_found',
+            message: 'Conduit did not answer; try again',
+            request: null,
+          }),
+        REQUEST_TIMEOUT_MS,
+      );
+      post({ type: 'mcp:requestAnswer', requestId, answer });
+    });
+  },
+  setAway(away, until) {
+    post({ type: 'mcp:setAway', away, until });
   },
 };
 

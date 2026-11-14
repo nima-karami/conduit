@@ -131,6 +131,13 @@ function fakeApi(state: McpUiState | null, o: Partial<ConduitMcpApi> = {}): Cond
     pause: vi.fn(),
     retry: vi.fn(),
     setToolPolicy: vi.fn(async () => true),
+    answerRequest: vi.fn(async () => ({
+      ok: false as const,
+      reason: 'not_found' as const,
+      message: '',
+      request: null,
+    })),
+    setAway: vi.fn(),
     ...o,
   };
 }
