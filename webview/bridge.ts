@@ -674,6 +674,16 @@ function mockHost(msg: WebviewToHost) {
           switchable: [],
           notConnected: {},
           awaitingApproval: [],
+          requests: {
+            open: [],
+            ended: [],
+            presence: {
+              state: 'here',
+              since: new Date().toISOString(),
+              until: null,
+              lastAway: null,
+            },
+          },
         },
       });
     }, 20);

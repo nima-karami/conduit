@@ -41,6 +41,11 @@ function state(o: Partial<McpUiState> = {}): McpUiState {
     switchable: [],
     notConnected: {},
     awaitingApproval: [],
+    requests: {
+      open: [],
+      ended: [],
+      presence: { state: 'here', since: '2026-10-25T10:00:00.000Z', until: null, lastAway: null },
+    },
     ...o,
   };
 }

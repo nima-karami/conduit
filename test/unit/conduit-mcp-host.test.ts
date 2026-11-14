@@ -25,6 +25,7 @@ import {
   NOTICE_SPACING_MS,
 } from '../../src/conduit-mcp/notice-gate';
 import { composeNotice } from '../../src/conduit-mcp/notice-text';
+import type { AnswerInput } from '../../src/conduit-mcp/request-types';
 import { screenVerdict } from '../../src/conduit-mcp/screen-verdict';
 import type { StoreIo } from '../../src/conduit-mcp/store';
 import {
@@ -4837,6 +4838,164 @@ describe('createConduitMcpHost — wait_sessions', () => {
     const { ca } = await pairForWait(h);
     const r = await ca.call('wait_sessions', args);
     expect(r.body.error.code).toBe('invalid_args');
+  });
+});
+
+describe('createConduitMcpHost — requests', () => {
+  async function pairForRequests(h: Harness) {
+    await h.host.start();
+    const a = await launch(h, 's1');
+    return client(h.ep, a.token);
+  }
+
+  const openIds = (h: Harness) => h.host.uiState().requests.open.map((r) => r.id);
+
+  async function answerFrom(h: Harness, requestId: string, answer: AnswerInput) {
+    const replies: HostToWebview[] = [];
+    await h.host.handleRenderer(
+      { type: 'mcp:requestAnswer', requestId, answer },
+      (m) => replies.push(m),
+      1,
+    );
+    return replies;
+  }
+
+  it('request_input answered from the renderer returns answered', async () => {
+    const h = harness();
+    const ca = await pairForRequests(h);
+    const p = ca.call('request_input', {
+      kind: 'choose',
+      title: 'Pick one',
+      options: [{ label: 'A' }, { label: 'B' }],
+      wait_s: 30,
+    });
+    await expect.poll(() => openIds(h).length).toBe(1);
+    const [requestId] = openIds(h);
+    const replies = await answerFrom(h, requestId, { outcome: 'chosen', values: ['A'] });
+    const r = await p;
+    expect(r.isError).toBe(false);
+    expect(r.body).toMatchObject({
+      state: 'answered',
+      request_id: requestId,
+      answer: { outcome: 'chosen', values: ['A'], answered_by: 'you' },
+    });
+    expect(replies).toEqual([
+      { type: 'mcp:requestResult', requestId, result: expect.objectContaining({ ok: true }) },
+    ]);
+  });
+
+  it('a late answer lands in read_inbox with request_id', async () => {
+    const h = harness();
+    const ca = await pairForRequests(h);
+    const first = await ca.call('request_input', { kind: 'confirm', title: 'Ship?', wait_s: 0 });
+    expect(first.body).toMatchObject({ state: 'open' });
+    const requestId: string = first.body.request_id;
+    await answerFrom(h, requestId, { outcome: 'approved' });
+    let inbox: { request_id?: string; body: string } | undefined;
+    await expect
+      .poll(async () => {
+        inbox = (await ca.call('read_inbox', {})).body.messages[0];
+        return inbox?.request_id;
+      })
+      .toBe(requestId);
+    const lines = inbox?.body.split('\n') ?? [];
+    expect(JSON.parse(lines.slice(1, -1).join('\n'))).toEqual({
+      request_id: requestId,
+      state: 'answered',
+      answer: { outcome: 'approved', answered_by: 'you', at: expect.any(String) },
+    });
+  });
+
+  it('the late answer is hidden from the human thread list', async () => {
+    const h = harness();
+    const ca = await pairForRequests(h);
+    const first = await ca.call('request_input', { kind: 'confirm', title: 'Ship?', wait_s: 0 });
+    await answerFrom(h, first.body.request_id, { outcome: 'approved' });
+    let lateThread: string | undefined;
+    await expect
+      .poll(async () => {
+        const msg = (await ca.call('read_inbox', {})).body.messages[0];
+        lateThread = msg?.thread_id;
+        return msg?.request_id;
+      })
+      .toBe(first.body.request_id);
+    const human = await ca.call('send_message', { to: ['you'], body: 'a real message' });
+    expect(h.host.uiState().threads.map((t) => t.threadId)).toEqual([human.body.thread_id]);
+    const replies: HostToWebview[] = [];
+    await h.host.handleRenderer(
+      { type: 'mcp:thread:get', requestId: 7, threadId: lateThread ?? '' },
+      (m) => replies.push(m),
+      1,
+    );
+    expect(replies).toEqual([{ type: 'mcp:thread', requestId: 7, thread: null }]);
+  });
+
+  it('cancel then repeat attaches to the same request', async () => {
+    const h = harness();
+    const ca = await pairForRequests(h);
+    const args = { kind: 'confirm', title: 'Retry me' };
+    ca.sock.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 900, method: 'tools/call', params: { name: 'request_input', arguments: { ...args, wait_s: 60 } } })}\n`,
+    );
+    await expect.poll(() => openIds(h).length).toBe(1);
+    const [requestId] = openIds(h);
+    await expect.poll(() => h.host.uiState().requests.open[0]?.waiting).toBe(true);
+    ca.sock.write(
+      `${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 900 } })}\n`,
+    );
+    await expect.poll(() => h.host.uiState().requests.open[0]?.waiting).toBe(false);
+    const again = await ca.call('request_input', { ...args, wait_s: 0 });
+    expect(again.body).toMatchObject({ state: 'open', request_id: requestId });
+    expect(openIds(h)).toEqual([requestId]);
+  });
+
+  it('a second answer gets already_ended', async () => {
+    const h = harness();
+    const ca = await pairForRequests(h);
+    const first = await ca.call('request_input', { kind: 'confirm', title: 'Ship?', wait_s: 0 });
+    const requestId: string = first.body.request_id;
+    await answerFrom(h, requestId, { outcome: 'approved' });
+    const second = await answerFrom(h, requestId, { outcome: 'declined', reason: 'no' });
+    expect(second).toEqual([
+      {
+        type: 'mcp:requestResult',
+        requestId,
+        result: expect.objectContaining({ ok: false, reason: 'already_ended' }),
+      },
+    ]);
+  });
+
+  it('uiState carries requests', async () => {
+    const h = harness();
+    const ca = await pairForRequests(h);
+    await ca.call('request_input', { kind: 'text', title: 'Name?', wait_s: 0 });
+    const state = h.host.uiState();
+    expect(state.requests.open).toHaveLength(1);
+    expect(state.requests.open[0]).toMatchObject({
+      kind: 'text',
+      title: 'Name?',
+      state: 'open',
+      requester: 'fake-1',
+    });
+    expect(state.requests.presence).toMatchObject({ state: 'here', until: null, lastAway: null });
+  });
+
+  it('list_sessions shows human presence', async () => {
+    const h = harness();
+    const ca = await pairForRequests(h);
+    expect((await ca.call('list_sessions')).body.human).toEqual({
+      handle: 'you',
+      presence: 'here',
+    });
+    await h.host.handleRenderer(
+      { type: 'mcp:setAway', away: true, until: null },
+      () => undefined,
+      1,
+    );
+    expect((await ca.call('list_sessions')).body.human).toEqual({
+      handle: 'you',
+      presence: 'away',
+    });
   });
 });
 

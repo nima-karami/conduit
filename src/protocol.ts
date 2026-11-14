@@ -1,6 +1,7 @@
 import type { AgentScopeReason } from './add-dir-delivery';
 import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
+import type { AnswerInput, RequestAnswerResult } from './conduit-mcp/request-types';
 import type { PolicySource, ToolName, ToolPolicyPatch } from './conduit-mcp/tool-policy';
 import type { Handle, MessageKind, Priority, ToolErrorCode } from './conduit-mcp/types';
 import type {
@@ -616,6 +617,7 @@ export type HostToWebview =
   // Conduit MCP server (docs/specs/archive/2026-10-25-conduit-mcp-server.md §8): one coalesced state
   // broadcast, plus replies to the sender's mcp:* requests.
   | { type: 'mcp:state'; state: McpUiState }
+  | { type: 'mcp:requestResult'; requestId: string; result: RequestAnswerResult }
   | { type: 'mcp:thread'; requestId: number; thread: McpThreadView | null }
   | { type: 'mcp:sent'; requestId: number; result: McpSendResult }
   // Ask details go to the caller's owner window only (spec 2026-10-30-conduit-mcp-tool-policy §2.4).
@@ -1160,6 +1162,8 @@ export type WebviewToHost =
   | { type: 'mcp:pause'; sessionId: string; paused: boolean }
   | { type: 'mcp:attachment:get'; requestId: number; messageId: string; attachmentId: string }
   | { type: 'mcp:retry' }
+  | { type: 'mcp:requestAnswer'; requestId: string; answer: AnswerInput }
+  | { type: 'mcp:setAway'; away: boolean; until: string | null }
   // Answer from the approval card; counts only from the window the ask was sent to
   // (spec 2026-10-30-conduit-mcp-tool-policy §2.4). The host re-validates every field.
   | { type: 'mcp:askAnswer'; askId: string; answer: AskAnswer }
