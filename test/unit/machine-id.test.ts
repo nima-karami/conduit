@@ -12,7 +12,7 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-const file = () => path.join(dir, 'machine.json');
+const file = () => path.join(dir, 'machine-id.json');
 
 describe('loadMachineId', () => {
   it('machine id is created once and reused', () => {

@@ -49,7 +49,11 @@ const REQUEST_SCHEMAS: readonly ToolSchema[] = [
         draft: { type: 'string' },
         thread_id: { type: 'string' },
         priority: { type: 'string', enum: ['normal', 'urgent'], default: 'normal' },
-        expires_in: { type: 'string', pattern: '^[0-9]+(s|m|h|d)$' },
+        expires_in: {
+          type: 'string',
+          description:
+            'how long until the default applies: a number and s, m, h or d (at most 7d), e.g. 2h',
+        },
         default: {
           ...OBJECT,
           properties: {
