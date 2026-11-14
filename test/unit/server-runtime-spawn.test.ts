@@ -299,7 +299,10 @@ describe('TerminalRuntime spawn', () => {
   it('TypingPort writes through input at the live generation', async () => {
     await started();
     await spawned();
-    const typing = createTyping(h.runtime, { gapMs: 0 });
+    const typing = createTyping(h.runtime, {
+      sleep: () => Promise.resolve(),
+      outputQuiet: { wait: () => Promise.resolve(), dispose: () => {} },
+    });
     expect(typing.write('s1', 'x')).toBe(true);
     expect(typing.write('s1', 'y', { generation: 0 })).toBe(false);
     await expect(typing.submit('s1', 'hi')).resolves.toBe('submitted');

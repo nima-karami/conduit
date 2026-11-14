@@ -361,8 +361,8 @@ function harness(
       else output(id, data);
       return true;
     },
-    sleep: () => (opts.holdGaps ? new Promise<void>((r) => gaps.push(r)) : Promise.resolve()),
-    gapMs: 0,
+    sleep: () => Promise.resolve(),
+    outputQuiet: () => (opts.holdGaps ? new Promise<void>((r) => gaps.push(r)) : Promise.resolve()),
   });
   const sessionStore: McpHostDeps['sessions'] = {
     get: (id: string) => sessions.get(id),
