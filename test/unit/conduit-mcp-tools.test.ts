@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AttachmentSender, AttachmentSnapshot } from '../../src/conduit-mcp/attachments';
+import type { RemoteEntry } from '../../src/conduit-mcp/remote-routing';
 import { createMessageStore, type StoreIo } from '../../src/conduit-mcp/store';
 import {
   type Caller,
@@ -121,6 +122,7 @@ async function harness(over: Partial<ToolDeps> = {}) {
     onThreadLimit: (t, by) => limits.push([t, by]),
     warn: () => {},
     humanPresence: () => 'here',
+    remote: () => [],
     ...over,
   };
   const tools = createToolHandlers(deps);
@@ -769,6 +771,63 @@ describe('listSessions', () => {
         self: true,
       },
     ]);
+  });
+});
+
+describe('list_sessions with remote entries', () => {
+  const REMOTE: RemoteEntry = {
+    handle: 'claude-1',
+    sessionId: 'r1',
+    openedBy: null,
+    label: 'Laptop Claude',
+    agent: 'claude',
+    project: null,
+    home: '/home/laptop/a',
+    roots: ['/home/laptop/shared'],
+    presence: 'busy',
+    messaging: 'connected',
+    connectable: true,
+    notices: 'typed',
+    address: 'claude-1@m-0123abcd',
+    display: 'claude-1@Laptop',
+    machineId: 'm-0123abcd',
+    machine: 'Laptop',
+    trust: 'own',
+    link: 'up',
+  };
+
+  it('appends one row per remote entry and leaves the local rows byte-identical', async () => {
+    const plain = await harness({ remote: () => [] });
+    const withRemote = await harness({ remote: () => [REMOTE] });
+    const local = okValue(plain.tools.listSessions(CODEX)).sessions;
+    const all = okValue(withRemote.tools.listSessions(CODEX)).sessions;
+    expect(all.slice(0, local.length)).toEqual(local);
+    expect(all.slice(local.length)).toEqual([
+      {
+        handle: 'claude-1@m-0123abcd',
+        session_id: 'r1',
+        label: 'Laptop Claude',
+        agent: 'claude',
+        opened_by: null,
+        project: null,
+        home: '/home/laptop/a',
+        roots: ['/home/laptop/a', '/home/laptop/shared'],
+        presence: 'busy',
+        messaging: 'connected',
+        messageable: true,
+        notices: 'typed',
+        self: false,
+        machine: 'Laptop',
+        machine_id: 'm-0123abcd',
+        address: 'claude-1@m-0123abcd',
+        trust: 'own',
+        link: 'up',
+      },
+    ]);
+    for (const row of local) {
+      expect(row).not.toHaveProperty('machine');
+      expect(row).not.toHaveProperty('address');
+    }
   });
 });
 

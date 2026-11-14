@@ -8,6 +8,7 @@ import {
   textPage,
 } from './attachments';
 import type { ToolCallResult } from './json-rpc';
+import type { RemoteEntry } from './remote-routing';
 import type { MessageStore } from './store';
 import {
   type AttachmentRecord,
@@ -76,6 +77,8 @@ export interface SendOptions {
 export interface ToolDeps {
   store: MessageStore;
   directory(): DirectoryEntry[];
+  /** Peers' sessions, listed after the local ones; never a control target (orchestrate is v1). */
+  remote(): RemoteEntry[];
   messagingOn(): boolean;
   now(): Date;
   /** 'm_' / 't_' + 16 base32 chars */
@@ -486,24 +489,45 @@ export function createToolHandlers(deps: ToolDeps): ToolHandlers {
       if (!deps.messagingOn()) return MESSAGING_OFF();
       const directory = deps.directory();
       const handleOf = new Map(directory.map((e) => [e.sessionId, e.handle]));
+      const local = directory.map((e) => ({
+        handle: e.handle,
+        session_id: e.sessionId,
+        label: e.label,
+        agent: e.agent,
+        opened_by: e.openedBy === null ? null : (handleOf.get(e.openedBy) ?? null),
+        project: e.project,
+        home: e.home,
+        roots: [e.home, ...e.roots],
+        presence: e.presence,
+        messaging: e.messaging,
+        messageable: e.connectable || e.messaging === 'connected',
+        notices: e.notices,
+        self: e.handle === caller.handle,
+      }));
+      const remote = deps.remote().map((e) => ({
+        handle: e.address,
+        session_id: e.sessionId,
+        label: e.label,
+        agent: e.agent,
+        opened_by: null,
+        project: null,
+        home: e.home,
+        roots: [e.home, ...e.roots],
+        presence: e.presence,
+        messaging: e.messaging,
+        messageable: e.connectable || e.messaging === 'connected',
+        notices: e.notices,
+        self: false,
+        machine: e.machine,
+        machine_id: e.machineId,
+        address: e.address,
+        trust: e.trust,
+        link: e.link,
+      }));
       return {
         ok: true,
         value: {
-          sessions: directory.map((e) => ({
-            handle: e.handle,
-            session_id: e.sessionId,
-            label: e.label,
-            agent: e.agent,
-            opened_by: e.openedBy === null ? null : (handleOf.get(e.openedBy) ?? null),
-            project: e.project,
-            home: e.home,
-            roots: [e.home, ...e.roots],
-            presence: e.presence,
-            messaging: e.messaging,
-            messageable: e.connectable || e.messaging === 'connected',
-            notices: e.notices,
-            self: e.handle === caller.handle,
-          })),
+          sessions: [...local, ...remote],
           human: { handle: HUMAN_HANDLE, presence: deps.humanPresence() },
         },
       };

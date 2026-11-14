@@ -375,6 +375,41 @@ describe('createMessageStore', () => {
   });
 });
 
+describe('message origin and has()', () => {
+  it('a message that arrived over a link keeps its origin through reload', async () => {
+    const { store, m } = await loaded();
+    const a = msg({ origin: 'm-0123abcd' });
+    expect((await store.append(a, [])).ok).toBe(true);
+    expect(store.get(a.messageId)?.origin).toBe('m-0123abcd');
+    const fresh = createMessageStore(m.io);
+    await fresh.load();
+    expect(fresh.get(a.messageId)?.origin).toBe('m-0123abcd');
+  });
+
+  it('a local message has no origin key, before and after reload', async () => {
+    const { store, m } = await loaded();
+    const a = msg();
+    await store.append(a, []);
+    expect(store.get(a.messageId)).not.toHaveProperty('origin');
+    const fresh = createMessageStore(m.io);
+    await fresh.load();
+    expect(fresh.get(a.messageId)).not.toHaveProperty('origin');
+    expect(m.state.log).not.toContain('"origin"');
+  });
+
+  it('has() reports stored message ids, including after reload', async () => {
+    const { store, m } = await loaded();
+    const a = msg();
+    expect(store.has(a.messageId)).toBe(false);
+    await store.append(a, []);
+    expect(store.has(a.messageId)).toBe(true);
+    expect(store.has('m_unknown')).toBe(false);
+    const fresh = createMessageStore(m.io);
+    await fresh.load();
+    expect(fresh.has(a.messageId)).toBe(true);
+  });
+});
+
 describe('createFsStoreIo', () => {
   it('round-trips the log and blobs through a store', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'conduit-mcp-store-'));

@@ -48,7 +48,12 @@ export type ToolErrorCode =
   | 'not_a_repo'
   | 'attach_refused'
   | 'unsaved_changes'
-  | 'ui_timeout';
+  | 'ui_timeout'
+  | 'peer_unreachable'
+  | 'peer_incompatible'
+  | 'peer_unsupported'
+  | 'peer_revoked'
+  | 'refused';
 export interface ToolError {
   code: ToolErrorCode;
   message: string;
@@ -72,6 +77,7 @@ const RETRYABLE: ReadonlySet<ToolErrorCode> = new Set([
   'window_not_ready',
   'server_stopping',
   'session_restarting',
+  'peer_unreachable',
 ]);
 
 export interface ToolErrorDetail {
@@ -116,6 +122,8 @@ export interface MessageRecord {
   attachments: AttachmentRecord[];
   /** Set on a late answer to a request; the human's views hide these (spec 2026-11-14-user-input-requests §4.3). */
   requestId?: string;
+  /** The origin machine id when the message arrived over a link; absent means local. */
+  origin?: string;
 }
 export interface RecipientState {
   status: RecipientStatus;
@@ -185,6 +193,12 @@ export interface ListSessionsOutput {
     /** "typed" when the session's adapter delivers typed notices, else the agent pulls read_inbox. */
     notices: 'typed' | 'pull';
     self: boolean;
+    /** Remote rows only: the peer's machine name and id, and the canonical address. */
+    machine?: string;
+    machine_id?: string;
+    address?: string;
+    trust?: 'own';
+    link?: 'up' | 'degraded' | 'down';
   }>;
   human: { handle: 'you'; presence: 'here' | 'away' };
 }

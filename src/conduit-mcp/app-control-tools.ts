@@ -22,6 +22,7 @@ import {
   type TargetSession,
 } from './control-tools';
 import { classifyRef, lookupCommit, repoRootOf } from './git-refs';
+import { remoteTargetRefusal } from './remote-routing';
 import { isValidField, type Reach, windowNotReady } from './tool-policy';
 import type { Caller } from './tools';
 import type { Result, ToolErrorCode } from './types';
@@ -171,6 +172,8 @@ export function createAppControlHandlers(
     const all = deps.targets();
     const t = all.find((x) => x.handle === v) ?? all.find((x) => x.sessionId === v);
     if (t) return t;
+    const remote = remoteTargetRefusal(String(v));
+    if (remote) return { ok: false, error: remote };
     return fail('unknown_session', `no session "${v}" in list_sessions`, {
       hint: UNKNOWN_SESSION_HINT,
       valid: all.filter((x) => inReach(tool, reach, callerId, x) === null).map((x) => x.handle),

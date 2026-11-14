@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { isRemote, mergeDirectory, type RemoteEntry } from '../../src/conduit-mcp/remote-routing';
+import {
+  isRemote,
+  mergeDirectory,
+  type RemoteEntry,
+  remoteTargetRefusal,
+} from '../../src/conduit-mcp/remote-routing';
 import type { DirectoryEntry } from '../../src/conduit-mcp/tools';
 
 function local(handle: string): DirectoryEntry {
@@ -51,5 +56,22 @@ describe('isRemote', () => {
   it('is true only for entries that carry an address', () => {
     expect(isRemote(remote('x'))).toBe(true);
     expect(isRemote(local('a'))).toBe(false);
+  });
+});
+
+describe('remoteTargetRefusal', () => {
+  it('refuses a target that names another machine as peer_unsupported', () => {
+    for (const target of ['claude-1@m-0123abcd', 'claude-1@win-box']) {
+      expect(remoteTargetRefusal(target)).toEqual({
+        code: 'peer_unsupported',
+        message: `${target} is on another machine; opening, typing into or reading sessions on other machines isn't available yet`,
+        retryable: false,
+        hint: 'message it with send_message instead',
+      });
+    }
+  });
+
+  it('passes a local handle through', () => {
+    expect(remoteTargetRefusal('claude-1')).toBeNull();
   });
 });

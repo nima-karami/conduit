@@ -1,10 +1,11 @@
 // Node-free. The MCP host reads remote sessions through NetworkPort; the directory implementation
 // lives in src/network/remote-directory.ts. Plan: 2026-11-14-conduit-network-machinery.plan.md, Slice 5.
 
-import type { Capabilities } from '../contracts/link-protocol';
+import type { Capabilities, MonitorSnapshot } from '../contracts/link-protocol';
+import { parseAddress } from '../network/addresses';
 import type { WaitReading } from './session-waits';
 import type { DirectoryEntry } from './tools';
-import type { Handle, MessageRecord } from './types';
+import { type Handle, type MessageRecord, type ToolError, toolError } from './types';
 
 export interface RemoteEntry extends DirectoryEntry {
   /** Canonical 'handle@m-xxxxxxxx'. */
@@ -35,6 +36,26 @@ export interface NetworkPort {
   waitReading(address: string, callerHandle: Handle): WaitReading | 'unreachable' | null;
   capabilitiesOf(machineId: string): Capabilities | null;
   onChange(listener: () => void): () => void;
+}
+
+/** Implemented by the mcp host; read by server/network. Slice 6 adds its members here. */
+export interface McpNetworkPort {
+  localDirectory(): DirectoryEntry[];
+  youUnread(): number;
+  ownerPresence(): 'here' | 'away';
+  requestsSummary(): MonitorSnapshot['requests'];
+}
+
+/** A control tool target naming another machine: orchestrate is v1 (NET §4.1), so say so plainly. */
+export function remoteTargetRefusal(target: string): ToolError | null {
+  const parsed = parseAddress(target);
+  if (parsed === null || parsed.machine === null) return null;
+  return toolError(
+    'peer_unsupported',
+    `${target} is on another machine; opening, typing into or reading sessions on other machines isn't available yet`,
+    undefined,
+    { hint: 'message it with send_message instead' },
+  );
 }
 
 /** Local rows keep their order and come first, so a bare handle still finds its local session. */
