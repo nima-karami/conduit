@@ -255,6 +255,25 @@ export function resolveClockTime(
   return null;
 }
 
+// see docs/plans/2026-11-13-scheduler-auto-resume.plan.md "Amendments after review"
+export function wallTimeToInstant(
+  zone: string | undefined,
+  w: { y: number; mo: number; d: number; h: number; mi: number },
+): number {
+  const fmt = (zone ? zoneFormatter(zone) : null) ?? localFormatter();
+  return instantFor(fmt, w.y, w.mo, w.d, w.h, w.mi);
+}
+
+// see docs/plans/2026-11-13-scheduler-auto-resume.plan.md "Amendments after review"
+export function wallDateIn(
+  zone: string | undefined,
+  at: number,
+): { y: number; mo: number; d: number } {
+  const fmt = (zone ? zoneFormatter(zone) : null) ?? localFormatter();
+  const w = wallClockIn(fmt, at);
+  return { y: w.y, mo: w.mo, d: w.d };
+}
+
 export function nextFireAt(trigger: TriggerInput, now: number): number | null {
   if (trigger.kind === 'at') return resolveClockTime(trigger.clock, trigger.zone, now);
   if (trigger.kind === 'in') return now + trigger.delayMs;
