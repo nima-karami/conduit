@@ -6,6 +6,20 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Changed
+- Auto-resume after a usage limit is more reliable for Claude Code and Codex. Conduit now learns about the limit and its reset time from the CLI itself (Claude Code's hooks and status line, Codex's session log) instead of only reading the screen. It sends one message a couple of minutes after the reset and checks that the agent really picked up again.
+- Auto-resume never types into a session that already carried on: when Claude Code resumes on its own, a new turn starts, or you type into it first, Conduit sends nothing.
+- When the session is busy at the reset, Conduit waits for it to go quiet instead of sending into the middle of its work.
+- If auto-resume can't help (no reset time, or the agent is still limited after a few tries), the session shows "needs you" with the reason instead of silently doing nothing.
+- Auto-resume works with every Conduit window closed.
+- Your own Claude Code hooks and status line keep working in sessions Conduit starts.
+- Timed and resume messages can now be long and keep their line breaks (up to 16,000 characters; longer ones are refused, never cut). The message box in the timed message dialog is now multi-line: Enter adds a line, Ctrl+Enter (Cmd+Enter on macOS) arms it.
+
+### Fixed
+- Codex's "You've hit your usage limit … try again at 3:45 PM" now arms auto-resume, and a reset on another day ("resets Nov 18, 3pm") is no longer read as today.
+- A Claude Code limit notice with several lines under it is now found.
+- A long timed message no longer arrives cut short or loses its Enter.
+
 ## [0.63.0] — 2026-11-12
 
 ### Added
