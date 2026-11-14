@@ -492,6 +492,9 @@ Failing tests:
 - 'applyLegacyPatch inherit removes the exception'.
 
 #### Task 2.2: policy service
+**Carried from Slice 1 reviews (do first):**
+- (a) One copy of no-target resolution. Export `resolveTarget(target: PolicyTarget, principal: Principal): PolicyTarget` from `policy-profiles.ts`; `policy-engine.ts` and `grant-store.ts` both call it, and their private copies are deleted.
+- (b) C1 `PolicyDecision` gains `grantIds: readonly string[]`: every grant that allowed a target. The service touches all of them, so a used grant never decays.
 **Files:** create `policy-service.ts`, `policy-targets.ts`; tests `test/unit/policy-service.test.ts`, `test/unit/policy-targets.test.ts`.
 **Consumes:** C1–C6 (signatures repeated in the brief). **Produces:** C7, plus `resolveTargets(tool: ToolName, args: Record<string, unknown>, deps: { sessionById(id): {id; cwd: string | null; projectId: string | null} | null; realPath(p: string): string | null; handleToId(h: string): string | null }): PolicyTarget[]`.
 
