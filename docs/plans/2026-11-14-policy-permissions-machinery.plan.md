@@ -299,23 +299,30 @@ export function applyLegacyPatch(state: PolicyState, point: AssignmentPoint, low
 - **What gets migrated.** The global layer migrates to the default assignment only when it differs from the defaults. The CLI layers become kind assignments, and the session layers become session assignments.
 - **The on-screen offer.** `notes.onScreenOnlyOffered` lists the session ids that got Lead with `onScreenOnly`. CON-25 shows the one-time offer from it.
 
-### C7 Composer — `policy-service.ts` (Slice 2, T2.2)
+### C7 Composer — `policy-service.ts` (Slice 2, T2.2) — as built (S2-2 brief)
 ```ts
-export interface PolicyServiceDeps { dir: string; now(): number; newId(): string; setTimer(fn: () => void, ms: number): unknown;
-  clearTimer(t: unknown): void; warn(m: string, e?: unknown): void; legacy(): LegacyPolicy; onChanged(): void }
+export interface PolicyServiceDeps {
+  policyIo: RequestsIo; grantsIo: RequestsIo; activityIo: ActivityIo;   // createRequestsIo(<dir>/policy.json), (<dir>/grants.json); createActivityIo(<dir>)
+  now(): number; newId(): string; setTimer(fn: () => void, ms: number): unknown; clearTimer(t: unknown): void;
+  warn(m: string, e?: unknown): void; legacy(): LegacyPolicy; onChanged(): void;
+}
 export interface PolicyService {
   start(): void; stop(): Promise<void>;
-  decide(input: Omit<PolicyInput, 'now'>): PolicyDecision;   // also touches a matched grant, consumes a matched override
-  visibleTools(p: Principal, masterOn: boolean): ToolName[];
+  decide(input: Omit<PolicyInput, 'now'>): PolicyDecision;          // touches every grantIds entry; consumes a reported override
+  noteDecision(activityId: string, input: Omit<PolicyInput, 'now'>, decision: PolicyDecision): void;  // remembers explicit denies for allowOnce
+  visibleTools(p: Principal): ToolName[];
   setAssignment(point: AssignmentPoint, profileId: ProfileId | null): { ok: true } | { ok: false; error: 'unknown-profile' | 'read-only' };
-  applyLegacyPatch(point: AssignmentPoint, tool: ToolName, patch: ToolPolicyPatch): { ok: true } | { ok: false; error: 'read-only' };
+  applyLegacyPatch(point: AssignmentPoint, lower: AssignmentPoint | null, tool: ToolName, patch: ToolPolicyPatch): { ok: true } | { ok: false; error: 'read-only' };
   createGrant(choice: GrantChoice, p: Principal, tool: ToolName, target: PolicyTarget, requestId: string | null): Grant | null;
   revokeGrant(id: string): boolean;
   allowOnce(activityId: string): { ok: true } | { ok: false; error: 'not-found' | 'not-overridable' };
   sessionEnded(sessionId: string): void;
-  activity: ActivityLog;
-  ui(): PolicyUiState;
+  readonly activity: ActivityLog;
+  ui(sessions: ReadonlyArray<{ sessionId: string; handleCli: CliKind | null; launchedCli: CliKind | null }>): PolicyUiState;
 }
+// policy-targets.ts
+export interface TargetDeps { sessionByHandle(h: string): { id: string; cwd: string | null; projectId: string | null } | null; realPath(p: string): string | null }
+export function resolveTargets(tool: ToolName, args: Record<string, unknown>, deps: TargetDeps): PolicyTarget[];
 ```
 - **Load and migration.** `start()` reads `policy.json` and `grants.json`. A missing `policy.json` runs `migrateLegacyPolicy(deps.legacy())` and writes it. Legacy keys are never read again and never deleted.
 - **Writes and timers.** Writes are coalesced atomically through `atomicWriteFile` at 250 ms. A 60 s timer runs `grants.tick()` and `activity.flushCounts()`, and once an hour `activity.purge()`.
