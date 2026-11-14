@@ -170,6 +170,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
             address,
             ...deps.tls(),
             expectKeyRaw: expect,
+            purpose: 'link',
             timeoutMs: deps.dialTimeoutMs ?? 5_000,
           })
         ).sock;

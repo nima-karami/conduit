@@ -13,6 +13,11 @@ export interface NetLog {
 }
 
 export type PeerClass = 'link' | 'pairing' | 'reject';
+/** What a connection is for, declared in TLS ALPN: a known peer may pair again (NET §4.2). */
+export type Purpose = 'link' | 'pair';
+const ALPN: Record<Purpose, string> = { link: 'conduit-link/1', pair: 'conduit-pair/1' };
+const purposeOf = (alpn: string | false | null | undefined): Purpose | null =>
+  alpn === ALPN.link ? 'link' : alpn === ALPN.pair ? 'pair' : null;
 
 export interface Listener {
   addresses(): string[];
@@ -24,7 +29,7 @@ export interface ListenOptions {
   port: number;
   cert: string;
   key: string;
-  classify(peerKeyRaw: Buffer): PeerClass;
+  classify(peerKeyRaw: Buffer, purpose: Purpose): PeerClass;
   onLink(sock: tls.TLSSocket, peerKeyRaw: Buffer): void;
   onPairing(sock: tls.TLSSocket, peerKeyRaw: Buffer): void;
   log: NetLog;
@@ -66,7 +71,9 @@ export async function listen(opts: ListenOptions): Promise<Listener> {
   const accept = (sock: tls.TLSSocket): void => {
     sock.pause();
     const peer = peerKeyOf(sock);
-    const kind: PeerClass = peer === null ? 'reject' : opts.classify(peer);
+    const purpose = purposeOf(sock.alpnProtocol);
+    const kind: PeerClass =
+      peer === null || purpose === null ? 'reject' : opts.classify(peer, purpose);
     if (peer === null || kind === 'reject') {
       opts.log.debug('link listener: refused peer', { remote: sock.remoteAddress ?? null });
       sock.destroy();
@@ -81,6 +88,7 @@ export async function listen(opts: ListenOptions): Promise<Listener> {
         {
           ...tlsOptions(opts.cert, opts.key),
           requestCert: true,
+          ALPNProtocols: [ALPN.link, ALPN.pair],
           handshakeTimeout: opts.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS,
         },
         accept,
@@ -122,6 +130,7 @@ export interface DialOptions {
   key: string;
   /** The pinned peer key; null only for a pairing join, which learns the key from the handshake. */
   expectKeyRaw: Buffer | null;
+  purpose: Purpose;
   timeoutMs: number;
 }
 
@@ -138,6 +147,7 @@ export function dial(opts: DialOptions): Promise<{ sock: tls.TLSSocket; peerKeyR
   if (target === null) return Promise.reject(new Error('bad_address'));
   return new Promise((resolve, reject) => {
     const sock = tls.connect({
+      ALPNProtocols: [ALPN[opts.purpose]],
       ...tlsOptions(opts.cert, opts.key),
       host: target.host,
       port: target.port,
@@ -156,6 +166,11 @@ export function dial(opts: DialOptions): Promise<{ sock: tls.TLSSocket; peerKeyR
       clearTimeout(timer);
       sock.pause();
       const peer = peerKeyOf(sock);
+      if (purposeOf(sock.alpnProtocol) !== opts.purpose) {
+        sock.destroy();
+        reject(new Error('purpose_refused'));
+        return;
+      }
       if (peer === null || (opts.expectKeyRaw !== null && !peer.equals(opts.expectKeyRaw))) {
         sock.destroy();
         reject(new Error('pin_mismatch'));

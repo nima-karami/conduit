@@ -7,6 +7,7 @@ import {
   type Listener,
   listen,
   type PeerClass,
+  type Purpose,
   parseHostPort,
 } from '../../server/network/listener';
 import { rawEd25519, selfSignedCert } from '../../src/network/self-signed-cert';
@@ -27,7 +28,7 @@ afterEach(async () => {
 
 async function start(
   a: ReturnType<typeof server>,
-  classify: (k: Buffer) => PeerClass,
+  classify: (k: Buffer, purpose: Purpose) => PeerClass,
   seen: { link: Buffer[]; pairing: Buffer[] },
 ) {
   const keep = (sock: tls.TLSSocket) => {
@@ -78,6 +79,7 @@ describe('link listener and dial', () => {
       key: b.key,
       expectKeyRaw: a.raw,
       timeoutMs: 5000,
+      purpose: 'link',
     });
     expect(peerKeyRaw.equals(a.raw)).toBe(true);
     expect(await readAll(sock)).toBe('ok');
@@ -96,6 +98,7 @@ describe('link listener and dial', () => {
       key: stranger.key,
       expectKeyRaw: a.raw,
       timeoutMs: 5000,
+      purpose: 'link',
     });
     expect(await readAll(sock)).toBe('');
     expect(seen.link).toEqual([]);
@@ -114,6 +117,7 @@ describe('link listener and dial', () => {
         key: b.key,
         expectKeyRaw: server('m-dddddddd').raw,
         timeoutMs: 5000,
+        purpose: 'link',
       }),
     ).rejects.toThrow('pin_mismatch');
   });
@@ -129,10 +133,41 @@ describe('link listener and dial', () => {
       key: joiner.key,
       expectKeyRaw: null,
       timeoutMs: 5000,
+      purpose: 'pair',
     });
     expect(peerKeyRaw.equals(a.raw)).toBe(true);
     expect(await readAll(sock)).toBe('ok');
     expect(seen.pairing.map((k) => k.equals(joiner.raw))).toEqual([true]);
+  });
+
+  it('the declared purpose routes a known key: pair goes to pairing, link to the link', async () => {
+    const a = server('m-aaaaaaaa');
+    const b = server('m-bbbbbbbb');
+    const seen = { link: [] as Buffer[], pairing: [] as Buffer[] };
+    const address = await start(
+      a,
+      (k, purpose) => (purpose === 'pair' ? 'pairing' : k.equals(b.raw) ? 'link' : 'reject'),
+      seen,
+    );
+    const paired = await dial({
+      address,
+      cert: b.cert,
+      key: b.key,
+      expectKeyRaw: a.raw,
+      timeoutMs: 5000,
+      purpose: 'pair',
+    });
+    expect(await readAll(paired.sock)).toBe('ok');
+    const linked = await dial({
+      address,
+      cert: b.cert,
+      key: b.key,
+      expectKeyRaw: a.raw,
+      timeoutMs: 5000,
+      purpose: 'link',
+    });
+    expect(await readAll(linked.sock)).toBe('ok');
+    expect([seen.pairing.length, seen.link.length]).toEqual([1, 1]);
   });
 
   it('a client with no certificate is refused', async () => {

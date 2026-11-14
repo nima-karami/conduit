@@ -109,7 +109,14 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
         hosts,
         port: s.networkPort,
         ...tlsPair,
-        classify: (k) => (manager.knows(k) ? 'link' : pairing.windowOpen() ? 'pairing' : 'reject'),
+        classify: (k, purpose) =>
+          purpose === 'pair'
+            ? pairing.windowOpen()
+              ? 'pairing'
+              : 'reject'
+            : manager.knows(k)
+              ? 'link'
+              : 'reject',
         onLink: (sock, k) => manager.accept(sock, k),
         onPairing: (sock, k) => pairing.onPairingSocket(sock, k),
         log: deps.log,

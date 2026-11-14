@@ -66,6 +66,7 @@ async function socketPair(): Promise<{ a: tls.TLSSocket; b: tls.TLSSocket }> {
     key: B.key,
     expectKeyRaw: A.raw,
     timeoutMs: 5000,
+    purpose: 'link',
   });
   return { a: await gotA, b };
 }

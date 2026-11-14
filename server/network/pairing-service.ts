@@ -355,6 +355,7 @@ export function createPairingService(deps: PairingDeps): PairingService {
           cert: t.cert,
           key: t.key,
           expectKeyRaw: null,
+          purpose: 'pair',
           timeoutMs: dialTimeoutMs,
         });
       } catch {
