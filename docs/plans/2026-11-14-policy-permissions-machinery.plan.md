@@ -648,6 +648,12 @@ So a Codex orchestrator can take over if Claude stops. The lead (claude-3) recei
   - After s2-1 lands, adapt the service: `applyLegacyPatch` returning `null` maps to `{ok:false, error:'scoped'}`.
   - Merge s2-1 into s2-2 for that adaptation.
 
+**Open review results (2026-11-15 00:05 UTC).**
+- s2-1 round 5 (4bba6b7e, refuse scoped) still needs its fresh review.
+- s2-2 follow-up (40581eff) review is REVISE, with one blocker. When an explicit-deny target is passed by its override and another target makes the call `ask`, the engine returns `overrideIds: []` (policy-engine.ts ~:252-258), so the override survives the approved call and passes that target again unattended.
+  - Fix: report `overrideIds` on the ask path too, and consume them when that decision is returned. Add engine and service tests for explicit-deny + override + ask.
+  - Nits: allowOnce dedupe must compare paths with the engine's `samePath`/folderKey helper; rename the policy-targets "session referenced by id" test, which only exercises its own fake.
+
 **Merge order:** s2-1, then s2-2 (which contains s2-1). Run `npm run verify; echo "exit=$?"` after each, with nothing else running on the machine, and check `df -h /tmp` first because of the shared /tmp quota.
 
 **Then:**
