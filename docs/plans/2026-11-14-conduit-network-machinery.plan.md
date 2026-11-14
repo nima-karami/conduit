@@ -42,22 +42,55 @@ card will consume.
    `RequestRecord.origin`/`.machine` (`src/conduit-mcp/request-queue.ts:253,260,294,301`) and is
    never compared, so old records stay valid. CON-21 isn't on `main`, so no release carries the old
    file.
-3. **Pairing crypto: CPace** (draft-irtf-cfrg-cpace, ristretto255 + SHA-512) over
-   `@noble/curves` (new exact-pinned dependency, see D-H2). Then:
-   - The session key ISK goes through HKDF-SHA256 into two ChaCha20-Poly1305 directional keys
-     (`node:crypto`), with 96-bit counter nonces, for the rest of the pairing exchange.
-   - Key confirmation is an HMAC each way. A failed MAC burns the window.
-   - Fingerprint = SHA-256 over the transcript (both server keys sorted, then the owner public key
-     after the exchange, then ISK). It shows as 4 groups of 4 uppercase hex.
-4. **Link channel: TLS 1.2 `ECDHE-PSK-CHACHA20-POLY1305`** through `node:tls` (OpenSSL), with a
-   32-byte per-link PSK that both sides derive from ISK at pairing. The PSK identity is the `linkId`.
-   This gives mutual authentication (only the two paired servers hold the PSK), forward secrecy and
-   AEAD with no hand-rolled channel crypto. Verified on this host with Node 26 / OpenSSL 3.5.9
-   (`ECDHE-PSK-CHACHA20-POLY1305`, TLSv1.2). The bundled runtime is Node 24.18
-   (`build/runtime-pins.json`), so Slice 3's e2e proves it on the Windows runner.
-5. **One TCP port per server.** Pairing and links share the listener: a first byte of `0x16` (TLS
-   handshake) means a link; the magic `CNDP` means a pairing attempt (only accepted while a window is
-   open); anything else is closed.
+3. **Pairing: numeric comparison (lead's ruling on D-H2). No PAKE and no new dependency.** The human
+   confirming that the two fingerprints match *is* the authentication. The three words are only a
+   short-lived rendezvous and rate-limit token.
+   - Pairing runs inside a TLS 1.3 connection (decision 4) where each side presents its own server
+     key. During an open window, the opener accepts a certificate it doesn't know.
+   - **Commit, then reveal.** This is the Bluetooth SSP numeric-comparison pattern: without it, a
+     man in the middle could grind keys or nonces until the short fingerprint collides.
+     1. The joiner sends `pair.hello {code, commit = SHA-256("conduit-pair-commit-v1" ‖ pkB ‖ nB)}`.
+     2. The opener checks the code, then sends `pair.nonce {nA}`.
+     3. The joiner reveals `pair.reveal {nB}`.
+     4. The opener checks the commitment against the joiner's certificate key.
+
+     `nA` and `nB` are 32 random bytes each. `pkA` and `pkB` are the raw Ed25519 keys taken from each
+     side's TLS certificate.
+   - Fingerprint = the first 32 bits of SHA-256("conduit-pair-v1" ‖ pkA ‖ pkB ‖ nA ‖ nB), shown
+     `XXXX-XXXX` (uppercase hex). With the commitment, an active attacker gets one guess per window,
+     a 2⁻³² chance, and the window burns after that one attempt.
+   - A wrong code burns the window. A second connection during a window gets `pair.fail used`.
+   - After both people confirm, the rest goes over the same TLS connection: `pair.id` (names,
+     addresses, owner public key), `pair.accept`, and `pair.owner`, the owner-key copy under
+     decision 10. TLS gives it confidentiality, and the confirmed fingerprint rules out a
+     man in the middle.
+   - **Residual risk (stated for the lead):** if a person confirms without comparing, an attacker on
+     the path during the window can pair. CPace would have stopped that, because the code was the
+     secret. Mitigations: one attempt per window, the 10-minute window, and the fingerprint shown
+     on both screens.
+   - All pairing crypto and auth code is written by me, not a lane.
+4. **Link channel: TLS 1.3 with mutual auth, self-signed certificates pinned to the paired Ed25519
+   server keys** (lead's ruling on D-H3). `node:tls` with `minVersion/maxVersion: 'TLSv1.3'`,
+   `requestCert: true`, `rejectUnauthorized: false` and `checkServerIdentity: () => undefined`. There
+   is no CA.
+   - Authorization is our own pin check on `secureConnection` / `secureConnect`, **before any frame
+     is read**: the raw key in `getPeerX509Certificate().publicKey` must equal the link's stored
+     `serverKey`. TLS 1.3's CertificateVerify proves the peer holds that private key.
+   - Each server builds its certificate at startup from its server key, with a minimal DER encoder
+     (`src/network/self-signed-cert.ts`, no dependency; I write it):
+     - X.509 v3, serial 1, issuer and subject `CN=<machineId>`, valid 2000-01-01 to 9999-12-31;
+     - the SPKI is `publicKey.export({type:'spki', format:'der'})`;
+     - signed with `crypto.sign(null, tbs, privateKey)`.
+   - **Measured on this host** (Node 26, OpenSSL 3.5.9): `TLSv1.3 TLS_AES_256_GCM_SHA384`. The
+     right key passes the pin. A third key is destroyed before any data. Node's own
+     `X509Certificate.verify` accepts the self-signature.
+   - Bundled Node 24.18 on Windows is proven by Slice 4's remote e2e.
+   - `linkId` = `l_` + the first 16 base32 chars of SHA-256 over the two server keys, sorted. It's an
+     identifier, not a secret.
+5. **One TCP port per server.** Every connection is TLS 1.3, and the pin decides what it is:
+   - a certificate key that matches a link (or a tombstone) → a link connection;
+   - an unknown key while a pairing window is open → a pairing attempt;
+   - anything else → destroyed after the handshake, before any read.
 
    The listener is off until the first pairing window opens. After that it runs while any link
    exists or a window is open.
@@ -104,8 +137,8 @@ card will consume.
     | K1 | K2 | Refused before the fingerprint step: "These machines have different owners" |
 11. **Revoke.** On the revoking side, at once:
     - close the connection;
-    - delete the PSK from the live record and keep a **tombstone** `{linkId, machineId, psk,
-      revokedAt}` for 30 days;
+    - delete the live record and keep a **tombstone** `{linkId, machineId, serverKey, revokedAt}` for
+      30 days;
     - mark that link's outbox entries `undelivered`;
     - emit `network.changed`;
     - write an audit entry.
@@ -125,8 +158,11 @@ card will consume.
 14. **Drive.** `drive.input` and `drive.resize` from a peer go through the same function C2
     `term.input` uses: a new `applyHumanInput` extracted in `server/services.ts`, using the session's
     current generation. Drops while down are never replayed, because the viewer never queues them.
-    Remote open and close of sessions is in MVP drive (Slice 8), using the serving side's own agents
-    list and its own folder format.
+    Remote open and close of sessions is MVP `drive` **only as a human action over C2**
+    (`remote.open`/`remote.close`). NET §4.1 defines `drive` as "(a **human** at a GUI): type into,
+    resize, open and close remote sessions". Agent-initiated `open_session`/`close_session` on a peer
+    is `orchestrate` (§4.1 table, R21), which is v1. No MCP tool reaches a peer here except the
+    `messaging` tools and `wait_sessions` (`monitor`).
 15. **Audit.** `<userData>/network/audit.jsonl`, append-only, one JSON object per line
     `{v:1, at, kind, peer, ...}`. It records link events (pairing outcome, state changes to and from
     down/incompatible/identity-changed, revoke, capability change) and crossings (message
@@ -137,10 +173,10 @@ card will consume.
 
 ```
             linux-box (A)                                     win-box (B)
- app ──C2── server ─────────────────────────── TCP (TLS-PSK) ─── server ──C2── app
+ app ──C2── server ──────────────────── TCP (TLS 1.3, pinned keys) ─── server ──C2── app
             │ services.ts                                       │
-            │  └ createNetwork ── listener ◄── sniff: 0x16 → link / CNDP → pairing
-            │      ├ pairing-service  (CPace, sealed channel, confirm, persist)
+            │  └ createNetwork ── listener ◄── pin: link key → link / unknown + window → pairing
+            │      ├ pairing-service  (commit/reveal, fingerprint, confirm, persist)
             │      ├ link-manager ── link-connection (hello, ping, frames) ×N
             │      ├ outbox-store ──► msg frames ──►  inbound ──► mcp port ─► store.append ─► notifier
             │      │          ◄── ack / receipt ◄──── receipts ◄── store.onChange
@@ -165,7 +201,6 @@ export const LINK_FEATURES = ['messaging', 'monitor', 'drive', 'view'] as const;
 export type LinkFeature = (typeof LINK_FEATURES)[number];
 export const LINK_FRAME_MAX_BYTES = 16 * 1024 * 1024;
 export const LINK_PING_MS = 5_000; export const LINK_DEGRADED_MS = 10_000; export const LINK_DOWN_MS = 20_000;
-export const PAIRING_MAGIC = 'CNDP';
 export const PAIRING_WINDOW_MS = 10 * 60_000; export const PAIRING_WARN_MS = 60_000;
 export const OUTBOX_TTL_MS = 24 * 60 * 60_000;
 export const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60_000;
@@ -318,8 +353,7 @@ observe(sessionId: string, events: { data(data: string): void; size(size: TermGe
 - `src/network/link-file.ts` — `LinkRecord`, `Tombstone`, `LinksFile`, parse/serialize.
 - `src/network/pairing-words.ts` — the BIP-39 English list (2048 words), generated (script S-1).
 - `src/network/pairing-code.ts` — `newCode(rand): [string,string,string]`, `normalizeCode(input): string | null`.
-- `src/network/cpace.ts` — CPace initiator/responder over ristretto255.
-- `src/network/sealed-channel.ts` — directional ChaCha20-Poly1305 seal/open with counters.
+- `src/network/self-signed-cert.ts` — minimal DER X.509 builder for the server key's certificate; `rawEd25519`.
 - `src/network/pairing-transcript.ts` — `fingerprint(...)`, `deriveLinkSecrets(...)`.
 - `src/network/pairing-protocol.ts` — pure opener/joiner state machines (`step(state, input) → {state, out}`).
 - `src/network/frame-codec.ts` — length-prefixed frame encoder and incremental decoder.
@@ -332,10 +366,10 @@ observe(sessionId: string, events: { data(data: string): void; size(size: TermGe
 - `server/network/index.ts` — `createNetwork(deps): NetworkService`.
 - `server/network/identity.ts` — load or create identity on disk.
 - `server/network/link-store.ts` — persisted links + tombstones.
-- `server/network/listener.ts` — TCP listener, sniff, TLS-PSK server upgrade.
+- `server/network/listener.ts` — TLS 1.3 listener, pin classification.
 - `server/network/link-connection.ts` — one framed TLS connection: hello, ping, frame dispatch.
 - `server/network/link-manager.ts` — dialing, states, duplicates, revoke, capability frames.
-- `server/network/pairing-service.ts` — windows, the CPace exchange over the sniffed socket, confirm, persist.
+- `server/network/pairing-service.ts` — windows, the commit/reveal exchange over a pairing TLS connection, confirm, persist.
 - `server/network/outbox-store.ts` — persisted outbox + delivery loop.
 - `server/network/inbound.ts` — `msg` → checks → `McpNetworkPort.deliverInbound` → `ack`; receipts out.
 - `server/network/monitor-publisher.ts` — builds and pushes `snapshot` (coalesced 500 ms).
@@ -365,8 +399,7 @@ observe(sessionId: string, events: { data(data: string): void; size(size: TermGe
 - `server/mcp/index.ts` — pass `machineId`/`network` through.
 - `src/contracts/server-protocol.ts`, `src/settings.ts`, `electron/server-client.ts`,
   `electron/server-events.ts`, `src/protocol.ts` — C2 + settings + forwarding (above).
-- `package.json`, `package-lock.json` — `@noble/curves` exact pin.
-- `THIRD_PARTY_NOTICES.txt` — `@noble/curves` (MIT) and the BIP-39 list (BSD-2-Clause).
+- `THIRD_PARTY_NOTICES.txt` — the BIP-39 word list (BSD-2-Clause).
 - `CHANGELOG.md` — Slice 9.
 
 **Delete**
@@ -393,8 +426,8 @@ VM; **3** = needs Linux ↔ Windows (owner setup).
 | # | Slice | Proven on | Check |
 |---|---|---|---|
 | 1 | Identity, link store, wire contract | 1 | unit |
-| 2 | Pairing crypto core | 1 | unit (CPace draft vectors) |
-| 3 | Frames, listener, link connection | 1 (+3 for TLS-PSK on bundled Windows Node) | unit with loopback sockets |
+| 2 | Pairing core (cert, transcript, protocol) | 1 | unit (incl. MITM simulation) |
+| 3 | Frames, listener, link connection | 1 (+ Windows runner for TLS 1.3/Ed25519 on bundled Node) | unit with loopback sockets |
 | 4 | Pairing service + link C2 + audit + revoke | 1 | `net-pairing` e2e |
 | 5 | Remote directory + list_sessions + monitor snapshot | 1 | unit + `net-messaging` part A |
 | 6 | Messaging exactly once | 1, 2 (real sleep) | `net-messaging` e2e |
@@ -417,8 +450,8 @@ VM; **3** = needs Linux ↔ Windows (owner setup).
     export function serializeIdentityFile(f: IdentityFile): string;
     export function deriveMachineId(publicKeyRaw: Buffer): string; // 'm-' + sha256 hex [0,8)
     export interface LinkRecord { linkId: string; machineId: string; serverKey: string; ownerKey: string; name: string;
-      trust: 'own'; addresses: string[]; capabilities: Capabilities; psk: string /* base64 */; fingerprint: string; createdAt: string }
-    export interface Tombstone { linkId: string; machineId: string; psk: string; revokedAt: string }
+      trust: 'own'; addresses: string[]; capabilities: Capabilities; fingerprint: string; createdAt: string }
+    export interface Tombstone { linkId: string; machineId: string; serverKey: string; revokedAt: string }
     export interface LinksFile { version: 1; links: LinkRecord[]; tombstones: Tombstone[] }
     export function parseLinksFile(text: string, now: number): { kind: 'ok'; file: LinksFile } | { kind: 'newer' } | { kind: 'corrupt' }; // drops tombstones older than TOMBSTONE_TTL_MS
     export function serializeLinksFile(f: LinksFile): string;
@@ -453,77 +486,76 @@ VM; **3** = needs Linux ↔ Windows (owner setup).
     - newer → error.
   - **Check:** `npm run verify:quick`, then `npm run verify`.
 
-### Slice 2 — Pairing crypto core (pure)
-**Parallel groups:** G1: T2.1 · G2: T2.2 · Serial: T2.3, T2.4 (T2.4 claims `package.json`, `package-lock.json`, `THIRD_PARTY_NOTICES.txt`)
+### Slice 2 — Pairing core (pure; crypto by me)
+**Parallel groups:** G1: T2.2 (lane) · Serial (me): T2.4, T2.1, T2.3
 
-- **T2.4 first in the serial lane, done by me (not a lane):**
-  - `npm install --save-exact @noble/curves@2.4.0` in the **main** checkout's `node_modules`
-    (the worktree symlinks to it; the lead must OK this, D-H2), then commit `package.json` and the
-    lock from the worktree.
-  - Run script S-1 (`node tools/gen-pairing-words.mjs <bip39-english.txt> --sha256 <hex>`). It refuses unless the
-    file's SHA-256 equals the `--sha256` it's given and the file has 2048 lines. I take the list from
-    `bitcoin/bips` (`bip-0039/english.txt`) at a pinned commit and cross-check the hash against a
-    second source before passing it. It then and writes `src/network/pairing-words.ts` (`export const PAIRING_WORDS: readonly string[]`).
-  - Add both notices.
-- **T2.1 `src/network/cpace.ts`** + `test/unit/cpace.test.ts`.
+- **T2.4 (me; claims `THIRD_PARTY_NOTICES.txt`):** run script S-1:
+  `node tools/gen-pairing-words.mjs <bip39-english.txt> --sha256 <hex>`.
+  - It refuses unless the file's SHA-256 equals the `--sha256` it's given and the file has 2048 lines.
+  - I take the list from `bitcoin/bips` (`bip-0039/english.txt`) at a pinned commit and cross-check
+    the hash against a second source before passing it.
+  - It writes `src/network/pairing-words.ts` (`export const PAIRING_WORDS: readonly string[]`).
+  - Add the BIP-39 notice (BSD-2-Clause).
+  - No dependency is added.
+- **T2.1 (me) `src/network/self-signed-cert.ts`** + `test/unit/self-signed-cert.test.ts`.
   - **Produces:**
     ```ts
-    export interface CpaceStart { state: CpaceState; message: Uint8Array /* Ya or Yb, 32 bytes */ }
-    export function cpaceStart(prs: Uint8Array /* the normalized code */, ci: Uint8Array /* channel id: 'conduit-pairing-v1' */, sid: Uint8Array, rand: (n: number) => Uint8Array): CpaceStart;
-    export function cpaceFinish(state: CpaceState, peerMessage: Uint8Array, role: 'initiator' | 'responder', adOwn: Uint8Array, adPeer: Uint8Array): Uint8Array | null; // ISK (64 bytes), null on identity point / invalid encoding
-    ```
-  - Follows draft-irtf-cfrg-cpace's ristretto255/SHA-512 cipher suite exactly: `generator_string`,
-    the `hash_to_group` input, `lv_cat`, scalar sampling, the "initiator-responder" transcript
-    ordering, and the ISK derivation.
-  - **Tests:** the draft's ristretto255 test vectors (generator, Ya/Yb, K, ISK) reproduce byte for
-    byte; a wrong PRS gives a different ISK; the identity point → null. **I review this file line by
-    line against the draft.**
-- **T2.2 `src/network/sealed-channel.ts`, `src/network/pairing-code.ts`** + tests.
-  - **Produces:**
-    ```ts
-    export function sealedPair(isk: Uint8Array, role: 'opener' | 'joiner'): { seal(plain: Buffer): Buffer; open(sealed: Buffer): Buffer | null };
-    // keys = HKDF-SHA256(isk, salt 'conduit-pairing-v1', info 'opener->joiner' | 'joiner->opener', 32);
-    // nonce = 4 zero bytes ‖ u64be counter; open() rejects any counter but the next expected one
-    export function newCode(rand: (n: number) => Uint8Array): [string, string, string]; // uniform via 11-bit chunks
-    export function normalizeCode(input: string): string | null; // lowercase, any whitespace/hyphen separated, each word in PAIRING_WORDS, exactly 3 → 'w1 w2 w3'
+    export function selfSignedCert(keys: { publicKey: KeyObject; privateKey: KeyObject }, commonName: string): string; // PEM, decision 4
+    export function rawEd25519(publicKey: KeyObject): Buffer; // 32 bytes, from the SPKI DER tail
     ```
   - **Tests:**
-    - round trip;
-    - a replayed or reordered frame → null;
-    - a tampered byte → null;
-    - `normalizeCode('  Apple-ZOO  ability ')` → `'apple zoo ability'`;
-    - 2 words or an unknown word → null.
-  - Until T2.4 lands, T2.2's tests import a 4-word fixture list through a parameter:
-    `normalizeCode(input, words = PAIRING_WORDS)`. `newCode(rand, words = PAIRING_WORDS)` takes the
-    same default.
-- **T2.3 `src/network/pairing-transcript.ts`, `src/network/pairing-protocol.ts`** + tests.
+    - `new X509Certificate(pem)` parses it;
+    - `verify(publicKey)` is true;
+    - the subject is `CN=<name>`;
+    - `rawEd25519(x509.publicKey)` equals the key's own raw bytes;
+    - two keys → different certificates;
+    - a TLS 1.3 loopback handshake with two such certificates succeeds.
+- **T2.2 (lane) `src/network/pairing-code.ts`** + tests.
   - **Produces:**
     ```ts
-    export function fingerprint(isk: Uint8Array, serverKeys: [Buffer, Buffer], ownerKey: Buffer): string; // 'XXXX XXXX XXXX XXXX'
-    export function deriveLinkSecrets(isk: Uint8Array, serverKeys: [Buffer, Buffer]): { linkId: string /* 'l_' + base32 16 */; psk: Buffer /* 32 */ };
-    export type PairingMsg =
-      | { t: 'pair.hello'; v: 1; cpace: string }               // joiner → opener, plaintext
-      | { t: 'pair.reply'; cpace: string }                      // opener → joiner, plaintext
-      | { t: 'pair.confirm-key'; mac: string }                  // each way, plaintext HMAC
-      | { t: 'pair.id'; serverKey: string; machineId: string; ownerKey: string | null; selfName: string; addresses: string[]; protocol: { major: number; minor: number } } // sealed
-      | { t: 'pair.accept' } | { t: 'pair.decline' }            // sealed
-      | { t: 'pair.owner'; publicKey: string; privateKey: string } // sealed, sent by the existing own machine (decision 10)
-      | { t: 'pair.fail'; reason: 'wrong-code' | 'different-owner' | 'expired' | 'used' | 'incompatible' };
-    export function openerStep(s: OpenerState, input: OpenerInput): { state: OpenerState; out: PairingMsg[]; done?: PairingOutcome };
-    export function joinerStep(s: JoinerState, input: JoinerInput): { state: JoinerState; out: PairingMsg[]; done?: PairingOutcome };
-    export type PairingOutcome = { kind: 'linked'; peer: { machineId: string; serverKey: string; ownerKey: string; selfName: string; addresses: string[] }; linkId: string; psk: Buffer; fingerprint: string; ownerKeyToStore: { publicKey: string; privateKey: string } | null }
-      | { kind: 'failed'; reason: 'wrong-code' | 'different-owner' | 'declined' | 'expired' | 'used' | 'incompatible' | 'cancelled' };
+    export function newCode(rand: (n: number) => Uint8Array, words?: readonly string[]): [string, string, string]; // uniform: 11-bit chunks, default PAIRING_WORDS
+    export function normalizeCode(input: string, words?: readonly string[]): string | null; // lowercase, whitespace/hyphen separated, each word in the list, exactly 3 → 'w1 w2 w3'
     ```
-  - The inputs are `{kind:'msg', msg}`, `{kind:'confirm'}`, `{kind:'decline'}`, `{kind:'cancel'}`
-    and `{kind:'expire'}`.
-  - The state machines embed the decision 10 table.
   - **Tests:**
-    - a full happy path between an opener and a joiner in memory gives equal `linkId`/`psk`/
-      `fingerprint` on both sides;
-    - a wrong code → both `wrong-code`;
+    - `normalizeCode('  Apple-ZOO  ability ', fixture)` → `'apple zoo ability'`;
+    - 2 words or an unknown word → null;
+    - `newCode` with a fixed `rand` is deterministic and every word comes from the list.
+
+    The tests use a 4-word fixture list, so the lane doesn't wait for T2.4.
+- **T2.3 (me) `src/network/pairing-transcript.ts`, `src/network/pairing-protocol.ts`** + tests.
+  - **Produces:**
+    ```ts
+    export function commitment(pkJoiner: Buffer, nonce: Buffer): Buffer;            // SHA-256('conduit-pair-commit-v1' ‖ pk ‖ n)
+    export function fingerprint(pkOpener: Buffer, pkJoiner: Buffer, nOpener: Buffer, nJoiner: Buffer): string; // 'XXXX-XXXX'
+    export function linkIdFor(a: Buffer, b: Buffer): string;                        // 'l_' + base32(sha256(sorted a‖b))[0,16)
+    export type PairingMsg =   // all inside the pairing TLS connection
+      | { t: 'pair.hello'; v: 1; code: string; commit: string }                     // joiner → opener
+      | { t: 'pair.nonce'; nonce: string }                                          // opener → joiner
+      | { t: 'pair.reveal'; nonce: string }                                         // joiner → opener
+      | { t: 'pair.id'; machineId: string; ownerKey: string | null; selfName: string; addresses: string[]; protocol: { major: number; minor: number } } // each way, after the reveal
+      | { t: 'pair.accept' } | { t: 'pair.decline' }
+      | { t: 'pair.owner'; publicKey: string; privateKey: string }                  // the existing own machine → the other (decision 10)
+      | { t: 'pair.fail'; reason: 'wrong-code' | 'bad-commit' | 'different-owner' | 'expired' | 'used' | 'incompatible' };
+    export function openerStep(s: OpenerState, input: PairingInput): { state: OpenerState; out: PairingMsg[]; done?: PairingOutcome };
+    export function joinerStep(s: JoinerState, input: PairingInput): { state: JoinerState; out: PairingMsg[]; done?: PairingOutcome };
+    export type PairingInput = { kind: 'msg'; msg: PairingMsg } | { kind: 'confirm' } | { kind: 'decline' } | { kind: 'cancel' } | { kind: 'expire' };
+    export type PairingOutcome =
+      | { kind: 'linked'; peer: { machineId: string; serverKey: string; ownerKey: string; selfName: string; addresses: string[] }; linkId: string; fingerprint: string; ownerKeyToStore: { publicKey: string; privateKey: string } | null }
+      | { kind: 'failed'; reason: 'wrong-code' | 'bad-commit' | 'different-owner' | 'declined' | 'expired' | 'used' | 'incompatible' | 'cancelled' };
+    ```
+  - Each state is created with its own raw key, the peer's raw key from the TLS certificate, its
+    identity, the window's code (opener only) and `rand`.
+  - The fingerprint becomes visible only after the reveal checks out. `pair.id` is exchanged right
+    after it, so the different-owner check (decision 10) happens before anyone confirms.
+  - **Tests:**
+    - an in-memory happy path gives equal `linkId` and `fingerprint` on both sides;
+    - a wrong code → `wrong-code`;
+    - a reveal that doesn't match the commitment → `bad-commit`;
+    - a MITM simulation, where the joiner's certificate key differs from the committed key →
+      `bad-commit`;
     - every row of the owner-key table;
     - a decline on either side → `declined` on both;
-    - a message out of order → `failed` (`wrong-code`).
+    - an out-of-order message → `failed`.
   - **Check (slice):** `npm run verify:quick`, then `npm run verify`.
 
 ### Slice 3 — Frames, listener, link connection
@@ -562,31 +594,31 @@ VM; **3** = needs Linux ↔ Windows (owner setup).
     - 127.0.0.1 is included;
     - an explicit `0.0.0.0` → `[]` (never all interfaces);
     - name clashes, including with self.
-- **T3.3 (serial) `server/network/listener.ts`, `server/network/link-connection.ts`** + tests
-  `test/unit/network-link-connection.test.ts`, using real sockets on `127.0.0.1:0`.
+- **T3.3 (serial; me, as it holds the pin check) `server/network/listener.ts`,
+  `server/network/link-connection.ts`** + tests `test/unit/network-link-connection.test.ts`, using
+  real sockets on `127.0.0.1:0`.
   - **Produces:**
     ```ts
     export interface Listener { addresses(): string[]; close(): Promise<void> }
-    export function listen(opts: { hosts: string[]; port: number; pskFor(identity: string): Buffer | null;
-      onLink(sock: tls.TLSSocket, identity: string): void; onPairing(sock: net.Socket, first: Buffer): void; log: NetLog }): Promise<Listener>;
-    export function dial(opts: { address: string /* host:port */; identity: string; psk: Buffer; timeoutMs: number }): Promise<tls.TLSSocket>;
+    export function listen(opts: { hosts: string[]; port: number; cert: string; key: string;
+      classify(peerKeyRaw: Buffer): 'link' | 'pairing' | 'reject'; onLink(sock: tls.TLSSocket, peerKeyRaw: Buffer): void;
+      onPairing(sock: tls.TLSSocket, peerKeyRaw: Buffer): void; log: NetLog }): Promise<Listener>;
+    export function dial(opts: { address: string /* host:port */; cert: string; key: string; expectKeyRaw: Buffer | null /* null only for a pairing join */; timeoutMs: number }):
+      Promise<{ sock: tls.TLSSocket; peerKeyRaw: Buffer }>; // rejects 'pin_mismatch' before any read
     export interface LinkConnection { send(f: LinkFrame): boolean /* false past 4 MiB buffered */; bufferedBytes(): number; close(reason: string): void; readonly peerHello: HelloFrame }
     export function openConnection(sock: tls.TLSSocket, opts: { hello: HelloFrame; onFrame(f: LinkFrame): void; onClose(why: string): void; now(): number; log: NetLog }): Promise<LinkConnection | { error: 'incompatible' | 'bad-hello' | 'timeout' }>;
     ```
-  - TLS options are exactly `{ ciphers: 'ECDHE-PSK-CHACHA20-POLY1305', minVersion: 'TLSv1.2',
-    maxVersion: 'TLSv1.2' }`, with `checkServerIdentity: () => undefined`. PSK authenticates; no
-    certificate exists.
+  - TLS options are those of decision 4. The socket is paused until `classify` has run on
+    `secureConnection`, and `reject` destroys it.
   - **Tests:**
-    - a dial with the right PSK exchanges hellos;
-    - a wrong PSK → handshake error, and no frame is delivered;
-    - a `CNDP`-prefixed connection reaches `onPairing` with its first bytes intact;
-    - other bytes → closed;
+    - a dial with the right pin exchanges hellos;
+    - a server or client with an unpinned key → destroyed, and no frame is delivered;
+    - an unknown key while `classify` → `'pairing'` reaches `onPairing`;
     - a hello with a different major → `incompatible` on both;
-    - pings keep it alive, and silence closes it (fake `now` plus short constants injected through
-      opts);
+    - pings keep the link alive, and silence closes it (fake `now` and short constants through opts);
     - `send` returns false past the buffer cap.
-  - **Check:** `npm run verify`. The `net-pairing` e2e in Slice 4 then proves TLS-PSK on the Windows
-    runner's bundled Node.
+  - **Check:** `npm run verify`. The `net-pairing` e2e in Slice 4 then proves TLS 1.3 + Ed25519 on the
+    Windows runner's bundled Node.
 
 ### Slice 4 — Pairing service, link C2, audit, revoke (Tier 1 e2e)
 **Parallel groups:** G1: T4.1 · G2: T4.2 · Serial: T4.3, T4.4
@@ -603,7 +635,7 @@ VM; **3** = needs Linux ↔ Windows (owner setup).
     ```
   - **Tests:**
     - put → reopen → same;
-    - revoke moves the record to a tombstone with the same PSK;
+    - revoke moves the record to a tombstone with the same server key;
     - a newer file is never overwritten;
     - an audit line is valid JSON with `v:1` and `at`.
 - **T4.2 `server/network/pairing-service.ts`** + tests (two instances over loopback with stub
@@ -620,7 +652,7 @@ VM; **3** = needs Linux ↔ Windows (owner setup).
   - Rules:
     - one window at a time;
     - 10 min, with an expiry timer;
-    - one socket per window: a second `CNDP` connection gets `pair.fail used`;
+    - one socket per window: a second pairing connection gets `pair.fail used`;
     - a failed MAC burns the window (`mismatch`);
     - "New code" is `cancel` + `start`;
     - a joiner that can't connect is `unreachable`.
@@ -677,7 +709,7 @@ VM; **3** = needs Linux ↔ Windows (owner setup).
   - B's `network/audit.jsonl` has the pairing and revoke entries.
 
   **Check:** `npm run verify`, then `npm run e2e -- net-pairing` locally, then
-  `npm run e2e:remote -- net-pairing` (Windows: TLS-PSK on the bundled Node).
+  `npm run e2e:remote -- net-pairing` (Windows: TLS 1.3 + Ed25519 on the bundled Node).
 
 ### Slice 5 — Remote directory, list_sessions, monitor snapshot
 **Parallel groups:** G1: T5.1 · Serial: T5.2, T5.3
@@ -911,7 +943,7 @@ around it. A lane never edits a claimed file it doesn't own.
 ## Security notes (what widens a remote party's reach)
 - **New network listener** (decision 5): off until the first pairing window, then bound to private
   and tailnet interfaces by default, never `0.0.0.0` or a public address unless the owner types one.
-  A connection without a valid PSK can't send a frame. A pairing attempt is only accepted during a
+  A connection whose certificate key isn't pinned can't send a frame. A pairing attempt is only accepted during a
   window, gets one try, and the code is never sent.
 - **Own peer with `messaging`** can put messages into my agents' inboxes, framed "information, not
   instructions" (unless `drive` is on, decision 12), under the same caps as local agents.
@@ -922,40 +954,44 @@ around it. A lane never edits a claimed file it doesn't own.
 - **Not widened:** no tool call executes on my machine on behalf of a peer (orchestrate is v1).
   Credentials, tokens and MCP session tokens never cross. Routing is non-transitive: inbound frames
   are only ever delivered locally, and `enqueue` refuses a record whose `origin` isn't this machine.
-- **Keys at rest:** `identity.json` and `links.json` hold private keys and PSKs, mode 0600 on POSIX
+- **Keys at rest:** `identity.json` and `links.json` hold the server and owner private keys (`links.json` holds only public keys), mode 0600 on POSIX
   and the per-user `%APPDATA%` ACL on Windows, the same as `tokens.json`.
 
-## Decisions Needed
-- **[high] D-H1 No renderer UI in CON-27.** Settings → Machines, the pairing dialog, the Machines
-  group, the remote pane (an app `TerminalLinkFactory` for remote targets plus per-pane `windowsPty`)
-  and the read-only remote ask card go to a follow-up UI card, as CON-20 followed CON-21. Default:
-  split. Without UI, an owner can't pair outside e2e.
-- **[high] D-H2 New dependency `@noble/curves` (2.4.0, exact) + our CPace implementation** checked
-  against the draft's vectors. There's no maintained audited PAKE package for Node. The alternative,
-  OPAQUE via `@cloudflare/opaque-ts`, is heavier and is an aPAKE. Installing needs a write to the
-  main checkout's `node_modules` (the worktree symlinks it). Default: proceed after the lead's OK.
-- **[high] D-H3 TLS 1.2 ECDHE-PSK as the link channel** instead of a hand-built Noise channel.
-  Default: TLS-PSK (OpenSSL, no hand-rolled channel crypto). Risk: TLS 1.2 only, since Node has no
-  TLS 1.3 external-PSK API; acceptable with ECDHE + ChaCha20-Poly1305.
-- **[high] D-H4 Product listener default:** `'auto'` = loopback + RFC 1918 + tailnet CGNAT + ULA
-  interfaces on port 47391, after the first pairing window. Tests bind `127.0.0.1` only. Nothing in
-  this run binds beyond loopback on this host. The VM's server binds inside the VM behind QEMU's
+## Decisions (lead's rulings, 2026-11-14)
+- **D-H1 No renderer UI in CON-27.** Agreed. The owner owns CON-28 (Cross-machine: UX and UI): the
+  Machines group, pairing dialog, remote pane (an app `TerminalLinkFactory` for remote targets plus
+  per-pane `windowsPty`), Settings → Machines and the read-only remote ask card. For now pairing goes
+  through C2 and e2e only.
+- **D-H2 No PAKE and no new crypto dependency.** Numeric comparison with commit/reveal instead
+  (decision 3). Crypto and auth code is written and reviewed by me, never by a lane: T2.1, T2.3 and
+  T3.3.
+- **D-H3 TLS 1.3 mutual auth with self-signed certificates pinned to the Ed25519 server keys**
+  (decision 4). Measured working on this host. No fallback is needed unless the Windows runner
+  disagrees, in which case I stop and tell the lead.
+- **D-H4 Listener default approved:** off until the first pairing window, then `'auto'` = loopback,
+  RFC 1918, tailnet CGNAT and ULA interfaces on port 47391, never 0.0.0.0 or a public address. In
+  this run, loopback only on this host. The VM's server binds inside the VM behind QEMU's
   loopback-only forward.
-- **[high] D-H5 POL/REQ seams before CON-24 lands:** NET enforces the "capability off → deny" floor
-  itself, writes its own `network/audit.jsonl` behind `AuditSink`, and doesn't delete grants on
-  revoke (none exist yet). When CON-24 lands, its principal/grant/Activity code consumes
-  `handle@m-…` principals and replaces `AuditSink`. Default: as stated; I'll tell the CON-24
-  orchestrator the seam names.
-- **[normal] D-N1 Machine id is 8 hex** (matches the existing code), not the spec example's 6.
-- **[normal] D-N2 Peer names are the peer's self-name** (no local rename of own peers). A clash
+- **D-H5 Seams with CON-24:**
+  - NET enforces the "capability off → deny" floor itself.
+  - NET writes `network/audit.jsonl` behind `AuditSink`.
+  - NET deletes no grants on revoke, because none exist yet.
+
+  I agree the principal shape, `AuditSink` and the capability floor in writing with claude-21 (the
+  CON-24 orchestrator), CC the lead. The interfaces stay small and are recorded on both branches.
+
+- **[accepted] D-N1 Machine id is 8 hex** (matches the existing code), not the spec example's 6.
+- **[accepted] D-N2 Peer names are the peer's self-name** (no local rename of own peers). A clash
   shows `name (m-…)`.
-- **[normal] D-N3 `you@m-x` frames as the human only while that link has `drive` on.**
-- **[normal] D-N4 Different owner keys refuse own pairing.** There's no "reset owner" in MVP.
-- **[normal] D-N5 Receipts are best effort** (held in memory while down, lost on a restart). Delivery
+- **[accepted] D-N3 `you@m-x` frames as the human only while that link has `drive` on.**
+- **[accepted] D-N4 Different owner keys refuse own pairing.** There's no "reset owner" in MVP.
+- **[accepted] D-N5 Receipts are best effort** (held in memory while down, lost on a restart). Delivery
   itself is exactly once.
-- **[normal] D-N6 Remote open/close of sessions** is in MVP `drive` (Slice 8), per NET §4.1. Remote
-  Editor & views tools wait for v1 with `orchestrate`.
-- **[normal] D-N7 Tier 3 (Tailscale CI job)** is planned after the owner's secrets exist. Not in
+- **[accepted] D-N6 Remote open/close follows NET §4.1 exactly.** A *human* open or close over C2
+  (`remote.open`/`remote.close`) is `drive`. An agent's `open_session`/`close_session` on a peer is
+  `orchestrate`, which is v1, and is refused with `peer_unsupported`. Remote Editor & views tools wait
+  for v1.
+- **[accepted] D-N7 Tier 3 (Tailscale CI job)** is planned after the owner's secrets exist. Not in
   these slices.
 
 ## Self-review
@@ -973,7 +1009,7 @@ around it. A lane never edits a claimed file it doesn't own.
 PLAN: docs/plans/2026-11-14-conduit-network-machinery.plan.md
 TIER: FULL
 SLICES: 9
-GROUPS: 11
-CLAIMS: src/contracts/session-identity.ts, src/conduit-mcp/host.ts, src/conduit-mcp/tools.ts, src/conduit-mcp/types.ts, src/conduit-mcp/store.ts, src/contracts/server-ports.ts, server/mcp/index.ts, server/services.ts, src/contracts/server-protocol.ts, src/settings.ts, electron/server-client.ts, electron/server-events.ts, src/protocol.ts, src/contracts/terminal-runtime.ts, server/runtime/runtime.ts, package.json, package-lock.json, THIRD_PARTY_NOTICES.txt, CHANGELOG.md
+GROUPS: 10
+CLAIMS: src/contracts/session-identity.ts, src/conduit-mcp/host.ts, src/conduit-mcp/tools.ts, src/conduit-mcp/types.ts, src/conduit-mcp/store.ts, src/contracts/server-ports.ts, server/mcp/index.ts, server/services.ts, src/contracts/server-protocol.ts, src/settings.ts, electron/server-client.ts, electron/server-events.ts, src/protocol.ts, src/contracts/terminal-runtime.ts, server/runtime/runtime.ts, THIRD_PARTY_NOTICES.txt, CHANGELOG.md
 SCRIPT_CANDIDATES: 2
 ```
