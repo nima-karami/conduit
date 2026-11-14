@@ -98,4 +98,23 @@ export const REQ_STR = {
     defaultSort: 'default',
     all: 'All',
   },
+  needsPane: {
+    emptyPurpose: "Agents' questions and approvals appear here.",
+    historyEmpty: 'Answered and closed requests appear here for 30 days.',
+    legendAsked: "What you're asked to do",
+    legendApprove: "Say yes or no: a tool permission, or an agent's yes/no.",
+    legendAnswer: 'Pick an option or write a reply.',
+    legendReview: 'Edit or approve a draft, or fill in a form.',
+    legendOpens: 'Where it opens',
+    markerPopup: 'A pop-up over the editor.',
+    markerTab: 'A tab beside the agent: too long for a pop-up.',
+    markerTerminal: "The agent's own prompt, in its terminal.",
+    legendAlso: 'Also',
+    conduitMeaning: 'Conduit wrote it, not an agent. Agents can never show this.',
+    waitingMeaning: 'An agent is blocked until you answer.',
+    closeLegend: 'Got it',
+    newRequests: (n: number) => countNoun(n, 'new request', 'new requests'),
+    filtered: (names: string, shown: number, total: number) =>
+      `Filtered: ${names} · ${shown} of ${total} shown`,
+  },
 };
