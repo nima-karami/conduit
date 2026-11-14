@@ -115,6 +115,8 @@ export interface MessageRecord {
   sentAt: string;
   body: string;
   attachments: AttachmentRecord[];
+  /** Set on a late answer to a request; the human's views hide these (spec 2026-11-14-user-input-requests §4.3). */
+  requestId?: string;
 }
 export interface RecipientState {
   status: RecipientStatus;
@@ -185,7 +187,7 @@ export interface ListSessionsOutput {
     notices: 'typed' | 'pull';
     self: boolean;
   }>;
-  human: { handle: 'you' };
+  human: { handle: 'you'; presence: 'here' | 'away' };
 }
 export interface SendMessageOutput {
   message_id: string;
@@ -204,6 +206,7 @@ export interface InboxMessageOut {
   /** Framed: see tools.ts frameBody. */
   body: string;
   attachments: Array<{ attachment_id: string; name: string; mime: string; bytes: number }>;
+  request_id?: string;
 }
 export interface ReadInboxOutput {
   messages: InboxMessageOut[];

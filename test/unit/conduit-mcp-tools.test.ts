@@ -120,6 +120,7 @@ async function harness(over: Partial<ToolDeps> = {}) {
     onStored: (m) => stored.push(m),
     onThreadLimit: (t, by) => limits.push([t, by]),
     warn: () => {},
+    humanPresence: () => 'here',
     ...over,
   };
   const tools = createToolHandlers(deps);
@@ -735,7 +736,7 @@ describe('listSessions', () => {
   it('list_sessions marks self and includes you', async () => {
     const h = await harness();
     const out = okValue(h.tools.listSessions(CODEX));
-    expect(out.human).toEqual({ handle: 'you' });
+    expect(out.human).toEqual({ handle: 'you', presence: 'here' });
     expect(out.sessions).toEqual([
       {
         handle: 'claude-1',

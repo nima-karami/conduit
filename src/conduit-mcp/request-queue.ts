@@ -179,8 +179,8 @@ export function createRequestQueue(deps: QueueDeps): RequestQueue {
         }
         arm(r);
       }
+      // A pure restore changes nothing on disk; every transition above already reported itself.
       purgeEnded();
-      deps.onChanged();
     },
 
     createAgent(stamp, input) {

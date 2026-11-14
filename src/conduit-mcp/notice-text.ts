@@ -1,7 +1,10 @@
 import type { Handle, StoredMessage } from './types';
 
 // Fixed ASCII with no digits and no peer text: docs/specs/archive/2026-10-25-conduit-mcp-server.md §2.
-export function composeNotice(urgent: boolean): string {
+export function composeNotice(urgent: boolean, answered = false): string {
+  if (answered) {
+    return `[conduit] A request you made was answered${urgent ? ' (urgent)' : ''}. Use the conduit read_inbox tool.`;
+  }
   return `[conduit] New messages for you${urgent ? ' (urgent)' : ''}. Use the conduit read_inbox tool.`;
 }
 

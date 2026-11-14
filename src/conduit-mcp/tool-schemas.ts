@@ -4,6 +4,15 @@ import { MAX_LABEL_CHARS, MAX_OPEN_FILE_PATHS, MAX_OPEN_MESSAGE_CHARS } from './
 import { MAX_REF_CHARS } from './git-refs';
 import type { ToolSchema } from './json-rpc';
 import {
+  OPTION_DESC_MAX,
+  OPTION_LABEL_MAX,
+  OPTIONS_MAX,
+  OPTIONS_MIN,
+  REASON_MAX,
+  TITLE_MAX,
+  WITHDRAW_REASON_MAX,
+} from './request-args';
+import {
   WAIT_CONDITIONS,
   WAIT_DEFAULT_TIMEOUT_S,
   WAIT_MAX_SESSIONS,
@@ -30,17 +39,17 @@ const REQUEST_SCHEMAS: readonly ToolSchema[] = [
       ...OBJECT,
       properties: {
         kind: { type: 'string', enum: ['confirm', 'choose', 'text', 'review'] },
-        title: { type: 'string', maxLength: 200 },
+        title: { type: 'string', maxLength: TITLE_MAX },
         body: { type: 'string' },
         options: {
           type: 'array',
-          minItems: 2,
-          maxItems: 8,
+          minItems: OPTIONS_MIN,
+          maxItems: OPTIONS_MAX,
           items: {
             ...OBJECT,
             properties: {
-              label: { type: 'string', maxLength: 100 },
-              description: { type: 'string', maxLength: 300 },
+              label: { type: 'string', maxLength: OPTION_LABEL_MAX },
+              description: { type: 'string', maxLength: OPTION_DESC_MAX },
             },
             required: ['label'],
           },
@@ -63,7 +72,7 @@ const REQUEST_SCHEMAS: readonly ToolSchema[] = [
             },
             text: { type: 'string' },
             values: { type: 'array', items: { type: 'string' } },
-            reason: { type: 'string', maxLength: 500 },
+            reason: { type: 'string', maxLength: REASON_MAX },
           },
           required: ['outcome'],
         },
@@ -92,7 +101,7 @@ const REQUEST_SCHEMAS: readonly ToolSchema[] = [
       ...OBJECT,
       properties: {
         request_id: { type: 'string' },
-        reason: { type: 'string', maxLength: 200 },
+        reason: { type: 'string', maxLength: WITHDRAW_REASON_MAX },
       },
       required: ['request_id'],
     },

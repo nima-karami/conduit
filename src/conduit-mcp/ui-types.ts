@@ -6,6 +6,7 @@ import type { RefEndpoint } from '../git-range';
 import type { ParsedPatchFile } from '../patch-parse';
 import type { CommitNode } from '../protocol';
 import type { AgentCli, UserInstallState } from './install-types';
+import type { RequestsUiState } from './request-types';
 import type {
   GateClosedReason,
   Handle,
@@ -142,6 +143,7 @@ export interface McpUiState {
   notConnected: Record<string, McpNotConnected>;
   /** Caller session ids with at least one waiting ask (spec 2026-10-30-conduit-mcp-tool-policy §2.4, caller side). */
   awaitingApproval: string[];
+  requests: RequestsUiState;
 }
 
 /** A session where an agent CLI was started but never reached this host (spec 2026-10-27-conduit-mcp-install §2.5). */

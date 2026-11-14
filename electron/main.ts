@@ -4093,7 +4093,9 @@ app.whenReady().then(() => {
         case 'mcp:retry':
         case 'mcp:setToolPolicy':
         case 'mcp:askAnswer':
-        case 'mcp:uiResult': {
+        case 'mcp:uiResult':
+        case 'mcp:requestAnswer':
+        case 'mcp:setAway': {
           const r = await callServer('mcp.fromRenderer', { windowId: senderId, message: m });
           if (r.reply) replyHere(r.reply);
           break;

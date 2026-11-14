@@ -4,6 +4,12 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Added
+- Agents can ask you a question and get a structured answer with the new `request_input` tool: yes/no, pick from options, a free answer, or review a draft. You can always type your own words as well. If you don't answer while the agent waits, the agent gets your answer later in its inbox, so a slow answer is never a lost one. Agents can also wait again, withdraw or list their requests (`wait_request`, `withdraw_request`, `list_requests`). They are in a new Requests group in the MCP tool settings, on by default.
+- An agent can attach a default answer that applies if you haven't answered by a set time (for example "go with Blue/green in 2 h"). Tool approvals never apply themselves.
+
 ## [0.64.0] — 2026-11-13
 
 ### Changed

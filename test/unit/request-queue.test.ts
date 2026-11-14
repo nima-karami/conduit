@@ -330,6 +330,12 @@ describe('request queue', () => {
     expect(h.queue.open().map((x) => x.id)).toEqual(['r_agent']);
   });
 
+  it('a load with nothing to end reports no change', () => {
+    const h = harness();
+    h.queue.load([rec({ id: 'r_agent', source: 'agent' })]);
+    expect(h.changes()).toBe(0);
+  });
+
   it('load ends overdue requests', () => {
     const h = harness();
     const now = h.now();
