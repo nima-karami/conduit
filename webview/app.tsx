@@ -192,6 +192,7 @@ import {
   REVIEW_DOC_ID,
   REVIEW_DOC_PATH,
   type ReviewSource,
+  requestDocPath,
   shownKeepsDoc,
   toPersistedDocs,
 } from './docs';
@@ -296,6 +297,7 @@ import { clearReveal, fileUri, peekReveal, setDefinitionOpener, setReveal } from
 import { createQuitResponder } from './quit-responder';
 import { quitStopFailureDialog } from './quit-stop-dialog';
 import { pushRecentDoc, type RecentDoc, recentPaletteId, recentSubtitle } from './recent-docs';
+import { setRequestOpeners } from './request-open';
 import { resolveModuleOnDemand } from './resolve-module';
 import { subscribeNoteTarget } from './review-note-target';
 import { loadNotesFor } from './review-notes-store';
@@ -2135,6 +2137,22 @@ export function App() {
       focus: requestTerminalFocus,
     });
   }, []);
+  // The request pop-up and tab reach the doc state and the terminal only through these openers.
+  useEffect(() => {
+    setRequestOpeners({
+      openTab: (r) => {
+        const shown = activeIdRef.current ?? '';
+        const sessionId = r.session ?? shown;
+        if (sessionId !== shown && sessionId !== '') setActiveId(sessionId);
+        setCenterView('editor');
+        const path = requestDocPath(r.id);
+        if (sessionId !== '') recordNav({ sessionId, doc: { kind: 'request', path } });
+        dispatchDocs({ type: 'open', kind: 'request', path, sessionId, shown: sessionId || shown });
+      },
+      openTerminal: goToTerminal,
+    });
+    return () => setRequestOpeners(null);
+  }, [goToTerminal, recordNav]);
   const focusAttention = useCallback(
     (entry: AttentionEntry) =>
       routeAttention(entry, {

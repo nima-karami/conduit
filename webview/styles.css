@@ -16218,6 +16218,70 @@ button.toggle--on .toggle__knob {
   gap: 6px;
 }
 
+/* Needs you: pop-up and request tab (CON-20) */
+.reqtpl-popup-layer {
+  position: relative;
+  height: 0;
+  z-index: var(--layer-popover);
+}
+.reqtpl-popup {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--layer-popover);
+  width: min(600px, calc(100% - 32px));
+  -webkit-app-region: no-drag;
+}
+/* Below 1200 px the pop-up also covers the right pane, so it anchors to the window. */
+@media (max-width: 1199px) {
+  .reqtpl-popup {
+    position: fixed;
+    width: min(600px, calc(100vw - 32px));
+  }
+}
+.reqtpl-popup .reqtpl {
+  border-radius: var(--r-card);
+  box-shadow: var(--elev-3);
+}
+.reqtpl-tab .reqtpl {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  column-gap: 16px;
+  align-items: start;
+}
+.reqtpl-tab .reqtpl-head,
+.reqtpl-tab .reqtpl-footer {
+  grid-column: 1 / -1;
+}
+.reqtpl-tab .reqtpl-head {
+  grid-row: 1;
+}
+.reqtpl-tab .reqtpl-context {
+  grid-column: 1;
+  grid-row: 2;
+}
+.reqtpl-tab .reqtpl-answer {
+  grid-column: 2;
+  grid-row: 2;
+}
+.reqtpl-tab .reqtpl-footer {
+  grid-row: 3;
+}
+.reqtpl-tab__gone {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px;
+  background: var(--raise);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-card);
+  color: var(--text);
+}
+.reqtpl-tab__gone p {
+  margin: 0;
+}
+
 /* ═════════ interaction state vocabulary ══════════════════════════════════════
    docs/specs/archive/2026-08-01-interaction-state-vocabulary.md. Read it before touching
    a value here; test/unit/state-vocabulary.test.ts holds the line.
