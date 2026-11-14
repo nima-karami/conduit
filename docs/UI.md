@@ -18,7 +18,7 @@ structure, iOS and Apple for calm and clarity, Notion for readable text `[owner,
 
 **Themes:** Aero Dark (default), Aero (light) and Neon `[evidence: webview/themes.ts:20-45]`. A theme
 also picks fonts, the code surface and the icon pack unless the user pinned them. Conduit doesn't
-follow the OS light/dark setting today (no `prefers-color-scheme`); see the open question in UX.md.
+follow the OS light/dark setting (no `prefers-color-scheme`), and that's intended for now `[owner, 2026-11-14]`.
 
 | Colour role | Aero Dark (`:root`) | Aero (light) | Token |
 |---|---|---|---|
@@ -138,4 +138,5 @@ CON-10 design are marked `[proposed]`.
 | 2026-07-31 | Three themes (Aero, Aero Dark, Neon); a theme owns colour, shape and material, density owns size | owner | The revamp handoff `[evidence: docs/design-handoff/revamp/]` |
 | 2026-08-01 | Hover is neutral; accent means state | owner | `[evidence: docs/specs/archive/2026-08-01-interaction-state-vocabulary.md]` |
 | 2026-11-14 | Request card, pop-up/tab template and session pill from CON-10 iter-7 | owner | Approved design |
+| 2026-11-14 | Don't follow the OS light/dark setting, for now | owner | Not wanted now |
 | `[proposed]` | A named type scale and a spacing scale for new components | — | Today's literal sizes drift |

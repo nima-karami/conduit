@@ -26,16 +26,16 @@ in [UI.md](UI.md). Each load-bearing line carries `[evidence: pointer]`, `[owner
 |---|---|---|---|---|---|
 | **The owner** | Human | Expert developer, runs 5–20 agents at once | None stated; English only `[owner, 2026-11-14]` | At a desk for hours, often across two screens. Steps away for unattended runs and comes back to catch up. Dictates most text with Wispr Flow; moves around with the mouse `[owner, 2026-11-14]` | "Keep all my agents moving." "Know the moment one needs me." "See and review what they changed." "Let them hand work to each other." `[owner, 2026-11-14]` |
 | **Agents** | Agent | Reads tool schemas, not the screen | Needs stable names and machine-readable state | Running inside a Conduit terminal, often unattended | Message other agents and the human, open helper sessions, ask for a decision and get the answer `[evidence: src/conduit-mcp/tool-policy.ts:6-35]` |
-| **Other developers** | Human | Developers, likely less familiar with agent fleets | Unknown | Unknown | Unknown `[assumption]`: whether Conduit is for anyone besides the owner is an open question |
+| **A few other developers** | Human | Developers | Unknown | Unknown | Secondary: Conduit is built for the owner; a few others use it `[owner, 2026-11-14]`. No onboarding is designed for them |
 
-The owner is the user every screen is designed for. Agents are users of the tools, not the
+The owner is the user every screen is designed for, so first-run and empty states stay short; there's no tutorial `[owner, 2026-11-14]`. Agents are users of the tools, not the
 screens. Every feature in §4 names which of them it serves.
 
 ## 3. Interfaces
 
 | Interface | Who uses it | Implication |
 |---|---|---|
-| **Voice (dictation)** | The owner, most of the time `[owner, 2026-11-14]` | Wispr Flow pastes dictated text into the focused field, usually a terminal. Long pasted text must arrive whole and in order (bracketed paste, a cap that refuses instead of truncating `[evidence: docs/specs/2026-11-13-scheduler-auto-resume.md]`). Every place you answer in words (terminal, compose, the request text field) must take a large paste cleanly. **Future:** connect Wispr Flow to Conduit directly, so a spoken command triggers an action without the paste step `[owner, 2026-11-14]` |
+| **Voice (dictation)** | The owner, most of the time `[owner, 2026-11-14]` | Wispr Flow pastes dictated text into the focused field, usually a terminal. Long pasted text must arrive whole and in order (bracketed paste, a cap that refuses instead of truncating `[evidence: docs/specs/2026-11-13-scheduler-auto-resume.md]`). Every place you answer in words (terminal, compose, the request text field) must take a large paste cleanly. **Future, not now:** talk to a request directly, e.g. an agent asks "A or B?" and you discuss it and say "A" out loud instead of reaching for the mouse; voice commands through Wispr Flow `[owner, 2026-11-14]` |
 | **Pointer** | The owner, to move around `[owner, 2026-11-14]` | Every action has a visible pointer path: no keyboard-only or right-click-only actions for anything core. Frequent targets are large and near where the eye already is |
 | **Keyboard** | The owner, secondary | Shortcuts exist and stay (VS Code-style, rebindable `[evidence: webview/shortcuts.ts:21-230]`), but no feature depends on them. The command palette is the keyboard way to reach anything |
 | **Agent (tool calls)** | Agents | Tool names, arguments and refusal codes are stable. State is exposed as data (handles, states, request ids), never only as something on screen `[evidence: webview/conduit-mcp-strings.ts:187-230]` |
@@ -76,7 +76,7 @@ them.
 | Architecture canvas | rare `[assumption]` | nice to have | planning | pointer | yes (proposals) | nothing | owner, agents | Centre overlay |
 | Plans (interactive `.conduit/plans`) | weekly | supporting | reviewing an agent's plan | pointer | no | annoyance | owner, agents | Centre, a doc tab |
 | Multiple windows | weekly | supporting | two screens | pointer | no | nothing | owner | Palette, session menu |
-| Voice commands to Conduit (future) | — | — | speaking a command | voice | no | — | owner | Not built `[owner, 2026-11-14]` |
+| Answer requests and run commands by voice (future) | — | — | an agent asks; you answer out loud | voice | no | — | owner | Not now `[owner, 2026-11-14]` |
 
 ## 5. Places
 
@@ -172,11 +172,12 @@ Badge counts are not capped today `[evidence: webview/conduit-mcp-view-model.ts:
 | Concept | Name in the UI | Never call it |
 |---|---|---|
 | A group of agents for one project | **Space** (All, No space) | project `[evidence: CHANGELOG "Projects are called Spaces"]` |
-| One running agent CLI in a terminal | **Agent** `[assumption: proposed, owner to confirm]` | session, in the UI (today both are used `[evidence: webview/sidebar-strings.ts:62-130]`) |
-| An agent another agent opened | **Sub-agent**; the opener is its **lead** | child, helper (except in MCP message origins) |
+| One running program in a Conduit terminal: an agent CLI, a shell, anything | **Session**; when the program is an agent CLI you may say "agent" about what runs in it `[owner, 2026-11-14: leaning to session]` | agent (as the name of the thing in the list), terminal, process; today both "agent" and "session" are used `[evidence: webview/sidebar-strings.ts:62-130]` |
+| A session another session opened | **Helper session**; the opener is its **lead** `[proposed]` | sub-agent, child |
 | Something that needs the human | **Request**; the list is **Needs you** | notification, decision, approval (for the whole list) `[owner, 2026-11-14]` |
 | The three request types | **Approve · Answer · Review** `[owner, 2026-11-14; CON-10 iter-7]` | Permission, Choose, Question, Confirm, Attend, in the UI |
-| The right-hand panel | **Side panel** (Files, Changes, Messages, Needs you) | explorer, right pane `[assumption: proposed]` |
+| The two docks either side of the centre | **Left pane** and **right pane**: the docks keep their place, so the names stay true `[owner, 2026-11-14]` | side panel, explorer, sidebar |
+| What a pane holds | A **panel**, named by its content: Spaces, Sessions, Files, Changes, Messages, Needs you. Panels can move between panes `[owner, 2026-11-14]` | the pane's name for its content |
 | The service that keeps agents running | **Background service** | server, daemon |
 | Agent-to-agent communication | **Messages** | MCP, Conduit MCP (in user-facing copy) `[assumption: proposed]` |
 
@@ -207,14 +208,16 @@ Badge counts are not capped today `[evidence: webview/conduit-mcp-view-model.ts:
 | 2026-11-14 | Requests: a one-line card list in Needs you; answer in a pop-up, or a tab beside the agent; three types; one four-section layout; free text always on | owner | The sidebar answer cards felt crammed; too many types (CON-10 iter-6 → iter-7) |
 | 2026-11-14 | Filter requests by session, lead group, space, type and machine | owner | Scale: many agents across spaces and machines |
 | 2026-11-14 | Main interfaces are voice (dictation) and pointer; keyboard is secondary | owner | How the owner works |
+| 2026-11-14 | Space, never project | owner | One name per concept |
+| 2026-11-14 | Session for anything that runs in a Conduit terminal, not only agents (leaning; see open question 1) | owner | A session can run a shell or anything else |
+| 2026-11-14 | Left pane and right pane are the docks; panels inside them are named by content and can move | owner | Panels will move around; content names must survive that |
+| 2026-11-14 | Built for the owner; a few other developers use it, with no onboarding for them | owner | Who it's for |
+| 2026-11-14 | Don't follow the OS light/dark setting, for now | owner | Not wanted now |
+| 2026-11-14 | Voice answers and commands are future work | owner | Not now |
 | 2026-11-14 | UX.md and UI.md live in `docs/`; the wireframe kit in `docs/design/` | owner | Keep design docs with the rest of the docs (ADR 0003 doesn't list a design folder yet) |
 | earlier | Agents keep running with the window closed; a three-process split | owner | Long unattended runs `[evidence: docs/adr/0007-three-process-split-and-terminal-runtime.md]` |
 | earlier | Agents run their own CLIs on the owner's subscriptions; no API-key chat UI | owner | Subscriptions can't power the SDK `[evidence: docs/specs/INDEX.md]` |
 
 **Open questions, most blocking first:**
-1. **Agent or session?** The UI uses both for the same thing. Proposed: "Agent" everywhere you see it, "session" only inside the code.
-2. **Is Conduit only for you, or for other developers too?** That changes how much explaining the empty states and first run should do.
-3. **The feature register (§4):** correct how often, how important and the cost of a miss, especially for the Board and Canvas. Are they still wanted?
-4. **Voice commands:** which actions would you want to speak first? For example "answer yes", "next request", "open claude-3".
-5. **Side panel naming:** "Side panel" for the right-hand panel, retiring "Explorer"?
-6. **OS light/dark:** should Conduit follow the OS setting? Today it doesn't (see UI.md).
+1. **Session: final?** You lean to "session". Alternatives considered: *terminal* (true but plain, and it hides that an agent is working), *run* (suggests something that ends), *tab* (a UI detail). Recommendation: **session**. It's what tmux and terminals call a running program you come back to, and it already matches the code. If agreed, the sidebar's "Agents" header becomes "Sessions", "New agent" becomes "New session", and "sub-agent" becomes "helper session".
+2. **The feature register (§4):** correct how often, how important and the cost of a miss, especially for the Board and Canvas. Are they still wanted?
