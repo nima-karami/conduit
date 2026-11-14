@@ -40,7 +40,7 @@ export interface LimitMonitorDeps {
   clearTimer(handle: unknown): void;
   scheduler: Pick<
     Scheduler,
-    'list' | 'armResume' | 'accept' | 'cancel' | 'resolveVerify' | 'recheck'
+    'list' | 'armResume' | 'accept' | 'cancel' | 'resolveVerify' | 'recheck' | 'sendOnce'
   >;
   settings(): Pick<
     AppSettings,
@@ -83,6 +83,10 @@ export interface LimitMonitor {
   preFire(job: Job): PreFireVerdict;
   onJobFailed(job: Job, reason: string): void;
   answerOffer(sessionId: string, action: 'arm' | 'dismiss'): boolean;
+  /** The human chose "Resume now" on the needs-you request: send the resume message once. */
+  resumeNow(sessionId: string): Promise<boolean>;
+  /** The human skipped the needs-you request: close the episode so the issue clears. */
+  dismissIssue(sessionId: string): void;
   offer(): LimitOffer | null;
   episodes(): LimitEpisode[];
   load(episodes: readonly LimitEpisode[]): void;
@@ -669,6 +673,21 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
       }
       deps.onChange();
       return true;
+    },
+    async resumeNow(sessionId) {
+      const ep = episodes.get(sessionId);
+      if (ep?.state !== 'open') return false;
+      const ok = await deps.scheduler.sendOnce(
+        sessionId,
+        ruleMessage.get(sessionId) ?? deps.settings().autoResumeMessage,
+      );
+      deps.log.info('resume now', { sessionId, ok });
+      return ok;
+    },
+    dismissIssue(sessionId) {
+      const ep = episodes.get(sessionId);
+      if (ep?.state !== 'open') return;
+      closeEpisode(ep, 'closed', 'dismissed by the human');
     },
     offer: () => pendingOffer,
     episodes: () => [...episodes.values()],
