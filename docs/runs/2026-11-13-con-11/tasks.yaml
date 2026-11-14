@@ -1,4 +1,37 @@
 - id: spike
   status: done
-  outcome: "spike.md settles S1, S3/S4, S5; §13 defaults applied where unconfirmed"
   evidence: [docs/runs/2026-11-13-con-11/spike.md, docs/runs/2026-11-13-con-11/evidence/s1/]
+- id: plan
+  status: done
+  evidence: [docs/plans/2026-11-13-scheduler-auto-resume.plan.md]
+- id: S0-contracts
+  status: done
+  gates: ["npm run verify"]
+  evidence: [docs/runs/2026-11-13-con-11/evidence/verify-s0.log]
+  commit: ""   # set after commit
+- id: lane-A-scheduler
+  status: todo
+  topology: delegated (Haiku, worktree)
+  deps: [S0-contracts]
+- id: lane-B-delivery
+  status: todo
+  topology: delegated (Haiku, worktree)
+  deps: [S0-contracts]
+- id: lane-C-claude
+  status: todo
+  topology: delegated (Haiku, worktree)
+  deps: [S0-contracts]
+- id: lane-D-codex-rules
+  status: todo
+  topology: delegated (Haiku, worktree)
+  deps: [S0-contracts]
+- id: E-integration
+  status: todo
+  topology: solo (conductor)
+  deps: [lane-A-scheduler, lane-B-delivery, lane-C-claude, lane-D-codex-rules]
+- id: E7-e2e
+  status: todo
+  deps: [E-integration]
+- id: report
+  status: todo
+  deps: [E7-e2e]

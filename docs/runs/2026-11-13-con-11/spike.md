@@ -95,3 +95,10 @@ watch events ≤ 250 ms and tolerates a partial last line.
 - S5 statusLine `rate_limits` live shape: **from the binary's docs + fixture** (no request
   possible without a model call). Listed in the run report.
 - Codex `turn_complete` vs `task_complete`: both accepted (spec's instruction).
+
+## Addendum (planning, 2026-11-13) — empty status line
+Measured with the same scratch set-up: a `--settings` statusLine whose command prints nothing
+renders the footer identically to no statusLine at all. So the Conduit wrapper is injected for
+every Claude launch (needed for `reset-info`), whether or not the user has a status line.
+Also from the binary: `statusLine` carries `padding`, `refreshInterval`, `hideVimModeIndicator`;
+the wrapper entry copies them from the user's effective status line at launch.

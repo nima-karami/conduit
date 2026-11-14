@@ -1,0 +1,8 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/home/u/.claude/projects/p/s.jsonl",
+  "cwd": "/work/project",
+  "hook_event_name": "Notification",
+  "message": "Usage limit reset \u2014 resuming",
+  "notification_type": "quota_auto_resume_fired"
+}
