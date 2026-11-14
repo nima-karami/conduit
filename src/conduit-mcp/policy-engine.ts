@@ -6,6 +6,7 @@ import {
   matchesScope,
   pointKey,
   profileById,
+  resolveTarget,
   STRICTNESS,
   WORKER_PROFILE,
 } from './policy-profiles';
@@ -81,23 +82,11 @@ const FLOOR_TEXT: Record<FloorId, string> = {
   'local-to-you': 'always allowed to you',
 };
 
-function noTarget(principal: Principal): PolicyTarget {
-  if (principal.kind === 'session')
-    return {
-      sessionId: null,
-      path: principal.homeFolder,
-      folder: principal.homeFolder,
-      projectId: principal.projectId,
-    };
-  return { sessionId: null, path: null, folder: null, projectId: null };
-}
+const EMPTY_TARGET: PolicyTarget = { sessionId: null, path: null, folder: null, projectId: null };
 
-// An action with no target matches the caller's home folder (spec §4.1).
 function resolveTargets(targets: readonly PolicyTarget[], principal: Principal): PolicyTarget[] {
-  if (targets.length === 0) return [noTarget(principal)];
-  return targets.map((t) =>
-    t.sessionId === null && t.path === null && t.folder === null ? noTarget(principal) : t,
-  );
+  const list = targets.length === 0 ? [EMPTY_TARGET] : targets;
+  return list.map((t) => resolveTarget(t, principal));
 }
 
 const samePath = (a: string | null, b: string | null): boolean =>
@@ -136,14 +125,15 @@ function done(
   decision: Decision,
   reason: Reason,
   rule: ToolRule,
-  grantId: string | null = null,
+  grantIds: readonly string[] = [],
   overrideId: string | null = null,
 ): PolicyDecision {
   return {
     decision,
     reason,
     rule: { when: rule.when, reach: rule.reach, move: rule.move },
-    grantId,
+    grantId: reason.by === 'grant' ? (grantIds[0] ?? null) : null,
+    grantIds,
     overrideId,
   };
 }
@@ -235,28 +225,31 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
   const strictest = decided.reduce((best, e) =>
     STRICTNESS[e.effective] > STRICTNESS[best.effective] ? e : best,
   );
+  const grantIds = [
+    ...new Set(decided.flatMap((e) => (e.grant === undefined ? [] : [e.grant.id]))),
+  ];
   if (strictest.effective === 'allow') {
     if (passing?.override)
       return done(
         'allow',
         { by: 'override', overrideId: passing.override.id },
         passing.rule,
-        null,
+        grantIds,
         passing.override.id,
       );
     const granted = decided.find((e) => e.grant !== undefined);
     if (granted?.grant)
-      return done(
-        'allow',
-        { by: 'grant', grantId: granted.grant.id },
-        granted.rule,
-        granted.grant.id,
-      );
+      return done('allow', { by: 'grant', grantId: granted.grant.id }, granted.rule, grantIds);
   }
   const reason: Reason = strictest.fromException
     ? { by: 'exception', point, profileId: profile.id }
     : { by: 'profile', point, profileId: profile.id };
-  return done(strictest.effective, reason, strictest.rule);
+  return done(
+    strictest.effective,
+    reason,
+    strictest.rule,
+    strictest.effective === 'allow' ? grantIds : [],
+  );
 }
 
 export function visibleTools(state: PolicyState, principal: Principal, now: number): ToolName[] {

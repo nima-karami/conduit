@@ -586,6 +586,30 @@ describe('decide', () => {
     expect(d.grantId).toBe('g-s2');
   });
 
+  it('grantIds lists every grant that allowed a target', () => {
+    const two = ['s2', 's3'].map((sid) =>
+      grant({ id: `g-${sid}`, on: { kind: 'session', sessionId: sid } }),
+    );
+    const both = input({
+      tool: 'open_session',
+      targets: [target({ sessionId: 's2' }), target({ sessionId: 's3' })],
+    });
+    const each = decide(state(worker, { grants: two }), both);
+    expect(each.grantIds).toEqual(['g-s2', 'g-s3']);
+    expect(each.grantId).toBe('g-s2');
+
+    const anywhere = decide(state(worker, { grants: [grant({ id: 'g-all' })] }), both);
+    expect(anywhere.grantIds).toEqual(['g-all']);
+
+    const asks = decide(
+      state(worker, { grants: [grant({ id: 'g-s2', on: { kind: 'session', sessionId: 's2' } })] }),
+      both,
+    );
+    expect(asks.decision).toBe('ask');
+    expect(asks.grantIds).toEqual([]);
+    expect(asks.grantId).toBeNull();
+  });
+
   it('a granted target plus an assignment-allowed target is allowed', () => {
     const s = state(
       {

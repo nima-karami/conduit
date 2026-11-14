@@ -4,11 +4,14 @@ import {
   effectiveRule,
   pointKey,
   profileById,
+  resolveTarget,
 } from '../../src/conduit-mcp/policy-profiles';
 import type {
   Assignment,
   Decision,
   PolicyState,
+  PolicyTarget,
+  Principal,
   ToolRule,
 } from '../../src/conduit-mcp/policy-types';
 import {
@@ -106,6 +109,43 @@ describe('built-in profiles', () => {
   it('profileById finds built-ins and returns null for an unknown id', () => {
     expect(profileById(emptyState, 'lead')?.name).toBe('Lead');
     expect(profileById(emptyState, 'p-missing')).toBeNull();
+  });
+});
+
+describe('resolveTarget', () => {
+  const none: PolicyTarget = { sessionId: null, path: null, folder: null, projectId: null };
+  const local: Principal = {
+    kind: 'session',
+    sessionId: 's1',
+    handle: 'claude-1',
+    launchedCli: null,
+    homeFolder: '/work/app',
+    projectId: 'p1',
+  };
+  const remote: Principal = {
+    kind: 'remote',
+    handle: 'r',
+    machineId: 'm1',
+    trust: 'own',
+    capabilities: { messaging: true, monitor: true, drive: true },
+  };
+
+  it('resolves an empty target to the session home folder', () => {
+    expect(resolveTarget(none, local)).toEqual({
+      sessionId: null,
+      path: '/work/app',
+      folder: '/work/app',
+      projectId: 'p1',
+    });
+  });
+
+  it('leaves an empty target empty for a remote principal, which has no home', () => {
+    expect(resolveTarget(none, remote)).toEqual(none);
+  });
+
+  it('leaves a target that names a session, path or folder unchanged', () => {
+    const folder: PolicyTarget = { sessionId: null, path: null, folder: '/x', projectId: null };
+    expect(resolveTarget(folder, local)).toBe(folder);
   });
 });
 
