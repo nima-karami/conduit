@@ -6,7 +6,12 @@ import {
   parseSchedulerFile,
   serializeSchedulerFile,
 } from '../../src/scheduler-store';
-import type { TimedMessage, TimedMessagesFile } from '../../src/timed-messages';
+import {
+  MAX_EPOCH_MS,
+  MAX_INTERVAL_MS,
+  type TimedMessage,
+  type TimedMessagesFile,
+} from '../../src/timed-messages';
 
 const NOW = Date.UTC(2026, 10, 13, 12, 0, 0);
 const OPTS = { maxAttempts: 3 };
@@ -172,7 +177,7 @@ describe('migrateTimedMessagesV1 (R9)', () => {
       { maxAttempts: 3 },
     );
     expect(jobs[0]).toMatchObject({ firedCount: 2, waitingSince: NOW + 1000, state: 'waiting' });
-    expect(jobs[0].history).toEqual([{ at: NOW + 500, state: 'waiting', reason: 'noSession' }]);
+    expect(jobs[0].history).toEqual([{ at: NOW + 500, state: 'waiting', reason: 'no session' }]);
   });
 
   it('R9: origin limit → limit-reset job + synthetic open episode migrated-<id>, resetAt nextAt − 60000, marginMs 60000, source rule:migrated', () => {
@@ -334,5 +339,53 @@ describe('serializeSchedulerFile retention uses the now argument', () => {
       serializeSchedulerFile({ version: 2, jobs: [recent], episodes: [] }, NOW + 2 * 24 * HOUR),
     ) as SchedulerFile;
     expect(kept.jobs).toEqual([]);
+  });
+});
+
+describe('parseSchedulerFile v1 ceilings', () => {
+  it('drops a job whose nextAt is past the epoch ceiling', () => {
+    const blob = JSON.stringify({
+      version: 2,
+      jobs: [{ ...job(), nextAt: MAX_EPOCH_MS + 1 }],
+      episodes: [],
+    });
+    expect(parseSchedulerFile(blob, OPTS).jobs).toEqual([]);
+  });
+
+  it('drops an interval longer than the interval ceiling', () => {
+    const trigger = { kind: 'every', everyMs: MAX_INTERVAL_MS + 1, maxRepeats: 2 };
+    const blob = JSON.stringify({ version: 2, jobs: [{ ...job(), trigger }], episodes: [] });
+    expect(parseSchedulerFile(blob, OPTS).jobs).toEqual([]);
+  });
+
+  it('keeps a job exactly at both ceilings', () => {
+    const trigger = { kind: 'every', everyMs: MAX_INTERVAL_MS, maxRepeats: 2 };
+    const blob = JSON.stringify({
+      version: 2,
+      jobs: [{ ...job({ id: 'edge', nextAt: MAX_EPOCH_MS }), trigger }],
+      episodes: [],
+    });
+    expect(parseSchedulerFile(blob, OPTS).jobs.map((j) => j.id)).toEqual(['edge']);
+  });
+});
+
+describe('migrateTimedMessagesV1 lastFire to history outcome', () => {
+  const migrateOne = (lastFire: TimedMessage['lastFire']) =>
+    migrateTimedMessagesV1(v1File([v1Schedule({ state: 'done', lastFire })]), { maxAttempts: 3 })
+      .jobs[0].history;
+
+  it('maps on-time, late, expired and no-session fires to the fixed vocabulary', () => {
+    expect(migrateOne({ at: NOW, late: false, delivered: true })).toEqual([
+      { at: NOW, state: 'done', reason: 'delivered' },
+    ]);
+    expect(migrateOne({ at: NOW, late: true, delivered: true })).toEqual([
+      { at: NOW, state: 'done', reason: 'delivered late' },
+    ]);
+    expect(migrateOne({ at: NOW, late: true, delivered: false, reason: 'expired' })).toEqual([
+      { at: NOW, state: 'done', reason: 'expired' },
+    ]);
+    expect(migrateOne({ at: NOW, late: false, delivered: false, reason: 'noSession' })).toEqual([
+      { at: NOW, state: 'done', reason: 'no session' },
+    ]);
   });
 });

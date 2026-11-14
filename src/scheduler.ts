@@ -15,6 +15,7 @@ import {
   CATCHUP_MS,
   type FireFailure,
   LATE_GRACE_MS,
+  type LastFire,
   MAX_PER_SESSION,
   MAX_REPEATS,
   MAX_TOTAL,
@@ -74,7 +75,36 @@ const MAX_TIMEOUT_MS = 2_147_483_647;
 /** Time jobs never verify, so attempts only ever count limit-reset deliveries. */
 const TIME_JOB_ATTEMPTS = 1;
 const JOINED_REASON = 'lines joined (no bracketed paste)';
-const NO_SESSION_REASON = 'no live session';
+const NO_SESSION_REASON = 'no session';
+/** The fixed fire vocabulary; the dialog reads it back through lastFire. */
+const FIRE_OUTCOMES = ['delivered', 'delivered late', 'expired', 'no session'] as const;
+export type FireOutcome = (typeof FIRE_OUTCOMES)[number];
+
+function isFireOutcome(v: string): v is FireOutcome {
+  return FIRE_OUTCOMES.some((o) => o === v);
+}
+
+function isTriggerInput(v: unknown): v is TriggerInput {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    'kind' in v &&
+    (v.kind === 'in' || v.kind === 'at' || v.kind === 'every')
+  );
+}
+
+function lastFireOf(entry: JobHistoryEntry & { reason: FireOutcome }): LastFire {
+  const delivered = entry.reason === 'delivered' || entry.reason === 'delivered late';
+  const late = entry.reason === 'delivered late' || entry.reason === 'expired';
+  if (delivered) return { at: entry.at, late, delivered };
+  return {
+    at: entry.at,
+    late,
+    delivered,
+    reason: entry.reason === 'expired' ? 'expired' : 'noSession',
+  };
+}
+
 const RESUME_BUSY_STATES: readonly JobState[] = ['checking', 'sending', 'verifying'];
 const RESUME_DONE_STATES: readonly JobState[] = ['checking', 'sending', 'verifying', 'done'];
 const RE_ARMED_REASON = 're-armed';
@@ -108,7 +138,7 @@ export class Scheduler {
   private readonly inFlight = new Set<string>();
   /** Limit-reset jobs the pre-fire check deferred; only `recheck` re-runs them. */
   private readonly deferred = new Set<string>();
-  // see spec 2026-11-13-scheduler-auto-resume R5
+  // two jobs coming due together would otherwise interleave into one garbled command
   private readonly sessionQueue = new Map<string, Promise<unknown>>();
 
   constructor(private readonly deps: SchedulerDeps) {}
@@ -137,6 +167,7 @@ export class Scheduler {
     if (input.origin === 'limit') {
       return { ok: false, error: 'Limit resumes are armed by the Limit monitor.' };
     }
+    if (!isTriggerInput(input.trigger)) return { ok: false, error: 'Unknown trigger.' };
     const editing = input.id === undefined ? undefined : this.find(input.id);
     if (editing && editing.trigger.kind === 'limit-reset') {
       return { ok: false, error: 'That timed message is gone.' };
@@ -149,10 +180,12 @@ export class Scheduler {
     if (triggerError) return { ok: false, error: triggerError };
     const now = this.now();
     const nextAt = nextFireAt(input.trigger, now);
-    if (nextAt === null) return { ok: false, error: 'That time could not be read — use HH:MM.' };
+    if (nextAt === null || !Number.isFinite(nextAt)) {
+      return { ok: false, error: 'That time could not be read — use HH:MM.' };
+    }
 
     const base: Job = {
-      id: input.id ?? newTimedMessageId(now),
+      id: editing?.id ?? newTimedMessageId(now),
       sessionId: input.sessionId,
       origin: 'user',
       trigger: { ...input.trigger },
@@ -306,6 +339,7 @@ export class Scheduler {
     if (!job || job.state !== 'waiting' || limitTriggerOf(job) === null) return;
     this.deferred.delete(job.id);
     if (!this.deps.isAlive(job.sessionId)) return;
+    if (this.now() < (this.settleUntil.get(job.sessionId) ?? 0)) return;
     this.checkResume(job, this.now());
     this.onChangeAndArm();
   }
@@ -447,6 +481,12 @@ export class Scheduler {
         continue;
       }
 
+      if (repeatsOf(job) - (job.firedCount ?? 0) <= 0) {
+        this.put(this.advanceTime(job, now, 0));
+        mutated = true;
+        continue;
+      }
+
       const decision = this.timeDecision(job, now);
       if (decision.skip) {
         const advanced = this.advanceTime(job, now, decision.slots, 'expired');
@@ -479,7 +519,7 @@ export class Scheduler {
     return { skip: false, late: job.state === 'waiting' || overdue > LATE_GRACE_MS, slots };
   }
 
-  private advanceTime(job: Job, at: number, slots: number, reason?: string): Job {
+  private advanceTime(job: Job, at: number, slots: number, outcome?: FireOutcome): Job {
     const repeats = repeatsOf(job);
     const firedCount = Math.min((job.firedCount ?? 0) + slots, repeats);
     const done = firedCount >= repeats;
@@ -489,28 +529,26 @@ export class Scheduler {
       { ...withoutWaiting(job), firedCount, nextAt },
       at,
       done ? 'done' : 'armed',
-      reason,
+      outcome,
     );
   }
 
   private fireTime(job: Job, slots: number, late: boolean): void {
     this.inFlight.add(job.id);
-    const sending = this.record(job, this.now(), 'sending');
-    void this.dispatch(sending).then((result) => {
+    void this.dispatch(job).then((result) => {
       this.inFlight.delete(job.id);
       const at = this.now();
       const delivered = result !== 'not-live' && result.ok;
-      const reason =
-        result === 'not-live'
-          ? NO_SESSION_REASON
-          : !result.ok
-            ? result.reason
-            : result.joined
-              ? JOINED_REASON
-              : undefined;
+      const outcome: FireOutcome = delivered
+        ? late
+          ? 'delivered late'
+          : 'delivered'
+        : 'no session';
       const current = this.find(job.id);
       if (current && !isTerminal(current.state)) {
-        this.put(this.advanceTime(current, at, slots, reason));
+        const joined = result !== 'not-live' && result.ok && result.joined;
+        const noted = joined ? this.record(current, at, current.state, JOINED_REASON) : current;
+        this.put(this.advanceTime(noted, at, slots, outcome));
       }
       this.deps.onFired({
         id: job.id,
@@ -646,7 +684,12 @@ export class Scheduler {
     const now = this.now();
     let earliest = Number.POSITIVE_INFINITY;
     for (const job of this.jobs) {
-      if (this.inFlight.has(job.id)) continue;
+      if (this.inFlight.has(job.id) || isTerminal(job.state)) continue;
+      const limit = limitTriggerOf(job);
+      if (limit && job.state !== 'verifying') {
+        // +1: evaluate() expires a job only once it is strictly more than 24 h past its reset
+        earliest = Math.min(earliest, Math.max(limit.resetAt + CATCHUP_MS.limit + 1, now));
+      }
       if (job.state === 'verifying') {
         earliest = Math.min(earliest, Math.max(job.nextAt, now));
         continue;
@@ -695,6 +738,14 @@ export function toTimedMessage(job: Job): TimedMessage | null {
             },
           }
         : { kind: 'once' as const };
+  const fire = limit
+    ? undefined
+    : [...job.history]
+        .reverse()
+        .find(
+          (e): e is JobHistoryEntry & { reason: FireOutcome } =>
+            e.reason !== undefined && isFireOutcome(e.reason),
+        );
   return {
     id: job.id,
     sessionId: job.sessionId,
@@ -707,5 +758,6 @@ export function toTimedMessage(job: Job): TimedMessage | null {
     origin: limit ? 'limit' : 'manual',
     createdAt: job.createdAt,
     ...(job.waitingSince === undefined ? {} : { waitingSince: job.waitingSince }),
+    ...(fire === undefined ? {} : { lastFire: lastFireOf(fire) }),
   };
 }

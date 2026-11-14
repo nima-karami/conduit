@@ -8,7 +8,13 @@ import {
   type SchedulerDeps,
   toTimedMessage,
 } from '../../src/scheduler';
-import { LIMIT_MESSAGE, PTY_SETTLE_MS, type TimedMessageInput } from '../../src/timed-messages';
+import {
+  CATCHUP_MS,
+  LIMIT_MESSAGE,
+  PTY_SETTLE_MS,
+  type TimedMessageInput,
+} from '../../src/timed-messages';
+import { TimerScheduler } from '../../src/timer-scheduler';
 
 const HOUR = 3_600_000;
 const NOW = Date.UTC(2026, 7, 28, 15, 0, 0);
@@ -1312,6 +1318,194 @@ describe('review fixes', () => {
           nextAt: NOW + 20,
         });
       }
+    });
+  });
+});
+
+describe('review fixes 2', () => {
+  const deferJob = async (h: Harness, reason: string) => {
+    h.setVerdict({ go: 'wait', reason });
+    const r = resume(h, { resetAt: NOW + 60_000 });
+    await h.tick(2 * 60_000);
+    return r.ok ? r.job.id : '';
+  };
+
+  it('set rejects an unknown trigger kind', () => {
+    const h = harness();
+    const trigger: TimedMessageInput['trigger'] = JSON.parse(
+      '{"kind":"limit-reset","episodeId":"e","resetAt":1,"marginMs":0}',
+    );
+    expect(arm(h, { trigger })).toEqual({ ok: false, error: 'Unknown trigger.' });
+    expect(h.scheduler.list()).toHaveLength(0);
+  });
+
+  it('set rejects a trigger whose time is not finite', () => {
+    const h = harness();
+    expect(arm(h, { trigger: { kind: 'in', delayMs: Number.POSITIVE_INFINITY } })).toEqual({
+      ok: false,
+      error: 'That time could not be read — use HH:MM.',
+    });
+    expect(h.scheduler.list()).toHaveLength(0);
+  });
+
+  it('set never adopts an id the caller invents', () => {
+    const h = harness();
+    const r = h.scheduler.set({
+      sessionId: 's1',
+      id: 'mine',
+      message: 'x',
+      trigger: { kind: 'in', delayMs: 60_000 },
+    });
+    expect(r.ok && r.job.id).not.toBe('mine');
+  });
+
+  it('a job with no repeats left is done without a delivery', async () => {
+    const h = harness();
+    h.scheduler.load([
+      timeJob({
+        id: 'z',
+        trigger: { kind: 'every', everyMs: 1000, maxRepeats: 2 },
+        firedCount: 2,
+        nextAt: NOW + 1000,
+      }),
+    ]);
+    await h.tick(1000);
+    expect(h.delivered).toHaveLength(0);
+    expect(h.scheduler.list()[0].state).toBe('done');
+  });
+
+  it('recheck during the settle window leaves the job for the settle timer', async () => {
+    const h = harness();
+    const id = await deferJob(h, 'session busy');
+    h.scheduler.onPtyStart('s1');
+    h.setVerdict({ go: true });
+    h.scheduler.recheck(id);
+    expect(h.preFired).toHaveLength(1);
+    await h.tick(PTY_SETTLE_MS);
+    expect(h.preFired).toHaveLength(2);
+    expect(h.delivered).toEqual([{ sessionId: 's1', message: LIMIT_MESSAGE }]);
+  });
+
+  it('a proposed limit job is expired by its own timer at resetAt + 24 h + 1 ms', async () => {
+    const h = harness();
+    resume(h, { resetAt: NOW + HOUR, proposed: true });
+    expect(h.nextWaitMs()).toBe(HOUR + CATCHUP_MS.limit + 1);
+    await h.tick(HOUR + CATCHUP_MS.limit + 1);
+    expect(h.scheduler.list()[0].state).toBe('cancelled');
+  });
+
+  it('armResume refuses an over-long message and arms nothing', () => {
+    const h = harness();
+    expect(resume(h, { message: 'x'.repeat(MAX_MESSAGE_CHARS + 1) })).toEqual({
+      ok: false,
+      error: MESSAGE_TOO_LONG,
+    });
+    expect(h.scheduler.list()).toHaveLength(0);
+  });
+
+  describe('lastFire parity with TimerScheduler', () => {
+    type Step = { tick: number } | { alive: boolean } | { ptyStart: true };
+
+    async function runTimer(steps: Step[]) {
+      let clock = NOW;
+      const slot: { pending: { at: number; fn: () => void } | null } = { pending: null };
+      const alive = new Set<string>(['s1']);
+      const timer = new TimerScheduler({
+        now: () => clock,
+        setTimer: (ms, fn) => {
+          slot.pending = { at: clock + ms, fn };
+          return slot.pending;
+        },
+        clearTimer: () => {
+          slot.pending = null;
+        },
+        isAlive: (id) => alive.has(id),
+        deliver: async () => true,
+        sessionExists: () => true,
+        onChange: () => {},
+        onFired: () => {},
+        minDelayMs: 0,
+        minIntervalMs: 0,
+      });
+      timer.set({ sessionId: 's1', message: 'Continue', trigger: { kind: 'in', delayMs: 60_000 } });
+      for (const step of steps) {
+        if ('tick' in step) {
+          clock += step.tick;
+          const due = slot.pending;
+          if (due && due.at <= clock) {
+            slot.pending = null;
+            due.fn();
+          }
+          await flush();
+        } else if ('alive' in step) {
+          if (step.alive) alive.add('s1');
+          else alive.delete('s1');
+        } else {
+          alive.add('s1');
+          timer.onPtyStart('s1');
+        }
+      }
+      return timer.list()[0].lastFire;
+    }
+
+    async function runNew(steps: Step[]) {
+      const h = harness();
+      h.scheduler.set({
+        sessionId: 's1',
+        message: 'Continue',
+        trigger: { kind: 'in', delayMs: 60_000 },
+      });
+      for (const step of steps) {
+        if ('tick' in step) await h.tick(step.tick);
+        else if ('alive' in step) {
+          if (step.alive) h.alive.add('s1');
+          else h.alive.delete('s1');
+        } else {
+          h.alive.add('s1');
+          h.scheduler.onPtyStart('s1');
+        }
+      }
+      const job = h.scheduler.list()[0];
+      return toTimedMessage(job)?.lastFire;
+    }
+
+    it('on time: lastFire matches TimerScheduler', async () => {
+      const steps: Step[] = [{ tick: 60_000 }];
+      const expected = { at: NOW + 60_000, late: false, delivered: true };
+      expect(await runTimer(steps)).toEqual(expected);
+      expect(await runNew(steps)).toEqual(expected);
+    });
+
+    it('late: lastFire matches TimerScheduler', async () => {
+      const steps: Step[] = [
+        { alive: false },
+        { tick: 60_000 },
+        { alive: true },
+        { ptyStart: true },
+        { tick: PTY_SETTLE_MS },
+      ];
+      const expected = { at: NOW + 60_000 + PTY_SETTLE_MS, late: true, delivered: true };
+      expect(await runTimer(steps)).toEqual(expected);
+      expect(await runNew(steps)).toEqual(expected);
+    });
+
+    it('expired: lastFire matches TimerScheduler', async () => {
+      const steps: Step[] = [
+        { alive: false },
+        { tick: 60_000 },
+        { tick: CATCHUP_MS.manual + 1 },
+        { alive: true },
+        { ptyStart: true },
+        { tick: PTY_SETTLE_MS },
+      ];
+      const expected = {
+        at: NOW + 60_000 + CATCHUP_MS.manual + 1 + PTY_SETTLE_MS,
+        late: true,
+        delivered: false,
+        reason: 'expired',
+      };
+      expect(await runTimer(steps)).toEqual(expected);
+      expect(await runNew(steps)).toEqual(expected);
     });
   });
 });

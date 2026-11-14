@@ -1,4 +1,3 @@
-// Persisted scheduler state: userData/scheduler.json (v2) and the one-time import of timed-messages.json (v1).
 // see docs/specs/2026-11-13-scheduler-auto-resume.md §3 "Job (persisted)" and R9
 
 import { CLI_KINDS, type CliKind } from './conduit-mcp/tool-policy';
@@ -15,7 +14,11 @@ import {
 } from './contracts/scheduler';
 import { judgePersistedVersion } from './contracts/session-identity';
 import { normalizeMessage } from './message-text';
+import type { FireOutcome } from './scheduler';
 import {
+  type LastFire,
+  MAX_EPOCH_MS,
+  MAX_INTERVAL_MS,
   MAX_REPEATS,
   MAX_TOTAL,
   type TimedMessage,
@@ -77,6 +80,11 @@ function isSignalSource(v: unknown): v is SignalSource {
   return v.startsWith('rule:') || FIXED_SOURCES.some((s) => s === v);
 }
 
+function fireOutcomeOf(lastFire: LastFire): FireOutcome {
+  if (lastFire.delivered) return lastFire.late ? 'delivered late' : 'delivered';
+  return lastFire.reason === 'expired' ? 'expired' : 'no session';
+}
+
 const clamp = (n: number, lo: number, hi: number): number => Math.min(Math.max(n, lo), hi);
 
 /** Time jobs past MAX_TOTAL are dropped; the first ones in file order win, as parseTimedMessagesFile did. */
@@ -109,11 +117,13 @@ function parseTrigger(v: unknown): JobTrigger | null {
       };
     }
     case 'every':
-      return isSafeInt(v.everyMs, 1) && isSafeInt(v.maxRepeats, 1, MAX_REPEATS)
+      return isSafeInt(v.everyMs, 1, MAX_INTERVAL_MS) && isSafeInt(v.maxRepeats, 1, MAX_REPEATS)
         ? { kind: 'every', everyMs: v.everyMs, maxRepeats: v.maxRepeats }
         : null;
     case 'limit-reset':
-      return typeof v.episodeId === 'string' && isSafeInt(v.resetAt, 0) && isSafeInt(v.marginMs, 0)
+      return typeof v.episodeId === 'string' &&
+        isSafeInt(v.resetAt, 0, MAX_EPOCH_MS) &&
+        isSafeInt(v.marginMs, 0)
         ? {
             kind: 'limit-reset',
             episodeId: v.episodeId,
@@ -164,9 +174,9 @@ function parseJob(v: unknown, fallbackMaxAttempts: number): Job | null {
     !trigger ||
     !action ||
     !isJobState(v.state) ||
-    !isSafeInt(v.nextAt, 0) ||
+    !isSafeInt(v.nextAt, 0, MAX_EPOCH_MS) ||
     !isSafeInt(v.attempts, Number.MIN_SAFE_INTEGER) ||
-    !isSafeInt(v.createdAt, 0) ||
+    !isSafeInt(v.createdAt, 0, MAX_EPOCH_MS) ||
     firedCount === null ||
     waitingSince === null
   ) {
@@ -191,7 +201,7 @@ function parseJob(v: unknown, fallbackMaxAttempts: number): Job | null {
 
 function parseEpisode(v: unknown): LimitEpisode | null {
   if (!isRecord(v)) return null;
-  const resetAtOk = v.resetAt === null || isSafeInt(v.resetAt, 0);
+  const resetAtOk = v.resetAt === null || isSafeInt(v.resetAt, 0, MAX_EPOCH_MS);
   if (
     typeof v.id !== 'string' ||
     typeof v.sessionId !== 'string' ||
@@ -302,13 +312,7 @@ export function migrateTimedMessagesV1(
     const check = normalizeMessage(s.message);
     if (!check.ok) continue;
     const history: JobHistoryEntry[] = s.lastFire
-      ? [
-          {
-            at: s.lastFire.at,
-            state: s.state,
-            ...(s.lastFire.reason ? { reason: s.lastFire.reason } : {}),
-          },
-        ]
+      ? [{ at: s.lastFire.at, state: s.state, reason: fireOutcomeOf(s.lastFire) }]
       : [];
     const action: Job['action'] = { kind: 'send', message: check.message };
     const base = {
