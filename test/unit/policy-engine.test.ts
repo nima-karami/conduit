@@ -610,6 +610,23 @@ describe('decide', () => {
     expect(asks.grantId).toBeNull();
   });
 
+  it('deniedTarget is the target the explicit deny matched', () => {
+    const folderDeny = except('open_file', { kind: 'folder', path: '/w/b' }, { decision: 'deny' });
+    const d = decide(
+      state({ default: assignment('worker', [folderDeny]) }),
+      input({
+        tool: 'open_file',
+        targets: [
+          target({ path: '/w/a/x.ts', folder: '/w/a' }),
+          target({ path: '/w/b/y.ts', folder: '/w/b' }),
+        ],
+      }),
+    );
+    expect(d.reason.by).toBe('deny');
+    expect(d.deniedTarget?.path).toBe('/w/b/y.ts');
+    expect(decide(state({}), input({ tool: 'list_sessions' })).deniedTarget).toBeNull();
+  });
+
   it('a granted target plus an assignment-allowed target is allowed', () => {
     const s = state(
       {

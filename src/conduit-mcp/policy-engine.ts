@@ -127,6 +127,7 @@ function done(
   rule: ToolRule,
   grantIds: readonly string[] = [],
   overrideId: string | null = null,
+  deniedTarget: PolicyTarget | null = null,
 ): PolicyDecision {
   return {
     decision,
@@ -135,6 +136,7 @@ function done(
     grantId: reason.by === 'grant' ? (grantIds[0] ?? null) : null,
     grantIds,
     overrideId,
+    deniedTarget,
   };
 }
 
@@ -206,7 +208,8 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
   const explicit = evaluated.filter((e) => e.explicitDeny);
   const passing = explicit.find((e) => e.override !== undefined);
   const unpassed = explicit.find((e) => e !== passing);
-  if (unpassed) return done('deny', { by: 'deny', point }, unpassed.rule);
+  if (unpassed)
+    return done('deny', { by: 'deny', point }, unpassed.rule, [], null, unpassed.target);
 
   const decided = evaluated.map((e) => {
     const grant = e.explicitDeny

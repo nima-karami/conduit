@@ -20,13 +20,7 @@ import {
   serializePolicyFile,
 } from './policy-file';
 import { type LegacyPolicy, migrateLegacyPolicy } from './policy-migration';
-import {
-  BUILT_IN_PROFILES,
-  pointKey,
-  profileById,
-  resolveTarget,
-  WORKER_PROFILE,
-} from './policy-profiles';
+import { BUILT_IN_PROFILES, pointKey, profileById, WORKER_PROFILE } from './policy-profiles';
 import { applyLegacyPatch as applyLegacyPatchPure, projectLegacyLayer } from './policy-projection';
 import type {
   Assignment,
@@ -133,6 +127,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
   let purgeTimer: unknown = null;
   const pending = new Set<Promise<void>>();
   const remembered = new Map<string, Remembered>();
+  const spent = new Set<string>();
 
   const activity: ActivityLog = createActivityLog({
     io: deps.activityIo,
@@ -152,8 +147,10 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     overrides: file.overrides,
   });
 
+  let stopped = false;
+
   const scheduleWrite = (): void => {
-    if (writeTimer !== null) return;
+    if (stopped || writeTimer !== null) return;
     writeTimer = deps.setTimer(() => {
       writeTimer = null;
       void flush();
@@ -280,6 +277,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
   }
 
   const tick = (): void => {
+    if (stopped) return;
     const expired = grants.tick();
     if (expired.length > 0) {
       markGrants();
@@ -290,6 +288,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
   };
 
   const purge = (): void => {
+    if (stopped) return;
     activity.purge();
     purgeTimer = deps.setTimer(purge, PURGE_MS);
   };
@@ -312,6 +311,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     },
 
     async stop() {
+      stopped = true;
       if (tickTimer !== null) deps.clearTimer(tickTimer);
       if (purgeTimer !== null) deps.clearTimer(purgeTimer);
       if (writeTimer !== null) deps.clearTimer(writeTimer);
@@ -339,12 +339,13 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
 
     noteDecision(activityId, input, decision) {
       if (decision.reason.by !== 'deny' || input.principal.kind !== 'session') return;
+      if (decision.deniedTarget === null) return;
       const principal = input.principal;
-      const target = resolveTarget(
-        input.targets[0] ?? { sessionId: null, path: null, folder: null, projectId: null },
-        principal,
-      );
-      remembered.set(activityId, { sessionId: principal.sessionId, tool: input.tool, target });
+      remembered.set(activityId, {
+        sessionId: principal.sessionId,
+        tool: input.tool,
+        target: decision.deniedTarget,
+      });
       if (remembered.size > REMEMBERED_DENIES) {
         const oldest = remembered.keys().next().value;
         if (oldest !== undefined) remembered.delete(oldest);
@@ -401,10 +402,17 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
 
     allowOnce(activityId) {
       const rem = remembered.get(activityId);
+      if (rem === undefined && spent.has(activityId)) return { ok: false, error: 'not-found' };
       if (rem === undefined) {
         return activity.recentDenies().has(activityId)
           ? { ok: false, error: 'not-overridable' }
           : { ok: false, error: 'not-found' };
+      }
+      remembered.delete(activityId);
+      spent.add(activityId);
+      if (spent.size > REMEMBERED_DENIES) {
+        const oldest = spent.values().next().value;
+        if (oldest !== undefined) spent.delete(oldest);
       }
       const override: OneUseOverride = {
         id: deps.newId(),
@@ -419,11 +427,18 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     },
 
     sessionEnded(sessionId) {
-      const before = file.assignments.length;
+      const assignments = file.assignments.length;
+      const overrides = file.overrides.length;
       file.assignments = file.assignments.filter(
         (a) => pointKey(a.point) !== pointKey({ kind: 'session', sessionId }),
       );
-      if (file.assignments.length !== before) markPolicy();
+      file.overrides = file.overrides.filter((o) => o.sessionId !== sessionId);
+      for (const [id, rem] of remembered) {
+        if (rem.sessionId === sessionId) remembered.delete(id);
+      }
+      if (file.assignments.length !== assignments || file.overrides.length !== overrides) {
+        markPolicy();
+      }
       grants.sessionEnded(sessionId);
       markGrants();
       deps.onChanged();

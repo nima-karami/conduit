@@ -141,6 +141,7 @@ export interface PolicyDecision {
   grantId: string | null;
   grantIds: readonly string[];
   overrideId: string | null;
+  deniedTarget: PolicyTarget | null;
 }
 
 // see plan C8

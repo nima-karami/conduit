@@ -111,9 +111,10 @@ function harness(o: Opts = {}) {
       grantWrites.push(t);
     },
   };
+  let activityDown = o.activityFails ?? false;
   const activityIo: ActivityIo = {
     append: (_day, line) => {
-      if (o.activityFails) throw new Error('activity disk full');
+      if (activityDown) throw new Error('activity disk full');
       rows.push(line);
     },
     list: () => [],
@@ -169,6 +170,9 @@ function harness(o: Opts = {}) {
     warnings,
     timers,
     legacyCalls: () => legacyCalls,
+    setActivityDown: (down: boolean) => {
+      activityDown = down;
+    },
     changed: () => changed,
     advance: (ms: number) => {
       now += ms;
@@ -447,23 +451,24 @@ describe('policy service', () => {
   it('activity write failure keeps local decisions working', () => {
     const h = harness({ activityFails: true });
     h.service.start();
-    h.service.activity.record({
-      lane: 'conduit',
+    const row = {
+      lane: 'conduit' as const,
       principal: { handle: 'alpha', sessionId: 's1', machineId: null },
       cli: null,
       action: 'open_session',
       target: null,
       summary: null,
-      decision: 'allow',
+      decision: 'allow' as const,
       decidedBy: 'profile',
-      outcome: 'ok',
+      outcome: 'ok' as const,
       durationMs: null,
       requestId: null,
       count: null,
-    });
-
-    expect(h.warnings.some((m) => m.includes('activity'))).toBe(true);
+    };
+    h.service.activity.record(row);
     expect(h.service.activity.writable()).toBe(false);
+    expect(h.warnings.filter((m) => m.includes('activity'))).toHaveLength(1);
+
     expect(
       h.service.decide({
         principal: session(),
@@ -473,6 +478,11 @@ describe('policy service', () => {
         toYou: false,
       }).decision,
     ).toBe('allow');
+
+    h.setActivityDown(false);
+    h.service.activity.record(row);
+    expect(h.activityRows().map((r) => r.lane)).toEqual(['note', 'conduit']);
+    expect(h.activityRows()[0]).toMatchObject({ action: 'gap' });
   });
 
   it('createGrant returns null when the scope cannot bind', async () => {
@@ -591,5 +601,237 @@ describe('policy service', () => {
     expect(h.service.ui([]).grants[0]?.state).toBe('revoked');
     await h.service.stop();
     expect(h.grantWrites).toHaveLength(1);
+  });
+
+  it('allowOnce overrides the denied target on a multi-target call', () => {
+    const folderDeny: Exception = {
+      tool: 'open_file',
+      scope: { kind: 'folder', path: '/w/b' },
+      rule: { decision: 'deny' },
+    };
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: { profileId: 'worker', exceptions: [folderDeny], onScreenOnly: false },
+          },
+        ],
+      }),
+    });
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_file' as const,
+      targets: [
+        target({ path: '/w/a/x.ts', folder: '/w/a' }),
+        target({ path: '/w/b/y.ts', folder: '/w/b' }),
+      ],
+      masterOn: true,
+      toYou: false,
+    };
+    const denied = h.service.decide(input);
+    expect(denied.reason.by).toBe('deny');
+    const activityId = h.service.activity.record({
+      lane: 'conduit',
+      principal: { handle: 'alpha', sessionId: 's1', machineId: null },
+      cli: null,
+      action: 'open_file',
+      target: null,
+      summary: null,
+      decision: 'deny',
+      decidedBy: 'policy',
+      outcome: 'denied',
+      durationMs: null,
+      requestId: null,
+      count: null,
+    });
+    h.service.noteDecision(activityId, input, denied);
+
+    expect(h.service.allowOnce(activityId)).toEqual({ ok: true });
+    expect(h.service.decide(input)).toMatchObject({
+      decision: 'allow',
+      reason: { by: 'override' },
+    });
+  });
+
+  it('allowOnce is single-use per denial', () => {
+    const exception: Exception = {
+      tool: 'open_session',
+      scope: { kind: 'anywhere' },
+      rule: { decision: 'deny' },
+    };
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: { profileId: 'worker', exceptions: [exception], onScreenOnly: false },
+          },
+        ],
+      }),
+    });
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_session' as const,
+      targets: [target({ sessionId: 's2' })],
+      masterOn: true,
+      toYou: false,
+    };
+    const denied = h.service.decide(input);
+    const activityId = h.service.activity.record({
+      lane: 'conduit',
+      principal: { handle: 'alpha', sessionId: 's1', machineId: null },
+      cli: null,
+      action: 'open_session',
+      target: null,
+      summary: null,
+      decision: 'deny',
+      decidedBy: 'policy',
+      outcome: 'denied',
+      durationMs: null,
+      requestId: null,
+      count: null,
+    });
+    h.service.noteDecision(activityId, input, denied);
+
+    expect(h.service.allowOnce(activityId)).toEqual({ ok: true });
+    expect(h.service.allowOnce(activityId)).toEqual({ ok: false, error: 'not-found' });
+  });
+
+  it('sessionEnded also removes that session overrides and remembered denies', async () => {
+    const denyAll: Exception = {
+      tool: 'open_session',
+      scope: { kind: 'anywhere' },
+      rule: { decision: 'deny' },
+    };
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: { profileId: 'worker', exceptions: [denyAll], onScreenOnly: false },
+          },
+        ],
+        overrides: [
+          {
+            id: 'o-s1',
+            sessionId: 's1',
+            tool: 'open_session',
+            target: target({ sessionId: 's7' }),
+            createdAt: iso(T0),
+          },
+          {
+            id: 'o-s9',
+            sessionId: 's9',
+            tool: 'open_session',
+            target: target({ sessionId: 's2' }),
+            createdAt: iso(T0),
+          },
+        ],
+      }),
+    });
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_session' as const,
+      targets: [target({ sessionId: 's2' })],
+      masterOn: true,
+      toYou: false,
+    };
+    const denied = h.service.decide(input);
+    const activityId = h.service.activity.record({
+      lane: 'conduit',
+      principal: { handle: 'alpha', sessionId: 's1', machineId: null },
+      cli: null,
+      action: 'open_session',
+      target: null,
+      summary: null,
+      decision: 'deny',
+      decidedBy: 'policy',
+      outcome: 'denied',
+      durationMs: null,
+      requestId: null,
+      count: null,
+    });
+    h.service.noteDecision(activityId, input, denied);
+    h.service.sessionEnded('s1');
+    expect(h.service.allowOnce(activityId)).toEqual({ ok: false, error: 'not-overridable' });
+    h.fire(WRITE_MS);
+    await h.service.stop();
+    const saved = parsePolicyFile(h.policyWrites.at(-1) ?? '');
+    expect(saved.ok && saved.file.overrides.map((o) => o.id)).toEqual(['o-s9']);
+  });
+
+  it('no timers remain after stop', async () => {
+    const h = harness({
+      grants: serializeGrantsFile({ version: 1, grants: [grant({ id: 'g-x' })] }),
+    });
+    h.service.start();
+    expect(h.timers.length).toBeGreaterThan(0);
+    await h.service.stop();
+    expect(h.timers).toEqual([]);
+    h.service.decide({
+      principal: session(),
+      tool: 'list_sessions',
+      targets: [],
+      masterOn: true,
+      toYou: false,
+    });
+    h.service.revokeGrant('g-x');
+    expect(h.timers).toEqual([]);
+  });
+
+  it('corrupt policy.json is never written', async () => {
+    const h = harness({ policy: '{not json' });
+    h.service.start();
+    expect(h.service.setAssignment({ kind: 'default' }, 'lead')).toEqual({
+      ok: false,
+      error: 'read-only',
+    });
+    expect(
+      h.service.applyLegacyPatch({ kind: 'default' }, null, 'list_sessions', { access: 'off' }),
+    ).toEqual({
+      ok: false,
+      error: 'read-only',
+    });
+    h.service.sessionEnded('s1');
+    h.service.decide({
+      principal: session(),
+      tool: 'list_sessions',
+      targets: [],
+      masterOn: true,
+      toYou: false,
+    });
+    h.fire(WRITE_MS);
+    await h.service.stop();
+    expect(h.policyWrites).toEqual([]);
+    expect(h.service.ui([]).readOnly).toBe(true);
+  });
+
+  it('newer grants.json is never written', async () => {
+    const h = harness({ grants: '{"version":99,"grants":[]}' });
+    h.service.start();
+    const created = h.service.createGrant(
+      { who: 'session', on: 'anywhere', for: 'until-revoked' },
+      session(),
+      'open_session',
+      target(),
+      null,
+    );
+    expect(created).not.toBeNull();
+    expect(h.service.revokeGrant(created?.id ?? '')).toBe(true);
+    h.service.decide({
+      principal: session(),
+      tool: 'open_session',
+      targets: [target()],
+      masterOn: true,
+      toYou: false,
+    });
+    h.fire(WRITE_MS);
+    await h.service.stop();
+    expect(h.grantWrites).toEqual([]);
+    expect(h.warnings.some((m) => m.includes('grants.json'))).toBe(true);
   });
 });
