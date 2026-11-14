@@ -46,10 +46,10 @@ const defaultIo: IdentityIo = {
     }
   },
   write(p, text) {
-    fs.mkdirSync(path.dirname(p), { recursive: true });
-    atomicWriteFileSync(p, text);
-    // Windows keeps the key private through the per-user userData ACL, as tokens.json does.
-    if (process.platform !== 'win32') fs.chmodSync(p, 0o600);
+    // POSIX modes keep the private keys owner-only; Windows ignores them and relies on the
+    // per-user userData ACL, as tokens.json does.
+    fs.mkdirSync(path.dirname(p), { recursive: true, mode: 0o700 });
+    atomicWriteFileSync(p, text, fs, { mode: 0o600 });
   },
   rename(from, to) {
     fs.renameSync(from, to);
@@ -123,24 +123,27 @@ function create(dir: string, io: IdentityIo): Identity {
  * identity cannot pair. A newer build's file is never written: the caller runs without it.
  */
 // see docs/plans/2026-11-14-conduit-network-machinery.plan.md, Technical decision 2
-export function loadIdentity(
-  dir: string,
-  io: IdentityIo = defaultIo,
-): Identity | { error: 'newer' } {
+export type LoadedIdentity =
+  | { kind: 'loaded' | 'created'; identity: Identity }
+  /** The old file was moved to identity.corrupt.json: a new machine id, so every link is lost. */
+  | { kind: 'recovered'; identity: Identity }
+  | { kind: 'newer' };
+
+export function loadIdentity(dir: string, io: IdentityIo = defaultIo): LoadedIdentity {
   const file = path.join(dir, FILE);
   const text = io.read(file);
-  if (text === null) return create(dir, io);
+  if (text === null) return { kind: 'created', identity: create(dir, io) };
   const parsed = parseIdentityFile(text);
-  if (parsed.kind === 'newer') return { error: 'newer' };
+  if (parsed.kind === 'newer') return { kind: 'newer' };
   if (parsed.kind === 'ok') {
     const server = decodePair(parsed.file.serverKey);
     const owner = parsed.file.ownerKey === null ? null : decodePair(parsed.file.ownerKey);
     if (server && (parsed.file.ownerKey === null || owner !== null)) {
-      return toIdentity(server, owner);
+      return { kind: 'loaded', identity: toIdentity(server, owner) };
     }
   }
   io.rename(file, path.join(dir, CORRUPT_FILE));
-  return create(dir, io);
+  return { kind: 'recovered', identity: create(dir, io) };
 }
 
 export function setOwnerKey(

@@ -193,9 +193,9 @@ export function createServices(o: ServicesOptions) {
   });
 
   const networkDir = path.join(o.userData, 'network');
-  const identity = loadIdentity(networkDir);
+  const loaded = loadIdentity(networkDir);
   let machineId: string;
-  if ('error' in identity) {
+  if (loaded.kind === 'newer') {
     log.error('network', 'identity.json is from a newer build; networking is off', {});
     const readOnly = readOnlyMachineId(networkDir);
     if (readOnly === null) {
@@ -205,7 +205,12 @@ export function createServices(o: ServicesOptions) {
     }
     machineId = readOnly;
   } else {
-    machineId = identity.machineId;
+    if (loaded.kind === 'recovered') {
+      log.error('network', 'identity.json was unreadable; moved to identity.corrupt.json', {
+        machineId: loaded.identity.machineId,
+      });
+    }
+    machineId = loaded.identity.machineId;
   }
 
   mcp = createMcp({

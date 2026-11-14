@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   type Identity,
   type IdentityIo,
+  type LoadedIdentity,
   loadIdentity,
   readOnlyMachineId,
   setOwnerKey,
@@ -32,9 +33,9 @@ function memoryIo(initial: Record<string, string> = {}) {
   return { io, files, writes };
 }
 
-function identityOf(r: Identity | { error: 'newer' }): Identity {
-  if ('error' in r) throw new Error(`unexpected ${r.error}`);
-  return r;
+function identityOf(r: LoadedIdentity): Identity {
+  if (r.kind === 'newer') throw new Error('unexpected newer');
+  return r.identity;
 }
 
 const der = (k: Identity['serverPublicKey']) => k.export({ format: 'der', type: 'spki' });
@@ -42,9 +43,13 @@ const der = (k: Identity['serverPublicKey']) => k.export({ format: 'der', type: 
 describe('loadIdentity', () => {
   it('creates an identity once and a reload returns the same id and keys', () => {
     const { io, writes } = memoryIo();
-    const first = identityOf(loadIdentity(DIR, io));
+    const created = loadIdentity(DIR, io);
+    expect(created.kind).toBe('created');
+    const first = identityOf(created);
     expect(writes).toEqual([FILE]);
-    const second = identityOf(loadIdentity(DIR, io));
+    const reloaded = loadIdentity(DIR, io);
+    expect(reloaded.kind).toBe('loaded');
+    const second = identityOf(reloaded);
     expect(writes).toEqual([FILE]);
     expect(second.machineId).toBe(first.machineId);
     expect(der(second.serverPublicKey).equals(der(first.serverPublicKey))).toBe(true);
@@ -81,14 +86,14 @@ describe('loadIdentity', () => {
         ownerKey: null,
       }),
     });
-    identityOf(loadIdentity(DIR, io));
+    expect(loadIdentity(DIR, io).kind).toBe('recovered');
     expect(files.has(CORRUPT)).toBe(true);
   });
 
   it('a newer version is an error and is never written', () => {
     const newer = JSON.stringify({ version: 2, serverKey: { publicKey: 'x', privateKey: 'y' } });
     const { io, files, writes } = memoryIo({ [FILE]: newer });
-    expect(loadIdentity(DIR, io)).toEqual({ error: 'newer' });
+    expect(loadIdentity(DIR, io)).toEqual({ kind: 'newer' });
     expect(writes).toEqual([]);
     expect(files.get(FILE)).toBe(newer);
     expect(files.has(CORRUPT)).toBe(false);

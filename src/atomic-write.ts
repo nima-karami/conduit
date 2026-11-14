@@ -34,9 +34,11 @@ export function atomicWriteFileSync(
   filePath: string,
   data: string | Uint8Array,
   io: SyncFs = fs,
+  options: { mode?: number } = {},
 ): void {
   const tmp = temporaryPath(filePath);
-  io.writeFileSync(tmp, data);
+  // The mode applies as the temp file is created, so a private file is never briefly readable.
+  io.writeFileSync(tmp, data, options.mode === undefined ? undefined : { mode: options.mode });
   try {
     io.renameSync(tmp, filePath);
   } catch (e) {
