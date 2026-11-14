@@ -319,12 +319,35 @@ describe('createPtyWriter', () => {
     expect(h.quiets.map((q) => [q.sessionId, q.quietMs, q.maxMs])).toEqual([
       ['a', ECHO_QUIET_MS, ECHO_MAX_MS],
     ]);
-    await h.releaseQuiet();
-    expect(writes(h.log, 'a')).toEqual(['text']);
     await h.releaseSleep();
+    expect(writes(h.log, 'a')).toEqual(['text']);
+    await h.releaseQuiet();
     expect(await p).toBe('submitted');
     expect(writes(h.log, 'a')).toEqual(['text', '\r']);
   });
+
+  it('sequence: a respawn during the quiet wait withholds Enter', async () => {
+    const h = harness();
+    const p = h.writer.sequence(
+      'a',
+      () => {
+        h.log.push(['a', 'text']);
+        return true;
+      },
+      { submit: true },
+    );
+    await h.flush();
+    await h.releaseSleep();
+    h.gens.set('a', 2);
+    await h.releaseQuiet();
+    expect(await p).toBe('generation-changed');
+    expect(writes(h.log, 'a')).toEqual(['text']);
+  });
+
+  it('pins the R5 timing values', () => {
+    expect([ENTER_FLOOR_MS, ECHO_QUIET_MS, ECHO_MAX_MS]).toEqual([120, 300, 5000]);
+  });
+
   it('keeps a queued sequence outside another submit and drops a stale Enter', async () => {
     const h = harness();
     const first = h.writer.submit('a', 'first');

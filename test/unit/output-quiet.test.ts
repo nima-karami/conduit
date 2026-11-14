@@ -35,6 +35,8 @@ function harness() {
   const quiet = createOutputQuiet(deps);
   const emit = (sessionId: string) =>
     listener?.({ type: 'data', sessionId, generation: 1, data: 'x' });
+  const exit = (sessionId: string) =>
+    listener?.({ type: 'exit', sessionId, generation: 1, code: 0, reason: 'exited' });
   const advance = (ms: number) => {
     const end = now + ms;
     for (;;) {
@@ -64,6 +66,10 @@ function harness() {
     track,
     settle,
     now: () => now,
+    setNow: (ms: number) => {
+      now = ms;
+    },
+    exit,
     unsubscribes: () => unsubscribes,
     attached: () => listener !== null,
   };
@@ -122,6 +128,18 @@ describe('createOutputQuiet', () => {
     h.advance(300);
     await h.settle();
     expect(rec).toEqual({ done: true, at: 300 });
+  });
+
+  it('an exit forgets the session last data, so a clock step back cannot delay a later wait', async () => {
+    const h = harness();
+    h.advance(1000);
+    h.emit('a');
+    h.exit('a');
+    h.setNow(500);
+    const rec = h.track(h.quiet.wait('a', 300, 5000));
+    h.advance(300);
+    await h.settle();
+    expect(rec).toEqual({ done: true, at: 800 });
   });
 
   it('dispose unsubscribes', async () => {

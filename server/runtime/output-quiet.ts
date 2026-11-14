@@ -46,6 +46,7 @@ export function createOutputQuiet(deps: OutputQuietDeps): OutputQuiet {
 
   const unsubscribe = deps.on((e) => {
     if (e.type === 'data') lastData.set(e.sessionId, deps.now());
+    else if (e.type === 'exit') lastData.delete(e.sessionId);
   });
 
   return {

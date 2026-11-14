@@ -42,8 +42,13 @@ beforeAll(() => {
 let host: HTMLDivElement | null = null;
 let root: Root | null = null;
 
+const onClose = vi.fn();
+const requestConfirm = vi.fn();
+
 beforeEach(() => {
   vi.mocked(armTimedMessage).mockClear();
+  onClose.mockClear();
+  requestConfirm.mockClear();
 });
 
 afterEach(async () => {
@@ -66,8 +71,8 @@ async function render() {
     r.render(
       createElement(TimedMessageDialog, {
         session: SESSION,
-        onClose: vi.fn(),
-        requestConfirm: vi.fn(),
+        onClose,
+        requestConfirm,
       }),
     );
   });
@@ -134,6 +139,30 @@ describe('TimedMessageDialog composer', () => {
       sessionId: 's1',
       message: 'line1\nline2',
     });
+  });
+
+  it('Cmd+Enter arms from the message field', async () => {
+    await render();
+    const box = messageBox();
+    await typeInto(box, 'cmd');
+    expect(await key(box, 'Enter', { metaKey: true })).toBe(false);
+    expect(vi.mocked(armTimedMessage)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(armTimedMessage).mock.calls[0][0]).toMatchObject({ message: 'cmd' });
+  });
+
+  it('closing over the limit asks before discarding the text', async () => {
+    await render();
+    await typeInto(messageBox(), 'b'.repeat(16_001));
+    await act(async () => {
+      q<HTMLButtonElement>('.tmdlg__close').dispatchEvent(
+        new MouseEvent('click', { bubbles: true }),
+      );
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(requestConfirm).toHaveBeenCalledTimes(1);
+    const state = requestConfirm.mock.calls[0][0] as { title: string; message: string };
+    expect(state.title).toBe('Discard this message');
+    expect(state.message).toBe(`Close without arming "${'b'.repeat(40)}…"?`);
   });
 
   it('plain Enter in the delay field arms', async () => {

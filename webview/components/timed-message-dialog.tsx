@@ -223,16 +223,17 @@ export function TimedMessageDialog({
   };
 
   /** Dirty = the composer holds something other than what it was last seeded with. */
-  const dirty = sanitized.length > 0 && sanitized !== seededRef.current;
+  const dirty = tooLong || (sanitized.length > 0 && sanitized !== seededRef.current);
 
   const requestClose = () => {
     if (!dirty) {
       onClose();
       return;
     }
+    const quote = sanitized || `${message.trimStart().slice(0, 40)}…`;
     requestConfirm({
       title: 'Discard this message',
-      message: `Close without arming "${sanitized}"?`,
+      message: `Close without arming "${quote}"?`,
       confirmLabel: 'Discard',
       danger: true,
       focusCancel: true,
@@ -241,9 +242,9 @@ export function TimedMessageDialog({
   };
 
   const onRootKeyDown = (e: React.KeyboardEvent) => {
-    // Enter is the composer's shortcut, not the whole dialog's: on a button it must do what the
-    // button says. Cancel, Send now, ×, and every row control are all buttons, and arming from
-    // any of them is a wrong, unattended write.
+    // Enter arms from the fields, but a button keeps its own Enter: arming from Cancel, Send now,
+    // × or a row control would be an unattended write. In the message textarea Enter is a newline,
+    // so only Ctrl/Cmd+Enter arms there.
     const target = e.target as HTMLElement;
     const newlineKey = target === messageRef.current;
     if (
@@ -455,7 +456,7 @@ export function TimedMessageDialog({
               type="button"
               className="btn btn--primary"
               disabled={!canArm}
-              aria-keyshortcuts="Enter"
+              aria-keyshortcuts="Enter Control+Enter Meta+Enter"
               onClick={arm}
             >
               {editingId ? 'Save' : 'Arm'}
