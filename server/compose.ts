@@ -51,6 +51,7 @@ export function emptySnapshot(): Omit<ServerSnapshot, 'seq' | 'runtime'> {
       switchable: [],
       notConnected: {},
       awaitingApproval: [],
+      waitingAsks: 0,
       requests: { open: [], ended: [], presence: emptyPresence(0) },
     },
     pendingAsks: [],

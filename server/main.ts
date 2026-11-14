@@ -7,7 +7,6 @@ import type { InstanceNames } from '../src/contracts/session-identity';
 import { instanceNames } from '../src/instance-names';
 import { formatRecord } from '../src/logging';
 import { runtimeBinaryName } from '../src/runtime-binary';
-import { trayCounts } from '../src/tray-counts';
 import { compose } from './compose';
 import { directStopAll, hcBinaryOf, hcClient, serverChildEnv, startCore, stopCore } from './hc-cli';
 import { argValue, requireUserData } from './lifecycle/cli-args';
@@ -141,7 +140,14 @@ export async function runServer(
       ? startTrayChannel({
           proc: trayProc,
           tap: tapped.tap,
-          initial: () => trayCounts(core.snapshot().sessions, shell.lifecycle.runtime.state, null),
+          seed: () => {
+            const snap = core.snapshot();
+            return {
+              sessions: snap.sessions,
+              needs: { openRequests: snap.mcp.requests.open, waitingAsks: snap.mcp.waitingAsks },
+              health: shell.lifecycle.runtime.state,
+            };
+          },
           stopAll: shell.stopAll,
           log: (message) => shell.log('warn', message),
         })

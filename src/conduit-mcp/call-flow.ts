@@ -123,6 +123,7 @@ export interface CallFlow {
   /** false unless the request is waiting, `fromWindowId` is its window, and `raw` parses for its kind. */
   answerUi(requestId: string, fromWindowId: number, raw: unknown): boolean;
   awaitingApproval(): string[];
+  waitingAskCount(): number;
   /** No app is left to answer (D8 grace): every waiting ask ends ui_unavailable; returns them. */
   denyUnavailable(): Array<{ askId: string; sessionId: string; tool: ToolName }>;
   dispose(): void;
@@ -489,6 +490,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     },
 
     awaitingApproval: () => [...new Set(waits.pending().map((w) => w.callerSessionId))],
+    waitingAskCount: () => waits.pending().length,
 
     denyUnavailable() {
       // Marked only as each is ended, so the ask's own cancelled branch always clears its mark.
