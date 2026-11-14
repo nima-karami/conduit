@@ -61,7 +61,7 @@ await runScenario(
     await popup.waitFor({ timeout: 10_000 });
     assert(
       await page.evaluate(
-        () => document.activeElement?.classList.contains('reqtpl-title') ?? false,
+        () => document.activeElement?.classList.contains('reqtpl-head__title') ?? false,
       ),
       'the pop-up did not focus its title',
     );
