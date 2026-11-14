@@ -433,3 +433,82 @@ function safeEqualText(a: string, b: string): boolean {
 /** The fingerprint to show, once the reveal has checked out; null before. */
 export const shownFingerprint = (s: OpenerState | JoinerState): string | null =>
   s.phase === 'confirm' || s.phase === 'await-owner' ? s.fingerprint : null;
+
+const FAIL_REASONS: readonly PairingFailReason[] = [
+  'wrong-code',
+  'bad-commit',
+  'different-owner',
+  'expired',
+  'used',
+  'incompatible',
+  'protocol',
+];
+type Rec = Record<string, unknown>;
+const isRec = (v: unknown): v is Rec => typeof v === 'object' && v !== null && !Array.isArray(v);
+const isStr = (v: unknown): v is string => typeof v === 'string';
+const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
+/** Exactly these keys: the pairing peer is unauthenticated until the fingerprint is confirmed. */
+const exactly = (r: Rec, keys: readonly string[]): boolean =>
+  Object.keys(r).length === keys.length && keys.every((k) => k in r);
+
+/** Strict validator for a message off the wire; anything else is null and fails the pairing. */
+export function parsePairingMsg(raw: unknown): PairingMsg | null {
+  if (!isRec(raw)) return null;
+  switch (raw.t) {
+    case 'pair.hello':
+      return exactly(raw, ['t', 'v', 'code', 'commit']) &&
+        isInt(raw.v) &&
+        isStr(raw.code) &&
+        raw.code.length <= 200 &&
+        isStr(raw.commit)
+        ? { t: 'pair.hello', v: raw.v, code: raw.code, commit: raw.commit }
+        : null;
+    case 'pair.nonce':
+    case 'pair.reveal':
+      return exactly(raw, ['t', 'nonce']) && isStr(raw.nonce)
+        ? { t: raw.t, nonce: raw.nonce }
+        : null;
+    case 'pair.id': {
+      const p = raw.protocol;
+      const addresses = raw.addresses;
+      if (
+        !exactly(raw, ['t', 'machineId', 'ownerKey', 'selfName', 'addresses', 'protocol']) ||
+        !isStr(raw.machineId) ||
+        !(raw.ownerKey === null || isStr(raw.ownerKey)) ||
+        !isStr(raw.selfName) ||
+        !Array.isArray(addresses) ||
+        !addresses.every(isStr) ||
+        !isRec(p) ||
+        !exactly(p, ['major', 'minor']) ||
+        !isInt(p.major) ||
+        !isInt(p.minor)
+      )
+        return null;
+      return {
+        t: 'pair.id',
+        machineId: raw.machineId,
+        ownerKey: raw.ownerKey,
+        selfName: raw.selfName,
+        addresses: addresses.filter(isStr),
+        protocol: { major: p.major, minor: p.minor },
+      };
+    }
+    case 'pair.accept':
+    case 'pair.decline':
+      return exactly(raw, ['t']) ? { t: raw.t } : null;
+    case 'pair.owner':
+      return exactly(raw, ['t', 'publicKey', 'privateKey']) &&
+        isStr(raw.publicKey) &&
+        isStr(raw.privateKey)
+        ? { t: 'pair.owner', publicKey: raw.publicKey, privateKey: raw.privateKey }
+        : null;
+    case 'pair.fail': {
+      const reason = FAIL_REASONS.find((r) => r === raw.reason);
+      return exactly(raw, ['t', 'reason']) && reason !== undefined
+        ? { t: 'pair.fail', reason }
+        : null;
+    }
+    default:
+      return null;
+  }
+}

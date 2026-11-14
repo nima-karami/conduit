@@ -13,6 +13,7 @@ import {
   type PairingInput,
   type PairingMsg,
   type PairingOutcome,
+  parsePairingMsg,
   shownFingerprint,
 } from '../../src/network/pairing-protocol';
 import { commitment, fingerprint, linkIdFor } from '../../src/network/pairing-transcript';
@@ -275,5 +276,40 @@ describe('pairing protocol', () => {
     const other = ownerKey();
     const r = joinerStep(pair.joiner, { kind: 'msg', msg: { t: 'pair.owner', ...other } });
     expect(r.done).toEqual({ kind: 'failed', reason: 'protocol' });
+  });
+});
+
+describe('parsePairingMsg', () => {
+  const samples: PairingMsg[] = [
+    { t: 'pair.hello', v: 1, code: CODE, commit: 'AAAA' },
+    { t: 'pair.nonce', nonce: 'AAAA' },
+    { t: 'pair.reveal', nonce: 'AAAA' },
+    {
+      t: 'pair.id',
+      machineId: 'm-00000000',
+      ownerKey: null,
+      selfName: 'x',
+      addresses: ['127.0.0.1:1'],
+      protocol: { major: 1, minor: 0 },
+    },
+    { t: 'pair.accept' },
+    { t: 'pair.decline' },
+    { t: 'pair.owner', publicKey: 'a', privateKey: 'b' },
+    { t: 'pair.fail', reason: 'used' },
+  ];
+  it.each(samples)('round-trips $t', (m) => {
+    expect(parsePairingMsg(JSON.parse(JSON.stringify(m)))).toEqual(m);
+  });
+  it.each(samples)('rejects $t with an extra key', (m) => {
+    expect(parsePairingMsg({ ...m, extra: 1 })).toBeNull();
+  });
+  it('rejects unknown types, bad fields and unknown fail reasons', () => {
+    expect(parsePairingMsg({ t: 'pair.nope' })).toBeNull();
+    expect(parsePairingMsg({ t: 'pair.hello', v: '1', code: CODE, commit: 'A' })).toBeNull();
+    expect(parsePairingMsg({ t: 'pair.fail', reason: 'whatever' })).toBeNull();
+    expect(
+      parsePairingMsg({ t: 'pair.hello', v: 1, code: 'x'.repeat(201), commit: 'A' }),
+    ).toBeNull();
+    expect(parsePairingMsg(null)).toBeNull();
   });
 });
