@@ -484,6 +484,7 @@ function harness(
       };
     },
     setResumeIssue: () => undefined,
+    needsYouFacts: () => [],
     setStuck: (id, next) => {
       stuckCalls.push([id, next]);
       if (next) stuck.set(id, next);
