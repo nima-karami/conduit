@@ -1,10 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import type { RequestView } from '../src/conduit-mcp/request-types';
-// TEMPORARY until request-view-model.ts lands in the merged tree (lane U1 binds to openAsOf).
-import { openAsOf } from './request-view-model';
+import { type OpenAs, openAsOf } from './request-view-model';
 import { getRequestsSnapshot } from './use-conduit-mcp';
-
-export type OpenAs = 'popup' | 'tab' | 'terminal';
 
 export interface RequestOpeners {
   openTab(r: RequestView): void;

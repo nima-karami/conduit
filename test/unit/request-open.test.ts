@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { RequestView } from '../../src/conduit-mcp/request-types';
-import type { OpenAs } from '../../webview/request-open';
 import { createRequestOpen } from '../../webview/request-open';
+import type { OpenAs } from '../../webview/request-view-model';
 
 function view(over: Partial<RequestView> & Pick<RequestView, 'id'>): RequestView {
   return {

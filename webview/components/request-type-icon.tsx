@@ -1,7 +1,6 @@
 import type { JSX, ReactNode } from 'react';
 
-// Matches RequestType in request-view-model.ts; unified when both land (CON-20 U1).
-export type RequestType = 'approve' | 'answer' | 'review';
+import type { RequestType } from '../request-view-model';
 
 const SHAPES: Record<RequestType, ReactNode> = {
   approve: (

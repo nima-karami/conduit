@@ -2,7 +2,8 @@
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { type RequestType, RequestTypeIcon } from '../../webview/components/request-type-icon';
+import { RequestTypeIcon } from '../../webview/components/request-type-icon';
+import type { RequestType } from '../../webview/request-view-model';
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
