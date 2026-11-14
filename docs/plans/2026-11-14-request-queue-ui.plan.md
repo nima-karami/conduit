@@ -79,8 +79,7 @@ The lead's rulings:
 ## Out of scope
 - Permission requests in the template (CON-18). The approval card stays.
 - `form`, remote rows, lead escalation, and the "Handled by leads" view.
-- Away controls and the return digest (Decisions Needed #3).
-- The sidebar "Needs you" grouping change and the "asks" row markers. They aren't in the lead's build list; Decisions Needed #4.
+- The sidebar "Needs you" grouping change and the "asks" row markers: a follow-up card (lead). Today's sidebar Needs you behaviour stays exactly as it is; the status bar is the one place the count lives.
 - Notification quick actions. Persisting unsent tab edits across a reload (spec "ASSUMED feasible").
 
 ## Contracts
@@ -108,7 +107,7 @@ export function cardsOf(rs: RequestView[], ctx: { now: number; sessions: Map<str
 export function shortestWaiting(rs: RequestView[], now: number): { sessionId: string | null; secondsLeft: number } | null;
 export function filterOptions(rs: RequestView[], ctx: { sessions: Map<string, { name: string }> }): { sessions: Array<{ id: string; label: string }>; leads: …; spaces: …; types: RequestType[]; machines: string[] };
 ```
-The waiting countdown's end time = the start of waiting plus the caller's budget. The renderer knows neither, so a **waiting** card shows "waiting" without a countdown unless `expiresAt` is set. See Decisions Needed #5.
+`RequestView.waitingUntil: string | null` (server addition, lead ruling 5) is the latest deadline of the calls waiting on it. Countdowns read it.
 
 ### UC2 `webview/request-drafts.ts`
 `getDraft(id): { pick: string[]; text: string } | undefined`, `setDraft(id, d)`, `clearDraft(id)`, `useDraft(id)` (useSyncExternalStore). Renderer memory only.
@@ -116,7 +115,7 @@ The waiting countdown's end time = the start of waiting plus the caller's budget
 ### UC3 `webview/use-conduit-mcp.ts` (modify)
 `ConduitMcpApi` gains:
 - `answerRequest(requestId: string, answer: AnswerInput): Promise<RequestAnswerResult>`, via `requestHost(… ['mcp:requestResult'] …)`;
-- `setAway(away: boolean, until: string | null): void`, which is `post` only. Unused in this plan (Decisions #3); added only if #3 is built.
+- `setAway(away: boolean, until: string | null): void`, which is `post` only (U5).
 
 ### UC4 Opening a request (one entry point)
 `openRequest(id: string, opts?: { asTab?: boolean })` in a new `webview/request-open.ts`. It reads the request and calls `openAsOf`:
@@ -210,6 +209,10 @@ Every surface calls this: row, pill, notice, thread link and shortcut.
 - **Open as tab** carries the pick and the note.
 - **Review tab:** Edited / Original / Changes, a line count, and Send blocked over 32 KB.
 
+### Slice U0: `waitingUntil` (server, orchestrator)
+**Check:** `npx vitest run test/unit/request-waits.test.ts test/unit/request-service.test.ts`; `npm run verify`.
+`RequestWaits.waitingUntil(requestId): number | null` is the latest live deadline. `RequestView.waitingUntil` is that value as ISO, or null. The service's `view()` sets it.
+
 ### Slice U4: Signals and entry points
 **Check:** component tests; `npm run verify`; e2e `requests-ui` (remote) and visual scenes.
 **Parallel groups:** G1: session-pill + waiting-notice · G2: thread link · Serial: attention/status bar/app wiring + shortcut + doc-tabs slot (claims: attention.ts, attention-route.ts, status-bar-model.ts, status-bar.tsx, app.tsx, doc-tabs.tsx, shortcuts.ts, message-thread.tsx, styles.css)
@@ -221,6 +224,27 @@ Every surface calls this: row, pill, notice, thread link and shortcut.
 - the thread link opens the request.
 **Runtime proof:** e2e `requests-ui` drives the real app headless, and `test/e2e/visual/shoot.mjs` produces the scenes for comparison by eye. Screenshot paths go in the run report.
 
+### Slice U5: Away and the return digest (lead ruling 3)
+**Check:** component tests; `npm run verify`; the e2e step and a `needs-digest` visual scene.
+**Files:**
+- Create `webview/components/away-menu.tsx`, opened from the status bar's Needs you item: For 1 hour · Until 09:00 tomorrow · Until I'm back · I'm back.
+- Create `webview/components/needs-you-digest.tsx`, at the top of the Needs you panel when `presence.lastAway` is newer than the last dismissal.
+- Create `webview/away-view-model.ts`, holding the until-time choices and the digest counts.
+- Modify `status-bar.tsx`: "Away until 09:00", then "Away ended 09:12".
+- Modify `needs-you-pane.tsx`: show the away banner while away (iter-5/14, adapted to iter-7 card style).
+**Digest:** "While you were away", with the from–to time and the duration. It counts:
+- N still need you (open);
+- N went with the agent's default (answered by default within the window);
+- N expired;
+- N cleared by themselves (resolved).
+
+Each count has "show", which filters the panel's History to that set. A row that went with a default gets "Follow up…", which opens Messages with a reply to the requester in the request's thread. That uses the existing compose, and it can't undo anything; the copy says so. "Dismiss" hides the digest until the next Away ends (renderer setting).
+**Key tests:**
+- the counts come only from requests ended within `[lastAway.from, lastAway.to]`;
+- the Away until-time choices compute correctly across midnight;
+- I'm back sends `setAway(false)`;
+- the digest hides after Dismiss and shows again after a new Away.
+
 ## Verification
 - Per task: its component tests, red first.
 - Per merge: review by me, then `npm run verify; echo exit=$?` and `npm run text-fit`.
@@ -230,7 +254,8 @@ Every surface calls this: row, pill, notice, thread link and shortcut.
 If a task's assumption turns out wrong (the piece it builds on is misaligned, or a locked signature doesn't fit), that task **stops**, and fixing the misaligned piece becomes the work. Never a shim, a second copy, a special case, a widened type or a fallback. The report leads with the fix that keeps the locked decision.
 
 ## Decisions Needed
-- [high] #1 **Shortcut.** Ctrl+Shift+A is taken by `openArchitecture`. Recommended: **Mod+Shift+Y** (free in the app's registry and in Monaco's defaults). Alternative: rebind Architecture.
+- **Ruled by the lead (2026-11-14):** #1 Mod+Shift+Y. #2 pill in the tab bar's right end. #3 Away + digest in this card (U5). #4 sidebar is a follow-up card. #5 add `waitingUntil` (U0).
+- [ruled] #1 **Shortcut.** Ctrl+Shift+A is taken by `openArchitecture`. Recommended: **Mod+Shift+Y** (free in the app's registry and in Monaco's defaults). Alternative: rebind Architecture.
 - [high] #2 **Where the session pill lives.** The shared frame's session strip doesn't exist yet. Recommended: the right end of the session's tab bar (`doc-tabs.tsx`), the same row the strip would occupy. CON-15/18 can move it into the strip when someone builds that.
 - [high] #3 **Away and the digest** (spec MVP, iter-5 flows) aren't in your build list. Recommended: a follow-up card. The server already holds presence and `lastAway`, so it's UI only.
 - [normal] #4 **Sidebar "Needs you" group and "asks" markers** (spec §4.4.8). Recommended: a follow-up card, since it touches the shared sidebar.
