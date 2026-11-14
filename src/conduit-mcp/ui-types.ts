@@ -143,6 +143,8 @@ export interface McpUiState {
   notConnected: Record<string, McpNotConnected>;
   /** Caller session ids with at least one waiting ask (spec 2026-10-30-conduit-mcp-tool-policy §2.4, caller side). */
   awaitingApproval: string[];
+  /** How many tool-policy asks are waiting right now (the tray counts each). */
+  waitingAsks: number;
   requests: RequestsUiState;
 }
 

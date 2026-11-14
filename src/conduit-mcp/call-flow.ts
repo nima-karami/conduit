@@ -126,6 +126,7 @@ export interface CallFlow {
   /** false unless the request is waiting, `fromWindowId` is its window, and `raw` parses for its kind. */
   answerUi(requestId: string, fromWindowId: number, raw: unknown): boolean;
   awaitingApproval(): string[];
+  waitingAskCount(): number;
   dispose(): void;
 }
 
@@ -483,6 +484,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     },
 
     awaitingApproval: () => [...new Set(waits.pending().map((w) => w.callerSessionId))],
+    waitingAskCount: () => waits.pending().length,
 
     dispose() {
       waits.dispose();

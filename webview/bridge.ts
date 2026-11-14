@@ -674,6 +674,7 @@ function mockHost(msg: WebviewToHost) {
           switchable: [],
           notConnected: {},
           awaitingApproval: [],
+          waitingAsks: 0,
           requests: {
             open: [],
             ended: [],

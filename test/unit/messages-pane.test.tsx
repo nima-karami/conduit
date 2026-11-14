@@ -80,6 +80,7 @@ function uiState(o: Partial<McpUiState> = {}): McpUiState {
     switchable: [],
     notConnected: {},
     awaitingApproval: [],
+    waitingAsks: 0,
     requests: {
       open: [],
       ended: [],

@@ -1779,6 +1779,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           )
         : {},
       awaitingApproval: flow.awaitingApproval(),
+      waitingAsks: flow.waitingAskCount(),
       requests: requestService.ui(),
     };
   }

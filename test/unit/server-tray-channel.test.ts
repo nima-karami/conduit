@@ -11,6 +11,7 @@ import {
   startTrayChannel,
   type TrayEvent,
   type TrayProc,
+  type TraySeed,
 } from '../../server/tray-channel';
 import { TRAY_LIMITS, type TrayCounts } from '../../src/contracts/tray-protocol';
 
@@ -39,7 +40,11 @@ function harness(over: { send?: boolean; stopAll?: () => Promise<ShellStopAll> }
     on,
     off,
   } as unknown as TrayProc;
-  const initial: TrayCounts = { running: 1, needsYou: 0, health: 'starting', stopping: null };
+  const seed: TraySeed = {
+    sessions: [{ id: 's0', ...session('running') }] as unknown as TraySeed['sessions'],
+    needs: { openRequests: [], waitingAsks: 0 },
+    health: 'starting',
+  };
   const log = vi.fn();
   const stopAll = vi.fn(
     over.stopAll ??
@@ -51,7 +56,7 @@ function harness(over: { send?: boolean; stopAll?: () => Promise<ShellStopAll> }
       listeners.add(cb);
       return () => listeners.delete(cb);
     },
-    initial: () => initial,
+    seed: () => seed,
     stopAll,
     log,
   });
@@ -66,6 +71,18 @@ function harness(over: { send?: boolean; stopAll?: () => Promise<ShellStopAll> }
 
 const sessionsChanged = (...s: ReturnType<typeof session>[]): TrayEvent =>
   ['sessions.changed', { sessions: s }] as unknown as TrayEvent;
+
+const mcpState = (
+  open: Array<{ session: string | null; source: string }>,
+  waitingAsks: number,
+): TrayEvent =>
+  [
+    'ui.post',
+    {
+      route: { kind: 'broadcast' },
+      message: { type: 'mcp:state', state: { requests: { open }, waitingAsks } },
+    },
+  ] as unknown as TrayEvent;
 
 const WINDOW = TRAY_LIMITS.countsCoalesceMs;
 
@@ -95,7 +112,7 @@ describe('tray channel', () => {
     });
   });
 
-  it('seeds the first counts from initial() when no event arrived yet', () => {
+  it('seeds the first counts from seed() when no event arrived yet', () => {
     const x = harness();
     x.channel.ready();
     expect(x.sent[1]).toMatchObject({ counts: { running: 1, needsYou: 0 } });
@@ -136,6 +153,42 @@ describe('tray channel', () => {
     x.sent.length = 0;
     x.emit(...sessionsChanged(session('running')));
     x.emit(...sessionsChanged(session('running'), session('exited')));
+    vi.advanceTimersByTime(WINDOW * 2);
+    expect(x.sent).toEqual([]);
+  });
+
+  it('an mcp:state broadcast updates the needs-you count', () => {
+    const x = harness();
+    x.channel.ready();
+    x.emit(...sessionsChanged(session('running')));
+    vi.advanceTimersByTime(WINDOW);
+    x.sent.length = 0;
+    x.emit(...mcpState([{ session: 's1', source: 'agent' }], 2));
+    vi.advanceTimersByTime(WINDOW);
+    expect(x.sent).toEqual([
+      { type: 'counts', counts: { running: 1, needsYou: 3, health: 'starting', stopping: null } },
+    ]);
+  });
+
+  it('an mcp:state before any sessions event still updates the count', () => {
+    const x = harness();
+    x.channel.ready();
+    x.sent.length = 0;
+    x.emit(...mcpState([{ session: 's1', source: 'agent' }], 1));
+    vi.advanceTimersByTime(WINDOW);
+    expect(x.sent).toEqual([
+      { type: 'counts', counts: { running: 1, needsYou: 2, health: 'starting', stopping: null } },
+    ]);
+  });
+
+  it('an unchanged count sends nothing', () => {
+    const x = harness();
+    x.channel.ready();
+    x.emit(...sessionsChanged(session('running')));
+    x.emit(...mcpState([{ session: 's1', source: 'agent' }], 0));
+    vi.advanceTimersByTime(WINDOW);
+    x.sent.length = 0;
+    x.emit(...mcpState([{ session: 's2', source: 'message' }], 0));
     vi.advanceTimersByTime(WINDOW * 2);
     expect(x.sent).toEqual([]);
   });
