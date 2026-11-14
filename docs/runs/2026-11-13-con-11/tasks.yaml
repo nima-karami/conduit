@@ -53,17 +53,30 @@
   topology: delegated (Haiku, worktree)
   deps: [S0-contracts]
 - id: E-integration
-  status: in_review
+  status: done
+  review3: "APPROVE (round 3); follow-ups 07ad1e8b; verify exit 0 at 07ad1e8b (evidence/verify-E4.log)"
+  review1: "monitor REVISE 4 blockers; wiring REVISE 1 blocker (legacy autoResumeOnLimit dropped) — fixed in f073a0d3, verify exit 0 (evidence/verify-E2.log); re-review dispatched"
   commit: d30afb9f
   gate: "npm run verify exit=0 at d30afb9f (evidence/verify-E.log)"
   notes: "E.1 settings, E.2 session override, E.3 attention setResumeIssue, E.4 limit-monitor (+R13) written uncommitted in main worktree; monitor tests await lane A"
   topology: solo (conductor)
   deps: [lane-A-scheduler, lane-B-delivery, lane-C-claude, lane-D-codex-rules]
 - id: E7-e2e
-  status: todo
+  status: done
+  remote_runs: "43553416254 at 07ad1e8b (265 pass, 1 fail midturn → R5 amended); 43555129096 at f19e3ed1 (31/31 pass)"
+  local: "all 10 PASS on Linux headless at head code (logs scratchpad/e2e-l-*.log)"
+  remote: "lead running --full at 07ad1e8b (human-approved in lead session)"
+  commit: 9d10f508
+  notes: "9 scenarios + dialog (Sonnet author, not run locally: hc binary absent). Remote named run started from a clean detached worktree (claude/ lock dir pre-existing, not ours)"
   deps: [E-integration]
+- id: R5-amend
+  status: done
+  commit: f19e3ed1
+  gate: "verify exit 0 (evidence/verify-E5.log); conduit-mcp-midturn local PASS; review APPROVE (4 nits held)"
 - id: report
-  status: todo
+  status: done
+  head: c5fe2e59 (verify exit 0, evidence/verify-final.log)
+  path: docs/runs/2026-11-13-con-11/report.md (uncommitted until remote results; head stays 07ad1e8b)
   deps: [E7-e2e]
 
 # lane worktrees: /tmp/claude-1000/-home-namemenima-projects--wt-conduit-CON-11/6af92499-c391-459b-8c04-ceb0878cb91d/scratchpad/lanes/{A,B,C,D} on branches CON-11-lane-{A..D}, base 428e18a9, node_modules symlinked
