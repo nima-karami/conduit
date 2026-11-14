@@ -2,6 +2,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { atomicWriteFileSync } from '../atomic-write';
+import { claudeHookSettings, statusLineWrapFor } from '../claude-hook-settings';
+import { readUserStatusLine } from '../claude-user-status-line';
 import { detectStuckScreen, type StuckScreen } from '../cli-stuck-screens';
 import type { DraftPort, LaunchPort, McpHostDeps } from '../contracts/server-ports';
 import type { CliBindingRecord } from '../contracts/session-identity';
@@ -149,6 +151,10 @@ export interface ConduitMcpHostDeps extends Omit<McpHostDeps, 'attention'> {
   endpointPath: string;
   execPath: string;
   shimPath: string;
+  /** The Claude hook client (resources/conduit-mcp/conduit-hook.cjs, copied); null = no hooks injected. */
+  hookClientPath: string | null;
+  /** Git Bash on Windows from its install paths (src/shells.ts), for the status line wrapper. */
+  gitBashPath: () => string | undefined;
   homeDir: string;
   platform: HostPlatform;
   e2e: boolean;
@@ -1591,10 +1597,57 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
   const configFileOf = (sessionId: string) => path.join(launchDir, `${sessionId}.json`);
 
+  const settingsFileOf = (sessionId: string) => path.join(launchDir, `${sessionId}.settings.json`);
+
   const removeConfig = (sessionId: string) =>
-    fs.promises.rm(configFileOf(sessionId), { force: true }).catch((err: unknown) => {
-      deps.log.warn('conduit-mcp', 'launch config not removed', { sessionId, err: String(err) });
+    Promise.all(
+      [configFileOf(sessionId), settingsFileOf(sessionId)].map((f) =>
+        fs.promises.rm(f, { force: true }).catch((err: unknown) => {
+          deps.log.warn('conduit-mcp', 'launch config not removed', {
+            sessionId,
+            err: String(err),
+          });
+        }),
+      ),
+    );
+
+  /** see spec 2026-11-13-scheduler-auto-resume §3 "Claude Code adapter" and blockers D6. */
+  const claudeSettingsFor = (
+    sessionId: string,
+    spec: SpawnSpec,
+  ): { file: string; json: string } | null => {
+    if (deps.hookClientPath === null) return null;
+    const env = { ...process.env, ...spec.env };
+    const user = readUserStatusLine({
+      projectDir: spec.cwd,
+      configDir: env.CLAUDE_CONFIG_DIR || path.join(deps.homeDir, '.claude'),
+      readFile: (f) => {
+        try {
+          return fs.readFileSync(f, 'utf8');
+        } catch {
+          // A missing settings layer is the common case; the next layer applies.
+          return null;
+        }
+      },
     });
+    const { wrap, skipped } = statusLineWrapFor({
+      platform: deps.platform,
+      env,
+      gitBash: deps.gitBashPath,
+      user,
+    });
+    if (skipped) deps.log.info('conduit-mcp', 'status line not wrapped', { sessionId, skipped });
+    return {
+      file: settingsFileOf(sessionId),
+      json: JSON.stringify(
+        claudeHookSettings({
+          execPath: deps.execPath,
+          hookClient: deps.hookClientPath,
+          statusLine: wrap,
+        }),
+      ),
+    };
+  };
 
   const closeConnectionsOf = (sessionId: string) => {
     for (const [id, s] of connSession) if (s === sessionId) conns.get(id)?.close();
@@ -1693,7 +1746,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         continue;
       }
       if (!snap || deps.runtime.get(s.id)?.state !== 'live') continue;
-      const stuck = detectStuckScreen(cli, snap.lines);
+      const stuck = detectStuckScreen(cli, snap.lines, deps.domain.limitRules());
       const prev = memo?.stuck ?? null;
       stuckFeed.set(s.id, { at: t, outputAt, stuck });
       if (prev?.kind === stuck?.kind && prev?.reason === stuck?.reason) continue;
@@ -1908,12 +1961,16 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         resolvedCommand: spec.command,
         server: mcpServerCommand(deps.execPath, deps.shimPath, deps.endpointPath),
         configFile,
+        claudeSettings:
+          adapter.wiring === 'mcp-config-flag' ? claudeSettingsFor(sessionId, spec) : null,
       });
       if (!wiring.ok) return unavailable(wiring.reason);
       if (wiring.configJson !== null) {
         try {
           fs.mkdirSync(launchDir, { recursive: true });
           atomicWriteFileSync(configFile, wiring.configJson);
+          if (wiring.settingsJson !== null)
+            atomicWriteFileSync(settingsFileOf(sessionId), wiring.settingsJson);
         } catch (err) {
           deps.log.error('conduit-mcp', 'launch config write failed', { err: String(err) });
           return unavailable('launch-io');

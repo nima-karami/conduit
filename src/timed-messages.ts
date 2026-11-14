@@ -91,8 +91,6 @@ export const CATCHUP_MS: Record<TimedMessageOrigin, number> = {
 };
 /** Past this much overdue a fire is reported as late. An on-time fire is always a few ms out. */
 export const LATE_GRACE_MS = 30_000;
-/** Reset boundaries are approximate, so an auto-resume aims just past one (§5). */
-export const LIMIT_PADDING_MS = 60_000;
 /** The ONLY message the app composes for itself — never anything parsed from output (§2). */
 export const LIMIT_MESSAGE = 'Continue';
 /** A message written into a shell that has not printed its prompt yet is lost (§2). */

@@ -250,10 +250,14 @@ describe('compose: sessions.changed carries attention', () => {
       completions: 0,
     });
     const before = of(h.sent, 'sessions.changed').length;
-    const changed = onChange.mock.calls[0]?.[0];
-    expect(changed).toBeDefined();
-    changed?.();
-    changed?.();
+    // Every subscriber (the domain's Limit monitor reads busy edges too, spec R3).
+    const listeners = onChange.mock.calls.map(([l]) => l);
+    expect(listeners.length).toBeGreaterThan(0);
+    const changed = () => {
+      for (const l of listeners) l();
+    };
+    changed();
+    changed();
     // Coalesced: two flips within the window are one re-send.
     await vi.waitFor(() => expect(of(h.sent, 'sessions.changed').length).toBe(before + 1));
   });
@@ -277,11 +281,14 @@ describe('compose: sessions.changed carries attention', () => {
     });
     await vi.waitFor(() => expect(of(h.sent, 'sessions.changed').length).toBeGreaterThan(0));
     const before = of(h.sent, 'sessions.changed').length;
-    const changed = onChange.mock.calls[0]?.[0];
+    const listeners = onChange.mock.calls.map(([l]) => l);
+    const changed = () => {
+      for (const l of listeners) l();
+    };
     status.mockReturnValue(facts(1));
-    changed?.();
+    changed();
     status.mockReturnValue(facts(2));
-    changed?.();
+    changed();
     await vi.waitFor(() => expect(of(h.sent, 'sessions.changed').length).toBe(before + 1));
     expect(
       of(h.sent, 'sessions.changed')

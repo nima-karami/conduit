@@ -9,6 +9,7 @@ import {
 import type { GateRow, McpInstallDeps } from '../../src/conduit-mcp/install';
 import type { McpInstallResult, McpInstallStatus } from '../../src/conduit-mcp/install-types';
 import type { McpUiState } from '../../src/conduit-mcp/ui-types';
+import type { HookPost } from '../../src/contracts/hook-protocol';
 import type {
   DraftPort,
   LaunchPort,
@@ -67,6 +68,11 @@ export interface McpServerDeps extends Omit<McpHostDeps, 'tokens'> {
   endpointPath: string;
   /** The write-once runtime/shim/ node and script every CLI entry and launch argv points at (D2b). */
   shim: { execPath: string; shimPath: string };
+  /** The copied Claude hook client; null = no hooks injected (spec 2026-11-13 §3). */
+  hookClientPath: string | null;
+  gitBashPath: () => string | undefined;
+  /** A hook post the endpoint authenticated. */
+  onHook: (sessionId: string, post: HookPost) => void;
   homeDir: string;
   platform: HostPlatform;
   e2e: boolean;
@@ -251,6 +257,8 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
     endpointPath: deps.endpointPath,
     execPath: deps.shim.execPath,
     shimPath: deps.shim.shimPath,
+    hookClientPath: deps.hookClientPath,
+    gitBashPath: deps.gitBashPath,
     homeDir: deps.homeDir,
     platform: deps.platform,
     e2e: deps.e2e,
@@ -258,7 +266,7 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
     ownerWindowOf: presence.ownerWindowOf,
     windowReady: presence.windowReady,
     onScreen: presence.onScreen,
-    createEndpoint: (o) => createShimEndpoint({ ...o, tokens }),
+    createEndpoint: (o) => createShimEndpoint({ ...o, tokens, onHook: deps.onHook }),
     onBindingChanged: (sessionId, binding) => {
       if (binding) bindings.set({ sessionId, ...binding });
       else bindings.delete(sessionId);

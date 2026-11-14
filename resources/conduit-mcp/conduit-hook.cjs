@@ -125,9 +125,11 @@ function readJson(file) {
 }
 
 // see docs/plans/2026-11-13-scheduler-auto-resume.plan.md "Amendments after review" (C)
+// A bare `bash` on Windows PATH can be WSL's launcher, so without a Git Bash there is no shell.
 function statusLineShell(platform, env, command) {
   if (platform === 'win32') {
-    return { file: env.CLAUDE_CODE_GIT_BASH_PATH || 'bash', args: ['-c', command] };
+    const bash = env.CONDUIT_GIT_BASH || env.CLAUDE_CODE_GIT_BASH_PATH;
+    return bash ? { file: bash, args: ['-c', command] } : null;
   }
   return { file: '/bin/sh', args: ['-c', command] };
 }
@@ -136,9 +138,9 @@ function runUserStatusLine(input, text, platform, env) {
   const projectDir = input?.workspace?.project_dir || input?.cwd || null;
   const configDir = env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
   const command = statusLineCommand(typeof projectDir === 'string' ? projectDir : null, configDir);
-  if (!command) return Promise.resolve(Buffer.alloc(0));
+  const shell = command ? statusLineShell(platform, env, command) : null;
+  if (!shell) return Promise.resolve(Buffer.alloc(0));
   return new Promise((resolve) => {
-    const shell = statusLineShell(platform, env, command);
     // The wrapper's own env marks it as Electron-as-node; the user's process must not inherit that.
     const childEnv = { ...env };
     delete childEnv.ELECTRON_RUN_AS_NODE;

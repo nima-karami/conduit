@@ -181,6 +181,10 @@ export class Scheduler {
     if (editing && editing.trigger.kind === 'limit-reset') {
       return { ok: false, error: 'That timed message is gone.' };
     }
+    // The in-flight fire would land on the edited schedule and consume it unsent.
+    if (editing && this.inFlight.has(editing.id)) {
+      return { ok: false, error: 'That message is being sent right now — try again in a moment.' };
+    }
     const cap = this.capError(input.sessionId, editing?.id);
     if (cap) return { ok: false, error: cap };
     const check = normalizeMessage(input.message);
@@ -189,7 +193,16 @@ export class Scheduler {
     if (triggerError) return { ok: false, error: triggerError };
     const now = this.now();
     const nextAt = nextFireAt(trigger, now);
-    if (nextAt === null || !Number.isFinite(nextAt) || nextAt > MAX_EPOCH_MS) {
+    const lastSlot =
+      nextAt === null || trigger.kind !== 'every'
+        ? nextAt
+        : nextAt + (trigger.maxRepeats - 1) * trigger.everyMs;
+    if (
+      nextAt === null ||
+      lastSlot === null ||
+      !Number.isFinite(lastSlot) ||
+      lastSlot > MAX_EPOCH_MS
+    ) {
       return { ok: false, error: 'That time could not be read — use HH:MM.' };
     }
 

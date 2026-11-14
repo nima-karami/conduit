@@ -127,6 +127,7 @@ export function parseSessions(blob: string | undefined): SessionsParse {
     // Back-compat: blobs written before lastActiveAt/createdAt existed.
     const createdAt = s.createdAt ?? Date.now();
     if (s.brief !== 'pending' && s.brief !== 'sent') delete s.brief;
+    if (s.autoResume !== 'on' && s.autoResume !== 'off') delete s.autoResume;
     // A command session whose command fails coercion is kept and refused at spawn (control-tools plan T1.3).
     const mcpToolPolicy = sessionPolicyOf(s.mcpToolPolicy, legacyToolOverrides);
     const openedBy = coerceOpenedBy(s.openedBy);

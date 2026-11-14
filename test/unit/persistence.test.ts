@@ -521,3 +521,22 @@ describe('persistence — session model (CON-148)', () => {
     expect(dropped?.model).toBeUndefined();
   });
 });
+
+describe('persistence — per-session auto-resume (spec 2026-11-13-scheduler-auto-resume §3)', () => {
+  it('round-trips on and off and drops anything else', () => {
+    const blob = v1([
+      { ...s, id: 'a', autoResume: 'off' },
+      { ...s, id: 'b', autoResume: 'on' },
+      { ...s, id: 'c', autoResume: 'inherit' },
+      { ...s, id: 'd', autoResume: true },
+    ]);
+    const out = sessionsOf(blob);
+    expect(out.map((x) => x.autoResume)).toEqual(['off', 'on', undefined, undefined]);
+    expect(sessionsOf(serializeSessions(out)).map((x) => x.autoResume)).toEqual([
+      'off',
+      'on',
+      undefined,
+      undefined,
+    ]);
+  });
+});

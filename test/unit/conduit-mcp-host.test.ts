@@ -44,6 +44,7 @@ import type {
   RuntimeEvent,
   RuntimeTerminal,
 } from '../../src/contracts/terminal-runtime';
+import { compileLimitRules, DEFAULT_LIMIT_RULES } from '../../src/limit-rules';
 import type { HostToWebview } from '../../src/protocol';
 import { createPtyWriter } from '../../src/pty-writer';
 import { COMMAND_AGENT_ID, commandDef } from '../../src/session-command';
@@ -407,6 +408,7 @@ function harness(
   const registry = opts.registry ?? new AgentRegistry(DEFS);
   const domain: McpHostDeps['domain'] = {
     bracketedPaste: opts.bracketedPaste ?? (() => false),
+    limitRules: () => compileLimitRules(DEFAULT_LIMIT_RULES),
     homeOf: (id: string) => sessions.get(id)?.home,
     resolvePath: (h: string, rel: string) => (rel.startsWith('/') ? rel : `${h}/${rel}`),
     kindOf: opts.kindOf ?? (async (abs: string) => opts.kinds?.[abs] ?? 'missing'),
@@ -471,6 +473,7 @@ function harness(
         completions: completions.get(id) ?? 0,
       };
     },
+    setResumeIssue: () => undefined,
     setStuck: (id, next) => {
       stuckCalls.push([id, next]);
       if (next) stuck.set(id, next);
@@ -526,6 +529,8 @@ function harness(
   };
   host = createConduitMcpHost({
     dir,
+    hookClientPath: null,
+    gitBashPath: () => undefined,
     homeDir: dir,
     endpointPath: ep,
     execPath: '/opt/conduit/conduit',

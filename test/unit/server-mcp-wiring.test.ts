@@ -14,6 +14,7 @@ import type {
   RuntimeEvent,
   RuntimeTerminal,
 } from '../../src/contracts/terminal-runtime';
+import { compileLimitRules, DEFAULT_LIMIT_RULES } from '../../src/limit-rules';
 import type { SubmitHooks } from '../../src/pty-writer';
 import type { AgentDefinition, Session, SpawnSpec } from '../../src/types';
 import { onLines, writeJsonLine } from '../helpers/line-socket';
@@ -114,6 +115,7 @@ function harness(opts: { manualTimers?: boolean } = {}) {
     } as McpHostDeps['sessions'],
     domain: {
       bracketedPaste: () => false,
+      limitRules: () => compileLimitRules(DEFAULT_LIMIT_RULES),
       homeOf: (id: string) => sessions.get(id)?.home,
       resolvePath: (h: string, rel: string) => (rel.startsWith('/') ? rel : `${h}/${rel}`),
       kindOf: async () => 'dir' as const,
@@ -148,6 +150,7 @@ function harness(opts: { manualTimers?: boolean } = {}) {
       }),
       lastOutputAt: () => undefined,
       setStuck: () => undefined,
+      setResumeIssue: () => undefined,
       setVisible: (w: number, ids: readonly string[]) => {
         log.push(`visible ${w} ${ids.join(',')}`);
         return false;
@@ -211,6 +214,9 @@ function harness(opts: { manualTimers?: boolean } = {}) {
       dir,
       endpointPath: ep,
       shim: { execPath: '/rt/shim/node', shimPath: '/rt/shim/conduit-mcp-shim.cjs' },
+      hookClientPath: null,
+      gitBashPath: () => undefined,
+      onHook: () => undefined,
       homeDir: dir,
       platform: 'linux',
       e2e: true,

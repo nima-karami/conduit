@@ -39,7 +39,7 @@ interface HookModule {
     platform: string,
     env: Record<string, string | undefined>,
     command: string,
-  ): { file: string; args: string[] };
+  ): { file: string; args: string[] } | null;
 }
 const hookModule = createRequire(__filename)(HOOK) as HookModule;
 
@@ -411,11 +411,18 @@ describe('conduit-hook.cjs statusLineShell', () => {
     ).toEqual({ file: 'C:\\Git\\bin\\bash.exe', args: ['-c', CMD] });
   });
 
-  it('win32 without it resolves bash from PATH, never cmd.exe', () => {
-    expect(hookModule.statusLineShell('win32', {}, CMD)).toEqual({
-      file: 'bash',
-      args: ['-c', CMD],
-    });
+  it('win32 prefers the Git Bash the launcher resolved', () => {
+    expect(
+      hookModule.statusLineShell(
+        'win32',
+        { CONDUIT_GIT_BASH: 'D:\\Git\\bin\\bash.exe', CLAUDE_CODE_GIT_BASH_PATH: 'C:\\x' },
+        CMD,
+      ),
+    ).toEqual({ file: 'D:\\Git\\bin\\bash.exe', args: ['-c', CMD] });
+  });
+
+  it('win32 with no Git Bash has no shell: never bash on PATH, never cmd.exe', () => {
+    expect(hookModule.statusLineShell('win32', {}, CMD)).toBeNull();
   });
 
   it('other platforms run /bin/sh, whatever the Git Bash variable says', () => {

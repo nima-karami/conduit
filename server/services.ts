@@ -1,4 +1,7 @@
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { atomicWriteFileSync } from '../src/atomic-write';
+import { isCountedInput } from '../src/conduit-mcp/draft-input';
 import type { McpRendererMessage } from '../src/conduit-mcp/host';
 import { CLI_BINARIES } from '../src/conduit-mcp/install-types';
 import type { DisplayFacts } from '../src/contracts/frames';
@@ -10,11 +13,18 @@ import type { AdoptedTerminal } from '../src/contracts/terminal-runtime';
 import { folderKey } from '../src/folder-key';
 import { HcDisconnectedError } from '../src/hc-client';
 import type { HostPlatform } from '../src/lsp-binary';
-import { detectAgentClis, detectShells, hostCliScanEnv, resolveCommand } from '../src/shells';
+import {
+  detectAgentClis,
+  detectShells,
+  gitBashPath,
+  hostCliScanEnv,
+  resolveCommand,
+} from '../src/shells';
 import type { AgentDefinition } from '../src/types';
 import { createDomain, type DomainLog } from './domain';
 import type { ShellCore } from './lifecycle/shell';
 import { type AppEventSink, createMcp, type McpServerDeps, type ServerMcp } from './mcp';
+import { ensureHookClient } from './mcp/hook-client-file';
 import type { PreviousShim } from './mcp/install';
 import { createRuntimeServices } from './runtime';
 import { RpcFault, type RpcHandler, RpcProtocolFault } from './transport/pipe';
@@ -193,6 +203,28 @@ export function createServices(o: ServicesOptions) {
     dir: path.join(o.userData, 'conduit-mcp'),
     endpointPath: o.names.mcpEndpoint,
     shim: o.shim,
+    hookClientPath: ensureHookClient({
+      // Packaged: the install's resources folder (beside the shim the app passes as previous);
+      // dev: the shim's own folder in the repo.
+      sourceDir: path.dirname(o.previousShims?.[0]?.shimPath ?? o.shim.shimPath),
+      targetDir: path.join(o.userData, 'conduit-mcp', 'hooks'),
+      fs: {
+        read: (p) => {
+          try {
+            return readFileSync(p);
+          } catch {
+            // Absent from this build: ensureHookClient reports it once.
+            return null;
+          }
+        },
+        exists: (p) => existsSync(p),
+        writeAtomic: (p, d) => atomicWriteFileSync(p, d),
+        mkdir: (p) => mkdirSync(p, { recursive: true }),
+      },
+      warn: (msg, data) => log.warn('scheduler', msg, data),
+    }),
+    gitBashPath: () => (hostPlatform === 'win32' ? gitBashPath() : undefined),
+    onHook: (sessionId, post) => domain.hookPost(sessionId, post),
     homeDir: o.homeDir,
     platform: hostPlatform,
     e2e: o.e2e,
@@ -321,11 +353,10 @@ export function createServices(o: ServicesOptions) {
       case 'term.input': {
         const data = p.data;
         if (typeof data !== 'string') throw new RpcFault('invalid', 'Expected data');
-        server.termInput({
-          sessionId: str(p, 'sessionId'),
-          generation: int(p, 'generation'),
-          data,
-        });
+        const sessionId = str(p, 'sessionId');
+        server.termInput({ sessionId, generation: int(p, 'generation'), data });
+        // see spec R4: a real keystroke from a window, not a terminal's own reply.
+        if (isCountedInput(data)) domain.humanInput(sessionId);
         return { result: {} };
       }
       case 'term.resize': {

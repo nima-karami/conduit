@@ -48,6 +48,11 @@ export class ServerAttention implements AttentionPort {
   private readonly reasons = new Map<string, Exclude<AttentionReason, null>>();
   /** Kept apart from `reasons`: visibility acknowledges those, but not a screen still stuck. */
   private readonly stuck = new Map<string, StuckScreen>();
+  /**
+   * The Limit monitor's "needs you" (auto-resume can't proceed). Apart from `stuck` because the
+   * host's screen pass clears that one, and it survives a PTY exit (spec 2026-11-13 R1).
+   */
+  private readonly resumeIssues = new Map<string, string>();
   /** Window ids presence reported, so clearAll can drop every one of them. */
   private readonly windows = new Set<number>();
   private readonly edgeListeners = new Set<(edge: AttentionEdge) => void>();
@@ -64,10 +69,11 @@ export class ServerAttention implements AttentionPort {
   }
 
   statusOf(sessionId: string): ServerAttentionSnapshot {
-    const stuck = this.stuck.get(sessionId);
+    const stuckReason = this.resumeIssues.get(sessionId) ?? this.stuck.get(sessionId)?.reason;
     const facts = {
-      attentionReason: stuck ? ('stuck' as const) : (this.reasons.get(sessionId) ?? null),
-      ...(stuck ? { stuckReason: stuck.reason } : {}),
+      attentionReason:
+        stuckReason !== undefined ? ('stuck' as const) : (this.reasons.get(sessionId) ?? null),
+      ...(stuckReason !== undefined ? { stuckReason } : {}),
       completions: this.completions.get(sessionId) ?? 0,
     };
     const base = this.activity.statusOf(sessionId);
@@ -139,8 +145,19 @@ export class ServerAttention implements AttentionPort {
     this.off();
   }
 
+  setResumeIssue(sessionId: string, reason: string | null): void {
+    if (reason === null) {
+      if (!this.resumeIssues.delete(sessionId)) return;
+    } else {
+      if (this.resumeIssues.get(sessionId) === reason) return;
+      this.resumeIssues.set(sessionId, reason);
+    }
+    this.changed();
+  }
+
   forgetSession(sessionId: string): void {
     this.reset(sessionId);
+    this.resumeIssues.delete(sessionId);
     this.completions.delete(sessionId);
     this.activity.forget(sessionId);
   }

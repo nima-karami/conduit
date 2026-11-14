@@ -8,6 +8,7 @@
 // Most methods carry the renderer's own message payload (src/protocol.ts) unchanged, so a change to
 // those payload types is a C2 change; the per-message ownership map is
 // docs/runs/2026-11-01-three-process-design/main-ts-ownership.md.
+
 import type {
   McpInstallRequest,
   McpInstallResult,
@@ -28,6 +29,7 @@ import type {
   SessionOpener,
 } from '../types';
 import type { DisplayFacts } from './frames';
+import type { Job, LimitEpisode, SessionAutoResume } from './scheduler';
 import type { SessionRuntime } from './session-identity';
 import type { AttachTarget, FirstPaint } from './terminal-link';
 import {
@@ -181,7 +183,11 @@ export const SERVER_SETTINGS_KEYS = [
   'mcpToolPolicy',
   'mcpToolPolicyByCli',
   'mcpGateMigrated',
-  'autoResumeOnLimit',
+  'autoResume',
+  'autoResumeMarginMs',
+  'autoResumeMaxAttempts',
+  'autoResumeMessage',
+  'autoResumeVerifyMs',
   'autoRelaunchStale',
   'restoreSessions',
   'scrollbackPersistence',
@@ -460,6 +466,15 @@ export interface ServerMethods {
   'timers.sendOnce': { params: Msg<'timer:sendOnce'>; result: Empty };
   /** e2e-only clock seam; refused unless the server was started with --e2e. */
   'timers.test': { params: Msg<'timer:test'>; result: Empty };
+  /** Per-session auto-resume override (spec 2026-11-13-scheduler-auto-resume §3 "Server protocol"). */
+  'scheduler.setSessionAutoResume': {
+    params: { sessionId: string; mode: SessionAutoResume };
+    result: Empty;
+  };
+  'scheduler.history': {
+    params: { sessionId: string };
+    result: { jobs: Job[]; episodes: LimitEpisode[] };
+  };
   /**
    * From the renderer's key-scoped `updateServerSettings{patch}`, never from a whole-object
    * `updateSettings`, so a stale window can't revert another's change (D7). Coerced server-side; the

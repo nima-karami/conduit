@@ -517,3 +517,20 @@ describe('SessionManager mcpToolPolicy (tool-policy spec §3.1)', () => {
     expect(calls).toBe(3);
   });
 });
+
+describe('SessionManager.setAutoResume', () => {
+  it('sets an override, emits once per change, and inherit removes it', () => {
+    const m = new SessionManager(new AgentRegistry([claude]), seqIds());
+    const s = m.create('claude', '/work/proj');
+    let emits = 0;
+    m.onChange(() => emits++);
+    expect(m.setAutoResume(s.id, 'off')).toBe(true);
+    expect(m.get(s.id)?.autoResume).toBe('off');
+    expect(m.setAutoResume(s.id, 'off')).toBe(true);
+    expect(emits).toBe(1);
+    expect(m.setAutoResume(s.id, 'inherit')).toBe(true);
+    expect(m.get(s.id) && 'autoResume' in (m.get(s.id) ?? {})).toBe(false);
+    expect(emits).toBe(2);
+    expect(m.setAutoResume('nope', 'on')).toBe(false);
+  });
+});

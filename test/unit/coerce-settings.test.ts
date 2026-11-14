@@ -379,20 +379,61 @@ describe('review settings', () => {
   });
 });
 
-describe('autoResumeOnLimit', () => {
-  it('defaults to arm — the job is to remove the manual step, not relocate it', () => {
-    expect(coerceSettings({}).autoResumeOnLimit).toBe('arm');
+describe('autoResume', () => {
+  it('defaults to on — the job is to remove the manual step, not relocate it', () => {
+    expect(coerceSettings({}).autoResume).toBe('on');
   });
 
   it('accepts each of the three modes', () => {
-    expect(coerceSettings({ autoResumeOnLimit: 'off' }).autoResumeOnLimit).toBe('off');
-    expect(coerceSettings({ autoResumeOnLimit: 'offer' }).autoResumeOnLimit).toBe('offer');
-    expect(coerceSettings({ autoResumeOnLimit: 'arm' }).autoResumeOnLimit).toBe('arm');
+    for (const mode of ['on', 'ask', 'off'] as const) {
+      expect(coerceSettings({ autoResume: mode }).autoResume).toBe(mode);
+    }
+  });
+
+  it('migrates the pre-CON-11 autoResumeOnLimit when autoResume is absent', () => {
+    expect(coerceSettings({ autoResumeOnLimit: 'arm' }).autoResume).toBe('on');
+    expect(coerceSettings({ autoResumeOnLimit: 'offer' }).autoResume).toBe('ask');
+    expect(coerceSettings({ autoResumeOnLimit: 'off' }).autoResume).toBe('off');
+    expect(coerceSettings({ autoResume: 'off', autoResumeOnLimit: 'arm' }).autoResume).toBe('off');
+    expect('autoResumeOnLimit' in coerceSettings({ autoResumeOnLimit: 'arm' })).toBe(false);
   });
 
   it('falls back to the default for anything else', () => {
-    expect(coerceSettings({ autoResumeOnLimit: 'sometimes' }).autoResumeOnLimit).toBe('arm');
-    expect(coerceSettings({ autoResumeOnLimit: true }).autoResumeOnLimit).toBe('arm');
+    expect(coerceSettings({ autoResume: 'sometimes' }).autoResume).toBe('on');
+    expect(coerceSettings({ autoResumeOnLimit: 'sometimes' }).autoResume).toBe('on');
+  });
+
+  it('clamps the numeric keys to their ranges (spec §3 "Settings")', () => {
+    const lo = coerceSettings({
+      autoResumeMarginMs: -5,
+      autoResumeMaxAttempts: 0,
+      autoResumeVerifyMs: 1,
+    });
+    expect([lo.autoResumeMarginMs, lo.autoResumeMaxAttempts, lo.autoResumeVerifyMs]).toEqual([
+      0, 1, 30_000,
+    ]);
+    const hi = coerceSettings({
+      autoResumeMarginMs: 9e9,
+      autoResumeMaxAttempts: 99,
+      autoResumeVerifyMs: 9e9,
+    });
+    expect([hi.autoResumeMarginMs, hi.autoResumeMaxAttempts, hi.autoResumeVerifyMs]).toEqual([
+      900_000, 5, 600_000,
+    ]);
+    const def = coerceSettings({});
+    expect([def.autoResumeMarginMs, def.autoResumeMaxAttempts, def.autoResumeVerifyMs]).toEqual([
+      120_000, 3, 90_000,
+    ]);
+  });
+
+  it('keeps a multi-line message and rejects an empty or over-long one', () => {
+    expect(coerceSettings({ autoResumeMessage: 'Go on\nplease' }).autoResumeMessage).toBe(
+      'Go on\nplease',
+    );
+    expect(coerceSettings({ autoResumeMessage: '  ' }).autoResumeMessage).toBe('Continue');
+    expect(coerceSettings({ autoResumeMessage: 'x'.repeat(16_001) }).autoResumeMessage).toBe(
+      'Continue',
+    );
   });
 });
 

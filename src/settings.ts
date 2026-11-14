@@ -5,8 +5,10 @@ import {
   coerceGlobalPolicy,
   type GlobalPolicy,
 } from './conduit-mcp/tool-policy';
+import type { AutoResumeMode } from './contracts/scheduler';
 import { DEFAULT_LAYOUT, parseLayout, serializeLayout } from './layout';
 import type { LogLevel } from './logging';
+import { normalizeMessage } from './message-text';
 import {
   type AgentsView,
   coerceAgentsView,
@@ -78,7 +80,6 @@ export function parseAutoSaveDelayInput(raw: string): number | null {
 /** User-facing application settings, persisted to settings.json in userData. */
 /** Explorer file-icon style: no icons, monochrome line icons, or per-type coloured icons. */
 export type IconPack = 'none' | 'minimal' | 'colored';
-export type LimitResumeMode = 'off' | 'offer' | 'arm';
 export type ChangesViewMode = 'all' | 'active';
 
 export interface AppSettings {
@@ -169,12 +170,13 @@ export interface AppSettings {
   // Behaviour: raise OS-level attention (taskbar flash + system notification) when
   // a backgrounded session finishes while the window is not focused. Default ON.
   osAttention: boolean;
-  // Behaviour: what to do when a session's own trailing output says it hit a usage limit and
-  // names a reset time. 'arm' (default) schedules `Continue` for reset + 60s and says so with an
-  // Undo toast; 'offer' asks first; 'off' does not run the detector at all. Default 'arm'
-  // because the stated job is "I don't have to come back and send a message manually" — safety
-  // is in the arming gates, not in asking (spec 2026-08-28-timed-messages §5).
-  autoResumeOnLimit: LimitResumeMode;
+  // Auto-resume after a usage limit (see spec 2026-11-13-scheduler-auto-resume §3 "Settings").
+  // 'on' arms a resume job; 'ask' proposes it; 'off' only tracks the limit for "needs you".
+  autoResume: AutoResumeMode;
+  autoResumeMarginMs: number;
+  autoResumeMaxAttempts: number;
+  autoResumeMessage: string;
+  autoResumeVerifyMs: number;
   // Behaviour: automatically relaunch sessions that were still running when the
   // app was last closed ("stale" after restore). Default OFF — re-running an
   // arbitrary command on startup can be destructive, so this must be opt-in.
@@ -264,7 +266,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   terminalFontSize: 13,
   editorFontSize: 13,
   osAttention: true,
-  autoResumeOnLimit: 'arm',
+  autoResume: 'on',
+  autoResumeMarginMs: 120_000,
+  autoResumeMaxAttempts: 3,
+  autoResumeMessage: 'Continue',
+  autoResumeVerifyMs: 90_000,
   autoRelaunchStale: false,
   trackCwd: true,
   changesView: 'all',
@@ -280,7 +286,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
 };
 
 const LOG_LEVELS: LogLevel[] = ['off', 'error', 'warn', 'info', 'debug', 'trace'];
-const LIMIT_RESUME_MODES: LimitResumeMode[] = ['off', 'offer', 'arm'];
+const AUTO_RESUME_MODES: AutoResumeMode[] = ['on', 'ask', 'off'];
+/** The pre-CON-11 key's values, read once when `autoResume` is absent. */
+const LEGACY_AUTO_RESUME: Record<string, AutoResumeMode> = { arm: 'on', offer: 'ask', off: 'off' };
 const CHANGES_VIEWS: ChangesViewMode[] = ['all', 'active'];
 
 const DENSITIES: Density[] = ['comfortable', 'compact'];
@@ -379,6 +387,12 @@ const clampWidth = (n: unknown, def: number): number =>
 
 const clampNum = (n: unknown, min: number, max: number, def: number): number =>
   typeof n === 'number' && Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : def;
+
+const resumeMessage = (v: unknown): string => {
+  if (typeof v !== 'string') return DEFAULT_SETTINGS.autoResumeMessage;
+  const checked = normalizeMessage(v);
+  return checked.ok ? checked.message : DEFAULT_SETTINGS.autoResumeMessage;
+};
 
 /** Validate a `#rrggbb` hex colour (case-insensitive); otherwise return `def`. */
 const hexColor = (v: unknown, def: string): string =>
@@ -543,10 +557,22 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     terminalFontSize: clampNum(payload.terminalFontSize, 8, 32, DEFAULT_SETTINGS.terminalFontSize),
     editorFontSize: clampNum(payload.editorFontSize, 8, 32, DEFAULT_SETTINGS.editorFontSize),
     osAttention: bool(payload.osAttention, DEFAULT_SETTINGS.osAttention),
-    autoResumeOnLimit: oneOf(
-      payload.autoResumeOnLimit,
-      LIMIT_RESUME_MODES,
-      DEFAULT_SETTINGS.autoResumeOnLimit,
+    autoResume: oneOf(
+      payload.autoResume,
+      AUTO_RESUME_MODES,
+      (typeof payload.autoResumeOnLimit === 'string'
+        ? LEGACY_AUTO_RESUME[payload.autoResumeOnLimit]
+        : undefined) ?? DEFAULT_SETTINGS.autoResume,
+    ),
+    autoResumeMarginMs: Math.round(
+      clampNum(payload.autoResumeMarginMs, 0, 900_000, DEFAULT_SETTINGS.autoResumeMarginMs),
+    ),
+    autoResumeMaxAttempts: Math.round(
+      clampNum(payload.autoResumeMaxAttempts, 1, 5, DEFAULT_SETTINGS.autoResumeMaxAttempts),
+    ),
+    autoResumeMessage: resumeMessage(payload.autoResumeMessage),
+    autoResumeVerifyMs: Math.round(
+      clampNum(payload.autoResumeVerifyMs, 30_000, 600_000, DEFAULT_SETTINGS.autoResumeVerifyMs),
     ),
     autoRelaunchStale: bool(payload.autoRelaunchStale, DEFAULT_SETTINGS.autoRelaunchStale),
     trackCwd: bool(payload.trackCwd, DEFAULT_SETTINGS.trackCwd),

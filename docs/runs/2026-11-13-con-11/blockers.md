@@ -17,6 +17,14 @@
 - D5 (lane B): plan widened by two construction-site test edits (conduit-mcp-host.test.ts,
   server-runtime-spawn.test.ts) — approved by conductor.
 
+- D6 (lead 2026-11-14 02:54Z): lane A gated together with E.5/E.6 (its only gate failure is fallow's duplicate
+  exports against timer-scheduler.ts, which E.6 deletes). Windows status line: the launcher resolves Git Bash
+  (CLAUDE_CODE_GIT_BASH_PATH or src/shells.ts candidates); NEVER a bare `bash` on PATH. No Git Bash → the
+  statusLine wrapper is not injected for that launch (user's own status line untouched, no reset-info, rules
+  give the reset), logged once per launch, unit-tested.
+- D7 (conductor): lane A's Haiku retries ran out with one blocker open; conductor fixed it (3daa3315, reviewed
+  APPROVE) instead of quarantining the scheduler core.
+
 ## User decisions
 - Executors are Haiku subagents (human, via lead). Risk: weak on slow/flaky suites and diagnosis.
 

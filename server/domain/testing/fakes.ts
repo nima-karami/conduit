@@ -31,6 +31,8 @@ export class FakeRuntime implements TerminalRuntime {
   readonly spawns: SpawnCall[] = [];
   readonly terminals = new Map<string, RuntimeTerminal>();
   readonly tails = new Map<string, string[]>();
+  /** The rendered rows `screen()` answers with, per session (the Limit monitor's rules scan). */
+  readonly screens = new Map<string, string[]>();
   private listeners: ((e: RuntimeEvent) => void)[] = [];
   /** Default: a live terminal at 80x24. */
   nextSpawn?: (call: SpawnCall) => Promise<SpawnResult>;
@@ -86,8 +88,9 @@ export class FakeRuntime implements TerminalRuntime {
   get(sessionId: string): RuntimeTerminal | undefined {
     return this.terminals.get(sessionId);
   }
-  async screen() {
-    return null;
+  async screen(sessionId: string) {
+    const lines = this.screens.get(sessionId);
+    return lines ? { lines, cursorY: lines.length - 1, cursorX: 0, cursorRowStyles: '' } : null;
   }
   tailLines(sessionId: string, n: number): string[] {
     return (this.tails.get(sessionId) ?? []).slice(-n);
@@ -179,7 +182,9 @@ export function harness(opts: HarnessOptions = {}) {
   const lastSizes = new Map<string, TermGeometry>();
   const written: { sessionId: string; data: string; generation?: number }[] = [];
   const drafts: { sessionId: string; data: string }[] = [];
-  const submitted: { sessionId: string; text: string }[] = [];
+  const submitted: { sessionId: string; text: string; bracketed?: boolean }[] = [];
+  const resumeIssues = new Map<string, string | null>();
+  const attentionListeners = new Set<() => void>();
   const state = {
     stopping: opts.stopping ?? false,
     busy: false,
@@ -241,10 +246,21 @@ export function harness(opts: HarnessOptions = {}) {
         attentionReason: null,
         completions: 0,
       }),
+      onChange: (listener) => {
+        attentionListeners.add(listener);
+        return () => attentionListeners.delete(listener);
+      },
+      setResumeIssue: (sessionId, reason) => {
+        resumeIssues.set(sessionId, reason);
+      },
     },
     typing: {
-      submit: async (sessionId, text): Promise<SubmitOutcome> => {
-        submitted.push({ sessionId, text });
+      submit: async (sessionId, text, o): Promise<SubmitOutcome> => {
+        submitted.push({
+          sessionId,
+          text,
+          ...(o?.bracketed === undefined ? {} : { bracketed: o.bracketed }),
+        });
         return 'submitted';
       },
       submitEnter: async (): Promise<SubmitOutcome> => 'submitted',
@@ -307,6 +323,11 @@ export function harness(opts: HarnessOptions = {}) {
     written,
     drafts,
     submitted,
+    resumeIssues,
+    /** Tells the domain attention changed (after flipping `state.busy`). */
+    attentionChanged: () => {
+      for (const l of attentionListeners) l();
+    },
     state,
     logs,
     deps,

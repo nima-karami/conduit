@@ -20,6 +20,7 @@ import {
   type ToolName,
   withPolicyPatch,
 } from '../../src/conduit-mcp/tool-policy';
+import type { AutoResumeMode } from '../../src/contracts/scheduler';
 import type { LogLevel } from '../../src/logging';
 import type { AboutInfo } from '../../src/protocol';
 import type {
@@ -32,7 +33,6 @@ import type {
   FontSize,
   HtmlDefaultView,
   IconPack,
-  LimitResumeMode,
 } from '../../src/settings';
 import { AUTO_SAVE_MODES, DEFAULT_SETTINGS, THEME_DEFAULTS } from '../../src/settings';
 import type { SkillDestination, SkillInfo, SkillStatus } from '../../src/skills';
@@ -1183,18 +1183,18 @@ function General({
         </Section>
         <Section
           title="Resume automatically after a usage limit"
-          desc="When a session says it hit a usage limit and names a reset time, arm a Continue for just after the reset. Offer asks first; Off never looks."
+          desc="When a session says it hit a usage limit and names a reset time, arm a Continue for just after the reset. Ask me asks first; Off never resumes."
         >
           <SelectField
             ariaLabel="Resume automatically after a usage limit"
-            value={settings.autoResumeOnLimit}
+            value={settings.autoResume}
             disabled={!serverConnected}
             options={[
-              { value: 'arm', label: 'Arm it' },
-              { value: 'offer', label: 'Ask me' },
+              { value: 'on', label: 'Arm it' },
+              { value: 'ask', label: 'Ask me' },
               { value: 'off', label: 'Off' },
             ]}
-            onChange={(v) => update({ autoResumeOnLimit: v as LimitResumeMode })}
+            onChange={(v) => update({ autoResume: v as AutoResumeMode })}
           />
         </Section>
       </SetGroup>

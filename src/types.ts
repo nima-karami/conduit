@@ -163,6 +163,8 @@ export interface Session {
   closeWhenDone?: boolean;
   /** The model the agent's CLI runs with, from open_session (CON-148); effectiveDef adds its flag. Persisted. */
   model?: string;
+  /** Per-session auto-resume override; absent = inherit the global setting (spec 2026-11-13-scheduler-auto-resume §3). Persisted. */
+  autoResume?: 'on' | 'off';
   /** live working dir (cd-tracked); falls back to home */
   cwd?: string;
   /** Runtime-only (stripped by serializeSessions). Keyed by RepoInfo.root exactly as in `repos`.

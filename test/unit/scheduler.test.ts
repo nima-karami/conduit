@@ -14,7 +14,6 @@ import {
   PTY_SETTLE_MS,
   type TimedMessageInput,
 } from '../../src/timed-messages';
-import { TimerScheduler } from '../../src/timer-scheduler';
 
 const HOUR = 3_600_000;
 const NOW = Date.UTC(2026, 7, 28, 15, 0, 0);
@@ -292,6 +291,44 @@ describe('firing into a live PTY', () => {
     expect(h.scheduler.list()[0].history.map((e) => e.reason)).toContain('write failed');
   });
 
+  it('a delivery that throws keeps the error text in history and consumes the slot', async () => {
+    const h = harness({
+      deliver: async () => {
+        throw new Error('pty write threw');
+      },
+    });
+    arm(h);
+    await h.tick(60_000);
+    const job = h.scheduler.list()[0];
+    expect(job.state).toBe('done');
+    expect(job.history.map((e) => e.reason)).toContain('pty write threw');
+  });
+
+  it('refuses an edit while that job is being delivered', async () => {
+    let release: (v: DeliveryResult) => void = () => {};
+    const h = harness({
+      deliver: () =>
+        new Promise<DeliveryResult>((r) => {
+          release = r;
+        }),
+    });
+    const first = arm(h);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    await h.tick(60_000);
+    expect(arm(h, { id: first.job.id, message: 'edited' })).toMatchObject({ ok: false });
+    release(OK);
+    await h.tick(0);
+    expect(h.scheduler.list()[0].action.message).toBe('Continue');
+  });
+
+  it('refuses an interval whose last repeat would fall past the epoch ceiling', () => {
+    const h = harness();
+    expect(
+      arm(h, { trigger: { kind: 'every', everyMs: 365 * 24 * HOUR, maxRepeats: 100 } }),
+    ).toEqual({ ok: false, error: 'That time could not be read — use HH:MM.' });
+  });
+
   it('a late fire into a gone session projects lastFire late', async () => {
     const h = harness();
     arm(h);
@@ -518,7 +555,6 @@ describe('the limit job', () => {
   it('arms Continue one minute past the reset', () => {
     const h = harness();
     const r = resume(h);
-    expect(r.ok).toBe(true);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.job).toMatchObject({
@@ -1476,50 +1512,9 @@ describe('trigger guards, settle and expiry timers, lastFire parity', () => {
     expect(h.scheduler.list()).toHaveLength(0);
   });
 
-  describe('lastFire parity with TimerScheduler', () => {
+  // The expected values were measured against the pre-CON-11 TimerScheduler before it was removed.
+  describe('lastFire parity with the TimerScheduler it replaced', () => {
     type Step = { tick: number } | { alive: boolean } | { ptyStart: true };
-
-    async function runTimer(steps: Step[]) {
-      let clock = NOW;
-      const slot: { pending: { at: number; fn: () => void } | null } = { pending: null };
-      const alive = new Set<string>(['s1']);
-      const timer = new TimerScheduler({
-        now: () => clock,
-        setTimer: (ms, fn) => {
-          slot.pending = { at: clock + ms, fn };
-          return slot.pending;
-        },
-        clearTimer: () => {
-          slot.pending = null;
-        },
-        isAlive: (id) => alive.has(id),
-        deliver: async () => true,
-        sessionExists: () => true,
-        onChange: () => {},
-        onFired: () => {},
-        minDelayMs: 0,
-        minIntervalMs: 0,
-      });
-      timer.set({ sessionId: 's1', message: 'Continue', trigger: { kind: 'in', delayMs: 60_000 } });
-      for (const step of steps) {
-        if ('tick' in step) {
-          clock += step.tick;
-          const due = slot.pending;
-          if (due && due.at <= clock) {
-            slot.pending = null;
-            due.fn();
-          }
-          await flush();
-        } else if ('alive' in step) {
-          if (step.alive) alive.add('s1');
-          else alive.delete('s1');
-        } else {
-          alive.add('s1');
-          timer.onPtyStart('s1');
-        }
-      }
-      return timer.list()[0].lastFire;
-    }
 
     async function runNew(steps: Step[]) {
       const h = harness();
@@ -1545,7 +1540,6 @@ describe('trigger guards, settle and expiry timers, lastFire parity', () => {
     it('on time: lastFire matches TimerScheduler', async () => {
       const steps: Step[] = [{ tick: 60_000 }];
       const expected = { at: NOW + 60_000, late: false, delivered: true };
-      expect(await runTimer(steps)).toEqual(expected);
       expect(await runNew(steps)).toEqual(expected);
     });
 
@@ -1558,7 +1552,6 @@ describe('trigger guards, settle and expiry timers, lastFire parity', () => {
         { tick: PTY_SETTLE_MS },
       ];
       const expected = { at: NOW + 60_000 + PTY_SETTLE_MS, late: true, delivered: true };
-      expect(await runTimer(steps)).toEqual(expected);
       expect(await runNew(steps)).toEqual(expected);
     });
 
@@ -1577,7 +1570,6 @@ describe('trigger guards, settle and expiry timers, lastFire parity', () => {
         delivered: false,
         reason: 'expired',
       };
-      expect(await runTimer(steps)).toEqual(expected);
       expect(await runNew(steps)).toEqual(expected);
     });
   });

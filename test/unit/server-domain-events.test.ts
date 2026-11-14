@@ -62,7 +62,7 @@ describe('server domain: event order', () => {
     const fired = h.types().indexOf('timers.fired');
     expect(fired).toBeGreaterThanOrEqual(0);
     expect(fired).toBeLessThan(h.events.findIndex(showsFire));
-    expect(h.submitted).toEqual([{ sessionId: id, text: 'go' }]);
+    expect(h.submitted).toEqual([{ sessionId: id, text: 'go', bracketed: false }]);
   });
 
   it('refuses timers.test unless started for e2e', async () => {
@@ -84,7 +84,7 @@ describe('server domain: event order', () => {
     await h.call('system.resumed');
     // Microtasks only: advancing the fake clock would run the armed timeout and prove nothing.
     for (let i = 0; i < 20; i++) await Promise.resolve();
-    expect(h.submitted).toEqual([{ sessionId: id, text: 'wake' }]);
+    expect(h.submitted).toEqual([{ sessionId: id, text: 'wake', bracketed: false }]);
   });
 });
 
@@ -98,17 +98,69 @@ describe('server domain: internal subscribers on C1 data', () => {
     expect(line.length).toBe(120);
   });
 
-  it('arms a limit timer from the trailing lines per autoResumeOnLimit', async () => {
+  // see spec 2026-11-13-scheduler-auto-resume R6: rules read the rendered screen, not the tail.
+  it('arms one resume job from a limit notice on the rendered screen, per autoResume', async () => {
+    const h = harness();
+    const notice = [
+      "You've hit your session limit · resets 11:10pm (America/Toronto)",
+      'line under it',
+      'another',
+      'and a third',
+    ];
+    const id = await live(h, { agentId: 'claude' });
+    h.runtime.screens.set(id, notice);
+    data(h, id, 'x');
+    const resumeJobs = (sid: string) =>
+      (h.domain.snapshot().timers.jobs ?? []).filter(
+        (j) => j.sessionId === sid && j.trigger.kind === 'limit-reset',
+      );
+    await vi.waitFor(() => expect(resumeJobs(id)).toHaveLength(1), { timeout: 3000 });
+
+    await h.call('serverSettings.patch', { patch: { autoResume: 'off' } });
+    const other = await live(h, { agentId: 'claude' });
+    h.runtime.screens.set(other, notice);
+    data(h, other, 'x');
+    await vi.waitFor(
+      () =>
+        expect(h.domain.snapshot().timers.episodes?.some((e) => e.sessionId === other)).toBe(true),
+      { timeout: 3000 },
+    );
+    expect(resumeJobs(other)).toHaveLength(0);
+    expect(h.resumeIssues.get(other)).toMatch(/auto-resume is off/);
+  });
+
+  it('a Claude StopFailure hook with a status-line reset arms one job; human input resolves the episode', async () => {
+    const h = harness();
+    const id = await live(h, { agentId: 'claude' });
+    const resetSec = Math.floor(Date.now() / 1000) + 3600;
+    h.domain.hookPost(id, {
+      conduitHook: 1,
+      token: 't',
+      event: 'StatusLine',
+      payload: { rate_limits: { five_hour: { used_percentage: 100, resets_at: resetSec } } },
+    });
+    h.domain.hookPost(id, {
+      conduitHook: 1,
+      token: 't',
+      event: 'StopFailure',
+      payload: { hook_event_name: 'StopFailure', error: 'rate_limit' },
+    });
+    const jobs = (h.domain.snapshot().timers.jobs ?? []).filter((j) => j.sessionId === id);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]?.nextAt).toBe(resetSec * 1000 + 120_000);
+    h.domain.humanInput(id);
+    expect(h.domain.snapshot().timers.episodes?.find((e) => e.sessionId === id)?.state).toBe(
+      'resumed',
+    );
+  });
+
+  it('tracks bracketed paste for every session, not only scoped ones (spec R2)', async () => {
     const h = harness();
     const id = await live(h);
-    data(h, id, 'x', ["You've hit your session limit · resets 11:10pm (America/Toronto)"]);
-    const { schedules } = h.domain.snapshot().timers;
-    expect(schedules.filter((s) => s.sessionId === id && s.origin === 'limit')).toHaveLength(1);
-
-    await h.call('serverSettings.patch', { patch: { autoResumeOnLimit: 'off' } });
-    const other = await live(h);
-    data(h, other, 'x', ["You've hit your session limit · resets 11:10pm (America/Toronto)"]);
-    expect(h.domain.snapshot().timers.schedules.some((s) => s.sessionId === other)).toBe(false);
+    data(h, id, `${ESC}[?2004h`);
+    expect(h.domain.domain.bracketedPaste(id)).toBe(true);
+    data(h, id, `${ESC}[?2004l`);
+    expect(h.domain.domain.bracketedPaste(id)).toBe(false);
   });
 
   it('tracks bracketed paste for runAddDir and notes the paste as a draft before writing', async () => {
