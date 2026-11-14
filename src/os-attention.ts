@@ -6,6 +6,8 @@
  * imports) so it is fully unit-testable without any host context.
  */
 
+import type { ServerEvents } from './contracts/server-protocol';
+
 export interface OsAttentionInput {
   /** The session just transitioned from busy -> needs-attention (the edge). */
   becameNeedsAttention: boolean;
@@ -24,4 +26,32 @@ export interface OsAttentionInput {
  */
 export function shouldRaiseOsAttention(input: OsAttentionInput): boolean {
   return input.enabled && input.becameNeedsAttention && !input.windowFocused;
+}
+
+/**
+ * The OS notification text. Built from the session name and the edge only: agent text never
+ * reaches an OS notice (spec §4.5).
+ */
+export function attentionBody(
+  name: string,
+  edge: Pick<ServerEvents['attention.edge'], 'kind' | 'requestKind' | 'count'>,
+): string {
+  if (edge.kind === 'run-end') return `${name} finished`;
+  if (edge.kind === 'request') {
+    if (edge.count !== undefined && edge.count > 1) return `${edge.count} new requests need you`;
+    switch (edge.requestKind) {
+      case 'attend':
+        return `${name} is waiting at a prompt`;
+      case 'confirm':
+        return `${name} needs your approval`;
+      case 'review':
+        return `${name} asks you to review`;
+      case 'choose':
+      case 'text':
+        return `${name} asks you a question`;
+      default:
+        return `${name} is waiting`;
+    }
+  }
+  return `${name} is waiting`;
 }
