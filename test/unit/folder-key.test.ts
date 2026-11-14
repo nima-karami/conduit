@@ -7,6 +7,12 @@ describe('folderKey', () => {
     expect(folderKey('c:/A/x/')).toBe('c:/a/x');
   });
 
+  it('a bare drive root folds like any drive path', () => {
+    expect(folderKey('C:\\')).toBe('c:');
+    expect(folderKey('C:\\')).toBe(folderKey('c:/'));
+    expect(folderKey('c:/')).toBe('c:');
+  });
+
   it('posix paths stay case-sensitive', () => {
     expect(folderKey('/Work/x')).toBe('/Work/x');
     expect(folderKey('/work/x/')).toBe('/work/x');

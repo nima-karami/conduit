@@ -129,7 +129,12 @@ export type Capability = 'messaging' | 'monitor' | 'drive' | 'orchestrate';
 export type Principal =
   | { kind: 'session'; sessionId: string; handle: string; launchedCli: CliKind | null; homeFolder: string | null; projectId: string | null }
   | { kind: 'remote'; handle: string; machineId: string; remoteSessionId: string; trust: 'own'; capabilities: readonly Capability[] };
-export interface PolicyTarget { sessionId: string | null; path: string | null; projectId: string | null }
+export interface PolicyTarget {
+  sessionId: string | null;   // a session target
+  path: string | null;        // the exact file/folder a tool acts on ("this target only")
+  folder: string | null;      // the folder the target lives in: a session's cwd, a file's parent, a folder itself ("this folder")
+  projectId: string | null;
+}
 
 export type GrantWho = { kind: 'session'; sessionId: string } | { kind: 'cli'; cli: CliKind } | { kind: 'peer'; machineId: string };
 export type GrantFor = 'session-end' | '1h' | '24h' | 'until-revoked';
@@ -179,11 +184,12 @@ export const BUILT_IN_PROFILES: readonly Profile[];              // observer, wo
 export function profileById(state: PolicyState, id: ProfileId): Profile | null;
 export function pointKey(p: AssignmentPoint): string;            // 'session:<id>' | 'peer:<m>' | 'cli:<k>' | 'default'
 export function effectiveRule(profile: Profile, a: Assignment, tool: ToolName, target: PolicyTarget | null): ToolRule;
+export function matchesScope(scope: Scope, target: PolicyTarget | null): boolean;   // the one scope matcher; decide() resolves no-target calls first
+export const WORKER_PROFILE: Profile;                // fallback for an unknown profileId
 // policy-engine.ts
 export function decide(state: PolicyState, input: PolicyInput): PolicyDecision;
-export function visibleTools(state: PolicyState, principal: Principal, masterOn: boolean): ToolName[];
+export function visibleTools(state: PolicyState, principal: Principal, now: number): ToolName[];  // master-off keeps every tool listed (today: messaging_off, not unknown-tool)
 export function assignmentFor(state: PolicyState, p: Principal): { point: AssignmentPoint; assignment: Assignment };
-export function matchesScope(scope: Scope, target: PolicyTarget, principal: Principal): boolean;
 export function reasonText(reason: Reason, decision: Decision, names: { profileName(id: ProfileId): string; cliName(k: CliKind): string }): string;
 ```
 - **Worker.** Worker's rules are built from `TOOL_SPECS[*].defaults` (`tool-policy.ts:131-202`), mapping off→deny, ask→ask, on→allow. Worker equals today by construction.
@@ -192,13 +198,15 @@ export function reasonText(reason: Reason, decision: Decision, names: { profileN
 
 Engine invariants:
 - **Precedence is exactly POL §4.3:** floors (a, d, c), then explicit denies (passable only by a matching one-use override, never a floor), then active, unexpired, unsuspended grants matching who × tool × scope, then the most specific assignment.
-- **Assignment specificity.** A session beats a peer, which beats a kind, which beats the default. Kind is used only when `launchedCli !== null`. A remote principal uses its peer assignment; with none, an own peer is Worker with `open_session`, `open_terminal`, `send_input`, `close_session` and `attach_folder` at ask.
+- **Assignment specificity.** A session beats a peer, which beats a kind, which beats the default. Kind is used only when `launchedCli !== null`. A remote principal uses its peer assignment; with none, an own peer is Worker with NET §4.1's orchestrate set (`open_session`, `open_terminal`, `close_session`, `send_input`, `read_screen`) at ask.
 - **Within an assignment.** An exception beats the profile, and a narrower scope beats a wider one. On an exact tie the stricter decision wins (deny > ask > allow).
 - **Several targets.** The strictest per-target decision wins, and its reason is reported.
 - **Remote principals.** `when` is forced to `'always'`, and `reach: 'window'` becomes `'opened'`.
 - **`onScreenOnly`.** It forces `when: 'viewing'` on every tool whose rule has a `when`.
 - **Defaults.** A target with no session or path matches the caller's `homeFolder`. Floor (c): a local session with `toYou` on `send_message` or `request_input` is always allowed.
 - **Every result carries exactly one `Reason`.**
+- **Explicit denies (review ruling).** Only exception denies are explicit (step 2). A profile deny is decided at step 4, so a grant can pass it: Guest is a deny profile that Share grants pass (§1 success 5). "Rule" in §4.3 step 2 means the v1 user-made rules. Explicit denies come only from the chosen assignment, which replaces lower ones.
+- **Hidden tools.** `visibleTools` hides a tool only when it is denied for every target: a non-master floor, or a profile deny with no non-deny exception and no matching grant.
 
 ### C3 Stores — `policy-file.ts`, `grant-store.ts` (Slice 1, lane B)
 ```ts
@@ -217,10 +225,19 @@ export interface GrantStore {
   sessionEnded(sessionId: string): Grant[];                 // expires grants whose who.sessionId or anchorSessionId matches
   tick(): Grant[];                                          // expires by expiresAt and 7-day decay ('session-end' only); purges expired > 24 h
 }
-export function grantScopeFor(choice: GrantChoice['on'], target: PolicyTarget, principal: Principal): Scope;
+export function grantScopeFor(choice: GrantChoice['on'], target: PolicyTarget, principal: Principal): Scope | null;  // null: nothing to bind to; never widens
 export function grantWhoFor(choice: GrantChoice['who'], principal: Principal): GrantWho | null;  // null: kind for a non-launched session
 export function isExpiring(g: Grant, now: number): boolean;
 ```
+
+Review rulings for C3 (lane B, 2026-11-14):
+- **Scopes.** `'target'` → session scope if `target.sessionId`, else a path scope on `target.path`, else null. `'folder'` → a folder scope on `target.folder`, else null. Never widens to anywhere.
+- **Ended sessions.** `sessionEnded(id)` also expires active or suspended grants whose `on` is `{kind:'session', sessionId:id}` (spec §5.2).
+- **Missing tools.** A profile in `policy.json` may omit tools; a missing tool's rule is filled from `WORKER_PROFILE` at parse time, and unknown tool keys are dropped.
+- **Unknown fields.** They are ignored everywhere (the reader rule in `session-identity.ts`). A future narrowing field must bump the file version instead.
+- **Expiring.** `isExpiring` also covers a `'session-end'` grant within 10 min of its 7-day decay.
+- **Ended state.** An ended grant (`expired`/`revoked`) must carry `endedAt`.
+- **Engine.** `matchesScope`: a folder scope tests `target.folder`, a path scope tests `target.path`. No-target resolution sets `path = folder = homeFolder`.
 
 ### C4 Activity — `activity-log.ts`, `activity-log-fs.ts` (Slice 1, lane C)
 ```ts
@@ -240,14 +257,17 @@ export interface ActivityIo { append(day: string, line: string): void; list(): A
 export interface ActivityLog {
   record(e: Omit<ActivityEntry, 'v' | 'id' | 'at'>): string;     // returns id; counted allow rows aggregate per session per hour
   recordAskArgs(requestId: string, args: unknown): void;          // 24 h TTL
-  flushCounts(): void; purge(): void; writable(): boolean;
+  flushCounts(all: boolean): void;   // all=false: finished hours only (timer); all=true: every bucket (service stop)
+  purge(): void; writable(): boolean;
   recentDenies(): ReadonlyMap<string, ActivityEntry>;            // last 200 deny rows by id, for allowOnce
 }
 export function createActivityLog(deps: { io: ActivityIo; now(): number; newId(): string; warn(m: string, e?: unknown): void }): ActivityLog;
 export function createActivityIo(dir: string): ActivityIo;       // <dir>/activity/YYYY-MM-DD.jsonl, ask-args.json
 ```
 - **Write failure.** A failed append sets `writable() === false` and logs one warning. The next append that succeeds first writes a `lane:'note', action:'gap'` row covering the unwritten span.
-- **Retention.** `purge()` deletes day files older than 30 days. It then deletes the oldest files until the total is 50 MB or less.
+- **Counted rows (review S1-C).** A bucket is keyed by the whole principal (handle, sessionId, machineId), the action, the outcome and the UTC hour. Its row is stamped `at` = the start of that hour and written to that hour's day file. `record()` returns the bucket row's id, assigned when the bucket is created.
+- **ask-args.json** is `{version:1; asks: Record<requestId,{at,args}>}`, judged with `judgePersistedVersion('conduit-mcp/activity/ask-args.json')`. If the file is corrupt, newer or unreadable, the ask store is read-only for the process: warn once, never overwrite it.
+- **Retention.** `purge()` deletes day files older than 30 days. It then deletes the oldest files until the total is 50 MB or less. Today's file is never deleted, since it is the one being appended to, so today alone can exceed the cap.
 
 ### C5 Observed parsers (Slice 1, lane C)
 ```ts
@@ -331,6 +351,12 @@ export interface PolicyUiState {
 - **Re-decide at answer time.** `decide()` runs again before anything executes:
   - A new deny withdraws the request (`withdrawnBy: 'conduit'`, reason = `reasonText`), and the call returns `tool_disabled` with that reason.
   - A late answer with a grant creates the grant, calls `answerLate`, and appends the notice "You can retry <tool> now" to the requester's inbox through the CON-21 hidden late-answer thread path. It never runs the call.
+
+## Seams with CON-27 (agreed with claude-22, lead-approved, 2026-11-14)
+1. `src/contracts/remote-principal.ts` is created **byte-identical** on both branches: `Capability = 'messaging'|'monitor'|'drive'`, `Capabilities`, `RemotePrincipal {kind:'remote'; handle; machineId; trust:'own'}`, `principalAddress`. C1's remote principal becomes `RemotePrincipal & { capabilities: Capabilities }`; C1 drops its own `Capability` type and `remoteSessionId`. Orchestrate tools are denied to remote principals until `orchestrate` joins `Capability` (v1).
+2. NET enforces the capability floor at its inbound boundary. POL's floor (d) stays as a second check on `principal.capabilities`, which the composer fills from NET's `capabilitiesOf(machineId)`; null or false means deny.
+3. NET's `AuditSink.record` takes a closed union of its 11 kinds. The branch that lands second adds `activityAuditSink(log: ActivityLog): AuditSink`, which writes Activity `note` rows with no bodies or keystrokes, and swaps it into NET's composer.
+4. NET's `onRevoked(machineId)` hook: the branch that lands second wires it to `GrantStore.peerRevoked(machineId)` (grants → revoked) and to REQ withdrawing that peer's open requests (`withdrawnBy:'conduit'`, "link revoked").
 
 ## Producer/consumer map
 | Behaviour changed | Produced by | Consumed by | Sides this plan touches |
@@ -541,6 +567,7 @@ Failing tests:
 - **T4.2 Codex watch.**
   - Files: `codex-rollout-watch.ts` (`onAction(sessionId, CodexAction)` dep, skips the replay read, reports `onFeed(sessionId, 'unavailable')` on an ambiguous or no bind after the 30 s bind window); test `codex-rollout-watch.test.ts`.
   - Failing tests: 'replay emits no actions'; 'new item_completed emits one action'; 'ambiguous bind reports unavailable'.
+- **T4.1b Claude feed-gap check (lead condition on the async hook).** An async PostToolUse post can be lost without Conduit knowing. On each `Stop` hook (sync, already delivered), the host reads the transcript (`transcript_path`), counts the `tool_use` entries since the previous Stop whose tool names match the PostToolUse matcher, and compares that with the PostToolUse posts received for the session over the same span. A shortfall writes one `note` row ("Feed gap: N actions not reported"). The reader is `src/claude-transcript-tools.ts` (`countMatchedToolUses(jsonl: string, sinceUuid: string | null): {count: number; lastUuid: string | null}`), tested against a scrubbed transcript fixture.
 - **T4.3 (serial) wiring.**
   - `server/domain/index.ts` passes `onAction`/`onFeed` and a PostToolUse branch in `hookPost`, then forwards through `server/services.ts` to `host.recordObserved(sessionId, action | {feed:'unavailable'})`. The row reads `lane:'observed'`, `decidedBy:'observed: decided by <CLI>, not Conduit'`.
 
