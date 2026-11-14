@@ -1,6 +1,7 @@
 import { type KeyboardEvent, useEffect, useRef } from 'react';
 import type { RequestView } from '../../src/conduit-mcp/request-types';
 import { openRequest, openSessionTerminal, requestPopup, usePopupRequest } from '../request-open';
+import { openAsOf } from '../request-view-model';
 import { useConduitMcp } from '../use-conduit-mcp';
 import { soonestOpen, useNow } from './request-tab';
 import { RequestTemplate } from './request-template';
@@ -82,29 +83,39 @@ export function RequestPopup({ sessions }: RequestPopupProps) {
   };
 
   return (
-    <div ref={boxRef} className="reqtpl-popup" onKeyDown={onKeyDown}>
-      <RequestTemplate
-        request={current}
-        sessionName={sessionName}
-        mode="popup"
-        moreCount={moreCount}
-        now={now}
-        onSend={(answer) => api.answerRequest(current.id, answer)}
-        onNext={() => {
-          if (next) requestPopup.open(next.id);
-        }}
-        onOpenAsTab={() => {
-          returnTo.current = null;
-          requestPopup.close();
-          openRequest(current.id, { asTab: true });
-        }}
-        onOpenTerminal={() => {
-          returnTo.current = null;
-          requestPopup.close();
-          if (current.session !== null) openSessionTerminal(current.session);
-        }}
-        onClose={() => requestPopup.close()}
-      />
+    // First child of .centerpane: a zero-height positioned layer anchors the pop-up to the
+    // top of the editor area without making the pane itself a containing block.
+    <div className="reqtpl-popup-layer">
+      <div ref={boxRef} className="reqtpl-popup" onKeyDown={onKeyDown}>
+        <RequestTemplate
+          request={current}
+          sessionName={sessionName}
+          mode="popup"
+          moreCount={moreCount}
+          now={now}
+          onSend={(answer) => api.answerRequest(current.id, answer)}
+          onNext={() => {
+            if (!next) return;
+            if (openAsOf(next) === 'popup') requestPopup.open(next.id);
+            else {
+              returnTo.current = null;
+              requestPopup.close();
+              openRequest(next.id);
+            }
+          }}
+          onOpenAsTab={() => {
+            returnTo.current = null;
+            requestPopup.close();
+            openRequest(current.id, { asTab: true });
+          }}
+          onOpenTerminal={() => {
+            returnTo.current = null;
+            requestPopup.close();
+            if (current.session !== null) openSessionTerminal(current.session);
+          }}
+          onClose={() => requestPopup.close()}
+        />
+      </div>
     </div>
   );
 }

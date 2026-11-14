@@ -16219,6 +16219,11 @@ button.toggle--on .toggle__knob {
 }
 
 /* Needs you: pop-up and request tab (CON-20) */
+.reqtpl-popup-layer {
+  position: relative;
+  height: 0;
+  z-index: var(--layer-popover);
+}
 .reqtpl-popup {
   position: absolute;
   top: 12px;

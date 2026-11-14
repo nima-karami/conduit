@@ -611,6 +611,7 @@ export function CenterPane({
           : undefined
       }
     >
+      <RequestPopup sessions={sessions} />
       {sessions.length === 0 ? (
         <CenterEmptyState repos={repos} agents={agents} onNewSession={onNewSession} />
       ) : (
@@ -637,8 +638,6 @@ export function CenterPane({
           terminalGroup={groupOne.activeDocId === null ? 1 : null}
         />
       )}
-
-      <RequestPopup sessions={sessions} />
 
       {compareOpen && active && (
         <CompareDialog

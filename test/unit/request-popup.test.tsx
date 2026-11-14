@@ -21,7 +21,7 @@ vi.mock('../../webview/bridge', () => ({
 }));
 
 import { RequestPopup } from '../../webview/components/request-popup';
-import { requestPopup } from '../../webview/request-open';
+import { requestPopup, setRequestOpeners } from '../../webview/request-open';
 
 const clock = { t: 1_000_000 };
 
@@ -209,6 +209,25 @@ describe('RequestPopup', () => {
     clock.t += 1000;
     act(() => nextButton()?.click());
     expect(shownTitle()).toBe('First ask');
+  });
+
+  it('Next to a tab-sized request opens it as a tab and closes the pop-up', async () => {
+    const openTab = vi.fn();
+    setRequestOpeners({ openTab, openTerminal: vi.fn() });
+    const light = view({
+      id: 'a',
+      title: 'Light ask',
+      waiting: true,
+      waitingUntil: '2026-11-14T10:05:00.000Z',
+    });
+    const heavy = view({ id: 'b', kind: 'review', title: 'Draft', draft: 'line' });
+    setRequests([light, heavy]);
+    await mount();
+    act(() => requestPopup.open('a'));
+    act(() => nextButton()?.click());
+    expect(openTab).toHaveBeenCalledWith(expect.objectContaining({ id: 'b' }));
+    expect(popupEl()).toBeNull();
+    setRequestOpeners(null);
   });
 
   it('it closes when the request disappears', async () => {
