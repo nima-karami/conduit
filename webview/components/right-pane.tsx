@@ -20,6 +20,7 @@ import type { MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
 import { FilesView, type FilesViewHandle, type FolderUiCache } from './files-view';
 import { MessagesPane } from './messages-pane';
+import { NeedsYouPanel } from './needs-you-panel';
 import { ReviewNavigator } from './review-navigator';
 import type { SearchPaneHandle, SearchScopeModel } from './search-pane';
 
@@ -195,7 +196,9 @@ export function RightPane({
       <span className="sr-only" role="status">
         {statusText}
       </span>
-      {tab === 'messages' ? (
+      {tab === 'needs' ? (
+        <NeedsYouPanel mcp={mcp} sessions={sessions} />
+      ) : tab === 'messages' ? (
         <MessagesPane
           key={messagesNav.seq}
           api={mcp}

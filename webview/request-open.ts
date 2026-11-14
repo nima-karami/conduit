@@ -70,7 +70,14 @@ export function createRequestOpen(deps: RequestOpenDeps) {
     return true;
   }
 
-  return { openRequest, requestPopup, setRequestOpeners };
+  function openSessionTerminal(sessionId: string): boolean {
+    const o = openers;
+    if (!o) return false;
+    o.openTerminal(sessionId);
+    return true;
+  }
+
+  return { openRequest, openSessionTerminal, requestPopup, setRequestOpeners };
 }
 
 const instance = createRequestOpen({
@@ -78,7 +85,7 @@ const instance = createRequestOpen({
   requests: () => getRequestsSnapshot()?.open ?? [],
 });
 
-export const { openRequest, requestPopup, setRequestOpeners } = instance;
+export const { openRequest, openSessionTerminal, requestPopup, setRequestOpeners } = instance;
 
 export function usePopupRequest(): string | null {
   return useSyncExternalStore(requestPopup.subscribe, requestPopup.current);

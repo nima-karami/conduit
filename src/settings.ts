@@ -54,7 +54,7 @@ export type Background = 'none' | 'aurora' | 'mesh' | 'grid' | 'flow' | 'shader'
 export type BgIntensity = 'subtle' | 'balanced' | 'vivid';
 export type SessionSort = 'manual' | 'name' | 'recent' | 'active' | 'status' | 'project';
 /** Active top-level tab of the right (explorer) pane. */
-export type RightPaneTab = 'changes' | 'files' | 'messages';
+export type RightPaneTab = 'needs' | 'changes' | 'files' | 'messages';
 /** Which side of an `.html`/`.htm` document a tab opens on. */
 export type HtmlDefaultView = 'preview' | 'source';
 /** VS Code `files.autoSave` modes (docs/specs/archive/2026-09-28-auto-save.md §2.2). */
@@ -321,7 +321,7 @@ function backgroundFrom(v: unknown): Background {
 const INTENSITIES: BgIntensity[] = ['subtle', 'balanced', 'vivid'];
 const SESSION_SORTS: SessionSort[] = ['manual', 'name', 'recent', 'active', 'status', 'project'];
 const ICON_PACKS: IconPack[] = ['none', 'minimal', 'colored'];
-const RIGHT_PANE_TABS: RightPaneTab[] = ['changes', 'files', 'messages'];
+const RIGHT_PANE_TABS: RightPaneTab[] = ['needs', 'changes', 'files', 'messages'];
 const HTML_DEFAULT_VIEWS: HtmlDefaultView[] = ['preview', 'source'];
 
 /**
