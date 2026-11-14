@@ -271,11 +271,25 @@ describe('grant store', () => {
   });
 
   it('grantScopeFor returns null instead of widening', () => {
-    const p = session();
+    const p = session({ homeFolder: null });
     expect(grantScopeFor('target', target(), p)).toBeNull();
     expect(grantScopeFor('folder', target(), p)).toBeNull();
     expect(grantScopeFor('folder', target({ path: '/w/a.ts' }), p)).toBeNull();
+    expect(grantScopeFor('target', target(), remote)).toBeNull();
+    expect(grantScopeFor('folder', target(), remote)).toBeNull();
     expect(grantScopeFor('anywhere', target({ sessionId: 's9' }), p)).toEqual(ANYWHERE);
+  });
+
+  it("a no-target call grants on the caller's home folder", () => {
+    const p = session();
+    expect(grantScopeFor('target', target(), p)).toEqual({
+      kind: 'path',
+      path: '/home/u/proj',
+    });
+    expect(grantScopeFor('folder', target(), p)).toEqual({
+      kind: 'folder',
+      path: '/home/u/proj',
+    });
   });
 
   it("grantScopeFor folder uses the target folder (a file's parent, a session's cwd)", () => {

@@ -1,5 +1,5 @@
 // Node-free: pure text in, text out.
-// Unknown fields are ignored (SERVER_FILE_VERSION reader rule); a narrowing field needs a version bump.
+// Unknown fields are kept and written back (SERVER_FILE_VERSION reader rule); a narrowing field needs a version bump.
 import { judgePersistedVersion, type ServerFile } from '../contracts/session-identity';
 import { WORKER_PROFILE } from './policy-profiles';
 import type {
@@ -199,13 +199,10 @@ function parseVersioned<T>(
 
 const toText = (v: unknown): string => `${JSON.stringify(v, null, 2)}\n`;
 
-// Starts from Worker so a missing tool gets the Worker rule; unknown tool keys are never copied.
+// Every tool gets its own copy, so a parsed rule never aliases the built-in Worker profile.
 function completeRules(rules: Partial<Record<ToolName, ToolRule>>): Record<ToolName, ToolRule> {
   const out = { ...WORKER_PROFILE.rules };
-  for (const tool of TOOL_NAMES) {
-    const rule = rules[tool];
-    if (rule !== undefined) out[tool] = rule;
-  }
+  for (const tool of TOOL_NAMES) out[tool] = { ...(rules[tool] ?? WORKER_PROFILE.rules[tool]) };
   return out;
 }
 

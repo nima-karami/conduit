@@ -183,6 +183,7 @@ describe('policy file', () => {
       ['endedAt', '"endedAt": "2026-11-14T13:00:00.000Z"', '"endedAt": "later"'],
       ['who cli value', '"cli": "codex"', '"cli": "vim"'],
       ['ended grant with null endedAt', '"endedAt": "2026-11-14T13:00:00.000Z"', '"endedAt": null'],
+      ['active grant with endedAt', '"endedAt": null', '"endedAt": "2026-11-14T12:10:00.000Z"'],
     ];
     for (const [label, from, to] of mutations) {
       const text = valid.replace(from, to);
@@ -195,20 +196,30 @@ describe('policy file', () => {
     });
   });
 
-  it('an unknown field is ignored', () => {
+  it('an unknown field is kept', () => {
     const policy = serializePolicyFile(validFile());
-    const policyExtras = [
-      ['"version": 1,', '"version": 1,\n  "extra": true,'],
-      ['"id": "p-1"', '"id": "p-1", "futureField": 1'],
-      ['"onScreenOnly": true', '"onScreenOnly": true, "futureField": "x"'],
+    const policyExtras: Array<[string, string, string]> = [
+      ['"version": 1,', '"version": 1,\n  "extra": true,', '"extra": true'],
+      ['"id": "p-1"', '"id": "p-1", "futureField": 1', '"futureField": 1'],
+      ['"onScreenOnly": true', '"onScreenOnly": true, "futureField": "x"', '"futureField": "x"'],
     ];
-    for (const [from, to] of policyExtras) {
-      expect(parsePolicyFile(policy.replace(from, to)).ok, from).toBe(true);
+    for (const [from, to, kept] of policyExtras) {
+      const first = parsePolicyFile(policy.replace(from, to));
+      expect(first.ok, from).toBe(true);
+      if (!first.ok) continue;
+      const text = serializePolicyFile(first.file);
+      expect(text, from).toContain(kept);
+      expect(parsePolicyFile(text), from).toEqual(first);
     }
     const grants = serializeGrantsFile(validGrants());
-    expect(
-      parseGrantsFile(grants.replace('"requestId": "r1"', '"requestId": "r1", "extra": 1')).ok,
-    ).toBe(true);
+    const first = parseGrantsFile(
+      grants.replace('"requestId": "r1"', '"requestId": "r1", "extra": 1'),
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const text = serializeGrantsFile(first.file);
+    expect(text).toContain('"extra": 1');
+    expect(parseGrantsFile(text)).toEqual(first);
   });
 
   it('a profile missing a newer tool parses with that tool at Worker', () => {
@@ -221,5 +232,14 @@ describe('policy file', () => {
     expect(rules?.open_file.decision).not.toBe('ask');
     expect(rules?.list_sessions).toEqual(rulesFor('ask').list_sessions);
     expect(rules && 'future_tool' in rules).toBe(false);
+  });
+
+  it('mutating a parsed filled rule leaves WORKER_PROFILE unchanged', () => {
+    const raw = JSON.parse(serializePolicyFile(validFile()));
+    delete raw.profiles[0].rules.open_file;
+    const parsed = parsePolicyFile(JSON.stringify(raw));
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) parsed.file.profiles[0].rules.open_file.decision = 'deny';
+    expect(WORKER_PROFILE.rules.open_file.decision).toBe('allow');
   });
 });

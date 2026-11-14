@@ -132,16 +132,32 @@ export function createGrantStore(deps: GrantStoreDeps): GrantStore {
   };
 }
 
+// A call with no target is resolved to the caller's home folder, as the engine does. A remote
+// caller has no home, so an empty target stays empty and never widens.
+const resolveTarget = (target: PolicyTarget, principal: Principal): PolicyTarget => {
+  if (target.sessionId || target.path || target.folder) return target;
+  if (principal.kind !== 'session' || principal.homeFolder === null) return target;
+  return {
+    sessionId: null,
+    path: principal.homeFolder,
+    folder: principal.homeFolder,
+    projectId: principal.projectId,
+  };
+};
+
 // Never widens: a target with no session, path or folder yields null, and the caller refuses.
 export function grantScopeFor(
   choice: GrantChoice['on'],
   target: PolicyTarget,
-  _principal: Principal,
+  principal: Principal,
 ): Scope | null {
   if (choice === 'anywhere') return { kind: 'anywhere' };
-  if (choice === 'folder') return target.folder ? { kind: 'folder', path: target.folder } : null;
-  if (target.sessionId) return { kind: 'session', sessionId: target.sessionId };
-  return target.path ? { kind: 'path', path: target.path } : null;
+  const resolved = resolveTarget(target, principal);
+  if (choice === 'folder') {
+    return resolved.folder ? { kind: 'folder', path: resolved.folder } : null;
+  }
+  if (resolved.sessionId) return { kind: 'session', sessionId: resolved.sessionId };
+  return resolved.path ? { kind: 'path', path: resolved.path } : null;
 }
 
 export function grantWhoFor(choice: GrantChoice['who'], principal: Principal): GrantWho | null {
