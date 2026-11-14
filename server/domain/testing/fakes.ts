@@ -151,6 +151,8 @@ export interface HarnessOptions {
   resolveCommand?: (command: string) => string | undefined;
   /** Default true: the first reconcile (`adopted([])`) has run, so starts can spawn. */
   reconciled?: boolean;
+  /** Args LaunchPort.prepareLaunch appends, as the MCP host does (e.g. Claude's `--settings`). */
+  launchArgs?: string[];
 }
 
 const tempDirs: string[] = [];
@@ -208,7 +210,11 @@ export function harness(opts: HarnessOptions = {}) {
       },
       prepareLaunch: async (_id, _def, spec, ids) => {
         calls.push(`prepareLaunch:${ids.generation}`);
-        return { ...spec, env: { ...spec.env, CONDUIT_SESSION_TOKEN: 't' } };
+        return {
+          ...spec,
+          args: [...spec.args, ...(opts.launchArgs ?? [])],
+          env: { ...spec.env, CONDUIT_SESSION_TOKEN: 't' },
+        };
       },
       onSessionDeleted: async (id) => {
         calls.push(`onSessionDeleted:${id}`);

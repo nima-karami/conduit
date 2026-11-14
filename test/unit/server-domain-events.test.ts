@@ -212,6 +212,69 @@ describe('server domain: internal subscribers on C1 data', () => {
     ).toBe('cancelled');
   });
 
+  it('reads bracketed paste from the attach paint, where a CLI that set it at startup shows it', async () => {
+    const h = harness();
+    const id = await live(h);
+    h.runtime.fire({
+      type: 'paint',
+      sessionId: id,
+      generation: 1,
+      data: `${ESC}[?2004hprompt> `,
+      size: { cols: 80, rows: 24 },
+      cause: 'attach',
+    });
+    expect(h.domain.domain.bracketedPaste(id)).toBe(true);
+    h.runtime.fire({
+      type: 'paint',
+      sessionId: id,
+      generation: 1,
+      data: 'repaint without modes',
+      size: { cols: 80, rows: 24 },
+      cause: 'gap',
+    });
+    expect(h.domain.domain.bracketedPaste(id)).toBe(true);
+  });
+
+  it('a Claude launch with injected hooks is structured from the start (R13)', async () => {
+    const notice = [
+      "You've hit your session limit · resets 11:10pm (America/Toronto)",
+      'a',
+      'b',
+      'c',
+    ];
+    // Without hooks: rules open the episode, and a sustained busy edge resumes it.
+    const plain = harness();
+    const p = await live(plain, { agentId: 'claude' });
+    plain.runtime.screens.set(p, notice);
+    data(plain, p, 'x');
+    const ep = (h: typeof plain, id: string) =>
+      h.domain.snapshot().timers.episodes?.find((e) => e.sessionId === id);
+    await vi.waitFor(() => expect(ep(plain, p)?.state).toBe('open'), { timeout: 3000 });
+    plain.state.busy = true;
+    plain.attentionChanged();
+    await vi.waitFor(() => expect(ep(plain, p)?.state).toBe('resumed'), { timeout: 4000 });
+
+    // With hooks: the same notice opens nothing (the hooks speak), and a hook-opened episode
+    // survives a sustained busy edge.
+    const hooked = harness({ launchArgs: ['--settings', '/x/c1.settings.json'] });
+    const id = await live(hooked, { agentId: 'claude' });
+    hooked.runtime.screens.set(id, notice);
+    data(hooked, id, 'x');
+    await new Promise((r) => setTimeout(r, 1_500));
+    expect(ep(hooked, id)).toBeUndefined();
+    hooked.domain.hookPost(id, {
+      conduitHook: 1,
+      token: 't',
+      event: 'StopFailure',
+      payload: { error: 'rate_limit' },
+    });
+    expect(ep(hooked, id)?.state).toBe('open');
+    hooked.state.busy = true;
+    hooked.attentionChanged();
+    await new Promise((r) => setTimeout(r, 2_300));
+    expect(ep(hooked, id)?.state).toBe('open');
+  }, 20_000);
+
   it('tracks bracketed paste for every session, not only scoped ones (spec R2)', async () => {
     const h = harness();
     const id = await live(h);

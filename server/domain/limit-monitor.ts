@@ -325,6 +325,12 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
     }
 
     if (open) {
+      // The same notice redrawn (or re-read after its clock rolled over) changes nothing: only a
+      // new notice may move the reset (spec §4 "Same notice redrawn"; review round 2 B1).
+      if (fromRule && ruleKey !== undefined && ruleKey === episodeRuleKey.get(s.sessionId)) {
+        if (open.resetAt === null) deps.setResumeIssue(s.sessionId, ISSUE_RESET_UNKNOWN);
+        return;
+      }
       if (fromRule && ruleKey !== undefined) episodeRuleKey.set(s.sessionId, ruleKey);
       const upgraded = fromRule ? open.source : s.source;
       const nextReset = resetAt ?? open.resetAt;
@@ -427,6 +433,8 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
       );
     } else if (counts === false || match === null) {
       ruleAbsentSinceSend.set(sessionId, true);
+      // The resolved notice is gone from the screen: the same text later is a new limit.
+      resolvedRuleKey.delete(sessionId);
     }
     if (
       !(counts && match) &&
@@ -651,7 +659,11 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
         if (ep.state !== 'open') continue;
         // In-memory facts a restart lost (review B1 / S2): who speaks for the session, and why
         // it needs you.
-        if (isStructured(ep.source)) structured.add(ep.sessionId);
+        // Claude's hooks live in the CLI process, which survives a server restart; a Codex file
+        // is only watched again once a launch binds it, so a restored Codex episode is rules-only
+        // until then (known limitation, run report).
+        if (ep.source === 'claude-hook' || ep.source === 'claude-statusline')
+          structured.add(ep.sessionId);
         if (ep.resetAt === null) deps.setResumeIssue(ep.sessionId, ISSUE_RESET_UNKNOWN);
         else if (modeOf(ep.sessionId) === 'off')
           deps.setResumeIssue(ep.sessionId, ISSUE_AUTO_RESUME_OFF);

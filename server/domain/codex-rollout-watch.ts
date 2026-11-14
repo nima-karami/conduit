@@ -236,16 +236,24 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
   const replayState = (sessionId: string, lines: readonly string[]): LimitSignal[] => {
     let reset: LimitSignal | null = null;
     let limited: LimitSignal | null = null;
+    let resumedAfter: LimitSignal | null = null;
     for (const line of lines) {
       for (const signal of rolloutSignals(sessionId, line, true, deps.now())) {
         if (signal.kind === 'reset-info') reset = signal;
-        else if (signal.kind === 'limited') limited = signal;
-        else if (signal.kind === 'resumed') limited = null;
+        else if (signal.kind === 'limited') {
+          limited = signal;
+          resumedAfter = null;
+        } else if (signal.kind === 'resumed') {
+          if (limited) resumedAfter = signal;
+          limited = null;
+        }
       }
     }
     const out: LimitSignal[] = [];
     if (reset) out.push(reset);
     if (limited) out.push(limited);
+    // A turn that started after the last limit still answers an episode the rules opened.
+    else if (resumedAfter && deps.episodeOpen(sessionId)) out.push(resumedAfter);
     return out;
   };
 

@@ -23,9 +23,9 @@ const { fake } = profile;
 const paragraph = (label, n) =>
   `${label} ${'lorem ipsum dolor sit amet '.repeat(Math.ceil(n / 5))}`.slice(0, n - 1).concat('x');
 const MESSAGE = [
-  paragraph('First', 1999),
+  paragraph('First', 1998),
   paragraph('Second', 2000),
-  paragraph('Third', 1999),
+  paragraph('Third', 1998),
 ].join('\n\n');
 
 await runScenario(

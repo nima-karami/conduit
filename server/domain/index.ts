@@ -282,10 +282,10 @@ const str = (p: Record<string, unknown>, key: string): string => {
   return v;
 };
 
-/** The W4 row of the program: everything the server owns about sessions and its stores. */
 /** Cap on a Codex rollout's first line (session_meta) read for binding. */
 const CODEX_META_MAX_BYTES = 1024 * 1024;
 
+/** The W4 row of the program: everything the server owns about sessions and its stores. */
 export function createDomain(deps: DomainDeps): Domain {
   const { userData, runtime, scrollback, log } = deps;
   const file = (name: string) => join(userData, name);
@@ -722,14 +722,17 @@ export function createDomain(deps: DomainDeps): Domain {
           await h.close();
         }
       },
+      // Only whole lines: a byte offset must never split a UTF-8 character, and the tail of a
+      // line still being written is read again next time.
       readFrom: async (p, offset) => {
         const h = await fsp.open(p, 'r');
         try {
           const { size } = await h.stat();
-          if (size <= offset) return { data: '', size };
+          if (size <= offset) return { data: '', size: Math.min(size, offset) };
           const buf = Buffer.alloc(size - offset);
           const { bytesRead } = await h.read(buf, 0, buf.length, offset);
-          return { data: buf.subarray(0, bytesRead).toString('utf8'), size: offset + bytesRead };
+          const end = buf.subarray(0, bytesRead).lastIndexOf(0x0a) + 1;
+          return { data: buf.subarray(0, end).toString('utf8'), size: offset + end };
         } finally {
           await h.close();
         }
@@ -852,6 +855,20 @@ export function createDomain(deps: DomainDeps): Domain {
     switch (e.type) {
       case 'data':
         if (current(e.sessionId, e.generation)) onData(e.sessionId, e.data);
+        return;
+      // hc's synthetic screen carries the program's modes: a CLI that switched bracketed paste
+      // on at startup, or before a server restart, says so only here (spec R2).
+      case 'paint':
+        if (current(e.sessionId, e.generation))
+          pasteModes.set(
+            e.sessionId,
+            trackBracketedPaste(
+              e.cause === 'attach'
+                ? PASTE_MODE_OFF
+                : (pasteModes.get(e.sessionId) ?? PASTE_MODE_OFF),
+              e.data,
+            ),
+          );
         return;
       case 'spawned':
         setFacts(e.sessionId, { generation: e.generation, spawn: 'live', lastSize: e.size });
@@ -1762,7 +1779,11 @@ export function createDomain(deps: DomainDeps): Domain {
     pendingTimers: () =>
       timers
         .list()
-        .some((j) => !['done', 'skipped', 'failed', 'cancelled', 'proposed'].includes(j.state)),
+        .some(
+          (j) =>
+            ['armed', 'checking', 'sending', 'verifying'].includes(j.state) ||
+            (j.state === 'waiting' && isLive(j.sessionId)),
+        ),
     hookPost: (sessionId: string, post: HookPost) => {
       for (const signal of claudeSignalsFromHook(sessionId, post.event, post.payload, Date.now()))
         monitor.signal(signal);

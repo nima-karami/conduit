@@ -174,6 +174,18 @@ describe('codex rollout watch', () => {
     expect(g.signals.map((s) => s.kind)).toEqual(['reset-info']);
   });
 
+  it('a late bind whose file ends with a turn after the limit answers an open episode as resumed', async () => {
+    const turn = fixture('turn.jsonl').split('\n');
+    const limit = fixture('limit.jsonl').split('\n');
+    const h = harness();
+    h.deps.episodeOpen = () => true;
+    h.files.set(FILE_A, [PRIMARY, ...limit, turn[0]].join('\n') + '\n');
+    const watch = createCodexRolloutWatch(h.deps);
+    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    await flush();
+    expect(h.signals.map((s) => s.kind)).toEqual(['reset-info', 'resumed']);
+  });
+
   it('holds a partial last line back until its newline arrives', async () => {
     const h = harness();
     const watch = createCodexRolloutWatch(h.deps);

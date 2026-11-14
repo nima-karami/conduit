@@ -646,7 +646,7 @@ describe('limit monitor — review fixes on d30afb9f', () => {
     expect(h.monitor.episodes()[0]?.state).toBe('open');
   });
 
-  it('B1: a session whose adapter is live ignores busy edges before its first signal', async () => {
+  it('B1: a session whose adapter is live ignores rule-opened episodes before its first signal', async () => {
     const h = harness({ cliOf: () => 'claude' });
     h.monitor.onAdapterLive('s');
     h.setScreen(['limit'], match(T0 + HOUR));
@@ -874,5 +874,57 @@ describe('limit monitor — review fixes on d30afb9f', () => {
     expect(h.monitor.offer()?.sessionId).toBe('a');
     h.monitor.answerOffer('a', 'arm');
     expect(h.monitor.offer()?.sessionId).toBe('b');
+  });
+});
+
+describe('limit monitor — review round 2', () => {
+  it('B1: the same notice re-read after its clock rolled over does not move an armed job', async () => {
+    const h = harness({ cliOf: () => 'cursor' });
+    h.setScreen(['limit'], textMatch(T0 + HOUR, '3:45 PM'));
+    h.monitor.onData('s');
+    await h.advance(0);
+    h.setScreen(['limit'], textMatch(T0 + 25 * HOUR, '3:45 PM'));
+    h.monitor.onData('s');
+    await h.advance(RULE_SCAN_INTERVAL_MS);
+    expect(h.armed).toHaveLength(1);
+    expect(h.jobs[0]?.nextAt).toBe(T0 + HOUR + 120_000);
+    (h.jobs[0] as Job).state = 'waiting';
+    h.monitor.onData('s');
+    await h.advance(RULE_SCAN_INTERVAL_MS);
+    expect(h.armed).toHaveLength(1);
+  });
+
+  it('B2: a notice that left the screen and came back with the same text opens a new episode', async () => {
+    const h = harness({ cliOf: () => 'cursor' });
+    h.setScreen(['limit'], textMatch(T0 + HOUR, '3:45 PM'));
+    h.monitor.onData('s');
+    await h.advance(0);
+    h.monitor.onHumanInput('s');
+    h.setScreen(['working'], null);
+    h.monitor.onData('s');
+    await h.advance(RULE_SCAN_INTERVAL_MS);
+    h.setScreen(['limit'], textMatch(T0 + 2 * HOUR, '3:45 PM'));
+    h.monitor.onData('s');
+    await h.advance(RULE_SCAN_INTERVAL_MS);
+    expect(h.monitor.episodes()[0]?.state).toBe('open');
+    expect(h.armed).toHaveLength(2);
+  });
+
+  it('B3: a restored Codex episode is rules-only until a launch binds its file again', async () => {
+    const h = harness({ cliOf: () => 'codex' });
+    h.monitor.load([
+      {
+        id: 'ep-1',
+        sessionId: 's',
+        cli: 'codex',
+        startedAt: T0,
+        resetAt: T0 + HOUR,
+        source: 'codex-rollout',
+        state: 'open',
+      },
+    ]);
+    h.monitor.onBusy('s', true);
+    await h.advance(BUSY_RESUME_MS);
+    expect(h.monitor.episodes()[0]?.state).toBe('resumed');
   });
 });
