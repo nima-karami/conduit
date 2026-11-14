@@ -145,4 +145,7 @@ export const REQ_STR = {
     needPick: 'Pick an option to send.',
     attendLine: "Answer in its terminal, where it's waiting.",
   },
+  threadLink: {
+    open: (title: string) => `Open request: ${title}`,
+  },
 };

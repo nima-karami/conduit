@@ -8,6 +8,9 @@ import {
 import type { McpThreadMessage, McpThreadView } from '../../src/conduit-mcp/ui-types';
 import { MCP_STR } from '../conduit-mcp-strings';
 import { IconDoc, IconWarning } from '../icons';
+import { openRequest } from '../request-open';
+import { REQ_STR } from '../request-strings';
+import { typeOf } from '../request-view-model';
 import type { ConduitMcpApi } from '../use-conduit-mcp';
 import { AttachmentViewModal } from './attachment-view-modal';
 import { ContextMenu, type MenuState } from './context-menu';
@@ -75,9 +78,23 @@ export function MessageThread({ api, threadId, onReply }: MessageThreadProps) {
 
   const participants = [...new Set(view.messages.flatMap((m) => [m.from, ...m.to]))];
   const replyTo = participants.filter((h) => h !== HUMAN_HANDLE);
+  // Only open requests: an ended one has nothing left for the reader to open.
+  const requestLinks = (api.state?.requests.open ?? []).filter((r) => r.thread === threadId);
 
   return (
     <div className="mcpmsg-thread">
+      {requestLinks.map((r) => (
+        <button
+          key={r.id}
+          type="button"
+          className="needs-threadlink"
+          aria-label={REQ_STR.threadLink.open(r.title)}
+          onClick={() => void openRequest(r.id)}
+        >
+          <span>{`${REQ_STR.typeWord[typeOf(r)]} · `}</span>
+          <span dir="auto">{r.title}</span>
+        </button>
+      ))}
       <div ref={logRef} className="mcpmsg-thread__log" role="log" aria-label={MCP_STR.thread}>
         {view.messages.map((m) => (
           <article

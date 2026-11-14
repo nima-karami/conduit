@@ -16366,6 +16366,29 @@ button.toggle--on .toggle__knob {
   color: color-mix(in srgb, var(--amber) 70%, var(--text));
 }
 
+/* Needs you: thread link (CON-20) */
+.needs-threadlink {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.needs-threadlink:hover {
+  background: var(--state-hover-bg);
+}
+.needs-threadlink:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: 2px;
+}
+
 /* ═════════ interaction state vocabulary ══════════════════════════════════════
    docs/specs/archive/2026-08-01-interaction-state-vocabulary.md. Read it before touching
    a value here; test/unit/state-vocabulary.test.ts holds the line.
