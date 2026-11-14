@@ -50,6 +50,54 @@ describe('mcpLaunchWiring', () => {
     expect(cfg.mcpServers.conduit.env).toEqual({ ELECTRON_RUN_AS_NODE: '1' });
   });
 
+  it('claude: --settings comes first when host settings are given, and the json is returned', () => {
+    const SETTINGS =
+      'C:\\Users\\A\\AppData\\Roaming\\Conduit\\conduit-mcp\\launch\\s1-settings.json';
+    const w = mcpLaunchWiring({
+      adapter: adapter('claude'),
+      platform: 'win32',
+      resolvedCommand: 'C:\\bin\\claude.exe',
+      server,
+      configFile: CONFIG,
+      claudeSettings: { file: SETTINGS, json: '{"hooks":{}}' },
+    });
+    expect(w.ok && w.args).toEqual([
+      '--settings',
+      SETTINGS,
+      '--mcp-config',
+      CONFIG,
+      '--allowedTools',
+      ALLOWED,
+    ]);
+    expect(w.ok && w.settingsJson).toBe('{"hooks":{}}');
+    expect(w.ok && w.configJson).not.toBeNull();
+  });
+
+  it('claude without host settings: no --settings, settingsJson null', () => {
+    const w = mcpLaunchWiring({
+      adapter: adapter('claude'),
+      platform: 'linux',
+      resolvedCommand: '/usr/bin/claude',
+      server,
+      configFile: '/tmp/s1.json',
+      claudeSettings: null,
+    });
+    expect(w.ok && w.args).toEqual(['--mcp-config', '/tmp/s1.json', '--allowedTools', ALLOWED]);
+    expect(w.ok && w.settingsJson).toBeNull();
+  });
+
+  it('win32 + .cmd + metachar in the settings path → cmd-metachar', () => {
+    const w = mcpLaunchWiring({
+      adapter: adapter('claude'),
+      platform: 'win32',
+      resolvedCommand: 'C:\\npm\\claude.cmd',
+      server,
+      configFile: CONFIG,
+      claudeSettings: { file: 'C:\\Users\\A&B\\s1-settings.json', json: '{}' },
+    });
+    expect(w).toEqual({ ok: false, reason: 'cmd-metachar' });
+  });
+
   it('fake uses the same --mcp-config wiring', () => {
     const w = mcpLaunchWiring({
       adapter: adapter('fake'),
@@ -72,6 +120,7 @@ describe('mcpLaunchWiring', () => {
     expect(w.ok).toBe(true);
     if (!w.ok) return;
     expect(w.configJson).toBeNull();
+    expect(w.settingsJson).toBeNull();
     expect(w.args).toEqual([
       '-c',
       `mcp_servers.conduit.command='${EXE}'`,
@@ -119,7 +168,7 @@ describe('mcpLaunchWiring', () => {
         server,
         configFile: CONFIG,
       }),
-    ).toEqual({ ok: true, args: [], configJson: null });
+    ).toEqual({ ok: true, args: [], configJson: null, settingsJson: null });
   });
 
   it('win32 + .cmd + metachar in the config path → cmd-metachar', () => {

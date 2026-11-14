@@ -13,7 +13,7 @@ export interface McpServerCommand {
 }
 
 export type McpLaunchWiring =
-  | { ok: true; args: string[]; configJson: string | null }
+  | { ok: true; args: string[]; configJson: string | null; settingsJson: string | null }
   | { ok: false; reason: Extract<McpUnavailableReason, 'cmd-metachar' | 'unquotable-path'> };
 
 /**
@@ -65,13 +65,22 @@ export function mcpLaunchWiring(i: {
   resolvedCommand: string | undefined;
   server: McpServerCommand;
   configFile: string;
+  claudeSettings?: { file: string; json: string } | null;
 }): McpLaunchWiring {
   let args: string[];
   let configJson: string | null = null;
+  let settingsJson: string | null = null;
   switch (i.adapter.wiring) {
     case 'mcp-config-flag':
       // Last: both flags are variadic, so a positional after them would be read as a value.
-      args = ['--mcp-config', i.configFile, '--allowedTools', CLAUDE_ALLOWED_TOOLS];
+      args = [
+        ...(i.claudeSettings ? ['--settings', i.claudeSettings.file] : []),
+        '--mcp-config',
+        i.configFile,
+        '--allowedTools',
+        CLAUDE_ALLOWED_TOOLS,
+      ];
+      settingsJson = i.claudeSettings?.json ?? null;
       configJson = JSON.stringify({
         mcpServers: {
           conduit: {
@@ -91,7 +100,7 @@ export function mcpLaunchWiring(i: {
     }
     case 'cursor-global':
       // Cursor's user MCP entry carries placeholders; no per-launch CLI args exist (spec §3.3).
-      return { ok: true, args: [], configJson: null };
+      return { ok: true, args: [], configJson: null, settingsJson: null };
   }
   // A launch that would trip the metachar guard goes without messaging, never broken (spec §3.1).
   if (
@@ -100,5 +109,5 @@ export function mcpLaunchWiring(i: {
   ) {
     return { ok: false, reason: 'cmd-metachar' };
   }
-  return { ok: true, args, configJson };
+  return { ok: true, args, configJson, settingsJson };
 }

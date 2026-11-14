@@ -4,6 +4,11 @@ import * as net from 'node:net';
 import * as path from 'node:path';
 import type { EndpointConnection, McpEndpoint } from '../../src/conduit-mcp/host';
 import { type Result, toolError } from '../../src/conduit-mcp/types';
+import {
+  HOOK_POST_MAX_BYTES,
+  type HookEvent,
+  type HookPost,
+} from '../../src/contracts/hook-protocol';
 import type { TokenRows, TokenStorePort } from '../../src/contracts/server-ports';
 import {
   parseShimHello,
@@ -49,6 +54,27 @@ function welcomeFor(hello: { token: string | null }, rows: TokenRows): ShimWelco
     : { conduit: 2, ok: false, reason: 'unknown_token' };
 }
 
+const HOOK_EVENTS: readonly HookEvent[] = [
+  'StopFailure',
+  'UserPromptSubmit',
+  'Stop',
+  'Notification',
+  'StatusLine',
+];
+const isHookEvent = (v: unknown): v is HookEvent => HOOK_EVENTS.some((e) => e === v);
+
+function sessionForToken(token: string, rows: TokenRows): string | undefined {
+  if (!welcomeFor({ token }, rows).ok || rows.state !== 'loaded') return undefined;
+  const hash = sha256(token);
+  return rows.rows.find((r) => r.sha256 === hash && r.state !== 'superseded')?.sessionId;
+}
+
+function parseHookPost(obj: Record<string, unknown>): HookPost | null {
+  const { token, event } = obj;
+  if (typeof token !== 'string' || !isHookEvent(event)) return null;
+  return { conduitHook: 1, token, event, payload: obj.payload };
+}
+
 const parseObject = (line: string): Record<string, unknown> | null => {
   try {
     const v: unknown = JSON.parse(line);
@@ -76,6 +102,7 @@ const isResumeReply = (line: string): boolean =>
 export function createShimEndpoint(opts: {
   path: string;
   onConnection(conn: EndpointConnection): void;
+  onHook?: (sessionId: string, post: HookPost) => void;
   log: EndpointLog;
   tokens: Pick<TokenStorePort, 'rows'>;
   closeFlushMs?: number;
@@ -160,7 +187,23 @@ export function createShimEndpoint(opts: {
       if (resume?.initialized) replay();
     };
 
+    const onHookPost = (obj: Record<string, unknown>) => {
+      const post = parseHookPost(obj);
+      const sessionId = post ? sessionForToken(post.token, opts.tokens.rows()) : undefined;
+      if (!post || sessionId === undefined) {
+        opts.log.debug('conduit-mcp', 'hook post refused', { id });
+        write(JSON.stringify({ conduitHook: 1, ok: false }));
+        return close();
+      }
+      opts.onHook?.(sessionId, post);
+      write(JSON.stringify({ conduitHook: 1, ok: true }));
+      close();
+    };
+
     const onHello = (line: string) => {
+      const obj = parseObject(line);
+      if (obj?.conduitHook === 1) return onHookPost(obj);
+      if (Buffer.byteLength(line, 'utf8') > SHIM_HELLO_MAX_BYTES) return drop('hello too large');
       const parsed = parseShimHello(line);
       if (!parsed) return drop('malformed hello');
       if (!parsed.ok) {
@@ -177,7 +220,7 @@ export function createShimEndpoint(opts: {
     };
 
     const reader = new LineReader(
-      () => (deliver ? INBOUND_LINE_MAX_BYTES : SHIM_HELLO_MAX_BYTES),
+      () => (deliver ? INBOUND_LINE_MAX_BYTES : HOOK_POST_MAX_BYTES),
       (raw) => {
         const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
         if (deliver) deliver(line);
