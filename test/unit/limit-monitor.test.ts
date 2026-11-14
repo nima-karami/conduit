@@ -903,6 +903,8 @@ describe('limit monitor — review round 2', () => {
     h.setScreen(['working'], null);
     h.monitor.onData('s');
     await h.advance(RULE_SCAN_INTERVAL_MS);
+    h.monitor.onData('s');
+    await h.advance(RULE_SCAN_INTERVAL_MS);
     h.setScreen(['limit'], textMatch(T0 + 2 * HOUR, '3:45 PM'));
     h.monitor.onData('s');
     await h.advance(RULE_SCAN_INTERVAL_MS);
@@ -926,5 +928,52 @@ describe('limit monitor — review round 2', () => {
     h.monitor.onBusy('s', true);
     await h.advance(BUSY_RESUME_MS);
     expect(h.monitor.episodes()[0]?.state).toBe('resumed');
+  });
+});
+
+describe('limit monitor — review round 3', () => {
+  it('a restored rule episode keeps its notice key: the rolled-over re-read does not move the job', async () => {
+    const h = harness({ cliOf: () => 'cursor' });
+    h.monitor.load([
+      {
+        id: 'ep-1',
+        sessionId: 's',
+        cli: 'cursor',
+        startedAt: T0,
+        resetAt: T0 + HOUR,
+        source: 'rule:default:claude:resets',
+        state: 'open',
+        ruleKey: 'default:claude:resets@3:45 PM',
+      },
+    ]);
+    h.setScreen(['limit'], textMatch(T0 + 25 * HOUR, '3:45 PM'));
+    h.monitor.onData('s');
+    await h.advance(0);
+    expect(h.armed).toHaveLength(0);
+    expect(h.monitor.episodes()[0]?.resetAt).toBe(T0 + HOUR);
+  });
+
+  it('records the notice key on the episode so it is persisted', async () => {
+    const h = harness({ cliOf: () => 'cursor' });
+    h.setScreen(['limit'], textMatch(T0 + HOUR, '3:45 PM'));
+    h.monitor.onData('s');
+    await h.advance(0);
+    expect(h.monitor.episodes()[0]?.ruleKey).toBe('default:claude:resets@3:45 PM');
+  });
+
+  it('one scan landing mid-redraw does not clear the resolved notice', async () => {
+    const h = harness({ cliOf: () => 'cursor' });
+    h.setScreen(['limit'], textMatch(T0 + HOUR, '3:45 PM'));
+    h.monitor.onData('s');
+    await h.advance(0);
+    h.monitor.onHumanInput('s');
+    h.setScreen([''], null);
+    h.monitor.onData('s');
+    await h.advance(RULE_SCAN_INTERVAL_MS);
+    h.setScreen(['limit'], textMatch(T0 + HOUR, '3:45 PM'));
+    h.monitor.onData('s');
+    await h.advance(RULE_SCAN_INTERVAL_MS);
+    expect(h.monitor.episodes()[0]?.state).toBe('resumed');
+    expect(h.armed).toHaveLength(1);
   });
 });

@@ -66,6 +66,8 @@ export interface LimitMonitor {
   signal(s: LimitSignal): void;
   /** A structured adapter speaks for the session (Claude launched with hooks, Codex bound): R13. */
   onAdapterLive(sessionId: string): void;
+  /** A new PTY started: which adapter speaks for it is decided again by this launch. */
+  onLaunch(sessionId: string): void;
   /** The effective auto-resume mode may have changed (global setting or the session's override). */
   onModeChanged(): void;
   /** PTY output arrived: schedule a trailing-edge rules scan (R6). */
@@ -94,6 +96,8 @@ interface RuleScanState {
   running: boolean;
   /** Consecutive scans without the episode's rule matching (R3). */
   misses: number;
+  /** Consecutive scans with no counting rule match at all. */
+  absent: number;
 }
 
 const isStructured = (source: SignalSource): boolean => !source.startsWith('rule:');
@@ -261,6 +265,15 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
     }
   };
 
+  const setRuleKey = (sessionId: string, key: string): void => {
+    episodeRuleKey.set(sessionId, key);
+    const ep = episodes.get(sessionId);
+    if (ep?.state === 'open' && ep.ruleKey !== key) {
+      ep.ruleKey = key;
+      deps.onChange();
+    }
+  };
+
   /** §2 step 5 outcome for a job still in checking/sending: held until it reaches verifying. */
   const applyWhenVerifying = (
     sessionId: string,
@@ -309,7 +322,7 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
         const back = ruleAbsentSinceSend.get(s.sessionId) === true;
         const changed = ruleKey !== undefined && ruleKey !== episodeRuleKey.get(s.sessionId);
         if (!back && !changed) return;
-        if (ruleKey !== undefined) episodeRuleKey.set(s.sessionId, ruleKey);
+        if (ruleKey !== undefined) setRuleKey(s.sessionId, ruleKey);
         ruleAbsentSinceSend.set(s.sessionId, false);
       }
       const next = resetAt ?? open.resetAt;
@@ -331,7 +344,7 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
         if (open.resetAt === null) deps.setResumeIssue(s.sessionId, ISSUE_RESET_UNKNOWN);
         return;
       }
-      if (fromRule && ruleKey !== undefined) episodeRuleKey.set(s.sessionId, ruleKey);
+      if (fromRule && ruleKey !== undefined) setRuleKey(s.sessionId, ruleKey);
       const upgraded = fromRule ? open.source : s.source;
       const nextReset = resetAt ?? open.resetAt;
       if (upgraded === open.source && nextReset === open.resetAt) {
@@ -356,7 +369,7 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
       state: 'open',
     };
     episodes.set(s.sessionId, ep);
-    if (fromRule && ruleKey !== undefined) episodeRuleKey.set(s.sessionId, ruleKey);
+    if (fromRule && ruleKey !== undefined) setRuleKey(s.sessionId, ruleKey);
     const st = scans.get(s.sessionId);
     if (st) st.misses = 0;
     deps.log.info('episode opened', {
@@ -418,6 +431,7 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
     const open = episodes.get(sessionId);
     if (counts && match) {
       st.misses = 0;
+      st.absent = 0;
       const structuredNow = structured.has(sessionId);
       if (match.rule.message && !structuredNow) ruleMessage.set(sessionId, match.rule.message);
       onLimited(
@@ -433,8 +447,10 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
       );
     } else if (counts === false || match === null) {
       ruleAbsentSinceSend.set(sessionId, true);
-      // The resolved notice is gone from the screen: the same text later is a new limit.
-      resolvedRuleKey.delete(sessionId);
+      st.absent++;
+      // Gone for RULE_CLEAR_SCANS scans in a row (not one scan landing mid-redraw): the same text
+      // later is a new limit.
+      if (st.absent >= RULE_CLEAR_SCANS) resolvedRuleKey.delete(sessionId);
     }
     if (
       !(counts && match) &&
@@ -544,12 +560,15 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
     onAdapterLive(sessionId) {
       structured.add(sessionId);
     },
+    onLaunch(sessionId) {
+      structured.delete(sessionId);
+    },
     onData(sessionId) {
       for (const [jobId, d] of deferred) if (d.sessionId === sessionId) armQuiet(jobId);
       if (deps.cliOf(sessionId) === null) return;
       let st = scans.get(sessionId);
       if (!st) {
-        st = { timer: null, dirty: false, lastAt: 0, running: false, misses: 0 };
+        st = { timer: null, dirty: false, lastAt: 0, running: false, misses: 0, absent: 0 };
         scans.set(sessionId, st);
       }
       schedule(sessionId, st);
@@ -657,6 +676,7 @@ export function createLimitMonitor(deps: LimitMonitorDeps): LimitMonitor {
       for (const ep of list) {
         episodes.set(ep.sessionId, { ...ep });
         if (ep.state !== 'open') continue;
+        if (ep.ruleKey !== undefined) episodeRuleKey.set(ep.sessionId, ep.ruleKey);
         // In-memory facts a restart lost (review B1 / S2): who speaks for the session, and why
         // it needs you.
         // Claude's hooks live in the CLI process, which survives a server restart; a Codex file

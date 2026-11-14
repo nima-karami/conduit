@@ -2,7 +2,11 @@ import { createHash, randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { atomicWriteFileSync } from '../atomic-write';
-import { claudeHookSettings, statusLineWrapFor } from '../claude-hook-settings';
+import {
+  claudeHookSettings,
+  claudeSettingsFileOf,
+  statusLineWrapFor,
+} from '../claude-hook-settings';
 import { readUserStatusLine } from '../claude-user-status-line';
 import { detectStuckScreen, type StuckScreen } from '../cli-stuck-screens';
 import type { DraftPort, LaunchPort, McpHostDeps } from '../contracts/server-ports';
@@ -1597,7 +1601,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
   const configFileOf = (sessionId: string) => path.join(launchDir, `${sessionId}.json`);
 
-  const settingsFileOf = (sessionId: string) => path.join(launchDir, `${sessionId}.settings.json`);
+  const settingsFileOf = (sessionId: string) => claudeSettingsFileOf(deps.dir, sessionId);
 
   const removeConfig = (sessionId: string) =>
     Promise.all(

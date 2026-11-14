@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import type { StatusLineSetting } from './claude-user-status-line';
 
 // see docs/plans/2026-11-13-scheduler-auto-resume.plan.md "Settled decisions"
@@ -75,4 +76,9 @@ export function statusLineWrapFor(i: {
   if (!bash)
     return { wrap: null, skipped: 'no Git Bash found; status line left as the user set it' };
   return { wrap: { user: i.user, gitBash: bash } };
+}
+
+/** Where a launch's --settings file lives; the domain matches it to know the hooks are Conduit's. */
+export function claudeSettingsFileOf(conduitMcpDir: string, sessionId: string): string {
+  return path.join(conduitMcpDir, 'launch', `${sessionId}.settings.json`);
 }

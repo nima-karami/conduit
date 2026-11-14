@@ -137,6 +137,32 @@ describe('parseSchedulerFile', () => {
   });
 });
 
+describe('episode rule key', () => {
+  it("round-trips an episode's rule key and drops a non-string one", () => {
+    const ep = {
+      id: 'ep-1',
+      sessionId: 's1',
+      cli: 'cursor',
+      startedAt: 1,
+      resetAt: null,
+      source: 'rule:default:cursor:usage',
+      state: 'open',
+    };
+    const file = parseSchedulerFile(
+      JSON.stringify({
+        version: 2,
+        jobs: [],
+        episodes: [
+          { ...ep, ruleKey: 'default:cursor:usage@3pm' },
+          { ...ep, id: 'ep-2', sessionId: 's2', ruleKey: 7 },
+        ],
+      }),
+      OPTS,
+    );
+    expect(file.episodes.map((e) => e.ruleKey)).toEqual(['default:cursor:usage@3pm', undefined]);
+  });
+});
+
 describe('migrateTimedMessagesV1 (R9)', () => {
   it('R9: once with spec → at trigger', () => {
     const { jobs } = migrateTimedMessagesV1(

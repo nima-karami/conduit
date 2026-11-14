@@ -25,6 +25,14 @@
 - D7 (conductor): lane A's Haiku retries ran out with one blocker open; conductor fixed it (3daa3315, reviewed
   APPROVE) instead of quarantining the scheduler core.
 
+- D8 (conductor, integration review round 3): after a server restart, a live Codex session is not
+  re-bound to its rollout file (its file sits in an older dated folder and binding watches only new
+  files); its restored episode is rules-only until the next launch binds. Claude sessions keep their
+  hooks across a restart (the hook client and token live in the surviving CLI). Known limitation,
+  listed in the run report.
+- D9 (conductor): bracketed-paste mode is read from hc's paint events too (a CLI that enables it at
+  startup shows it only there) — found by the claude-resumes-after-reset e2e.
+
 ## User decisions
 - Executors are Haiku subagents (human, via lead). Risk: weak on slow/flaky suites and diagnosis.
 

@@ -8,6 +8,7 @@ import { AgentRegistry } from '../../src/agent-registry';
 import { scopeFromSpawnArgs } from '../../src/agent-scope';
 import { AgentScopeTracker } from '../../src/agent-scope-tracker';
 import { atomicWriteFile, atomicWriteFileSync } from '../../src/atomic-write';
+import { claudeSettingsFileOf } from '../../src/claude-hook-settings';
 import { claudeSignalsFromHook } from '../../src/claude-signals';
 import { adapterFor } from '../../src/conduit-mcp/adapters';
 import type { McpOpenRequest } from '../../src/conduit-mcp/control-tools';
@@ -109,6 +110,7 @@ import type {
 } from '../../src/types';
 import { HC_XDG_ISOLATED_ENV } from '../hc-cli';
 import { type RpcAnswer, RpcFault, type RpcRequest } from '../transport/pipe';
+import { createRolloutFs } from './codex-rollout-fs';
 import { createCodexRolloutWatch } from './codex-rollout-watch';
 import { ServerFolderHealth } from './folder-health';
 import { createLimitMonitor } from './limit-monitor';
@@ -281,9 +283,6 @@ const str = (p: Record<string, unknown>, key: string): string => {
   if (typeof v !== 'string' || v === '') throw new RpcFault('invalid', `Expected ${key}`);
   return v;
 };
-
-/** Cap on a Codex rollout's first line (session_meta) read for binding. */
-const CODEX_META_MAX_BYTES = 1024 * 1024;
 
 /** The W4 row of the program: everything the server owns about sessions and its stores. */
 export function createDomain(deps: DomainDeps): Domain {
@@ -691,58 +690,13 @@ export function createDomain(deps: DomainDeps): Domain {
       return { y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate() };
     },
     watchDir,
-    fs: {
-      readdir: (p) => fsp.readdir(p),
-      // Real session_meta lines measured 19–23 KiB (spike.md addendum); 1 MiB leaves headroom.
-      readFirstLine: async (p) => {
-        const h = await fsp.open(p, 'r').catch(() => null);
-        if (!h) return null;
-        try {
-          const chunks: Buffer[] = [];
-          let total = 0;
-          while (total < CODEX_META_MAX_BYTES) {
-            const buf = Buffer.alloc(64 * 1024);
-            const { bytesRead } = await h.read(buf, 0, buf.length, total);
-            if (bytesRead === 0) return null;
-            const chunk = buf.subarray(0, bytesRead);
-            const nl = chunk.indexOf(0x0a);
-            if (nl >= 0) {
-              chunks.push(chunk.subarray(0, nl));
-              return Buffer.concat(chunks).toString('utf8');
-            }
-            chunks.push(chunk);
-            total += bytesRead;
-          }
-          if (!metaCapWarned.has(p)) {
-            metaCapWarned.add(p);
-            log.warn('scheduler', 'rollout first line over the read cap; not bound', { file: p });
-          }
-          return null;
-        } finally {
-          await h.close();
-        }
+    fs: createRolloutFs({
+      onFirstLineTooLong: (file) => {
+        if (metaCapWarned.has(file)) return;
+        metaCapWarned.add(file);
+        log.warn('scheduler', 'rollout first line over the read cap; not bound', { file });
       },
-      // Only whole lines: a byte offset must never split a UTF-8 character, and the tail of a
-      // line still being written is read again next time.
-      readFrom: async (p, offset) => {
-        const h = await fsp.open(p, 'r');
-        try {
-          const { size } = await h.stat();
-          if (size <= offset) return { data: '', size: Math.min(size, offset) };
-          const buf = Buffer.alloc(size - offset);
-          const { bytesRead } = await h.read(buf, 0, buf.length, offset);
-          const end = buf.subarray(0, bytesRead).lastIndexOf(0x0a) + 1;
-          return { data: buf.subarray(0, end).toString('utf8'), size: offset + end };
-        } finally {
-          await h.close();
-        }
-      },
-      exists: (p) =>
-        fsp.access(p).then(
-          () => true,
-          () => false,
-        ),
-    },
+    }),
     samePath: (a, b) => folderKey(a) === folderKey(b),
     episodeOpen: (id) => monitor.episodes().some((e) => e.sessionId === id && e.state === 'open'),
     onSignal: (signal) => monitor.signal(signal),
@@ -798,6 +752,9 @@ export function createDomain(deps: DomainDeps): Domain {
           lastSize: t.size,
         });
         mgr.setStatus(t.sessionId, 'running');
+        // A job loaded before reconcile saw no live PTY and is waiting: an adopted terminal is
+        // its PTY coming back (spec §4 "Server restarted between arm and fire").
+        timers.onPtyStart(t.sessionId);
       } else mgr.setStatus(t.sessionId, 'exited');
     }
     reconciled = true;
@@ -862,12 +819,8 @@ export function createDomain(deps: DomainDeps): Domain {
         if (current(e.sessionId, e.generation))
           pasteModes.set(
             e.sessionId,
-            trackBracketedPaste(
-              e.cause === 'attach'
-                ? PASTE_MODE_OFF
-                : (pasteModes.get(e.sessionId) ?? PASTE_MODE_OFF),
-              e.data,
-            ),
+            // A paint is a full synthetic screen (terminal-runtime.ts): its modes are the truth.
+            trackBracketedPaste(PASTE_MODE_OFF, e.data),
           );
         return;
       case 'spawned':
@@ -1193,8 +1146,16 @@ export function createDomain(deps: DomainDeps): Domain {
       codexWatch.untrack(id);
       codexWatch.track(id, { cwd: spec.cwd, launchAt });
     }
-    // The host injected Claude's hooks for this launch: they speak for the session (spec R13).
-    if (cli === 'claude' && spec.args.includes('--settings')) monitor.onAdapterLive(id);
+    // The host injected Claude's hooks for this launch (its own settings file, not a user's
+    // --settings): they speak for the session (spec R13).
+    monitor.onLaunch(id);
+    const settingsAt = spec.args.indexOf('--settings');
+    if (
+      cli === 'claude' &&
+      settingsAt >= 0 &&
+      spec.args[settingsAt + 1] === claudeSettingsFileOf(join(userData, 'conduit-mcp'), id)
+    )
+      monitor.onAdapterLive(id);
     return {
       ok: true,
       target: terminal.target,

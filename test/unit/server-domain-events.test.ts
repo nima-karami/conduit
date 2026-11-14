@@ -8,6 +8,7 @@ import {
   isFault,
   type RecordedEvent,
 } from '../../server/domain/testing/fakes';
+import { claudeSettingsFileOf } from '../../src/claude-hook-settings';
 import type { SessionView } from '../../src/contracts/server-protocol';
 import type { TimedMessage } from '../../src/timed-messages';
 
@@ -232,7 +233,8 @@ describe('server domain: internal subscribers on C1 data', () => {
       size: { cols: 80, rows: 24 },
       cause: 'gap',
     });
-    expect(h.domain.domain.bracketedPaste(id)).toBe(true);
+    // Every paint is the full screen, modes included: one without ?2004h means off.
+    expect(h.domain.domain.bracketedPaste(id)).toBe(false);
   });
 
   it('a Claude launch with injected hooks is structured from the start (R13)', async () => {
@@ -256,7 +258,12 @@ describe('server domain: internal subscribers on C1 data', () => {
 
     // With hooks: the same notice opens nothing (the hooks speak), and a hook-opened episode
     // survives a sustained busy edge.
-    const hooked = harness({ launchArgs: ['--settings', '/x/c1.settings.json'] });
+    const hooked = harness({
+      launchArgs: (sid, userData) => [
+        '--settings',
+        claudeSettingsFileOf(join(userData, 'conduit-mcp'), sid),
+      ],
+    });
     const id = await live(hooked, { agentId: 'claude' });
     hooked.runtime.screens.set(id, notice);
     data(hooked, id, 'x');
@@ -273,7 +280,14 @@ describe('server domain: internal subscribers on C1 data', () => {
     hooked.attentionChanged();
     await new Promise((r) => setTimeout(r, 2_300));
     expect(ep(hooked, id)?.state).toBe('open');
-  }, 20_000);
+
+    // A user's own --settings is not Conduit's hooks: rules still speak for that session.
+    const own = harness({ launchArgs: () => ['--settings', '/home/u/my-settings.json'] });
+    const o = await live(own, { agentId: 'claude' });
+    own.runtime.screens.set(o, notice);
+    data(own, o, 'x');
+    await vi.waitFor(() => expect(ep(own, o)?.state).toBe('open'), { timeout: 3000 });
+  }, 25_000);
 
   it('tracks bracketed paste for every session, not only scoped ones (spec R2)', async () => {
     const h = harness();

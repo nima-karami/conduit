@@ -58,6 +58,8 @@ export interface LimitEpisode {
   resetAt: number | null;
   source: SignalSource;
   state: 'open' | 'resumed' | 'expired' | 'closed';
+  /** Rule episodes: the notice's rule id + reset text, so a restart still knows the same notice. */
+  ruleKey?: string;
 }
 
 export interface SchedulerFile {

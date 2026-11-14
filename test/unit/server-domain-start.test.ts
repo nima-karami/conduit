@@ -1,9 +1,10 @@
-import { mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { disposeHarnesses, FakeRuntime, harness, isFault } from '../../server/domain/testing/fakes';
 import type { SessionStartResult } from '../../src/contracts/server-protocol';
 import { COMMAND_AGENT_ID } from '../../src/session-command';
+import { PTY_SETTLE_MS } from '../../src/timed-messages';
 
 type Started = Extract<SessionStartResult, { ok: true; target: unknown }>;
 
@@ -191,6 +192,61 @@ describe('server domain: sessions.start', () => {
     ]);
     expect(await pending).toMatchObject({ ok: true, spawned: false, generation: 4 });
     expect(h.runtime.spawns).toHaveLength(0);
+  });
+
+  // see spec 2026-11-13-scheduler-auto-resume §4 "Server restarted between arm and fire".
+  it('a job loaded before reconcile fires once its terminal is adopted', async () => {
+    const first = harness();
+    const id = await first.create();
+    // Running when the server went down, as in a restart: its record is kept for reconcile.
+    await first.call('sessions.start', { sessionId: id });
+    await first.domain.persist();
+    await first.domain.dispose();
+    const now = Date.now();
+    writeFileSync(
+      join(first.userData, 'scheduler.json'),
+      JSON.stringify({
+        version: 2,
+        jobs: [
+          {
+            id: 'tm-late',
+            sessionId: id,
+            origin: 'user',
+            trigger: { kind: 'in', delayMs: 60_000 },
+            action: { kind: 'send', message: 'late hello' },
+            nextAt: now - 1_000,
+            state: 'armed',
+            attempts: 0,
+            maxAttempts: 1,
+            createdAt: now - 61_000,
+            history: [],
+            firedCount: 0,
+          },
+        ],
+        episodes: [],
+      }),
+    );
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      const h = harness({ userData: first.userData, reconciled: false });
+      const terminal = h.runtime.live(id, 4, 'd'.repeat(32), { cols: 80, rows: 24 });
+      h.domain.adopted([
+        {
+          ...terminal,
+          labels: {
+            'conduit.session': id,
+            'conduit.instance': 'inst',
+            'conduit.generation': '4',
+            'conduit.launch': 'd'.repeat(32),
+            'conduit.role': 'session',
+          },
+        },
+      ]);
+      await vi.advanceTimersByTimeAsync(PTY_SETTLE_MS + 100);
+      expect(h.submitted.map((x) => x.text)).toEqual(['late hello']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("restores the user's captured XDG values into the session's env, an empty one included", async () => {

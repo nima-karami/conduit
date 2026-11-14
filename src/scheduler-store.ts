@@ -222,6 +222,7 @@ function parseEpisode(v: unknown): LimitEpisode | null {
     resetAt: typeof v.resetAt === 'number' ? v.resetAt : null,
     source: v.source,
     state: v.state,
+    ...(typeof v.ruleKey === 'string' && v.ruleKey.length <= 1024 ? { ruleKey: v.ruleKey } : {}),
   };
 }
 
