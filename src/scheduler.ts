@@ -11,11 +11,13 @@ import {
   TERMINAL_JOB_STATES,
 } from './contracts/scheduler';
 import { normalizeMessage } from './message-text';
+import { parseJobTrigger } from './scheduler-store';
 import {
   CATCHUP_MS,
   type FireFailure,
   LATE_GRACE_MS,
   type LastFire,
+  MAX_EPOCH_MS,
   MAX_PER_SESSION,
   MAX_REPEATS,
   MAX_TOTAL,
@@ -77,25 +79,31 @@ const TIME_JOB_ATTEMPTS = 1;
 const JOINED_REASON = 'lines joined (no bracketed paste)';
 const NO_SESSION_REASON = 'no session';
 /** The fixed fire vocabulary; the dialog reads it back through lastFire. */
-const FIRE_OUTCOMES = ['delivered', 'delivered late', 'expired', 'no session'] as const;
+const FIRE_OUTCOMES = [
+  'delivered',
+  'delivered late',
+  'expired',
+  'no session',
+  'no session late',
+] as const;
 export type FireOutcome = (typeof FIRE_OUTCOMES)[number];
 
 function isFireOutcome(v: string): v is FireOutcome {
   return FIRE_OUTCOMES.some((o) => o === v);
 }
 
-function isTriggerInput(v: unknown): v is TriggerInput {
-  return (
-    typeof v === 'object' &&
-    v !== null &&
-    'kind' in v &&
-    (v.kind === 'in' || v.kind === 'at' || v.kind === 'every')
-  );
+/** The IPC trigger, rebuilt from validated fields with the store's own rules, so an armed job always survives a restart. */
+function timeTriggerOf(v: unknown): TriggerInput | null {
+  const t = parseJobTrigger(v);
+  return t && t.kind !== 'limit-reset' ? t : null;
 }
 
 function lastFireOf(entry: JobHistoryEntry & { reason: FireOutcome }): LastFire {
   const delivered = entry.reason === 'delivered' || entry.reason === 'delivered late';
-  const late = entry.reason === 'delivered late' || entry.reason === 'expired';
+  const late =
+    entry.reason === 'delivered late' ||
+    entry.reason === 'expired' ||
+    entry.reason === 'no session late';
   if (delivered) return { at: entry.at, late, delivered };
   return {
     at: entry.at,
@@ -167,7 +175,8 @@ export class Scheduler {
     if (input.origin === 'limit') {
       return { ok: false, error: 'Limit resumes are armed by the Limit monitor.' };
     }
-    if (!isTriggerInput(input.trigger)) return { ok: false, error: 'Unknown trigger.' };
+    const trigger = timeTriggerOf(input.trigger);
+    if (!trigger) return { ok: false, error: 'Unknown trigger.' };
     const editing = input.id === undefined ? undefined : this.find(input.id);
     if (editing && editing.trigger.kind === 'limit-reset') {
       return { ok: false, error: 'That timed message is gone.' };
@@ -176,11 +185,11 @@ export class Scheduler {
     if (cap) return { ok: false, error: cap };
     const check = normalizeMessage(input.message);
     if (!check.ok) return { ok: false, error: check.error };
-    const triggerError = this.triggerError(input.trigger);
+    const triggerError = this.triggerError(trigger);
     if (triggerError) return { ok: false, error: triggerError };
     const now = this.now();
-    const nextAt = nextFireAt(input.trigger, now);
-    if (nextAt === null || !Number.isFinite(nextAt)) {
+    const nextAt = nextFireAt(trigger, now);
+    if (nextAt === null || !Number.isFinite(nextAt) || nextAt > MAX_EPOCH_MS) {
       return { ok: false, error: 'That time could not be read — use HH:MM.' };
     }
 
@@ -188,14 +197,15 @@ export class Scheduler {
       id: editing?.id ?? newTimedMessageId(now),
       sessionId: input.sessionId,
       origin: 'user',
-      trigger: { ...input.trigger },
+      trigger,
       action: { kind: 'send', message: check.message },
       nextAt,
       state: 'armed',
       attempts: 0,
       maxAttempts: TIME_JOB_ATTEMPTS,
       createdAt: now,
-      history: editing ? editing.history : [],
+      // An edit is a new schedule: the old one's last fire must not show against it.
+      history: [],
       firedCount: 0,
     };
     const job = this.record(base, now, 'armed');
@@ -358,10 +368,10 @@ export class Scheduler {
     return { ok: true, job: renewed };
   }
 
-  /** Deliver now. Consumes no repeat and does not move `nextAt` (§2 "The dialog"). */
+  /** Deliver now. Consumes no repeat and does not move `nextAt` (spec 2026-08-28-timed-messages §2 "The dialog"). */
   async sendNow(id: string): Promise<boolean> {
     const job = this.find(id);
-    if (!job || job.trigger.kind === 'limit-reset') return false;
+    if (!job || job.trigger.kind === 'limit-reset' || isTerminal(job.state)) return false;
     return this.sendOnce(job.sessionId, job.action.message);
   }
 
@@ -543,11 +553,18 @@ export class Scheduler {
         ? late
           ? 'delivered late'
           : 'delivered'
-        : 'no session';
+        : late
+          ? 'no session late'
+          : 'no session';
       const current = this.find(job.id);
       if (current && !isTerminal(current.state)) {
         const joined = result !== 'not-live' && result.ok && result.joined;
-        const noted = joined ? this.record(current, at, current.state, JOINED_REASON) : current;
+        // A failed write on a live session keeps its own reason; 'no session' alone would hide it.
+        const failure = result !== 'not-live' && !result.ok ? result.reason : undefined;
+        const noted =
+          joined || failure !== undefined
+            ? this.record(current, at, current.state, failure ?? JOINED_REASON)
+            : current;
         this.put(this.advanceTime(noted, at, slots, outcome));
       }
       this.deps.onFired({

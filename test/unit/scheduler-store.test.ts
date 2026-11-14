@@ -177,7 +177,9 @@ describe('migrateTimedMessagesV1 (R9)', () => {
       { maxAttempts: 3 },
     );
     expect(jobs[0]).toMatchObject({ firedCount: 2, waitingSince: NOW + 1000, state: 'waiting' });
-    expect(jobs[0].history).toEqual([{ at: NOW + 500, state: 'waiting', reason: 'no session' }]);
+    expect(jobs[0].history).toEqual([
+      { at: NOW + 500, state: 'waiting', reason: 'no session late' },
+    ]);
   });
 
   it('R9: origin limit → limit-reset job + synthetic open episode migrated-<id>, resetAt nextAt − 60000, marginMs 60000, source rule:migrated', () => {

@@ -289,6 +289,68 @@ describe('firing into a live PTY', () => {
     expect(h.fired[0]).toMatchObject({ delivered: false, reason: 'noSession' });
     // The slot is consumed: half the message is already in the PTY (plan assumption 6).
     expect(h.scheduler.list()[0]).toMatchObject({ state: 'done', firedCount: 1 });
+    expect(h.scheduler.list()[0].history.map((e) => e.reason)).toContain('write failed');
+  });
+
+  it('a late fire into a gone session projects lastFire late', async () => {
+    const h = harness();
+    arm(h);
+    h.alive.delete('s1');
+    await h.tick(60_000);
+    expect(h.scheduler.list()[0].state).toBe('waiting');
+    h.alive.add('s1');
+    h.setDeliverResult({ ok: false, reason: 'gone' });
+    h.scheduler.onPtyStart('s1');
+    await h.tick(PTY_SETTLE_MS);
+    expect(toTimedMessage(h.scheduler.list()[0])?.lastFire).toMatchObject({
+      late: true,
+      delivered: false,
+      reason: 'noSession',
+    });
+  });
+
+  it('an edit starts a new history: the old last fire does not show on the new schedule', async () => {
+    const h = harness();
+    const first = arm(h, { trigger: { kind: 'every', everyMs: HOUR, maxRepeats: 3 } });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    await h.tick(HOUR);
+    expect(toTimedMessage(h.scheduler.list()[0])?.lastFire).toBeDefined();
+    const edited = arm(h, { id: first.job.id, trigger: { kind: 'in', delayMs: HOUR } });
+    expect(edited.ok).toBe(true);
+    if (!edited.ok) return;
+    expect(toTimedMessage(edited.job)?.lastFire).toBeUndefined();
+  });
+
+  it('stores only validated trigger fields from the IPC input', () => {
+    const h = harness();
+    const r = arm(h, {
+      trigger: {
+        kind: 'in',
+        delayMs: 60_000,
+        extra: 'x',
+      } as unknown as TimedMessageInput['trigger'],
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.job.trigger).toEqual({ kind: 'in', delayMs: 60_000 });
+    expect(
+      arm(h, { trigger: { kind: 'at', clock: 5 } as unknown as TimedMessageInput['trigger'] }),
+    ).toEqual({ ok: false, error: 'Unknown trigger.' });
+    expect(arm(h, { trigger: { kind: 'every', everyMs: 2 ** 52, maxRepeats: 2 } })).toEqual({
+      ok: false,
+      error: 'Unknown trigger.',
+    });
+  });
+
+  it('send now refuses a cancelled job', async () => {
+    const h = harness();
+    const r = arm(h);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    h.scheduler.cancel(r.job.id, 'human');
+    await expect(h.scheduler.sendNow(r.job.id)).resolves.toBe(false);
+    expect(h.delivered).toHaveLength(0);
   });
 
   it('never touches a job twice while its delivery is in flight', async () => {
@@ -456,6 +518,7 @@ describe('the limit job', () => {
   it('arms Continue one minute past the reset', () => {
     const h = harness();
     const r = resume(h);
+    expect(r.ok).toBe(true);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.job).toMatchObject({
@@ -626,6 +689,7 @@ describe('cancel, renew, send now', () => {
   it('renew resets firedCount and recomputes nextAt from now', async () => {
     const h = harness();
     const r = arm(h);
+    expect(r.ok).toBe(true);
     if (!r.ok) return;
     await h.tick(60_000);
     expect(h.scheduler.list()[0].state).toBe('done');
@@ -638,6 +702,7 @@ describe('cancel, renew, send now', () => {
   it('renew refuses a cancelled job', () => {
     const h = harness();
     const r = arm(h);
+    expect(r.ok).toBe(true);
     if (!r.ok) return;
     h.scheduler.cancel(r.job.id, 'by user');
     expect(h.scheduler.renewSchedule(r.job.id)).toEqual({
@@ -649,6 +714,7 @@ describe('cancel, renew, send now', () => {
   it('send now delivers immediately and moves neither firedCount nor nextAt', async () => {
     const h = harness();
     const r = arm(h);
+    expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(await h.scheduler.sendNow(r.job.id)).toBe(true);
     expect(h.delivered).toEqual([{ sessionId: 's1', message: 'Continue' }]);
@@ -659,6 +725,7 @@ describe('cancel, renew, send now', () => {
   it('send now answers false for a session with no live PTY', async () => {
     const h = harness();
     const r = arm(h);
+    expect(r.ok).toBe(true);
     if (!r.ok) return;
     h.alive.delete('s1');
     expect(await h.scheduler.sendNow(r.job.id)).toBe(false);
@@ -772,6 +839,7 @@ describe('lifecycle', () => {
       message: 'hello',
       trigger: { kind: 'every', everyMs: HOUR, maxRepeats: 4 },
     });
+    expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(toTimedMessage(r.job)).toEqual({
       id: r.job.id,
@@ -1154,7 +1222,7 @@ describe('deferred pre-fire (R13)', () => {
   });
 });
 
-describe('review fixes', () => {
+describe('R13 recheck, re-arm, onFired and projection', () => {
   const deferJob = async (h: Harness, reason: string) => {
     h.setVerdict({ go: 'wait', reason });
     const r = resume(h, { resetAt: NOW + 60_000 });
@@ -1322,7 +1390,7 @@ describe('review fixes', () => {
   });
 });
 
-describe('review fixes 2', () => {
+describe('trigger guards, settle and expiry timers, lastFire parity', () => {
   const deferJob = async (h: Harness, reason: string) => {
     h.setVerdict({ go: 'wait', reason });
     const r = resume(h, { resetAt: NOW + 60_000 });
@@ -1343,6 +1411,10 @@ describe('review fixes 2', () => {
     const h = harness();
     expect(arm(h, { trigger: { kind: 'in', delayMs: Number.POSITIVE_INFINITY } })).toEqual({
       ok: false,
+      error: 'Unknown trigger.',
+    });
+    expect(arm(h, { trigger: { kind: 'in', delayMs: 9_000_000_000_000_000 } })).toEqual({
+      ok: false,
       error: 'That time could not be read — use HH:MM.',
     });
     expect(h.scheduler.list()).toHaveLength(0);
@@ -1356,6 +1428,7 @@ describe('review fixes 2', () => {
       message: 'x',
       trigger: { kind: 'in', delayMs: 60_000 },
     });
+    expect(r.ok).toBe(true);
     expect(r.ok && r.job.id).not.toBe('mine');
   });
 

@@ -16,6 +16,7 @@ import { judgePersistedVersion } from './contracts/session-identity';
 import { normalizeMessage } from './message-text';
 import type { FireOutcome } from './scheduler';
 import {
+  HOUR_MS,
   type LastFire,
   MAX_EPOCH_MS,
   MAX_INTERVAL_MS,
@@ -25,7 +26,6 @@ import {
   type TimedMessagesFile,
 } from './timed-messages';
 
-const HOUR_MS = 3_600_000;
 const LIMIT_RECORD_KEEP_MS = 24 * HOUR_MS;
 const TERMINAL_LIMIT_KEEP_PER_SESSION = 10;
 const MIGRATED_MARGIN_MS = 60_000;
@@ -82,7 +82,8 @@ function isSignalSource(v: unknown): v is SignalSource {
 
 function fireOutcomeOf(lastFire: LastFire): FireOutcome {
   if (lastFire.delivered) return lastFire.late ? 'delivered late' : 'delivered';
-  return lastFire.reason === 'expired' ? 'expired' : 'no session';
+  if (lastFire.reason === 'expired') return 'expired';
+  return lastFire.late ? 'no session late' : 'no session';
 }
 
 const clamp = (n: number, lo: number, hi: number): number => Math.min(Math.max(n, lo), hi);
@@ -102,7 +103,7 @@ function emptyFile(): SchedulerFile {
   return { version: 2, jobs: [], episodes: [] };
 }
 
-function parseTrigger(v: unknown): JobTrigger | null {
+export function parseJobTrigger(v: unknown): JobTrigger | null {
   if (!isRecord(v)) return null;
   switch (v.kind) {
     case 'in':
@@ -158,7 +159,7 @@ function parseHistory(v: unknown): JobHistoryEntry[] {
 
 function parseJob(v: unknown, fallbackMaxAttempts: number): Job | null {
   if (!isRecord(v)) return null;
-  const trigger = parseTrigger(v.trigger);
+  const trigger = parseJobTrigger(v.trigger);
   const action = parseAction(v.action);
   const firedCount = optionalInt(v.firedCount, 0, MAX_REPEATS);
   const waitingSince = optionalInt(v.waitingSince, 0);
