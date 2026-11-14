@@ -17,6 +17,8 @@ export interface RequestWaits {
   ended(requestId: string): void;
   cancel(match: (w: { sessionId: string; key: CallKey }) => boolean): void;
   isWaiting(requestId: string): boolean;
+  /** The latest deadline (ms since the epoch) of the calls waiting on it; null when none waits. */
+  waitingUntil(requestId: string): number | null;
   countFor(sessionId: string): number;
   dispose(): void;
 }
@@ -26,10 +28,12 @@ interface Entry {
   sessionId: string;
   key: CallKey;
   timer: unknown;
+  deadline: number;
   resolve(end: WaitEnd): void;
 }
 
 export function createRequestWaits(deps: {
+  now(): number;
   setTimer(fn: () => void, ms: number): unknown;
   clearTimer(t: unknown): void;
   onWaitingChanged(): void;
@@ -63,6 +67,7 @@ export function createRequestWaits(deps: {
           sessionId: w.sessionId,
           key: w.key,
           timer: undefined,
+          deadline: deps.now() + w.timeoutMs,
           resolve,
         };
         entries.add(entry);
@@ -79,6 +84,13 @@ export function createRequestWaits(deps: {
     },
     cancel: (match) => {
       endWhere((e) => match({ sessionId: e.sessionId, key: e.key }), { kind: 'cancelled' });
+    },
+    waitingUntil: (requestId) => {
+      let latest: number | null = null;
+      for (const e of entries)
+        if (e.requestId === requestId && (latest === null || e.deadline > latest))
+          latest = e.deadline;
+      return latest;
     },
     isWaiting: (requestId) => {
       for (const e of entries) if (e.requestId === requestId) return true;

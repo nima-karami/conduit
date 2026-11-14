@@ -79,7 +79,11 @@ export function createRequestQueue(deps: QueueDeps): RequestQueue {
   let store = new Map<string, RequestRecord>();
   const timers = new Map<string, unknown>();
 
-  const view = (r: RequestRecord): RequestView => ({ ...clone(r), waiting: false });
+  const view = (r: RequestRecord): RequestView => ({
+    ...clone(r),
+    waiting: false,
+    waitingUntil: null,
+  });
 
   const disarm = (id: string): void => {
     if (!timers.has(id)) return;

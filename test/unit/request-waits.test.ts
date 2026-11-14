@@ -10,7 +10,9 @@ interface FakeTimer {
 function setup() {
   const timers: FakeTimer[] = [];
   const changes = { n: 0 };
+  const clock = { now: 1_000_000 };
   const waits = createRequestWaits({
+    now: () => clock.now,
     setTimer: (fn, ms) => {
       const t: FakeTimer = { fn, ms, cleared: false };
       timers.push(t);
@@ -27,7 +29,7 @@ function setup() {
   const fire = (t: FakeTimer) => {
     if (!t.cleared) t.fn();
   };
-  return { waits, timers, changes, fire };
+  return { waits, timers, changes, fire, clock };
 }
 
 const key = (connId: number, requestId: string) => ({ connId, requestId });
@@ -149,5 +151,22 @@ describe('createRequestWaits', () => {
     t.waits.open({ requestId: 'r1', sessionId: 's1', key: key(1, 'a'), timeoutMs: 60_000 });
     t.waits.ended('r1');
     expect(t.timers[0]?.cleared).toBe(true);
+  });
+
+  it('waitingUntil is the latest deadline of the live waits and null once they end', async () => {
+    const { waits, timers, fire, clock } = setup();
+    expect(waits.waitingUntil('r1')).toBeNull();
+    const a = waits.open({ requestId: 'r1', sessionId: 's1', key: key(1, 'a'), timeoutMs: 30_000 });
+    clock.now += 5_000;
+    const b = waits.open({ requestId: 'r1', sessionId: 's1', key: key(1, 'b'), timeoutMs: 60_000 });
+    expect(waits.waitingUntil('r1')).toBe(1_000_000 + 5_000 + 60_000);
+    const [, second] = timers;
+    if (second === undefined) throw new Error('no second timer');
+    fire(second);
+    await b;
+    expect(waits.waitingUntil('r1')).toBe(1_000_000 + 30_000);
+    waits.ended('r1');
+    await a;
+    expect(waits.waitingUntil('r1')).toBeNull();
   });
 });

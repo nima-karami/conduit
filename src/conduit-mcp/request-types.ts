@@ -78,6 +78,8 @@ export interface RequestRecord {
 export interface RequestView extends RequestRecord {
   /** Live, never persisted: a call is blocked on it right now. */
   waiting: boolean;
+  /** Live: when the latest waiting call gives up (ISO UTC), so views count down; null when none waits. */
+  waitingUntil: string | null;
 }
 
 export interface HumanPresence {

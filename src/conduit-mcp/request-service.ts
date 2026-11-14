@@ -137,7 +137,14 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
   let awayTimer: Timer | null = null;
   const inFlight = new Set<string>();
 
-  const view = (r: RequestRecord): RequestView => ({ ...r, waiting: waits.isWaiting(r.id) });
+  const view = (r: RequestRecord): RequestView => {
+    const until = waits.waitingUntil(r.id);
+    return {
+      ...r,
+      waiting: until !== null,
+      waitingUntil: until === null ? null : new Date(until).toISOString(),
+    };
+  };
 
   const markDirty = (): void => {
     if (!writable) return;
@@ -188,6 +195,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
   };
 
   const waits: RequestWaits = createRequestWaits({
+    now: () => deps.now(),
     setTimer: (fn, ms) => deps.setTimer(fn, ms),
     clearTimer: (t) => deps.clearTimer(t),
     onWaitingChanged: () => deps.onChanged(),

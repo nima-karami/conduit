@@ -65,7 +65,7 @@ The lead's rulings:
   - no `!important`;
   - floating chrome uses the layer tokens (`--layer-popover` and up);
   - anything over `.topbar` gets `-webkit-app-region: no-drag` (`test/unit/drag-region.test.ts`).
-- **Words (owner, 2026-11-14; `design-foundation` branch `docs/UX.md` §8):** Space (never project); Session (an agent CLI is one kind); helper session and its lead; Request, the list is Needs you; the types Approve · Answer · Review; left/right **pane** holding a **panel** named by its content (the "Needs you panel"). New strings use these words; existing strings aren't renamed in this card. Not following the OS light/dark setting.
+- **Words (owner, 2026-11-14; `/home/namemenima/projects/conduit/docs/UX.md` §8 on local main):** Space (never project); Session (an agent CLI is one kind); helper session and its lead; Request, the list is Needs you; the types Approve · Answer · Review; left/right **pane** holding a **panel** named by its content (the "Needs you panel"). New strings use these words; existing strings aren't renamed in this card. Not following the OS light/dark setting.
 - Strings go in a new `webview/request-strings.ts` (pattern: `webview/conduit-mcp-strings.ts`), plural-aware. Agent text renders with `dir="auto"` inside the quote frame, never in Conduit's header slots (anti-spoofing, spec §4.1).
 - React:
   - native `{passive:false}` listeners if a wheel handler needs preventDefault;

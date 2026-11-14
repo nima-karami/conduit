@@ -221,6 +221,16 @@ describe('request service: waits and answers', () => {
     expect(h.service.ui().open[0]?.waiting).toBe(false);
   });
 
+  it('a waiting request carries waitingUntil, and loses it when the call ends', async () => {
+    const h = harness({ budgetMs: 120_000 });
+    const k = key(1);
+    const p = h.service.tools.requestInput(alice, ask(), k);
+    expect(h.service.ui().open[0]?.waitingUntil).toBe(new Date(h.c.now() + 110_000).toISOString());
+    h.service.cancelCalls((w) => w.key.requestId === k.requestId);
+    await p;
+    expect(h.service.ui().open[0]?.waitingUntil).toBeNull();
+  });
+
   it('a repeat identical call attaches to the same request and waits again', async () => {
     const h = harness();
     const first = h.service.tools.requestInput(alice, ask(), key(1));
