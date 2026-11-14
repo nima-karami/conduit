@@ -260,3 +260,14 @@ If a task's assumption turns out wrong (the piece it builds on is misaligned, or
 - [high] #3 **Away and the digest** (spec MVP, iter-5 flows) aren't in your build list. Recommended: a follow-up card. The server already holds presence and `lastAway`, so it's UI only.
 - [normal] #4 **Sidebar "Needs you" group and "asks" markers** (spec §4.4.8). Recommended: a follow-up card, since it touches the shared sidebar.
 - [normal] #5 **Waiting countdown.** The renderer can't compute the time left for a waiting call (the budget is server-side). Recommended: show "waiting" with no countdown in MVP, or add `waitingUntil` to `RequestView` in a tiny server change (I'd do the latter if you agree).
+
+## State and next steps (2026-11-14, for whoever continues)
+- **Done** on `CON-21-request-queue-machinery`: CON-21 machinery and CON-20 U0–U5. Verify 0 at c96236d5. Full e2e PASS at 7591622c (run 43652942374). Run reports: `docs/runs/2026-11-14-CON-21/report.md` and `ui-report.md`.
+- **Pending check:** remote `requests-ui` + `status-bar` on c96236d5 (the Away button and tab-close fixes). If it fails, read the runner log and screenshot first; earlier `requests-ui` failures were wrong selectors.
+- **Open, not started:**
+  - (a) the request tab title "Review: {title}" instead of "Request";
+  - (b) line numbers in the review draft;
+  - (c) re-shoot `needs-away` / `needs-digest` after the fixes, only when the load average is below 6;
+  - (d) the floating waiting notice (on hold until the owner decides).
+- **Not this card:** permission requests (CON-18), sidebar Needs you markers and the app-closed OS notification (lead's follow-up cards).
+- **Not done here on purpose:** no merge to main, no push, no release. Those are the owner's call.
