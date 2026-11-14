@@ -1,4 +1,3 @@
-import type { NetworkState } from './contracts/network-state';
 import type { AgentScopeReason } from './add-dir-delivery';
 import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
@@ -17,6 +16,7 @@ import type {
 } from './conduit-mcp/ui-types';
 import type { SearchFileResult, SearchQuery, TruncatedBy } from './content-search';
 import type { DisplayFacts } from './contracts/frames';
+import type { NetworkState } from './contracts/network-state';
 import type { Job, LimitEpisode } from './contracts/scheduler';
 import type { RuntimeHealth, ServerSettings } from './contracts/server-protocol';
 import type { DroppedRoot, SessionOpReason as FolderSessionOpReason } from './folder-validation';

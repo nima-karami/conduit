@@ -392,7 +392,10 @@ export function createServices(o: ServicesOptions) {
     if (owned) return owned;
     if (request.method.startsWith('pairing.') || request.method.startsWith('link.')) {
       if (!network)
-        throw new RpcFault('unavailable', 'Linked machines are off: identity.json is from a newer build');
+        throw new RpcFault(
+          'unavailable',
+          'Linked machines are off: identity.json is from a newer build',
+        );
       const answer = network.handle(request.method, request.params);
       if (answer) return answer.then((result) => ({ result }));
     }

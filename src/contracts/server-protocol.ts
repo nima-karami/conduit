@@ -9,8 +9,6 @@
 // those payload types is a C2 change; the per-message ownership map is
 // docs/runs/2026-11-01-three-process-design/main-ts-ownership.md.
 
-import type { Capability } from './link-protocol';
-import type { NetworkState } from './network-state';
 import type {
   McpInstallRequest,
   McpInstallResult,
@@ -32,6 +30,8 @@ import type {
   SessionOpener,
 } from '../types';
 import type { DisplayFacts } from './frames';
+import type { Capability } from './link-protocol';
+import type { NetworkState } from './network-state';
 import type { Job, LimitEpisode, SessionAutoResume } from './scheduler';
 import type { SessionRuntime } from './session-identity';
 import type { AttachTarget, FirstPaint } from './terminal-link';
@@ -493,7 +493,12 @@ export interface ServerMethods {
   // Linked machines (docs/plans/2026-11-14-conduit-network-machinery.plan.md "C2 additions").
   'pairing.start': {
     params: Record<string, never>;
-    result: { pairingId: string; code: [string, string, string]; addresses: string[]; expiresAt: string };
+    result: {
+      pairingId: string;
+      code: [string, string, string];
+      addresses: string[];
+      expiresAt: string;
+    };
   };
   'pairing.join': { params: { code: string; address: string }; result: { pairingId: string } };
   'pairing.confirm': { params: { pairingId: string }; result: Record<string, never> };

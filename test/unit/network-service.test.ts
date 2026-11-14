@@ -2,9 +2,9 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { NetworkState } from '../../src/contracts/network-state';
 import { loadIdentity } from '../../server/network/identity';
 import { createNetwork, type NetworkService } from '../../server/network/index';
+import type { NetworkState } from '../../src/contracts/network-state';
 
 const quiet = { debug: () => undefined, warn: () => undefined, error: () => undefined };
 const cleanup: Array<() => Promise<void> | void> = [];
@@ -65,7 +65,8 @@ describe('network service over C2 calls', () => {
       address: started.addresses[0],
     });
     await until(
-      () => a.net.state().pairing?.state === 'confirm' && b.net.state().pairing?.state === 'confirm',
+      () =>
+        a.net.state().pairing?.state === 'confirm' && b.net.state().pairing?.state === 'confirm',
     );
     expect(a.net.state().pairing?.fingerprint).toBe(b.net.state().pairing?.fingerprint);
     await call(a.net, 'pairing.confirm', { pairingId: started.pairingId });
@@ -76,7 +77,11 @@ describe('network service over C2 calls', () => {
     const bId = b.net.state().machineId;
     await until(() => linkTo(a.net, bId)?.state === 'up' && linkTo(b.net, aId)?.state === 'up');
     expect(linkTo(a.net, bId)?.name).toBe('net-b');
-    expect(linkTo(b.net, aId)?.capabilities).toEqual({ messaging: true, monitor: true, drive: false });
+    expect(linkTo(b.net, aId)?.capabilities).toEqual({
+      messaging: true,
+      monitor: true,
+      drive: false,
+    });
     expect(b.net.state().listening.length).toBeGreaterThan(0);
 
     await call(b.net, 'link.revoke', { machineId: aId });
@@ -94,9 +99,15 @@ describe('network service over C2 calls', () => {
     await expect(
       call(a.net, 'pairing.join', { code: 'not three words', address: '127.0.0.1:1' }),
     ).rejects.toThrow('three pairing words');
-    await expect(call(a.net, 'link.revoke', { machineId: 'm-00000000' })).rejects.toThrow('No link');
+    await expect(call(a.net, 'link.revoke', { machineId: 'm-00000000' })).rejects.toThrow(
+      'No link',
+    );
     await expect(
-      call(a.net, 'link.setCapability', { machineId: 'm-00000000', capability: 'orchestrate', on: true }),
+      call(a.net, 'link.setCapability', {
+        machineId: 'm-00000000',
+        capability: 'orchestrate',
+        on: true,
+      }),
     ).rejects.toThrow('Expected capability');
     expect(a.net.handle('sessions.list', {})).toBeNull();
   });
@@ -117,11 +128,15 @@ describe('network service over C2 calls', () => {
     await until(() => b.net.state().pairing?.state === 'confirm');
     await call(a.net, 'pairing.confirm', { pairingId: started.pairingId });
     await call(b.net, 'pairing.confirm', { pairingId: joined.pairingId });
-    await until(() => a.net.state().pairing?.state === 'done' && b.net.state().pairing?.state === 'done');
+    await until(
+      () => a.net.state().pairing?.state === 'done' && b.net.state().pairing?.state === 'done',
+    );
     const ownerOf = (dir: string) => {
       const r = loadIdentity(dir);
       if (r.kind === 'newer') throw new Error('unexpected');
-      return r.identity.ownerKey?.publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+      return r.identity.ownerKey?.publicKey
+        .export({ type: 'spki', format: 'der' })
+        .toString('base64');
     };
     expect(ownerOf(a.dir)).toBeDefined();
     expect(ownerOf(a.dir)).toBe(ownerOf(b.dir));

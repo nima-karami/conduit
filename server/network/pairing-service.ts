@@ -1,8 +1,5 @@
 import type tls from 'node:tls';
-import {
-  LINK_PROTOCOL,
-  PAIRING_WINDOW_MS,
-} from '../../src/contracts/link-protocol';
+import { LINK_PROTOCOL, PAIRING_WINDOW_MS } from '../../src/contracts/link-protocol';
 import type { NetworkPairingView, PairingViewState } from '../../src/contracts/network-state';
 import { encodeFrame, FrameDecoder } from '../../src/network/frame-codec';
 import { newCode, normalizeCode } from '../../src/network/pairing-code';
