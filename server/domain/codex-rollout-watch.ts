@@ -96,6 +96,9 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
       watch.close();
       folders.delete(dir);
     }
+    for (const dir of openWarned) {
+      if (!wanted.has(dir)) openWarned.delete(dir);
+    }
     let missing = false;
     for (const dir of wanted) {
       if (folders.has(dir)) continue;
@@ -283,6 +286,7 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
       poll = null;
       for (const watch of folders.values()) watch.close();
       folders.clear();
+      openWarned.clear();
       for (const s of sessions.values()) {
         if (s.debounce) clearTimeout(s.debounce);
       }

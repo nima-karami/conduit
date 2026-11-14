@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { type DirWatch, EXISTS_POLL_MS, type watchDir } from '../../electron/watch-dir';
+import type { watchDirWhilePresent } from '../../electron/watch-dir';
 import { SERVER_FILE_VERSION } from '../../src/contracts/session-identity';
 import {
   type CompiledRules,
@@ -18,7 +18,7 @@ export interface LimitRulesSource {
 
 export function createLimitRulesSource(deps: {
   userData: string;
-  watchDir: typeof watchDir;
+  watchDirWhilePresent: typeof watchDirWhilePresent;
   fs: { read(p: string): string | null; writeAtomic(p: string, data: string): void };
   onChange(): void;
   log: { info(msg: string, data?: object): void; warn(msg: string, data?: object): void };
@@ -27,8 +27,7 @@ export function createLimitRulesSource(deps: {
   const defaults = (): CompiledRules => compileLimitRules(DEFAULT_LIMIT_RULES);
   let compiled = defaults();
 
-  // Only the first load may fall back to the defaults. A reload keeps the rules the user already
-  // has when the file goes bad, so an editing slip never silently drops them.
+  // see plan "Amendments after review": a reload keeps the rules the user already has when the file goes bad
   const load = (initial: boolean): void => {
     const reject = (message: string, data: object): void => {
       deps.log.warn(message, { file, ...data });
@@ -82,68 +81,28 @@ export function createLimitRulesSource(deps: {
   load(true);
 
   let timer: ReturnType<typeof setTimeout> | null = null;
-  let watch: DirWatch | null = null;
-  let rearm: ReturnType<typeof setTimeout> | null = null;
-  let unwatched = false;
-  let warnedWatch = false;
-  let disposed = false;
-
-  const onEvent = (_event: string, name: string | null): void => {
-    if (name !== null && name !== FILE_NAME) return;
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => {
-      timer = null;
-      load(false);
-      deps.onChange();
-    }, RELOAD_DEBOUNCE_MS);
-  };
-
-  const scheduleRearm = (): void => {
-    unwatched = true;
-    if (disposed || rearm) return;
-    rearm = setTimeout(() => {
-      rearm = null;
-      arm();
-    }, EXISTS_POLL_MS);
-  };
-
-  // A reload after an unwatched gap picks up what changed meanwhile: the watch cannot replay it.
-  const arm = (): void => {
-    if (disposed) return;
-    try {
-      watch = deps.watchDir(deps.userData, {}, onEvent, (error) => {
-        watch = null;
-        if (error) deps.log.warn('limit rules folder watch failed', { error: String(error) });
-        scheduleRearm();
-      });
-    } catch (err) {
-      if (!warnedWatch) {
-        warnedWatch = true;
-        deps.log.warn('could not watch limit rules folder; retrying', { error: String(err) });
-      }
-      scheduleRearm();
-      return;
-    }
-    warnedWatch = false;
-    if (!unwatched) return;
-    unwatched = false;
-    load(false);
-    deps.onChange();
-  };
-
-  arm();
+  const watch = deps.watchDirWhilePresent(
+    deps.userData,
+    { log: (message, error) => deps.log.warn(message, { error: String(error) }) },
+    (_event, name) => {
+      if (name !== null && name !== FILE_NAME) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        load(false);
+        deps.onChange();
+      }, RELOAD_DEBOUNCE_MS);
+    },
+  );
 
   return {
     current() {
       return compiled;
     },
     dispose() {
-      disposed = true;
       if (timer) clearTimeout(timer);
-      if (rearm) clearTimeout(rearm);
       timer = null;
-      rearm = null;
-      watch?.close();
+      watch.close();
     },
   };
 }

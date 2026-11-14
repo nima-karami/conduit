@@ -7,29 +7,30 @@ import { DEFAULT_LIMIT_RULES } from '../../src/limit-rules';
 const USER_DATA = '/userdata';
 const FILE = join(USER_DATA, 'limit-rules.json');
 
-interface Live {
+interface Watch {
   onEvent(event: string, filename: string | null): void;
-  onGone(error?: Error): void;
   closed: boolean;
 }
 
-function harness(initial: string | null, opts: { failWatches?: number } = {}) {
-  let watchCalls = 0;
+function harness(initial: string | null) {
   const files = new Map<string, string>();
   if (initial !== null) files.set(FILE, initial);
   const writes: string[] = [];
   const infos: string[] = [];
   const warnings: string[] = [];
   const onChange = vi.fn();
-  const live: Live[] = [];
+  const watches: Watch[] = [];
+  const watchCalls: {
+    dir: string;
+    opts: object;
+    log?: (message: string, error?: unknown) => void;
+  }[] = [];
   const source = createLimitRulesSource({
     userData: USER_DATA,
-    watchDir: (dir, _opts, onEvent, onGone) => {
-      expect(dir).toBe(USER_DATA);
-      watchCalls++;
-      if (watchCalls <= (opts.failWatches ?? 0)) throw new Error('EMFILE: too many open files');
-      const watch: Live = { onEvent, onGone, closed: false };
-      live.push(watch);
+    watchDirWhilePresent: (dir, opts, onEvent) => {
+      watchCalls.push({ dir, opts, log: opts.log });
+      const watch: Watch = { onEvent, closed: false };
+      watches.push(watch);
       return {
         close() {
           watch.closed = true;
@@ -49,10 +50,14 @@ function harness(initial: string | null, opts: { failWatches?: number } = {}) {
       warn: (msg) => warnings.push(msg),
     },
   });
-  return { source, files, writes, infos, warnings, onChange, live };
+  return { source, files, writes, infos, warnings, onChange, watches, watchCalls };
 }
 
 const ruleIds = (rules: readonly { id: string }[]) => rules.map((r) => r.id);
+const FRESH = JSON.stringify({
+  version: 1,
+  rules: [{ id: 'fresh', cli: 'codex', enabled: true, match: 'quota' }],
+});
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
@@ -72,6 +77,13 @@ describe('limit rules file', () => {
     });
     expect(ruleIds(h.source.current().rules)).toEqual(ruleIds(DEFAULT_LIMIT_RULES));
     expect(h.writes).toHaveLength(1);
+  });
+
+  it('seeds the file with the registered version', () => {
+    const h = harness(null);
+    expect(JSON.parse(h.files.get(FILE) ?? '{}').version).toBe(
+      SERVER_FILE_VERSION['limit-rules.json'],
+    );
   });
 
   it('keeps a corrupt file untouched, serves the defaults and warns once', () => {
@@ -103,19 +115,18 @@ describe('limit rules file', () => {
     expect(h.files.get(FILE)).toBe(blob);
   });
 
-  it('reloads when limit-rules.json changes, after the debounce, and ignores other files', () => {
+  it('watches userData through the self-re-arming helper, with its logger wired', () => {
+    const h = harness(null);
+    expect(h.watchCalls).toHaveLength(1);
+    expect(h.watchCalls[0]?.dir).toBe(USER_DATA);
+    h.watchCalls[0]?.log?.('could not watch', new Error('EMFILE'));
+    expect(h.warnings).toContain('could not watch');
+  });
+
+  it('reloads and calls onChange when limit-rules.json changes, after the debounce', () => {
     const h = harness(JSON.stringify({ version: 1, rules: [] }));
-    const next = JSON.stringify({
-      version: 1,
-      rules: [{ id: 'fresh', cli: 'codex', enabled: true, match: 'quota' }],
-    });
-    h.files.set(FILE, next);
-
-    h.live[0]?.onEvent('change', 'other.json');
-    vi.advanceTimersByTime(500);
-    expect(h.onChange).not.toHaveBeenCalled();
-
-    h.live[0]?.onEvent('change', 'limit-rules.json');
+    h.files.set(FILE, FRESH);
+    h.watches[0]?.onEvent('change', 'limit-rules.json');
     vi.advanceTimersByTime(249);
     expect(h.onChange).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
@@ -123,22 +134,29 @@ describe('limit rules file', () => {
     expect(ruleIds(h.source.current().rules)).toEqual(['fresh']);
   });
 
-  it('seeds the file with the registered version', () => {
-    const h = harness(null);
-    expect(JSON.parse(h.files.get(FILE) ?? '{}').version).toBe(
-      SERVER_FILE_VERSION['limit-rules.json'],
-    );
+  it('reloads on a null-name event, which the helper emits after an unwatched gap', () => {
+    const h = harness(JSON.stringify({ version: 1, rules: [] }));
+    h.files.set(FILE, FRESH);
+    h.watches[0]?.onEvent('rename', null);
+    vi.advanceTimersByTime(250);
+    expect(h.onChange).toHaveBeenCalledTimes(1);
+    expect(ruleIds(h.source.current().rules)).toEqual(['fresh']);
+  });
+
+  it('ignores an event for an unrelated file', () => {
+    const h = harness(JSON.stringify({ version: 1, rules: [] }));
+    h.files.set(FILE, FRESH);
+    h.watches[0]?.onEvent('change', 'other.json');
+    vi.advanceTimersByTime(1000);
+    expect(h.onChange).not.toHaveBeenCalled();
+    expect(ruleIds(h.source.current().rules)).toEqual([]);
   });
 
   it('keeps the current rules and logs one line when the file goes missing on reload', () => {
-    const fresh = JSON.stringify({
-      version: 1,
-      rules: [{ id: 'fresh', cli: 'codex', enabled: true, match: 'quota' }],
-    });
-    const h = harness(fresh);
+    const h = harness(FRESH);
     h.files.delete(FILE);
     h.writes.length = 0;
-    h.live[0]?.onEvent('rename', 'limit-rules.json');
+    h.watches[0]?.onEvent('rename', 'limit-rules.json');
     vi.advanceTimersByTime(250);
     expect(ruleIds(h.source.current().rules)).toEqual(['fresh']);
     expect(h.warnings).toHaveLength(1);
@@ -147,13 +165,9 @@ describe('limit rules file', () => {
   });
 
   it('keeps the current rules on a reload that finds the file corrupt', () => {
-    const fresh = JSON.stringify({
-      version: 1,
-      rules: [{ id: 'fresh', cli: 'codex', enabled: true, match: 'quota' }],
-    });
-    const h = harness(fresh);
+    const h = harness(FRESH);
     h.files.set(FILE, '{not json');
-    h.live[0]?.onEvent('rename', 'limit-rules.json');
+    h.watches[0]?.onEvent('rename', 'limit-rules.json');
     vi.advanceTimersByTime(250);
     expect(ruleIds(h.source.current().rules)).toEqual(['fresh']);
     expect(h.warnings).toHaveLength(1);
@@ -168,35 +182,9 @@ describe('limit rules file', () => {
     expect(h.warnings[0]).toMatch(/newer/);
   });
 
-  it('closes its watch on dispose', () => {
+  it('closes the helper handle on dispose', () => {
     const h = harness(null);
     h.source.dispose();
-    expect(h.live[0]?.closed).toBe(true);
-  });
-
-  it('logs a throw from the initial watch and retries it every 2 s', () => {
-    const h = harness(JSON.stringify({ version: 1, rules: [] }), { failWatches: 1 });
-    expect(
-      h.warnings.filter((w) => w === 'could not watch limit rules folder; retrying'),
-    ).toHaveLength(1);
-    expect(h.live).toHaveLength(0);
-    vi.advanceTimersByTime(2000);
-    expect(h.live).toHaveLength(1);
-  });
-
-  it('re-arms after 2 s when the watch errors, and reloads what changed while unwatched', () => {
-    const h = harness(JSON.stringify({ version: 1, rules: [] }));
-    h.live[0]?.onGone(new Error('x'));
-    h.files.set(
-      FILE,
-      JSON.stringify({
-        version: 1,
-        rules: [{ id: 'fresh', cli: 'codex', enabled: true, match: 'quota' }],
-      }),
-    );
-    expect(h.live).toHaveLength(1);
-    vi.advanceTimersByTime(2000);
-    expect(h.live).toHaveLength(2);
-    expect(ruleIds(h.source.current().rules)).toEqual(['fresh']);
+    expect(h.watches[0]?.closed).toBe(true);
   });
 });

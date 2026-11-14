@@ -291,16 +291,35 @@ describe('codex rollout watch', () => {
     expect(watch.boundFile('s1')).toBe(FILE_A);
     const openedBefore = h.opened.filter((d) => d === DAY12).length;
 
-    h.live.get(DAY12)?.onGone(new Error('x'));
+    const before = h.live.get(DAY12);
+    before?.onGone(new Error('x'));
     vi.advanceTimersByTime(2000);
     await flush();
     expect(h.opened.filter((d) => d === DAY12)).toHaveLength(openedBefore + 1);
-    expect(h.live.has(DAY12)).toBe(true);
+    const reopened = h.live.get(DAY12);
+    expect(reopened).toBeDefined();
+    expect(reopened).not.toBe(before);
 
     h.files.set(FILE_A, `${PRIMARY}\n${LIMIT_TASK_COMPLETE}\n`);
     h.emit(DAY12, 'rollout-a.jsonl');
     vi.advanceTimersByTime(250);
     await flush();
     expect(h.signals.map((x) => x.kind)).toEqual(['limited']);
+  });
+
+  it('warns again for a folder that failed, left the sessions, and came back', async () => {
+    const h = harness();
+    h.failWatch.add(DAY12);
+    const watch = createCodexRolloutWatch(h.deps);
+    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    await flush();
+    const openWarnings = () => h.warnings.filter((w) => w === 'could not watch rollout folder');
+    expect(openWarnings()).toHaveLength(1);
+
+    watch.untrack('s1');
+    await flush();
+    watch.track('s2', { cwd: '/work/project', launchAt: LAUNCH });
+    await flush();
+    expect(openWarnings()).toHaveLength(2);
   });
 });
