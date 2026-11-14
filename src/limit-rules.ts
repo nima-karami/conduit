@@ -21,12 +21,12 @@ interface RuleHit {
   reason: string;
 }
 
-const STUCK_KINDS = [
-  'usage-limit',
-  'rate-limit-prompt',
-  'provider-error',
-  'update-prompt',
-] as const satisfies readonly StuckKind[];
+const STUCK_KIND_SET: Record<StuckKind, true> = {
+  'usage-limit': true,
+  'rate-limit-prompt': true,
+  'provider-error': true,
+  'update-prompt': true,
+};
 const RESET_FORMATS = [
   'clock',
   'clock-or-date',
@@ -156,7 +156,8 @@ export function compileLimitRules(rules: readonly LimitRule[]): CompiledRules {
 
 const isCli = (v: unknown): v is CliKind | '*' =>
   v === '*' || (CLI_KINDS as readonly unknown[]).includes(v);
-const isStuckKind = (v: unknown): v is StuckKind => (STUCK_KINDS as readonly unknown[]).includes(v);
+const isStuckKind = (v: unknown): v is StuckKind =>
+  typeof v === 'string' && Object.hasOwn(STUCK_KIND_SET, v);
 const isResetFormat = (v: unknown): v is ResetFormat =>
   (RESET_FORMATS as readonly unknown[]).includes(v);
 

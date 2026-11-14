@@ -161,3 +161,23 @@ describe('parseResetText — DST', () => {
     );
   });
 });
+
+describe('parseResetText — impossible dates', () => {
+  const FEB28_1500_TORONTO = Date.UTC(2026, 1, 28, 20, 0, 0);
+
+  it('refuses a day the calendar does not have', () => {
+    expect(
+      parseResetText('Feb 30, 3pm (America/Toronto)', 'clock-or-date', FEB28_1500_TORONTO),
+    ).toBeNull();
+    expect(
+      parseResetText('Feb 29, 2026 3pm (America/Toronto)', 'clock-or-date', FEB28_1500_TORONTO),
+    ).toBeNull();
+  });
+
+  it('keeps a real leap day', () => {
+    const feb25 = Date.UTC(2028, 1, 25, 0, 0, 0);
+    expect(parseResetText('Feb 29, 2028 3pm (America/Toronto)', 'clock-or-date', feb25)).toBe(
+      Date.UTC(2028, 1, 29, 20, 0),
+    );
+  });
+});

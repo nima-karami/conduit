@@ -31,6 +31,7 @@ function harness() {
   const files = new Map<string, string>();
   const dirs = new Set<string>([DAY12]);
   const live = new Map<string, Live>();
+  const failWatch = new Set<string>();
   const opened: string[] = [];
   const signals: LimitSignal[] = [];
   const warnings: string[] = [];
@@ -39,6 +40,7 @@ function harness() {
     now: () => NOW,
     localDate: () => ({ y: 2026, m: 11, d: 12 }),
     watchDir: (dir, _opts, onEvent, onGone) => {
+      if (failWatch.has(dir)) throw new Error('EMFILE: too many open files');
       opened.push(dir);
       const watch: Live = { onEvent, onGone, closed: false };
       live.set(dir, watch);
@@ -77,7 +79,7 @@ function harness() {
     },
   };
   const emit = (dir: string, name: string | null) => live.get(dir)?.onEvent('rename', name);
-  return { deps, files, dirs, live, opened, signals, warnings, emit };
+  return { deps, files, dirs, live, failWatch, opened, signals, warnings, emit };
 }
 
 async function flush(): Promise<void> {
@@ -253,6 +255,50 @@ describe('codex rollout watch', () => {
 
     h.files.set(FILE_A, `${PRIMARY}\n${LIMIT_TASK_COMPLETE}\n`);
     h.emit(DAY12, null);
+    vi.advanceTimersByTime(250);
+    await flush();
+    expect(h.signals.map((x) => x.kind)).toEqual(['limited']);
+  });
+
+  it('warns once per folder while the watch keeps throwing, and again after the folder goes missing', async () => {
+    const h = harness();
+    h.failWatch.add(DAY12);
+    const watch = createCodexRolloutWatch(h.deps);
+    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    await flush();
+    const openWarnings = () => h.warnings.filter((w) => w === 'could not watch rollout folder');
+    vi.advanceTimersByTime(2000);
+    await flush();
+    vi.advanceTimersByTime(2000);
+    await flush();
+    expect(openWarnings()).toHaveLength(1);
+
+    h.dirs.delete(DAY12);
+    vi.advanceTimersByTime(2000);
+    await flush();
+    h.dirs.add(DAY12);
+    vi.advanceTimersByTime(2000);
+    await flush();
+    expect(openWarnings()).toHaveLength(2);
+  });
+
+  it('reopens a folder whose watch errored, and still emits lines appended afterwards', async () => {
+    const h = harness();
+    h.files.set(FILE_A, `${PRIMARY}\n`);
+    const watch = createCodexRolloutWatch(h.deps);
+    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    await flush();
+    expect(watch.boundFile('s1')).toBe(FILE_A);
+    const openedBefore = h.opened.filter((d) => d === DAY12).length;
+
+    h.live.get(DAY12)?.onGone(new Error('x'));
+    vi.advanceTimersByTime(2000);
+    await flush();
+    expect(h.opened.filter((d) => d === DAY12)).toHaveLength(openedBefore + 1);
+    expect(h.live.has(DAY12)).toBe(true);
+
+    h.files.set(FILE_A, `${PRIMARY}\n${LIMIT_TASK_COMPLETE}\n`);
+    h.emit(DAY12, 'rollout-a.jsonl');
     vi.advanceTimersByTime(250);
     await flush();
     expect(h.signals.map((x) => x.kind)).toEqual(['limited']);

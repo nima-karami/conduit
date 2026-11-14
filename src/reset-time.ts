@@ -40,6 +40,20 @@ function clockInstant(text: string, zone: string | undefined, now: number): numb
   return clock === null ? null : resolveClockTime(clock, zone, now);
 }
 
+// a wall time on a day the calendar lacks (Feb 30) lands on a later date; refuse it rather than move it
+function instantOnDate(
+  zone: string | undefined,
+  y: number,
+  mo: number,
+  d: number,
+  h: number,
+  mi: number,
+): number | null {
+  const at = wallTimeToInstant(zone, { y, mo, d, h, mi });
+  const back = wallDateIn(zone, at);
+  return back.y === y && back.mo === mo && back.d === d ? at : null;
+}
+
 function dateInstant(text: string, zone: string | undefined, now: number): number | null {
   const m = MONTH_DAY.exec(text);
   const monthName = m?.[1];
@@ -50,11 +64,11 @@ function dateInstant(text: string, zone: string | undefined, now: number): numbe
   if (month === 0 || clock === null) return null;
   const h = Number(clock.slice(0, 2));
   const mi = Number(clock.slice(3));
-  if (m[3]) return wallTimeToInstant(zone, { y: Number(m[3]), mo: month, d: day, h, mi });
+  if (m[3]) return instantOnDate(zone, Number(m[3]), month, day, h, mi);
   const thisYear = wallDateIn(zone, now).y;
   for (const y of [thisYear, thisYear + 1]) {
-    const at = wallTimeToInstant(zone, { y, mo: month, d: day, h, mi });
-    if (at >= now - MAX_BEHIND_MS) return at;
+    const at = instantOnDate(zone, y, month, day, h, mi);
+    if (at !== null && at >= now - MAX_BEHIND_MS) return at;
   }
   return null;
 }

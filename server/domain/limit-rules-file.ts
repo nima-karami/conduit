@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import type { watchDir } from '../../electron/watch-dir';
+import { type DirWatch, EXISTS_POLL_MS, type watchDir } from '../../electron/watch-dir';
 import { SERVER_FILE_VERSION } from '../../src/contracts/session-identity';
 import {
   type CompiledRules,
@@ -82,31 +82,68 @@ export function createLimitRulesSource(deps: {
   load(true);
 
   let timer: ReturnType<typeof setTimeout> | null = null;
-  const watch = deps.watchDir(
-    deps.userData,
-    {},
-    (_event, name) => {
-      if (name !== null && name !== FILE_NAME) return;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        timer = null;
-        load(false);
-        deps.onChange();
-      }, RELOAD_DEBOUNCE_MS);
-    },
-    (error) => {
-      if (error) deps.log.warn('limit rules folder watch failed', { error: String(error) });
-    },
-  );
+  let watch: DirWatch | null = null;
+  let rearm: ReturnType<typeof setTimeout> | null = null;
+  let unwatched = false;
+  let warnedWatch = false;
+  let disposed = false;
+
+  const onEvent = (_event: string, name: string | null): void => {
+    if (name !== null && name !== FILE_NAME) return;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      load(false);
+      deps.onChange();
+    }, RELOAD_DEBOUNCE_MS);
+  };
+
+  const scheduleRearm = (): void => {
+    unwatched = true;
+    if (disposed || rearm) return;
+    rearm = setTimeout(() => {
+      rearm = null;
+      arm();
+    }, EXISTS_POLL_MS);
+  };
+
+  // A reload after an unwatched gap picks up what changed meanwhile: the watch cannot replay it.
+  const arm = (): void => {
+    if (disposed) return;
+    try {
+      watch = deps.watchDir(deps.userData, {}, onEvent, (error) => {
+        watch = null;
+        if (error) deps.log.warn('limit rules folder watch failed', { error: String(error) });
+        scheduleRearm();
+      });
+    } catch (err) {
+      if (!warnedWatch) {
+        warnedWatch = true;
+        deps.log.warn('could not watch limit rules folder; retrying', { error: String(err) });
+      }
+      scheduleRearm();
+      return;
+    }
+    warnedWatch = false;
+    if (!unwatched) return;
+    unwatched = false;
+    load(false);
+    deps.onChange();
+  };
+
+  arm();
 
   return {
     current() {
       return compiled;
     },
     dispose() {
+      disposed = true;
       if (timer) clearTimeout(timer);
+      if (rearm) clearTimeout(rearm);
       timer = null;
-      watch.close();
+      rearm = null;
+      watch?.close();
     },
   };
 }

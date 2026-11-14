@@ -212,3 +212,20 @@ describe('compileLimitRules and parseLimitRulesFile', () => {
     expect(parseLimitRulesFile(JSON.stringify({ version: 1, rules: [] })).version).toBe('read');
   });
 });
+
+describe('default Claude rule — negatives ported from scanLimitNotice', () => {
+  const negatives: [string, string][] = [
+    ['a word that merely contains limit', 'rate limiter tripped; counters reset at 12:30'],
+    ['a comment about a limit with no usage anchor', '+  // the limit resets nightly at 23:10'],
+    [
+      'an unrelated sentence carrying limit, reset and a time',
+      'Please reset your password before the 12:30 deadline; there is no limit',
+    ],
+    ['a limit with no reset anchor', 'You have hit the limit of open files'],
+  ];
+  for (const [label, line] of negatives) {
+    it(`does not match ${label}`, () => {
+      expect(matchLimitRules(DEFAULTS, 'claude', [line], NOV13_1500_TORONTO)).toBeNull();
+    });
+  }
+});

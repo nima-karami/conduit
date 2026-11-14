@@ -68,6 +68,7 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
   const inspecting = new Set<string>();
   const folders = new Map<string, DirWatch>();
   const opening = new Set<string>();
+  const openWarned = new Set<string>();
   let poll: ReturnType<typeof setInterval> | null = null;
   let disposed = false;
 
@@ -112,7 +113,10 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
   const openFolder = async (dir: string): Promise<void> => {
     opening.add(dir);
     try {
-      if (!(await deps.fs.exists(dir))) return;
+      if (!(await deps.fs.exists(dir))) {
+        openWarned.delete(dir);
+        return;
+      }
       if (disposed || folders.has(dir) || !wantedFolders().has(dir)) return;
       try {
         const watch = deps.watchDir(
@@ -126,8 +130,12 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
           },
         );
         folders.set(dir, watch);
+        openWarned.delete(dir);
       } catch (err) {
-        deps.log.warn('could not watch rollout folder', { dir, error: String(err) });
+        if (!openWarned.has(dir)) {
+          openWarned.add(dir);
+          deps.log.warn('could not watch rollout folder', { dir, error: String(err) });
+        }
         return;
       }
       await examineFolder(dir);

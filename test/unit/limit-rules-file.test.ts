@@ -9,10 +9,12 @@ const FILE = join(USER_DATA, 'limit-rules.json');
 
 interface Live {
   onEvent(event: string, filename: string | null): void;
+  onGone(error?: Error): void;
   closed: boolean;
 }
 
-function harness(initial: string | null) {
+function harness(initial: string | null, opts: { failWatches?: number } = {}) {
+  let watchCalls = 0;
   const files = new Map<string, string>();
   if (initial !== null) files.set(FILE, initial);
   const writes: string[] = [];
@@ -22,9 +24,11 @@ function harness(initial: string | null) {
   const live: Live[] = [];
   const source = createLimitRulesSource({
     userData: USER_DATA,
-    watchDir: (dir, _opts, onEvent) => {
+    watchDir: (dir, _opts, onEvent, onGone) => {
       expect(dir).toBe(USER_DATA);
-      const watch: Live = { onEvent, closed: false };
+      watchCalls++;
+      if (watchCalls <= (opts.failWatches ?? 0)) throw new Error('EMFILE: too many open files');
+      const watch: Live = { onEvent, onGone, closed: false };
       live.push(watch);
       return {
         close() {
@@ -168,5 +172,31 @@ describe('limit rules file', () => {
     const h = harness(null);
     h.source.dispose();
     expect(h.live[0]?.closed).toBe(true);
+  });
+
+  it('logs a throw from the initial watch and retries it every 2 s', () => {
+    const h = harness(JSON.stringify({ version: 1, rules: [] }), { failWatches: 1 });
+    expect(
+      h.warnings.filter((w) => w === 'could not watch limit rules folder; retrying'),
+    ).toHaveLength(1);
+    expect(h.live).toHaveLength(0);
+    vi.advanceTimersByTime(2000);
+    expect(h.live).toHaveLength(1);
+  });
+
+  it('re-arms after 2 s when the watch errors, and reloads what changed while unwatched', () => {
+    const h = harness(JSON.stringify({ version: 1, rules: [] }));
+    h.live[0]?.onGone(new Error('x'));
+    h.files.set(
+      FILE,
+      JSON.stringify({
+        version: 1,
+        rules: [{ id: 'fresh', cli: 'codex', enabled: true, match: 'quota' }],
+      }),
+    );
+    expect(h.live).toHaveLength(1);
+    vi.advanceTimersByTime(2000);
+    expect(h.live).toHaveLength(2);
+    expect(ruleIds(h.source.current().rules)).toEqual(['fresh']);
   });
 });

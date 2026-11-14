@@ -256,7 +256,7 @@ export function resolveClockTime(
   return null;
 }
 
-/** The instant a wall time in `zone` (absent or unusable → the machine's) denotes, spring-forward handled. */
+// see docs/plans/2026-11-13-scheduler-auto-resume.plan.md "Amendments after review"
 export function wallTimeToInstant(
   zone: string | undefined,
   w: { y: number; mo: number; d: number; h: number; mi: number },
@@ -265,7 +265,7 @@ export function wallTimeToInstant(
   return instantFor(fmt, w.y, w.mo, w.d, w.h, w.mi);
 }
 
-/** The calendar date `at` falls on in `zone` (same fallback). */
+// see docs/plans/2026-11-13-scheduler-auto-resume.plan.md "Amendments after review"
 export function wallDateIn(
   zone: string | undefined,
   at: number,
