@@ -30,6 +30,11 @@ function outbox(server) {
   const file = join(server.userData, 'network', 'outbox.json');
   return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')).entries : [];
 }
+// B stores a message under its own id; the sender's id survives as originMessageId (CON-27 B1).
+function localIdOf(server, originId) {
+  return records(server).find((r) => r.t === 'msg' && r.msg.originMessageId === originId)?.msg
+    .messageId;
+}
 function dumpServerLog(server) {
   const file = join(server.userData, 'server.log');
   if (existsSync(file))
@@ -66,10 +71,11 @@ async function run() {
     });
     assert(first.recipients?.[0]?.status === 'queued', `send: ${JSON.stringify(first)}`);
     await eventually('B receives first message', () =>
-      records(b).some((r) => r.t === 'msg' && r.msg.messageId === first.message_id),
+      records(b).some((r) => r.t === 'msg' && r.msg.originMessageId === first.message_id),
     );
     const inbox = await callTool(b, ba, 'read_inbox', { unread_only: false });
-    const received = inbox.messages?.filter((m) => m.message_id === first.message_id) ?? [];
+    const firstLocal = localIdOf(b, first.message_id);
+    const received = inbox.messages?.filter((m) => m.message_id === firstLocal) ?? [];
     assert(received.length === 1, `first inbox: ${JSON.stringify(inbox)}`);
     assert(
       received[0].body.includes('on another machine') &&
@@ -81,7 +87,7 @@ async function run() {
     const attachment = received[0].attachments?.find((a) => a.name === 'network-note.txt');
     assert(attachment, `attachment metadata missing: ${JSON.stringify(received[0])}`);
     const read = await callTool(b, ba, 'read_attachment', {
-      message_id: first.message_id,
+      message_id: firstLocal,
       attachment_id: attachment.attachment_id,
     });
     assert(read.text === attachmentText, `attachment contents: ${JSON.stringify(read)}`);
@@ -117,7 +123,7 @@ async function run() {
       `send while dropping replies: ${JSON.stringify(dropped)}`,
     );
     await eventually('B stores dropped-ack message', () =>
-      records(b).some((r) => r.t === 'msg' && r.msg.messageId === dropped.message_id),
+      records(b).some((r) => r.t === 'msg' && r.msg.originMessageId === dropped.message_id),
     );
     assert(
       outbox(a).some((e) => e.message.messageId === dropped.message_id),
@@ -130,19 +136,20 @@ async function run() {
       () => !outbox(a).some((e) => e.message.messageId === dropped.message_id),
     );
     assert(
-      records(b).filter((r) => r.t === 'msg' && r.msg.messageId === dropped.message_id).length ===
-        1,
+      records(b).filter((r) => r.t === 'msg' && r.msg.originMessageId === dropped.message_id)
+        .length === 1,
       'resend created duplicate stored records',
     );
+    const droppedLocal = localIdOf(b, dropped.message_id);
     const afterDrop = await callTool(b, ba, 'read_inbox', { unread_only: false });
     assert(
-      afterDrop.messages?.filter((m) => m.message_id === dropped.message_id).length === 1,
+      afterDrop.messages?.filter((m) => m.message_id === droppedLocal).length === 1,
       `resend inbox: ${JSON.stringify(afterDrop)}`,
     );
     assert(
       agentRecords(b, ba.sessionId, 'INBOX')
         .flatMap((r) => r.result.messages ?? [])
-        .filter((m) => m.message_id === dropped.message_id).length <= 1,
+        .filter((m) => m.message_id === droppedLocal).length <= 1,
       'duplicate automatic inbox delivery',
     );
 
@@ -172,7 +179,7 @@ async function run() {
     );
     assert(
       !(await until(
-        () => records(b).some((r) => r.t === 'msg' && r.msg.messageId === queued.message_id),
+        () => records(b).some((r) => r.t === 'msg' && r.msg.originMessageId === queued.message_id),
         2_000,
       )),
       'revoked message reached B after reconnection was allowed',
