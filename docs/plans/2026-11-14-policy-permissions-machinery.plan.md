@@ -618,6 +618,7 @@ Failing tests:
   - allow → it commits that decision at once and the call goes ahead;
   - deny or ask → the call is refused, and the row records that decision and reasonText with outcome 'denied'.
   Held overrides come first in the engine's override lookup, so the override an ask already paid for is the one reported.
+  A recovered allow always carries the original rule, so no guard is needed: ruleFor depends on profile, assignment, tool and target only, and overrides/grants never feed it. If overrides ever carry their own rule, commitResolved must compare rules before standing in.
 - **Carried to T3.2 (T3.1 re-review):**
   - Catching tests for the `ui().open` filter and the withdraw_request policy guard, using a live permission from createPermission. The current withdraw test passes only because load withdraws the record; rewrite it.
   - Narrow once in answerFromRenderer (drop the unreachable second visibility branch).
