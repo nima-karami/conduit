@@ -558,6 +558,19 @@ describe('createCallFlow', () => {
     expect(t.settled).toMatchObject([{ end: 'withdrawn', reason: 'the call was cancelled' }]);
   });
 
+  it('a grant scope that does not resolve ends the ask withdrawn with that reason, creating nothing more', async () => {
+    const t = setup();
+    const c = t.call({ grantOutcome: 'scope' });
+    await t.flush();
+    answerLast(t, t.flow, 'always');
+    const r = await c.promise;
+    expect(r && !r.ok ? r.error.message : '').toBe("that scope isn't available for every target");
+    expect(t.settled).toMatchObject([
+      { end: 'withdrawn', reason: "that scope isn't available for every target" },
+    ]);
+    expect(c.spies.run).toBe(0);
+  });
+
   it('a deny at the re-decide creates no grant, even for always', async () => {
     const t = setup();
     const c = t.call({ redecide: { kind: 'withdraw', reason: 'Observer: deny' } });
