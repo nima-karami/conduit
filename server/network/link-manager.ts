@@ -89,6 +89,8 @@ const TERMINAL: readonly LinkState[] = ['revoked', 'incompatible', 'identity-cha
 const ownerMatches = (record: LinkRecord, helloOwner: string | null): boolean =>
   helloOwner === record.ownerKey || (record.ownerTransfer === 'send' && helloOwner === null);
 const b64 = (b: Buffer): string => b.toString('base64');
+const sameCapabilities = (x: Capabilities, y: Capabilities): boolean =>
+  x.messaging === y.messaging && x.monitor === y.monitor && x.drive === y.drive;
 
 export function createLinkManager(deps: LinkManagerDeps): LinkManager {
   const peers = new Map<string, Peer>();
@@ -208,8 +210,9 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       sock.destroy();
       return;
     }
+    const sentCapabilities = { ...p.record.capabilities };
     const opened = await openConnection(sock, {
-      hello: ownHello(p.record.capabilities),
+      hello: ownHello(sentCapabilities),
       now: deps.now,
       log: deps.log,
       pingMs: deps.pingMs,
@@ -259,6 +262,9 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     }
     event(p, { kind: 'up', at: deps.now() });
     opened.start({ onFrame: (f) => onFrame(p, opened, f), onClose: () => onClose(p, opened) });
+    // A change made during the handshake missed this hello, and any connection it went out on.
+    if (!sameCapabilities(sentCapabilities, p.record.capabilities))
+      opened.send({ t: 'caps', capabilities: { ...p.record.capabilities } });
     if (p.record.ownerTransfer === 'send') sendOwnerKey(p, opened);
     deps.changed();
   };

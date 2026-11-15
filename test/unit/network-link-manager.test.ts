@@ -3,8 +3,14 @@ import type { AuditEvent } from '../../server/network/audit-log';
 import { type Identity, loadIdentity } from '../../server/network/identity';
 import { createLinkManager, type LinkManager } from '../../server/network/link-manager';
 import { openLinkStore } from '../../server/network/link-store';
-import { type LinkListener, listenLinks } from '../../server/network/listener';
-import { OWN_DEFAULT_CAPABILITIES } from '../../src/contracts/link-protocol';
+import { dial, type LinkListener, listenLinks } from '../../server/network/listener';
+import {
+  LINK_FEATURES,
+  LINK_FRAME_MAX_BYTES,
+  LINK_PROTOCOL,
+  OWN_DEFAULT_CAPABILITIES,
+} from '../../src/contracts/link-protocol';
+import { encodeFrame, FrameDecoder } from '../../src/network/frame-codec';
 import type { LinkRecord } from '../../src/network/link-file';
 import { linkIdFor } from '../../src/network/pairing-transcript';
 import { selfSignedCert } from '../../src/network/self-signed-cert';
@@ -169,6 +175,50 @@ describe('link manager', { timeout: 60_000 }, () => {
     expect(b.manager.setCapability(a.id.machineId, 'drive', true)).toBe(true);
     await until(() => a.manager.view(b.id.machineId)?.peerCapabilities?.drive === true);
     expect(b.audit.some((e) => e.kind === 'link.capability')).toBe(true);
+  });
+
+  it('a capability change made after its hello went out still reaches the peer', async () => {
+    const owner = identity();
+    const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
+    const a = await node(identity(ownerKey), 'linux-box');
+    const b = await node(identity(ownerKey), 'win-box');
+    // B never dials; A's side is driven by hand so the change lands mid-handshake.
+    b.link(record(a, 'linux-box', { addresses: [] }));
+    b.manager.start();
+    const { sock } = await dial({
+      address: b.address,
+      cert: a.cert,
+      key: a.id.serverPrivateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      peerCert: b.cert,
+      peerMachineId: b.id.machineId,
+      expectKeyRaw: b.id.serverKeyRaw,
+      timeoutMs: 5000,
+    });
+    cleanup.push(async () => {
+      sock.destroy();
+    });
+    const frames: Array<{ t: string; capabilities?: { drive: boolean } }> = [];
+    const decoder = new FrameDecoder(LINK_FRAME_MAX_BYTES);
+    sock.on('data', (d: Buffer) => {
+      frames.push(...(decoder.push(d).frames as typeof frames));
+    });
+    sock.resume();
+    await until(() => frames.some((f) => f.t === 'hello'));
+    expect(frames.find((f) => f.t === 'hello')?.capabilities?.drive).toBe(false);
+    expect(b.manager.setCapability(a.id.machineId, 'drive', true)).toBe(true);
+    sock.write(
+      encodeFrame({
+        t: 'hello',
+        protocol: { major: LINK_PROTOCOL.major, minor: LINK_PROTOCOL.minor },
+        machineId: a.id.machineId,
+        serverKey: a.id.serverKeyRaw.toString('base64'),
+        ownerKey: ownerPub(a.id),
+        selfName: 'linux-box',
+        features: [...LINK_FEATURES],
+        capabilities: { ...OWN_DEFAULT_CAPABILITIES },
+      }),
+    );
+    await until(() => frames.some((f) => f.t === 'caps' && f.capabilities?.drive === true), 4000);
   });
 
   it('a stopped peer goes down, and a new address brings it back up', async () => {
