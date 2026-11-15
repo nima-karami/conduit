@@ -119,6 +119,14 @@ async function run() {
         await a.c2.call('remote.input', { machineId: bId, sessionId: echo, data: 'size\r' });
       }
       return false;
+    }).catch((error) => {
+      const sizes = a.c2.events
+        .filter((e) => e.type === 'remote.data' && e.data.viewId === view.viewId)
+        .map((e) => e.data.data)
+        .join('')
+        .match(/SIZE:[^\r\n]*/g);
+      log('size replies seen:', JSON.stringify(sizes));
+      throw error;
     });
 
     phase('5. input during a cut is refused and never delivered after resume');
