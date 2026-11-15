@@ -51,7 +51,7 @@ const session = (over: Partial<Extract<Principal, { kind: 'session' }>> = {}): P
   projectId: 'p1',
   ...over,
 });
-const sessionRow = (sessionId: string) => ({ sessionId, handleCli: null, launchedCli: null });
+const sessionRow = (sessionId: string) => ({ sessionId, launchedCli: null });
 
 const policyText = (over: Partial<PolicyFile> = {}): string =>
   serializePolicyFile({
@@ -194,11 +194,8 @@ beforeEach(() => {
 });
 
 describe('policy service', () => {
-  it.each([
-    { handleCli: 'claude' as const, launchedCli: null },
-    { handleCli: 'claude' as const, launchedCli: 'codex' as const },
-  ])(
-    'projects session overrides against the launched CLI, not the handle ($launchedCli)',
+  it.each([{ launchedCli: null }, { launchedCli: 'codex' as const }])(
+    'projects session overrides against the launched CLI ($launchedCli)',
     (row) => {
       const h = harness({
         policy: policyText({
@@ -222,6 +219,34 @@ describe('policy service', () => {
       expect(h.service.ui([{ sessionId: 's1', ...row }]).legacy.sessions.s1).toEqual({});
     },
   );
+
+  it("the launched CLI projection lowers onto that CLI's assignment when it differs from default", () => {
+    const observer = { profileId: 'observer' as const, exceptions: [], onScreenOnly: false };
+    const worker = { profileId: 'worker' as const, exceptions: [], onScreenOnly: false };
+    const viaCli = harness({
+      policy: policyText({
+        assignments: [
+          { point: { kind: 'cli', cli: 'claude' }, assignment: observer },
+          { point: { kind: 'session', sessionId: 's1' }, assignment: worker },
+        ],
+      }),
+    });
+    viaCli.service.start();
+    const viaDefault = harness({
+      policy: policyText({
+        assignments: [
+          { point: { kind: 'default' }, assignment: observer },
+          { point: { kind: 'session', sessionId: 's1' }, assignment: worker },
+        ],
+      }),
+    });
+    viaDefault.service.start();
+
+    const layer = viaCli.service.ui([{ sessionId: 's1', launchedCli: 'claude' }]).legacy.sessions
+      .s1;
+    expect(Object.keys(layer ?? {}).length).toBeGreaterThan(0);
+    expect(layer).toEqual(viaDefault.service.ui([sessionRow('s1')]).legacy.sessions.s1);
+  });
 
   it('rejects a legacy patch for a scoped assignment without changing or writing policy', async () => {
     const h = harness({

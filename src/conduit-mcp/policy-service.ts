@@ -99,6 +99,7 @@ export interface PolicyService {
     }>,
   ): PolicyUiState;
   legacyLowerPoint(launchedCli: CliKind | null): AssignmentPoint;
+  profileName(id: ProfileId): string | null;
 }
 
 const WRITE_COALESCE_MS = 250;
@@ -398,6 +399,10 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
 
     legacyLowerPoint(launchedCli) {
       return legacyLowerPoint(stateNow(), launchedCli);
+    },
+
+    profileName(id) {
+      return profileById(stateNow(), id)?.name ?? null;
     },
 
     setAssignment(point, profileId) {

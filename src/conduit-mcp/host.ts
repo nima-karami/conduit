@@ -1405,7 +1405,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         if (!isToolName(name)) {
           return { ok: false, error: toolError('invalid_args', `unknown tool: ${name}`) };
         }
-        if (!sessionId || !handle) {
+        const principal = sessionId && handle ? principalOf(sessionId) : null;
+        if (!sessionId || !handle || principal === null) {
           return {
             ok: false,
             error: toolError(
@@ -1416,12 +1417,6 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             ),
           };
         }
-        const principal = principalOf(sessionId);
-        if (principal === null)
-          return {
-            ok: false,
-            error: toolError('not_in_session', 'this MCP connection is not a Conduit session'),
-          };
         const rawArgs =
           typeof args === 'object' && args !== null && !Array.isArray(args)
             ? (args as Record<string, unknown>)
@@ -1551,8 +1546,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         decision: decision?.decision ?? null,
         decidedBy: decision
           ? reasonText(decision.reason, decision.decision, {
-              profileName: (id) =>
-                policyService.ui([]).profiles.find((p) => p.id === id)?.name ?? id,
+              profileName: (id) => policyService.profileName(id) ?? id,
               cliName: (kind) => kind,
             })
           : 'unknown',
@@ -2225,8 +2219,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       })();
       await startupSweep;
       if (stopped) return;
-      // Listening first: a launch wired before then would point its shim at nothing, and one
-      // wired while the store loads only meets store_unavailable, which it can retry.
+      // Policy first: a connection accepted before it is loaded would be judged on empty settings.
+      policyService.start();
+      // Listening before the store loads: a launch wired before then would point its shim at
+      // nothing, and one wired while the store loads only meets store_unavailable, which it can retry.
       // A listen that throws is a down endpoint like a refused one; either way the launches
       // waiting on it go now, as endpoint-down, rather than at the bound.
       try {
@@ -2244,7 +2240,6 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       }
       if (stopped) return;
       scheduleBroadcast();
-      policyService.start();
       requestService.start();
       requestService.onAttention(factsWithHandles());
       await loadStore();

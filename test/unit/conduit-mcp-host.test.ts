@@ -2323,6 +2323,30 @@ describe('createConduitMcpHost — store', () => {
   });
 });
 
+describe('policy.json is loaded before the endpoint takes connections', () => {
+  it('the policy read happens before listen', async () => {
+    const order: string[] = [];
+    const h = harness({
+      policyIo: {
+        read: () => {
+          order.push('policy-read');
+          return null;
+        },
+        write: async () => undefined,
+      },
+      createEndpoint: () => ({
+        listen: async () => {
+          order.push('listen');
+          return { ok: true as const, value: undefined };
+        },
+        close: async () => {},
+      }),
+    });
+    await h.host.start();
+    expect(order).toEqual(['policy-read', 'listen']);
+  });
+});
+
 describe('a launch waits for the endpoint (conductor decision: restored sessions get messaging)', () => {
   it('a launch that awaits whenLaunchReady while start() is still listening is wired', async () => {
     const h = harness();

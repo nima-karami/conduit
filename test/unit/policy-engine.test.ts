@@ -923,6 +923,28 @@ describe('visibleTools', () => {
     expect(visibleTools(s, session(), NOW)).toContain('open_session');
   });
 
+  it('an anywhere deny does not hide a tool that has a narrower non-deny exception at the same assignment', () => {
+    const s = state({
+      default: assignment('worker', [
+        except('open_session', { kind: 'anywhere' }, { decision: 'deny' }),
+        except('open_session', { kind: 'folder', path: '/w' }, { decision: 'allow' }),
+      ]),
+    });
+    expect(visibleTools(s, session(), NOW)).toContain('open_session');
+  });
+
+  it('a session keeps send_message and request_input listed under anywhere denies', () => {
+    const s = state({
+      default: assignment('worker', [
+        except('send_message', { kind: 'anywhere' }, { decision: 'deny' }),
+        except('request_input', { kind: 'anywhere' }, { decision: 'deny' }),
+      ]),
+    });
+    const visible = visibleTools(s, session(), NOW);
+    expect(visible).toContain('send_message');
+    expect(visible).toContain('request_input');
+  });
+
   it('keeps a folder deny visible', () => {
     const s = state({
       default: assignment('worker', [
