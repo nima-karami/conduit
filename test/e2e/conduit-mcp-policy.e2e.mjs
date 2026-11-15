@@ -337,7 +337,27 @@ await runScenario(
     log('move:no keeps A on screen ✓');
 
     phase('CLI cancel');
-    await setSessionPolicy(page, a.sessionId, 'open_session', { access: 'ask' });
+    // Asking again means revoking the Always grant; the session layer never held access:on.
+    const grant = await grantOf();
+    const revoked = await page.evaluate(
+      (grantId) =>
+        new Promise((resolve) => {
+          window.__policyReq = (window.__policyReq ?? 900_000) + 1;
+          const requestId = window.__policyReq;
+          const off = window.agentDeck.subscribe((m) => {
+            if (m.type !== 'mcp:policyResult' || m.requestId !== requestId) return;
+            off();
+            resolve(m.ok);
+          });
+          window.agentDeck.post({ type: 'mcp:revokeGrant', requestId, grantId });
+        }),
+      grant.id,
+    );
+    assert(revoked, `mcp:revokeGrant refused ${grant.id}`);
+    assert(
+      await until(async () => (await grantOf()) === undefined, 5_000),
+      'the Always grant is still active after revoking it',
+    );
     const beforeCancel = (await sessions(page)).length;
     before = await startCall(page, a.sessionId, 'open_session', openArgs(false));
     await waitCard(a.handle);
