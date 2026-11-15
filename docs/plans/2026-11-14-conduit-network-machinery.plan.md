@@ -1101,6 +1101,15 @@ SCRIPT_CANDIDATES: 2
   is capped at 64 KiB per frame. `drive.open` takes only a registered agent id (no command line)
   and an absolute folder that exists as a directory. Remote open/close exist only as C2 methods,
   never as MCP tools.
+- **Slice 8 complete.** Merged lane s8-drive; CI run 43753909822: verify green; `net-drive`,
+  `net-monitor`, `net-messaging`, `net-pairing`, `server-standalone` pass remotely. As built:
+  - `closeSession` uses C2 `sessions.remove` (there is no `sessions.close`).
+  - `drive.stop` is audited whenever drive stops being allowed (off, revoke, link down).
+  - Remote close works on live sessions only; an exited session can't be closed remotely.
+  - `lastSize` doesn't move on a plain resize, so `net-drive` asks the echo program for its size.
+    The echo program reads stdin raw: on Windows a line-mode reader never sees a ConPTY resize.
+- **Lanes from 2026-11-15 on are Claude only:** Haiku executors via the Agent tool, Opus review.
+  Codex sessions stay open and idle.
 - **Lanes are Conduit sessions** (`open_session`: codex with gpt-6.1-terra, or cursor-agent with
   composer-2.5). codex-6 works in `/home/namemenima/projects/.wt/conduit/CON-27-s6net`. Remove
   each lane worktree once its last branch merges, because /tmp is a shared quota.
