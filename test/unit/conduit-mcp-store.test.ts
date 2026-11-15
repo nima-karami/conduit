@@ -400,6 +400,24 @@ describe('message origin and has()', () => {
     expect(fresh.get(a.messageId)?.origin).toBe('m-0123abcd');
   });
 
+  // The receipt and the reply-thread lookups read these two ids after a restart, so they must
+  // survive the log round trip (CON-27 review B1).
+  it('the origin message and thread ids of a message from a link survive reload', async () => {
+    const { store, m } = await loaded();
+    const a = msg({
+      origin: 'm-0123abcd',
+      originMessageId: 'm_abcdefghijklmnop',
+      originThreadId: 't_abcdefghijklmnop',
+    });
+    expect((await store.append(a, [])).ok).toBe(true);
+    const fresh = createMessageStore(m.io);
+    await fresh.load();
+    expect(fresh.get(a.messageId)).toMatchObject({
+      originMessageId: 'm_abcdefghijklmnop',
+      originThreadId: 't_abcdefghijklmnop',
+    });
+  });
+
   it('a local message has no origin key, before and after reload', async () => {
     const { store, m } = await loaded();
     const a = msg();
