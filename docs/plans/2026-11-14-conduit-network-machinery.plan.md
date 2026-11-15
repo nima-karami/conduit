@@ -1077,6 +1077,11 @@ SCRIPT_CANDIDATES: 2
   enqueue path reads each snapshot blob and puts `{name, mime, data}` (base64) on the wire,
   inside the 25 MiB cap. Unit test in `test/unit/network-messaging.test.ts`; the net-messaging
   e2e gains one attachment send.
+- **Slice 7 rulings (2026-11-15):** the monitor snapshot lists every local session (spec §4.5),
+  joining the MCP directory entry when one exists; sessions without one carry `handle: null`,
+  `messaging: 'unavailable'`, `messageable: false`. Agent-facing `list_sessions` still lists
+  handles only. Remote `wait_sessions` targets handles only in the MVP; `net-monitor` waits on a
+  fake MCP agent, not the echo session.
 - **Lanes are Conduit sessions** (`open_session`: codex with gpt-6.1-terra, or cursor-agent with
   composer-2.5). codex-6 works in `/home/namemenima/projects/.wt/conduit/CON-27-s6net`. Remove
   each lane worktree once its last branch merges, because /tmp is a shared quota.
