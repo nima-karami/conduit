@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { AuditEvent } from '../../server/network/audit-log';
-import { createMessaging, type MessagingLink } from '../../server/network/messaging';
+import {
+  createMessaging,
+  type MessagingLink,
+  RECEIPT_BASE_PER_MIN,
+} from '../../server/network/messaging';
 import type { McpNetworkPort, RemoteEntry } from '../../src/conduit-mcp/remote-routing';
 import type { MessageRecord } from '../../src/conduit-mcp/types';
 import {
@@ -558,4 +562,38 @@ it('accepts a 200-character attachment name and a mime with a capital letter', (
     },
   });
   expect(vi.mocked(h.mcp.deliverInbound)).toHaveBeenCalledTimes(1);
+});
+
+// CON-27 third pass N1: receipts have their own per-link budget, sized from what we sent that
+// peer, so a busy conversation's receipts never rate-limit real messages or get dropped.
+const receiptFrame = (i: number): Extract<LinkFrame, { t: 'receipt' }> => ({
+  t: 'receipt',
+  messageId: `m_${'a'.repeat(15)}${'abcdefghijklmnopqrstuvwxyz234567'[i % 32]}`,
+  handle: 'agent-2',
+  status: 'noticed',
+});
+it('receipts never use up the message budget', async () => {
+  const h = setup();
+  h.link.state = 'up';
+  for (let i = 0; i < 120; i++) h.svc.onFrame(machine, receiptFrame(i));
+  h.svc.onFrame(machine, { t: 'msg', message: { ...wire, messageId: 'm_zzzzzzzzzzzzzzzz' } });
+  await vi.waitFor(() => expect(h.mcp.deliverInbound).toHaveBeenCalledTimes(1));
+});
+it('receipts beyond their own budget are dropped', async () => {
+  const h = setup();
+  h.link.state = 'up';
+  for (let i = 0; i < RECEIPT_BASE_PER_MIN + 5; i++) h.svc.onFrame(machine, receiptFrame(i));
+  await vi.waitFor(() => expect(h.mcp.setRemoteStatus).toHaveBeenCalledTimes(RECEIPT_BASE_PER_MIN));
+});
+it('the receipt budget grows with the messages sent to that peer', async () => {
+  const h = setup();
+  for (let i = 0; i < 50; i++)
+    h.svc.enqueue(
+      { ...h.msg, messageId: `m_${'b'.repeat(14)}${i.toString(32).padStart(2, 'a')}` },
+      [h.recipient],
+    );
+  h.link.state = 'up';
+  const budget = RECEIPT_BASE_PER_MIN + 2 * 50;
+  for (let i = 0; i < budget + 5; i++) h.svc.onFrame(machine, receiptFrame(i));
+  await vi.waitFor(() => expect(h.mcp.setRemoteStatus).toHaveBeenCalledTimes(budget));
 });

@@ -308,3 +308,22 @@ describe('names that fail printableName', () => {
     expect(dir.entries()[0]?.display).toBe(`claude-9@${DESKTOP}`);
   });
 });
+
+// CON-27 third pass N2: a peer's row handle must be a bare local handle, or it would show as an
+// address on yet another machine.
+describe('row handles', () => {
+  it('drops rows whose handle is not a bare handle, and keeps you', () => {
+    const dir = createRemoteDirectory();
+    dir.setLinks([link(LAPTOP, 'Laptop', 'up')], 'Mine');
+    dir.apply(
+      LAPTOP,
+      snapshot(1, [
+        session('claude-1'),
+        session('x@m-cccccccc'),
+        session('Bad Handle'),
+        session('you'),
+      ]),
+    );
+    expect(dir.entries().map((e) => e.handle)).toEqual(['claude-1', 'you']);
+  });
+});

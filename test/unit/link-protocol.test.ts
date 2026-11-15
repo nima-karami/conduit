@@ -197,6 +197,23 @@ describe('parseLinkFrame', () => {
     expect(parseLinkFrame({ t: 'snapshot', snapshot: bad })).toBeNull();
   });
 
+  it('rejects a snapshot session whose handle is not a bare handle (CON-27 N2)', () => {
+    for (const handle of ['x@m-cccccccc', 'Bad Handle', 'a\nb'])
+      expect(
+        parseLinkFrame({
+          t: 'snapshot',
+          snapshot: { ...SNAPSHOT, sessions: [{ ...SESSION, handle }] },
+        }),
+      ).toBeNull();
+    for (const handle of ['claude-1', 'you', null])
+      expect(
+        parseLinkFrame({
+          t: 'snapshot',
+          snapshot: { ...SNAPSHOT, sessions: [{ ...SESSION, handle }] },
+        }),
+      ).not.toBeNull();
+  });
+
   it('rejects an unknown enum value', () => {
     expect(parseLinkFrame({ t: 'bye', reason: 'bored' })).toBeNull();
     expect(parseLinkFrame({ ...SAMPLES.receipt, status: 'seen' })).toBeNull();

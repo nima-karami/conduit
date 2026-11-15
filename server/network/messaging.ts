@@ -79,6 +79,8 @@ const TERMINAL: readonly LinkState[] = ['revoked', 'incompatible', 'identity-cha
 const live = (s: LinkState) => s === 'up' || s === 'degraded';
 /** Message frames one link may deliver a window; past it they are refused unstored (CON-27 M2). */
 const INBOUND_PER_LINK_PER_MIN = 120;
+/** Receipts a link may send a minute before counting what we sent it (CON-27 N1). */
+export const RECEIPT_BASE_PER_MIN = 60;
 const INBOUND_WINDOW_MS = 60_000;
 /** One message.refused audit per link per window, as drive.ts does for drive.refused. */
 const REFUSAL_AUDIT_MS = 60_000;
