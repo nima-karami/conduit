@@ -323,6 +323,8 @@ describe('pairing protocol', () => {
     ['a certificate for another key', { cert: self('x', null).cert }],
     ['a certificate that is not one', { cert: 'not a certificate' }],
     ['a name with a newline', { selfName: 'linux-box\n[conduit message' }],
+    ['a name with a bidi override', { selfName: 'linux\u202Exob' }],
+    ['a name with a zero-width space', { selfName: 'linux\u200Bbox' }],
   ])('an opener identity with %s fails', (_, patch) => {
     const { pair, first } = setup();
     const r1 = openerStep(pair.opener, { kind: 'msg', msg: nth(first, 0) });
@@ -495,5 +497,30 @@ describe('the fingerprint binds both identities and the owner key', () => {
   it('pair.owner and pair.id are no longer messages', () => {
     expect(parsePairingMsg({ t: 'pair.owner', publicKey: 'a' })).toBeNull();
     expect(parsePairingMsg({ t: 'pair.id', ...SAMPLE_ID })).toBeNull();
+  });
+});
+
+describe('strictness the re-review asked for', () => {
+  it('an owner key in non-canonical base64 fails', () => {
+    const { pair, first } = setup({ joinerOwner: null });
+    const r1 = openerStep(pair.opener, { kind: 'msg', msg: nth(first, 0) });
+    const nonce = nth(r1.out, 0);
+    if (nonce.t !== 'pair.nonce') throw new Error('no nonce');
+    const canonical = ownerKey().publicKey;
+    expect(canonical.endsWith('=')).toBe(true);
+    const r2 = joinerStep(pair.joiner, {
+      kind: 'msg',
+      msg: {
+        ...nonce,
+        id: { ...nonce.id, ownerOffer: null, ownerKey: canonical.replace(/=+$/, '') },
+      },
+    });
+    expect(r2.done).toEqual({ kind: 'failed', reason: 'protocol' });
+  });
+
+  it('a message whose required key is only inherited is refused', () => {
+    const inherited = Object.create({ t: 'pair.accept' }) as Record<string, unknown>;
+    inherited.x = 1;
+    expect(parsePairingMsg(inherited)).toBeNull();
   });
 });

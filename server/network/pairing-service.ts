@@ -55,10 +55,16 @@ export interface PairingDeps {
   openPairingPort(): Promise<string[]>;
   /** The window is used or over: nothing more may connect to pair. Idempotent. */
   closePairingPort(): void;
+  /** Stores the link; false when it can't be stored (another link holds that machine id). */
   onLinked(
     outcome: Extract<PairingOutcome, { kind: 'linked' }>,
     dialedAddress: string | null,
-  ): void;
+  ): boolean;
+  /**
+   * An owner key this server is owed over a link hasn't arrived yet: until it does, this server's
+   * owner is undecided, so it may not pair (CON-27 re-review of R1, minor).
+   */
+  ownerPending(): boolean;
   generateOwnerKey(): OwnerKeyPair;
   audit: AuditSink;
   changed(): void;
@@ -73,6 +79,8 @@ export interface PairingDeps {
 // Pairing messages are small and the peer is unauthenticated until the fingerprint is confirmed,
 // so it may not make us buffer more than this.
 const PAIRING_FRAME_MAX_BYTES = 64 * 1024;
+/** A connection to the pairing port must send its first message within this, or it is dropped. */
+export const PAIRING_FIRST_FRAME_MS = 10_000;
 const LIVE: ReadonlySet<PairingViewState> = new Set([
   'showing-code',
   'connecting',

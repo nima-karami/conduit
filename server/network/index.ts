@@ -343,7 +343,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
   const onLinked = (
     outcome: Extract<PairingOutcome, { kind: 'linked' }>,
     dialedAddress: string | null,
-  ): void => {
+  ): boolean => {
     if (outcome.ownerKeyToStore) {
       identity = setOwnerKey(deps.dir, identity, {
         publicKey: createPublicKey({
@@ -379,6 +379,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     void ensureListening().catch((err: Error) =>
       deps.log.warn('link listener did not start after pairing', { message: err.message }),
     );
+    return true;
   };
 
   const pairing: PairingService = createPairingService({
@@ -389,6 +390,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     openPairingPort,
     closePairingPort,
     onLinked,
+    ownerPending: () => false,
     generateOwnerKey: () => {
       const k = generateKeyPairSync('ed25519');
       return {

@@ -11,6 +11,7 @@ import {
 import { type Listener, listenPairing } from '../../server/network/listener';
 import {
   createPairingService,
+  PAIRING_FIRST_FRAME_MS,
   type PairingDeps,
   type PairingService,
 } from '../../server/network/pairing-service';
@@ -64,6 +65,7 @@ function newOwnerKey(): OwnerKeyPair {
 /** Fires only when the test says so: expiry is driven by hand, never by a real clock. */
 function manualTimers() {
   const pending = new Map<symbol, () => void>();
+  const delays = new Map<symbol, number>();
   const scheduled: number[] = [];
   return {
     scheduled,
@@ -71,9 +73,18 @@ function manualTimers() {
       const key = Symbol('timer');
       scheduled.push(ms);
       pending.set(key, fn);
+      delays.set(key, ms);
       return () => {
         pending.delete(key);
       };
+    },
+    /** Fires only the pending timers scheduled with this delay. */
+    fire(ms: number): void {
+      for (const [key, fn] of [...pending]) {
+        if (delays.get(key) !== ms) continue;
+        pending.delete(key);
+        fn();
+      }
     },
     fireAll(): void {
       for (const [key, fn] of [...pending]) {
@@ -97,7 +108,13 @@ interface Ports {
   close(): void;
 }
 
-function side(identity: Identity, selfName: string, ports: Ports, dialTimeoutMs = 2_000): Side {
+function side(
+  identity: Identity,
+  selfName: string,
+  ports: Ports,
+  dialTimeoutMs = 2_000,
+  extra: Partial<PairingDeps> = {},
+): Side {
   const timers = manualTimers();
   const linked: Side['linked'] = [];
   const audit: AuditEvent[] = [];
@@ -120,6 +137,7 @@ function side(identity: Identity, selfName: string, ports: Ports, dialTimeoutMs 
         machineId: outcome.peer.machineId,
         dialed: dialedAddress,
       });
+      return true;
     },
     generateOwnerKey: newOwnerKey,
     audit: { record: (e) => audit.push(e) },
@@ -131,7 +149,9 @@ function side(identity: Identity, selfName: string, ports: Ports, dialTimeoutMs 
     rand: (n) => randomBytes(n),
     after: timers.after,
     newId: () => randomUUID(),
+    ownerPending: () => false,
     dialTimeoutMs,
+    ...extra,
   };
   const svc = createPairingService(deps);
   holder.svc = svc;
@@ -139,26 +159,32 @@ function side(identity: Identity, selfName: string, ports: Ports, dialTimeoutMs 
 }
 
 /** The opener's pairing port, opened per window and shut by the service once used. */
-function openerSide(identity: Identity, selfName: string): Side {
+function openerSide(identity: Identity, selfName: string, extra: Partial<PairingDeps> = {}): Side {
   let port: Listener | null = null;
-  const s: Side = side(identity, selfName, {
-    open: async () => {
-      const opened = await listenPairing({
-        hosts: ['127.0.0.1'],
-        port: 0,
-        onPairing: (sock) => s.svc.onPairingSocket(sock),
-        log: quiet,
-      });
-      port = opened;
-      listeners.push(opened);
-      return opened.addresses();
+  const s: Side = side(
+    identity,
+    selfName,
+    {
+      open: async () => {
+        const opened = await listenPairing({
+          hosts: ['127.0.0.1'],
+          port: 0,
+          onPairing: (sock) => s.svc.onPairingSocket(sock),
+          log: quiet,
+        });
+        port = opened;
+        listeners.push(opened);
+        return opened.addresses();
+      },
+      close: () => {
+        const p = port;
+        port = null;
+        void p?.close();
+      },
     },
-    close: () => {
-      const p = port;
-      port = null;
-      void p?.close();
-    },
-  });
+    2_000,
+    extra,
+  );
   return s;
 }
 
@@ -216,6 +242,48 @@ async function startWindow(opener: Side) {
 }
 
 describe('pairing service over its pairing port', () => {
+  it('refuses to pair while an owner key this server is owed has not arrived', async () => {
+    const opener = openerSide(makeIdentity('opener', null), 'alpha', { ownerPending: () => true });
+    await expect(opener.svc.start()).rejects.toThrow('owner_pending');
+    const joiner = side(makeIdentity('joiner', null), 'beta', noPorts, 2_000, {
+      ownerPending: () => true,
+    });
+    await expect(joiner.svc.join(newCode(randomBytes).join(' '), '127.0.0.1:1')).rejects.toThrow(
+      'owner_pending',
+    );
+    expect(opener.svc.view()).toBeNull();
+    expect(joiner.svc.view()).toBeNull();
+  });
+
+  it('a connection that sends nothing is dropped after the first-frame deadline', async () => {
+    const { opener } = await rig();
+    const w = await startWindow(opener);
+    const port = Number(w.address.slice(w.address.lastIndexOf(':') + 1));
+    const silent = net.connect({ host: '127.0.0.1', port });
+    silent.on('error', () => undefined);
+    const closed = new Promise<void>((r) => silent.on('close', () => r()));
+    await until('connecting', () => stateOf(opener) === 'connecting');
+    expect(opener.timers.scheduled).toContain(PAIRING_FIRST_FRAME_MS);
+    opener.timers.fire(PAIRING_FIRST_FRAME_MS);
+    await closed;
+    await until('the window ended', () => !isLive(opener));
+  });
+
+  it('a pairing whose peer would take over another link’s machine id links nothing', async () => {
+    const opener = openerSide(makeIdentity('opener', null), 'alpha', { onLinked: () => false });
+    const joiner = side(makeIdentity('joiner', null), 'beta', noPorts);
+    const w = await startWindow(opener);
+    await joiner.svc.join(w.code.join(' '), w.address);
+    await until('confirm', () => stateOf(opener) === 'confirm' && stateOf(joiner) === 'confirm');
+    const pid = (s: Side) => s.svc.view()?.pairingId ?? '';
+    opener.svc.confirm(pid(opener));
+    joiner.svc.confirm(pid(joiner));
+    await until('opener ended', () => !isLive(opener));
+    expect(stateOf(opener)).not.toBe('done');
+    expect(opener.audit.some((e) => e.kind === 'pairing.failed')).toBe(true);
+    expect(opener.audit.some((e) => e.kind === 'pairing.linked')).toBe(false);
+  });
+
   it('happy path: both confirm the same fingerprint, then both link with one linkId', async () => {
     const { opener, joiner } = await rig();
     const w = await startWindow(opener);

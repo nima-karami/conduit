@@ -128,6 +128,19 @@ describe('link store', () => {
     expect(persisted.tombstones).toEqual([]);
   });
 
+  it('conflicts names a machine id already held under another server key, live or revoked', () => {
+    const { io } = memoryIo();
+    const store = openLinkStore(FILE, { now: () => T0, log: logSpy(), io });
+    store.put(rec('m-11111111'));
+    store.put(rec('m-22222222'));
+    store.revoke('m-22222222', T0);
+    expect(store.conflicts('m-33333333', 'key-x')).toBe(false);
+    expect(store.conflicts('m-11111111', 'key-m-11111111')).toBe(false);
+    expect(store.conflicts('m-11111111', 'key-other')).toBe(true);
+    expect(store.conflicts('m-22222222', 'key-other')).toBe(true);
+    expect(store.conflicts('m-22222222', 'key-m-22222222')).toBe(false);
+  });
+
   it('put for a revoked machine clears its tombstone', () => {
     const { io, files } = memoryIo();
     const log = logSpy();

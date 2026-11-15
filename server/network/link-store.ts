@@ -23,6 +23,11 @@ export interface LinkStore {
   byServerKey(serverKey: string): LinkRecord | { tombstone: Tombstone } | null;
   /** Inserts or replaces by machineId, and clears any tombstone for that machineId. */
   put(r: LinkRecord): void;
+  /**
+   * A live link or tombstone already holds this machine id under a different server key. Machine
+   * ids are 32 bits, so a second key could be ground to collide; it must not take over the record.
+   */
+  conflicts(machineId: string, serverKey: string): boolean;
   update(
     machineId: string,
     patch: Partial<Pick<LinkRecord, 'addresses' | 'capabilities' | 'name' | 'ownerTransfer'>>,
@@ -125,6 +130,7 @@ export function openLinkStore(
       const tomb = state.tombstones.find((t) => t.serverKey === serverKey && isLive(t));
       return tomb ? { tombstone: copyTombstone(tomb) } : null;
     },
+    conflicts: () => false,
     put(r) {
       state = {
         ...state,
