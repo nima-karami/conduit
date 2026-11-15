@@ -107,10 +107,19 @@ async function run() {
     await eventually('ECHO:ping forwarded', () => echoed(a, view.viewId, 'ECHO:ping'));
 
     phase('4. remote resize reaches B');
-    // The PTY's own size, reported by the program on its resize event, is the observable: the
-    // session's lastSize facts only move on an hc size event that a plain resize does not emit.
+    // The PTY's own size is the observable: lastSize only moves on an hc size event, and Node on
+    // Windows fires no stdout 'resize' for a line-mode reader under ConPTY, so the program reports
+    // its console size when asked.
     await a.c2.call('remote.resize', { machineId: bId, sessionId: echo, cols: 120, rows: 40 });
-    await eventually('B PTY resized to 120x40', () => echoed(a, view.viewId, 'SIZE:120x40'));
+    let askedAt = 0;
+    await eventually('B PTY resized to 120x40', async () => {
+      if (echoed(a, view.viewId, 'SIZE:120x40')) return true;
+      if (Date.now() - askedAt > 500) {
+        askedAt = Date.now();
+        await a.c2.call('remote.input', { machineId: bId, sessionId: echo, data: 'size\r' });
+      }
+      return false;
+    });
 
     phase('5. input during a cut is refused and never delivered after resume');
     proxy.pause();
