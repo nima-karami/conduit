@@ -28,6 +28,15 @@ describe('docsReducer — web docs', () => {
     expect(s).toBe(before); // no-op returns the same state reference
   });
 
+  it('setTitle with the same title plus surrounding spaces is a no-op', () => {
+    // A tab that re-sends its title on every render would otherwise loop forever.
+    let s = docsReducer(initialDocs, { type: 'open', kind: 'web', path: URL, sessionId: 's1' });
+    s = docsReducer(s, { type: 'setTitle', id: `web:${URL}`, title: 'Example Docs' });
+    const before = s;
+    s = docsReducer(s, { type: 'setTitle', id: `web:${URL}`, title: 'Example Docs  ' });
+    expect(s).toBe(before);
+  });
+
   it('re-opening the same URL transfers ownership, not a duplicate tab', () => {
     let s = docsReducer(initialDocs, { type: 'open', kind: 'web', path: URL, sessionId: 's1' });
     s = docsReducer(s, { type: 'open', kind: 'web', path: URL, sessionId: 's2' });
