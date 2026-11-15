@@ -173,6 +173,30 @@ async function run() {
       'remote-closed session gone from A snapshot',
       async () => !(await inSnapshot(opened.sessionId)),
     );
+
+    phase("8. B's own refusal: input that reaches B while its drive is off is never echoed");
+    // A still believes B allows drive: B's caps frame is held behind the pause, so A's input
+    // crosses the link and B has to refuse it on its own record.
+    const marker = `B-OFF-${Date.now().toString(36)}`;
+    proxy.pause();
+    await b.c2.call('link.setCapability', { machineId: aId, capability: 'drive', on: false });
+    assert(
+      (await linkView(a.c2, bId))?.peerCapabilities.drive === true,
+      'A saw B drive off while the link was paused',
+    );
+    await a.c2.call('remote.input', { machineId: bId, sessionId: echo, data: `${marker}\r` });
+    proxy.resume();
+    await new Promise((r) => setTimeout(r, 3_000));
+    assert(!echoed(a, view.viewId, `ECHO:${marker}`), 'B echoed input while its drive was off');
+    const refused = readAudit(b.userData).filter((e) => e.kind === 'drive.refused');
+    assert(
+      refused.length > 0,
+      `B audit has no drive.refused: ${JSON.stringify(readAudit(b.userData))}`,
+    );
+    assert(
+      !JSON.stringify(readAudit(b.userData)).includes(marker),
+      'the refused input text reached the audit log',
+    );
   } catch (error) {
     for (const server of [pair?.a, pair?.b]) if (server) dumpServerLog(server);
     if (proxy?.errors.length) log('proxy errors:', proxy.errors);
