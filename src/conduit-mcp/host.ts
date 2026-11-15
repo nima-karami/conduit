@@ -2667,13 +2667,18 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       setRemoteStatus: async (messageId, address, status) => {
         // 'queued' is the state a remote recipient starts in, so there is nothing to record.
         if (status === 'queued') return;
-        const r = await store.setStatus(messageId, address, status);
+        const r = await store.setStatus(messageId, address, status, 'remote');
         if (!r.ok) {
+          // A peer can name a message we never sent as often as it likes, so this is not a warning.
+          if (r.error.code === 'not_found') {
+            deps.log.debug('conduit-mcp', 'remote status for unknown recipient', { messageId });
+            return;
+          }
           deps.log.warn('conduit-mcp', 'remote status not stored', {
             messageId,
             code: r.error.code,
           });
-          if (r.error.code !== 'not_found') throw new Error(r.error.message);
+          throw new Error(r.error.message);
         }
       },
       // The store reports which recipient moved; only origin records are of interest here.

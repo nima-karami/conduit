@@ -247,6 +247,18 @@ export function createMessaging(deps: MessagingDeps): Messaging {
     heldReceipts.set(machineId, held);
   };
 
+  /** A peer's receipt: it counts against the link's inbound budget, and only while messaging is on here. */
+  const receipt = async (
+    machineId: string,
+    frame: Extract<LinkFrame, { t: 'receipt' }>,
+  ): Promise<void> => {
+    if (!linkOf(machineId)?.capabilities.messaging) return;
+    if (!admitInbound(machineId)) return;
+    await deps
+      .mcp()
+      ?.setRemoteStatus(frame.messageId, formatAddress(frame.handle, machineId), frame.status);
+  };
+
   const expire = (): void => {
     const gone = outbox.expire(deps.now());
     if (gone.length > 0) {
@@ -503,14 +515,8 @@ export function createMessaging(deps: MessagingDeps): Messaging {
           ? inbound(machineId, frame.message)
           : frame.t === 'ack'
             ? ack(machineId, frame.messageId, frame.recipients)
-            : deps
-                .mcp()
-                ?.setRemoteStatus(
-                  frame.messageId,
-                  formatAddress(frame.handle, machineId),
-                  frame.status,
-                );
-      void run?.catch((err: unknown) =>
+            : receipt(machineId, frame);
+      void run.catch((err: unknown) =>
         deps.log.error('message processing failed', { message: String(err) }),
       );
     },
