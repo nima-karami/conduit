@@ -190,30 +190,58 @@ await runScenario(
             (r) =>
               r.action === 'close_session' &&
               r.principal?.sessionId === w.sessionId &&
-              r.outcome === 'expired',
+              r.outcome === 'expired' &&
+              r.requestId === ask1.askId,
           ),
         10_000,
       ),
       'no expired Activity row for the timed-out close',
     );
-    await until(async () => (await page.locator('.askcard').count()) === 0, 5_000);
+    assert(
+      await until(async () => (await page.locator('.askcard').count()) === 0, 5_000),
+      'the timed-out card did not clear',
+    );
+    assert(
+      activityRows().some(
+        (r) => r.action === 'close_session' && r.requestId === ask1.askId && r.outcome === 'asked',
+      ),
+      'no asked Activity row carrying the permission id',
+    );
     log('unanswered close_session → approval_timeout, target open ✓');
 
-    phase('later identical ask answered with a grant');
-    const secondBefore = await startCall(page, w.sessionId, 'close_session', {
-      session: t1.handle,
-    });
-    const ask2 = await nextAsk(page, w.sessionId, new Set([ask1.askId]), 15_000);
-    const answered = await permissionAnswer(page, ask2.askId, {
+    phase('late answer on the timed-out ask: the grant is kept, the call does not run');
+    const late = await permissionAnswer(page, ask1.askId, {
       outcome: 'allowed',
       grant: { who: 'session', on: 'target', for: '1h' },
     });
-    assert(answered.ok === true, `mcp:permissionAnswer: ${JSON.stringify(answered)}`);
-    const closed = await resultAfter(w.sessionId, secondBefore, 15_000);
-    assert(closed?.closed === t1.sessionId, `retry after the grant: ${JSON.stringify(closed)}`);
+    assert(late.ok === true, `late mcp:permissionAnswer: ${JSON.stringify(late)}`);
+    assert(await stillOpen(t1.sessionId), 'a late answer ran the call');
+    const hasRetryNotice = async () => {
+      const inbox = await callTool(page, w.sessionId, 'read_inbox', {});
+      return (inbox.messages ?? []).some(
+        (m) => typeof m.body === 'string' && m.body.includes('You can retry close_session now'),
+      );
+    };
+    assert(
+      await until(hasRetryNotice, 15_000),
+      "W's inbox never got 'You can retry close_session now'",
+    );
+    log('late allowed+grant → t1 still open, retry notice in W’s inbox ✓');
+
+    phase('retry after the late grant closes t1 with no card');
+    const retryBefore = await startCall(page, w.sessionId, 'close_session', {
+      session: t1.handle,
+    });
+    const retryCard = await until(async () => (await card.count()) > 0, 1_500);
+    assert(!retryCard, 'the retry after a late grant showed a card');
+    const closed = await resultAfter(w.sessionId, retryBefore, 15_000);
+    assert(
+      closed?.closed === t1.sessionId,
+      `retry after the late grant: ${JSON.stringify(closed)}`,
+    );
     assert(
       await until(async () => !(await stillOpen(t1.sessionId)), 10_000),
-      'the granted close never removed its target',
+      'the retry after the late grant never removed its target',
     );
     assert(
       await until(
@@ -222,15 +250,15 @@ await runScenario(
             (r) =>
               r.action === 'close_session' &&
               r.principal?.sessionId === w.sessionId &&
+              r.target === t1.sessionId &&
               r.outcome === 'ok' &&
-              r.requestId === ask2.askId,
+              typeof r.decidedBy === 'string' &&
+              r.decidedBy.startsWith('allowed by grant'),
           ),
         10_000,
       ),
-      // The approved call runs on its own ask (plan C9: re-decide before the grant exists), so
-      // its row is that ask's; "allowed by grant" is proved in step 4 on a call the grant covers.
-      `no ran row for the answered ask: ${JSON.stringify(
-        activityRows().filter((r) => r.action === 'close_session'),
+      `no "allowed by grant" row for the retry: ${JSON.stringify(
+        activityRows().filter((r) => r.target === t1.sessionId),
       )}`,
     );
     // A grant on a session target ends with that session: closing t1 expires it at once.
@@ -239,7 +267,7 @@ await runScenario(
         st?.policy?.grants?.find(
           (g) =>
             g.state === 'expired' &&
-            g.requestId === ask2.askId &&
+            g.requestId === ask1.askId &&
             g.tool === 'close_session' &&
             g.who?.kind === 'session' &&
             g.who?.sessionId === w.sessionId &&
@@ -254,7 +282,7 @@ await runScenario(
         (await mcpState(page))?.policy?.grants,
       )}`,
     );
-    log('later ask answered allowed+grant → the asked close runs; its target grant ends with it ✓');
+    log('retry closes t1 with no card; its target grant ends with it ✓');
 
     phase('exception deny refuses; allowOnce lets one close through');
     // Scoped exceptions cannot be written at runtime, so the deny is the session's own legacy
@@ -310,7 +338,7 @@ await runScenario(
           g.on?.kind === 'anywhere' &&
           g.for === '1h',
       );
-    const seen = new Set([ask1.askId, ask2.askId]);
+    const seen = new Set([ask1.askId]);
 
     // (a) A card is answered with an anywhere grant; the call that asked closes its target.
     await makeActive(w.sessionId);
@@ -326,6 +354,10 @@ await runScenario(
       grant: { who: 'session', on: 'anywhere', for: '1h' },
     });
     assert(grantedA.ok === true, `anywhere grant answer: ${JSON.stringify(grantedA)}`);
+    assert(
+      await until(async () => (await card.count()) === 0, 5_000),
+      'the card for T4 did not clear after its answer',
+    );
     const closedA = await resultAfter(w.sessionId, beforeA, 15_000);
     assert(
       closedA?.closed === t4.sessionId,
@@ -384,8 +416,8 @@ await runScenario(
     assert(revokedAny.ok === true, `mcp:revokeGrant ${anyGrant.id}: ${JSON.stringify(revokedAny)}`);
     assert(
       await until(async () => {
-        const g = await grantWhere((x) => x.id === anyGrant.id);
-        return g?.state === 'revoked';
+        const revokedGrant = await grantWhere((g) => g.id === anyGrant.id);
+        return revokedGrant?.state === 'revoked';
       }, 5_000),
       `anywhere grant ${anyGrant.id} never reached state revoked`,
     );
