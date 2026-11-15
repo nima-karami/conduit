@@ -455,6 +455,13 @@ function isAttentionFacts(v: unknown): boolean {
   );
 }
 
+/**
+ * A session handle as one machine names its own sessions ('you' included): a peer's handle is
+ * shown as `handle@machine`, so one with an `@` or a space would pose as another address.
+ */
+export const BARE_HANDLE = /^[a-z0-9-]+$/;
+const isBareHandle = (v: unknown): boolean => typeof v === 'string' && BARE_HANDLE.test(v);
+
 function isMonitorSession(v: unknown): boolean {
   return (
     hasKeys(v, [
@@ -474,7 +481,7 @@ function isMonitorSession(v: unknown): boolean {
       'status',
     ]) &&
     str(v.sessionId) &&
-    nullable(v.handle, str) &&
+    nullable(v.handle, isBareHandle) &&
     str(v.label) &&
     str(v.agent) &&
     oneOf(v.presence, PRESENCES) &&

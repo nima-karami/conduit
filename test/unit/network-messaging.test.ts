@@ -514,10 +514,17 @@ it('audits a refused inbound message once per link per minute', () => {
 
 // CON-27 R2c: receipts draw on the same per-link inbound budget as messages, and count only while
 // messaging is on for that link here.
-it('drops a receipt past the per-link inbound budget silently, and one while messaging is off here', () => {
+const receiptFrame = (i: number): Extract<LinkFrame, { t: 'receipt' }> => ({
+  t: 'receipt',
+  messageId: `m_${'a'.repeat(15)}${'abcdefghijklmnopqrstuvwxyz234567'[i % 32]}`,
+  handle: 'agent-2',
+  status: 'noticed',
+});
+it('drops a receipt past the link’s receipt budget silently, and one while messaging is off here', () => {
   const h = setup();
   h.link.state = 'up';
-  for (let i = 0; i < 120; i++) h.svc.onFrame(machine, frameN(i));
+  for (let i = 0; i < RECEIPT_BASE_PER_MIN; i++) h.svc.onFrame(machine, receiptFrame(i));
+  vi.mocked(h.mcp.setRemoteStatus).mockClear();
   const receipt = {
     t: 'receipt' as const,
     messageId: 'm_abcdefghijklmnop',
@@ -566,12 +573,6 @@ it('accepts a 200-character attachment name and a mime with a capital letter', (
 
 // CON-27 third pass N1: receipts have their own per-link budget, sized from what we sent that
 // peer, so a busy conversation's receipts never rate-limit real messages or get dropped.
-const receiptFrame = (i: number): Extract<LinkFrame, { t: 'receipt' }> => ({
-  t: 'receipt',
-  messageId: `m_${'a'.repeat(15)}${'abcdefghijklmnopqrstuvwxyz234567'[i % 32]}`,
-  handle: 'agent-2',
-  status: 'noticed',
-});
 it('receipts never use up the message budget', async () => {
   const h = setup();
   h.link.state = 'up';

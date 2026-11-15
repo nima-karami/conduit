@@ -9,12 +9,13 @@ import type {
 } from '../../src/conduit-mcp/remote-routing';
 import { MAX_BODY_BYTES, MAX_RECIPIENTS } from '../../src/conduit-mcp/tools';
 import type { MessageRecord } from '../../src/conduit-mcp/types';
-import type {
-  Capabilities,
-  LinkFrame,
-  LinkState,
-  WireMessage,
-  WireRecipientOutcome,
+import {
+  BARE_HANDLE,
+  type Capabilities,
+  type LinkFrame,
+  type LinkState,
+  type WireMessage,
+  type WireRecipientOutcome,
 } from '../../src/contracts/link-protocol';
 import { formatAddress, printableName } from '../../src/network/addresses';
 import {
@@ -81,6 +82,8 @@ const live = (s: LinkState) => s === 'up' || s === 'degraded';
 const INBOUND_PER_LINK_PER_MIN = 120;
 /** Receipts a link may send a minute before counting what we sent it (CON-27 N1). */
 export const RECEIPT_BASE_PER_MIN = 60;
+/** How long a queued recipient counts toward its peer's receipt budget. */
+const RECEIPT_CREDIT_MS = 60 * 60_000;
 const INBOUND_WINDOW_MS = 60_000;
 /** One message.refused audit per link per window, as drive.ts does for drive.refused. */
 const REFUSAL_AUDIT_MS = 60_000;
@@ -142,6 +145,27 @@ export function createMessaging(deps: MessagingDeps): Messaging {
   const inboundTimes = new Map<string, number[]>();
   /** The last message.refused audit per link: a flood of refusals audits once a window. */
   const lastRefusalAudit = new Map<string, number>();
+
+  /** When each recipient of a message we queued for a peer was queued: it sizes that peer's receipt budget. */
+  const sentRecipients = new Map<string, number[]>();
+  /** Admitted receipts per link, inside the rolling window. */
+  const receiptTimes = new Map<string, number[]>();
+
+  /**
+   * Receipts have their own budget so a busy conversation's receipts never crowd out messages:
+   * a base rate plus two (noticed, read) per recipient we queued for that peer in the last hour.
+   */
+  const admitReceipt = (machineId: string): boolean => {
+    const t = deps.now();
+    const sent = (sentRecipients.get(machineId) ?? []).filter((x) => t - x < RECEIPT_CREDIT_MS);
+    if (sent.length === 0) sentRecipients.delete(machineId);
+    else sentRecipients.set(machineId, sent);
+    const recent = (receiptTimes.get(machineId) ?? []).filter((x) => t - x < INBOUND_WINDOW_MS);
+    const admitted = recent.length < RECEIPT_BASE_PER_MIN + 2 * sent.length;
+    if (admitted) recent.push(t);
+    receiptTimes.set(machineId, recent);
+    return admitted;
+  };
 
   const admitInbound = (machineId: string): boolean => {
     const t = deps.now();
@@ -259,7 +283,7 @@ export function createMessaging(deps: MessagingDeps): Messaging {
     frame: Extract<LinkFrame, { t: 'receipt' }>,
   ): Promise<void> => {
     if (!linkOf(machineId)?.capabilities.messaging) return;
-    if (!admitInbound(machineId)) return;
+    if (!admitReceipt(machineId)) return;
     await deps
       .mcp()
       ?.setRemoteStatus(frame.messageId, formatAddress(frame.handle, machineId), frame.status);
@@ -343,7 +367,7 @@ export function createMessaging(deps: MessagingDeps): Messaging {
     if (
       !isWireMessageId(wire.messageId) ||
       !isWireThreadId(wire.threadId) ||
-      !/^[a-z0-9-]+$/.test(wire.from) ||
+      !BARE_HANDLE.test(wire.from) ||
       wire.to.length > MAX_RECIPIENTS ||
       wire.to.some((h) => h.includes('@')) ||
       Buffer.byteLength(wire.body, 'utf8') > MAX_BODY_BYTES ||
@@ -485,6 +509,11 @@ export function createMessaging(deps: MessagingDeps): Messaging {
             refused('outbox_full');
             continue;
           }
+          const queuedAt = deps.now();
+          sentRecipients.set(machineId, [
+            ...(sentRecipients.get(machineId) ?? []),
+            ...entries.map(() => queuedAt),
+          ]);
           persist();
           const reason: RemoteRecipientOutcome['reason'] = live(state) ? null : 'peer_unreachable';
           outcomes.push(

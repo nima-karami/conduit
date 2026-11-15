@@ -4,11 +4,12 @@
 import type { RemoteEntry, RemoteResolution } from '../conduit-mcp/remote-routing';
 import type { WaitReading } from '../conduit-mcp/session-waits';
 import type { Handle } from '../conduit-mcp/types';
-import type {
-  Capabilities,
-  LinkState,
-  MonitorSession,
-  MonitorSnapshot,
+import {
+  BARE_HANDLE,
+  type Capabilities,
+  type LinkState,
+  type MonitorSession,
+  type MonitorSnapshot,
 } from '../contracts/link-protocol';
 import { displayNames, formatAddress, parseAddress, printableName } from './addresses';
 
@@ -85,7 +86,8 @@ export function createRemoteDirectory(): RemoteDirectory {
       const machine = names.get(link.machineId) ?? shownName(link);
       return snapshot.sessions.flatMap((session): Row[] => {
         const handle = session.handle;
-        if (handle === null) return [];
+        // The frame parser refuses these too; a row is where a forged address would be shown.
+        if (handle === null || !BARE_HANDLE.test(handle)) return [];
         return [
           {
             session,
