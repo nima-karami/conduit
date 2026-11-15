@@ -663,6 +663,12 @@ Failing tests:
 3. An exception `close_session: deny` on codex-4 refuses → `mcp:allowOnce(rowId)` → the retry closes claude-5, and a second target is refused.
 4. `mcp:revokeGrant` on step 2's grant → its state is `revoked` in `McpUiState.policy.grants`, and the next close asks again.
 
+*Slice 3 e2e rulings (2026-11-15):*
+- Step 2 is the late path: "Allow next time" (on:'target') on the timed-out ask → no run, plus the retry notice → the retry closes the target with "allowed by grant".
+- A session-target grant expires when its target closes (`sessionEnded`), so step 4 proves revoke with an `on:'anywhere'` grant: it covers a close with no card, it's revoked, and the next close asks again.
+- Fake sessions stand in for codex/claude.
+- The deny for step 3 is the session's legacy access off (an anywhere deny exception), because scoped exceptions can't be written at runtime.
+
 ### Slice 4: Observed lane
 **Check:** `npm run verify` exits 0. `npm run e2e:remote -- activity-observed auto-resume-codex-session-log auto-resume-claude-resumes-after-reset`, then `--affected`, PASS.
 **Parallel groups:** G1: T4.1 · G2: T4.2 · Serial: T4.3
