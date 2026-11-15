@@ -42,7 +42,7 @@ function capAuditEvent(e: AuditEvent): AuditEvent {
   };
 }
 
-/** The file sink is one of two outputs; see docs/plans/2026-11-14-conduit-network-machinery.plan.md, "Seam rulings at the CON-27 merge". */
+/** The file sink is one of two outputs; see docs/plans/2026-11-14-policy-permissions-machinery.plan.md, "Seam rulings at the CON-27 merge". */
 export function openAuditLog(
   file: string,
   opts: {
