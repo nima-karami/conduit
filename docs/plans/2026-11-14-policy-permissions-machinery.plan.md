@@ -629,6 +629,13 @@ Failing tests:
   - `endPermission` ends 'answered' | 'withdrawn' only; the queue's timer owns expiry.
   - Activity for an ask is an `asked` row at raise (requestId = permission id, raw args in ask-args) plus the call's own row, which carries the requestId and the outcome. Together they meet "ask and answer each write a row".
   - A late answer writes no Activity row. Noted for CON-25.
+- *T3.2b review rulings (2026-11-15):*
+  - The answer order is re-decide → deny withdraws with no grant → grants → commit → run.
+  - mcp:permissionAnswer follows the card's authority rule: owner window only, and an unknown sender is refused.
+  - An answer through answerPermission emits mcp:askClosed.
+  - A recheck that cancels a now-hidden ask re-decides, and a deny ends it the C9 way (withdrawn by conduit, tool_disabled + reasonText).
+  - A denied answer's reason reaches the agent, sanitised.
+  - Non-anywhere grants get one per target; if any target can't take the scope, the answer is refused.
 - **Carried to T3.2 (T3.1 re-review):**
   - Catching tests for the `ui().open` filter and the withdraw_request policy guard, using a live permission from createPermission. The current withdraw test passes only because load withdraws the record; rewrite it.
   - Narrow once in answerFromRenderer (drop the unreachable second visibility branch).
