@@ -18,6 +18,12 @@ import type {
 } from '../../src/contracts/link-protocol';
 import { formatAddress } from '../../src/network/addresses';
 import {
+  inboundMessageId,
+  inboundThreadId,
+  isWireMessageId,
+  isWireThreadId,
+} from '../../src/network/inbound-ids';
+import {
   createOutbox,
   type Outbox,
   type OutboxEntry,
@@ -269,7 +275,10 @@ export function createMessaging(deps: MessagingDeps): Messaging {
       });
       return;
     }
+    // The ids are the peer's choice; only the local derivation below may name a stored message.
     if (
+      !isWireMessageId(wire.messageId) ||
+      !isWireThreadId(wire.threadId) ||
       !/^[a-z0-9-]+$/.test(wire.from) ||
       wire.to.some((h) => h.includes('@')) ||
       Buffer.byteLength(wire.body, 'utf8') > MAX_BODY_BYTES ||
@@ -287,7 +296,8 @@ export function createMessaging(deps: MessagingDeps): Messaging {
     const mcp = deps.mcp();
     // No ack without the store: the sender keeps the message queued and resends on the next up.
     if (mcp === null) return;
-    if (mcp.hasMessage(wire.messageId)) {
+    const messageId = inboundMessageId(machineId, wire.messageId);
+    if (mcp.hasMessage(messageId)) {
       deps.send(machineId, {
         t: 'ack',
         messageId: wire.messageId,
@@ -295,9 +305,14 @@ export function createMessaging(deps: MessagingDeps): Messaging {
       });
       return;
     }
+    const threadId = inboundThreadId(machineId, wire.threadId, (t, m) =>
+      mcp.threadExportedTo(t, m),
+    );
     const record: MessageRecord & { origin: string } = {
-      messageId: wire.messageId,
-      threadId: wire.threadId,
+      messageId,
+      threadId,
+      originMessageId: wire.messageId,
+      originThreadId: wire.threadId,
       from: formatAddress(wire.from, machineId),
       to: wire.to,
       subject: wire.subject,
@@ -375,7 +390,7 @@ export function createMessaging(deps: MessagingDeps): Messaging {
             machineId,
             message: {
               messageId: msg.messageId,
-              threadId: msg.threadId,
+              threadId: deps.mcp()?.wireThreadFor(msg.threadId, machineId) ?? msg.threadId,
               from: msg.from,
               to: entries.map((e) => e.handle),
               subject: msg.subject,

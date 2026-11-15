@@ -19,8 +19,8 @@ afterEach(() => {
 });
 const machine = 'm-12345678';
 const wire: WireMessage = {
-  messageId: 'id',
-  threadId: 'thread',
+  messageId: 'm_abcdefghijklmnop',
+  threadId: 't_abcdefghijklmnop',
   from: 'agent-1',
   to: ['agent-2'],
   subject: 'hi',
@@ -98,7 +98,7 @@ function setup() {
       now = t;
       timer();
     },
-    receipt: () => listener('id', 'agent-2', 'read', machine),
+    receipt: () => listener('m_abcdefghijklmnop', 'agent-2', 'read', machine),
   };
 }
 
@@ -108,14 +108,18 @@ it('flushes queued messages on link up and handles refused acknowledgements', as
   expect(h.frames).toHaveLength(0);
   h.link.state = 'up';
   h.svc.linkUp(machine);
-  expect(h.frames[0]).toMatchObject({ t: 'msg', message: { messageId: 'id' } });
+  expect(h.frames[0]).toMatchObject({ t: 'msg', message: { messageId: 'm_abcdefghijklmnop' } });
   h.svc.onFrame(machine, {
     t: 'ack',
-    messageId: 'id',
+    messageId: 'm_abcdefghijklmnop',
     recipients: [{ handle: 'agent-2', status: 'refused', reason: 'unknown_session' }],
   });
   await vi.waitFor(() =>
-    expect(h.mcp.setRemoteStatus).toHaveBeenCalledWith('id', `agent-2@${machine}`, 'undelivered'),
+    expect(h.mcp.setRemoteStatus).toHaveBeenCalledWith(
+      'm_abcdefghijklmnop',
+      `agent-2@${machine}`,
+      'undelivered',
+    ),
   );
 });
 it('expires and revokes queued messages', async () => {
@@ -123,13 +127,17 @@ it('expires and revokes queued messages', async () => {
   h.svc.enqueue(h.msg, [h.recipient]);
   h.tick(24 * 60 * 60 * 1000);
   await vi.waitFor(() =>
-    expect(h.mcp.setRemoteStatus).toHaveBeenCalledWith('id', `agent-2@${machine}`, 'expired'),
+    expect(h.mcp.setRemoteStatus).toHaveBeenCalledWith(
+      'm_abcdefghijklmnop',
+      `agent-2@${machine}`,
+      'expired',
+    ),
   );
-  h.svc.enqueue({ ...h.msg, messageId: 'other' }, [h.recipient]);
+  h.svc.enqueue({ ...h.msg, messageId: 'm_qrstuvwxyzabcdef' }, [h.recipient]);
   h.svc.revoked(machine);
   await vi.waitFor(() =>
     expect(h.mcp.setRemoteStatus).toHaveBeenCalledWith(
-      'other',
+      'm_qrstuvwxyzabcdef',
       `agent-2@${machine}`,
       'undelivered',
     ),
@@ -191,7 +199,7 @@ it('keeps an acknowledgement pending when updating status fails', async () => {
   vi.mocked(h.mcp.setRemoteStatus).mockRejectedValueOnce(new Error('disk'));
   h.svc.onFrame(machine, {
     t: 'ack',
-    messageId: 'id',
+    messageId: 'm_abcdefghijklmnop',
     recipients: [{ handle: 'agent-2', status: 'refused', reason: 'unknown_session' }],
   });
   await vi.waitFor(() => expect(h.mcp.setRemoteStatus).toHaveBeenCalled());
@@ -245,7 +253,11 @@ it('marks the recipient undelivered and removes the outbox entry if a blob is mi
   h.link.state = 'up';
   h.svc.linkUp(machine);
   await vi.waitFor(() =>
-    expect(h.mcp.setRemoteStatus).toHaveBeenCalledWith('id', `agent-2@${machine}`, 'undelivered'),
+    expect(h.mcp.setRemoteStatus).toHaveBeenCalledWith(
+      'm_abcdefghijklmnop',
+      `agent-2@${machine}`,
+      'undelivered',
+    ),
   );
   await vi.waitFor(() =>
     expect(JSON.parse(readFileSync(join(h.dir, 'outbox.json'), 'utf8')).entries).toEqual([]),
@@ -300,7 +312,11 @@ it('does not send a blob read after a link is revoked', async () => {
   h.svc.revoked(machine);
   finish(Buffer.from('x'));
   await vi.waitFor(() =>
-    expect(h.mcp.setRemoteStatus).toHaveBeenCalledWith('id', `agent-2@${machine}`, 'undelivered'),
+    expect(h.mcp.setRemoteStatus).toHaveBeenCalledWith(
+      'm_abcdefghijklmnop',
+      `agent-2@${machine}`,
+      'undelivered',
+    ),
   );
   expect(h.frames.filter((f) => f.t === 'msg')).toEqual([]);
 });
@@ -325,7 +341,7 @@ it('preserves FIFO when a link drops while the first blob is loading', async () 
     },
     [h.recipient],
   );
-  h.svc.enqueue({ ...h.msg, messageId: 'second' }, [h.recipient]);
+  h.svc.enqueue({ ...h.msg, messageId: 'm_234567abcdefghij' }, [h.recipient]);
   h.link.state = 'up';
   h.svc.linkUp(machine);
   await vi.waitFor(() => expect(h.mcp.readBlob).toHaveBeenCalledTimes(1));
@@ -337,7 +353,7 @@ it('preserves FIFO when a link drops while the first blob is loading', async () 
   finish(Buffer.from('blob'));
   await vi.waitFor(() => expect(h.frames.filter((f) => f.t === 'msg')).toHaveLength(2));
   expect(h.frames.flatMap((f) => (f.t === 'msg' ? [f.message.messageId] : []))).toEqual([
-    'id',
-    'second',
+    'm_abcdefghijklmnop',
+    'm_234567abcdefghij',
   ]);
 });
