@@ -354,7 +354,7 @@ export interface PolicyUiState {
 - `{type:'mcp:setAssignment'; requestId; point: AssignmentPoint; profileId: ProfileId | null}`, answered by `{type:'mcp:policyResult'; requestId; ok: true} | {…; ok: false; error: string}`
 - `{type:'mcp:setPointPolicy'; requestId; point: {kind:'default'} | {kind:'cli'; cli: CliKind}; tool: string; patch: unknown}`, answered by `mcp:policyResult`
 - `{type:'mcp:revokeGrant'; requestId; grantId}` and `{type:'mcp:allowOnce'; requestId; activityId}`, both answered by `mcp:policyResult`
-- `{type:'mcp:permissionAnswer'; requestId: string; answer: PermissionAnswer}`, answered by the existing `mcp:requestResult`
+- `{type:'mcp:permissionAnswer'; requestId: string; answer: PermissionAnswer}`, answered by the existing `mcp:requestResult` (T3.2 adds it, with `PermissionAnswer`; not T2.3)
 - Existing `mcp:setToolPolicy` keeps its shape and result. It now routes to `applyLegacyPatch({kind:'session'})`.
 
 ### C9 Permission requests (Slice 3)
