@@ -177,6 +177,13 @@ describe('link manager', { timeout: 60_000 }, () => {
     expect(b.audit.some((e) => e.kind === 'link.capability')).toBe(true);
   });
 
+  it('a peer enabling drive on its side never enables drive on mine', async () => {
+    const { a, b } = await linkedPair();
+    expect(a.manager.setCapability(b.id.machineId, 'drive', true)).toBe(true);
+    await until(() => b.manager.view(a.id.machineId)?.peerCapabilities?.drive === true);
+    expect(b.manager.view(a.id.machineId)?.capabilities.drive).toBe(false);
+  });
+
   it('a capability change made after its hello went out still reaches the peer', async () => {
     const owner = identity();
     const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
