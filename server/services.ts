@@ -25,6 +25,7 @@ import type { AgentDefinition } from '../src/types';
 import { createDomain, type DomainLog } from './domain';
 import type { ShellCore } from './lifecycle/shell';
 import { type AppEventSink, createMcp, type McpServerDeps, type ServerMcp } from './mcp';
+import { activityAuditSink } from './mcp/activity-audit-sink';
 import { ensureHookClient } from './mcp/hook-client-file';
 import type { PreviousShim } from './mcp/install';
 import { createNetwork, type NetworkService } from './network';
@@ -370,6 +371,8 @@ export function createServices(o: ServicesOptions) {
   });
   const server = mcp;
   network?.setMcp(server.networkPort());
+  network?.setAuditTap(activityAuditSink(server.recordNote));
+  network?.onRevoked((machineId) => server.peerRevoked(machineId));
 
   const offChange = attention.onChange(invalidateSessions);
   const offEdge = attention.onEdge((edge) => emit('attention.edge', edge));

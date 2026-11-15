@@ -236,6 +236,13 @@ export interface ConduitMcpHostDeps extends Omit<McpHostDeps, 'attention'> {
 }
 export type McpRendererMessage = Extract<WebviewToHost, { type: `mcp:${string}` }>;
 
+/** A note row for a fact that has no session or call behind it (NET audit events). */
+export interface ActivityNote {
+  action: string;
+  machineId: string | null;
+  handle: string | null;
+}
+
 export interface ConduitMcpHost extends LaunchPort, DraftPort {
   start(): Promise<void>;
   /**
@@ -277,6 +284,10 @@ export interface ConduitMcpHost extends LaunchPort, DraftPort {
   ): Promise<void>;
   tick(): Promise<void>;
   networkPort(): McpNetworkPort;
+  /** A peer's link was revoked: its grants end. */
+  peerRevoked(machineId: string): void;
+  /** An audit event from the network, shown in the Activity log as a note row. */
+  recordNote(note: ActivityNote): void;
   stop(): Promise<void>;
 }
 
@@ -3077,6 +3088,26 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
 
     tick,
+
+    peerRevoked(machineId) {
+      policyService.peerRevoked(machineId);
+    },
+    recordNote(note) {
+      policyService.activity.record({
+        lane: 'note',
+        principal: { handle: note.handle, sessionId: null, machineId: note.machineId },
+        cli: null,
+        action: note.action,
+        target: null,
+        summary: null,
+        decision: null,
+        decidedBy: 'conduit',
+        outcome: null,
+        durationMs: null,
+        requestId: null,
+        count: null,
+      });
+    },
 
     networkPort: (): McpNetworkPort => ({
       localDirectory: () => directory(),

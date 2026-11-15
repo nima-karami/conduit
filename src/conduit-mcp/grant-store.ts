@@ -37,6 +37,7 @@ export interface GrantStore {
   touch(id: string): void;
   revoke(id: string): Grant | null;
   sessionEnded(sessionId: string): Grant[];
+  peerRevoked(machineId: string): Grant[];
   tick(): Grant[];
 }
 
@@ -109,6 +110,18 @@ export function createGrantStore(deps: GrantStoreDeps): GrantStore {
         const anchored = g.anchorSessionId === sessionId && g.for === 'session-end';
         if (!ownedBy && !onSession && !anchored) continue;
         end(g, 'expired', now);
+        changed.push(copyGrant(g));
+      }
+      return changed;
+    },
+
+    peerRevoked(machineId) {
+      const now = deps.now();
+      const changed: Grant[] = [];
+      for (const g of grants.values()) {
+        if (g.state !== 'active' && g.state !== 'suspended') continue;
+        if (g.who.kind !== 'peer' || g.who.machineId !== machineId) continue;
+        end(g, 'revoked', now);
         changed.push(copyGrant(g));
       }
       return changed;

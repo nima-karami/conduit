@@ -27,17 +27,22 @@ export interface AuditSink {
 
 /**
  * A peer's text reaches the log through detail and principal (CON-27 review M2), so each string
- * there is cut before it is written; the log stays one bounded line per event.
+ * there is cut before any sink sees it; every sink gets one bounded event.
  */
 const AUDIT_STRING_MAX = 128;
 const capped = (s: string): string => s.slice(0, AUDIT_STRING_MAX);
 const capDetail = (d: NonNullable<AuditEvent['detail']>): AuditEvent['detail'] =>
   Object.fromEntries(Object.entries(d).map(([k, v]) => [k, typeof v === 'string' ? capped(v) : v]));
 
-/**
- * The sink is a port: POL's Activity store replaces this file-backed one later. See
- * docs/plans/2026-11-14-conduit-network-machinery.plan.md, Seams with CON-24 item 3.
- */
+function capAuditEvent(e: AuditEvent): AuditEvent {
+  return {
+    ...e,
+    ...(e.principal === undefined ? {} : { principal: capped(e.principal) }),
+    ...(e.detail === undefined ? {} : { detail: capDetail(e.detail) }),
+  };
+}
+
+/** The file sink is one of two outputs; see docs/plans/2026-11-14-policy-permissions-machinery.plan.md, "Seam rulings at the CON-27 merge". */
 export function openAuditLog(
   file: string,
   opts: {
@@ -49,12 +54,7 @@ export function openAuditLog(
   const append = opts.append ?? defaultAppend();
   return {
     record(e) {
-      const event: AuditEvent = {
-        ...e,
-        ...(e.principal === undefined ? {} : { principal: capped(e.principal) }),
-        ...(e.detail === undefined ? {} : { detail: capDetail(e.detail) }),
-      };
-      const line = `${JSON.stringify({ v: 1, at: new Date(opts.now()).toISOString(), ...event })}\n`;
+      const line = `${JSON.stringify({ v: 1, at: new Date(opts.now()).toISOString(), ...capAuditEvent(e) })}\n`;
       try {
         append(file, line);
       } catch (err) {
@@ -62,6 +62,35 @@ export function openAuditLog(
         // describes, so the failure goes to onError rather than to the caller.
         opts.onError(err instanceof Error ? err : new Error(String(err)));
       }
+    },
+  };
+}
+
+/**
+ * Every event goes to the file and to the tap, capped once. A failing tap is a side channel
+ * like the file: it goes to onError and never reaches the caller, so the revoke path that
+ * records an audit event still runs its listeners.
+ */
+export function teeAudit(
+  file: AuditSink,
+  onError: (err: Error) => void,
+): { sink: AuditSink; setTap(tap: AuditSink): void } {
+  let tap: AuditSink | null = null;
+  return {
+    sink: {
+      record(e) {
+        const event = capAuditEvent(e);
+        file.record(event);
+        if (tap === null) return;
+        try {
+          tap.record(event);
+        } catch (err) {
+          onError(err instanceof Error ? err : new Error(String(err)));
+        }
+      },
+    },
+    setTap(t) {
+      tap = t;
     },
   };
 }

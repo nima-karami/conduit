@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { AuditEvent } from '../../server/network/audit-log';
 import { loadIdentity } from '../../server/network/identity';
 import { createNetwork, type NetworkService } from '../../server/network/index';
 import type { NetworkState } from '../../src/contracts/network-state';
@@ -75,6 +76,8 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
     const a = server('net-a');
     const b = server('net-b');
     await a.net.start();
+    const tapped: AuditEvent[] = [];
+    b.net.setAuditTap({ record: (e) => tapped.push(e) });
     await b.net.start();
     const started = await call<{ pairingId: string; code: string[]; addresses: string[] }>(
       a.net,
@@ -117,6 +120,7 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
     await until(() => linkTo(a.net, bId)?.state === 'revoked');
     expect(linkTo(a.net, bId)?.revokedBy).toBe('peer');
     expect(auditKinds(b.dir)).toEqual(expect.arrayContaining(['pairing.linked', 'link.revoked']));
+    expect(tapped.map((e) => e.kind)).toEqual(auditKinds(b.dir));
     expect(a.states.length).toBeGreaterThan(0);
   });
 
