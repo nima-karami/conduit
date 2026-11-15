@@ -518,6 +518,10 @@ Failing tests:
 - Hidden tools: an anywhere deny exception doesn't hide the tool when a narrower exception for it at the same assignment sets a non-deny decision.
 - Deferred to CON-25: reasonText CLI display names (the host passes the kind).
 - Commit point for control calls: `ControlCall.commit()`. call-flow calls it right before runNow, right before the card is sent (after every pre-card refusal), and in the prepared-done branch unless the decision is deny. Messaging/request calls outside runControl commit in host.ts after their gate.
+*T2.3 review round 2 rulings (2026-11-15):*
+- `commit(decision)` returns boolean and is atomic: false, with no change at all, when any of the decision's overrides is already gone (a concurrent call spent it). The caller then refuses with tool_disabled. So a one-use override passes exactly once even with parallel calls.
+- Messaging/request calls commit only after the store check and argument validation, right before they take effect.
+- Accepted, noted for Slice 3/CON-25: (1) an ask raised on an override that passes an anywhere deny removes the tool from the list while the card waits, and a recheck can then end that ask; (2) approval_timeout from the pre-card budget check is recorded as `expired`.
 
 #### Task 2.1: migration and projection
 **Files:** create `policy-migration.ts`, `policy-projection.ts`; tests `test/unit/policy-migration.test.ts`, `test/unit/policy-projection.test.ts`.
