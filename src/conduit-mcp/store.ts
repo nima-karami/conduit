@@ -52,7 +52,7 @@ export interface MessageStore {
   load(): Promise<Result<void>>;
   available(): boolean;
   append(msg: MessageRecord, blobs: BlobInput): Promise<Result<void>>;
-  /** `remote`: the status came from a peer's receipt, which may repeat itself (CON-27 R2c). */
+  /** origin 'remote': the status came from a peer's receipt, which may repeat itself (CON-27 R2c). */
   setStatus(
     messageId: string,
     handle: Handle,
