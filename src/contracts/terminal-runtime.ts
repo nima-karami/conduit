@@ -248,6 +248,14 @@ export interface TerminalRuntime {
    * facts or none.
    */
   facts(sessionId: string, facts: DisplayFacts): void;
+  observe(
+    sessionId: string,
+    events: {
+      data(data: string): void;
+      size(size: TermGeometry): void;
+      end(reason: 'exited' | 'closed', exitCode: number | null): void;
+    },
+  ): Promise<{ firstPaint: string; size: TermGeometry; close(): void } | null>;
   get(sessionId: string): RuntimeTerminal | undefined;
   /**
    * Screen model for the notice gate (W5 reads, W6 owns; ScreenPort starts it). Fed off the ring
