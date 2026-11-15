@@ -432,7 +432,7 @@ export function createMessaging(deps: MessagingDeps): Messaging {
         else if (link?.peerCapabilities && !link.peerCapabilities.messaging)
           refused('capability_off');
         else {
-          outbox.enqueue({
+          const accepted = outbox.enqueue({
             machineId,
             message: {
               messageId: msg.messageId,
@@ -458,6 +458,10 @@ export function createMessaging(deps: MessagingDeps): Messaging {
               : {}),
             enqueuedAt: deps.now(),
           });
+          if (!accepted) {
+            refused('outbox_full');
+            continue;
+          }
           persist();
           const reason: RemoteRecipientOutcome['reason'] = live(state) ? null : 'peer_unreachable';
           outcomes.push(

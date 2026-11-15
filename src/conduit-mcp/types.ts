@@ -54,6 +54,7 @@ export type ToolErrorCode =
   | 'peer_incompatible'
   | 'peer_unsupported'
   | 'peer_revoked'
+  | 'outbox_full'
   | 'refused';
 export interface ToolError {
   code: ToolErrorCode;

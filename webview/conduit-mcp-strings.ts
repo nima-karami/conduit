@@ -230,6 +230,8 @@ export const MCP_STR = {
     peer_incompatible: 'that machine runs a Conduit version that cannot talk to this one',
     peer_unsupported: 'that session is on another machine; this tool only works on this one',
     peer_revoked: 'the link to that machine was removed',
+    outbox_full:
+      'too many messages are already waiting for that machine; they go out as the link allows, so try again later',
     capability_off: 'that machine has messages from other machines turned off',
     refused: 'that machine refused the request',
   } satisfies Record<ToolErrorCode | 'capability_off', string>,
