@@ -14,9 +14,9 @@ export interface OutboxEntry {
 }
 
 /** Most entries one outbox holds; past it, new sends are refused, not dropped (CON-27 review, minor 6). */
-export const OUTBOX_MAX_ENTRIES = 1000;
+const OUTBOX_MAX_ENTRIES = 1000;
 /** Most serialized bytes one outbox holds, summed over its entries. */
-export const OUTBOX_MAX_BYTES = 64 * 1024 * 1024;
+const OUTBOX_MAX_BYTES = 64 * 1024 * 1024;
 
 export interface Outbox {
   /**
