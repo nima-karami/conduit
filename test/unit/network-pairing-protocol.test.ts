@@ -134,10 +134,13 @@ describe('pairing transcript', () => {
   it('fingerprint is XXXX-XXXX and depends on every input', () => {
     const k = [randomBytes(32), randomBytes(32)];
     const n = [randomBytes(32), randomBytes(32)];
-    const fp = fingerprint(k[0], k[1], n[0], n[1]);
+    const d = [randomBytes(32), randomBytes(32)];
+    const fp = fingerprint(k[0], k[1], n[0], n[1], d[0], d[1]);
     expect(fp).toMatch(/^[0-9A-F]{4}-[0-9A-F]{4}$/);
-    expect(fingerprint(k[1], k[0], n[0], n[1])).not.toBe(fp);
-    expect(fingerprint(k[0], k[1], n[1], n[0])).not.toBe(fp);
+    expect(fingerprint(k[1], k[0], n[0], n[1], d[0], d[1])).not.toBe(fp);
+    expect(fingerprint(k[0], k[1], n[1], n[0], d[0], d[1])).not.toBe(fp);
+    expect(fingerprint(k[0], k[1], n[0], n[1], d[1], d[0])).not.toBe(fp);
+    expect(() => fingerprint(k[0], k[1], n[0], n[1], Buffer.alloc(31), d[1])).toThrow();
   });
   it('linkIdFor is order-independent', () => {
     const a = randomBytes(32);
@@ -294,17 +297,6 @@ describe('pairing protocol', () => {
     const r3 = openerStep(pair.opener, { kind: 'msg', msg: { ...id, ...patch } });
     expect(r3.done).toEqual({ kind: 'failed', reason: 'protocol' });
   });
-
-  it('a pair.owner when an owner key was announced fails', () => {
-    const k = ownerKey();
-    const { pair, first } = setup({ openerOwner: k });
-    pump(pair, first);
-    const r = joinerStep(pair.joiner, {
-      kind: 'msg',
-      msg: { t: 'pair.owner', publicKey: k.publicKey },
-    });
-    expect(r.done).toEqual({ kind: 'failed', reason: 'protocol' });
-  });
 });
 
 describe('parsePairingMsg', () => {
@@ -324,7 +316,6 @@ describe('parsePairingMsg', () => {
     },
     { t: 'pair.accept' },
     { t: 'pair.decline' },
-    { t: 'pair.owner', publicKey: 'a' },
     { t: 'pair.fail', reason: 'used' },
   ];
   it.each(samples)('round-trips $t', (m) => {
@@ -338,7 +329,6 @@ describe('parsePairingMsg', () => {
     expect(
       parsePairingMsg({ t: 'pair.hello', v: '1', code: CODE, key: 'A', commit: 'A' }),
     ).toBeNull();
-    expect(parsePairingMsg({ t: 'pair.owner', publicKey: 'a', privateKey: 'b' })).toBeNull();
     expect(parsePairingMsg({ t: 'pair.fail', reason: 'whatever' })).toBeNull();
     expect(
       parsePairingMsg({ t: 'pair.hello', v: 1, code: 'x'.repeat(201), key: 'A', commit: 'A' }),

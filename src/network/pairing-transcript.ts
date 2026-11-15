@@ -1,14 +1,16 @@
 import { createHash } from 'node:crypto';
 
 // see docs/plans/2026-11-14-conduit-network-machinery.plan.md decision 3 (numeric comparison with a
-// commitment). Every input is fixed-length (32-byte keys and nonces), so plain concatenation is
-// unambiguous and needs no length prefixes.
+// commitment). Every input is fixed-length (32-byte keys, nonces and identity digests), so plain
+// concatenation is unambiguous and needs no length prefixes.
 
 const PAIRING_KEY_BYTES = 32;
 export const PAIRING_NONCE_BYTES = 32;
 
 const COMMIT_LABEL = Buffer.from('conduit-pair-commit-v1', 'ascii');
-const FINGERPRINT_LABEL = Buffer.from('conduit-pair-v1', 'ascii');
+const FINGERPRINT_LABEL = Buffer.from('conduit-pair-v2', 'ascii');
+const IDENTITY_LABEL = Buffer.from('conduit-pair-id-v1', 'ascii');
+const DIGEST_BYTES = 32;
 const LINK_LABEL = Buffer.from('conduit-link-id-v1', 'ascii');
 const BASE32 = 'abcdefghijklmnopqrstuvwxyz234567';
 
@@ -31,12 +33,47 @@ export function commitment(pkJoiner: Buffer, nonce: Buffer): Buffer {
   );
 }
 
-/** 32 bits shown as `XXXX-XXXX`; the commitment holds an attacker to one guess per window. */
+/** What a pair.id announces, as the fingerprint binds it. */
+export interface PairingIdentity {
+  machineId: string;
+  ownerKey: string | null;
+  ownerOffer: string | null;
+  selfName: string;
+  addresses: string[];
+  protocol: { major: number; minor: number };
+  cert: string;
+}
+
+/**
+ * A fixed-length digest of one pair.id. The fields go in as a JSON array in a fixed order, so the
+ * encoding is canonical whatever key order the message arrived with (CON-27 review minor 1).
+ */
+export function identityDigest(id: PairingIdentity): Buffer {
+  const canonical = JSON.stringify([
+    id.machineId,
+    id.ownerKey,
+    id.ownerOffer,
+    id.selfName,
+    id.addresses,
+    id.protocol.major,
+    id.protocol.minor,
+    id.cert,
+  ]);
+  return sha256(IDENTITY_LABEL, Buffer.from(canonical, 'utf8'));
+}
+
+/**
+ * 32 bits shown as `XXXX-XXXX`; the commitment holds an attacker to one guess per window. Both
+ * identities are in it, so a relay that changes a name, an address or an owner key shows each
+ * person a different value.
+ */
 export function fingerprint(
   pkOpener: Buffer,
   pkJoiner: Buffer,
   nOpener: Buffer,
   nJoiner: Buffer,
+  idOpener: Buffer,
+  idJoiner: Buffer,
 ): string {
   const hex = sha256(
     FINGERPRINT_LABEL,
@@ -44,6 +81,8 @@ export function fingerprint(
     fixed(pkJoiner, PAIRING_KEY_BYTES, 'key'),
     fixed(nOpener, PAIRING_NONCE_BYTES, 'nonce'),
     fixed(nJoiner, PAIRING_NONCE_BYTES, 'nonce'),
+    fixed(idOpener, DIGEST_BYTES, 'identity digest'),
+    fixed(idJoiner, DIGEST_BYTES, 'identity digest'),
   )
     .subarray(0, 4)
     .toString('hex')

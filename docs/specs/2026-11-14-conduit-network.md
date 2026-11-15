@@ -353,6 +353,11 @@ Also checked: OpenAI (https://openai.com/policies/terms-of-use, UNVERIFIED), Ope
   is the peer's own certificate, pinned at pairing (SAN = machine id). `rejectUnauthorized` stays
   on, and a raw-key pin is checked as well. A revoked peer's certificate stays trusted for 30 days,
   only so its next handshake can be told `revoked`.
+- **The fingerprint covers everything each side learns.** It hashes both keys, both nonces and a
+  digest of both pair.id messages (machine id, owner key, offered owner key, name, addresses,
+  protocol, certificate), so a relay that changes any of them shows each person a different value.
+  On a first-ever link the opener offers its new owner public key inside its pair.id; there is no
+  separate owner message after the confirm (CON-27 review minor 1).
 - **The owner private key never travels in pairing.** It crosses the first verified link once, and
   the receiver accepts it only if it matches the public owner key both people confirmed.
 
