@@ -1314,7 +1314,6 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     if (point.kind === 'peer') return 'machineId' in point && typeof point.machineId === 'string';
     return point.kind === 'cli' && 'cli' in point && CLI_KINDS.some((kind) => kind === point.cli);
   };
-  /** The permission each raised call waits on; its call row carries that request id. */
   const raisedRequests = new Map<InFlight, string>();
   const reasonOf = (decision: PolicyDecision): string =>
     reasonText(decision.reason, decision.decision, {

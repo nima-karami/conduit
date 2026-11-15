@@ -113,7 +113,7 @@ export interface RequestService {
   createPermission(sessionId: string, fields: PermissionFields, expiresAt: string): RequestRecord;
   endPermission(
     id: string,
-    end: 'answered' | 'expired' | 'withdrawn',
+    end: 'answered' | 'withdrawn',
     answer: AnswerInput | null,
     reason: string | null,
   ): void;
@@ -695,15 +695,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
         if (!res.ok) deps.warn('a permission could not be answered', { id, reason: res.reason });
         return;
       }
-      if (end === 'withdrawn') {
-        queue.withdraw(id, 'conduit', reason);
-        return;
-      }
-      // The queue's own timer ends a permission at its deadline, which is the call's deadline.
-      const r = queue.get(id);
-      if (r !== undefined && r.state === 'open') {
-        deps.warn('a permission is still open at its deadline', { id });
-      }
+      queue.withdraw(id, 'conduit', reason);
     },
 
     answerLate(requestId, grantId) {

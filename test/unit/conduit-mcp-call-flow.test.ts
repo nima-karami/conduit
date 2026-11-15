@@ -552,7 +552,7 @@ describe('createCallFlow', () => {
     await t.flush();
     t.advance(ASK_TIMEOUT_MS.claude);
     expect(errCode(await c.promise)).toBe('approval_timeout');
-    expect(t.settled).toMatchObject([{ requestId: 'perm-1', end: 'expired', answer: null }]);
+    expect(t.settled).toEqual([]);
   });
 
   it('a cancel settles the permission withdrawn, with the cancel as its reason', async () => {

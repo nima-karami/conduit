@@ -60,12 +60,10 @@ export interface InFlight {
   /** Drops the in-flight entry; called in the host's finally. Idempotent. */
   end(): void;
 }
-/** The decision the call goes ahead on, and the one-use overrides its commit spent. */
 export interface AskCommit {
   decision: PolicyDecision;
   held: readonly OneUseOverride[];
 }
-/** What an answered ask does: run, withdraw with the policy's reason, or refuse. */
 export type AnswerDecision =
   | { kind: 'run' }
   | { kind: 'withdraw'; reason: string }
@@ -78,17 +76,8 @@ export interface ControlCall<T> {
   wiredAtLaunch: boolean;
   tool: ToolName;
   decision: PolicyDecision;
-  /**
-   * Spends the decision's grants and one-use overrides once the call goes ahead. A null result is
-   * a refusal. The overrides in an ask's result are held until its request is answered.
-   */
   commit(): AskCommit | null;
-  /** The permission request's body: why the policy asks, and what it asks about. */
   permission: { why: string; targets: readonly PolicyTarget[] };
-  /**
-   * Run once an ask is approved: creates the grant, re-decides with the held overrides, and
-   * commits them when the call runs.
-   */
   reDecide(
     grant: GrantChoice | undefined,
     held: readonly OneUseOverride[],
@@ -112,7 +101,7 @@ export interface PermissionEnd {
   requestId: string;
   caller: { sessionId: string; handle: Handle };
   tool: ToolName;
-  end: 'answered' | 'expired' | 'withdrawn';
+  end: 'answered' | 'withdrawn';
   answer: AnswerInput | null;
   reason: string | null;
 }
@@ -128,7 +117,6 @@ export interface CallFlowDeps {
   // see plan T2.3 call-flow seam ruling (visibility is pure)
   stillVisible(sessionId: string, tool: ToolName): boolean;
   messagingOn(): boolean;
-  /** Opens the permission request an ask waits on; its id is the askId. */
   openPermission(r: PermissionRaise): string;
   settlePermission(e: PermissionEnd): void;
   /** The waiting set changed: the host re-broadcasts mcp:state. */
@@ -168,7 +156,6 @@ export interface CallFlow {
   recheck(): void;
   /** false unless the ask exists, is waiting, and `fromWindowId` is its window. */
   answer(askId: string, fromWindowId: number, answer: AskAnswer): boolean;
-  /** false unless an ask is waiting on `askId`; it ends with that answer. */
   answerPermission(askId: string, answer: PermissionAnswer): boolean;
   /**
    * Sends mcp:ui to `windowId` and waits ≤ UI_TIMEOUT_MS for that window's answer. Keyed by the
@@ -379,7 +366,6 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     // Unanswered ends keep the rate token: it caps card spam (spec §3.3 "Rate").
     switch (end.kind) {
       case 'expired':
-        settle('expired', null, null);
         return { ok: false, error: approvalTimeout() };
       case 'cancelled':
         settle('withdrawn', null, 'the call was cancelled');

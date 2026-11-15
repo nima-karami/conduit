@@ -3799,7 +3799,6 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     h.toOwner.flatMap((s) => (s.msg.type === 'mcp:ask' ? [{ to: s.to, ...s.msg }] : []));
   const closedOf = (h: Harness) =>
     h.toOwner.flatMap((s) => (s.msg.type === 'mcp:askClosed' ? [s.msg] : []));
-  /** An ask's id is its permission request's id, so tests read it from the card that went out. */
   const askIdOf = (h: Harness, n = 1) => asksOf(h)[n - 1]?.askId ?? '';
   const answer = (h: Harness, askId: string, a: 'approve' | 'deny' | 'always', senderId = 1) =>
     h.host.handleRenderer({ type: 'mcp:askAnswer', askId, answer: a }, () => undefined, senderId);
@@ -4735,6 +4734,42 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(ui.requests.open).toEqual([]);
     await answer(h, askIdOf(h), 'deny');
     await c.reply(1);
+  });
+
+  it('a late grant on an expired card creates the grant, never runs the call, and the requester is told it can retry', async () => {
+    const { h, c } = await asking({ manualTimers: true });
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    const requestId = askIdOf(h);
+    h.advance(10 * 60_000);
+    expect(c.errorOf(await c.reply(1))).toBe('approval_timeout');
+    const replies: HostToWebview[] = [];
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:permissionAnswer',
+        requestId,
+        answer: {
+          outcome: 'allowed',
+          grant: { who: 'session', on: 'anywhere', for: 'session-end' },
+        },
+      },
+      (m) => replies.push(m),
+      1,
+    );
+    expect(replies).toEqual([{ type: 'mcp:permissionResult', requestId, ok: true }]);
+    expect(h.host.uiState().policy.grants).toMatchObject([
+      { tool: 'open_session', who: { kind: 'session', sessionId: 's1' }, on: { kind: 'anywhere' } },
+    ]);
+    expect(h.opens).toEqual([]);
+    let notice = '';
+    for (let id = 2; id < 30 && !notice.includes('You can retry open_session now'); id++) {
+      c.call(id, 'read_inbox');
+      await c.barrier(id);
+      notice = JSON.stringify(c.lines.filter((l) => l.id === id).at(-1) ?? null);
+      await new Promise((r) => setImmediate(r));
+    }
+    expect(notice).toContain('You can retry open_session now');
+    expect(h.opens).toEqual([]);
   });
 
   it('mcp:permissionAnswer answers a waiting ask with mcp:permissionResult; a bad answer leaves it waiting', async () => {
