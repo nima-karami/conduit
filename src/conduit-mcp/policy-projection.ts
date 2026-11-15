@@ -186,7 +186,7 @@ export function applyLegacyPatch(
   return next;
 }
 
-// see POL-D5: a session's legacy edits lower onto its launched CLI's point, never its handle's CLI.
+// see POL-D5
 export function legacyLowerPoint(state: PolicyState, launchedCli: CliKind | null): AssignmentPoint {
   if (launchedCli !== null && state.assignments.has(pointKey({ kind: 'cli', cli: launchedCli })))
     return { kind: 'cli', cli: launchedCli };

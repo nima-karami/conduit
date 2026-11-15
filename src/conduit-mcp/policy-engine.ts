@@ -277,7 +277,7 @@ function isDeniedForEveryTarget(
   if (principal.kind === 'remote' && !remoteAllows(principal, tool)) return true;
   if (principal.kind === 'session' && (tool === 'send_message' || tool === 'request_input'))
     return false;
-  // see POL §4.3 (T2.3 ruling): a narrower exception that allows the tool keeps it listed.
+  // see POL §4.3 (T2.3 ruling)
   const narrowerAllows = assignment.exceptions.some(
     (e) =>
       e.tool === tool &&
