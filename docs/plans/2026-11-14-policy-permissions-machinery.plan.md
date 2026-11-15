@@ -614,6 +614,12 @@ Failing tests:
 - Requests file: a persisted grant tolerates unknown keys.
 - The ended-history cap and the server open cap count only visible/non-policy records.
 - On load, an open policy record is withdrawn by Conduit ("Conduit restarted").
+- **Carried to T3.2 (T3.1 re-review):**
+  - Catching tests for the `ui().open` filter and the withdraw_request policy guard, using a live permission from createPermission. The current withdraw test passes only because load withdraws the record; rewrite it.
+  - Narrow once in answerFromRenderer (drop the unreachable second visibility branch).
+  - Rename `isAgentRecord` → `isNonPolicy`.
+  - request-file also drops a record when `(source==='policy') !== (kind==='permission')`.
+  - On load, overdue policy records expire first (so a late "Allow next time" still works). Only the rest are withdrawn as "Conduit restarted".
 
 #### Task 3.2 (serial): ask becomes a request
 **Files:** `call-flow.ts`, `request-service.ts`, `host.ts`, `use-conduit-mcp.ts` (`answerPermission`); tests `conduit-mcp-call-flow.test.ts`, `request-service.test.ts`.
