@@ -16,16 +16,18 @@ import {
   type SessionNeedsYou,
   type SourceAction,
 } from './request-sources';
-import type {
-  HumanPresence,
-  ListRequestsOutput,
-  RequestAnswer,
-  RequestAnswerOut,
-  RequestAnswerResult,
-  RequestCallOutput,
-  RequestRecord,
-  RequestsUiState,
-  RequestView,
+import {
+  type HumanPresence,
+  isVisibleRequest,
+  type ListRequestsOutput,
+  type RequestAnswer,
+  type RequestAnswerOut,
+  type RequestAnswerResult,
+  type RequestCallOutput,
+  type RequestRecord,
+  type RequestsUiState,
+  type RequestView,
+  type VisibleRequestRecord,
 } from './request-types';
 import {
   createRequestWaits,
@@ -137,7 +139,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
   let awayTimer: Timer | null = null;
   const inFlight = new Set<string>();
 
-  const view = (r: RequestRecord): RequestView => {
+  const view = (r: VisibleRequestRecord): RequestView => {
     const until = waits.waitingUntil(r.id);
     return {
       ...r,
@@ -145,6 +147,13 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
       waitingUntil: until === null ? null : new Date(until).toISOString(),
     };
   };
+
+  const viewOf = (r: RequestRecord): RequestView | null => (isVisibleRequest(r) ? view(r) : null);
+
+  const visibleOnly = (rs: RequestRecord[]): VisibleRequestRecord[] =>
+    rs.flatMap((r) => (isVisibleRequest(r) ? [r] : []));
+
+  const isAgentRecord = (r: RequestRecord): boolean => r.source !== 'policy';
 
   const markDirty = (): void => {
     if (!writable) return;
@@ -344,7 +353,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     if (!parsed.ok) return parsed;
     const { requestId, waitS } = parsed.value;
     const r = queue.get(requestId);
-    if (r === undefined || r.session !== sessionId) {
+    if (r === undefined || r.session !== sessionId || r.source === 'policy') {
       return {
         ok: false,
         error: toolError('not_found', `no request ${requestId} of yours`, sessionId),
@@ -367,7 +376,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     if (!parsed.ok) return parsed;
     const { requestId, reason } = parsed.value;
     const r = queue.get(requestId);
-    if (r === undefined || r.session !== sessionId || r.state !== 'open') {
+    if (r === undefined || r.session !== sessionId || r.source === 'policy' || r.state !== 'open') {
       return {
         ok: false,
         error: toolError('not_found', `no open request ${requestId} of yours`, sessionId),
@@ -383,7 +392,8 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     const parsed = parseListRequests(args);
     if (!parsed.ok) return parsed;
     const requests = queue
-      .bySession(sessionId, parsed.value.state, parsed.value.limit)
+      .bySession(sessionId, parsed.value.state, parsed.value.limit, isAgentRecord)
+      .flatMap((r) => (isVisibleRequest(r) ? [r] : []))
       .map((r) => ({
         request_id: r.id,
         kind: r.kind,
@@ -430,7 +440,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     return ids;
   };
 
-  const actOnScheduler = (r: RequestView, sessionId: string): void => {
+  const actOnScheduler = (r: VisibleRequestRecord, sessionId: string): void => {
     const answer = r.answer;
     if (answer === null) return;
     if (answer.outcome === 'dismissed') {
@@ -521,6 +531,14 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
 
     async answerFromRenderer(requestId, answer, windowId) {
       const record = queue.get(requestId);
+      if (record !== undefined && !isVisibleRequest(record)) {
+        return {
+          ok: false,
+          reason: 'not_answerable',
+          message: 'permission requests are answered through the policy',
+          request: null,
+        };
+      }
       if (record !== undefined && record.source === 'message' && record.state === 'open') {
         const checked = validateAnswer(record, answer);
         if (!checked.ok) {
@@ -528,7 +546,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
             ok: false,
             reason: 'invalid_answer',
             message: checked.error.message,
-            request: view(record),
+            request: viewOf(record),
           };
         }
         const { outcome, text } = checked.value;
@@ -538,7 +556,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
               ok: false,
               reason: 'not_answerable',
               message: 'the reply is already being sent',
-              request: view(record),
+              request: viewOf(record),
             };
           }
           if (record.messageId !== null) replying.add(record.messageId);
@@ -553,7 +571,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
               ok: false,
               reason: 'not_answerable',
               message: 'the reply could not be sent; try again',
-              request: view(record),
+              request: viewOf(record),
             };
           }
         }
@@ -561,17 +579,29 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
 
       const result = queue.answer(requestId, answer, { kind: 'you', windowId });
       if (!result.ok) {
+        const after = queue.get(requestId);
         return {
-          ...result,
-          request: result.request === null ? null : view(result.request),
+          ok: false,
+          reason: result.reason,
+          message: result.message,
+          request: after === undefined ? null : viewOf(after),
         };
       }
-      if (result.request.source === 'scheduler' && result.request.session !== null) {
-        // Before acting: acting can re-enter onAttention synchronously while the issue persists.
-        handledIssues.set(result.request.session, result.request.body);
-        actOnScheduler(result.request, result.request.session);
+      const answered = result.record;
+      if (!isVisibleRequest(answered)) {
+        return {
+          ok: false,
+          reason: 'not_answerable',
+          message: 'permission requests are answered through the policy',
+          request: null,
+        };
       }
-      return { ok: true, request: view(result.request) };
+      if (answered.source === 'scheduler' && answered.session !== null) {
+        // Before acting: acting can re-enter onAttention synchronously while the issue persists.
+        handledIssues.set(answered.session, answered.body);
+        actOnScheduler(answered, answered.session);
+      }
+      return { ok: true, request: view(answered) };
     },
 
     setAway,
@@ -603,8 +633,8 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
 
     ui() {
       return {
-        open: queue.open().map(view),
-        ended: queue.ended(ENDED_IN_UI).map(view),
+        open: visibleOnly(queue.open()).map(view),
+        ended: visibleOnly(queue.ended(ENDED_IN_UI, isVisibleRequest)).map(view),
         presence,
       };
     },

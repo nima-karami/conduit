@@ -1,6 +1,7 @@
 // Node-free: pure text in, text out.
 // Unknown fields are kept and written back (SERVER_FILE_VERSION reader rule); a narrowing field needs a version bump.
 import { judgePersistedVersion, type ServerFile } from '../contracts/session-identity';
+import { GRANT_FORS } from './grant-store';
 import { WORKER_PROFILE } from './policy-profiles';
 import type {
   Assignment,
@@ -8,7 +9,6 @@ import type {
   Decision,
   Exception,
   Grant,
-  GrantFor,
   GrantState,
   GrantWho,
   OneUseOverride,
@@ -148,7 +148,6 @@ const isFile = (v: unknown): v is RawPolicyFile =>
   isObj(v.notes) &&
   arrayOf(isStr)(v.notes.onScreenOnlyOffered);
 
-const GRANT_FORS: readonly GrantFor[] = ['session-end', '1h', '24h', 'until-revoked'];
 const GRANT_STATES: readonly GrantState[] = ['active', 'suspended', 'expired', 'revoked'];
 const ENDED_STATES: readonly GrantState[] = ['expired', 'revoked'];
 

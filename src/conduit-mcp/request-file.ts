@@ -1,4 +1,6 @@
 import { judgePersistedVersion } from '../contracts/session-identity';
+import { GRANT_CHOICE_ON, GRANT_FORS, GRANT_WHO_KINDS, type GrantChoice } from './grant-store';
+import type { PolicyTarget } from './policy-types';
 import type {
   AnsweredBy,
   AnswerInput,
@@ -13,6 +15,7 @@ import type {
   RequestSource,
   RequestState,
 } from './request-types';
+import { TOOL_NAMES, type ToolName } from './tool-policy';
 
 export interface RequestsFile {
   version: 1;
@@ -40,8 +43,9 @@ const arrayOf =
   (v: unknown): v is T[] =>
     Array.isArray(v) && v.every(guard);
 
-const isSource = oneOf<RequestSource>('agent', 'message', 'observed', 'scheduler');
-const isKind = oneOf<RequestKind>('confirm', 'choose', 'text', 'review', 'attend');
+const isSource = oneOf<RequestSource>('agent', 'message', 'observed', 'scheduler', 'policy');
+const isKind = oneOf<RequestKind>('confirm', 'choose', 'text', 'review', 'attend', 'permission');
+const isTool = oneOf<ToolName>(...TOOL_NAMES);
 const isState = oneOf<RequestState>(
   'open',
   'answered',
@@ -58,6 +62,8 @@ const isOutcome = oneOf<RequestOutcome>(
   'chosen',
   'edited',
   'dismissed',
+  'allowed',
+  'denied',
 );
 const isPriority = oneOf<RequestPriority>('normal', 'urgent');
 const isBlocked = orNull(oneOf<Exclude<BlockedKind, null>>('permission', 'question', 'auth'));
@@ -66,12 +72,19 @@ const isWithdrawnBy = orNull(oneOf<'requester' | 'conduit'>('requester', 'condui
 const isOption = (v: unknown): v is RequestOption =>
   isObj(v) && isStr(v.label) && (v.description === undefined || isStr(v.description));
 
+const isStoredGrant = (v: unknown): v is GrantChoice =>
+  isObj(v) &&
+  oneOf(...GRANT_WHO_KINDS)(v.who) &&
+  oneOf(...GRANT_CHOICE_ON)(v.on) &&
+  oneOf(...GRANT_FORS)(v.for);
+
 const isAnswerInput = (v: unknown): v is AnswerInput =>
   isObj(v) &&
   isOutcome(v.outcome) &&
   (v.text === undefined || isStr(v.text)) &&
   (v.values === undefined || isStrArray(v.values)) &&
-  (v.reason === undefined || isStr(v.reason));
+  (v.reason === undefined || isStr(v.reason)) &&
+  (v.grant === undefined || isStoredGrant(v.grant));
 
 const isAnsweredBy = (v: unknown): v is AnsweredBy =>
   isObj(v) &&
@@ -80,6 +93,16 @@ const isAnsweredBy = (v: unknown): v is AnsweredBy =>
 
 const isAnswer = (v: unknown): v is RequestAnswer =>
   isObj(v) && isAnswerInput(v) && isAnsweredBy(v.answeredBy) && isStr(v.at);
+
+const isPolicyTarget = (v: unknown): v is PolicyTarget =>
+  isObj(v) && nullStr(v.sessionId) && nullStr(v.path) && nullStr(v.folder) && nullStr(v.projectId);
+
+const isPermission = (v: unknown): v is NonNullable<RequestRecord['permission']> =>
+  isObj(v) &&
+  isTool(v.tool) &&
+  isStr(v.why) &&
+  arrayOf(isPolicyTarget)(v.targets) &&
+  nullStr(v.lateGrant);
 
 const isRecord = (v: unknown): v is RequestRecord =>
   isObj(v) &&
@@ -111,7 +134,10 @@ const isRecord = (v: unknown): v is RequestRecord =>
   isWithdrawnBy(v.withdrawnBy) &&
   nullStr(v.withdrawReason) &&
   nullStr(v.supersededBy) &&
-  nullStr(v.deliveredAt);
+  nullStr(v.deliveredAt) &&
+  (v.permission === undefined || v.permission === null
+    ? v.kind !== 'permission'
+    : v.kind === 'permission' && isPermission(v.permission));
 
 const isLastAway = (v: unknown): v is NonNullable<HumanPresence['lastAway']> =>
   isObj(v) && isStr(v.from) && isStr(v.to);
@@ -148,7 +174,9 @@ export function parseRequestsFile(
   if (verdict === 'newer') return empty('newer');
   if (verdict === 'invalid') return empty('corrupt');
   if (!Array.isArray(raw.requests)) return empty('corrupt');
-  const requests = raw.requests.filter(isRecord);
+  const requests = raw.requests
+    .filter(isRecord)
+    .map((r) => ({ ...r, permission: r.permission === undefined ? null : r.permission }));
   return {
     kind: 'ok',
     file: {

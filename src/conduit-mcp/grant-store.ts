@@ -14,6 +14,10 @@ export interface GrantChoice {
   for: GrantFor;
 }
 
+export const GRANT_WHO_KINDS: readonly GrantWho['kind'][] = ['session', 'cli', 'peer'];
+export const GRANT_CHOICE_ON: readonly GrantChoice['on'][] = ['target', 'folder', 'anywhere'];
+export const GRANT_FORS: readonly GrantFor[] = ['session-end', '1h', '24h', 'until-revoked'];
+
 export interface GrantStoreDeps {
   now(): number;
   newId(): string;

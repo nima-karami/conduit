@@ -33,6 +33,7 @@ function view(over: Partial<RequestView> & Pick<RequestView, 'id'>): RequestView
     withdrawReason: null,
     supersededBy: null,
     deliveredAt: null,
+    permission: null,
     waiting: false,
     waitingUntil: null,
     ...over,
