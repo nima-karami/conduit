@@ -309,6 +309,9 @@ export function toolsSeen(sessionId) {
 }
 
 const SEG = { On: 'on', Off: 'off', Ask: 'ask', Inherit: 'inherit' };
+// A layer field equal to the lower point is absent from the projection, so a wait for it never ends.
+const NOT_PROJECTED_HINT =
+  "A value equal to the lower point is never shown: send 'inherit' or drop the field.";
 
 /**
  * Set one tool's session-layer access through the session's MCP tools dialog (card menu → MCP
@@ -326,11 +329,22 @@ export async function enableToolViaDialog(page, sessionId, tool, value) {
     .locator(`[role="radiogroup"][aria-label="${tool} access"] [data-seg="${SEG[value]}"]`)
     .click();
   const want = value === 'Inherit' ? null : SEG[value];
-  await page.waitForFunction(
-    ({ id, t, w }) => (window.__mcp?.policy?.legacy?.sessions?.[id]?.[t]?.access ?? null) === w,
-    { id: sessionId, t: tool, w: want },
-    { timeout: 10_000 },
-  );
+  try {
+    await page.waitForFunction(
+      ({ id, t, w }) => (window.__mcp?.policy?.legacy?.sessions?.[id]?.[t]?.access ?? null) === w,
+      { id: sessionId, t: tool, w: want },
+      { timeout: 10_000 },
+    );
+  } catch (cause) {
+    const seen = await page.evaluate(
+      ({ id, t }) => JSON.stringify(window.__mcp?.policy?.legacy?.sessions?.[id]?.[t] ?? null),
+      { id: sessionId, t: tool },
+    );
+    throw new Error(
+      `enableToolViaDialog ${tool} ${value} on ${sessionId}: not projected in 10000 ms (last: ${seen}). ${NOT_PROJECTED_HINT}`,
+      { cause },
+    );
+  }
   await page.keyboard.press('Escape');
   await dialog.waitFor({ state: 'detached', timeout: 5_000 });
 }
@@ -373,16 +387,27 @@ export async function setSessionPolicy(page, sessionId, tool, patch) {
     { s: sessionId, t: tool, p: patch },
   );
   if (!ok) throw new Error(`mcp:setToolPolicy refused ${tool} ${JSON.stringify(patch)}`);
-  await page.waitForFunction(
-    ({ id, t, p }) => {
-      const layer = window.__mcp?.policy?.legacy?.sessions?.[id]?.[t] ?? {};
-      return Object.entries(p).every(([f, v]) =>
-        v === 'inherit' ? !(f in layer) : layer[f] === v,
-      );
-    },
-    { id: sessionId, t: tool, p: patch },
-    { timeout: 10_000 },
-  );
+  try {
+    await page.waitForFunction(
+      ({ id, t, p }) => {
+        const layer = window.__mcp?.policy?.legacy?.sessions?.[id]?.[t] ?? {};
+        return Object.entries(p).every(([f, v]) =>
+          v === 'inherit' ? !(f in layer) : layer[f] === v,
+        );
+      },
+      { id: sessionId, t: tool, p: patch },
+      { timeout: 10_000 },
+    );
+  } catch (cause) {
+    const seen = await page.evaluate(
+      ({ id, t }) => JSON.stringify(window.__mcp?.policy?.legacy?.sessions?.[id]?.[t] ?? null),
+      { id: sessionId, t: tool },
+    );
+    throw new Error(
+      `setSessionPolicy ${tool} ${JSON.stringify(patch)} on ${sessionId}: not projected in 10000 ms (last: ${seen}). ${NOT_PROJECTED_HINT}`,
+      { cause },
+    );
+  }
 }
 
 /**
@@ -418,7 +443,7 @@ export async function setGlobalPolicy(page, tool, policy, ms = 10_000) {
           const seen = JSON.stringify(window.__mcp?.policy?.legacy?.global?.[t] ?? null);
           reject(
             new Error(
-              `setGlobalPolicy ${t} ${JSON.stringify(p)}: not projected in ${ms} ms (last: ${seen})`,
+              `setGlobalPolicy ${t} ${JSON.stringify(p)}: not projected in ${ms} ms (last: ${seen}). ${NOT_PROJECTED_HINT}`,
             ),
           );
         }, ms);

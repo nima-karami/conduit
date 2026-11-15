@@ -85,7 +85,6 @@ writeFileSync(
     ],
   }),
 );
-/** The session layers the seeded sessions migrate to (old keys overlay the new ones). */
 // The raw session layers sessions.json keeps (persistence writes them back unchanged).
 const RAW_SESSION_LAYERS = {
   'v050-old': {
