@@ -171,7 +171,7 @@ export async function startServer(label) {
       await until(() => runtimeState(app.c2, app.snapshot) === 'ready', 30_000),
       `runtime never ready (${label}): ${runtimeState(app.c2, app.snapshot)}`,
     );
-    return { label, userData, names, c2, recordsDir, stop: stopOne };
+    return { label, userData, work, names, c2, recordsDir, stop: stopOne };
   } catch (error) {
     await stopOne();
     throw error;
@@ -297,6 +297,7 @@ export class LinkProxy {
     this.target = target;
     this.pairs = new Set();
     this.paused = false;
+    this.dropReplies = false;
     /** Socket errors seen while relaying, kept for the scenario to assert on or dump. */
     this.errors = [];
     this.server = createServer((client) => this.accept(client));
@@ -337,7 +338,10 @@ export class LinkProxy {
     client.on('close', () => this.pairs.delete(pair));
     upstream.on('close', () => this.pairs.delete(pair));
     client.on('data', (chunk) => upstream.write(chunk));
-    upstream.on('data', (chunk) => client.write(chunk));
+    // dropReplies loses what the dialed side answers (acks) while its frames still arrive there.
+    upstream.on('data', (chunk) => {
+      if (!this.dropReplies) client.write(chunk);
+    });
     if (this.paused) {
       client.pause();
       upstream.pause();
@@ -374,4 +378,48 @@ export class LinkProxy {
     this.cut();
     return new Promise((resolve) => this.server.close(() => resolve()));
   }
+}
+
+const SIZE = { cols: 100, rows: 30 };
+
+/** One fake MCP agent session on a server, READY with Conduit's tools. */
+export async function startAgent(server) {
+  const { sessionId } = await server.c2.call('sessions.create', {
+    agentId: FAKE_AGENT_ID,
+    home: server.work,
+  });
+  server.c2.notify('term.resize', { sessionId, ...SIZE });
+  const started = await server.c2.call('sessions.start', { sessionId });
+  assert(started.ok, `fake start on ${server.label}: ${JSON.stringify(started)}`);
+  assert(
+    await until(
+      () => agentRecords(server, sessionId, 'READY').some((r) => r.tools.includes('send_message')),
+      30_000,
+    ),
+    `fake agent on ${server.label} never READY`,
+  );
+  return { sessionId, generation: started.generation };
+}
+
+export function agentRecords(server, sessionId, kind) {
+  const file = join(server.recordsDir, `${sessionId}.jsonl`);
+  if (!existsSync(file)) return [];
+  const lines = readFileSync(file, 'utf8').split('\n');
+  lines.pop();
+  return lines.map((l) => JSON.parse(l)).filter((r) => r.kind === kind);
+}
+
+/** Types `call <tool> <json>` into the fake agent and returns that call's result. */
+export async function callTool(server, agent, tool, args) {
+  const before = agentRecords(server, agent.sessionId, 'RESULT').length;
+  server.c2.notify('term.input', {
+    sessionId: agent.sessionId,
+    generation: agent.generation,
+    data: `call ${tool} ${JSON.stringify(args)}\r`,
+  });
+  assert(
+    await until(() => agentRecords(server, agent.sessionId, 'RESULT').length > before, 20_000),
+    `no ${tool} result on ${server.label}`,
+  );
+  return agentRecords(server, agent.sessionId, 'RESULT')[before].result;
 }
