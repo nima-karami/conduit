@@ -24,6 +24,7 @@ import {
   clickAskAnswer,
   FAKE_AGENT_ID,
   fakeAgentProfile,
+  mcpState,
   openFake,
   records,
   resultAfter,
@@ -99,7 +100,12 @@ await runScenario(
     log('off refuses tool_disabled ✓');
 
     phase('ask deny');
-    await setGlobalPolicy(page, 'open_session', { access: 'ask', when: 'viewing', move: 'yes' });
+    // Worker's own open_session is ask · viewing · move yes, so restoring the default is all inherit.
+    await setGlobalPolicy(page, 'open_session', {
+      access: 'inherit',
+      when: 'inherit',
+      move: 'inherit',
+    });
     assert(
       await until(() => toolsSeen(a.sessionId).includes('open_session'), 15_000),
       'A never re-listed open_session',
@@ -285,18 +291,27 @@ await runScenario(
     await clickAskAnswer(page, 'always');
     const always = await resultAfter(a.sessionId, before, 15_000);
     assert(always?.session_id, `always: ${JSON.stringify(always)}`);
-    const policyOf = async () =>
-      (await sessions(page)).find((s) => s.id === a.sessionId)?.mcpToolPolicy?.open_session;
+    // Always is a session grant now, not a session-layer write (plan C9).
+    const grantOf = async () =>
+      (await mcpState(page))?.policy?.grants?.find(
+        (g) =>
+          g.state === 'active' &&
+          g.tool === 'open_session' &&
+          g.who.kind === 'session' &&
+          g.who.sessionId === a.sessionId &&
+          g.on.kind === 'anywhere' &&
+          g.for === 'session-end',
+      );
     assert(
-      await until(async () => (await policyOf())?.access === 'on', 5_000),
-      `A's session layer: ${JSON.stringify(await policyOf())}`,
+      await until(async () => (await grantOf()) !== undefined, 5_000),
+      `A's grants: ${JSON.stringify((await mcpState(page))?.policy?.grants)}`,
     );
     before = await startCall(page, a.sessionId, 'open_session', openArgs(false));
     const quiet = await until(async () => (await card.count()) > 0, 1_000);
     assert(!quiet, 'a card showed after Always for this session');
     const unasked = await resultAfter(a.sessionId, before, 15_000);
     assert(unasked?.session_id, `after Always: ${JSON.stringify(unasked)}`);
-    log('Always writes access:on and stops asking ✓');
+    log('Always grants this session and stops asking ✓');
 
     phase('viewing refusal');
     await makeActive(b.sessionId);
@@ -322,7 +337,27 @@ await runScenario(
     log('move:no keeps A on screen ✓');
 
     phase('CLI cancel');
-    await setSessionPolicy(page, a.sessionId, 'open_session', { access: 'ask' });
+    // Asking again means revoking the Always grant; the session layer never held access:on.
+    const grant = await grantOf();
+    const revoked = await page.evaluate(
+      (grantId) =>
+        new Promise((resolve) => {
+          window.__policyReq = (window.__policyReq ?? 900_000) + 1;
+          const requestId = window.__policyReq;
+          const off = window.agentDeck.subscribe((m) => {
+            if (m.type !== 'mcp:policyResult' || m.requestId !== requestId) return;
+            off();
+            resolve(m.ok);
+          });
+          window.agentDeck.post({ type: 'mcp:revokeGrant', requestId, grantId });
+        }),
+      grant.id,
+    );
+    assert(revoked, `mcp:revokeGrant refused ${grant.id}`);
+    assert(
+      await until(async () => (await grantOf()) === undefined, 5_000),
+      'the Always grant is still active after revoking it',
+    );
     const beforeCancel = (await sessions(page)).length;
     before = await startCall(page, a.sessionId, 'open_session', openArgs(false));
     await waitCard(a.handle);
