@@ -22,7 +22,9 @@ const HC_VERSION = '0.1.16';
 const APP_VERSION = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8')).version;
 const ECHO_AGENT = 'e2e-echo';
 const FAKE_AGENT_ID = 'e2e-fake-mcp';
-const ECHO_PROGRAM = String.raw`process.stdout.write('E2E-READY\n');process.stdin.on('data',d=>{const s=d.toString().trim();if(s==='exit-23'){process.exitCode=23;process.stdin.destroy();process.stdout.write('E2E-EXITING\n')}else if(s==='size')process.stdout.write('SIZE:'+process.stdout.columns+'x'+process.stdout.rows+'\n');else process.stdout.write('ECHO:'+s+'\n')})`;
+// Raw mode, as fixtures/echo-probe.cjs: on Windows a line-mode stdin reader never learns of a
+// ConPTY resize, so `size` would report the spawn size.
+const ECHO_PROGRAM = String.raw`if(process.stdin.isTTY)process.stdin.setRawMode(true);process.stdout.write('E2E-READY\n');process.stdin.on('data',d=>{const s=d.toString().trim();if(s==='exit-23'){process.exitCode=23;process.stdin.destroy();process.stdout.write('E2E-EXITING\n')}else if(s==='size')process.stdout.write('SIZE:'+process.stdout.columns+'x'+process.stdout.rows+'\n');else process.stdout.write('ECHO:'+s+'\n')})`;
 const PAIRING_TIMEOUT_MS = 15_000;
 
 const runtimeState = (c2, snapshot) =>
