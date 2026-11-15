@@ -2,9 +2,9 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { PolicyUiState } from '../../src/conduit-mcp/policy-types';
 import {
   type CliPolicyLayers,
-  coerceGlobalPolicy,
   type PolicyLayer,
   TOOL_NAMES,
 } from '../../src/conduit-mcp/tool-policy';
@@ -19,7 +19,9 @@ beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
 
-const session = (p: { policy?: PolicyLayer; handle?: string } = {}): Session => ({
+type Legacy = PolicyUiState['legacy'];
+
+const session = (p: { handle?: string } = {}): Session => ({
   id: 's1',
   name: 'api',
   agentId: 'cli:claude',
@@ -28,8 +30,15 @@ const session = (p: { policy?: PolicyLayer; handle?: string } = {}): Session => 
   status: 'running',
   createdAt: 1,
   lastActiveAt: 1,
-  ...(p.policy ? { mcpToolPolicy: p.policy } : {}),
   ...(p.handle ? { mcpHandle: p.handle } : {}),
+});
+
+const legacyOf = (
+  p: { session?: PolicyLayer; byCli?: CliPolicyLayers; global?: PolicyLayer } = {},
+): Legacy => ({
+  global: p.global ?? {},
+  byCli: p.byCli ?? {},
+  sessions: p.session ? { s1: p.session } : {},
 });
 
 let root: Root | null = null;
@@ -45,8 +54,7 @@ afterEach(async () => {
 function props(p: Partial<McpToolsDialogProps> = {}): McpToolsDialogProps {
   return {
     session: session(),
-    global: coerceGlobalPolicy(undefined),
-    byCli: {},
+    legacy: legacyOf(),
     masterOn: true,
     connected: false,
     onChange: vi.fn(async () => true),
@@ -97,20 +105,34 @@ describe('McpToolsDialog', () => {
 
   it('inherit labels name the CLI from the handle', async () => {
     const byCli: CliPolicyLayers = { codex: { open_session: { access: 'off' } } };
-    await mount(props({ session: session({ handle: 'codex-2' }), byCli }));
+    await mount(props({ session: session({ handle: 'codex-2' }), legacy: legacyOf({ byCli }) }));
     expect(checked('open_session')).toBe('Inherit (Off · from Codex)');
     // A field the Codex layer leaves unset still comes from All CLIs.
     expect(checked('open_file')).toBe(`Inherit (On · from ${ALL})`);
     await act(async () => root?.unmount());
     // No handle: no CLI layer applies, so even a Codex layer is not consulted.
-    await mount(props({ byCli }));
+    await mount(props({ legacy: legacyOf({ byCli }) }));
     expect(checked('open_session')).toBe(`Inherit (Ask · from ${ALL})`);
   });
 
-  it('shows the session layer as set', async () => {
-    await mount(props({ session: session({ policy: { open_file: { access: 'off' } } }) }));
+  it('shows the session layer from policy.legacy.sessions', async () => {
+    await mount(props({ legacy: legacyOf({ session: { open_file: { access: 'off' } } }) }));
     expect(checked('open_file')).toBe('Off');
     expect(checked('open_session')).toBe(`Inherit (Ask · from ${ALL})`);
+  });
+
+  it('reads only this session out of policy.legacy.sessions', async () => {
+    const legacy: Legacy = {
+      ...legacyOf(),
+      sessions: { other: { open_file: { access: 'off' } } },
+    };
+    await mount(props({ legacy }));
+    expect(checked('open_file')).toBe(`Inherit (On · from ${ALL})`);
+  });
+
+  it('inherit labels show the global layer from policy.legacy.global', async () => {
+    await mount(props({ legacy: legacyOf({ global: { open_file: { access: 'off' } } }) }));
+    expect(checked('open_file')).toBe(`Inherit (Off · from ${ALL})`);
   });
 
   it('picking Ask posts a one-field patch and announces', async () => {
@@ -131,7 +153,7 @@ describe('McpToolsDialog', () => {
   it('a refused change reverts that tool only and shows saveFailed', async () => {
     const onChange = vi.fn(async (tool: string) => tool !== 'open_file');
     const p = props({
-      session: session({ policy: { open_file: { access: 'on', when: 'always' } } }),
+      legacy: legacyOf({ session: { open_file: { access: 'on', when: 'always' } } }),
       onChange,
     });
     await mount(p);
@@ -148,6 +170,14 @@ describe('McpToolsDialog', () => {
     await act(async () => radio('open_file', 'Ask')?.click());
     expect(errorOf('open_file')).toBeNull();
     expect(checked('open_file')).toBe('Ask');
+  });
+
+  it('a save the host refuses as read-only or scoped shows saveFailed and reverts', async () => {
+    const p = props({ onChange: vi.fn(async () => false) });
+    await mount(p);
+    await act(async () => radio('open_file', 'Off')?.click());
+    expect(checked('open_file')).toBe(`Inherit (On · from ${ALL})`);
+    expect(errorOf('open_file')?.textContent).toBe(MCP_STR.tools.saveFailed);
   });
 
   it('a late older pick cannot undo a newer one', async () => {
@@ -180,7 +210,7 @@ describe('McpToolsDialog', () => {
     const p = props();
     await mount(p);
     expect(checked('open_session')).toBe(`Inherit (Ask · from ${ALL})`);
-    await rerender({ ...p, session: session({ policy: { open_session: { access: 'on' } } }) });
+    await rerender({ ...p, legacy: legacyOf({ session: { open_session: { access: 'on' } } }) });
     expect(checked('open_session')).toBe('On');
     await rerender(p);
     expect(checked('open_session')).toBe(`Inherit (Ask · from ${ALL})`);
@@ -195,7 +225,7 @@ describe('McpToolsDialog', () => {
       open_session: { access: 'on', when: 'always' },
       open_file: { access: 'off' },
     };
-    await rerender({ ...p, session: session({ policy: elsewhere }) });
+    await rerender({ ...p, legacy: legacyOf({ session: elsewhere }) });
     expect(checked('open_session')).toBe('Off');
     expect(checked('open_file')).toBe('Off');
     await act(async () =>

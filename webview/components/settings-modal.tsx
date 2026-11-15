@@ -6,6 +6,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -16,10 +17,15 @@ import {
   coerceGlobalPolicy,
   coercePolicyPatch,
   type PolicyField,
+  type PolicyLayer,
   type PolicyValue,
+  TOOL_NAMES,
   type ToolName,
+  type ToolPolicy,
+  type ToolPolicyPatch,
   withPolicyPatch,
 } from '../../src/conduit-mcp/tool-policy';
+import { emptyPolicyUi } from '../../src/conduit-mcp/ui-types';
 import type { AutoResumeMode } from '../../src/contracts/scheduler';
 import type { LogLevel } from '../../src/logging';
 import type { AboutInfo } from '../../src/protocol';
@@ -53,6 +59,7 @@ import { IconCheck, IconChevron, IconClose, IconDownload, IconRefreshCw } from '
 import { useSettings } from '../settings';
 import { DEFAULT_CUSTOM, validateShader } from '../shader-source';
 import { MONO_FONTS, THEMES, type ThemeDef, UI_FONTS } from '../themes';
+import { useConduitMcp } from '../use-conduit-mcp';
 import { useMcpInstall } from '../use-mcp-install';
 import { AutoSaveDelayField } from './auto-save-delay-field';
 import { McpInstallRow } from './mcp-install-row';
@@ -888,25 +895,101 @@ function Toggle({
 type PolicyTab = 'all' | CliKind;
 const POLICY_TABS: readonly PolicyTab[] = ['all', ...CLI_KINDS];
 
+interface Pick {
+  patch: ToolPolicyPatch;
+  settled: boolean;
+}
+type PendingPicks = Partial<Record<PolicyTab, Partial<Record<ToolName, Pick>>>>;
+type FailedPicks = Partial<Record<PolicyTab, ReadonlySet<ToolName>>>;
+
+const restorePatch = (entry: Partial<ToolPolicy> | undefined): ToolPolicyPatch => ({
+  access: entry?.access ?? 'inherit',
+  when: entry?.when ?? 'inherit',
+  reach: entry?.reach ?? 'inherit',
+  move: entry?.move ?? 'inherit',
+});
+
+const withoutTool = (set: ReadonlySet<ToolName> | undefined, tool: ToolName) => {
+  const next = new Set(set);
+  next.delete(tool);
+  return next;
+};
+
+const putPick = (
+  pending: PendingPicks,
+  t: PolicyTab,
+  tool: ToolName,
+  pick: Pick | null,
+): PendingPicks => {
+  const picks: Partial<Record<ToolName, Pick>> = { ...pending[t] };
+  if (pick) picks[tool] = pick;
+  else delete picks[tool];
+  return { ...pending, [t]: picks };
+};
+
+/** A broadcast carries the host's answer for every pick that has landed; the picks still in
+ *  flight keep their optimistic value. */
+const dropSettled = (pending: PendingPicks): PendingPicks => {
+  const next: PendingPicks = {};
+  for (const t of POLICY_TABS) {
+    const kept: Partial<Record<ToolName, Pick>> = {};
+    for (const tool of TOOL_NAMES) {
+      const pick = pending[t]?.[tool];
+      if (pick && !pick.settled) kept[tool] = pick;
+    }
+    if (Object.keys(kept).length > 0) next[t] = kept;
+  }
+  return next;
+};
+
+function withPending(
+  layer: PolicyLayer | undefined,
+  picks: Partial<Record<ToolName, Pick>> | undefined,
+): PolicyLayer | undefined {
+  let next = layer;
+  for (const tool of TOOL_NAMES) {
+    const pick = picks?.[tool];
+    if (pick) next = withPolicyPatch(next, tool, pick.patch);
+  }
+  return next;
+}
+
 /** The tool policy under the MCP master: the global layer, or one CLI's layer over it
  *  (tool-policy spec §8–§9). Disabled, not hidden, while the master is off so the user can
  *  see what turning it on would allow. */
 function McpToolPolicyRows({
   settings,
-  update,
   serverConnected,
 }: {
   settings: AppSettings;
-  update: (p: Partial<AppSettings>) => void;
   serverConnected: boolean;
 }) {
   const idBase = useId();
   const [tab, setTab] = useState<PolicyTab>('all');
+  const mcp = useConduitMcp();
+  const legacy = useMemo(() => mcp.state?.policy.legacy ?? emptyPolicyUi().legacy, [mcp.state]);
+  const [pending, setPending] = useState<PendingPicks>({});
+  const [failed, setFailed] = useState<FailedPicks>({});
+  const [seenLegacy, setSeenLegacy] = useState(legacy);
+  // Only the newest pick per tab and tool may settle it, so an older answer landing late can't.
+  const seqRef = useRef(new Map<string, number>());
+  // A refused pick goes back to the last value the host confirmed here: the broadcast carrying
+  // an earlier confirmed pick can still be on its way.
+  const confirmedRef = useRef(new Map<string, Partial<ToolPolicy> | undefined>());
+  const legacyRef = useRef(legacy);
+  legacyRef.current = legacy;
   const off = !settings.conduitMcp || !serverConnected;
-  const global = settings.mcpToolPolicy;
-  const byCli = settings.mcpToolPolicyByCli;
+  const global = useMemo(
+    () => coerceGlobalPolicy(withPending(legacy.global, pending.all)),
+    [legacy.global, pending.all],
+  );
   const tabId = (t: PolicyTab) => `${idBase}-tab-${t}`;
   const panelId = `${idBase}-panel`;
+
+  if (seenLegacy !== legacy) {
+    setSeenLegacy(legacy);
+    setPending(dropSettled);
+  }
 
   const select = (t: PolicyTab) => {
     setTab(t);
@@ -923,25 +1006,49 @@ function McpToolPolicyRows({
     e.preventDefault();
   };
 
-  const onChange = (tool: ToolName, field: PolicyField, value: PolicyValue | 'inherit') => {
-    if (tab === 'all') {
-      // The global layer is complete: it has no Inherit to write.
-      if (value === 'inherit') return;
-      update({
-        mcpToolPolicy: coerceGlobalPolicy({
-          ...global,
-          [tool]: { ...global[tool], [field]: value },
-        }),
+  const confirmedEntry = (t: PolicyTab, tool: ToolName) => {
+    const key = `${t}:${tool}`;
+    if (confirmedRef.current.has(key)) return confirmedRef.current.get(key);
+    const layer = t === 'all' ? legacyRef.current.global : legacyRef.current.byCli[t];
+    return layer?.[tool];
+  };
+
+  const pick = async (t: PolicyTab, tool: ToolName, patch: ToolPolicyPatch) => {
+    const key = `${t}:${tool}`;
+    const seq = (seqRef.current.get(key) ?? 0) + 1;
+    seqRef.current.set(key, seq);
+    setPending((p) =>
+      putPick(p, t, tool, {
+        patch: { ...p[t]?.[tool]?.patch, ...patch },
+        settled: false,
+      }),
+    );
+    setFailed((f) => ({ ...f, [t]: withoutTool(f[t], tool) }));
+    const point = t === 'all' ? { kind: 'default' as const } : { kind: 'cli' as const, cli: t };
+    const ok = await mcp.setPointPolicy(point, tool, patch);
+    if (ok) {
+      const base: PolicyLayer = { [tool]: confirmedEntry(t, tool) };
+      confirmedRef.current.set(key, withPolicyPatch(base, tool, patch)?.[tool]);
+    }
+    if (seqRef.current.get(key) !== seq) return;
+    if (ok) {
+      setPending((p) => {
+        const current = p[t]?.[tool];
+        return current ? putPick(p, t, tool, { ...current, settled: true }) : p;
       });
       return;
     }
+    const revertTo = restorePatch(confirmedEntry(t, tool));
+    setPending((p) => putPick(p, t, tool, { patch: revertTo, settled: true }));
+    setFailed((f) => ({ ...f, [t]: new Set(f[t]).add(tool) }));
+  };
+
+  const onChange = (tool: ToolName, field: PolicyField, value: PolicyValue | 'inherit') => {
+    // The global layer is complete: it has no Inherit to write.
+    if (tab === 'all' && value === 'inherit') return;
     const patch = coercePolicyPatch(tool, { [field]: value });
     if (!patch) return;
-    const next = { ...byCli };
-    const layer = withPolicyPatch(byCli[tab], tool, patch);
-    if (layer) next[tab] = layer;
-    else delete next[tab];
-    update({ mcpToolPolicyByCli: next });
+    void pick(tab, tool, patch);
   };
 
   return (
@@ -979,13 +1086,18 @@ function McpToolPolicyRows({
         {tab !== 'all' && <p className="settools__hint">{MCP_STR.tools.cliLayerNote}</p>}
         <ToolPolicyEditor
           layer={tab === 'all' ? 'global' : 'cli'}
-          layers={tab === 'all' ? { global } : { cli: byCli[tab], global }}
+          layers={
+            tab === 'all'
+              ? { global }
+              : { cli: withPending(legacy.byCli[tab], pending[tab]), global }
+          }
           sourceName={(s) =>
             s === 'cli' && tab !== 'all'
               ? MCP_STR.tools.cliName[tab]
               : MCP_STR.tools.layerName.global
           }
           disabled={off}
+          failed={failed[tab]}
           onChange={onChange}
         />
       </div>
@@ -1058,7 +1170,7 @@ function McpTab({
       </SetGroup>
 
       <SetGroup title={S.toolsTitle}>
-        <McpToolPolicyRows settings={settings} update={update} serverConnected={serverConnected} />
+        <McpToolPolicyRows settings={settings} serverConnected={serverConnected} />
       </SetGroup>
 
       <SetGroup title={S.suggestTitle}>

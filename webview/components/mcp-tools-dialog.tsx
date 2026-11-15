@@ -3,12 +3,12 @@
  * the shared editor over session > CLI > global, each change saved through the host as a
  * one-field patch.
  */
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { cliKindOfHandle } from '../../src/conduit-mcp/handles';
+import type { PolicyUiState } from '../../src/conduit-mcp/policy-types';
 import {
-  type CliPolicyLayers,
+  coerceGlobalPolicy,
   coercePolicyPatch,
-  type GlobalPolicy,
   type PolicyLayer,
   type PolicyLayers,
   type PolicySource,
@@ -26,8 +26,7 @@ import { policyChoiceLabel, ToolPolicyEditor } from './tool-policy-editor';
 
 export interface McpToolsDialogProps {
   session: Session;
-  global: GlobalPolicy;
-  byCli: CliPolicyLayers;
+  legacy: PolicyUiState['legacy'];
   masterOn: boolean;
   connected: boolean;
   /** Resolves false when the host didn't persist it; the row then reverts. */
@@ -47,8 +46,7 @@ const restorePatch = (entry: Partial<ToolPolicy> | undefined): ToolPolicyPatch =
 
 export function McpToolsDialog({
   session,
-  global,
-  byCli,
+  legacy,
   masterOn,
   connected,
   onChange,
@@ -61,15 +59,17 @@ export function McpToolsDialog({
   useFocusTrap(rootRef);
 
   // What the controls show: the persisted session layer plus picks not yet confirmed.
-  const [shown, setShown] = useState<PolicyLayer | undefined>(session.mcpToolPolicy);
+  const sessionLayer: PolicyLayer | undefined = legacy.sessions[session.id];
+  const global = useMemo(() => coerceGlobalPolicy(legacy.global), [legacy.global]);
+  const [shown, setShown] = useState<PolicyLayer | undefined>(sessionLayer);
   const [failed, setFailed] = useState<ReadonlySet<ToolName>>(new Set());
   const [changed, setChanged] = useState(false);
   // A revert goes to the tool's entry as the host last confirmed it in this dialog, else the
   // persisted props: the broadcast carrying a confirmed pick can arrive after a later pick has
   // already failed. Only the newest pick per tool may revert, so an older pick resolving late
   // can't undo it.
-  const persistedRef = useRef(session.mcpToolPolicy);
-  persistedRef.current = session.mcpToolPolicy;
+  const persistedRef = useRef(sessionLayer);
+  persistedRef.current = sessionLayer;
   const confirmedRef = useRef(new Map<ToolName, Partial<ToolPolicy> | undefined>());
   const seqRef = useRef(new Map<ToolName, number>());
   // Picks not yet answered, per tool and field: a session-layer change from elsewhere (Always,
@@ -77,14 +77,18 @@ export function McpToolsDialog({
   const pendingRef = useRef(new Map<ToolName, ToolPolicyPatch>());
 
   useEffect(() => {
-    let next = session.mcpToolPolicy;
+    let next: PolicyLayer | undefined = sessionLayer;
     for (const [tool, patch] of pendingRef.current) next = withPolicyPatch(next, tool, patch);
     setShown(next);
-  }, [session.mcpToolPolicy]);
+  }, [sessionLayer]);
 
   // The CLI layer follows the handle (spec §2.1); a session that never connected has none.
   const kind = session.mcpHandle ? cliKindOfHandle(session.mcpHandle) : undefined;
-  const layers: PolicyLayers = { session: shown, cli: kind ? byCli[kind] : undefined, global };
+  const layers: PolicyLayers = {
+    session: shown,
+    cli: kind ? legacy.byCli[kind] : undefined,
+    global,
+  };
   const sourceName = (s: PolicySource): string => {
     if (s !== 'cli') return MCP_STR.tools.layerName[s];
     // Without a kind there is no CLI layer, so resolution never names it.

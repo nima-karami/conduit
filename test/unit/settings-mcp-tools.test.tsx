@@ -2,20 +2,73 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CLI_KINDS, TOOL_NAMES } from '../../src/conduit-mcp/tool-policy';
-import type { WebviewToHost } from '../../src/protocol';
+import type { PolicyUiState } from '../../src/conduit-mcp/policy-types';
+import {
+  CLI_KINDS,
+  type CliPolicyLayers,
+  type PolicyLayer,
+  TOOL_NAMES,
+} from '../../src/conduit-mcp/tool-policy';
+import { emptyPolicyUi, type McpUiState } from '../../src/conduit-mcp/ui-types';
+import type { HostToWebview, WebviewToHost } from '../../src/protocol';
 import { SettingsModal } from '../../webview/components/settings-modal';
 import { MCP_STR } from '../../webview/conduit-mcp-strings';
 import { SettingsProvider } from '../../webview/settings';
 
 const bridge = vi.hoisted(() => ({
+  listeners: new Set<(m: HostToWebview) => void>(),
   post: vi.fn<(m: unknown) => void>(),
   mcpInstallStatus: vi.fn(async () => ({ clis: [] })),
 }));
 vi.mock('../../webview/bridge', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../webview/bridge')>()),
-  ...bridge,
+  post: bridge.post,
+  mcpInstallStatus: bridge.mcpInstallStatus,
+  subscribe: (cb: (m: HostToWebview) => void) => {
+    bridge.listeners.add(cb);
+    return () => {
+      bridge.listeners.delete(cb);
+    };
+  },
 }));
+
+const emit = (m: HostToWebview) => {
+  act(() => {
+    for (const l of [...bridge.listeners]) l(m);
+  });
+};
+
+type Legacy = PolicyUiState['legacy'];
+
+function mcpState(legacy: Legacy): McpUiState {
+  return {
+    enabled: true,
+    storeError: null,
+    loading: false,
+    sessions: {},
+    threads: [],
+    attention: [],
+    youUnread: 0,
+    youUrgent: 0,
+    youUnreadByThread: [],
+    switchable: [],
+    notConnected: {},
+    awaitingApproval: [],
+    waitingAsks: 0,
+    policy: { ...emptyPolicyUi(), legacy },
+    requests: {
+      open: [],
+      ended: [],
+      presence: { state: 'here', since: '2026-11-14T09:00:00.000Z', until: null, lastAway: null },
+    },
+  };
+}
+
+const layersOf = (p: { global?: PolicyLayer; byCli?: CliPolicyLayers } = {}): Legacy => ({
+  global: p.global ?? {},
+  byCli: p.byCli ?? {},
+  sessions: {},
+});
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -36,7 +89,8 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 
-async function mount() {
+async function mount(legacy: Legacy = layersOf()) {
+  emit({ type: 'mcp:state', state: mcpState(legacy) });
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
@@ -93,13 +147,24 @@ const flush = () =>
     vi.advanceTimersByTime(300);
   });
 
-const serverPatches = (): Extract<WebviewToHost, { type: 'updateServerSettings' }>[] =>
+type PointPolicy = Extract<WebviewToHost, { type: 'mcp:setPointPolicy' }>;
+const pointPosts = (): PointPolicy[] =>
   bridge.post.mock.calls
     .map(([m]) => m as WebviewToHost)
-    .filter(
-      (m): m is Extract<WebviewToHost, { type: 'updateServerSettings' }> =>
-        m.type === 'updateServerSettings',
-    );
+    .filter((m): m is PointPolicy => m.type === 'mcp:setPointPolicy');
+const lastPointPost = (): PointPolicy => {
+  const last = pointPosts().at(-1);
+  if (!last) throw new Error('no mcp:setPointPolicy posted');
+  return last;
+};
+const replyPolicy = (requestId: number, error?: string) =>
+  emit(
+    error === undefined
+      ? { type: 'mcp:policyResult', requestId, ok: true }
+      : { type: 'mcp:policyResult', requestId, ok: false, error },
+  );
+const errorOf = (tool: string) =>
+  document.body.querySelector(`.policyrow[data-tool="${tool}"] .policyrow__error`);
 
 const ALL = MCP_STR.tools.layerName.global;
 
@@ -127,22 +192,25 @@ describe('Settings → MCP tools', () => {
     expect(document.body.textContent).not.toContain(MCP_STR.tools.cliLayerNote);
   });
 
-  it('All CLIs: On for open_terminal posts mcpToolPolicy.open_terminal.access on', async () => {
+  it('All CLIs: On for open_terminal posts setPointPolicy to the default point', async () => {
     await mount();
     await click(radio('open_terminal', 'On'));
     expect(checked('open_terminal')).toBe('On');
     await flush();
-    const last = serverPatches().at(-1);
-    expect(last?.patch.mcpToolPolicy?.open_terminal).toEqual({
-      access: 'on',
-      when: 'viewing',
-      move: 'yes',
+    expect(lastPointPost()).toEqual({
+      type: 'mcp:setPointPolicy',
+      requestId: expect.any(Number),
+      point: { kind: 'default' },
+      tool: 'open_terminal',
+      patch: { access: 'on' },
     });
-    expect(last?.patch.mcpToolPolicy?.open_session.access).toBe('ask');
-    expect(Object.keys(last?.patch ?? {})).toEqual(['mcpToolPolicy']);
+    expect(pointPosts()).toHaveLength(1);
+    expect(bridge.post.mock.calls.map(([m]) => (m as WebviewToHost).type)).not.toContain(
+      'updateServerSettings',
+    );
   });
 
-  it('Codex tab: Off for open_file posts mcpToolPolicyByCli.codex.open_file.access off', async () => {
+  it('Codex tab: Off for open_file posts setPointPolicy to that CLI', async () => {
     await mount();
     await click(tab('codex'));
     expect(tab('codex')?.getAttribute('aria-selected')).toBe('true');
@@ -151,18 +219,72 @@ describe('Settings → MCP tools', () => {
     await click(radio('open_file', 'Off'));
     expect(checked('open_file')).toBe('Off');
     await flush();
-    const last = serverPatches().at(-1);
-    expect(last?.patch.mcpToolPolicyByCli).toEqual({ codex: { open_file: { access: 'off' } } });
-    expect(Object.keys(last?.patch ?? {})).toEqual(['mcpToolPolicyByCli']);
+    expect(lastPointPost()).toEqual({
+      type: 'mcp:setPointPolicy',
+      requestId: expect.any(Number),
+      point: { kind: 'cli', cli: 'codex' },
+      tool: 'open_file',
+      patch: { access: 'off' },
+    });
   });
 
-  it('Codex tab: Inherit drops an empty kind', async () => {
+  it('Codex tab: Inherit posts an inherit patch for that CLI', async () => {
     await mount();
     await click(tab('codex'));
     await click(radio('open_file', 'Off'));
     await click(radio('open_file', `Inherit (On · from ${ALL})`));
     await flush();
-    expect(serverPatches().at(-1)?.patch.mcpToolPolicyByCli).toStrictEqual({});
+    expect(lastPointPost()).toMatchObject({
+      point: { kind: 'cli', cli: 'codex' },
+      tool: 'open_file',
+      patch: { access: 'inherit' },
+    });
+  });
+
+  it('shows the global and CLI layers from policy.legacy', async () => {
+    await mount(
+      layersOf({
+        global: { open_file: { access: 'off' } },
+        byCli: { codex: { open_file: { access: 'on' } } },
+      }),
+    );
+    expect(checked('open_file')).toBe('Off');
+    await click(tab('codex'));
+    expect(checked('open_file')).toBe('On');
+  });
+
+  it('a save the host refuses as read-only shows saveFailed and reverts', async () => {
+    await mount(layersOf({ global: { open_file: { access: 'on', when: 'always' } } }));
+    await click(radio('open_file', 'Off'));
+    expect(checked('open_file')).toBe('Off');
+    replyPolicy(lastPointPost().requestId, 'read-only');
+    await flush();
+    expect(checked('open_file')).toBe('On');
+    expect(errorOf('open_file')?.textContent).toBe(MCP_STR.tools.saveFailed);
+  });
+
+  it('a refused pick reverts to the last confirmed value, not the persisted one', async () => {
+    await mount();
+    await click(radio('open_file', 'Off'));
+    replyPolicy(lastPointPost().requestId);
+    await flush();
+    await click(radio('open_file', 'Ask'));
+    replyPolicy(lastPointPost().requestId, 'read-only');
+    await flush();
+    expect(checked('open_file')).toBe('Off');
+    expect(errorOf('open_file')?.textContent).toBe(MCP_STR.tools.saveFailed);
+  });
+
+  it('a scoped refusal on a CLI tab shows saveFailed on that tab', async () => {
+    await mount();
+    await click(tab('codex'));
+    await click(radio('open_file', 'Off'));
+    replyPolicy(lastPointPost().requestId, 'scoped');
+    await flush();
+    expect(checked('open_file')).toBe(`Inherit (On · from ${ALL})`);
+    expect(errorOf('open_file')?.textContent).toBe(MCP_STR.tools.saveFailed);
+    await click(tab('all'));
+    expect(errorOf('open_file')).toBeNull();
   });
 
   it('arrows move between CLI tabs and select', async () => {
