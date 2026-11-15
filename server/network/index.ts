@@ -344,6 +344,13 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     outcome: Extract<PairingOutcome, { kind: 'linked' }>,
     dialedAddress: string | null,
   ): boolean => {
+    // Machine ids are short enough to grind: a new key must not take over another link's record.
+    if (store.conflicts(outcome.peer.machineId, outcome.peer.serverKey)) {
+      deps.log.warn('pairing refused: machine id already linked under another key', {
+        peer: outcome.peer.machineId,
+      });
+      return false;
+    }
     if (outcome.ownerKeyToStore) {
       identity = setOwnerKey(deps.dir, identity, {
         publicKey: createPublicKey({
@@ -390,7 +397,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     openPairingPort,
     closePairingPort,
     onLinked,
-    ownerPending: () => false,
+    ownerPending: () => store.links().some((l) => l.ownerTransfer === 'receive'),
     generateOwnerKey: () => {
       const k = generateKeyPairSync('ed25519');
       return {

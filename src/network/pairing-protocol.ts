@@ -201,6 +201,9 @@ function b64(s: string, bytes: number): Buffer | null {
 }
 
 function isEd25519Spki(s: string): boolean {
+  // Canonical base64 only: owner keys are compared as strings, so one key has one spelling.
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(s) || Buffer.from(s, 'base64').toString('base64') !== s)
+    return false;
   try {
     return (
       createPublicKey({ key: Buffer.from(s, 'base64'), format: 'der', type: 'spki' })
@@ -227,8 +230,12 @@ function certMatches(pem: string, peerKeyRaw: Buffer, machineId: string): boolea
   }
 }
 
-/** Control characters and line or paragraph separators: a name is shown and quoted, never a line. */
-const UNPRINTABLE = /[\p{Cc}\u2028\u2029]/u;
+/**
+ * Control characters, line and paragraph separators, and format characters (bidi overrides,
+ * zero-width characters, BOM): a name is shown and quoted, so it may neither break a line nor
+ * read as something it isn't.
+ */
+const UNPRINTABLE = /[\p{Cc}\p{Cf}\u2028\u2029]/u;
 
 function validId(m: PairingIdentity, peerKeyRaw: Buffer): boolean {
   const name = m.selfName.trim();
@@ -495,7 +502,7 @@ const isStr = (v: unknown): v is string => typeof v === 'string';
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
 /** Exactly these keys: nothing from the pairing peer is trusted until the fingerprint matches. */
 const exactly = (r: Rec, keys: readonly string[]): boolean =>
-  Object.keys(r).length === keys.length && keys.every((k) => k in r);
+  Object.keys(r).length === keys.length && keys.every((k) => Object.hasOwn(r, k));
 
 /** Strict validator for a message off the wire; anything else is null and fails the pairing. */
 export function parsePairingMsg(raw: unknown): PairingMsg | null {

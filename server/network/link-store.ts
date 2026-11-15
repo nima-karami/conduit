@@ -130,7 +130,14 @@ export function openLinkStore(
       const tomb = state.tombstones.find((t) => t.serverKey === serverKey && isLive(t));
       return tomb ? { tombstone: copyTombstone(tomb) } : null;
     },
-    conflicts: () => false,
+    conflicts(machineId, serverKey) {
+      return (
+        state.links.some((l) => l.machineId === machineId && l.serverKey !== serverKey) ||
+        state.tombstones.some(
+          (t) => t.machineId === machineId && t.serverKey !== serverKey && isLive(t),
+        )
+      );
+    },
     put(r) {
       state = {
         ...state,

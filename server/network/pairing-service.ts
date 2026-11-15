@@ -108,6 +108,8 @@ interface Bound {
   sock: net.Socket;
   proto: Proto;
   decoder: FrameDecoder;
+  /** Cancels the first-frame deadline once the peer has sent a whole message. */
+  cancelFirstFrame?: () => void;
 }
 
 interface Pairing {
@@ -189,7 +191,17 @@ export function createPairingService(deps: PairingDeps): PairingService {
   function conclude(p: Pairing, b: Bound, outcome: PairingOutcome, out: PairingMsg[]): void {
     send(b, out);
     stopTimer(p);
-    if (outcome.kind === 'linked') {
+    if (
+      outcome.kind === 'linked' &&
+      !deps.onLinked(outcome, p.view.role === 'joiner' ? p.dialed : null)
+    ) {
+      publish(p, { state: 'failed', code: null });
+      deps.audit.record({
+        kind: 'pairing.failed',
+        peer: outcome.peer.machineId,
+        detail: { reason: 'machine-id-taken' },
+      });
+    } else if (outcome.kind === 'linked') {
       publish(p, {
         state: 'done',
         code: null,
@@ -197,7 +209,6 @@ export function createPairingService(deps: PairingDeps): PairingService {
         peerName: outcome.peer.selfName,
         peerMachineId: outcome.peer.machineId,
       });
-      deps.onLinked(outcome, p.view.role === 'joiner' ? p.dialed : null);
       deps.audit.record({
         kind: 'pairing.linked',
         peer: outcome.peer.machineId,
@@ -242,6 +253,10 @@ export function createPairingService(deps: PairingDeps): PairingService {
   function onData(p: Pairing, b: Bound, chunk: Buffer): void {
     if (!isLive(p.view.state)) return;
     const { frames, error } = b.decoder.push(chunk);
+    if (frames.length > 0) {
+      b.cancelFirstFrame?.();
+      b.cancelFirstFrame = undefined;
+    }
     for (const raw of frames) {
       if (!isLive(p.view.state)) return;
       const msg = parsePairingMsg(raw);
@@ -304,6 +319,7 @@ export function createPairingService(deps: PairingDeps): PairingService {
 
   return {
     async start() {
+      if (deps.ownerPending()) throw new Error('owner_pending');
       const mine = ++seq;
       const opening = ++openSeq;
       cancelCurrent();
@@ -344,6 +360,7 @@ export function createPairingService(deps: PairingDeps): PairingService {
     async join(codeInput, address) {
       const code = normalizeCode(codeInput);
       if (code === null) throw new Error('bad_code');
+      if (deps.ownerPending()) throw new Error('owner_pending');
       const mine = ++seq;
       cancelCurrent();
       // Both sides listen after pairing, so the joiner's own addresses are needed in pair.id.
@@ -426,7 +443,9 @@ export function createPairingService(deps: PairingDeps): PairingService {
         code: p.code,
         generateOwnerKey: deps.generateOwnerKey,
       });
-      attach(p, sock, { role: 'opener', s: started });
+      const b = attach(p, sock, { role: 'opener', s: started });
+      // A silent connection would hold the one-attempt window open until it expires.
+      b.cancelFirstFrame = deps.after(() => sock.destroy(), PAIRING_FIRST_FRAME_MS);
       publish(p, { state: 'connecting' });
     },
 
