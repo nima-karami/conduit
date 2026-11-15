@@ -19,6 +19,7 @@ import {
   type LinkStateMachine,
   linkEvent,
 } from '../../src/network/link-state';
+import { MAX_NAME_CHARS } from '../../src/network/pairing-protocol';
 import type { AuditSink } from './audit-log';
 import type { Identity } from './identity';
 import { type ConnectionError, type LinkConnection, openConnection } from './link-connection';
@@ -258,7 +259,8 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     p.attempt = 0;
     p.peerHello = hello;
     p.lastActivity = deps.now();
-    if (printableName(hello.selfName) && hello.selfName !== p.record.name) {
+    // Pairing's name limit applies to a hello name too; one number, owned by pairing.
+    if (printableName(hello.selfName, MAX_NAME_CHARS) && hello.selfName !== p.record.name) {
       p.record = deps.store.update(p.record.machineId, { name: hello.selfName }) ?? p.record;
     }
     event(p, { kind: 'up', at: deps.now() });
