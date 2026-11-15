@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { until } from './conduit-mcp-helpers.mjs';
 import { assert, finishScenario, makeLog, phase } from './harness.mjs';
@@ -57,7 +57,13 @@ async function run() {
     log(`remote address ${address}`);
 
     phase('2. send, read once, and receive a status');
-    const first = await callTool(a, aa, 'send_message', { to: [address], body: 'network first' });
+    const attachmentText = 'Network attachment: hello from A.\n';
+    writeFileSync(join(a.work, 'network-note.txt'), attachmentText);
+    const first = await callTool(a, aa, 'send_message', {
+      to: [address],
+      body: 'network first',
+      attachments: [{ path: 'network-note.txt' }],
+    });
     assert(first.recipients?.[0]?.status === 'queued', `send: ${JSON.stringify(first)}`);
     await eventually('B receives first message', () =>
       records(b).some((r) => r.t === 'msg' && r.msg.messageId === first.message_id),
@@ -72,6 +78,13 @@ async function run() {
         ),
       `untrusted framing: ${received[0].body}`,
     );
+    const attachment = received[0].attachments?.find((a) => a.name === 'network-note.txt');
+    assert(attachment, `attachment metadata missing: ${JSON.stringify(received[0])}`);
+    const read = await callTool(b, ba, 'read_attachment', {
+      message_id: first.message_id,
+      attachment_id: attachment.attachment_id,
+    });
+    assert(read.text === attachmentText, `attachment contents: ${JSON.stringify(read)}`);
     await eventually('A receives a receipt', () =>
       records(a).some(
         (r) =>
