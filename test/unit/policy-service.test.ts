@@ -1025,6 +1025,56 @@ describe('policy service', () => {
     expect(saved.ok && saved.file.overrides).toEqual([]);
   });
 
+  it('retains a passed override when another target is denied by the profile', async () => {
+    const override: OneUseOverride = {
+      id: 'oa',
+      sessionId: 's1',
+      tool: 'open_file',
+      target: target({ path: '/w/a/x.ts', folder: '/w/a' }),
+      createdAt: iso(T0),
+    };
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: {
+              profileId: 'observer',
+              onScreenOnly: false,
+              exceptions: [
+                {
+                  tool: 'open_file',
+                  scope: { kind: 'folder', path: '/w/a' },
+                  rule: { decision: 'deny' },
+                },
+              ],
+            },
+          },
+        ],
+        overrides: [override],
+      }),
+    });
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_file' as const,
+      targets: [
+        target({ path: '/w/a/x.ts', folder: '/w/a' }),
+        target({ path: '/w/b/y.ts', folder: '/w/b' }),
+      ],
+      masterOn: true,
+      toYou: false,
+    };
+    expect(h.service.decide(input)).toMatchObject({ decision: 'deny', overrideIds: [] });
+    expect(h.service.setAssignment({ kind: 'session', sessionId: 's1' }, 'worker')).toEqual({
+      ok: true,
+    });
+    h.fire(WRITE_MS);
+    await h.service.stop();
+    const saved = parsePolicyFile(h.policyWrites.at(-1) ?? '');
+    expect(saved.ok && saved.file.overrides).toEqual([override]);
+  });
+
   it('consumes a passed override when another target asks', () => {
     const h = harness({
       policy: policyText({

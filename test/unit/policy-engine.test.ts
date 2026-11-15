@@ -738,6 +738,39 @@ describe('decide', () => {
     expect(d.reason).toEqual({ by: 'override', overrideId: 'oa' });
   });
 
+  it('keeps a passed override when another target is denied by the profile', () => {
+    const s = state(
+      {
+        default: assignment('observer', [
+          except('open_file', { kind: 'folder', path: '/w/a' }, { decision: 'deny' }),
+        ]),
+      },
+      {
+        overrides: [
+          {
+            id: 'oa',
+            sessionId: 's1',
+            tool: 'open_file',
+            target: target({ path: '/w/a/x.ts', folder: '/w/a' }),
+            createdAt: iso(NOW),
+          },
+        ],
+      },
+    );
+    const d = decide(
+      s,
+      input({
+        tool: 'open_file',
+        targets: [
+          target({ path: '/w/a/x.ts', folder: '/w/a' }),
+          target({ path: '/w/b/y.ts', folder: '/w/b' }),
+        ],
+      }),
+    );
+    expect(d.decision).toBe('deny');
+    expect(d.overrideIds).toEqual([]);
+  });
+
   it('reports the override when another target asks', () => {
     const s = state(
       {

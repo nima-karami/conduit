@@ -254,7 +254,7 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
     reason,
     strictest.rule,
     strictest.effective === 'allow' ? grantIds : [],
-    overrideIds,
+    strictest.effective === 'deny' ? [] : overrideIds,
   );
 }
 
