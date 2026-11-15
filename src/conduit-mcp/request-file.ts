@@ -135,6 +135,7 @@ const isRecord = (v: unknown): v is RequestRecord =>
   nullStr(v.withdrawReason) &&
   nullStr(v.supersededBy) &&
   nullStr(v.deliveredAt) &&
+  (v.source === 'policy') === (v.kind === 'permission') &&
   (v.permission === undefined || v.permission === null
     ? v.kind !== 'permission'
     : v.kind === 'permission' && isPermission(v.permission));

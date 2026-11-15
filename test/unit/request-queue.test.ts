@@ -363,6 +363,40 @@ describe('request queue', () => {
     expect(h.liveTimers()).toBe(0);
   });
 
+  it('load expires an overdue permission so a late answer still works, and withdraws the rest', () => {
+    const h = harness();
+    const now = h.now();
+    const permission = {
+      tool: 'send_message' as const,
+      why: 'reach s2',
+      targets: [],
+      lateGrant: null,
+    };
+    h.queue.load([
+      rec({
+        id: 'r_overdue_perm',
+        source: 'policy',
+        kind: 'permission',
+        expiresAt: iso(now - 1),
+        permission,
+      }),
+      rec({
+        id: 'r_perm',
+        source: 'policy',
+        kind: 'permission',
+        expiresAt: iso(now + 60_000),
+        permission,
+      }),
+    ]);
+    const overdue = h.queue.get('r_overdue_perm');
+    expect(overdue?.state).toBe('expired');
+    expect(overdue?.withdrawnBy).toBeNull();
+    expect(h.queue.answerLate('r_overdue_perm', 'g_late').ok).toBe(true);
+    const rest = h.queue.get('r_perm');
+    expect(rest?.state).toBe('withdrawn');
+    expect(rest?.withdrawReason).toBe('Conduit restarted');
+  });
+
   it('load ends overdue requests', () => {
     const h = harness();
     const now = h.now();

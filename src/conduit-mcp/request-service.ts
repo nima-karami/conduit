@@ -153,7 +153,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
   const visibleOnly = (rs: RequestRecord[]): VisibleRequestRecord[] =>
     rs.flatMap((r) => (isVisibleRequest(r) ? [r] : []));
 
-  const isAgentRecord = (r: RequestRecord): boolean => r.source !== 'policy';
+  const isNonPolicy = (r: RequestRecord): boolean => r.source !== 'policy';
 
   const markDirty = (): void => {
     if (!writable) return;
@@ -392,7 +392,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     const parsed = parseListRequests(args);
     if (!parsed.ok) return parsed;
     const requests = queue
-      .bySession(sessionId, parsed.value.state, parsed.value.limit, isAgentRecord)
+      .bySession(sessionId, parsed.value.state, parsed.value.limit, isNonPolicy)
       .flatMap((r) => (isVisibleRequest(r) ? [r] : []))
       .map((r) => ({
         request_id: r.id,
