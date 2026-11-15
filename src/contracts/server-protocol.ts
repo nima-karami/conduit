@@ -532,6 +532,16 @@ export interface ServerMethods {
     };
   };
   'remote.detach': { params: { viewId: string }; result: Empty };
+  'remote.input': { params: { machineId: string; sessionId: string; data: string }; result: Empty };
+  'remote.resize': {
+    params: { machineId: string; sessionId: string; cols: number; rows: number };
+    result: Empty;
+  };
+  'remote.open': {
+    params: { machineId: string; agentId: string; folder: string };
+    result: { sessionId: string };
+  };
+  'remote.close': { params: { machineId: string; sessionId: string }; result: Empty };
 
   // ── UI facts from the app ──
   'ui.presence': { params: { windows: WindowPresence[] }; result: Empty };

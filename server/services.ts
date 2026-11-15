@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, promises as fsPromises, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { atomicWriteFileSync } from '../src/atomic-write';
 import { isCountedInput } from '../src/conduit-mcp/draft-input';
@@ -273,6 +273,20 @@ export function createServices(o: ServicesOptions) {
             debug: (msg, data) => log.debug('network', msg, data),
             warn: (msg, data) => log.warn('network', msg, data),
             error: (msg, data) => log.error('network', msg, data),
+          },
+          drive: {
+            applyHumanInput: (sessionId, data) => applyHumanInput(sessionId, data, null),
+            resize: (sessionId, size) => {
+              runtime.resize(sessionId, size);
+              domain.resized(sessionId, size);
+            },
+            liveSession: (sessionId) => runtime.get(sessionId)?.state === 'live',
+            agentExists: (agentId) =>
+              domain.snapshot().stores.agents.some((agent) => agent.id === agentId),
+            isDirectory: async (absolutePath) =>
+              (await fsPromises.stat(absolutePath).catch(() => null))?.isDirectory() === true,
+            openSession,
+            closeSession,
           },
           monitor: {
             sessions: () => monitorSessions(),

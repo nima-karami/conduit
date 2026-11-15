@@ -26,6 +26,17 @@ function server(name: string) {
     log: quiet,
     observe: async () => null,
     emitTo: () => {},
+    drive: {
+      applyHumanInput: () => false,
+      resize: () => {},
+      liveSession: () => false,
+      agentExists: () => false,
+      isDirectory: async () => false,
+      openSession: async () => {
+        throw new Error('drive is not exercised by this test');
+      },
+      closeSession: async () => {},
+    },
     monitor: {
       sessions: () => [],
       requests: () => [],
