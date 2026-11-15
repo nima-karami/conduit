@@ -418,7 +418,7 @@ describe('request queue', () => {
     h.queue.withdraw(out.request.id, 'requester', null);
     h.queue.resolve(out.request.id);
     expect(h.ended.map((r) => r.id)).toEqual([out.request.id]);
-    expect(h.queue.ended(10).map((r) => r.id)).toEqual([out.request.id]);
+    expect(h.queue.ended(10, () => true).map((r) => r.id)).toEqual([out.request.id]);
   });
 
   it('an answer clears the expiry timer', () => {
@@ -463,6 +463,33 @@ describe('permission requests', () => {
     if (second.ok) return;
     expect(second.reason).toBe('not_answerable');
     expect(h.queue.get(perm.id)?.permission?.lateGrant).toBe('g_first');
+  });
+
+  it('replaces refuses a permission record', () => {
+    const h = harness();
+    const perm = h.queue.createBound(stamp(), PERMISSION_FIELDS, iso(START + 60_000));
+    const out = h.queue.createAgent(stamp(), input({ title: 'x', replaces: perm.id }));
+    expect(out.kind).toBe('refused');
+    if (out.kind !== 'refused') return;
+    expect(out.error.code).toBe('not_found');
+    expect(h.queue.get(perm.id)?.state).toBe('open');
+  });
+
+  it('ended applies its keep filter before the limit', () => {
+    const h = harness();
+    const a1 = h.queue.createAgent(stamp(), input({ title: 'a1' }));
+    const a2 = h.queue.createAgent(stamp(), input({ title: 'a2' }));
+    if (a1.kind !== 'created' || a2.kind !== 'created') throw new Error('expected created');
+    h.queue.answer(a1.request.id, { outcome: 'approved' }, YOU);
+    h.advance(1_000);
+    h.queue.answer(a2.request.id, { outcome: 'approved' }, YOU);
+    for (let i = 0; i < 3; i++) {
+      h.advance(1_000);
+      const p = h.queue.createBound(stamp(), PERMISSION_FIELDS, iso(h.now() + 60_000));
+      h.queue.withdraw(p.id, 'requester', null);
+    }
+    const kept = h.queue.ended(2, (r) => r.kind !== 'permission');
+    expect(kept.map((r) => r.id)).toEqual([a2.request.id, a1.request.id]);
   });
 
   it('answerLate only on an expired permission', () => {

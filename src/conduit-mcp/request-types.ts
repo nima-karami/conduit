@@ -147,7 +147,7 @@ export type RequestCallOutput =
 export interface ListRequestsOutput {
   requests: Array<{
     request_id: string;
-    kind: RequestKind;
+    kind: Exclude<RequestKind, 'permission'>;
     title: string;
     state: RequestState;
     created_at: string;

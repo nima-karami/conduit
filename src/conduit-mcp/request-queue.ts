@@ -67,8 +67,13 @@ export interface RequestQueue {
   markDelivered(id: string): void;
   get(id: string): RequestRecord | undefined;
   open(): RequestRecord[];
-  ended(limit: number): RequestRecord[];
-  bySession(sessionId: string, state: 'open' | 'all', limit: number): RequestRecord[];
+  ended(limit: number, keep: (r: RequestRecord) => boolean): RequestRecord[];
+  bySession(
+    sessionId: string,
+    state: 'open' | 'all',
+    limit: number,
+    keep: (r: RequestRecord) => boolean,
+  ): RequestRecord[];
   purge(): number;
   records(): RequestRecord[];
   dispose(): void;
@@ -194,7 +199,12 @@ export function createRequestQueue(deps: QueueDeps): RequestQueue {
       let replaced: RequestRecord | null = null;
       if (input.replaces !== null) {
         const old = store.get(input.replaces);
-        if (old === undefined || old.state !== 'open' || old.session !== stamp.session) {
+        if (
+          old === undefined ||
+          old.state !== 'open' ||
+          old.session !== stamp.session ||
+          old.source === 'policy'
+        ) {
           return refuse('not_found', `no open request ${input.replaces} of yours`, stamp.session);
         }
         replaced = old;
@@ -444,17 +454,19 @@ export function createRequestQueue(deps: QueueDeps): RequestQueue {
         .map(clone);
     },
 
-    ended(limit) {
+    ended(limit, keep) {
       return [...store.values()]
-        .filter((r) => r.state !== 'open' && r.endedAt !== null)
+        .filter((r) => r.state !== 'open' && r.endedAt !== null && keep(r))
         .sort((a, b) => timeOf(b.endedAt ?? '') - timeOf(a.endedAt ?? ''))
         .slice(0, limit)
         .map(clone);
     },
 
-    bySession(sessionId, state, limit) {
+    bySession(sessionId, state, limit, keep) {
       return [...store.values()]
-        .filter((r) => r.session === sessionId && (state === 'all' || r.state === 'open'))
+        .filter(
+          (r) => r.session === sessionId && (state === 'all' || r.state === 'open') && keep(r),
+        )
         .sort((a, b) => timeOf(b.createdAt) - timeOf(a.createdAt))
         .slice(0, limit)
         .map(clone);

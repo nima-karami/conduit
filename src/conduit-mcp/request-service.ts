@@ -150,6 +150,11 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
 
   const viewOf = (r: RequestRecord): RequestView | null => (isVisibleRequest(r) ? view(r) : null);
 
+  const visibleOnly = (rs: RequestRecord[]): VisibleRequestRecord[] =>
+    rs.flatMap((r) => (isVisibleRequest(r) ? [r] : []));
+
+  const isAgentRecord = (r: RequestRecord): boolean => r.source !== 'policy';
+
   const markDirty = (): void => {
     if (!writable) return;
     dirty = true;
@@ -348,7 +353,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     if (!parsed.ok) return parsed;
     const { requestId, waitS } = parsed.value;
     const r = queue.get(requestId);
-    if (r === undefined || r.session !== sessionId) {
+    if (r === undefined || r.session !== sessionId || r.source === 'policy') {
       return {
         ok: false,
         error: toolError('not_found', `no request ${requestId} of yours`, sessionId),
@@ -371,7 +376,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     if (!parsed.ok) return parsed;
     const { requestId, reason } = parsed.value;
     const r = queue.get(requestId);
-    if (r === undefined || r.session !== sessionId || r.state !== 'open') {
+    if (r === undefined || r.session !== sessionId || r.source === 'policy' || r.state !== 'open') {
       return {
         ok: false,
         error: toolError('not_found', `no open request ${requestId} of yours`, sessionId),
@@ -387,7 +392,8 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     const parsed = parseListRequests(args);
     if (!parsed.ok) return parsed;
     const requests = queue
-      .bySession(sessionId, parsed.value.state, parsed.value.limit)
+      .bySession(sessionId, parsed.value.state, parsed.value.limit, isAgentRecord)
+      .flatMap((r) => (isVisibleRequest(r) ? [r] : []))
       .map((r) => ({
         request_id: r.id,
         kind: r.kind,
@@ -525,6 +531,14 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
 
     async answerFromRenderer(requestId, answer, windowId) {
       const record = queue.get(requestId);
+      if (record !== undefined && !isVisibleRequest(record)) {
+        return {
+          ok: false,
+          reason: 'not_answerable',
+          message: 'permission requests are answered through the policy',
+          request: null,
+        };
+      }
       if (record !== undefined && record.source === 'message' && record.state === 'open') {
         const checked = validateAnswer(record, answer);
         if (!checked.ok) {
@@ -619,8 +633,8 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
 
     ui() {
       return {
-        open: queue.open().filter(isVisibleRequest).map(view),
-        ended: queue.ended(ENDED_IN_UI).filter(isVisibleRequest).map(view),
+        open: visibleOnly(queue.open()).map(view),
+        ended: visibleOnly(queue.ended(ENDED_IN_UI, isVisibleRequest)).map(view),
         presence,
       };
     },

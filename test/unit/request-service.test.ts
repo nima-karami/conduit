@@ -667,3 +667,122 @@ describe('request service: needs-you sources', () => {
     expect(h.service.ui().open).toHaveLength(0);
   });
 });
+
+function seedRecord(over: Partial<RequestRecord>): RequestRecord {
+  return {
+    id: 'r-agent-1',
+    origin: 'm-00000001',
+    source: 'agent',
+    kind: 'confirm',
+    requester: 'alice',
+    session: 's-alice',
+    space: 'proj',
+    lead: null,
+    machine: 'm-00000001',
+    title: 'Deploy?',
+    body: '',
+    options: [],
+    multi: false,
+    draft: null,
+    thread: null,
+    messageId: null,
+    blocked: null,
+    priority: 'normal',
+    createdAt: new Date(T0 - HOUR).toISOString(),
+    expiresAt: null,
+    default: null,
+    contentKey: 'k',
+    state: 'answered',
+    endedAt: new Date(T0 - 60_000).toISOString(),
+    answer: {
+      outcome: 'approved',
+      answeredBy: { kind: 'default' },
+      at: new Date(T0 - 60_000).toISOString(),
+    },
+    withdrawnBy: null,
+    withdrawReason: null,
+    supersededBy: null,
+    deliveredAt: null,
+    permission: null,
+    ...over,
+  };
+}
+
+const permissionRecord = (over: Partial<RequestRecord> = {}): RequestRecord =>
+  seedRecord({
+    id: 'r-perm-1',
+    source: 'policy',
+    kind: 'permission',
+    state: 'expired',
+    answer: null,
+    permission: { tool: 'send_message', why: 'reach s2', targets: [], lateGrant: null },
+    createdAt: new Date(T0 - 30 * 60_000).toISOString(),
+    ...over,
+  });
+
+const fileOf = (requests: RequestRecord[]): string => JSON.stringify({ version: 1, requests });
+
+describe('permission records stay out of the agent tools and the UI', () => {
+  it('answerFromRenderer refuses a permission record with not_answerable', async () => {
+    const h = harness({ initial: fileOf([permissionRecord()]) });
+    const out = await h.service.answerFromRenderer('r-perm-1', { outcome: 'allowed' }, 1);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.reason).toBe('not_answerable');
+  });
+
+  it('wait_request answers not_found for a permission record', async () => {
+    const h = harness({ initial: fileOf([permissionRecord()]) });
+    const out = await h.service.tools.waitRequest(alice, { request_id: 'r-perm-1' }, key(1));
+    expect(out).not.toBeNull();
+    if (out === null || out.ok) throw new Error('expected a refusal');
+    expect(out.error.code).toBe('not_found');
+  });
+
+  it('withdraw_request answers not_found for a permission record', () => {
+    const h = harness({
+      initial: fileOf([
+        permissionRecord({
+          state: 'open',
+          endedAt: null,
+          answer: null,
+          expiresAt: new Date(T0 + HOUR).toISOString(),
+        }),
+      ]),
+    });
+    const out = h.service.tools.withdrawRequest(alice, { request_id: 'r-perm-1' });
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error.code).toBe('not_found');
+  });
+
+  it('list_requests leaves permission records out, before its limit applies', () => {
+    const h = harness({ initial: fileOf([seedRecord({}), permissionRecord()]) });
+    const all = h.service.tools.listRequests(alice, { state: 'all' });
+    expect(all.ok).toBe(true);
+    if (!all.ok) return;
+    expect(all.value.requests.map((r) => r.request_id)).toEqual(['r-agent-1']);
+    const one = h.service.tools.listRequests(alice, { state: 'all', limit: 1 });
+    expect(one.ok).toBe(true);
+    if (!one.ok) return;
+    expect(one.value.requests.map((r) => r.request_id)).toEqual(['r-agent-1']);
+  });
+
+  it('ui() keeps permission records out of open and ended', () => {
+    const h = harness({
+      initial: fileOf([
+        seedRecord({}),
+        permissionRecord(),
+        permissionRecord({
+          id: 'r-perm-open',
+          state: 'open',
+          endedAt: null,
+          expiresAt: new Date(T0 + HOUR).toISOString(),
+        }),
+      ]),
+    });
+    const ui = h.service.ui();
+    expect(ui.open.map((r) => r.id)).toEqual([]);
+    expect(ui.ended.map((r) => r.id)).toEqual(['r-agent-1']);
+  });
+});
