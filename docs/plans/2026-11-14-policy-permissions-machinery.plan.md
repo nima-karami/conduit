@@ -521,7 +521,7 @@ Failing tests:
 *T2.3 review round 2 rulings (2026-11-15):*
 - `commit(decision)` returns boolean and is atomic: false, with no change at all, when any of the decision's overrides is already gone (a concurrent call spent it). The caller then refuses with tool_disabled. So a one-use override passes exactly once even with parallel calls.
 - Messaging/request calls commit only after the store check and argument validation, right before they take effect.
-- Accepted, noted for Slice 3/CON-25: (1) an ask raised on an override that passes an anywhere deny removes the tool from the list while the card waits, and a recheck can then end that ask; (2) approval_timeout from the pre-card budget check is recorded as `expired`.
+- Accepted, noted for Slice 3/CON-25: (1) an ask raised on an override that passes an anywhere deny removes the tool from the list while the card waits, and a recheck can then end that ask; (2) approval_timeout from the pre-card budget check is recorded as `expired`. (3) A messaging/request call refused for invalid args spends its override: their validation lives in tools.ts/request-service.ts, after the commit point.
 
 #### Task 2.1: migration and projection
 **Files:** create `policy-migration.ts`, `policy-projection.ts`; tests `test/unit/policy-migration.test.ts`, `test/unit/policy-projection.test.ts`.
