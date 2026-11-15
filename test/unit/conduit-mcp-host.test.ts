@@ -4234,6 +4234,45 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(asksOf(h)).toHaveLength(2);
   });
 
+  describe('activity outcome of an ask that did not run', () => {
+    const activityIoRecording = (rows: Array<Record<string, unknown>>): ActivityIo => ({
+      append: (_day, line) => {
+        rows.push(JSON.parse(line) as Record<string, unknown>);
+      },
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    });
+
+    it('a card the human declines is recorded as denied', async () => {
+      const rows: Array<Record<string, unknown>> = [];
+      const { h, c } = await asking({ activityIo: activityIoRecording(rows) });
+      c.call(1, 'open_session', OPEN);
+      await until(() => asksOf(h).length === 1);
+      await answer(h, 'ask-1', 'deny');
+      expect(c.errorOf(await c.reply(1))).toBe('denied');
+      expect(rows.filter((r) => r.action === 'open_session').map((r) => r.outcome)).toEqual([
+        'denied',
+      ]);
+    });
+
+    it('a card nobody answers in time is recorded as expired', async () => {
+      const rows: Array<Record<string, unknown>> = [];
+      const { h, c } = await asking({
+        activityIo: activityIoRecording(rows),
+        manualTimers: true,
+      });
+      c.call(1, 'open_session', OPEN);
+      await until(() => asksOf(h).length === 1);
+      h.advance(10 * 60_000);
+      expect(c.errorOf(await c.reply(1))).toBe('approval_timeout');
+      expect(rows.filter((r) => r.action === 'open_session').map((r) => r.outcome)).toEqual([
+        'expired',
+      ]);
+    });
+  });
+
   it('mcp:revokeGrant and mcp:setAssignment answer with mcp:policyResult', async () => {
     const { h, c } = await asking();
     const post = async (msg: unknown) => {

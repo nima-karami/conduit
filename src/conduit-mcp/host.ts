@@ -21,7 +21,7 @@ import { readCappedBytes } from '../read-capped';
 import { COMMAND_AGENT_ID } from '../session-command';
 import { PTY_SETTLE_MS } from '../timed-messages';
 import type { AgentDefinition, SpawnSpec } from '../types';
-import type { ActivityIo } from './activity-log';
+import type { ActivityIo, ActivityOutcome } from './activity-log';
 import { createActivityIo } from './activity-log-fs';
 import {
   adapterFor,
@@ -1536,6 +1536,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           ? value.request_id
           : null;
       const decision = record?.decision;
+      const outcomeOfError = (code: string): ActivityOutcome => {
+        if (code === 'denied' || decision?.decision === 'deny') return 'denied';
+        if (code === 'approval_timeout') return 'expired';
+        return 'error';
+      };
       const activityId = policyService.activity.record({
         lane: 'conduit',
         principal: { handle: handle ?? null, sessionId, machineId: null },
@@ -1551,13 +1556,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               cliName: (kind) => kind,
             })
           : 'unknown',
-        outcome: cancelled
-          ? 'withdrawn'
-          : result.ok
-            ? 'ok'
-            : decision?.decision === 'deny'
-              ? 'denied'
-              : 'error',
+        outcome: cancelled ? 'withdrawn' : result.ok ? 'ok' : outcomeOfError(result.error.code),
         durationMs: now() - startedAt,
         requestId,
         count: null,
