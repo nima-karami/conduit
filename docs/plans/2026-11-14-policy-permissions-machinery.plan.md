@@ -624,6 +624,11 @@ Failing tests:
   - T3.2b-1 (cc559d20) did the request-file pairing, the load expiry order and the isNonPolicy rename.
   - Everything else goes to T3.2b-2: the service permission API, the protocol, call-flow and the host. `onPermissionAnswer` has no honest implementation before the host wiring, so they land together.
   - Accepted: answerFromRenderer keeps its second, narrowing-only visibility check. Dropping it needs a cast or a QueueAnswerResult type change.
+- *T3.2b-2 rulings (2026-11-15):*
+  - `createPermission` fields add `requester: Handle`, so the late notice can reach the inbox.
+  - `endPermission` ends 'answered' | 'withdrawn' only; the queue's timer owns expiry.
+  - Activity for an ask is an `asked` row at raise (requestId = permission id, raw args in ask-args) plus the call's own row, which carries the requestId and the outcome. Together they meet "ask and answer each write a row".
+  - A late answer writes no Activity row. Noted for CON-25.
 - **Carried to T3.2 (T3.1 re-review):**
   - Catching tests for the `ui().open` filter and the withdraw_request policy guard, using a live permission from createPermission. The current withdraw test passes only because load withdraws the record; rewrite it.
   - Narrow once in answerFromRenderer (drop the unreachable second visibility branch).
