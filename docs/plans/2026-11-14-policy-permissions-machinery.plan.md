@@ -546,7 +546,7 @@ Failing tests:
 - (b) Until Slice 3, an approved ask runs on the original decision without calling `decide` again (the overrides that decision reported are already used up). Slice 3's answer-time re-decide must pass the original decision's `overrideIds` through, so an approved ask isn't refused at its explicit-deny target. That is a T3.2 ruling, recorded under C9.
 - (c) A host unit test: explicit deny + "Allow this once" + another target asks + the card is approved → the call runs once, and a second identical call is refused.
 
-Every tool call writes one Activity row with the decision, `reasonText`, outcome and duration. `request_input` rows carry `requestId` (POL-D17). Build the principal from `runtime.defAdapter` (`launchedCli`), `Session.cwd` and `Session.projectId`.
+Every tool call writes one Activity row with the decision, `reasonText`, outcome and duration. `request_input` rows carry `requestId` (POL-D17). Build the principal from `runtime.defAdapter` (`launchedCli`), `Session.home` and `Session.projectId`.
 
 #### Task 2.4 (serial): editors read the projection (DN-2)
 **Files:** modify `mcp-tools-dialog.tsx`, `settings-modal.tsx`, `app.tsx` (props at `:5564-5572`), `use-conduit-mcp.ts`; tests: update `mcp-tools-dialog.test.tsx`, `settings-mcp-tools.test.tsx`.
