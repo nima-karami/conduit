@@ -10,6 +10,7 @@ import {
   type LinkState,
 } from '../../src/contracts/link-protocol';
 import type { NetworkLinkView } from '../../src/contracts/network-state';
+import { printableName } from '../../src/network/addresses';
 import type { LinkRecord } from '../../src/network/link-file';
 import {
   backoffMs,
@@ -18,7 +19,6 @@ import {
   type LinkStateMachine,
   linkEvent,
 } from '../../src/network/link-state';
-import { MAX_NAME_CHARS } from '../../src/network/pairing-protocol';
 import type { AuditSink } from './audit-log';
 import type { Identity } from './identity';
 import { type ConnectionError, type LinkConnection, openConnection } from './link-connection';
@@ -89,8 +89,6 @@ const TERMINAL: readonly LinkState[] = ['revoked', 'incompatible', 'identity-cha
 /** A peer still waiting for the owner key we owe it has none yet; any other mismatch is a change. */
 const ownerMatches = (record: LinkRecord, helloOwner: string | null): boolean =>
   helloOwner === record.ownerKey || (record.ownerTransfer === 'send' && helloOwner === null);
-// Pairing's rule (pairing-protocol.ts validId): a non-blank name within MAX_NAME_CHARS.
-const storableName = (name: string): boolean => name.trim() !== '' && name.length <= MAX_NAME_CHARS;
 const b64 = (b: Buffer): string => b.toString('base64');
 const sameCapabilities = (x: Capabilities, y: Capabilities): boolean =>
   x.messaging === y.messaging && x.monitor === y.monitor && x.drive === y.drive;
@@ -260,7 +258,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     p.attempt = 0;
     p.peerHello = hello;
     p.lastActivity = deps.now();
-    if (storableName(hello.selfName) && hello.selfName !== p.record.name) {
+    if (printableName(hello.selfName) && hello.selfName !== p.record.name) {
       p.record = deps.store.update(p.record.machineId, { name: hello.selfName }) ?? p.record;
     }
     event(p, { kind: 'up', at: deps.now() });

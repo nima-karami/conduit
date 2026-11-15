@@ -44,7 +44,16 @@ export function displayNames(
   return out;
 }
 
-/** Red stub: the printable-name rule lands with its fix commit. */
-export function printableName(_s: string, _max = 64): boolean {
-  throw new Error('printableName: not implemented');
+/**
+ * A peer's own text (a machine name, an attachment name) is shown in lists, hints and logs, so it
+ * must be one printable line: not blank, at most `max` characters, and free of control characters
+ * and the Unicode line separators. Checked by code point range so no regex is needed.
+ */
+export function printableName(s: string, max = 64): boolean {
+  if (s.trim() === '' || s.length > max) return false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c <= 0x1f || (c >= 0x7f && c <= 0x9f) || c === 0x2028 || c === 0x2029) return false;
+  }
+  return true;
 }

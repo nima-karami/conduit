@@ -10,7 +10,7 @@ import type {
   MonitorSession,
   MonitorSnapshot,
 } from '../contracts/link-protocol';
-import { displayNames, formatAddress, parseAddress } from './addresses';
+import { displayNames, formatAddress, parseAddress, printableName } from './addresses';
 
 export interface RemoteLinkInfo {
   machineId: string;
@@ -40,14 +40,21 @@ interface Row {
 
 type LinkLookup = { link: RemoteLinkInfo } | { hint: string };
 
+/**
+ * The name a link is shown by. A peer's own text reaches hints and rows only once it passes
+ * printableName; otherwise the machine id stands in (CON-27 R3).
+ */
+const shownName = (link: RemoteLinkInfo): string =>
+  printableName(link.name) ? link.name : link.machineId;
+
 function terminalHint(link: RemoteLinkInfo): string | null {
   switch (link.state) {
     case 'revoked':
-      return `${link.name} is revoked`;
+      return `${shownName(link)} is revoked`;
     case 'incompatible':
-      return `${link.name} is incompatible`;
+      return `${shownName(link)} is incompatible`;
     case 'identity-changed':
-      return `${link.name} changed identity`;
+      return `${shownName(link)} changed identity`;
     default:
       return null;
   }
@@ -68,14 +75,14 @@ export function createRemoteDirectory(): RemoteDirectory {
   // that restarts the peer's counter is not silently ignored.
   function rows(): Row[] {
     const names = displayNames(
-      links.map((l) => ({ machineId: l.machineId, name: l.name })),
+      links.map((l) => ({ machineId: l.machineId, name: shownName(l) })),
       selfName,
     );
     return links.flatMap((link) => {
       if (TERMINAL.has(link.state) || link.peerCapabilities?.messaging !== true) return [];
       const snapshot = snapshots.get(link.machineId);
       if (snapshot === undefined) return [];
-      const machine = names.get(link.machineId) ?? link.name;
+      const machine = names.get(link.machineId) ?? shownName(link);
       return snapshot.sessions.flatMap((session): Row[] => {
         const handle = session.handle;
         if (handle === null) return [];

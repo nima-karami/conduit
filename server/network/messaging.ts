@@ -16,7 +16,7 @@ import type {
   WireMessage,
   WireRecipientOutcome,
 } from '../../src/contracts/link-protocol';
-import { formatAddress } from '../../src/network/addresses';
+import { formatAddress, printableName } from '../../src/network/addresses';
 import {
   inboundMessageId,
   inboundThreadId,
@@ -82,6 +82,10 @@ const INBOUND_PER_LINK_PER_MIN = 120;
 const INBOUND_WINDOW_MS = 60_000;
 /** One message.refused audit per link per window, as drive.ts does for drive.refused. */
 const REFUSAL_AUDIT_MS = 60_000;
+/** A mime is a type/subtype token pair; anything else is not a file type a peer may name (CON-27 R3). */
+const MIME = /^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i;
+const MAX_MIME_CHARS = 100;
+const MAX_ATTACHMENT_NAME_CHARS = 200;
 
 function loadOutbox(
   file: string,
@@ -342,6 +346,12 @@ export function createMessaging(deps: MessagingDeps): Messaging {
       wire.to.some((h) => h.includes('@')) ||
       Buffer.byteLength(wire.body, 'utf8') > MAX_BODY_BYTES ||
       wire.subject.length > 200 ||
+      wire.attachments.some(
+        (a) =>
+          !printableName(a.name, MAX_ATTACHMENT_NAME_CHARS) ||
+          a.mime.length > MAX_MIME_CHARS ||
+          !MIME.test(a.mime),
+      ) ||
       wire.attachments.reduce((n, a) => n + Buffer.byteLength(a.data, 'base64'), 0) >
         MAX_REMOTE_ATTACHMENT_BYTES
     ) {
