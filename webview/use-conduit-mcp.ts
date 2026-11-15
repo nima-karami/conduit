@@ -1,6 +1,9 @@
 import { useMemo, useSyncExternalStore } from 'react';
+import type { PermissionAnswer } from '../src/conduit-mcp/policy-types';
 import type {
   AnswerInput,
+  AnswerRefusal,
+  PermissionAnswerResult,
   RequestAnswerResult,
   RequestsUiState,
 } from '../src/conduit-mcp/request-types';
@@ -17,6 +20,15 @@ import { post, subscribe } from './bridge';
 import { requestHost } from './host-request';
 
 const REQUEST_TIMEOUT_MS = 10_000;
+
+const REFUSALS: readonly AnswerRefusal[] = [
+  'not_found',
+  'already_ended',
+  'not_answerable',
+  'invalid_answer',
+];
+const refusalOf = (reason: string | undefined): AnswerRefusal =>
+  REFUSALS.find((r) => r === reason) ?? 'not_answerable';
 
 type PolicyPoint = Extract<WebviewToHost, { type: 'mcp:setPointPolicy' }>['point'];
 
@@ -39,6 +51,7 @@ export interface ConduitMcpApi {
   /** False when the host refused it or didn't answer: the caller reverts. */
   setPointPolicy(point: PolicyPoint, tool: ToolName, patch: ToolPolicyPatch): Promise<boolean>;
   answerRequest(requestId: string, answer: AnswerInput): Promise<RequestAnswerResult>;
+  answerPermission(requestId: string, answer: PermissionAnswer): Promise<PermissionAnswerResult>;
   setAway(away: boolean, until: string | null): void;
 }
 
@@ -144,6 +157,37 @@ const api: Omit<ConduitMcpApi, 'state'> = {
         REQUEST_TIMEOUT_MS,
       );
       post({ type: 'mcp:requestAnswer', requestId, answer });
+    });
+  },
+  answerPermission(requestId, answer) {
+    return new Promise((resolve) => {
+      const settle = (result: PermissionAnswerResult) => {
+        clearTimeout(timer);
+        unsubscribe();
+        resolve(result);
+      };
+      const unsubscribe = subscribe((m) => {
+        if (m.type !== 'mcp:permissionResult' || m.requestId !== requestId) return;
+        settle(
+          m.ok
+            ? { ok: true }
+            : {
+                ok: false,
+                reason: refusalOf(m.reason),
+                message: m.message ?? 'Conduit refused the answer',
+              },
+        );
+      });
+      const timer = setTimeout(
+        () =>
+          settle({
+            ok: false,
+            reason: 'not_found',
+            message: 'Conduit did not answer; try again',
+          }),
+        REQUEST_TIMEOUT_MS,
+      );
+      post({ type: 'mcp:permissionAnswer', requestId, answer });
     });
   },
   setAway(away, until) {

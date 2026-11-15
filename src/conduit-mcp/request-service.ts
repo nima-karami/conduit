@@ -122,6 +122,7 @@ export interface RequestService {
     answer: unknown,
     by: AnsweredBy,
   ): Promise<PermissionAnswerResult>;
+  answerLate(requestId: string, grantId: string): PermissionAnswerResult;
 }
 
 interface Timer {
@@ -151,8 +152,11 @@ const outputOf = (r: RequestRecord): RequestCallOutput => {
   };
 };
 
+// A permission's late grant is the one answer the requester's inbox hears about.
 const isAgentEnd = (r: RequestRecord): boolean =>
-  r.source === 'agent' && (r.state === 'answered' || r.state === 'expired');
+  r.permission !== null
+    ? r.state === 'expired' && r.permission.lateGrant !== null
+    : r.source === 'agent' && (r.state === 'answered' || r.state === 'expired');
 
 const iso = (ms: number): string => new Date(ms).toISOString();
 
@@ -700,6 +704,13 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
       if (r !== undefined && r.state === 'open') {
         deps.warn('a permission is still open at its deadline', { id });
       }
+    },
+
+    answerLate(requestId, grantId) {
+      const res = queue.answerLate(requestId, grantId);
+      if (!res.ok) return { ok: false, reason: res.reason, message: res.message };
+      void deliverOne(requestId);
+      return { ok: true };
     },
 
     async answerPermission(requestId, answer, by) {

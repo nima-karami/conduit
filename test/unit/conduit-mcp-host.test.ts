@@ -4650,6 +4650,29 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       ]);
     });
 
+    it('the ask and its answer are linked by request id; raw args go only to ask-args', async () => {
+      const rows: Array<Record<string, unknown>> = [];
+      const argsWrites: string[] = [];
+      const io: ActivityIo = {
+        ...activityIoRecording(rows),
+        writeArgs: (text) => {
+          argsWrites.push(text);
+        },
+      };
+      const { h, c } = await asking({ activityIo: io });
+      c.call(1, 'open_session', OPEN);
+      await until(() => asksOf(h).length === 1);
+      const askId = askIdOf(h);
+      await answer(h, askId, 'deny');
+      expect(c.errorOf(await c.reply(1))).toBe('denied');
+      expect(rows.filter((r) => r.requestId === askId).map((r) => r.outcome)).toEqual([
+        'asked',
+        'denied',
+      ]);
+      expect(JSON.stringify(rows)).not.toContain('e2e-fake-mcp');
+      expect(argsWrites.join('')).toContain('e2e-fake-mcp');
+    });
+
     it('a card nobody answers in time is recorded as expired', async () => {
       const rows: Array<Record<string, unknown>> = [];
       const { h, c } = await asking({
@@ -4700,6 +4723,39 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     h.advance(1_000);
     expect(writes.join('')).toContain('"s1"');
     expect(writes.join('')).not.toContain('ghost');
+  });
+
+  it('a waiting permission ask counts once in waitingAsks and awaitingApproval, and stays out of requests.open', async () => {
+    const { h, c } = await asking();
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    const ui = h.host.uiState();
+    expect(ui.waitingAsks).toBe(1);
+    expect(ui.awaitingApproval).toEqual(['s1']);
+    expect(ui.requests.open).toEqual([]);
+    await answer(h, askIdOf(h), 'deny');
+    await c.reply(1);
+  });
+
+  it('mcp:permissionAnswer answers a waiting ask with mcp:permissionResult; a bad answer leaves it waiting', async () => {
+    const { h, c } = await asking();
+    const replies: HostToWebview[] = [];
+    const post = (msg: unknown) =>
+      h.host.handleRenderer(msg as McpRendererMessage, (m) => replies.push(m), 1);
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    const askId = askIdOf(h);
+    await post({ type: 'mcp:permissionAnswer', requestId: askId, answer: { outcome: 'approved' } });
+    expect(replies.at(-1)).toMatchObject({
+      type: 'mcp:permissionResult',
+      requestId: askId,
+      ok: false,
+      reason: 'invalid_answer',
+    });
+    expect(closedOf(h)).toEqual([]);
+    await post({ type: 'mcp:permissionAnswer', requestId: askId, answer: { outcome: 'denied' } });
+    expect(replies.at(-1)).toEqual({ type: 'mcp:permissionResult', requestId: askId, ok: true });
+    expect(c.errorOf(await c.reply(1))).toBe('denied');
   });
 
   it('mcp:revokeGrant and mcp:setAssignment answer with mcp:policyResult', async () => {

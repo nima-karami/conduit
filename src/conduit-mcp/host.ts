@@ -709,7 +709,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         kind: 'inform',
         priority: 'normal',
         sentAt: new Date(now()).toISOString(),
-        body: JSON.stringify({ request_id: r.id, state: r.state, answer: answerBody }),
+        body:
+          r.permission === null
+            ? JSON.stringify({ request_id: r.id, state: r.state, answer: answerBody })
+            : `You can retry ${r.permission.tool} now`,
         attachments: [],
         requestId: r.id,
       };
@@ -726,11 +729,40 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
     onChanged: () => scheduleBroadcast(),
     onNew: (r) => notices.added(r),
-    onPermissionAnswer: async () => ({
-      ok: false,
-      reason: 'not_answerable',
-      message: 'permission answers are not wired yet',
-    }),
+    onPermissionAnswer: async (r, a) => {
+      if (r.state === 'open') {
+        return flow.answerPermission(r.id, a)
+          ? { ok: true }
+          : { ok: false, reason: 'not_answerable', message: 'nothing is waiting on this request' };
+      }
+      const p = r.session === null ? null : principalOf(r.session);
+      if (r.permission === null || a.outcome !== 'allowed' || a.grant === undefined) {
+        return { ok: false, reason: 'invalid_answer', message: 'a late answer needs a grant' };
+      }
+      const grant =
+        p === null
+          ? null
+          : policyService.createGrant(
+              a.grant,
+              p,
+              r.permission.tool,
+              r.permission.targets[0] ?? {
+                sessionId: null,
+                path: null,
+                folder: null,
+                projectId: null,
+              },
+              r.id,
+            );
+      if (grant === null) {
+        return {
+          ok: false,
+          reason: 'not_answerable',
+          message: 'the session closed before the grant could be made',
+        };
+      }
+      return requestService.answerLate(r.id, grant.id);
+    },
     scheduler: deps.domain.limit,
     replyToQuestion: async (r, text) => {
       const sent = await tools.sendMessage(
@@ -2785,6 +2817,20 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         case 'mcp:requestAnswer': {
           const result = await requestService.answerFromRenderer(m.requestId, m.answer, senderId);
           reply({ type: 'mcp:requestResult', requestId: m.requestId, result });
+          return;
+        }
+        case 'mcp:permissionAnswer': {
+          const result = await requestService.answerPermission(m.requestId, m.answer, {
+            kind: 'you',
+            windowId: senderId,
+          });
+          reply({
+            type: 'mcp:permissionResult',
+            requestId: m.requestId,
+            ...(result.ok
+              ? { ok: true }
+              : { ok: false, reason: result.reason, message: result.message }),
+          });
           return;
         }
         case 'mcp:setAway':

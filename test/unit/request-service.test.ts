@@ -759,21 +759,28 @@ describe('permission records stay out of the agent tools and the UI', () => {
     expect(out.error.code).toBe('not_found');
   });
 
-  it('withdraw_request answers not_found for a permission record', () => {
-    const h = harness({
-      initial: fileOf([
-        permissionRecord({
-          state: 'open',
-          endedAt: null,
-          answer: null,
-          expiresAt: new Date(T0 + HOUR).toISOString(),
-        }),
-      ]),
-    });
-    const out = h.service.tools.withdrawRequest(alice, { request_id: 'r-perm-1' });
+  it('withdraw_request on a live permission from its own session is not_found, and it stays open', async () => {
+    const h = harness();
+    const r = h.service.createPermission(
+      's-alice',
+      {
+        requester: 'alice',
+        title: 'close_session',
+        body: 'Closes claude-4',
+        permission: { tool: 'close_session', why: 'reach', targets: [], lateGrant: null },
+      },
+      new Date(T0 + HOUR).toISOString(),
+    );
+    const out = h.service.tools.withdrawRequest(alice, { request_id: r.id });
     expect(out.ok).toBe(false);
     if (out.ok) return;
     expect(out.error.code).toBe('not_found');
+    const still = await h.service.answerPermission(
+      r.id,
+      { outcome: 'denied' },
+      { kind: 'you', windowId: 1 },
+    );
+    expect(still).toEqual({ ok: true });
   });
 
   it('list_requests leaves permission records out, before its limit applies', () => {
@@ -895,5 +902,46 @@ describe('permission requests in the service', () => {
       withdrawnBy: 'conduit',
       withdrawReason: 'the policy now denies it',
     });
+  });
+
+  it('a late grant on an expired permission is delegated, then recorded and delivered once, and never resolves the call', async () => {
+    const h = harness({ initial: fileOf([permissionRecord()]) });
+    const out = await h.service.answerPermission(
+      'r-perm-1',
+      { outcome: 'allowed', grant: { who: 'session', on: 'anywhere', for: 'session-end' } },
+      you,
+    );
+    expect(out).toEqual({ ok: true });
+    expect(h.onPermissionAnswer).toHaveBeenCalledTimes(1);
+    expect(h.service.answerLate('r-perm-1', 'g-late')).toEqual({ ok: true });
+    await flush();
+    expect(h.deliver).toHaveBeenCalledTimes(1);
+    expect(h.deliver.mock.calls[0]?.[0]).toMatchObject({
+      id: 'r-perm-1',
+      state: 'expired',
+      permission: { lateGrant: 'g-late' },
+    });
+  });
+
+  it('a second late grant on the same permission is refused as not_answerable', () => {
+    const h = harness({
+      initial: fileOf([
+        permissionRecord({
+          permission: { tool: 'send_message', why: 'reach s2', targets: [], lateGrant: 'g-first' },
+        }),
+      ]),
+    });
+    expect(h.service.answerLate('r-perm-1', 'g-second')).toMatchObject({
+      ok: false,
+      reason: 'not_answerable',
+    });
+    expect(h.deliver).not.toHaveBeenCalled();
+  });
+
+  it('an expired permission answered without a grant is already_ended', async () => {
+    const h = harness({ initial: fileOf([permissionRecord()]) });
+    const out = await h.service.answerPermission('r-perm-1', { outcome: 'allowed' }, you);
+    expect(out).toMatchObject({ ok: false, reason: 'already_ended' });
+    expect(h.onPermissionAnswer).not.toHaveBeenCalled();
   });
 });
