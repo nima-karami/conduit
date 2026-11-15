@@ -752,6 +752,28 @@ describe('policy service', () => {
     expect(h.grantWrites).toHaveLength(1);
   });
 
+  it('peerRevoked ends that peer grants, persists once, and notifies only when one changed', async () => {
+    const h = harness({
+      grants: serializeGrantsFile({
+        version: 1,
+        grants: [
+          grant({ id: 'g-peer', who: { kind: 'peer', machineId: 'm-1' } }),
+          grant({ id: 'g-other', who: { kind: 'peer', machineId: 'm-2' } }),
+        ],
+      }),
+    });
+    h.service.start();
+    const before = h.changed();
+    h.service.peerRevoked('m-1');
+    expect(h.changed()).toBe(before + 1);
+    const states = Object.fromEntries(h.service.ui([]).grants.map((g) => [g.id, g.state]));
+    expect(states).toEqual({ 'g-peer': 'revoked', 'g-other': 'active' });
+    h.service.peerRevoked('m-1');
+    expect(h.changed()).toBe(before + 1);
+    await h.service.stop();
+    expect(h.grantWrites).toHaveLength(1);
+  });
+
   it('allowOnce overrides the denied target on a multi-target call', () => {
     const folderDeny: Exception = {
       tool: 'open_file',

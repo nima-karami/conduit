@@ -366,4 +366,46 @@ describe('grant store', () => {
     expect(store.all()[0].state).toBe('active');
     expect(store.all()[0].on).toEqual({ kind: 'path', path: '/a' });
   });
+
+  it('peerRevoked ends every active or suspended grant of that peer as revoked', () => {
+    const peer = { kind: 'peer', machineId: 'm-1' } as const;
+    const a = store.create(peer, 'send_message', ANYWHERE, 'until-revoked', null, null);
+    const b = store.create(peer, 'read_inbox', ANYWHERE, '24h', null, null);
+    t += MIN;
+    const changed = store.peerRevoked('m-1');
+    expect(changed.map((g) => g.id).sort()).toEqual([a.id, b.id].sort());
+    expect(changed.every((g) => g.state === 'revoked' && g.endedAt === iso(T0 + MIN))).toBe(true);
+    expect(store.all().every((g) => g.state === 'revoked')).toBe(true);
+  });
+
+  it('peerRevoked leaves other peers, session and cli grants, and already-ended grants alone', () => {
+    const other = store.create(
+      { kind: 'peer', machineId: 'm-2' },
+      'send_message',
+      ANYWHERE,
+      'until-revoked',
+      null,
+      null,
+    );
+    const cli = store.create(
+      { kind: 'cli', cli: 'claude' },
+      'send_message',
+      ANYWHERE,
+      'until-revoked',
+      null,
+      null,
+    );
+    const ended = store.create(
+      { kind: 'peer', machineId: 'm-1' },
+      'read_inbox',
+      ANYWHERE,
+      'until-revoked',
+      null,
+      null,
+    );
+    store.revoke(ended.id);
+    expect(store.peerRevoked('m-1')).toEqual([]);
+    expect(store.all().find((g) => g.id === other.id)?.state).toBe('active');
+    expect(store.all().find((g) => g.id === cli.id)?.state).toBe('active');
+  });
 });

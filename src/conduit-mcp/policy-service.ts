@@ -88,6 +88,7 @@ export interface PolicyService {
     requestId: string | null,
   ): Grant | null;
   revokeGrant(id: string): boolean;
+  peerRevoked(machineId: string): void;
   allowOnce(
     activityId: string,
   ): { ok: true } | { ok: false; error: 'not-found' | 'not-overridable' };
@@ -447,6 +448,12 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       markGrants();
       deps.onChanged();
       return created;
+    },
+
+    peerRevoked(machineId) {
+      if (grants.peerRevoked(machineId).length === 0) return;
+      markGrants();
+      deps.onChanged();
     },
 
     revokeGrant(id) {
