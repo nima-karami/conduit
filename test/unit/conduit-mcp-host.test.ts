@@ -8,10 +8,8 @@ import { createSessionScreens, type SessionScreens } from '../../server/runtime/
 import { createTokenStore } from '../../server/runtime/testing/token-store';
 import { AgentRegistry } from '../../src/agent-registry';
 import type { StuckScreen } from '../../src/cli-stuck-screens';
-import { MCP_ADAPTERS } from '../../src/conduit-mcp/adapters';
 import type { ActivityIo } from '../../src/conduit-mcp/activity-log';
-import { serializePolicyFile } from '../../src/conduit-mcp/policy-file';
-import type { RequestsIo } from '../../src/conduit-mcp/request-file-fs';
+import { MCP_ADAPTERS } from '../../src/conduit-mcp/adapters';
 import type { McpFileRequest, McpOpenRequest, PathKind } from '../../src/conduit-mcp/control-tools';
 import {
   type ConduitMcpHost,
@@ -28,6 +26,8 @@ import {
   NOTICE_SPACING_MS,
 } from '../../src/conduit-mcp/notice-gate';
 import { composeNotice } from '../../src/conduit-mcp/notice-text';
+import { serializePolicyFile } from '../../src/conduit-mcp/policy-file';
+import type { RequestsIo } from '../../src/conduit-mcp/request-file-fs';
 import type { AnswerInput } from '../../src/conduit-mcp/request-types';
 import { screenVerdict } from '../../src/conduit-mcp/screen-verdict';
 import type { StoreIo } from '../../src/conduit-mcp/store';
@@ -38,7 +38,6 @@ import {
   type PolicyLayer,
   TOOL_NAMES,
   type ToolName,
-  withPolicyPatch,
 } from '../../src/conduit-mcp/tool-policy';
 import { toolError } from '../../src/conduit-mcp/types';
 import type { McpHostDeps, NeedsYouFact, TokenStorePort } from '../../src/contracts/server-ports';

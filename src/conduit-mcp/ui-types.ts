@@ -6,8 +6,8 @@ import type { RefEndpoint } from '../git-range';
 import type { ParsedPatchFile } from '../patch-parse';
 import type { CommitNode } from '../protocol';
 import type { AgentCli, UserInstallState } from './install-types';
-import type { RequestsUiState } from './request-types';
 import type { PolicyUiState } from './policy-types';
+import type { RequestsUiState } from './request-types';
 import type {
   GateClosedReason,
   Handle,

@@ -1,4 +1,3 @@
-import { emptyPolicyUi } from '../../src/conduit-mcp/ui-types';
 // @vitest-environment jsdom
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -6,6 +5,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { RequestView } from '../../src/conduit-mcp/request-types';
 import type { StoredMessage } from '../../src/conduit-mcp/types';
 import type { McpThreadView, McpUiState } from '../../src/conduit-mcp/ui-types';
+import { emptyPolicyUi } from '../../src/conduit-mcp/ui-types';
 import { MessageThread } from '../../webview/components/message-thread';
 import { openRequest } from '../../webview/request-open';
 import type { ConduitMcpApi } from '../../webview/use-conduit-mcp';

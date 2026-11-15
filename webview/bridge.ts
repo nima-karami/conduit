@@ -1,4 +1,3 @@
-import { emptyPolicyUi } from '../src/conduit-mcp/ui-types';
 import { type ArchDoc, seedArchitecture } from '../src/architecture';
 import { type BoardData, seedBoard } from '../src/board';
 import { formatCommandLine } from '../src/command-line';
@@ -10,6 +9,7 @@ import {
   type McpInstallResult,
   type McpInstallStatus,
 } from '../src/conduit-mcp/install-types';
+import { emptyPolicyUi } from '../src/conduit-mcp/ui-types';
 import { type ContentSearchDeps, type Dirent, searchContent } from '../src/content-search';
 import type { DndOpts, DndResult } from '../src/fs-dnd';
 import type { ImportConflictPolicy, ImportResult } from '../src/fs-import';

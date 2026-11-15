@@ -21,6 +21,8 @@ import { readCappedBytes } from '../read-capped';
 import { COMMAND_AGENT_ID } from '../session-command';
 import { PTY_SETTLE_MS } from '../timed-messages';
 import type { AgentDefinition, SpawnSpec } from '../types';
+import type { ActivityIo } from './activity-log';
+import { createActivityIo } from './activity-log-fs';
 import {
   adapterFor,
   MCP_ADAPTERS,
@@ -32,12 +34,6 @@ import {
 import { agentListing } from './agent-listing';
 import { registeredIdFor } from './agent-resolve';
 import { createAppControlHandlers } from './app-control-tools';
-import { createActivityIo } from './activity-log-fs';
-import type { ActivityIo } from './activity-log';
-import { createPolicyService } from './policy-service';
-import { reasonText } from './policy-engine';
-import { resolveTargets } from './policy-targets';
-import type { AssignmentPoint, PolicyDecision, PolicyInput, Principal } from './policy-types';
 import { snapshotAttachment } from './attachments';
 import { type AttentionEvent, reduceAttention, youAttention } from './attention-items';
 import { askBudgetMs, createCallFlow } from './call-flow';
@@ -84,6 +80,10 @@ import {
 } from './notice-gate';
 import { composeUnreadBanner } from './notice-text';
 import { type AttentionRaise, bannerCandidates, createNotifier, type Notifier } from './notifier';
+import { reasonText } from './policy-engine';
+import { createPolicyService } from './policy-service';
+import { resolveTargets } from './policy-targets';
+import type { AssignmentPoint, PolicyDecision, PolicyInput, Principal } from './policy-types';
 import { createRequestsIo, type RequestsIo } from './request-file-fs';
 import { createRequestNotices } from './request-notices';
 import { createRequestService, type RequestService } from './request-service';
@@ -102,14 +102,14 @@ import {
 import { createMessageStore, type StoreIo } from './store';
 import { createFsStoreIo } from './store-fs';
 import {
+  CLI_KINDS,
+  type CliKind,
   coercePolicyPatch,
   gateToolCall,
   isMessagingTool,
   isRequestTool,
   isToolName,
   NOT_IN_SESSION_HINT,
-  CLI_KINDS,
-  type CliKind,
   type PolicySource,
   TOOL_NAMES,
   type ToolName,
@@ -1372,12 +1372,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
    * What a session's connection lists (spec 2026-10-27-conduit-mcp-control-tools §3.4): with the
    * master off, everything, so the CLI's calls get messaging_off rather than an unknown tool.
    */
-  const listedTools = (sessionId: string): readonly ToolName[] =>
-    deps.domain.messagingOn()
-      ? principalOf(sessionId)
-        ? policyService.visibleTools(principalOf(sessionId)!)
-        : []
-      : TOOL_NAMES;
+  const listedTools = (sessionId: string): readonly ToolName[] => {
+    if (!deps.domain.messagingOn()) return TOOL_NAMES;
+    const principal = principalOf(sessionId);
+    return principal ? policyService.visibleTools(principal) : [];
+  };
 
   type CallContext = ToolCallContext & { connId: number };
 

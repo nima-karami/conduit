@@ -1,10 +1,9 @@
 import type { AgentScopeReason } from './add-dir-delivery';
 import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
-import type { AnswerInput, RequestAnswerResult } from './conduit-mcp/request-types';
 import type { AssignmentPoint, ProfileId } from './conduit-mcp/policy-types';
-import type { CliKind } from './conduit-mcp/tool-policy';
-import type { PolicySource, ToolName, ToolPolicyPatch } from './conduit-mcp/tool-policy';
+import type { AnswerInput, RequestAnswerResult } from './conduit-mcp/request-types';
+import type { CliKind, PolicySource, ToolName, ToolPolicyPatch } from './conduit-mcp/tool-policy';
 import type { Handle, MessageKind, Priority, ToolErrorCode } from './conduit-mcp/types';
 import type {
   AskAnswer,

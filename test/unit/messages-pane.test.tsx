@@ -1,4 +1,3 @@
-import { emptyPolicyUi } from '../../src/conduit-mcp/ui-types';
 // @vitest-environment jsdom
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -10,6 +9,7 @@ import type {
   McpThreadView,
   McpUiState,
 } from '../../src/conduit-mcp/ui-types';
+import { emptyPolicyUi } from '../../src/conduit-mcp/ui-types';
 import type { Session } from '../../src/types';
 import { mcpInstallStatus } from '../../webview/bridge';
 import { MessagesPane, type MessagesPaneProps } from '../../webview/components/messages-pane';

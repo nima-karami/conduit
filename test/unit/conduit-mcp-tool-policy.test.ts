@@ -14,7 +14,6 @@ import {
   TOOL_GROUPS,
   TOOL_NAMES,
   TOOL_SPECS,
-  type ToolPolicy,
   withPolicyPatch,
 } from '../../src/conduit-mcp/tool-policy';
 
