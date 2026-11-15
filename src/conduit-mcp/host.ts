@@ -21,6 +21,8 @@ import { readCappedBytes } from '../read-capped';
 import { COMMAND_AGENT_ID } from '../session-command';
 import { PTY_SETTLE_MS } from '../timed-messages';
 import type { AgentDefinition, SpawnSpec } from '../types';
+import type { ActivityIo, ActivityOutcome } from './activity-log';
+import { createActivityIo } from './activity-log-fs';
 import {
   adapterFor,
   MCP_ADAPTERS,
@@ -78,7 +80,11 @@ import {
 } from './notice-gate';
 import { composeUnreadBanner } from './notice-text';
 import { type AttentionRaise, bannerCandidates, createNotifier, type Notifier } from './notifier';
-import { createRequestsIo } from './request-file-fs';
+import { reasonText } from './policy-engine';
+import { createPolicyService } from './policy-service';
+import { resolveTargets } from './policy-targets';
+import type { AssignmentPoint, PolicyDecision, PolicyInput, Principal } from './policy-types';
+import { createRequestsIo, type RequestsIo } from './request-file-fs';
 import { createRequestNotices } from './request-notices';
 import { createRequestService, type RequestService } from './request-service';
 import type { QuestionMessage, SessionNeedsYou } from './request-sources';
@@ -96,16 +102,18 @@ import {
 import { createMessageStore, type StoreIo } from './store';
 import { createFsStoreIo } from './store-fs';
 import {
+  CLI_KINDS,
+  type CliKind,
   coercePolicyPatch,
   gateToolCall,
   isMessagingTool,
   isRequestTool,
   isToolName,
   NOT_IN_SESSION_HINT,
-  type ResolvedPolicy,
-  resolvePolicy,
+  type PolicySource,
   TOOL_NAMES,
   type ToolName,
+  toolDisabled,
 } from './tool-policy';
 import { CONDUIT_INSTRUCTIONS, toolSchemas } from './tool-schemas';
 import { type Caller, createToolHandlers, type DirectoryEntry, toToolCallResult } from './tools';
@@ -182,6 +190,9 @@ export interface ConduitMcpHostDeps extends Omit<McpHostDeps, 'attention'> {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   storeIo?: StoreIo;
+  policyIo?: RequestsIo;
+  grantsIo?: RequestsIo;
+  activityIo?: ActivityIo;
   listen?: boolean;
   tickMs?: number;
   createEndpoint(opts: {
@@ -1215,18 +1226,60 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     control.prepared,
   );
 
-  /** Session > CLI kind (the persisted handle's prefix) > global, per field (spec §3.1). */
-  const resolveFor = (sessionId: string, tool: ToolName): ResolvedPolicy => {
-    const { global, byCli } = deps.domain.toolPolicy();
-    const session = deps.sessions.get(sessionId);
-    const handle = session?.mcpHandle;
-    return resolvePolicy(tool, {
-      session: session?.mcpToolPolicy,
-      cli: handle ? byCli[cliKindOfHandle(handle)] : undefined,
-      global,
-    });
+  const launchedCli = (sessionId: string): CliKind | null => {
+    const id = runtime.get(sessionId)?.defAdapter?.id;
+    return CLI_KINDS.find((kind) => kind === id) ?? null;
   };
-
+  const principalOf = (sessionId: string): Extract<Principal, { kind: 'session' }> | null => {
+    const session = deps.sessions.get(sessionId);
+    if (!session?.mcpHandle) return null;
+    return {
+      kind: 'session',
+      sessionId,
+      handle: session.mcpHandle,
+      launchedCli: launchedCli(sessionId),
+      homeFolder: session.home,
+      projectId: session.projectId ?? null,
+    };
+  };
+  const policyService = createPolicyService({
+    policyIo: deps.policyIo ?? createRequestsIo(path.join(deps.dir, 'policy.json')),
+    grantsIo: deps.grantsIo ?? createRequestsIo(path.join(deps.dir, 'grants.json')),
+    activityIo: deps.activityIo ?? createActivityIo(deps.dir),
+    now,
+    newId: () => randomBytes(12).toString('hex'),
+    ...requestTimers,
+    warn: (message, error) => deps.log.warn('conduit-mcp', message, { error: String(error) }),
+    legacy: () => ({
+      ...deps.domain.toolPolicy(),
+      sessions: deps.sessions.list().map((s) => ({
+        sessionId: s.id,
+        layer: s.mcpToolPolicy ?? {},
+        cli: s.mcpHandle ? cliKindOfHandle(s.mcpHandle) : null,
+      })),
+    }),
+    onChanged: () => {
+      syncToolLists();
+      scheduleBroadcast();
+    },
+  });
+  const validPoint = (point: unknown): point is AssignmentPoint => {
+    if (typeof point !== 'object' || point === null || !('kind' in point)) return false;
+    if (point.kind === 'default') return true;
+    if (point.kind === 'session')
+      return 'sessionId' in point && typeof point.sessionId === 'string';
+    if (point.kind === 'peer') return 'machineId' in point && typeof point.machineId === 'string';
+    return point.kind === 'cli' && 'cli' in point && CLI_KINDS.some((kind) => kind === point.cli);
+  };
+  const sourceOf = (decision: PolicyDecision): PolicySource => {
+    const reason = decision.reason;
+    if (!('point' in reason)) return 'global';
+    return reason.point.kind === 'session'
+      ? 'session'
+      : reason.point.kind === 'cli'
+        ? 'cli'
+        : 'global';
+  };
   const flow = createCallFlow({
     now,
     setTimer: deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms)),
@@ -1241,11 +1294,24 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     appConnected: () => deps.appConnected(),
     sendToOwner: (sessionId, msg) => sendToOwner(sessionId, msg),
     flashOwner: (sessionId) => flashOwner(sessionId),
-    resolve: (sessionId, tool) =>
-      deps.sessions.get(sessionId) ? resolveFor(sessionId, tool).policy : null,
+    stillVisible: (sessionId, tool) => {
+      const p = principalOf(sessionId);
+      return p !== null && policyService.visibleTools(p).includes(tool);
+    },
     messagingOn: () => deps.domain.messagingOn(),
-    setSessionPolicy: (sessionId, tool, patch) =>
-      deps.sessions.setMcpToolPolicy(sessionId, tool, patch),
+    grantAlways: (sessionId, tool) => {
+      const p = principalOf(sessionId);
+      return (
+        p !== null &&
+        policyService.createGrant(
+          { who: 'session', on: 'anywhere', for: 'session-end' },
+          p,
+          tool,
+          { sessionId: null, path: null, folder: null, projectId: null },
+          null,
+        ) !== null
+      );
+    },
     onPolicyWritten: () => {
       syncToolLists();
       scheduleBroadcast();
@@ -1307,10 +1373,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
    * What a session's connection lists (spec 2026-10-27-conduit-mcp-control-tools §3.4): with the
    * master off, everything, so the CLI's calls get messaging_off rather than an unknown tool.
    */
-  const listedTools = (sessionId: string): readonly ToolName[] =>
-    deps.domain.messagingOn()
-      ? TOOL_NAMES.filter((t) => resolveFor(sessionId, t).policy.access !== 'off')
-      : TOOL_NAMES;
+  const listedTools = (sessionId: string): readonly ToolName[] => {
+    if (!deps.domain.messagingOn()) return TOOL_NAMES;
+    const principal = principalOf(sessionId);
+    return principal ? policyService.visibleTools(principal) : [];
+  };
 
   type CallContext = ToolCallContext & { connId: number };
 
@@ -1328,6 +1395,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   ): Promise<ToolCallResult | null> => {
     // Before the first await: a notifications/cancelled read right after this line must find it.
     const inflight = flow.begin({ connId: ctx.connId, requestId: ctx.requestId });
+    const startedAt = now();
+    const evaluated: {
+      current: { input: Omit<PolicyInput, 'now'>; decision: PolicyDecision } | null;
+    } = { current: null };
     try {
       const handle = sessionId ? handleOf(sessionId) : undefined;
       const result = await (async (): Promise<Result<unknown> | null> => {
@@ -1335,7 +1406,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         if (!isToolName(name)) {
           return { ok: false, error: toolError('invalid_args', `unknown tool: ${name}`) };
         }
-        if (!sessionId || !handle) {
+        const principal = sessionId && handle ? principalOf(sessionId) : null;
+        if (!sessionId || !handle || principal === null) {
           return {
             ok: false,
             error: toolError(
@@ -1346,20 +1418,67 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             ),
           };
         }
-        const resolved = resolveFor(sessionId, name);
+        const rawArgs =
+          typeof args === 'object' && args !== null && !Array.isArray(args)
+            ? (args as Record<string, unknown>)
+            : {};
+        const targets = resolveTargets(
+          name,
+          rawArgs,
+          { sessionId, home: principal.homeFolder },
+          {
+            sessionByHandle: (ref) => {
+              const s = deps.sessions.get(ref) ?? deps.sessions.get(sessionOfHandle(ref) ?? '');
+              return s ? { id: s.id, cwd: s.home, projectId: s.projectId ?? null } : null;
+            },
+            childrenOf: (id) =>
+              deps.sessions
+                .list()
+                .filter((s) => s.openedBy?.sessionId === id)
+                .map((s) => ({ id: s.id, cwd: s.home, projectId: s.projectId ?? null })),
+            realPath: (p) => {
+              try {
+                return fs.realpathSync(p);
+              } catch (error) {
+                deps.log.warn('conduit-mcp', 'policy target realpath failed', {
+                  path: p,
+                  error: String(error),
+                });
+                return null;
+              }
+            },
+          },
+        );
+        const policyInput = {
+          principal,
+          tool: name,
+          targets,
+          masterOn: deps.domain.messagingOn(),
+          toYou:
+            name === 'request_input' ||
+            (name === 'send_message' &&
+              Array.isArray(rawArgs.to) &&
+              rawArgs.to.length > 0 &&
+              rawArgs.to.every((recipient) => recipient === HUMAN_HANDLE)),
+        };
+        const resolved = policyService.decide(policyInput);
+        evaluated.current = { input: policyInput, decision: resolved };
         const windowId = deps.ownerWindowOf(sessionId);
         const refused = gateToolCall({
           sessionId,
           messagingOn: deps.domain.messagingOn(),
           tool: name,
-          policy: resolved.policy,
+          decision: resolved,
           ownerReady: () => windowId !== null && deps.windowReady(windowId),
           onScreen: () => windowId !== null && deps.onScreen(windowId, sessionId),
           appConnected: deps.appConnected(),
         });
         if (refused) return { ok: false, error: refused };
         const caller = { handle, sessionId };
-        if (isRequestTool(name)) return runRequest(caller, name, args, ctx);
+        if (isRequestTool(name)) {
+          if (!policyService.commit(resolved)) return { ok: false, error: toolDisabled(name) };
+          return runRequest(caller, name, args, ctx);
+        }
         if (isMessagingTool(name)) {
           if (!store.available()) {
             return {
@@ -1367,11 +1486,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               error: toolError('store_unavailable', storeError ?? 'message store unavailable'),
             };
           }
+          if (!policyService.commit(resolved)) return { ok: false, error: toolDisabled(name) };
           return runMessaging(caller, name, args, ctx);
         }
         const controlCtx: ControlCallContext = {
-          move: resolved.policy.move,
-          reach: resolved.policy.reach,
+          move: resolved.rule.move ?? undefined,
+          reach: resolved.rule.reach ?? undefined,
           ui: (windowId, routedSessionId, action) =>
             flow.requestUi({
               inflight,
@@ -1387,8 +1507,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           kind: cliKindOfHandle(handle),
           wiredAtLaunch: wiredAtLaunch(sessionId),
           tool: name,
-          policy: resolved.policy,
-          source: resolved.source.access,
+          decision: resolved,
+          commit: () => policyService.commit(resolved),
+          source: sourceOf(resolved),
           args,
           prepare: () => prepareControl(caller, name, args, controlCtx),
         });
@@ -1402,6 +1523,45 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           ? { cancelled: true }
           : { ok: result.ok, ...(result.ok ? {} : { code: result.error.code }) }),
       });
+      const record = evaluated.current;
+      const value =
+        result?.ok && typeof result.value === 'object' && result.value !== null
+          ? result.value
+          : null;
+      const requestId =
+        name === 'request_input' &&
+        value &&
+        'request_id' in value &&
+        typeof value.request_id === 'string'
+          ? value.request_id
+          : null;
+      const decision = record?.decision;
+      const outcomeOfError = (code: string): ActivityOutcome => {
+        if (code === 'denied' || decision?.decision === 'deny') return 'denied';
+        if (code === 'approval_timeout') return 'expired';
+        return 'error';
+      };
+      const activityId = policyService.activity.record({
+        lane: 'conduit',
+        principal: { handle: handle ?? null, sessionId, machineId: null },
+        cli: sessionId ? launchedCli(sessionId) : null,
+        action: name,
+        target: record?.input.targets[0]?.path ?? record?.input.targets[0]?.sessionId ?? null,
+        summary: null,
+        decision: decision?.decision ?? null,
+        decidedBy: decision
+          ? reasonText(decision.reason, decision.decision, {
+              profileName: (id) => policyService.profileName(id) ?? id,
+              cliName: (kind) => kind,
+            })
+          : 'unknown',
+        outcome: cancelled ? 'withdrawn' : result.ok ? 'ok' : outcomeOfError(result.error.code),
+        durationMs: now() - startedAt,
+        requestId,
+        count: null,
+      });
+
+      if (record) policyService.noteDecision(activityId, record.input, record.decision);
       if (cancelled) return null;
       const built = toToolCallResult(result);
       const banner = unreadBannerFor(handle, name);
@@ -1793,6 +1953,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       awaitingApproval: flow.awaitingApproval(),
       waitingAsks: flow.waitingAskCount(),
       requests: requestService.ui(),
+      policy: policyService.ui(
+        deps.sessions.list().map((s) => ({ sessionId: s.id, launchedCli: launchedCli(s.id) })),
+      ),
     };
   }
 
@@ -2061,8 +2224,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       })();
       await startupSweep;
       if (stopped) return;
-      // Listening first: a launch wired before then would point its shim at nothing, and one
-      // wired while the store loads only meets store_unavailable, which it can retry.
+      // Policy first: a connection accepted before it is loaded would be judged on empty settings.
+      policyService.start();
+      // Listening before the store loads: a launch wired before then would point its shim at
+      // nothing, and one wired while the store loads only meets store_unavailable, which it can retry.
       // A listen that throws is a down endpoint like a refused one; either way the launches
       // waiting on it go now, as endpoint-down, rather than at the bound.
       try {
@@ -2274,6 +2439,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       flow.sessionGone(sessionId);
       sessionWaits.cancel((w) => w.caller.sessionId === sessionId);
       requestService.onSessionDeleted(sessionId);
+      policyService.sessionEnded(sessionId);
       const handle = handleOf(sessionId);
       sessionWaits.forget(sessionId, handle);
       // Awaited after the teardown: the caller removes the session as soon as this yields.
@@ -2424,11 +2590,92 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           // The renderer is never load-bearing: the patch is re-checked here.
           const patch = coercePolicyPatch(m.tool, m.patch);
           if (!patch) return refuse('invalid-value');
-          deps.sessions.setMcpToolPolicy(m.sessionId, m.tool, patch);
-          reply({ type: 'mcp:toolPolicyResult', requestId: m.requestId, ok: true });
+          const result = policyService.applyLegacyPatch(
+            { kind: 'session', sessionId: m.sessionId },
+            policyService.legacyLowerPoint(launchedCli(m.sessionId)),
+            m.tool,
+            patch,
+          );
+          reply({ type: 'mcp:toolPolicyResult', requestId: m.requestId, ...result });
           syncToolLists();
           flow.recheck();
           scheduleBroadcast();
+          return;
+        }
+        case 'mcp:setAssignment': {
+          if (!validPoint(m.point) || (m.profileId !== null && typeof m.profileId !== 'string')) {
+            reply({
+              type: 'mcp:policyResult',
+              requestId: m.requestId,
+              ok: false,
+              error: 'invalid-value',
+            });
+            return;
+          }
+          if (m.point.kind === 'session' && !deps.sessions.get(m.point.sessionId)) {
+            reply({
+              type: 'mcp:policyResult',
+              requestId: m.requestId,
+              ok: false,
+              error: 'unknown-session',
+            });
+            return;
+          }
+          const result = policyService.setAssignment(m.point, m.profileId);
+          reply({ type: 'mcp:policyResult', requestId: m.requestId, ...result });
+          flow.recheck();
+          return;
+        }
+        case 'mcp:setPointPolicy': {
+          if (
+            !validPoint(m.point) ||
+            (m.point.kind !== 'default' && m.point.kind !== 'cli') ||
+            !isToolName(m.tool)
+          ) {
+            reply({
+              type: 'mcp:policyResult',
+              requestId: m.requestId,
+              ok: false,
+              error: 'invalid-value',
+            });
+            return;
+          }
+          const patch = coercePolicyPatch(m.tool, m.patch);
+          if (!patch) {
+            reply({
+              type: 'mcp:policyResult',
+              requestId: m.requestId,
+              ok: false,
+              error: 'invalid-value',
+            });
+            return;
+          }
+          const result = policyService.applyLegacyPatch(
+            m.point,
+            m.point.kind === 'cli' ? { kind: 'default' } : null,
+            m.tool,
+            patch,
+          );
+          reply({ type: 'mcp:policyResult', requestId: m.requestId, ...result });
+          flow.recheck();
+          return;
+        }
+        case 'mcp:revokeGrant': {
+          const ok = typeof m.grantId === 'string' && policyService.revokeGrant(m.grantId);
+          reply(
+            ok
+              ? { type: 'mcp:policyResult', requestId: m.requestId, ok: true }
+              : { type: 'mcp:policyResult', requestId: m.requestId, ok: false, error: 'not-found' },
+          );
+          flow.recheck();
+          return;
+        }
+        case 'mcp:allowOnce': {
+          const result =
+            typeof m.activityId === 'string'
+              ? policyService.allowOnce(m.activityId)
+              : { ok: false as const, error: 'not-found' };
+          reply({ type: 'mcp:policyResult', requestId: m.requestId, ...result });
           return;
         }
         case 'mcp:askAnswer': {
@@ -2491,6 +2738,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       for (const c of conns.values()) c.close();
       notices.dispose();
       await requestService.stop();
+      await policyService.stop();
       const storeStopped = store.stop();
       await endpoint?.close();
       await startupSweep;

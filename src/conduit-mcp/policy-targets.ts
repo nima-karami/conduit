@@ -4,7 +4,7 @@ import type { PolicyTarget } from './policy-types';
 import type { ToolName } from './tool-policy';
 import { HUMAN_HANDLE } from './types';
 
-export interface TargetSession {
+export interface PolicyTargetSession {
   id: string;
   cwd: string | null;
   projectId: string | null;
@@ -12,8 +12,8 @@ export interface TargetSession {
 
 export interface TargetDeps {
   // Resolves a handle or a session id.
-  sessionByHandle(h: string): TargetSession | null;
-  childrenOf(sessionId: string): TargetSession[];
+  sessionByHandle(h: string): PolicyTargetSession | null;
+  childrenOf(sessionId: string): PolicyTargetSession[];
   realPath(p: string): string | null;
 }
 
@@ -29,14 +29,14 @@ const strings = (v: unknown): string[] =>
 
 const oneString = (v: unknown): string[] => (typeof v === 'string' ? [v] : []);
 
-const sessionTarget = (s: TargetSession): PolicyTarget => ({
+const sessionTarget = (s: PolicyTargetSession): PolicyTarget => ({
   sessionId: s.id,
   path: null,
   folder: s.cwd,
   projectId: s.projectId,
 });
 
-function sessionTargets(sessions: readonly TargetSession[]): PolicyTarget[] {
+function sessionTargets(sessions: readonly PolicyTargetSession[]): PolicyTarget[] {
   const seen = new Set<string>();
   const out: PolicyTarget[] = [];
   for (const s of sessions) {
@@ -47,8 +47,8 @@ function sessionTargets(sessions: readonly TargetSession[]): PolicyTarget[] {
   return out;
 }
 
-function handleRefs(handles: readonly string[], deps: TargetDeps): TargetSession[] {
-  const found: TargetSession[] = [];
+function handleRefs(handles: readonly string[], deps: TargetDeps): PolicyTargetSession[] {
+  const found: PolicyTargetSession[] = [];
   for (const h of handles) {
     const s = deps.sessionByHandle(h);
     if (s !== null) found.push(s);

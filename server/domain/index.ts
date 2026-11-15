@@ -1660,7 +1660,6 @@ export function createDomain(deps: DomainDeps): Domain {
     get: (id) => mgr.get(id),
     list: () => mgr.list(),
     setMcp: (id, patch) => mgr.setMcp(id, patch),
-    setMcpToolPolicy: (id, tool, patch) => mgr.setMcpToolPolicy(id, tool, patch),
     touch: (id, minIntervalMs) => mgr.touch(id, minIntervalMs),
     setStatus: (id, value) => mgr.setStatus(id, value),
     onChange: (listener) => mgr.onChange(listener),

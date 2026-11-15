@@ -14,7 +14,6 @@ import {
   TOOL_GROUPS,
   TOOL_NAMES,
   TOOL_SPECS,
-  type ToolPolicy,
   withPolicyPatch,
 } from '../../src/conduit-mcp/tool-policy';
 
@@ -233,6 +232,19 @@ describe('layers', () => {
 });
 
 describe('gateToolCall (spec §3.3 steps 1–5)', () => {
+  it('refuses a policy engine denial', () => {
+    expect(
+      gateToolCall({
+        sessionId: 's1',
+        messagingOn: true,
+        tool: 'open_file',
+        decision: { decision: 'deny', rule: { when: 'viewing', reach: null, move: null } },
+        ownerReady: () => true,
+        onScreen: () => true,
+        appConnected: true,
+      })?.code,
+    ).toBe('tool_disabled');
+  });
   it.each(['open_session', 'open_terminal', 'close_session', 'attach_folder'] as const)(
     '%s with on/viewing runs windowless without consulting visibility',
     (tool) => {
@@ -241,7 +253,7 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
           sessionId: 's1',
           messagingOn: true,
           tool,
-          policy: { access: 'on', when: 'viewing' },
+          decision: makeDecision('on', 'viewing'),
           ownerReady: () => false,
           onScreen: () => false,
           appConnected: true,
@@ -249,12 +261,24 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
       ).toBeNull();
     },
   );
-  const on: ToolPolicy = { access: 'on', when: 'viewing' };
+  const makeDecision = (
+    access: 'on' | 'off' | 'ask',
+    when: 'viewing' | 'always' | null = null,
+  ) => ({
+    decision:
+      access === 'on'
+        ? ('allow' as const)
+        : access === 'off'
+          ? ('deny' as const)
+          : ('ask' as const),
+    rule: { when, reach: null, move: null },
+  });
+  const on = makeDecision('on', 'viewing');
   const base = {
     sessionId: 's1' as string | null,
     messagingOn: true,
     tool: 'open_file' as const,
-    policy: on,
+    decision: on,
     ownerReady: () => true,
     onScreen: () => true,
     appConnected: true,
@@ -267,10 +291,10 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
     expect(gateToolCall({ ...base, sessionId: null, messagingOn: false })?.code).toBe(
       'not_in_session',
     );
-    expect(gateToolCall({ ...base, messagingOn: false, policy: { access: 'off' } })?.code).toBe(
+    expect(gateToolCall({ ...base, messagingOn: false, decision: makeDecision('off') })?.code).toBe(
       'messaging_off',
     );
-    const off = gateToolCall({ ...base, policy: { access: 'off' }, ownerReady: throws });
+    const off = gateToolCall({ ...base, decision: makeDecision('off'), ownerReady: throws });
     expect(off?.code).toBe('tool_disabled');
     expect(off?.message).toContain('open_file');
     expect(off?.message).not.toContain('Settings');
@@ -279,14 +303,14 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
     expect(notReady?.retryable).toBe(true);
     expect(gateToolCall({ ...base, onScreen: () => false })?.code).toBe('caller_not_visible');
     expect(
-      gateToolCall({ ...base, policy: { access: 'on', when: 'always' }, onScreen: () => false }),
+      gateToolCall({ ...base, decision: makeDecision('on', 'always'), onScreen: () => false }),
     ).toBeNull();
-    expect(gateToolCall({ ...base, policy: { access: 'ask', when: 'viewing' } })).toBeNull();
+    expect(gateToolCall({ ...base, decision: makeDecision('ask', 'viewing') })).toBeNull();
     expect(
       gateToolCall({
         ...base,
         tool: 'send_message',
-        policy: { access: 'on' },
+        decision: makeDecision('on'),
         ownerReady: throws,
         onScreen: throws,
       }),
@@ -300,7 +324,7 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
           sessionId: 's1',
           messagingOn: true,
           tool,
-          policy: { access: 'on' },
+          decision: makeDecision('on'),
           ownerReady: () => false,
           onScreen: () => false,
           appConnected: true,
@@ -314,7 +338,7 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
       gateToolCall({
         ...base,
         tool: 'open_session',
-        policy: { access: 'ask', when: 'always' },
+        decision: makeDecision('ask', 'always'),
         ownerReady: () => false,
         appConnected: false,
       }),
@@ -326,7 +350,7 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
       gateToolCall({
         ...base,
         tool: 'open_file',
-        policy: { access: 'ask', when: 'always' },
+        decision: makeDecision('ask', 'always'),
         ownerReady: () => false,
         appConnected: false,
       })?.code,
@@ -338,7 +362,7 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
       gateToolCall({
         ...base,
         tool: 'open_session',
-        policy: { access: 'ask', when: 'viewing' },
+        decision: makeDecision('ask', 'viewing'),
         ownerReady: () => false,
         appConnected: false,
       })?.code,
@@ -350,7 +374,7 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
       gateToolCall({
         ...base,
         tool: 'list_agents',
-        policy: { access: 'on' },
+        decision: makeDecision('on'),
         ownerReady: () => false,
       }),
     ).toBeNull();
@@ -358,7 +382,6 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
       gateToolCall({
         ...base,
         tool: 'open_session',
-        policy: { access: 'on', when: 'viewing' },
         ownerReady: () => false,
       }),
     ).toBeNull();
@@ -366,7 +389,6 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
       gateToolCall({
         ...base,
         tool: 'close_session',
-        policy: { access: 'on', when: 'viewing' },
         ownerReady: () => true,
         onScreen: () => false,
       })?.code,
@@ -381,7 +403,7 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
       gateToolCall({
         ...base,
         tool: 'open_session',
-        policy: { access: 'ask', when: 'viewing' },
+        decision: makeDecision('ask', 'viewing'),
         ownerReady: () => false,
       })?.code,
     ).toBe('window_not_ready');

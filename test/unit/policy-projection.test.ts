@@ -5,7 +5,11 @@ import {
   profileById,
   WORKER_PROFILE,
 } from '../../src/conduit-mcp/policy-profiles';
-import { applyLegacyPatch, projectLegacyLayer } from '../../src/conduit-mcp/policy-projection';
+import {
+  applyLegacyPatch,
+  legacyLowerPoint,
+  projectLegacyLayer,
+} from '../../src/conduit-mcp/policy-projection';
 import type {
   Assignment,
   AssignmentPoint,
@@ -291,5 +295,19 @@ describe('applyLegacyPatch', () => {
         access: 'off',
       }),
     ).toBeNull();
+  });
+});
+
+describe('legacyLowerPoint', () => {
+  const CLAUDE_POINT: AssignmentPoint = { kind: 'cli', cli: 'claude' };
+
+  it('a session launched by claude lowers onto the claude cli point when that point has an assignment', () => {
+    const state = stateOf([[CLAUDE_POINT, WORKER_PLAIN]]);
+    expect(legacyLowerPoint(state, 'claude')).toEqual(CLAUDE_POINT);
+  });
+
+  it('a session launched by claude with no claude cli assignment lowers onto the default', () => {
+    const state = stateOf([[{ kind: 'cli', cli: 'codex' }, WORKER_PLAIN]]);
+    expect(legacyLowerPoint(state, 'claude')).toEqual(DEFAULT);
   });
 });

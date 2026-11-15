@@ -9,6 +9,7 @@ import type {
   McpThreadView,
   McpUiState,
 } from '../../src/conduit-mcp/ui-types';
+import { emptyPolicyUi } from '../../src/conduit-mcp/ui-types';
 import type { Session } from '../../src/types';
 import { mcpInstallStatus } from '../../webview/bridge';
 import { MessagesPane, type MessagesPaneProps } from '../../webview/components/messages-pane';
@@ -81,6 +82,7 @@ function uiState(o: Partial<McpUiState> = {}): McpUiState {
     notConnected: {},
     awaitingApproval: [],
     waitingAsks: 0,
+    policy: emptyPolicyUi(),
     requests: {
       open: [],
       ended: [],

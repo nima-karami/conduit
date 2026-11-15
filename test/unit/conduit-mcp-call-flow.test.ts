@@ -11,12 +11,8 @@ import {
 } from '../../src/conduit-mcp/call-flow';
 import type { Prepared, PreparedCall } from '../../src/conduit-mcp/control-tools';
 import type { JsonRpcId } from '../../src/conduit-mcp/json-rpc';
-import type {
-  CliKind,
-  ToolName,
-  ToolPolicy,
-  ToolPolicyPatch,
-} from '../../src/conduit-mcp/tool-policy';
+import type { PolicyDecision } from '../../src/conduit-mcp/policy-types';
+import type { CliKind, ToolName } from '../../src/conduit-mcp/tool-policy';
 import type { Result } from '../../src/conduit-mcp/types';
 import {
   MAX_CLOSE_RESULTS,
@@ -26,8 +22,17 @@ import {
 import type { HostToWebview } from '../../src/protocol';
 
 const CALLER = 'caller-1';
-const ASK: ToolPolicy = { access: 'ask', when: 'viewing', move: 'yes' };
-const ON: ToolPolicy = { access: 'on', when: 'viewing', move: 'yes' };
+const ASK: PolicyDecision = {
+  decision: 'ask',
+  reason: { by: 'profile', point: { kind: 'default' }, profileId: 'worker' },
+  rule: { when: 'viewing', move: 'yes', reach: null },
+  grantId: null,
+  overrideId: null,
+  grantIds: [],
+  overrideIds: [],
+  deniedTarget: null,
+};
+const ON: PolicyDecision = { ...ASK, decision: 'allow' };
 
 /** A deferred: `hold()` returns a promise the test releases with `go()`. */
 function gate() {
@@ -55,12 +60,12 @@ function setup() {
   let ask = 0;
   const sent: Array<{ to: string; msg: HostToWebview }> = [];
   const flashed: string[] = [];
-  const writes: Array<{ id: string; tool: ToolName; patch: ToolPolicyPatch }> = [];
+  const writes: Array<{ id: string; tool: ToolName }> = [];
   const owners = new Map<string, number | null>([
     [CALLER, 1],
     ['caller-2', 2],
   ]);
-  const policies = new Map<string, ToolPolicy>([
+  const policies = new Map<string, PolicyDecision>([
     [CALLER, ASK],
     ['caller-2', ASK],
   ]);
@@ -87,11 +92,11 @@ function setup() {
     appConnected: () => state.appUp,
     sendToOwner: (to, msg) => sent.push({ to, msg }),
     flashOwner: (id) => flashed.push(id),
-    resolve: (id) => policies.get(id) ?? null,
+    stillVisible: (id) => policies.has(id) && policies.get(id)?.decision !== 'deny',
     messagingOn: () => state.messagingOn,
-    setSessionPolicy: (id, tool, patch) => {
+    grantAlways: (id, tool) => {
       if (!policies.has(id)) return false;
-      writes.push({ id, tool, patch });
+      writes.push({ id, tool });
       return true;
     },
     onPolicyWritten: () => state.policyWritten++,
@@ -116,12 +121,13 @@ function setup() {
   const call = (
     o: {
       caller?: string;
-      policy?: ToolPolicy;
+      policy?: PolicyDecision;
       requestId?: JsonRpcId | null;
       connId?: number;
       prepareGate?: ReturnType<typeof gate>;
       runGate?: ReturnType<typeof gate>;
       prepareResult?: Result<Prepared<string>>;
+      commitResult?: boolean;
       kind?: CliKind;
       wiredAtLaunch?: boolean;
       routesUi?: boolean;
@@ -131,6 +137,8 @@ function setup() {
     } = {},
   ) => {
     const spies = { run: 0, release: 0 };
+    const commits = { n: 0 };
+    const events: string[] = [];
     let inflightRef: InFlight | null = null;
     const prepared: PreparedCall<string> = {
       summary: { tool: 'open_session', path: '/repo', agent: 'claude', focus: true },
@@ -138,6 +146,7 @@ function setup() {
       alwaysAsk: o.alwaysAsk ?? false,
       run: async () => {
         spies.run++;
+        events.push('run');
         if (o.runGate) await o.runGate.hold();
         if (o.runBody && inflightRef) return o.runBody(inflightRef);
         return { ok: true, value: 'opened' };
@@ -158,7 +167,12 @@ function setup() {
       kind: o.kind ?? 'claude',
       wiredAtLaunch: o.wiredAtLaunch ?? false,
       tool: 'open_session',
-      policy: o.policy ?? policies.get(caller) ?? ASK,
+      decision: o.policy ?? policies.get(caller) ?? ASK,
+      commit: () => {
+        commits.n++;
+        events.push('commit');
+        return o.commitResult ?? true;
+      },
       source: 'global',
       args: { path: '/repo', agent: 'claude' },
       prepare: async () => {
@@ -173,7 +187,7 @@ function setup() {
       inflight.end();
       return r;
     });
-    return { promise, out, spies, inflight };
+    return { promise, out, spies, inflight, commits, events };
   };
   const asks = () =>
     sent.filter(
@@ -283,7 +297,7 @@ describe('createCallFlow', () => {
     const onOn = t.call({ policy: ON, prepareResult: { ok: true, value: { done } } });
     expect(await onOn.promise).toEqual(done);
     const off = t.call({
-      policy: { ...ASK, access: 'off' },
+      policy: { ...ASK, decision: 'deny' },
       prepareResult: { ok: true, value: { done } },
     });
     expect(await off.promise).toEqual({
@@ -427,7 +441,7 @@ describe('createCallFlow', () => {
     await t.flush();
     answerLast(t, t.flow, 'always');
     expect(await c.promise).toEqual({ ok: true, value: 'opened' });
-    expect(t.writes).toEqual([{ id: CALLER, tool: 'open_session', patch: { access: 'on' } }]);
+    expect(t.writes).toEqual([{ id: CALLER, tool: 'open_session' }]);
     expect(t.state.policyWritten).toBe(1);
     expect(c.spies.run).toBe(1);
   });
@@ -461,6 +475,79 @@ describe('createCallFlow', () => {
     t.call({ caller: 'caller-2' });
     await t.flush();
     expect(t.asks()).toHaveLength(4);
+  });
+
+  it('an allowed call commits once, before it runs', async () => {
+    const t = setup();
+    const c = t.call({ policy: ON });
+    expect(await c.promise).toEqual({ ok: true, value: 'opened' });
+    expect(c.commits.n).toBe(1);
+    expect(c.events).toEqual(['commit', 'run']);
+  });
+
+  it('an ask commits once when its card is raised, and an approved run does not commit again', async () => {
+    const t = setup();
+    const c = t.call();
+    await t.flush();
+    expect(c.commits.n).toBe(1);
+    answerLast(t, t.flow, 'approve');
+    expect(await c.promise).toEqual({ ok: true, value: 'opened' });
+    expect(c.commits.n).toBe(1);
+    expect(c.events).toEqual(['commit', 'run']);
+  });
+
+  it('a call refused before its card or run never commits', async () => {
+    const t = setup();
+    for (let i = 0; i < MAX_ASKS_PER_CALLER; i++) t.call();
+    await t.flush();
+    const rateLimited = t.call();
+    expect(errCode(await rateLimited.promise)).toBe('rate_limited');
+    expect(rateLimited.commits.n).toBe(0);
+
+    const denied = t.call({ policy: { ...ASK, decision: 'deny' } });
+    expect(errCode(await denied.promise)).toBe('tool_disabled');
+    expect(denied.commits.n).toBe(0);
+
+    const prepareFailed = t.call({
+      prepareResult: {
+        ok: false,
+        error: { code: 'path_missing', message: 'no such path', retryable: false },
+      },
+    });
+    expect(errCode(await prepareFailed.promise)).toBe('path_missing');
+    expect(prepareFailed.commits.n).toBe(0);
+
+    const fresh = setup();
+    fresh.owners.set(CALLER, null);
+    const notReady = fresh.call();
+    expect(errCode(await notReady.promise)).toBe('window_not_ready');
+    expect(notReady.commits.n).toBe(0);
+  });
+
+  it('a done answer commits when the decision is not deny, and a deny never does', async () => {
+    const t = setup();
+    const done: Result<string> = { ok: true, value: 'answered' };
+    const on = t.call({ policy: ON, prepareResult: { ok: true, value: { done } } });
+    expect(await on.promise).toEqual(done);
+    expect(on.commits.n).toBe(1);
+    const off = t.call({
+      policy: { ...ASK, decision: 'deny' },
+      prepareResult: { ok: true, value: { done } },
+    });
+    expect(errCode(await off.promise)).toBe('tool_disabled');
+    expect(off.commits.n).toBe(0);
+  });
+
+  it('a commit that finds its override spent runs nothing and refuses as tool_disabled', async () => {
+    const t = setup();
+    const allowed = t.call({ policy: ON, commitResult: false });
+    expect(errCode(await allowed.promise)).toBe('tool_disabled');
+    expect(allowed.spies).toEqual({ run: 0, release: 1 });
+
+    const asked = t.call({ commitResult: false });
+    expect(errCode(await asked.promise)).toBe('tool_disabled');
+    expect(asked.spies).toEqual({ run: 0, release: 1 });
+    expect(t.asks()).toEqual([]);
   });
 
   it('no owner window → window_not_ready, released', async () => {
@@ -561,7 +648,7 @@ describe('createCallFlow', () => {
     t.flow.recheck();
     await t.flush();
     expect([a.out.done, b.out.done]).toEqual([false, false]);
-    t.policies.set(CALLER, { ...ASK, access: 'off' });
+    t.policies.set(CALLER, { ...ASK, decision: 'deny' });
     t.flow.recheck();
     expect(errCode(await a.promise)).toBe('cancelled');
     await t.flush();

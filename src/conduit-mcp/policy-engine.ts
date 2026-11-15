@@ -254,7 +254,7 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
     reason,
     strictest.rule,
     strictest.effective === 'allow' ? grantIds : [],
-    overrideIds,
+    strictest.effective === 'deny' ? [] : overrideIds,
   );
 }
 
@@ -275,12 +275,31 @@ function isDeniedForEveryTarget(
   now: number,
 ): boolean {
   if (principal.kind === 'remote' && !remoteAllows(principal, tool)) return true;
+  if (principal.kind === 'session' && (tool === 'send_message' || tool === 'request_input'))
+    return false;
+  // see POL §4.3 (T2.3 ruling)
+  const narrowerAllows = assignment.exceptions.some(
+    (e) =>
+      e.tool === tool &&
+      e.scope.kind !== 'anywhere' &&
+      e.rule.decision !== undefined &&
+      e.rule.decision !== 'deny',
+  );
+  if (
+    !narrowerAllows &&
+    assignment.exceptions.some(
+      (e) => e.tool === tool && e.scope.kind === 'anywhere' && e.rule.decision === 'deny',
+    )
+  ) {
+    return (
+      principal.kind !== 'session' ||
+      !state.overrides.some((o) => o.sessionId === principal.sessionId && o.tool === tool)
+    );
+  }
   if (profile.rules[tool].decision !== 'deny') return false;
   const settingExceptions = assignment.exceptions.filter(
     (e) => e.tool === tool && e.rule.decision !== undefined,
   );
-  if (principal.kind === 'session' && (tool === 'send_message' || tool === 'request_input'))
-    return false;
   if (settingExceptions.some((e) => e.rule.decision !== 'deny')) return false;
   return !state.grants.some(
     (g) => isLiveGrant(g, now) && g.tool === tool && whoMatches(g.who, principal),

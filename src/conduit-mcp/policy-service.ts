@@ -22,12 +22,15 @@ import {
 } from './policy-file';
 import { type LegacyPolicy, migrateLegacyPolicy } from './policy-migration';
 import { BUILT_IN_PROFILES, pointKey, profileById, WORKER_PROFILE } from './policy-profiles';
-import { applyLegacyPatch as applyLegacyPatchPure, projectLegacyLayer } from './policy-projection';
+import {
+  applyLegacyPatch as applyLegacyPatchPure,
+  legacyLowerPoint,
+  projectLegacyLayer,
+} from './policy-projection';
 import type {
   Assignment,
   AssignmentPoint,
   Grant,
-  OneUseOverride,
   PolicyDecision,
   PolicyInput,
   PolicyState,
@@ -63,6 +66,7 @@ export interface PolicyService {
   start(): void;
   stop(): Promise<void>;
   decide(input: Omit<PolicyInput, 'now'>): PolicyDecision;
+  commit(decision: PolicyDecision): boolean;
   noteDecision(activityId: string, input: Omit<PolicyInput, 'now'>, decision: PolicyDecision): void;
   visibleTools(p: Principal): ToolName[];
   setAssignment(
@@ -91,10 +95,11 @@ export interface PolicyService {
   ui(
     sessions: ReadonlyArray<{
       sessionId: string;
-      handleCli: CliKind | null;
       launchedCli: CliKind | null;
     }>,
   ): PolicyUiState;
+  legacyLowerPoint(launchedCli: CliKind | null): AssignmentPoint;
+  profileName(id: ProfileId): string | null;
 }
 
 const WRITE_COALESCE_MS = 250;
@@ -354,7 +359,13 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     },
 
     decide(input) {
-      const decision = decideEngine(stateNow(), { ...input, now: deps.now() });
+      return decideEngine(stateNow(), { ...input, now: deps.now() });
+    },
+
+    commit(decision) {
+      // A concurrent call decided on the same override; the first commit spent it.
+      const saved = new Set(file.overrides.map((o) => o.id));
+      if (decision.overrideIds.some((id) => !saved.has(id))) return false;
       if (decision.grantIds.length > 0) {
         for (const id of decision.grantIds) grants.touch(id);
         markGrants();
@@ -363,8 +374,9 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
         const used = new Set(decision.overrideIds);
         file.overrides = file.overrides.filter((o) => !used.has(o.id));
         markPolicy();
+        deps.onChanged();
       }
-      return decision;
+      return true;
     },
 
     noteDecision(activityId, input, decision) {
@@ -384,6 +396,14 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
 
     visibleTools(p) {
       return visibleEngine(stateNow(), p, deps.now());
+    },
+
+    legacyLowerPoint(launchedCli) {
+      return legacyLowerPoint(stateNow(), launchedCli);
+    },
+
+    profileName(id) {
+      return profileById(stateNow(), id)?.name ?? null;
     },
 
     setAssignment(point, profileId) {
@@ -465,6 +485,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
           },
         ];
         markPolicy();
+        deps.onChanged();
       }
       return { ok: true };
     },
@@ -515,15 +536,10 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
           source,
           label: isPlain ? null : `${profile.name}${exceptions ? ` +${exceptions}` : ''}`,
         };
-        const lower: AssignmentPoint =
-          row.handleCli !== null &&
-          st.assignments.has(pointKey({ kind: 'cli', cli: row.handleCli }))
-            ? { kind: 'cli', cli: row.handleCli }
-            : { kind: 'default' };
         sessionLegacy[row.sessionId] = projectLegacyLayer(
           st,
           { kind: 'session', sessionId: row.sessionId },
-          lower,
+          legacyLowerPoint(st, row.launchedCli),
         );
       }
       const byCli: CliPolicyLayers = {};

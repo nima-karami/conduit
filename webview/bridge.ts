@@ -9,6 +9,7 @@ import {
   type McpInstallResult,
   type McpInstallStatus,
 } from '../src/conduit-mcp/install-types';
+import { emptyPolicyUi } from '../src/conduit-mcp/ui-types';
 import { type ContentSearchDeps, type Dirent, searchContent } from '../src/content-search';
 import type { DndOpts, DndResult } from '../src/fs-dnd';
 import type { ImportConflictPolicy, ImportResult } from '../src/fs-import';
@@ -675,6 +676,7 @@ function mockHost(msg: WebviewToHost) {
           notConnected: {},
           awaitingApproval: [],
           waitingAsks: 0,
+          policy: emptyPolicyUi(),
           requests: {
             open: [],
             ended: [],

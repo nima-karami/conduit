@@ -51,7 +51,7 @@ const session = (over: Partial<Extract<Principal, { kind: 'session' }>> = {}): P
   projectId: 'p1',
   ...over,
 });
-const sessionRow = (sessionId: string) => ({ sessionId, handleCli: null, launchedCli: null });
+const sessionRow = (sessionId: string) => ({ sessionId, launchedCli: null });
 
 const policyText = (over: Partial<PolicyFile> = {}): string =>
   serializePolicyFile({
@@ -194,6 +194,60 @@ beforeEach(() => {
 });
 
 describe('policy service', () => {
+  it.each([{ launchedCli: null }, { launchedCli: 'codex' as const }])(
+    'projects session overrides against the launched CLI ($launchedCli)',
+    (row) => {
+      const h = harness({
+        policy: policyText({
+          assignments: [
+            {
+              point: { kind: 'cli', cli: 'claude' },
+              assignment: { profileId: 'observer', exceptions: [], onScreenOnly: false },
+            },
+            {
+              point: { kind: 'cli', cli: 'codex' },
+              assignment: { profileId: 'worker', exceptions: [], onScreenOnly: false },
+            },
+            {
+              point: { kind: 'session', sessionId: 's1' },
+              assignment: { profileId: 'worker', exceptions: [], onScreenOnly: false },
+            },
+          ],
+        }),
+      });
+      h.service.start();
+      expect(h.service.ui([{ sessionId: 's1', ...row }]).legacy.sessions.s1).toEqual({});
+    },
+  );
+
+  it("the launched CLI projection lowers onto that CLI's assignment when it differs from default", () => {
+    const observer = { profileId: 'observer' as const, exceptions: [], onScreenOnly: false };
+    const worker = { profileId: 'worker' as const, exceptions: [], onScreenOnly: false };
+    const viaCli = harness({
+      policy: policyText({
+        assignments: [
+          { point: { kind: 'cli', cli: 'claude' }, assignment: observer },
+          { point: { kind: 'session', sessionId: 's1' }, assignment: worker },
+        ],
+      }),
+    });
+    viaCli.service.start();
+    const viaDefault = harness({
+      policy: policyText({
+        assignments: [
+          { point: { kind: 'default' }, assignment: observer },
+          { point: { kind: 'session', sessionId: 's1' }, assignment: worker },
+        ],
+      }),
+    });
+    viaDefault.service.start();
+
+    const layer = viaCli.service.ui([{ sessionId: 's1', launchedCli: 'claude' }]).legacy.sessions
+      .s1;
+    expect(Object.keys(layer ?? {}).length).toBeGreaterThan(0);
+    expect(layer).toEqual(viaDefault.service.ui([sessionRow('s1')]).legacy.sessions.s1);
+  });
+
   it('rejects a legacy patch for a scoped assignment without changing or writing policy', async () => {
     const h = harness({
       policy: policyText({
@@ -306,7 +360,7 @@ describe('policy service', () => {
     expect(h.policyWrites).toEqual([]);
   });
 
-  it('decide touches every matched grant and consumes an override', async () => {
+  it('commit touches every matched grant and consumes an override; decide alone changes neither', async () => {
     const exception: Exception = {
       tool: 'open_session',
       scope: { kind: 'session', sessionId: 's9' },
@@ -349,8 +403,12 @@ describe('policy service', () => {
     });
     expect(used.decision).toBe('allow');
     expect(used.grantIds).toEqual(['g-s2', 'g-s3']);
-    const touched = h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt]);
-    expect(touched).toEqual([
+    expect(h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt])).toEqual([
+      ['g-s2', null],
+      ['g-s3', null],
+    ]);
+    h.service.commit(used);
+    expect(h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt])).toEqual([
       ['g-s2', iso(h.now())],
       ['g-s3', iso(h.now())],
     ]);
@@ -366,6 +424,7 @@ describe('policy service', () => {
       decision: 'allow',
       reason: { by: 'override', overrideId: 'o1' },
     });
+    h.service.commit(passed);
 
     const again = h.service.decide({
       principal: session(),
@@ -451,11 +510,59 @@ describe('policy service', () => {
     h.service.noteDecision(activityId, input, denied);
 
     expect(h.service.allowOnce(activityId)).toEqual({ ok: true });
-    expect(h.service.decide(input)).toMatchObject({
+    const passed = h.service.decide(input);
+    expect(passed).toMatchObject({
       decision: 'allow',
       reason: { by: 'override' },
     });
+    h.service.commit(passed);
     expect(h.service.decide(input).decision).toBe('deny');
+  });
+
+  it('allowOnce fires onChanged once when it saves an override, so tool lists re-sync', () => {
+    const exception: Exception = {
+      tool: 'open_session',
+      scope: { kind: 'anywhere' },
+      rule: { decision: 'deny' },
+    };
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: { profileId: 'worker', exceptions: [exception], onScreenOnly: false },
+          },
+        ],
+      }),
+    });
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_session' as const,
+      targets: [target({ path: '/work/app/x' })],
+      masterOn: true,
+      toYou: false,
+    };
+    const denied = h.service.decide(input);
+    const activityId = h.service.activity.record({
+      lane: 'conduit',
+      principal: { handle: 'alpha', sessionId: 's1', machineId: null },
+      cli: null,
+      action: 'open_session',
+      target: null,
+      summary: null,
+      decision: 'deny',
+      decidedBy: 'policy',
+      outcome: 'denied',
+      durationMs: null,
+      requestId: null,
+      count: null,
+    });
+    h.service.noteDecision(activityId, input, denied);
+
+    const before = h.changed();
+    expect(h.service.allowOnce(activityId)).toEqual({ ok: true });
+    expect(h.changed()).toBe(before + 1);
   });
 
   it('allowOnce on a floor deny → not-overridable', () => {
@@ -978,7 +1085,7 @@ describe('policy service', () => {
     expect(saved.ok && saved.file.overrides).toHaveLength(1);
   });
 
-  it('decide consumes every override the call passed', async () => {
+  it('commit consumes every override the call passed', async () => {
     const folderDeny = (path: string): Exception => ({
       tool: 'open_file',
       scope: { kind: 'folder', path },
@@ -1017,7 +1124,9 @@ describe('policy service', () => {
       masterOn: true,
       toYou: false,
     };
-    expect(h.service.decide(input)).toMatchObject({ decision: 'allow', overrideIds: ['oa', 'ob'] });
+    const passed = h.service.decide(input);
+    expect(passed).toMatchObject({ decision: 'allow', overrideIds: ['oa', 'ob'] });
+    h.service.commit(passed);
     expect(h.service.decide(input).decision).toBe('deny');
     h.fire(WRITE_MS);
     await h.service.stop();
@@ -1025,7 +1134,156 @@ describe('policy service', () => {
     expect(saved.ok && saved.file.overrides).toEqual([]);
   });
 
-  it('consumes a passed override when another target asks', () => {
+  it('a second commit of an already spent override is refused and touches no grant', () => {
+    const exception: Exception = {
+      tool: 'open_session',
+      scope: { kind: 'session', sessionId: 's9' },
+      rule: { decision: 'deny' },
+    };
+    const override: OneUseOverride = {
+      id: 'o1',
+      sessionId: 's1',
+      tool: 'open_session',
+      target: target({ sessionId: 's9' }),
+      createdAt: iso(T0),
+    };
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: { profileId: 'worker', exceptions: [exception], onScreenOnly: false },
+          },
+        ],
+        overrides: [override],
+      }),
+      grants: serializeGrantsFile({
+        version: 1,
+        grants: [grant({ id: 'g-s2', on: { kind: 'session', sessionId: 's2' } })],
+      }),
+    });
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_session' as const,
+      targets: [target({ sessionId: 's9' }), target({ sessionId: 's2' })],
+      masterOn: true,
+      toYou: false,
+    };
+    const first = h.service.decide(input);
+    const second = h.service.decide(input);
+    expect(first).toMatchObject({ decision: 'allow', overrideIds: ['o1'], grantIds: ['g-s2'] });
+    expect(second).toMatchObject({ decision: 'allow', overrideIds: ['o1'], grantIds: ['g-s2'] });
+
+    expect(h.service.commit(first)).toBe(true);
+    const afterFirst = h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt]);
+    h.advance(MIN);
+    expect(h.service.commit(second)).toBe(false);
+    expect(h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt])).toEqual(afterFirst);
+    expect(h.service.decide(input).decision).toBe('deny');
+  });
+
+  it('decide changes nothing; commit removes an override once and fires onChanged only then', () => {
+    const override: OneUseOverride = {
+      id: 'oa',
+      sessionId: 's1',
+      tool: 'open_file',
+      target: target({ path: '/w/a/x.ts', folder: '/w/a' }),
+      createdAt: iso(T0),
+    };
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: {
+              profileId: 'worker',
+              onScreenOnly: false,
+              exceptions: [
+                {
+                  tool: 'open_file',
+                  scope: { kind: 'folder', path: '/w/a' },
+                  rule: { decision: 'deny' },
+                },
+              ],
+            },
+          },
+        ],
+        overrides: [override],
+      }),
+    });
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_file' as const,
+      targets: [target({ path: '/w/a/x.ts', folder: '/w/a' })],
+      masterOn: true,
+      toYou: false,
+    };
+    const before = h.changed();
+    const first = h.service.decide(input);
+    expect(first).toMatchObject({ decision: 'allow', overrideIds: ['oa'] });
+    expect(h.service.decide(input)).toMatchObject({ decision: 'allow', overrideIds: ['oa'] });
+    expect(h.changed()).toBe(before);
+
+    h.service.commit(first);
+    expect(h.changed()).toBe(before + 1);
+    h.service.commit(first);
+    expect(h.changed()).toBe(before + 1);
+    expect(h.service.decide(input).decision).toBe('deny');
+  });
+
+  it('retains a passed override when another target is denied by the profile', async () => {
+    const override: OneUseOverride = {
+      id: 'oa',
+      sessionId: 's1',
+      tool: 'open_file',
+      target: target({ path: '/w/a/x.ts', folder: '/w/a' }),
+      createdAt: iso(T0),
+    };
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: {
+              profileId: 'observer',
+              onScreenOnly: false,
+              exceptions: [
+                {
+                  tool: 'open_file',
+                  scope: { kind: 'folder', path: '/w/a' },
+                  rule: { decision: 'deny' },
+                },
+              ],
+            },
+          },
+        ],
+        overrides: [override],
+      }),
+    });
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_file' as const,
+      targets: [
+        target({ path: '/w/a/x.ts', folder: '/w/a' }),
+        target({ path: '/w/b/y.ts', folder: '/w/b' }),
+      ],
+      masterOn: true,
+      toYou: false,
+    };
+    expect(h.service.decide(input)).toMatchObject({ decision: 'deny', overrideIds: [] });
+    expect(h.service.setAssignment({ kind: 'session', sessionId: 's1' }, 'worker')).toEqual({
+      ok: true,
+    });
+    h.fire(WRITE_MS);
+    await h.service.stop();
+    const saved = parsePolicyFile(h.policyWrites.at(-1) ?? '');
+    expect(saved.ok && saved.file.overrides).toEqual([override]);
+  });
+
+  it('commit consumes a passed override when another target asks', () => {
     const h = harness({
       policy: policyText({
         assignments: [
@@ -1071,7 +1329,9 @@ describe('policy service', () => {
       masterOn: true,
       toYou: false,
     };
-    expect(h.service.decide(input)).toMatchObject({ decision: 'ask', overrideIds: ['oa'] });
+    const asked = h.service.decide(input);
+    expect(asked).toMatchObject({ decision: 'ask', overrideIds: ['oa'] });
+    h.service.commit(asked);
     expect(h.service.decide(input).decision).toBe('deny');
   });
 
