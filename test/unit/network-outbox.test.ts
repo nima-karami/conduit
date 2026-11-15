@@ -194,12 +194,19 @@ describe('outbox file', () => {
 
   it('serializes as versioned JSON with a trailing newline', () => {
     expect(serializeOutboxFile(sample)).toBe(
-      `${JSON.stringify({ version: 1, entries: sample })}\n`,
+      `${JSON.stringify({ version: 2, entries: sample })}\n`,
     );
   });
 
+  it('loads entries without attachment references from version 1', () => {
+    expect(parseOutboxFile(JSON.stringify({ version: 1, entries: sample }))).toEqual({
+      kind: 'ok',
+      entries: sample,
+    });
+  });
+
   it('a newer version is newer', () => {
-    expect(parseOutboxFile(JSON.stringify({ version: 2, entries: sample }))).toEqual({
+    expect(parseOutboxFile(JSON.stringify({ version: 3, entries: sample }))).toEqual({
       kind: 'newer',
     });
   });

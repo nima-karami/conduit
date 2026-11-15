@@ -2644,16 +2644,19 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     networkPort: (): McpNetworkPort => ({
       localDirectory: () => directory(),
       hasMessage: (id) => store.has(id),
+      readBlob: (sha256) => store.readBlob(sha256),
       deliverInbound,
       setRemoteStatus: async (messageId, address, status) => {
         // 'queued' is the state a remote recipient starts in, so there is nothing to record.
         if (status === 'queued') return;
         const r = await store.setStatus(messageId, address, status);
-        if (!r.ok)
+        if (!r.ok) {
           deps.log.warn('conduit-mcp', 'remote status not stored', {
             messageId,
             code: r.error.code,
           });
+          if (r.error.code !== 'not_found') throw new Error(r.error.message);
+        }
       },
       // The store reports which recipient moved; only origin records are of interest here.
       onLocalStatus: (listener) =>
