@@ -3799,6 +3799,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     h.toOwner.flatMap((s) => (s.msg.type === 'mcp:ask' ? [{ to: s.to, ...s.msg }] : []));
   const closedOf = (h: Harness) =>
     h.toOwner.flatMap((s) => (s.msg.type === 'mcp:askClosed' ? [s.msg] : []));
+  const askIdOf = (h: Harness, n = 1) => asksOf(h)[n - 1]?.askId ?? '';
   const answer = (h: Harness, askId: string, a: 'approve' | 'deny' | 'always', senderId = 1) =>
     h.host.handleRenderer({ type: 'mcp:askAnswer', askId, answer: a }, () => undefined, senderId);
   const OPEN = { path: '/w', agent: 'e2e-fake-mcp' };
@@ -4429,7 +4430,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     one.c.cancel(1);
     await until(() => closedOf(one.h).length === 1);
     expect(closedOf(one.h)).toEqual([
-      { type: 'mcp:askClosed', askId: 'ask-1', outcome: 'cancelled' },
+      { type: 'mcp:askClosed', askId: askIdOf(one.h), outcome: 'cancelled' },
     ]);
     await one.c.barrier(2);
     expect(one.c.lines.some((l) => l.id === 1)).toBe(false);
@@ -4494,7 +4495,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     await c.barrier(2);
     await other.barrier(3);
     expect(closedOf(h)).toEqual([]);
-    await answer(h, 'ask-1', 'approve');
+    await answer(h, askIdOf(h), 'approve');
     expect(c.errorOf(await c.reply(1))).toBe('ok');
   });
 
@@ -4518,7 +4519,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       end(h);
       expect(c.errorOf(await c.reply(1))).toBe('cancelled');
       expect(closedOf(h)).toEqual([
-        { type: 'mcp:askClosed', askId: 'ask-1', outcome: 'cancelled' },
+        { type: 'mcp:askClosed', askId: askIdOf(h), outcome: 'cancelled' },
       ]);
       expect(h.opens).toEqual([]);
     }
@@ -4584,7 +4585,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       () => undefined,
       1,
     );
-    expect(c.errorOf(await c.reply(1))).toBe('cancelled');
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
   });
 
   it("a waiting ask doesn't block another call on the same connection", async () => {
@@ -4605,10 +4606,10 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     c.call(2, 'open_session', OPEN);
     await until(() => asksOf(h).length === 2);
     expect(h.host.uiState().awaitingApproval).toEqual(['s1']);
-    await answer(h, 'ask-1', 'deny');
+    await answer(h, askIdOf(h, 1), 'deny');
     expect(c.errorOf(await c.reply(1))).toBe('denied');
     expect(h.host.uiState().awaitingApproval).toEqual(['s1']);
-    await answer(h, 'ask-2', 'always');
+    await answer(h, askIdOf(h, 2), 'always');
     expect(c.errorOf(await c.reply(2))).toBe('ok');
     expect(h.host.uiState().policy.grants).toMatchObject([
       {
@@ -4640,11 +4641,35 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       const { h, c } = await asking({ activityIo: activityIoRecording(rows) });
       c.call(1, 'open_session', OPEN);
       await until(() => asksOf(h).length === 1);
-      await answer(h, 'ask-1', 'deny');
+      await answer(h, askIdOf(h), 'deny');
       expect(c.errorOf(await c.reply(1))).toBe('denied');
       expect(rows.filter((r) => r.action === 'open_session').map((r) => r.outcome)).toEqual([
+        'asked',
         'denied',
       ]);
+    });
+
+    it('the ask and its answer are linked by request id; raw args go only to ask-args', async () => {
+      const rows: Array<Record<string, unknown>> = [];
+      const argsWrites: string[] = [];
+      const io: ActivityIo = {
+        ...activityIoRecording(rows),
+        writeArgs: (text) => {
+          argsWrites.push(text);
+        },
+      };
+      const { h, c } = await asking({ activityIo: io });
+      c.call(1, 'open_session', OPEN);
+      await until(() => asksOf(h).length === 1);
+      const askId = askIdOf(h);
+      await answer(h, askId, 'deny');
+      expect(c.errorOf(await c.reply(1))).toBe('denied');
+      expect(rows.filter((r) => r.requestId === askId).map((r) => r.outcome)).toEqual([
+        'asked',
+        'denied',
+      ]);
+      expect(JSON.stringify(rows)).not.toContain('e2e-fake-mcp');
+      expect(argsWrites.join('')).toContain('e2e-fake-mcp');
     });
 
     it('a card nobody answers in time is recorded as expired', async () => {
@@ -4658,6 +4683,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       h.advance(10 * 60_000);
       expect(c.errorOf(await c.reply(1))).toBe('approval_timeout');
       expect(rows.filter((r) => r.action === 'open_session').map((r) => r.outcome)).toEqual([
+        'asked',
         'expired',
       ]);
     });
@@ -4698,6 +4724,263 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(writes.join('')).not.toContain('ghost');
   });
 
+  it('a waiting permission ask counts once in waitingAsks and awaitingApproval, and stays out of requests.open', async () => {
+    const { h, c } = await asking();
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    const ui = h.host.uiState();
+    expect(ui.waitingAsks).toBe(1);
+    expect(ui.awaitingApproval).toEqual(['s1']);
+    expect(ui.requests.open).toEqual([]);
+    await answer(h, askIdOf(h), 'deny');
+    await c.reply(1);
+  });
+
+  const setDefaultAccess = (h: Harness, tool: string, access: 'ask' | 'on' | 'off') =>
+    h.host.handleRenderer(
+      {
+        type: 'mcp:setPointPolicy',
+        requestId: 90,
+        point: { kind: 'default' },
+        tool,
+        patch: { access },
+      } as McpRendererMessage,
+      () => undefined,
+      1,
+    );
+  const grantPaths = (h: Harness) => h.host.uiState().policy.grants.map((g) => g.on);
+
+  it('a target grant on a two-target open_file makes one grant per target, live and late', async () => {
+    const kinds = {
+      '/w': 'dir' as const,
+      '/w/a.ts': 'file' as const,
+      '/w/b.ts': 'file' as const,
+      '/w/c.ts': 'file' as const,
+      '/w/d.ts': 'file' as const,
+    };
+    const { h, c } = await asking({ kinds, manualTimers: true });
+    await setDefaultAccess(h, 'open_file', 'ask');
+    c.call(1, 'open_file', { paths: ['/w/a.ts', '/w/b.ts'] });
+    await until(() => asksOf(h).length === 1);
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:permissionAnswer',
+        requestId: askIdOf(h, 1),
+        answer: { outcome: 'allowed', grant: { who: 'session', on: 'target', for: '1h' } },
+      },
+      () => undefined,
+      1,
+    );
+    expect(grantPaths(h)).toMatchObject([
+      { kind: 'path', path: '/w/a.ts' },
+      { kind: 'path', path: '/w/b.ts' },
+    ]);
+
+    c.call(2, 'open_file', { paths: ['/w/c.ts', '/w/d.ts'] });
+    await until(() => asksOf(h).length === 2);
+    h.advance(10 * 60_000);
+    const replies: HostToWebview[] = [];
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:permissionAnswer',
+        requestId: askIdOf(h, 2),
+        answer: { outcome: 'allowed', grant: { who: 'session', on: 'target', for: '1h' } },
+      },
+      (m) => replies.push(m),
+      1,
+    );
+    expect(replies).toEqual([{ type: 'mcp:permissionResult', requestId: askIdOf(h, 2), ok: true }]);
+    expect(grantPaths(h)).toMatchObject([
+      { kind: 'path', path: '/w/a.ts' },
+      { kind: 'path', path: '/w/b.ts' },
+      { kind: 'path', path: '/w/c.ts' },
+      { kind: 'path', path: '/w/d.ts' },
+    ]);
+  });
+
+  it('a target grant on open_url, which has no target, refuses the answer and the ask keeps waiting', async () => {
+    const { h, c } = await asking({ manualTimers: true });
+    await setDefaultAccess(h, 'open_url', 'ask');
+    c.call(1, 'open_url', { url: 'https://example.com/' });
+    await until(() => asksOf(h).length === 1);
+    const requestId = askIdOf(h);
+    const replies: HostToWebview[] = [];
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:permissionAnswer',
+        requestId,
+        answer: { outcome: 'allowed', grant: { who: 'session', on: 'target', for: '1h' } },
+      },
+      (m) => replies.push(m),
+      1,
+    );
+    expect(replies).toEqual([
+      {
+        type: 'mcp:permissionResult',
+        requestId,
+        ok: false,
+        reason: 'invalid_answer',
+        message: "that scope isn't available for every target",
+      },
+    ]);
+    expect(closedOf(h)).toEqual([]);
+    expect(asksOf(h)).toHaveLength(1);
+    expect(grantPaths(h)).toEqual([]);
+  });
+
+  it('a folder grant on a single-target open_session makes one folder grant', async () => {
+    const { h, c } = await asking({ manualTimers: true });
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:permissionAnswer',
+        requestId: askIdOf(h),
+        answer: { outcome: 'allowed', grant: { who: 'session', on: 'folder', for: '1h' } },
+      },
+      () => undefined,
+      1,
+    );
+    expect(grantPaths(h)).toMatchObject([{ kind: 'folder' }]);
+    expect(grantPaths(h)).toHaveLength(1);
+  });
+
+  it('a late grant from a sender with no known window is refused and leaves no grant', async () => {
+    const { h, c } = await asking({ manualTimers: true });
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    const requestId = askIdOf(h);
+    h.advance(10 * 60_000);
+    expect(c.errorOf(await c.reply(1))).toBe('approval_timeout');
+    const replies: HostToWebview[] = [];
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:permissionAnswer',
+        requestId,
+        answer: {
+          outcome: 'allowed',
+          grant: { who: 'session', on: 'anywhere', for: 'session-end' },
+        },
+      },
+      (m) => replies.push(m),
+      0,
+    );
+    expect(replies).toMatchObject([{ ok: false, reason: 'not_answerable' }]);
+    expect(grantPaths(h)).toEqual([]);
+  });
+
+  it('a late grant on an expired card creates the grant, never runs the call, and the requester is told it can retry', async () => {
+    const { h, c } = await asking({ manualTimers: true });
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    const requestId = askIdOf(h);
+    h.advance(10 * 60_000);
+    expect(c.errorOf(await c.reply(1))).toBe('approval_timeout');
+    const replies: HostToWebview[] = [];
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:permissionAnswer',
+        requestId,
+        answer: {
+          outcome: 'allowed',
+          grant: { who: 'session', on: 'anywhere', for: 'session-end' },
+        },
+      },
+      (m) => replies.push(m),
+      1,
+    );
+    expect(replies).toEqual([{ type: 'mcp:permissionResult', requestId, ok: true }]);
+    expect(h.host.uiState().policy.grants).toMatchObject([
+      { tool: 'open_session', who: { kind: 'session', sessionId: 's1' }, on: { kind: 'anywhere' } },
+    ]);
+    expect(h.opens).toEqual([]);
+    let notice = '';
+    for (let id = 2; id < 30 && !notice.includes('You can retry open_session now'); id++) {
+      c.call(id, 'read_inbox');
+      await c.barrier(id);
+      notice = JSON.stringify(c.lines.filter((l) => l.id === id).at(-1) ?? null);
+      await new Promise((r) => setImmediate(r));
+    }
+    expect(notice).toContain('You can retry open_session now');
+    expect(h.opens).toEqual([]);
+  });
+
+  it('an assignment to Observer while a card waits ends it withdrawn with the policy reason; the call is tool_disabled', async () => {
+    const { h, c } = await asking();
+    const replies: HostToWebview[] = [];
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    const requestId = askIdOf(h);
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:setAssignment',
+        requestId: 9,
+        point: { kind: 'session', sessionId: 's1' },
+        profileId: 'observer',
+      },
+      (m) => replies.push(m),
+      1,
+    );
+    const reply = await c.reply(1);
+    expect(c.errorOf(reply)).toBe('tool_disabled');
+    expect(closedOf(h)).toEqual([
+      { type: 'mcp:askClosed', askId: requestId, outcome: 'cancelled' },
+    ]);
+    await h.host.handleRenderer(
+      { type: 'mcp:permissionAnswer', requestId, answer: { outcome: 'denied' } },
+      (m) => replies.push(m),
+      1,
+    );
+    expect(replies.at(-1)).toMatchObject({ ok: false, reason: 'already_ended' });
+  });
+
+  it('mcp:permissionAnswer from a window that does not own the ask is refused; the owner window answers', async () => {
+    const { h, c } = await asking();
+    const replies: HostToWebview[] = [];
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    const requestId = askIdOf(h);
+    await h.host.handleRenderer(
+      { type: 'mcp:permissionAnswer', requestId, answer: { outcome: 'denied' } },
+      (m) => replies.push(m),
+      2,
+    );
+    expect(replies.at(-1)).toMatchObject({
+      type: 'mcp:permissionResult',
+      ok: false,
+      reason: 'not_answerable',
+    });
+    expect(closedOf(h)).toEqual([]);
+    await h.host.handleRenderer(
+      { type: 'mcp:permissionAnswer', requestId, answer: { outcome: 'denied' } },
+      (m) => replies.push(m),
+      1,
+    );
+    expect(replies.at(-1)).toEqual({ type: 'mcp:permissionResult', requestId, ok: true });
+    expect(c.errorOf(await c.reply(1))).toBe('denied');
+  });
+
+  it('mcp:permissionAnswer answers a waiting ask with mcp:permissionResult; a bad answer leaves it waiting', async () => {
+    const { h, c } = await asking();
+    const replies: HostToWebview[] = [];
+    const post = (msg: unknown) =>
+      h.host.handleRenderer(msg as McpRendererMessage, (m) => replies.push(m), 1);
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    const askId = askIdOf(h);
+    await post({ type: 'mcp:permissionAnswer', requestId: askId, answer: { outcome: 'approved' } });
+    expect(replies.at(-1)).toMatchObject({
+      type: 'mcp:permissionResult',
+      requestId: askId,
+      ok: false,
+      reason: 'invalid_answer',
+    });
+    expect(closedOf(h)).toEqual([]);
+    await post({ type: 'mcp:permissionAnswer', requestId: askId, answer: { outcome: 'denied' } });
+    expect(replies.at(-1)).toEqual({ type: 'mcp:permissionResult', requestId: askId, ok: true });
+    expect(c.errorOf(await c.reply(1))).toBe('denied');
+  });
+
   it('mcp:revokeGrant and mcp:setAssignment answer with mcp:policyResult', async () => {
     const { h, c } = await asking();
     const post = async (msg: unknown) => {
@@ -4707,7 +4990,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     };
     c.call(1, 'open_session', OPEN);
     await until(() => asksOf(h).length === 1);
-    await answer(h, 'ask-1', 'always');
+    await answer(h, askIdOf(h, 1), 'always');
     expect(c.errorOf(await c.reply(1))).toBe('ok');
     const [grant] = h.host.uiState().policy.grants;
     expect(await post({ type: 'mcp:revokeGrant', requestId: 1, grantId: 'missing' })).toEqual([
@@ -4719,7 +5002,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(h.host.uiState().policy.grants).toMatchObject([{ id: grant.id, state: 'revoked' }]);
     c.call(2, 'open_session', OPEN);
     await until(() => asksOf(h).length === 2);
-    await answer(h, 'ask-2', 'deny');
+    await answer(h, askIdOf(h, 2), 'deny');
     expect(c.errorOf(await c.reply(2))).toBe('denied');
 
     const point = { kind: 'session', sessionId: 's1' };

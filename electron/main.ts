@@ -4097,6 +4097,7 @@ app.whenReady().then(() => {
         case 'mcp:askAnswer':
         case 'mcp:uiResult':
         case 'mcp:requestAnswer':
+        case 'mcp:permissionAnswer':
         case 'mcp:setAway': {
           const r = await callServer('mcp.fromRenderer', { windowId: senderId, message: m });
           if (r.reply) replyHere(r.reply);

@@ -237,6 +237,26 @@ describe('request file', () => {
     expect(parsed.dropped).toBe(2);
   });
 
+  it('a policy source must be a permission, and a permission must come from policy', () => {
+    const permission = { tool: 'send_message' as const, why: 'x', targets: [], lateGrant: null };
+    const policyConfirm: Record<string, unknown> = {
+      ...record({ source: 'policy', kind: 'confirm' }),
+    };
+    const agentPermission: Record<string, unknown> = {
+      ...record({ source: 'agent', kind: 'permission', permission }),
+    };
+    const parsed = parseRequestsFile(
+      JSON.stringify({
+        version: 1,
+        requests: [policyConfirm, agentPermission],
+        presence: EMPTY.presence,
+      }),
+      NOW,
+    );
+    expect(parsed.file.requests).toEqual([]);
+    expect(parsed.dropped).toBe(2);
+  });
+
   it('a persisted grant with an extra key is kept on read', () => {
     const stored: Record<string, unknown> = {
       ...record({

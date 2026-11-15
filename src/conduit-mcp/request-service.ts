@@ -1,3 +1,4 @@
+import type { PermissionAnswer } from './policy-types';
 import {
   type CreateInput,
   parseListRequests,
@@ -17,9 +18,12 @@ import {
   type SourceAction,
 } from './request-sources';
 import {
+  type AnsweredBy,
+  type AnswerInput,
   type HumanPresence,
   isVisibleRequest,
   type ListRequestsOutput,
+  type PermissionAnswerResult,
   type RequestAnswer,
   type RequestAnswerOut,
   type RequestAnswerResult,
@@ -36,10 +40,14 @@ import {
   requestWaitMs,
 } from './request-waits';
 import type { Caller } from './tools';
-import { type Result, toolError } from './types';
+import { type Handle, type Result, toolError } from './types';
 import type { CallKey } from './window-waits';
 
 export const PERSIST_COALESCE_MS = 250;
+
+export type PermissionFields = Pick<RequestRecord, 'title' | 'body' | 'permission'> & {
+  requester: Handle;
+};
 
 export interface RequestServiceDeps {
   io: RequestsIo;
@@ -55,6 +63,11 @@ export interface RequestServiceDeps {
   onChanged(): void;
   onNew(r: RequestRecord): void;
   replyToQuestion(r: RequestRecord, text: string): Promise<boolean>;
+  onPermissionAnswer(
+    r: RequestRecord,
+    a: PermissionAnswer,
+    by: AnsweredBy,
+  ): Promise<PermissionAnswerResult>;
   scheduler: {
     resumeNow(sessionId: string): Promise<boolean>;
     autoResumeOn(sessionId: string): boolean;
@@ -97,6 +110,20 @@ export interface RequestService {
   purge(): void;
   ui(): RequestsUiState;
   presence(): HumanPresence;
+  createPermission(sessionId: string, fields: PermissionFields, expiresAt: string): RequestRecord;
+  endPermission(
+    id: string,
+    end: 'answered' | 'withdrawn',
+    answer: AnswerInput | null,
+    reason: string | null,
+    by: AnsweredBy,
+  ): void;
+  answerPermission(
+    requestId: string,
+    answer: unknown,
+    by: AnsweredBy,
+  ): Promise<PermissionAnswerResult>;
+  answerLate(requestId: string, grantId: string): PermissionAnswerResult;
 }
 
 interface Timer {
@@ -126,10 +153,23 @@ const outputOf = (r: RequestRecord): RequestCallOutput => {
   };
 };
 
+// A permission's late grant is the one answer the requester's inbox hears about.
 const isAgentEnd = (r: RequestRecord): boolean =>
-  r.source === 'agent' && (r.state === 'answered' || r.state === 'expired');
+  r.permission !== null
+    ? r.state === 'expired' && r.permission.lateGrant !== null
+    : r.source === 'agent' && (r.state === 'answered' || r.state === 'expired');
 
 const iso = (ms: number): string => new Date(ms).toISOString();
+
+const toPermissionAnswer = (a: AnswerInput): PermissionAnswer | null => {
+  if (a.outcome === 'allowed') {
+    return a.grant === undefined ? { outcome: 'allowed' } : { outcome: 'allowed', grant: a.grant };
+  }
+  if (a.outcome === 'denied') {
+    return a.reason === undefined ? { outcome: 'denied' } : { outcome: 'denied', reason: a.reason };
+  }
+  return null;
+};
 
 export function createRequestService(deps: RequestServiceDeps): RequestService {
   let writable = true;
@@ -153,7 +193,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
   const visibleOnly = (rs: RequestRecord[]): VisibleRequestRecord[] =>
     rs.flatMap((r) => (isVisibleRequest(r) ? [r] : []));
 
-  const isAgentRecord = (r: RequestRecord): boolean => r.source !== 'policy';
+  const isNonPolicy = (r: RequestRecord): boolean => r.source !== 'policy';
 
   const markDirty = (): void => {
     if (!writable) return;
@@ -392,7 +432,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     const parsed = parseListRequests(args);
     if (!parsed.ok) return parsed;
     const requests = queue
-      .bySession(sessionId, parsed.value.state, parsed.value.limit, isAgentRecord)
+      .bySession(sessionId, parsed.value.state, parsed.value.limit, isNonPolicy)
       .flatMap((r) => (isVisibleRequest(r) ? [r] : []))
       .map((r) => ({
         request_id: r.id,
@@ -641,6 +681,63 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
 
     presence() {
       return presence;
+    },
+    createPermission(sessionId, fields, expiresAt) {
+      return queue.createBound(
+        { requester: fields.requester, ...deps.stampOf(sessionId) },
+        { title: fields.title, body: fields.body, permission: fields.permission },
+        expiresAt,
+      );
+    },
+
+    endPermission(id, end, answer, reason, by) {
+      if (end === 'answered') {
+        const res = queue.answer(id, answer, by);
+        if (!res.ok) deps.warn('a permission could not be answered', { id, reason: res.reason });
+        return;
+      }
+      queue.withdraw(id, 'conduit', reason);
+    },
+
+    answerLate(requestId, grantId) {
+      const res = queue.answerLate(requestId, grantId);
+      if (!res.ok) return { ok: false, reason: res.reason, message: res.message };
+      void deliverOne(requestId);
+      return { ok: true };
+    },
+
+    async answerPermission(requestId, answer, by) {
+      const r = queue.get(requestId);
+      if (r === undefined)
+        return { ok: false, reason: 'not_found', message: `no request ${requestId}` };
+      if (r.permission === null) {
+        return {
+          ok: false,
+          reason: 'not_answerable',
+          message: 'only permission requests are answered here',
+        };
+      }
+      const checked = validateAnswer(r, answer);
+      if (!checked.ok) {
+        return { ok: false, reason: 'invalid_answer', message: checked.error.message };
+      }
+      const lateGrant =
+        r.state === 'expired' &&
+        r.permission.lateGrant === null &&
+        checked.value.outcome === 'allowed' &&
+        checked.value.grant !== undefined;
+      if (r.state !== 'open' && !lateGrant) {
+        return {
+          ok: false,
+          reason: 'already_ended',
+          message: `request ${requestId} already ${r.state}`,
+        };
+      }
+      const a = toPermissionAnswer(checked.value);
+      if (a === null) {
+        return { ok: false, reason: 'invalid_answer', message: 'not an answer to a permission' };
+      }
+      return deps.onPermissionAnswer(r, a, by);
     },
   };
 }

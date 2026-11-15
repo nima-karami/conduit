@@ -1,18 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import {
+  type AnswerDecision,
   ASK_TIMEOUT_MS,
   askBudgetMs,
   type CallFlow,
   type ControlCall,
   createCallFlow,
+  type GrantOutcome,
   type InFlight,
   MAX_ASKS_PER_CALLER,
+  NO_OWNER_WINDOW,
+  type PermissionEnd,
+  type PermissionRaise,
   UI_TIMEOUT_MS,
 } from '../../src/conduit-mcp/call-flow';
 import type { Prepared, PreparedCall } from '../../src/conduit-mcp/control-tools';
+import type { GrantChoice } from '../../src/conduit-mcp/grant-store';
 import type { JsonRpcId } from '../../src/conduit-mcp/json-rpc';
-import type { PolicyDecision } from '../../src/conduit-mcp/policy-types';
-import type { CliKind, ToolName } from '../../src/conduit-mcp/tool-policy';
+import type { OneUseOverride, PolicyDecision } from '../../src/conduit-mcp/policy-types';
+import type { CliKind } from '../../src/conduit-mcp/tool-policy';
 import type { Result } from '../../src/conduit-mcp/types';
 import {
   MAX_CLOSE_RESULTS,
@@ -33,6 +39,14 @@ const ASK: PolicyDecision = {
   deniedTarget: null,
 };
 const ON: PolicyDecision = { ...ASK, decision: 'allow' };
+const HELD: OneUseOverride = {
+  id: 'ov-held',
+  sessionId: CALLER,
+  tool: 'open_session',
+  target: { sessionId: null, path: null, folder: null, projectId: null },
+  createdAt: '2026-11-15T00:00:00.000Z',
+};
+const ALWAYS_GRANT: GrantChoice = { who: 'session', on: 'anywhere', for: 'session-end' };
 
 /** A deferred: `hold()` returns a promise the test releases with `go()`. */
 function gate() {
@@ -60,7 +74,12 @@ function setup() {
   let ask = 0;
   const sent: Array<{ to: string; msg: HostToWebview }> = [];
   const flashed: string[] = [];
-  const writes: Array<{ id: string; tool: ToolName }> = [];
+  const permissions: PermissionRaise[] = [];
+  const settled: PermissionEnd[] = [];
+  const reDecides: string[][] = [];
+  const grants: Array<{ choice: GrantChoice; requestId: string }> = [];
+  const answerCommits: string[][] = [];
+  let perm = 0;
   const owners = new Map<string, number | null>([
     [CALLER, 1],
     ['caller-2', 2],
@@ -72,7 +91,9 @@ function setup() {
   const state = {
     messagingOn: true,
     appUp: true,
-    policyWritten: 0,
+    redecide: { kind: 'ready' } as AnswerDecision,
+    grantOutcome: 'made' as GrantOutcome,
+    commitOk: true,
     awaitingChanged: 0,
     sendThrows: false,
   };
@@ -94,12 +115,13 @@ function setup() {
     flashOwner: (id) => flashed.push(id),
     stillVisible: (id) => policies.has(id) && policies.get(id)?.decision !== 'deny',
     messagingOn: () => state.messagingOn,
-    grantAlways: (id, tool) => {
-      if (!policies.has(id)) return false;
-      writes.push({ id, tool });
-      return true;
+    openPermission: (r) => {
+      permissions.push(r);
+      return `perm-${++perm}`;
     },
-    onPolicyWritten: () => state.policyWritten++,
+    settlePermission: (e) => {
+      settled.push(e);
+    },
     onAwaitingChanged: () => state.awaitingChanged++,
     sendToWindow: (windowId, msg) => {
       if (state.sendThrows) throw new Error('render frame disposed');
@@ -129,6 +151,11 @@ function setup() {
       prepareResult?: Result<Prepared<string>>;
       commitResult?: boolean;
       commitTo?: PolicyDecision;
+      held?: OneUseOverride[];
+      redecide?: AnswerDecision;
+      denyReason?: string;
+      grantOutcome?: GrantOutcome;
+      commitOk?: boolean;
       kind?: CliKind;
       wiredAtLaunch?: boolean;
       routesUi?: boolean;
@@ -174,7 +201,21 @@ function setup() {
         commits.n++;
         events.push('commit');
         if (o.commitResult === false) return null;
-        return o.commitTo ?? decision;
+        return { decision: o.commitTo ?? decision, held: o.held ?? [] };
+      },
+      permission: { why: 'the policy asks', targets: [] },
+      denyReason: () => o.denyReason ?? null,
+      reDecide: (held) => {
+        reDecides.push(held.map((h) => h.id));
+        return o.redecide ?? state.redecide;
+      },
+      grant: (choice, requestId) => {
+        grants.push({ choice, requestId });
+        return o.grantOutcome ?? state.grantOutcome;
+      },
+      commitAnswered: (held) => {
+        answerCommits.push(held.map((h) => h.id));
+        return o.commitOk ?? state.commitOk;
       },
       source: 'global',
       args: { path: '/repo', agent: 'claude' },
@@ -208,7 +249,11 @@ function setup() {
     asks,
     closed,
     flashed,
-    writes,
+    permissions,
+    settled,
+    reDecides,
+    grants,
+    answerCommits,
     owners,
     policies,
     state,
@@ -270,7 +315,7 @@ describe('createCallFlow', () => {
         to: CALLER,
         msg: {
           type: 'mcp:ask',
-          askId: 'ask-1',
+          askId: 'perm-1',
           callerSessionId: CALLER,
           callerHandle: `claude-${CALLER}`,
           tool: 'open_session',
@@ -365,7 +410,7 @@ describe('createCallFlow', () => {
     t.advance(ASK_TIMEOUT_MS.claude);
     expect(errCode(await c.promise)).toBe('approval_timeout');
     expect(c.spies).toEqual({ run: 0, release: 0 });
-    expect(t.closed()).toEqual([{ type: 'mcp:askClosed', askId: 'ask-1', outcome: 'expired' }]);
+    expect(t.closed()).toEqual([{ type: 'mcp:askClosed', askId: 'perm-1', outcome: 'expired' }]);
   });
 
   it('reply-true cancel → cancelled', async () => {
@@ -375,7 +420,7 @@ describe('createCallFlow', () => {
     t.flow.sessionGone(CALLER);
     expect(errCode(await c.promise)).toBe('cancelled');
     expect(c.spies).toEqual({ run: 0, release: 0 });
-    expect(t.closed()).toEqual([{ type: 'mcp:askClosed', askId: 'ask-1', outcome: 'cancelled' }]);
+    expect(t.closed()).toEqual([{ type: 'mcp:askClosed', askId: 'perm-1', outcome: 'cancelled' }]);
   });
 
   it('reply-false cancel → null', async () => {
@@ -385,7 +430,7 @@ describe('createCallFlow', () => {
     t.flow.cancelled(4, 'r');
     expect(await c.promise).toBeNull();
     expect(c.spies).toEqual({ run: 0, release: 0 });
-    expect(t.closed()).toEqual([{ type: 'mcp:askClosed', askId: 'ask-1', outcome: 'cancelled' }]);
+    expect(t.closed()).toEqual([{ type: 'mcp:askClosed', askId: 'perm-1', outcome: 'cancelled' }]);
   });
 
   it('cancel during prepare → no run, released, null', async () => {
@@ -438,28 +483,245 @@ describe('createCallFlow', () => {
     expect(t.asks()).toEqual([]);
   });
 
-  it('always writes the session policy, calls onPolicyWritten, runs', async () => {
+  it('card always → session-end anywhere grant, re-decided, then runs', async () => {
     const t = setup();
     const c = t.call();
     await t.flush();
     answerLast(t, t.flow, 'always');
     expect(await c.promise).toEqual({ ok: true, value: 'opened' });
-    expect(t.writes).toEqual([{ id: CALLER, tool: 'open_session' }]);
-    expect(t.state.policyWritten).toBe(1);
+    expect(t.reDecides).toHaveLength(1);
+    expect(t.grants).toEqual([{ choice: ALWAYS_GRANT, requestId: 'perm-1' }]);
     expect(c.spies.run).toBe(1);
   });
 
-  it('always after the session is gone → cancelled, run not called', async () => {
+  it('card approve → re-decided with no grant, then runs', async () => {
     const t = setup();
     const c = t.call();
     await t.flush();
-    t.policies.delete(CALLER);
+    answerLast(t, t.flow, 'approve');
+    expect(await c.promise).toEqual({ ok: true, value: 'opened' });
+    expect(t.grants).toEqual([]);
+  });
+
+  it('a grant the re-decide refuses (session gone) → cancelled, run not called', async () => {
+    const t = setup();
+    const c = t.call({ grantOutcome: 'session-gone' });
+    await t.flush();
     answerLast(t, t.flow, 'always');
     const r = await c.promise;
     expect(errCode(r)).toBe('cancelled');
     expect(r && !r.ok ? r.error.message : '').toBe('the session closed before the request ran');
     expect(c.spies).toEqual({ run: 0, release: 0 });
-    expect(t.state.policyWritten).toBe(0);
+  });
+
+  it('a denied answer reason reaches the declined error, with its control characters removed', async () => {
+    const t = setup();
+    const c = t.call();
+    await t.flush();
+    t.flow.answerPermission('perm-1', { outcome: 'denied', reason: 'too risky\u001b[31m now' }, 1);
+    const r = await c.promise;
+    expect(errCode(r)).toBe('denied');
+    expect(r && !r.ok ? r.error.message : '').toBe(
+      'the human declined the request: too risky[31m now',
+    );
+  });
+
+  it('a denied answer with no reason keeps the plain declined message', async () => {
+    const t = setup();
+    const c = t.call();
+    await t.flush();
+    t.flow.answerPermission('perm-1', { outcome: 'denied' }, 1);
+    const r = await c.promise;
+    expect(r && !r.ok ? r.error.message : '').toBe('the human declined the request');
+  });
+
+  it('a recheck that finds the policy denying the ask withdraws it with that reason; the call is tool_disabled', async () => {
+    const t = setup();
+    const c = t.call({ denyReason: 'Observer: deny' });
+    await t.flush();
+    t.policies.delete(CALLER);
+    t.flow.recheck();
+    const r = await c.promise;
+    expect(errCode(r)).toBe('tool_disabled');
+    expect(r && !r.ok ? r.error.message : '').toBe('Observer: deny');
+    expect(t.settled).toMatchObject([{ end: 'withdrawn', reason: 'Observer: deny' }]);
+    expect(c.spies.run).toBe(0);
+  });
+
+  it('a recheck that cancels an ask the policy still allows keeps it cancelled', async () => {
+    const t = setup();
+    const c = t.call();
+    await t.flush();
+    t.policies.delete(CALLER);
+    t.flow.recheck();
+    expect(errCode(await c.promise)).toBe('cancelled');
+    expect(t.settled).toMatchObject([{ end: 'withdrawn', reason: 'the call was cancelled' }]);
+  });
+
+  it('a grant scope that does not resolve ends the ask withdrawn with that reason, creating nothing more', async () => {
+    const t = setup();
+    const c = t.call({ grantOutcome: 'scope' });
+    await t.flush();
+    answerLast(t, t.flow, 'always');
+    const r = await c.promise;
+    expect(r && !r.ok ? r.error.message : '').toBe("that scope isn't available for every target");
+    expect(t.settled).toMatchObject([
+      { end: 'withdrawn', reason: "that scope isn't available for every target" },
+    ]);
+    expect(c.spies.run).toBe(0);
+  });
+
+  it('a deny at the re-decide creates no grant, even for always', async () => {
+    const t = setup();
+    const c = t.call({ redecide: { kind: 'withdraw', reason: 'Observer: deny' } });
+    await t.flush();
+    answerLast(t, t.flow, 'always');
+    expect(errCode(await c.promise)).toBe('tool_disabled');
+    expect(t.grants).toEqual([]);
+    expect(t.answerCommits).toEqual([]);
+    expect(c.spies.run).toBe(0);
+  });
+
+  it('ask creates one permission request whose id is the askId', async () => {
+    const t = setup();
+    const c = t.call();
+    await t.flush();
+    expect(t.permissions).toHaveLength(1);
+    expect(t.asks().map((a) => a.msg.askId)).toEqual(['perm-1']);
+    expect(t.permissions[0]).toMatchObject({
+      caller: { sessionId: CALLER, handle: `claude-${CALLER}` },
+      tool: 'open_session',
+      why: 'the policy asks',
+      targets: [],
+      expiresAt: 1000 + ASK_TIMEOUT_MS.claude,
+    });
+    answerLast(t, t.flow, 'deny');
+    await c.promise;
+  });
+
+  it('deny settles the permission answered as denied and runs nothing', async () => {
+    const t = setup();
+    const c = t.call();
+    await t.flush();
+    answerLast(t, t.flow, 'deny');
+    expect(errCode(await c.promise)).toBe('denied');
+    expect(t.settled).toEqual([
+      {
+        requestId: 'perm-1',
+        caller: { sessionId: CALLER, handle: `claude-${CALLER}` },
+        tool: 'open_session',
+        end: 'answered',
+        answer: { outcome: 'denied' },
+        by: { kind: 'you', windowId: 1 },
+        reason: null,
+      },
+    ]);
+    expect(t.reDecides).toEqual([]);
+  });
+
+  it('approve settles the permission answered as allowed, after the re-decide', async () => {
+    const t = setup();
+    const c = t.call();
+    await t.flush();
+    answerLast(t, t.flow, 'approve');
+    expect(await c.promise).toEqual({ ok: true, value: 'opened' });
+    expect(t.settled).toHaveLength(1);
+    expect(t.settled[0]).toMatchObject({
+      requestId: 'perm-1',
+      end: 'answered',
+      answer: { outcome: 'allowed' },
+    });
+  });
+
+  it("expiry leaves the permission to the queue's timer and returns approval_timeout", async () => {
+    const t = setup();
+    const c = t.call();
+    await t.flush();
+    t.advance(ASK_TIMEOUT_MS.claude);
+    expect(errCode(await c.promise)).toBe('approval_timeout');
+    expect(t.settled).toEqual([]);
+  });
+
+  it('a cancel settles the permission withdrawn, with the cancel as its reason', async () => {
+    const t = setup();
+    const c = t.call();
+    await t.flush();
+    t.flow.sessionGone(CALLER);
+    expect(errCode(await c.promise)).toBe('cancelled');
+    expect(t.settled).toMatchObject([
+      { requestId: 'perm-1', end: 'withdrawn', answer: null, reason: 'the call was cancelled' },
+    ]);
+  });
+
+  it('a policy turned deny while the card waits → withdrawn with its reason, call tool_disabled', async () => {
+    const t = setup();
+    const c = t.call({ redecide: { kind: 'withdraw', reason: 'Lead: deny' } });
+    await t.flush();
+    answerLast(t, t.flow, 'approve');
+    const r = await c.promise;
+    expect(errCode(r)).toBe('tool_disabled');
+    expect(r && !r.ok ? r.error.message : '').toBe('Lead: deny');
+    expect(c.spies.run).toBe(0);
+    expect(t.settled).toMatchObject([{ end: 'withdrawn', reason: 'Lead: deny' }]);
+  });
+
+  it('a policy turned allow while the card waits does not run until it is answered', async () => {
+    const t = setup();
+    const c = t.call({ policy: ASK });
+    await t.flush();
+    t.policies.set(CALLER, ON);
+    t.flush();
+    expect(c.spies.run).toBe(0);
+    expect(t.reDecides).toEqual([]);
+    answerLast(t, t.flow, 'approve');
+    expect(await c.promise).toEqual({ ok: true, value: 'opened' });
+    expect(c.spies.run).toBe(1);
+  });
+
+  it('the override records the commit held go to the re-decide by id', async () => {
+    const t = setup();
+    const c = t.call({ held: [HELD] });
+    await t.flush();
+    answerLast(t, t.flow, 'approve');
+    await c.promise;
+    expect(t.reDecides[0]).toEqual(['ov-held']);
+  });
+
+  it("answerPermission from a window that is not the ask's owner is refused and the ask keeps waiting", async () => {
+    const t = setup();
+    const c = t.call();
+    await t.flush();
+    expect(t.flow.answerPermission('perm-1', { outcome: 'denied' }, 2)).toBe(false);
+    expect(t.asks()).toHaveLength(1);
+    expect(c.out.done).toBe(false);
+    expect(t.flow.answerPermission('perm-1', { outcome: 'denied' }, 1)).toBe(true);
+    expect(errCode(await c.promise)).toBe('denied');
+    expect(t.closed()).toContainEqual({
+      type: 'mcp:askClosed',
+      askId: 'perm-1',
+      outcome: 'answered',
+    });
+  });
+
+  it('answerPermission from a sender with no known window (NO_OWNER_WINDOW) is refused', async () => {
+    const t = setup();
+    t.owners.set(CALLER, null);
+    t.state.appUp = false;
+    const c = t.call();
+    await t.flush();
+    expect(t.flow.answerPermission('perm-1', { outcome: 'denied' }, NO_OWNER_WINDOW)).toBe(false);
+    expect(c.out.done).toBe(false);
+    t.advance(ASK_TIMEOUT_MS.claude);
+    expect(errCode(await c.promise)).toBe('approval_timeout');
+  });
+
+  it('answerPermission ends a live ask with the given answer; an unknown id is false', async () => {
+    const t = setup();
+    const c = t.call();
+    await t.flush();
+    expect(t.flow.answerPermission('perm-missing', { outcome: 'denied' }, 1)).toBe(false);
+    expect(t.flow.answerPermission('perm-1', { outcome: 'denied' }, 1)).toBe(true);
+    expect(errCode(await c.promise)).toBe('denied');
   });
 
   it('a 4th waiting ask → rate_limited, released, no mcp:ask', async () => {
@@ -592,14 +854,14 @@ describe('createCallFlow', () => {
     const c = t.call();
     await t.flush();
     expect(t.asks()).toHaveLength(1);
-    expect(t.flow.answer('ask-1', 1, 'approve')).toBe(false);
+    expect(t.flow.answer('perm-1', 1, 'approve')).toBe(false);
     t.advance(ASK_TIMEOUT_MS.claude - 1);
     await t.flush();
     expect(c.out.done).toBe(false);
     t.advance(1);
     expect(errCode(await c.promise)).toBe('approval_timeout');
     expect(c.spies).toEqual({ run: 0, release: 0 });
-    expect(t.closed()).toEqual([{ type: 'mcp:askClosed', askId: 'ask-1', outcome: 'expired' }]);
+    expect(t.closed()).toEqual([{ type: 'mcp:askClosed', askId: 'perm-1', outcome: 'expired' }]);
   });
 
   it('no await between the cap check and open', async () => {
