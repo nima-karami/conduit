@@ -81,7 +81,7 @@ describe('resolveTargets', () => {
     ]);
   });
 
-  it('a session referenced by id resolves like a handle', () => {
+  it('a session lookup result supplies the target metadata', () => {
     expect(resolveTargets('close_session', { session: 's-beta' }, caller, deps)).toEqual([
       { sessionId: 's-beta', path: null, folder: '/w/b', projectId: 'p1' },
     ]);

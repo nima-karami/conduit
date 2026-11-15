@@ -738,6 +738,40 @@ describe('decide', () => {
     expect(d.reason).toEqual({ by: 'override', overrideId: 'oa' });
   });
 
+  it('reports the override when another target asks', () => {
+    const s = state(
+      {
+        default: assignment('worker', [
+          except('open_file', { kind: 'folder', path: '/w/a' }, { decision: 'deny' }),
+          except('open_file', { kind: 'folder', path: '/w/b' }, { decision: 'ask' }),
+        ]),
+      },
+      {
+        overrides: [
+          {
+            id: 'oa',
+            sessionId: 's1',
+            tool: 'open_file',
+            target: target({ path: '/w/a/x.ts', folder: '/w/a' }),
+            createdAt: iso(NOW),
+          },
+        ],
+      },
+    );
+    const d = decide(
+      s,
+      input({
+        tool: 'open_file',
+        targets: [
+          target({ path: '/w/a/x.ts', folder: '/w/a' }),
+          target({ path: '/w/b/y.ts', folder: '/w/b' }),
+        ],
+      }),
+    );
+    expect(d.decision).toBe('ask');
+    expect(d.overrideIds).toEqual(['oa']);
+  });
+
   it('folder scope matches a session target by its folder (cwd)', () => {
     expect(
       matchesScope(

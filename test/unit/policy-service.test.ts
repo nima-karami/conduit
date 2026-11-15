@@ -881,7 +881,7 @@ describe('policy service', () => {
 
   it('allowOnce does not duplicate an existing override', async () => {
     const exception: Exception = {
-      tool: 'open_session',
+      tool: 'open_file',
       scope: { kind: 'anywhere' },
       rule: { decision: 'deny' },
     };
@@ -898,8 +898,8 @@ describe('policy service', () => {
     h.service.start();
     const input = {
       principal: session(),
-      tool: 'open_session' as const,
-      targets: [target({ sessionId: 's2' })],
+      tool: 'open_file' as const,
+      targets: [target({ path: 'C:/Work/X.ts', folder: 'C:/Work' })],
       masterOn: true,
       toYou: false,
     };
@@ -932,7 +932,8 @@ describe('policy service', () => {
       count: null,
     });
     h.service.noteDecision(first, input, h.service.decide(input));
-    h.service.noteDecision(second, input, h.service.decide(input));
+    const equivalent = { ...input, targets: [target({ path: 'c:/work/x.ts', folder: 'c:/work' })] };
+    h.service.noteDecision(second, equivalent, h.service.decide(equivalent));
 
     expect(h.service.allowOnce(first)).toEqual({ ok: true });
     expect(h.service.allowOnce(second)).toEqual({ ok: true });
@@ -988,6 +989,56 @@ describe('policy service', () => {
     await h.service.stop();
     const saved = parsePolicyFile(h.policyWrites.at(-1) ?? '');
     expect(saved.ok && saved.file.overrides).toEqual([]);
+  });
+
+  it('consumes a passed override when another target asks', () => {
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: {
+              profileId: 'worker',
+              onScreenOnly: false,
+              exceptions: [
+                {
+                  tool: 'open_file',
+                  scope: { kind: 'folder', path: '/w/a' },
+                  rule: { decision: 'deny' },
+                },
+                {
+                  tool: 'open_file',
+                  scope: { kind: 'folder', path: '/w/b' },
+                  rule: { decision: 'ask' },
+                },
+              ],
+            },
+          },
+        ],
+        overrides: [
+          {
+            id: 'oa',
+            sessionId: 's1',
+            tool: 'open_file',
+            target: target({ path: '/w/a/x.ts', folder: '/w/a' }),
+            createdAt: iso(T0),
+          },
+        ],
+      }),
+    });
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_file' as const,
+      targets: [
+        target({ path: '/w/a/x.ts', folder: '/w/a' }),
+        target({ path: '/w/b/y.ts', folder: '/w/b' }),
+      ],
+      masterOn: true,
+      toYou: false,
+    };
+    expect(h.service.decide(input)).toMatchObject({ decision: 'ask', overrideIds: ['oa'] });
+    expect(h.service.decide(input).decision).toBe('deny');
   });
 
   it('a failing disk warns once per outage', async () => {

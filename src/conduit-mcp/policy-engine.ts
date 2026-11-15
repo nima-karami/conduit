@@ -89,7 +89,7 @@ function resolveTargets(targets: readonly PolicyTarget[], principal: Principal):
   return list.map((t) => resolveTarget(t, principal));
 }
 
-const samePath = (a: string | null, b: string | null): boolean =>
+export const samePath = (a: string | null, b: string | null): boolean =>
   a === null || b === null ? a === b : folderKey(a) === folderKey(b);
 
 function remoteAllows(principal: Extract<Principal, { kind: 'remote' }>, tool: ToolName): boolean {
@@ -254,6 +254,7 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
     reason,
     strictest.rule,
     strictest.effective === 'allow' ? grantIds : [],
+    overrideIds,
   );
 }
 

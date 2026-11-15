@@ -10,6 +10,7 @@ import {
 import {
   assignmentFor,
   decide as decideEngine,
+  samePath,
   visibleTools as visibleEngine,
 } from './policy-engine';
 import {
@@ -448,7 +449,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
           o.sessionId === rem.sessionId &&
           o.tool === rem.tool &&
           o.target.sessionId === rem.target.sessionId &&
-          o.target.path === rem.target.path,
+          samePath(o.target.path, rem.target.path),
       );
       if (!duplicate) {
         file.overrides = [
