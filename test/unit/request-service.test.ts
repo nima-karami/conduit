@@ -282,6 +282,22 @@ describe('request service: waits and answers', () => {
   });
 });
 
+describe('request service: canCreate', () => {
+  it('canCreate is ok until the caller has its waits, then refuses and creates nothing', () => {
+    const h = harness();
+    expect(h.service.canCreate('s-alice')).toEqual({ ok: true });
+    for (let i = 0; i < 4; i++) {
+      h.service.tools.requestInput(alice, ask({ title: `Q${i}` }), key(i));
+    }
+    expect(h.service.canCreate('s-alice')).toMatchObject({
+      ok: false,
+      error: { code: 'rate_limited' },
+    });
+    expect(h.service.canCreate('s-bob')).toEqual({ ok: true });
+    expect(h.onNew).toHaveBeenCalledTimes(4);
+  });
+});
+
 describe('request service: onNew', () => {
   it('onNew fires for a new request and not for an attached repeat', () => {
     const h = harness();

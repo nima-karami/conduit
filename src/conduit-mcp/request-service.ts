@@ -36,7 +36,7 @@ import {
   requestWaitMs,
 } from './request-waits';
 import type { Caller } from './tools';
-import { type Result, toolError } from './types';
+import { type Result, type ToolError, toolError } from './types';
 import type { CallKey } from './window-waits';
 
 export const PERSIST_COALESCE_MS = 250;
@@ -65,6 +65,7 @@ export interface RequestServiceDeps {
 export interface RequestService {
   start(): void;
   stop(): Promise<void>;
+  canCreate(sessionId: string): { ok: true } | { ok: false; error: ToolError };
   onAttention(facts: readonly SessionNeedsYou[]): void;
   onQuestions(unread: readonly QuestionMessage[]): void;
   tools: {
@@ -521,6 +522,8 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
       waits.dispose();
       queue.dispose();
     },
+
+    canCreate: (sessionId) => notCapped(sessionId) ?? { ok: true },
 
     tools: {
       requestInput,
