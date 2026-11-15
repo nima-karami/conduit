@@ -395,6 +395,14 @@ describe('grant store', () => {
       null,
       null,
     );
+    const sessionGrant = store.create(
+      { kind: 'session', sessionId: 's1' },
+      'send_message',
+      ANYWHERE,
+      'until-revoked',
+      null,
+      null,
+    );
     const ended = store.create(
       { kind: 'peer', machineId: 'm-1' },
       'read_inbox',
@@ -407,5 +415,6 @@ describe('grant store', () => {
     expect(store.peerRevoked('m-1')).toEqual([]);
     expect(store.all().find((g) => g.id === other.id)?.state).toBe('active');
     expect(store.all().find((g) => g.id === cli.id)?.state).toBe('active');
+    expect(store.all().find((g) => g.id === sessionGrant.id)?.state).toBe('active');
   });
 });

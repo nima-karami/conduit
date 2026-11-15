@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { type ActivityNote, activityAuditSink } from '../../server/mcp/activity-audit-sink';
+import { activityAuditSink } from '../../server/mcp/activity-audit-sink';
 import type { AuditEvent, AuditKind } from '../../server/network/audit-log';
+import type { ActivityNote } from '../../src/conduit-mcp/host';
 
 function fakeNotes(): { notes: ActivityNote[]; write(n: ActivityNote): void } {
   const notes: ActivityNote[] = [];

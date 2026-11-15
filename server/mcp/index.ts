@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import { NO_OWNER_WINDOW, UI_TIMEOUT_MS } from '../../src/conduit-mcp/call-flow';
 import {
+  type ActivityNote,
   type ConduitMcpHost,
   type ConduitMcpHostDeps,
   createConduitMcpHost,
@@ -96,7 +97,7 @@ export interface ServerMcp {
   /** NET's onRevoked: that peer's grants end. */
   peerRevoked(machineId: string): void;
   /** NET's audit tap: one Activity note row. */
-  recordNote(note: { action: string; machineId: string | null; handle: string | null }): void;
+  recordNote(note: ActivityNote): void;
   /** DomainDeps.closeWhenDone: a closeWhenDone program exited; see ConduitMcpHost.closeWhenDone. */
   closeWhenDone(sessionId: string): Promise<void>;
   /** Startup ordering: see docs/specs/archive/2026-11-01-three-process-architecture.md F1.4.5-6. */

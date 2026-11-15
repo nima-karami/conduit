@@ -1,10 +1,5 @@
+import type { ActivityNote } from '../../src/conduit-mcp/host';
 import type { AuditSink } from '../network/audit-log';
-
-export interface ActivityNote {
-  action: string;
-  machineId: string | null;
-  handle: string | null;
-}
 
 // Only the kind, the peer machine and the principal handle cross over: the event's detail
 // carries reasons, fingerprints and message fields the Activity log never shows.

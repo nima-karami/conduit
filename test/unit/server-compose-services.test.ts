@@ -501,6 +501,18 @@ describe.sequential('compose: per-peer events', () => {
 });
 
 describe.sequential('compose: NET audit and link revoke reach the MCP side', () => {
+  /** Loopback with an ephemeral port: the default settings bind the fixed pairing port on the LAN. */
+  const dirFor = () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'compose-net-'));
+    fs.writeFileSync(
+      path.join(dir, 'settings.json'),
+      JSON.stringify({
+        version: 1,
+        settings: { networkBindHost: '127.0.0.1', networkPort: 0 },
+      }),
+    );
+    return dir;
+  };
   const rpcResult = async <T>(services: Services, method: string, params: unknown): Promise<T> => {
     const a = await answer(services, method, params);
     if (!('result' in a)) throw new Error(`${method} failed: ${JSON.stringify(a)}`);
@@ -527,7 +539,7 @@ describe.sequential('compose: NET audit and link revoke reach the MCP side', () 
   };
 
   it('a NET audit event reaches audit.jsonl and an Activity note', async () => {
-    const h = await harness();
+    const h = await harness({}, dirFor());
     await h.services.core.start();
     const started = await rpcResult<{ addresses: string[] }>(h.services, 'pairing.start', {});
     const address = started.addresses[0] ?? '';
@@ -552,17 +564,6 @@ describe.sequential('compose: NET audit and link revoke reach the MCP side', () 
   });
 
   it('a link revoke on this server reaches the MCP side with the peer machine', async () => {
-    const dirFor = () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'compose-net-'));
-      fs.writeFileSync(
-        path.join(dir, 'settings.json'),
-        JSON.stringify({
-          version: 1,
-          settings: { networkBindHost: '127.0.0.1', networkPort: 0 },
-        }),
-      );
-      return dir;
-    };
     const a = await harness({}, dirFor());
     const b = await harness({}, dirFor());
     await a.services.core.start();

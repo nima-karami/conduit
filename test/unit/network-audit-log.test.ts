@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { openAuditLog } from '../../server/network/audit-log';
+import { type AuditEvent, openAuditLog, teeAudit } from '../../server/network/audit-log';
 
 const FILE = '/mem/network/audit.jsonl';
 const NOW = Date.parse('2026-11-14T12:00:00.000Z');
@@ -76,5 +76,50 @@ describe('audit log', () => {
     const parsed = JSON.parse(lines[0]);
     expect(parsed.principal).toBe('p'.repeat(128));
     expect(parsed.detail).toEqual({ messageId: 'x'.repeat(128), to: 'a', count: 7, flag: true });
+  });
+});
+
+describe('audit tee', () => {
+  const memorySink = () => {
+    const seen: AuditEvent[] = [];
+    return { seen, sink: { record: (e: AuditEvent) => void seen.push(e) } };
+  };
+
+  it('every event reaches the file sink and the tap once a tap is set', () => {
+    const file = memorySink();
+    const tap = memorySink();
+    const tee = teeAudit(file.sink, vi.fn());
+    tee.sink.record({ kind: 'link.state', peer: 'm-1' });
+    expect(file.seen).toHaveLength(1);
+    expect(tap.seen).toHaveLength(0);
+    tee.setTap(tap.sink);
+    tee.sink.record({ kind: 'link.revoked', peer: 'm-1' });
+    expect(file.seen.map((e) => e.kind)).toEqual(['link.state', 'link.revoked']);
+    expect(tap.seen.map((e) => e.kind)).toEqual(['link.revoked']);
+  });
+
+  it('the tap gets a principal cut to 128 chars, the same as the file', () => {
+    const file = memorySink();
+    const tap = memorySink();
+    const tee = teeAudit(file.sink, vi.fn());
+    tee.setTap(tap.sink);
+    tee.sink.record({ kind: 'message.in', peer: 'm-1', principal: 'h'.repeat(300) });
+    expect(tap.seen[0]?.principal).toBe('h'.repeat(128));
+    expect(file.seen[0]?.principal).toBe('h'.repeat(128));
+  });
+
+  it('a throwing tap is reported to onError and never reaches the caller or the file', () => {
+    const file = memorySink();
+    const failure = new Error('tap broke');
+    const onError = vi.fn();
+    const tee = teeAudit(file.sink, onError);
+    tee.setTap({
+      record: () => {
+        throw failure;
+      },
+    });
+    expect(() => tee.sink.record({ kind: 'link.revoked', peer: 'm-1' })).not.toThrow();
+    expect(onError).toHaveBeenCalledWith(failure);
+    expect(file.seen.map((e) => e.kind)).toEqual(['link.revoked']);
   });
 });

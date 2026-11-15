@@ -236,6 +236,13 @@ export interface ConduitMcpHostDeps extends Omit<McpHostDeps, 'attention'> {
 }
 export type McpRendererMessage = Extract<WebviewToHost, { type: `mcp:${string}` }>;
 
+/** A note row for a fact that has no session or call behind it (NET audit events). */
+export interface ActivityNote {
+  action: string;
+  machineId: string | null;
+  handle: string | null;
+}
+
 export interface ConduitMcpHost extends LaunchPort, DraftPort {
   start(): Promise<void>;
   /**
@@ -280,7 +287,7 @@ export interface ConduitMcpHost extends LaunchPort, DraftPort {
   /** A peer's link was revoked: its grants end. */
   peerRevoked(machineId: string): void;
   /** An audit event from the network, shown in the Activity log as a note row. */
-  recordNote(note: { action: string; machineId: string | null; handle: string | null }): void;
+  recordNote(note: ActivityNote): void;
   stop(): Promise<void>;
 }
 
