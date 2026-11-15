@@ -403,7 +403,7 @@ const isStringArray = (v: unknown): v is string[] =>
 const oneOfValues = <T extends string>(values: readonly T[], v: unknown): v is T =>
   values.some((x) => x === v);
 
-export function isGrantChoice(v: unknown): v is GrantChoice {
+function isGrantChoice(v: unknown): v is GrantChoice {
   const obj = argsObject(v, GRANT_CHOICE_KEYS);
   if (!obj.ok) return false;
   const { who, on, for: forDur } = obj.value;

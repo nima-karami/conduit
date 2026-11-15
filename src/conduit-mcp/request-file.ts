@@ -1,6 +1,6 @@
 import { judgePersistedVersion } from '../contracts/session-identity';
+import { GRANT_CHOICE_ON, GRANT_FORS, GRANT_WHO_KINDS, type GrantChoice } from './grant-store';
 import type { PolicyTarget } from './policy-types';
-import { isGrantChoice } from './request-args';
 import type {
   AnsweredBy,
   AnswerInput,
@@ -72,13 +72,19 @@ const isWithdrawnBy = orNull(oneOf<'requester' | 'conduit'>('requester', 'condui
 const isOption = (v: unknown): v is RequestOption =>
   isObj(v) && isStr(v.label) && (v.description === undefined || isStr(v.description));
 
+const isStoredGrant = (v: unknown): v is GrantChoice =>
+  isObj(v) &&
+  oneOf(...GRANT_WHO_KINDS)(v.who) &&
+  oneOf(...GRANT_CHOICE_ON)(v.on) &&
+  oneOf(...GRANT_FORS)(v.for);
+
 const isAnswerInput = (v: unknown): v is AnswerInput =>
   isObj(v) &&
   isOutcome(v.outcome) &&
   (v.text === undefined || isStr(v.text)) &&
   (v.values === undefined || isStrArray(v.values)) &&
   (v.reason === undefined || isStr(v.reason)) &&
-  (v.grant === undefined || isGrantChoice(v.grant));
+  (v.grant === undefined || isStoredGrant(v.grant));
 
 const isAnsweredBy = (v: unknown): v is AnsweredBy =>
   isObj(v) &&

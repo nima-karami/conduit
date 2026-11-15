@@ -237,6 +237,42 @@ describe('request file', () => {
     expect(parsed.dropped).toBe(2);
   });
 
+  it('a persisted grant with an extra key is kept on read', () => {
+    const stored: Record<string, unknown> = {
+      ...record({
+        id: 'r_000000000008',
+        source: 'policy',
+        kind: 'permission',
+        lead: null,
+        options: [],
+        blocked: null,
+        default: null,
+        state: 'answered',
+        endedAt: '2026-11-14T11:20:00.000Z',
+        permission: { tool: 'send_message', why: 'x', targets: [], lateGrant: null },
+      }),
+      answer: {
+        outcome: 'allowed',
+        grant: { who: 'session', on: 'target', for: '1h', note: 'from a later build' },
+        answeredBy: { kind: 'you', windowId: 2 },
+        at: '2026-11-14T11:20:00.000Z',
+      },
+    };
+    const parsed = parseRequestsFile(
+      JSON.stringify({ version: 1, requests: [stored], presence: EMPTY.presence }),
+      NOW,
+    );
+    expect(parsed.kind).toBe('ok');
+    expect(parsed.dropped).toBe(0);
+    expect(parsed.file.requests).toHaveLength(1);
+    expect(parsed.file.requests[0]?.answer?.grant).toEqual({
+      who: 'session',
+      on: 'target',
+      for: '1h',
+      note: 'from a later build',
+    });
+  });
+
   it('a record without the permission field reads as permission null', () => {
     const legacy: Record<string, unknown> = { ...record() };
     delete legacy.permission;
