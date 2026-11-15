@@ -39,6 +39,8 @@ export type PairingMsg =
       t: 'pair.id';
       machineId: string;
       ownerKey: string | null;
+      /** The opener only, when it holds no owner key: the public half of one it would create. */
+      ownerOffer: string | null;
       selfName: string;
       addresses: string[];
       protocol: { major: number; minor: number };
@@ -233,6 +235,7 @@ function idMsg(self: PairingSelf): PairingMsg {
     t: 'pair.id',
     machineId: self.machineId,
     ownerKey: self.ownerKey?.publicKey ?? null,
+    ownerOffer: null,
     selfName: self.selfName,
     addresses: self.addresses,
     protocol: self.protocol,
@@ -509,6 +512,7 @@ export function parsePairingMsg(raw: unknown): PairingMsg | null {
           't',
           'machineId',
           'ownerKey',
+          'ownerOffer',
           'selfName',
           'addresses',
           'protocol',
@@ -516,6 +520,7 @@ export function parsePairingMsg(raw: unknown): PairingMsg | null {
         ]) ||
         !isStr(raw.machineId) ||
         !(raw.ownerKey === null || isStr(raw.ownerKey)) ||
+        !(raw.ownerOffer === null || isStr(raw.ownerOffer)) ||
         !isStr(raw.selfName) ||
         !isStr(raw.cert) ||
         !Array.isArray(addresses) ||
@@ -530,6 +535,7 @@ export function parsePairingMsg(raw: unknown): PairingMsg | null {
         t: 'pair.id',
         machineId: raw.machineId,
         ownerKey: raw.ownerKey,
+        ownerOffer: raw.ownerOffer,
         selfName: raw.selfName,
         addresses: addresses.filter(isStr),
         protocol: { major: p.major, minor: p.minor },

@@ -316,6 +316,7 @@ describe('parsePairingMsg', () => {
       t: 'pair.id',
       machineId: 'm-00000000',
       ownerKey: null,
+      ownerOffer: null,
       selfName: 'x',
       addresses: ['127.0.0.1:1'],
       protocol: { major: 1, minor: 0 },
@@ -343,5 +344,111 @@ describe('parsePairingMsg', () => {
       parsePairingMsg({ t: 'pair.hello', v: 1, code: 'x'.repeat(201), key: 'A', commit: 'A' }),
     ).toBeNull();
     expect(parsePairingMsg(null)).toBeNull();
+  });
+});
+
+// CON-27 security review minor 1: an on-path relay must not be able to change what either side
+// learns (names, addresses, owner key) without the two shown fingerprints differing.
+describe('the fingerprint binds both identities and the owner key', () => {
+  type Rewrite = (msg: PairingMsg, to: 'opener' | 'joiner') => PairingMsg;
+  function relay(
+    p: Pair,
+    toOpener: PairingMsg[],
+    rewrite: Rewrite,
+    toJoiner: PairingMsg[] = [],
+  ): PairingMsg[] {
+    const seen: PairingMsg[] = [];
+    let a = toOpener;
+    let b = toJoiner;
+    while (a.length > 0 || b.length > 0) {
+      const nextA: PairingMsg[] = [];
+      const nextB: PairingMsg[] = [];
+      for (const m of a) {
+        seen.push(m);
+        const r = openerStep(p.opener, { kind: 'msg', msg: rewrite(m, 'opener') });
+        nextB.push(...r.out);
+        if (r.done) p.openerDone = r.done;
+      }
+      for (const m of b) {
+        seen.push(m);
+        const r = joinerStep(p.joiner, { kind: 'msg', msg: rewrite(m, 'joiner') });
+        nextA.push(...r.out);
+        if (r.done) p.joinerDone = r.done;
+      }
+      a = nextA;
+      b = nextB;
+    }
+    return seen;
+  }
+  const shown = (p: Pair) => [shownFingerprint(p.opener), shownFingerprint(p.joiner)];
+
+  it.each([
+    [
+      'the joiner’s name',
+      (m: PairingMsg) => (m.t === 'pair.id' ? { ...m, selfName: 'evil-box' } : m),
+    ],
+    [
+      'the joiner’s addresses',
+      (m: PairingMsg) => (m.t === 'pair.id' ? { ...m, addresses: ['10.6.6.6:47391'] } : m),
+    ],
+  ])('a relay rewriting %s makes the shown fingerprints differ', (_what, change) => {
+    const { pair, first } = setup();
+    relay(pair, first, (m, to) => (to === 'opener' ? change(m) : m));
+    const [a, b] = shown(pair);
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    expect(a).not.toBe(b);
+  });
+
+  it('a relay swapping the joiner’s owner key makes the shown fingerprints differ', () => {
+    const attacker = ownerKey();
+    const { pair, first } = setup({ joinerOwner: ownerKey() });
+    relay(pair, first, (m, to) =>
+      to === 'opener' && m.t === 'pair.id' ? { ...m, ownerKey: attacker.publicKey } : m,
+    );
+    const [a, b] = shown(pair);
+    expect(a).not.toBe(b);
+  });
+
+  it('a first-ever link settles the owner key inside the compared transcript, with no pair.owner', () => {
+    const { pair, first } = setup();
+    const seen = relay(pair, first, (m) => m);
+    const [a, b] = shown(pair);
+    expect(a).not.toBeNull();
+    expect(a).toBe(b);
+    const ro = openerStep(pair.opener, { kind: 'confirm' });
+    if (ro.done) pair.openerDone = ro.done;
+    seen.push(...ro.out, ...relay(pair, [], (m) => m, ro.out));
+    const rj = joinerStep(pair.joiner, { kind: 'confirm' });
+    if (rj.done) pair.joinerDone = rj.done;
+    seen.push(...rj.out, ...relay(pair, rj.out, (m) => m));
+    const { a: o, b: j } = linkedBoth(pair);
+    expect(pair.generated).toHaveLength(1);
+    expect(o.ownerKeyToStore).toEqual(pair.generated[0]);
+    expect(j.peer.ownerKey).toBe(pair.generated[0]?.publicKey);
+    expect(o.peer.ownerKey).toBe(pair.generated[0]?.publicKey);
+    expect(seen.some((m) => (m as { t: string }).t === 'pair.owner')).toBe(false);
+  });
+
+  it('a relay swapping the opener’s offered owner key makes the shown fingerprints differ', () => {
+    const attacker = ownerKey();
+    const { pair, first } = setup();
+    relay(pair, first, (m, to) =>
+      to === 'joiner' && m.t === 'pair.id' ? { ...m, ownerOffer: attacker.publicKey } : m,
+    );
+    const [a, b] = shown(pair);
+    expect(a).not.toBe(b);
+  });
+
+  it('a joiner offering an owner key fails: only the opener generates one', () => {
+    const { pair, first } = setup();
+    relay(pair, first, (m, to) =>
+      to === 'opener' && m.t === 'pair.id' ? { ...m, ownerOffer: ownerKey().publicKey } : m,
+    );
+    expect(pair.openerDone).toEqual({ kind: 'failed', reason: 'protocol' });
+  });
+
+  it('pair.owner is no longer a message', () => {
+    expect(parsePairingMsg({ t: 'pair.owner', publicKey: 'a' })).toBeNull();
   });
 });
