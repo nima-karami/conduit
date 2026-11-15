@@ -1395,7 +1395,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     // Before the first await: a notifications/cancelled read right after this line must find it.
     const inflight = flow.begin({ connId: ctx.connId, requestId: ctx.requestId });
     const startedAt = now();
-    let evaluated: { input: Omit<PolicyInput, 'now'>; decision: PolicyDecision } | null = null;
+    const evaluated: {
+      current: { input: Omit<PolicyInput, 'now'>; decision: PolicyDecision } | null;
+    } = { current: null };
     try {
       const handle = sessionId ? handleOf(sessionId) : undefined;
       const result = await (async (): Promise<Result<unknown> | null> => {
@@ -1464,7 +1466,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               rawArgs.to.every((recipient) => recipient === HUMAN_HANDLE)),
         };
         const resolved = policyService.decide(policyInput);
-        evaluated = { input: policyInput, decision: resolved };
+        evaluated.current = { input: policyInput, decision: resolved };
         const windowId = deps.ownerWindowOf(sessionId);
         const refused = gateToolCall({
           sessionId,
@@ -1520,10 +1522,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           ? { cancelled: true }
           : { ok: result.ok, ...(result.ok ? {} : { code: result.error.code }) }),
       });
-      const record = evaluated as {
-        input: Omit<PolicyInput, 'now'>;
-        decision: PolicyDecision;
-      } | null;
+      const record = evaluated.current;
       const value =
         result?.ok && typeof result.value === 'object' && result.value !== null
           ? result.value

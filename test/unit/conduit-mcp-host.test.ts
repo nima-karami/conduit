@@ -2626,18 +2626,16 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
 
 describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §3.1)', () => {
   const on = (h: Harness, id: string, tools: readonly ToolName[]) => {
-    const s = h.sessions.get(id);
-    if (!s) throw new Error(`no session ${id}`);
     const layer: PolicyLayer = {};
     for (const t of tools) layer[t] = { access: 'on' };
-    s.mcpToolPolicy = layer;
+    return setHostPolicy(h, id, layer);
   };
 
   it('open_session with the switch on calls control.openSession and returns the claimed handle', async () => {
     const h = harness({ kinds: { '/w/wt': 'dir' } });
     await h.host.start();
     const a = await launch(h, 's1');
-    on(h, 's1', ['open_session']);
+    await on(h, 's1', ['open_session']);
     const c = await client(h.ep, a.token);
     const r = await c.call('open_session', { path: 'wt', agent: 'e2e-fake-mcp', focus: false });
     expect(r.isError).toBe(false);
@@ -2665,7 +2663,7 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
     const h = harness({ kinds: { '/w/wt': 'dir' } });
     await h.host.start();
     const a = await launch(h, 's1');
-    on(h, 's1', ['open_session']);
+    await on(h, 's1', ['open_session']);
     const c = await client(h.ep, a.token);
     const r = await c.call('open_session', {
       path: 'wt',
@@ -2693,7 +2691,7 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
     const h = harness({ kinds: { '/w/wt': 'dir' } });
     await h.host.start();
     const a = await launch(h, 's1');
-    on(h, 's1', ['open_session']);
+    await on(h, 's1', ['open_session']);
     const c = await client(h.ep, a.token);
     await c.call('open_session', { path: 'wt', agent: 'e2e-fake-mcp' });
     const handles = fs.readFileSync(path.join(h.dir, 'handles.json'), 'utf8');
@@ -2706,7 +2704,7 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
     const h = harness({ kinds: { '/w': 'dir' } });
     await h.host.start();
     const a = await launch(h, 's1');
-    on(h, 's1', ['open_terminal']);
+    await on(h, 's1', ['open_terminal']);
     const c = await client(h.ep, a.token);
     const r = await c.call('open_terminal', { path: '/w', command: 'node', args: ['-e', 'x'] });
     expect(r.body).toMatchObject({ session_id: 'n1', handle: 'term-1', agent: 'node' });
@@ -2717,7 +2715,7 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
     const h = harness({ kinds: { '/w': 'dir' } });
     await h.host.start();
     const a = await launch(h, 's1');
-    on(h, 's1', ['open_terminal']);
+    await on(h, 's1', ['open_terminal']);
     const c = await client(h.ep, a.token);
     const r = await c.call('open_terminal', { path: '/w', command: 'cursor-agent' });
     expect(r.body).toMatchObject({ session_id: 'n1', handle: 'cursor-1' });
@@ -2727,7 +2725,7 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
     const h = harness({ kinds: { '/w': 'dir' } });
     await h.host.start();
     const a = await launch(h, 's1');
-    on(h, 's1', ['open_terminal']);
+    await on(h, 's1', ['open_terminal']);
     const c = await client(h.ep, a.token);
     const r = await c.call('open_terminal', { path: '/w', command: '/opt/bin/claude' });
     expect(r.body).toMatchObject({ session_id: 'n1', handle: 'claude-1', agent: 'claude' });
@@ -2743,7 +2741,7 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
     const h = harness({ kinds: { '/w/wt': 'dir' }, log: rec.log });
     await h.host.start();
     const a = await launch(h, 's1');
-    on(h, 's1', ['open_session']);
+    await on(h, 's1', ['open_session']);
     const c = await client(h.ep, a.token);
     fs.rmSync(path.join(h.dir, 'handles.json'));
     fs.mkdirSync(path.join(h.dir, 'handles.json'));
@@ -2757,7 +2755,7 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
     const h = harness({ kinds: { '/w/src/a.ts': 'file' } });
     await h.host.start();
     const a = await launch(h, 's1');
-    on(h, 's1', ['open_file']);
+    await on(h, 's1', ['open_file']);
     const c = await client(h.ep, a.token);
     const r = await c.call('open_file', { path: 'src/a.ts', line: 3 });
     expect(r.body).toEqual({ opened: '/w/src/a.ts', session_id: 's1' });
@@ -2770,7 +2768,7 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
     const h = harness({ kinds: { '/w/src/a.ts': 'file' }, storeIo: failingIo() });
     await h.host.start();
     const a = await launch(h, 's1');
-    on(h, 's1', ['open_file']);
+    await on(h, 's1', ['open_file']);
     const c = await client(h.ep, a.token);
     expect((await c.call('send_message', { to: ['x'], body: 'b' })).body.error.code).toBe(
       'store_unavailable',
@@ -4170,6 +4168,46 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(asksOf(h)).toHaveLength(2);
   });
 
+  it('mcp:revokeGrant and mcp:setAssignment answer with mcp:policyResult', async () => {
+    const { h, c } = await asking();
+    const post = async (msg: unknown) => {
+      const replies: HostToWebview[] = [];
+      await h.host.handleRenderer(msg as McpRendererMessage, (m) => replies.push(m), 1);
+      return replies;
+    };
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    await answer(h, 'ask-1', 'always');
+    expect(c.errorOf(await c.reply(1))).toBe('ok');
+    const [grant] = h.host.uiState().policy.grants;
+    expect(await post({ type: 'mcp:revokeGrant', requestId: 1, grantId: 'missing' })).toEqual([
+      { type: 'mcp:policyResult', requestId: 1, ok: false, error: 'not-found' },
+    ]);
+    expect(await post({ type: 'mcp:revokeGrant', requestId: 2, grantId: grant.id })).toEqual([
+      { type: 'mcp:policyResult', requestId: 2, ok: true },
+    ]);
+    expect(h.host.uiState().policy.grants).toMatchObject([{ id: grant.id, state: 'revoked' }]);
+    c.call(2, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 2);
+    await answer(h, 'ask-2', 'deny');
+    expect(c.errorOf(await c.reply(2))).toBe('denied');
+
+    const point = { kind: 'session', sessionId: 's1' };
+    expect(
+      await post({ type: 'mcp:setAssignment', requestId: 3, point: { kind: 'x' }, profileId: 'lead' }),
+    ).toEqual([{ type: 'mcp:policyResult', requestId: 3, ok: false, error: 'invalid-value' }]);
+    expect(await post({ type: 'mcp:setAssignment', requestId: 4, point, profileId: 'nope' })).toEqual(
+      [{ type: 'mcp:policyResult', requestId: 4, ok: false, error: 'unknown-profile' }],
+    );
+    expect(await post({ type: 'mcp:setAssignment', requestId: 5, point, profileId: 'lead' })).toEqual(
+      [{ type: 'mcp:policyResult', requestId: 5, ok: true }],
+    );
+    expect(h.host.uiState().policy.sessions.s1?.profileId).toBe('lead');
+    c.call(3, 'open_session', OPEN);
+    expect(c.errorOf(await c.reply(3))).toBe('ok');
+    expect(asksOf(h)).toHaveLength(2);
+  });
+
   it('mcp:setToolPolicy replies unknown-session / unknown-tool / invalid-value / ok', async () => {
     const h = harness();
     await h.host.start();
@@ -4227,11 +4265,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
       | undefined;
     return r ? (r.structuredContent ?? JSON.parse(r.content[0].text)) : undefined;
   };
-  const allow = (h: Harness, id: string, layer: PolicyLayer) => {
-    const s = h.sessions.get(id);
-    if (!s) throw new Error(`no session ${id}`);
-    s.mcpToolPolicy = layer;
-  };
+  const allow = (h: Harness, id: string, layer: PolicyLayer) => setHostPolicy(h, id, layer);
 
   /** s1 calls; s2 is a listed peer (window 2 unless told otherwise); both have handles. */
   async function twoSessions(over: Parameters<typeof harness>[0] = {}) {
@@ -4248,7 +4282,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
 
   it('targets are listed sessions only', async () => {
     const { h, c } = await twoSessions();
-    allow(h, 's1', { close_session: { access: 'on', reach: 'any' } });
+    await allow(h, 's1', { close_session: { access: 'on', reach: 'any' } });
     h.sessions.set('s3', session('s3'));
     c.call(1, 'close_session', { session: 's3' });
     expect(c.errorOf(await c.reply(1))).toBe('unknown_session');
@@ -4257,7 +4291,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
 
   it('close_session end to end', async () => {
     const { h, c } = await twoSessions();
-    allow(h, 's1', { close_session: { access: 'on', reach: 'any' } });
+    await allow(h, 's1', { close_session: { access: 'on', reach: 'any' } });
     const handle = h.sessions.get('s2')?.mcpHandle;
     c.call(1, 'close_session', { session: handle });
     const ui = await lastUi(h);
@@ -4281,9 +4315,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
     const peer = await client(h.ep, b.token);
     await peer.listed();
     h.owners.set('s2', null);
-    const caller = h.sessions.get('s1');
-    if (!caller) throw new Error('no session s1');
-    caller.mcpToolPolicy = { close_session: { access: 'on', reach: 'any' } };
+    await setHostPolicy(h, 's1', { close_session: { access: 'on', reach: 'any' } });
 
     c.call(1, 'close_session', { session: h.sessions.get('s2')?.mcpHandle });
     expect(c.errorOf(await c.reply(1))).toBe('ok');
@@ -4370,7 +4402,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
     const h = harness({ kinds: { '/w': 'dir' } });
     await h.host.start();
     const a = await launch(h, 's1');
-    allow(h, 's1', {
+    await allow(h, 's1', {
       open_terminal: { access: 'on' },
       close_session: { access: 'on', reach: 'opened' },
     });
@@ -4393,7 +4425,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
 
   it('self close: the reply is written before the drained connection closes', async () => {
     const { h, c } = await twoSessions();
-    allow(h, 's1', { close_session: { access: 'on' } });
+    await allow(h, 's1', { close_session: { access: 'on' } });
     c.call(1, 'close_session', { session: 's1' });
     const ui = await lastUi(h);
     expect(ui.windowId).toBe(1);
@@ -4412,7 +4444,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
 
   it('uiResult from a different window is ignored', async () => {
     const { h, c } = await twoSessions({ manualTimers: true });
-    allow(h, 's1', { open_url: { access: 'on' } });
+    await allow(h, 's1', { open_url: { access: 'on' } });
     c.call(1, 'open_url', { url: 'http://x/' });
     const ui = await lastUi(h);
     expect(ui.windowId).toBe(1);
@@ -4425,7 +4457,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
 
   it('onWindowReset during a UI wait → window_not_ready', async () => {
     const { h, c } = await twoSessions();
-    allow(h, 's1', { open_url: { access: 'on' } });
+    await allow(h, 's1', { open_url: { access: 'on' } });
     c.call(1, 'open_url', { url: 'http://x/' });
     await lastUi(h);
     h.host.onWindowReset(1);
@@ -4434,7 +4466,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
 
   it('onSessionMoved(target) during a close_session wait → window_not_ready', async () => {
     const { h, c } = await twoSessions();
-    allow(h, 's1', { close_session: { access: 'on', reach: 'any' } });
+    await allow(h, 's1', { close_session: { access: 'on', reach: 'any' } });
     c.call(1, 'close_session', { session: h.sessions.get('s2')?.mcpHandle });
     await lastUi(h);
     h.host.onSessionMoved('s2');
@@ -4443,7 +4475,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
 
   it('notifications/cancelled during a UI wait → no reply line', async () => {
     const { h, c } = await twoSessions();
-    allow(h, 's1', { open_url: { access: 'on' } });
+    await allow(h, 's1', { open_url: { access: 'on' } });
     c.call(1, 'open_url', { url: 'http://x/' });
     const ui = await lastUi(h);
     c.cancel(1);
@@ -4456,7 +4488,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
 
   it('reach refusal at the host', async () => {
     const { h, c } = await twoSessions();
-    allow(h, 's1', { close_session: { access: 'on', reach: 'self' } });
+    await allow(h, 's1', { close_session: { access: 'on', reach: 'self' } });
     c.call(1, 'close_session', { session: h.sessions.get('s2')?.mcpHandle });
     expect(c.errorOf(await c.reply(1))).toBe('out_of_reach');
     expect(uiOf(h)).toEqual([]);
@@ -4464,7 +4496,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
 
   it('an ask for a UI tool expires 5 s early', async () => {
     const { h, c } = await twoSessions({ manualTimers: true });
-    allow(h, 's1', { open_url: { access: 'ask' } });
+    await allow(h, 's1', { open_url: { access: 'ask' } });
     c.call(1, 'open_url', { url: 'http://x/' });
     await until(() => h.toOwner.some((m) => m.msg.type === 'mcp:ask'));
     h.advance(20_000 - 1);
@@ -4481,7 +4513,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
     const a = await launch(h, 's3', CODEX, spec('/usr/bin/codex'));
     expect(a.spec.args).toContain('mcp_servers.conduit.tool_timeout_sec=180');
     const c = await rawClient(h.ep, a.token);
-    allow(h, 's3', { open_url: { access: 'ask' } });
+    await allow(h, 's3', { open_url: { access: 'ask' } });
     c.call(1, 'open_url', { url: 'http://x/' });
     await until(() => h.toOwner.some((m) => m.msg.type === 'mcp:ask'));
     h.advance(165_000 - 1);
@@ -4499,7 +4531,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
 
   it('reads trimmed last rows and relative cursor from the helper screen', async () => {
     const { h, c } = await twoSessions();
-    allow(h, 's1', { read_screen: { access: 'on', reach: 'any' } });
+    await allow(h, 's1', { read_screen: { access: 'on', reach: 'any' } });
     h.output('s2', 'first\r\nsecond\r\nthird');
     c.call(1, 'read_screen', { session: 's2', lines: 2 });
     expect(resultOf(await c.reply(1))).toMatchObject({
@@ -4515,7 +4547,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
 
   it('sends text, keys and a separate submit in order', async () => {
     const { h, c } = await twoSessions();
-    allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
+    await allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
     c.call(1, 'send_input', {
       session: 's2',
       text: 'hello',
@@ -4532,14 +4564,14 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
 
   it('rejects unsafe input before typing', async () => {
     const { h, c } = await twoSessions();
-    allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
+    await allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
     c.call(1, 'send_input', { session: 's2', text: 'a\nb' });
     expect(c.errorOf(await c.reply(1))).toBe('invalid_args');
     expect(h.inputs.filter(([id]) => id === 's2')).toEqual([]);
   });
   it('uses bracketed paste and rejects all control characters', async () => {
     const { h, c } = await twoSessions({ bracketedPaste: () => true });
-    allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
+    await allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
     c.call(1, 'send_input', { session: 's2', text: 'a\nb' });
     expect(resultOf(await c.reply(1))).toMatchObject({ sent_chars: 3 });
     expect(h.inputs).toContainEqual(['s2', '\x1b[200~a\nb\x1b[201~']);
@@ -4551,7 +4583,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
 
   it('reports target and input errors without writing', async () => {
     const { h, c } = await twoSessions();
-    allow(h, 's1', {
+    await allow(h, 's1', {
       send_input: { access: 'on', reach: 'opened' },
       read_screen: { access: 'on', reach: 'opened' },
     });
@@ -4567,7 +4599,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
     expect(resultOf(await c.reply(2))).toMatchObject({
       error: { code: 'out_of_reach', hint: expect.stringContaining('Settings') },
     });
-    allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
+    await allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
     c.call(3, 'send_input', { session: 's2' });
     expect(c.errorOf(await c.reply(3))).toBe('invalid_args');
     h.exit('s2');
@@ -4578,14 +4610,14 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
 
   it('reports a failed submit as restarting', async () => {
     const { h, c } = await twoSessions();
-    allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
+    await allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
     h.failEnter.add('s2');
     c.call(1, 'send_input', { session: 's2', text: 'x', submit: true });
     expect(c.errorOf(await c.reply(1))).toBe('session_restarting');
   });
   it('maps every supported key and validates input limits', async () => {
     const { h, c } = await twoSessions();
-    allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
+    await allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
     c.call(1, 'send_input', {
       session: 's2',
       keys: ['enter', 'tab', 'esc', 'backspace', 'space', 'ctrl+c'],
@@ -4605,7 +4637,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
 
   it('returns empty rows without a snapshot and null cursor outside the requested rows', async () => {
     const { h, c } = await twoSessions();
-    allow(h, 's1', { read_screen: { access: 'on', reach: 'any' } });
+    await allow(h, 's1', { read_screen: { access: 'on', reach: 'any' } });
     h.screens.dispose('s2');
     c.call(1, 'read_screen', { session: 's2' });
     expect(resultOf(await c.reply(1))).toMatchObject({ rows: [], cursor_row: null, cols: 40 });
@@ -4622,7 +4654,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
   it('rechecks paste mode after approval and shows the full request', async () => {
     let paste = true;
     const { h, c } = await twoSessions({ bracketedPaste: () => paste });
-    allow(h, 's1', { send_input: { access: 'ask', reach: 'any' } });
+    await allow(h, 's1', { send_input: { access: 'ask', reach: 'any' } });
     c.call(1, 'send_input', { session: 's2', text: 'first\nsecond', keys: ['ctrl+c'] });
     await until(() => h.toOwner.some(({ msg }) => msg.type === 'mcp:ask'));
     const ask = h.toOwner.find(({ msg }) => msg.type === 'mcp:ask')?.msg;
@@ -4643,7 +4675,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
   });
   it('reports a refused write as restarting', async () => {
     const { h, c } = await twoSessions();
-    allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
+    await allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
     h.alive.delete('s2');
     c.call(1, 'send_input', { session: 's2', text: 'x' });
     expect(c.errorOf(await c.reply(1))).toBe('session_restarting');
@@ -4652,7 +4684,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
   it('rechecks reach and exit while approval is pending', async () => {
     const { h, c } = await twoSessions();
     h.owners.set('s2', 1);
-    allow(h, 's1', { send_input: { access: 'ask', reach: 'window' } });
+    await allow(h, 's1', { send_input: { access: 'ask', reach: 'window' } });
     c.call(1, 'send_input', { session: 's2', text: 'x' });
     await until(() => h.toOwner.some(({ msg }) => msg.type === 'mcp:ask'));
     const first = h.toOwner.find(({ msg }) => msg.type === 'mcp:ask')?.msg;
@@ -4696,7 +4728,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
     await launch(h, 's2', SHELL);
     h.output('s2', 'unregistered helper screen');
     messaging = true;
-    allow(h, 's1', { read_screen: { access: 'on', reach: 'opened' } });
+    await allow(h, 's1', { read_screen: { access: 'on', reach: 'opened' } });
     c.call(1, 'read_screen', { session: 's2' });
     expect(resultOf(await c.reply(1))).toMatchObject({ rows: ['unregistered helper screen'] });
   });
@@ -4704,7 +4736,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
     const { h, c } = await twoSessions();
     h.output('s2', 'fake❯ ');
     h.clock.t += 10000;
-    allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
+    await allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
     c.call(1, 'send_input', { session: 's2', text: 'draft' });
     expect(resultOf(await c.reply(1))).toMatchObject({ sent_chars: 5 });
     await h.host.tick();
@@ -4712,7 +4744,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
   });
   it('focus_session and attach_folder run host-side', async () => {
     const { h, c } = await twoSessions();
-    allow(h, 's1', {
+    await allow(h, 's1', {
       focus_session: { access: 'on', reach: 'any' },
       attach_folder: { access: 'on' },
     });
@@ -4866,7 +4898,19 @@ describe('createConduitMcpHost — wait_sessions', () => {
   });
 
   it('times out with nothing fired and every requested session in states', async () => {
-    const h = harness({ manualTimers: true });
+    // An already-migrated policy.json, so no first-write timer is pending in the base count.
+    const migrated = serializePolicyFile({
+      version: 1,
+      profiles: [],
+      assignments: [],
+      overrides: [],
+      migratedFrom: null,
+      notes: { onScreenOnlyOffered: [] },
+    });
+    const h = harness({
+      manualTimers: true,
+      policyIo: { read: () => migrated, write: async () => undefined },
+    });
     const { ca } = await pairForWait(h);
     const base = h.pendingTimers;
     const p = ca.call('wait_sessions', {
@@ -5025,6 +5069,41 @@ describe('createConduitMcpHost — requests', () => {
     });
     expect(replies).toEqual([
       { type: 'mcp:requestResult', requestId, result: expect.objectContaining({ ok: true }) },
+    ]);
+  });
+
+  it('every tool call writes one Activity row; request_input rows carry requestId', async () => {
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line) as Record<string, unknown>);
+      },
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const h = harness({ activityIo });
+    const ca = await pairForRequests(h);
+    const first = await ca.call('request_input', { kind: 'confirm', title: 'Ship?', wait_s: 0 });
+    await ca.call('list_requests', {});
+    const calls = rows.filter((row) => row.lane === 'conduit');
+    expect(calls).toEqual([
+      expect.objectContaining({
+        action: 'request_input',
+        decision: 'allow',
+        outcome: 'ok',
+        durationMs: expect.any(Number),
+        requestId: first.body.request_id,
+        decidedBy: expect.any(String),
+      }),
+      expect.objectContaining({
+        action: 'list_requests',
+        decision: 'allow',
+        outcome: 'ok',
+        durationMs: expect.any(Number),
+        requestId: null,
+      }),
     ]);
   });
 
