@@ -3879,7 +3879,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(h.files).toHaveLength(1);
   });
 
-  it('two concurrent messaging calls on one one-use override run exactly once', async () => {
+  it('a messaging call after its one-use override is spent is refused', async () => {
     const rows: Array<Record<string, unknown>> = [];
     const activityIo: ActivityIo = {
       append: (_day, line) => {
