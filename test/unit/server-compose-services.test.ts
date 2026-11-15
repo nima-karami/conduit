@@ -499,3 +499,92 @@ describe.sequential('compose: per-peer events', () => {
     expect(peers).toContain(gone[0]);
   });
 });
+
+describe.sequential('compose: NET audit and link revoke reach the MCP side', () => {
+  const rpcResult = async <T>(services: Services, method: string, params: unknown): Promise<T> => {
+    const a = await answer(services, method, params);
+    if (!('result' in a)) throw new Error(`${method} failed: ${JSON.stringify(a)}`);
+    return a.result as T;
+  };
+  const readLines = (dir: string): Array<Record<string, unknown>> => {
+    if (!fs.existsSync(dir)) return [];
+    return fs
+      .readdirSync(dir)
+      .flatMap((f) => fs.readFileSync(path.join(dir, f), 'utf8').trim().split('\n'))
+      .filter((l) => l !== '')
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+  };
+  const eventually = async (check: () => boolean, ms = 10_000) => {
+    const end = Date.now() + ms;
+    while (!check()) {
+      if (Date.now() > end) throw new Error('timed out');
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  };
+  const lastNetState = (sent: Sent[]) => {
+    const states = of(sent, 'network.changed');
+    return states.at(-1);
+  };
+
+  it('a NET audit event reaches audit.jsonl and an Activity note', async () => {
+    const h = await harness();
+    await h.services.core.start();
+    const started = await rpcResult<{ addresses: string[] }>(h.services, 'pairing.start', {});
+    const address = started.addresses[0] ?? '';
+    const cut = address.lastIndexOf(':');
+    const sock = createConnection({
+      host: address.slice(0, cut),
+      port: Number(address.slice(cut + 1)),
+    });
+    await new Promise<void>((resolve, reject) => {
+      sock.once('connect', () => resolve());
+      sock.once('error', reject);
+    });
+    sock.destroy();
+    await eventually(() =>
+      readLines(path.join(h.userData, 'network')).some((r) => r.kind === 'pairing.failed'),
+    );
+    await eventually(() =>
+      readLines(path.join(h.userData, 'conduit-mcp', 'activity')).some(
+        (r) => r.lane === 'note' && r.action === 'pairing.failed',
+      ),
+    );
+  });
+
+  it('a link revoke on this server reaches the MCP side with the peer machine', async () => {
+    const dirFor = () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'compose-net-'));
+      fs.writeFileSync(
+        path.join(dir, 'settings.json'),
+        JSON.stringify({
+          version: 1,
+          settings: { networkBindHost: '127.0.0.1', networkPort: 0 },
+        }),
+      );
+      return dir;
+    };
+    const a = await harness({}, dirFor());
+    const b = await harness({}, dirFor());
+    await a.services.core.start();
+    await b.services.core.start();
+    const peerRevoked = vi.spyOn(a.services.mcp, 'peerRevoked');
+    const started = await rpcResult<{ pairingId: string; code: string[]; addresses: string[] }>(
+      a.services,
+      'pairing.start',
+      {},
+    );
+    const joined = await rpcResult<{ pairingId: string }>(b.services, 'pairing.join', {
+      code: started.code.join(' '),
+      address: started.addresses[0],
+    });
+    await eventually(() => lastNetState(a.sent)?.pairing?.state === 'confirm');
+    await rpcResult(a.services, 'pairing.confirm', { pairingId: started.pairingId });
+    await rpcResult(b.services, 'pairing.confirm', { pairingId: joined.pairingId });
+    const bId = lastNetState(b.sent)?.machineId ?? '';
+    await eventually(() =>
+      Boolean(lastNetState(a.sent)?.links.some((l) => l.machineId === bId && l.state === 'up')),
+    );
+    await rpcResult(a.services, 'link.revoke', { machineId: bId });
+    expect(peerRevoked).toHaveBeenCalledWith(bId);
+  });
+});

@@ -27,7 +27,11 @@ import {
 } from '../../src/conduit-mcp/notice-gate';
 import { composeNotice } from '../../src/conduit-mcp/notice-text';
 import { reasonText } from '../../src/conduit-mcp/policy-engine';
-import { parsePolicyFile, serializePolicyFile } from '../../src/conduit-mcp/policy-file';
+import {
+  parsePolicyFile,
+  serializeGrantsFile,
+  serializePolicyFile,
+} from '../../src/conduit-mcp/policy-file';
 import type { OneUseOverride } from '../../src/conduit-mcp/policy-types';
 import type { NetworkPort, RemoteEntry } from '../../src/conduit-mcp/remote-routing';
 import type { RequestsIo } from '../../src/conduit-mcp/request-file-fs';
@@ -6493,5 +6497,70 @@ describe('createConduitMcpHost — inbound from another machine', () => {
     const lines = text.split('\n');
     expect(lines.filter((l: string) => l.startsWith('[conduit message'))).toHaveLength(1);
     expect(text).not.toContain('from the human (your user) on m-aaaaaaaa]');
+  });
+});
+
+describe('NET wiring at the host: a peer link revoke and its audit notes', () => {
+  const peerGrant = (id: string, machineId: string) => ({
+    id,
+    who: { kind: 'peer' as const, machineId },
+    tool: 'send_message' as const,
+    on: { kind: 'anywhere' as const },
+    for: 'until-revoked' as const,
+    anchorSessionId: null,
+    createdAt: new Date(0).toISOString(),
+    expiresAt: null,
+    lastUsedAt: null,
+    state: 'active' as const,
+    endedAt: null,
+    requestId: null,
+  });
+
+  it('peerRevoked ends that peer grant and saves it', async () => {
+    const written: string[] = [];
+    const grantsIo: RequestsIo = {
+      read: () =>
+        serializeGrantsFile({
+          version: 1,
+          grants: [peerGrant('g-m1', 'm-1'), peerGrant('g-m2', 'm-2')],
+        }),
+      write: async (text) => {
+        written.push(text);
+      },
+    };
+    const h = harness({ grantsIo });
+    await h.host.start();
+    h.host.peerRevoked('m-1');
+    const states = Object.fromEntries(h.host.uiState().policy.grants.map((g) => [g.id, g.state]));
+    expect(states).toEqual({ 'g-m1': 'revoked', 'g-m2': 'active' });
+    await h.host.stop();
+    const saved = JSON.parse(written.at(-1) ?? '{}') as {
+      grants: Array<{ id: string; state: string }>;
+    };
+    expect(saved.grants.find((g) => g.id === 'g-m1')?.state).toBe('revoked');
+  });
+
+  it('recordNote writes one note row with the given action, machine and handle', async () => {
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line) as Record<string, unknown>);
+      },
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordNote({ action: 'link.revoked', machineId: 'm-1', handle: null });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        lane: 'note',
+        action: 'link.revoked',
+        principal: { handle: null, sessionId: null, machineId: 'm-1' },
+        decidedBy: 'conduit',
+      }),
+    ]);
   });
 });

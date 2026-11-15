@@ -277,6 +277,10 @@ export interface ConduitMcpHost extends LaunchPort, DraftPort {
   ): Promise<void>;
   tick(): Promise<void>;
   networkPort(): McpNetworkPort;
+  /** A peer's link was revoked: its grants end. */
+  peerRevoked(machineId: string): void;
+  /** An audit event from the network, shown in the Activity log as a note row. */
+  recordNote(note: { action: string; machineId: string | null; handle: string | null }): void;
   stop(): Promise<void>;
 }
 
@@ -3077,6 +3081,26 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
 
     tick,
+
+    peerRevoked(machineId) {
+      policyService.peerRevoked(machineId);
+    },
+    recordNote(note) {
+      policyService.activity.record({
+        lane: 'note',
+        principal: { handle: note.handle, sessionId: null, machineId: note.machineId },
+        cli: null,
+        action: note.action,
+        target: null,
+        summary: null,
+        decision: null,
+        decidedBy: 'conduit',
+        outcome: null,
+        durationMs: null,
+        requestId: null,
+        count: null,
+      });
+    },
 
     networkPort: (): McpNetworkPort => ({
       localDirectory: () => directory(),
