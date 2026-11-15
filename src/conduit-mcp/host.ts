@@ -1398,7 +1398,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const startedAt = now();
     const evaluated: {
       current: { input: Omit<PolicyInput, 'now'>; decision: PolicyDecision } | null;
-    } = { current: null };
+      spent: boolean;
+    } = { current: null, spent: false };
     try {
       const handle = sessionId ? handleOf(sessionId) : undefined;
       const result = await (async (): Promise<Result<unknown> | null> => {
@@ -1474,10 +1475,15 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           appConnected: deps.appConnected(),
         });
         if (refused) return { ok: false, error: refused };
+        // A concurrent call may have spent the override this decision relies on.
+        const commitResolved = (): boolean => {
+          if (policyService.commit(resolved) !== null) return true;
+          evaluated.spent = true;
+          return false;
+        };
         const caller = { handle, sessionId };
         if (isRequestTool(name)) {
-          if (policyService.commit(resolved) === null)
-            return { ok: false, error: toolDisabled(name) };
+          if (!commitResolved()) return { ok: false, error: toolDisabled(name) };
           return runRequest(caller, name, args, ctx);
         }
         if (isMessagingTool(name)) {
@@ -1487,8 +1493,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               error: toolError('store_unavailable', storeError ?? 'message store unavailable'),
             };
           }
-          if (policyService.commit(resolved) === null)
-            return { ok: false, error: toolDisabled(name) };
+          if (!commitResolved()) return { ok: false, error: toolDisabled(name) };
           return runMessaging(caller, name, args, ctx);
         }
         const controlCtx: ControlCallContext = {
@@ -1510,7 +1515,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           wiredAtLaunch: wiredAtLaunch(sessionId),
           tool: name,
           decision: resolved,
-          commit: () => policyService.commit(resolved) !== null,
+          commit: commitResolved,
           source: sourceOf(resolved),
           args,
           prepare: () => prepareControl(caller, name, args, controlCtx),
@@ -1550,14 +1555,20 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         action: name,
         target: record?.input.targets[0]?.path ?? record?.input.targets[0]?.sessionId ?? null,
         summary: null,
-        decision: decision?.decision ?? null,
+        decision: evaluated.spent ? 'deny' : (decision?.decision ?? null),
         decidedBy: decision
           ? reasonText(decision.reason, decision.decision, {
               profileName: (id) => policyService.profileName(id) ?? id,
               cliName: (kind) => kind,
             })
           : 'unknown',
-        outcome: cancelled ? 'withdrawn' : result.ok ? 'ok' : outcomeOfError(result.error.code),
+        outcome: cancelled
+          ? 'withdrawn'
+          : result.ok
+            ? 'ok'
+            : evaluated.spent
+              ? 'denied'
+              : outcomeOfError(result.error.code),
         durationMs: now() - startedAt,
         requestId,
         count: null,

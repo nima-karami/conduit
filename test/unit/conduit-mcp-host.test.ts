@@ -4031,6 +4031,72 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(h.files).toHaveLength(1);
   });
 
+  it('a call refused because a concurrent call spent its override records denied, never allow', async () => {
+    const policy = serializePolicyFile({
+      version: 1,
+      profiles: [],
+      overrides: [],
+      migratedFrom: null,
+      notes: { onScreenOnlyOffered: [] },
+      assignments: [
+        {
+          point: { kind: 'session', sessionId: 's1' },
+          assignment: {
+            profileId: 'worker',
+            onScreenOnly: false,
+            exceptions: [
+              {
+                tool: 'open_file',
+                scope: { kind: 'path', path: '/w/a.ts' },
+                rule: { decision: 'deny' },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line) as Record<string, unknown>);
+      },
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const { h, c } = await asking({
+      kinds: { '/w': 'dir', '/w/a.ts': 'file' },
+      policyIo: { read: () => policy, write: async () => undefined },
+      grantsIo: { read: () => null, write: async () => undefined },
+      activityIo,
+    });
+    c.call(1, 'open_file', { path: '/w/a.ts' });
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:allowOnce',
+        requestId: 2,
+        activityId: String(rows.find((r) => r.decision === 'deny')?.id),
+      },
+      () => undefined,
+      1,
+    );
+
+    const before = rows.length;
+    c.call(3, 'open_file', { path: '/w/a.ts' });
+    c.call(4, 'open_file', { path: '/w/a.ts' });
+    const codes = [c.errorOf(await c.reply(3)), c.errorOf(await c.reply(4))].sort();
+    expect(codes).toEqual(['ok', 'tool_disabled']);
+    expect(
+      rows
+        .slice(before)
+        .filter((r) => r.action === 'open_file')
+        .map((r) => `${String(r.decision)}/${String(r.outcome)}`)
+        .sort(),
+    ).toEqual(['allow/ok', 'deny/denied']);
+  });
+
   it('an override is kept when the ask that would spend it is refused for rate_limited', async () => {
     const rows: Array<Record<string, unknown>> = [];
     const activityIo: ActivityIo = {
