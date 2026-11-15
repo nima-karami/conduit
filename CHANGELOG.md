@@ -7,11 +7,30 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Added
+- Groundwork for using Conduit across your own machines: the Background service can link to the one on another machine you own. Linking takes three words shown on one machine and typed on the other, then a fingerprint you compare on both screens. The screens for this arrive in a later release.
+- Once two machines are linked, agents see the sessions on both in `list_sessions` (each with an address like `claude-3@m-1a2b3c4d`), can message them with `send_message`, and can wait on them with `wait_sessions`. A message sent while the other machine is unreachable waits and is delivered once when it's back, never twice. Attachments to another machine are limited to 10 MiB per message.
+- On a linked machine you can watch another machine's terminals. Typing into, resizing, opening or closing them ("drive") is off on every link until you turn it on for that link. Agents can never drive another machine's sessions.
+- Unlinking ("revoke") on either machine stops the link on both at once.
+
+## [0.65.2] — 2026-11-15
+
+### Fixed
+- A session whose folder is a whole drive (like `C:\`) or `/` now shows change markers and diffs for its files.
+- Codex no longer asks you to approve each of Conduit's own tool calls; Conduit's approval cards are the only prompt.
+
+## [0.65.1] — 2026-11-15
+
+### Changed
+- A request open as a tab is named after it, for example "Review: v0.65.0 changelog", instead of "Request".
+- A draft to review shows line numbers, and the lines you changed are marked beside their numbers.
+
+## [0.65.0] — 2026-11-15
+
+### Added
 - Agents can ask you a question and get a structured answer with the new `request_input` tool: yes/no, pick from options, a free answer, or review a draft. You can always type your own words as well. If you don't answer while the agent waits, the agent gets your answer later in its inbox, so a slow answer is never a lost one. Agents can also wait again, withdraw or list their requests (`wait_request`, `withdraw_request`, `list_requests`). They are in a new Requests group in the MCP tool settings, on by default.
 - An agent can attach a default answer that applies if you haven't answered by a set time (for example "go with Blue/green in 2 h"). Tool approvals never apply themselves.
 - A question an agent sends you as a message (kind "question"), a session stuck at its own permission or question prompt while you're looking elsewhere (Claude Code and OpenCode report this), and a usage limit auto-resume can't handle now each become a request you can answer. Each counts once.
 - When a request arrives and no Conduit window is focused, you get one OS notification in Conduit's own words (at most one every 10 seconds; held while you're Away unless it's urgent).
-
 - A **Needs you** panel lists everything that needs you, apart from Messages: each request shows as Approve, Answer or Review, says which session asks and why it matters now, and opens in a pop-up (or a tab beside the session when it's long, like a draft to review). Sort, filter (session, lead group, space, type, machine) and choose what cards show from its ⋯ menu; History keeps answered and closed requests for 30 days.
 - Answer without opening the agent's terminal: pick an option, write your own words, or both; Send moves on to the next request. Skip means you won't answer.
 - The status bar counts what needs you with a countdown while an agent waits, the session's tab bar shows "Waiting on you", and Ctrl+Shift+Y (Cmd+Shift+Y on macOS) opens the request that needs you soonest.
@@ -20,6 +39,11 @@ All notable user-facing changes to Conduit. Format follows
 ### Changed
 - A tool approval no longer gets denied 5 seconds after you close every Conduit window: it waits until the agent's own time limit, and Conduit's tray counts it. Approvals set to "always" for actions that need no window can even start with no window open; reopen Conduit to answer them.
 - The tray's "need you" count now includes open requests and waiting approvals, each counted once.
+
+## [0.64.1] — 2026-11-14
+
+### Fixed
+- A "JavaScript error occurred in the main process" box no longer appears, and headless runs no longer crash, when git quits before reading the input Conduit gives it (for example, checking ignored files in a folder that isn't a git repository).
 
 ## [0.64.0] — 2026-11-13
 

@@ -338,6 +338,47 @@ Also checked: OpenAI (https://openai.com/policies/terms-of-use, UNVERIFIED), Ope
 | Impersonation | ✓ | ✓ | Identity is the key; addresses carry the machine id |
 | Local pipe exposure (M28) | ✓ | ✓ | Separate authenticated link endpoint; C2/MCP stay local |
 
+### 6.5 As built: pairing and link security (CON-27, lead-approved 2026-11-14)
+- **Pairing is numeric comparison, not a PAKE.** Each server sends its Ed25519 key and
+  certificate in plain-TCP messages on a pairing port. That port is open only for the 10-minute
+  window and only for one attempt. The joiner commits to its key and nonce before it sees the
+  opener's, so a man in the middle gets one 2⁻³² guess at the 32-bit fingerprint per window. The
+  person comparing fingerprints on both screens is the authentication.
+- **Residual: a person who confirms without comparing.** An attacker on the path during the window
+  can then pair. CPace would have stopped that, but it was ruled out to avoid owning PAKE code.
+- **Residual: passive observers during a window.** Someone watching the LAN during a window sees the
+  three words, both self-names, the listen addresses and both public keys. The code is single-use
+  and burns on the first connection. A hijacked join shows a fingerprint that won't match.
+- **Links use verified TLS.** Each link is TLS 1.3 with mutual certificates, and the only trusted CA
+  is the peer's own certificate, pinned at pairing (SAN = machine id). `rejectUnauthorized` stays
+  on, and a raw-key pin is checked as well. A revoked peer's certificate stays trusted for 30 days,
+  only so its next handshake can be told `revoked`.
+- **The fingerprint covers everything each side learns, and nothing in it can be ground.** It
+  hashes both keys, both nonces and a digest of both identities (machine id, owner key, offered
+  owner key, name, addresses, protocol, certificate). Every identity is fixed before any nonce it
+  could be ground against is public: the joiner's first message commits to its key, nonce and
+  identity; the opener's identity travels with the opener's nonce; the joiner's reveal opens the
+  commitment, which the opener checks. A relay that changes anything either fails the commitment
+  or shows the two people different values. On a first-ever link the opener offers its new owner
+  public key inside its identity; nothing settles after the confirm (CON-27 review minor 1 and
+  re-review R1). Self-names must be printable, with no line breaks.
+- **The owner private key never travels in pairing.** It crosses the first verified link once, and
+  the receiver accepts it only if it matches the public owner key both people confirmed.
+
+### 6.6 Deviations (CON-27 as built, lead-approved 2026-11-15)
+- **Attachments to another machine: 10 MiB per message, not 25 MB.** A link frame is capped at
+  16 MiB, and a 25 MB message doesn't fit one frame once base64-encoded. `send_message` to any
+  remote recipient fails before anything is stored if the attachments total over 10 MiB; the error
+  names the limit. The inbound guard refuses over 10 MiB too, so neither side accepts more than it
+  can send. Local messages keep the 25 MB limit.
+- **Never all interfaces, never a public address, not even when set explicitly.** §5 says "never on
+  a public interface by default"; as built, no setting can bind one. The link and pairing
+  listeners bind only loopback, RFC 1918, 100.64.0.0/10 (tailnets) and ULA addresses, whether the
+  setting is `auto` or one explicit address; IPv4-mapped spellings are judged as the IPv4 address
+  they carry (CON-27 review M1).
+- **Monitor shows every local session.** Sessions without an MCP handle appear with no address and
+  can't be messaged; agents' `list_sessions` still lists addressable sessions only.
+
 ## 7. Acceptance criteria
 EARS (MVP unless tagged):
 - When both people confirm the same fingerprint, the system shall store the link with the chosen trust
@@ -496,6 +537,8 @@ durations → POL-D7; waiting-ask caps → POL §4.5 · remote principal in MVP 
   - Re-check every "Source" row in §2.
 
 ## 13. Decisions Needed
+
+**Locked by the owner (2026-11-14, CON-27 build):** NET-D1 one mechanism, two trust levels · NET-D2 owner key at pairing · NET-D3 direct over LAN/tailnet, no relay · NET-D4 own links: messaging + monitor by default, `drive` and `orchestrate` each one opt-in · NET-D18 `drive` in MVP, opt-in per link · NET-D19 Kiro only after measuring its Windows MCP setup. Guest decisions (NET-D6, D7, D8, D17, D21) belong to CON-17 and stay open.
 Format: options → **default** → why.
 
 - **NET-D1 [high] One feature or two?** (a) one mechanism, two trust levels, two slices; (b) two
@@ -549,3 +592,4 @@ Format: options → **default** → why.
   "Owned elsewhere"; A17/R14 NET-D18–D21; A18 refused by default; A19/R15 NET-D7/D8 reworded; A21
   feature gaps; B1/R16 `wait_sessions`; B2–B4 limit wording, MVP limits, no rotation, 5 s nuance; B5 cuts.
 - v4 (cross-spec r2): N3/R21 all 25 tools mapped + capability-off floor; N5/R22 manual revoke MVP (unchanged); N6/R23 merged presence flow, read-only MVP; N7/R24 share 24 h + Renew; N12 stable remote session id, guest orchestrate in vision; NET-D18 cost clause; status set.
+- v5 (CON-27 build): §6.5 as-built security; §6.6 deviations (10 MiB remote attachments; monitor lists every local session).

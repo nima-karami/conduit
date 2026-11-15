@@ -296,6 +296,23 @@ describe('RequestTemplate', () => {
     expect(rejected.onSend).toHaveBeenCalledWith({ outcome: 'declined', reason: 'Too broad' });
   });
 
+  it('the draft shows line numbers and marks edited lines in the margin', async () => {
+    const draft = 'line one\nline two\nline three';
+    await mount({ id: 'rv-lines', kind: 'review', draft, options: [] }, { mode: 'tab' });
+    const numbers = () =>
+      Array.from(host.querySelectorAll('.reqtpl-draft__ln')).map((n) => n.textContent);
+    const marked = () =>
+      Array.from(host.querySelectorAll('.reqtpl-draft__ln--edited')).map((n) => n.textContent);
+    expect(numbers()).toEqual(['1', '2', '3']);
+    expect(marked()).toEqual([]);
+    setField(fieldFor(REQ_STR.reqTpl.editedLabel), 'line one\nLINE two\nline three\nnew line');
+    expect(numbers()).toEqual(['1', '2', '3', '4']);
+    expect(marked()).toEqual(['2', '4']);
+    click(must(buttonNamed(REQ_STR.reqTpl.originalTab), 'Original view'));
+    expect(numbers()).toEqual(['1', '2', '3']);
+    expect(marked()).toEqual([]);
+  });
+
   it('Skip sends dismissed', async () => {
     const m = await mount({ id: 'skip-1' });
     await clickAsync(must(buttonNamed(REQ_STR.skip), 'Skip button'));

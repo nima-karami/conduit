@@ -217,4 +217,28 @@ describe('atomicWriteFileSync', () => {
     // and the temp file is cleaned up, not orphaned
     expect(fs.readdirSync(dir)).toEqual(['a.json']);
   });
+
+  // POSIX only: Windows has no mode bits, and CI runs on ubuntu.
+  it.skipIf(process.platform === 'win32')(
+    'creates the file with the given mode, never wider',
+    () => {
+      const dir = tmp();
+      const file = join(dir, 'secret.json');
+      const seen: number[] = [];
+      atomicWriteFileSync(
+        file,
+        'key',
+        {
+          ...fs,
+          renameSync: (from: fs.PathLike, to: fs.PathLike) => {
+            seen.push(fs.statSync(from).mode & 0o777);
+            fs.renameSync(from, to);
+          },
+        },
+        { mode: 0o600 },
+      );
+      expect(seen).toEqual([0o600]);
+      expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    },
+  );
 });

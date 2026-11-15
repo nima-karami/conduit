@@ -6,6 +6,7 @@ import { getRequestsSnapshot } from './use-conduit-mcp';
 interface RequestOpeners {
   openTab(r: RequestView): void;
   openTerminal(sessionId: string): void;
+  closeTab(requestId: string): void;
 }
 
 interface RequestPopupStore {
@@ -77,7 +78,14 @@ export function createRequestOpen(deps: RequestOpenDeps) {
     return true;
   }
 
-  return { openRequest, openSessionTerminal, requestPopup, setRequestOpeners };
+  function closeRequestTab(requestId: string): boolean {
+    const o = openers;
+    if (!o) return false;
+    o.closeTab(requestId);
+    return true;
+  }
+
+  return { openRequest, openSessionTerminal, closeRequestTab, requestPopup, setRequestOpeners };
 }
 
 const instance = createRequestOpen({
@@ -85,7 +93,13 @@ const instance = createRequestOpen({
   requests: () => getRequestsSnapshot()?.open ?? [],
 });
 
-export const { openRequest, openSessionTerminal, requestPopup, setRequestOpeners } = instance;
+export const {
+  openRequest,
+  openSessionTerminal,
+  closeRequestTab,
+  requestPopup,
+  setRequestOpeners,
+} = instance;
 
 export function usePopupRequest(): string | null {
   return useSyncExternalStore(requestPopup.subscribe, requestPopup.current);

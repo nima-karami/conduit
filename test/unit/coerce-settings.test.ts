@@ -679,3 +679,24 @@ describe('coerceSettings — sidebar panel views', () => {
     expect(r.sidebarSpacesView).toEqual(DEFAULT_SETTINGS.sidebarSpacesView);
   });
 });
+
+describe('network settings', () => {
+  it('defaults to auto bind on 47391 with the host name', () => {
+    const s = coerceSettings({});
+    expect([s.networkBindHost, s.networkPort, s.networkSelfName]).toEqual(['auto', 47391, '']);
+  });
+  it('clamps the port, trims names and never stores an empty bind host', () => {
+    const s = coerceSettings({
+      networkBindHost: '   ',
+      networkPort: 70000,
+      networkSelfName: `  ${'x'.repeat(80)} `,
+    });
+    expect(s.networkBindHost).toBe('auto');
+    expect(s.networkPort).toBe(65535);
+    expect(s.networkSelfName).toHaveLength(64);
+    expect(coerceSettings({ networkPort: 0, networkBindHost: '127.0.0.1' })).toMatchObject({
+      networkPort: 0,
+      networkBindHost: '127.0.0.1',
+    });
+  });
+});

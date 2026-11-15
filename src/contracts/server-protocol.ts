@@ -18,7 +18,13 @@ import type { RequestKind } from '../conduit-mcp/request-types';
 import type { McpUiState } from '../conduit-mcp/ui-types';
 import type { DroppedRoot } from '../folder-validation';
 import type { LauncherDTO } from '../launchers';
-import type { HostToWebview, TermGeometry, TermStartMode, WebviewToHost } from '../protocol';
+import type {
+  HostToWebview,
+  TermGeometry,
+  TermStartMode,
+  WebviewToHost,
+  WindowsPtyInfo,
+} from '../protocol';
 import type { AppSettings } from '../settings';
 import type {
   AgentDefinition,
@@ -30,6 +36,8 @@ import type {
   SessionOpener,
 } from '../types';
 import type { DisplayFacts } from './frames';
+import type { Capability } from './link-protocol';
+import type { NetworkState } from './network-state';
 import type { Job, LimitEpisode, SessionAutoResume } from './scheduler';
 import type { SessionRuntime } from './session-identity';
 import type { AttachTarget, FirstPaint } from './terminal-link';
@@ -193,6 +201,9 @@ export const SERVER_SETTINGS_KEYS = [
   'restoreSessions',
   'scrollbackPersistence',
   'trackCwd',
+  'networkBindHost',
+  'networkPort',
+  'networkSelfName',
 ] as const satisfies readonly (keyof AppSettings)[];
 export type ServerSettings = Pick<AppSettings, (typeof SERVER_SETTINGS_KEYS)[number]>;
 
@@ -485,6 +496,52 @@ export interface ServerMethods {
     params: { patch: Partial<ServerSettings> };
     result: { settings: ServerSettings };
   };
+  // Linked machines (docs/plans/2026-11-14-conduit-network-machinery.plan.md "C2 additions").
+  'pairing.start': {
+    params: Record<string, never>;
+    result: {
+      pairingId: string;
+      code: [string, string, string];
+      addresses: string[];
+      expiresAt: string;
+    };
+  };
+  'pairing.join': { params: { code: string; address: string }; result: { pairingId: string } };
+  'pairing.confirm': { params: { pairingId: string }; result: Record<string, never> };
+  'pairing.decline': { params: { pairingId: string }; result: Record<string, never> };
+  'pairing.cancel': { params: { pairingId: string }; result: Record<string, never> };
+  'link.list': { params: Record<string, never>; result: NetworkState };
+  'link.revoke': { params: { machineId: string }; result: Record<string, never> };
+  'link.setCapability': {
+    params: { machineId: string; capability: Capability; on: boolean };
+    result: Record<string, never>;
+  };
+  'link.setAddresses': {
+    params: { machineId: string; addresses: string[] };
+    result: Record<string, never>;
+  };
+
+  'remote.attach': {
+    params: { machineId: string; sessionId: string };
+    result: {
+      viewId: string;
+      firstPaint: string;
+      size: TermGeometry;
+      windowsPty: WindowsPtyInfo | null;
+      drive: boolean;
+    };
+  };
+  'remote.detach': { params: { viewId: string }; result: Empty };
+  'remote.input': { params: { machineId: string; sessionId: string; data: string }; result: Empty };
+  'remote.resize': {
+    params: { machineId: string; sessionId: string; cols: number; rows: number };
+    result: Empty;
+  };
+  'remote.open': {
+    params: { machineId: string; agentId: string; folder: string };
+    result: { sessionId: string };
+  };
+  'remote.close': { params: { machineId: string; sessionId: string }; result: Empty };
 
   // ── UI facts from the app ──
   'ui.presence': { params: { windows: WindowPresence[] }; result: Empty };
@@ -580,6 +637,14 @@ export interface ServerEvents {
   'timers.fired': Reply<'timer:fired'>;
   'timers.changed': Reply<'timer:state'>;
   'server.stopping': { reason: 'update' | 'user' | 'idle' | 'stopAll' };
+  'network.changed': NetworkState;
+  'remote.data': { viewId: string; data: string };
+  'remote.state': {
+    viewId: string;
+    state: 'live' | 'frozen' | 'exited' | 'resyncing';
+    since: string | null;
+    size: TermGeometry | null;
+  };
   /**
    * The app fell behind; call events.subscribe again. `seq` is the first event this peer did not get,
    * and nothing more arrives on this connection until it re-subscribes.
@@ -605,7 +670,11 @@ export type ServerErrorKind =
   | 'refused'
   | 'unavailable'
   | 'invalid'
-  | 'server_stopping';
+  | 'server_stopping'
+  | 'peer_unreachable'
+  | 'peer_revoked'
+  | 'capability_off'
+  | 'pairing_failed';
 
 /**
  * Every server event travels as one JSON-RPC notification method, so a reader dispatches on

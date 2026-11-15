@@ -18,7 +18,7 @@
     "test/e2e/fixtures/*.cjs"
   ],
   "ignoreDependencies": ["electron-updater", "dompurify"],
-  "ignorePatterns": ["out/**", "dist/**", "designs/**", "node_modules/**"],
+  "ignorePatterns": ["out/**", "dist/**", "designs/**", "node_modules/**", "docs/design/**"],
   "ignoreExports": [
     {
       "file": "src/protocol.ts",

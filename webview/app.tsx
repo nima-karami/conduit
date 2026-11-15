@@ -2190,6 +2190,8 @@ export function App() {
         dispatchDocs({ type: 'open', kind: 'request', path, sessionId, shown: sessionId || shown });
       },
       openTerminal: goToTerminal,
+      closeTab: (requestId) =>
+        dispatchDocs({ type: 'close', id: `request:${requestDocPath(requestId)}` }),
     });
     return () => setRequestOpeners(null);
   }, [goToTerminal, recordNav]);

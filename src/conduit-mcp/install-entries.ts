@@ -5,10 +5,16 @@ import type {
   CodexEntry,
   OpenCodeEntry,
   V050CodexEntry,
+  V065CodexEntry,
 } from './install-types';
 
 export type ConduitEntry = ClaudeEntry | CodexEntry | CursorEntry | OpenCodeEntry;
-export type LegacyConduitEntry = ClaudeEntry | V050CodexEntry | CursorEntry | OpenCodeEntry;
+export type LegacyConduitEntry =
+  | ClaudeEntry
+  | V050CodexEntry
+  | V065CodexEntry
+  | CursorEntry
+  | OpenCodeEntry;
 export const SHIM_LEAF = 'conduit-mcp-shim.cjs';
 /** Longer than Conduit's ask budget, so the human's card decides, not the CLI's clock. */
 export const CODEX_TOOL_TIMEOUT_SEC = 180;
@@ -32,12 +38,21 @@ const claudeEntry = (execPath: string, shimPath: string): ClaudeEntry => ({
   },
 });
 
-const v050Codex = (execPath: string, shimPath: string): V050CodexEntry => ({
+const codexCommon = (execPath: string, shimPath: string) => ({
   command: execPath,
   args: [shimPath],
-  env: { ELECTRON_RUN_AS_NODE: '1' },
+  env: { ELECTRON_RUN_AS_NODE: '1' as const },
   env_vars: [TOKEN, ENDPOINT],
+});
+
+const v050Codex = (execPath: string, shimPath: string): V050CodexEntry => ({
+  ...codexCommon(execPath, shimPath),
   default_tools_approval_mode: 'auto',
+});
+
+const v065Codex = (execPath: string, shimPath: string): V065CodexEntry => ({
+  ...v050Codex(execPath, shimPath),
+  tool_timeout_sec: CODEX_TOOL_TIMEOUT_SEC,
 });
 
 const openCodeEntry = (execPath: string, shimPath: string): OpenCodeEntry => ({
@@ -57,7 +72,11 @@ export function conduitEntry(cli: AgentCli, execPath: string, shimPath: string):
     case 'claude':
       return claudeEntry(execPath, shimPath);
     case 'codex':
-      return { ...v050Codex(execPath, shimPath), tool_timeout_sec: CODEX_TOOL_TIMEOUT_SEC };
+      return {
+        ...codexCommon(execPath, shimPath),
+        default_tools_approval_mode: 'approve',
+        tool_timeout_sec: CODEX_TOOL_TIMEOUT_SEC,
+      };
     case 'cursor':
       return cursorEntry(execPath, shimPath);
     case 'opencode':
@@ -65,14 +84,23 @@ export function conduitEntry(cli: AgentCli, execPath: string, shimPath: string):
   }
 }
 
-/** What v0.50 installed; classifyEntry counts it as ours so it never reads as another Conduit. */
-export function legacyConduitEntry(
+/**
+ * Every entry shape Conduit wrote in an earlier release that differs from today's, so classifyEntry
+ * treats it as ours and startup repair upgrades it. An entry we wrote in any earlier release is still ours to upgrade.
+ */
+export function legacyConduitEntries(
   cli: AgentCli,
   execPath: string,
   shimPath: string,
-): LegacyConduitEntry {
-  // Only the codex entry has changed since v0.50.
-  return cli === 'codex' ? v050Codex(execPath, shimPath) : conduitEntry(cli, execPath, shimPath);
+): readonly LegacyConduitEntry[] {
+  switch (cli) {
+    case 'codex':
+      return [v050Codex(execPath, shimPath), v065Codex(execPath, shimPath)];
+    case 'claude':
+    case 'cursor':
+    case 'opencode':
+      return [];
+  }
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -169,16 +197,16 @@ export function isConduitShaped(cli: AgentCli, entry: unknown): boolean {
 
 export type EntryClass = 'absent' | 'ours' | 'other-conduit' | 'conflict';
 
-/** `legacy`: this build's v0.50 entry, also 'ours'; startup repair upgrades it in place. */
+/** `legacy`: earlier-release shapes, also 'ours'; startup repair upgrades them in place. */
 export function classifyEntry(
   cli: AgentCli,
   entry: unknown,
   expected: ConduitEntry,
-  legacy?: LegacyConduitEntry,
+  legacy: readonly LegacyConduitEntry[] = [],
 ): EntryClass {
   if (entry === undefined) return 'absent';
   if (deepEqualConfig(entry, expected)) return 'ours';
-  if (legacy !== undefined && deepEqualConfig(entry, legacy)) return 'ours';
+  if (legacy.some((l) => deepEqualConfig(entry, l))) return 'ours';
   return isConduitShaped(cli, entry) ? 'other-conduit' : 'conflict';
 }
 

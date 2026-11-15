@@ -355,6 +355,7 @@ export function CenterPane({
       <RequestTab
         requestId={requestIdOfPath(doc.path) ?? ''}
         sessionName={sessions.find((s) => s.id === doc.sessionId)?.name ?? ''}
+        onTitle={(title) => onDocTitle?.(doc.id, title)}
       />
     ) : doc.kind === 'commit-diff' ? (
       <CommitDiffView

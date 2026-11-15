@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Conduit · d2 bars · 1 things arrive</title>
+<link rel="stylesheet" href="../../../kit/wireframe.css">
+</head>
+<body class="wf">
+<div class="wf-frame">
+
+<div class="wf-bar">
+  <span class="wf-h3">▢ Conduit</span>
+  <span class="wf-muted">‹ ›</span>
+  <div class="wf-grow" style="display:flex; justify-content:center;">
+    <span class="wf-input" style="width:420px;">Search sessions, agents, files…</span>
+  </div>
+  <span class="wf-btn">Files</span>
+  <span class="wf-btn"><b>Changes</b> <span class="wf-count">6</span></span>
+  <span class="wf-btn">Messages <span class="wf-count">14</span></span>
+  <span class="wf-btn">Needs you</span>
+  <span class="wf-muted">— ▢ ✕</span>
+</div>
+
+<div class="wf-body" style="grid-template-columns:264px 1fr 340px;">
+
+<!-- wf-locked:sidebar -->
+<div class="wf-region wf-panel wf-pad-s" style="display:flex; flex-direction:column; gap:12px;">
+  <div class="wf-spread"><span class="wf-label">Spaces</span><span class="wf-muted">+ ⋯</span></div>
+  <div class="wf-list">
+    <div class="is-selected wf-spread"><span>▦ All</span><span class="wf-small wf-muted">8 agents</span></div>
+    <div class="wf-spread"><span>C Conduit</span><span class="wf-small wf-muted">main</span></div>
+    <div class="wf-spread"><span>N Nimbus</span><span class="wf-small wf-muted">main</span></div>
+    <div class="wf-spread"><span>No space</span><span class="wf-small wf-muted"></span></div>
+  </div>
+  <div class="wf-spread"><span class="wf-label">Agents · 8 live</span><span class="wf-muted">⌕ + ⋯</span></div>
+  <div class="wf-stack-s">
+    <span class="wf-label">Needs you</span>
+    <div class="wf-spread"><span>Three-process lead <span class="wf-small wf-muted">· Conduit</span></span><span class="wf-small">12m ◉</span></div>
+    <div class="wf-spread" style="padding-left:16px;"><span>app lane</span><span class="wf-small">1m ◉</span></div>
+    <span class="wf-label">Done</span>
+    <div class="wf-spread"><span>Release notes</span><span class="wf-small">3m ◎</span></div>
+    <span class="wf-label">Working</span>
+    <div class="wf-spread"><span>api-server <span class="wf-small wf-muted">· Nimbus</span></span><span class="wf-small">31m ●</span></div>
+    <div class="wf-spread" style="padding-left:16px;"><span>server lane</span><span class="wf-small">8m ●</span></div>
+    <span class="wf-label">Idle</span>
+    <div class="wf-spread"><span>scratch</span><span class="wf-small">1h ○</span></div>
+    <span class="wf-label">Stopped (2) ›</span>
+  </div>
+  <div class="wf-grow"></div>
+  <span class="wf-small">⚙ Settings</span>
+</div>
+<!-- /wf-locked:sidebar -->
+
+<div class="wf-region" style="display:grid; grid-template-rows:auto auto 1fr;">
+  <div class="wf-tabs wf-pad-s" style="padding-bottom:0;"><span class="wf-tab is-active">▸ Three-process lead</span><span class="wf-tab">agent-row.tsx</span><span class="wf-tab">Review: working tree</span></div>
+  <div class="wf-spread wf-pad-s wf-panel">
+    <span class="wf-small"><b>Three-process lead</b> · claude-3 · Claude Code · ~/projects/conduit · ⎇ feat/three-process</span>
+    <span class="wf-row"><span class="wf-btn is-primary" style="padding:2px 8px;">◉ Approve · npm run e2e:remote -- --full</span><span class="wf-btn" style="padding:2px 8px;">✉ 2</span></span>
+  </div>
+  <div class="wf-pad wf-mono wf-stack-s">
+    <span>✻ Claude Code · Three-process lead</span>
+    <span class="wf-muted">cwd ~/projects/conduit</span>
+    <span>› wire the agent tree into the sidebar and keep drag-reorder working</span>
+    <span>● Update(src/agent-tree.ts) · Added 71 lines</span>
+    <span>● Update(webview/components/sidebar.tsx) · Added 24 lines</span>
+    <span>● Bash(npm run verify) · passed in 2m 41s</span>
+    <span>● Bash(npm run e2e:remote -- --full) · waiting for approval in Conduit</span>
+    <span class="wf-box">› and once the e2e run is green, fold the Stopped group by default and keep it folded after a reload▌</span>
+    <span class="wf-small wf-muted">Wispr Flow · dictating into this terminal</span>
+  </div>
+</div>
+
+<div class="wf-region wf-pad wf-stack">
+  <div class="wf-spread"><span class="wf-h3">Changes</span><span class="wf-small wf-muted">feat/three-process · 6 files</span></div>
+  <div class="wf-list wf-small">
+    <div>M src/agent-tree.ts</div>
+    <div>M webview/components/sidebar.tsx</div>
+    <div>A src/session-groups.test.ts</div>
+    <div>M webview/styles.css</div>
+    <div>M CHANGELOG.md</div>
+    <div>D src/flat-order.ts</div>
+  </div>
+</div>
+
+</div>
+
+<div class="wf-status">
+  <span>▭ This computer</span><span>⎇ feat/three-process</span><span>worktree tp-main</span><span>● 8 sessions</span>
+  <span class="wf-btn is-primary" style="padding:2px 8px;">◉ 2 need you</span>
+  <span class="wf-grow"></span>
+  <span class="wf-btn" style="padding:2px 8px;">↑ Update ready · v0.65.0</span>
+  <span>Ctrl+Shift+P commands</span>
+</div>
+
+<div class="wf-box wf-stack-s" style="position:absolute; right:16px; bottom:44px; width:360px;">
+  <span class="wf-small"><b>✓ Timed message sent to api-server</b></span>
+  <span class="wf-small wf-muted">“Rebase on main and rerun the API tests” · sent 14:30 · you scheduled it at 11:02</span>
+  <span class="wf-small" style="display:flex; justify-content:flex-end;"><span class="wf-btn is-quiet" style="padding:0;">View in Messages</span></span>
+</div>
+<div class="wf-note" style="left:760px; top:470px;">Legend. Bar items: status bar “◉ 2 need you” (changed: codex-4’s A/B + claude-3’s approval) and “↑ Update ready”; session bar “◉ Approve” on claude-3. Toast: the timed message you scheduled was sent. Nothing opens; the caret stays in the terminal.</div>
+
+</div>
+</body>
+</html>

@@ -127,6 +127,7 @@ export const REQ_STR = {
   },
   reqTab: {
     title: 'Request',
+    named: (typeWord: string, title: string) => `${typeWord}: ${title}`,
     gone: 'This request no longer exists',
     goneHint: 'It was answered or closed. Find it under History in Needs you.',
   },

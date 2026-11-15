@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Moment 4 · Something is wrong</title>
+<link rel="stylesheet" href="../../../kit/wireframe.css">
+</head>
+<body class="wf">
+<div class="wf-frame">
+
+<div class="wf-bar" style="flex-wrap:wrap;">
+  <span class="wf-h3">▢ Conduit</span>
+  <span class="wf-muted">‹ ›</span>
+  <div class="wf-grow" style="display:flex; justify-content:center;">
+    <span class="wf-input" style="width:420px;">Search sessions, agents, files…</span>
+  </div>
+  <span class="wf-btn">Files</span>
+  <span class="wf-btn">Changes <span class="wf-count">6</span></span>
+  <span class="wf-btn">Messages <span class="wf-count">14</span></span>
+  <span class="wf-muted">— ▢ ✕</span>
+<div class="wf-box wf-spread wf-small" style="width:100%; padding:6px 12px;"><span>⚠ <b>Conduit's background service restarted</b> at 16:42. Sessions are reconnecting (5 of 8); typing is paused until each is back.</span><span class="wf-row"><span class="wf-btn is-quiet wf-small" style="padding:2px 6px;">Show log</span></span></div>
+</div>
+
+<div class="wf-body" style="grid-template-columns:264px 1fr 340px;">
+
+<!-- wf-locked:sidebar -->
+<div class="wf-region wf-panel wf-pad-s" style="display:flex; flex-direction:column; gap:12px;">
+  <div class="wf-spread"><span class="wf-label">Spaces</span><span class="wf-muted">+ ⋯</span></div>
+  <div class="wf-list">
+    <div class="is-selected wf-spread"><span>▦ All</span><span class="wf-small wf-muted">8 agents</span></div>
+    <div class="wf-spread"><span>C Conduit</span><span class="wf-small wf-muted">main</span></div>
+    <div class="wf-spread"><span>N Nimbus</span><span class="wf-small wf-muted">main</span></div>
+    <div class="wf-spread"><span>No space</span><span class="wf-small wf-muted"></span></div>
+  </div>
+  <div class="wf-spread"><span class="wf-label">Agents · 8 live</span><span class="wf-muted">⌕ + ⋯</span></div>
+  <div class="wf-stack-s">
+    <span class="wf-label">Needs you</span>
+    <div class="wf-spread"><span>Three-process lead <span class="wf-small wf-muted">· Conduit</span></span><span class="wf-small">12m ◉</span></div>
+    <div class="wf-spread" style="padding-left:16px;"><span>app lane</span><span class="wf-small">1m ◉</span></div>
+    <span class="wf-label">Done</span>
+    <div class="wf-spread"><span>Release notes</span><span class="wf-small">3m ◎</span></div>
+    <span class="wf-label">Working</span>
+    <div class="wf-spread"><span>api-server <span class="wf-small wf-muted">· Nimbus</span></span><span class="wf-small">31m ●</span></div>
+    <div class="wf-spread" style="padding-left:16px;"><span>server lane</span><span class="wf-small">8m ●</span></div>
+    <span class="wf-label">Idle</span>
+    <div class="wf-spread"><span>scratch</span><span class="wf-small">1h ○</span></div>
+    <span class="wf-label">Stopped (2) ›</span>
+  </div>
+  <div class="wf-grow"></div>
+  <span class="wf-small">⚙ Settings</span>
+</div>
+<!-- /wf-locked:sidebar -->
+
+<div class="wf-region" style="display:grid; grid-template-rows:auto 1fr;">
+  <div class="wf-tabs wf-pad-s" style="padding-bottom:0;">
+    <span class="wf-tab is-active">▸ Three-process lead | api-server</span>
+    <span class="wf-tab">agent-row.tsx</span>
+    <span class="wf-tab">Review: working tree</span>
+  </div>
+  <div style="display:grid; grid-template-columns:1fr 1fr; min-height:0;">
+    <div class="wf-region" style="display:grid; grid-template-rows:auto auto 1fr;">
+      <div class="wf-pad-s wf-small"><b>Three-process lead</b> · claude-3 · Conduit</div>
+      <div class="wf-pad-s" style="padding-top:0;"><div class="wf-box wf-small" style="padding:6px 10px;">⟳ Reconnecting — input paused</div></div>
+      <div class="wf-pad wf-mono wf-stack-s wf-muted" style="padding-top:4px;">
+        <span>✻ Claude Code · Three-process lead</span>
+        <span>● Update(src/agent-tree.ts) · Added 71 lines</span>
+        <span>● Bash(npm run verify) · passed</span>
+        <span>● Update(webview/components/sidebar.tsx)</span>
+        <span>● Bash(npm run e2e:remote -- --full)</span>
+        <span>  ⎿ Approved · running on the runner…</span>
+        <span class="wf-box">› _</span>
+      </div>
+    </div>
+    <div class="wf-region" style="display:grid; grid-template-rows:auto auto 1fr;">
+      <div class="wf-pad-s wf-small"><b>api-server</b> · codex-6 · Nimbus</div>
+      <div class="wf-pad-s" style="padding-top:0;"><div class="wf-box wf-stack-s wf-small" style="padding:8px 10px;">
+        <span>✕ <b>api-server didn't start after the restart.</b> Codex exited before its prompt (code 1).</span>
+        <div class="wf-row"><span class="wf-btn is-primary wf-small" style="padding:3px 10px;">Retry launch</span><span class="wf-btn wf-small" style="padding:3px 10px;">Discard</span><span class="wf-btn is-quiet wf-small" style="padding:3px 6px;">Change launcher…</span></div>
+      </div></div>
+      <div class="wf-pad wf-mono wf-stack-s wf-muted" style="padding-top:4px;">
+        <span>$ codex --cd ~/projects/nimbus/api</span>
+        <span>[process exited with code 1]</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="wf-region wf-pad wf-stack">
+  <div class="wf-spread"><span class="wf-h3">Changes</span><span class="wf-small wf-muted">feat/three-process · 6 files</span></div>
+  <span class="wf-small wf-muted">Last read 16:41 · updates resume when the service is back</span>
+  <div class="wf-list wf-small">
+    <div>M src/agent-tree.ts</div>
+    <div>M webview/components/sidebar.tsx</div>
+    <div>A src/session-groups.test.ts</div>
+    <div>M webview/styles.css</div>
+    <div>M CHANGELOG.md</div>
+    <div>D src/flat-order.ts</div>
+  </div>
+</div>
+
+</div>
+
+<div class="wf-status">
+  <span>▭ This computer</span><span>⎇ feat/three-process</span><span>worktree tp-main</span><span>● 8 agents</span>
+  <span class="wf-btn wf-small" style="padding:2px 8px;"><span class="wf-count">2</span> need you</span>
+  <span class="wf-grow"></span><span class="wf-row"><span>✕ 1 session didn't start</span><span class="wf-btn wf-small" style="padding:2px 8px;">Show</span></span><span>Ctrl+Shift+P commands</span>
+</div>
+
+<div class="wf-note" style="left:300px; bottom:60px; max-width:420px;">Legend · <b>notice</b> (window): service restarted, under the top bar, clears by itself · <b>notice</b> (session): “Reconnecting — input paused” on each terminal; launch failed + Retry launch / Discard on api-server · <b>notice</b> (status bar): “1 session didn't start · Show” jumps there when it's out of view. A failed launch is a fix, not a request, so it isn't in Needs you. No toast, no sheet.</div>
+
+</div>
+</body>
+</html>

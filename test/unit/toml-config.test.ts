@@ -13,7 +13,7 @@ const ENTRY: CodexEntry = {
   args: ['/app/res/conduit-mcp-shim.cjs'],
   env: { ELECTRON_RUN_AS_NODE: '1' },
   env_vars: ['CONDUIT_SESSION_TOKEN', 'CONDUIT_MCP_ENDPOINT'],
-  default_tools_approval_mode: 'auto',
+  default_tools_approval_mode: 'approve',
   tool_timeout_sec: 180,
 };
 
@@ -23,7 +23,7 @@ const TABLE = [
   'args = ["/app/res/conduit-mcp-shim.cjs"]',
   'env = { ELECTRON_RUN_AS_NODE = "1" }',
   'env_vars = ["CONDUIT_SESSION_TOKEN", "CONDUIT_MCP_ENDPOINT"]',
-  'default_tools_approval_mode = "auto"',
+  'default_tools_approval_mode = "approve"',
   'tool_timeout_sec = 180',
   '',
 ].join('\n');

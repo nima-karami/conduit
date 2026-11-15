@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, promises as fsPromises, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { atomicWriteFileSync } from '../src/atomic-write';
 import { isCountedInput } from '../src/conduit-mcp/draft-input';
@@ -6,6 +6,7 @@ import type { McpRendererMessage } from '../src/conduit-mcp/host';
 import { CLI_BINARIES } from '../src/conduit-mcp/install-types';
 import type { DisplayFacts } from '../src/contracts/frames';
 import type { HcClient } from '../src/contracts/hc';
+import type { MonitorSession } from '../src/contracts/link-protocol';
 import type { ServerEventSink, TokenStorePort } from '../src/contracts/server-ports';
 import type { RuntimeHealth, SessionView, WindowPresence } from '../src/contracts/server-protocol';
 import type { InstanceNames } from '../src/contracts/session-identity';
@@ -26,6 +27,9 @@ import type { ShellCore } from './lifecycle/shell';
 import { type AppEventSink, createMcp, type McpServerDeps, type ServerMcp } from './mcp';
 import { ensureHookClient } from './mcp/hook-client-file';
 import type { PreviousShim } from './mcp/install';
+import { createNetwork, type NetworkService } from './network';
+import { loadIdentity, readOnlyMachineId } from './network/identity';
+import { monitorRows } from './network/monitor-publisher';
 import { createRuntimeServices } from './runtime';
 import { RpcFault, type RpcHandler, RpcProtocolFault } from './transport/pipe';
 
@@ -130,14 +134,22 @@ export function createServices(o: ServicesOptions) {
       o.emit('sessions.changed', { sessions: withStatus(domain.snapshot().sessions) });
     }, STATUS_RESEND_MS);
   };
+  // Built after the domain (it reads settings) but referenced by emit, which runs earlier.
+  let network: NetworkService | null = null;
   const emit: ServerEventSink = (type, data) => {
     if (type === 'sessions.changed') {
+      network?.localChanged();
       invalidateSessions();
       return;
     }
     o.emit(type, data);
     // Tool lists and waiting asks re-resolve against the new policy.
-    if (type === 'serverSettings.changed') mcp?.refresh();
+    if (type === 'serverSettings.changed') {
+      mcp?.refresh();
+      void network?.settingsChanged();
+    }
+    // A peer's monitor view follows local sessions, asks and unread counts.
+    if (type === 'ui.post') network?.localChanged();
   };
 
   const rt = createRuntimeServices({
@@ -191,7 +203,108 @@ export function createServices(o: ServicesOptions) {
     log,
   });
 
+  /**
+   * The human input path shared by C2 `term.input` (a generation the app read) and network drive
+   * (`null`: the live generation, since a remote typist has no generation to quote).
+   */
+  const applyHumanInput = (sessionId: string, data: string, generation: number | null): boolean => {
+    const current = generation ?? runtime.get(sessionId)?.generation;
+    // No live terminal: nothing to write to, and a missing generation must not match one.
+    if (current === undefined) return false;
+    const delivered = m().termInput({ sessionId, generation: current, data });
+    // see spec R4: a real keystroke that reached the program, not a terminal's own reply.
+    if (delivered && isCountedInput(data)) domain.humanInput(sessionId);
+    return delivered;
+  };
+
+  /** C2 `sessions.create` then `sessions.start`, the same domain handlers the app's open runs. */
+  const openSession = async (agentId: string, folder: string): Promise<string> => {
+    const created = await domain.handle({
+      id: 0,
+      method: 'sessions.create',
+      params: { agentId, home: folder },
+    });
+    if (!created || !('result' in created))
+      throw new RpcFault('refused', 'could not create the session');
+    const { sessionId } = created.result as { sessionId: string };
+    // A start that refused or failed still leaves the session in its pane, as an app open does.
+    const started = await domain.handle({ id: 0, method: 'sessions.start', params: { sessionId } });
+    if (!started || 'error' in started) log.warn('drive', 'session created but did not start');
+    return sessionId;
+  };
+
+  /** C2 `sessions.remove`, the server-local close that kills or retires the terminal. */
+  const closeSession = async (sessionId: string): Promise<void> => {
+    const answer = await domain.handle({ id: 0, method: 'sessions.remove', params: { sessionId } });
+    if (answer && 'error' in answer) throw answer.error;
+  };
+
+  const networkDir = path.join(o.userData, 'network');
+  const loaded = loadIdentity(networkDir);
+  let machineId: string;
+  if (loaded.kind === 'newer') {
+    log.error('network', 'identity.json is from a newer build; networking is off', {});
+    const readOnly = readOnlyMachineId(networkDir);
+    if (readOnly === null) {
+      throw new Error(
+        `${path.join(networkDir, 'identity.json')} is unreadable; no server identity`,
+      );
+    }
+    machineId = readOnly;
+  } else {
+    if (loaded.kind === 'recovered') {
+      log.error('network', 'identity.json was unreadable; moved to identity.corrupt.json', {
+        machineId: loaded.identity.machineId,
+      });
+    }
+    machineId = loaded.identity.machineId;
+  }
+  network =
+    loaded.kind === 'newer'
+      ? null
+      : createNetwork({
+          dir: networkDir,
+          identity: loaded.identity,
+          settings: () => domain.settings(),
+          emit: (state) => o.emit('network.changed', state),
+          emitTo: o.emitTo,
+          observe: (sessionId, events) => runtime.observe(sessionId, events),
+          log: {
+            debug: (msg, data) => log.debug('network', msg, data),
+            warn: (msg, data) => log.warn('network', msg, data),
+            error: (msg, data) => log.error('network', msg, data),
+          },
+          drive: {
+            applyHumanInput: (sessionId, data) => applyHumanInput(sessionId, data, null),
+            resize: (sessionId, size) => {
+              runtime.resize(sessionId, size);
+              domain.resized(sessionId, size);
+            },
+            liveSession: (sessionId) => runtime.get(sessionId)?.state === 'live',
+            agentExists: (agentId) =>
+              domain.snapshot().stores.agents.some((agent) => agent.id === agentId),
+            isDirectory: async (absolutePath) =>
+              (await fsPromises.stat(absolutePath).catch(() => null))?.isDirectory() === true,
+            openSession,
+            closeSession,
+          },
+          monitor: {
+            sessions: () => monitorSessions(),
+            requests: () => mcp?.networkPort().requestsSummary() ?? [],
+            youUnread: () => mcp?.networkPort().youUnread() ?? 0,
+            ownerPresence: () => mcp?.networkPort().ownerPresence() ?? 'here',
+            agents: () =>
+              domain.snapshot().stores.agents.map((a) => ({ id: a.id, label: a.label })),
+          },
+        });
+
+  /** Local sessions with a handle, joined with their attention facts, as a peer sees them. */
+  const monitorSessions = (): MonitorSession[] =>
+    monitorRows(domain.snapshot().sessions, mcp?.networkPort().localDirectory() ?? []);
+
   mcp = createMcp({
+    machineId,
+    network: network?.port(),
     sessions: domain.sessions,
     domain: domain.domain,
     attention,
@@ -256,6 +369,7 @@ export function createServices(o: ServicesOptions) {
     },
   });
   const server = mcp;
+  network?.setMcp(server.networkPort());
 
   const offChange = attention.onChange(invalidateSessions);
   const offEdge = attention.onEdge((edge) => emit('attention.edge', edge));
@@ -311,6 +425,7 @@ export function createServices(o: ServicesOptions) {
         // See docs/specs/archive/2026-11-01-three-process-architecture.md F1.4.5-6.
         await server.start();
         mcpStarted = true;
+        await network?.start();
       }
       started = true;
       return runtime.health();
@@ -348,15 +463,26 @@ export function createServices(o: ServicesOptions) {
   const dispatch: RpcHandler = (request, peer) => {
     const owned = domain.handle(request);
     if (owned) return owned;
+    if (
+      request.method.startsWith('pairing.') ||
+      request.method.startsWith('link.') ||
+      request.method.startsWith('remote.')
+    ) {
+      if (!network)
+        throw new RpcFault(
+          'unavailable',
+          'Linked machines are off: identity.json is from a newer build',
+        );
+      const answer = network.handle(request.method, request.params, peer);
+      if (answer) return answer.then((result) => ({ result }));
+    }
     const p = paramsOf(request.params);
     switch (request.method) {
       case 'term.input': {
         const data = p.data;
         if (typeof data !== 'string') throw new RpcFault('invalid', 'Expected data');
         const sessionId = str(p, 'sessionId');
-        const delivered = server.termInput({ sessionId, generation: int(p, 'generation'), data });
-        // see spec R4: a real keystroke that reached the program, not a terminal's own reply.
-        if (delivered && isCountedInput(data)) domain.humanInput(sessionId);
+        applyHumanInput(sessionId, data, int(p, 'generation'));
         return { result: {} };
       }
       case 'term.resize': {
@@ -408,8 +534,14 @@ export function createServices(o: ServicesOptions) {
     mcp: server,
     attention,
     scrollback,
+    applyHumanInput,
+    openSession,
+    closeSession,
     connected: () => domain.reloadAgents(),
-    disconnected: (peer: object) => server.appDisconnected(peer),
+    disconnected: (peer: object) => {
+      network?.disconnected(peer);
+      server.appDisconnected(peer);
+    },
     /** Idempotent: both the stop paths and the exit handler reach it. */
     close(): Promise<void> {
       closing ??= (async () => {
@@ -417,6 +549,11 @@ export function createServices(o: ServicesOptions) {
         offChange();
         offEdge();
         offHealth();
+        try {
+          await network?.stop();
+        } catch (error) {
+          log.error('network', `stop failed: ${String(error)}`);
+        }
         try {
           await server.stop();
         } catch (error) {

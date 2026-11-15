@@ -9,7 +9,7 @@ export const GIT_TIMEOUT = { metadata: 2000, diff: 10000, history: 5000, blame: 
 const DEFAULT_MAX_BUFFER = 16 * 1024 * 1024;
 
 export interface GitResult {
-  ok: boolean; // true iff the process exited 0 within all limits
+  ok: boolean; // true iff the process exited 0 within all limits and took all of its stdin
   stdout: string; // utf8 decode of stdoutBuffer; '' unless ok
   stdoutBuffer: Buffer; // raw bytes (empty unless ok) — for binary-safe blob reads
   stderr: string; // utf8 stderr (for surfacing git action failure messages)
@@ -48,10 +48,33 @@ export interface GitOpts {
 
 const EMPTY = Buffer.alloc(0);
 
+// A child that exits without reading all of its stdin fails our pending write with one of these.
+// Its exit code already carries the outcome. See docs/specs/2026-11-14-linux-sigtrap.md (B1).
+const EARLY_EXIT_STDIN_CODES = new Set(['EPIPE', 'ERR_STREAM_DESTROYED']);
+
+/** Fold a stdin delivery error into the result: an early exit's EPIPE changes nothing, any other
+ *  error means the child never got its input, so its output can't be trusted. */
+export function withStdinError(r: GitResult, err: NodeJS.ErrnoException | undefined): GitResult {
+  if (!err || EARLY_EXIT_STDIN_CODES.has(err.code ?? '')) return r;
+  const note = `stdin: ${err.message}`;
+  return {
+    ...r,
+    ok: false,
+    stdout: '',
+    stdoutBuffer: EMPTY,
+    stderr: r.stderr ? `${r.stderr}\n${note}` : note,
+  };
+}
+
 /** Run an arbitrary binary (git by default) with resource limits. Never rejects — the outcome is
  *  entirely in the returned {@link GitResult} flags so callers branch instead of try/catch. */
 export function runGitBin(gitBin: string, args: string[], opts: GitOpts): Promise<GitResult> {
   return new Promise((resolve) => {
+    // Resolve only once stdin has settled too, so a delivery error always reaches the result.
+    let stdinSettled: Promise<NodeJS.ErrnoException | undefined> = Promise.resolve(undefined);
+    const settle = (r: GitResult) => {
+      void stdinSettled.then((err) => resolve(withStdinError(r, err)));
+    };
     const child = execFile(
       gitBin,
       args,
@@ -72,7 +95,7 @@ export function runGitBin(gitBin: string, args: string[], opts: GitOpts): Promis
         const buf = Buffer.isBuffer(stdout) ? stdout : EMPTY;
         const errText = Buffer.isBuffer(stderr) ? stderr.toString('utf8') : '';
         if (!e) {
-          resolve({
+          settle({
             ok: true,
             stdout: buf.toString('utf8'),
             stdoutBuffer: buf,
@@ -95,7 +118,7 @@ export function runGitBin(gitBin: string, args: string[], opts: GitOpts): Promis
           e.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' || /maxBuffer/i.test(e.message ?? '');
         // execFile's own timeout kills with SIGTERM and sets `killed`; distinguish it from an abort.
         const timedOut = !aborted && e.killed === true && (opts.timeoutMs ?? 0) > 0;
-        resolve({
+        settle({
           ok: false,
           stdout: '',
           stdoutBuffer: EMPTY,
@@ -109,7 +132,16 @@ export function runGitBin(gitBin: string, args: string[], opts: GitOpts): Promis
         });
       },
     );
-    if (opts.stdin != null) child.stdin?.end(opts.stdin);
+    const stdin = child.stdin;
+    if (opts.stdin != null && stdin) {
+      // Without an 'error' listener, the EPIPE from a child that exits early is an uncaught
+      // exception in main. See docs/specs/2026-11-14-linux-sigtrap.md (B1).
+      stdinSettled = new Promise((done) => {
+        stdin.on('error', (err: NodeJS.ErrnoException) => done(err));
+        stdin.on('close', () => done(undefined));
+      });
+      stdin.end(opts.stdin);
+    }
   });
 }
 

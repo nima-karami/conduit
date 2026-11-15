@@ -6,6 +6,7 @@ import {
   gitFailureText,
   mapWithConcurrency,
   runGitBin,
+  withStdinError,
 } from '../../src/git-exec';
 
 // Use node itself as a deterministic fake "git" binary so these tests need no real git and can
@@ -98,6 +99,53 @@ describe('runGitBin (node as a fake binary)', () => {
       'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>process.stdout.write(d.toUpperCase()))';
     const r = await runGitBin(node, ['-e', script], { cwd, stdin: 'abc' });
     expect(r.stdout).toBe('ABC');
+  });
+
+  // Larger than any pipe buffer, so the write is still pending when the child exits.
+  const bigStdin = 'x'.repeat(4 * 1024 * 1024);
+
+  it('a child that exits before reading stdin returns its exit code, no uncaught EPIPE', async () => {
+    const r = await runGitBin(node, ['-e', 'process.exit(7)'], { cwd, stdin: bigStdin });
+    expect(r.ok).toBe(false);
+    expect(r.code).toBe(7);
+    expect(r.stderr).toBe('');
+  });
+
+  it('an early clean exit with unread stdin is still ok', async () => {
+    const r = await runGitBin(node, ['-e', 'process.stdout.write("done");process.exit(0)'], {
+      cwd,
+      stdin: bigStdin,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.stdout).toBe('done');
+  });
+
+  it('any stdin error other than an early exit fails the result and says why', () => {
+    const okResult: GitResult = {
+      ok: true,
+      stdout: 'partial',
+      stdoutBuffer: Buffer.from('partial'),
+      stderr: '',
+      code: 0,
+      notFound: false,
+      timedOut: false,
+      aborted: false,
+      truncated: false,
+    };
+    const err = (code: string, message: string) => Object.assign(new Error(message), { code });
+    expect(withStdinError(okResult, undefined)).toBe(okResult);
+    expect(withStdinError(okResult, err('EPIPE', 'write EPIPE'))).toBe(okResult);
+    expect(withStdinError(okResult, err('ERR_STREAM_DESTROYED', 'destroyed'))).toBe(okResult);
+    const r = withStdinError(okResult, err('EIO', 'write EIO'));
+    expect(r).toMatchObject({ ok: false, stdout: '', stderr: 'stdin: write EIO' });
+    expect(r.stdoutBuffer.length).toBe(0);
+    expect(gitFailureOf(r)).toBe('failed');
+  });
+
+  it('a missing binary with stdin still resolves notFound', async () => {
+    const r = await runGitBin('definitely-not-a-binary-xyz', [], { cwd, stdin: bigStdin });
+    expect(r.ok).toBe(false);
+    expect(r.notFound).toBe(true);
   });
 
   it('exposes ordered timeout tiers', () => {

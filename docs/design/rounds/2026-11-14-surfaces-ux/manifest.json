@@ -1,0 +1,42 @@
+{
+  "title": "Conduit surfaces: UX round 1",
+  "intro": "How Conduit shows things: where a decision, a problem, the result of your own action, a focused task and long work each appear. Three pattern sets, the same four moments. Pick the best per moment and overall, then reveal.",
+  "moments": [
+    "Things arrive while you dictate",
+    "Answering an A/B question",
+    "Starting a new session",
+    "Something is wrong"
+  ],
+  "directions": [
+    {
+      "id": "d1-sheets",
+      "summary": "Panel · tab · sheet · notice · toast: decisions in Needs you, tasks in a centred sheet, problems as a one-line notice where they happen",
+      "shots": [
+        "d1-sheets/shots/screen-1.png",
+        "d1-sheets/shots/screen-2.png",
+        "d1-sheets/shots/screen-3.png",
+        "d1-sheets/shots/screen-4.png"
+      ]
+    },
+    {
+      "id": "d2-bars",
+      "summary": "Bars and pop-ups: state lives in the top, session and status bars; click a bar item for a pop-up attached to it, expandable to a tab",
+      "shots": [
+        "d2-bars/shots/screen-1.png",
+        "d2-bars/shots/screen-2.png",
+        "d2-bars/shots/screen-3.png",
+        "d2-bars/shots/screen-4.png"
+      ]
+    },
+    {
+      "id": "d3-inbox",
+      "summary": "No overlays: everything arrives in one Inbox panel; every task opens as a tab beside its session; nothing covers the work",
+      "shots": [
+        "d3-inbox/shots/screen-1.png",
+        "d3-inbox/shots/screen-2.png",
+        "d3-inbox/shots/screen-3.png",
+        "d3-inbox/shots/screen-4.png"
+      ]
+    }
+  ]
+}

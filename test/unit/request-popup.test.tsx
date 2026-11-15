@@ -216,7 +216,7 @@ describe('RequestPopup', () => {
 
   it('Next to a tab-sized request opens it as a tab and closes the pop-up', async () => {
     const openTab = vi.fn();
-    setRequestOpeners({ openTab, openTerminal: vi.fn() });
+    setRequestOpeners({ openTab, openTerminal: vi.fn(), closeTab: vi.fn() });
     const light = view({
       id: 'a',
       title: 'Light ask',
