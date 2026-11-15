@@ -1,7 +1,15 @@
 // Node-free: the renderer imports these. See spec 2026-11-14-policy-and-permissions §4.
 
 import type { Capabilities, RemotePrincipal } from '../contracts/remote-principal';
-import type { CliKind, Move, Reach, ToolName, When } from './tool-policy';
+import type {
+  CliKind,
+  CliPolicyLayers,
+  Move,
+  PolicyLayer,
+  Reach,
+  ToolName,
+  When,
+} from './tool-policy';
 
 export type Decision = 'allow' | 'ask' | 'deny';
 export type BuiltInProfileId = 'observer' | 'worker' | 'lead';
@@ -131,5 +139,27 @@ export interface PolicyDecision {
   reason: Reason;
   rule: { when: When | null; reach: Reach | null; move: Move | null };
   grantId: string | null;
+  grantIds: readonly string[];
   overrideId: string | null;
+  overrideIds: readonly string[];
+  deniedTarget: PolicyTarget | null;
+}
+
+// see plan C8
+export interface PolicyUiState {
+  profiles: Array<{ id: ProfileId; name: string; builtIn: boolean }>;
+  sessions: Record<
+    string,
+    {
+      profileId: ProfileId;
+      profileName: string;
+      exceptions: number;
+      source: 'session' | 'cli' | 'default';
+      label: string | null;
+    }
+  >;
+  grants: Array<Grant & { expiring: boolean }>;
+  /** DN-2: the legacy editors read this projection, not the assignments. */
+  legacy: { global: PolicyLayer; byCli: CliPolicyLayers; sessions: Record<string, PolicyLayer> };
+  readOnly: boolean;
 }

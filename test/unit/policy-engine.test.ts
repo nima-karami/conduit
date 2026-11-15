@@ -586,6 +586,47 @@ describe('decide', () => {
     expect(d.grantId).toBe('g-s2');
   });
 
+  it('grantIds lists every grant that allowed a target', () => {
+    const two = ['s2', 's3'].map((sid) =>
+      grant({ id: `g-${sid}`, on: { kind: 'session', sessionId: sid } }),
+    );
+    const both = input({
+      tool: 'open_session',
+      targets: [target({ sessionId: 's2' }), target({ sessionId: 's3' })],
+    });
+    const each = decide(state(worker, { grants: two }), both);
+    expect(each.grantIds).toEqual(['g-s2', 'g-s3']);
+    expect(each.grantId).toBe('g-s2');
+
+    const anywhere = decide(state(worker, { grants: [grant({ id: 'g-all' })] }), both);
+    expect(anywhere.grantIds).toEqual(['g-all']);
+
+    const asks = decide(
+      state(worker, { grants: [grant({ id: 'g-s2', on: { kind: 'session', sessionId: 's2' } })] }),
+      both,
+    );
+    expect(asks.decision).toBe('ask');
+    expect(asks.grantIds).toEqual([]);
+    expect(asks.grantId).toBeNull();
+  });
+
+  it('deniedTarget is the target the explicit deny matched', () => {
+    const folderDeny = except('open_file', { kind: 'folder', path: '/w/b' }, { decision: 'deny' });
+    const d = decide(
+      state({ default: assignment('worker', [folderDeny]) }),
+      input({
+        tool: 'open_file',
+        targets: [
+          target({ path: '/w/a/x.ts', folder: '/w/a' }),
+          target({ path: '/w/b/y.ts', folder: '/w/b' }),
+        ],
+      }),
+    );
+    expect(d.reason.by).toBe('deny');
+    expect(d.deniedTarget?.path).toBe('/w/b/y.ts');
+    expect(decide(state({}), input({ tool: 'list_sessions' })).deniedTarget).toBeNull();
+  });
+
   it('a granted target plus an assignment-allowed target is allowed', () => {
     const s = state(
       {
@@ -637,14 +678,16 @@ describe('decide', () => {
     ).toBe('ask');
   });
 
-  it('a second target needing another override stays denied', () => {
-    const overrides: OneUseOverride[] = ['s2', 's3'].map((sid) => ({
-      id: `o-${sid}`,
-      sessionId: 's1',
-      tool: 'open_session',
-      target: target({ sessionId: sid }),
-      createdAt: iso(NOW),
-    }));
+  it('a denied target with no matching override keeps the call denied', () => {
+    const overrides: OneUseOverride[] = [
+      {
+        id: 'o-s2',
+        sessionId: 's1',
+        tool: 'open_session',
+        target: target({ sessionId: 's2' }),
+        createdAt: iso(NOW),
+      },
+    ];
     const s = state(
       {
         default: assignment('worker', [
@@ -661,8 +704,72 @@ describe('decide', () => {
       }),
     );
     expect(d.decision).toBe('deny');
-    expect(d.overrideId).toBeNull();
+    expect(d.overrideIds).toEqual([]);
+    expect(d.deniedTarget?.sessionId).toBe('s3');
     expect(d.reason).toEqual({ by: 'deny', point: { kind: 'default' } });
+  });
+
+  it('two denied targets each pass with their own override', () => {
+    const folderDeny = (path: string) =>
+      except('open_file', { kind: 'folder', path }, { decision: 'deny' });
+    const override = (id: string, path: string): OneUseOverride => ({
+      id,
+      sessionId: 's1',
+      tool: 'open_file',
+      target: target({ path, folder: path.replace(/\/[^/]+$/, '') }),
+      createdAt: iso(NOW),
+    });
+    const s = state(
+      { default: assignment('worker', [folderDeny('/w/a'), folderDeny('/w/b')]) },
+      { overrides: [override('oa', '/w/a/x.ts'), override('ob', '/w/b/y.ts')] },
+    );
+    const d = decide(
+      s,
+      input({
+        tool: 'open_file',
+        targets: [
+          target({ path: '/w/a/x.ts', folder: '/w/a' }),
+          target({ path: '/w/b/y.ts', folder: '/w/b' }),
+        ],
+      }),
+    );
+    expect(d.decision).toBe('allow');
+    expect(d.overrideIds).toEqual(['oa', 'ob']);
+    expect(d.reason).toEqual({ by: 'override', overrideId: 'oa' });
+  });
+
+  it('reports the override when another target asks', () => {
+    const s = state(
+      {
+        default: assignment('worker', [
+          except('open_file', { kind: 'folder', path: '/w/a' }, { decision: 'deny' }),
+          except('open_file', { kind: 'folder', path: '/w/b' }, { decision: 'ask' }),
+        ]),
+      },
+      {
+        overrides: [
+          {
+            id: 'oa',
+            sessionId: 's1',
+            tool: 'open_file',
+            target: target({ path: '/w/a/x.ts', folder: '/w/a' }),
+            createdAt: iso(NOW),
+          },
+        ],
+      },
+    );
+    const d = decide(
+      s,
+      input({
+        tool: 'open_file',
+        targets: [
+          target({ path: '/w/a/x.ts', folder: '/w/a' }),
+          target({ path: '/w/b/y.ts', folder: '/w/b' }),
+        ],
+      }),
+    );
+    expect(d.decision).toBe('ask');
+    expect(d.overrideIds).toEqual(['oa']);
   });
 
   it('folder scope matches a session target by its folder (cwd)', () => {

@@ -9,6 +9,7 @@ import type {
   Exception,
   PolicyState,
   PolicyTarget,
+  Principal,
   Profile,
   ProfileId,
   Scope,
@@ -176,4 +177,16 @@ export function effectiveRule(
   }
   if (a.onScreenOnly && rule.when !== null) rule.when = 'viewing';
   return rule;
+}
+
+// see POL §4.1
+export function resolveTarget(target: PolicyTarget, principal: Principal): PolicyTarget {
+  if (target.sessionId !== null || target.path !== null || target.folder !== null) return target;
+  if (principal.kind !== 'session') return target;
+  return {
+    sessionId: null,
+    path: principal.homeFolder,
+    folder: principal.homeFolder,
+    projectId: principal.projectId,
+  };
 }

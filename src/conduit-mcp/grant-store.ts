@@ -1,5 +1,6 @@
 // Node-free: pure store with an injected clock and id source. The service persists it.
 // see spec 2026-11-14-policy-and-permissions §5.1 (POL-D7)
+import { resolveTarget } from './policy-profiles';
 import type { Grant, GrantFor, GrantWho, PolicyTarget, Principal, Scope } from './policy-types';
 import type { ToolName } from './tool-policy';
 
@@ -131,19 +132,6 @@ export function createGrantStore(deps: GrantStoreDeps): GrantStore {
     },
   };
 }
-
-// A call with no target is resolved to the caller's home folder, as the engine does. A remote
-// caller has no home, so an empty target stays empty and never widens.
-const resolveTarget = (target: PolicyTarget, principal: Principal): PolicyTarget => {
-  if (target.sessionId || target.path || target.folder) return target;
-  if (principal.kind !== 'session' || principal.homeFolder === null) return target;
-  return {
-    sessionId: null,
-    path: principal.homeFolder,
-    folder: principal.homeFolder,
-    projectId: principal.projectId,
-  };
-};
 
 // Never widens: a target with no session, path or folder yields null, and the caller refuses.
 export function grantScopeFor(
