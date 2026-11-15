@@ -1473,8 +1473,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           appConnected: deps.appConnected(),
         });
         if (refused) return { ok: false, error: refused };
-        policyService.commit(resolved);
         const caller = { handle, sessionId };
+        if (isRequestTool(name) || isMessagingTool(name)) policyService.commit(resolved);
         if (isRequestTool(name)) return runRequest(caller, name, args, ctx);
         if (isMessagingTool(name)) {
           if (!store.available()) {
@@ -1504,6 +1504,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           wiredAtLaunch: wiredAtLaunch(sessionId),
           tool: name,
           decision: resolved,
+          commit: () => policyService.commit(resolved),
           source: sourceOf(resolved),
           args,
           prepare: () => prepareControl(caller, name, args, controlCtx),

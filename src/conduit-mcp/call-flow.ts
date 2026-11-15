@@ -61,6 +61,8 @@ export interface ControlCall<T> {
   wiredAtLaunch: boolean;
   tool: ToolName;
   decision: PolicyDecision;
+  /** Spends the decision's grants and one-use overrides; called only once the call goes ahead. */
+  commit(): void;
   /** Only for the card's reason line: the gate reads decision, never source. */
   source: PolicySource;
   args: unknown;
@@ -263,6 +265,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       return { ok: false, error: approvalTimeout() };
     }
     const askId = deps.newAskId();
+    c.commit();
     deps.sendToOwner(caller, {
       type: 'mcp:ask',
       askId,
@@ -421,7 +424,9 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       // Prepare answered without taking a reservation, so nothing to release; a deny still refuses.
       if ('done' in p) {
         if (c.decision.decision === 'deny') return { ok: false, error: toolDisabled(c.tool) };
-        return c.inflight.cancelled ? null : p.done;
+        if (c.inflight.cancelled) return null;
+        c.commit();
+        return p.done;
       }
       if (c.inflight.cancelled) {
         p.release();
@@ -432,6 +437,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       const access = p.alwaysAsk && c.decision.decision === 'allow' ? 'ask' : c.decision.decision;
       switch (access) {
         case 'allow':
+          c.commit();
           return runNow(c, p);
         case 'ask':
           return ask(c, p);

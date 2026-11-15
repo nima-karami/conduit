@@ -3879,6 +3879,82 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(h.files).toHaveLength(1);
   });
 
+  it('an override is kept when the ask that would spend it is refused for rate_limited', async () => {
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line) as Record<string, unknown>);
+      },
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const policy = serializePolicyFile({
+      version: 1,
+      profiles: [],
+      overrides: [],
+      migratedFrom: null,
+      notes: { onScreenOnlyOffered: [] },
+      assignments: [
+        {
+          point: { kind: 'session', sessionId: 's1' },
+          assignment: {
+            profileId: 'worker',
+            onScreenOnly: false,
+            exceptions: [
+              {
+                tool: 'open_file',
+                scope: { kind: 'path', path: '/w/a.ts' },
+                rule: { decision: 'deny' },
+              },
+              {
+                tool: 'open_file',
+                scope: { kind: 'path', path: '/w/b.ts' },
+                rule: { decision: 'ask' },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const policyIo: RequestsIo = { read: () => policy, write: async () => undefined };
+    const grantsIo: RequestsIo = { read: () => null, write: async () => undefined };
+    const { h, c } = await asking({
+      kinds: { '/w': 'dir', '/w/a.ts': 'file', '/w/b.ts': 'file' },
+      policyIo,
+      grantsIo,
+      activityIo,
+    });
+    const both = { paths: ['/w/a.ts', '/w/b.ts'] };
+    c.call(1, 'open_file', both);
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    const denied = rows.find((row) => row.decision === 'deny');
+    let allowed: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:allowOnce', requestId: 2, activityId: String(denied?.id) },
+      (m) => {
+        allowed = m;
+      },
+      1,
+    );
+    expect(allowed).toEqual({ type: 'mcp:policyResult', requestId: 2, ok: true });
+
+    for (const id of [10, 11, 12]) c.call(id, 'open_file', { paths: ['/w/b.ts'] });
+    await until(() => asksOf(h).length === 3);
+    c.call(20, 'open_file', both);
+    expect(c.errorOf(await c.reply(20))).toBe('rate_limited');
+
+    await answer(h, asksOf(h)[0]?.askId ?? '', 'deny');
+    expect(c.errorOf(await c.reply(10))).toBe('denied');
+    c.call(21, 'open_file', both);
+    await until(() => asksOf(h).length === 4 || c.lines.some((l) => l.id === 21));
+    expect(c.lines.find((l) => l.id === 21)).toBeUndefined();
+    expect(asksOf(h)).toHaveLength(4);
+    await answer(h, asksOf(h).at(-1)?.askId ?? '', 'approve');
+    expect(c.errorOf(await c.reply(21))).toBe('ok');
+  });
+
   it('on/viewing open_session runs with an unready owner or no owner window', async () => {
     for (const owner of ['unready', 'none'] as const) {
       const h = harness({ kinds: { '/w': 'dir' } });
