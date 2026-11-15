@@ -400,8 +400,13 @@ export async function setGlobalPolicy(page, tool, policy, ms = 10_000) {
         const requestId = window.__policyReq;
         let acked = false;
         let matched = false;
-        const matches = (s) =>
-          Object.entries(p).every(([f, v]) => s?.policy?.legacy?.global?.[t]?.[f] === v);
+        // The projection is a diff against Worker, so a field equal to Worker is absent: 'inherit'.
+        const matches = (s) => {
+          const layer = s?.policy?.legacy?.global?.[t] ?? {};
+          return Object.entries(p).every(([f, v]) =>
+            v === 'inherit' ? !(f in layer) : layer[f] === v,
+          );
+        };
         const finish = () => {
           if (!acked || !matched) return;
           clearTimeout(timer);

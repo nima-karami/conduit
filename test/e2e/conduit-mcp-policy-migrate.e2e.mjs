@@ -86,7 +86,8 @@ writeFileSync(
   }),
 );
 /** The session layers the seeded sessions migrate to (old keys overlay the new ones). */
-const MIGRATED_LAYERS = {
+// The raw session layers sessions.json keeps (persistence writes them back unchanged).
+const RAW_SESSION_LAYERS = {
   'v050-old': {
     open_session: { access: 'on', when: 'always' },
     open_file: { access: 'off' },
@@ -96,6 +97,14 @@ const MIGRATED_LAYERS = {
     open_session: { access: 'on', when: 'always', move: 'no' },
     open_terminal: { access: 'ask' },
   },
+};
+
+// What the editors show for each session: a diff against the global layer, so a field equal to it
+// is absent (plan C6 DN-2). Here the global layer is the migrated v0.50 global: open_session on ·
+// always · move yes, and send_message off.
+const PROJECTED_SESSION_LAYERS = {
+  'v050-old': { open_file: { access: 'off' } },
+  'v050-both': { open_session: { move: 'no' }, open_terminal: { access: 'ask' } },
 };
 
 await runScenario(
@@ -117,7 +126,7 @@ await runScenario(
 
     phase('v0.50 session overrides restore migrated');
     const layerOf = async (id) => (await mcpState(page))?.policy?.legacy?.sessions?.[id];
-    for (const [id, want] of Object.entries(MIGRATED_LAYERS)) {
+    for (const [id, want] of Object.entries(PROJECTED_SESSION_LAYERS)) {
       assert(
         await until(async () => isDeepStrictEqual(await layerOf(id), want), 10_000),
         `${id} restored with ${JSON.stringify(await layerOf(id))}`,
@@ -178,13 +187,14 @@ await runScenario(
     // Opening A and B wrote sessions.json since the restore.
     const savedSeeded = () =>
       (JSON.parse(readFileSync(sessionsFile, 'utf8')).sessions ?? []).filter(
-        (s) => s.id in MIGRATED_LAYERS,
+        (s) => s.id in RAW_SESSION_LAYERS,
       );
     const rewritten = (list) =>
       list.length === 2 &&
       list.every(
         (s) =>
-          !('mcpToolOverrides' in s) && isDeepStrictEqual(s.mcpToolPolicy, MIGRATED_LAYERS[s.id]),
+          !('mcpToolOverrides' in s) &&
+          isDeepStrictEqual(s.mcpToolPolicy, RAW_SESSION_LAYERS[s.id]),
       );
     assert(
       await until(() => rewritten(savedSeeded()), 10_000),

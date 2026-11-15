@@ -100,7 +100,12 @@ await runScenario(
     log('off refuses tool_disabled ✓');
 
     phase('ask deny');
-    await setGlobalPolicy(page, 'open_session', { access: 'ask', when: 'viewing', move: 'yes' });
+    // Worker's own open_session is ask · viewing · move yes, so restoring the default is all inherit.
+    await setGlobalPolicy(page, 'open_session', {
+      access: 'inherit',
+      when: 'inherit',
+      move: 'inherit',
+    });
     assert(
       await until(() => toolsSeen(a.sessionId).includes('open_session'), 15_000),
       'A never re-listed open_session',
