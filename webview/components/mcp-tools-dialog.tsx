@@ -22,7 +22,7 @@ import { MCP_STR } from '../conduit-mcp-strings';
 import { IconClose } from '../icons';
 import { useFocusTrap } from '../use-focus-trap';
 import { ModalLayer } from './modal-layer';
-import { policyChoiceLabel, ToolPolicyEditor } from './tool-policy-editor';
+import { policyChoiceLabel, restorePatch, ToolPolicyEditor } from './tool-policy-editor';
 
 export interface McpToolsDialogProps {
   session: Session;
@@ -35,14 +35,6 @@ export interface McpToolsDialogProps {
   announce(text: string): void;
   onClose(): void;
 }
-
-/** Puts one tool's whole entry back: every field it lacks becomes 'inherit'. */
-const restorePatch = (entry: Partial<ToolPolicy> | undefined): ToolPolicyPatch => ({
-  access: entry?.access ?? 'inherit',
-  when: entry?.when ?? 'inherit',
-  reach: entry?.reach ?? 'inherit',
-  move: entry?.move ?? 'inherit',
-});
 
 export function McpToolsDialog({
   session,

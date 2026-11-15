@@ -172,7 +172,7 @@ describe('McpToolsDialog', () => {
     expect(checked('open_file')).toBe('Ask');
   });
 
-  it('a save the host refuses as read-only or scoped shows saveFailed and reverts', async () => {
+  it('a false save result reverts and shows saveFailed', async () => {
     const p = props({ onChange: vi.fn(async () => false) });
     await mount(p);
     await act(async () => radio('open_file', 'Off')?.click());

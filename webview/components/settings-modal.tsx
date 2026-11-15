@@ -69,7 +69,7 @@ import { ReleaseNotesPage } from './release-notes-page';
 import { SelectField } from './select-field';
 import { AgentRowPreview } from './session-card';
 import { ShortcutsTab } from './shortcuts-tab';
-import { ToolPolicyEditor } from './tool-policy-editor';
+import { restorePatch, ToolPolicyEditor } from './tool-policy-editor';
 import type { UpdateStatus } from './update-card';
 
 export type SettingsTab = 'general' | 'mcp' | 'appearance' | 'shortcuts' | 'skills' | 'about';
@@ -895,19 +895,14 @@ function Toggle({
 type PolicyTab = 'all' | CliKind;
 const POLICY_TABS: readonly PolicyTab[] = ['all', ...CLI_KINDS];
 
-interface Pick {
+interface PendingPick {
   patch: ToolPolicyPatch;
   settled: boolean;
+  // The host's last yes for this tool, kept until a broadcast reflects it: a refusal reverts here.
+  confirmed?: Partial<ToolPolicy>;
 }
-type PendingPicks = Partial<Record<PolicyTab, Partial<Record<ToolName, Pick>>>>;
+type PendingPicks = Partial<Record<PolicyTab, Partial<Record<ToolName, PendingPick>>>>;
 type FailedPicks = Partial<Record<PolicyTab, ReadonlySet<ToolName>>>;
-
-const restorePatch = (entry: Partial<ToolPolicy> | undefined): ToolPolicyPatch => ({
-  access: entry?.access ?? 'inherit',
-  when: entry?.when ?? 'inherit',
-  reach: entry?.reach ?? 'inherit',
-  move: entry?.move ?? 'inherit',
-});
 
 const withoutTool = (set: ReadonlySet<ToolName> | undefined, tool: ToolName) => {
   const next = new Set(set);
@@ -919,9 +914,9 @@ const putPick = (
   pending: PendingPicks,
   t: PolicyTab,
   tool: ToolName,
-  pick: Pick | null,
+  pick: PendingPick | null,
 ): PendingPicks => {
-  const picks: Partial<Record<ToolName, Pick>> = { ...pending[t] };
+  const picks: Partial<Record<ToolName, PendingPick>> = { ...pending[t] };
   if (pick) picks[tool] = pick;
   else delete picks[tool];
   return { ...pending, [t]: picks };
@@ -932,7 +927,7 @@ const putPick = (
 const dropSettled = (pending: PendingPicks): PendingPicks => {
   const next: PendingPicks = {};
   for (const t of POLICY_TABS) {
-    const kept: Partial<Record<ToolName, Pick>> = {};
+    const kept: Partial<Record<ToolName, PendingPick>> = {};
     for (const tool of TOOL_NAMES) {
       const pick = pending[t]?.[tool];
       if (pick && !pick.settled) kept[tool] = pick;
@@ -944,7 +939,7 @@ const dropSettled = (pending: PendingPicks): PendingPicks => {
 
 function withPending(
   layer: PolicyLayer | undefined,
-  picks: Partial<Record<ToolName, Pick>> | undefined,
+  picks: Partial<Record<ToolName, PendingPick>> | undefined,
 ): PolicyLayer | undefined {
   let next = layer;
   for (const tool of TOOL_NAMES) {
@@ -973,9 +968,6 @@ function McpToolPolicyRows({
   const [seenLegacy, setSeenLegacy] = useState(legacy);
   // Only the newest pick per tab and tool may settle it, so an older answer landing late can't.
   const seqRef = useRef(new Map<string, number>());
-  // A refused pick goes back to the last value the host confirmed here: the broadcast carrying
-  // an earlier confirmed pick can still be on its way.
-  const confirmedRef = useRef(new Map<string, Partial<ToolPolicy> | undefined>());
   const legacyRef = useRef(legacy);
   legacyRef.current = legacy;
   const off = !settings.conduitMcp || !serverConnected;
@@ -1006,9 +998,7 @@ function McpToolPolicyRows({
     e.preventDefault();
   };
 
-  const confirmedEntry = (t: PolicyTab, tool: ToolName) => {
-    const key = `${t}:${tool}`;
-    if (confirmedRef.current.has(key)) return confirmedRef.current.get(key);
+  const persistedEntry = (t: PolicyTab, tool: ToolName) => {
     const layer = t === 'all' ? legacyRef.current.global : legacyRef.current.byCli[t];
     return layer?.[tool];
   };
@@ -1021,25 +1011,31 @@ function McpToolPolicyRows({
       putPick(p, t, tool, {
         patch: { ...p[t]?.[tool]?.patch, ...patch },
         settled: false,
+        confirmed: p[t]?.[tool]?.confirmed,
       }),
     );
     setFailed((f) => ({ ...f, [t]: withoutTool(f[t], tool) }));
     const point = t === 'all' ? { kind: 'default' as const } : { kind: 'cli' as const, cli: t };
     const ok = await mcp.setPointPolicy(point, tool, patch);
-    if (ok) {
-      const base: PolicyLayer = { [tool]: confirmedEntry(t, tool) };
-      confirmedRef.current.set(key, withPolicyPatch(base, tool, patch)?.[tool]);
-    }
-    if (seqRef.current.get(key) !== seq) return;
+    const latest = seqRef.current.get(key) === seq;
     if (ok) {
       setPending((p) => {
         const current = p[t]?.[tool];
-        return current ? putPick(p, t, tool, { ...current, settled: true }) : p;
+        if (!current) return p;
+        const base: PolicyLayer = { [tool]: current.confirmed ?? persistedEntry(t, tool) };
+        return putPick(p, t, tool, {
+          ...current,
+          settled: latest || current.settled,
+          confirmed: withPolicyPatch(base, tool, patch)?.[tool],
+        });
       });
       return;
     }
-    const revertTo = restorePatch(confirmedEntry(t, tool));
-    setPending((p) => putPick(p, t, tool, { patch: revertTo, settled: true }));
+    if (!latest) return;
+    setPending((p) => {
+      const base = p[t]?.[tool]?.confirmed ?? persistedEntry(t, tool);
+      return putPick(p, t, tool, { patch: restorePatch(base), settled: true, confirmed: base });
+    });
     setFailed((f) => ({ ...f, [t]: new Set(f[t]).add(tool) }));
   };
 

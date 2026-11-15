@@ -64,6 +64,8 @@ function mcpState(legacy: Legacy): McpUiState {
   };
 }
 
+const broadcast = (legacy: Legacy) => emit({ type: 'mcp:state', state: mcpState(legacy) });
+
 const layersOf = (p: { global?: PolicyLayer; byCli?: CliPolicyLayers } = {}): Legacy => ({
   global: p.global ?? {},
   byCli: p.byCli ?? {},
@@ -272,6 +274,42 @@ describe('Settings → MCP tools', () => {
     replyPolicy(lastPointPost().requestId, 'read-only');
     await flush();
     expect(checked('open_file')).toBe('Off');
+    expect(errorOf('open_file')?.textContent).toBe(MCP_STR.tools.saveFailed);
+  });
+
+  it('a broadcast after a confirmed pick shows the broadcast value', async () => {
+    await mount();
+    await click(tab('codex'));
+    await click(radio('open_file', 'Off'));
+    replyPolicy(lastPointPost().requestId);
+    await flush();
+    expect(checked('open_file')).toBe('Off');
+    broadcast(layersOf());
+    expect(checked('open_file')).toBe(`Inherit (On · from ${ALL})`);
+  });
+
+  it('a broadcast that lands while a pick is in flight keeps the optimistic value', async () => {
+    await mount();
+    await click(tab('codex'));
+    await click(radio('open_file', 'Off'));
+    broadcast(layersOf());
+    expect(checked('open_file')).toBe('Off');
+    replyPolicy(lastPointPost().requestId);
+    await flush();
+    expect(checked('open_file')).toBe('Off');
+  });
+
+  it('after a broadcast with no pick in flight, a refused pick reverts to that broadcast', async () => {
+    await mount();
+    await click(radio('open_file', 'Off'));
+    replyPolicy(lastPointPost().requestId);
+    await flush();
+    broadcast(layersOf({ global: { open_file: { access: 'ask' } } }));
+    expect(checked('open_file')).toBe('Ask');
+    await click(radio('open_file', 'On'));
+    replyPolicy(lastPointPost().requestId, 'read-only');
+    await flush();
+    expect(checked('open_file')).toBe('Ask');
     expect(errorOf('open_file')?.textContent).toBe(MCP_STR.tools.saveFailed);
   });
 
