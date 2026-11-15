@@ -663,8 +663,14 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     framedAsHuman: boolean,
   ): Promise<WireRecipientOutcome[]> => {
     const t = now();
-    const sends = (inboundSends.get(msg.from) ?? []).filter((x) => t - x < RATE_WINDOW_MS);
-    inboundSends.set(msg.from, sends);
+    // A handle leaves the map once its window is empty; the sender's handle is peer-chosen and
+    // rotates, so a key kept past its window would grow the map without bound.
+    for (const [handle, times] of inboundSends) {
+      const live = times.filter((x) => t - x < RATE_WINDOW_MS);
+      if (live.length === 0) inboundSends.delete(handle);
+      else inboundSends.set(handle, live);
+    }
+    const sends = inboundSends.get(msg.from) ?? [];
     if (!framedAsHuman && store.agentCountSinceHuman(msg.threadId) >= THREAD_AGENT_LIMIT) {
       threadLimitHit(msg.threadId, msg.from);
       return refuseAll(msg.to, 'thread_limit');
@@ -722,6 +728,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       throw new Error(appended.error.message);
     }
     sends.push(t);
+    inboundSends.set(msg.from, sends);
     storedFollowUp(record);
     return outcomes;
   };
