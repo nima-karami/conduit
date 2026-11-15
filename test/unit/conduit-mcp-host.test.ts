@@ -3879,6 +3879,41 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(h.files).toHaveLength(1);
   });
 
+  it('two concurrent messaging calls on one one-use override run exactly once', async () => {
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line) as Record<string, unknown>);
+      },
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const { h, c } = await asking({ activityIo });
+    await setPolicy(h, { list_sessions: { access: 'off' } });
+    c.call(1, 'list_sessions');
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    let allowed: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:allowOnce',
+        requestId: 2,
+        activityId: String(rows.find((r) => r.decision === 'deny')?.id),
+      },
+      (m) => {
+        allowed = m;
+      },
+      1,
+    );
+    expect(allowed).toEqual({ type: 'mcp:policyResult', requestId: 2, ok: true });
+
+    c.call(3, 'list_sessions');
+    c.call(4, 'list_sessions');
+    const codes = [c.errorOf(await c.reply(3)), c.errorOf(await c.reply(4))].sort();
+    expect(codes).toEqual(['ok', 'tool_disabled']);
+  });
+
   it('an override is kept when a messaging call is refused for store_unavailable', async () => {
     const rows: Array<Record<string, unknown>> = [];
     const activityIo: ActivityIo = {
