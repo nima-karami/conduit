@@ -94,7 +94,13 @@ export interface V050CodexEntry {
   env_vars: string[];
   default_tools_approval_mode: 'auto';
 }
-export interface CodexEntry extends V050CodexEntry {
+/** The v0.51-v0.65 shape: auto plus the 180 s tool timeout. Upgraded at startup like v0.50. */
+export interface V065CodexEntry extends V050CodexEntry {
+  tool_timeout_sec: number;
+}
+/** 'approve' never asks per call; 'auto' still does (spec 2026-10-31-conduit-mcp-single-gate). */
+export interface CodexEntry extends Omit<V050CodexEntry, 'default_tools_approval_mode'> {
+  default_tools_approval_mode: 'approve';
   tool_timeout_sec: number;
 }
 export interface OpenCodeEntry {

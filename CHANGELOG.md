@@ -6,6 +6,9 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- Codex no longer asks you to approve each of Conduit's own tool calls; Conduit's approval cards are the only prompt.
+
 ## [0.65.0] — 2026-11-15
 
 ### Added

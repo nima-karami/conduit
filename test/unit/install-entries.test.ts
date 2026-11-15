@@ -6,7 +6,7 @@ import {
   deepEqualConfig,
   entryTargets,
   isConduitShaped,
-  legacyConduitEntry,
+  legacyConduitEntries,
   SHIM_LEAF,
 } from '../../src/conduit-mcp/install-entries';
 import { AGENT_CLIS, type AgentCli } from '../../src/conduit-mcp/install-types';
@@ -15,6 +15,14 @@ const EXE = '/app/conduit';
 const SHIM = '/app/res/conduit-mcp-shim.cjs';
 const OTHER_EXE = '/old/conduit';
 const OTHER_SHIM = '/old/res/conduit-mcp-shim.cjs';
+const CODEX_V050 = {
+  command: EXE,
+  args: [SHIM],
+  env: { ELECTRON_RUN_AS_NODE: '1' },
+  env_vars: ['CONDUIT_SESSION_TOKEN', 'CONDUIT_MCP_ENDPOINT'],
+  default_tools_approval_mode: 'auto',
+};
+const CODEX_V065 = { ...CODEX_V050, tool_timeout_sec: 180 };
 
 /** Literal CLI placeholders, built so no source line holds a template-looking string. */
 const dollar = (inner: string) => `$${'{'}${inner}}`;
@@ -37,13 +45,13 @@ describe('install-entries', () => {
     });
   });
 
-  it('codex entry forwards both names in env_vars, sets approval auto and a 180 s tool timeout', () => {
+  it('codex entry forwards both names in env_vars, sets approval approve and a 180 s tool timeout', () => {
     expect(conduitEntry('codex', EXE, SHIM)).toEqual({
       command: EXE,
       args: [SHIM],
       env: { ELECTRON_RUN_AS_NODE: '1' },
       env_vars: ['CONDUIT_SESSION_TOKEN', 'CONDUIT_MCP_ENDPOINT'],
-      default_tools_approval_mode: 'auto',
+      default_tools_approval_mode: 'approve',
       tool_timeout_sec: 180,
     });
   });
@@ -61,28 +69,34 @@ describe('install-entries', () => {
     });
   });
 
-  it('legacy (v0.50) entries lack only the codex tool timeout; the others are unchanged', () => {
-    expect(legacyConduitEntry('codex', EXE, SHIM)).toEqual({
-      command: EXE,
-      args: [SHIM],
-      env: { ELECTRON_RUN_AS_NODE: '1' },
-      env_vars: ['CONDUIT_SESSION_TOKEN', 'CONDUIT_MCP_ENDPOINT'],
-      default_tools_approval_mode: 'auto',
-    });
+  it('legacy entries: codex has the v0.50 and v0.51-v0.65 shapes; the other CLIs never changed, so none', () => {
+    expect(legacyConduitEntries('codex', EXE, SHIM)).toEqual([CODEX_V050, CODEX_V065]);
     for (const cli of ['claude', 'cursor', 'opencode'] as const) {
-      expect(legacyConduitEntry(cli, EXE, SHIM)).toEqual(conduitEntry(cli, EXE, SHIM));
+      expect(legacyConduitEntries(cli, EXE, SHIM)).toEqual([]);
     }
   });
 
-  it.each(AGENT_CLIS)('classify: a v0.50 entry is ours, not another Conduit (%s)', (cli) => {
-    const expected = conduitEntry(cli, EXE, SHIM);
-    const legacy = legacyConduitEntry(cli, EXE, SHIM);
-    expect(classifyEntry(cli, clone(legacy), expected, legacy)).toBe('ours');
-    // Another build's v0.50 entry is still another Conduit.
-    expect(
-      classifyEntry(cli, legacyConduitEntry(cli, OTHER_EXE, OTHER_SHIM), expected, legacy),
-    ).toBe('other-conduit');
+  it('classify: an entry from any earlier release is ours, not another Conduit (codex)', () => {
+    const expected = conduitEntry('codex', EXE, SHIM);
+    const legacy = legacyConduitEntries('codex', EXE, SHIM);
+    expect(classifyEntry('codex', clone(CODEX_V050), expected, legacy)).toBe('ours');
+    expect(classifyEntry('codex', clone(CODEX_V065), expected, legacy)).toBe('ours');
+    // Another build's earlier-release entry is still another Conduit.
+    const otherV065 = { ...CODEX_V065, command: OTHER_EXE, args: [OTHER_SHIM] };
+    expect(classifyEntry('codex', otherV065, expected, legacy)).toBe('other-conduit');
   });
+
+  it.each(AGENT_CLIS)(
+    "classify: our entry is ours; another build's is another Conduit (%s)",
+    (cli) => {
+      const expected = conduitEntry(cli, EXE, SHIM);
+      const legacy = legacyConduitEntries(cli, EXE, SHIM);
+      expect(classifyEntry(cli, clone(expected), expected, legacy)).toBe('ours');
+      expect(classifyEntry(cli, conduitEntry(cli, OTHER_EXE, OTHER_SHIM), expected, legacy)).toBe(
+        'other-conduit',
+      );
+    },
+  );
 
   it('cursor entry equals cursorEntry()', () => {
     expect(conduitEntry('cursor', EXE, SHIM)).toEqual(cursorEntry(EXE, SHIM));

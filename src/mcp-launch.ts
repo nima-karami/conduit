@@ -53,8 +53,8 @@ function codexArgs(server: McpServerCommand): string[] | undefined {
     `mcp_servers.conduit.env={${env.join(',')}}`,
     // Codex strips the PTY env from MCP children unless named here (spec §2, measured S0).
     "mcp_servers.conduit.env_vars=['CONDUIT_SESSION_TOKEN']",
-    // Conduit's own tools only: no Codex approval prompt on every call.
-    "mcp_servers.conduit.default_tools_approval_mode='auto'",
+    // 'approve', not 'auto': auto still prompts per call. Conduit's tool policy is the only gate (see docs/specs/archive/2026-10-31-conduit-mcp-single-gate.md).
+    "mcp_servers.conduit.default_tools_approval_mode='approve'",
     `mcp_servers.conduit.tool_timeout_sec=${CODEX_TOOL_TIMEOUT_SEC}`,
   ].flatMap((pair) => ['-c', pair]);
 }
