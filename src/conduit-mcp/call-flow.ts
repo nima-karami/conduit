@@ -80,7 +80,7 @@ export interface CallFlowDeps {
   appConnected(): boolean;
   sendToOwner(sessionId: string, msg: HostToWebview): void;
   flashOwner(sessionId: string): void;
-  /** Visibility, not a fresh decide: a waiting ask must not spend an override it never ran on. */
+  // see plan T2.3 call-flow seam ruling (visibility is pure)
   stillVisible(sessionId: string, tool: ToolName): boolean;
   messagingOn(): boolean;
   /** false when the session no longer exists. */
