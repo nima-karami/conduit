@@ -514,6 +514,27 @@ describe('createCallFlow', () => {
     expect(c.spies).toEqual({ run: 0, release: 0 });
   });
 
+  it('a denied answer reason reaches the declined error, with its control characters removed', async () => {
+    const t = setup();
+    const c = t.call();
+    await t.flush();
+    t.flow.answerPermission('perm-1', { outcome: 'denied', reason: 'too risky\u001b[31m now' }, 1);
+    const r = await c.promise;
+    expect(errCode(r)).toBe('denied');
+    expect(r && !r.ok ? r.error.message : '').toBe(
+      'the human declined the request: too risky[31m now',
+    );
+  });
+
+  it('a denied answer with no reason keeps the plain declined message', async () => {
+    const t = setup();
+    const c = t.call();
+    await t.flush();
+    t.flow.answerPermission('perm-1', { outcome: 'denied' }, 1);
+    const r = await c.promise;
+    expect(r && !r.ok ? r.error.message : '').toBe('the human declined the request');
+  });
+
   it('a recheck that finds the policy denying the ask withdraws it with that reason; the call is tool_disabled', async () => {
     const t = setup();
     const c = t.call({ denyReason: 'Observer: deny' });

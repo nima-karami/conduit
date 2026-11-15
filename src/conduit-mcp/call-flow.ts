@@ -215,6 +215,12 @@ function withoutControls(s: string): string {
   return out;
 }
 
+/** The human's reason reaches the agent through the same control-character filter as renderer text. */
+function declinedMessage(reason: string | undefined): string {
+  const text = reason === undefined ? '' : withoutControls(reason);
+  return text === '' ? 'the human declined the request' : `the human declined the request: ${text}`;
+}
+
 /** The renderer is never load-bearing: its answer is rebuilt field by field for the wait's kind. */
 function parseUiResult(kind: McpUiAction['kind'], v: unknown): McpUiResult | null {
   if (!isRecord(v)) return null;
@@ -390,7 +396,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     const answer = end.answer;
     if (answer.outcome === 'denied') {
       settle('answered', answerInputOf(answer), null);
-      return { ok: false, error: toolError('denied', 'the human declined the request') };
+      return { ok: false, error: toolError('denied', declinedMessage(answer.reason)) };
     }
     // Approved, then cancelled before it ran: still a cancelled ask, so the token stays spent.
     if (c.inflight.cancelled) {
