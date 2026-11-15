@@ -697,3 +697,12 @@ So a Codex orchestrator can take over if Claude stops. The lead (claude-3) recei
 - Check the new lane with `read_screen` (Codex asks once to trust the folder; Enter accepts).
 - Send the brief, built from `brief-common.md` in the scratchpad plus the task text, and require a `send_message` report.
 - Reviews also run in a fresh Codex session with the code-review brief.
+
+**Slice 2 done (2026-11-15 21:20 UTC).** The branch tip is e78029aa.
+- Merges: S2-2 ddd57b4b, T2.3 fe8bf986, T2.4 f1f079a3, e2e 5c9a99c0 and e78029aa.
+- `npm run verify` exit 0 after the T2.4 merge; the later changes are e2e-only, and CI's verify job is green on e78029aa.
+- e2e remote: `--affected` run 43760637089 has 271 PASS, 0 FAIL (scrollback-inrun quarantined). The named runs are 43760219778 and 43759273884.
+- Lanes are now Claude Haiku (owner, 2026-11-15); Opus does review and diagnosis only.
+- The lane worktree `scratchpad/lanes/s2-2` is reused for Slice 3.
+- Next: Slice 3 (T3.1, then T3.2 with its carried items: the request-service cap check before commit, the `denied` outcome for a spent override, and the prepared-done commit-false test).
+
