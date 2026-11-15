@@ -4,11 +4,14 @@ import path from 'node:path';
 import type { McpNetworkPort, NetworkPort } from '../../src/conduit-mcp/remote-routing';
 import { type LinkState, OWN_DEFAULT_CAPABILITIES } from '../../src/contracts/link-protocol';
 import type { NetworkState } from '../../src/contracts/network-state';
+import type { ServerEventSink } from '../../src/contracts/server-ports';
 import type { ServerSettings } from '../../src/contracts/server-protocol';
+import type { TerminalRuntime } from '../../src/contracts/terminal-runtime';
 import { bindableAddresses } from '../../src/network/bind-addresses';
 import type { PairingOutcome } from '../../src/network/pairing-protocol';
 import { createRemoteDirectory } from '../../src/network/remote-directory';
 import { selfSignedCert } from '../../src/network/self-signed-cert';
+import { currentWindowsPty } from '../../src/windows-pty-info';
 import { openAuditLog } from './audit-log';
 import { handleNetworkCall } from './c2';
 import { type Identity, setOwnerKey } from './identity';
@@ -24,6 +27,7 @@ import {
 import { createMessaging } from './messaging';
 import { createMonitorPublisher, type MonitorSource } from './monitor-publisher';
 import { createPairingService, type PairingService } from './pairing-service';
+import { createViewRelay } from './view-relay';
 
 // The one composer for linked machines (plan "Technical decisions" 1): services.ts only builds,
 // starts, stops and routes C2 calls here.
@@ -42,13 +46,16 @@ export interface NetworkDeps {
   hostname?: () => string;
   /** This server's sessions, asks and agents as linked peers may see them (monitor push). */
   monitor: MonitorSource;
+  observe: TerminalRuntime['observe'];
+  emitTo(peer: object, ...event: Parameters<ServerEventSink>): void;
 }
 
 export interface NetworkService {
   start(): Promise<void>;
   stop(): Promise<void>;
   /** A C2 call for pairing.* / link.*, or null when the method isn't the network's. */
-  handle(method: string, params: unknown): Promise<unknown> | null;
+  handle(method: string, params: unknown, peer?: object): Promise<unknown> | null;
+  disconnected(peer: object): void;
   /** Server settings changed: re-bind the listener if its host or port changed. */
   settingsChanged(): Promise<void>;
   state(): NetworkState;
@@ -115,6 +122,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
         messaging.linkUp(v.machineId);
         publisher.pushTo(v.machineId);
       } else if (!live(v.state) && live(before)) messaging.linkDown(v.machineId);
+      relay.linkChanged(v.machineId);
     }
     for (const l of portListeners) l();
   };
@@ -149,6 +157,17 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
         changed();
       } else if (f.t === 'msg' || f.t === 'ack' || f.t === 'receipt')
         messaging.onFrame(machineId, f);
+      else if (
+        f.t === 'view.open' ||
+        f.t === 'view.opened' ||
+        f.t === 'view.data' ||
+        f.t === 'view.size' ||
+        f.t === 'view.end' ||
+        f.t === 'view.close'
+      )
+        void relay
+          .onFrame(machineId, f)
+          .catch((err: unknown) => deps.log.error('view frame failed', { message: String(err) }));
     },
     changed,
     onOwnerKey: (pair) => onOwnerKey(pair),
@@ -161,6 +180,17 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       capabilities: v.capabilities,
       peerCapabilities: v.peerCapabilities,
     }));
+  const relay = createViewRelay({
+    links: linkInfo,
+    sessions: deps.monitor.sessions,
+    observe: deps.observe,
+    windowsPty: () => currentWindowsPty() ?? null,
+    send: (machineId, frame) => manager.send(machineId, frame),
+    emitTo: deps.emitTo,
+    now,
+    newId: () => `v_${randomBytes(16).toString('hex')}`,
+    log: (message) => deps.log.warn(message),
+  });
   const messaging = createMessaging({
     file: path.join(deps.dir, 'outbox.json'),
     machineId: () => identity.machineId,
@@ -191,7 +221,9 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
         v.state !== 'revoked' &&
         v.state !== 'incompatible' &&
         v.state !== 'identity-changed'
-        ? { ...v.capabilities }
+        ? v.peerCapabilities
+          ? { ...v.peerCapabilities }
+          : null
         : null;
     },
     onChange(listener) {
@@ -367,12 +399,15 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     async stop() {
       emitTimer?.();
       closePairingPort();
+      relay.stop();
       publisher.stop();
       messaging.stop();
       await manager.stop();
       await closeListener();
     },
-    handle: (method, params) => handleNetworkCall(method, params, { pairing, manager, state }),
+    handle: (method, params, peer) =>
+      handleNetworkCall(method, params, { pairing, manager, state, relay, peer }),
+    disconnected: (peer) => relay.disconnected(peer),
     async settingsChanged() {
       const s = deps.settings();
       if (bound && (bound.host !== s.networkBindHost || bound.port !== s.networkPort)) {

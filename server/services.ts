@@ -29,6 +29,7 @@ import { ensureHookClient } from './mcp/hook-client-file';
 import type { PreviousShim } from './mcp/install';
 import { createNetwork, type NetworkService } from './network';
 import { loadIdentity, readOnlyMachineId } from './network/identity';
+import { monitorRows } from './network/monitor-publisher';
 import { createRuntimeServices } from './runtime';
 import { RpcFault, type RpcHandler, RpcProtocolFault } from './transport/pipe';
 
@@ -230,6 +231,8 @@ export function createServices(o: ServicesOptions) {
           identity: loaded.identity,
           settings: () => domain.settings(),
           emit: (state) => o.emit('network.changed', state),
+          emitTo: o.emitTo,
+          observe: (sessionId, events) => runtime.observe(sessionId, events),
           log: {
             debug: (msg, data) => log.debug('network', msg, data),
             warn: (msg, data) => log.warn('network', msg, data),
@@ -246,33 +249,8 @@ export function createServices(o: ServicesOptions) {
         });
 
   /** Local sessions with a handle, joined with their attention facts, as a peer sees them. */
-  const monitorSessions = (): MonitorSession[] => {
-    const views = new Map(domain.snapshot().sessions.map((v) => [v.id, v]));
-    return (mcp?.networkPort().localDirectory() ?? []).map((e) => {
-      const v = views.get(e.sessionId);
-      return {
-        sessionId: e.sessionId,
-        handle: e.handle,
-        label: e.label,
-        agent: e.agent,
-        presence: e.presence,
-        messaging: e.messaging,
-        messageable: e.connectable || e.messaging === 'connected',
-        notices: e.notices,
-        home: e.home,
-        roots: e.roots,
-        attention: {
-          attentionReason: v?.attentionReason ?? null,
-          completions: v?.completions ?? 0,
-          ...(v?.stuckReason === undefined ? {} : { stuckReason: v.stuckReason }),
-        },
-        completions: v?.completions ?? 0,
-        // Limit state reaches peers with the monitor pane (Slice 7); rows carry none yet.
-        limit: null,
-        status: v?.status ?? 'running',
-      };
-    });
-  };
+  const monitorSessions = (): MonitorSession[] =>
+    monitorRows(domain.snapshot().sessions, mcp?.networkPort().localDirectory() ?? []);
 
   mcp = createMcp({
     machineId,
@@ -435,13 +413,17 @@ export function createServices(o: ServicesOptions) {
   const dispatch: RpcHandler = (request, peer) => {
     const owned = domain.handle(request);
     if (owned) return owned;
-    if (request.method.startsWith('pairing.') || request.method.startsWith('link.')) {
+    if (
+      request.method.startsWith('pairing.') ||
+      request.method.startsWith('link.') ||
+      request.method.startsWith('remote.')
+    ) {
       if (!network)
         throw new RpcFault(
           'unavailable',
           'Linked machines are off: identity.json is from a newer build',
         );
-      const answer = network.handle(request.method, request.params);
+      const answer = network.handle(request.method, request.params, peer);
       if (answer) return answer.then((result) => ({ result }));
     }
     const p = paramsOf(request.params);
@@ -505,7 +487,10 @@ export function createServices(o: ServicesOptions) {
     attention,
     scrollback,
     connected: () => domain.reloadAgents(),
-    disconnected: (peer: object) => server.appDisconnected(peer),
+    disconnected: (peer: object) => {
+      network?.disconnected(peer);
+      server.appDisconnected(peer);
+    },
     /** Idempotent: both the stop paths and the exit handler reach it. */
     close(): Promise<void> {
       closing ??= (async () => {

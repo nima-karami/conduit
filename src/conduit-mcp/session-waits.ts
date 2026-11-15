@@ -2,7 +2,7 @@
 // until a listed session meets a condition. The host reads each session; this module owns the wait's
 // lifecycle and the per-caller turn-end memory.
 
-import { type Handle, type Presence, type Result, toolError } from './types';
+import { type Handle, type Presence, type Result, type ToolError, toolError } from './types';
 import type { CallKey } from './window-waits';
 
 export const WAIT_CONDITIONS = ['turn_end', 'exited', 'needs_you', 'message'] as const;
@@ -167,14 +167,14 @@ export interface OpenWait {
   timeoutMs: number;
 }
 export interface SessionWaitsDeps {
-  read(callerHandle: Handle, target: WaitTarget): WaitReading;
+  read(callerHandle: Handle, target: WaitTarget): WaitReading | { error: ToolError };
   setTimer(fn: () => void, ms: number): unknown;
   clearTimer(handle: unknown): void;
 }
 export interface SessionWaits {
   countFor(callerSessionId: string): number;
   /** Resolves null when the wait is cancelled: no reply is owed then. */
-  open(w: OpenWait): Promise<WaitOutput | null>;
+  open(w: OpenWait): Promise<WaitOutput | { error: ToolError } | null>;
   /** Re-reads every open wait. The host calls it on each change of anything a wait reads. */
   notify(): void;
   /** Ends each open wait that matches, unanswered. */
@@ -187,7 +187,7 @@ export interface SessionWaits {
 interface Entry {
   wait: OpenWait;
   timer: unknown;
-  resolve(out: WaitOutput | null): void;
+  resolve(out: WaitOutput | { error: ToolError } | null): void;
 }
 
 export function createSessionWaits(deps: SessionWaitsDeps): SessionWaits {
@@ -207,7 +207,11 @@ export function createSessionWaits(deps: SessionWaitsDeps): SessionWaits {
     return seen;
   };
 
-  const finish = (e: Entry, out: WaitOutput | null, turnEnds: readonly WaitReading[] = []) => {
+  const finish = (
+    e: Entry,
+    out: WaitOutput | { error: ToolError } | null,
+    turnEnds: readonly WaitReading[] = [],
+  ) => {
     if (!open.delete(e)) return;
     deps.clearTimer(e.timer);
     for (const r of turnEnds) {
@@ -223,7 +227,13 @@ export function createSessionWaits(deps: SessionWaitsDeps): SessionWaits {
 
   const check = (e: Entry, deadline: boolean) => {
     const readings = e.wait.targets.map((t) => deps.read(e.wait.caller.handle, t));
-    const ev = evaluateWait(e.wait.until, readings, (r) => seenTurnEnds(e.wait.caller.handle, r));
+    const failure = readings.find((r) => 'error' in r);
+    if (failure && 'error' in failure) {
+      finish(e, failure);
+      return;
+    }
+    const valid = readings.filter((r): r is WaitReading => !('error' in r));
+    const ev = evaluateWait(e.wait.until, valid, (r) => seenTurnEnds(e.wait.caller.handle, r));
     if (ev.fired.length > 0)
       finish(e, { fired: ev.fired, timed_out: false, states: ev.states }, ev.turnEnds);
     else if (deadline) finish(e, { fired: [], timed_out: true, states: ev.states });
@@ -234,7 +244,7 @@ export function createSessionWaits(deps: SessionWaitsDeps): SessionWaits {
       [...open].filter((e) => e.wait.caller.sessionId === callerSessionId).length,
 
     open: (w) =>
-      new Promise<WaitOutput | null>((resolve) => {
+      new Promise<WaitOutput | { error: ToolError } | null>((resolve) => {
         const e: Entry = { wait: w, timer: undefined, resolve };
         open.add(e);
         check(e, false);

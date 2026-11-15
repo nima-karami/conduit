@@ -25,6 +25,7 @@ import {
   NOTICE_SPACING_MS,
 } from '../../src/conduit-mcp/notice-gate';
 import { composeNotice } from '../../src/conduit-mcp/notice-text';
+import type { NetworkPort, RemoteEntry } from '../../src/conduit-mcp/remote-routing';
 import type { AnswerInput } from '../../src/conduit-mcp/request-types';
 import { screenVerdict } from '../../src/conduit-mcp/screen-verdict';
 import type { StoreIo } from '../../src/conduit-mcp/store';
@@ -209,6 +210,7 @@ function session(id: string, extra: Partial<Session> = {}): Session {
 function harness(
   opts: {
     dir?: string;
+    network?: NetworkPort;
     registry?: AgentRegistry;
     messagingOn?: () => boolean;
     storeIo?: StoreIo;
@@ -550,6 +552,7 @@ function harness(
   host = createConduitMcpHost({
     dir,
     machineId: 'm-00000000',
+    network: opts.network,
     hookClientPath: opts.hookClientPath ?? null,
     gitBashPath: opts.gitBashPath ?? (() => undefined),
     homeDir: dir,
@@ -4618,6 +4621,114 @@ describe('createConduitMcpHost — wait_sessions', () => {
       `${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'wait_sessions', arguments: args } })}\n`,
     );
   }
+
+  function remoteRig() {
+    const address = 'fake-9@m-12345678';
+    const entry: RemoteEntry = {
+      handle: 'fake-9',
+      sessionId: 'remote-id',
+      openedBy: null,
+      label: 'remote',
+      agent: 'fake',
+      project: null,
+      home: '/w',
+      roots: [],
+      presence: 'idle',
+      messaging: 'connected',
+      connectable: true,
+      notices: 'pull',
+      address,
+      display: 'fake-9@peer',
+      machineId: 'm-12345678',
+      machine: 'peer',
+      trust: 'own',
+      link: 'up',
+    };
+    let state: 'idle' | 'exited' | 'unreachable' = 'idle';
+    let monitor = true;
+    let changed = () => {};
+    const network: NetworkPort = {
+      remoteEntries: () => [entry],
+      resolve: (target) =>
+        target === address || target === 'fake-9@peer'
+          ? { kind: 'remote', entry }
+          : { kind: 'unknown', hint: 'not found' },
+      enqueue: () => [],
+      waitReading: () =>
+        state === 'unreachable'
+          ? 'unreachable'
+          : {
+              sessionId: 'remote-id',
+              handle: address,
+              presence: state,
+              needsYou: false,
+              completions: 0,
+              unreadFrom: 0,
+            },
+      capabilitiesOf: () => ({ messaging: true, monitor, drive: false }),
+      onChange: (listener) => {
+        changed = listener;
+        return () => {};
+      },
+    };
+    return {
+      network,
+      address,
+      setState: (next: typeof state) => {
+        state = next;
+        changed();
+      },
+      setMonitor: (next: boolean) => {
+        monitor = next;
+        changed();
+      },
+    };
+  }
+
+  it('waits on remote names and finishes when the remote snapshot reports exit', async () => {
+    const remote = remoteRig();
+    const h = harness({ network: remote.network, manualTimers: true });
+    const { ca } = await pairForWait(h);
+    const base = h.pendingTimers;
+    const pending = ca.call('wait_sessions', { sessions: ['fake-9@peer'], until: ['exited'] });
+    await expect.poll(() => h.pendingTimers).toBe(base + 1);
+    remote.setState('exited');
+    expect((await pending).body).toMatchObject({
+      fired: [{ session: remote.address, condition: 'exited' }],
+    });
+  });
+
+  it('refuses a remote wait without the peer monitor capability, including mid-wait', async () => {
+    const remote = remoteRig();
+    remote.setMonitor(false);
+    const h = harness({ network: remote.network, manualTimers: true });
+    const { ca } = await pairForWait(h);
+    expect(
+      (await ca.call('wait_sessions', { sessions: [remote.address], until: ['exited'] })).body.error
+        .code,
+    ).toBe('capability_off');
+    remote.setMonitor(true);
+    const base = h.pendingTimers;
+    const pending = ca.call('wait_sessions', { sessions: [remote.address], until: ['exited'] });
+    await expect.poll(() => h.pendingTimers).toBe(base + 1);
+    remote.setMonitor(false);
+    expect((await pending).body.error.code).toBe('capability_off');
+  });
+
+  it('returns peer_unreachable when a remote link drops during a wait', async () => {
+    const remote = remoteRig();
+    const h = harness({ network: remote.network, manualTimers: true });
+    const { ca } = await pairForWait(h);
+    const base = h.pendingTimers;
+    const pending = ca.call('wait_sessions', { sessions: [remote.address], until: ['exited'] });
+    await expect.poll(() => h.pendingTimers).toBe(base + 1);
+    remote.setState('unreachable');
+    expect((await pending).body.error.code).toBe('peer_unreachable');
+    expect(
+      (await ca.call('wait_sessions', { sessions: [remote.address], until: ['exited'] })).body.error
+        .code,
+    ).toBe('peer_unreachable');
+  });
 
   it('wait_sessions is listed with its input schema', async () => {
     const h = harness();

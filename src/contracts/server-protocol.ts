@@ -18,7 +18,13 @@ import type { RequestKind } from '../conduit-mcp/request-types';
 import type { McpUiState } from '../conduit-mcp/ui-types';
 import type { DroppedRoot } from '../folder-validation';
 import type { LauncherDTO } from '../launchers';
-import type { HostToWebview, TermGeometry, TermStartMode, WebviewToHost } from '../protocol';
+import type {
+  HostToWebview,
+  TermGeometry,
+  TermStartMode,
+  WebviewToHost,
+  WindowsPtyInfo,
+} from '../protocol';
 import type { AppSettings } from '../settings';
 import type {
   AgentDefinition,
@@ -515,6 +521,18 @@ export interface ServerMethods {
     result: Record<string, never>;
   };
 
+  'remote.attach': {
+    params: { machineId: string; sessionId: string };
+    result: {
+      viewId: string;
+      firstPaint: string;
+      size: TermGeometry;
+      windowsPty: WindowsPtyInfo | null;
+      drive: boolean;
+    };
+  };
+  'remote.detach': { params: { viewId: string }; result: Empty };
+
   // ── UI facts from the app ──
   'ui.presence': { params: { windows: WindowPresence[] }; result: Empty };
 
@@ -610,6 +628,13 @@ export interface ServerEvents {
   'timers.changed': Reply<'timer:state'>;
   'server.stopping': { reason: 'update' | 'user' | 'idle' | 'stopAll' };
   'network.changed': NetworkState;
+  'remote.data': { viewId: string; data: string };
+  'remote.state': {
+    viewId: string;
+    state: 'live' | 'frozen' | 'exited' | 'resyncing';
+    since: string | null;
+    size: TermGeometry | null;
+  };
   /**
    * The app fell behind; call events.subscribe again. `seq` is the first event this peer did not get,
    * and nothing more arrives on this connection until it re-subscribes.
@@ -635,7 +660,11 @@ export type ServerErrorKind =
   | 'refused'
   | 'unavailable'
   | 'invalid'
-  | 'server_stopping';
+  | 'server_stopping'
+  | 'peer_unreachable'
+  | 'peer_revoked'
+  | 'capability_off'
+  | 'pairing_failed';
 
 /**
  * Every server event travels as one JSON-RPC notification method, so a reader dispatches on

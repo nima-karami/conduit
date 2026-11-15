@@ -554,6 +554,25 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     clearTimer:
       deps.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout> | undefined)),
     read: (callerHandle, target) => {
+      if (target.handle.includes('@')) {
+        const reading = deps.network?.waitReading(target.handle, callerHandle);
+        if (!reading || reading === 'unreachable')
+          return {
+            error: toolError('peer_unreachable', `peer for ${target.handle} is unreachable`),
+          };
+        const parsed = parseAddress(target.handle);
+        if (!parsed?.machine || !deps.network?.capabilitiesOf(parsed.machine)?.monitor)
+          return {
+            error: toolError('capability_off', `peer has not enabled monitor for ${target.handle}`),
+          };
+        return {
+          ...reading,
+          sessionId: target.sessionId,
+          unreadFrom: store.available()
+            ? store.pending(callerHandle).filter((m) => m.from === target.handle).length
+            : 0,
+        };
+      }
       const snap = deps.attention.statusOf(target.sessionId);
       return {
         ...target,
@@ -1571,6 +1590,20 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const listed = listedSessions();
     const targets: WaitTarget[] = [];
     for (const v of parsed.value.sessions) {
+      if (v.includes('@')) {
+        const resolved = deps.network?.resolve(v);
+        if (resolved?.kind !== 'remote')
+          return {
+            ok: false,
+            error: toolError('unknown_session', `no session "${v}" in list_sessions`, undefined, {
+              hint: resolved?.kind === 'unknown' ? resolved.hint : 'no linked machines',
+            }),
+          };
+        const entry = resolved.entry;
+        if (!targets.some((t) => t.sessionId === entry.address))
+          targets.push({ sessionId: entry.address, handle: entry.address });
+        continue;
+      }
       const hit = listed.find((x) => x.handle === v) ?? listed.find((x) => x.session.id === v);
       if (!hit)
         return {
@@ -1607,6 +1640,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       timeoutMs: timeoutS * 1000,
     });
     if (out === null) return null;
+    if ('error' in out) return { ok: false, error: out.error };
     return { ok: true, value: clampedTo === undefined ? out : { ...out, clamped_to: clampedTo } };
   };
 
