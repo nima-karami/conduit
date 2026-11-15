@@ -88,6 +88,9 @@ const TERMINAL: readonly LinkState[] = ['revoked', 'incompatible', 'identity-cha
 /** A peer still waiting for the owner key we owe it has none yet; any other mismatch is a change. */
 const ownerMatches = (record: LinkRecord, helloOwner: string | null): boolean =>
   helloOwner === record.ownerKey || (record.ownerTransfer === 'send' && helloOwner === null);
+// Pairing's rule (pairing-protocol.ts validId): a non-blank name of at most 64 characters.
+const MAX_NAME_CHARS = 64;
+const storableName = (name: string): boolean => name.trim() !== '' && name.length <= MAX_NAME_CHARS;
 const b64 = (b: Buffer): string => b.toString('base64');
 const sameCapabilities = (x: Capabilities, y: Capabilities): boolean =>
   x.messaging === y.messaging && x.monitor === y.monitor && x.drive === y.drive;
@@ -257,7 +260,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     p.attempt = 0;
     p.peerHello = hello;
     p.lastActivity = deps.now();
-    if (hello.selfName.trim() !== '' && hello.selfName !== p.record.name) {
+    if (storableName(hello.selfName) && hello.selfName !== p.record.name) {
       p.record = deps.store.update(p.record.machineId, { name: hello.selfName }) ?? p.record;
     }
     event(p, { kind: 'up', at: deps.now() });

@@ -2,7 +2,11 @@ import { createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes } f
 import os from 'node:os';
 import path from 'node:path';
 import type { McpNetworkPort, NetworkPort } from '../../src/conduit-mcp/remote-routing';
-import { type LinkState, OWN_DEFAULT_CAPABILITIES } from '../../src/contracts/link-protocol';
+import {
+  type Capabilities,
+  type LinkState,
+  OWN_DEFAULT_CAPABILITIES,
+} from '../../src/contracts/link-protocol';
 import type { NetworkState } from '../../src/contracts/network-state';
 import type { ServerEventSink } from '../../src/contracts/server-ports';
 import type { ServerSettings } from '../../src/contracts/server-protocol';
@@ -15,7 +19,7 @@ import { currentWindowsPty } from '../../src/windows-pty-info';
 import { openAuditLog } from './audit-log';
 import { handleNetworkCall } from './c2';
 import { createDrive, type Drive, type DriveDeps } from './drive';
-import { type Identity, setOwnerKey } from './identity';
+import { adoptOwnerKey, type Identity, setOwnerKey } from './identity';
 import { createLinkManager, type LinkManager } from './link-manager';
 import { openLinkStore } from './link-store';
 import {
@@ -28,6 +32,7 @@ import {
 import { createMessaging } from './messaging';
 import { createMonitorPublisher, type MonitorSource } from './monitor-publisher';
 import { createPairingService, type PairingService } from './pairing-service';
+import { createSnapshotCoalescer } from './snapshot-coalescer';
 import { createViewRelay } from './view-relay';
 
 // The one composer for linked machines (plan "Technical decisions" 1): services.ts only builds,
@@ -112,7 +117,10 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
   const directory = createRemoteDirectory();
   /** The last state each link was seen in, to act once on up and down. */
   const seen = new Map<string, LinkState>();
+  /** My capabilities per link as last seen, to push a fresh snapshot when they change. */
+  const capsSeen = new Map<string, string>();
   const live = (st: LinkState | undefined) => st === 'up' || st === 'degraded';
+  const capsKey = (c: Capabilities): string => `${c.messaging}/${c.monitor}/${c.drive}`;
 
   // Runs on every link change, synchronously, so remote rows and the outbox follow at once;
   // only the C2 broadcast below is coalesced.
@@ -130,10 +138,16 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     for (const v of views) {
       const before = seen.get(v.machineId);
       seen.set(v.machineId, v.state);
+      const capsBefore = capsSeen.get(v.machineId);
+      const capsNow = capsKey(v.capabilities);
+      capsSeen.set(v.machineId, capsNow);
       if (live(v.state) && !live(before)) {
         messaging.linkUp(v.machineId);
         publisher.pushTo(v.machineId);
       } else if (!live(v.state) && live(before)) messaging.linkDown(v.machineId);
+      // What the peer sees depends on these, so a change is pushed at once, not only on up.
+      else if (live(v.state) && capsBefore !== undefined && capsBefore !== capsNow)
+        publisher.pushTo(v.machineId);
       relay.linkChanged(v.machineId);
       drive.linkChanged(v.machineId);
     }
@@ -148,6 +162,17 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       deps.emit(state());
     }, EMIT_COALESCE_MS);
   };
+
+  // A peer's snapshots are applied at most once per window, so a burst costs one recompute.
+  const snapshots = createSnapshotCoalescer({
+    now,
+    after,
+    apply: (machineId, snapshot) => {
+      directory.apply(machineId, snapshot);
+      for (const l of portListeners) l();
+      changed();
+    },
+  });
 
   let listener: LinkListener | null = null;
   let bound: { host: string; port: number } | null = null;
@@ -164,12 +189,8 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     rand: Math.random,
     after,
     onFrame: (machineId, f) => {
-      if (f.t === 'snapshot') {
-        directory.apply(machineId, f.snapshot);
-        for (const l of portListeners) l();
-        changed();
-      } else if (f.t === 'msg' || f.t === 'ack' || f.t === 'receipt')
-        messaging.onFrame(machineId, f);
+      if (f.t === 'snapshot') snapshots.offer(machineId, f.snapshot);
+      else if (f.t === 'msg' || f.t === 'ack' || f.t === 'receipt') messaging.onFrame(machineId, f);
       else if (
         f.t === 'drive.input' ||
         f.t === 'drive.resize' ||
@@ -317,18 +338,12 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
 
   const onOwnerKey = (pair: { publicKey: string; privateKey: string }): boolean => {
     try {
-      const privateKey = createPrivateKey({
-        key: Buffer.from(pair.privateKey, 'base64'),
-        format: 'der',
-        type: 'pkcs8',
-      });
-      const publicKey = createPublicKey(privateKey);
-      if (
-        privateKey.asymmetricKeyType !== 'ed25519' ||
-        publicKey.export({ type: 'spki', format: 'der' }).toString('base64') !== pair.publicKey
-      )
+      const next = adoptOwnerKey(deps.dir, identity, pair);
+      if (next === null) {
+        deps.log.warn('owner key refused');
         return false;
-      identity = setOwnerKey(deps.dir, identity, { publicKey, privateKey });
+      }
+      identity = next;
       return true;
     } catch (err) {
       deps.log.warn('owner key refused', {
@@ -431,6 +446,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     },
     async stop() {
       emitTimer?.();
+      snapshots.stop();
       closePairingPort();
       relay.stop();
       drive.stop();

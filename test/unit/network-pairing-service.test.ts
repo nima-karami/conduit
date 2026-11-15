@@ -297,6 +297,29 @@ describe('pairing service over its pairing port', () => {
     expect(opener.audit).toEqual([]);
   });
 
+  it('a start superseded while its port is opening closes that port and never shows the code', async () => {
+    const opening: Array<(addresses: string[]) => void> = [];
+    let closes = 0;
+    const ports: Ports = {
+      open: () => new Promise<string[]>((resolve) => opening.push(resolve)),
+      close: () => {
+        closes += 1;
+      },
+    };
+    const a = side(makeIdentity('a', null), 'a', ports, 200);
+    const started = a.svc.start();
+    const rejected = expect(started).rejects.toThrow('superseded');
+    while (opening.length === 0) await new Promise((r) => setTimeout(r, 0));
+    const joining = a.svc
+      .join(newCode((n) => randomBytes(n)).join(' '), '127.0.0.1:1')
+      .catch(() => undefined);
+    opening[0]?.(['127.0.0.1:47391']);
+    await rejected;
+    await joining;
+    expect(closes).toBe(1);
+    expect(a.svc.view()?.state).not.toBe('showing-code');
+  });
+
   it('a join with an invalid code throws bad_code and changes no state', async () => {
     const { opener, joiner } = await rig();
     const w = await startWindow(opener);

@@ -272,6 +272,19 @@ describe('link manager', { timeout: 60_000 }, () => {
     expect(a.manager.view(b.id.machineId)?.state).toBe('up');
   });
 
+  it('a hello name longer than pairing allows is not stored, and the link still comes up', async () => {
+    const owner = identity();
+    const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
+    const a = await node(identity(ownerKey), 'linux-box');
+    const b = await node(identity(ownerKey), 'x'.repeat(65));
+    a.link(record(b, 'win-box'));
+    b.link(record(a, 'linux-box'));
+    a.manager.start();
+    b.manager.start();
+    await until(() => a.manager.view(b.id.machineId)?.state === 'up');
+    expect(a.manager.view(b.id.machineId)?.name).toBe('win-box');
+  });
+
   it('a peer whose owner key changed is identity-changed and never up', async () => {
     const owner = identity();
     const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };

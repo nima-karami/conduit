@@ -179,3 +179,26 @@ export function readOnlyMachineId(dir: string, io: IdentityIo = defaultIo): stri
   const publicKey = importPublic(serverKey.publicKey);
   return publicKey === null ? null : deriveMachineId(rawPublicKey(publicKey));
 }
+
+/**
+ * The identity after an owner key arrives over a link, or null when it is refused. A server that
+ * already holds an owner key accepts only that same key again: a late transfer never replaces it.
+ */
+export function adoptOwnerKey(
+  dir: string,
+  id: Identity,
+  offered: { publicKey: string; privateKey: string },
+  io: IdentityIo = defaultIo,
+): Identity | null {
+  const pair = decodePair(offered);
+  if (pair === null) return null;
+  const derived = createPublicKey(pair.privateKey).export({ format: 'der', type: 'spki' });
+  const offeredPub = pair.publicKey.export({ format: 'der', type: 'spki' });
+  if (!derived.equals(offeredPub)) return null;
+  if (id.ownerKey !== null) {
+    return id.ownerKey.publicKey.export({ format: 'der', type: 'spki' }).equals(offeredPub)
+      ? id
+      : null;
+  }
+  return setOwnerKey(dir, id, pair, io);
+}

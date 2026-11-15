@@ -49,10 +49,24 @@ describe('snapshotFor', () => {
   it('sends nothing when neither messaging nor monitor is enabled', () => {
     expect(snapshotFor(caps(false, false, true), source, 1)).toBeNull();
   });
-  it('messaging only: session rows, no asks, unread, presence or agents', () => {
-    expect(snapshotFor(caps(true, false, false), source, 1)).toEqual({
+  it('messaging only: handled session rows, stripped of home, roots, attention and asks', () => {
+    const handleless: MonitorSession = { ...session, sessionId: 's2', handle: null };
+    const messagingOnly: MonitorSource = {
+      ...source,
+      sessions: () => [session, handleless],
+    };
+    expect(snapshotFor(caps(true, false, false), messagingOnly, 1)).toEqual({
       seq: 1,
-      sessions: [session],
+      sessions: [
+        {
+          ...session,
+          home: '',
+          roots: [],
+          attention: { attentionReason: null, completions: 0 },
+          completions: 0,
+          limit: null,
+        },
+      ],
       requests: [],
       youUnread: 0,
       ownerPresence: 'here',

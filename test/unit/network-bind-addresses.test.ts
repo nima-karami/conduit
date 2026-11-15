@@ -4,6 +4,34 @@ import { bindableAddresses } from '../../src/network/bind-addresses';
 
 const MAC = '00:00:00:00:00:00';
 
+const UNSPECIFIED = [
+  '0.0.0.0',
+  '::',
+  '0:0::0',
+  '::ffff:0.0.0.0',
+  '::ffff:0:0',
+  '0:0:0:0:0:ffff:0:0',
+];
+
+const NOT_BINDABLE = [
+  ...UNSPECIFIED,
+  '8.8.8.8',
+  '203.0.113.5',
+  '2001:db8::1',
+  'fe80::1',
+  '169.254.1.1',
+];
+
+const BINDABLE = [
+  '127.0.0.1',
+  '10.1.2.3',
+  '172.16.0.1',
+  '192.168.1.5',
+  '100.64.0.1',
+  '::1',
+  'fd00::1',
+];
+
 const v4 = (address: string): NetworkInterfaceInfo => ({
   address,
   netmask: '255.255.255.0',
@@ -88,17 +116,38 @@ describe('bindableAddresses', () => {
 
   it('an explicit IPv4 setting returns exactly that address, even if no interface has it', () => {
     expect(bindableAddresses(FIXTURE, '192.168.2.11')).toEqual(['192.168.2.11']);
-    expect(bindableAddresses(FIXTURE, '8.8.8.8')).toEqual(['8.8.8.8']);
   });
 
   it('an explicit IPv6 setting returns exactly that address', () => {
     expect(bindableAddresses(FIXTURE, 'fd7a:115c:a1e0::1')).toEqual(['fd7a:115c:a1e0::1']);
   });
 
-  it('never binds all interfaces from a setting', () => {
-    expect(bindableAddresses(FIXTURE, '0.0.0.0')).toEqual([]);
-    expect(bindableAddresses(FIXTURE, '::')).toEqual([]);
-    expect(bindableAddresses(FIXTURE, '0:0:0:0:0:0:0:0')).toEqual([]);
+  it('an explicit setting is held to the same private check as auto', () => {
+    for (const bad of NOT_BINDABLE) expect(bindableAddresses(FIXTURE, bad)).toEqual([]);
+    for (const good of BINDABLE) expect(bindableAddresses(FIXTURE, good)).toEqual([good]);
+  });
+
+  it('an explicit IPv4-mapped setting returns the normalised IPv4 address', () => {
+    expect(bindableAddresses(FIXTURE, '::ffff:192.168.1.5')).toEqual(['192.168.1.5']);
+    expect(bindableAddresses(FIXTURE, '::ffff:c0a8:105')).toEqual(['192.168.1.5']);
+  });
+
+  it('never binds all interfaces from a setting, in any spelling', () => {
+    for (const bad of UNSPECIFIED) expect(bindableAddresses(FIXTURE, bad)).toEqual([]);
+  });
+
+  it('auto normalises an IPv4-mapped interface address before judging it', () => {
+    const mapped: NodeJS.Dict<NetworkInterfaceInfo[]> = {
+      a: [v6('::ffff:192.168.1.5'), v6('0:0:0:0:0:ffff:c0a8:105')],
+    };
+    expect(bindableAddresses(mapped, 'auto')).toEqual(['192.168.1.5']);
+  });
+
+  it('auto never binds a mapped public or unspecified address', () => {
+    const mapped: NodeJS.Dict<NetworkInterfaceInfo[]> = {
+      a: [v6('::ffff:8.8.8.8'), v6('::ffff:0.0.0.0'), v6('::ffff:0:0'), v6('0:0::0')],
+    };
+    expect(bindableAddresses(mapped, 'auto')).toEqual([]);
   });
 
   it('a non-IP setting returns nothing', () => {
