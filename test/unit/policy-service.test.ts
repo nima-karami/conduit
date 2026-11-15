@@ -494,6 +494,52 @@ describe('policy service', () => {
     expect(h.service.decide(input).decision).toBe('deny');
   });
 
+  it('allowOnce fires onChanged once when it saves an override, so tool lists re-sync', () => {
+    const exception: Exception = {
+      tool: 'open_session',
+      scope: { kind: 'anywhere' },
+      rule: { decision: 'deny' },
+    };
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: { profileId: 'worker', exceptions: [exception], onScreenOnly: false },
+          },
+        ],
+      }),
+    });
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_session' as const,
+      targets: [target({ path: '/work/app/x' })],
+      masterOn: true,
+      toYou: false,
+    };
+    const denied = h.service.decide(input);
+    const activityId = h.service.activity.record({
+      lane: 'conduit',
+      principal: { handle: 'alpha', sessionId: 's1', machineId: null },
+      cli: null,
+      action: 'open_session',
+      target: null,
+      summary: null,
+      decision: 'deny',
+      decidedBy: 'policy',
+      outcome: 'denied',
+      durationMs: null,
+      requestId: null,
+      count: null,
+    });
+    h.service.noteDecision(activityId, input, denied);
+
+    const before = h.changed();
+    expect(h.service.allowOnce(activityId)).toEqual({ ok: true });
+    expect(h.changed()).toBe(before + 1);
+  });
+
   it('allowOnce on a floor deny → not-overridable', () => {
     const h = harness();
     h.service.start();

@@ -479,6 +479,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
           },
         ];
         markPolicy();
+        deps.onChanged();
       }
       return { ok: true };
     },
