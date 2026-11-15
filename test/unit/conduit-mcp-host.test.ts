@@ -4273,6 +4273,41 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     });
   });
 
+  it('mcp:setAssignment on an unknown session point is refused and saves nothing', async () => {
+    const writes: string[] = [];
+    const policyIo: RequestsIo = {
+      read: () => null,
+      write: async (t) => {
+        writes.push(t);
+      },
+    };
+    const { h } = await asking({ policyIo, manualTimers: true });
+    const replies: HostToWebview[] = [];
+    const post = (requestId: number, sessionId: string) =>
+      h.host.handleRenderer(
+        {
+          type: 'mcp:setAssignment',
+          requestId,
+          point: { kind: 'session', sessionId },
+          profileId: 'lead',
+        },
+        (m) => replies.push(m),
+        1,
+      );
+    await post(1, 'ghost');
+    expect(replies).toEqual([
+      { type: 'mcp:policyResult', requestId: 1, ok: false, error: 'unknown-session' },
+    ]);
+    h.advance(1_000);
+    expect(writes.join('')).not.toContain('ghost');
+
+    await post(2, 's1');
+    expect(replies.at(-1)).toEqual({ type: 'mcp:policyResult', requestId: 2, ok: true });
+    h.advance(1_000);
+    expect(writes.join('')).toContain('"s1"');
+    expect(writes.join('')).not.toContain('ghost');
+  });
+
   it('mcp:revokeGrant and mcp:setAssignment answer with mcp:policyResult', async () => {
     const { h, c } = await asking();
     const post = async (msg: unknown) => {

@@ -2612,6 +2612,15 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             });
             return;
           }
+          if (m.point.kind === 'session' && !deps.sessions.get(m.point.sessionId)) {
+            reply({
+              type: 'mcp:policyResult',
+              requestId: m.requestId,
+              ok: false,
+              error: 'unknown-session',
+            });
+            return;
+          }
           const result = policyService.setAssignment(m.point, m.profileId);
           reply({ type: 'mcp:policyResult', requestId: m.requestId, ...result });
           flow.recheck();
