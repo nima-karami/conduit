@@ -183,11 +183,14 @@ it.each([
       },
     ],
   },
-])('refuses malformed or oversized inbound messages', (patch) => {
+  { messageId: 'm_short' },
+])('refuses malformed or oversized inbound messages without acknowledging them', (patch) => {
   const h = setup();
   h.svc.onFrame(machine, { t: 'msg', message: { ...wire, ...patch } });
   expect(h.mcp.deliverInbound).not.toHaveBeenCalled();
-  expect(h.frames[0]).toMatchObject({ t: 'ack', recipients: [{ status: 'refused' }] });
+  // CON-27 R2a: an ack for a message that fails validation would amplify, so the sender's outbox expires it instead.
+  expect(ackFrames(h.frames)).toEqual([]);
+  expect(h.audit.filter((e) => e.kind === 'message.refused')).toHaveLength(1);
 });
 it('does not acknowledge a failed durable append', async () => {
   const h = setup();
@@ -415,8 +418,48 @@ it('refuses a message to more than 10 recipients and stores nothing', () => {
   const to = Array.from({ length: 11 }, (_, i) => `agent-${i}`);
   h.svc.onFrame(machine, { t: 'msg', message: { ...wire, to } });
   expect(vi.mocked(h.mcp.deliverInbound)).not.toHaveBeenCalled();
-  expect(ackFrames(h.frames)[0]?.recipients.every((r) => r.status === 'refused')).toBe(true);
-  expect(ackFrames(h.frames)[0]?.recipients).toHaveLength(11);
+  expect(ackFrames(h.frames)).toEqual([]);
+});
+
+// CON-27 R2a: a 1,000-recipient message would make the ack echo 1,000 handles back to the peer.
+it('sends no ack for a 1,000-recipient message, on any refusal path', () => {
+  const to = Array.from({ length: 1000 }, (_, i) => `agent-${i}`);
+  const h = setup();
+  h.svc.onFrame(machine, { t: 'msg', message: { ...wire, to } });
+  expect(ackFrames(h.frames)).toEqual([]);
+  h.link.capabilities.messaging = false;
+  h.svc.onFrame(machine, { t: 'msg', message: { ...wire, to } });
+  expect(ackFrames(h.frames)).toEqual([]);
+});
+
+it('sends no ack for a malformed message id, even when capability is off', () => {
+  const h = setup();
+  h.link.capabilities.messaging = false;
+  h.svc.onFrame(machine, { t: 'msg', message: { ...wire, messageId: 'not-an-id' } });
+  expect(ackFrames(h.frames)).toEqual([]);
+});
+
+// CON-27 R2a: a capability_off ack lists at most MAX_RECIPIENTS handles, and only for a sound message.
+it('caps a capability_off ack at 10 recipients', () => {
+  const h = setup();
+  h.link.capabilities.messaging = false;
+  const to = Array.from({ length: 10 }, (_, i) => `agent-${i}`);
+  h.svc.onFrame(machine, { t: 'msg', message: { ...wire, to } });
+  expect(ackFrames(h.frames).at(-1)?.recipients).toHaveLength(10);
+});
+
+// CON-27 R2a: the rate_limited ack is bounded the same way as the capability_off one.
+it('bounds the rate_limited ack the same way: 10 recipients at most, none for an oversized message', () => {
+  const h = setup();
+  h.link.state = 'up';
+  for (let i = 0; i < 120; i++) h.svc.onFrame(machine, frameN(i));
+  const to = Array.from({ length: 10 }, (_, i) => `agent-${i}`);
+  h.svc.onFrame(machine, frameN(120, { to }));
+  expect(ackFrames(h.frames).at(-1)?.recipients).toHaveLength(10);
+  const big = Array.from({ length: 1000 }, (_, i) => `agent-${i}`);
+  const before = ackFrames(h.frames).length;
+  h.svc.onFrame(machine, frameN(121, { to: big }));
+  expect(ackFrames(h.frames)).toHaveLength(before);
 });
 
 it('acts on each recipient the outbox entry was addressed to, once: an ack with 1,000 recipients writes one status', async () => {
