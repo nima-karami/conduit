@@ -74,7 +74,7 @@ export interface PolicyService {
     lower: AssignmentPoint | null,
     tool: ToolName,
     patch: ToolPolicyPatch,
-  ): { ok: true } | { ok: false; error: 'read-only' };
+  ): { ok: true } | { ok: false; error: 'read-only' | 'scoped' };
   createGrant(
     choice: GrantChoice,
     p: Principal,
@@ -407,7 +407,9 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
 
     applyLegacyPatch(point, lower, tool, patch) {
       if (!policyWritable) return { ok: false, error: 'read-only' };
-      setPointAssignment(point, applyLegacyPatchPure(stateNow(), point, lower, tool, patch));
+      const assignment = applyLegacyPatchPure(stateNow(), point, lower, tool, patch);
+      if (assignment === null) return { ok: false, error: 'scoped' };
+      setPointAssignment(point, assignment);
       deps.onChanged();
       return { ok: true };
     },

@@ -194,6 +194,40 @@ beforeEach(() => {
 });
 
 describe('policy service', () => {
+  it('rejects a legacy patch for a scoped assignment without changing or writing policy', async () => {
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'default' },
+            assignment: {
+              profileId: 'worker',
+              onScreenOnly: false,
+              exceptions: [
+                {
+                  tool: 'open_file',
+                  scope: { kind: 'folder', path: '/work/app' },
+                  rule: { decision: 'deny' },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    });
+    h.service.start();
+    const before = h.service.ui([]);
+    const changed = h.changed();
+    expect(
+      h.service.applyLegacyPatch({ kind: 'default' }, null, 'open_file', { access: 'off' }),
+    ).toEqual({ ok: false, error: 'scoped' });
+    expect(h.service.ui([])).toEqual(before);
+    expect(h.changed()).toBe(changed);
+    h.fire(WRITE_MS);
+    await h.service.stop();
+    expect(h.policyWrites).toEqual([]);
+  });
+
   it('missing policy.json migrates from legacy and persists once', async () => {
     vi.mocked(migrateLegacyPolicy).mockReturnValueOnce({
       assignments: [
