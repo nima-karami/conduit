@@ -6,9 +6,10 @@ merge base) · **Spec** `docs/specs/2026-11-14-conduit-network.md` §13 · **Pla
 
 ## Result
 All nine slices are built and merged into the branch: 100 files, +16,795 / −148 against the merge
-base, 42 of them tests. The last CI run on the branch, 43753909822, has the verify job green
-(semgrep and gitleaks included) and the remote e2e green on the Windows runner for `net-drive`,
-`net-monitor`, `net-messaging`, `net-pairing` and `server-standalone`. The Tier 2 VM run passes.
+base, 42 of them tests. CI run 43755912568 (at a2799f8d, with the Tier 2 tooling) has the verify
+job green (semgrep and gitleaks included) and the remote e2e green on the Windows runner for
+`net-drive`, `net-monitor`, `net-messaging` and `net-pairing`; run 43753909822 also passed
+`server-standalone`. The Tier 2 VM run passes.
 
 | Spec §13 item | Where | Proved by |
 |---|---|---|
