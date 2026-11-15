@@ -614,7 +614,10 @@ Failing tests:
 - Requests file: a persisted grant tolerates unknown keys.
 - The ended-history cap and the server open cap count only visible/non-policy records.
 - On load, an open policy record is withdrawn by Conduit ("Conduit restarted").
-- *T3.2a finding (2026-11-15):* request_input is always decided by the local-to-you floor, so it never spends an override. The "request cap before commit" carry-over is void and no `canCreate` is added. The queue-side refusals for send_message stay under the accepted item. A spent-override refusal writes decision 'deny' with no "allowed" reasonText.
+- *T3.2a finding (2026-11-15):* request_input is always decided by the local-to-you floor, so it never spends an override. The "request cap before commit" carry-over is void and no `canCreate` is added. The queue-side refusals for send_message stay under the accepted item. When a commit is refused, the host re-decides with the pure decide:
+  - allow → it commits that decision at once and the call goes ahead;
+  - deny or ask → the call is refused, and the row records that decision and reasonText with outcome 'denied'.
+  Held overrides come first in the engine's override lookup, so the override an ask already paid for is the one reported.
 - **Carried to T3.2 (T3.1 re-review):**
   - Catching tests for the `ui().open` filter and the withdraw_request policy guard, using a live permission from createPermission. The current withdraw test passes only because load withdraws the record; rewrite it.
   - Narrow once in answerFromRenderer (drop the unreachable second visibility branch).
