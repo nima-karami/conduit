@@ -620,6 +620,10 @@ Failing tests:
   Held overrides come first in the engine's override lookup, so the override an ask already paid for is the one reported.
   A recovered allow always carries the original rule, so no guard is needed: ruleFor depends on profile, assignment, tool and target only, and overrides/grants never feed it. If overrides ever carry their own rule, commitResolved must compare rules before standing in.
   Accepted: a spent ask whose re-decide recovers an allow still passes the card-only checks first (cap, window, budget), so it can be refused rate_limited/window_not_ready/expired. That's conservative. Carried to T3.2b: host tests for a spent-override re-decide that asks (row `ask/denied`) and for an ask that recovers an allow through a grant.
+- *T3.2b split (2026-11-15):*
+  - T3.2b-1 (cc559d20) did the request-file pairing, the load expiry order and the isNonPolicy rename.
+  - Everything else goes to T3.2b-2: the service permission API, the protocol, call-flow and the host. `onPermissionAnswer` has no honest implementation before the host wiring, so they land together.
+  - Accepted: answerFromRenderer keeps its second, narrowing-only visibility check. Dropping it needs a cast or a QueueAnswerResult type change.
 - **Carried to T3.2 (T3.1 re-review):**
   - Catching tests for the `ui().open` filter and the withdraw_request policy guard, using a live permission from createPermission. The current withdraw test passes only because load withdraws the record; rewrite it.
   - Narrow once in answerFromRenderer (drop the unreachable second visibility branch).
