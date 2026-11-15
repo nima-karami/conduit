@@ -6,6 +6,7 @@ import {
   identityDigest,
   linkIdFor,
   PAIRING_NONCE_BYTES,
+  type PairingIdentity,
 } from './pairing-transcript';
 import { rawEd25519 } from './self-signed-cert';
 
@@ -15,8 +16,13 @@ import { rawEd25519 } from './self-signed-cert';
 // comparing the fingerprint is what authenticates them (numeric comparison). Possession of each
 // key is proven later by the first pinned TLS link handshake, which is also where the owner
 // private key crosses, never here.
+//
+// Order (CON-27 re-review R1): every identity is fixed before any nonce it could be ground
+// against is revealed. The joiner's hello commits to its key, nonce and identity; the opener's
+// nonce message carries its identity; the joiner's reveal opens the commitment. Nothing that
+// enters the fingerprint travels after a nonce it depends on is public.
 
-const PAIRING_VERSION = 1;
+const PAIRING_VERSION = 2;
 const KEY_BYTES = 32;
 /** A machine's self-name: pairing and every later hello hold it to this. */
 export const MAX_NAME_CHARS = 64;
@@ -38,21 +44,15 @@ export type PairingFailReason =
   | 'incompatible'
   | 'protocol';
 
+export type { PairingIdentity };
+
 export type PairingMsg =
+  /** The joiner's first message: `commit` = H(key, its nonce, digest of its identity). */
   | { t: 'pair.hello'; v: number; code: string; key: string; commit: string }
-  | { t: 'pair.nonce'; nonce: string; key: string }
-  | { t: 'pair.reveal'; nonce: string }
-  | {
-      t: 'pair.id';
-      machineId: string;
-      ownerKey: string | null;
-      /** The opener only, when it holds no owner key: the public half of one it would create. */
-      ownerOffer: string | null;
-      selfName: string;
-      addresses: string[];
-      protocol: { major: number; minor: number };
-      cert: string;
-    }
+  /** The opener's nonce and identity, together, before the joiner reveals anything. */
+  | { t: 'pair.nonce'; nonce: string; key: string; id: PairingIdentity }
+  /** Opens the joiner's commitment: its nonce and the identity it committed to. */
+  | { t: 'pair.reveal'; nonce: string; id: PairingIdentity }
   | { t: 'pair.accept' }
   | { t: 'pair.decline' }
   | { t: 'pair.fail'; reason: PairingFailReason };
@@ -108,8 +108,9 @@ export interface OpenerContext extends PairingContext {
   /** The window's code, normalized ('w1 w2 w3'). */
   code: string;
   /**
-   * Called at the reveal when this opener holds no owner key: its public half goes out in pair.id
-   * as ownerOffer, inside the compared fingerprint, and is kept only if the joiner has none either.
+   * Called when this opener holds no owner key and answers a hello: its public half goes out in
+   * the opener's identity as ownerOffer, inside the compared fingerprint, and is kept only if the
+   * joiner has none either.
    */
   generateOwnerKey(): OwnerKeyPair;
 }
@@ -118,7 +119,6 @@ type Phase =
   | 'await-hello' // opener
   | 'await-reveal' // opener
   | 'await-nonce' // joiner
-  | 'await-id'
   | 'confirm'
   | 'done';
 
@@ -128,9 +128,9 @@ interface Shared {
   peerKeyRaw: Buffer | null;
   nonceOpener: Buffer | null;
   nonceJoiner: Buffer | null;
-  peerId: Extract<PairingMsg, { t: 'pair.id' }> | null;
-  /** The pair.id this side sent; the fingerprint binds it alongside the peer's. */
-  sentId: Extract<PairingMsg, { t: 'pair.id' }> | null;
+  peerId: PairingIdentity | null;
+  /** The identity this side sent; the fingerprint binds it alongside the peer's. */
+  sentId: PairingIdentity | null;
   fingerprint: string | null;
   selfAccepted: boolean;
   peerAccepted: boolean;
@@ -140,7 +140,7 @@ export interface OpenerState extends Shared {
   role: 'opener';
   ctx: OpenerContext;
   commit: Buffer | null;
-  /** The owner key offered in this opener's pair.id, when it held none. */
+  /** The owner key offered in this opener's identity, when it held none. */
   offer: OwnerKeyPair | null;
 }
 
@@ -173,11 +173,12 @@ export function openerStart(ctx: OpenerContext): OpenerState {
   return { role: 'opener', ctx, commit: null, offer: null, ...shared('await-hello') };
 }
 
-/** The joiner speaks first: its commitment binds its key and nonce before it sees the opener's. */
+/** The joiner speaks first: its commitment binds its key, nonce and identity before it sees the opener's. */
 export function joinerStart(ctx: PairingContext, code: string): StepResult<JoinerState> {
   const nonce = ctx.rand(PAIRING_NONCE_BYTES);
   const state: JoinerState = { role: 'joiner', ctx, code, ...shared('await-nonce') };
   state.nonceJoiner = nonce;
+  state.sentId = identityOf(ctx.self, null);
   const key = ctx.self.serverKeyRaw;
   return {
     state,
@@ -187,7 +188,7 @@ export function joinerStart(ctx: PairingContext, code: string): StepResult<Joine
         v: PAIRING_VERSION,
         code,
         key: key.toString('base64'),
-        commit: commitment(key, nonce).toString('base64'),
+        commit: commitment(key, nonce, identityDigest(state.sentId)).toString('base64'),
       },
     ],
   };
@@ -226,12 +227,16 @@ function certMatches(pem: string, peerKeyRaw: Buffer, machineId: string): boolea
   }
 }
 
-function validId(m: Extract<PairingMsg, { t: 'pair.id' }>, peerKeyRaw: Buffer): boolean {
+/** Control characters and line or paragraph separators: a name is shown and quoted, never a line. */
+const UNPRINTABLE = /[\p{Cc}\u2028\u2029]/u;
+
+function validId(m: PairingIdentity, peerKeyRaw: Buffer): boolean {
   const name = m.selfName.trim();
   return (
     m.machineId === deriveMachineId(peerKeyRaw) &&
     name.length > 0 &&
     m.selfName.length <= MAX_NAME_CHARS &&
+    !UNPRINTABLE.test(m.selfName) &&
     m.addresses.length <= MAX_ADDRESSES &&
     m.addresses.every((a) => a.length > 0 && a.length <= MAX_ADDRESS_CHARS) &&
     Number.isInteger(m.protocol.major) &&
@@ -243,12 +248,8 @@ function validId(m: Extract<PairingMsg, { t: 'pair.id' }>, peerKeyRaw: Buffer): 
   );
 }
 
-function idMsg(
-  self: PairingSelf,
-  ownerOffer: string | null,
-): Extract<PairingMsg, { t: 'pair.id' }> {
+function identityOf(self: PairingSelf, ownerOffer: string | null): PairingIdentity {
   return {
-    t: 'pair.id',
     machineId: self.machineId,
     ownerKey: self.ownerKey?.publicKey ?? null,
     ownerOffer,
@@ -328,7 +329,7 @@ function settle<S extends AnyState>(s: S, out: PairingMsg[]): StepResult<S> {
   if (plan === 'different') return fail(s, 'different-owner');
   if (plan === 'none') return linked(s, out, owners.opener ?? '', null, null);
   if (plan === 'opener-generates') {
-    // The key both people compared, in the opener's pair.id; nothing settles it after the confirm.
+    // The key both people compared, in the opener's identity; nothing settles it after the confirm.
     if (s.role === 'opener')
       return s.offer === null
         ? fail(s, 'protocol')
@@ -344,11 +345,11 @@ function settle<S extends AnyState>(s: S, out: PairingMsg[]): StepResult<S> {
   return linked(s, out, ownerPublic, null, holderIsMe ? 'send' : 'receive');
 }
 
-function onPeerId<S extends AnyState>(
-  s: S,
-  m: Extract<PairingMsg, { t: 'pair.id' }>,
-  out: PairingMsg[],
-): StepResult<S> {
+/**
+ * The peer's identity, checked, and the fingerprint over both. Runs once both nonces and both
+ * identities are known: at the opener on the reveal, at the joiner on the opener's nonce.
+ */
+function learnPeer<S extends AnyState>(s: S, m: PairingIdentity, out: PairingMsg[]): StepResult<S> {
   if (s.peerKeyRaw === null || !validId(m, s.peerKeyRaw)) return fail(s, 'protocol');
   // Only the opener may offer an owner key; a joiner's offer is a forged or broken message.
   if (s.role === 'opener' && m.ownerOffer !== null) return fail(s, 'protocol');
@@ -371,7 +372,7 @@ function onPeerId<S extends AnyState>(
   const owners = ownerKeys(s);
   if (ownerPlan(owners.opener, owners.joiner) === 'different') return fail(s, 'different-owner');
   s.phase = 'confirm';
-  return settle(s, out);
+  return { state: s, out };
 }
 
 /** Messages and user actions every phase after the reveal treats the same way. */
@@ -388,8 +389,6 @@ function common<S extends AnyState>(s: S, input: PairingInput): StepResult<S> | 
 function afterReveal<S extends AnyState>(s: S, input: PairingInput): StepResult<S> {
   const c = common(s, input);
   if (c) return c;
-  if (s.phase === 'await-id' && input.kind === 'msg' && input.msg.t === 'pair.id')
-    return onPeerId(s, input.msg, []);
   if (s.phase === 'confirm' && input.kind === 'confirm') {
     if (s.selfAccepted) return { state: s, out: [] };
     s.selfAccepted = true;
@@ -419,6 +418,8 @@ export function openerStep(s: OpenerState, input: PairingInput): StepResult<Open
     s.commit = commit;
     s.peerKeyRaw = key;
     s.nonceOpener = s.ctx.rand(PAIRING_NONCE_BYTES);
+    s.offer = s.ctx.self.ownerKey === null ? s.ctx.generateOwnerKey() : null;
+    s.sentId = identityOf(s.ctx.self, s.offer?.publicKey ?? null);
     s.phase = 'await-reveal';
     return {
       state: s,
@@ -427,6 +428,7 @@ export function openerStep(s: OpenerState, input: PairingInput): StepResult<Open
           t: 'pair.nonce',
           nonce: s.nonceOpener.toString('base64'),
           key: s.ctx.self.serverKeyRaw.toString('base64'),
+          id: s.sentId,
         },
       ],
     };
@@ -438,12 +440,12 @@ export function openerStep(s: OpenerState, input: PairingInput): StepResult<Open
     const nonce = b64(input.msg.nonce, PAIRING_NONCE_BYTES);
     if (nonce === null || s.commit === null || s.nonceOpener === null || s.peerKeyRaw === null)
       return fail(s, 'protocol');
-    if (!timingSafeEqual(commitment(s.peerKeyRaw, nonce), s.commit)) return fail(s, 'bad-commit');
+    const id = input.msg.id;
+    // The identity the joiner committed to in its hello, or this is not the joiner that spoke.
+    if (!timingSafeEqual(commitment(s.peerKeyRaw, nonce, identityDigest(id)), s.commit))
+      return fail(s, 'bad-commit');
     s.nonceJoiner = nonce;
-    s.offer = s.ctx.self.ownerKey === null ? s.ctx.generateOwnerKey() : null;
-    s.sentId = idMsg(s.ctx.self, s.offer?.publicKey ?? null);
-    s.phase = 'await-id';
-    return { state: s, out: [s.sentId] };
+    return learnPeer(s, id, []);
   }
   return afterReveal(s, input);
 }
@@ -458,14 +460,12 @@ export function joinerStep(s: JoinerState, input: PairingInput): StepResult<Join
     const key = b64(input.msg.key, KEY_BYTES);
     if (nonce === null || key === null || s.nonceJoiner === null) return fail(s, 'protocol');
     if (key.equals(s.ctx.self.serverKeyRaw)) return fail(s, 'protocol');
+    if (s.sentId === null) return fail(s, 'protocol');
     s.peerKeyRaw = key;
     s.nonceOpener = nonce;
-    s.sentId = idMsg(s.ctx.self, null);
-    s.phase = 'await-id';
-    return {
-      state: s,
-      out: [{ t: 'pair.reveal', nonce: s.nonceJoiner.toString('base64') }, s.sentId],
-    };
+    return learnPeer(s, input.msg.id, [
+      { t: 'pair.reveal', nonce: s.nonceJoiner.toString('base64'), id: s.sentId },
+    ]);
   }
   return afterReveal(s, input);
 }
@@ -510,51 +510,17 @@ export function parsePairingMsg(raw: unknown): PairingMsg | null {
         isStr(raw.commit)
         ? { t: 'pair.hello', v: raw.v, code: raw.code, key: raw.key, commit: raw.commit }
         : null;
-    case 'pair.nonce':
-      return exactly(raw, ['t', 'nonce', 'key']) && isStr(raw.nonce) && isStr(raw.key)
-        ? { t: 'pair.nonce', nonce: raw.nonce, key: raw.key }
+    case 'pair.nonce': {
+      const id = parseIdentity(raw.id);
+      return exactly(raw, ['t', 'nonce', 'key', 'id']) && isStr(raw.nonce) && isStr(raw.key) && id
+        ? { t: 'pair.nonce', nonce: raw.nonce, key: raw.key, id }
         : null;
-    case 'pair.reveal':
-      return exactly(raw, ['t', 'nonce']) && isStr(raw.nonce)
-        ? { t: 'pair.reveal', nonce: raw.nonce }
+    }
+    case 'pair.reveal': {
+      const id = parseIdentity(raw.id);
+      return exactly(raw, ['t', 'nonce', 'id']) && isStr(raw.nonce) && id
+        ? { t: 'pair.reveal', nonce: raw.nonce, id }
         : null;
-    case 'pair.id': {
-      const p = raw.protocol;
-      const addresses = raw.addresses;
-      if (
-        !exactly(raw, [
-          't',
-          'machineId',
-          'ownerKey',
-          'ownerOffer',
-          'selfName',
-          'addresses',
-          'protocol',
-          'cert',
-        ]) ||
-        !isStr(raw.machineId) ||
-        !(raw.ownerKey === null || isStr(raw.ownerKey)) ||
-        !(raw.ownerOffer === null || isStr(raw.ownerOffer)) ||
-        !isStr(raw.selfName) ||
-        !isStr(raw.cert) ||
-        !Array.isArray(addresses) ||
-        !addresses.every(isStr) ||
-        !isRec(p) ||
-        !exactly(p, ['major', 'minor']) ||
-        !isInt(p.major) ||
-        !isInt(p.minor)
-      )
-        return null;
-      return {
-        t: 'pair.id',
-        machineId: raw.machineId,
-        ownerKey: raw.ownerKey,
-        ownerOffer: raw.ownerOffer,
-        selfName: raw.selfName,
-        addresses: addresses.filter(isStr),
-        protocol: { major: p.major, minor: p.minor },
-        cert: raw.cert,
-      };
     }
     case 'pair.accept':
     case 'pair.decline':
@@ -568,4 +534,42 @@ export function parsePairingMsg(raw: unknown): PairingMsg | null {
     default:
       return null;
   }
+}
+
+function parseIdentity(raw: unknown): PairingIdentity | null {
+  if (!isRec(raw)) return null;
+  const p = raw.protocol;
+  const addresses = raw.addresses;
+  if (
+    !exactly(raw, [
+      'machineId',
+      'ownerKey',
+      'ownerOffer',
+      'selfName',
+      'addresses',
+      'protocol',
+      'cert',
+    ]) ||
+    !isStr(raw.machineId) ||
+    !(raw.ownerKey === null || isStr(raw.ownerKey)) ||
+    !(raw.ownerOffer === null || isStr(raw.ownerOffer)) ||
+    !isStr(raw.selfName) ||
+    !isStr(raw.cert) ||
+    !Array.isArray(addresses) ||
+    !addresses.every(isStr) ||
+    !isRec(p) ||
+    !exactly(p, ['major', 'minor']) ||
+    !isInt(p.major) ||
+    !isInt(p.minor)
+  )
+    return null;
+  return {
+    machineId: raw.machineId,
+    ownerKey: raw.ownerKey,
+    ownerOffer: raw.ownerOffer,
+    selfName: raw.selfName,
+    addresses: addresses.filter(isStr),
+    protocol: { major: p.major, minor: p.minor },
+    cert: raw.cert,
+  };
 }

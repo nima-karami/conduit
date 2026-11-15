@@ -21,7 +21,19 @@ describe('encodeFrame', () => {
   });
 
   it('throws when the encoded JSON exceeds LINK_FRAME_MAX_BYTES', () => {
-    const huge: PairingMsg = { t: 'pair.nonce', key: 'k', nonce: 'x'.repeat(LINK_FRAME_MAX_BYTES) };
+    const huge: PairingMsg = {
+      t: 'pair.reveal',
+      nonce: 'x'.repeat(LINK_FRAME_MAX_BYTES),
+      id: {
+        machineId: 'm-00000000',
+        ownerKey: null,
+        ownerOffer: null,
+        selfName: 'x',
+        addresses: [],
+        protocol: { major: 1, minor: 0 },
+        cert: 'PEM',
+      },
+    };
     expect(() => encodeFrame(huge)).toThrow();
   });
 });

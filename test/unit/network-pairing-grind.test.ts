@@ -7,6 +7,7 @@ import {
   type OwnerKeyPair,
   openerStart,
   openerStep,
+  type PairingIdentity,
   type PairingMsg,
   type PairingSelf,
   shownFingerprint,
@@ -45,7 +46,7 @@ function one<T extends PairingMsg['t']>(out: PairingMsg[], t: T): Extract<Pairin
   return m as Extract<PairingMsg, { t: T }>;
 }
 
-it('a relay cannot grind pair.id fields until both fingerprints match', () => {
+it('a relay cannot grind identity fields until both fingerprints match', () => {
   const sO = self('linux-box');
   const sJ = self('win-box');
   const sM1 = self('win-box');
@@ -56,58 +57,60 @@ it('a relay cannot grind pair.id fields until both fingerprints match', () => {
   const O = openerStart({ self: sO, rand: randomBytes, code: CODE, generateOwnerKey: gen });
   const J0 = joinerStart({ self: sJ, rand: randomBytes }, CODE);
   const J = J0.state;
-  const hello = one(J0.out, 'pair.hello');
-  const Mo = openerStart({ self: sM2, rand: randomBytes, code: hello.code, generateOwnerKey: gen });
-  const nonceToJ = one(openerStep(Mo, { kind: 'msg', msg: hello }).out, 'pair.nonce');
+  const helloJ = one(J0.out, 'pair.hello');
+  // M as joiner toward O: its identity is fixed by its commitment before O's nonce exists.
   const Mj0 = joinerStart({ self: sM1, rand: randomBytes }, CODE);
   const Mj = Mj0.state;
   const nonceO = one(
     openerStep(O, { kind: 'msg', msg: one(Mj0.out, 'pair.hello') }).out,
     'pair.nonce',
   );
-  const mjOut = joinerStep(Mj, { kind: 'msg', msg: nonceO }).out;
-  const idO = one(openerStep(O, { kind: 'msg', msg: one(mjOut, 'pair.reveal') }).out, 'pair.id');
-  const jOut = joinerStep(J, { kind: 'msg', msg: nonceToJ }).out;
-  const revealJ = one(jOut, 'pair.reveal');
-  const idJ = one(jOut, 'pair.id');
-  const idM2base = one(openerStep(Mo, { kind: 'msg', msg: revealJ }).out, 'pair.id');
-  const idM1base = one(mjOut, 'pair.id');
-  const nO = b(nonceO.nonce);
-  const nM1 = Mj.nonceJoiner as Buffer;
-  const nM2 = Mo.nonceOpener as Buffer;
+  const revealM1 = one(joinerStep(Mj, { kind: 'msg', msg: nonceO }).out, 'pair.reveal');
+  const fpO = shownFingerprint(Mj);
+  // M as opener toward J: its identity goes out with its nonce, before J reveals anything.
+  const Mo = openerStart({
+    self: sM2,
+    rand: randomBytes,
+    code: helloJ.code,
+    generateOwnerKey: gen,
+  });
+  const nonceToJ = one(openerStep(Mo, { kind: 'msg', msg: helloJ }).out, 'pair.nonce');
+  const revealJ = one(joinerStep(J, { kind: 'msg', msg: nonceToJ }).out, 'pair.reveal');
+  const fpJ = shownFingerprint(J);
+  expect(fpO).not.toBeNull();
+  expect(fpJ).not.toBeNull();
+
+  // Now M knows every nonce. Grinding its identity toward J needs J to take a new one: refused.
   const nJ = b(revealJ.nonce);
-  const dO = identityDigest(idO);
-  const dJ = identityDigest(idJ);
-  const fpO = (i: number) =>
-    fingerprint(
-      sO.serverKeyRaw,
-      sM1.serverKeyRaw,
-      nO,
-      nM1,
-      dO,
-      identityDigest({ ...idM1base, addresses: [`10.0.0.1:${i}`] }),
-    );
-  const fpJ = (i: number) =>
-    fingerprint(
-      sM2.serverKeyRaw,
-      sJ.serverKeyRaw,
-      nM2,
-      nJ,
-      identityDigest({ ...idM2base, addresses: [`10.0.0.1:${i}`] }),
-      dJ,
-    );
-  const seen = new Map<string, number>();
-  let hit: [number, number] | null = null;
-  for (let i = 0; i < 1 << 18; i++) seen.set(fpO(i), i);
-  for (let j = 0; j < 1 << 20 && !hit; j++) {
-    const k = seen.get(fpJ(j));
-    if (k !== undefined) hit = [k, j];
+  const dJ = identityDigest(revealJ.id);
+  let ground: PairingIdentity | null = null;
+  for (let i = 0; i < 1 << 16 && !ground; i++) {
+    const candidate = { ...nonceToJ.id, addresses: [`10.0.0.1:${i}`] };
+    if (
+      fingerprint(
+        sM2.serverKeyRaw,
+        sJ.serverKeyRaw,
+        b(nonceToJ.nonce),
+        nJ,
+        identityDigest(candidate),
+        dJ,
+      ) === fpO
+    )
+      ground = candidate;
   }
-  if (hit) {
-    const [i, j] = hit;
-    openerStep(O, { kind: 'msg', msg: { ...idM1base, addresses: [`10.0.0.1:${i}`] } });
-    joinerStep(J, { kind: 'msg', msg: { ...idM2base, addresses: [`10.0.0.1:${j}`] } });
-  }
-  const shownO = shownFingerprint(O);
-  expect(shownO === null || shownO !== shownFingerprint(J)).toBe(true);
+  const late = joinerStep(J, {
+    kind: 'msg',
+    msg: { ...nonceToJ, id: ground ?? { ...nonceToJ.id, addresses: ['10.0.0.1:1'] } },
+  });
+  expect(late.done).toEqual({ kind: 'failed', reason: 'protocol' });
+
+  // Grinding its identity toward O changes what it committed to: the commitment fails.
+  const altered = openerStep(O, {
+    kind: 'msg',
+    msg: { ...revealM1, id: { ...revealM1.id, addresses: ['10.0.0.1:2'] } },
+  });
+  expect(altered.done).toEqual({ kind: 'failed', reason: 'bad-commit' });
+
+  // Relaying honestly instead leaves two independent 32-bit codes on the two screens.
+  expect(fpO).not.toBe(fpJ);
 }, 60_000);

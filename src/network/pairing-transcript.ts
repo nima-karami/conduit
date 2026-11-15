@@ -7,8 +7,8 @@ import { createHash } from 'node:crypto';
 const PAIRING_KEY_BYTES = 32;
 export const PAIRING_NONCE_BYTES = 32;
 
-const COMMIT_LABEL = Buffer.from('conduit-pair-commit-v1', 'ascii');
-const FINGERPRINT_LABEL = Buffer.from('conduit-pair-v2', 'ascii');
+const COMMIT_LABEL = Buffer.from('conduit-pair-commit-v2', 'ascii');
+const FINGERPRINT_LABEL = Buffer.from('conduit-pair-v3', 'ascii');
 const IDENTITY_LABEL = Buffer.from('conduit-pair-id-v1', 'ascii');
 const DIGEST_BYTES = 32;
 const LINK_LABEL = Buffer.from('conduit-link-id-v1', 'ascii');
@@ -25,11 +25,17 @@ const sha256 = (...parts: Buffer[]): Buffer => {
   return h.digest();
 };
 
-export function commitment(pkJoiner: Buffer, nonce: Buffer): Buffer {
+/**
+ * The joiner's commitment, sent before it sees anything of the opener's: it fixes the joiner's
+ * key, nonce and whole identity, so none of them can be ground against the opener's nonce
+ * (CON-27 re-review R1).
+ */
+export function commitment(pkJoiner: Buffer, nonce: Buffer, idJoiner: Buffer): Buffer {
   return sha256(
     COMMIT_LABEL,
     fixed(pkJoiner, PAIRING_KEY_BYTES, 'key'),
     fixed(nonce, PAIRING_NONCE_BYTES, 'nonce'),
+    fixed(idJoiner, DIGEST_BYTES, 'identity digest'),
   );
 }
 
