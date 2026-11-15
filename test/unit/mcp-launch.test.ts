@@ -131,7 +131,7 @@ describe('mcpLaunchWiring', () => {
       '-c',
       "mcp_servers.conduit.env_vars=['CONDUIT_SESSION_TOKEN']",
       '-c',
-      "mcp_servers.conduit.default_tools_approval_mode='auto'",
+      "mcp_servers.conduit.default_tools_approval_mode='approve'",
       '-c',
       'mcp_servers.conduit.tool_timeout_sec=180',
     ]);
