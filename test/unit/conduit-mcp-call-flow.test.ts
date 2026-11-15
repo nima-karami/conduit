@@ -633,7 +633,7 @@ describe('createCallFlow', () => {
     });
   });
 
-  it('expiry settles the permission expired and returns approval_timeout', async () => {
+  it("expiry leaves the permission to the queue's timer and returns approval_timeout", async () => {
     const t = setup();
     const c = t.call();
     await t.flush();
