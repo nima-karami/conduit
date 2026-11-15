@@ -550,6 +550,20 @@ describe('createCallFlow', () => {
     expect(t.asks()).toEqual([]);
   });
 
+  it('a done answer whose commit finds its override spent refuses as tool_disabled and runs nothing', async () => {
+    const t = setup();
+    const done: Result<string> = { ok: true, value: 'answered' };
+    const c = t.call({
+      policy: ON,
+      commitResult: false,
+      prepareResult: { ok: true, value: { done } },
+    });
+    expect(errCode(await c.promise)).toBe('tool_disabled');
+    expect(c.commits.n).toBe(1);
+    expect(c.spies).toEqual({ run: 0, release: 0 });
+    expect(t.asks()).toEqual([]);
+  });
+
   it('no owner window → window_not_ready, released', async () => {
     const t = setup();
     t.owners.set(CALLER, null);
