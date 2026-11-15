@@ -18,6 +18,7 @@ import type {
 import {
   ACCESS_VALUES,
   type Access,
+  type CliKind,
   type Move,
   type PolicyField,
   type PolicyLayer,
@@ -183,4 +184,11 @@ export function applyLegacyPatch(
   if (patch.reach !== undefined) next = applyField(state, lowerA, next, tool, 'reach', patch.reach);
   if (patch.move !== undefined) next = applyField(state, lowerA, next, tool, 'move', patch.move);
   return next;
+}
+
+// see POL-D5: a session's legacy edits lower onto its launched CLI's point, never its handle's CLI.
+export function legacyLowerPoint(state: PolicyState, launchedCli: CliKind | null): AssignmentPoint {
+  if (launchedCli !== null && state.assignments.has(pointKey({ kind: 'cli', cli: launchedCli })))
+    return { kind: 'cli', cli: launchedCli };
+  return { kind: 'default' };
 }

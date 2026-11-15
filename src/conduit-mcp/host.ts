@@ -2590,11 +2590,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           // The renderer is never load-bearing: the patch is re-checked here.
           const patch = coercePolicyPatch(m.tool, m.patch);
           if (!patch) return refuse('invalid-value');
-          const cli = launchedCli(m.sessionId);
-          const lower: AssignmentPoint = cli === null ? { kind: 'default' } : { kind: 'cli', cli };
           const result = policyService.applyLegacyPatch(
             { kind: 'session', sessionId: m.sessionId },
-            lower,
+            policyService.legacyLowerPoint(launchedCli(m.sessionId)),
             m.tool,
             patch,
           );

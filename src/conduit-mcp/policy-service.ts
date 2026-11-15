@@ -22,7 +22,11 @@ import {
 } from './policy-file';
 import { type LegacyPolicy, migrateLegacyPolicy } from './policy-migration';
 import { BUILT_IN_PROFILES, pointKey, profileById, WORKER_PROFILE } from './policy-profiles';
-import { applyLegacyPatch as applyLegacyPatchPure, projectLegacyLayer } from './policy-projection';
+import {
+  applyLegacyPatch as applyLegacyPatchPure,
+  legacyLowerPoint,
+  projectLegacyLayer,
+} from './policy-projection';
 import type {
   Assignment,
   AssignmentPoint,
@@ -93,6 +97,7 @@ export interface PolicyService {
       launchedCli: CliKind | null;
     }>,
   ): PolicyUiState;
+  legacyLowerPoint(launchedCli: CliKind | null): AssignmentPoint;
 }
 
 const WRITE_COALESCE_MS = 250;
@@ -384,6 +389,10 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       return visibleEngine(stateNow(), p, deps.now());
     },
 
+    legacyLowerPoint(launchedCli) {
+      return legacyLowerPoint(stateNow(), launchedCli);
+    },
+
     setAssignment(point, profileId) {
       if (profileId !== null && profileById(stateNow(), profileId) === null) {
         return { ok: false, error: 'unknown-profile' };
@@ -513,15 +522,10 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
           source,
           label: isPlain ? null : `${profile.name}${exceptions ? ` +${exceptions}` : ''}`,
         };
-        const lower: AssignmentPoint =
-          row.launchedCli !== null &&
-          st.assignments.has(pointKey({ kind: 'cli', cli: row.launchedCli }))
-            ? { kind: 'cli', cli: row.launchedCli }
-            : { kind: 'default' };
         sessionLegacy[row.sessionId] = projectLegacyLayer(
           st,
           { kind: 'session', sessionId: row.sessionId },
-          lower,
+          legacyLowerPoint(st, row.launchedCli),
         );
       }
       const byCli: CliPolicyLayers = {};

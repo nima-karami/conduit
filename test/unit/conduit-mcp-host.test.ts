@@ -2603,6 +2603,35 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     expect(await ca.listed()).toEqual([...TOOL_NAMES]);
   });
 
+  it('an edit on a claude-launched session keeps the default layer it lowers onto', async () => {
+    const h = harness();
+    await h.host.start();
+    const a = await launch(h, 's1', CLAUDE);
+    const c = await client(h.ep, a.token);
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:setPointPolicy',
+        requestId: 1,
+        point: { kind: 'default' },
+        tool: 'open_file',
+        patch: { access: 'off' },
+      },
+      () => undefined,
+      1,
+    );
+    const before = await c.listed();
+    expect(before).not.toContain('open_file');
+    await setHostPolicy(h, 's1', { open_terminal: { access: 'on' } });
+    const after = await c.listed();
+    expect(after).not.toContain('open_file');
+    expect(after.filter((t) => t !== 'open_terminal')).toEqual(
+      before.filter((t) => t !== 'open_terminal'),
+    );
+    expect(h.host.uiState().policy.legacy.sessions.s1).toEqual({
+      open_terminal: { access: 'on' },
+    });
+  });
+
   it('uiState.switchable lists sessions whose defOf matches an adapter, before any launch', () => {
     const h = harness();
     h.sessions.set('fake', session('fake'));
