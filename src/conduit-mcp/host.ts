@@ -1403,8 +1403,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
     settlePermission: (e) => {
       if (e.end === 'answered')
-        requestService.endPermission(e.requestId, 'answered', e.answer, null);
-      else requestService.endPermission(e.requestId, e.end, null, e.reason);
+        requestService.endPermission(e.requestId, 'answered', e.answer, null, e.by);
+      else requestService.endPermission(e.requestId, e.end, null, e.reason, e.by);
     },
     onAwaitingChanged: () => scheduleBroadcast(),
     sendToWindow: (windowId, msg) => sendToWindow(windowId, msg),

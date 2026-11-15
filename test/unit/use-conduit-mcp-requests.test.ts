@@ -62,6 +62,19 @@ async function mountApi(): Promise<ConduitMcpApi> {
   return captured;
 }
 
+describe('answerPermission', () => {
+  it('a permission answer that gets no reply settles not_answerable', async () => {
+    const api = await mountApi();
+    const baseline = bridge.listeners.length;
+    vi.useFakeTimers();
+    const p = api.answerPermission('perm-1', { outcome: 'denied' });
+    expect(bridge.listeners.length).toBe(baseline + 1);
+    vi.advanceTimersByTime(10_000);
+    await expect(p).resolves.toMatchObject({ ok: false, reason: 'not_answerable' });
+    expect(bridge.listeners.length).toBe(baseline);
+  });
+});
+
 describe('answerRequest', () => {
   it('answerRequest resolves with the matching mcp:requestResult and ignores other ids', async () => {
     const api = await mountApi();

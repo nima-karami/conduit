@@ -9,7 +9,7 @@ const NO_NEEDS = { openRequests: [], waitingAsks: 0 };
 const request = (session: string | null, source: RequestSource) => ({ session, source });
 
 describe('trayCounts', () => {
-  it('a waiting permission ask counts once: as a waiting ask, not as a request', () => {
+  it('a waiting ask counts once in needsYou, with no request in the open list', () => {
     const waitingPermission = { openRequests: [], waitingAsks: 1 };
     expect(trayCounts([], 'ready', null, waitingPermission).needsYou).toBe(1);
   });

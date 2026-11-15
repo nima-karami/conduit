@@ -612,6 +612,7 @@ describe('createCallFlow', () => {
         tool: 'open_session',
         end: 'answered',
         answer: { outcome: 'denied' },
+        by: { kind: 'you', windowId: 1 },
         reason: null,
       },
     ]);

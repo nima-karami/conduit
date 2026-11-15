@@ -880,7 +880,7 @@ describe('permission requests in the service', () => {
   it('answerPermission refuses an ended permission as already_ended', async () => {
     const h = harness();
     const r = h.service.createPermission('s-alice', fields, EXPIRY);
-    h.service.endPermission(r.id, 'answered', { outcome: 'denied' }, null);
+    h.service.endPermission(r.id, 'answered', { outcome: 'denied' }, null, you);
     const out = await h.service.answerPermission(r.id, { outcome: 'denied' }, you);
     expect(out).toMatchObject({ ok: false, reason: 'already_ended' });
     expect(h.onPermissionAnswer).not.toHaveBeenCalled();
@@ -890,13 +890,19 @@ describe('permission requests in the service', () => {
     const h = harness();
     const a = h.service.createPermission('s-alice', fields, EXPIRY);
     const b = h.service.createPermission('s-alice', fields, EXPIRY);
-    h.service.endPermission(a.id, 'answered', { outcome: 'allowed' }, null);
-    h.service.endPermission(b.id, 'withdrawn', null, 'the policy now denies it');
+    h.service.endPermission(a.id, 'answered', { outcome: 'allowed' }, null, {
+      kind: 'you',
+      windowId: 7,
+    });
+    h.service.endPermission(b.id, 'withdrawn', null, 'the policy now denies it', you);
     h.c.advance(PERSIST_COALESCE_MS);
     await flush();
     const saved = JSON.parse(h.store.current() ?? '{}') as { requests: RequestRecord[] };
     const byId = new Map(saved.requests.map((r) => [r.id, r]));
-    expect(byId.get(a.id)).toMatchObject({ state: 'answered', answer: { outcome: 'allowed' } });
+    expect(byId.get(a.id)).toMatchObject({
+      state: 'answered',
+      answer: { outcome: 'allowed', answeredBy: { kind: 'you', windowId: 7 } },
+    });
     expect(byId.get(b.id)).toMatchObject({
       state: 'withdrawn',
       withdrawnBy: 'conduit',
@@ -904,7 +910,7 @@ describe('permission requests in the service', () => {
     });
   });
 
-  it('a late grant on an expired permission is delegated, then recorded and delivered once, and never resolves the call', async () => {
+  it('a late grant on an expired permission is delegated, recorded once, and its notice delivered once', async () => {
     const h = harness({ initial: fileOf([permissionRecord()]) });
     const out = await h.service.answerPermission(
       'r-perm-1',

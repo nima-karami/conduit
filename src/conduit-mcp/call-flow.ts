@@ -11,7 +11,7 @@ import type {
   PolicyDecision,
   PolicyTarget,
 } from './policy-types';
-import type { AnswerInput } from './request-types';
+import type { AnsweredBy, AnswerInput } from './request-types';
 import {
   type CliKind,
   type PolicySource,
@@ -101,6 +101,7 @@ export interface PermissionEnd {
   end: 'answered' | 'withdrawn';
   answer: AnswerInput | null;
   reason: string | null;
+  by: AnsweredBy;
 }
 export interface CallFlowDeps {
   now(): number;
@@ -344,7 +345,15 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       answer: AnswerInput | null,
       reason: string | null,
     ): void =>
-      deps.settlePermission({ requestId, caller: c.caller, tool: c.tool, end, answer, reason });
+      deps.settlePermission({
+        requestId,
+        caller: c.caller,
+        tool: c.tool,
+        end,
+        answer,
+        reason,
+        by: { kind: 'you', windowId },
+      });
     deps.sendToOwner(caller, {
       type: 'mcp:ask',
       askId: requestId,

@@ -116,6 +116,7 @@ export interface RequestService {
     end: 'answered' | 'withdrawn',
     answer: AnswerInput | null,
     reason: string | null,
+    by: AnsweredBy,
   ): void;
   answerPermission(
     requestId: string,
@@ -689,9 +690,9 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
       );
     },
 
-    endPermission(id, end, answer, reason) {
+    endPermission(id, end, answer, reason, by) {
       if (end === 'answered') {
-        const res = queue.answer(id, answer, { kind: 'you', windowId: null });
+        const res = queue.answer(id, answer, by);
         if (!res.ok) deps.warn('a permission could not be answered', { id, reason: res.reason });
         return;
       }

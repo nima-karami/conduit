@@ -182,7 +182,7 @@ const api: Omit<ConduitMcpApi, 'state'> = {
         () =>
           settle({
             ok: false,
-            reason: 'not_found',
+            reason: 'not_answerable',
             message: 'Conduit did not answer; try again',
           }),
         REQUEST_TIMEOUT_MS,
