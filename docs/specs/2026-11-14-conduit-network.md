@@ -356,6 +356,15 @@ Also checked: OpenAI (https://openai.com/policies/terms-of-use, UNVERIFIED), Ope
 - **The owner private key never travels in pairing.** It crosses the first verified link once, and
   the receiver accepts it only if it matches the public owner key both people confirmed.
 
+### 6.6 Deviations (CON-27 as built, lead-approved 2026-11-15)
+- **Attachments to another machine: 10 MiB per message, not 25 MB.** A link frame is capped at
+  16 MiB, and a 25 MB message doesn't fit one frame once base64-encoded. `send_message` to any
+  remote recipient fails before anything is stored if the attachments total over 10 MiB; the error
+  names the limit. The inbound guard refuses over 10 MiB too, so neither side accepts more than it
+  can send. Local messages keep the 25 MB limit.
+- **Monitor shows every local session.** Sessions without an MCP handle appear with no address and
+  can't be messaged; agents' `list_sessions` still lists addressable sessions only.
+
 ## 7. Acceptance criteria
 EARS (MVP unless tagged):
 - When both people confirm the same fingerprint, the system shall store the link with the chosen trust
@@ -569,3 +578,4 @@ Format: options → **default** → why.
   "Owned elsewhere"; A17/R14 NET-D18–D21; A18 refused by default; A19/R15 NET-D7/D8 reworded; A21
   feature gaps; B1/R16 `wait_sessions`; B2–B4 limit wording, MVP limits, no rotation, 5 s nuance; B5 cuts.
 - v4 (cross-spec r2): N3/R21 all 25 tools mapped + capability-off floor; N5/R22 manual revoke MVP (unchanged); N6/R23 merged presence flow, read-only MVP; N7/R24 share 24 h + Renew; N12 stable remote session id, guest orchestrate in vision; NET-D18 cost clause; status set.
+- v5 (CON-27 build): §6.5 as-built security; §6.6 deviations (10 MiB remote attachments; monitor lists every local session).
