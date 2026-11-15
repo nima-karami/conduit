@@ -197,7 +197,7 @@ export const SERVER_FILE_VERSION = {
   'server-exhausted.json': 1,
   'network/identity.json': 1,
   'network/links.json': 1,
-  'network/outbox.json': 1,
+  'network/outbox.json': 2,
 } as const;
 export type ServerFile = keyof typeof SERVER_FILE_VERSION;
 

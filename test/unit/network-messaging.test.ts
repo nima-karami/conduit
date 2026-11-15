@@ -1,11 +1,17 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createMessaging, type MessagingLink } from '../../server/network/messaging';
 import type { McpNetworkPort, RemoteEntry } from '../../src/conduit-mcp/remote-routing';
 import type { MessageRecord } from '../../src/conduit-mcp/types';
-import type { LinkFrame, WireMessage } from '../../src/contracts/link-protocol';
+import {
+  LINK_FRAME_MAX_BYTES,
+  type LinkFrame,
+  type WireMessage,
+} from '../../src/contracts/link-protocol';
+import { encodeFrame } from '../../src/network/frame-codec';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -41,6 +47,7 @@ function setup() {
   const mcp: McpNetworkPort = {
     localDirectory: () => [],
     hasMessage: vi.fn(() => false),
+    readBlob: vi.fn(async () => undefined),
     deliverInbound: vi.fn(async (msg: MessageRecord) =>
       msg.to.map((handle) => ({ handle, status: 'delivered' as const, reason: null })),
     ),
@@ -79,6 +86,7 @@ function setup() {
   } as RemoteEntry;
   return {
     svc,
+    dir,
     link,
     frames,
     mcp,
@@ -155,7 +163,7 @@ it.each([
       {
         name: 'x',
         mime: 'text/plain',
-        data: Buffer.alloc(25 * 1024 * 1024 + 1).toString('base64'),
+        data: Buffer.alloc(10 * 1024 * 1024 + 1).toString('base64'),
       },
     ],
   },
@@ -188,5 +196,146 @@ it('keeps an acknowledgement pending when updating status fails', async () => {
   await new Promise((resolve) => setTimeout(resolve, 0));
   h.svc.linkDown(machine);
   h.svc.linkUp(machine);
-  expect(h.frames.filter((frame) => frame.t === 'msg')).toHaveLength(2);
+  await vi.waitFor(() => expect(h.frames.filter((frame) => frame.t === 'msg')).toHaveLength(2));
+});
+
+it('persists blob references and delivers the exact attachment bytes', async () => {
+  const sender = setup();
+  const receiver = setup();
+  const bytes = Buffer.from('attachment payload\n');
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  vi.mocked(sender.mcp.readBlob).mockResolvedValue(bytes);
+  const message = {
+    ...sender.msg,
+    attachments: [
+      { attachmentId: 'a1', name: 'note.txt', mime: 'text/plain', bytes: bytes.length, sha256 },
+    ],
+  };
+  sender.svc.enqueue(message, [sender.recipient]);
+  const persisted = readFileSync(join(sender.dir, 'outbox.json'), 'utf8');
+  expect(persisted).toContain(sha256);
+  expect(persisted).not.toContain(bytes.toString('base64'));
+  expect(JSON.parse(persisted).entries[0].attachmentRefs).toEqual([
+    { sha256, name: 'note.txt', mime: 'text/plain' },
+  ]);
+  sender.link.state = 'up';
+  sender.svc.linkUp(machine);
+  await vi.waitFor(() => expect(sender.frames.some((f) => f.t === 'msg')).toBe(true));
+  const frame = sender.frames.find((f) => f.t === 'msg');
+  if (!frame || frame.t !== 'msg') throw new Error('message not sent');
+  receiver.svc.onFrame(machine, frame);
+  await vi.waitFor(() => expect(receiver.mcp.deliverInbound).toHaveBeenCalled());
+  expect(vi.mocked(receiver.mcp.deliverInbound).mock.calls[0][1]).toEqual([
+    { name: 'note.txt', mime: 'text/plain', bytes },
+  ]);
+});
+
+it('marks the recipient undelivered and removes the outbox entry if a blob is missing', async () => {
+  const h = setup();
+  const sha256 = 'a'.repeat(64);
+  h.svc.enqueue(
+    {
+      ...h.msg,
+      attachments: [{ attachmentId: 'a1', name: 'gone', mime: 'text/plain', bytes: 1, sha256 }],
+    },
+    [h.recipient],
+  );
+  h.link.state = 'up';
+  h.svc.linkUp(machine);
+  await vi.waitFor(() =>
+    expect(h.mcp.setRemoteStatus).toHaveBeenCalledWith('id', `agent-2@${machine}`, 'undelivered'),
+  );
+  await vi.waitFor(() =>
+    expect(JSON.parse(readFileSync(join(h.dir, 'outbox.json'), 'utf8')).entries).toEqual([]),
+  );
+  expect(h.frames.filter((f) => f.t === 'msg')).toEqual([]);
+});
+
+it('fits a 10 MiB attachment and maximum message body in one wire frame', async () => {
+  const h = setup();
+  const bytes = Buffer.alloc(10 * 1024 * 1024, 42);
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  vi.mocked(h.mcp.readBlob).mockResolvedValue(bytes);
+  h.svc.enqueue(
+    {
+      ...h.msg,
+      body: 'x'.repeat(32 * 1024),
+      attachments: [
+        { attachmentId: 'a1', name: 'large.txt', mime: 'text/plain', bytes: bytes.length, sha256 },
+      ],
+    },
+    [h.recipient],
+  );
+  h.link.state = 'up';
+  h.svc.linkUp(machine);
+  await vi.waitFor(() => expect(h.frames.some((f) => f.t === 'msg')).toBe(true));
+  const frame = h.frames.find((f) => f.t === 'msg');
+  if (!frame) throw new Error('message not sent');
+  expect(encodeFrame(frame).length - 4).toBeLessThanOrEqual(LINK_FRAME_MAX_BYTES);
+});
+
+it('does not send a blob read after a link is revoked', async () => {
+  const h = setup();
+  let finish: (bytes: Uint8Array) => void = () => {};
+  vi.mocked(h.mcp.readBlob).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  h.svc.enqueue(
+    {
+      ...h.msg,
+      attachments: [
+        { attachmentId: 'a1', name: 'x', mime: 'text/plain', bytes: 1, sha256: 'b'.repeat(64) },
+      ],
+    },
+    [h.recipient],
+  );
+  h.link.state = 'up';
+  h.svc.linkUp(machine);
+  await vi.waitFor(() => expect(h.mcp.readBlob).toHaveBeenCalled());
+  h.svc.revoked(machine);
+  finish(Buffer.from('x'));
+  await vi.waitFor(() =>
+    expect(h.mcp.setRemoteStatus).toHaveBeenCalledWith('id', `agent-2@${machine}`, 'undelivered'),
+  );
+  expect(h.frames.filter((f) => f.t === 'msg')).toEqual([]);
+});
+
+it('preserves FIFO when a link drops while the first blob is loading', async () => {
+  const h = setup();
+  let finish: (bytes: Uint8Array) => void = () => {};
+  vi.mocked(h.mcp.readBlob)
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    )
+    .mockResolvedValue(Buffer.from('blob'));
+  h.svc.enqueue(
+    {
+      ...h.msg,
+      attachments: [
+        { attachmentId: 'a1', name: 'x', mime: 'text/plain', bytes: 4, sha256: 'c'.repeat(64) },
+      ],
+    },
+    [h.recipient],
+  );
+  h.svc.enqueue({ ...h.msg, messageId: 'second' }, [h.recipient]);
+  h.link.state = 'up';
+  h.svc.linkUp(machine);
+  await vi.waitFor(() => expect(h.mcp.readBlob).toHaveBeenCalledTimes(1));
+  expect(h.frames.filter((f) => f.t === 'msg')).toEqual([]);
+  h.link.state = 'down';
+  h.svc.linkDown(machine);
+  h.link.state = 'up';
+  h.svc.linkUp(machine);
+  finish(Buffer.from('blob'));
+  await vi.waitFor(() => expect(h.frames.filter((f) => f.t === 'msg')).toHaveLength(2));
+  expect(h.frames.flatMap((f) => (f.t === 'msg' ? [f.message.messageId] : []))).toEqual([
+    'id',
+    'second',
+  ]);
 });

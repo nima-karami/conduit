@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { atomicWriteFileSync } from '../../src/atomic-write';
-import { MAX_MESSAGE_ATTACHMENT_BYTES } from '../../src/conduit-mcp/attachments';
+import { MAX_REMOTE_ATTACHMENT_BYTES } from '../../src/conduit-mcp/attachments';
 import type {
   McpNetworkPort,
   RemoteEntry,
@@ -101,6 +101,10 @@ export function createMessaging(deps: MessagingDeps): Messaging {
   const heldReceipts = new Map<string, Extract<LinkFrame, { t: 'receipt' }>[]>();
   let stopExpiry: (() => void) | null = null;
   let offLocalStatus: (() => void) | null = null;
+  let stopped = false;
+  const flushing = new Set<string>();
+  const flushAgain = new Set<string>();
+  const generations = new Map<string, number>();
 
   const persist = (): void => {
     if (!writable) return;
@@ -126,13 +130,80 @@ export function createMessaging(deps: MessagingDeps): Messaging {
       await mcp?.setRemoteStatus(entry.message.messageId, address, status);
   };
 
-  const flush = (machineId: string): void => {
+  const flushBatch = async (machineId: string, generation: number): Promise<void> => {
     for (const entry of outbox.batchFor(machineId)) {
-      if (deps.send(machineId, { t: 'msg', message: entry.message }) === null) {
+      const refs = entry.attachmentRefs ?? [];
+      const attachments = [...entry.message.attachments];
+      if (refs.length > 0) {
+        const mcp = deps.mcp();
+        if (!mcp) {
+          outbox.onDown(machineId);
+          return;
+        }
+        let missing = false;
+        for (const ref of refs) {
+          const bytes = await mcp.readBlob(ref.sha256);
+          if (stopped || (generations.get(machineId) ?? 0) !== generation) return;
+          if (!bytes) {
+            missing = true;
+            break;
+          }
+          attachments.push({
+            name: ref.name,
+            mime: ref.mime,
+            data: Buffer.from(bytes).toString('base64'),
+          });
+        }
+        if (missing) {
+          for (const address of entry.addresses)
+            await mcp.setRemoteStatus(entry.message.messageId, address, 'undelivered');
+          if (outbox.ack(machineId, entry.message.messageId)) persist();
+          continue;
+        }
+      }
+      if (
+        stopped ||
+        (generations.get(machineId) ?? 0) !== generation ||
+        !live(linkOf(machineId)?.state ?? 'down')
+      )
+        return;
+      if (
+        !outbox
+          .entries()
+          .some((e) => e.machineId === machineId && e.message.messageId === entry.message.messageId)
+      )
+        continue;
+      if (deps.send(machineId, { t: 'msg', message: { ...entry.message, attachments } }) === null) {
         outbox.onDown(machineId);
         break;
       }
     }
+  };
+
+  const flush = (machineId: string): void => {
+    if (stopped) return;
+    if (flushing.has(machineId)) {
+      flushAgain.add(machineId);
+      return;
+    }
+    flushing.add(machineId);
+    const run = async () => {
+      do {
+        flushAgain.delete(machineId);
+        await flushBatch(machineId, generations.get(machineId) ?? 0);
+      } while (!stopped && flushAgain.has(machineId) && live(linkOf(machineId)?.state ?? 'down'));
+    };
+    void run()
+      .catch((err: unknown) => {
+        outbox.onDown(machineId);
+        flushAgain.delete(machineId);
+        deps.log.error('outbox flush failed', { message: String(err) });
+      })
+      .finally(() => {
+        flushing.delete(machineId);
+        if (flushAgain.delete(machineId) && !stopped && live(linkOf(machineId)?.state ?? 'down'))
+          flush(machineId);
+      });
   };
 
   const sendReceipt = (machineId: string, frame: Extract<LinkFrame, { t: 'receipt' }>): void => {
@@ -204,7 +275,7 @@ export function createMessaging(deps: MessagingDeps): Messaging {
       Buffer.byteLength(wire.body, 'utf8') > MAX_BODY_BYTES ||
       wire.subject.length > 200 ||
       wire.attachments.reduce((n, a) => n + Buffer.byteLength(a.data, 'base64'), 0) >
-        MAX_MESSAGE_ATTACHMENT_BYTES
+        MAX_REMOTE_ATTACHMENT_BYTES
     ) {
       deps.send(machineId, {
         t: 'ack',
@@ -257,6 +328,7 @@ export function createMessaging(deps: MessagingDeps): Messaging {
 
   return {
     start() {
+      stopped = false;
       stopExpiry = deps.after(expire, EXPIRE_EVERY_MS);
       offLocalStatus =
         deps
@@ -266,6 +338,9 @@ export function createMessaging(deps: MessagingDeps): Messaging {
           ) ?? null;
     },
     stop() {
+      stopped = true;
+      for (const machineId of flushing)
+        generations.set(machineId, (generations.get(machineId) ?? 0) + 1);
       stopExpiry?.();
       stopExpiry = null;
       offLocalStatus?.();
@@ -311,6 +386,15 @@ export function createMessaging(deps: MessagingDeps): Messaging {
               attachments: [],
             },
             addresses: entries.map((e) => e.address),
+            ...(msg.attachments.length > 0
+              ? {
+                  attachmentRefs: msg.attachments.map((a) => ({
+                    sha256: a.sha256,
+                    name: a.name,
+                    mime: a.mime,
+                  })),
+                }
+              : {}),
             enqueuedAt: deps.now(),
           });
           persist();
@@ -336,9 +420,11 @@ export function createMessaging(deps: MessagingDeps): Messaging {
       for (const r of held) sendReceipt(machineId, r);
     },
     linkDown(machineId) {
+      generations.set(machineId, (generations.get(machineId) ?? 0) + 1);
       outbox.onDown(machineId);
     },
     revoked(machineId) {
+      generations.set(machineId, (generations.get(machineId) ?? 0) + 1);
       const gone = outbox.revoke(machineId);
       heldReceipts.delete(machineId);
       for (const e of gone)

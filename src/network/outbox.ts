@@ -1,12 +1,14 @@
 import type { MessageKind, Priority } from '../conduit-mcp/types';
 import { OUTBOX_TTL_MS, type WireMessage } from '../contracts/link-protocol';
-import { judgePersistedVersion } from '../contracts/session-identity';
+import { judgePersistedVersion, SERVER_FILE_VERSION } from '../contracts/session-identity';
 
 export interface OutboxEntry {
   machineId: string;
   message: WireMessage;
   /** canonical 'handle@m-…' recipients on that machine */
   addresses: string[];
+  /** Blob content addresses in the local message store, never inline bytes. */
+  attachmentRefs?: { sha256: string; name: string; mime: string }[];
   enqueuedAt: number;
   state: 'queued' | 'sent';
 }
@@ -92,6 +94,7 @@ function copyEntry(e: OutboxEntry): OutboxEntry {
   return {
     ...e,
     addresses: [...e.addresses],
+    ...(e.attachmentRefs ? { attachmentRefs: e.attachmentRefs.map((a) => ({ ...a })) } : {}),
     message: {
       ...e.message,
       to: [...e.message.to],
@@ -134,12 +137,17 @@ const isWireMessage = (v: unknown): v is WireMessage =>
   Array.isArray(v.attachments) &&
   v.attachments.every(isAttachment);
 
+const isBlobRef = (v: unknown): boolean =>
+  isObj(v) && isStr(v.sha256) && /^[0-9a-f]{64}$/.test(v.sha256) && isStr(v.name) && isStr(v.mime);
+
 const isEntry = (v: unknown): v is OutboxEntry =>
   isObj(v) &&
   isMachineId(v.machineId) &&
   isWireMessage(v.message) &&
   Array.isArray(v.addresses) &&
   v.addresses.every(isStr) &&
+  (v.attachmentRefs === undefined ||
+    (Array.isArray(v.attachmentRefs) && v.attachmentRefs.every(isBlobRef))) &&
   typeof v.enqueuedAt === 'number' &&
   Number.isFinite(v.enqueuedAt) &&
   (v.state === 'queued' || v.state === 'sent');
@@ -162,5 +170,5 @@ export function parseOutboxFile(
 }
 
 export function serializeOutboxFile(entries: OutboxEntry[]): string {
-  return `${JSON.stringify({ version: 1, entries })}\n`;
+  return `${JSON.stringify({ version: SERVER_FILE_VERSION['network/outbox.json'], entries })}\n`;
 }

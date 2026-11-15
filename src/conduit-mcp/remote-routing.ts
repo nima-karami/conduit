@@ -53,6 +53,7 @@ export interface NetworkPort {
 export interface McpNetworkPort {
   localDirectory(): DirectoryEntry[];
   hasMessage(messageId: string): boolean;
+  readBlob(sha256: string): Promise<Uint8Array | undefined>;
   /**
    * Stores a message that arrived over a link for the local handles in msg.to it may reach; one
    * outcome per msg.to entry, in order. Resolves only after the append is durable, so the caller
