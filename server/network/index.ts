@@ -221,7 +221,9 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
         v.state !== 'revoked' &&
         v.state !== 'incompatible' &&
         v.state !== 'identity-changed'
-        ? { ...v.capabilities }
+        ? v.peerCapabilities
+          ? { ...v.peerCapabilities }
+          : null
         : null;
     },
     onChange(listener) {

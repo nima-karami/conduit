@@ -49,6 +49,7 @@ export type ToolErrorCode =
   | 'attach_refused'
   | 'unsaved_changes'
   | 'ui_timeout'
+  | 'capability_off'
   | 'peer_unreachable'
   | 'peer_incompatible'
   | 'peer_unsupported'

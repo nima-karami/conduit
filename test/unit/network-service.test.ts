@@ -92,6 +92,11 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
       drive: false,
     });
     expect(b.net.state().listening.length).toBeGreaterThan(0);
+    await call(b.net, 'link.setCapability', { machineId: aId, capability: 'monitor', on: false });
+    await until(() => a.net.port().capabilitiesOf(bId)?.monitor === false);
+    expect(linkTo(a.net, bId)?.capabilities.monitor).toBe(true);
+    await call(b.net, 'link.setCapability', { machineId: aId, capability: 'monitor', on: true });
+    await until(() => a.net.port().capabilitiesOf(bId)?.monitor === true);
 
     await call(b.net, 'link.revoke', { machineId: aId });
     await until(() => linkTo(a.net, bId)?.state === 'revoked');
