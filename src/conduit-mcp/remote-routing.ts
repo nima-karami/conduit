@@ -1,11 +1,21 @@
 // Node-free. The MCP host reads remote sessions through NetworkPort; the directory implementation
 // lives in src/network/remote-directory.ts. Plan: 2026-11-14-conduit-network-machinery.plan.md, Slice 5.
 
-import type { Capabilities, MonitorSnapshot } from '../contracts/link-protocol';
+import type {
+  Capabilities,
+  MonitorSnapshot,
+  WireRecipientOutcome,
+} from '../contracts/link-protocol';
 import { parseAddress } from '../network/addresses';
 import type { WaitReading } from './session-waits';
 import type { DirectoryEntry } from './tools';
-import { type Handle, type MessageRecord, type ToolError, toolError } from './types';
+import {
+  type Handle,
+  type MessageRecord,
+  type RecipientStatus,
+  type ToolError,
+  toolError,
+} from './types';
 
 export interface RemoteEntry extends DirectoryEntry {
   /** Canonical 'handle@m-xxxxxxxx'. */
@@ -41,6 +51,28 @@ export interface NetworkPort {
 /** Implemented by the mcp host; read by server/network. Slice 6 adds its members here. */
 export interface McpNetworkPort {
   localDirectory(): DirectoryEntry[];
+  hasMessage(messageId: string): boolean;
+  /**
+   * Stores a message that arrived over a link for the local handles in msg.to it may reach; one
+   * outcome per msg.to entry, in order. Resolves only after the append is durable, so the caller
+   * acks nothing it could still lose. Rejects when the store cannot write (the caller retries).
+   */
+  deliverInbound(
+    msg: MessageRecord & { origin: string },
+    blobs: { name: string; mime: string; bytes: Buffer }[],
+    framedAsHuman: boolean,
+  ): Promise<WireRecipientOutcome[]>;
+  /** A receipt or failure for a remote recipient of a message sent from here. */
+  setRemoteStatus(messageId: string, address: string, status: RecipientStatus): Promise<void>;
+  /** Fires when a local recipient of a message that came over a link is noticed or reads it. */
+  onLocalStatus(
+    listener: (
+      messageId: string,
+      handle: Handle,
+      status: 'noticed' | 'read',
+      origin: string,
+    ) => void,
+  ): () => void;
   youUnread(): number;
   ownerPresence(): 'here' | 'away';
   requestsSummary(): MonitorSnapshot['requests'];
