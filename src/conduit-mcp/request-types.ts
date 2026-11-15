@@ -37,7 +37,7 @@ export interface AnswerInput {
   text?: string;
   /** choose `chosen`: labels of the request's options. */
   values?: string[];
-  /** `declined` only. */
+  /** `declined` / `denied`. */
   reason?: string;
   grant?: GrantChoice;
 }

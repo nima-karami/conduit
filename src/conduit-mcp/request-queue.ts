@@ -182,6 +182,12 @@ export function createRequestQueue(deps: QueueDeps): RequestQueue {
           finish(r, 'resolved');
           continue;
         }
+        if (r.source === 'policy') {
+          r.withdrawnBy = 'conduit';
+          r.withdrawReason = 'Conduit restarted';
+          finish(r, 'withdrawn');
+          continue;
+        }
         if (r.expiresAt !== null && timeOf(r.expiresAt) <= now) {
           expire(r);
           continue;

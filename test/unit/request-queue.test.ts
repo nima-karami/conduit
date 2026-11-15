@@ -343,6 +343,26 @@ describe('request queue', () => {
     expect(h.changes()).toBe(0);
   });
 
+  it('load withdraws an open permission, since its blocked call is gone', () => {
+    const h = harness();
+    const now = h.now();
+    h.queue.load([
+      rec({
+        id: 'r_perm',
+        source: 'policy',
+        kind: 'permission',
+        expiresAt: iso(now + 60_000),
+        permission: { tool: 'send_message', why: 'reach s2', targets: [], lateGrant: null },
+      }),
+    ]);
+    const r = h.queue.get('r_perm');
+    expect(r?.state).toBe('withdrawn');
+    expect(r?.withdrawnBy).toBe('conduit');
+    expect(r?.withdrawReason).toBe('Conduit restarted');
+    expect(h.ended.map((x) => x.id)).toEqual(['r_perm']);
+    expect(h.liveTimers()).toBe(0);
+  });
+
   it('load ends overdue requests', () => {
     const h = harness();
     const now = h.now();
