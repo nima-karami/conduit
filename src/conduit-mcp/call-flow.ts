@@ -64,10 +64,8 @@ export interface AskCommit {
   decision: PolicyDecision;
   held: readonly OneUseOverride[];
 }
-export type AnswerDecision =
-  | { kind: 'run' }
-  | { kind: 'withdraw'; reason: string }
-  | { kind: 'refused'; reason: 'grant' | 'spent' };
+export type AnswerDecision = { kind: 'ready' } | { kind: 'withdraw'; reason: string };
+export type GrantOutcome = 'made' | 'session-gone' | 'scope';
 export interface ControlCall<T> {
   inflight: InFlight;
   caller: { sessionId: string; handle: Handle };
@@ -78,11 +76,9 @@ export interface ControlCall<T> {
   decision: PolicyDecision;
   commit(): AskCommit | null;
   permission: { why: string; targets: readonly PolicyTarget[] };
-  reDecide(
-    grant: GrantChoice | undefined,
-    held: readonly OneUseOverride[],
-    requestId: string,
-  ): AnswerDecision;
+  reDecide(held: readonly OneUseOverride[]): AnswerDecision;
+  grant(choice: GrantChoice, requestId: string): GrantOutcome;
+  commitAnswered(held: readonly OneUseOverride[]): boolean;
   /** Only for the card's reason line: the gate reads decision, never source. */
   source: PolicySource;
   args: unknown;
@@ -385,23 +381,25 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       settle('withdrawn', null, 'the call was cancelled');
       return null;
     }
-    const decided = c.reDecide(answer.grant, held, requestId);
-    switch (decided.kind) {
-      case 'withdraw':
-        settle('withdrawn', null, decided.reason);
-        return { ok: false, error: toolError('tool_disabled', decided.reason) };
-      case 'refused':
-        if (decided.reason === 'grant') {
-          settle('withdrawn', null, 'the session closed before the request ran');
-          return {
-            ok: false,
-            error: toolError('cancelled', 'the session closed before the request ran'),
-          };
-        }
-        settle('withdrawn', null, 'the policy changed while the request waited');
-        return { ok: false, error: toolDisabled(c.tool) };
-      case 'run':
-        break;
+    const decided = c.reDecide(held);
+    if (decided.kind === 'withdraw') {
+      settle('withdrawn', null, decided.reason);
+      return { ok: false, error: toolError('tool_disabled', decided.reason) };
+    }
+    if (answer.grant !== undefined) {
+      const made = c.grant(answer.grant, requestId);
+      if (made !== 'made') {
+        const why =
+          made === 'session-gone'
+            ? 'the session closed before the request ran'
+            : "that scope isn't available for every target";
+        settle('withdrawn', null, why);
+        return { ok: false, error: toolError('cancelled', why) };
+      }
+    }
+    if (!c.commitAnswered(held)) {
+      settle('withdrawn', null, 'the policy changed while the request waited');
+      return { ok: false, error: toolDisabled(c.tool) };
     }
     settle('answered', answerInputOf(answer), null);
     return runNow(c, p);

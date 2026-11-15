@@ -51,6 +51,7 @@ import {
   type Prepared,
 } from './control-tools';
 import { isCountedInput, nextDraftState, settleDraft, stripTerminalReplies } from './draft-input';
+import { type GrantChoice, grantScopeFor, grantWhoFor } from './grant-store';
 import {
   agentHandlePrefix,
   cliKindOfHandle,
@@ -1315,6 +1316,18 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return point.kind === 'cli' && 'cli' in point && CLI_KINDS.some((kind) => kind === point.cli);
   };
   const raisedRequests = new Map<InFlight, string>();
+  const emptyTarget: PolicyTarget = { sessionId: null, path: null, folder: null, projectId: null };
+  /** The targets one grant per answer covers: a non-anywhere scope needs each target to resolve. */
+  const grantTargetsFor = (
+    choice: GrantChoice,
+    p: Principal,
+    targets: readonly PolicyTarget[],
+  ): readonly PolicyTarget[] | null => {
+    if (grantWhoFor(choice.who, p) === null) return null;
+    if (choice.on === 'anywhere') return [emptyTarget];
+    if (targets.length === 0) return null;
+    return targets.every((t) => grantScopeFor(choice.on, t, p) !== null) ? targets : null;
+  };
   const reasonOf = (decision: PolicyDecision): string =>
     reasonText(decision.reason, decision.decision, {
       profileName: (id) => policyService.profileName(id) ?? id,
@@ -1466,6 +1479,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       current: { input: Omit<PolicyInput, 'now'>; decision: PolicyDecision } | null;
       spent: boolean;
     } = { current: null, spent: false };
+    let reDecided: PolicyDecision | null = null;
     try {
       const handle = sessionId ? handleOf(sessionId) : undefined;
       const result = await (async (): Promise<Result<unknown> | null> => {
@@ -1530,12 +1544,6 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         };
         const resolved = policyService.decide(policyInput);
         evaluated.current = { input: policyInput, decision: resolved };
-        const emptyTarget: PolicyTarget = {
-          sessionId: null,
-          path: null,
-          folder: null,
-          projectId: null,
-        };
         const windowId = deps.ownerWindowOf(sessionId);
         const refused = gateToolCall({
           sessionId,
@@ -1599,27 +1607,36 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           decision: resolved,
           commit: commitResolved,
           permission: { why: reasonOf(resolved), targets },
-          reDecide: (grant, held, requestId) => {
-            const p = principalOf(sessionId);
-            const target = targets[0] ?? emptyTarget;
-            if (
-              grant !== undefined &&
-              (p === null || policyService.createGrant(grant, p, name, target, requestId) === null)
-            )
-              return { kind: 'refused', reason: 'grant' };
+          reDecide: (held) => {
             const again = policyService.decide({ ...policyInput, heldOverrides: held });
             evaluated.current = { input: policyInput, decision: again };
+            reDecided = again;
             if (again.decision === 'deny') return { kind: 'withdraw', reason: reasonOf(again) };
+            return { kind: 'ready' };
+          },
+          grant: (choice, requestId) => {
+            const p = principalOf(sessionId);
+            if (p === null) return 'session-gone';
+            const scopes = grantTargetsFor(choice, p, policyInput.targets);
+            if (scopes === null) return 'scope';
+            for (const target of scopes) {
+              if (policyService.createGrant(choice, p, name, target, requestId) === null)
+                return 'scope';
+            }
+            return 'made';
+          },
+          commitAnswered: (held) => {
+            if (reDecided === null) return false;
             if (
               policyService.commit(
-                again,
+                reDecided,
                 held.map((o) => o.id),
               ) === null
             ) {
               evaluated.spent = true;
-              return { kind: 'refused', reason: 'spent' };
+              return false;
             }
-            return { kind: 'run' };
+            return true;
           },
           source: sourceOf(resolved),
           args,

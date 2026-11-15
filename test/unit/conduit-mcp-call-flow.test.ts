@@ -6,6 +6,7 @@ import {
   type CallFlow,
   type ControlCall,
   createCallFlow,
+  type GrantOutcome,
   type InFlight,
   MAX_ASKS_PER_CALLER,
   type PermissionEnd,
@@ -74,8 +75,9 @@ function setup() {
   const flashed: string[] = [];
   const permissions: PermissionRaise[] = [];
   const settled: PermissionEnd[] = [];
-  const reDecides: Array<{ grant: GrantChoice | undefined; held: string[]; requestId: string }> =
-    [];
+  const reDecides: string[][] = [];
+  const grants: Array<{ choice: GrantChoice; requestId: string }> = [];
+  const answerCommits: string[][] = [];
   let perm = 0;
   const owners = new Map<string, number | null>([
     [CALLER, 1],
@@ -88,7 +90,9 @@ function setup() {
   const state = {
     messagingOn: true,
     appUp: true,
-    redecide: { kind: 'run' } as AnswerDecision,
+    redecide: { kind: 'ready' } as AnswerDecision,
+    grantOutcome: 'made' as GrantOutcome,
+    commitOk: true,
     awaitingChanged: 0,
     sendThrows: false,
   };
@@ -148,6 +152,8 @@ function setup() {
       commitTo?: PolicyDecision;
       held?: OneUseOverride[];
       redecide?: AnswerDecision;
+      grantOutcome?: GrantOutcome;
+      commitOk?: boolean;
       kind?: CliKind;
       wiredAtLaunch?: boolean;
       routesUi?: boolean;
@@ -196,10 +202,17 @@ function setup() {
         return { decision: o.commitTo ?? decision, held: o.held ?? [] };
       },
       permission: { why: 'the policy asks', targets: [] },
-      reDecide: (grant, held, requestId) => {
-        reDecides.push({ grant, held: held.map((h) => h.id), requestId });
-        if (o.redecide) return o.redecide;
-        return state.redecide;
+      reDecide: (held) => {
+        reDecides.push(held.map((h) => h.id));
+        return o.redecide ?? state.redecide;
+      },
+      grant: (choice, requestId) => {
+        grants.push({ choice, requestId });
+        return o.grantOutcome ?? state.grantOutcome;
+      },
+      commitAnswered: (held) => {
+        answerCommits.push(held.map((h) => h.id));
+        return o.commitOk ?? state.commitOk;
       },
       source: 'global',
       args: { path: '/repo', agent: 'claude' },
@@ -236,6 +249,8 @@ function setup() {
     permissions,
     settled,
     reDecides,
+    grants,
+    answerCommits,
     owners,
     policies,
     state,
@@ -472,7 +487,7 @@ describe('createCallFlow', () => {
     answerLast(t, t.flow, 'always');
     expect(await c.promise).toEqual({ ok: true, value: 'opened' });
     expect(t.reDecides).toHaveLength(1);
-    expect(t.reDecides[0]?.grant).toEqual(ALWAYS_GRANT);
+    expect(t.grants).toEqual([{ choice: ALWAYS_GRANT, requestId: 'perm-1' }]);
     expect(c.spies.run).toBe(1);
   });
 
@@ -482,18 +497,29 @@ describe('createCallFlow', () => {
     await t.flush();
     answerLast(t, t.flow, 'approve');
     expect(await c.promise).toEqual({ ok: true, value: 'opened' });
-    expect(t.reDecides[0]?.grant).toBeUndefined();
+    expect(t.grants).toEqual([]);
   });
 
   it('a grant the re-decide refuses (session gone) → cancelled, run not called', async () => {
     const t = setup();
-    const c = t.call({ redecide: { kind: 'refused', reason: 'grant' } });
+    const c = t.call({ grantOutcome: 'session-gone' });
     await t.flush();
     answerLast(t, t.flow, 'always');
     const r = await c.promise;
     expect(errCode(r)).toBe('cancelled');
     expect(r && !r.ok ? r.error.message : '').toBe('the session closed before the request ran');
     expect(c.spies).toEqual({ run: 0, release: 0 });
+  });
+
+  it('a deny at the re-decide creates no grant, even for always', async () => {
+    const t = setup();
+    const c = t.call({ redecide: { kind: 'withdraw', reason: 'Observer: deny' } });
+    await t.flush();
+    answerLast(t, t.flow, 'always');
+    expect(errCode(await c.promise)).toBe('tool_disabled');
+    expect(t.grants).toEqual([]);
+    expect(t.answerCommits).toEqual([]);
+    expect(c.spies.run).toBe(0);
   });
 
   it('ask creates one permission request whose id is the askId', async () => {
@@ -597,7 +623,7 @@ describe('createCallFlow', () => {
     await t.flush();
     answerLast(t, t.flow, 'approve');
     await c.promise;
-    expect(t.reDecides[0]?.held).toEqual(['ov-held']);
+    expect(t.reDecides[0]).toEqual(['ov-held']);
   });
 
   it('answerPermission ends a live ask with the given answer; an unknown id is false', async () => {
