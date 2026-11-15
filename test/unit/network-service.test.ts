@@ -103,8 +103,12 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
       drive: false,
     });
     expect(b.net.state().listening.length).toBeGreaterThan(0);
+    // The snapshot b pushed on up is the baseline; a capability change must push a fresh one.
+    await until(() => linkTo(a.net, bId)?.snapshot != null);
+    const seqBefore = linkTo(a.net, bId)?.snapshot?.seq ?? 0;
     await call(b.net, 'link.setCapability', { machineId: aId, capability: 'monitor', on: false });
     await until(() => a.net.port().peerCapabilitiesOf(bId)?.monitor === false);
+    await until(() => (linkTo(a.net, bId)?.snapshot?.seq ?? 0) > seqBefore);
     expect(linkTo(a.net, bId)?.capabilities.monitor).toBe(true);
     await call(b.net, 'link.setCapability', { machineId: aId, capability: 'monitor', on: true });
     await until(() => a.net.port().peerCapabilitiesOf(bId)?.monitor === true);
