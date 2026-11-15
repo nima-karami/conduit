@@ -15,7 +15,7 @@ import { currentWindowsPty } from '../../src/windows-pty-info';
 import { openAuditLog } from './audit-log';
 import { handleNetworkCall } from './c2';
 import { createDrive, type Drive, type DriveDeps } from './drive';
-import { type Identity, setOwnerKey } from './identity';
+import { adoptOwnerKey, type Identity, setOwnerKey } from './identity';
 import { createLinkManager, type LinkManager } from './link-manager';
 import { openLinkStore } from './link-store';
 import {
@@ -317,18 +317,12 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
 
   const onOwnerKey = (pair: { publicKey: string; privateKey: string }): boolean => {
     try {
-      const privateKey = createPrivateKey({
-        key: Buffer.from(pair.privateKey, 'base64'),
-        format: 'der',
-        type: 'pkcs8',
-      });
-      const publicKey = createPublicKey(privateKey);
-      if (
-        privateKey.asymmetricKeyType !== 'ed25519' ||
-        publicKey.export({ type: 'spki', format: 'der' }).toString('base64') !== pair.publicKey
-      )
+      const next = adoptOwnerKey(deps.dir, identity, pair);
+      if (next === null) {
+        deps.log.warn('owner key refused');
         return false;
-      identity = setOwnerKey(deps.dir, identity, { publicKey, privateKey });
+      }
+      identity = next;
       return true;
     } catch (err) {
       deps.log.warn('owner key refused', {

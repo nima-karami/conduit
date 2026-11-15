@@ -181,8 +181,8 @@ export function readOnlyMachineId(dir: string, io: IdentityIo = defaultIo): stri
 }
 
 /**
- * The identity after an owner key arrives over a link, or null when it is refused. Only the
- * key already held is accepted again: a late transfer never replaces one (see index.ts onOwnerKey).
+ * The identity after an owner key arrives over a link, or null when it is refused. A server that
+ * already holds an owner key accepts only that same key again: a late transfer never replaces it.
  */
 export function adoptOwnerKey(
   dir: string,
@@ -193,6 +193,12 @@ export function adoptOwnerKey(
   const pair = decodePair(offered);
   if (pair === null) return null;
   const derived = createPublicKey(pair.privateKey).export({ format: 'der', type: 'spki' });
-  if (!derived.equals(pair.publicKey.export({ format: 'der', type: 'spki' }))) return null;
+  const offeredPub = pair.publicKey.export({ format: 'der', type: 'spki' });
+  if (!derived.equals(offeredPub)) return null;
+  if (id.ownerKey !== null) {
+    return id.ownerKey.publicKey.export({ format: 'der', type: 'spki' }).equals(offeredPub)
+      ? id
+      : null;
+  }
   return setOwnerKey(dir, id, pair, io);
 }
