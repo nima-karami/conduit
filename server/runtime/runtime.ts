@@ -193,6 +193,7 @@ export class HcTerminalRuntime implements TerminalRuntime {
   /** Every spawn this process has in flight, by launch id (C1 reconcile step 2). */
   private readonly inFlight = new Map<string, Launch>();
   private readonly listeners = new Set<(e: RuntimeEvent) => void>();
+  private readonly observers = new Set<() => void>();
   private readonly healthListeners = new Set<(h: RuntimeHealth) => void>();
   private stopping: 'restart' | 'stopAll' | undefined;
   private clean = false;
@@ -433,6 +434,104 @@ export class HcTerminalRuntime implements TerminalRuntime {
     return t && this.view(t);
   }
 
+  async observe(
+    sessionId: string,
+    events: {
+      data(data: string): void;
+      size(size: TermGeometry): void;
+      end(reason: 'exited' | 'closed', exitCode: number | null): void;
+    },
+  ): Promise<{ firstPaint: string; size: TermGeometry; close(): void } | null> {
+    const t = this.sessions.get(sessionId);
+    if (!t || t.exit || this.streamsDetached) return null;
+    const size = this.lastSize.get(sessionId) ?? t.size;
+    let stream: HcStream;
+    try {
+      ({ stream } = await this.deps.hc.attach({
+        terminal: t.address,
+        observe: true,
+        history: 0,
+        cols: size.cols,
+        rows: size.rows,
+      }));
+    } catch (error) {
+      if (isNotFound(error) || isFinishedRefusal(error)) return null;
+      throw error;
+    }
+    if (this.sessions.get(sessionId) !== t || this.streamsDetached) {
+      stream.close();
+      return null;
+    }
+    let closed = false;
+    let ended = false;
+    let ready = false;
+    const pending: Array<() => void> = [];
+    const deliver = (fn: () => void) => {
+      if (closed) return;
+      if (ready) fn();
+      else pending.push(fn);
+    };
+    let resolvePaint: (data: string) => void = () => {};
+    const firstPaint = new Promise<string>((resolve) => {
+      resolvePaint = resolve;
+    });
+    const paint = new PaintCollector(resolvePaint);
+    const decoder = new TextDecoder();
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      this.observers.delete(close);
+      off();
+      paint.end();
+      stream.close();
+    };
+    this.observers.add(close);
+    const off = this.on((event) => {
+      if (
+        !closed &&
+        !ended &&
+        event.type === 'size' &&
+        event.sessionId === sessionId &&
+        this.sessions.get(sessionId) === t
+      )
+        deliver(() => events.size(event.size));
+    });
+    stream.onData((bytes) => {
+      if (closed || ended) return;
+      const text = decoder.decode(bytes, { stream: true });
+      stream.credit(bytes.byteLength);
+      if (paint.done) deliver(() => events.data(text));
+      else paint.push(text);
+    });
+    stream.onClose((end) => {
+      if (closed || ended) return;
+      ended = true;
+      this.observers.delete(close);
+      off();
+      paint.end();
+      deliver(() =>
+        events.end(
+          end.reason === 'exited' ? 'exited' : 'closed',
+          end.reason === 'exited' ? (end.exit_code ?? null) : null,
+        ),
+      );
+    });
+    const data = await firstPaint;
+    // Let the caller receive the observer before forwarding events captured during its paint.
+    setImmediate(() => {
+      ready = true;
+      for (const fn of pending.splice(0)) {
+        if (closed) break;
+        fn();
+      }
+    });
+    return {
+      firstPaint: data,
+      size,
+      close,
+    };
+  }
+
   screen(sessionId: string): Promise<ScreenSnapshot | null> {
     return this.screens.snapshot(sessionId);
   }
@@ -463,6 +562,7 @@ export class HcTerminalRuntime implements TerminalRuntime {
     this.streamsDetached = true;
     this.sub?.close();
     this.sub = undefined;
+    for (const close of this.observers) close();
     for (const t of this.sessions.values()) t.stream?.close();
   }
 

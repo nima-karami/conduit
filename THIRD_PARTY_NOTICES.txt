@@ -70,3 +70,9 @@ windows-link — MIT OR Apache-2.0. Copyright (c) Microsoft Corporation. https:/
 windows-targets — MIT OR Apache-2.0. Copyright (c) Microsoft Corporation. https://github.com/microsoft/windows-rs
 windows_x86_64_msvc — MIT OR Apache-2.0. Copyright (c) Microsoft Corporation. https://github.com/microsoft/windows-rs
 zmij — MIT. Copyright (c) David Tolnay. https://github.com/dtolnay/zmij
+
+==== BIP-39 English word list (pairing codes)
+
+Copyright (c) 2013 Marek Palatinus, Pavol Rusnak, Aaron Voisine, Sean Bowe. BSD 2-Clause License.
+Embedded as src/network/pairing-words.ts, unmodified (2048 words).
+Source: https://github.com/bitcoin/bips/blob/ce1862ac6bcffa1dd20aad858380e51e66e949ea/bip-0039/english.txt

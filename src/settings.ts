@@ -193,6 +193,12 @@ export interface AppSettings {
   // escape sequences to the emulator (mouse modes, alt screen, bracketed paste, …), which
   // is why a cold relaunch appends REPLAY_MODE_NEUTRALIZER.
   scrollbackPersistence: boolean;
+  // Linked machines (docs/specs/2026-11-14-conduit-network.md §5). The link listener binds
+  // 'auto' (loopback, private and tailnet addresses, never public) or one explicit IP; port 0 is
+  // ephemeral (tests). An empty self-name means the OS host name.
+  networkBindHost: string;
+  networkPort: number;
+  networkSelfName: string;
   // Diagnostics: write a leveled, file-backed log to userData/logs (rotating). Default ON —
   // a modest always-on trail is what makes a first bug report useful. `off` (via logLevel)
   // silences the file sink entirely; this toggle is the user-facing master switch.
@@ -275,6 +281,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   trackCwd: true,
   changesView: 'all',
   scrollbackPersistence: true,
+  networkBindHost: 'auto',
+  networkPort: 47391,
+  networkSelfName: '',
   logging: true,
   logLevel: 'info',
   conduitMcp: true,
@@ -588,6 +597,13 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
       payload.scrollbackPersistence,
       DEFAULT_SETTINGS.scrollbackPersistence,
     ),
+    networkBindHost:
+      str(payload.networkBindHost, DEFAULT_SETTINGS.networkBindHost).trim().slice(0, 64) ||
+      DEFAULT_SETTINGS.networkBindHost,
+    networkPort: Math.round(clampNum(payload.networkPort, 0, 65535, DEFAULT_SETTINGS.networkPort)),
+    networkSelfName: strOr(payload.networkSelfName, DEFAULT_SETTINGS.networkSelfName)
+      .trim()
+      .slice(0, 64),
     logging: bool(payload.logging, DEFAULT_SETTINGS.logging),
     logLevel: oneOf(payload.logLevel, LOG_LEVELS, DEFAULT_SETTINGS.logLevel),
     conduitMcp: bool(payload.conduitMcp, DEFAULT_SETTINGS.conduitMcp),

@@ -7,6 +7,7 @@ import { type Result, toolError } from './types';
 
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const MAX_MESSAGE_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+export const MAX_REMOTE_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const MAX_ATTACHMENTS = 5;
 export const TEXT_PAGE_BYTES = 64 * 1024;
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;

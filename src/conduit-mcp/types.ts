@@ -48,7 +48,14 @@ export type ToolErrorCode =
   | 'not_a_repo'
   | 'attach_refused'
   | 'unsaved_changes'
-  | 'ui_timeout';
+  | 'ui_timeout'
+  | 'capability_off'
+  | 'peer_unreachable'
+  | 'peer_incompatible'
+  | 'peer_unsupported'
+  | 'peer_revoked'
+  | 'outbox_full'
+  | 'refused';
 export interface ToolError {
   code: ToolErrorCode;
   message: string;
@@ -72,6 +79,7 @@ const RETRYABLE: ReadonlySet<ToolErrorCode> = new Set([
   'window_not_ready',
   'server_stopping',
   'session_restarting',
+  'peer_unreachable',
 ]);
 
 export interface ToolErrorDetail {
@@ -116,6 +124,14 @@ export interface MessageRecord {
   attachments: AttachmentRecord[];
   /** Set on a late answer to a request; the human's views hide these (spec 2026-11-14-user-input-requests §4.3). */
   requestId?: string;
+  /** The origin machine id when the message arrived over a link; absent means local. */
+  origin?: string;
+  /** The origin's own message id, when it arrived over a link (the local id is derived from it). */
+  originMessageId?: string;
+  /** The origin's own thread id, when it arrived over a link. */
+  originThreadId?: string;
+  /** Set when a message from `you` on an own-linked machine whose link has drive on is framed as from the human, plan decision 12. */
+  originHuman?: true;
 }
 export interface RecipientState {
   status: RecipientStatus;
@@ -134,7 +150,7 @@ export type StoreLogRecord =
       t: 'rcpt';
       messageId: string;
       handle: Handle;
-      status: 'noticed' | 'read' | 'undelivered';
+      status: 'noticed' | 'read' | 'undelivered' | 'expired';
       at: string;
     }
   | { v: 1; t: 'allow'; threadId: string; at: string }
@@ -185,13 +201,23 @@ export interface ListSessionsOutput {
     /** "typed" when the session's adapter delivers typed notices, else the agent pulls read_inbox. */
     notices: 'typed' | 'pull';
     self: boolean;
+    /** Remote rows only: the peer's machine name and id, and the canonical address. */
+    machine?: string;
+    machine_id?: string;
+    address?: string;
+    trust?: 'own';
+    link?: 'up' | 'degraded' | 'down';
   }>;
   human: { handle: 'you'; presence: 'here' | 'away' };
 }
 export interface SendMessageOutput {
   message_id: string;
   thread_id: string;
-  recipients: Array<{ handle: Handle; status: 'queued' | 'refused'; reason?: ToolErrorCode }>;
+  recipients: Array<{
+    handle: Handle;
+    status: 'queued' | 'refused';
+    reason?: ToolErrorCode | 'capability_off';
+  }>;
 }
 export interface InboxMessageOut {
   message_id: string;

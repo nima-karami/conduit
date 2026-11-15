@@ -323,6 +323,23 @@ describe('compose: dispatch routing', () => {
     expect(human).not.toHaveBeenCalled();
   });
 
+  it('applyHumanInput with a null generation writes at the live generation', async () => {
+    const h = await harness();
+    const { services } = h;
+    const termInput = vi.spyOn(services.mcp, 'termInput').mockReturnValue(true);
+    const live = vi
+      .spyOn(services.runtime, 'get')
+      .mockReturnValue({ generation: 4 } as unknown as ReturnType<typeof services.runtime.get>);
+    expect(services.applyHumanInput('s', 'y', null)).toBe(true);
+    expect(termInput).toHaveBeenLastCalledWith({ sessionId: 's', generation: 4, data: 'y' });
+    expect(services.applyHumanInput('s', 'y', 2)).toBe(true);
+    expect(termInput).toHaveBeenLastCalledWith({ sessionId: 's', generation: 2, data: 'y' });
+    live.mockReturnValue(undefined);
+    termInput.mockClear();
+    expect(services.applyHumanInput('gone', 'y', null)).toBe(false);
+    expect(termInput).not.toHaveBeenCalled();
+  });
+
   it('routes term, ui and mcp traffic to the right service, and refuses the rest', async () => {
     const h = await harness();
     const { runtime, domain, mcp } = h.services;

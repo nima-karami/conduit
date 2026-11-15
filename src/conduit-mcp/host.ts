@@ -9,12 +9,14 @@ import {
 } from '../claude-hook-settings';
 import { readUserStatusLine } from '../claude-user-status-line';
 import { detectStuckScreen, type StuckScreen } from '../cli-stuck-screens';
+import type { WireRecipientOutcome } from '../contracts/link-protocol';
 import type { DraftPort, LaunchPort, McpHostDeps } from '../contracts/server-ports';
 import type { CliBindingRecord } from '../contracts/session-identity';
 import type { LaunchIds } from '../contracts/terminal-runtime';
 import { inputBoxTop } from '../input-box-rows';
 import type { HostPlatform } from '../lsp-binary';
 import { mcpLaunchWiring, mcpServerCommand } from '../mcp-launch';
+import { parseAddress } from '../network/addresses';
 import type { HostToWebview, WebviewToHost } from '../protocol';
 import type { SubmitOutcome } from '../pty-writer';
 import { readCappedBytes } from '../read-capped';
@@ -65,7 +67,6 @@ import {
   type ToolCallContext,
   type ToolCallResult,
 } from './json-rpc';
-import { loadMachineId } from './machine-id';
 import {
   awaitEnterVerdict,
   ECHO_POLL_MS,
@@ -78,6 +79,7 @@ import {
 } from './notice-gate';
 import { composeUnreadBanner } from './notice-text';
 import { type AttentionRaise, bannerCandidates, createNotifier, type Notifier } from './notifier';
+import type { McpNetworkPort, RemoteRecipientOutcome, RemoteResolution } from './remote-routing';
 import { createRequestsIo } from './request-file-fs';
 import { createRequestNotices } from './request-notices';
 import { createRequestService, type RequestService } from './request-service';
@@ -108,7 +110,15 @@ import {
   type ToolName,
 } from './tool-policy';
 import { CONDUIT_INSTRUCTIONS, toolSchemas } from './tool-schemas';
-import { type Caller, createToolHandlers, type DirectoryEntry, toToolCallResult } from './tools';
+import {
+  attachmentRecords,
+  type Caller,
+  createToolHandlers,
+  type DirectoryEntry,
+  RATE_LIMIT_PER_MIN,
+  RATE_WINDOW_MS,
+  toToolCallResult,
+} from './tools';
 import {
   createTypedLineTracker,
   DETECT_GRACE_MS,
@@ -240,6 +250,7 @@ export interface ConduitMcpHost extends LaunchPort, DraftPort {
     senderId: number,
   ): Promise<void>;
   tick(): Promise<void>;
+  networkPort(): McpNetworkPort;
   stop(): Promise<void>;
 }
 
@@ -543,6 +554,25 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     clearTimer:
       deps.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout> | undefined)),
     read: (callerHandle, target) => {
+      if (target.handle.includes('@')) {
+        const reading = deps.network?.waitReading(target.handle, callerHandle);
+        if (!reading || reading === 'unreachable')
+          return {
+            error: toolError('peer_unreachable', `peer for ${target.handle} is unreachable`),
+          };
+        const parsed = parseAddress(target.handle);
+        if (!parsed?.machine || !deps.network?.peerCapabilitiesOf(parsed.machine)?.monitor)
+          return {
+            error: toolError('capability_off', `peer has not enabled monitor for ${target.handle}`),
+          };
+        return {
+          ...reading,
+          sessionId: target.sessionId,
+          unreadFrom: store.available()
+            ? store.pending(callerHandle).filter((m) => m.from === target.handle).length
+            : 0,
+        };
+      }
       const snap = deps.attention.statusOf(target.sessionId);
       return {
         ...target,
@@ -566,6 +596,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   });
   // Set by start: a host that never listened has no connections, so no waits to wake.
   let stopAttentionWatch: (() => void) | undefined;
+  let stopNetworkWatch: (() => void) | undefined;
 
   const loadCounters = (): HandleCounters => {
     if (counters) return counters;
@@ -605,20 +636,144 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     }));
 
   const newId = (prefix: 'm' | 't') => `${prefix}_${base32(randomBytes(10))}`;
+  // Without a network no machine name resolves; saying so beats treating the target as local.
+  const localResolve = (target: string): RemoteResolution =>
+    target.includes('@')
+      ? { kind: 'unknown', hint: 'no linked machines' }
+      : { kind: 'local', handle: target };
+  const storedFollowUp = (msg: MessageRecord) => {
+    if (msg.from === HUMAN_HANDLE) dispatch({ t: 'thread-reset', threadId: msg.threadId });
+    scheduleBroadcast();
+  };
+  const threadLimitHit = (threadId: string, by: string) => {
+    dispatch({ t: 'thread-limit', threadId, handle: by, at: new Date(now()).toISOString() });
+  };
+
+  // Rate and in-flight dedupe are per sending handle and per message id. A resend of a stored id
+  // acks without a second append (plan decision 8), and one that races its first copy waits for it.
+  const inboundSends = new Map<string, number[]>();
+  const inboundInFlight = new Map<string, Promise<WireRecipientOutcome[]>>();
+  const refuseAll = (
+    to: string[],
+    reason: NonNullable<WireRecipientOutcome['reason']>,
+  ): WireRecipientOutcome[] => to.map((handle) => ({ handle, status: 'refused', reason }));
+  const storeInbound = async (
+    msg: MessageRecord & { origin: string },
+    blobs: { name: string; mime: string; bytes: Buffer }[],
+    framedAsHuman: boolean,
+  ): Promise<WireRecipientOutcome[]> => {
+    const t = now();
+    // A handle leaves the map once its window is empty; the sender's handle is peer-chosen and
+    // rotates, so a key kept past its window would grow the map without bound.
+    for (const [handle, times] of inboundSends) {
+      const live = times.filter((x) => t - x < RATE_WINDOW_MS);
+      if (live.length === 0) inboundSends.delete(handle);
+      else inboundSends.set(handle, live);
+    }
+    const sends = inboundSends.get(msg.from) ?? [];
+    if (!framedAsHuman && store.agentCountSinceHuman(msg.threadId) >= THREAD_AGENT_LIMIT) {
+      threadLimitHit(msg.threadId, msg.from);
+      return refuseAll(msg.to, 'thread_limit');
+    }
+    if (sends.length >= RATE_LIMIT_PER_MIN) return refuseAll(msg.to, 'rate_limited');
+    const byHandle = new Map(directory().map((e) => [e.handle, e]));
+    const outcomes: WireRecipientOutcome[] = [];
+    const deliveredTo = new Set<string>();
+    for (const to of msg.to) {
+      const parsed = parseAddress(to);
+      const entry = parsed === null ? undefined : byHandle.get(parsed.handle);
+      if (parsed === null || entry === undefined) {
+        outcomes.push({ handle: to, status: 'refused', reason: 'unknown_session' });
+      } else if (entry.messaging === 'unavailable' && !entry.connectable) {
+        outcomes.push({ handle: to, status: 'refused', reason: 'not_messageable' });
+      } else {
+        deliveredTo.add(parsed.handle);
+        outcomes.push({ handle: to, status: 'delivered', reason: null });
+      }
+    }
+    if (deliveredTo.size === 0) return outcomes;
+    // The sender's attachment metadata is not trusted: the hashes are taken from the bytes here.
+    const written = attachmentRecords(
+      blobs.map((b) => ({
+        name: b.name,
+        mime: b.mime,
+        data: b.bytes,
+        sha256: createHash('sha256').update(b.bytes).digest('hex'),
+      })),
+    );
+    // requestId is dropped: a remote message must not answer a local request.
+    const record: MessageRecord = {
+      messageId: msg.messageId,
+      threadId: msg.threadId,
+      originMessageId: msg.originMessageId,
+      originThreadId: msg.originThreadId,
+      from: msg.from,
+      to: [...deliveredTo],
+      subject: msg.subject,
+      kind: msg.kind,
+      priority: msg.priority,
+      sentAt: msg.sentAt,
+      body: msg.body,
+      attachments: written.attachments,
+      origin: msg.origin,
+    };
+    if (framedAsHuman) record.originHuman = true;
+    const appended = await store.append(record, written.blobs);
+    if (!appended.ok) {
+      deps.log.warn('conduit-mcp', 'inbound message not stored', {
+        messageId: msg.messageId,
+        code: appended.error.code,
+      });
+      // Rejecting leaves the sender's copy unacked, so it is resent rather than marked refused.
+      throw new Error(appended.error.message);
+    }
+    sends.push(t);
+    inboundSends.set(msg.from, sends);
+    storedFollowUp(record);
+    return outcomes;
+  };
+  const deliverInbound = (
+    msg: MessageRecord & { origin: string },
+    blobs: { name: string; mime: string; bytes: Buffer }[],
+    framedAsHuman: boolean,
+  ): Promise<WireRecipientOutcome[]> => {
+    if (!deps.domain.messagingOn()) return Promise.resolve(refuseAll(msg.to, 'messaging_off'));
+    if (store.has(msg.messageId)) {
+      return Promise.resolve(
+        msg.to.map(
+          (handle): WireRecipientOutcome => ({ handle, status: 'delivered', reason: null }),
+        ),
+      );
+    }
+    const inFlight = inboundInFlight.get(msg.messageId);
+    if (inFlight !== undefined) return inFlight;
+    const run = storeInbound(msg, blobs, framedAsHuman).finally(() => {
+      inboundInFlight.delete(msg.messageId);
+    });
+    inboundInFlight.set(msg.messageId, run);
+    return run;
+  };
+
   const tools = createToolHandlers({
     store,
     directory,
+    remote: () => deps.network?.remoteEntries() ?? [],
+    resolve: (t) => deps.network?.resolve(t) ?? localResolve(t),
+    enqueueRemote: (msg, entries) =>
+      deps.network?.enqueue(msg, entries) ??
+      entries.map(
+        (e): RemoteRecipientOutcome => ({
+          address: e.address,
+          status: 'refused',
+          reason: 'peer_unreachable',
+        }),
+      ),
     messagingOn: () => deps.domain.messagingOn(),
     now: () => new Date(now()),
     newId,
     snapshot: (sender, p) => snapshotAttachment(sender, p),
-    onStored: (msg) => {
-      if (msg.from === HUMAN_HANDLE) dispatch({ t: 'thread-reset', threadId: msg.threadId });
-      scheduleBroadcast();
-    },
-    onThreadLimit: (threadId, by) => {
-      dispatch({ t: 'thread-limit', threadId, handle: by, at: new Date(now()).toISOString() });
-    },
+    onStored: storedFollowUp,
+    onThreadLimit: threadLimitHit,
     warn: (message, data) => deps.log.warn('conduit-mcp', message, data),
     humanPresence: () => requestService.presence().state,
   });
@@ -640,7 +795,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
   const requestService: RequestService = createRequestService({
     io: createRequestsIo(path.join(deps.dir, 'requests.json')),
-    machineId: loadMachineId(deps.dir),
+    machineId: deps.machineId,
     now,
     newId: () => `r_${base32(randomBytes(8))}`,
     ...requestTimers,
@@ -1444,6 +1599,20 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const listed = listedSessions();
     const targets: WaitTarget[] = [];
     for (const v of parsed.value.sessions) {
+      if (v.includes('@')) {
+        const resolved = deps.network?.resolve(v);
+        if (resolved?.kind !== 'remote')
+          return {
+            ok: false,
+            error: toolError('unknown_session', `no session "${v}" in list_sessions`, undefined, {
+              hint: resolved?.kind === 'unknown' ? resolved.hint : 'no linked machines',
+            }),
+          };
+        const entry = resolved.entry;
+        if (!targets.some((t) => t.sessionId === entry.address))
+          targets.push({ sessionId: entry.address, handle: entry.address });
+        continue;
+      }
       const hit = listed.find((x) => x.handle === v) ?? listed.find((x) => x.session.id === v);
       if (!hit)
         return {
@@ -1480,6 +1649,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       timeoutMs: timeoutS * 1000,
     });
     if (out === null) return null;
+    if ('error' in out) return { ok: false, error: out.error };
     return { ok: true, value: clampedTo === undefined ? out : { ...out, clamped_to: clampedTo } };
   };
 
@@ -2050,6 +2220,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         sessionWaits.notify();
         requestService.onAttention(factsWithHandles());
       });
+      stopNetworkWatch = deps.network?.onChange(() => {
+        scheduleBroadcast();
+        sessionWaits.notify();
+      });
       startupSweep = (async () => {
         try {
           // Configs left by a crash: they name a dead session and can't be reused.
@@ -2476,6 +2650,63 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     tick,
 
+    networkPort: (): McpNetworkPort => ({
+      localDirectory: () => directory(),
+      hasMessage: (id) => store.has(id),
+      readBlob: (sha256) => store.readBlob(sha256),
+      // A thread is exported to a machine once a message in it went there (to its recipient) or
+      // came from there; only then may the machine know the thread by a wire id (CON-27 B1).
+      threadExportedTo: (threadId, machineId) =>
+        store
+          .thread(threadId)
+          .some((m) => m.origin === machineId || m.to.some((h) => h.endsWith(`@${machineId}`))),
+      wireThreadFor: (threadId, machineId) =>
+        store.thread(threadId).find((m) => m.origin === machineId && m.originThreadId !== undefined)
+          ?.originThreadId ?? threadId,
+      deliverInbound,
+      setRemoteStatus: async (messageId, address, status) => {
+        // 'queued' is the state a remote recipient starts in, so there is nothing to record.
+        if (status === 'queued') return;
+        const r = await store.setStatus(messageId, address, status, 'remote');
+        if (!r.ok) {
+          // A peer can name a message we never sent as often as it likes, so this is not a warning.
+          if (r.error.code === 'not_found') {
+            deps.log.debug('conduit-mcp', 'remote status for unknown recipient', { messageId });
+            return;
+          }
+          deps.log.warn('conduit-mcp', 'remote status not stored', {
+            messageId,
+            code: r.error.code,
+          });
+          throw new Error(r.error.message);
+        }
+      },
+      // The store reports which recipient moved; only origin records are of interest here.
+      onLocalStatus: (listener) =>
+        store.onChange((change) => {
+          if (change === undefined) return;
+          if (change.status !== 'noticed' && change.status !== 'read') return;
+          const record = store.get(change.messageId);
+          if (record?.origin === undefined) return;
+          listener(
+            record.originMessageId ?? change.messageId,
+            change.handle,
+            change.status,
+            record.origin,
+          );
+        }),
+      youUnread: () => uiState().youUnread,
+      ownerPresence: () => requestService.presence().state,
+      requestsSummary: () =>
+        requestService.ui().open.map((r) => ({
+          requestId: r.id,
+          type: r.kind,
+          summary: r.title.slice(0, 200),
+          sessionHandle: r.requester === 'conduit' ? null : r.requester,
+          createdAt: r.createdAt,
+        })),
+    }),
+
     async stop() {
       stopped = true;
       stopRuntime();
@@ -2486,6 +2717,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       broadcastTimer = undefined;
       for (const sessionId of lateEchoWatchers.keys()) cancelLateEcho(sessionId);
       stopAttentionWatch?.();
+      stopNetworkWatch?.();
       sessionWaits.dispose();
       flow.dispose();
       for (const c of conns.values()) c.close();

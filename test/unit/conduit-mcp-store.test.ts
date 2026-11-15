@@ -310,6 +310,20 @@ describe('createMessageStore', () => {
     expect(store.agentCountSinceHuman('t_1')).toBe(0);
   });
 
+  it('only a remote human resets the thread pause', async () => {
+    const { store } = await loaded();
+    await store.append(msg({ from: 'agent@m-12345678', origin: 'm-12345678' }), []);
+    await store.append(msg({ from: 'you@m-12345678', origin: 'm-12345678' }), []);
+    expect(store.agentCountSinceHuman('t_1')).toBe(2);
+    await store.append(
+      msg({ from: 'you@m-12345678', origin: 'm-12345678', originHuman: true }),
+      [],
+    );
+    expect(store.agentCountSinceHuman('t_1')).toBe(0);
+    await store.append(msg(), []);
+    expect(store.agentCountSinceHuman('t_1')).toBe(1);
+  });
+
   it('participants = from ∪ to over the thread', async () => {
     const { store } = await loaded();
     await store.append(msg(), []);
@@ -372,6 +386,133 @@ describe('createMessageStore', () => {
     off();
     await store.append(msg(), []);
     expect(n).toBe(1);
+  });
+});
+
+describe('message origin and has()', () => {
+  it('a message that arrived over a link keeps its origin through reload', async () => {
+    const { store, m } = await loaded();
+    const a = msg({ origin: 'm-0123abcd' });
+    expect((await store.append(a, [])).ok).toBe(true);
+    expect(store.get(a.messageId)?.origin).toBe('m-0123abcd');
+    const fresh = createMessageStore(m.io);
+    await fresh.load();
+    expect(fresh.get(a.messageId)?.origin).toBe('m-0123abcd');
+  });
+
+  // The receipt and the reply-thread lookups read these two ids after a restart, so they must
+  // survive the log round trip (CON-27 review B1).
+  it('the origin message and thread ids of a message from a link survive reload', async () => {
+    const { store, m } = await loaded();
+    const a = msg({
+      origin: 'm-0123abcd',
+      originMessageId: 'm_abcdefghijklmnop',
+      originThreadId: 't_abcdefghijklmnop',
+    });
+    expect((await store.append(a, [])).ok).toBe(true);
+    const fresh = createMessageStore(m.io);
+    await fresh.load();
+    expect(fresh.get(a.messageId)).toMatchObject({
+      originMessageId: 'm_abcdefghijklmnop',
+      originThreadId: 't_abcdefghijklmnop',
+    });
+  });
+
+  it('a local message has no origin key, before and after reload', async () => {
+    const { store, m } = await loaded();
+    const a = msg();
+    await store.append(a, []);
+    expect(store.get(a.messageId)).not.toHaveProperty('origin');
+    const fresh = createMessageStore(m.io);
+    await fresh.load();
+    expect(fresh.get(a.messageId)).not.toHaveProperty('origin');
+    expect(m.state.log).not.toContain('"origin"');
+  });
+
+  it('has() reports stored message ids, including after reload', async () => {
+    const { store, m } = await loaded();
+    const a = msg();
+    expect(store.has(a.messageId)).toBe(false);
+    await store.append(a, []);
+    expect(store.has(a.messageId)).toBe(true);
+    expect(store.has('m_unknown')).toBe(false);
+    const fresh = createMessageStore(m.io);
+    await fresh.load();
+    expect(fresh.has(a.messageId)).toBe(true);
+  });
+});
+
+describe('status change feed', () => {
+  it('setStatus reports the recipient change to a listener; a plain listener still fires', async () => {
+    const { store } = await loaded();
+    const a = msg({ to: ['codex-2'] });
+    await store.append(a, []);
+    const changes: unknown[] = [];
+    let plain = 0;
+    store.onChange((c) => changes.push(c));
+    store.onChange(() => {
+      plain += 1;
+    });
+    await store.setStatus(a.messageId, 'codex-2', 'read');
+    expect(changes).toEqual([{ messageId: a.messageId, handle: 'codex-2', status: 'read' }]);
+    expect(plain).toBe(1);
+  });
+
+  it('a status that changes nothing reports nothing', async () => {
+    const { store } = await loaded();
+    const a = msg({ to: ['codex-2'] });
+    await store.append(a, []);
+    await store.setStatus(a.messageId, 'codex-2', 'read');
+    let n = 0;
+    store.onChange(() => {
+      n += 1;
+    });
+    await store.setStatus(a.messageId, 'codex-2', 'read');
+    expect(n).toBe(0);
+  });
+
+  it('a per-recipient expired status is accepted, is not unread, and survives reload', async () => {
+    const { store, m } = await loaded();
+    const a = msg({ to: ['codex-2'] });
+    await store.append(a, []);
+    expect(await store.setStatus(a.messageId, 'codex-2', 'expired')).toEqual({
+      ok: true,
+      value: undefined,
+    });
+    expect(store.pending('codex-2')).toEqual([]);
+    const fresh = createMessageStore(m.io);
+    await fresh.load();
+    expect(fresh.get(a.messageId)?.recipients['codex-2'].status).toBe('expired');
+  });
+});
+
+describe('remote status', () => {
+  // CON-27 R2c: a peer repeating its notice must not write again or inflate our count.
+  it('a repeated remote noticed is a no-op: no record, and noticeCount does not grow', async () => {
+    const { store } = await loaded();
+    const a = msg({ to: ['codex-2'] });
+    await store.append(a, []);
+    await store.setStatus(a.messageId, 'codex-2', 'noticed', 'remote');
+    let changes = 0;
+    store.onChange(() => {
+      changes += 1;
+    });
+    await store.setStatus(a.messageId, 'codex-2', 'noticed', 'remote');
+    await store.setStatus(a.messageId, 'codex-2', 'noticed', 'remote');
+    expect(changes).toBe(0);
+    expect(store.get(a.messageId)?.recipients['codex-2']).toMatchObject({
+      status: 'noticed',
+      noticeCount: 1,
+    });
+  });
+
+  it('a local notice still counts each time, which escalation depends on', async () => {
+    const { store } = await loaded();
+    const a = msg({ to: ['codex-2'] });
+    await store.append(a, []);
+    await store.setStatus(a.messageId, 'codex-2', 'noticed');
+    await store.setStatus(a.messageId, 'codex-2', 'noticed');
+    expect(store.get(a.messageId)?.recipients['codex-2']).toMatchObject({ noticeCount: 2 });
   });
 });
 

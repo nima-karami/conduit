@@ -6,6 +6,12 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- Groundwork for using Conduit across your own machines: the Background service can link to the one on another machine you own. Linking takes three words shown on one machine and typed on the other, then a fingerprint you compare on both screens. The screens for this arrive in a later release.
+- Once two machines are linked, agents see the sessions on both in `list_sessions` (each with an address like `claude-3@m-1a2b3c4d`), can message them with `send_message`, and can wait on them with `wait_sessions`. A message sent while the other machine is unreachable waits and is delivered once when it's back, never twice. Attachments to another machine are limited to 10 MiB per message.
+- On a linked machine you can watch another machine's terminals. Typing into, resizing, opening or closing them ("drive") is off on every link until you turn it on for that link. Agents can never drive another machine's sessions.
+- Unlinking ("revoke") on either machine stops the link on both at once.
+
 ## [0.65.2] — 2026-11-15
 
 ### Fixed

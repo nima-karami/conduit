@@ -9,6 +9,7 @@
 import type { StuckScreen } from '../cli-stuck-screens';
 import type { ControlDeps, McpOpenRequest } from '../conduit-mcp/control-tools';
 import type { AgentCli, UserInstallState } from '../conduit-mcp/install-types';
+import type { NetworkPort } from '../conduit-mcp/remote-routing';
 import type { BlockedKind } from '../conduit-mcp/request-types';
 import type { CliPolicyLayers, GlobalPolicy } from '../conduit-mcp/tool-policy';
 import type { CompiledRules } from '../limit-rules';
@@ -341,4 +342,8 @@ export interface McpHostDeps {
   tokens: TokenStorePort;
   runtime: Pick<TerminalRuntime, 'get' | 'screen' | 'on'>;
   emit: ServerEventSink;
+  /** The server's identity (network/identity.json); requests are stamped with it. */
+  machineId: string;
+  /** Absent when networking is off: the directory then lists local sessions only. */
+  network?: NetworkPort;
 }
