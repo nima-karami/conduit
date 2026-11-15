@@ -1330,6 +1330,50 @@ describe('policy service', () => {
     ]);
   });
 
+  it('committing a held override leaves a saved override for the same target', () => {
+    const saved: OneUseOverride = {
+      id: 'o2',
+      sessionId: 's1',
+      tool: 'open_session',
+      target: target({ sessionId: 's9' }),
+      createdAt: iso(T0),
+    };
+    const held: OneUseOverride = { ...saved, id: 'o1' };
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: {
+              profileId: 'worker',
+              onScreenOnly: false,
+              exceptions: [
+                {
+                  tool: 'open_session',
+                  scope: { kind: 'session', sessionId: 's9' },
+                  rule: { decision: 'deny' },
+                },
+              ],
+            },
+          },
+        ],
+        overrides: [saved],
+      }),
+    });
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_session' as const,
+      targets: [target({ sessionId: 's9' })],
+      masterOn: true,
+      toYou: false,
+    };
+    const answer = h.service.decide({ ...input, heldOverrides: [held] });
+    expect(answer).toMatchObject({ decision: 'allow', overrideIds: ['o1'] });
+    expect(h.service.commit(answer, ['o1'])).toEqual([]);
+    expect(h.service.decide(input)).toMatchObject({ decision: 'allow', overrideIds: ['o2'] });
+  });
+
   it('retains a passed override when another target is denied by the profile', async () => {
     const override: OneUseOverride = {
       id: 'oa',

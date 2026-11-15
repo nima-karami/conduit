@@ -179,7 +179,7 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
   )
     return done('allow', { by: 'floor', floor: 'local-to-you' }, ruleFor(primary));
 
-  const overrides = [...state.overrides, ...(input.heldOverrides ?? [])];
+  const overrides = [...(input.heldOverrides ?? []), ...state.overrides];
   const overrideFor = (t: PolicyTarget): OneUseOverride | undefined =>
     principal.kind === 'session'
       ? overrides.find(

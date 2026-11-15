@@ -235,6 +235,60 @@ describe('decide', () => {
     ).toBe('deny');
   });
 
+  it('a held override wins over a saved one for the same target', () => {
+    const held: OneUseOverride = {
+      id: 'o1',
+      sessionId: 's1',
+      tool: 'open_session',
+      target: target({ sessionId: 's2' }),
+      createdAt: iso(NOW),
+    };
+    const saved: OneUseOverride = { ...held, id: 'o2' };
+    const s = state(
+      {
+        default: assignment('worker', [
+          except('open_session', { kind: 'anywhere' }, { decision: 'deny' }),
+        ]),
+      },
+      { overrides: [saved] },
+    );
+    const d = decide(
+      s,
+      input({
+        tool: 'open_session',
+        targets: [target({ sessionId: 's2' })],
+        heldOverrides: [held],
+      }),
+    );
+    expect(d.overrideIds).toEqual(['o1']);
+    expect(d.reason).toEqual({ by: 'override', overrideId: 'o1' });
+  });
+
+  it('a held override for another session does not pass the deny', () => {
+    const held: OneUseOverride = {
+      id: 'o1',
+      sessionId: 's9',
+      tool: 'open_session',
+      target: target({ sessionId: 's2' }),
+      createdAt: iso(NOW),
+    };
+    const s = state({
+      default: assignment('worker', [
+        except('open_session', { kind: 'anywhere' }, { decision: 'deny' }),
+      ]),
+    });
+    const d = decide(
+      s,
+      input({
+        tool: 'open_session',
+        targets: [target({ sessionId: 's2' })],
+        heldOverrides: [held],
+      }),
+    );
+    expect(d.decision).toBe('deny');
+    expect(d.overrideIds).toEqual([]);
+  });
+
   it('override never passes a floor', () => {
     const override: OneUseOverride = {
       id: 'o1',
