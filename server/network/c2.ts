@@ -1,6 +1,7 @@
 import type { Capability } from '../../src/contracts/link-protocol';
 import type { NetworkState } from '../../src/contracts/network-state';
 import { RpcFault } from '../transport/pipe';
+import { DRIVE_INPUT_MAX_BYTES, type Drive } from './drive';
 import type { LinkManager } from './link-manager';
 import { parseHostPort } from './listener';
 import type { PairingService } from './pairing-service';
@@ -11,12 +12,17 @@ import type { createViewRelay } from './view-relay';
 
 const CAPABILITIES: readonly Capability[] = ['messaging', 'monitor', 'drive'];
 const MAX_ADDRESSES = 16;
+const MAX_PATH = 4096;
+const MAX_DIMENSION = 10_000;
+const isDimension = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= MAX_DIMENSION;
 
 export interface NetworkCallDeps {
   pairing: PairingService;
   manager: LinkManager;
   state(): NetworkState;
   relay: ReturnType<typeof createViewRelay>;
+  drive: Drive;
   peer?: object;
 }
 
@@ -75,6 +81,25 @@ export function handleNetworkCall(
       if (!d.peer) throw new RpcFault('invalid', 'Expected connection');
       d.relay.detach(d.peer, str(p, 'viewId'));
       return Promise.resolve({});
+    case 'remote.input': {
+      const data = p.data;
+      if (typeof data !== 'string' || Buffer.byteLength(data, 'utf8') > DRIVE_INPUT_MAX_BYTES)
+        throw new RpcFault('invalid', 'Expected data up to 64 KiB');
+      d.drive.input(str(p, 'machineId'), str(p, 'sessionId'), data);
+      return Promise.resolve({});
+    }
+    case 'remote.resize': {
+      const cols = p.cols;
+      const rows = p.rows;
+      if (!isDimension(cols) || !isDimension(rows))
+        throw new RpcFault('invalid', 'Expected cols and rows');
+      d.drive.resize(str(p, 'machineId'), str(p, 'sessionId'), cols, rows);
+      return Promise.resolve({});
+    }
+    case 'remote.open':
+      return d.drive.open(str(p, 'machineId'), str(p, 'agentId'), str(p, 'folder', MAX_PATH));
+    case 'remote.close':
+      return d.drive.close(str(p, 'machineId'), str(p, 'sessionId')).then(() => ({}));
     case 'link.list':
       return Promise.resolve(d.state());
     case 'link.revoke': {

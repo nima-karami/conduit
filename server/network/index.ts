@@ -14,6 +14,7 @@ import { selfSignedCert } from '../../src/network/self-signed-cert';
 import { currentWindowsPty } from '../../src/windows-pty-info';
 import { openAuditLog } from './audit-log';
 import { handleNetworkCall } from './c2';
+import { createDrive, type Drive, type DriveDeps } from './drive';
 import { type Identity, setOwnerKey } from './identity';
 import { createLinkManager, type LinkManager } from './link-manager';
 import { openLinkStore } from './link-store';
@@ -47,6 +48,17 @@ export interface NetworkDeps {
   /** This server's sessions, asks and agents as linked peers may see them (monitor push). */
   monitor: MonitorSource;
   observe: TerminalRuntime['observe'];
+  /** The server's side of drive: the human input path, sessions and folders. */
+  drive: Pick<
+    DriveDeps,
+    | 'applyHumanInput'
+    | 'resize'
+    | 'liveSession'
+    | 'agentExists'
+    | 'isDirectory'
+    | 'openSession'
+    | 'closeSession'
+  >;
   emitTo(peer: object, ...event: Parameters<ServerEventSink>): void;
 }
 
@@ -123,6 +135,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
         publisher.pushTo(v.machineId);
       } else if (!live(v.state) && live(before)) messaging.linkDown(v.machineId);
       relay.linkChanged(v.machineId);
+      drive.linkChanged(v.machineId);
     }
     for (const l of portListeners) l();
   };
@@ -158,6 +171,16 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       } else if (f.t === 'msg' || f.t === 'ack' || f.t === 'receipt')
         messaging.onFrame(machineId, f);
       else if (
+        f.t === 'drive.input' ||
+        f.t === 'drive.resize' ||
+        f.t === 'drive.open' ||
+        f.t === 'drive.close' ||
+        f.t === 'drive.result'
+      )
+        void drive
+          .onFrame(machineId, f)
+          .catch((err: unknown) => deps.log.error('drive frame failed', { message: String(err) }));
+      else if (
         f.t === 'view.open' ||
         f.t === 'view.opened' ||
         f.t === 'view.data' ||
@@ -189,6 +212,16 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     emitTo: deps.emitTo,
     now,
     newId: () => `v_${randomBytes(16).toString('hex')}`,
+    log: (message) => deps.log.warn(message),
+  });
+  const drive: Drive = createDrive({
+    ...deps.drive,
+    links: linkInfo,
+    send: (machineId, frame) => manager.send(machineId, frame),
+    audit,
+    now,
+    newId: () => `d_${randomBytes(12).toString('hex')}`,
+    after,
     log: (message) => deps.log.warn(message),
   });
   const messaging = createMessaging({
@@ -400,13 +433,14 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       emitTimer?.();
       closePairingPort();
       relay.stop();
+      drive.stop();
       publisher.stop();
       messaging.stop();
       await manager.stop();
       await closeListener();
     },
     handle: (method, params, peer) =>
-      handleNetworkCall(method, params, { pairing, manager, state, relay, peer }),
+      handleNetworkCall(method, params, { pairing, manager, state, relay, drive, peer }),
     disconnected: (peer) => relay.disconnected(peer),
     async settingsChanged() {
       const s = deps.settings();

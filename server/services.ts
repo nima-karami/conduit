@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, promises as fsPromises, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { atomicWriteFileSync } from '../src/atomic-write';
 import { isCountedInput } from '../src/conduit-mcp/draft-input';
@@ -203,6 +203,42 @@ export function createServices(o: ServicesOptions) {
     log,
   });
 
+  /**
+   * The human input path shared by C2 `term.input` (a generation the app read) and network drive
+   * (`null`: the live generation, since a remote typist has no generation to quote).
+   */
+  const applyHumanInput = (sessionId: string, data: string, generation: number | null): boolean => {
+    const current = generation ?? runtime.get(sessionId)?.generation;
+    // No live terminal: nothing to write to, and a missing generation must not match one.
+    if (current === undefined) return false;
+    const delivered = m().termInput({ sessionId, generation: current, data });
+    // see spec R4: a real keystroke that reached the program, not a terminal's own reply.
+    if (delivered && isCountedInput(data)) domain.humanInput(sessionId);
+    return delivered;
+  };
+
+  /** C2 `sessions.create` then `sessions.start`, the same domain handlers the app's open runs. */
+  const openSession = async (agentId: string, folder: string): Promise<string> => {
+    const created = await domain.handle({
+      id: 0,
+      method: 'sessions.create',
+      params: { agentId, home: folder },
+    });
+    if (!created || !('result' in created))
+      throw new RpcFault('refused', 'could not create the session');
+    const { sessionId } = created.result as { sessionId: string };
+    // A start that refused or failed still leaves the session in its pane, as an app open does.
+    const started = await domain.handle({ id: 0, method: 'sessions.start', params: { sessionId } });
+    if (!started || 'error' in started) log.warn('drive', 'session created but did not start');
+    return sessionId;
+  };
+
+  /** C2 `sessions.remove`, the server-local close that kills or retires the terminal. */
+  const closeSession = async (sessionId: string): Promise<void> => {
+    const answer = await domain.handle({ id: 0, method: 'sessions.remove', params: { sessionId } });
+    if (answer && 'error' in answer) throw answer.error;
+  };
+
   const networkDir = path.join(o.userData, 'network');
   const loaded = loadIdentity(networkDir);
   let machineId: string;
@@ -237,6 +273,20 @@ export function createServices(o: ServicesOptions) {
             debug: (msg, data) => log.debug('network', msg, data),
             warn: (msg, data) => log.warn('network', msg, data),
             error: (msg, data) => log.error('network', msg, data),
+          },
+          drive: {
+            applyHumanInput: (sessionId, data) => applyHumanInput(sessionId, data, null),
+            resize: (sessionId, size) => {
+              runtime.resize(sessionId, size);
+              domain.resized(sessionId, size);
+            },
+            liveSession: (sessionId) => runtime.get(sessionId)?.state === 'live',
+            agentExists: (agentId) =>
+              domain.snapshot().stores.agents.some((agent) => agent.id === agentId),
+            isDirectory: async (absolutePath) =>
+              (await fsPromises.stat(absolutePath).catch(() => null))?.isDirectory() === true,
+            openSession,
+            closeSession,
           },
           monitor: {
             sessions: () => monitorSessions(),
@@ -432,9 +482,7 @@ export function createServices(o: ServicesOptions) {
         const data = p.data;
         if (typeof data !== 'string') throw new RpcFault('invalid', 'Expected data');
         const sessionId = str(p, 'sessionId');
-        const delivered = server.termInput({ sessionId, generation: int(p, 'generation'), data });
-        // see spec R4: a real keystroke that reached the program, not a terminal's own reply.
-        if (delivered && isCountedInput(data)) domain.humanInput(sessionId);
+        applyHumanInput(sessionId, data, int(p, 'generation'));
         return { result: {} };
       }
       case 'term.resize': {
@@ -486,6 +534,9 @@ export function createServices(o: ServicesOptions) {
     mcp: server,
     attention,
     scrollback,
+    applyHumanInput,
+    openSession,
+    closeSession,
     connected: () => domain.reloadAgents(),
     disconnected: (peer: object) => {
       network?.disconnected(peer);
