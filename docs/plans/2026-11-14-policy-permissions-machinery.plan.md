@@ -390,6 +390,12 @@ export interface PolicyUiState {
 3. NET's `AuditSink.record` takes a closed union of its 11 kinds. The branch that lands second adds `activityAuditSink(log: ActivityLog): AuditSink`, which writes Activity `note` rows with no bodies or keystrokes, and swaps it into NET's composer.
 4. NET's `onRevoked(machineId)` hook: the branch that lands second wires it to `GrantStore.peerRevoked(machineId)` (grants → revoked) and to REQ withdrawing that peer's open requests (`withdrawnBy:'conduit'`, "link revoked").
 
+*Seam rulings at the CON-27 merge (2026-11-15; CON-24 lands second):*
+- Seam 3 tees: NET keeps its own audit.jsonl (its tests and e2es read it), and a late-bound tap also writes each event as an Activity note (identifiers only, never `detail`).
+- The sink lives in server/mcp/activity-audit-sink.ts, since src never imports server.
+- Seam 4 revokes the peer's grants (`PolicyService.peerRevoked`) through network.onRevoked → host.
+- The request half is dropped: peers can't create requests in v1, because every request tool needs a local session.
+
 ## Producer/consumer map
 | Behaviour changed | Produced by | Consumed by | Sides this plan touches |
 |---|---|---|---|
