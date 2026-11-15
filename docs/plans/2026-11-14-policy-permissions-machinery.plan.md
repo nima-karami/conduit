@@ -503,6 +503,7 @@ Failing tests:
 **Check:** `npm run verify` exits 0. `npm run e2e:remote -- policy-profiles conduit-mcp-policy conduit-mcp-policy-migrate conduit-mcp-refusals conduit-mcp-control conduit-mcp-control-terminal`, then `--affected`, all PASS.
 **Parallel groups:** G1: T2.1 · G2: T2.2 · Serial: T2.3, then T2.4
 **Claims (serial lane):** `src/conduit-mcp/host.ts`, `src/conduit-mcp/tool-policy.ts`, `src/conduit-mcp/ui-types.ts`, `src/protocol.ts`, `electron/main.ts`, `server/services.ts`, `src/contracts/session-identity.ts`, `src/session-manager.ts`, `server/domain/index.ts`, `webview/use-conduit-mcp.ts`
+*T2.3 ruling (2026-11-15):* `src/contracts/server-ports.ts` joins T2.3, but only to drop `'setMcpToolPolicy'` from `SessionStorePort`.
 
 #### Task 2.1: migration and projection
 **Files:** create `policy-migration.ts`, `policy-projection.ts`; tests `test/unit/policy-migration.test.ts`, `test/unit/policy-projection.test.ts`.
