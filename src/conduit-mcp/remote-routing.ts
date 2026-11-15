@@ -44,7 +44,8 @@ export interface NetworkPort {
   resolve(target: string): RemoteResolution;
   enqueue(msg: MessageRecord, recipients: RemoteEntry[]): RemoteRecipientOutcome[];
   waitReading(address: string, callerHandle: Handle): WaitReading | 'unreachable' | null;
-  capabilitiesOf(machineId: string): Capabilities | null;
+  /** What that machine lets me do (its record of the link), not what I let it do. */
+  peerCapabilitiesOf(machineId: string): Capabilities | null;
   onChange(listener: () => void): () => void;
 }
 

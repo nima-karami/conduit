@@ -4665,7 +4665,7 @@ describe('createConduitMcpHost — wait_sessions', () => {
               completions: 0,
               unreadFrom: 0,
             },
-      capabilitiesOf: () => ({ messaging: true, monitor, drive: false }),
+      peerCapabilitiesOf: () => ({ messaging: true, monitor, drive: false }),
       onChange: (listener) => {
         changed = listener;
         return () => {};

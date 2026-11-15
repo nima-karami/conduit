@@ -561,7 +561,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             error: toolError('peer_unreachable', `peer for ${target.handle} is unreachable`),
           };
         const parsed = parseAddress(target.handle);
-        if (!parsed?.machine || !deps.network?.capabilitiesOf(parsed.machine)?.monitor)
+        if (!parsed?.machine || !deps.network?.peerCapabilitiesOf(parsed.machine)?.monitor)
           return {
             error: toolError('capability_off', `peer has not enabled monitor for ${target.handle}`),
           };

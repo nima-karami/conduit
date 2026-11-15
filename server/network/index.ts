@@ -215,7 +215,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     resolve: (target) => directory.resolve(target),
     enqueue: (msg, recipients) => messaging.enqueue(msg, recipients),
     waitReading: (address, caller) => directory.waitReading(address, caller),
-    capabilitiesOf: (machineId) => {
+    peerCapabilitiesOf: (machineId) => {
       const v = manager.view(machineId);
       return v &&
         v.state !== 'revoked' &&
