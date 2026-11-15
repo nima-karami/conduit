@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.65.2] — 2026-11-15
+
 ### Fixed
 - A session whose folder is a whole drive (like `C:\`) or `/` now shows change markers and diffs for its files.
 - Codex no longer asks you to approve each of Conduit's own tool calls; Conduit's approval cards are the only prompt.
