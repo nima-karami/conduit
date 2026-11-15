@@ -22,7 +22,11 @@ import {
   type ToolName,
 } from './tool-policy';
 
-const DECISION_OF_ACCESS: Record<Access, Decision> = { off: 'deny', ask: 'ask', on: 'allow' };
+export const DECISION_OF_ACCESS: Record<Access, Decision> = {
+  off: 'deny',
+  ask: 'ask',
+  on: 'allow',
+};
 const LEAD_ALLOWED: readonly ToolName[] = [
   'open_session',
   'open_terminal',
