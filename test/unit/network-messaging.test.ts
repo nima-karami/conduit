@@ -507,3 +507,25 @@ it('audits a refused inbound message once per link per minute', () => {
   h.svc.onFrame(machine, frameN(6));
   expect(h.audit.filter((e) => e.kind === 'message.refused')).toHaveLength(2);
 });
+
+// CON-27 R2c: receipts draw on the same per-link inbound budget as messages, and count only while
+// messaging is on for that link here.
+it('drops a receipt past the per-link inbound budget silently, and one while messaging is off here', () => {
+  const h = setup();
+  h.link.state = 'up';
+  for (let i = 0; i < 120; i++) h.svc.onFrame(machine, frameN(i));
+  const receipt = {
+    t: 'receipt' as const,
+    messageId: 'm_abcdefghijklmnop',
+    handle: 'agent-2',
+    status: 'read' as const,
+  };
+  h.svc.onFrame(machine, receipt);
+  expect(h.mcp.setRemoteStatus).not.toHaveBeenCalled();
+  h.tick(60_000);
+  h.svc.onFrame(machine, receipt);
+  expect(h.mcp.setRemoteStatus).toHaveBeenCalledTimes(1);
+  h.link.capabilities.messaging = false;
+  h.svc.onFrame(machine, { ...receipt, status: 'noticed' });
+  expect(h.mcp.setRemoteStatus).toHaveBeenCalledTimes(1);
+});

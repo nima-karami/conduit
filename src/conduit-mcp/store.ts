@@ -52,7 +52,13 @@ export interface MessageStore {
   load(): Promise<Result<void>>;
   available(): boolean;
   append(msg: MessageRecord, blobs: BlobInput): Promise<Result<void>>;
-  setStatus(messageId: string, handle: Handle, status: RcptStatus): Promise<Result<void>>;
+  /** `remote`: the status came from a peer's receipt, which may repeat itself (CON-27 R2c). */
+  setStatus(
+    messageId: string,
+    handle: Handle,
+    status: RcptStatus,
+    origin?: 'local' | 'remote',
+  ): Promise<Result<void>>;
   allowMore(threadId: string): Promise<Result<void>>;
   get(messageId: string): StoredMessage | undefined;
   has(messageId: string): boolean;
@@ -396,7 +402,7 @@ export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): M
         return write({ v: 1, t: 'msg', msg });
       }),
 
-    setStatus: (messageId, handle, status) =>
+    setStatus: (messageId, handle, status, _origin) =>
       enqueue(async () => {
         if (!isAvailable) return unavailable('not loaded');
         const cur = state.messages.get(messageId)?.recipients[handle];
