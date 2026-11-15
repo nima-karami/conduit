@@ -486,6 +486,36 @@ describe('status change feed', () => {
   });
 });
 
+describe('remote status', () => {
+  // CON-27 R2c: a peer repeating its notice must not write again or inflate our count.
+  it('a repeated remote noticed is a no-op: no record, and noticeCount does not grow', async () => {
+    const { store } = await loaded();
+    const a = msg({ to: ['codex-2'] });
+    await store.append(a, []);
+    await store.setStatus(a.messageId, 'codex-2', 'noticed', 'remote');
+    let changes = 0;
+    store.onChange(() => {
+      changes += 1;
+    });
+    await store.setStatus(a.messageId, 'codex-2', 'noticed', 'remote');
+    await store.setStatus(a.messageId, 'codex-2', 'noticed', 'remote');
+    expect(changes).toBe(0);
+    expect(store.get(a.messageId)?.recipients['codex-2']).toMatchObject({
+      status: 'noticed',
+      noticeCount: 1,
+    });
+  });
+
+  it('a local notice still counts each time, which escalation depends on', async () => {
+    const { store } = await loaded();
+    const a = msg({ to: ['codex-2'] });
+    await store.append(a, []);
+    await store.setStatus(a.messageId, 'codex-2', 'noticed');
+    await store.setStatus(a.messageId, 'codex-2', 'noticed');
+    expect(store.get(a.messageId)?.recipients['codex-2']).toMatchObject({ noticeCount: 2 });
+  });
+});
+
 describe('createFsStoreIo', () => {
   it('round-trips the log and blobs through a store', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'conduit-mcp-store-'));

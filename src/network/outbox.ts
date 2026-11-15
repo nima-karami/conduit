@@ -13,15 +13,18 @@ export interface OutboxEntry {
   state: 'queued' | 'sent';
 }
 
-/** Most entries one outbox holds; past it, new sends are refused, not dropped (CON-27 review, minor 6). */
+/**
+ * Caps are per machine, not per outbox: one dead peer's backlog must not refuse sends to the
+ * others (CON-27 R3-adjacent). Past a cap, new sends are refused, not dropped (CON-27 review, minor 6).
+ */
 const OUTBOX_MAX_ENTRIES = 1000;
-/** Most serialized bytes one outbox holds, summed over its entries. */
+/** Most serialized bytes one machine's queue holds, summed over its entries. */
 const OUTBOX_MAX_BYTES = 64 * 1024 * 1024;
 
 export interface Outbox {
   /**
    * FIFO per machine; a duplicate messageId for the same machine is ignored. False when the entry
-   * would pass OUTBOX_MAX_ENTRIES or OUTBOX_MAX_BYTES; nothing is stored then.
+   * would pass OUTBOX_MAX_ENTRIES or OUTBOX_MAX_BYTES for its machine; nothing is stored then.
    */
   enqueue(e: Omit<OutboxEntry, 'state'>): boolean;
   /** Every 'queued' entry for that machine, marked 'sent'. A second call returns nothing new. */
@@ -50,7 +53,10 @@ interface Slot {
 
 export function createOutbox(initial: OutboxEntry[]): Outbox {
   let slots: Slot[] = [];
-  let usedBytes = 0;
+  /** Serialized bytes queued per machine; kept beside `slots` so a cap check is a lookup. */
+  const usedBytes = new Map<string, number>();
+  const entriesOf = (machineId: string) =>
+    slots.reduce((n, s) => (s.entry.machineId === machineId ? n + 1 : n), 0);
 
   const sameMessage = (e: OutboxEntry, machineId: string, messageId: string) =>
     e.machineId === machineId && e.message.messageId === messageId;
@@ -60,15 +66,18 @@ export function createOutbox(initial: OutboxEntry[]): Outbox {
     return { entry, bytes: encoder.encode(JSON.stringify(entry)).byteLength };
   };
 
+  const addBytes = (machineId: string, delta: number) =>
+    usedBytes.set(machineId, (usedBytes.get(machineId) ?? 0) + delta);
+
   const store = (slot: Slot) => {
     slots.push(slot);
-    usedBytes += slot.bytes;
+    addBytes(slot.entry.machineId, slot.bytes);
   };
 
   const removeWhere = (pred: (e: OutboxEntry) => boolean): OutboxEntry[] => {
     const removed = slots.filter((s) => pred(s.entry));
     slots = slots.filter((s) => !pred(s.entry));
-    for (const s of removed) usedBytes -= s.bytes;
+    for (const s of removed) addBytes(s.entry.machineId, -s.bytes);
     return removed.map((s) => copyEntry(s.entry));
   };
 
@@ -85,7 +94,11 @@ export function createOutbox(initial: OutboxEntry[]): Outbox {
       if (slots.some((s) => sameMessage(s.entry, fresh.machineId, fresh.message.messageId)))
         return true;
       const slot = slotOf(fresh);
-      if (slots.length >= OUTBOX_MAX_ENTRIES || usedBytes + slot.bytes > OUTBOX_MAX_BYTES)
+      const machine = fresh.machineId;
+      if (
+        entriesOf(machine) >= OUTBOX_MAX_ENTRIES ||
+        (usedBytes.get(machine) ?? 0) + slot.bytes > OUTBOX_MAX_BYTES
+      )
         return false;
       store(slot);
       return true;
@@ -107,8 +120,9 @@ export function createOutbox(initial: OutboxEntry[]): Outbox {
     ack(machineId, messageId) {
       const i = slots.findIndex((s) => sameMessage(s.entry, machineId, messageId));
       if (i === -1) return null;
-      const [removed] = slots.splice(i, 1);
-      usedBytes -= removed.bytes;
+      const removed = slots.splice(i, 1)[0];
+      if (removed === undefined) return null;
+      addBytes(removed.entry.machineId, -removed.bytes);
       return copyEntry(removed.entry);
     },
     expire(now) {

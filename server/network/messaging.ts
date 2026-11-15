@@ -16,7 +16,7 @@ import type {
   WireMessage,
   WireRecipientOutcome,
 } from '../../src/contracts/link-protocol';
-import { formatAddress } from '../../src/network/addresses';
+import { formatAddress, printableName } from '../../src/network/addresses';
 import {
   inboundMessageId,
   inboundThreadId,
@@ -82,6 +82,10 @@ const INBOUND_PER_LINK_PER_MIN = 120;
 const INBOUND_WINDOW_MS = 60_000;
 /** One message.refused audit per link per window, as drive.ts does for drive.refused. */
 const REFUSAL_AUDIT_MS = 60_000;
+/** A mime is a type/subtype token pair; anything else is not a file type a peer may name (CON-27 R3). */
+const MIME = /^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i;
+const MAX_MIME_CHARS = 100;
+const MAX_ATTACHMENT_NAME_CHARS = 200;
 
 function loadOutbox(
   file: string,
@@ -247,6 +251,18 @@ export function createMessaging(deps: MessagingDeps): Messaging {
     heldReceipts.set(machineId, held);
   };
 
+  /** A peer's receipt: it counts against the link's inbound budget, and only while messaging is on here. */
+  const receipt = async (
+    machineId: string,
+    frame: Extract<LinkFrame, { t: 'receipt' }>,
+  ): Promise<void> => {
+    if (!linkOf(machineId)?.capabilities.messaging) return;
+    if (!admitInbound(machineId)) return;
+    await deps
+      .mcp()
+      ?.setRemoteStatus(frame.messageId, formatAddress(frame.handle, machineId), frame.status);
+  };
+
   const expire = (): void => {
     const gone = outbox.expire(deps.now());
     if (gone.length > 0) {
@@ -296,25 +312,26 @@ export function createMessaging(deps: MessagingDeps): Messaging {
 
   const inbound = async (machineId: string, wire: WireMessage): Promise<void> => {
     const link = linkOf(machineId);
-    const refuse = (reason: WireRecipientOutcome['reason']) =>
-      wire.to.map((handle) => ({ handle, status: 'refused' as const, reason }));
-    if (!link || !link.capabilities.messaging) {
+    // An ack echoes the peer's handles back, so only a sound message with few enough of them may
+    // earn one; anything else is left for the sender's outbox to expire (CON-27 R2a).
+    const ackable = isWireMessageId(wire.messageId) && wire.to.length <= MAX_RECIPIENTS;
+    const refuseAck = (reason: WireRecipientOutcome['reason']) => {
+      if (!ackable) return;
       deps.send(machineId, {
         t: 'ack',
         messageId: wire.messageId,
-        recipients: refuse('capability_off'),
+        recipients: wire.to.map((handle) => ({ handle, status: 'refused' as const, reason })),
       });
+    };
+    if (!link || !link.capabilities.messaging) {
+      refuseAck('capability_off');
       auditRefused(machineId, {
         detail: { messageId: wire.messageId, reason: 'capability_off', direction: 'in' },
       });
       return;
     }
     if (!admitInbound(machineId)) {
-      deps.send(machineId, {
-        t: 'ack',
-        messageId: wire.messageId,
-        recipients: refuse('rate_limited'),
-      });
+      refuseAck('rate_limited');
       auditRefused(machineId, {
         detail: { messageId: wire.messageId, reason: 'rate_limited', direction: 'in' },
       });
@@ -329,13 +346,17 @@ export function createMessaging(deps: MessagingDeps): Messaging {
       wire.to.some((h) => h.includes('@')) ||
       Buffer.byteLength(wire.body, 'utf8') > MAX_BODY_BYTES ||
       wire.subject.length > 200 ||
+      wire.attachments.some(
+        (a) =>
+          !printableName(a.name, MAX_ATTACHMENT_NAME_CHARS) ||
+          a.mime.length > MAX_MIME_CHARS ||
+          !MIME.test(a.mime),
+      ) ||
       wire.attachments.reduce((n, a) => n + Buffer.byteLength(a.data, 'base64'), 0) >
         MAX_REMOTE_ATTACHMENT_BYTES
     ) {
-      deps.send(machineId, {
-        t: 'ack',
-        messageId: wire.messageId,
-        recipients: refuse('unknown_session'),
+      auditRefused(machineId, {
+        detail: { messageId: wire.messageId, reason: 'malformed', direction: 'in' },
       });
       return;
     }
@@ -504,14 +525,8 @@ export function createMessaging(deps: MessagingDeps): Messaging {
           ? inbound(machineId, frame.message)
           : frame.t === 'ack'
             ? ack(machineId, frame.messageId, frame.recipients)
-            : deps
-                .mcp()
-                ?.setRemoteStatus(
-                  frame.messageId,
-                  formatAddress(frame.handle, machineId),
-                  frame.status,
-                );
-      void run?.catch((err: unknown) =>
+            : receipt(machineId, frame);
+      void run.catch((err: unknown) =>
         deps.log.error('message processing failed', { message: String(err) }),
       );
     },

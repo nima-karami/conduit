@@ -300,4 +300,21 @@ describe('outbox caps', () => {
     outbox.ack(A, 'm_0');
     expect(outbox.enqueue(entry(A, 'm_over'))).toBe(true);
   });
+
+  // CON-27 R3-adjacent: one dead machine's backlog must not refuse sends to the others.
+  it('caps each machine on its own: a full machine A refuses, and machine B is still accepted', () => {
+    const outbox = createOutbox([]);
+    for (let i = 0; i < MAX_ENTRIES; i++) outbox.enqueue(entry(A, `m_${i}`));
+    expect(outbox.enqueue(entry(A, 'm_over'))).toBe(false);
+    expect(outbox.enqueue(entry(B, 'm_b0'))).toBe(true);
+    expect(outbox.pending(B)).toBe(1);
+  });
+
+  it('caps the bytes per machine: a machine past 64 MiB is refused while another is not', () => {
+    const outbox = createOutbox([]);
+    const fourMiB = 4 * 1024 * 1024;
+    for (let i = 0; i < 15; i++) expect(outbox.enqueue(big(`m_${i}`, fourMiB))).toBe(true);
+    expect(outbox.enqueue(big('m_15', fourMiB))).toBe(false);
+    expect(outbox.enqueue({ ...big('m_b0', fourMiB), machineId: B })).toBe(true);
+  });
 });

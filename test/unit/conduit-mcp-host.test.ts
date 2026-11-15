@@ -5350,6 +5350,19 @@ describe('createConduitMcpHost — inbound from another machine', () => {
     ]);
   });
 
+  // CON-27 R2c: a receipt for a message we never sent is a peer's stray, not an event to warn about.
+  it('an unknown message id in a receipt does not log a warning', async () => {
+    const rec = recordingLog();
+    const h = harness({ log: rec.log });
+    await h.host.start();
+    await launch(h, 's1');
+    await ready(h, 's2');
+    settle(h);
+    const port = h.host.networkPort();
+    for (let i = 0; i < 5; i++) await port.setRemoteStatus('m_nope', 'fake-2@m-0123abcd', 'read');
+    expect(rec.entries.filter((e) => e.level === 'warn')).toEqual([]);
+  });
+
   it('messaging off → every recipient refused messaging_off, nothing stored', async () => {
     let on = true;
     const h = harness({ messagingOn: () => on });

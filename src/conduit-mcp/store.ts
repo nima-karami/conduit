@@ -52,7 +52,13 @@ export interface MessageStore {
   load(): Promise<Result<void>>;
   available(): boolean;
   append(msg: MessageRecord, blobs: BlobInput): Promise<Result<void>>;
-  setStatus(messageId: string, handle: Handle, status: RcptStatus): Promise<Result<void>>;
+  /** origin 'remote': the status came from a peer's receipt, which may repeat itself (CON-27 R2c). */
+  setStatus(
+    messageId: string,
+    handle: Handle,
+    status: RcptStatus,
+    origin?: 'local' | 'remote',
+  ): Promise<Result<void>>;
   allowMore(threadId: string): Promise<Result<void>>;
   get(messageId: string): StoredMessage | undefined;
   has(messageId: string): boolean;
@@ -115,6 +121,7 @@ function nextRecipient(
   cur: RecipientState,
   status: RcptStatus,
   at: string,
+  origin: 'local' | 'remote',
 ): RecipientState | undefined {
   if (cur.status === 'read' || cur.status === 'expired') return undefined;
   if (status === 'read') return { ...cur, status: 'read', updatedAt: at };
@@ -125,6 +132,8 @@ function nextRecipient(
   }
   if (status === 'noticed') {
     if (cur.status === 'undelivered') return undefined;
+    // A peer repeats its notice on every poll; only a notice made here counts toward escalation.
+    if (origin === 'remote' && cur.status === 'noticed') return undefined;
     return { status: 'noticed', noticeCount: cur.noticeCount + 1, updatedAt: at };
   }
   if (cur.status === 'undelivered') return undefined;
@@ -196,7 +205,8 @@ function applyRecord(s: State, rec: StoreLogRecord): void {
       const m = s.messages.get(rec.messageId);
       const cur = m?.recipients[rec.handle];
       if (!m || !cur) return;
-      const next = nextRecipient(cur, rec.status, rec.at);
+      // Only accepted transitions are logged, so replay applies each one as it was written.
+      const next = nextRecipient(cur, rec.status, rec.at, 'local');
       if (next) m.recipients[rec.handle] = next;
       return;
     }
@@ -396,13 +406,13 @@ export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): M
         return write({ v: 1, t: 'msg', msg });
       }),
 
-    setStatus: (messageId, handle, status) =>
+    setStatus: (messageId, handle, status, origin = 'local') =>
       enqueue(async () => {
         if (!isAvailable) return unavailable('not loaded');
         const cur = state.messages.get(messageId)?.recipients[handle];
         if (!cur) return notFound(`recipient ${handle} of ${messageId}`);
         const at = new Date().toISOString();
-        if (!nextRecipient(cur, status, at)) return OK;
+        if (!nextRecipient(cur, status, at, origin)) return OK;
         return write({ v: 1, t: 'rcpt', messageId, handle, status, at });
       }),
 

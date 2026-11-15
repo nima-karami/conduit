@@ -93,11 +93,12 @@ describe('inbound ids', () => {
     ['a short message id', { messageId: 'id' }],
     ['a frame-like thread id', { threadId: FORGED }],
     ['a thread id of the wrong kind', { threadId: 'm_abcdefghijklmnop' }],
-  ])('refuses %s and stores nothing', async (_what, over) => {
+  ])('refuses %s without an ack, and stores nothing', async (_what, over) => {
+    // CON-27 R2a: a message that fails validation earns no ack; the sender's outbox expires it.
     const h = setup();
     h.svc.onFrame(machine, { t: 'msg', message: wire(over) });
-    await vi.waitFor(() => expect(acks(h.frames)).toHaveLength(1));
-    expect(acks(h.frames)[0]?.recipients.every((r) => r.status === 'refused')).toBe(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(acks(h.frames)).toEqual([]);
     expect(h.mcp.deliverInbound).not.toHaveBeenCalled();
   });
 
