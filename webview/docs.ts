@@ -643,9 +643,8 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
     }
     case 'setTitle': {
       const idx = state.docs.findIndex((d) => d.id === action.id);
-      if (idx === -1 || state.docs[idx].title === action.title) return state;
       const title = action.title.trim();
-      if (!title) return state;
+      if (idx === -1 || !title || state.docs[idx].title === title) return state;
       const docs = state.docs.map((d) => (d.id === action.id ? { ...d, title } : d));
       return { ...state, docs };
     }

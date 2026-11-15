@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Conduit · something is wrong</title>
+<link rel="stylesheet" href="../../../kit/wireframe.css">
+</head>
+<body class="wf">
+<div class="wf-frame">
+
+<div class="wf-bar">
+  <span class="wf-h3">▢ Conduit</span>
+  <span class="wf-muted">‹ ›</span>
+  <div class="wf-grow" style="display:flex; justify-content:center;">
+    <span class="wf-input" style="width:420px;">Search sessions, agents, files…</span>
+  </div>
+  <span class="wf-btn">Files</span>
+  <span class="wf-btn">Changes <span class="wf-count">6</span></span>
+  <span class="wf-btn">Messages <span class="wf-count">14</span></span>
+  <span class="wf-btn is-primary">Inbox <span class="wf-count">1</span></span>
+  <span class="wf-muted">— ▢ ✕</span>
+</div>
+
+<div class="wf-body" style="grid-template-columns:264px 1fr 340px;">
+
+<!-- wf-locked:sidebar -->
+<div class="wf-region wf-panel wf-pad-s" style="display:flex; flex-direction:column; gap:12px;">
+  <div class="wf-spread"><span class="wf-label">Spaces</span><span class="wf-muted">+ ⋯</span></div>
+  <div class="wf-list">
+    <div class="is-selected wf-spread"><span>▦ All</span><span class="wf-small wf-muted">8 agents</span></div>
+    <div class="wf-spread"><span>C Conduit</span><span class="wf-small wf-muted">main</span></div>
+    <div class="wf-spread"><span>N Nimbus</span><span class="wf-small wf-muted">main</span></div>
+    <div class="wf-spread"><span>No space</span><span class="wf-small wf-muted"></span></div>
+  </div>
+  <div class="wf-spread"><span class="wf-label">Agents · 8 live</span><span class="wf-muted">⌕ + ⋯</span></div>
+  <div class="wf-stack-s">
+    <span class="wf-label">Needs you</span>
+    <div class="wf-spread"><span>Three-process lead <span class="wf-small wf-muted">· Conduit</span></span><span class="wf-small">12m ◉</span></div>
+    <div class="wf-spread" style="padding-left:16px;"><span>app lane</span><span class="wf-small">1m ◉</span></div>
+    <span class="wf-label">Done</span>
+    <div class="wf-spread"><span>Release notes</span><span class="wf-small">3m ◎</span></div>
+    <span class="wf-label">Working</span>
+    <div class="wf-spread"><span>api-server <span class="wf-small wf-muted">· Nimbus</span></span><span class="wf-small">31m ●</span></div>
+    <div class="wf-spread" style="padding-left:16px;"><span>server lane</span><span class="wf-small">8m ●</span></div>
+    <span class="wf-label">Idle</span>
+    <div class="wf-spread"><span>scratch</span><span class="wf-small">1h ○</span></div>
+    <span class="wf-label">Stopped (2) ›</span>
+  </div>
+  <div class="wf-grow"></div>
+  <span class="wf-small">⚙ Settings</span>
+</div>
+<!-- /wf-locked:sidebar -->
+
+<div class="wf-region" style="display:grid; grid-template-rows:auto auto 1fr auto;">
+  <div class="wf-tabs wf-pad-s" style="padding-bottom:0;">
+    <span class="wf-tab">▸ api-server <span class="wf-tag is-solid">⚠ not running</span></span>
+    <span class="wf-tab is-active">Problem · api-server ✕</span>
+    <span class="wf-tab">routes.ts</span>
+  </div>
+  <div class="wf-spread wf-pad-s"><span class="wf-small"><span class="wf-tag is-solid">⚠ Problem</span> <b>api-server</b> didn’t start again · Codex · codex-6 · Nimbus</span><span class="wf-small wf-muted">14:41 · after the background service restarted</span></div>
+  <div class="wf-pad wf-stack" style="max-width:760px;">
+    <div class="wf-stack-s">
+      <span class="wf-label">What happened</span>
+      <span>The background service restarted at 14:41. Conduit relaunched api-server, but Codex exited before its prompt appeared.</span>
+    </div>
+    <div class="wf-stack-s">
+      <span class="wf-label">Last output from codex-6</span>
+      <div class="wf-box wf-mono wf-small wf-stack-s">
+        <span>$ codex --cd ~/projects/nimbus</span>
+        <span>error: session file ~/.codex/sessions/2026-11-14/api-server.jsonl is locked by another process</span>
+        <span class="wf-muted">exited with code 1 after 0.8s</span>
+      </div>
+    </div>
+    <div class="wf-stack-s">
+      <span class="wf-label">Fix it</span>
+      <div class="wf-row"><span class="wf-btn is-primary">Retry launch</span><span class="wf-btn">Discard</span><span class="wf-btn is-quiet">Launch with another CLI…</span></div>
+      <span class="wf-small wf-muted">Retry starts codex-6 again in ~/projects/nimbus with its last conversation. Discard removes api-server from Sessions (its helper, server lane, keeps running).</span>
+    </div>
+    <div class="wf-stack-s">
+      <span class="wf-label">Other sessions</span>
+      <div class="wf-list wf-small">
+        <div class="wf-spread"><span>Three-process lead, app lane, Release notes, server lane, scratch</span><span>✓ reconnected</span></div>
+        <div class="wf-spread"><span>2 stopped sessions</span><span class="wf-muted">not affected</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="wf-stack-s"><hr class="wf-divider"><div class="wf-spread wf-pad-s">
+    <span class="wf-small wf-muted">When it’s fixed, this tab closes and the Problem moves to Results.</span>
+    <span class="wf-row"><span class="wf-btn is-quiet">Open api-server’s terminal</span></span>
+  </div></div>
+</div>
+
+<div class="wf-region wf-pad-s" style="display:grid; grid-template-rows:auto auto 1fr auto; gap:6px;">
+  <div class="wf-spread" style="padding:4px 4px 0;"><span class="wf-h3">Inbox</span><span class="wf-small wf-muted">newest first · all spaces ▾</span></div>
+  <div class="wf-tabs wf-small" style="gap:12px; padding:0 4px;"><span class="wf-tab is-active">All 9</span><span class="wf-tab">Needs you 1</span><span class="wf-tab">Problems 2</span><span class="wf-tab">Updates 1</span><span class="wf-tab">Results 4</span></div>
+  <div class="wf-list" style="overflow:hidden;">
+    <div class="is-selected">
+      <div class="wf-stack-s" style="gap:3px;">
+        <div class="wf-spread"><span class="wf-row"><span class="wf-tag is-solid">⚠ Problem</span><b class="wf-small">api-server</b></span><span class="wf-small wf-muted" style="white-space:nowrap;">14:41</span></div>
+        <span class="wf-small">Launch failed: codex-6 exited before its prompt</span>
+      <span class="wf-small wf-muted">Retry launch · Discard — in its tab</span>
+        <span class="wf-small"><b>Open in a tab ▸</b></span>
+      </div>
+    </div>
+    <div>
+      <div class="wf-stack-s" style="gap:3px;">
+        <div class="wf-spread"><span class="wf-row"><span class="wf-tag is-solid">⚠ Problem</span><b class="wf-small">Background service</b></span><span class="wf-small wf-muted" style="white-space:nowrap;">14:41 ●</span></div>
+        <span class="wf-small">Restarted. 5 of 6 terminals reconnected; input was paused for 4s.</span>
+      <span class="wf-small wf-muted">Resolved by itself at 14:41 · nothing to do</span>
+      </div>
+    </div>
+    <div>
+      <div class="wf-stack-s" style="gap:3px;">
+        <div class="wf-spread"><span class="wf-row"><span class="wf-tag">✓ Result</span><b class="wf-small">app lane</b></span><span class="wf-small wf-muted" style="white-space:nowrap;">14:34</span></div>
+        <span class="wf-small">You answered: A, plus your note</span>
+      <span class="wf-small wf-muted">app lane picked it up and resumed</span>
+      </div>
+    </div>
+    <div>
+      <div class="wf-stack-s" style="gap:3px;">
+        <div class="wf-spread"><span class="wf-row"><span class="wf-tag is-solid">Approve</span><b class="wf-small">Three-process lead</b></span><span class="wf-small wf-muted" style="white-space:nowrap;">now</span></div>
+        <span class="wf-small">Run <span class="wf-mono">npm run e2e:remote -- --full</span></span>
+      <span class="wf-small wf-muted">claude-3 · Conduit · tool call set to Ask</span>
+      </div>
+    </div>
+    <div>
+      <div class="wf-stack-s" style="gap:3px;">
+        <div class="wf-spread"><span class="wf-row"><span class="wf-tag">✓ Result</span><b class="wf-small">api-server</b></span><span class="wf-small wf-muted" style="white-space:nowrap;">14:32</span></div>
+        <span class="wf-small">Timed message sent: “Rebase on main, then rerun the API tests.”</span>
+      <span class="wf-small wf-muted">You scheduled it at 13:10 · codex-6 · Nimbus</span>
+      </div>
+    </div>
+    <div>
+      <div class="wf-stack-s" style="gap:3px;">
+        <div class="wf-spread"><span class="wf-row"><span class="wf-tag">Update</span><b class="wf-small">Conduit v0.65.0</b></span><span class="wf-small wf-muted" style="white-space:nowrap;">14:31</span></div>
+        <span class="wf-small">Ready to install · Relaunch when you choose</span>
+      <span class="wf-small wf-muted">Agents keep running through the relaunch</span>
+      </div>
+    </div>
+  </div>
+  <div class="wf-small wf-muted" style="padding:4px;">Problems stay at the top of All until they are fixed.</div>
+</div>
+
+</div>
+
+<div class="wf-status">
+  <span>▭ This computer</span><span>⎇ feat/three-process</span><span>worktree tp-main</span><span>● 8 agents</span>
+  <span class="wf-tag is-solid">1 needs you</span><span class="wf-tag is-solid">⚠ 1 problem</span><span>Background service ✓ back · restarted 14:41</span><span>v0.65.0 ready</span>
+  <span class="wf-grow"></span><span>Ctrl+Shift+P commands</span>
+</div>
+
+<div class="wf-note" style="right:356px; bottom:96px;">Patterns: <b>Inbox panel</b> (both problems, newest first) · <b>Task tab</b> (the fix, beside api-server) · <b>Marks</b> (⚠ on api-server’s tab, problem count and service state on the status bar). No banner.</div>
+
+</div>
+</body>
+</html>

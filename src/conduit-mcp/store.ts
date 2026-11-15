@@ -39,16 +39,29 @@ export interface RetentionResult {
   tombstoned: number;
   blobsDeleted: number;
 }
-type RcptStatus = 'noticed' | 'read' | 'undelivered';
+type RcptStatus = 'noticed' | 'read' | 'undelivered' | 'expired';
+/** What a recipient-status record changed; sent to listeners that take the argument. */
+interface StoreChange {
+  messageId: string;
+  handle: Handle;
+  status: RcptStatus;
+}
 type BlobInput = ReadonlyArray<{ sha256: string; data: Uint8Array }>;
 export interface MessageStore {
   stop(): Promise<void>;
   load(): Promise<Result<void>>;
   available(): boolean;
   append(msg: MessageRecord, blobs: BlobInput): Promise<Result<void>>;
-  setStatus(messageId: string, handle: Handle, status: RcptStatus): Promise<Result<void>>;
+  /** origin 'remote': the status came from a peer's receipt, which may repeat itself (CON-27 R2c). */
+  setStatus(
+    messageId: string,
+    handle: Handle,
+    status: RcptStatus,
+    origin?: 'local' | 'remote',
+  ): Promise<Result<void>>;
   allowMore(threadId: string): Promise<Result<void>>;
   get(messageId: string): StoredMessage | undefined;
+  has(messageId: string): boolean;
   /** sentAt ascending */
   thread(threadId: string): StoredMessage[];
   /** lastAt descending */
@@ -62,7 +75,7 @@ export interface MessageStore {
   agentCountSinceHuman(threadId: string): number;
   readBlob(sha256: string): Promise<Uint8Array | undefined>;
   enforceRetention(now: Date): Promise<Result<RetentionResult>>;
-  onChange(cb: () => void): () => void;
+  onChange(cb: (change?: StoreChange) => void): () => void;
 }
 export const RETENTION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -108,11 +121,19 @@ function nextRecipient(
   cur: RecipientState,
   status: RcptStatus,
   at: string,
+  origin: 'local' | 'remote',
 ): RecipientState | undefined {
   if (cur.status === 'read' || cur.status === 'expired') return undefined;
   if (status === 'read') return { ...cur, status: 'read', updatedAt: at };
+  // Expiry is per recipient for a remote one whose link never acked (plan T6.3); not a sender-side undo.
+  if (status === 'expired') {
+    if (cur.status === 'undelivered') return undefined;
+    return { ...cur, status: 'expired', updatedAt: at };
+  }
   if (status === 'noticed') {
     if (cur.status === 'undelivered') return undefined;
+    // A peer repeats its notice on every poll; only a notice made here counts toward escalation.
+    if (origin === 'remote' && cur.status === 'noticed') return undefined;
     return { status: 'noticed', noticeCount: cur.noticeCount + 1, updatedAt: at };
   }
   if (cur.status === 'undelivered') return undefined;
@@ -177,14 +198,15 @@ function applyRecord(s: State, rec: StoreLogRecord): void {
         recipients[h] = { status: 'queued', noticeCount: 0, updatedAt: m.sentAt };
       s.messages.set(m.messageId, { ...m, recipients, expired: false });
       s.seqOf.set(m.messageId, seq);
-      if (m.from === HUMAN_HANDLE) s.resetSeq.set(m.threadId, seq);
+      if (m.from === HUMAN_HANDLE || m.originHuman === true) s.resetSeq.set(m.threadId, seq);
       return;
     }
     case 'rcpt': {
       const m = s.messages.get(rec.messageId);
       const cur = m?.recipients[rec.handle];
       if (!m || !cur) return;
-      const next = nextRecipient(cur, rec.status, rec.at);
+      // Only accepted transitions are logged, so replay applies each one as it was written.
+      const next = nextRecipient(cur, rec.status, rec.at, 'local');
       if (next) m.recipients[rec.handle] = next;
       return;
     }
@@ -224,7 +246,8 @@ function recipientRecords(m: StoredMessage): StoreLogRecord[] {
   for (const [handle, r] of Object.entries(m.recipients)) {
     const base = { v: 1, t: 'rcpt', messageId: m.messageId, handle, at: r.updatedAt } as const;
     for (let i = 0; i < r.noticeCount; i++) out.push({ ...base, status: 'noticed' });
-    if (r.status === 'read' || r.status === 'undelivered') out.push({ ...base, status: r.status });
+    if (r.status === 'read' || r.status === 'undelivered' || r.status === 'expired')
+      out.push({ ...base, status: r.status });
   }
   return out;
 }
@@ -300,7 +323,7 @@ export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): M
   let state = emptyState();
   let isAvailable = false;
   let refusedNewerVersion = false;
-  const listeners = new Set<() => void>();
+  const listeners = new Set<(change?: StoreChange) => void>();
   let chain: Promise<unknown> = Promise.resolve();
   let stopped = false;
 
@@ -318,8 +341,8 @@ export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): M
     return stopped ? Promise.resolve(unavailable('store stopped')) : enqueueRaw(fn);
   }
 
-  const emit = () => {
-    for (const cb of listeners) cb();
+  const emit = (change?: StoreChange) => {
+    for (const cb of listeners) cb(change);
   };
 
   async function write(rec: StoreLogRecord): Promise<Result<void>> {
@@ -329,7 +352,11 @@ export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): M
       return unavailable(e);
     }
     applyRecord(state, rec);
-    emit();
+    emit(
+      rec.t === 'rcpt'
+        ? { messageId: rec.messageId, handle: rec.handle, status: rec.status }
+        : undefined,
+    );
     return OK;
   }
 
@@ -379,13 +406,13 @@ export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): M
         return write({ v: 1, t: 'msg', msg });
       }),
 
-    setStatus: (messageId, handle, status) =>
+    setStatus: (messageId, handle, status, origin = 'local') =>
       enqueue(async () => {
         if (!isAvailable) return unavailable('not loaded');
         const cur = state.messages.get(messageId)?.recipients[handle];
         if (!cur) return notFound(`recipient ${handle} of ${messageId}`);
         const at = new Date().toISOString();
-        if (!nextRecipient(cur, status, at)) return OK;
+        if (!nextRecipient(cur, status, at, origin)) return OK;
         return write({ v: 1, t: 'rcpt', messageId, handle, status, at });
       }),
 
@@ -397,6 +424,8 @@ export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): M
       }),
 
     get: (id) => state.messages.get(id),
+
+    has: (id) => state.messages.has(id),
 
     thread: (threadId) =>
       all()
@@ -470,7 +499,7 @@ export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): M
       const since = state.resetSeq.get(threadId) ?? -1;
       let n = 0;
       for (const m of all()) {
-        if (m.threadId !== threadId || m.from === HUMAN_HANDLE) continue;
+        if (m.threadId !== threadId || m.from === HUMAN_HANDLE || m.originHuman === true) continue;
         if ((state.seqOf.get(m.messageId) ?? -1) > since) n += 1;
       }
       return n;

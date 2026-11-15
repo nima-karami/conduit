@@ -926,3 +926,12 @@ describe('server domain: open_session model (CON-148)', () => {
     expect(args[args.indexOf('--model') + 1]).toBe('opus');
   });
 });
+
+it('the domain fake exposes a live observer and returns null for a missing session', async () => {
+  const runtime = new FakeRuntime();
+  expect(await runtime.observe('missing')).toBeNull();
+  runtime.live('s1', 1, 'launch', { cols: 90, rows: 30 });
+  const observer = await runtime.observe('s1');
+  expect(observer).toMatchObject({ firstPaint: '', size: { cols: 90, rows: 30 } });
+  observer?.close();
+});

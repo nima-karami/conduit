@@ -17,6 +17,7 @@ import type {
 } from './conduit-mcp/ui-types';
 import type { SearchFileResult, SearchQuery, TruncatedBy } from './content-search';
 import type { DisplayFacts } from './contracts/frames';
+import type { NetworkState } from './contracts/network-state';
 import type { Job, LimitEpisode } from './contracts/scheduler';
 import type { RuntimeHealth, ServerSettings } from './contracts/server-protocol';
 import type { DroppedRoot, SessionOpReason as FolderSessionOpReason } from './folder-validation';
@@ -617,6 +618,8 @@ export type HostToWebview =
   | { type: 'timer:error'; message: string }
   // Conduit MCP server (docs/specs/archive/2026-10-25-conduit-mcp-server.md §8): one coalesced state
   // broadcast, plus replies to the sender's mcp:* requests.
+  // Linked machines (CON-27 machinery; the Machines UI is CON-28).
+  | { type: 'network:state'; state: NetworkState }
   | { type: 'mcp:state'; state: McpUiState }
   | { type: 'mcp:requestResult'; requestId: string; result: RequestAnswerResult }
   | {

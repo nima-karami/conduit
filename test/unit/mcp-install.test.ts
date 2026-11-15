@@ -8,7 +8,7 @@ import {
   type McpInstallDeps,
   migrateGateOnce,
 } from '../../src/conduit-mcp/install';
-import { conduitEntry, legacyConduitEntry } from '../../src/conduit-mcp/install-entries';
+import { conduitEntry, legacyConduitEntries } from '../../src/conduit-mcp/install-entries';
 import {
   claudeLocalTarget,
   permissionTarget,
@@ -760,7 +760,7 @@ describe('repair (D2)', () => {
     const rows = createMcpInstall(s.deps).repair();
     expect(rows.map((r) => r.cli).sort()).toEqual(['claude', 'codex']);
     expect(readCodexConduit(fs.readFileSync(codex, 'utf8'))).toEqual({
-      ...legacyConduitEntry('codex', execPath, shimPath),
+      ...legacyConduitEntries('codex', execPath, shimPath)[0],
       args: [shimPath, '--verbose'],
       enabled: false,
       startup_timeout_sec: 20,
@@ -808,7 +808,7 @@ describe('repair (D2)', () => {
       env: { ...identity, ELECTRON_RUN_AS_NODE: '1' },
     });
     expect(readCodexConduit(fs.readFileSync(codex, 'utf8'))).toEqual(
-      legacyConduitEntry('codex', execPath, liveShim),
+      legacyConduitEntries('codex', execPath, liveShim)[0],
     );
   });
 
@@ -923,7 +923,7 @@ describe('v0.50 entries (single gate)', () => {
     const s = setup();
     const codex = s.seed('codex', thisBuild(OLD_CODEX_TABLE));
     expect(readCodexConduit(fs.readFileSync(codex, 'utf8'))).toEqual(
-      legacyConduitEntry('codex', execPath, shimPath),
+      legacyConduitEntries('codex', execPath, shimPath)[0],
     );
     const api = createMcpInstall(s.deps);
     expect(statusOf(api.status(null), 'codex').user.state).toBe('installed');
@@ -934,6 +934,20 @@ describe('v0.50 entries (single gate)', () => {
     expect(fs.readFileSync(codex, 'utf8')).toBe(before);
   });
 
+  it('repair upgrades a v0.51-v0.65 user entry (auto with a tool timeout) to approve, once', () => {
+    const s = setup();
+    const codexFile = s.seed(
+      'codex',
+      `a = 1\n\n${thisBuild(OLD_CODEX_TABLE)}tool_timeout_sec = 180\n`,
+    );
+    const api = createMcpInstall(s.deps);
+    expect(api.repair().map((r) => r.cli)).toEqual(['codex']);
+    const codexText = fs.readFileSync(codexFile, 'utf8');
+    expect(codexText).toContain('default_tools_approval_mode = "approve"');
+    expect(readCodexConduit(codexText)).toEqual(conduitEntry('codex', execPath, shimPath));
+    expect(api.repair()).toEqual([]);
+  });
+
   it('repair upgrades a v0.50 user entry of this build to the current shape, once', () => {
     const s = setup();
     const codexFile = s.seed('codex', `a = 1\n\n${thisBuild(OLD_CODEX_TABLE)}`);
@@ -941,6 +955,8 @@ describe('v0.50 entries (single gate)', () => {
     expect(api.repair().map((r) => r.cli)).toEqual(['codex']);
     const codexText = fs.readFileSync(codexFile, 'utf8');
     expect(codexText.startsWith('a = 1\n\n')).toBe(true);
+    expect(codexText).toContain('default_tools_approval_mode = "approve"');
+    expect(codexText).not.toContain('"auto"');
     expect(readCodexConduit(codexText)).toEqual(conduitEntry('codex', execPath, shimPath));
     expect(api.repair()).toEqual([]);
   });

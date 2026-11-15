@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Conduit · answering</title>
+<link rel="stylesheet" href="../../../kit/wireframe.css">
+</head>
+<body class="wf">
+<div class="wf-frame">
+
+<div class="wf-bar">
+  <span class="wf-h3">▢ Conduit</span>
+  <span class="wf-muted">‹ ›</span>
+  <div class="wf-grow" style="display:flex; justify-content:center;">
+    <span class="wf-input" style="width:420px;">Search sessions, agents, files…</span>
+  </div>
+  <span class="wf-btn">Files</span>
+  <span class="wf-btn">Changes <span class="wf-count">6</span></span>
+  <span class="wf-btn">Messages <span class="wf-count">14</span></span>
+  <span class="wf-btn is-primary">Inbox <span class="wf-count">1</span></span>
+  <span class="wf-muted">— ▢ ✕</span>
+</div>
+
+<div class="wf-body" style="grid-template-columns:264px 1fr 340px;">
+
+<!-- wf-locked:sidebar -->
+<div class="wf-region wf-panel wf-pad-s" style="display:flex; flex-direction:column; gap:12px;">
+  <div class="wf-spread"><span class="wf-label">Spaces</span><span class="wf-muted">+ ⋯</span></div>
+  <div class="wf-list">
+    <div class="is-selected wf-spread"><span>▦ All</span><span class="wf-small wf-muted">8 agents</span></div>
+    <div class="wf-spread"><span>C Conduit</span><span class="wf-small wf-muted">main</span></div>
+    <div class="wf-spread"><span>N Nimbus</span><span class="wf-small wf-muted">main</span></div>
+    <div class="wf-spread"><span>No space</span><span class="wf-small wf-muted"></span></div>
+  </div>
+  <div class="wf-spread"><span class="wf-label">Agents · 8 live</span><span class="wf-muted">⌕ + ⋯</span></div>
+  <div class="wf-stack-s">
+    <span class="wf-label">Needs you</span>
+    <div class="wf-spread"><span>Three-process lead <span class="wf-small wf-muted">· Conduit</span></span><span class="wf-small">12m ◉</span></div>
+    <div class="wf-spread" style="padding-left:16px;"><span>app lane</span><span class="wf-small">1m ◉</span></div>
+    <span class="wf-label">Done</span>
+    <div class="wf-spread"><span>Release notes</span><span class="wf-small">3m ◎</span></div>
+    <span class="wf-label">Working</span>
+    <div class="wf-spread"><span>api-server <span class="wf-small wf-muted">· Nimbus</span></span><span class="wf-small">31m ●</span></div>
+    <div class="wf-spread" style="padding-left:16px;"><span>server lane</span><span class="wf-small">8m ●</span></div>
+    <span class="wf-label">Idle</span>
+    <div class="wf-spread"><span>scratch</span><span class="wf-small">1h ○</span></div>
+    <span class="wf-label">Stopped (2) ›</span>
+  </div>
+  <div class="wf-grow"></div>
+  <span class="wf-small">⚙ Settings</span>
+</div>
+<!-- /wf-locked:sidebar -->
+
+<div class="wf-region" style="display:grid; grid-template-rows:auto auto 1fr auto;">
+  <div class="wf-tabs wf-pad-s" style="padding-bottom:0;">
+    <span class="wf-tab">▸ app lane</span>
+    <span class="wf-tab is-active">Answer · app lane ✕</span>
+    <span class="wf-tab">session-store.ts</span>
+  </div>
+  <div class="wf-spread wf-pad-s"><span class="wf-small"><span class="wf-tag is-solid">Answer</span> <b>app lane</b> asks you · Codex · codex-4 · Conduit · lead: Three-process lead</span><span class="wf-small wf-muted">asked 1m ago · it is waiting</span></div>
+  <div class="wf-pad wf-stack" style="max-width:760px;">
+    <div class="wf-stack-s">
+      <span class="wf-label">The question, in app lane’s words</span>
+      <div class="wf-quote wf-stack-s">
+        <span><b>Where should the session list state live?</b></span>
+        <span class="wf-small">I’m wiring the sidebar tree. Two ways work; they differ in who owns the truth.</span>
+      </div>
+    </div>
+    <div class="wf-stack-s">
+      <span class="wf-label">Pick one</span>
+      <div class="wf-box is-selected wf-stack-s"><span><span class="wf-check is-on"></span> <b>A · Main process, diffs over IPC</b></span><span class="wf-small wf-muted wf-quote">One source of truth; matches the three-process split. Slightly more IPC code.</span></div>
+      <div class="wf-box wf-stack-s"><span><span class="wf-check"></span> <b>B · Mirror in a renderer store</b></span><span class="wf-small wf-muted wf-quote">Snappier drag-reorder; two copies to keep in sync after a reconnect.</span></div>
+    </div>
+    <div class="wf-stack-s">
+      <span class="wf-label">Or say it in your own words (optional, sent with your pick)</span>
+      <div class="wf-input" style="min-height:96px;">A, but keep the drag preview local so reorder still feels instant, and send the final order over IPC on drop._</div>
+      <span class="wf-small wf-muted">Dictation goes here while this tab has focus · long pastes arrive whole</span>
+    </div>
+    <div class="wf-stack-s">
+      <span class="wf-label">Context · last lines of app lane</span>
+      <div class="wf-box wf-mono wf-stack-s wf-small">
+        <span>● Read(src/agent-tree.ts)</span>
+        <span>● Read(docs/adr/0007-three-process-split-and-terminal-runtime.md)</span>
+        <span>● ask_user · “Where should the session list state live?” · waiting</span>
+      </div>
+    </div>
+  </div>
+  <div class="wf-stack-s"><hr class="wf-divider"><div class="wf-spread wf-pad-s">
+    <span class="wf-small wf-muted">Your answer goes to app lane’s terminal and shows in the Inbox as a result.</span>
+    <span class="wf-row"><span class="wf-btn is-quiet">Open app lane’s terminal</span><span class="wf-btn">Later</span><span class="wf-btn is-primary">Send answer</span></span>
+  </div></div>
+</div>
+
+<div class="wf-region wf-pad-s" style="display:grid; grid-template-rows:auto auto 1fr auto; gap:6px;">
+  <div class="wf-spread" style="padding:4px 4px 0;"><span class="wf-h3">Inbox</span><span class="wf-small wf-muted">newest first · all spaces ▾</span></div>
+  <div class="wf-tabs wf-small" style="gap:12px; padding:0 4px;"><span class="wf-tab is-active">All 6</span><span class="wf-tab">Needs you 2</span><span class="wf-tab">Problems 0</span><span class="wf-tab">Updates 1</span><span class="wf-tab">Results 3</span></div>
+  <div class="wf-list" style="overflow:hidden;">
+    <div class="is-selected">
+      <div class="wf-stack-s" style="gap:3px;">
+        <div class="wf-spread"><span class="wf-row"><span class="wf-tag is-solid">Answer</span><b class="wf-small">app lane</b></span><span class="wf-small wf-muted" style="white-space:nowrap;">now</span></div>
+        <span class="wf-small">“Session list state: A or B?”</span>
+      <span class="wf-small wf-muted">codex-4 · Conduit · waiting on you</span>
+        <span class="wf-small"><b>Open in a tab ▸</b></span>
+      </div>
+    </div>
+    <div>
+      <div class="wf-stack-s" style="gap:3px;">
+        <div class="wf-spread"><span class="wf-row"><span class="wf-tag is-solid">Approve</span><b class="wf-small">Three-process lead</b></span><span class="wf-small wf-muted" style="white-space:nowrap;">now ●</span></div>
+        <span class="wf-small">Run <span class="wf-mono">npm run e2e:remote -- --full</span></span>
+      <span class="wf-small wf-muted">claude-3 · Conduit · tool call set to Ask</span>
+      </div>
+    </div>
+    <div>
+      <div class="wf-stack-s" style="gap:3px;">
+        <div class="wf-spread"><span class="wf-row"><span class="wf-tag">✓ Result</span><b class="wf-small">api-server</b></span><span class="wf-small wf-muted" style="white-space:nowrap;">14:32</span></div>
+        <span class="wf-small">Timed message sent: “Rebase on main, then rerun the API tests.”</span>
+      <span class="wf-small wf-muted">You scheduled it at 13:10 · codex-6 · Nimbus</span>
+      </div>
+    </div>
+    <div>
+      <div class="wf-stack-s" style="gap:3px;">
+        <div class="wf-spread"><span class="wf-row"><span class="wf-tag">Update</span><b class="wf-small">Conduit v0.65.0</b></span><span class="wf-small wf-muted" style="white-space:nowrap;">14:31</span></div>
+        <span class="wf-small">Ready to install · Relaunch when you choose</span>
+      <span class="wf-small wf-muted">Agents keep running through the relaunch</span>
+      </div>
+    </div>
+    <div>
+      <div class="wf-stack-s" style="gap:3px;">
+        <div class="wf-spread"><span class="wf-row"><span class="wf-tag">✓ Result</span><b class="wf-small">Release notes</b></span><span class="wf-small wf-muted" style="white-space:nowrap;">14:20</span></div>
+        <span class="wf-small">Session finished: “CHANGELOG updated for v0.64.1.”</span>
+      <span class="wf-small wf-muted">Done · not seen yet</span>
+      </div>
+    </div>
+    <div>
+      <div class="wf-stack-s" style="gap:3px;">
+        <div class="wf-spread"><span class="wf-row"><span class="wf-tag">✓ Result</span><b class="wf-small">server lane</b></span><span class="wf-small wf-muted" style="white-space:nowrap;">13:58</span></div>
+        <span class="wf-small">You approved <span class="wf-mono">git push origin server-lane</span></span>
+      <span class="wf-small wf-muted">Ran · exit 0</span>
+      </div>
+    </div>
+  </div>
+  <div class="wf-small wf-muted" style="padding:4px;">After Send: Next in Inbox → Approve · Three-process lead</div>
+</div>
+
+</div>
+
+<div class="wf-status">
+  <span>▭ This computer</span><span>⎇ feat/three-process</span><span>worktree tp-main</span><span>● 8 agents</span>
+  <span class="wf-tag is-solid">2 need you</span><span>v0.65.0 ready</span>
+  <span class="wf-grow"></span><span>Ctrl+Shift+P commands</span>
+</div>
+
+<div class="wf-note" style="right:356px; bottom:96px;">Patterns: <b>Task tab</b> (opens beside app lane’s terminal tab; ✕ or Send closes it) · <b>Inbox panel</b> (the open item is outlined). Nothing covers the terminal: it is one tab to the left.</div>
+
+</div>
+</body>
+</html>

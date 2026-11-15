@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { RequestView } from '../../src/conduit-mcp/request-types';
-import { openRequest, openSessionTerminal } from '../request-open';
+import { closeRequestTab, openRequest, openSessionTerminal } from '../request-open';
 import { REQ_STR } from '../request-strings';
-import { type SessionInfo, sortRequests } from '../request-view-model';
+import { type SessionInfo, sortRequests, typeOf } from '../request-view-model';
 import { useConduitMcp } from '../use-conduit-mcp';
 import { RequestTemplate } from './request-template';
 
@@ -26,16 +26,25 @@ export function useNow(intervalMs = 1000): number {
 export interface RequestTabProps {
   requestId: string;
   sessionName: string;
+  onTitle?: (title: string) => void;
 }
 
-export function RequestTab({ requestId, sessionName }: RequestTabProps) {
+export function RequestTab({ requestId, sessionName, onTitle }: RequestTabProps) {
   const api = useConduitMcp();
+  // Only a request answered here closes its tab: one withdrawn or answered elsewhere keeps its
+  // ended banner so unsent text stays copyable (spec §5).
+  const answeredHere = useRef(false);
   const now = useNow();
   const requests = api.state?.requests ?? null;
   const ordered = soonestOpen(requests?.open ?? []);
   const at = ordered.findIndex((r) => r.id === requestId);
   const r: RequestView | undefined =
     at >= 0 ? ordered[at] : requests?.ended.find((x) => x.id === requestId);
+  // The doc opens before the request is known, with a generic title; this names it once known.
+  const tabTitle = r ? REQ_STR.reqTab.named(REQ_STR.typeWord[typeOf(r)], r.title) : null;
+  useEffect(() => {
+    if (tabTitle !== null) onTitle?.(tabTitle);
+  }, [tabTitle, onTitle]);
 
   if (!r) {
     return (
@@ -57,8 +66,18 @@ export function RequestTab({ requestId, sessionName }: RequestTabProps) {
         mode="tab"
         moreCount={moreCount}
         now={now}
-        onSend={(answer) => api.answerRequest(r.id, answer)}
+        onSend={async (answer) => {
+          const result = await api.answerRequest(r.id, answer);
+          if (result.ok) answeredHere.current = true;
+          return result;
+        }}
         onNext={() => {
+          if (answeredHere.current) {
+            closeRequestTab(r.id);
+            const next = ordered.find((x) => x.id !== r.id);
+            if (next) openRequest(next.id);
+            return;
+          }
           if (after) openRequest(after.id);
         }}
         onOpenAsTab={() => openRequest(r.id, { asTab: true })}

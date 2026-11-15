@@ -221,6 +221,7 @@ function harness(opts: { manualTimers?: boolean; policy?: GlobalPolicy } = {}) {
   const make = () =>
     createMcp({
       ...deps,
+      machineId: 'm-00000000',
       dir,
       endpointPath: ep,
       shim: { execPath: '/rt/shim/node', shimPath: '/rt/shim/conduit-mcp-shim.cjs' },

@@ -114,6 +114,25 @@ function changedLineNumbers(original: string, edited: string): number[] {
   return out;
 }
 
+const lineCount = (text: string) => text.split('\n').length;
+
+function DraftGutter({ count, edited }: { count: number; edited: readonly number[] }) {
+  return (
+    <div className="reqtpl-draft__gutter" aria-hidden="true">
+      {Array.from({ length: count }, (_, i) => i + 1).map((n) => (
+        <span
+          key={n}
+          className={
+            edited.includes(n) ? 'reqtpl-draft__ln reqtpl-draft__ln--edited' : 'reqtpl-draft__ln'
+          }
+        >
+          {n}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 const withText = (answer: AnswerInput, own: string): AnswerInput =>
   own ? { ...answer, text: own } : answer;
 
@@ -337,16 +356,30 @@ export function RequestTemplate(p: RequestTemplateProps): JSX.Element {
           <label className="reqtpl-field__label" htmlFor={editId}>
             {REQ_STR.reqTpl.editedLabel}
           </label>
-          <textarea
-            id={editId}
-            className="reqtpl-edit"
-            value={edited}
-            disabled={ended}
-            onChange={(e) => setDraft(editKey, { pick: [], text: e.target.value })}
-          />
+          <div className="reqtpl-draft">
+            <DraftGutter
+              count={lineCount(edited)}
+              edited={changedLineNumbers(r.draft ?? '', edited)}
+            />
+            {/* Unwrapped and sized to its lines, so each line sits beside its number. */}
+            <textarea
+              id={editId}
+              className="reqtpl-edit"
+              value={edited}
+              rows={lineCount(edited)}
+              wrap="off"
+              disabled={ended}
+              onChange={(e) => setDraft(editKey, { pick: [], text: e.target.value })}
+            />
+          </div>
         </>
       )}
-      {view === 'original' && <pre className="reqtpl-original">{r.draft ?? ''}</pre>}
+      {view === 'original' && (
+        <div className="reqtpl-draft">
+          <DraftGutter count={lineCount(r.draft ?? '')} edited={[]} />
+          <pre className="reqtpl-original">{r.draft ?? ''}</pre>
+        </div>
+      )}
       {view === 'changes' && <ChangesList original={r.draft ?? ''} edited={edited} />}
     </div>
   );

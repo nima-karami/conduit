@@ -3,11 +3,13 @@ import {
   type ControlCallContext,
   type ControlDeps,
   type ControlHandlers,
+  type Fail,
   fail,
   isFail,
   parseKeys,
   type TargetSession,
 } from './control-tools';
+import { remoteTargetRefusal } from './remote-routing';
 import type { ScreenSnapshot } from './screen-verdict';
 import { isValidField, type Reach } from './tool-policy';
 import type { Caller } from './tools';
@@ -61,16 +63,24 @@ export function createScreenToolHandlers(
       hint: `widen ${tool}'s reach in Settings → MCP to act on this session`,
     });
   };
-  const target = (value: unknown, tool: ScreenTool, callerId: string, reach: Reach | undefined) => {
+  const target = (
+    value: unknown,
+    tool: ScreenTool,
+    callerId: string,
+    reach: Reach | undefined,
+  ): TargetSession | Fail => {
     if (typeof value !== 'string' || value.length === 0 || value.length > 128)
       return fail('invalid_args', 'session must be a handle or id of 1–128 chars');
     const all = deps.control.targets();
     const t = all.find((x) => x.handle === value) ?? all.find((x) => x.sessionId === value);
-    if (!t)
+    if (!t) {
+      const remote = remoteTargetRefusal(value);
+      if (remote) return { ok: false, error: remote };
       return fail('unknown_session', `no session "${value}" in list_sessions`, {
         hint: 'use a handle from valid; list_sessions shows the current ones',
         valid: all.filter((x) => inReach(tool, reach, callerId, x) === null).map((x) => x.handle),
       });
+    }
     if (t.sessionId === callerId) return fail('self_target', 'cannot target your own session');
     return inReach(tool, reach, callerId, t) ?? t;
   };

@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Conduit · d2 bars · 4 something wrong</title>
+<link rel="stylesheet" href="../../../kit/wireframe.css">
+</head>
+<body class="wf">
+<div class="wf-frame">
+
+<div class="wf-bar">
+  <span class="wf-h3">▢ Conduit</span>
+  <span class="wf-muted">‹ ›</span>
+  <div class="wf-grow" style="display:flex; justify-content:center;">
+    <span class="wf-input" style="width:420px;">Search sessions, agents, files…</span>
+  </div>
+  <span class="wf-btn">Files</span>
+  <span class="wf-btn"><b>Changes</b> <span class="wf-count">6</span></span>
+  <span class="wf-btn">Messages <span class="wf-count">14</span></span>
+  <span class="wf-btn">Needs you</span>
+  <span class="wf-muted">— ▢ ✕</span>
+</div>
+
+<div class="wf-body" style="grid-template-columns:264px 1fr 340px;">
+
+<!-- wf-locked:sidebar -->
+<div class="wf-region wf-panel wf-pad-s" style="display:flex; flex-direction:column; gap:12px;">
+  <div class="wf-spread"><span class="wf-label">Spaces</span><span class="wf-muted">+ ⋯</span></div>
+  <div class="wf-list">
+    <div class="is-selected wf-spread"><span>▦ All</span><span class="wf-small wf-muted">8 agents</span></div>
+    <div class="wf-spread"><span>C Conduit</span><span class="wf-small wf-muted">main</span></div>
+    <div class="wf-spread"><span>N Nimbus</span><span class="wf-small wf-muted">main</span></div>
+    <div class="wf-spread"><span>No space</span><span class="wf-small wf-muted"></span></div>
+  </div>
+  <div class="wf-spread"><span class="wf-label">Agents · 8 live</span><span class="wf-muted">⌕ + ⋯</span></div>
+  <div class="wf-stack-s">
+    <span class="wf-label">Needs you</span>
+    <div class="wf-spread"><span>Three-process lead <span class="wf-small wf-muted">· Conduit</span></span><span class="wf-small">12m ◉</span></div>
+    <div class="wf-spread" style="padding-left:16px;"><span>app lane</span><span class="wf-small">1m ◉</span></div>
+    <span class="wf-label">Done</span>
+    <div class="wf-spread"><span>Release notes</span><span class="wf-small">3m ◎</span></div>
+    <span class="wf-label">Working</span>
+    <div class="wf-spread"><span>api-server <span class="wf-small wf-muted">· Nimbus</span></span><span class="wf-small">31m ●</span></div>
+    <div class="wf-spread" style="padding-left:16px;"><span>server lane</span><span class="wf-small">8m ●</span></div>
+    <span class="wf-label">Idle</span>
+    <div class="wf-spread"><span>scratch</span><span class="wf-small">1h ○</span></div>
+    <span class="wf-label">Stopped (2) ›</span>
+  </div>
+  <div class="wf-grow"></div>
+  <span class="wf-small">⚙ Settings</span>
+</div>
+<!-- /wf-locked:sidebar -->
+
+<div class="wf-region" style="display:grid; grid-template-rows:auto auto 1fr;">
+  <div class="wf-tabs wf-pad-s" style="padding-bottom:0;"><span class="wf-tab is-active">▸ api-server</span><span class="wf-tab">routes.ts</span></div>
+  <div class="wf-spread wf-pad-s wf-panel">
+    <span class="wf-small"><b>api-server</b> · codex-6 · Codex · ~/projects/nimbus · ⎇ main</span>
+    <span class="wf-row"><span class="wf-btn is-primary" style="padding:2px 8px;">✕ Launch failed ▾</span></span>
+  </div>
+  <div class="wf-pad wf-mono wf-stack-s">
+    <span class="wf-muted">codex · api-server</span>
+    <span class="wf-muted">cwd ~/projects/nimbus</span>
+    <span class="wf-muted">No output: the session didn’t start.</span>
+  </div>
+</div>
+
+<div class="wf-region wf-pad wf-stack">
+  <div class="wf-spread"><span class="wf-h3">Changes</span><span class="wf-small wf-muted">main · ~/projects/nimbus</span></div>
+  <span class="wf-small wf-muted">The working tree is clean</span>
+</div>
+
+</div>
+
+<div class="wf-status">
+  <span>▭ This computer</span><span>⎇ feat/three-process</span><span>worktree tp-main</span><span>● 8 sessions</span>
+  <span class="wf-btn is-primary" style="padding:2px 8px;">⟳ Background service restarted · 7 of 8 terminals back</span><span class="wf-btn" style="padding:2px 8px;">◉ 1 needs you</span>
+  <span class="wf-grow"></span>
+  <span class="wf-btn" style="padding:2px 8px;">↑ Update ready · v0.65.0</span>
+  <span>Ctrl+Shift+P commands</span>
+</div>
+
+<div class="wf-overlay wf-pad wf-stack" style="right:350px; top:128px; width:420px;">
+  <div class="wf-stack-s">
+    <span><span class="wf-tag">Problem</span> <b>api-server didn’t start</b></span>
+    <span>Conduit couldn’t confirm this session started. It may still come up on its own.</span>
+    <span class="wf-small wf-muted">Launched 14:31 with Codex in ~/projects/nimbus, while the background service was restarting.</span>
+  </div>
+  <div class="wf-spread">
+    <span class="wf-btn is-quiet" style="padding:6px 0;">Change launcher…</span>
+    <span class="wf-row"><span class="wf-btn">Discard</span><span class="wf-btn is-primary">Retry launch</span></span>
+  </div>
+</div>
+<span class="wf-small" style="position:absolute; right:420px; top:114px;">▲</span>
+<div class="wf-note" style="left:300px; top:420px;">No banners: each problem is a bar item where it lives. Session problem → that session’s bar (✕ Launch failed → this pop-up). App problem → status bar “⟳ Background service restarted”; its pop-up has Retry now · Stop all sessions and continue · Open log, and it clears by itself. A terminal still reconnecting shows “◌ Reconnecting — input paused” in its own session bar.</div>
+
+</div>
+</body>
+</html>

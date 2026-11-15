@@ -17,7 +17,7 @@ import {
   deepEqualConfig,
   type EntryClass,
   entryTargets,
-  legacyConduitEntry,
+  legacyConduitEntries,
   retargetEntry,
 } from './install-entries';
 import {
@@ -128,7 +128,7 @@ export function createMcpInstall(deps: McpInstallDeps): McpInstall {
       cli,
       loaded.entry,
       expected(cli),
-      legacyConduitEntry(cli, deps.execPath, deps.shimPath),
+      legacyConduitEntries(cli, deps.execPath, deps.shimPath),
     );
 
   function parse(target: ConfigTarget, read: ConfigRead): Loaded {

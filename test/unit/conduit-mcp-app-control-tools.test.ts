@@ -216,6 +216,13 @@ async function budgetIntact(app: AppControlHandlers, tool: 'act' | 'show') {
 }
 
 describe('targets and reach', () => {
+  it('a target on another machine is peer_unsupported, not unknown_session', async () => {
+    const app = build(harness());
+    const { ctx } = context({ reach: 'any' });
+    const r = await app.prepareFocusSession(caller(), { session: 'codex-1@m-0123abcd' }, ctx);
+    expect(code(r)).toBe('peer_unsupported');
+  });
+
   it('target by handle, then id; unlisted → unknown_session, token refunded', async () => {
     const h = harness();
     const app = build(h);
