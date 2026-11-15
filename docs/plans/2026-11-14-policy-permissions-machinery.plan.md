@@ -505,6 +505,7 @@ Failing tests:
 **Claims (serial lane):** `src/conduit-mcp/host.ts`, `src/conduit-mcp/tool-policy.ts`, `src/conduit-mcp/ui-types.ts`, `src/protocol.ts`, `electron/main.ts`, `server/services.ts`, `src/contracts/session-identity.ts`, `src/session-manager.ts`, `server/domain/index.ts`, `webview/use-conduit-mcp.ts`
 *T2.3 ruling (2026-11-15):* `src/contracts/server-ports.ts` joins T2.3, but only to drop `'setMcpToolPolicy'` from `SessionStorePort`.
 *T2.3 ruling, call-flow seam (2026-11-15):* `call-flow.ts` and `conduit-mcp-call-flow.test.ts` join T2.3. `ControlCall.policy` becomes `decision: PolicyDecision`. `source: PolicySource` stays for the card and comes from `decision.reason.point.kind`: session→session, cli→cli, otherwise global. runControl maps allow→run, ask→card, deny→`toolDisabled`. `deps.resolve` becomes `deps.stillVisible(sessionId, tool)`, which reads `visibleTools`, pure, never `decide`. `deps.setSessionPolicy` becomes `deps.grantAlways(sessionId, tool)`, which calls `createGrant({who:'session', on:'anywhere', for:'session-end'}, principal, tool, emptyTarget, null)`. An approved ask runs on its original decision.
+*T2.3 ruling, result union (2026-11-15):* `mcp:toolPolicyResult`'s error union gains `'read-only' | 'scoped'`, with the same message shape. T2.4 shows them as a failed save.
 
 #### Task 2.1: migration and projection
 **Files:** create `policy-migration.ts`, `policy-projection.ts`; tests `test/unit/policy-migration.test.ts`, `test/unit/policy-projection.test.ts`.
