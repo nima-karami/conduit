@@ -1082,6 +1082,17 @@ SCRIPT_CANDIDATES: 2
   `messaging: 'unavailable'`, `messageable: false`. Agent-facing `list_sessions` still lists
   handles only. Remote `wait_sessions` targets handles only in the MVP; `net-monitor` waits on a
   fake MCP agent, not the echo session.
+- **Slice 7 T7.1–T7.3 merged** (035d3495, 784d45f3). CI run 43747705777: verify green;
+  `net-monitor`, `net-messaging`, `net-pairing` pass remotely. As built:
+  - `NetworkPort.peerCapabilitiesOf` returns the peer's record of the link (what it lets me do);
+    remote `wait_sessions` requires its `monitor`.
+  - Residual: the agent-facing remote directory hides a peer's rows when that peer has
+    `messaging` off, so a monitor-only link can't resolve `wait_sessions` targets. Default own
+    links have both on; revisit with CON-28.
+  - Tier 3 still owes the `windowsPty` check from a Windows peer.
+- **T7.4 ruling:** remote attachments are capped at 10 MiB decoded per message
+  (`MAX_REMOTE_ATTACHMENT_BYTES`) so a `msg` frame fits the 16 MiB frame cap. The outbox holds
+  blob references, read at flush; a blob gone at flush marks the recipients `undelivered`.
 - **Lanes are Conduit sessions** (`open_session`: codex with gpt-6.1-terra, or cursor-agent with
   composer-2.5). codex-6 works in `/home/namemenima/projects/.wt/conduit/CON-27-s6net`. Remove
   each lane worktree once its last branch merges, because /tmp is a shared quota.
