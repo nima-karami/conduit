@@ -37,7 +37,8 @@ import {
   type ToolName,
   withPolicyPatch,
 } from '../../src/conduit-mcp/tool-policy';
-import { toolError } from '../../src/conduit-mcp/types';
+import { RATE_LIMIT_PER_MIN } from '../../src/conduit-mcp/tools';
+import { type MessageRecord, THREAD_AGENT_LIMIT, toolError } from '../../src/conduit-mcp/types';
 import type { McpHostDeps, NeedsYouFact, TokenStorePort } from '../../src/contracts/server-ports';
 import type { ServerEvents } from '../../src/contracts/server-protocol';
 import type {
@@ -5184,5 +5185,143 @@ describe('createConduitMcpHost — stuck screens (CON-151)', () => {
     expect((await p).body).toMatchObject({
       fired: [{ session: 'codex-1', condition: 'needs_you' }],
     });
+  });
+});
+
+describe('createConduitMcpHost — inbound from another machine', () => {
+  const inbound = (over: Partial<MessageRecord> = {}): MessageRecord & { origin: string } => ({
+    messageId: 'm_in1',
+    threadId: 't_in1',
+    from: 'claude-3@m-0123abcd',
+    to: ['fake-2'],
+    subject: '',
+    kind: 'inform',
+    priority: 'normal',
+    sentAt: new Date(0).toISOString(),
+    body: 'hello from the other machine',
+    attachments: [],
+    ...over,
+    origin: 'm-0123abcd',
+  });
+  const delivered = (handle: string) => [{ handle, status: 'delivered', reason: null }];
+
+  it('a messageable local session gets it, and read_inbox frames it as from another machine', async () => {
+    const h = harness();
+    await h.host.start();
+    await launch(h, 's1');
+    const cb = await ready(h, 's2');
+    settle(h);
+    const port = h.host.networkPort();
+    expect(await port.deliverInbound(inbound(), [], false)).toEqual(delivered('fake-2'));
+    expect(port.hasMessage('m_in1')).toBe(true);
+    const inbox = await cb.call('read_inbox');
+    expect(inbox.body.messages).toHaveLength(1);
+    expect(inbox.body.messages[0]).toMatchObject({
+      message_id: 'm_in1',
+      from: 'claude-3@m-0123abcd',
+    });
+    expect(inbox.body.messages[0].body).toContain(
+      'session claude-3@m-0123abcd on another machine (another agent)',
+    );
+  });
+
+  it('an unknown local handle is refused as unknown_session, and the others still get it', async () => {
+    const h = harness();
+    await h.host.start();
+    await launch(h, 's1');
+    await ready(h, 's2');
+    settle(h);
+    expect(
+      await h.host.networkPort().deliverInbound(inbound({ to: ['fake-2', 'nobody'] }), [], false),
+    ).toEqual([
+      { handle: 'fake-2', status: 'delivered', reason: null },
+      { handle: 'nobody', status: 'refused', reason: 'unknown_session' },
+    ]);
+  });
+
+  it('messaging off → every recipient refused messaging_off, nothing stored', async () => {
+    let on = true;
+    const h = harness({ messagingOn: () => on });
+    await h.host.start();
+    await launch(h, 's1');
+    await ready(h, 's2');
+    settle(h);
+    const port = h.host.networkPort();
+    on = false;
+    expect(await port.deliverInbound(inbound(), [], false)).toEqual([
+      { handle: 'fake-2', status: 'refused', reason: 'messaging_off' },
+    ]);
+    expect(port.hasMessage('m_in1')).toBe(false);
+  });
+
+  it('a paused thread → every recipient refused thread_limit', async () => {
+    const h = harness();
+    await h.host.start();
+    await launch(h, 's1');
+    await ready(h, 's2');
+    settle(h);
+    const port = h.host.networkPort();
+    for (let i = 0; i < THREAD_AGENT_LIMIT; i++) {
+      expect(
+        await port.deliverInbound(inbound({ messageId: `m_t${i}`, threadId: 't_busy' }), [], false),
+      ).toEqual(delivered('fake-2'));
+    }
+    expect(
+      await port.deliverInbound(inbound({ messageId: 'm_over', threadId: 't_busy' }), [], false),
+    ).toEqual([{ handle: 'fake-2', status: 'refused', reason: 'thread_limit' }]);
+  });
+
+  it('the 61st message from one remote handle in a minute → rate_limited, and a minute later it is accepted', async () => {
+    const h = harness();
+    await h.host.start();
+    await launch(h, 's1');
+    await ready(h, 's2');
+    settle(h);
+    const port = h.host.networkPort();
+    for (let i = 0; i < RATE_LIMIT_PER_MIN; i++) {
+      expect(
+        await port.deliverInbound(
+          inbound({ messageId: `m_r${i}`, threadId: `t_r${i}` }),
+          [],
+          false,
+        ),
+      ).toEqual(delivered('fake-2'));
+    }
+    expect(
+      await port.deliverInbound(inbound({ messageId: 'm_over', threadId: 't_over' }), [], false),
+    ).toEqual([{ handle: 'fake-2', status: 'refused', reason: 'rate_limited' }]);
+    h.clock.t += 60_000;
+    expect(
+      await port.deliverInbound(inbound({ messageId: 'm_later', threadId: 't_later' }), [], false),
+    ).toEqual(delivered('fake-2'));
+  });
+
+  it('the same message id twice is acked again without a second copy; hasMessage is true after the first', async () => {
+    const h = harness();
+    await h.host.start();
+    await launch(h, 's1');
+    const cb = await ready(h, 's2');
+    settle(h);
+    const port = h.host.networkPort();
+    expect(await port.deliverInbound(inbound(), [], false)).toEqual(delivered('fake-2'));
+    expect(port.hasMessage('m_in1')).toBe(true);
+    expect(await port.deliverInbound(inbound(), [], false)).toEqual(delivered('fake-2'));
+    expect((await cb.call('read_inbox')).body.messages).toHaveLength(1);
+  });
+
+  it('onLocalStatus fires once for the message when the recipient reads it', async () => {
+    const h = harness();
+    await h.host.start();
+    await launch(h, 's1');
+    const cb = await ready(h, 's2');
+    settle(h);
+    const port = h.host.networkPort();
+    const seen: Array<[string, string, string, string]> = [];
+    port.onLocalStatus((id, handle, status, origin) => seen.push([id, handle, status, origin]));
+    await port.deliverInbound(inbound(), [], false);
+    await cb.call('read_inbox');
+    expect(seen.filter((s) => s[2] === 'read')).toEqual([
+      ['m_in1', 'fake-2', 'read', 'm-0123abcd'],
+    ]);
   });
 });

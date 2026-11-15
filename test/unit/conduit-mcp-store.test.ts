@@ -410,6 +410,50 @@ describe('message origin and has()', () => {
   });
 });
 
+describe('status change feed', () => {
+  it('setStatus reports the recipient change to a listener; a plain listener still fires', async () => {
+    const { store } = await loaded();
+    const a = msg({ to: ['codex-2'] });
+    await store.append(a, []);
+    const changes: unknown[] = [];
+    let plain = 0;
+    store.onChange((c) => changes.push(c));
+    store.onChange(() => {
+      plain += 1;
+    });
+    await store.setStatus(a.messageId, 'codex-2', 'read');
+    expect(changes).toEqual([{ messageId: a.messageId, handle: 'codex-2', status: 'read' }]);
+    expect(plain).toBe(1);
+  });
+
+  it('a status that changes nothing reports nothing', async () => {
+    const { store } = await loaded();
+    const a = msg({ to: ['codex-2'] });
+    await store.append(a, []);
+    await store.setStatus(a.messageId, 'codex-2', 'read');
+    let n = 0;
+    store.onChange(() => {
+      n += 1;
+    });
+    await store.setStatus(a.messageId, 'codex-2', 'read');
+    expect(n).toBe(0);
+  });
+
+  it('a per-recipient expired status is accepted, is not unread, and survives reload', async () => {
+    const { store, m } = await loaded();
+    const a = msg({ to: ['codex-2'] });
+    await store.append(a, []);
+    expect(await store.setStatus(a.messageId, 'codex-2', 'expired')).toEqual({
+      ok: true,
+      value: undefined,
+    });
+    expect(store.pending('codex-2')).toEqual([]);
+    const fresh = createMessageStore(m.io);
+    await fresh.load();
+    expect(fresh.get(a.messageId)?.recipients['codex-2'].status).toBe('expired');
+  });
+});
+
 describe('createFsStoreIo', () => {
   it('round-trips the log and blobs through a store', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'conduit-mcp-store-'));

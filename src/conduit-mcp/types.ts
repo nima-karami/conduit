@@ -124,6 +124,8 @@ export interface MessageRecord {
   requestId?: string;
   /** The origin machine id when the message arrived over a link; absent means local. */
   origin?: string;
+  /** Set when a message from `you` on an own-linked machine whose link has drive on is framed as from the human, plan decision 12. */
+  originHuman?: true;
 }
 export interface RecipientState {
   status: RecipientStatus;
@@ -142,7 +144,7 @@ export type StoreLogRecord =
       t: 'rcpt';
       messageId: string;
       handle: Handle;
-      status: 'noticed' | 'read' | 'undelivered';
+      status: 'noticed' | 'read' | 'undelivered' | 'expired';
       at: string;
     }
   | { v: 1; t: 'allow'; threadId: string; at: string }
@@ -205,7 +207,11 @@ export interface ListSessionsOutput {
 export interface SendMessageOutput {
   message_id: string;
   thread_id: string;
-  recipients: Array<{ handle: Handle; status: 'queued' | 'refused'; reason?: ToolErrorCode }>;
+  recipients: Array<{
+    handle: Handle;
+    status: 'queued' | 'refused';
+    reason?: ToolErrorCode | 'capability_off';
+  }>;
 }
 export interface InboxMessageOut {
   message_id: string;

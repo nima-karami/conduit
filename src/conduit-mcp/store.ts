@@ -39,7 +39,13 @@ export interface RetentionResult {
   tombstoned: number;
   blobsDeleted: number;
 }
-type RcptStatus = 'noticed' | 'read' | 'undelivered';
+type RcptStatus = 'noticed' | 'read' | 'undelivered' | 'expired';
+/** What a recipient-status record changed; sent to listeners that take the argument. */
+interface StoreChange {
+  messageId: string;
+  handle: Handle;
+  status: RcptStatus;
+}
 type BlobInput = ReadonlyArray<{ sha256: string; data: Uint8Array }>;
 export interface MessageStore {
   stop(): Promise<void>;
@@ -63,7 +69,7 @@ export interface MessageStore {
   agentCountSinceHuman(threadId: string): number;
   readBlob(sha256: string): Promise<Uint8Array | undefined>;
   enforceRetention(now: Date): Promise<Result<RetentionResult>>;
-  onChange(cb: () => void): () => void;
+  onChange(cb: (change?: StoreChange) => void): () => void;
 }
 export const RETENTION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -112,6 +118,11 @@ function nextRecipient(
 ): RecipientState | undefined {
   if (cur.status === 'read' || cur.status === 'expired') return undefined;
   if (status === 'read') return { ...cur, status: 'read', updatedAt: at };
+  // Expiry is per recipient for a remote one whose link never acked (plan T6.3); not a sender-side undo.
+  if (status === 'expired') {
+    if (cur.status === 'undelivered') return undefined;
+    return { ...cur, status: 'expired', updatedAt: at };
+  }
   if (status === 'noticed') {
     if (cur.status === 'undelivered') return undefined;
     return { status: 'noticed', noticeCount: cur.noticeCount + 1, updatedAt: at };
@@ -225,7 +236,8 @@ function recipientRecords(m: StoredMessage): StoreLogRecord[] {
   for (const [handle, r] of Object.entries(m.recipients)) {
     const base = { v: 1, t: 'rcpt', messageId: m.messageId, handle, at: r.updatedAt } as const;
     for (let i = 0; i < r.noticeCount; i++) out.push({ ...base, status: 'noticed' });
-    if (r.status === 'read' || r.status === 'undelivered') out.push({ ...base, status: r.status });
+    if (r.status === 'read' || r.status === 'undelivered' || r.status === 'expired')
+      out.push({ ...base, status: r.status });
   }
   return out;
 }
@@ -301,7 +313,7 @@ export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): M
   let state = emptyState();
   let isAvailable = false;
   let refusedNewerVersion = false;
-  const listeners = new Set<() => void>();
+  const listeners = new Set<(change?: StoreChange) => void>();
   let chain: Promise<unknown> = Promise.resolve();
   let stopped = false;
 
@@ -319,8 +331,8 @@ export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): M
     return stopped ? Promise.resolve(unavailable('store stopped')) : enqueueRaw(fn);
   }
 
-  const emit = () => {
-    for (const cb of listeners) cb();
+  const emit = (change?: StoreChange) => {
+    for (const cb of listeners) cb(change);
   };
 
   async function write(rec: StoreLogRecord): Promise<Result<void>> {
@@ -330,7 +342,11 @@ export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): M
       return unavailable(e);
     }
     applyRecord(state, rec);
-    emit();
+    emit(
+      rec.t === 'rcpt'
+        ? { messageId: rec.messageId, handle: rec.handle, status: rec.status }
+        : undefined,
+    );
     return OK;
   }
 

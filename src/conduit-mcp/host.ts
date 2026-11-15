@@ -9,12 +9,14 @@ import {
 } from '../claude-hook-settings';
 import { readUserStatusLine } from '../claude-user-status-line';
 import { detectStuckScreen, type StuckScreen } from '../cli-stuck-screens';
+import type { WireRecipientOutcome } from '../contracts/link-protocol';
 import type { DraftPort, LaunchPort, McpHostDeps } from '../contracts/server-ports';
 import type { CliBindingRecord } from '../contracts/session-identity';
 import type { LaunchIds } from '../contracts/terminal-runtime';
 import { inputBoxTop } from '../input-box-rows';
 import type { HostPlatform } from '../lsp-binary';
 import { mcpLaunchWiring, mcpServerCommand } from '../mcp-launch';
+import { parseAddress } from '../network/addresses';
 import type { HostToWebview, WebviewToHost } from '../protocol';
 import type { SubmitOutcome } from '../pty-writer';
 import { readCappedBytes } from '../read-capped';
@@ -77,7 +79,7 @@ import {
 } from './notice-gate';
 import { composeUnreadBanner } from './notice-text';
 import { type AttentionRaise, bannerCandidates, createNotifier, type Notifier } from './notifier';
-import type { McpNetworkPort } from './remote-routing';
+import type { McpNetworkPort, RemoteRecipientOutcome, RemoteResolution } from './remote-routing';
 import { createRequestsIo } from './request-file-fs';
 import { createRequestNotices } from './request-notices';
 import { createRequestService, type RequestService } from './request-service';
@@ -108,7 +110,15 @@ import {
   type ToolName,
 } from './tool-policy';
 import { CONDUIT_INSTRUCTIONS, toolSchemas } from './tool-schemas';
-import { type Caller, createToolHandlers, type DirectoryEntry, toToolCallResult } from './tools';
+import {
+  attachmentRecords,
+  type Caller,
+  createToolHandlers,
+  type DirectoryEntry,
+  RATE_LIMIT_PER_MIN,
+  RATE_WINDOW_MS,
+  toToolCallResult,
+} from './tools';
 import {
   createTypedLineTracker,
   DETECT_GRACE_MS,
@@ -607,21 +617,135 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     }));
 
   const newId = (prefix: 'm' | 't') => `${prefix}_${base32(randomBytes(10))}`;
+  // Without a network no machine name resolves; saying so beats treating the target as local.
+  const localResolve = (target: string): RemoteResolution =>
+    target.includes('@')
+      ? { kind: 'unknown', hint: 'no linked machines' }
+      : { kind: 'local', handle: target };
+  const storedFollowUp = (msg: MessageRecord) => {
+    if (msg.from === HUMAN_HANDLE) dispatch({ t: 'thread-reset', threadId: msg.threadId });
+    scheduleBroadcast();
+  };
+  const threadLimitHit = (threadId: string, by: string) => {
+    dispatch({ t: 'thread-limit', threadId, handle: by, at: new Date(now()).toISOString() });
+  };
+
+  // Rate and in-flight dedupe are per sending handle and per message id. A resend of a stored id
+  // acks without a second append (plan decision 8), and one that races its first copy waits for it.
+  const inboundSends = new Map<string, number[]>();
+  const inboundInFlight = new Map<string, Promise<WireRecipientOutcome[]>>();
+  const refuseAll = (
+    to: string[],
+    reason: NonNullable<WireRecipientOutcome['reason']>,
+  ): WireRecipientOutcome[] => to.map((handle) => ({ handle, status: 'refused', reason }));
+  const storeInbound = async (
+    msg: MessageRecord & { origin: string },
+    blobs: { name: string; mime: string; bytes: Buffer }[],
+    framedAsHuman: boolean,
+  ): Promise<WireRecipientOutcome[]> => {
+    const t = now();
+    const sends = (inboundSends.get(msg.from) ?? []).filter((x) => t - x < RATE_WINDOW_MS);
+    inboundSends.set(msg.from, sends);
+    if (store.agentCountSinceHuman(msg.threadId) >= THREAD_AGENT_LIMIT) {
+      threadLimitHit(msg.threadId, msg.from);
+      return refuseAll(msg.to, 'thread_limit');
+    }
+    if (sends.length >= RATE_LIMIT_PER_MIN) return refuseAll(msg.to, 'rate_limited');
+    const byHandle = new Map(directory().map((e) => [e.handle, e]));
+    const outcomes: WireRecipientOutcome[] = [];
+    const deliveredTo = new Set<string>();
+    for (const to of msg.to) {
+      const parsed = parseAddress(to);
+      const entry = parsed === null ? undefined : byHandle.get(parsed.handle);
+      if (parsed === null || entry === undefined) {
+        outcomes.push({ handle: to, status: 'refused', reason: 'unknown_session' });
+      } else if (entry.messaging === 'unavailable' && !entry.connectable) {
+        outcomes.push({ handle: to, status: 'refused', reason: 'not_messageable' });
+      } else {
+        deliveredTo.add(parsed.handle);
+        outcomes.push({ handle: to, status: 'delivered', reason: null });
+      }
+    }
+    if (deliveredTo.size === 0) return outcomes;
+    // The sender's attachment metadata is not trusted: the hashes are taken from the bytes here.
+    const written = attachmentRecords(
+      blobs.map((b) => ({
+        name: b.name,
+        mime: b.mime,
+        data: b.bytes,
+        sha256: createHash('sha256').update(b.bytes).digest('hex'),
+      })),
+    );
+    // requestId is dropped: a remote message must not answer a local request.
+    const record: MessageRecord = {
+      messageId: msg.messageId,
+      threadId: msg.threadId,
+      from: msg.from,
+      to: [...deliveredTo],
+      subject: msg.subject,
+      kind: msg.kind,
+      priority: msg.priority,
+      sentAt: msg.sentAt,
+      body: msg.body,
+      attachments: written.attachments,
+      origin: msg.origin,
+    };
+    if (framedAsHuman) record.originHuman = true;
+    const appended = await store.append(record, written.blobs);
+    if (!appended.ok) {
+      deps.log.warn('conduit-mcp', 'inbound message not stored', {
+        messageId: msg.messageId,
+        code: appended.error.code,
+      });
+      // Rejecting leaves the sender's copy unacked, so it is resent rather than marked refused.
+      throw new Error(appended.error.message);
+    }
+    sends.push(t);
+    storedFollowUp(record);
+    return outcomes;
+  };
+  const deliverInbound = (
+    msg: MessageRecord & { origin: string },
+    blobs: { name: string; mime: string; bytes: Buffer }[],
+    framedAsHuman: boolean,
+  ): Promise<WireRecipientOutcome[]> => {
+    if (!deps.domain.messagingOn()) return Promise.resolve(refuseAll(msg.to, 'messaging_off'));
+    if (store.has(msg.messageId)) {
+      return Promise.resolve(
+        msg.to.map(
+          (handle): WireRecipientOutcome => ({ handle, status: 'delivered', reason: null }),
+        ),
+      );
+    }
+    const inFlight = inboundInFlight.get(msg.messageId);
+    if (inFlight !== undefined) return inFlight;
+    const run = storeInbound(msg, blobs, framedAsHuman).finally(() => {
+      inboundInFlight.delete(msg.messageId);
+    });
+    inboundInFlight.set(msg.messageId, run);
+    return run;
+  };
+
   const tools = createToolHandlers({
     store,
     directory,
     remote: () => deps.network?.remoteEntries() ?? [],
+    resolve: (t) => deps.network?.resolve(t) ?? localResolve(t),
+    enqueueRemote: (msg, entries) =>
+      deps.network?.enqueue(msg, entries) ??
+      entries.map(
+        (e): RemoteRecipientOutcome => ({
+          address: e.address,
+          status: 'refused',
+          reason: 'peer_unreachable',
+        }),
+      ),
     messagingOn: () => deps.domain.messagingOn(),
     now: () => new Date(now()),
     newId,
     snapshot: (sender, p) => snapshotAttachment(sender, p),
-    onStored: (msg) => {
-      if (msg.from === HUMAN_HANDLE) dispatch({ t: 'thread-reset', threadId: msg.threadId });
-      scheduleBroadcast();
-    },
-    onThreadLimit: (threadId, by) => {
-      dispatch({ t: 'thread-limit', threadId, handle: by, at: new Date(now()).toISOString() });
-    },
+    onStored: storedFollowUp,
+    onThreadLimit: threadLimitHit,
     warn: (message, data) => deps.log.warn('conduit-mcp', message, data),
     humanPresence: () => requestService.presence().state,
   });
@@ -2485,6 +2609,27 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     networkPort: (): McpNetworkPort => ({
       localDirectory: () => directory(),
+      hasMessage: (id) => store.has(id),
+      deliverInbound,
+      setRemoteStatus: async (messageId, address, status) => {
+        // 'queued' is the state a remote recipient starts in, so there is nothing to record.
+        if (status === 'queued') return;
+        const r = await store.setStatus(messageId, address, status);
+        if (!r.ok)
+          deps.log.warn('conduit-mcp', 'remote status not stored', {
+            messageId,
+            code: r.error.code,
+          });
+      },
+      // The store reports which recipient moved; only origin records are of interest here.
+      onLocalStatus: (listener) =>
+        store.onChange((change) => {
+          if (change === undefined) return;
+          if (change.status !== 'noticed' && change.status !== 'read') return;
+          const origin = store.get(change.messageId)?.origin;
+          if (origin === undefined) return;
+          listener(change.messageId, change.handle, change.status, origin);
+        }),
       youUnread: () => uiState().youUnread,
       ownerPresence: () => requestService.presence().state,
       requestsSummary: () =>
