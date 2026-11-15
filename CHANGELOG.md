@@ -6,6 +6,9 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- A session whose folder is a whole drive (like `C:\`) or `/` now shows change markers and diffs for its files.
+
 ## [0.65.0] — 2026-11-15
 
 ### Added
