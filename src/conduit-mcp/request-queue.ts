@@ -1,7 +1,13 @@
 // Node-free: the renderer may import this. Clock and timers are injected so the
 // lifecycle is testable without real time.
 import { type CreateInput, contentKeyOf, validateAnswer } from './request-args';
-import type { AnsweredBy, RequestAnswerResult, RequestRecord, RequestView } from './request-types';
+import {
+  type AnsweredBy,
+  isVisibleRequest,
+  type RequestAnswerResult,
+  type RequestRecord,
+  type RequestView,
+} from './request-types';
 import { type Handle, type ToolError, toolError } from './types';
 
 export const CAP_OPEN_PER_REQUESTER = 5;
@@ -54,6 +60,12 @@ export interface RequestQueue {
       | 'priority'
     >,
   ): RequestRecord;
+  createBound(
+    stamp: Stamp,
+    fields: Pick<RequestRecord, 'title' | 'body' | 'permission'>,
+    expiresAt: string,
+  ): RequestRecord;
+  answerLate(id: string, grantId: string): RequestAnswerResult;
   answer(id: string, input: unknown, by: AnsweredBy): RequestAnswerResult;
   withdraw(id: string, by: 'requester' | 'conduit', reason: string | null): RequestRecord | null;
   resolve(id: string): RequestRecord | null;
@@ -68,7 +80,7 @@ export interface RequestQueue {
   dispose(): void;
 }
 
-const clone = (r: RequestRecord): RequestRecord => JSON.parse(JSON.stringify(r));
+const clone = <T>(r: T): T => JSON.parse(JSON.stringify(r));
 
 const isCountable = (r: RequestRecord): boolean => r.source === 'agent' || r.source === 'message';
 
@@ -79,11 +91,8 @@ export function createRequestQueue(deps: QueueDeps): RequestQueue {
   let store = new Map<string, RequestRecord>();
   const timers = new Map<string, unknown>();
 
-  const view = (r: RequestRecord): RequestView => ({
-    ...clone(r),
-    waiting: false,
-    waitingUntil: null,
-  });
+  const view = (r: RequestRecord): RequestView | null =>
+    isVisibleRequest(r) ? { ...clone(r), waiting: false, waitingUntil: null } : null;
 
   const disarm = (id: string): void => {
     if (!timers.has(id)) return;
@@ -278,6 +287,7 @@ export function createRequestQueue(deps: QueueDeps): RequestQueue {
         withdrawReason: null,
         supersededBy: null,
         deliveredAt: null,
+        permission: null,
       });
 
       if (replaced !== null) {
@@ -319,9 +329,65 @@ export function createRequestQueue(deps: QueueDeps): RequestQueue {
         withdrawReason: null,
         supersededBy: null,
         deliveredAt: null,
+        permission: null,
       });
       deps.onChanged();
       return created;
+    },
+
+    createBound(stamp, fields, expiresAt) {
+      const created = insert({
+        id: deps.newId(),
+        origin: deps.machineId,
+        source: 'policy',
+        kind: 'permission',
+        requester: stamp.requester,
+        session: stamp.session,
+        space: stamp.space,
+        lead: stamp.lead,
+        machine: deps.machineId,
+        title: fields.title,
+        body: fields.body,
+        options: [],
+        multi: false,
+        draft: null,
+        thread: null,
+        messageId: null,
+        blocked: null,
+        priority: 'normal',
+        createdAt: iso(deps.now()),
+        expiresAt,
+        default: null,
+        contentKey: '',
+        state: 'open',
+        endedAt: null,
+        answer: null,
+        withdrawnBy: null,
+        withdrawReason: null,
+        supersededBy: null,
+        deliveredAt: null,
+        permission: fields.permission,
+      });
+      deps.onChanged();
+      return created;
+    },
+
+    answerLate(id, grantId) {
+      const r = store.get(id);
+      if (r === undefined) {
+        return { ok: false, reason: 'not_found', message: `no request ${id}`, request: null };
+      }
+      if (r.permission === null || r.state !== 'expired' || r.permission.lateGrant !== null) {
+        return {
+          ok: false,
+          reason: 'not_answerable',
+          message: `request ${id} is not an expired permission without a late grant`,
+          request: view(r),
+        };
+      }
+      r.permission.lateGrant = grantId;
+      deps.onChanged();
+      return { ok: true, request: view(r) };
     },
 
     answer(id, input, by) {

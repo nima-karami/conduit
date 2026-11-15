@@ -45,6 +45,7 @@ function rv(p: Partial<RequestView> & { id: string }): RequestView {
     withdrawReason: null,
     supersededBy: null,
     deliveredAt: null,
+    permission: null,
     waiting: false,
     waitingUntil: null,
     ...p,

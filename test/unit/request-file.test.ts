@@ -50,6 +50,7 @@ const record = (over: Partial<RequestRecord> = {}): RequestRecord => ({
   withdrawReason: null,
   supersededBy: null,
   deliveredAt: null,
+  permission: null,
   ...over,
 });
 
@@ -151,6 +152,101 @@ describe('request file', () => {
     expect(parsed.kind).toBe('ok');
     expect(parsed.file.requests).toEqual([good, good2]);
     expect(parsed.dropped).toBe(5);
+  });
+
+  it('permission record round-trips the file', () => {
+    const answeredPermission = record({
+      id: 'r_000000000005',
+      source: 'policy',
+      kind: 'permission',
+      requester: 'alpha',
+      lead: null,
+      options: [],
+      blocked: null,
+      default: null,
+      expiresAt: '2026-11-14T13:00:00.000Z',
+      state: 'answered',
+      endedAt: '2026-11-14T11:20:00.000Z',
+      answer: {
+        outcome: 'allowed',
+        grant: { who: 'session', on: 'target', for: '1h' },
+        answeredBy: { kind: 'you', windowId: 2 },
+        at: '2026-11-14T11:20:00.000Z',
+      },
+      permission: {
+        tool: 'send_message',
+        why: 'reach s2',
+        targets: [{ sessionId: 's2', path: null, folder: null, projectId: 'p1' }],
+        lateGrant: null,
+      },
+    });
+    const expiredPermission = record({
+      ...answeredPermission,
+      id: 'r_000000000006',
+      state: 'expired',
+      endedAt: '2026-11-14T13:00:00.000Z',
+      answer: null,
+      permission: {
+        tool: 'open_session',
+        why: 'start a worker',
+        targets: [{ sessionId: null, path: '/work/a', folder: '/work', projectId: null }],
+        lateGrant: 'g_000000000001',
+      },
+    });
+    const file: RequestsFile = {
+      version: 1,
+      requests: [answeredPermission, expiredPermission],
+      presence: EMPTY.presence,
+    };
+    const parsed = parseRequestsFile(serializeRequestsFile(file), NOW);
+    expect(parsed.kind).toBe('ok');
+    expect(parsed.dropped).toBe(0);
+    expect(parsed.file).toEqual(file);
+  });
+
+  it('a permission with a malformed tool is dropped on read', () => {
+    const bad: Record<string, unknown> = {
+      ...record({ source: 'policy', kind: 'permission' }),
+      permission: { tool: 'not_a_tool', why: 'x', targets: [], lateGrant: null },
+    };
+    const parsed = parseRequestsFile(
+      JSON.stringify({ version: 1, requests: [bad], presence: EMPTY.presence }),
+      NOW,
+    );
+    expect(parsed.file.requests).toEqual([]);
+    expect(parsed.dropped).toBe(1);
+  });
+
+  it('kind permission must carry a permission, and only permission records may', () => {
+    const noPermission: Record<string, unknown> = {
+      ...record({ source: 'policy', kind: 'permission' }),
+    };
+    const strayPermission: Record<string, unknown> = {
+      ...record(),
+      permission: { tool: 'send_message', why: 'x', targets: [], lateGrant: null },
+    };
+    const parsed = parseRequestsFile(
+      JSON.stringify({
+        version: 1,
+        requests: [noPermission, strayPermission],
+        presence: EMPTY.presence,
+      }),
+      NOW,
+    );
+    expect(parsed.file.requests).toEqual([]);
+    expect(parsed.dropped).toBe(2);
+  });
+
+  it('a record without the permission field reads as permission null', () => {
+    const legacy: Record<string, unknown> = { ...record() };
+    delete legacy.permission;
+    const parsed = parseRequestsFile(
+      JSON.stringify({ version: 1, requests: [legacy], presence: EMPTY.presence }),
+      NOW,
+    );
+    expect(parsed.kind).toBe('ok');
+    expect(parsed.file.requests).toEqual([record()]);
+    expect(parsed.file.requests[0]?.permission).toBeNull();
   });
 
   it('bad presence falls back to here', () => {

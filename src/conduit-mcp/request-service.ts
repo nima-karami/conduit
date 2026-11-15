@@ -16,16 +16,18 @@ import {
   type SessionNeedsYou,
   type SourceAction,
 } from './request-sources';
-import type {
-  HumanPresence,
-  ListRequestsOutput,
-  RequestAnswer,
-  RequestAnswerOut,
-  RequestAnswerResult,
-  RequestCallOutput,
-  RequestRecord,
-  RequestsUiState,
-  RequestView,
+import {
+  type HumanPresence,
+  isVisibleRequest,
+  type ListRequestsOutput,
+  type RequestAnswer,
+  type RequestAnswerOut,
+  type RequestAnswerResult,
+  type RequestCallOutput,
+  type RequestRecord,
+  type RequestsUiState,
+  type RequestView,
+  type VisibleRequestRecord,
 } from './request-types';
 import {
   createRequestWaits,
@@ -137,7 +139,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
   let awayTimer: Timer | null = null;
   const inFlight = new Set<string>();
 
-  const view = (r: RequestRecord): RequestView => {
+  const view = (r: VisibleRequestRecord): RequestView => {
     const until = waits.waitingUntil(r.id);
     return {
       ...r,
@@ -145,6 +147,8 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
       waitingUntil: until === null ? null : new Date(until).toISOString(),
     };
   };
+
+  const viewOf = (r: RequestRecord): RequestView | null => (isVisibleRequest(r) ? view(r) : null);
 
   const markDirty = (): void => {
     if (!writable) return;
@@ -528,7 +532,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
             ok: false,
             reason: 'invalid_answer',
             message: checked.error.message,
-            request: view(record),
+            request: viewOf(record),
           };
         }
         const { outcome, text } = checked.value;
@@ -538,7 +542,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
               ok: false,
               reason: 'not_answerable',
               message: 'the reply is already being sent',
-              request: view(record),
+              request: viewOf(record),
             };
           }
           if (record.messageId !== null) replying.add(record.messageId);
@@ -553,7 +557,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
               ok: false,
               reason: 'not_answerable',
               message: 'the reply could not be sent; try again',
-              request: view(record),
+              request: viewOf(record),
             };
           }
         }
@@ -566,6 +570,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
           request: result.request === null ? null : view(result.request),
         };
       }
+      if (result.request === null) return { ok: true, request: null };
       if (result.request.source === 'scheduler' && result.request.session !== null) {
         // Before acting: acting can re-enter onAttention synchronously while the issue persists.
         handledIssues.set(result.request.session, result.request.body);
@@ -603,8 +608,8 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
 
     ui() {
       return {
-        open: queue.open().map(view),
-        ended: queue.ended(ENDED_IN_UI).map(view),
+        open: queue.open().filter(isVisibleRequest).map(view),
+        ended: queue.ended(ENDED_IN_UI).filter(isVisibleRequest).map(view),
         presence,
       };
     },

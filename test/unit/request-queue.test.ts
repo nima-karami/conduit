@@ -126,11 +126,18 @@ function rec(over: Partial<RequestRecord>): RequestRecord {
     withdrawReason: null,
     supersededBy: null,
     deliveredAt: null,
+    permission: null,
     ...over,
   };
 }
 
 const YOU = { kind: 'you' as const, windowId: 1 };
+
+const PERMISSION_FIELDS = {
+  title: 'Allow send_message?',
+  body: 'to reach another session',
+  permission: { tool: 'send_message' as const, why: 'reach s2', targets: [], lateGrant: null },
+};
 
 describe('request queue', () => {
   it('first answer wins; second gets already_ended', () => {
@@ -424,5 +431,75 @@ describe('request queue', () => {
     h.advance(60_000);
     expect(h.queue.get(out.request.id)?.state).toBe('answered');
     expect(h.ended).toHaveLength(1);
+  });
+});
+
+describe('permission requests', () => {
+  it('createBound expires at its time to expired, never a default', () => {
+    const h = harness();
+    const expiresAt = iso(START + 60_000);
+    const created = h.queue.createBound(stamp(), PERMISSION_FIELDS, expiresAt);
+    expect(created.kind).toBe('permission');
+    expect(created.source).toBe('policy');
+    expect(created.expiresAt).toBe(expiresAt);
+    expect(created.default).toBeNull();
+    h.advance(59_999);
+    expect(h.queue.get(created.id)?.state).toBe('open');
+    h.advance(1);
+    const r = h.queue.get(created.id);
+    expect(r?.state).toBe('expired');
+    expect(r?.answer).toBeNull();
+    expect(r?.endedAt).toBe(expiresAt);
+    expect(h.ended.map((x) => x.id)).toEqual([created.id]);
+  });
+
+  it('answerLate refuses when a late grant is already recorded', () => {
+    const h = harness();
+    const perm = h.queue.createBound(stamp(), PERMISSION_FIELDS, iso(START + 1_000));
+    h.advance(1_000);
+    expect(h.queue.answerLate(perm.id, 'g_first').ok).toBe(true);
+    const second = h.queue.answerLate(perm.id, 'g_second');
+    expect(second.ok).toBe(false);
+    if (second.ok) return;
+    expect(second.reason).toBe('not_answerable');
+    expect(h.queue.get(perm.id)?.permission?.lateGrant).toBe('g_first');
+  });
+
+  it('answerLate only on an expired permission', () => {
+    const h = harness();
+    const perm = h.queue.createBound(stamp(), PERMISSION_FIELDS, iso(START + 60_000));
+
+    const early = h.queue.answerLate(perm.id, 'g_early');
+    expect(early.ok).toBe(false);
+    if (early.ok) return;
+    expect(early.reason).toBe('not_answerable');
+    expect(h.queue.get(perm.id)?.permission?.lateGrant).toBeNull();
+
+    h.advance(60_000);
+    const late = h.queue.answerLate(perm.id, 'g_late');
+    expect(late.ok).toBe(true);
+    const r = h.queue.get(perm.id);
+    expect(r?.permission?.lateGrant).toBe('g_late');
+    expect(r?.state).toBe('expired');
+    expect(r?.answer).toBeNull();
+
+    const agent = h.queue.createAgent(stamp(), input({ expiresInMs: 1_000 }));
+    if (agent.kind !== 'created') throw new Error('expected created');
+    h.advance(1_000);
+    const notPermission = h.queue.answerLate(agent.request.id, 'g_agent');
+    expect(notPermission.ok).toBe(false);
+    if (notPermission.ok) return;
+    expect(notPermission.reason).toBe('not_answerable');
+
+    const answered = h.queue.createBound(stamp(), PERMISSION_FIELDS, iso(h.now() + 60_000));
+    h.queue.answer(answered.id, { outcome: 'allowed' }, YOU);
+    const afterAnswer = h.queue.answerLate(answered.id, 'g_answered');
+    expect(afterAnswer.ok).toBe(false);
+    expect(h.queue.get(answered.id)?.permission?.lateGrant).toBeNull();
+
+    const missing = h.queue.answerLate('r_missing', 'g_missing');
+    expect(missing.ok).toBe(false);
+    if (missing.ok) return;
+    expect(missing.reason).toBe('not_found');
   });
 });
