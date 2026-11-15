@@ -134,6 +134,8 @@ await runScenario(
     const dirT3 = temp('target3');
     const dirX = temp('exception');
     const dirT4 = temp('target4');
+    const dirT5 = temp('target5');
+    const dirT6 = temp('target6');
 
     const makeActive = async (sessionId) => {
       await page
@@ -156,6 +158,8 @@ await runScenario(
     const t3 = await openFake(page, dirT3);
     const x = await openFake(page, dirX);
     const t4 = await openFake(page, dirT4);
+    const t5 = await openFake(page, dirT5);
+    const t6 = await openFake(page, dirT6);
     const stillOpen = async (sessionId) => (await sessions(page)).some((s) => s.id === sessionId);
 
     phase('unanswered ask times out; the target stays open');
@@ -291,10 +295,9 @@ await runScenario(
     assert(await stillOpen(t3.sessionId), 'the second target was closed despite its deny');
     log('exception deny → allowOnce closes one target, the second is refused ✓');
 
-    phase('revoke a grant; the next close asks again');
-    // The step-2 grant's only target (t1) was closed by the retry that created it, so no later
-    // close can match it. t4 is a target the grant never covered: the check is that the revoked
-    // grant leaves W asking on a fresh close, not that a matching target is re-closed.
+    phase('revoke the target grant');
+    // The step-2 grant's only target (t1) was closed by the retry that created it, so this checks
+    // the state change only; the anywhere grant below carries the coverage check.
     const grant = await grantOfW();
     assert(
       grant,
@@ -311,21 +314,113 @@ await runScenario(
         (await mcpState(page))?.policy?.grants,
       )}`,
     );
+    log('target grant revoked → state revoked ✓');
 
+    phase('anywhere grant covers calls; revoking it brings the card back');
+    const grantWhere = async (pred) => (await mcpState(page))?.policy?.grants?.find(pred);
+    const anywhereOfW = () =>
+      grantWhere(
+        (g) =>
+          g.state === 'active' &&
+          g.tool === 'close_session' &&
+          g.who?.kind === 'session' &&
+          g.who?.sessionId === w.sessionId &&
+          g.on?.kind === 'anywhere' &&
+          g.for === '1h',
+      );
+    const seen = new Set([ask1.askId, ask2.askId]);
+
+    // (a) A card is answered with an anywhere grant; the call that asked closes its target.
     await makeActive(w.sessionId);
-    const afterRevoke = await startCall(page, w.sessionId, 'close_session', {
-      session: t4.handle,
-    });
-    const ask4 = await nextAsk(page, w.sessionId, new Set([ask1.askId, ask2.askId]), 15_000);
+    const beforeA = await startCall(page, w.sessionId, 'close_session', { session: t4.handle });
+    const askA = await nextAsk(page, w.sessionId, seen, 15_000);
+    seen.add(askA.askId);
     assert(
-      await until(async () => (await page.locator('.askcard').count()) > 0, 5_000),
-      `no card after revoke for ${ask4.askId}`,
+      await until(async () => (await card.count()) > 0, 5_000),
+      `no card for T4's ask ${askA.askId}`,
+    );
+    const grantedA = await permissionAnswer(page, askA.askId, {
+      outcome: 'allowed',
+      grant: { who: 'session', on: 'anywhere', for: '1h' },
+    });
+    assert(grantedA.ok === true, `anywhere grant answer: ${JSON.stringify(grantedA)}`);
+    const closedA = await resultAfter(w.sessionId, beforeA, 15_000);
+    assert(
+      closedA?.closed === t4.sessionId,
+      `T4 after the anywhere grant: ${JSON.stringify(closedA)}`,
+    );
+    assert(
+      await until(async () => !(await stillOpen(t4.sessionId)), 10_000),
+      'T4 survived its granted close',
+    );
+    assert(
+      await until(async () => (await anywhereOfW()) !== undefined, 10_000),
+      `the anywhere/1h grant never reached McpUiState: ${JSON.stringify(
+        (await mcpState(page))?.policy?.grants,
+      )}`,
+    );
+    log('anywhere grant answered → T4 closes ✓');
+
+    // (b) A later close under the grant runs with no card, and its row says so.
+    await makeActive(w.sessionId);
+    const beforeB = await startCall(page, w.sessionId, 'close_session', { session: t5.handle });
+    const cardShown = await until(async () => (await card.count()) > 0, 1_500);
+    assert(!cardShown, 'a close covered by the anywhere grant showed a card');
+    const closedB = await resultAfter(w.sessionId, beforeB, 15_000);
+    assert(closedB?.closed === t5.sessionId, `T5 under the grant: ${JSON.stringify(closedB)}`);
+    assert(
+      await until(async () => !(await stillOpen(t5.sessionId)), 10_000),
+      'T5 survived its granted close',
+    );
+    assert(
+      await until(
+        () =>
+          activityRows().some(
+            (r) =>
+              r.action === 'close_session' &&
+              r.principal?.sessionId === w.sessionId &&
+              r.target === t5.sessionId &&
+              r.outcome === 'ok' &&
+              typeof r.decidedBy === 'string' &&
+              r.decidedBy.startsWith('allowed by grant'),
+          ),
+        10_000,
+      ),
+      `no "allowed by grant" row for T5: ${JSON.stringify(
+        activityRows().filter((r) => r.target === t5.sessionId),
+      )}`,
+    );
+    log('the anywhere grant covers the next close with no card ✓');
+
+    // (c) Revoking the anywhere grant ends its coverage.
+    const anyGrant = await anywhereOfW();
+    assert(
+      anyGrant,
+      `no active anywhere grant: ${JSON.stringify((await mcpState(page))?.policy?.grants)}`,
+    );
+    const revokedAny = await policyRequest(page, { type: 'mcp:revokeGrant', grantId: anyGrant.id });
+    assert(revokedAny.ok === true, `mcp:revokeGrant ${anyGrant.id}: ${JSON.stringify(revokedAny)}`);
+    assert(
+      await until(async () => {
+        const g = await grantWhere((x) => x.id === anyGrant.id);
+        return g?.state === 'revoked';
+      }, 5_000),
+      `anywhere grant ${anyGrant.id} never reached state revoked`,
+    );
+
+    // (d) After the revoke, a close asks again; the card is denied and the target stays open.
+    await makeActive(w.sessionId);
+    const beforeD = await startCall(page, w.sessionId, 'close_session', { session: t6.handle });
+    const askD = await nextAsk(page, w.sessionId, seen, 15_000);
+    assert(
+      await until(async () => (await card.count()) > 0, 5_000),
+      `no card after the revoke for ${askD.askId}`,
     );
     await clickAskAnswer(page, 'deny');
-    const denied4 = await resultAfter(w.sessionId, afterRevoke, 10_000);
-    assert(errCode(denied4) === 'denied', `answer after revoke: ${JSON.stringify(denied4)}`);
-    assert(await stillOpen(t4.sessionId), 'a denied close still closed its target');
-    log('revoked grant → the next close asks again, card shown ✓');
+    const deniedD = await resultAfter(w.sessionId, beforeD, 10_000);
+    assert(errCode(deniedD) === 'denied', `answer after revoke: ${JSON.stringify(deniedD)}`);
+    assert(await stillOpen(t6.sessionId), 'a denied close still closed its target');
+    log('revoked anywhere grant → the next close asks, deny keeps the target ✓');
 
     phase('cleanup');
     // The sessions hold their folders as cwd; close them before removing the folders.
@@ -336,7 +431,7 @@ await runScenario(
       await until(async () => (await sessions(page)).length === 0, 15_000),
       'sessions survived kill',
     );
-    for (const d of [dirW, dirT1, dirT2, dirT3, dirX, dirT4]) {
+    for (const d of [dirW, dirT1, dirT2, dirT3, dirX, dirT4, dirT5, dirT6]) {
       await removeDir(d, { budgetMs: 10_000 });
     }
   },
