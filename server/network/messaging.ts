@@ -296,25 +296,26 @@ export function createMessaging(deps: MessagingDeps): Messaging {
 
   const inbound = async (machineId: string, wire: WireMessage): Promise<void> => {
     const link = linkOf(machineId);
-    const refuse = (reason: WireRecipientOutcome['reason']) =>
-      wire.to.map((handle) => ({ handle, status: 'refused' as const, reason }));
-    if (!link || !link.capabilities.messaging) {
+    // An ack echoes the peer's handles back, so only a sound message with few enough of them may
+    // earn one; anything else is left for the sender's outbox to expire (CON-27 R2a).
+    const ackable = isWireMessageId(wire.messageId) && wire.to.length <= MAX_RECIPIENTS;
+    const refuseAck = (reason: WireRecipientOutcome['reason']) => {
+      if (!ackable) return;
       deps.send(machineId, {
         t: 'ack',
         messageId: wire.messageId,
-        recipients: refuse('capability_off'),
+        recipients: wire.to.map((handle) => ({ handle, status: 'refused' as const, reason })),
       });
+    };
+    if (!link || !link.capabilities.messaging) {
+      refuseAck('capability_off');
       auditRefused(machineId, {
         detail: { messageId: wire.messageId, reason: 'capability_off', direction: 'in' },
       });
       return;
     }
     if (!admitInbound(machineId)) {
-      deps.send(machineId, {
-        t: 'ack',
-        messageId: wire.messageId,
-        recipients: refuse('rate_limited'),
-      });
+      refuseAck('rate_limited');
       auditRefused(machineId, {
         detail: { messageId: wire.messageId, reason: 'rate_limited', direction: 'in' },
       });
@@ -332,10 +333,8 @@ export function createMessaging(deps: MessagingDeps): Messaging {
       wire.attachments.reduce((n, a) => n + Buffer.byteLength(a.data, 'base64'), 0) >
         MAX_REMOTE_ATTACHMENT_BYTES
     ) {
-      deps.send(machineId, {
-        t: 'ack',
-        messageId: wire.messageId,
-        recipients: refuse('unknown_session'),
+      auditRefused(machineId, {
+        detail: { messageId: wire.messageId, reason: 'malformed', direction: 'in' },
       });
       return;
     }
