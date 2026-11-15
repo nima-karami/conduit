@@ -574,6 +574,7 @@ Every tool call writes one Activity row with the decision, `reasonText`, outcome
 - Settings edits post `mcp:setPointPolicy` instead of `update({mcpToolPolicy…})`.
 - No visual change.
 - *T2.4 rulings (2026-11-15):* the files are `webview/components/{mcp-tools-dialog,settings-modal}.tsx`. Settings shows a failed save through `ToolPolicyEditor`'s existing `failed` prop. `use-conduit-mcp.ts` gains `setPointPolicy(point, tool, patch): Promise<boolean>`. The dialog keeps choosing its cli layer by the handle; the launchedCli mismatch in that display goes to CON-25.
+- *T2.4 review rulings:* `webview/components/tool-policy-editor.tsx` joins T2.4, but only for the shared `restorePatch` export. Deferred to CON-25: the session dialog's `confirmedRef` is never cleared on a broadcast (pre-existing; Settings is fixed).
 
 **e2e** `test/e2e/policy-profiles.e2e.mjs` (orchestrator writes):
 1. Seed `sessions.json` with an all-on v0.64 override. `McpUiState.policy.sessions[id].label === 'Lead +1'` (DN-1). A Worker-equal tool call resolves as before.
