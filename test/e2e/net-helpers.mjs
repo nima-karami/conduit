@@ -139,8 +139,8 @@ export async function startServer(label) {
       }
     })());
 
-  try {
-    await execFile(
+  const startSupervisor = () =>
+    execFile(
       HC,
       [
         'run',
@@ -161,6 +161,9 @@ export async function startServer(label) {
       ],
       { env, windowsHide: true, timeout: 20_000, cwd: coreCwd },
     );
+
+  try {
+    await startSupervisor();
     const app = await attachApp(names.serverEndpoint);
     c2 = app.c2;
     assert(
@@ -171,7 +174,40 @@ export async function startServer(label) {
       await until(() => runtimeState(app.c2, app.snapshot) === 'ready', 30_000),
       `runtime never ready (${label}): ${runtimeState(app.c2, app.snapshot)}`,
     );
-    return { label, userData, work, names, c2, recordsDir, stop: stopOne };
+    const server = {
+      label,
+      userData,
+      work,
+      names,
+      c2,
+      recordsDir,
+      stop: stopOne,
+      restart: async () => {
+        const old = server.c2;
+        await old.call('server.restart', { reason: 'user' });
+        assert(await until(() => old.closed, 15_000), 'server did not close');
+        assert(
+          await until(async () => {
+            const result = await execFile(HC, ['get', names.supervisorName, '--json'], {
+              env,
+              windowsHide: true,
+              timeout: 5_000,
+            });
+            return JSON.parse(result.stdout).state !== 'live';
+          }, 15_000),
+          'supervisor did not stop',
+        );
+        await startSupervisor();
+        const next = await attachApp(names.serverEndpoint);
+        c2 = next.c2;
+        server.c2 = c2;
+        assert(
+          await until(() => runtimeState(c2, next.snapshot) === 'ready', 15_000),
+          'runtime did not recover',
+        );
+      },
+    };
+    return server;
   } catch (error) {
     await stopOne();
     throw error;
@@ -394,7 +430,7 @@ export async function startAgent(server) {
   assert(
     await until(
       () => agentRecords(server, sessionId, 'READY').some((r) => r.tools.includes('send_message')),
-      30_000,
+      15_000,
     ),
     `fake agent on ${server.label} never READY`,
   );
@@ -418,7 +454,7 @@ export async function callTool(server, agent, tool, args) {
     data: `call ${tool} ${JSON.stringify(args)}\r`,
   });
   assert(
-    await until(() => agentRecords(server, agent.sessionId, 'RESULT').length > before, 20_000),
+    await until(() => agentRecords(server, agent.sessionId, 'RESULT').length > before, 15_000),
     `no ${tool} result on ${server.label}`,
   );
   return agentRecords(server, agent.sessionId, 'RESULT')[before].result;
