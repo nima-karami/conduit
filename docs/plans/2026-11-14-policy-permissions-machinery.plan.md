@@ -376,6 +376,13 @@ export interface PolicyUiState {
   - A late answer with a grant creates the grant, calls `answerLate`, and appends the notice "You can retry <tool> now" to the requester's inbox through the CON-21 hidden late-answer thread path. It never runs the call.
 
 - **Overrides across an ask (S2-2 r2 ruling).** The service uses up `overrideIds` when it returns the ask decision. At answer time, `decide` re-runs with the original decision's `overrideIds` counted as passing their own targets, for this call only. A declined or withdrawn ask does not restore them: "Allow this once" was spent on a call the human then refused.
+- **Overrides across an ask, as built after T2.3 (ruling 2026-11-15; this replaces the bullet above where they differ):**
+  - `PolicyService.commit(decision, held?: readonly string[]): OneUseOverride[] | null`. null means refused: one of its overrides is already gone, and nothing changed. Otherwise it returns the override records it removed. Ids in `held` are skipped by the still-saved check and are not removed again. T2.3's boolean callers become `!== null`.
+  - `PolicyInput.heldOverrides?: readonly OneUseOverride[]`. The engine treats them as present for this decision only. `decide` passes them through.
+  - call-flow keeps the records returned by the commit at card raise. At answer time (approve or always), the host re-decides with `heldOverrides` = those records:
+    - deny → withdraw (`withdrawnBy:'conduit'`, reason = reasonText), and the call returns `tool_disabled`.
+    - allow or ask → run, committing with `held` = those ids, which touches grants only.
+  - A declined, expired or withdrawn ask never restores the overrides.
 
 ## Seams with CON-27 (agreed with claude-22, lead-approved, 2026-11-14)
 1. `src/contracts/remote-principal.ts` is created **byte-identical** on both branches: `Capability = 'messaging'|'monitor'|'drive'`, `Capabilities`, `RemotePrincipal {kind:'remote'; handle; machineId; trust:'own'}`, `principalAddress`. C1's remote principal becomes `RemotePrincipal & { capabilities: Capabilities }`; C1 drops its own `Capability` type and `remoteSessionId`. Orchestrate tools are denied to remote principals until `orchestrate` joins `Capability` (v1).
