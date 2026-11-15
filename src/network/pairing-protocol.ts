@@ -1,4 +1,5 @@
 import { createPublicKey, timingSafeEqual, X509Certificate } from 'node:crypto';
+import { printableName } from './addresses';
 import { deriveMachineId } from './identity-file';
 import {
   commitment,
@@ -230,20 +231,10 @@ function certMatches(pem: string, peerKeyRaw: Buffer, machineId: string): boolea
   }
 }
 
-/**
- * Control characters, line and paragraph separators, and format characters (bidi overrides,
- * zero-width characters, BOM): a name is shown and quoted, so it may neither break a line nor
- * read as something it isn't.
- */
-const UNPRINTABLE = /[\p{Cc}\p{Cf}\u2028\u2029]/u;
-
 function validId(m: PairingIdentity, peerKeyRaw: Buffer): boolean {
-  const name = m.selfName.trim();
   return (
     m.machineId === deriveMachineId(peerKeyRaw) &&
-    name.length > 0 &&
-    m.selfName.length <= MAX_NAME_CHARS &&
-    !UNPRINTABLE.test(m.selfName) &&
+    printableName(m.selfName, MAX_NAME_CHARS) &&
     m.addresses.length <= MAX_ADDRESSES &&
     m.addresses.every((a) => a.length > 0 && a.length <= MAX_ADDRESS_CHARS) &&
     Number.isInteger(m.protocol.major) &&

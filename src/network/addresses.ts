@@ -45,15 +45,17 @@ export function displayNames(
 }
 
 /**
+ * Control characters, line and paragraph separators, and format characters (bidi overrides,
+ * zero-width characters, BOM): a peer's text must neither break a line nor read as something it
+ * isn't.
+ */
+const UNPRINTABLE = /[\p{Cc}\p{Cf}\u2028\u2029]/u;
+
+/**
  * A peer's own text (a machine name, an attachment name) is shown in lists, hints and logs, so it
- * must be one printable line: not blank, at most `max` characters, and free of control characters
- * and the Unicode line separators. Checked by code point range so no regex is needed.
+ * must be one printable line: not blank and at most `max` characters. Pairing, hello, the remote
+ * directory and inbound attachments all hold peer text to this one rule.
  */
 export function printableName(s: string, max = 64): boolean {
-  if (s.trim() === '' || s.length > max) return false;
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    if (c <= 0x1f || (c >= 0x7f && c <= 0x9f) || c === 0x2028 || c === 0x2029) return false;
-  }
-  return true;
+  return s.trim() !== '' && s.length <= max && !UNPRINTABLE.test(s);
 }
