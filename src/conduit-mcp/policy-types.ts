@@ -132,6 +132,7 @@ export interface PolicyInput {
   masterOn: boolean;
   toYou: boolean;
   now: number;
+  heldOverrides?: readonly OneUseOverride[];
 }
 
 export interface PolicyDecision {

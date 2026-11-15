@@ -203,6 +203,38 @@ describe('decide', () => {
     ).toBe('deny');
   });
 
+  it('a held override passes an explicit deny for this one decision', () => {
+    const held: OneUseOverride = {
+      id: 'o1',
+      sessionId: 's1',
+      tool: 'open_session',
+      target: target({ sessionId: 's2' }),
+      createdAt: iso(NOW),
+    };
+    const s = state(
+      {
+        default: assignment('worker', [
+          except('open_session', { kind: 'anywhere' }, { decision: 'deny' }),
+        ]),
+      },
+      { overrides: [] },
+    );
+    const passed = decide(
+      s,
+      input({
+        tool: 'open_session',
+        targets: [target({ sessionId: 's2' })],
+        heldOverrides: [held],
+      }),
+    );
+    expect(passed.decision).toBe('allow');
+    expect(passed.reason).toEqual({ by: 'override', overrideId: 'o1' });
+    expect(passed.overrideIds).toEqual(['o1']);
+    expect(
+      decide(s, input({ tool: 'open_session', targets: [target({ sessionId: 's2' })] })).decision,
+    ).toBe('deny');
+  });
+
   it('override never passes a floor', () => {
     const override: OneUseOverride = {
       id: 'o1',
