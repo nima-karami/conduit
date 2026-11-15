@@ -1,4 +1,5 @@
 import { generateKeyPairSync } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import type tls from 'node:tls';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -8,6 +9,7 @@ import {
 } from '../../server/network/link-connection';
 import { dial, type Listener, listenLinks } from '../../server/network/listener';
 import type { HelloFrame, LinkFrame } from '../../src/contracts/link-protocol';
+import { encodeFrame } from '../../src/network/frame-codec';
 import { deriveMachineId } from '../../src/network/identity-file';
 import { rawEd25519, selfSignedCert } from '../../src/network/self-signed-cert';
 
@@ -192,5 +194,59 @@ describe('link connection', () => {
     cb.close('shutdown');
     await until(() => closes.length > 0);
     expect(closes).toEqual(['closed']);
+  });
+});
+
+/** The socket surface the connection uses; writableLength is the test's to set. */
+class FakeSocket extends EventEmitter {
+  writableLength = 0;
+  written = 0;
+  destroyed = false;
+  write(chunk: Buffer): boolean {
+    this.written += chunk.length;
+    return true;
+  }
+  end(): void {}
+  destroy(): void {
+    this.destroyed = true;
+  }
+  resume(): void {}
+}
+
+describe('send buffer limits', () => {
+  async function fakeLink() {
+    const sock = new FakeSocket();
+    const pending = openConnection(sock as unknown as tls.TLSSocket, {
+      hello: hello('m-aaaaaaaa'),
+      now: () => 0,
+      log: quiet,
+      every: () => () => undefined,
+    });
+    sock.emit('data', encodeFrame(hello('m-bbbbbbbb')));
+    const c = await pending;
+    if ('error' in c) throw new Error('connection failed');
+    const frames: LinkFrame[] = [];
+    const closes: string[] = [];
+    c.start({ onFrame: (f) => frames.push(f), onClose: (w) => closes.push(w) });
+    return { sock, c, closes };
+  }
+
+  // CON-27 R2b: a peer that never reads must not grow our buffer without bound.
+  it('closes the connection and drops the frame once the buffer would pass the hard cap', async () => {
+    const { sock, c, closes } = await fakeLink();
+    const before = sock.written;
+    sock.writableLength = 16 * 1024 * 1024 - 10;
+    expect(c.send({ t: 'view.close', viewId: 'v1' })).toBe(false);
+    expect(sock.written).toBe(before);
+    expect(sock.destroyed).toBe(true);
+    expect(closes).toEqual(['overflow']);
+  });
+
+  it('past the soft cap but under the hard one, send returns false and the link stays up', async () => {
+    const { sock, c, closes } = await fakeLink();
+    sock.writableLength = 5 * 1024 * 1024;
+    expect(c.send({ t: 'view.close', viewId: 'v1' })).toBe(false);
+    expect(sock.destroyed).toBe(false);
+    expect(closes).toEqual([]);
   });
 });
