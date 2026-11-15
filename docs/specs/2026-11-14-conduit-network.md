@@ -367,6 +367,11 @@ Also checked: OpenAI (https://openai.com/policies/terms-of-use, UNVERIFIED), Ope
   remote recipient fails before anything is stored if the attachments total over 10 MiB; the error
   names the limit. The inbound guard refuses over 10 MiB too, so neither side accepts more than it
   can send. Local messages keep the 25 MB limit.
+- **Never all interfaces, never a public address, not even when set explicitly.** §5 says "never on
+  a public interface by default"; as built, no setting can bind one. The link and pairing
+  listeners bind only loopback, RFC 1918, 100.64.0.0/10 (tailnets) and ULA addresses, whether the
+  setting is `auto` or one explicit address; IPv4-mapped spellings are judged as the IPv4 address
+  they carry (CON-27 review M1).
 - **Monitor shows every local session.** Sessions without an MCP handle appear with no address and
   can't be messaged; agents' `list_sessions` still lists addressable sessions only.
 
