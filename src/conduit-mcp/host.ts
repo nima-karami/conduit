@@ -1398,7 +1398,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const startedAt = now();
     const evaluated: {
       current: { input: Omit<PolicyInput, 'now'>; decision: PolicyDecision } | null;
-    } = { current: null };
+      spent: boolean;
+    } = { current: null, spent: false };
     try {
       const handle = sessionId ? handleOf(sessionId) : undefined;
       const result = await (async (): Promise<Result<unknown> | null> => {
@@ -1474,9 +1475,23 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           appConnected: deps.appConnected(),
         });
         if (refused) return { ok: false, error: refused };
+        // A concurrent call may have spent the override this decision relies on. decide and commit
+        // run back to back, so the re-decide sees the state the commit did: a second override for
+        // the target can stand in for the spent one.
+        const commitResolved = (): PolicyDecision | null => {
+          if (policyService.commit(resolved) !== null) return resolved;
+          const again = policyService.decide(policyInput);
+          if (again.decision === 'allow' && policyService.commit(again) !== null) {
+            evaluated.current = { input: policyInput, decision: again };
+            return again;
+          }
+          evaluated.spent = true;
+          evaluated.current = { input: policyInput, decision: again };
+          return null;
+        };
         const caller = { handle, sessionId };
         if (isRequestTool(name)) {
-          if (!policyService.commit(resolved)) return { ok: false, error: toolDisabled(name) };
+          if (commitResolved() === null) return { ok: false, error: toolDisabled(name) };
           return runRequest(caller, name, args, ctx);
         }
         if (isMessagingTool(name)) {
@@ -1486,7 +1501,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               error: toolError('store_unavailable', storeError ?? 'message store unavailable'),
             };
           }
-          if (!policyService.commit(resolved)) return { ok: false, error: toolDisabled(name) };
+          if (commitResolved() === null) return { ok: false, error: toolDisabled(name) };
           return runMessaging(caller, name, args, ctx);
         }
         const controlCtx: ControlCallContext = {
@@ -1508,7 +1523,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           wiredAtLaunch: wiredAtLaunch(sessionId),
           tool: name,
           decision: resolved,
-          commit: () => policyService.commit(resolved),
+          commit: commitResolved,
           source: sourceOf(resolved),
           args,
           prepare: () => prepareControl(caller, name, args, controlCtx),
@@ -1555,7 +1570,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               cliName: (kind) => kind,
             })
           : 'unknown',
-        outcome: cancelled ? 'withdrawn' : result.ok ? 'ok' : outcomeOfError(result.error.code),
+        outcome: cancelled
+          ? 'withdrawn'
+          : result.ok
+            ? 'ok'
+            : evaluated.spent
+              ? 'denied'
+              : outcomeOfError(result.error.code),
         durationMs: now() - startedAt,
         requestId,
         count: null,
