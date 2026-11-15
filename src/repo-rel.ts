@@ -6,14 +6,16 @@
  * a drive-letter prefix means a Windows filesystem, wherever the code happens to run.
  */
 
-const toPosix = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '');
+const toPosix = (p: string): string => p.replace(/\\/g, '/');
 
-const isWindowsRoot = (root: string): boolean => /^[a-zA-Z]:\//.test(root);
+const trimTrailingSlashes = (p: string): string => p.replace(/\/+$/, '');
 
-/**
- * `absPath` expressed relative to `root`, with forward slashes — the form git wants for
- * `HEAD:<rel>`. Null when the path is the root itself, escapes it, or lives elsewhere.
- */
+// The prefix keeps the root's own separator: a drive root `C:\` must stay `C:/` (so the
+// drive-letter check sees it) and a filesystem root `/` must stay `/` (not collapse to '').
+const rootPrefix = (root: string): string => `${trimTrailingSlashes(toPosix(root))}/`;
+
+const isWindowsPrefix = (prefix: string): boolean => /^[a-zA-Z]:\//.test(prefix);
+
 /**
  * Case fold for comparing repo-relative paths, by the same rule repoRelPath uses for
  * containment: Windows paths are case-insensitive, so two spellings of one file must compare
@@ -21,17 +23,20 @@ const isWindowsRoot = (root: string): boolean => /^[a-zA-Z]:\//.test(root);
  * with a staged side got Stage offered on it anyway.
  */
 export function foldRelPath(root: string, rel: string): string {
-  return isWindowsRoot(toPosix(root)) ? rel.toLowerCase() : rel;
+  return isWindowsPrefix(rootPrefix(root)) ? rel.toLowerCase() : rel;
 }
 
+/**
+ * `absPath` expressed relative to `root`, with forward slashes — the form git wants for
+ * `HEAD:<rel>`. Null when the path is the root itself, escapes it, or lives elsewhere.
+ */
 export function repoRelPath(root: string, absPath: string): string | null {
-  const r = toPosix(root);
-  const p = toPosix(absPath);
-  if (!r || !p) return null;
-  const fold = isWindowsRoot(r) ? (s: string) => s.toLowerCase() : (s: string) => s;
-  if (fold(p) === fold(r)) return null;
-  if (!fold(p).startsWith(`${fold(r)}/`)) return null;
-  const rel = p.slice(r.length + 1);
+  if (!toPosix(root)) return null;
+  const p = trimTrailingSlashes(toPosix(absPath));
+  const prefix = rootPrefix(root);
+  const fold = isWindowsPrefix(prefix) ? (s: string) => s.toLowerCase() : (s: string) => s;
+  if (!p || !fold(p).startsWith(fold(prefix))) return null;
+  const rel = p.slice(prefix.length);
   if (!rel || rel.split('/').includes('..')) return null;
   return rel;
 }
