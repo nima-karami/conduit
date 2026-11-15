@@ -14,11 +14,16 @@ import type { NetLog } from './listener';
 // frames, says hello, keeps the link alive and hands frames up. Plan decision 7.
 
 const SEND_BUFFER_MAX = 4 * 1024 * 1024;
+/** Past this the peer is not reading at all; we close rather than buffer without bound (CON-27 R2b). */
+const SEND_BUFFER_HARD_MAX = 16 * 1024 * 1024;
 const HELLO_TIMEOUT_MS = 10_000;
 const END_GRACE_MS = 2_000;
 
 export interface LinkConnection {
-  /** False once the socket holds more than 4 MiB unsent: the caller sheds load (pane relay). */
+  /**
+   * False once the socket holds more than 4 MiB unsent: the caller sheds load (pane relay). Past
+   * 16 MiB the connection closes with reason 'overflow' and the frame is dropped.
+   */
   send(frame: LinkFrame): boolean;
   bufferedBytes(): number;
   /** Milliseconds since the peer last sent anything; the manager shows `degraded` from it. */
@@ -94,7 +99,13 @@ export function openConnection(
     };
     const write = (frame: LinkFrame): boolean => {
       if (closed) return false;
-      sock.write(encodeFrame(frame));
+      const bytes = encodeFrame(frame);
+      if (sock.writableLength + bytes.length > SEND_BUFFER_HARD_MAX) {
+        // The frame is dropped, not queued: the peer has stopped reading, so the link is no use.
+        finish('overflow');
+        return false;
+      }
+      sock.write(bytes);
       return sock.writableLength <= SEND_BUFFER_MAX;
     };
     const helloTimer = setTimeout(() => finish('timeout'), opts.helloTimeoutMs ?? HELLO_TIMEOUT_MS);
