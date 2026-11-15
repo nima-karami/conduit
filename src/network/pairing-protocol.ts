@@ -18,7 +18,8 @@ import { rawEd25519 } from './self-signed-cert';
 
 const PAIRING_VERSION = 1;
 const KEY_BYTES = 32;
-const MAX_NAME_CHARS = 64;
+/** A machine's self-name: pairing and every later hello hold it to this. */
+export const MAX_NAME_CHARS = 64;
 const MAX_ADDRESSES = 16;
 const MAX_ADDRESS_CHARS = 255;
 const MAX_CERT_CHARS = 4096;

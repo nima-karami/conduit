@@ -18,6 +18,7 @@ import {
   type LinkStateMachine,
   linkEvent,
 } from '../../src/network/link-state';
+import { MAX_NAME_CHARS } from '../../src/network/pairing-protocol';
 import type { AuditSink } from './audit-log';
 import type { Identity } from './identity';
 import { type ConnectionError, type LinkConnection, openConnection } from './link-connection';
@@ -88,8 +89,7 @@ const TERMINAL: readonly LinkState[] = ['revoked', 'incompatible', 'identity-cha
 /** A peer still waiting for the owner key we owe it has none yet; any other mismatch is a change. */
 const ownerMatches = (record: LinkRecord, helloOwner: string | null): boolean =>
   helloOwner === record.ownerKey || (record.ownerTransfer === 'send' && helloOwner === null);
-// Pairing's rule (pairing-protocol.ts validId): a non-blank name of at most 64 characters.
-const MAX_NAME_CHARS = 64;
+// Pairing's rule (pairing-protocol.ts validId): a non-blank name within MAX_NAME_CHARS.
 const storableName = (name: string): boolean => name.trim() !== '' && name.length <= MAX_NAME_CHARS;
 const b64 = (b: Buffer): string => b.toString('base64');
 const sameCapabilities = (x: Capabilities, y: Capabilities): boolean =>
