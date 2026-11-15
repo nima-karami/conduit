@@ -1,11 +1,13 @@
 import { createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
-import { OWN_DEFAULT_CAPABILITIES } from '../../src/contracts/link-protocol';
+import type { McpNetworkPort, NetworkPort } from '../../src/conduit-mcp/remote-routing';
+import { type LinkState, OWN_DEFAULT_CAPABILITIES } from '../../src/contracts/link-protocol';
 import type { NetworkState } from '../../src/contracts/network-state';
 import type { ServerSettings } from '../../src/contracts/server-protocol';
 import { bindableAddresses } from '../../src/network/bind-addresses';
 import type { PairingOutcome } from '../../src/network/pairing-protocol';
+import { createRemoteDirectory } from '../../src/network/remote-directory';
 import { selfSignedCert } from '../../src/network/self-signed-cert';
 import { openAuditLog } from './audit-log';
 import { handleNetworkCall } from './c2';
@@ -19,6 +21,8 @@ import {
   listenPairing,
   type NetLog,
 } from './listener';
+import { createMessaging } from './messaging';
+import { createMonitorPublisher, type MonitorSource } from './monitor-publisher';
 import { createPairingService, type PairingService } from './pairing-service';
 
 // The one composer for linked machines (plan "Technical decisions" 1): services.ts only builds,
@@ -36,6 +40,8 @@ export interface NetworkDeps {
   now?: () => number;
   interfaces?: () => NodeJS.Dict<os.NetworkInterfaceInfo[]>;
   hostname?: () => string;
+  /** This server's sessions, asks and agents as linked peers may see them (monitor push). */
+  monitor: MonitorSource;
 }
 
 export interface NetworkService {
@@ -47,6 +53,12 @@ export interface NetworkService {
   settingsChanged(): Promise<void>;
   state(): NetworkState;
   onRevoked(listener: (machineId: string) => void): () => void;
+  /** What the MCP host reads: remote sessions, address resolution, the outbox. */
+  port(): NetworkPort;
+  /** The MCP host's side, set once it exists (the host is built after the network). */
+  setMcp(port: McpNetworkPort): void;
+  /** Something local a peer may see changed: sessions, asks, unread, presence. */
+  localChanged(): void;
 }
 
 const EMIT_COALESCE_MS = 50;
@@ -76,7 +88,39 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
   });
 
   let emitTimer: (() => void) | null = null;
+  let mcp: McpNetworkPort | null = null;
+  const portListeners = new Set<() => void>();
+  const directory = createRemoteDirectory();
+  /** The last state each link was seen in, to act once on up and down. */
+  const seen = new Map<string, LinkState>();
+  const live = (st: LinkState | undefined) => st === 'up' || st === 'degraded';
+
+  // Runs on every link change, synchronously, so remote rows and the outbox follow at once;
+  // only the C2 broadcast below is coalesced.
+  const onLinksChanged = (): void => {
+    const views = manager.views();
+    directory.setLinks(
+      views.map((v) => ({
+        machineId: v.machineId,
+        name: v.name,
+        state: v.state,
+        peerCapabilities: v.peerCapabilities,
+      })),
+      selfName(),
+    );
+    for (const v of views) {
+      const before = seen.get(v.machineId);
+      seen.set(v.machineId, v.state);
+      if (live(v.state) && !live(before)) {
+        messaging.linkUp(v.machineId);
+        publisher.pushTo(v.machineId);
+      } else if (!live(v.state) && live(before)) messaging.linkDown(v.machineId);
+    }
+    for (const l of portListeners) l();
+  };
+
   const changed = (): void => {
+    onLinksChanged();
     if (emitTimer) return;
     emitTimer = after(() => {
       emitTimer = null;
@@ -98,10 +142,63 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     now,
     rand: Math.random,
     after,
-    onFrame: () => undefined,
+    onFrame: (machineId, f) => {
+      if (f.t === 'snapshot') {
+        directory.apply(machineId, f.snapshot);
+        for (const l of portListeners) l();
+        changed();
+      } else if (f.t === 'msg' || f.t === 'ack' || f.t === 'receipt')
+        messaging.onFrame(machineId, f);
+    },
     changed,
     onOwnerKey: (pair) => onOwnerKey(pair),
   });
+
+  const linkInfo = () =>
+    manager.views().map((v) => ({
+      machineId: v.machineId,
+      state: v.state,
+      capabilities: v.capabilities,
+      peerCapabilities: v.peerCapabilities,
+    }));
+  const messaging = createMessaging({
+    file: path.join(deps.dir, 'outbox.json'),
+    machineId: () => identity.machineId,
+    links: linkInfo,
+    send: (machineId, frame) => manager.send(machineId, frame),
+    mcp: () => mcp,
+    audit,
+    log: deps.log,
+    now,
+    after,
+  });
+  const publisher = createMonitorPublisher({
+    source: deps.monitor,
+    links: linkInfo,
+    send: (machineId, frame) => manager.send(machineId, frame),
+    after,
+  });
+  manager.onRevoked((machineId) => messaging.revoked(machineId));
+
+  const networkPort: NetworkPort = {
+    remoteEntries: () => directory.entries(),
+    resolve: (target) => directory.resolve(target),
+    enqueue: (msg, recipients) => messaging.enqueue(msg, recipients),
+    waitReading: (address, caller) => directory.waitReading(address, caller),
+    capabilitiesOf: (machineId) => {
+      const v = manager.view(machineId);
+      return v &&
+        v.state !== 'revoked' &&
+        v.state !== 'incompatible' &&
+        v.state !== 'identity-changed'
+        ? { ...v.capabilities }
+        : null;
+    },
+    onChange(listener) {
+      portListeners.add(listener);
+      return () => portListeners.delete(listener);
+    },
+  };
 
   const hosts = (): string[] => {
     const s = deps.settings();
@@ -244,7 +341,9 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     machineId: identity.machineId,
     selfName: selfName(),
     listening: listener?.addresses() ?? [],
-    links: manager.views().map((v) => ({ ...v, trust: 'own' as const, snapshot: null })),
+    links: manager
+      .views()
+      .map((v) => ({ ...v, trust: 'own' as const, snapshot: directory.snapshotOf(v.machineId) })),
     pairing: pairing.view(),
   });
 
@@ -257,6 +356,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
 
   return {
     async start() {
+      messaging.start();
       manager.start();
       if (store.links().length > 0) {
         await ensureListening().catch((err: Error) =>
@@ -267,6 +367,8 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     async stop() {
       emitTimer?.();
       closePairingPort();
+      publisher.stop();
+      messaging.stop();
       await manager.stop();
       await closeListener();
     },
@@ -283,5 +385,10 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     },
     state,
     onRevoked: (l) => manager.onRevoked(l),
+    port: () => networkPort,
+    setMcp(port) {
+      mcp = port;
+    },
+    localChanged: () => publisher.changed(),
   };
 }

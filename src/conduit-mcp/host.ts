@@ -646,7 +646,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const t = now();
     const sends = (inboundSends.get(msg.from) ?? []).filter((x) => t - x < RATE_WINDOW_MS);
     inboundSends.set(msg.from, sends);
-    if (store.agentCountSinceHuman(msg.threadId) >= THREAD_AGENT_LIMIT) {
+    if (!framedAsHuman && store.agentCountSinceHuman(msg.threadId) >= THREAD_AGENT_LIMIT) {
       threadLimitHit(msg.threadId, msg.from);
       return refuseAll(msg.to, 'thread_limit');
     }

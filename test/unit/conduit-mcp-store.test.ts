@@ -310,6 +310,20 @@ describe('createMessageStore', () => {
     expect(store.agentCountSinceHuman('t_1')).toBe(0);
   });
 
+  it('only a remote human resets the thread pause', async () => {
+    const { store } = await loaded();
+    await store.append(msg({ from: 'agent@m-12345678', origin: 'm-12345678' }), []);
+    await store.append(msg({ from: 'you@m-12345678', origin: 'm-12345678' }), []);
+    expect(store.agentCountSinceHuman('t_1')).toBe(2);
+    await store.append(
+      msg({ from: 'you@m-12345678', origin: 'm-12345678', originHuman: true }),
+      [],
+    );
+    expect(store.agentCountSinceHuman('t_1')).toBe(0);
+    await store.append(msg(), []);
+    expect(store.agentCountSinceHuman('t_1')).toBe(1);
+  });
+
   it('participants = from ∪ to over the thread', async () => {
     const { store } = await loaded();
     await store.append(msg(), []);

@@ -6,6 +6,7 @@ import type { McpRendererMessage } from '../src/conduit-mcp/host';
 import { CLI_BINARIES } from '../src/conduit-mcp/install-types';
 import type { DisplayFacts } from '../src/contracts/frames';
 import type { HcClient } from '../src/contracts/hc';
+import type { MonitorSession } from '../src/contracts/link-protocol';
 import type { ServerEventSink, TokenStorePort } from '../src/contracts/server-ports';
 import type { RuntimeHealth, SessionView, WindowPresence } from '../src/contracts/server-protocol';
 import type { InstanceNames } from '../src/contracts/session-identity';
@@ -132,8 +133,11 @@ export function createServices(o: ServicesOptions) {
       o.emit('sessions.changed', { sessions: withStatus(domain.snapshot().sessions) });
     }, STATUS_RESEND_MS);
   };
+  // Built after the domain (it reads settings) but referenced by emit, which runs earlier.
+  let network: NetworkService | null = null;
   const emit: ServerEventSink = (type, data) => {
     if (type === 'sessions.changed') {
+      network?.localChanged();
       invalidateSessions();
       return;
     }
@@ -143,6 +147,8 @@ export function createServices(o: ServicesOptions) {
       mcp?.refresh();
       void network?.settingsChanged();
     }
+    // A peer's monitor view follows local sessions, asks and unread counts.
+    if (type === 'ui.post') network?.localChanged();
   };
 
   const rt = createRuntimeServices({
@@ -216,7 +222,7 @@ export function createServices(o: ServicesOptions) {
     }
     machineId = loaded.identity.machineId;
   }
-  const network: NetworkService | null =
+  network =
     loaded.kind === 'newer'
       ? null
       : createNetwork({
@@ -229,10 +235,48 @@ export function createServices(o: ServicesOptions) {
             warn: (msg, data) => log.warn('network', msg, data),
             error: (msg, data) => log.error('network', msg, data),
           },
+          monitor: {
+            sessions: () => monitorSessions(),
+            requests: () => mcp?.networkPort().requestsSummary() ?? [],
+            youUnread: () => mcp?.networkPort().youUnread() ?? 0,
+            ownerPresence: () => mcp?.networkPort().ownerPresence() ?? 'here',
+            agents: () =>
+              domain.snapshot().stores.agents.map((a) => ({ id: a.id, label: a.label })),
+          },
         });
+
+  /** Local sessions with a handle, joined with their attention facts, as a peer sees them. */
+  const monitorSessions = (): MonitorSession[] => {
+    const views = new Map(domain.snapshot().sessions.map((v) => [v.id, v]));
+    return (mcp?.networkPort().localDirectory() ?? []).map((e) => {
+      const v = views.get(e.sessionId);
+      return {
+        sessionId: e.sessionId,
+        handle: e.handle,
+        label: e.label,
+        agent: e.agent,
+        presence: e.presence,
+        messaging: e.messaging,
+        messageable: e.connectable || e.messaging === 'connected',
+        notices: e.notices,
+        home: e.home,
+        roots: e.roots,
+        attention: {
+          attentionReason: v?.attentionReason ?? null,
+          completions: v?.completions ?? 0,
+          ...(v?.stuckReason === undefined ? {} : { stuckReason: v.stuckReason }),
+        },
+        completions: v?.completions ?? 0,
+        // Limit state reaches peers with the monitor pane (Slice 7); rows carry none yet.
+        limit: null,
+        status: v?.status ?? 'running',
+      };
+    });
+  };
 
   mcp = createMcp({
     machineId,
+    network: network?.port(),
     sessions: domain.sessions,
     domain: domain.domain,
     attention,
@@ -297,6 +341,7 @@ export function createServices(o: ServicesOptions) {
     },
   });
   const server = mcp;
+  network?.setMcp(server.networkPort());
 
   const offChange = attention.onChange(invalidateSessions);
   const offEdge = attention.onEdge((edge) => emit('attention.edge', edge));
