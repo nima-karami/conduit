@@ -62,10 +62,10 @@ export interface ControlCall<T> {
   tool: ToolName;
   decision: PolicyDecision;
   /**
-   * Spends the decision's grants and one-use overrides once the call goes ahead. False when an
-   * override was already spent by a concurrent call; the call then refuses without running.
+   * Spends the decision's grants and one-use overrides once the call goes ahead. Returns the
+   * decision the call goes ahead on, which can be a re-decided allow; null when it is refused.
    */
-  commit(): boolean;
+  commit(): PolicyDecision | null;
   /** Only for the card's reason line: the gate reads decision, never source. */
   source: PolicySource;
   args: unknown;
@@ -267,10 +267,13 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       p.release();
       return { ok: false, error: approvalTimeout() };
     }
-    if (!c.commit()) {
+    const committed = c.commit();
+    if (committed === null) {
       p.release();
       return { ok: false, error: toolDisabled(c.tool) };
     }
+    // The card guards a decision that is still an ask; a recovered allow has nothing to guard.
+    if (committed.decision === 'allow' && !p.alwaysAsk) return runNow(c, p);
     const askId = deps.newAskId();
     deps.sendToOwner(caller, {
       type: 'mcp:ask',
@@ -431,7 +434,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       if ('done' in p) {
         if (c.decision.decision === 'deny') return { ok: false, error: toolDisabled(c.tool) };
         if (c.inflight.cancelled) return null;
-        if (!c.commit()) return { ok: false, error: toolDisabled(c.tool) };
+        if (c.commit() === null) return { ok: false, error: toolDisabled(c.tool) };
         return p.done;
       }
       if (c.inflight.cancelled) {
@@ -443,7 +446,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       const access = p.alwaysAsk && c.decision.decision === 'allow' ? 'ask' : c.decision.decision;
       switch (access) {
         case 'allow':
-          if (!c.commit()) {
+          if (c.commit() === null) {
             p.release();
             return { ok: false, error: toolDisabled(c.tool) };
           }

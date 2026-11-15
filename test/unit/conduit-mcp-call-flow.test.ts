@@ -128,6 +128,7 @@ function setup() {
       runGate?: ReturnType<typeof gate>;
       prepareResult?: Result<Prepared<string>>;
       commitResult?: boolean;
+      commitTo?: PolicyDecision;
       kind?: CliKind;
       wiredAtLaunch?: boolean;
       routesUi?: boolean;
@@ -156,6 +157,7 @@ function setup() {
       },
     };
     const caller = o.caller ?? CALLER;
+    const decision = o.policy ?? policies.get(caller) ?? ASK;
     const inflight = flow.begin({
       connId: o.connId ?? 1,
       requestId: o.requestId === undefined ? ++req : o.requestId,
@@ -167,11 +169,12 @@ function setup() {
       kind: o.kind ?? 'claude',
       wiredAtLaunch: o.wiredAtLaunch ?? false,
       tool: 'open_session',
-      decision: o.policy ?? policies.get(caller) ?? ASK,
+      decision,
       commit: () => {
         commits.n++;
         events.push('commit');
-        return o.commitResult ?? true;
+        if (o.commitResult === false) return null;
+        return o.commitTo ?? decision;
       },
       source: 'global',
       args: { path: '/repo', agent: 'claude' },
@@ -561,6 +564,14 @@ describe('createCallFlow', () => {
     expect(errCode(await c.promise)).toBe('tool_disabled');
     expect(c.commits.n).toBe(1);
     expect(c.spies).toEqual({ run: 0, release: 0 });
+    expect(t.asks()).toEqual([]);
+  });
+
+  it('a spent ask whose commit recovers an allow runs without a card', async () => {
+    const t = setup();
+    const c = t.call({ commitTo: ON });
+    expect(await c.promise).toEqual({ ok: true, value: 'opened' });
+    expect(c.spies).toEqual({ run: 1, release: 0 });
     expect(t.asks()).toEqual([]);
   });
 

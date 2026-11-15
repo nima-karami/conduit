@@ -1475,17 +1475,23 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           appConnected: deps.appConnected(),
         });
         if (refused) return { ok: false, error: refused };
-        // A concurrent call may have spent the override this decision relies on; the re-decide
-        // is pure, and it names the decision the call now meets.
-        const commitResolved = (): boolean => {
-          if (policyService.commit(resolved) !== null) return true;
+        // A concurrent call may have spent the override this decision relies on. decide and commit
+        // run back to back, so the re-decide sees the state the commit did: a second override for
+        // the target can stand in for the spent one.
+        const commitResolved = (): PolicyDecision | null => {
+          if (policyService.commit(resolved) !== null) return resolved;
+          const again = policyService.decide(policyInput);
+          if (again.decision === 'allow' && policyService.commit(again) !== null) {
+            evaluated.current = { input: policyInput, decision: again };
+            return again;
+          }
           evaluated.spent = true;
-          evaluated.current = { input: policyInput, decision: policyService.decide(policyInput) };
-          return false;
+          evaluated.current = { input: policyInput, decision: again };
+          return null;
         };
         const caller = { handle, sessionId };
         if (isRequestTool(name)) {
-          if (!commitResolved()) return { ok: false, error: toolDisabled(name) };
+          if (commitResolved() === null) return { ok: false, error: toolDisabled(name) };
           return runRequest(caller, name, args, ctx);
         }
         if (isMessagingTool(name)) {
@@ -1495,7 +1501,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               error: toolError('store_unavailable', storeError ?? 'message store unavailable'),
             };
           }
-          if (!commitResolved()) return { ok: false, error: toolDisabled(name) };
+          if (commitResolved() === null) return { ok: false, error: toolDisabled(name) };
           return runMessaging(caller, name, args, ctx);
         }
         const controlCtx: ControlCallContext = {

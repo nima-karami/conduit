@@ -28,6 +28,7 @@ import {
 import { composeNotice } from '../../src/conduit-mcp/notice-text';
 import { reasonText } from '../../src/conduit-mcp/policy-engine';
 import { parsePolicyFile, serializePolicyFile } from '../../src/conduit-mcp/policy-file';
+import type { OneUseOverride } from '../../src/conduit-mcp/policy-types';
 import type { RequestsIo } from '../../src/conduit-mcp/request-file-fs';
 import type { AnswerInput } from '../../src/conduit-mcp/request-types';
 import { screenVerdict } from '../../src/conduit-mcp/screen-verdict';
@@ -4030,6 +4031,68 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     const codes = [c.errorOf(await c.reply(3)), c.errorOf(await c.reply(4))].sort();
     expect(codes).toEqual(['ok', 'tool_disabled']);
     expect(h.files).toHaveLength(1);
+  });
+
+  it('two concurrent calls on two one-use overrides for one target both run, each spending one', async () => {
+    const overrideFor = (id: string): OneUseOverride => ({
+      id,
+      sessionId: 's1',
+      tool: 'open_file',
+      target: { sessionId: null, path: '/w/a.ts', folder: '/w', projectId: null },
+      createdAt: new Date(0).toISOString(),
+    });
+    const policy = serializePolicyFile({
+      version: 1,
+      profiles: [],
+      overrides: [overrideFor('o1'), overrideFor('o2')],
+      migratedFrom: null,
+      notes: { onScreenOnlyOffered: [] },
+      assignments: [
+        {
+          point: { kind: 'session', sessionId: 's1' },
+          assignment: {
+            profileId: 'worker',
+            onScreenOnly: false,
+            exceptions: [
+              {
+                tool: 'open_file',
+                scope: { kind: 'path', path: '/w/a.ts' },
+                rule: { decision: 'deny' },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line) as Record<string, unknown>);
+      },
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const { c } = await asking({
+      kinds: { '/w': 'dir', '/w/a.ts': 'file' },
+      policyIo: { read: () => policy, write: async () => undefined },
+      grantsIo: { read: () => null, write: async () => undefined },
+      activityIo,
+    });
+    const before = rows.length;
+    c.call(3, 'open_file', { path: '/w/a.ts' });
+    c.call(4, 'open_file', { path: '/w/a.ts' });
+    expect([c.errorOf(await c.reply(3)), c.errorOf(await c.reply(4))]).toEqual(['ok', 'ok']);
+    expect(
+      rows
+        .slice(before)
+        .filter((r) => r.action === 'open_file')
+        .map((r) => `${String(r.decision)}/${String(r.outcome)}/${String(r.decidedBy)}`)
+        .sort(),
+    ).toEqual(['allow/ok/allowed once', 'allow/ok/allowed once']);
+    c.call(5, 'open_file', { path: '/w/a.ts' });
+    expect(c.errorOf(await c.reply(5))).toBe('tool_disabled');
   });
 
   it('a call refused because a concurrent call spent its override records denied, never allow', async () => {
