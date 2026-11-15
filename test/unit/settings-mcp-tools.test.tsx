@@ -313,6 +313,20 @@ describe('Settings → MCP tools', () => {
     expect(errorOf('open_file')?.textContent).toBe(MCP_STR.tools.saveFailed);
   });
 
+  it('a refusal after a broadcast reverts to that broadcast, not to a confirmed value it superseded', async () => {
+    await mount();
+    await click(radio('open_file', 'Off'));
+    replyPolicy(lastPointPost().requestId);
+    await flush();
+    await click(radio('open_file', 'On'));
+    broadcast(layersOf({ global: { open_file: { access: 'ask' } } }));
+    expect(checked('open_file')).toBe('On');
+    replyPolicy(lastPointPost().requestId, 'read-only');
+    await flush();
+    expect(checked('open_file')).toBe('Ask');
+    expect(errorOf('open_file')?.textContent).toBe(MCP_STR.tools.saveFailed);
+  });
+
   it('a scoped refusal on a CLI tab shows saveFailed on that tab', async () => {
     await mount();
     await click(tab('codex'));

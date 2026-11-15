@@ -69,10 +69,6 @@ function below(layer: PolicySource, layers: PolicyLayers): PolicyLayers | null {
 
 type LabelContext = Pick<ToolPolicyEditorProps, 'layer' | 'layers' | 'sourceName'>;
 
-/**
- * The words a choice shows in the editor; the session dialog announces a change with them.
- * null: Inherit isn't offered (the global layer, or a field the tool doesn't have).
- */
 /** Puts one tool's whole entry back: every field it lacks becomes 'inherit'. */
 export const restorePatch = (entry: Partial<ToolPolicy> | undefined): ToolPolicyPatch => ({
   access: entry?.access ?? 'inherit',
@@ -81,6 +77,10 @@ export const restorePatch = (entry: Partial<ToolPolicy> | undefined): ToolPolicy
   move: entry?.move ?? 'inherit',
 });
 
+/**
+ * The words a choice shows in the editor; the session dialog announces a change with them.
+ * null: Inherit isn't offered (the global layer, or a field the tool doesn't have).
+ */
 export function policyChoiceLabel(
   tool: ToolName,
   field: PolicyField,

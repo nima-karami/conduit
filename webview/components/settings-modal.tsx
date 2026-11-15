@@ -930,7 +930,7 @@ const dropSettled = (pending: PendingPicks): PendingPicks => {
     const kept: Partial<Record<ToolName, PendingPick>> = {};
     for (const tool of TOOL_NAMES) {
       const pick = pending[t]?.[tool];
-      if (pick && !pick.settled) kept[tool] = pick;
+      if (pick && !pick.settled) kept[tool] = { ...pick, confirmed: undefined };
     }
     if (Object.keys(kept).length > 0) next[t] = kept;
   }
