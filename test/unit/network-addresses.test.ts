@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { displayNames, formatAddress, parseAddress } from '../../src/network/addresses';
+import {
+  displayNames,
+  formatAddress,
+  parseAddress,
+  printableName,
+} from '../../src/network/addresses';
 
 describe('parseAddress', () => {
   it('reads a bare handle with no machine', () => {
@@ -105,5 +110,36 @@ describe('displayNames', () => {
   it('gives every peer an entry, including an empty peer list', () => {
     expect(displayNames([], 'mac').size).toBe(0);
     expect(displayNames([{ machineId: 'm-00000001', name: 'a' }], 'mac').size).toBe(1);
+  });
+});
+
+// CON-27 R3: peer text reaches free-text surfaces, so a name must be printable and short.
+describe('printableName', () => {
+  it.each(['linux-box', 'Office Mac', '  padded  ', 'Müller', 'x'.repeat(64)])(
+    'accepts %j',
+    (s) => {
+      expect(printableName(s)).toBe(true);
+    },
+  );
+
+  it.each([
+    '',
+    '   ',
+    'a\nb',
+    'a\tb',
+    'a\u0000b',
+    'a\u001fb',
+    'a\u007fb',
+    'a\u009bb',
+    'a\u2028b',
+    'a\u2029b',
+    'x'.repeat(65),
+  ])('rejects %j', (s) => {
+    expect(printableName(s)).toBe(false);
+  });
+
+  it('takes a longer limit when asked, for attachment names', () => {
+    expect(printableName('x'.repeat(200), 200)).toBe(true);
+    expect(printableName('x'.repeat(201), 200)).toBe(false);
   });
 });

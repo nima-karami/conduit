@@ -285,6 +285,20 @@ describe('link manager', { timeout: 60_000 }, () => {
     expect(a.manager.view(b.id.machineId)?.name).toBe('win-box');
   });
 
+  // CON-27 R3: a control character in a name would reach every surface that prints it.
+  it('a hello name with a control character is not stored, and the link still comes up', async () => {
+    const owner = identity();
+    const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
+    const a = await node(identity(ownerKey), 'linux-box');
+    const b = await node(identity(ownerKey), 'bad\nname');
+    a.link(record(b, 'win-box'));
+    b.link(record(a, 'linux-box'));
+    a.manager.start();
+    b.manager.start();
+    await until(() => a.manager.view(b.id.machineId)?.state === 'up');
+    expect(a.manager.view(b.id.machineId)?.name).toBe('win-box');
+  });
+
   it('a peer whose owner key changed is identity-changed and never up', async () => {
     const owner = identity();
     const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };

@@ -296,3 +296,15 @@ describe('remote directory waitReading', () => {
     expect(dir.waitReading(`ghost@${LAPTOP}`, 'me')).toBeNull();
   });
 });
+
+// CON-27 R3: a name a peer chose is not trusted to reach a hint or a row unvalidated.
+describe('names that fail printableName', () => {
+  it('shows the machine id, not the peer text, in a terminal hint and in rows', () => {
+    const dir = createRemoteDirectory();
+    dir.setLinks([link(LAPTOP, 'Lap\ntop', 'revoked')], 'Mine');
+    expect(dir.resolve(`a@${LAPTOP}`)).toEqual({ kind: 'unknown', hint: `${LAPTOP} is revoked` });
+    dir.setLinks([link(DESKTOP, 'Desk\u2028top', 'up')], 'Mine');
+    dir.apply(DESKTOP, snapshot(1, [session('claude-9')]));
+    expect(dir.entries()[0]?.display).toBe(`claude-9@${DESKTOP}`);
+  });
+});

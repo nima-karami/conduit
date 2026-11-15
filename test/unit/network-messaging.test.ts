@@ -529,3 +529,33 @@ it('drops a receipt past the per-link inbound budget silently, and one while mes
   h.svc.onFrame(machine, { ...receipt, status: 'noticed' });
   expect(h.mcp.setRemoteStatus).toHaveBeenCalledTimes(1);
 });
+
+// CON-27 R3: an attachment name or mime that is not plain text gets no ack, like any malformed message.
+it.each([
+  { name: 'x'.repeat(201), mime: 'text/plain' },
+  { name: 'bad\nname', mime: 'text/plain' },
+  { name: '   ', mime: 'text/plain' },
+  { name: 'note.txt', mime: 'text/plain; charset=utf-8' },
+  { name: 'note.txt', mime: `a/${'b'.repeat(99)}` },
+  { name: 'note.txt', mime: 'text' },
+])('refuses an inbound attachment with a bad name or mime, unacknowledged: %j', (att) => {
+  const h = setup();
+  h.svc.onFrame(machine, {
+    t: 'msg',
+    message: { ...wire, attachments: [{ ...att, data: '' }] },
+  });
+  expect(vi.mocked(h.mcp.deliverInbound)).not.toHaveBeenCalled();
+  expect(ackFrames(h.frames)).toEqual([]);
+});
+
+it('accepts a 200-character attachment name and a mime with a capital letter', () => {
+  const h = setup();
+  h.svc.onFrame(machine, {
+    t: 'msg',
+    message: {
+      ...wire,
+      attachments: [{ name: 'x'.repeat(200), mime: 'Text/Plain', data: '' }],
+    },
+  });
+  expect(vi.mocked(h.mcp.deliverInbound)).toHaveBeenCalledTimes(1);
+});

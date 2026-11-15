@@ -43,3 +43,8 @@ export function displayNames(
   }
   return out;
 }
+
+/** Red stub: the printable-name rule lands with its fix commit. */
+export function printableName(_s: string, _max = 64): boolean {
+  throw new Error('printableName: not implemented');
+}
