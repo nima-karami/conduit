@@ -113,6 +113,7 @@ import {
   type PolicySource,
   TOOL_NAMES,
   type ToolName,
+  toolDisabled,
 } from './tool-policy';
 import { CONDUIT_INSTRUCTIONS, toolSchemas } from './tool-schemas';
 import { type Caller, createToolHandlers, type DirectoryEntry, toToolCallResult } from './tools';
@@ -1474,7 +1475,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         });
         if (refused) return { ok: false, error: refused };
         const caller = { handle, sessionId };
-        if (isRequestTool(name) || isMessagingTool(name)) policyService.commit(resolved);
+        if ((isRequestTool(name) || isMessagingTool(name)) && !policyService.commit(resolved))
+          return { ok: false, error: toolDisabled(name) };
         if (isRequestTool(name)) return runRequest(caller, name, args, ctx);
         if (isMessagingTool(name)) {
           if (!store.available()) {

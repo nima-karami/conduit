@@ -127,6 +127,7 @@ function setup() {
       prepareGate?: ReturnType<typeof gate>;
       runGate?: ReturnType<typeof gate>;
       prepareResult?: Result<Prepared<string>>;
+      commitResult?: boolean;
       kind?: CliKind;
       wiredAtLaunch?: boolean;
       routesUi?: boolean;
@@ -170,6 +171,7 @@ function setup() {
       commit: () => {
         commits.n++;
         events.push('commit');
+        return o.commitResult ?? true;
       },
       source: 'global',
       args: { path: '/repo', agent: 'claude' },
@@ -534,6 +536,18 @@ describe('createCallFlow', () => {
     });
     expect(errCode(await off.promise)).toBe('tool_disabled');
     expect(off.commits.n).toBe(0);
+  });
+
+  it('a commit that finds its override spent runs nothing and refuses as tool_disabled', async () => {
+    const t = setup();
+    const allowed = t.call({ policy: ON, commitResult: false });
+    expect(errCode(await allowed.promise)).toBe('tool_disabled');
+    expect(allowed.spies).toEqual({ run: 0, release: 1 });
+
+    const asked = t.call({ commitResult: false });
+    expect(errCode(await asked.promise)).toBe('tool_disabled');
+    expect(asked.spies).toEqual({ run: 0, release: 1 });
+    expect(t.asks()).toEqual([]);
   });
 
   it('no owner window → window_not_ready, released', async () => {

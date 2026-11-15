@@ -1134,6 +1134,55 @@ describe('policy service', () => {
     expect(saved.ok && saved.file.overrides).toEqual([]);
   });
 
+  it('a second commit of an already spent override is refused and touches no grant', () => {
+    const exception: Exception = {
+      tool: 'open_session',
+      scope: { kind: 'session', sessionId: 's9' },
+      rule: { decision: 'deny' },
+    };
+    const override: OneUseOverride = {
+      id: 'o1',
+      sessionId: 's1',
+      tool: 'open_session',
+      target: target({ sessionId: 's9' }),
+      createdAt: iso(T0),
+    };
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: { profileId: 'worker', exceptions: [exception], onScreenOnly: false },
+          },
+        ],
+        overrides: [override],
+      }),
+      grants: serializeGrantsFile({
+        version: 1,
+        grants: [grant({ id: 'g-s2', on: { kind: 'session', sessionId: 's2' } })],
+      }),
+    });
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_session' as const,
+      targets: [target({ sessionId: 's9' }), target({ sessionId: 's2' })],
+      masterOn: true,
+      toYou: false,
+    };
+    const first = h.service.decide(input);
+    const second = h.service.decide(input);
+    expect(first).toMatchObject({ decision: 'allow', overrideIds: ['o1'], grantIds: ['g-s2'] });
+    expect(second).toMatchObject({ decision: 'allow', overrideIds: ['o1'], grantIds: ['g-s2'] });
+
+    expect(h.service.commit(first)).toBe(true);
+    const afterFirst = h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt]);
+    h.advance(MIN);
+    expect(h.service.commit(second)).toBe(false);
+    expect(h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt])).toEqual(afterFirst);
+    expect(h.service.decide(input).decision).toBe('deny');
+  });
+
   it('decide changes nothing; commit removes an override once and fires onChanged only then', () => {
     const override: OneUseOverride = {
       id: 'oa',

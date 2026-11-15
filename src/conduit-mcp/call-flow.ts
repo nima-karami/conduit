@@ -61,8 +61,11 @@ export interface ControlCall<T> {
   wiredAtLaunch: boolean;
   tool: ToolName;
   decision: PolicyDecision;
-  /** Spends the decision's grants and one-use overrides; called only once the call goes ahead. */
-  commit(): void;
+  /**
+   * Spends the decision's grants and one-use overrides once the call goes ahead. False when an
+   * override was already spent by a concurrent call; the call then refuses without running.
+   */
+  commit(): boolean;
   /** Only for the card's reason line: the gate reads decision, never source. */
   source: PolicySource;
   args: unknown;
@@ -264,8 +267,11 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       p.release();
       return { ok: false, error: approvalTimeout() };
     }
+    if (!c.commit()) {
+      p.release();
+      return { ok: false, error: toolDisabled(c.tool) };
+    }
     const askId = deps.newAskId();
-    c.commit();
     deps.sendToOwner(caller, {
       type: 'mcp:ask',
       askId,
@@ -425,7 +431,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       if ('done' in p) {
         if (c.decision.decision === 'deny') return { ok: false, error: toolDisabled(c.tool) };
         if (c.inflight.cancelled) return null;
-        c.commit();
+        if (!c.commit()) return { ok: false, error: toolDisabled(c.tool) };
         return p.done;
       }
       if (c.inflight.cancelled) {
@@ -437,7 +443,10 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       const access = p.alwaysAsk && c.decision.decision === 'allow' ? 'ask' : c.decision.decision;
       switch (access) {
         case 'allow':
-          c.commit();
+          if (!c.commit()) {
+            p.release();
+            return { ok: false, error: toolDisabled(c.tool) };
+          }
           return runNow(c, p);
         case 'ask':
           return ask(c, p);
