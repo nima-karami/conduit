@@ -189,7 +189,7 @@ function applyRecord(s: State, rec: StoreLogRecord): void {
         recipients[h] = { status: 'queued', noticeCount: 0, updatedAt: m.sentAt };
       s.messages.set(m.messageId, { ...m, recipients, expired: false });
       s.seqOf.set(m.messageId, seq);
-      if (m.from === HUMAN_HANDLE) s.resetSeq.set(m.threadId, seq);
+      if (m.from === HUMAN_HANDLE || m.originHuman === true) s.resetSeq.set(m.threadId, seq);
       return;
     }
     case 'rcpt': {
@@ -489,7 +489,7 @@ export function createMessageStore(io: StoreIo, opts?: { maxAgeMs?: number }): M
       const since = state.resetSeq.get(threadId) ?? -1;
       let n = 0;
       for (const m of all()) {
-        if (m.threadId !== threadId || m.from === HUMAN_HANDLE) continue;
+        if (m.threadId !== threadId || m.from === HUMAN_HANDLE || m.originHuman === true) continue;
         if ((state.seqOf.get(m.messageId) ?? -1) > since) n += 1;
       }
       return n;

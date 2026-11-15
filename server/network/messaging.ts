@@ -1,11 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { atomicWriteFileSync } from '../../src/atomic-write';
+import { MAX_MESSAGE_ATTACHMENT_BYTES } from '../../src/conduit-mcp/attachments';
 import type {
   McpNetworkPort,
   RemoteEntry,
   RemoteRecipientOutcome,
 } from '../../src/conduit-mcp/remote-routing';
+import { MAX_BODY_BYTES } from '../../src/conduit-mcp/tools';
 import type { MessageRecord } from '../../src/conduit-mcp/types';
 import type {
   Capabilities,
@@ -115,10 +117,13 @@ export function createMessaging(deps: MessagingDeps): Messaging {
 
   const linkOf = (machineId: string) => deps.links().find((l) => l.machineId === machineId) ?? null;
 
-  const markRemote = (entry: OutboxEntry, status: 'undelivered' | 'expired'): void => {
+  const markRemote = async (
+    entry: OutboxEntry,
+    status: 'undelivered' | 'expired',
+  ): Promise<void> => {
     const mcp = deps.mcp();
     for (const address of entry.addresses)
-      mcp?.setRemoteStatus(entry.message.messageId, address, status);
+      await mcp?.setRemoteStatus(entry.message.messageId, address, status);
   };
 
   const flush = (machineId: string): void => {
@@ -141,20 +146,30 @@ export function createMessaging(deps: MessagingDeps): Messaging {
   const expire = (): void => {
     const gone = outbox.expire(deps.now());
     if (gone.length > 0) {
-      for (const e of gone) markRemote(e, 'expired');
+      for (const e of gone)
+        void markRemote(e, 'expired').catch((err: unknown) =>
+          deps.log.error('expiry status failed', { message: String(err) }),
+        );
       persist();
     }
     stopExpiry = deps.after(expire, EXPIRE_EVERY_MS);
   };
 
-  const ack = (machineId: string, messageId: string, recipients: WireRecipientOutcome[]): void => {
-    if (outbox.ack(machineId, messageId) === null) return;
-    persist();
+  const ack = async (
+    machineId: string,
+    messageId: string,
+    recipients: WireRecipientOutcome[],
+  ): Promise<void> => {
+    if (
+      !outbox.entries().some((e) => e.machineId === machineId && e.message.messageId === messageId)
+    )
+      return;
     const mcp = deps.mcp();
+    if (mcp === null && recipients.some((r) => r.status === 'refused')) return;
     for (const r of recipients) {
       // A delivered recipient stays queued until its receipt says it was noticed or read.
       if (r.status === 'refused') {
-        mcp?.setRemoteStatus(messageId, formatAddress(r.handle, machineId), 'undelivered');
+        await mcp?.setRemoteStatus(messageId, formatAddress(r.handle, machineId), 'undelivered');
         deps.audit.record({
           kind: 'message.refused',
           peer: machineId,
@@ -162,9 +177,11 @@ export function createMessaging(deps: MessagingDeps): Messaging {
         });
       }
     }
+    outbox.ack(machineId, messageId);
+    persist();
   };
 
-  const inbound = (machineId: string, wire: WireMessage): void => {
+  const inbound = async (machineId: string, wire: WireMessage): Promise<void> => {
     const link = linkOf(machineId);
     const refuse = (reason: WireRecipientOutcome['reason']) =>
       wire.to.map((handle) => ({ handle, status: 'refused' as const, reason }));
@@ -178,6 +195,21 @@ export function createMessaging(deps: MessagingDeps): Messaging {
         kind: 'message.refused',
         peer: machineId,
         detail: { messageId: wire.messageId, reason: 'capability_off', direction: 'in' },
+      });
+      return;
+    }
+    if (
+      !/^[a-z0-9-]+$/.test(wire.from) ||
+      wire.to.some((h) => h.includes('@')) ||
+      Buffer.byteLength(wire.body, 'utf8') > MAX_BODY_BYTES ||
+      wire.subject.length > 200 ||
+      wire.attachments.reduce((n, a) => n + Buffer.byteLength(a.data, 'base64'), 0) >
+        MAX_MESSAGE_ATTACHMENT_BYTES
+    ) {
+      deps.send(machineId, {
+        t: 'ack',
+        messageId: wire.messageId,
+        recipients: refuse('unknown_session'),
       });
       return;
     }
@@ -212,7 +244,7 @@ export function createMessaging(deps: MessagingDeps): Messaging {
     }));
     // Plan decision 12: `you` there counts as the human here only while I let that machine drive.
     const framedAsHuman = wire.from === 'you' && link.capabilities.drive;
-    const outcomes = mcp.deliverInbound(record, blobs, framedAsHuman);
+    const outcomes = await mcp.deliverInbound(record, blobs, framedAsHuman);
     deps.send(machineId, { t: 'ack', messageId: wire.messageId, recipients: outcomes });
     const delivered = outcomes.filter((o) => o.status === 'delivered').map((o) => o.handle);
     deps.audit.record({
@@ -309,16 +341,28 @@ export function createMessaging(deps: MessagingDeps): Messaging {
     revoked(machineId) {
       const gone = outbox.revoke(machineId);
       heldReceipts.delete(machineId);
-      for (const e of gone) markRemote(e, 'undelivered');
+      for (const e of gone)
+        void markRemote(e, 'undelivered').catch((err: unknown) =>
+          deps.log.error('revoke status failed', { message: String(err) }),
+        );
       if (gone.length > 0) persist();
     },
     onFrame(machineId, frame) {
-      if (frame.t === 'msg') inbound(machineId, frame.message);
-      else if (frame.t === 'ack') ack(machineId, frame.messageId, frame.recipients);
-      else
-        deps
-          .mcp()
-          ?.setRemoteStatus(frame.messageId, formatAddress(frame.handle, machineId), frame.status);
+      const run =
+        frame.t === 'msg'
+          ? inbound(machineId, frame.message)
+          : frame.t === 'ack'
+            ? ack(machineId, frame.messageId, frame.recipients)
+            : deps
+                .mcp()
+                ?.setRemoteStatus(
+                  frame.messageId,
+                  formatAddress(frame.handle, machineId),
+                  frame.status,
+                );
+      void run?.catch((err: unknown) =>
+        deps.log.error('message processing failed', { message: String(err) }),
+      );
     },
   };
 }

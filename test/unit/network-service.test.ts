@@ -24,6 +24,13 @@ function server(name: string) {
     settings: () => ({ networkBindHost: '127.0.0.1', networkPort: 0, networkSelfName: name }),
     emit: (s) => states.push(s),
     log: quiet,
+    monitor: {
+      sessions: () => [],
+      requests: () => [],
+      youUnread: () => 0,
+      ownerPresence: () => 'here',
+      agents: () => [],
+    },
   });
   cleanup.push(() => rmSync(root, { recursive: true, force: true }));
   cleanup.push(() => net.stop());
