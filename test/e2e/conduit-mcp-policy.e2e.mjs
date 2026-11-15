@@ -24,6 +24,7 @@ import {
   clickAskAnswer,
   FAKE_AGENT_ID,
   fakeAgentProfile,
+  mcpState,
   openFake,
   records,
   resultAfter,
@@ -286,7 +287,7 @@ await runScenario(
     const always = await resultAfter(a.sessionId, before, 15_000);
     assert(always?.session_id, `always: ${JSON.stringify(always)}`);
     const policyOf = async () =>
-      (await sessions(page)).find((s) => s.id === a.sessionId)?.mcpToolPolicy?.open_session;
+      (await mcpState(page))?.policy?.legacy?.sessions?.[a.sessionId]?.open_session;
     assert(
       await until(async () => (await policyOf())?.access === 'on', 5_000),
       `A's session layer: ${JSON.stringify(await policyOf())}`,

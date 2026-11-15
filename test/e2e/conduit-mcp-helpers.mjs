@@ -317,7 +317,7 @@ const SEG = { On: 'on', Off: 'off', Ask: 'ask', Inherit: 'inherit' };
  * @param {'On' | 'Off' | 'Ask' | 'Inherit'} value
  */
 export async function enableToolViaDialog(page, sessionId, tool, value) {
-  await tapBridge(page);
+  await tapMcp(page);
   await page.locator(`.session[data-sessionid="${sessionId}"]`).click({ button: 'right' });
   await page.locator('.ctxmenu__item', { hasText: 'MCP tools…' }).click();
   const dialog = page.locator('.mcptools[role="dialog"]');
@@ -327,10 +327,7 @@ export async function enableToolViaDialog(page, sessionId, tool, value) {
     .click();
   const want = value === 'Inherit' ? null : SEG[value];
   await page.waitForFunction(
-    ({ id, t, w }) => {
-      const s = (window.__sessions || []).find((x) => x.id === id);
-      return (s?.mcpToolPolicy?.[t]?.access ?? null) === w;
-    },
+    ({ id, t, w }) => (window.__mcp?.policy?.legacy?.sessions?.[id]?.[t]?.access ?? null) === w,
     { id: sessionId, t: tool, w: want },
     { timeout: 10_000 },
   );
@@ -354,7 +351,7 @@ export const activeSessionId = (page) =>
  * @param {Record<string, string>} patch e.g. `{ when: 'always' }`
  */
 export async function setSessionPolicy(page, sessionId, tool, patch) {
-  await tapBridge(page);
+  await tapMcp(page);
   const ok = await page.evaluate(
     ({ s, t, p }) =>
       new Promise((resolve) => {
@@ -378,7 +375,7 @@ export async function setSessionPolicy(page, sessionId, tool, patch) {
   if (!ok) throw new Error(`mcp:setToolPolicy refused ${tool} ${JSON.stringify(patch)}`);
   await page.waitForFunction(
     ({ id, t, p }) => {
-      const layer = (window.__sessions || []).find((x) => x.id === id)?.mcpToolPolicy?.[t] ?? {};
+      const layer = window.__mcp?.policy?.legacy?.sessions?.[id]?.[t] ?? {};
       return Object.entries(p).every(([f, v]) =>
         v === 'inherit' ? !(f in layer) : layer[f] === v,
       );
@@ -389,45 +386,60 @@ export async function setSessionPolicy(page, sessionId, tool, patch) {
 }
 
 /**
- * `updateServerSettings` with `mcpToolPolicy[tool]` = `policy` merged over its current value;
- * waits for the host to broadcast it back, or throws after `ms`.
+ * Patch one tool's default-point (global) layer through the host's `mcp:setPointPolicy`, and wait
+ * until the host acknowledges it and its projected `policy.legacy.global` shows every field. Rejects
+ * on a refusal or after `ms`.
  * @param {Record<string, string>} policy e.g. `{ access: 'ask' }`
  */
-export function setGlobalPolicy(page, tool, policy, ms = 10_000) {
+export async function setGlobalPolicy(page, tool, policy, ms = 10_000) {
+  await tapMcp(page);
   return page.evaluate(
     ({ t, p, ms }) =>
       new Promise((resolve, reject) => {
-        let sent = false;
-        let last = null;
+        window.__policyReq = (window.__policyReq ?? 900_000) + 1;
+        const requestId = window.__policyReq;
+        let acked = false;
+        let matched = false;
         const matches = (s) =>
-          Object.entries(p).every(([f, v]) => s?.mcpToolPolicy?.[t]?.[f] === v);
+          Object.entries(p).every(([f, v]) => s?.policy?.legacy?.global?.[t]?.[f] === v);
+        const finish = () => {
+          if (!acked || !matched) return;
+          clearTimeout(timer);
+          off();
+          resolve();
+        };
         const timer = setTimeout(() => {
           off();
-          const seen = JSON.stringify(last?.mcpToolPolicy?.[t] ?? null);
+          const seen = JSON.stringify(window.__mcp?.policy?.legacy?.global?.[t] ?? null);
           reject(
             new Error(
-              `setGlobalPolicy ${t} ${JSON.stringify(p)}: not broadcast back in ${ms} ms (last: ${seen})`,
+              `setGlobalPolicy ${t} ${JSON.stringify(p)}: not projected in ${ms} ms (last: ${seen})`,
             ),
           );
         }, ms);
         const off = window.agentDeck.subscribe((m) => {
-          if (m.type !== 'state') return;
-          last = m.settings;
-          if (!sent) {
-            sent = true;
-            const cur = m.settings.mcpToolPolicy;
-            window.agentDeck.post({
-              type: 'updateServerSettings',
-              patch: { mcpToolPolicy: { ...cur, [t]: { ...cur[t], ...p } } },
-            });
+          if (m.type === 'mcp:policyResult' && m.requestId === requestId) {
+            if (!m.ok) {
+              clearTimeout(timer);
+              off();
+              reject(new Error(`setGlobalPolicy ${t} ${JSON.stringify(p)}: refused (${m.error})`));
+              return;
+            }
+            acked = true;
+            // A no-op edit broadcasts nothing new, so the state that is already in place counts.
+            if (matches(window.__mcp)) matched = true;
+          } else if (m.type === 'mcp:state' && matches(m.state)) {
+            matched = true;
           }
-          if (matches(m.settings)) {
-            clearTimeout(timer);
-            off();
-            resolve();
-          }
+          finish();
         });
-        window.agentDeck.post({ type: 'ready' });
+        window.agentDeck.post({
+          type: 'mcp:setPointPolicy',
+          requestId,
+          point: { kind: 'default' },
+          tool: t,
+          patch: p,
+        });
       }),
     { t: tool, p: policy, ms },
   );

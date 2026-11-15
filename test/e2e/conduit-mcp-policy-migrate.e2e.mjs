@@ -21,6 +21,7 @@ import {
   callTool,
   FAKE_AGENT_ID,
   fakeAgentProfile,
+  mcpState,
   openFake,
   sessions,
   setMessaging,
@@ -115,7 +116,7 @@ await runScenario(
     };
 
     phase('v0.50 session overrides restore migrated');
-    const layerOf = async (id) => (await sessions(page)).find((s) => s.id === id)?.mcpToolPolicy;
+    const layerOf = async (id) => (await mcpState(page))?.policy?.legacy?.sessions?.[id];
     for (const [id, want] of Object.entries(MIGRATED_LAYERS)) {
       assert(
         await until(async () => isDeepStrictEqual(await layerOf(id), want), 10_000),
