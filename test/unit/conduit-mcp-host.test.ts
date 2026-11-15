@@ -26,7 +26,7 @@ import {
   NOTICE_SPACING_MS,
 } from '../../src/conduit-mcp/notice-gate';
 import { composeNotice } from '../../src/conduit-mcp/notice-text';
-import { serializePolicyFile } from '../../src/conduit-mcp/policy-file';
+import { parsePolicyFile, serializePolicyFile } from '../../src/conduit-mcp/policy-file';
 import type { RequestsIo } from '../../src/conduit-mcp/request-file-fs';
 import type { AnswerInput } from '../../src/conduit-mcp/request-types';
 import { screenVerdict } from '../../src/conduit-mcp/screen-verdict';
@@ -3877,6 +3877,60 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     c.call(3, 'open_file', { path: '/w/a.ts' });
     expect(c.errorOf(await c.reply(3))).toBe('ok');
     expect(h.files).toHaveLength(1);
+  });
+
+  it('an override is kept when a messaging call is refused for store_unavailable', async () => {
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line) as Record<string, unknown>);
+      },
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const writes: string[] = [];
+    const policyIo: RequestsIo = {
+      read: () => null,
+      write: async (t) => {
+        writes.push(t);
+      },
+    };
+    const { h, c } = await asking({
+      storeIo: failingIo(),
+      policyIo,
+      grantsIo: { read: () => null, write: async () => undefined },
+      activityIo,
+      manualTimers: true,
+    });
+    await setPolicy(h, { list_sessions: { access: 'off' } });
+    c.call(1, 'list_sessions');
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    let allowed: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:allowOnce',
+        requestId: 2,
+        activityId: String(rows.find((r) => r.decision === 'deny')?.id),
+      },
+      (m) => {
+        allowed = m;
+      },
+      1,
+    );
+    expect(allowed).toEqual({ type: 'mcp:policyResult', requestId: 2, ok: true });
+    h.advance(1_000);
+    const saved = () => {
+      const parsed = parsePolicyFile(writes.at(-1) ?? '');
+      return parsed.ok ? parsed.file.overrides.length : -1;
+    };
+    expect(saved()).toBe(1);
+
+    c.call(3, 'list_sessions');
+    expect(c.errorOf(await c.reply(3))).toBe('store_unavailable');
+    h.advance(1_000);
+    expect(saved()).toBe(1);
   });
 
   it('two concurrent calls on one one-use override run exactly once', async () => {

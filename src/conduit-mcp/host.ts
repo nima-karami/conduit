@@ -1475,9 +1475,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         });
         if (refused) return { ok: false, error: refused };
         const caller = { handle, sessionId };
-        if ((isRequestTool(name) || isMessagingTool(name)) && !policyService.commit(resolved))
-          return { ok: false, error: toolDisabled(name) };
-        if (isRequestTool(name)) return runRequest(caller, name, args, ctx);
+        if (isRequestTool(name)) {
+          if (!policyService.commit(resolved)) return { ok: false, error: toolDisabled(name) };
+          return runRequest(caller, name, args, ctx);
+        }
         if (isMessagingTool(name)) {
           if (!store.available()) {
             return {
@@ -1485,6 +1486,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               error: toolError('store_unavailable', storeError ?? 'message store unavailable'),
             };
           }
+          if (!policyService.commit(resolved)) return { ok: false, error: toolDisabled(name) };
           return runMessaging(caller, name, args, ctx);
         }
         const controlCtx: ControlCallContext = {
