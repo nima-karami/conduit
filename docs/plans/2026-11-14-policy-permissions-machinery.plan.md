@@ -509,6 +509,14 @@ Failing tests:
 *T2.3 ruling, required policy field (2026-11-15):* `McpUiState.policy` is required. `ui-types.ts` exports `emptyPolicyUi()`, used by `server/compose.ts` (placeholder state), `webview/bridge.ts` (fake shell) and four test fixtures (`conduit-mcp-view-model`, `message-thread-request-link`, `messages-pane`, `request-popup`). These files join T2.3.
 *T2.3 ruling, projection lower point (2026-11-15):* the legacy session projection's lower point follows `launchedCli` (POL-D5), never the handle's CLI. The `policy-service.ts` implementation joins T2.3 for this change.
 *T2.3 ruling, name clash (2026-11-15):* `policy-targets.ts`'s `TargetSession` becomes `PolicyTargetSession`, because fallow flags a duplicate export with `control-tools.ts`.
+*T2.3 review round 1 rulings (2026-11-15):*
+- One rule for a session's legacy lower point: `legacyLowerPoint(state, launchedCli)` in policy-projection.ts returns the cli point if launchedCli has a cli assignment, otherwise default. `ui()` and the `mcp:setToolPolicy` route both call it. (Blocker: the host used a cli point with no assignment, so applyLegacyPatch fell back to plain Worker and one edit dropped every default customisation.)
+- C7 split: `decide` makes no changes. A new `commit(decision)` touches grants and removes overrides, and fires onChanged when it removed an override. The host commits only when the call runs or its card is raised, so a gate-refused call keeps its override.
+- `allowOnce` fires onChanged, so tool lists follow override-dependent visibility.
+- Activity outcome: card declined → denied, approval_timeout → expired.
+- `mcp:setAssignment` on an unknown session → unknown-session.
+- Hidden tools: an anywhere deny exception doesn't hide the tool when a narrower exception for it at the same assignment sets a non-deny decision.
+- Deferred to CON-25: reasonText CLI display names (the host passes the kind).
 
 #### Task 2.1: migration and projection
 **Files:** create `policy-migration.ts`, `policy-projection.ts`; tests `test/unit/policy-migration.test.ts`, `test/unit/policy-projection.test.ts`.
