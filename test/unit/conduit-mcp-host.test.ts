@@ -3818,6 +3818,43 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(c.errorOf(await c.reply(6))).toBe('ok');
   });
 
+  it('an override waits for a call that runs: an off-screen call is refused and keeps it, the next on-screen call spends it', async () => {
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line) as Record<string, unknown>);
+      },
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const { h, c } = await asking({ activityIo });
+    await setPolicy(h, { open_file: { access: 'off' } });
+    c.call(1, 'open_file', { path: '/w/a.ts' });
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    const denied = rows.find((row) => row.decision === 'deny');
+    let answer: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:allowOnce', requestId: 1, activityId: String(denied?.id) },
+      (m) => {
+        answer = m;
+      },
+      1,
+    );
+    expect(answer).toEqual({ type: 'mcp:policyResult', requestId: 1, ok: true });
+
+    h.presence.shown.set(1, new Set());
+    c.call(2, 'open_file', { path: '/w/a.ts' });
+    expect(c.errorOf(await c.reply(2))).toBe('caller_not_visible');
+    expect(h.files).toEqual([]);
+
+    h.presence.shown.set(1, new Set(['s1']));
+    c.call(3, 'open_file', { path: '/w/a.ts' });
+    expect(c.errorOf(await c.reply(3))).toBe('ok');
+    expect(h.files).toHaveLength(1);
+  });
+
   it('on/viewing open_session runs with an unready owner or no owner window', async () => {
     for (const owner of ['unready', 'none'] as const) {
       const h = harness({ kinds: { '/w': 'dir' } });

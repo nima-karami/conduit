@@ -1478,6 +1478,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           appConnected: deps.appConnected(),
         });
         if (refused) return { ok: false, error: refused };
+        policyService.commit(resolved);
         const caller = { handle, sessionId };
         if (isRequestTool(name)) return runRequest(caller, name, args, ctx);
         if (isMessagingTool(name)) {

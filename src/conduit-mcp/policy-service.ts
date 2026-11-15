@@ -66,6 +66,7 @@ export interface PolicyService {
   start(): void;
   stop(): Promise<void>;
   decide(input: Omit<PolicyInput, 'now'>): PolicyDecision;
+  commit(decision: PolicyDecision): void;
   noteDecision(activityId: string, input: Omit<PolicyInput, 'now'>, decision: PolicyDecision): void;
   visibleTools(p: Principal): ToolName[];
   setAssignment(
@@ -357,17 +358,23 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     },
 
     decide(input) {
-      const decision = decideEngine(stateNow(), { ...input, now: deps.now() });
+      return decideEngine(stateNow(), { ...input, now: deps.now() });
+    },
+
+    commit(decision) {
       if (decision.grantIds.length > 0) {
         for (const id of decision.grantIds) grants.touch(id);
         markGrants();
       }
       if (decision.overrideIds.length > 0) {
         const used = new Set(decision.overrideIds);
+        const before = file.overrides.length;
         file.overrides = file.overrides.filter((o) => !used.has(o.id));
-        markPolicy();
+        if (file.overrides.length !== before) {
+          markPolicy();
+          deps.onChanged();
+        }
       }
-      return decision;
     },
 
     noteDecision(activityId, input, decision) {
