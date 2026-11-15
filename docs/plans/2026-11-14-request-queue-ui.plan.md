@@ -1,6 +1,6 @@
 # Request queue UI (CON-20) — implementation plan
 
-**Spec:** `docs/specs/2026-11-14-user-input-requests.md` v4.5 §4.4, §4.5, §11  **Tier:** FULL
+**Spec:** `docs/specs/archive/2026-11-14-user-input-requests.md` v4.5 §4.4, §4.5, §11  **Tier:** FULL
 **Design (approved, final):** `docs/design-handoff/2026-11-14-shaping/CON-10/` on branch `shaping-2026-11-14`
 (README, `iter-7/` screens and `critique.md` incl. "cut the repetition", iter-6's empty / caught-up / session
 pill / waiting notice, `../shared-frame.md`). Read it from `/home/namemenima/projects/.wt/conduit/shaping/…`;
@@ -133,7 +133,7 @@ Every surface calls this: row, pill, notice, thread link and shortcut.
 
 ### UC6 Attention entries (`src/attention.ts`)
 - `AttentionEntry.kind` gains `'request'`.
-- `needYouEntries` puts open requests first (soonest-needed order) and drops session entries already covered by an open request. This mirrors the tray rule merged in CON-21 T5.2.
+- `needYouEntries` keeps waiting asks first (a call is blocked on each), then open requests (soonest-needed order), and drops session entries already covered by an open request. Corrected during the build: `status-bar.e2e` showed requests ahead of a waiting ask. This mirrors the tray rule merged in CON-21 T5.2.
 - `routeAttention` (`src/attention-route.ts:27`) routes `'request'` to `openRequest`.
 
 ## Producer/consumer map

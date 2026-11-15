@@ -95,7 +95,11 @@ export function RequestPopup({ sessions }: RequestPopupProps) {
           now={now}
           onSend={(answer) => api.answerRequest(current.id, answer)}
           onNext={() => {
-            if (!next) return;
+            // The last request answered: nothing to load, so the pop-up gets out of the way.
+            if (!next) {
+              requestPopup.close();
+              return;
+            }
             if (openAsOf(next) === 'popup') requestPopup.open(next.id);
             else {
               returnTo.current = null;

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Session } from '../../src/types';
+import { digestCounts } from '../away-view-model';
 import { useNeedsYouView } from '../needs-you-view-store';
 import { openRequest, openSessionTerminal } from '../request-open';
 import {
@@ -9,18 +10,19 @@ import {
   type SessionInfo,
 } from '../request-view-model';
 import type { ConduitMcpApi } from '../use-conduit-mcp';
+import { AwayBanner } from './away-banner';
+import { NeedsYouDigest } from './needs-you-digest';
 import { NeedsYouMenu } from './needs-you-menu';
 import { NeedsYouPane } from './needs-you-pane';
-
-// The right pane is not handed the sidebar's project list, so cards show no space names yet.
-const NO_SPACE_NAMES: ReadonlyMap<string, string> = new Map();
 
 export function NeedsYouPanel({
   mcp,
   sessions,
+  spaceNames,
 }: {
   mcp: ConduitMcpApi;
   sessions: readonly Session[];
+  spaceNames: ReadonlyMap<string, string>;
 }) {
   const [view, setView] = useNeedsYouView();
   // Filters are per visit: a remount starts unfiltered.
@@ -44,6 +46,12 @@ export function NeedsYouPanel({
     [sessions],
   );
 
+  const [historySignal, setHistorySignal] = useState(0);
+  const [dismissedTo, setDismissedTo] = useState(readDismissedDigest);
+  const presence = requests?.presence ?? null;
+  const digest = requests && presence?.state === 'here' ? digestCounts(requests) : null;
+  const showDigest = digest !== null && digest.to !== dismissedTo;
+
   const menu = (
     <NeedsYouMenu
       sort={view.sort}
@@ -52,7 +60,7 @@ export function NeedsYouPanel({
       onFilters={setFilters}
       options={filterOptions(requests?.open ?? [], {
         sessions: sessionInfo,
-        spaces: NO_SPACE_NAMES,
+        spaces: spaceNames,
       })}
       show={view.show}
       onShow={(show) => setView({ ...view, show })}
@@ -61,24 +69,55 @@ export function NeedsYouPanel({
   );
 
   return (
-    <NeedsYouPane
-      requests={requests}
-      sessions={sessions}
-      spaceNames={NO_SPACE_NAMES}
-      sort={view.sort}
-      filters={filters}
-      show={view.show}
-      onClearFilters={() => setFilters(NO_FILTERS)}
-      menu={menu}
-      legendOpen={legendOpen}
-      onCloseLegend={() => setLegendOpen(false)}
-      onOpen={(id) => {
-        openRequest(id);
-      }}
-      onOpenTerminal={(sid) => {
-        openSessionTerminal(sid);
-      }}
-      now={now}
-    />
+    <div className="needs-panel">
+      {presence && <AwayBanner presence={presence} onBack={() => mcp.setAway(false, null)} />}
+      {showDigest && (
+        <NeedsYouDigest
+          counts={digest}
+          onDismiss={() => {
+            writeDismissedDigest(digest.to);
+            setDismissedTo(digest.to);
+          }}
+          onShowHistory={() => setHistorySignal((n) => n + 1)}
+        />
+      )}
+      <NeedsYouPane
+        historySignal={historySignal}
+        requests={requests}
+        sessions={sessions}
+        spaceNames={spaceNames}
+        sort={view.sort}
+        filters={filters}
+        show={view.show}
+        onClearFilters={() => setFilters(NO_FILTERS)}
+        menu={menu}
+        legendOpen={legendOpen}
+        onCloseLegend={() => setLegendOpen(false)}
+        onOpen={(id) => {
+          openRequest(id);
+        }}
+        onOpenTerminal={(sid) => {
+          openSessionTerminal(sid);
+        }}
+        now={now}
+      />
+    </div>
   );
+}
+
+// Per viewer: which return digest this person already dismissed, so it isn't shown twice.
+const DIGEST_KEY = 'conduit.needsYou.digestDismissed';
+function readDismissedDigest(): string | null {
+  try {
+    return localStorage.getItem(DIGEST_KEY);
+  } catch {
+    return null;
+  }
+}
+function writeDismissedDigest(to: string): void {
+  try {
+    localStorage.setItem(DIGEST_KEY, to);
+  } catch {
+    // Storage can be unavailable; the digest then hides only for this visit.
+  }
 }

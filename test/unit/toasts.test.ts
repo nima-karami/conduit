@@ -34,8 +34,11 @@ const chrome: WorkbenchChromeContextValue = {
     attentionCount: 0,
     firstAttention: null,
     showCommandHint: false,
+    waitingUntil: null,
   },
   commandHint: '',
+  presence: null,
+  setAway: () => {},
   focusAttention: noop,
   update: { status: null, dismissed: false, dismiss: noop, reveal: noop, openNotes: noop },
 };

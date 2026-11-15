@@ -55,7 +55,7 @@ it('a bare session switch restores both groups and the focused group, including 
 });
 
 function routes() {
-  return { focusAsk: vi.fn(), openThread: vi.fn(), focusSession: vi.fn() };
+  return { focusAsk: vi.fn(), openThread: vi.fn(), focusSession: vi.fn(), openRequest: vi.fn() };
 }
 
 it('Go to shows the workspace and Terminal even for the already selected agent, then focuses', () => {
@@ -121,6 +121,13 @@ describe('routeAttention', () => {
     routeAttention(entry({ kind: 'session', sessionId: 's2' }), to);
     expect(to.focusSession).toHaveBeenCalledWith('s2');
     expect(to.focusAsk).not.toHaveBeenCalled();
+  });
+
+  it('a request entry opens the request, not its session', () => {
+    const to = routes();
+    routeAttention(entry({ kind: 'request', sessionId: 's4', requestId: 'r_1' }), to);
+    expect(to.openRequest).toHaveBeenCalledWith('r_1');
+    expect(to.focusSession).not.toHaveBeenCalled();
   });
 
   it('a message without a thread falls back to its session', () => {

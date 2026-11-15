@@ -166,7 +166,7 @@ export type ServerAttentionSnapshot = ActivitySnapshot & SessionAttentionFacts;
 
 /**
  * What the request queue needs to raise or resolve `attend` and `scheduler` requests
- * (docs/specs/2026-11-14-user-input-requests.md §4.1, REQ-D9 measured in docs/runs/2026-11-14-CON-21/osc7501.md).
+ * (docs/specs/archive/2026-11-14-user-input-requests.md §4.1, REQ-D9 measured in docs/runs/2026-11-14-CON-21/osc7501.md).
  * `blocked` is false unless the program's own OSC 7501 report is `blocked`.
  */
 export interface NeedsYouFact {

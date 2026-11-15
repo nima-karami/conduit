@@ -171,6 +171,9 @@ export interface PolicyDecision {
   decision: Decision; reason: Reason;
   rule: { when: When | null; reach: Reach | null; move: Move | null };
   grantId: string | null; overrideId: string | null;
+  grantIds: readonly string[];            // every grant that allowed a target (S1 review)
+  deniedTarget: PolicyTarget | null;      // the resolved target an explicit deny decided on (S2-2 review), for allowOnce
+  overrideIds: readonly string[];         // every one-use override that passed its own target this call (S2-2 re-review); overrideId = overrideIds[0] ?? null
 }
 export type PermissionAnswer =
   | { outcome: 'allowed'; grant?: GrantChoice }
@@ -289,39 +292,55 @@ export interface LegacyPolicy { global: GlobalPolicy; byCli: CliPolicyLayers; se
 export function migrateLegacyPolicy(legacy: LegacyPolicy): Pick<PolicyFile, 'assignments' | 'migratedFrom' | 'notes'>;
 // policy-projection.ts
 export function projectLegacyLayer(state: PolicyState, point: AssignmentPoint, lower: AssignmentPoint | null): PolicyLayer;
-export function applyLegacyPatch(state: PolicyState, point: AssignmentPoint, lower: AssignmentPoint | null, tool: ToolName, patch: ToolPolicyPatch): Assignment;
+export function applyLegacyPatch(state: PolicyState, point: AssignmentPoint, lower: AssignmentPoint | null, tool: ToolName, patch: ToolPolicyPatch): Assignment | null;  // null: refused, a scoped exception is present
 ```
 - **Migration is exact by construction.** For each layer it first tries Lead with `onScreenOnly: true` and no exceptions. It keeps that only if `effectiveRule` equals today's `resolvePolicy` result for all 23 tools and every field. Otherwise it writes Worker plus one anywhere-scoped exception per field that differs.
 - **What "today" means for each layer.** Today's value for a session is `resolvePolicy(tool, {session: layer, cli: byCli[cli], global})`. For a kind it is `resolvePolicy(tool, {cli: byCli[k], global})`, and for the default `resolvePolicy(tool, {global})`. The migrated assignment's effective rules (anywhere scope) must equal those for every tool and field, because an assignment replaces the lower points wholesale.
 - **Exceptions.** There is one exception object per tool, holding every field that differs (an exception is per action, §4.1). The label counts exception objects, plus 1 for `onScreenOnly`.
 - **Projection (DN-2).** `projectLegacyLayer(state, point, lower)` returns, per tool and field, the effective value at `point` only where it differs from the effective value at `lower`. Access is mapped allow→on, ask→ask, deny→off. Below `lower = null` sit Worker's rules. For a session, `lower` is the `cli:<handle kind>` point if it has an assignment, else default; for a kind it is default; for the default it is null. This reproduces today's field-by-field "inherit" display.
-- **Legacy patches.** `applyLegacyPatch`: a value sets that field in the tool's anywhere exception. `'inherit'` removes the field, and an empty exception is removed. A point with no assignment yet starts as a copy of `lower`'s assignment (same profile, anywhere exceptions, `onScreenOnly`), so only the patched field changes.
+- **Legacy patches (review S2-1: defined by outcome).** After `applyLegacyPatch(point, lower, tool, {field: v})`, `projectLegacyLayer(point, lower)` shows `v` for that field. After `'inherit'`, it no longer shows the field: the effective value equals `lower`'s.
+  - The patch computes the target effective value (`v`, or `lower`'s effective value for inherit).
+  - A `when` patch on an `onScreenOnly` point first clears `onScreenOnly` and writes `when:'viewing'` into the anywhere exception of every other tool whose profile `when` differs from `'viewing'`. This is a behaviour-preserving expansion.
+  - The tool's anywhere exception then holds the field only if the profile's value differs from the target; otherwise the field is removed. Empty exceptions are dropped.
+  - A point with no assignment starts as a full copy of `lower`'s assignment: same profile, **all** exceptions including scoped ones, same `onScreenOnly`.
+  - The access↔decision map lives once, in `policy-profiles.ts`.
+  - **Scoped exceptions: refused (decision after three review rounds).** The old editors cannot represent scopes, and nothing in this build creates a scoped exception: migration writes anywhere exceptions only, and CON-25 adds scoped ones later. So `applyLegacyPatch` returns `null` (refused) when the point's assignment or `lower`'s assignment has any exception whose scope is not anywhere, and the service answers `{ok:false, error:'scoped'}`. The editor then shows its existing failed-save state. With scopes out, set and inherit are reasoned at target null only, which reviews verified exact. A patch for a field the tool doesn't have (`TOOL_SPECS[tool].fields`) is skipped.
 - **What gets migrated.** The global layer migrates to the default assignment only when it differs from the defaults. The CLI layers become kind assignments, and the session layers become session assignments.
 - **The on-screen offer.** `notes.onScreenOnlyOffered` lists the session ids that got Lead with `onScreenOnly`. CON-25 shows the one-time offer from it.
 
-### C7 Composer — `policy-service.ts` (Slice 2, T2.2)
+### C7 Composer — `policy-service.ts` (Slice 2, T2.2) — as built (S2-2 brief)
 ```ts
-export interface PolicyServiceDeps { dir: string; now(): number; newId(): string; setTimer(fn: () => void, ms: number): unknown;
-  clearTimer(t: unknown): void; warn(m: string, e?: unknown): void; legacy(): LegacyPolicy; onChanged(): void }
+export interface PolicyServiceDeps {
+  policyIo: RequestsIo; grantsIo: RequestsIo; activityIo: ActivityIo;   // createRequestsIo(<dir>/policy.json), (<dir>/grants.json); createActivityIo(<dir>)
+  now(): number; newId(): string; setTimer(fn: () => void, ms: number): unknown; clearTimer(t: unknown): void;
+  warn(m: string, e?: unknown): void; legacy(): LegacyPolicy; onChanged(): void;
+}
 export interface PolicyService {
   start(): void; stop(): Promise<void>;
-  decide(input: Omit<PolicyInput, 'now'>): PolicyDecision;   // also touches a matched grant, consumes a matched override
-  visibleTools(p: Principal, masterOn: boolean): ToolName[];
+  decide(input: Omit<PolicyInput, 'now'>): PolicyDecision;          // touches every grantIds entry; consumes a reported override
+  noteDecision(activityId: string, input: Omit<PolicyInput, 'now'>, decision: PolicyDecision): void;  // remembers explicit denies for allowOnce
+  visibleTools(p: Principal): ToolName[];
   setAssignment(point: AssignmentPoint, profileId: ProfileId | null): { ok: true } | { ok: false; error: 'unknown-profile' | 'read-only' };
-  applyLegacyPatch(point: AssignmentPoint, tool: ToolName, patch: ToolPolicyPatch): { ok: true } | { ok: false; error: 'read-only' };
+  applyLegacyPatch(point: AssignmentPoint, lower: AssignmentPoint | null, tool: ToolName, patch: ToolPolicyPatch): { ok: true } | { ok: false; error: 'read-only' | 'scoped' };
   createGrant(choice: GrantChoice, p: Principal, tool: ToolName, target: PolicyTarget, requestId: string | null): Grant | null;
   revokeGrant(id: string): boolean;
   allowOnce(activityId: string): { ok: true } | { ok: false; error: 'not-found' | 'not-overridable' };
   sessionEnded(sessionId: string): void;
-  activity: ActivityLog;
-  ui(): PolicyUiState;
+  readonly activity: ActivityLog;
+  ui(sessions: ReadonlyArray<{ sessionId: string; handleCli: CliKind | null; launchedCli: CliKind | null }>): PolicyUiState;
 }
+// policy-targets.ts
+type TargetSession = { id: string; cwd: string | null; projectId: string | null };   // sessionByHandle resolves a handle OR a session id, exactly as the tools do (app-control-tools.ts ~:385)
+export interface TargetDeps { sessionByHandle(h: string): TargetSession | null; childrenOf(sessionId: string): TargetSession[]; realPath(p: string): string | null }
+export function resolveTargets(tool: ToolName, args: Record<string, unknown>, caller: { sessionId: string; home: string | null }, deps: TargetDeps): PolicyTarget[];
+// review S2-2: close_session children:true → the caller's children; relative paths resolve against caller.home (node:path), never kept raw
 ```
+- **Unreadable policy.json (S2-2 re-review, fails closed).** If `policy.json` is corrupt, newer or unreadable, the service evaluates `migrateLegacyPolicy(deps.legacy())` **in memory** (the frozen pre-upgrade settings), stays read-only, never writes, and records one Activity `note` row: "Permissions file unreadable; using pre-upgrade settings". An empty state (everyone Worker) is never used, because it would widen Observer sessions and drop deny exceptions.
 - **Load and migration.** `start()` reads `policy.json` and `grants.json`. A missing `policy.json` runs `migrateLegacyPolicy(deps.legacy())` and writes it. Legacy keys are never read again and never deleted.
 - **Writes and timers.** Writes are coalesced atomically through `atomicWriteFile` at 250 ms. A 60 s timer runs `grants.tick()` and `activity.flushCounts()`, and once an hour `activity.purge()`.
 
 ### C8 Renderer seams (Slice 2/3, serial claims)
-`src/conduit-mcp/ui-types.ts` adds `policy: PolicyUiState` to `McpUiState`:
+`PolicyUiState` lives in `policy-types.ts` (Node-free, the renderer's home for policy types; ruling S2-2). `src/conduit-mcp/ui-types.ts` adds `policy: PolicyUiState` to `McpUiState`:
 ```ts
 export interface PolicyUiState {
   profiles: Array<{ id: ProfileId; name: string; builtIn: boolean }>;
@@ -613,3 +632,39 @@ If a task's assumption turns out wrong (the piece it builds on is misaligned, or
 - **DN-7:** revoke and remote-lead scenarios are covered by engine unit tests only; `revokePeer` is left for NET.
 - **DN-8:** matcher plus measurement. **If the hook adds more than about 20 ms per call at the median, stop and report to the lead before S4 ships.**
 - **DN-9:** the own-permissions box is not built.
+
+## Run state and next steps (hand-over, 2026-11-14 23:58 UTC)
+
+So a Codex orchestrator can take over if Claude stops. The lead (claude-3) receives reports via Conduit `send_message`.
+
+**Done.**
+- Slice 0.
+- Slice 1, merged: lanes A, B and C at b92f7411. Local verify exit 0; CI verify passed in e2e:remote run 43653097733 (flaky: `role-brief`; `scrollback-inrun` quarantined).
+- CON-21 tip 9ba00fe9 merged at 55a70bb5. Its verify has not been run yet; run it before the next merge.
+
+**In flight. Lane worktrees are under the CON-24 session scratchpad: `/tmp/claude-1000/-home-namemenima-projects--wt-conduit-CON-24/4344d38f-77e3-4aed-916f-805841433cf8/scratchpad/lanes/`.**
+- `s2-1` (branch con24-s2-1): T2.1 migration and projection. Round 5 makes legacy patches refuse scoped exceptions (C6 "Scoped exceptions: refused"). Approve it after a fresh review of that commit.
+- `s2-2` (branch con24-s2-2): T2.2 service and targets. Approved; a follow-up (40581eff) is under review.
+  - After s2-1 lands, adapt the service: `applyLegacyPatch` returning `null` maps to `{ok:false, error:'scoped'}`.
+  - Merge s2-1 into s2-2 for that adaptation.
+
+**Open review results (2026-11-15 00:05 UTC).**
+- s2-1 round 5 (4bba6b7e, refuse scoped) still needs its fresh review.
+- s2-2 follow-up (40581eff) review is REVISE, with one blocker. When an explicit-deny target is passed by its override and another target makes the call `ask`, the engine returns `overrideIds: []` (policy-engine.ts ~:252-258), so the override survives the approved call and passes that target again unattended.
+  - Fix: report `overrideIds` on the ask path too, and consume them when that decision is returned. Add engine and service tests for explicit-deny + override + ask.
+  - Nits: allowOnce dedupe must compare paths with the engine's `samePath`/folderKey helper; rename the policy-targets "session referenced by id" test, which only exercises its own fake.
+
+**Merge order:** s2-1, then s2-2 (which contains s2-1). Run `npm run verify; echo "exit=$?"` after each, with nothing else running on the machine, and check `df -h /tmp` first because of the shared /tmp quota.
+
+**Then:**
+1. T2.3 host wiring (serial; claims listed in Slice 2).
+2. T2.4 editors read the projection; the `scoped` error shows as the editors' failed-save state.
+3. `test/e2e/policy-profiles.e2e.mjs`.
+4. `npm run e2e:remote -- policy-profiles conduit-mcp-policy conduit-mcp-policy-migrate conduit-mcp-refusals conduit-mcp-control conduit-mcp-control-terminal`, then `--affected`. CI's verify job must pass.
+5. Slices 3, 4 and 5 as planned.
+
+**Lanes from now on (lead order, 23:55).**
+- Lanes are Conduit sessions, not Claude subagents: `open_session` with agent `codex` (model `gpt-6.1-terra`, or `gpt-6-luna` for mechanical lanes), or `cursor-agent` (model `composer-2.5`), path = the lane worktree, `focus:false`.
+- Check the new lane with `read_screen` (Codex asks once to trust the folder; Enter accepts).
+- Send the brief, built from `brief-common.md` in the scratchpad plus the task text, and require a `send_message` report.
+- Reviews also run in a fresh Codex session with the code-review brief.

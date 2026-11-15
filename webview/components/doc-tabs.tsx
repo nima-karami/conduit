@@ -62,6 +62,7 @@ export function DocTabs({
   moveGrip,
   flashTabId = null,
   saveStatuses = NO_SAVE_STATUSES,
+  trailing,
 }: {
   group: GroupIndex;
   /** The strip's group is the active one: its active tab takes the full active treatment. */
@@ -78,6 +79,8 @@ export function DocTabs({
   // appIcon, or agent-derived kind), falling back to the plain terminal glyph.
   terminalIcon: ResolvedSessionIcon;
   terminalFocusKey?: string;
+  /** The strip's right end, before Split: the session pill (docs/plans/2026-11-14-request-queue-ui.plan.md Decisions #2). */
+  trailing?: React.ReactNode;
   onSelect: (id: string | null) => void;
   onClose: (id: string) => void;
   onTabContextMenu?: (e: React.MouseEvent, doc: OpenDoc) => void;
@@ -442,6 +445,8 @@ export function DocTabs({
           <IconChevronDown size={13} />
         </button>
       )}
+
+      {trailing}
 
       <button
         type="button"

@@ -32,6 +32,7 @@ function chrome(first: AttentionEntry | null): WorkbenchChromeContextValue {
     attentionCount: first ? 1 : 0,
     firstAttention: first,
     showCommandHint: false,
+    waitingUntil: null,
   };
   return {
     rightOpen: false,
@@ -40,6 +41,8 @@ function chrome(first: AttentionEntry | null): WorkbenchChromeContextValue {
     openPanel: noop,
     status,
     commandHint: '',
+    presence: null,
+    setAway: () => {},
     focusAttention: noop,
     update: {
       status: null,

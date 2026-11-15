@@ -1,6 +1,6 @@
 /**
  * requests-sources: Conduit raises requests from what it observes, not only from agents
- * (spec docs/specs/2026-11-14-user-input-requests.md §4.1 attend, §4.10 prose questions;
+ * (spec docs/specs/archive/2026-11-14-user-input-requests.md §4.1 attend, §4.10 prose questions;
  * plan docs/plans/2026-11-14-request-queue-machinery.plan.md Slice 4; REQ-D9 measured in
  * docs/runs/2026-11-14-CON-21/osc7501.md).
  *   (a) a session hidden behind another reports OSC 7501 blocked/permission → one open `attend`
