@@ -76,6 +76,7 @@ export interface ControlCall<T> {
   decision: PolicyDecision;
   commit(): AskCommit | null;
   permission: { why: string; targets: readonly PolicyTarget[] };
+  denyReason(held: readonly OneUseOverride[]): string | null;
   reDecide(held: readonly OneUseOverride[]): AnswerDecision;
   grant(choice: GrantChoice, requestId: string): GrantOutcome;
   commitAnswered(held: readonly OneUseOverride[]): boolean;
@@ -169,6 +170,8 @@ export interface CallFlow {
 interface AskMeta {
   tool: ToolName;
   handle: Handle;
+  /** The reason the policy now denies this ask, or null while it does not. Pure. */
+  denyReason: () => string | null;
 }
 interface Entry extends InFlight {
   cancelled: boolean;
@@ -270,6 +273,8 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       }),
   });
 
+  /** Asks an unshown policy denial ended; their call reports tool_disabled with the reason. */
+  const denied = new Map<string, string>();
   const waitsUi = createWindowWaits<McpUiResult, UiMeta>({
     now: deps.now,
     setTimer: deps.setTimer,
@@ -350,7 +355,11 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
         callerSessionId: caller,
         key,
         windowId,
-        meta: { tool: c.tool, handle: c.caller.handle },
+        meta: {
+          tool: c.tool,
+          handle: c.caller.handle,
+          denyReason: () => c.denyReason(held),
+        },
       },
       askMs,
     );
@@ -363,11 +372,18 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     switch (end.kind) {
       case 'expired':
         return { ok: false, error: approvalTimeout() };
-      case 'cancelled':
+      case 'cancelled': {
+        const deny = denied.get(requestId);
+        denied.delete(requestId);
+        if (deny !== undefined) {
+          settle('withdrawn', null, deny);
+          return { ok: false, error: toolError('tool_disabled', deny) };
+        }
         settle('withdrawn', null, 'the call was cancelled');
         return end.reply
           ? { ok: false, error: toolError('cancelled', 'the request was cancelled') }
           : null;
+      }
       case 'answered':
         break;
     }
@@ -565,7 +581,10 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
         return;
       }
       waits.cancel((w) => {
-        return !deps.stillVisible(w.callerSessionId, w.meta.tool);
+        if (deps.stillVisible(w.callerSessionId, w.meta.tool)) return false;
+        const reason = w.meta.denyReason();
+        if (reason !== null) denied.set(w.id, reason);
+        return true;
       }, true);
     },
 

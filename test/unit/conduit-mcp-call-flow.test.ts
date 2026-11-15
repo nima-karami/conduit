@@ -153,6 +153,7 @@ function setup() {
       commitTo?: PolicyDecision;
       held?: OneUseOverride[];
       redecide?: AnswerDecision;
+      denyReason?: string;
       grantOutcome?: GrantOutcome;
       commitOk?: boolean;
       kind?: CliKind;
@@ -203,6 +204,7 @@ function setup() {
         return { decision: o.commitTo ?? decision, held: o.held ?? [] };
       },
       permission: { why: 'the policy asks', targets: [] },
+      denyReason: () => o.denyReason ?? null,
       reDecide: (held) => {
         reDecides.push(held.map((h) => h.id));
         return o.redecide ?? state.redecide;
@@ -510,6 +512,29 @@ describe('createCallFlow', () => {
     expect(errCode(r)).toBe('cancelled');
     expect(r && !r.ok ? r.error.message : '').toBe('the session closed before the request ran');
     expect(c.spies).toEqual({ run: 0, release: 0 });
+  });
+
+  it('a recheck that finds the policy denying the ask withdraws it with that reason; the call is tool_disabled', async () => {
+    const t = setup();
+    const c = t.call({ denyReason: 'Observer: deny' });
+    await t.flush();
+    t.policies.delete(CALLER);
+    t.flow.recheck();
+    const r = await c.promise;
+    expect(errCode(r)).toBe('tool_disabled');
+    expect(r && !r.ok ? r.error.message : '').toBe('Observer: deny');
+    expect(t.settled).toMatchObject([{ end: 'withdrawn', reason: 'Observer: deny' }]);
+    expect(c.spies.run).toBe(0);
+  });
+
+  it('a recheck that cancels an ask the policy still allows keeps it cancelled', async () => {
+    const t = setup();
+    const c = t.call();
+    await t.flush();
+    t.policies.delete(CALLER);
+    t.flow.recheck();
+    expect(errCode(await c.promise)).toBe('cancelled');
+    expect(t.settled).toMatchObject([{ end: 'withdrawn', reason: 'the call was cancelled' }]);
   });
 
   it('a deny at the re-decide creates no grant, even for always', async () => {

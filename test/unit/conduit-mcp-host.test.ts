@@ -4585,7 +4585,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       () => undefined,
       1,
     );
-    expect(c.errorOf(await c.reply(1))).toBe('cancelled');
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
   });
 
   it("a waiting ask doesn't block another call on the same connection", async () => {
@@ -4770,6 +4770,35 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     }
     expect(notice).toContain('You can retry open_session now');
     expect(h.opens).toEqual([]);
+  });
+
+  it('an assignment to Observer while a card waits ends it withdrawn with the policy reason; the call is tool_disabled', async () => {
+    const { h, c } = await asking();
+    const replies: HostToWebview[] = [];
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    const requestId = askIdOf(h);
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:setAssignment',
+        requestId: 9,
+        point: { kind: 'session', sessionId: 's1' },
+        profileId: 'observer',
+      },
+      (m) => replies.push(m),
+      1,
+    );
+    const reply = await c.reply(1);
+    expect(c.errorOf(reply)).toBe('tool_disabled');
+    expect(closedOf(h)).toEqual([
+      { type: 'mcp:askClosed', askId: requestId, outcome: 'cancelled' },
+    ]);
+    await h.host.handleRenderer(
+      { type: 'mcp:permissionAnswer', requestId, answer: { outcome: 'denied' } },
+      (m) => replies.push(m),
+      1,
+    );
+    expect(replies.at(-1)).toMatchObject({ ok: false, reason: 'already_ended' });
   });
 
   it('mcp:permissionAnswer from a window that does not own the ask is refused; the owner window answers', async () => {
