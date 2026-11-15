@@ -22,12 +22,7 @@ import { createDrive, type Drive, type DriveDeps } from './drive';
 import { adoptOwnerKey, type Identity, setOwnerKey } from './identity';
 import { createLinkManager, type LinkManager } from './link-manager';
 import { openLinkStore } from './link-store';
-import {
-  type LinkListener,
-  listenLinks,
-  listenPairing,
-  type NetLog,
-} from './listener';
+import { type LinkListener, listenLinks, listenPairing, type NetLog } from './listener';
 import { createMessaging } from './messaging';
 import { createMonitorPublisher, type MonitorSource } from './monitor-publisher';
 import { createPairingPort } from './pairing-port';
