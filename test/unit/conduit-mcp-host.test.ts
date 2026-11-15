@@ -4194,14 +4194,19 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
 
     const point = { kind: 'session', sessionId: 's1' };
     expect(
-      await post({ type: 'mcp:setAssignment', requestId: 3, point: { kind: 'x' }, profileId: 'lead' }),
+      await post({
+        type: 'mcp:setAssignment',
+        requestId: 3,
+        point: { kind: 'x' },
+        profileId: 'lead',
+      }),
     ).toEqual([{ type: 'mcp:policyResult', requestId: 3, ok: false, error: 'invalid-value' }]);
-    expect(await post({ type: 'mcp:setAssignment', requestId: 4, point, profileId: 'nope' })).toEqual(
-      [{ type: 'mcp:policyResult', requestId: 4, ok: false, error: 'unknown-profile' }],
-    );
-    expect(await post({ type: 'mcp:setAssignment', requestId: 5, point, profileId: 'lead' })).toEqual(
-      [{ type: 'mcp:policyResult', requestId: 5, ok: true }],
-    );
+    expect(
+      await post({ type: 'mcp:setAssignment', requestId: 4, point, profileId: 'nope' }),
+    ).toEqual([{ type: 'mcp:policyResult', requestId: 4, ok: false, error: 'unknown-profile' }]);
+    expect(
+      await post({ type: 'mcp:setAssignment', requestId: 5, point, profileId: 'lead' }),
+    ).toEqual([{ type: 'mcp:policyResult', requestId: 5, ok: true }]);
     expect(h.host.uiState().policy.sessions.s1?.profileId).toBe('lead');
     c.call(3, 'open_session', OPEN);
     expect(c.errorOf(await c.reply(3))).toBe('ok');
