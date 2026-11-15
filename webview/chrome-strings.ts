@@ -26,12 +26,15 @@ export const CHROME_STR = {
   maximize: 'Maximize',
   restore: 'Restore',
   close: 'Close',
+  away: 'Away',
   view: {
+    needs: 'Needs you',
     files: 'Files',
     changes: 'Changes',
     messages: 'Messages',
   } satisfies Record<RightPaneTab, string>,
   changesBadge: (n: number) => noun(n, 'change', 'changes'),
+  needsBadge: (n: number) => noun(n, 'open request', 'open requests'),
   messagesBadge: (unread: number, urgent: number, outside = 0) => {
     const total = noun(unread, 'unread message', 'unread messages');
     const head =

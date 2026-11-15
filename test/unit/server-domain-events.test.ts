@@ -190,6 +190,33 @@ describe('server domain: internal subscribers on C1 data', () => {
     ).rejects.toSatisfy((e: unknown) => isFault(e, 'refused'));
   });
 
+  it('domain.limit.autoResumeOn sets the session mode and re-reads it', async () => {
+    const h = harness();
+    const id = await live(h, { agentId: 'claude' });
+    const resetSec = Math.floor(Date.now() / 1000) + 3600;
+    h.domain.hookPost(id, {
+      conduitHook: 1,
+      token: 't',
+      event: 'StatusLine',
+      payload: { rate_limits: { five_hour: { used_percentage: 100, resets_at: resetSec } } },
+    });
+    h.domain.hookPost(id, {
+      conduitHook: 1,
+      token: 't',
+      event: 'StopFailure',
+      payload: { error: 'rate_limit' },
+    });
+    await h.call('scheduler.setSessionAutoResume', { sessionId: id, mode: 'off' });
+    const armed = () =>
+      (h.domain.snapshot().timers.jobs ?? []).filter(
+        (j) => j.sessionId === id && j.state === 'armed',
+      );
+    expect(armed()).toHaveLength(0);
+    expect(h.domain.domain.limit.autoResumeOn(id)).toBe(true);
+    expect(armed()).toHaveLength(1);
+    expect(h.domain.domain.limit.autoResumeOn('no-such-session')).toBe(false);
+  });
+
   it('turning auto-resume off globally cancels an armed resume', async () => {
     const h = harness();
     const id = await live(h, { agentId: 'claude' });

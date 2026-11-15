@@ -25,6 +25,8 @@ function harness(over: Partial<LimitMonitorDeps> = {}) {
   const armed: ArmResumeInput[] = [];
   const verifies: { sessionId: string; outcome: unknown }[] = [];
   const rechecks: string[] = [];
+  const sends: { sessionId: string; message: string }[] = [];
+  let sendResult = true;
   const issues = new Map<string, string | null>();
   const busyNow = new Map<string, boolean>();
   const settings = {
@@ -102,6 +104,10 @@ function harness(over: Partial<LimitMonitorDeps> = {}) {
       recheck: (jobId) => {
         rechecks.push(jobId);
       },
+      sendOnce: async (sessionId, message) => {
+        sends.push({ sessionId, message });
+        return sendResult;
+      },
     },
     settings: () => settings,
     sessionMode: (id) => modes.get(id),
@@ -137,6 +143,10 @@ function harness(over: Partial<LimitMonitorDeps> = {}) {
     armed,
     verifies,
     rechecks,
+    sends,
+    setSendResult: (ok: boolean) => {
+      sendResult = ok;
+    },
     issues,
     busyNow,
     settings,
@@ -975,5 +985,41 @@ describe('limit monitor — review round 3', () => {
     await h.advance(RULE_SCAN_INTERVAL_MS);
     expect(h.monitor.episodes()[0]?.state).toBe('resumed');
     expect(h.armed).toHaveLength(1);
+  });
+});
+
+describe('limit monitor — needs-you actions', () => {
+  const openUnknownReset = () => {
+    const h = harness();
+    h.monitor.signal({ kind: 'limited', sessionId: 's', at: T0, source: 'claude-hook' });
+    return h;
+  };
+
+  it('resumeNow sends the resume message once while an episode is open', async () => {
+    const h = openUnknownReset();
+    expect(await h.monitor.resumeNow('s')).toBe(true);
+    expect(h.sends).toEqual([{ sessionId: 's', message: 'Continue' }]);
+    expect(h.monitor.episodes()[0]?.state).toBe('open');
+  });
+
+  it('resumeNow returns false with no open episode', async () => {
+    const h = harness();
+    expect(await h.monitor.resumeNow('s')).toBe(false);
+    expect(h.sends).toHaveLength(0);
+  });
+
+  it('dismissIssue closes the episode and clears the resume issue', () => {
+    const h = openUnknownReset();
+    expect(h.issues.get('s')).toBe(ISSUE_RESET_UNKNOWN);
+    h.monitor.dismissIssue('s');
+    expect(h.monitor.episodes()[0]?.state).toBe('closed');
+    expect(h.issues.get('s')).toBeNull();
+  });
+
+  it('dismissIssue with no episode does nothing', () => {
+    const h = harness();
+    h.monitor.dismissIssue('s');
+    expect(h.monitor.episodes()).toHaveLength(0);
+    expect(h.issues.has('s')).toBe(false);
   });
 });

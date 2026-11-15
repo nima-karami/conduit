@@ -19,7 +19,7 @@ import type { RightPaneTab } from '../../src/settings';
 import type { AgentDefinition, GitInfo, Session } from '../../src/types';
 import { diffTabKey } from '../diff-tab-scope';
 import type { CenterLayout, GroupIndex, GroupView } from '../doc-groups';
-import type { OpenDoc, OpenMode, ReviewSource } from '../docs';
+import { type OpenDoc, type OpenMode, type ReviewSource, requestIdOfPath } from '../docs';
 import { tabStateKey } from '../editor-group-context';
 import { useFileSaveStatuses } from '../file-saves';
 import { registerFocusTarget, terminalFocusKey, terminalTabFocusKey } from '../focus-targets';
@@ -43,7 +43,10 @@ import { GitHistoryView } from './git-history-view';
 import { McpSetupBanner } from './mcp-setup-banner';
 import { MissingHomeState, StartRefusedState } from './missing-home-state';
 import type { DockHandlers } from './panel-frame';
+import { RequestPopup } from './request-popup';
+import { RequestTab } from './request-tab';
 import { ReviewView } from './review-view';
+import { LiveSessionPill } from './session-pill';
 import { TerminalPane } from './terminal-pane';
 import { TrustPrompt } from './trust-prompt';
 import { WebView } from './web-view';
@@ -348,6 +351,11 @@ export function CenterPane({
         onOpenCommitFile={onOpenCommitFile}
         onReviewCommit={onReviewCommit}
       />
+    ) : doc.kind === 'request' ? (
+      <RequestTab
+        requestId={requestIdOfPath(doc.path) ?? ''}
+        sessionName={sessions.find((s) => s.id === doc.sessionId)?.name ?? ''}
+      />
     ) : doc.kind === 'commit-diff' ? (
       <CommitDiffView
         sessionId={doc.sessionId}
@@ -543,6 +551,7 @@ export function CenterPane({
             groupActive={layout.activeGroup === g}
             showTerminal={g === 1}
             terminalFocusKey={g === 1 && activeId ? terminalTabFocusKey(activeId) : undefined}
+            trailing={g === 1 && activeId ? <LiveSessionPill sessionId={activeId} /> : undefined}
             split={{
               // Group 1's button splits group 1's shown doc even while group 2 is active (spec §2.4
               // flow 2), with or without a pointer-down focusing group 1 first.
@@ -604,6 +613,7 @@ export function CenterPane({
           : undefined
       }
     >
+      <RequestPopup sessions={sessions} />
       {sessions.length === 0 ? (
         <CenterEmptyState repos={repos} agents={agents} onNewSession={onNewSession} />
       ) : (

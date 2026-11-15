@@ -25,6 +25,7 @@ import {
   NOTICE_SPACING_MS,
 } from '../../src/conduit-mcp/notice-gate';
 import { composeNotice } from '../../src/conduit-mcp/notice-text';
+import type { AnswerInput } from '../../src/conduit-mcp/request-types';
 import { screenVerdict } from '../../src/conduit-mcp/screen-verdict';
 import type { StoreIo } from '../../src/conduit-mcp/store';
 import {
@@ -37,7 +38,7 @@ import {
   withPolicyPatch,
 } from '../../src/conduit-mcp/tool-policy';
 import { toolError } from '../../src/conduit-mcp/types';
-import type { McpHostDeps, TokenStorePort } from '../../src/contracts/server-ports';
+import type { McpHostDeps, NeedsYouFact, TokenStorePort } from '../../src/contracts/server-ports';
 import type { ServerEvents } from '../../src/contracts/server-protocol';
 import type {
   LaunchIds,
@@ -171,6 +172,7 @@ interface Harness {
   finishTurn(sessionId: string): void;
   /** Flips the session needs-you reason, as the server attention does. */
   setNeedsYou(sessionId: string, on: boolean): void;
+  setNeedsYouFacts(facts: NeedsYouFact[]): void;
   /** Host timers armed and not yet fired or cleared. */
   readonly pendingTimers: number;
   /** Every stuck-screen verdict the host handed to attention, in order. */
@@ -460,6 +462,11 @@ function harness(
     installState: opts.installState ?? (() => 'not-installed' as const),
     messagingOn: opts.messagingOn ?? (() => true),
     toolPolicy: opts.toolPolicy ?? (() => ({ global: DEFAULT_TOOL_POLICY, byCli: {} })),
+    limit: {
+      resumeNow: async () => false,
+      autoResumeOn: () => true,
+      dismissIssue: () => undefined,
+    },
   };
   const attentionListeners = new Set<Parameters<McpHostDeps['attention']['onEdge']>[0]>();
   const completions = new Map<string, number>();
@@ -471,6 +478,7 @@ function harness(
   const notifyAttention = () => {
     for (const l of changeListeners) l();
   };
+  const needsYou: NeedsYouFact[] = [];
   const attention: McpHostDeps['attention'] = {
     statusOf: (id) => {
       const s = stuck.get(id);
@@ -484,6 +492,7 @@ function harness(
       };
     },
     setResumeIssue: () => undefined,
+    needsYouFacts: () => [...needsYou],
     setStuck: (id, next) => {
       stuckCalls.push([id, next]);
       if (next) stuck.set(id, next);
@@ -578,6 +587,7 @@ function harness(
     },
     emit,
     ownerWindowOf: (id) => (owners.has(id) ? (owners.get(id) ?? null) : 1),
+    appConnected: () => true,
     windowReady: (w) => presence.ready.has(w),
     onScreen: (w, id) => presence.shown.get(w)?.has(id) ?? true,
     newAskId: () => `ask-${++askN}`,
@@ -689,6 +699,10 @@ function harness(
     setNeedsYou(id, on) {
       if (on) needing.add(id);
       else needing.delete(id);
+      notifyAttention();
+    },
+    setNeedsYouFacts(facts: NeedsYouFact[]) {
+      needsYou.splice(0, needsYou.length, ...facts);
       notifyAttention();
     },
     get pendingTimers() {
@@ -4837,6 +4851,221 @@ describe('createConduitMcpHost — wait_sessions', () => {
     const { ca } = await pairForWait(h);
     const r = await ca.call('wait_sessions', args);
     expect(r.body.error.code).toBe('invalid_args');
+  });
+});
+
+describe('createConduitMcpHost — requests', () => {
+  async function pairForRequests(h: Harness) {
+    await h.host.start();
+    const a = await launch(h, 's1');
+    return client(h.ep, a.token);
+  }
+
+  const openIds = (h: Harness) => h.host.uiState().requests.open.map((r) => r.id);
+
+  async function answerFrom(h: Harness, requestId: string, answer: AnswerInput) {
+    const replies: HostToWebview[] = [];
+    await h.host.handleRenderer(
+      { type: 'mcp:requestAnswer', requestId, answer },
+      (m) => replies.push(m),
+      1,
+    );
+    return replies;
+  }
+
+  it('request_input answered from the renderer returns answered', async () => {
+    const h = harness();
+    const ca = await pairForRequests(h);
+    const p = ca.call('request_input', {
+      kind: 'choose',
+      title: 'Pick one',
+      options: [{ label: 'A' }, { label: 'B' }],
+      wait_s: 30,
+    });
+    await expect.poll(() => openIds(h).length).toBe(1);
+    const [requestId] = openIds(h);
+    const replies = await answerFrom(h, requestId, { outcome: 'chosen', values: ['A'] });
+    const r = await p;
+    expect(r.isError).toBe(false);
+    expect(r.body).toMatchObject({
+      state: 'answered',
+      request_id: requestId,
+      answer: { outcome: 'chosen', values: ['A'], answered_by: 'you' },
+    });
+    expect(replies).toEqual([
+      { type: 'mcp:requestResult', requestId, result: expect.objectContaining({ ok: true }) },
+    ]);
+  });
+
+  it('a late answer lands in read_inbox with request_id', async () => {
+    const h = harness();
+    const ca = await pairForRequests(h);
+    const first = await ca.call('request_input', { kind: 'confirm', title: 'Ship?', wait_s: 0 });
+    expect(first.body).toMatchObject({ state: 'open' });
+    const requestId: string = first.body.request_id;
+    await answerFrom(h, requestId, { outcome: 'approved' });
+    let inbox: { request_id?: string; body: string } | undefined;
+    await expect
+      .poll(async () => {
+        inbox = (await ca.call('read_inbox', {})).body.messages[0];
+        return inbox?.request_id;
+      })
+      .toBe(requestId);
+    const lines = inbox?.body.split('\n') ?? [];
+    expect(JSON.parse(lines.slice(1, -1).join('\n'))).toEqual({
+      request_id: requestId,
+      state: 'answered',
+      answer: { outcome: 'approved', answered_by: 'you', at: expect.any(String) },
+    });
+  });
+
+  it('the late answer is hidden from the human thread list', async () => {
+    const h = harness();
+    const ca = await pairForRequests(h);
+    const first = await ca.call('request_input', { kind: 'confirm', title: 'Ship?', wait_s: 0 });
+    await answerFrom(h, first.body.request_id, { outcome: 'approved' });
+    let lateThread: string | undefined;
+    await expect
+      .poll(async () => {
+        const msg = (await ca.call('read_inbox', {})).body.messages[0];
+        lateThread = msg?.thread_id;
+        return msg?.request_id;
+      })
+      .toBe(first.body.request_id);
+    const human = await ca.call('send_message', { to: ['you'], body: 'a real message' });
+    expect(h.host.uiState().threads.map((t) => t.threadId)).toEqual([human.body.thread_id]);
+    const replies: HostToWebview[] = [];
+    await h.host.handleRenderer(
+      { type: 'mcp:thread:get', requestId: 7, threadId: lateThread ?? '' },
+      (m) => replies.push(m),
+      1,
+    );
+    expect(replies).toEqual([{ type: 'mcp:thread', requestId: 7, thread: null }]);
+  });
+
+  it('cancel then repeat attaches to the same request', async () => {
+    const h = harness();
+    const ca = await pairForRequests(h);
+    const args = { kind: 'confirm', title: 'Retry me' };
+    ca.sock.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 900, method: 'tools/call', params: { name: 'request_input', arguments: { ...args, wait_s: 60 } } })}\n`,
+    );
+    await expect.poll(() => openIds(h).length).toBe(1);
+    const [requestId] = openIds(h);
+    await expect.poll(() => h.host.uiState().requests.open[0]?.waiting).toBe(true);
+    ca.sock.write(
+      `${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 900 } })}\n`,
+    );
+    await expect.poll(() => h.host.uiState().requests.open[0]?.waiting).toBe(false);
+    const again = await ca.call('request_input', { ...args, wait_s: 0 });
+    expect(again.body).toMatchObject({ state: 'open', request_id: requestId });
+    expect(openIds(h)).toEqual([requestId]);
+  });
+
+  it('a second answer gets already_ended', async () => {
+    const h = harness();
+    const ca = await pairForRequests(h);
+    const first = await ca.call('request_input', { kind: 'confirm', title: 'Ship?', wait_s: 0 });
+    const requestId: string = first.body.request_id;
+    await answerFrom(h, requestId, { outcome: 'approved' });
+    const second = await answerFrom(h, requestId, { outcome: 'declined', reason: 'no' });
+    expect(second).toEqual([
+      {
+        type: 'mcp:requestResult',
+        requestId,
+        result: expect.objectContaining({ ok: false, reason: 'already_ended' }),
+      },
+    ]);
+  });
+
+  it('uiState carries requests', async () => {
+    const h = harness();
+    const ca = await pairForRequests(h);
+    await ca.call('request_input', { kind: 'text', title: 'Name?', wait_s: 0 });
+    const state = h.host.uiState();
+    expect(state.requests.open).toHaveLength(1);
+    expect(state.requests.open[0]).toMatchObject({
+      kind: 'text',
+      title: 'Name?',
+      state: 'open',
+      requester: 'fake-1',
+    });
+    expect(state.requests.presence).toMatchObject({ state: 'here', until: null, lastAway: null });
+  });
+
+  it('a question to you becomes one message request and the chip item is dropped', async () => {
+    const h = harness();
+    const ca = await pairForRequests(h);
+    await ca.call('send_message', { to: ['you'], body: 'Which branch?', kind: 'question' });
+    await expect.poll(() => openIds(h).length).toBe(1);
+    expect(h.host.uiState().requests.open[0]).toMatchObject({
+      source: 'message',
+      kind: 'text',
+      requester: 'fake-1',
+      title: 'fake-1 asked you a question',
+    });
+    expect(h.host.uiState().attention.filter((a) => a.reason === 'message-to-you')).toEqual([]);
+  });
+
+  it('answering the question request posts a thread reply and marks it read', async () => {
+    const h = harness();
+    const ca = await pairForRequests(h);
+    const sent = await ca.call('send_message', {
+      to: ['you'],
+      body: 'Which branch?',
+      kind: 'question',
+    });
+    await expect.poll(() => openIds(h).length).toBe(1);
+    const [requestId] = openIds(h);
+    const replies = await answerFrom(h, requestId, { outcome: 'answered', text: 'main, please' });
+    expect(replies).toEqual([
+      { type: 'mcp:requestResult', requestId, result: expect.objectContaining({ ok: true }) },
+    ]);
+    const inbox = await ca.call('read_inbox', {});
+    expect(inbox.body.messages[0]).toMatchObject({
+      thread_id: sent.body.thread_id,
+      from: 'you',
+      body: expect.stringContaining('main, please'),
+    });
+    expect(h.host.uiState().youUnread).toBe(0);
+    expect(openIds(h)).toEqual([]);
+  });
+
+  it('a blocked hidden session from needsYouFacts appears as an attend request', async () => {
+    const h = harness();
+    await pairForRequests(h);
+    h.setNeedsYouFacts([
+      { sessionId: 's1', blocked: 'permission', visible: false, resumeIssue: null },
+    ]);
+    expect(h.host.uiState().requests.open).toMatchObject([
+      {
+        source: 'observed',
+        kind: 'attend',
+        session: 's1',
+        requester: 'fake-1',
+        blocked: 'permission',
+      },
+    ]);
+    h.setNeedsYouFacts([]);
+    expect(openIds(h)).toEqual([]);
+  });
+
+  it('list_sessions shows human presence', async () => {
+    const h = harness();
+    const ca = await pairForRequests(h);
+    expect((await ca.call('list_sessions')).body.human).toEqual({
+      handle: 'you',
+      presence: 'here',
+    });
+    await h.host.handleRenderer(
+      { type: 'mcp:setAway', away: true, until: null },
+      () => undefined,
+      1,
+    );
+    expect((await ca.call('list_sessions')).body.human).toEqual({
+      handle: 'you',
+      presence: 'away',
+    });
   });
 });
 

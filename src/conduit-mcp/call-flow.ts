@@ -41,6 +41,8 @@ export function askBudgetMs(kind: CliKind, wiredAtLaunch: boolean): number {
   return kind === 'codex' && wiredAtLaunch ? CODEX_WIRED_ASK_TIMEOUT_MS : ASK_TIMEOUT_MS[kind];
 }
 export const MAX_ASKS_PER_CALLER = 3;
+/** Presence ids start at 1, so 0 is never a real window. */
+export const NO_OWNER_WINDOW = 0;
 /** An app-control tool's renderer step (spec 2026-10-30-conduit-mcp-app-control §2.3). */
 export const UI_TIMEOUT_MS = 5_000;
 /** What an ask holds back from its CLI budget so the reply lands first. Waits use WAIT_REPLY_MARGIN_MS instead (session-waits.ts). */
@@ -71,6 +73,7 @@ export interface CallFlowDeps {
   clearTimer(handle: unknown): void;
   newAskId(): string;
   ownerWindowOf(sessionId: string): number | null;
+  appConnected(): boolean;
   sendToOwner(sessionId: string, msg: HostToWebview): void;
   flashOwner(sessionId: string): void;
   /** Current resolved policy for a waiting ask's caller and tool; null when the session is gone. */
@@ -123,8 +126,7 @@ export interface CallFlow {
   /** false unless the request is waiting, `fromWindowId` is its window, and `raw` parses for its kind. */
   answerUi(requestId: string, fromWindowId: number, raw: unknown): boolean;
   awaitingApproval(): string[];
-  /** No app is left to answer (D8 grace): every waiting ask ends ui_unavailable; returns them. */
-  denyUnavailable(): Array<{ askId: string; sessionId: string; tool: ToolName }>;
+  waitingAskCount(): number;
   dispose(): void;
 }
 
@@ -205,8 +207,6 @@ function parseUiResult(kind: McpUiAction['kind'], v: unknown): McpUiResult | nul
 export function createCallFlow(deps: CallFlowDeps): CallFlow {
   /** By connId, then requestId: a Map keeps 1 and '1' apart, as JSON-RPC does. */
   const inflight = new Map<number, Map<JsonRpcId, Entry>>();
-  /** Asks ended by denyUnavailable: their cancelled end reads as ui_unavailable. */
-  const unavailable = new Set<string>();
   const waits = createWindowWaits<AskAnswer, AskMeta>({
     now: deps.now,
     setTimer: deps.setTimer,
@@ -244,7 +244,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
         error: toolError('rate_limited', 'more than 3 requests are waiting for the human'),
       };
     }
-    const windowId = deps.ownerWindowOf(caller);
+    const windowId = deps.ownerWindowOf(caller) ?? (deps.appConnected() ? null : NO_OWNER_WINDOW);
     if (windowId === null) {
       p.release();
       return { ok: false, error: windowNotReady() };
@@ -291,11 +291,6 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       case 'expired':
         return { ok: false, error: approvalTimeout() };
       case 'cancelled':
-        if (unavailable.delete(askId))
-          return {
-            ok: false,
-            error: toolError('ui_unavailable', 'no Conduit window was open to answer the request'),
-          };
         return end.reply
           ? { ok: false, error: toolError('cancelled', 'the request was cancelled') }
           : null;
@@ -489,21 +484,10 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     },
 
     awaitingApproval: () => [...new Set(waits.pending().map((w) => w.callerSessionId))],
-
-    denyUnavailable() {
-      // Marked only as each is ended, so the ask's own cancelled branch always clears its mark.
-      const ended: Array<{ askId: string; sessionId: string; tool: ToolName }> = [];
-      waits.cancel((w) => {
-        unavailable.add(w.id);
-        ended.push({ askId: w.id, sessionId: w.callerSessionId, tool: w.meta.tool });
-        return true;
-      }, true);
-      return ended;
-    },
+    waitingAskCount: () => waits.pending().length,
 
     dispose() {
       waits.dispose();
-      unavailable.clear();
       waitsUi.dispose();
       inflight.clear();
     },

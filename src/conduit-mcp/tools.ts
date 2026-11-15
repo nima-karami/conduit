@@ -84,6 +84,7 @@ export interface ToolDeps {
   onStored(msg: MessageRecord): void;
   onThreadLimit(threadId: string, by: Handle): void;
   warn(message: string, data: Record<string, unknown>): void;
+  humanPresence(): 'here' | 'away';
 }
 export interface ToolHandlers {
   listSessions(caller: Caller): Result<ListSessionsOutput>;
@@ -252,6 +253,7 @@ function inboxOut(m: StoredMessage, caller: Caller, directory: DirectoryEntry[])
       mime: x.mime,
       bytes: x.bytes,
     })),
+    ...(m.requestId !== undefined ? { request_id: m.requestId } : {}),
   };
 }
 
@@ -502,7 +504,7 @@ export function createToolHandlers(deps: ToolDeps): ToolHandlers {
             notices: e.notices,
             self: e.handle === caller.handle,
           })),
-          human: { handle: HUMAN_HANDLE },
+          human: { handle: HUMAN_HANDLE, presence: deps.humanPresence() },
         },
       };
     },

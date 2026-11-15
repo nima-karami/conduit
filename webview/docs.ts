@@ -16,6 +16,7 @@ import {
   type Tab,
   tabPreview,
 } from './doc-groups';
+import { REQ_STR } from './request-strings';
 import type { ReviewScope } from './review-scope';
 
 // 'web' is an in-app browser tab; its `path` is the URL (id = `web:<url>`). It has no
@@ -30,7 +31,15 @@ import type { ReviewScope } from './review-scope';
 // per-identity persistent tab on double-click). A preview doc's id is the sentinel
 // `commit-diff:@preview` while its `path` carries the live target (`<sha> <file>`);
 // pinning re-keys it to `commit-diff:${path}`.
-export type DocKind = 'file' | 'diff' | 'review' | 'web' | 'git-history' | 'commit-diff';
+// 'request' is one agent request open as an editor tab; its path is `@request/<id>`.
+export type DocKind =
+  | 'file'
+  | 'diff'
+  | 'review'
+  | 'web'
+  | 'git-history'
+  | 'commit-diff'
+  | 'request';
 
 // What the singleton Review tab is scoped to: the live working tree (default), one commit's
 // diff (vs. its first parent), or a comparison of two refs (base...head — spec
@@ -98,6 +107,15 @@ const REVIEW_DOC_TITLE = 'Review Changes';
 // it scopes to that session's repo.
 export const GIT_HISTORY_DOC_PATH = '@git-history';
 const GIT_HISTORY_DOC_TITLE = 'History';
+
+// The id is the request's own, so the tab follows the request rather than a list position.
+const REQUEST_DOC_PREFIX = '@request/';
+export const requestDocPath = (requestId: string): string => `${REQUEST_DOC_PREFIX}${requestId}`;
+export function requestIdOfPath(path: string): string | null {
+  if (!path.startsWith(REQUEST_DOC_PREFIX)) return null;
+  const id = path.slice(REQUEST_DOC_PREFIX.length);
+  return id === '' ? null : id;
+}
 
 // Preview-slot sentinel for the history-originated commit-diff tab: one preview doc whose
 // `path` carries the live target while the tab stays put. A '@' leader can't collide with a
@@ -231,6 +249,8 @@ const titleOf = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() || p
 function initialTitle(kind: DocKind, path: string, diffScope?: DiffTabScope): string {
   if (kind === 'review') return REVIEW_DOC_TITLE;
   if (kind === 'git-history') return GIT_HISTORY_DOC_TITLE;
+  // The kind alone is known at open time, so the title is generic; the tab names the request.
+  if (kind === 'request') return REQ_STR.reqTab.title;
   if (kind === 'web') return displayTitleForUrl(path);
   if (kind === 'commit-diff') {
     const { sha, file } = parseCommitDiffPath(path);
@@ -892,7 +912,9 @@ export function toPersistedDocs(state: DocsState): PersistedDoc[] {
     return layout.groups.flatMap((group, i) =>
       group.tabs.flatMap((tab): PersistedDoc[] => {
         const d = byId.get(tab.id);
-        if (!d || (d.kind === 'commit-diff' && parseCommitDiffPath(d.path).file === '')) return [];
+        // A request is server state: a restored tab would point at a request that may be gone.
+        if (!d || d.kind === 'request') return [];
+        if (d.kind === 'commit-diff' && parseCommitDiffPath(d.path).file === '') return [];
         return [
           {
             kind: d.kind,

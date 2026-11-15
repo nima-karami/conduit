@@ -99,6 +99,7 @@ describe('ToolPolicyEditor', () => {
       ),
     ).toEqual([
       MCP_STR.tools.group.messaging,
+      MCP_STR.tools.group.requests,
       MCP_STR.tools.group.sessions,
       MCP_STR.tools.group.editor,
     ]);

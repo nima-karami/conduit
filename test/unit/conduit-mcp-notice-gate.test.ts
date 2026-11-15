@@ -221,4 +221,18 @@ describe('composeNotice', () => {
     );
     expect(composeNotice(false)).not.toContain('(urgent)');
   });
+
+  it('the answered variant names a request, not messages, and stays ASCII with no digits', () => {
+    for (const urgent of [true, false]) {
+      const n = composeNotice(urgent, true);
+      expect(n).toMatch(/^[\x20-\x7e]+$/);
+      expect(n).not.toMatch(/\d/);
+    }
+    expect(composeNotice(false, true)).toBe(
+      '[conduit] A request you made was answered. Use the conduit read_inbox tool.',
+    );
+    expect(composeNotice(true, true)).toBe(
+      '[conduit] A request you made was answered (urgent). Use the conduit read_inbox tool.',
+    );
+  });
 });

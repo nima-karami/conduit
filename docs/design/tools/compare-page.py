@@ -56,7 +56,7 @@ main { max-width:1800px; margin:0 auto; display:grid; gap:40px; }
 h1 { font-size:26px; margin:0 0 8px; } h2 { font-size:18px; margin:0; } p { margin:0; color:var(--muted); max-width:80ch; }
 .summaries { display:grid; gap:8px; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); }
 .sum { background:var(--surface); border:1px solid var(--line); padding:10px 12px; }
-.sum b { display:block; } .who { color:var(--pick); font-weight:600; } [hidden] { display:none !important; }
+.sum b { display:block; } .who { color:var(--pick); font-weight:600; }
 .moment { display:grid; gap:12px; }
 .grid { display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(420px,1fr)); }
 figure { margin:0; display:grid; gap:6px; min-width:0; }
@@ -70,6 +70,7 @@ button:focus-visible, a:focus-visible { outline:3px solid var(--pick); outline-o
 .primary { background:var(--fg); color:var(--bg); border-color:var(--fg); font-weight:600; padding:9px 14px; }
 @media (max-width:900px) { .grid { grid-template-columns:1fr; } }
 #lb { position:fixed; inset:0; z-index:50; background:#0b0c0e; display:flex; flex-direction:column; }
+#lb[hidden] { display:none; }
 #lb .lbbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:10px max(16px,env(safe-area-inset-left)); color:#ececea; }
 #lb .lbbar .t { flex:1; min-width:0; font-weight:600; }
 #lb .lbbar button { background:#26282c; color:#ececea; border-color:#3a3d42; }
@@ -93,27 +94,27 @@ button:focus-visible, a:focus-visible { outline:3px solid var(--pick); outline-o
   <div class="stage fit" id="lbS"><img id="lbI" alt=""></div>
 </div><script>
 const D = __DATA__;
-const KEY = 'compare:' + D.title;
+const KEY = `compare:${D.title}`;
 let picks = {}; try { picks = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) {}
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(picks)); } catch (e) {} };
 let shown = false;
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);
 document.getElementById('t').textContent = D.title;
-document.getElementById('intro').textContent = (D.intro ? D.intro + ' ' : '') + 'Click any screen to zoom.';
+document.getElementById('intro').textContent = `${D.intro ? `${D.intro} ` : ''}Click any screen to zoom.`;
 document.getElementById('sums').innerHTML = D.dirs.map(d => `<div class="sum"><b>${d.label} <span class="who" hidden>· ${esc(d.id)}</span></b>${esc(d.summary)}</div>`).join('');
 const pickBtn = (slot, i) => `<button type="button" data-slot="${slot}" data-i="${i}">Best</button>`;
 document.getElementById('moments').innerHTML = D.moments.map((m, k) => `
   <section class="moment"><h2>${k + 1}. ${esc(m)}</h2><div class="grid">
   ${D.dirs.map((d, i) => `<figure><button type="button" class="shot" data-k="${k}" data-i="${i}" aria-label="Zoom ${esc(m)}, ${d.label}"><img src="${d.shots[k]}" alt="${esc(m)}, ${d.label}" loading="lazy"></button>
-    <figcaption><span>${d.label} <span class="who" hidden>· ${esc(d.id)}</span></span>${pickBtn('m' + k, i)}</figcaption></figure>`).join('')}
+    <figcaption><span>${d.label} <span class="who" hidden>· ${esc(d.id)}</span></span>${pickBtn(`m${k}`, i)}</figcaption></figure>`).join('')}
   </div></section>`).join('');
 document.getElementById('overall').innerHTML = D.dirs.map((d, i) => `<div class="sum"><b>${d.label} <span class="who" hidden>· ${esc(d.id)}</span></b>${pickBtn('overall', i)}</div>`).join('');
 function paint() {
-  document.querySelectorAll('button[data-slot]').forEach(b => b.setAttribute('aria-pressed', String(picks[b.dataset.slot] === +b.dataset.i)));
+  document.querySelectorAll('button[data-slot]').forEach(b => { b.setAttribute('aria-pressed', String(picks[b.dataset.slot] === +b.dataset.i)); });
   const total = D.moments.length + 1, done = Object.keys(picks).length;
   let t = `${done} of ${total} picked`;
-  if (shown) { const c = {}; Object.values(picks).forEach(i => c[D.dirs[i].id] = (c[D.dirs[i].id] || 0) + 1);
-    t += ' · ' + Object.entries(c).map(([id, n]) => `${id}: ${n}`).join(' · '); }
+  if (shown) { const c = {}; for (const i of Object.values(picks)) c[D.dirs[i].id] = (c[D.dirs[i].id] || 0) + 1;
+    t += ` · ${Object.entries(c).map(([id, n]) => `${id}: ${n}`).join(' · ')}`; }
   document.getElementById('tally').textContent = t;
 }
 document.addEventListener('click', e => {
@@ -124,25 +125,25 @@ document.addEventListener('click', e => {
 document.getElementById('reveal').addEventListener('click', e => {
   shown = !shown; e.currentTarget.setAttribute('aria-expanded', String(shown));
   e.currentTarget.textContent = shown ? 'Hide the directions' : 'Reveal the directions';
-  document.querySelectorAll('.who').forEach(el => el.hidden = !shown); paint();
+  for (const el of document.querySelectorAll('.who')) el.hidden = !shown; paint();
 });
 paint();
 const LB = {k:0, i:0, z:'fit', ret:null}, $ = id => document.getElementById(id);
 function lbShow() {
   const d = D.dirs[LB.i], img = $('lbI');
   img.src = d.shots[LB.k]; img.alt = `${D.moments[LB.k]}, ${d.label}`;
-  $('lbT').textContent = `${LB.k + 1}. ${D.moments[LB.k]} · ${d.label}` + (shown ? ` · ${d.id}` : '');
+  $('lbT').textContent = `${LB.k + 1}. ${D.moments[LB.k]} · ${d.label}${shown ? ` · ${d.id}` : ''}`;
   lbZoom(LB.z);
 }
 function lbZoom(z) {
   LB.z = z; const st = $('lbS'), img = $('lbI');
   st.classList.toggle('fit', z === 'fit');
-  const w = () => { img.style.width = z === 'fit' ? '' : (img.naturalWidth * +z) + 'px'; };
-  img.complete ? w() : (img.onload = w);
-  document.querySelectorAll('#lb [data-z]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.z === z)));
+  const w = () => { img.style.width = z === 'fit' ? '' : `${img.naturalWidth * +z}px`; };
+  if (img.complete) w(); else img.onload = w;
+  for (const b of document.querySelectorAll('#lb [data-z]')) b.setAttribute('aria-pressed', String(b.dataset.z === z));
 }
 function lbOpen(k, i) { LB.k = k; LB.i = i; LB.ret = document.activeElement; $('lb').hidden = false; lbShow(); $('lbX').focus(); }
-function lbClose() { $('lb').hidden = true; LB.ret && LB.ret.focus && LB.ret.focus(); }
+function lbClose() { $('lb').hidden = true; LB.ret?.focus?.(); }
 function lbStep(n) { const N = D.dirs.length; let j = LB.i + n;
   if (j >= N) { j = 0; LB.k = (LB.k + 1) % D.moments.length; } else if (j < 0) { j = N - 1; LB.k = (LB.k - 1 + D.moments.length) % D.moments.length; }
   LB.i = j; lbShow(); }

@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { UI_TIMEOUT_MS } from '../../src/conduit-mcp/call-flow';
+import { NO_OWNER_WINDOW, UI_TIMEOUT_MS } from '../../src/conduit-mcp/call-flow';
 import {
   type ConduitMcpHost,
   type ConduitMcpHostDeps,
@@ -37,10 +37,6 @@ export type { AppConnection } from './presence';
 
 /** As main.ts today: input fires per keystroke, a touch per keystroke would write per character. */
 const INPUT_TOUCH_INTERVAL_MS = 30_000;
-/** D8: how long waiting asks outlive the last app connection before ui_unavailable. */
-const APP_GRACE_MS = 5_000;
-/** The sender of a renderer message from a window no presence named: owns nothing, never ready. */
-const NO_WINDOW = 0;
 
 /** One app connection's event stream; the transport sends it to that peer only. */
 export type AppEventSink = <E extends ServerEvent>(
@@ -148,16 +144,6 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
     warn: (message, data) => deps.log.warn('conduit-mcp', message, data),
   });
   let host: ConduitMcpHost | undefined;
-  const setTimer = deps.host?.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
-  const clearTimer =
-    deps.host?.clearTimer ??
-    ((t: unknown) => clearTimeout(t as ReturnType<typeof setTimeout> | undefined));
-  let graceTimer: unknown;
-  const cancelGrace = () => {
-    if (graceTimer === undefined) return;
-    clearTimer(graceTimer);
-    graceTimer = undefined;
-  };
   const presence = createPresenceMirror({
     attention: deps.attention,
     onSessionMoved: (s) => host?.onSessionMoved(s),
@@ -265,6 +251,7 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
     e2e: deps.e2e,
     log: deps.log,
     ownerWindowOf: presence.ownerWindowOf,
+    appConnected: () => presence.connected(),
     windowReady: presence.windowReady,
     onScreen: presence.onScreen,
     createEndpoint: (o) => createShimEndpoint({ ...o, tokens, onHook: deps.onHook }),
@@ -297,7 +284,6 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
     start: () => h.start(),
     resumeAdopted,
     async stop() {
-      cancelGrace();
       stopAdopt();
       await h.stop();
     },
@@ -313,25 +299,19 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
     },
 
     presence(conn, windows) {
-      // Only a ready window can answer an ask: an app with none is still away.
-      if (windows.some((w) => w.ready)) cancelGrace();
       presence.update(conn, windows);
     },
     appDisconnected(conn) {
       presence.disconnect(conn);
-      if (presence.connected() || graceTimer !== undefined) return;
-      graceTimer = setTimer(() => {
-        graceTimer = undefined;
-        h.denyAsksUnavailable();
-      }, APP_GRACE_MS);
     },
 
     async fromRenderer(conn, { windowId, message }) {
       // Looked up, never allocated: a window no presence named answers nothing.
-      let sender = presence.windowIdOf(conn, windowId) ?? NO_WINDOW;
+      let sender = presence.windowIdOf(conn, windowId) ?? NO_OWNER_WINDOW;
       const ask = message.type === 'mcp:askAnswer' ? asks.get(message.askId) : undefined;
-      if (ask?.windowId != null)
-        sender = answeringWindow(ask.windowId, ask.ask.callerSessionId, sender);
+      if (ask && sender === NO_OWNER_WINDOW) return {};
+      if (ask)
+        sender = answeringWindow(ask.windowId ?? NO_OWNER_WINDOW, ask.ask.callerSessionId, sender);
       if (message.type === 'mcp:uiResult') {
         const wait = uiWaits.get(message.requestId);
         if (wait) sender = answeringWindow(wait.windowId, wait.sessionId, sender);
@@ -349,7 +329,7 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
       if (
         message.type === 'mcp:askAnswer' &&
         ask &&
-        ask.windowId === sender &&
+        (ask.windowId ?? NO_OWNER_WINDOW) === sender &&
         (message.answer === 'approve' ||
           message.answer === 'deny' ||
           message.answer === 'always') &&

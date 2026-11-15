@@ -1,12 +1,12 @@
 import type { ServerEventSink } from '../src/contracts/server-ports';
-import type { RuntimeHealth } from '../src/contracts/server-protocol';
+import type { RuntimeHealth, ServerEvents } from '../src/contracts/server-protocol';
 import {
   type ServerToSupervisor,
   TRAY_LIMITS,
   type TrayCounts,
 } from '../src/contracts/tray-protocol';
 import type { SessionStateFields } from '../src/session-icon';
-import { trayCounts } from '../src/tray-counts';
+import { type TrayNeeds, trayCounts } from '../src/tray-counts';
 import type { ShellStopAll } from './compose';
 
 // See docs/plans/2026-11-03-tray-helper.plan.md S5 and P8.
@@ -17,10 +17,18 @@ export type TrayTap = (cb: (...event: TrayEvent) => void) => () => void;
 
 export type TrayProc = Pick<NodeJS.Process, 'send' | 'on' | 'off' | 'connected'>;
 
+type TraySessions = readonly (SessionStateFields & { id: string })[];
+export interface TraySeed {
+  sessions: TraySessions;
+  needs: TrayNeeds;
+  health: RuntimeHealth['state'];
+}
+
 export interface TrayChannelOptions {
   proc: TrayProc;
   tap: TrayTap;
-  initial(): TrayCounts;
+  /** The count inputs as they stand now, read once at ready() for any input no event has set yet. */
+  seed(): TraySeed;
   stopAll(): Promise<ShellStopAll>;
   log(message: string): void;
 }
@@ -78,10 +86,11 @@ export function startTrayChannel(options: TrayChannelOptions): {
     }
   };
 
-  let sessions: readonly SessionStateFields[] | null = null;
-  let current = options.initial();
-  let health = current.health;
-  let stopping = current.stopping;
+  let sessions: TraySessions | null = null;
+  let needs: TrayNeeds | null = null;
+  let health: RuntimeHealth['state'] | null = null;
+  let stopping: TrayCounts['stopping'] = null;
+  let current: TrayCounts | null = null;
   let sent: TrayCounts | null = null;
   let announced = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -90,14 +99,15 @@ export function startTrayChannel(options: TrayChannelOptions): {
   const flush = (): void => {
     clearTimeout(timer);
     timer = undefined;
-    if (disposed || !announced || (sent && sameCounts(sent, current))) return;
+    if (disposed || !announced || current === null || (sent && sameCounts(sent, current))) return;
     sent = current;
     send({ type: 'counts', counts: current });
   };
 
   const recompute = (flushNow: boolean): void => {
-    current = sessions ? trayCounts(sessions, health, stopping) : { ...current, health, stopping };
-    if (!announced || (sent && sameCounts(sent, current))) return;
+    if (!announced || sessions === null || needs === null || health === null) return;
+    current = trayCounts(sessions, health, stopping, needs);
+    if (sent && sameCounts(sent, current)) return;
     // The server exits right after announcing a stop, so the stopping state cannot wait out a window.
     if (flushNow) flush();
     else timer ??= setTimeout(flush, TRAY_LIMITS.countsCoalesceMs);
@@ -105,8 +115,17 @@ export function startTrayChannel(options: TrayChannelOptions): {
 
   const untap = options.tap((type, data) => {
     if (type === 'sessions.changed') {
-      sessions = (data as { sessions: readonly SessionStateFields[] }).sessions;
+      sessions = (data as { sessions: TraySessions }).sessions;
       recompute(false);
+    } else if (type === 'ui.post') {
+      const message = (data as ServerEvents['ui.post']).message;
+      if (message.type === 'mcp:state') {
+        needs = {
+          openRequests: message.state.requests.open,
+          waitingAsks: message.state.waitingAsks,
+        };
+        recompute(false);
+      }
     } else if (type === 'runtime.changed') {
       health = (data as RuntimeHealth).state;
       recompute(false);
@@ -141,8 +160,12 @@ export function startTrayChannel(options: TrayChannelOptions): {
     ready() {
       if (disposed || announced) return;
       announced = true;
-      // Events seen before ready already updated the tracked parts; initial() only seeds the sessions.
-      if (!sessions) current = { ...options.initial(), health, stopping };
+      // Events seen before ready already set their inputs; the seed fills only the rest.
+      const seed = options.seed();
+      sessions ??= seed.sessions;
+      needs ??= seed.needs;
+      health ??= seed.health;
+      current = trayCounts(sessions, health, stopping, needs);
       send({ type: 'ready' });
       sent = current;
       send({ type: 'counts', counts: current });

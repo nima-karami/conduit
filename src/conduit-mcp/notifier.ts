@@ -162,14 +162,19 @@ export function createNotifier(deps: NotifierDeps, opts: { rearmAll: boolean }):
     }
 
     const urgent = pending.some((m) => m.priority === 'urgent');
-    const outcome = await deps.submit(s.sessionId, composeNotice(urgent), async (finalOutcome) => {
-      if (finalOutcome === 'submitted') {
-        lastNoticeAt.set(s.sessionId, deps.now());
-        const ids = pending.map((m) => m.messageId);
-        for (const id of ids) st.armed.delete(id);
-        await deps.markNoticed(s.handle, ids);
-      }
-    });
+    const answered = pending.some((m) => m.requestId !== undefined);
+    const outcome = await deps.submit(
+      s.sessionId,
+      composeNotice(urgent, answered),
+      async (finalOutcome) => {
+        if (finalOutcome === 'submitted') {
+          lastNoticeAt.set(s.sessionId, deps.now());
+          const ids = pending.map((m) => m.messageId);
+          for (const id of ids) st.armed.delete(id);
+          await deps.markNoticed(s.handle, ids);
+        }
+      },
+    );
     if (outcome === 'withheld') {
       deps.raise({ kind: 'unsent-notice', handle: s.handle });
     }

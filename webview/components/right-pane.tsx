@@ -20,6 +20,7 @@ import type { MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
 import { FilesView, type FilesViewHandle, type FolderUiCache } from './files-view';
 import { MessagesPane } from './messages-pane';
+import { NeedsYouPanel } from './needs-you-panel';
 import { ReviewNavigator } from './review-navigator';
 import type { SearchPaneHandle, SearchScopeModel } from './search-pane';
 
@@ -68,6 +69,7 @@ export function RightPane({
   searchScope,
   mcp,
   sessions,
+  spaceNames,
   sidebarSelection,
   sidebarSpaceName,
   selectedAgentHandle,
@@ -117,6 +119,8 @@ export function RightPane({
   /** Messaging state and requests; the Messages tab is app-wide, not per session. */
   mcp: ConduitMcpApi;
   sessions: readonly Session[];
+  /** Space id → name, for the Needs you panel's space filter and card details. */
+  spaceNames: ReadonlyMap<string, string>;
   sidebarSelection: SpaceSelection;
   sidebarSpaceName: string | null;
   selectedAgentHandle: Handle | null;
@@ -195,7 +199,9 @@ export function RightPane({
       <span className="sr-only" role="status">
         {statusText}
       </span>
-      {tab === 'messages' ? (
+      {tab === 'needs' ? (
+        <NeedsYouPanel mcp={mcp} sessions={sessions} spaceNames={spaceNames} />
+      ) : tab === 'messages' ? (
         <MessagesPane
           key={messagesNav.seq}
           api={mcp}

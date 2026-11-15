@@ -14,6 +14,7 @@ import type {
   McpInstallResult,
   McpInstallStatus,
 } from '../conduit-mcp/install-types';
+import type { RequestKind } from '../conduit-mcp/request-types';
 import type { McpUiState } from '../conduit-mcp/ui-types';
 import type { DroppedRoot } from '../folder-validation';
 import type { LauncherDTO } from '../launchers';
@@ -561,7 +562,12 @@ export interface ServerEvents {
   'ui.post': { route: UiRoute; message: HostToWebview; raise?: boolean };
   'approvals.changed': { pending: PendingAsk[] };
   /** The app decides whether to show an OS notification (D9). */
-  'attention.edge': { sessionId: string; kind: 'run-end' | 'bell' | 'urgent-message' | 'ask' };
+  'attention.edge': {
+    sessionId: string;
+    kind: 'run-end' | 'bell' | 'urgent-message' | 'ask' | 'request';
+    requestKind?: RequestKind;
+    count?: number;
+  };
   'attention.flash': { sessionId: string };
   'serverSettings.changed': { settings: ServerSettings };
   'data.changed': { [K in DataStore]: { store: K; value: DataStores[K] } }[DataStore];

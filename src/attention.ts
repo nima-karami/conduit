@@ -104,13 +104,21 @@ export interface AttentionAsk {
 /** One reason the topbar chip counts: a waiting ask, a session waiting on you, or a message item. */
 export interface AttentionEntry {
   key: string;
-  kind: 'session' | 'message' | 'ask';
+  kind: 'session' | 'message' | 'ask' | 'request';
   sessionId: string | null;
   threadId: string | null;
   reason: McpAttentionReason | null;
   handle: Handle | null;
   /** A session entry's own words for why it needs you, when the server gives them (stuck screens). */
   detail?: string;
+  /** A request entry's id (docs/specs/archive/2026-11-14-user-input-requests.md §4.4). */
+  requestId?: string;
+}
+
+/** An open request, as the footer counts it: the caller passes them in soonest-needed order. */
+export interface AttentionRequest {
+  id: string;
+  session: string | null;
 }
 
 /**
@@ -180,11 +188,28 @@ export function needYouEntries<
   snoozed: SnoozeMap,
   now: number,
   asks?: readonly AttentionAsk[],
+  requests: readonly AttentionRequest[] = [],
 ): AttentionEntry[] {
   const projected = sessions.map((s) =>
     s.attentionReason != null
       ? { ...s, needsAttention: true, busy: false }
       : { ...s, needsAttention: false },
   );
-  return attentionEntries(projected, items, snoozed, now, asks);
+  // Asks lead (a call is waiting on each), then requests; a session that already has an open
+  // request is counted by it, never twice (the same rule as the tray, src/tray-counts.ts).
+  const asking = new Set(requests.flatMap((r) => (r.session === null ? [] : [r.session])));
+  const fromRequests: AttentionEntry[] = requests.map((r) => ({
+    key: `request:${r.id}`,
+    kind: 'request',
+    sessionId: r.session,
+    threadId: null,
+    reason: null,
+    handle: null,
+    requestId: r.id,
+  }));
+  const rest = attentionEntries(projected, items, snoozed, now, asks).filter(
+    (e) => !(e.kind === 'session' && e.sessionId !== null && asking.has(e.sessionId)),
+  );
+  const fromAsks = rest.filter((e) => e.kind === 'ask');
+  return [...fromAsks, ...fromRequests, ...rest.filter((e) => e.kind !== 'ask')];
 }

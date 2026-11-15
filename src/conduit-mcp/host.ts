@@ -65,6 +65,7 @@ import {
   type ToolCallContext,
   type ToolCallResult,
 } from './json-rpc';
+import { loadMachineId } from './machine-id';
 import {
   awaitEnterVerdict,
   ECHO_POLL_MS,
@@ -77,6 +78,10 @@ import {
 } from './notice-gate';
 import { composeUnreadBanner } from './notice-text';
 import { type AttentionRaise, bannerCandidates, createNotifier, type Notifier } from './notifier';
+import { createRequestsIo } from './request-file-fs';
+import { createRequestNotices } from './request-notices';
+import { createRequestService, type RequestService } from './request-service';
+import type { QuestionMessage, SessionNeedsYou } from './request-sources';
 import { createScreenToolHandlers } from './screen-tools';
 import { type ScreenSnapshot, screenVerdict } from './screen-verdict';
 import { assignHandle, createSessionRegistry } from './session-registry';
@@ -94,6 +99,7 @@ import {
   coercePolicyPatch,
   gateToolCall,
   isMessagingTool,
+  isRequestTool,
   isToolName,
   NOT_IN_SESSION_HINT,
   type ResolvedPolicy,
@@ -115,10 +121,12 @@ import {
   HUMAN_HANDLE,
   type McpAttentionItem,
   type McpUnavailableReason,
+  type MessageRecord,
   type Presence,
   type Result,
   type ScreenVerdict,
   THREAD_AGENT_LIMIT,
+  type ThreadSummary,
   toolError,
 } from './types';
 import type {
@@ -150,7 +158,10 @@ type HostLog = Record<
 >;
 
 export interface ConduitMcpHostDeps extends Omit<McpHostDeps, 'attention'> {
-  attention: Pick<McpHostDeps['attention'], 'statusOf' | 'lastOutputAt' | 'onChange' | 'setStuck'>;
+  attention: Pick<
+    McpHostDeps['attention'],
+    'statusOf' | 'lastOutputAt' | 'onChange' | 'setStuck' | 'needsYouFacts'
+  >;
   dir: string;
   endpointPath: string;
   execPath: string;
@@ -163,6 +174,7 @@ export interface ConduitMcpHostDeps extends Omit<McpHostDeps, 'attention'> {
   platform: HostPlatform;
   e2e: boolean;
   ownerWindowOf(sessionId: string): number | null;
+  appConnected(): boolean;
   windowReady(windowId: number): boolean;
   onScreen(windowId: number, sessionId: string): boolean;
   detectGraceMs?: number;
@@ -219,8 +231,6 @@ export interface ConduitMcpHost extends LaunchPort, DraftPort {
     ids: LaunchIds,
     binding: CliBindingRecord | null,
   ): void;
-  /** No app for the grace (D8): every waiting ask ends `ui_unavailable`. */
-  denyAsksUnavailable(): void;
   refresh(): void;
   uiState(): McpUiState;
   /** `senderId`: the window the message came from; an ask answer counts only from its own window. */
@@ -549,6 +559,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     deriveAttentionFromStore();
     scheduleBroadcast();
     sessionWaits.notify();
+    if (store.available()) {
+      requestService.retryDeliveries();
+      requestService.onQuestions(unreadQuestions());
+    }
   });
   // Set by start: a host that never listened has no connections, so no waits to wake.
   let stopAttentionWatch: (() => void) | undefined;
@@ -590,12 +604,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       notices: noticesOf(s.id),
     }));
 
+  const newId = (prefix: 'm' | 't') => `${prefix}_${base32(randomBytes(10))}`;
   const tools = createToolHandlers({
     store,
     directory,
     messagingOn: () => deps.domain.messagingOn(),
     now: () => new Date(now()),
-    newId: (prefix) => `${prefix}_${base32(randomBytes(10))}`,
+    newId,
     snapshot: (sender, p) => snapshotAttachment(sender, p),
     onStored: (msg) => {
       if (msg.from === HUMAN_HANDLE) dispatch({ t: 'thread-reset', threadId: msg.threadId });
@@ -605,7 +620,144 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       dispatch({ t: 'thread-limit', threadId, handle: by, at: new Date(now()).toISOString() });
     },
     warn: (message, data) => deps.log.warn('conduit-mcp', message, data),
+    humanPresence: () => requestService.presence().state,
   });
+
+  const answerOnly = (t: ThreadSummary): boolean =>
+    t.messageCount === 1 && store.thread(t.threadId).every((m) => m.requestId !== undefined);
+
+  const requestTimers = {
+    setTimer: deps.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms)),
+    clearTimer:
+      deps.clearTimer ??
+      ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout> | undefined)),
+  };
+  const notices = createRequestNotices({
+    ...requestTimers,
+    away: () => requestService.presence().state === 'away',
+    emit: (e) => deps.emit('attention.edge', e),
+  });
+
+  const requestService: RequestService = createRequestService({
+    io: createRequestsIo(path.join(deps.dir, 'requests.json')),
+    machineId: loadMachineId(deps.dir),
+    now,
+    newId: () => `r_${base32(randomBytes(8))}`,
+    ...requestTimers,
+    warn: (message, data) =>
+      deps.log.warn('conduit-mcp', message, {
+        detail: data instanceof Error ? String(data) : data,
+      }),
+    stampOf: (sessionId) => {
+      const seen = new Set<string>([sessionId]);
+      let lead = sessionId;
+      let opener = deps.sessions.get(lead)?.openedBy?.sessionId;
+      while (opener !== undefined && !seen.has(opener) && deps.sessions.get(opener) !== undefined) {
+        seen.add(opener);
+        lead = opener;
+        opener = deps.sessions.get(lead)?.openedBy?.sessionId;
+      }
+      return {
+        session: sessionId,
+        space: deps.sessions.get(sessionId)?.projectId ?? null,
+        lead,
+      };
+    },
+    budgetMs: (caller) =>
+      askBudgetMs(
+        cliKindOfHandle(caller.handle),
+        caller.sessionId !== null && wiredAtLaunch(caller.sessionId),
+      ),
+    deliver: async (r) => {
+      if (r.requester === 'conduit') return true;
+      if (!store.available()) return false;
+      const answer = r.answer;
+      const answerBody =
+        answer === null
+          ? null
+          : (() => {
+              const { answeredBy, at, ...input } = answer;
+              return {
+                ...input,
+                answered_by: answeredBy.kind === 'default' ? 'default' : 'you',
+                at,
+              };
+            })();
+      const msg: MessageRecord = {
+        messageId: newId('m'),
+        threadId: newId('t'),
+        from: HUMAN_HANDLE,
+        to: [r.requester],
+        subject: `Answer to your request ${r.id}`,
+        kind: 'inform',
+        priority: 'normal',
+        sentAt: new Date(now()).toISOString(),
+        body: JSON.stringify({ request_id: r.id, state: r.state, answer: answerBody }),
+        attachments: [],
+        requestId: r.id,
+      };
+      const res = await store.append(msg, []);
+      if (!res.ok) {
+        deps.log.warn('conduit-mcp', 'late request answer not stored', {
+          requestId: r.id,
+          code: res.error.code,
+        });
+        return false;
+      }
+      scheduleBroadcast();
+      return true;
+    },
+    onChanged: () => scheduleBroadcast(),
+    onNew: (r) => notices.added(r),
+    scheduler: deps.domain.limit,
+    replyToQuestion: async (r, text) => {
+      const sent = await tools.sendMessage(
+        { handle: HUMAN_HANDLE, sessionId: null },
+        {
+          to: [r.requester],
+          body: text,
+          ...(r.thread === null ? {} : { thread_id: r.thread }),
+          kind: 'inform',
+          priority: 'normal',
+        },
+      );
+      if (!sent.ok) {
+        deps.log.warn('conduit-mcp', 'reply to question not sent', {
+          requestId: r.id,
+          code: sent.error.code,
+        });
+        return false;
+      }
+      if (r.messageId === null) return true;
+      const read = await store.setStatus(r.messageId, HUMAN_HANDLE, 'read');
+      // The reply went out: reporting failure now would invite a retry and a second reply.
+      if (!read.ok)
+        deps.log.warn('conduit-mcp', 'question not marked read after its reply', {
+          requestId: r.id,
+          code: read.error.code,
+        });
+      return true;
+    },
+  });
+
+  const factsWithHandles = (): SessionNeedsYou[] =>
+    deps.attention.needsYouFacts().map((f) => ({ ...f, handle: handleOf(f.sessionId) ?? null }));
+
+  const unreadQuestions = (): QuestionMessage[] =>
+    store.available()
+      ? store
+          .pending(HUMAN_HANDLE)
+          .filter((m) => m.kind === 'question' && m.requestId === undefined)
+          .map((m) => ({
+            messageId: m.messageId,
+            threadId: m.threadId,
+            from: m.from,
+            fromSession: sessionOfHandle(m.from),
+            subject: m.subject,
+            body: m.body,
+            sentAt: m.sentAt,
+          }))
+      : [];
 
   // ---- gate -------------------------------------------------------------------------------
 
@@ -1086,6 +1238,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       const w = deps.ownerWindowOf(sessionId);
       return w !== null && deps.windowReady(w) ? w : null;
     },
+    appConnected: () => deps.appConnected(),
     sendToOwner: (sessionId, msg) => sendToOwner(sessionId, msg),
     flashOwner: (sessionId) => flashOwner(sessionId),
     resolve: (sessionId, tool) =>
@@ -1202,9 +1355,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           policy: resolved.policy,
           ownerReady: () => windowId !== null && deps.windowReady(windowId),
           onScreen: () => windowId !== null && deps.onScreen(windowId, sessionId),
+          appConnected: deps.appConnected(),
         });
         if (refused) return { ok: false, error: refused };
         const caller = { handle, sessionId };
+        if (isRequestTool(name)) return runRequest(caller, name, args, ctx);
         if (isMessagingTool(name)) {
           if (!store.available()) {
             return {
@@ -1344,6 +1499,26 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     throw new Error(`runMessaging: ${name} is not a messaging tool`);
   };
 
+  const runRequest = async (
+    caller: Caller,
+    name: ToolName,
+    args: unknown,
+    ctx: CallContext,
+  ): Promise<Result<unknown> | null> => {
+    const key = { connId: ctx.connId, requestId: ctx.requestId };
+    switch (name) {
+      case 'request_input':
+        return requestService.tools.requestInput(caller, args, key);
+      case 'wait_request':
+        return requestService.tools.waitRequest(caller, args, key);
+      case 'withdraw_request':
+        return requestService.tools.withdrawRequest(caller, args);
+      case 'list_requests':
+        return requestService.tools.listRequests(caller, args);
+    }
+    throw new Error(`runRequest: ${name} is not a request tool`);
+  };
+
   const prepareControl = (
     caller: Caller,
     name: ToolName,
@@ -1438,6 +1613,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       cancelled: (requestId) => {
         flow.cancelled(conn.id, requestId);
         sessionWaits.cancel((w) => w.key.connId === conn.id && w.key.requestId === requestId);
+        requestService.cancelCalls(
+          (w) => w.key.connId === conn.id && w.key.requestId === requestId,
+        );
       },
     });
     conn.onLine((line) => {
@@ -1491,6 +1669,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       }
       flow.connectionClosed(conn.id);
       sessionWaits.cancel((w) => w.key.connId === conn.id);
+      requestService.cancelCalls((w) => w.key.connId === conn.id);
       const owner = connSession.get(conn.id);
       const r = owner === undefined ? undefined : runtime.get(owner);
       if (owner !== undefined && r?.bound === conn.id) unbind(owner, r);
@@ -1557,13 +1736,25 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       sessions[s.id] = badgeOf(s.id, handle);
       listed.add(s.id);
     }
-    const all = store.available() ? store.threads() : [];
+    const all = store.available() ? store.threads().filter((t) => !answerOnly(t)) : [];
     const threads: McpThreadSummary[] = all.slice(0, MAX_UI_THREADS).map((t) => ({
       ...t,
       paused: store.agentCountSinceHuman(t.threadId) >= THREAD_AGENT_LIMIT,
       unreadForYou: t.unreadFor.includes(HUMAN_HANDLE),
     }));
-    const youPending = store.available() ? store.pending(HUMAN_HANDLE) : [];
+    const youPending = store.available()
+      ? store.pending(HUMAN_HANDLE).filter((m) => m.requestId === undefined)
+      : [];
+    const openQuestionIds = new Set(
+      requestService
+        .ui()
+        .open.flatMap((r) => (r.source === 'message' && r.messageId !== null ? [r.messageId] : [])),
+    );
+    const requestOnlyThreads = new Set(youPending.map((m) => m.threadId));
+    for (const m of youPending) {
+      if (!(m.kind === 'question' && openQuestionIds.has(m.messageId)))
+        requestOnlyThreads.delete(m.threadId);
+    }
     const participantsByThread = new Map(
       all.map((thread) => [thread.threadId, thread.participants]),
     );
@@ -1576,7 +1767,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       loading,
       sessions,
       threads,
-      attention: [...attention, ...youAttention(all, new Date(now()).toISOString())],
+      attention: [
+        ...attention,
+        ...youAttention(
+          all.filter((t) => !requestOnlyThreads.has(t.threadId)),
+          new Date(now()).toISOString(),
+        ),
+      ],
       youUnread: youPending.length,
       youUrgent: youPending.filter((m) => m.priority === 'urgent').length,
       youUnreadByThread: [...youUnreadByThread].flatMap(([threadId, count]) => {
@@ -1594,6 +1791,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           )
         : {},
       awaitingApproval: flow.awaitingApproval(),
+      waitingAsks: flow.waitingAskCount(),
+      requests: requestService.ui(),
     };
   }
 
@@ -1847,7 +2046,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   return {
     async start() {
       if (stopped) return;
-      stopAttentionWatch = deps.attention.onChange(() => sessionWaits.notify());
+      stopAttentionWatch = deps.attention.onChange(() => {
+        sessionWaits.notify();
+        requestService.onAttention(factsWithHandles());
+      });
       startupSweep = (async () => {
         try {
           // Configs left by a crash: they name a dead session and can't be reused.
@@ -1878,7 +2080,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       }
       if (stopped) return;
       scheduleBroadcast();
+      requestService.start();
+      requestService.onAttention(factsWithHandles());
       await loadStore();
+      requestService.onQuestions(unreadQuestions());
+      requestService.retryDeliveries();
       notifier = makeNotifier();
       const tickMs = deps.tickMs ?? TICK_MS;
       if (tickMs > 0 && !stopped) {
@@ -1890,6 +2096,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         tickTimer.unref?.();
         retentionTimer = setInterval(() => {
           void store.enforceRetention(new Date(now()));
+          requestService.purge();
         }, RETENTION_EVERY_MS);
         retentionTimer.unref?.();
       }
@@ -1996,6 +2203,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
 
     onRendererInput(sessionId, data) {
+      requestService.humanActive();
       // Ahead of noteInput's filter, which serves the notice gate's draft state only.
       detectTyped(sessionId, data);
       if (!noteInput(sessionId, data)) return;
@@ -2065,6 +2273,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       // Before the drain: the session's waiting asks end now, so their cancelled replies are owed.
       flow.sessionGone(sessionId);
       sessionWaits.cancel((w) => w.caller.sessionId === sessionId);
+      requestService.onSessionDeleted(sessionId);
       const handle = handleOf(sessionId);
       sessionWaits.forget(sessionId, handle);
       // Awaited after the teardown: the caller removes the session as soon as this yields.
@@ -2126,16 +2335,6 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       scheduleBroadcast();
     },
 
-    denyAsksUnavailable() {
-      for (const ask of flow.denyUnavailable())
-        deps.log.info('conduit-mcp', 'ask denied: no app', {
-          askId: ask.askId,
-          sessionId: ask.sessionId,
-          tool: ask.tool,
-          code: 'ui_unavailable',
-        });
-    },
-
     refresh() {
       syncToolLists();
       flow.recheck();
@@ -2162,7 +2361,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           return;
         }
         case 'mcp:thread:get': {
-          const msgs = store.thread(m.threadId);
+          const msgs = store.thread(m.threadId).filter((x) => x.requestId === undefined);
           const messages: McpThreadMessage[] = msgs.map((x) => ({
             ...x,
             attachmentsExpired: x.expired && x.attachments.length > 0,
@@ -2252,6 +2451,14 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               senderId,
             });
           return;
+        case 'mcp:requestAnswer': {
+          const result = await requestService.answerFromRenderer(m.requestId, m.answer, senderId);
+          reply({ type: 'mcp:requestResult', requestId: m.requestId, result });
+          return;
+        }
+        case 'mcp:setAway':
+          requestService.setAway(m.away, m.until);
+          return;
         case 'mcp:pause':
           deps.sessions.setMcp(m.sessionId, { mcpNoticesPaused: m.paused });
           scheduleBroadcast();
@@ -2282,6 +2489,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       sessionWaits.dispose();
       flow.dispose();
       for (const c of conns.values()) c.close();
+      notices.dispose();
+      await requestService.stop();
       const storeStopped = store.stop();
       await endpoint?.close();
       await startupSweep;

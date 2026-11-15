@@ -9,6 +9,7 @@ import {
   isValidField,
   migrateToolOverrides,
   type PolicyLayer,
+  REQUEST_TOOL_NAMES,
   resolvePolicy,
   TOOL_GROUPS,
   TOOL_NAMES,
@@ -52,8 +53,21 @@ describe('tool-policy catalog', () => {
   });
 
   it('groups cover every tool once, in catalog order', () => {
-    expect(TOOL_GROUPS.map((g) => g.group)).toEqual(['messaging', 'sessions', 'editor']);
+    expect(TOOL_GROUPS.map((g) => g.group)).toEqual([
+      'messaging',
+      'requests',
+      'sessions',
+      'editor',
+    ]);
     expect(TOOL_GROUPS.flatMap((g) => g.tools)).toEqual([...TOOL_NAMES]);
+  });
+
+  it('request tools default on with no ask', () => {
+    for (const t of REQUEST_TOOL_NAMES) {
+      expect(DEFAULT_TOOL_POLICY[t]).toEqual({ access: 'on' });
+      expect(isValidField(t, 'access', 'ask')).toBe(false);
+    }
+    expect(coercePolicyLayer({ request_input: { access: 'ask' } })).toBeUndefined();
   });
 
   it('messaging tools are never ask', () => {
@@ -230,6 +244,7 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
           policy: { access: 'on', when: 'viewing' },
           ownerReady: () => false,
           onScreen: () => false,
+          appConnected: true,
         }),
       ).toBeNull();
     },
@@ -242,6 +257,7 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
     policy: on,
     ownerReady: () => true,
     onScreen: () => true,
+    appConnected: true,
   };
   const throws = () => {
     throw new Error('thunk ran');
@@ -275,6 +291,58 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
         onScreen: throws,
       }),
     ).toBeNull();
+  });
+
+  it('gate lets a request tool through with no ready window', () => {
+    for (const tool of REQUEST_TOOL_NAMES) {
+      expect(
+        gateToolCall({
+          sessionId: 's1',
+          messagingOn: true,
+          tool,
+          policy: { access: 'on' },
+          ownerReady: () => false,
+          onScreen: () => false,
+          appConnected: true,
+        }),
+      ).toBeNull();
+    }
+  });
+
+  it('gate lets an always ask through with no app', () => {
+    expect(
+      gateToolCall({
+        ...base,
+        tool: 'open_session',
+        policy: { access: 'ask', when: 'always' },
+        ownerReady: () => false,
+        appConnected: false,
+      }),
+    ).toBeNull();
+  });
+
+  it('gate refuses an always ask for a window tool with no app', () => {
+    expect(
+      gateToolCall({
+        ...base,
+        tool: 'open_file',
+        policy: { access: 'ask', when: 'always' },
+        ownerReady: () => false,
+        appConnected: false,
+      })?.code,
+    ).toBe('window_not_ready');
+  });
+
+  it('gate still refuses a viewing ask with no app', () => {
+    expect(
+      gateToolCall({
+        ...base,
+        tool: 'open_session',
+        policy: { access: 'ask', when: 'viewing' },
+        ownerReady: () => false,
+        appConnected: false,
+      })?.code,
+    ).toBe('window_not_ready');
   });
 
   it('on server actions run without a ready owner window, while viewing still checks visibility', () => {

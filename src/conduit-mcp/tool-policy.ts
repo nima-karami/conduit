@@ -10,6 +10,12 @@ export const MESSAGING_TOOL_NAMES = [
   'read_inbox',
   'read_attachment',
 ] as const;
+export const REQUEST_TOOL_NAMES = [
+  'request_input',
+  'wait_request',
+  'withdraw_request',
+  'list_requests',
+] as const;
 const SESSION_TOOL_NAMES = [
   'list_agents',
   'open_session',
@@ -30,14 +36,16 @@ const EDITOR_TOOL_NAMES = [
 ] as const;
 export const TOOL_NAMES = [
   ...MESSAGING_TOOL_NAMES,
+  ...REQUEST_TOOL_NAMES,
   ...SESSION_TOOL_NAMES,
   ...EDITOR_TOOL_NAMES,
 ] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 
-export type ToolGroup = 'messaging' | 'sessions' | 'editor';
+export type ToolGroup = 'messaging' | 'requests' | 'sessions' | 'editor';
 export const TOOL_GROUPS: readonly { group: ToolGroup; tools: readonly ToolName[] }[] = [
   { group: 'messaging', tools: MESSAGING_TOOL_NAMES },
+  { group: 'requests', tools: REQUEST_TOOL_NAMES },
   { group: 'sessions', tools: SESSION_TOOL_NAMES },
   { group: 'editor', tools: EDITOR_TOOL_NAMES },
 ];
@@ -86,6 +94,7 @@ export interface ToolPolicyPatch {
 
 type RateBudget = 'act' | 'show';
 type MessagingToolName = (typeof MESSAGING_TOOL_NAMES)[number];
+type RequestToolName = (typeof REQUEST_TOOL_NAMES)[number];
 export interface ToolSpec<B extends RateBudget | null = RateBudget | null> {
   /** Applicable fields, 'access' first. */
   fields: readonly PolicyField[];
@@ -99,6 +108,7 @@ export interface ToolSpec<B extends RateBudget | null = RateBudget | null> {
 }
 
 // Messaging has no 'ask': a card per read_inbox is noise (spec §3.2).
+// Requests have no 'ask' either: a policy card to ask permission to ask the human would be noise.
 const MESSAGING_SPEC: ToolSpec<null> = {
   fields: ['access'],
   access: ['off', 'on'],
@@ -119,7 +129,7 @@ const VIEW_SPEC: ToolSpec<RateBudget> = {
 
 /** Typed per tool so a control tool's budget is never null. */
 export const TOOL_SPECS: Readonly<{
-  [K in ToolName]: ToolSpec<K extends MessagingToolName ? null : RateBudget>;
+  [K in ToolName]: ToolSpec<K extends MessagingToolName | RequestToolName ? null : RateBudget>;
 }> = {
   list_sessions: MESSAGING_SPEC,
   list_agents: {
@@ -132,6 +142,10 @@ export const TOOL_SPECS: Readonly<{
   send_message: MESSAGING_SPEC,
   read_inbox: MESSAGING_SPEC,
   read_attachment: MESSAGING_SPEC,
+  request_input: MESSAGING_SPEC,
+  wait_request: MESSAGING_SPEC,
+  withdraw_request: MESSAGING_SPEC,
+  list_requests: MESSAGING_SPEC,
   open_session: {
     fields: SESSION_FIELDS,
     access: ACCESS_VALUES,
@@ -197,6 +211,7 @@ export const DEFAULT_TOOL_POLICY: Readonly<GlobalPolicy> = Object.freeze(default
 
 const NAMES: ReadonlySet<string> = new Set(TOOL_NAMES);
 const MESSAGING: ReadonlySet<ToolName> = new Set(MESSAGING_TOOL_NAMES);
+const REQUESTS: ReadonlySet<ToolName> = new Set(REQUEST_TOOL_NAMES);
 const SERVER_ACTIONS: ReadonlySet<ToolName> = new Set([
   'list_agents',
   'open_session',
@@ -211,6 +226,10 @@ export function isToolName(v: unknown): v is ToolName {
 
 export function isMessagingTool(t: ToolName): boolean {
   return MESSAGING.has(t);
+}
+
+export function isRequestTool(t: ToolName): boolean {
+  return REQUESTS.has(t);
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
@@ -402,7 +421,7 @@ export const toolDisabled = (tool: ToolName): ToolError =>
 export const NOT_IN_SESSION_HINT =
   'Conduit MCP tools work only from a CLI that a Conduit terminal started; run it there';
 
-/** Also the call flow's refusal when an ask finds no owner window. */
+/** Also the call flow's refusal when an ask finds no owner window while an app is connected. */
 export const windowNotReady = (): ToolError =>
   toolError('window_not_ready', "this session's Conduit window isn't ready; try again shortly");
 
@@ -414,6 +433,7 @@ export function gateToolCall(i: {
   policy: ToolPolicy;
   ownerReady: () => boolean;
   onScreen: () => boolean;
+  appConnected: boolean;
 }): ToolError | null {
   if (i.sessionId === null)
     return toolError('not_in_session', 'this MCP connection is not a Conduit session', undefined, {
@@ -423,7 +443,16 @@ export function gateToolCall(i: {
   if (!i.messagingOn && i.tool !== 'list_agents')
     return toolError('messaging_off', 'Conduit messaging is turned off');
   if (i.policy.access === 'off') return toolDisabled(i.tool);
-  if (isMessagingTool(i.tool)) return null;
+  if (isMessagingTool(i.tool) || isRequestTool(i.tool)) return null;
+  // REQ-D21c: with no app at all, an always-ask may wait for one, but only for a server action, which
+  // can run once approved without a window (docs/specs/archive/2026-11-14-user-input-requests.md §4.3).
+  if (
+    !i.appConnected &&
+    i.policy.access === 'ask' &&
+    i.policy.when === 'always' &&
+    SERVER_ACTIONS.has(i.tool)
+  )
+    return null;
   // Without a ready window there is no card to ask on and no visibility to trust; an `on` server
   // action needs neither (architecture D8).
   if (!i.ownerReady())

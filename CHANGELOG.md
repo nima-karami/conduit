@@ -6,6 +6,20 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- Agents can ask you a question and get a structured answer with the new `request_input` tool: yes/no, pick from options, a free answer, or review a draft. You can always type your own words as well. If you don't answer while the agent waits, the agent gets your answer later in its inbox, so a slow answer is never a lost one. Agents can also wait again, withdraw or list their requests (`wait_request`, `withdraw_request`, `list_requests`). They are in a new Requests group in the MCP tool settings, on by default.
+- An agent can attach a default answer that applies if you haven't answered by a set time (for example "go with Blue/green in 2 h"). Tool approvals never apply themselves.
+- A question an agent sends you as a message (kind "question"), a session stuck at its own permission or question prompt while you're looking elsewhere (Claude Code and OpenCode report this), and a usage limit auto-resume can't handle now each become a request you can answer. Each counts once.
+- When a request arrives and no Conduit window is focused, you get one OS notification in Conduit's own words (at most one every 10 seconds; held while you're Away unless it's urgent).
+- A **Needs you** panel lists everything that needs you, apart from Messages: each request shows as Approve, Answer or Review, says which session asks and why it matters now, and opens in a pop-up (or a tab beside the session when it's long, like a draft to review). Sort, filter (session, lead group, space, type, machine) and choose what cards show from its ⋯ menu; History keeps answered and closed requests for 30 days.
+- Answer without opening the agent's terminal: pick an option, write your own words, or both; Send moves on to the next request. Skip means you won't answer.
+- The status bar counts what needs you with a countdown while an agent waits, the session's tab bar shows "Waiting on you", and Ctrl+Shift+Y (Cmd+Shift+Y on macOS) opens the request that needs you soonest.
+- Set yourself Away from the status bar; when you're back, the panel summarises what happened while you were away.
+
+### Changed
+- A tool approval no longer gets denied 5 seconds after you close every Conduit window: it waits until the agent's own time limit, and Conduit's tray counts it. Approvals set to "always" for actions that need no window can even start with no window open; reopen Conduit to answer them.
+- The tray's "need you" count now includes open requests and waiting approvals, each counted once.
+
 ## [0.64.1] — 2026-11-14
 
 ### Fixed

@@ -226,7 +226,6 @@ export const MCP_STR = {
     spawn_unconfirmed: 'the launch could not be confirmed; close this session before trying again',
     server_stopping: 'Conduit is stopping; try again after it restarts',
     ui_timeout: 'Conduit’s window didn’t answer in time',
-    ui_unavailable: 'no Conduit window was open to answer',
   } satisfies Record<ToolErrorCode, string>,
   noResponse: 'Conduit didn’t answer. Try again.',
   you: 'you',
@@ -252,6 +251,10 @@ export const MCP_STR = {
       send_message: 'Lets an agent message other sessions and you.',
       read_inbox: 'Lets an agent read the messages sent to it.',
       read_attachment: 'Lets an agent open files attached to its messages.',
+      request_input: 'Lets an agent ask you a question and wait for your answer.',
+      wait_request: 'Lets an agent wait again for one of its open requests.',
+      withdraw_request: 'Lets an agent withdraw one of its open requests.',
+      list_requests: 'Lets an agent see its own requests and their state.',
       open_session:
         'Lets an agent start sessions from your profiles or any agent CLI on your PATH.',
       open_terminal: 'Lets an agent run any program as you, outside its own sandbox.',
@@ -280,6 +283,7 @@ export const MCP_STR = {
     // The policy editor (spec 2026-10-30-conduit-mcp-tool-policy §8–§10).
     group: {
       messaging: 'Messaging',
+      requests: 'Requests',
       sessions: 'Sessions',
       editor: 'Editor & views',
     } satisfies Record<ToolGroup, string>,

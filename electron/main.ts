@@ -119,6 +119,7 @@ import {
   touchResolution,
 } from '../src/module-resolver-fs';
 import { openWithCommand } from '../src/open-with';
+import { attentionBody } from '../src/os-attention';
 import {
   nodeOutgoingPathDeps,
   outgoingFoldersFor,
@@ -2431,15 +2432,12 @@ app.whenReady().then(() => {
     schedulePresence();
   };
 
-  const attentionBody = (name: string, kind: ServerEvents['attention.edge']['kind']) =>
-    kind === 'run-end' ? `${name} finished` : `${name} is waiting`;
-
-  const notifyAttention = (sessionId: string, kind: ServerEvents['attention.edge']['kind']) => {
+  const notifyAttention = (sessionId: string, edge: ServerEvents['attention.edge']) => {
     const session = store.get(sessionId);
     if (!session) return;
     windowFor(sessionId)?.flashFrame(true);
     if (!Notification.isSupported()) return;
-    const notif = new Notification({ title: 'Conduit', body: attentionBody(session.name, kind) });
+    const notif = new Notification({ title: 'Conduit', body: attentionBody(session.name, edge) });
     notif.on('click', () => {
       const w = windowFor(sessionId);
       if (w) {
@@ -4093,7 +4091,9 @@ app.whenReady().then(() => {
         case 'mcp:retry':
         case 'mcp:setToolPolicy':
         case 'mcp:askAnswer':
-        case 'mcp:uiResult': {
+        case 'mcp:uiResult':
+        case 'mcp:requestAnswer':
+        case 'mcp:setAway': {
           const r = await callServer('mcp.fromRenderer', { windowId: senderId, message: m });
           if (r.reply) replyHere(r.reply);
           break;

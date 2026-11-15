@@ -80,6 +80,12 @@ function uiState(o: Partial<McpUiState> = {}): McpUiState {
     switchable: [],
     notConnected: {},
     awaitingApproval: [],
+    waitingAsks: 0,
+    requests: {
+      open: [],
+      ended: [],
+      presence: { state: 'here', since: '2026-10-25T10:00:00.000Z', until: null, lastAway: null },
+    },
     ...o,
   };
 }
@@ -125,6 +131,13 @@ function fakeApi(state: McpUiState | null, o: Partial<ConduitMcpApi> = {}): Cond
     pause: vi.fn(),
     retry: vi.fn(),
     setToolPolicy: vi.fn(async () => true),
+    answerRequest: vi.fn(async () => ({
+      ok: false as const,
+      reason: 'not_found' as const,
+      message: '',
+      request: null,
+    })),
+    setAway: vi.fn(),
     ...o,
   };
 }
