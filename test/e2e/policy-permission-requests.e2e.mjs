@@ -233,11 +233,13 @@ await runScenario(
         activityRows().filter((r) => r.action === 'close_session'),
       )}`,
     );
+    // A grant on a session target ends with that session: closing t1 expires it at once.
     const grantOfW = () =>
       mcpState(page).then((st) =>
         st?.policy?.grants?.find(
           (g) =>
-            g.state === 'active' &&
+            g.state === 'expired' &&
+            g.requestId === ask2.askId &&
             g.tool === 'close_session' &&
             g.who?.kind === 'session' &&
             g.who?.sessionId === w.sessionId &&
@@ -252,7 +254,7 @@ await runScenario(
         (await mcpState(page))?.policy?.grants,
       )}`,
     );
-    log('later ask answered allowed+grant → the asked close runs, grant saved ✓');
+    log('later ask answered allowed+grant → the asked close runs; its target grant ends with it ✓');
 
     phase('exception deny refuses; allowOnce lets one close through');
     // Scoped exceptions cannot be written at runtime, so the deny is the session's own legacy
@@ -295,27 +297,6 @@ await runScenario(
     assert(errCode(second) === 'tool_disabled', `second target: ${JSON.stringify(second)}`);
     assert(await stillOpen(t3.sessionId), 'the second target was closed despite its deny');
     log('exception deny → allowOnce closes one target, the second is refused ✓');
-
-    phase('revoke the target grant');
-    // The step-2 grant's only target (t1) was closed by the retry that created it, so this checks
-    // the state change only; the anywhere grant below carries the coverage check.
-    const grant = await grantOfW();
-    assert(
-      grant,
-      `no active grant to revoke: ${JSON.stringify((await mcpState(page))?.policy?.grants)}`,
-    );
-    const revoked = await policyRequest(page, { type: 'mcp:revokeGrant', grantId: grant.id });
-    assert(revoked.ok === true, `mcp:revokeGrant ${grant.id}: ${JSON.stringify(revoked)}`);
-    assert(
-      await until(async () => {
-        const st = await mcpState(page);
-        return st?.policy?.grants?.find((g) => g.id === grant.id)?.state === 'revoked';
-      }, 5_000),
-      `grant ${grant.id} never reached state revoked: ${JSON.stringify(
-        (await mcpState(page))?.policy?.grants,
-      )}`,
-    );
-    log('target grant revoked → state revoked ✓');
 
     phase('anywhere grant covers calls; revoking it brings the card back');
     const grantWhere = async (pred) => (await mcpState(page))?.policy?.grants?.find(pred);
