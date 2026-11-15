@@ -1108,6 +1108,9 @@ SCRIPT_CANDIDATES: 2
   - Remote close works on live sessions only; an exited session can't be closed remotely.
   - `lastSize` doesn't move on a plain resize, so `net-drive` asks the echo program for its size.
     The echo program reads stdin raw: on Windows a line-mode reader never sees a ConPTY resize.
+- **Slice 9 done:** Tier 2 passes (`tools/vm-peer.mjs`, `test/e2e/tier2/net-vm.mjs`): B in the VM
+  binds `auto`, not `0.0.0.0` (refused by D-H4). CHANGELOG and `docs/runs/2026-11-14-CON-27/report.md`
+  written. The VM is stopped; its 1.6 GB live in `~/.cache/conduit-vm/con27`.
 - **Lanes from 2026-11-15 on are Claude only:** Haiku executors via the Agent tool, Opus review.
   Codex sessions stay open and idle.
 - **Lanes are Conduit sessions** (`open_session`: codex with gpt-6.1-terra, or cursor-agent with

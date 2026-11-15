@@ -11,6 +11,10 @@ All notable user-facing changes to Conduit. Format follows
 - An agent can attach a default answer that applies if you haven't answered by a set time (for example "go with Blue/green in 2 h"). Tool approvals never apply themselves.
 - A question an agent sends you as a message (kind "question"), a session stuck at its own permission or question prompt while you're looking elsewhere (Claude Code and OpenCode report this), and a usage limit auto-resume can't handle now each become a request you can answer. Each counts once.
 - When a request arrives and no Conduit window is focused, you get one OS notification in Conduit's own words (at most one every 10 seconds; held while you're Away unless it's urgent).
+- Groundwork for using Conduit across your own machines: the Background service can link to the one on another machine you own. Linking takes three words shown on one machine and typed on the other, then a fingerprint you compare on both screens. The screens for this arrive in a later release.
+- Once two machines are linked, agents see the sessions on both in `list_sessions` (each with an address like `claude-3@m-1a2b3c4d`), can message them with `send_message`, and can wait on them with `wait_sessions`. A message sent while the other machine is unreachable waits and is delivered once when it's back, never twice. Attachments to another machine are limited to 10 MiB per message.
+- On a linked machine you can watch another machine's terminals. Typing into, resizing, opening or closing them ("drive") is off on every link until you turn it on for that link. Agents can never drive another machine's sessions.
+- Unlinking ("revoke") on either machine stops the link on both at once.
 
 ### Changed
 - A tool approval no longer gets denied 5 seconds after you close every Conduit window: it waits until the agent's own time limit, and Conduit's tray counts it. Approvals set to "always" for actions that need no window can even start with no window open; reopen Conduit to answer them.
