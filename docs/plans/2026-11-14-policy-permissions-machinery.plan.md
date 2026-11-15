@@ -636,6 +636,8 @@ Failing tests:
   - A recheck that cancels a now-hidden ask re-decides, and a deny ends it the C9 way (withdrawn by conduit, tool_disabled + reasonText).
   - A denied answer's reason reaches the agent, sanitised.
   - Non-anywhere grants get one per target; if any target can't take the scope, the answer is refused.
+  - A late answer needs a known sender window (not NO_OWNER_WINDOW). It doesn't need the session's owner window, since the session may be gone.
+  - `permission.lateGrant` records the first of N per-target grant ids. Every grant carries requestId; widening the field to an array is CON-25's call.
 - **Carried to T3.2 (T3.1 re-review):**
   - Catching tests for the `ui().open` filter and the withdraw_request policy guard, using a live permission from createPermission. The current withdraw test passes only because load withdraws the record; rewrite it.
   - Narrow once in answerFromRenderer (drop the unreachable second visibility branch).
