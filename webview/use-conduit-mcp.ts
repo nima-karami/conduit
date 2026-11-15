@@ -18,6 +18,8 @@ import { requestHost } from './host-request';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
+type PolicyPoint = Extract<WebviewToHost, { type: 'mcp:setPointPolicy' }>['point'];
+
 export interface ConduitMcpApi {
   state: McpUiState | null;
   getThread(threadId: string): Promise<McpThreadView | null>;
@@ -34,6 +36,8 @@ export interface ConduitMcpApi {
   retry(): void;
   /** False when the host refused it or didn't answer: the caller reverts. */
   setToolPolicy(sessionId: string, tool: ToolName, patch: ToolPolicyPatch): Promise<boolean>;
+  /** False when the host refused it or didn't answer: the caller reverts. */
+  setPointPolicy(point: PolicyPoint, tool: ToolName, patch: ToolPolicyPatch): Promise<boolean>;
   answerRequest(requestId: string, answer: AnswerInput): Promise<RequestAnswerResult>;
   setAway(away: boolean, until: string | null): void;
 }
@@ -104,6 +108,14 @@ const api: Omit<ConduitMcpApi, 'state'> = {
     const r = await requestHost(
       (requestId) => ({ type: 'mcp:setToolPolicy', requestId, sessionId, tool, patch }),
       ['mcp:toolPolicyResult'],
+      REQUEST_TIMEOUT_MS,
+    );
+    return r?.ok === true;
+  },
+  async setPointPolicy(point, tool, patch) {
+    const r = await requestHost(
+      (requestId) => ({ type: 'mcp:setPointPolicy', requestId, point, tool, patch }),
+      ['mcp:policyResult'],
       REQUEST_TIMEOUT_MS,
     );
     return r?.ok === true;

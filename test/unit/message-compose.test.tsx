@@ -49,6 +49,7 @@ function fakeApi(o: Partial<ConduitMcpApi> = {}): ConduitMcpApi {
     pause: vi.fn(),
     retry: vi.fn(),
     setToolPolicy: vi.fn(async () => true),
+    setPointPolicy: vi.fn(async () => true),
     answerRequest: vi.fn(async () => ({
       ok: false as const,
       reason: 'not_found' as const,

@@ -258,6 +258,7 @@ function rightPane(
       pause: noop,
       retry: noop,
       setToolPolicy: async () => true,
+      setPointPolicy: async () => true,
       answerRequest: async () => ({
         ok: false as const,
         reason: 'not_found' as const,

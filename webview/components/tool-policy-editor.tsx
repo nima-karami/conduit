@@ -16,6 +16,8 @@ import {
   TOOL_GROUPS,
   TOOL_SPECS,
   type ToolName,
+  type ToolPolicy,
+  type ToolPolicyPatch,
   WHEN_VALUES,
 } from '../../src/conduit-mcp/tool-policy';
 import { MCP_STR } from '../conduit-mcp-strings';
@@ -66,6 +68,14 @@ function below(layer: PolicySource, layers: PolicyLayers): PolicyLayers | null {
 }
 
 type LabelContext = Pick<ToolPolicyEditorProps, 'layer' | 'layers' | 'sourceName'>;
+
+/** Puts one tool's whole entry back: every field it lacks becomes 'inherit'. */
+export const restorePatch = (entry: Partial<ToolPolicy> | undefined): ToolPolicyPatch => ({
+  access: entry?.access ?? 'inherit',
+  when: entry?.when ?? 'inherit',
+  reach: entry?.reach ?? 'inherit',
+  move: entry?.move ?? 'inherit',
+});
 
 /**
  * The words a choice shows in the editor; the session dialog announces a change with them.
