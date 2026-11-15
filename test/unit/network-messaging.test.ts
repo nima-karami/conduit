@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
+import type { AuditEvent } from '../../server/network/audit-log';
 import { createMessaging, type MessagingLink } from '../../server/network/messaging';
 import type { McpNetworkPort, RemoteEntry } from '../../src/conduit-mcp/remote-routing';
 import type { MessageRecord } from '../../src/conduit-mcp/types';
@@ -12,6 +13,7 @@ import {
   type WireMessage,
 } from '../../src/contracts/link-protocol';
 import { encodeFrame } from '../../src/network/frame-codec';
+import { type OutboxEntry, serializeOutboxFile } from '../../src/network/outbox';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -19,8 +21,8 @@ afterEach(() => {
 });
 const machine = 'm-12345678';
 const wire: WireMessage = {
-  messageId: 'id',
-  threadId: 'thread',
+  messageId: 'm_abcdefghijklmnop',
+  threadId: 't_abcdefghijklmnop',
   from: 'agent-1',
   to: ['agent-2'],
   subject: 'hi',
@@ -30,9 +32,11 @@ const wire: WireMessage = {
   body: 'hello',
   attachments: [],
 };
-function setup() {
+function setup(seed: OutboxEntry[] = []) {
   const dir = mkdtempSync(join(tmpdir(), 'messaging-'));
   dirs.push(dir);
+  // Seeded before the service loads, so a test can start with a full outbox without N writes.
+  if (seed.length > 0) writeFileSync(join(dir, 'outbox.json'), serializeOutboxFile(seed));
   const caps = { messaging: true, monitor: true, drive: false, orchestrate: false };
   const link: MessagingLink = {
     machineId: machine,
@@ -41,6 +45,7 @@ function setup() {
     peerCapabilities: caps,
   };
   const frames: LinkFrame[] = [];
+  const audit: AuditEvent[] = [];
   let now = 0;
   let timer = () => {};
   let listener: Parameters<McpNetworkPort['onLocalStatus']>[0] = () => {};
@@ -71,7 +76,7 @@ function setup() {
       return true;
     },
     mcp: () => mcp,
-    audit: { record: () => {} },
+    audit: { record: (e) => audit.push(e) },
     log: { warn: () => {}, error: () => {} },
     now: () => now,
     after: (fn) => {
@@ -91,6 +96,7 @@ function setup() {
     dir,
     link,
     frames,
+    audit,
     mcp,
     msg,
     recipient,
@@ -98,7 +104,7 @@ function setup() {
       now = t;
       timer();
     },
-    receipt: () => listener('id', 'agent-2', 'read', machine),
+    receipt: () => listener('m_abcdefghijklmnop', 'agent-2', 'read', machine),
   };
 }
 
@@ -108,14 +114,18 @@ it('flushes queued messages on link up and handles refused acknowledgements', as
   expect(h.frames).toHaveLength(0);
   h.link.state = 'up';
   h.svc.linkUp(machine);
-  expect(h.frames[0]).toMatchObject({ t: 'msg', message: { messageId: 'id' } });
+  expect(h.frames[0]).toMatchObject({ t: 'msg', message: { messageId: 'm_abcdefghijklmnop' } });
   h.svc.onFrame(machine, {
     t: 'ack',
-    messageId: 'id',
+    messageId: 'm_abcdefghijklmnop',
     recipients: [{ handle: 'agent-2', status: 'refused', reason: 'unknown_session' }],
   });
   await vi.waitFor(() =>
-    expect(h.mcp.setRemoteStatus).toHaveBeenCalledWith('id', `agent-2@${machine}`, 'undelivered'),
+    expect(h.mcp.setRemoteStatus).toHaveBeenCalledWith(
+      'm_abcdefghijklmnop',
+      `agent-2@${machine}`,
+      'undelivered',
+    ),
   );
 });
 it('expires and revokes queued messages', async () => {
@@ -123,13 +133,17 @@ it('expires and revokes queued messages', async () => {
   h.svc.enqueue(h.msg, [h.recipient]);
   h.tick(24 * 60 * 60 * 1000);
   await vi.waitFor(() =>
-    expect(h.mcp.setRemoteStatus).toHaveBeenCalledWith('id', `agent-2@${machine}`, 'expired'),
+    expect(h.mcp.setRemoteStatus).toHaveBeenCalledWith(
+      'm_abcdefghijklmnop',
+      `agent-2@${machine}`,
+      'expired',
+    ),
   );
-  h.svc.enqueue({ ...h.msg, messageId: 'other' }, [h.recipient]);
+  h.svc.enqueue({ ...h.msg, messageId: 'm_qrstuvwxyzabcdef' }, [h.recipient]);
   h.svc.revoked(machine);
   await vi.waitFor(() =>
     expect(h.mcp.setRemoteStatus).toHaveBeenCalledWith(
-      'other',
+      'm_qrstuvwxyzabcdef',
       `agent-2@${machine}`,
       'undelivered',
     ),
@@ -191,7 +205,7 @@ it('keeps an acknowledgement pending when updating status fails', async () => {
   vi.mocked(h.mcp.setRemoteStatus).mockRejectedValueOnce(new Error('disk'));
   h.svc.onFrame(machine, {
     t: 'ack',
-    messageId: 'id',
+    messageId: 'm_abcdefghijklmnop',
     recipients: [{ handle: 'agent-2', status: 'refused', reason: 'unknown_session' }],
   });
   await vi.waitFor(() => expect(h.mcp.setRemoteStatus).toHaveBeenCalled());
@@ -245,7 +259,11 @@ it('marks the recipient undelivered and removes the outbox entry if a blob is mi
   h.link.state = 'up';
   h.svc.linkUp(machine);
   await vi.waitFor(() =>
-    expect(h.mcp.setRemoteStatus).toHaveBeenCalledWith('id', `agent-2@${machine}`, 'undelivered'),
+    expect(h.mcp.setRemoteStatus).toHaveBeenCalledWith(
+      'm_abcdefghijklmnop',
+      `agent-2@${machine}`,
+      'undelivered',
+    ),
   );
   await vi.waitFor(() =>
     expect(JSON.parse(readFileSync(join(h.dir, 'outbox.json'), 'utf8')).entries).toEqual([]),
@@ -300,7 +318,11 @@ it('does not send a blob read after a link is revoked', async () => {
   h.svc.revoked(machine);
   finish(Buffer.from('x'));
   await vi.waitFor(() =>
-    expect(h.mcp.setRemoteStatus).toHaveBeenCalledWith('id', `agent-2@${machine}`, 'undelivered'),
+    expect(h.mcp.setRemoteStatus).toHaveBeenCalledWith(
+      'm_abcdefghijklmnop',
+      `agent-2@${machine}`,
+      'undelivered',
+    ),
   );
   expect(h.frames.filter((f) => f.t === 'msg')).toEqual([]);
 });
@@ -325,7 +347,7 @@ it('preserves FIFO when a link drops while the first blob is loading', async () 
     },
     [h.recipient],
   );
-  h.svc.enqueue({ ...h.msg, messageId: 'second' }, [h.recipient]);
+  h.svc.enqueue({ ...h.msg, messageId: 'm_234567abcdefghij' }, [h.recipient]);
   h.link.state = 'up';
   h.svc.linkUp(machine);
   await vi.waitFor(() => expect(h.mcp.readBlob).toHaveBeenCalledTimes(1));
@@ -337,7 +359,108 @@ it('preserves FIFO when a link drops while the first blob is loading', async () 
   finish(Buffer.from('blob'));
   await vi.waitFor(() => expect(h.frames.filter((f) => f.t === 'msg')).toHaveLength(2));
   expect(h.frames.flatMap((f) => (f.t === 'msg' ? [f.message.messageId] : []))).toEqual([
-    'id',
-    'second',
+    'm_abcdefghijklmnop',
+    'm_234567abcdefghij',
   ]);
+});
+
+// A distinct valid id for each i: 'm_' / 't_' plus 16 base32 chars.
+const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
+const ident = (prefix: 'm' | 't', i: number): string => {
+  let s = '';
+  for (let n = i; s.length < 16; n = Math.floor(n / 32)) s += B32[n % 32];
+  return `${prefix}_${s}`;
+};
+const frameN = (i: number, over: Partial<WireMessage> = {}): Extract<LinkFrame, { t: 'msg' }> => ({
+  t: 'msg',
+  message: { ...wire, messageId: ident('m', i), threadId: ident('t', i), ...over },
+});
+const ackFrames = (frames: LinkFrame[]) =>
+  frames.filter((f): f is Extract<LinkFrame, { t: 'ack' }> => f.t === 'ack');
+
+// CON-27 review, minor 6: a full outbox refuses the send to that machine, and says so.
+it('refuses a send that finds the outbox full, as outbox_full, and stores nothing for it', () => {
+  const full: OutboxEntry[] = Array.from({ length: 1000 }, (_, i) => ({
+    machineId: machine,
+    message: { ...wire, messageId: ident('m', i), threadId: ident('t', i) },
+    addresses: [`agent-2@${machine}`],
+    enqueuedAt: 0,
+    state: 'queued',
+  }));
+  const h = setup(full);
+  expect(h.svc.enqueue(h.msg, [h.recipient])).toEqual([
+    { address: h.recipient.address, status: 'refused', reason: 'outbox_full' },
+  ]);
+  expect(JSON.parse(readFileSync(join(h.dir, 'outbox.json'), 'utf8')).entries).toHaveLength(1000);
+});
+
+// CON-27 security review M2: a peer cannot fill the disk through one link.
+it('refuses the 121st message frame from one link in a minute, and accepts again a minute later', () => {
+  const h = setup();
+  h.link.state = 'up';
+  for (let i = 0; i < 120; i++) h.svc.onFrame(machine, frameN(i));
+  expect(vi.mocked(h.mcp.deliverInbound)).toHaveBeenCalledTimes(120);
+  h.svc.onFrame(machine, frameN(120));
+  expect(vi.mocked(h.mcp.deliverInbound)).toHaveBeenCalledTimes(120);
+  expect(ackFrames(h.frames).at(-1)?.recipients).toEqual([
+    { handle: 'agent-2', status: 'refused', reason: 'rate_limited' },
+  ]);
+  h.tick(60_000);
+  h.svc.onFrame(machine, frameN(121));
+  expect(vi.mocked(h.mcp.deliverInbound)).toHaveBeenCalledTimes(121);
+});
+
+it('refuses a message to more than 10 recipients and stores nothing', () => {
+  const h = setup();
+  const to = Array.from({ length: 11 }, (_, i) => `agent-${i}`);
+  h.svc.onFrame(machine, { t: 'msg', message: { ...wire, to } });
+  expect(vi.mocked(h.mcp.deliverInbound)).not.toHaveBeenCalled();
+  expect(ackFrames(h.frames)[0]?.recipients.every((r) => r.status === 'refused')).toBe(true);
+  expect(ackFrames(h.frames)[0]?.recipients).toHaveLength(11);
+});
+
+it('acts on each recipient the outbox entry was addressed to, once: an ack with 1,000 recipients writes one status', async () => {
+  const h = setup();
+  h.svc.enqueue(h.msg, [h.recipient]);
+  const recipients = Array.from({ length: 1000 }, (_, i) => ({
+    handle: i === 0 ? 'agent-2' : `stranger-${i}`,
+    status: 'refused' as const,
+    reason: 'unknown_session' as const,
+  }));
+  h.svc.onFrame(machine, { t: 'ack', messageId: 'm_abcdefghijklmnop', recipients });
+  await vi.waitFor(() => expect(h.mcp.setRemoteStatus).toHaveBeenCalled());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(vi.mocked(h.mcp.setRemoteStatus)).toHaveBeenCalledTimes(1);
+  expect(h.mcp.setRemoteStatus).toHaveBeenCalledWith(
+    'm_abcdefghijklmnop',
+    `agent-2@${machine}`,
+    'undelivered',
+  );
+});
+
+it('ignores a repeated handle in an ack after the first', async () => {
+  const h = setup();
+  h.svc.enqueue(h.msg, [h.recipient]);
+  const refused = { handle: 'agent-2', status: 'refused' as const, reason: null };
+  h.svc.onFrame(machine, {
+    t: 'ack',
+    messageId: 'm_abcdefghijklmnop',
+    recipients: [refused, refused, refused],
+  });
+  await vi.waitFor(() => expect(h.mcp.setRemoteStatus).toHaveBeenCalled());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(vi.mocked(h.mcp.setRemoteStatus)).toHaveBeenCalledTimes(1);
+});
+
+it('audits a refused inbound message once per link per minute', () => {
+  const h = setup();
+  h.link.capabilities.messaging = false;
+  for (let i = 0; i < 5; i++) h.svc.onFrame(machine, frameN(i));
+  expect(h.audit.filter((e) => e.kind === 'message.refused')).toHaveLength(1);
+  h.tick(59_999);
+  h.svc.onFrame(machine, frameN(5));
+  expect(h.audit.filter((e) => e.kind === 'message.refused')).toHaveLength(1);
+  h.tick(60_000);
+  h.svc.onFrame(machine, frameN(6));
+  expect(h.audit.filter((e) => e.kind === 'message.refused')).toHaveLength(2);
 });

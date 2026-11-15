@@ -13,9 +13,17 @@ export interface OutboxEntry {
   state: 'queued' | 'sent';
 }
 
+/** Most entries one outbox holds; past it, new sends are refused, not dropped (CON-27 review, minor 6). */
+const OUTBOX_MAX_ENTRIES = 1000;
+/** Most serialized bytes one outbox holds, summed over its entries. */
+const OUTBOX_MAX_BYTES = 64 * 1024 * 1024;
+
 export interface Outbox {
-  /** FIFO per machine; a duplicate messageId for the same machine is ignored. */
-  enqueue(e: Omit<OutboxEntry, 'state'>): void;
+  /**
+   * FIFO per machine; a duplicate messageId for the same machine is ignored. False when the entry
+   * would pass OUTBOX_MAX_ENTRIES or OUTBOX_MAX_BYTES; nothing is stored then.
+   */
+  enqueue(e: Omit<OutboxEntry, 'state'>): boolean;
   /** Every 'queued' entry for that machine, marked 'sent'. A second call returns nothing new. */
   batchFor(machineId: string): OutboxEntry[];
   /** Sent entries go back to queued in their original order: the link dropped before the ack. */
@@ -32,32 +40,59 @@ export interface Outbox {
 }
 
 // see docs/plans/2026-11-14-conduit-network-machinery.plan.md, Technical decisions 8
+const encoder = new TextEncoder();
+
+/** An entry with its serialized size, fixed when it is stored: the cap counts what was admitted. */
+interface Slot {
+  entry: OutboxEntry;
+  bytes: number;
+}
+
 export function createOutbox(initial: OutboxEntry[]): Outbox {
-  let list: OutboxEntry[] = [];
+  let slots: Slot[] = [];
+  let usedBytes = 0;
 
   const sameMessage = (e: OutboxEntry, machineId: string, messageId: string) =>
     e.machineId === machineId && e.message.messageId === messageId;
 
-  const insert = (e: OutboxEntry) => {
-    if (list.some((o) => sameMessage(o, e.machineId, e.message.messageId))) return;
-    list.push(copyEntry(e));
+  const slotOf = (e: OutboxEntry): Slot => {
+    const entry = copyEntry(e);
+    return { entry, bytes: encoder.encode(JSON.stringify(entry)).byteLength };
+  };
+
+  const store = (slot: Slot) => {
+    slots.push(slot);
+    usedBytes += slot.bytes;
   };
 
   const removeWhere = (pred: (e: OutboxEntry) => boolean): OutboxEntry[] => {
-    const removed = list.filter(pred);
-    list = list.filter((e) => !pred(e));
-    return removed.map(copyEntry);
+    const removed = slots.filter((s) => pred(s.entry));
+    slots = slots.filter((s) => !pred(s.entry));
+    for (const s of removed) usedBytes -= s.bytes;
+    return removed.map((s) => copyEntry(s.entry));
   };
 
-  for (const e of initial) insert({ ...e, state: 'queued' });
+  // A load keeps what was persisted, even past the caps: the caps only refuse new sends.
+  for (const e of initial) {
+    const fresh = { ...e, state: 'queued' as const };
+    if (!slots.some((s) => sameMessage(s.entry, fresh.machineId, fresh.message.messageId)))
+      store(slotOf(fresh));
+  }
 
   return {
     enqueue(e) {
-      insert({ ...e, state: 'queued' });
+      const fresh = { ...e, state: 'queued' as const };
+      if (slots.some((s) => sameMessage(s.entry, fresh.machineId, fresh.message.messageId)))
+        return true;
+      const slot = slotOf(fresh);
+      if (slots.length >= OUTBOX_MAX_ENTRIES || usedBytes + slot.bytes > OUTBOX_MAX_BYTES)
+        return false;
+      store(slot);
+      return true;
     },
     batchFor(machineId) {
       const batch: OutboxEntry[] = [];
-      for (const e of list) {
+      for (const { entry: e } of slots) {
         if (e.machineId !== machineId || e.state !== 'queued') continue;
         e.state = 'sent';
         batch.push(copyEntry(e));
@@ -65,15 +100,16 @@ export function createOutbox(initial: OutboxEntry[]): Outbox {
       return batch;
     },
     onDown(machineId) {
-      for (const e of list) {
+      for (const { entry: e } of slots) {
         if (e.machineId === machineId && e.state === 'sent') e.state = 'queued';
       }
     },
     ack(machineId, messageId) {
-      const i = list.findIndex((e) => sameMessage(e, machineId, messageId));
+      const i = slots.findIndex((s) => sameMessage(s.entry, machineId, messageId));
       if (i === -1) return null;
-      const [removed] = list.splice(i, 1);
-      return copyEntry(removed);
+      const [removed] = slots.splice(i, 1);
+      usedBytes -= removed.bytes;
+      return copyEntry(removed.entry);
     },
     expire(now) {
       return removeWhere((e) => now - e.enqueuedAt >= OUTBOX_TTL_MS);
@@ -82,10 +118,10 @@ export function createOutbox(initial: OutboxEntry[]): Outbox {
       return removeWhere((e) => e.machineId === machineId);
     },
     entries() {
-      return list.map(copyEntry);
+      return slots.map((s) => copyEntry(s.entry));
     },
     pending(machineId) {
-      return list.filter((e) => e.machineId === machineId).length;
+      return slots.filter((s) => s.entry.machineId === machineId).length;
     },
   };
 }

@@ -26,6 +26,15 @@ export interface AuditSink {
 }
 
 /**
+ * A peer's text reaches the log through detail and principal (CON-27 review M2), so each string
+ * there is cut before it is written; the log stays one bounded line per event.
+ */
+const AUDIT_STRING_MAX = 128;
+const capped = (s: string): string => s.slice(0, AUDIT_STRING_MAX);
+const capDetail = (d: NonNullable<AuditEvent['detail']>): AuditEvent['detail'] =>
+  Object.fromEntries(Object.entries(d).map(([k, v]) => [k, typeof v === 'string' ? capped(v) : v]));
+
+/**
  * The sink is a port: POL's Activity store replaces this file-backed one later. See
  * docs/plans/2026-11-14-conduit-network-machinery.plan.md, Seams with CON-24 item 3.
  */
@@ -40,7 +49,12 @@ export function openAuditLog(
   const append = opts.append ?? defaultAppend();
   return {
     record(e) {
-      const line = `${JSON.stringify({ v: 1, at: new Date(opts.now()).toISOString(), ...e })}\n`;
+      const event: AuditEvent = {
+        ...e,
+        ...(e.principal === undefined ? {} : { principal: capped(e.principal) }),
+        ...(e.detail === undefined ? {} : { detail: capDetail(e.detail) }),
+      };
+      const line = `${JSON.stringify({ v: 1, at: new Date(opts.now()).toISOString(), ...event })}\n`;
       try {
         append(file, line);
       } catch (err) {

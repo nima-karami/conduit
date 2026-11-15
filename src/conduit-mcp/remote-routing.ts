@@ -36,7 +36,13 @@ export type RemoteResolution =
 export interface RemoteRecipientOutcome {
   address: string;
   status: 'queued' | 'refused';
-  reason: 'peer_unreachable' | 'peer_revoked' | 'peer_incompatible' | 'capability_off' | null;
+  reason:
+    | 'peer_unreachable'
+    | 'peer_revoked'
+    | 'peer_incompatible'
+    | 'capability_off'
+    | 'outbox_full'
+    | null;
 }
 
 export interface NetworkPort {

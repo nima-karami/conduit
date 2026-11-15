@@ -663,8 +663,14 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     framedAsHuman: boolean,
   ): Promise<WireRecipientOutcome[]> => {
     const t = now();
-    const sends = (inboundSends.get(msg.from) ?? []).filter((x) => t - x < RATE_WINDOW_MS);
-    inboundSends.set(msg.from, sends);
+    // A handle leaves the map once its window is empty; the sender's handle is peer-chosen and
+    // rotates, so a key kept past its window would grow the map without bound.
+    for (const [handle, times] of inboundSends) {
+      const live = times.filter((x) => t - x < RATE_WINDOW_MS);
+      if (live.length === 0) inboundSends.delete(handle);
+      else inboundSends.set(handle, live);
+    }
+    const sends = inboundSends.get(msg.from) ?? [];
     if (!framedAsHuman && store.agentCountSinceHuman(msg.threadId) >= THREAD_AGENT_LIMIT) {
       threadLimitHit(msg.threadId, msg.from);
       return refuseAll(msg.to, 'thread_limit');
@@ -699,6 +705,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const record: MessageRecord = {
       messageId: msg.messageId,
       threadId: msg.threadId,
+      originMessageId: msg.originMessageId,
+      originThreadId: msg.originThreadId,
       from: msg.from,
       to: [...deliveredTo],
       subject: msg.subject,
@@ -720,6 +728,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       throw new Error(appended.error.message);
     }
     sends.push(t);
+    inboundSends.set(msg.from, sends);
     storedFollowUp(record);
     return outcomes;
   };
@@ -2645,12 +2654,15 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       localDirectory: () => directory(),
       hasMessage: (id) => store.has(id),
       readBlob: (sha256) => store.readBlob(sha256),
-      threadExportedTo: () => {
-        throw new Error('CON-27 B1: threadExportedTo is not implemented yet');
-      },
-      wireThreadFor: () => {
-        throw new Error('CON-27 B1: wireThreadFor is not implemented yet');
-      },
+      // A thread is exported to a machine once a message in it went there (to its recipient) or
+      // came from there; only then may the machine know the thread by a wire id (CON-27 B1).
+      threadExportedTo: (threadId, machineId) =>
+        store
+          .thread(threadId)
+          .some((m) => m.origin === machineId || m.to.some((h) => h.endsWith(`@${machineId}`))),
+      wireThreadFor: (threadId, machineId) =>
+        store.thread(threadId).find((m) => m.origin === machineId && m.originThreadId !== undefined)
+          ?.originThreadId ?? threadId,
       deliverInbound,
       setRemoteStatus: async (messageId, address, status) => {
         // 'queued' is the state a remote recipient starts in, so there is nothing to record.
@@ -2669,9 +2681,14 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         store.onChange((change) => {
           if (change === undefined) return;
           if (change.status !== 'noticed' && change.status !== 'read') return;
-          const origin = store.get(change.messageId)?.origin;
-          if (origin === undefined) return;
-          listener(change.messageId, change.handle, change.status, origin);
+          const record = store.get(change.messageId);
+          if (record?.origin === undefined) return;
+          listener(
+            record.originMessageId ?? change.messageId,
+            change.handle,
+            change.status,
+            record.origin,
+          );
         }),
       youUnread: () => uiState().youUnread,
       ownerPresence: () => requestService.presence().state,

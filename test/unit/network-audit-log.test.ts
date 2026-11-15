@@ -58,4 +58,23 @@ describe('audit log', () => {
     // @ts-expect-error 'link.bogus' is not an AuditKind
     sink.record({ kind: 'link.bogus', peer: null });
   });
+
+  // CON-27 security review M2: a peer's text reaches detail and principal, so the log caps it.
+  it('cuts every string in detail and principal to 128 chars, and leaves other values alone', () => {
+    const lines: string[] = [];
+    const sink = openAuditLog(FILE, {
+      now: () => NOW,
+      append: (_path, line) => lines.push(line),
+      onError: vi.fn(),
+    });
+    sink.record({
+      kind: 'message.refused',
+      peer: 'm-0000000a',
+      principal: 'p'.repeat(300),
+      detail: { messageId: 'x'.repeat(300), to: 'a', count: 7, flag: true },
+    });
+    const parsed = JSON.parse(lines[0]);
+    expect(parsed.principal).toBe('p'.repeat(128));
+    expect(parsed.detail).toEqual({ messageId: 'x'.repeat(128), to: 'a', count: 7, flag: true });
+  });
 });

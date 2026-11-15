@@ -269,3 +269,35 @@ describe('outbox file', () => {
     expect(parseOutboxFile(text)).toEqual({ kind: 'corrupt' });
   });
 });
+
+// CON-27 review, minor 6: the caps are 1,000 entries and 64 MiB in total, serialized.
+describe('outbox caps', () => {
+  const MAX_ENTRIES = 1000;
+  const big = (messageId: string, bodyBytes: number) => ({
+    ...entry(A, messageId),
+    message: { ...message(messageId), body: 'x'.repeat(bodyBytes) },
+  });
+
+  it('refuses the 1,001st entry, and stores nothing for it', () => {
+    const outbox = createOutbox([]);
+    for (let i = 0; i < MAX_ENTRIES; i++) expect(outbox.enqueue(entry(A, `m_${i}`))).toBe(true);
+    expect(outbox.enqueue(entry(A, 'm_over'))).toBe(false);
+    expect(outbox.entries()).toHaveLength(MAX_ENTRIES);
+  });
+
+  it('refuses an entry that would take the outbox past 64 MiB in total', () => {
+    const outbox = createOutbox([]);
+    const fourMiB = 4 * 1024 * 1024;
+    for (let i = 0; i < 15; i++) expect(outbox.enqueue(big(`m_${i}`, fourMiB))).toBe(true);
+    expect(outbox.enqueue(big('m_15', fourMiB))).toBe(false);
+    expect(outbox.entries()).toHaveLength(15);
+  });
+
+  it('an ack frees room under both caps', () => {
+    const outbox = createOutbox([]);
+    for (let i = 0; i < MAX_ENTRIES; i++) outbox.enqueue(entry(A, `m_${i}`));
+    expect(outbox.enqueue(entry(A, 'm_over'))).toBe(false);
+    outbox.ack(A, 'm_0');
+    expect(outbox.enqueue(entry(A, 'm_over'))).toBe(true);
+  });
+});

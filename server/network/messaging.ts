@@ -7,7 +7,7 @@ import type {
   RemoteEntry,
   RemoteRecipientOutcome,
 } from '../../src/conduit-mcp/remote-routing';
-import { MAX_BODY_BYTES } from '../../src/conduit-mcp/tools';
+import { MAX_BODY_BYTES, MAX_RECIPIENTS } from '../../src/conduit-mcp/tools';
 import type { MessageRecord } from '../../src/conduit-mcp/types';
 import type {
   Capabilities,
@@ -18,13 +18,19 @@ import type {
 } from '../../src/contracts/link-protocol';
 import { formatAddress } from '../../src/network/addresses';
 import {
+  inboundMessageId,
+  inboundThreadId,
+  isWireMessageId,
+  isWireThreadId,
+} from '../../src/network/inbound-ids';
+import {
   createOutbox,
   type Outbox,
   type OutboxEntry,
   parseOutboxFile,
   serializeOutboxFile,
 } from '../../src/network/outbox';
-import type { AuditSink } from './audit-log';
+import type { AuditEvent, AuditSink } from './audit-log';
 
 // Cross-machine messages, exactly once (plan decision 8). The sender keeps a persisted FIFO outbox
 // per machine and resends what isn't acked whenever the link comes up; the receiver dedupes by
@@ -71,6 +77,11 @@ export interface Messaging {
 const EXPIRE_EVERY_MS = 60_000;
 const TERMINAL: readonly LinkState[] = ['revoked', 'incompatible', 'identity-changed'];
 const live = (s: LinkState) => s === 'up' || s === 'degraded';
+/** Message frames one link may deliver a window; past it they are refused unstored (CON-27 M2). */
+const INBOUND_PER_LINK_PER_MIN = 120;
+const INBOUND_WINDOW_MS = 60_000;
+/** One message.refused audit per link per window, as drive.ts does for drive.refused. */
+const REFUSAL_AUDIT_MS = 60_000;
 
 function loadOutbox(
   file: string,
@@ -120,6 +131,28 @@ export function createMessaging(deps: MessagingDeps): Messaging {
   };
 
   const linkOf = (machineId: string) => deps.links().find((l) => l.machineId === machineId) ?? null;
+
+  /** Admitted inbound message frames per link, inside the rolling window. */
+  const inboundTimes = new Map<string, number[]>();
+  /** The last message.refused audit per link: a flood of refusals audits once a window. */
+  const lastRefusalAudit = new Map<string, number>();
+
+  const admitInbound = (machineId: string): boolean => {
+    const t = deps.now();
+    const recent = (inboundTimes.get(machineId) ?? []).filter((x) => t - x < INBOUND_WINDOW_MS);
+    const admitted = recent.length < INBOUND_PER_LINK_PER_MIN;
+    if (admitted) recent.push(t);
+    inboundTimes.set(machineId, recent);
+    return admitted;
+  };
+
+  const auditRefused = (machineId: string, e: Omit<AuditEvent, 'kind' | 'peer'>): void => {
+    const at = deps.now();
+    const last = lastRefusalAudit.get(machineId);
+    if (last !== undefined && at - last < REFUSAL_AUDIT_MS) return;
+    lastRefusalAudit.set(machineId, at);
+    deps.audit.record({ kind: 'message.refused', peer: machineId, ...e });
+  };
 
   const markRemote = async (
     entry: OutboxEntry,
@@ -231,20 +264,29 @@ export function createMessaging(deps: MessagingDeps): Messaging {
     messageId: string,
     recipients: WireRecipientOutcome[],
   ): Promise<void> => {
-    if (
-      !outbox.entries().some((e) => e.machineId === machineId && e.message.messageId === messageId)
-    )
-      return;
+    const entry = outbox
+      .entries()
+      .find((e) => e.machineId === machineId && e.message.messageId === messageId);
+    if (!entry) return;
     const mcp = deps.mcp();
     if (mcp === null && recipients.some((r) => r.status === 'refused')) return;
+    // A peer may only speak for the handles this message was addressed to, and each only once:
+    // anything else would let one ack write statuses without bound (CON-27 review M2).
+    const addressed = new Set(entry.message.to);
+    const seen = new Set<string>();
     for (const r of recipients) {
+      if (!addressed.has(r.handle) || seen.has(r.handle)) continue;
+      seen.add(r.handle);
       // A delivered recipient stays queued until its receipt says it was noticed or read.
       if (r.status === 'refused') {
         await mcp?.setRemoteStatus(messageId, formatAddress(r.handle, machineId), 'undelivered');
-        deps.audit.record({
-          kind: 'message.refused',
-          peer: machineId,
-          detail: { messageId, handle: r.handle, reason: r.reason ?? 'refused', direction: 'out' },
+        auditRefused(machineId, {
+          detail: {
+            messageId,
+            handle: r.handle,
+            reason: r.reason ?? 'refused',
+            direction: 'out',
+          },
         });
       }
     }
@@ -262,15 +304,28 @@ export function createMessaging(deps: MessagingDeps): Messaging {
         messageId: wire.messageId,
         recipients: refuse('capability_off'),
       });
-      deps.audit.record({
-        kind: 'message.refused',
-        peer: machineId,
+      auditRefused(machineId, {
         detail: { messageId: wire.messageId, reason: 'capability_off', direction: 'in' },
       });
       return;
     }
+    if (!admitInbound(machineId)) {
+      deps.send(machineId, {
+        t: 'ack',
+        messageId: wire.messageId,
+        recipients: refuse('rate_limited'),
+      });
+      auditRefused(machineId, {
+        detail: { messageId: wire.messageId, reason: 'rate_limited', direction: 'in' },
+      });
+      return;
+    }
+    // The ids are the peer's choice; only the local derivation below may name a stored message.
     if (
+      !isWireMessageId(wire.messageId) ||
+      !isWireThreadId(wire.threadId) ||
       !/^[a-z0-9-]+$/.test(wire.from) ||
+      wire.to.length > MAX_RECIPIENTS ||
       wire.to.some((h) => h.includes('@')) ||
       Buffer.byteLength(wire.body, 'utf8') > MAX_BODY_BYTES ||
       wire.subject.length > 200 ||
@@ -287,7 +342,8 @@ export function createMessaging(deps: MessagingDeps): Messaging {
     const mcp = deps.mcp();
     // No ack without the store: the sender keeps the message queued and resends on the next up.
     if (mcp === null) return;
-    if (mcp.hasMessage(wire.messageId)) {
+    const messageId = inboundMessageId(machineId, wire.messageId);
+    if (mcp.hasMessage(messageId)) {
       deps.send(machineId, {
         t: 'ack',
         messageId: wire.messageId,
@@ -295,9 +351,14 @@ export function createMessaging(deps: MessagingDeps): Messaging {
       });
       return;
     }
+    const threadId = inboundThreadId(machineId, wire.threadId, (t, m) =>
+      mcp.threadExportedTo(t, m),
+    );
     const record: MessageRecord & { origin: string } = {
-      messageId: wire.messageId,
-      threadId: wire.threadId,
+      messageId,
+      threadId,
+      originMessageId: wire.messageId,
+      originThreadId: wire.threadId,
       from: formatAddress(wire.from, machineId),
       to: wire.to,
       subject: wire.subject,
@@ -318,12 +379,12 @@ export function createMessaging(deps: MessagingDeps): Messaging {
     const outcomes = await mcp.deliverInbound(record, blobs, framedAsHuman);
     deps.send(machineId, { t: 'ack', messageId: wire.messageId, recipients: outcomes });
     const delivered = outcomes.filter((o) => o.status === 'delivered').map((o) => o.handle);
-    deps.audit.record({
-      kind: delivered.length > 0 ? 'message.in' : 'message.refused',
-      peer: machineId,
+    const audit = {
       principal: record.from,
       detail: { messageId: wire.messageId, to: delivered.join(','), direction: 'in' },
-    });
+    };
+    if (delivered.length > 0) deps.audit.record({ kind: 'message.in', peer: machineId, ...audit });
+    else auditRefused(machineId, audit);
   };
 
   return {
@@ -371,11 +432,11 @@ export function createMessaging(deps: MessagingDeps): Messaging {
         else if (link?.peerCapabilities && !link.peerCapabilities.messaging)
           refused('capability_off');
         else {
-          outbox.enqueue({
+          const accepted = outbox.enqueue({
             machineId,
             message: {
               messageId: msg.messageId,
-              threadId: msg.threadId,
+              threadId: deps.mcp()?.wireThreadFor(msg.threadId, machineId) ?? msg.threadId,
               from: msg.from,
               to: entries.map((e) => e.handle),
               subject: msg.subject,
@@ -397,6 +458,10 @@ export function createMessaging(deps: MessagingDeps): Messaging {
               : {}),
             enqueuedAt: deps.now(),
           });
+          if (!accepted) {
+            refused('outbox_full');
+            continue;
+          }
           persist();
           const reason: RemoteRecipientOutcome['reason'] = live(state) ? null : 'peer_unreachable';
           outcomes.push(
