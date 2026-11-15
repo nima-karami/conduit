@@ -36,7 +36,14 @@ import { registeredIdFor } from './agent-resolve';
 import { createAppControlHandlers } from './app-control-tools';
 import { snapshotAttachment } from './attachments';
 import { type AttentionEvent, reduceAttention, youAttention } from './attention-items';
-import { type AskCommit, askBudgetMs, createCallFlow, type InFlight } from './call-flow';
+import {
+  type AskCommit,
+  askBudgetMs,
+  createCallFlow,
+  type InFlight,
+  NO_OWNER_WINDOW,
+  SCOPE_UNAVAILABLE,
+} from './call-flow';
 import {
   bindsTypedLine,
   type ClientKind,
@@ -86,6 +93,7 @@ import { createPolicyService } from './policy-service';
 import { resolveTargets } from './policy-targets';
 import type {
   AssignmentPoint,
+  Grant,
   PolicyDecision,
   PolicyInput,
   PolicyTarget,
@@ -736,11 +744,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         return { ok: false, reason: 'not_answerable', message: 'not a permission request' };
       }
       const p = r.session === null ? null : principalOf(r.session);
-      const scopes =
-        a.outcome === 'allowed' && a.grant !== undefined && p !== null
-          ? grantTargetsFor(a.grant, p, perm.targets)
-          : null;
-      if (a.outcome === 'allowed' && a.grant !== undefined && p !== null && scopes === null) {
+      if (
+        a.outcome === 'allowed' &&
+        a.grant !== undefined &&
+        p !== null &&
+        grantTargetsFor(a.grant, p, perm.targets) === null
+      ) {
         return { ok: false, reason: 'invalid_answer', message: SCOPE_UNAVAILABLE };
       }
       if (r.state === 'open') {
@@ -750,29 +759,29 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           ? { ok: true }
           : { ok: false, reason: 'not_answerable', message: 'nothing is waiting on this request' };
       }
+      if (by.kind !== 'you' || by.windowId === null || by.windowId === NO_OWNER_WINDOW) {
+        return {
+          ok: false,
+          reason: 'not_answerable',
+          message: 'a window that shows this request must answer it',
+        };
+      }
       if (a.outcome !== 'allowed' || a.grant === undefined) {
         return { ok: false, reason: 'invalid_answer', message: 'a late answer needs a grant' };
       }
-      if (p === null || scopes === null) {
+      if (p === null) {
         return {
           ok: false,
           reason: 'not_answerable',
           message: 'the session closed before the grant could be made',
         };
       }
-      const ids: string[] = [];
-      for (const t of scopes) {
-        const g = policyService.createGrant(a.grant, p, perm.tool, t, r.id);
-        if (g === null) {
-          return { ok: false, reason: 'not_answerable', message: 'the grant could not be made' };
-        }
-        ids.push(g.id);
-      }
-      const [firstId] = ids;
-      if (firstId === undefined) {
+      const grants = grantsFor(a.grant, p, perm.tool, perm.targets, r.id);
+      const [first] = grants ?? [];
+      if (first === undefined) {
         return { ok: false, reason: 'not_answerable', message: 'the grant could not be made' };
       }
-      return requestService.answerLate(r.id, firstId);
+      return requestService.answerLate(r.id, first.id);
     },
     scheduler: deps.domain.limit,
     replyToQuestion: async (r, text) => {
@@ -1327,8 +1336,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   };
   const raisedRequests = new Map<InFlight, string>();
   const emptyTarget: PolicyTarget = { sessionId: null, path: null, folder: null, projectId: null };
-  /** The targets one grant per answer covers: a non-anywhere scope needs each target to resolve. */
-  const SCOPE_UNAVAILABLE = "that scope isn't available for every target";
+  /** The targets an answer's grants cover, or null when a target cannot resolve the scope. */
   const grantTargetsFor = (
     choice: GrantChoice,
     p: Principal,
@@ -1338,6 +1346,22 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     if (choice.on === 'anywhere') return [emptyTarget];
     if (targets.length === 0) return null;
     return targets.every((t) => grantScopeFor(choice.on, t, p) !== null) ? targets : null;
+  };
+  /** One grant per covered target, all or none. */
+  const grantsFor = (
+    choice: GrantChoice,
+    p: Principal,
+    tool: ToolName,
+    targets: readonly PolicyTarget[],
+    requestId: string,
+  ): Grant[] | null => {
+    const scopes = grantTargetsFor(choice, p, targets);
+    if (scopes === null) return null;
+    const made = scopes.flatMap((t) => {
+      const g = policyService.createGrant(choice, p, tool, t, requestId);
+      return g === null ? [] : [g];
+    });
+    return made.length === scopes.length ? made : null;
   };
   const reasonOf = (decision: PolicyDecision): string =>
     reasonText(decision.reason, decision.decision, {
@@ -1632,13 +1656,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           grant: (choice, requestId) => {
             const p = principalOf(sessionId);
             if (p === null) return 'session-gone';
-            const scopes = grantTargetsFor(choice, p, policyInput.targets);
-            if (scopes === null) return 'scope';
-            for (const target of scopes) {
-              if (policyService.createGrant(choice, p, name, target, requestId) === null)
-                return 'scope';
-            }
-            return 'made';
+            return grantsFor(choice, p, name, policyInput.targets, requestId) === null
+              ? 'scope'
+              : 'made';
           },
           commitAnswered: (held) => {
             if (reDecided === null) return false;

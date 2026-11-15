@@ -66,6 +66,7 @@ export interface AskCommit {
 }
 export type AnswerDecision = { kind: 'ready' } | { kind: 'withdraw'; reason: string };
 export type GrantOutcome = 'made' | 'session-gone' | 'scope';
+export const SCOPE_UNAVAILABLE = "that scope isn't available for every target";
 export interface ControlCall<T> {
   inflight: InFlight;
   caller: { sessionId: string; handle: Handle };
@@ -421,9 +422,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       const made = c.grant(answer.grant, requestId);
       if (made !== 'made') {
         const why =
-          made === 'session-gone'
-            ? 'the session closed before the request ran'
-            : "that scope isn't available for every target";
+          made === 'session-gone' ? 'the session closed before the request ran' : SCOPE_UNAVAILABLE;
         settle('withdrawn', null, why);
         return { ok: false, error: toolError('cancelled', why) };
       }

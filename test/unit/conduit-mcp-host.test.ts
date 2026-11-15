@@ -4736,6 +4736,139 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     await c.reply(1);
   });
 
+  const setDefaultAccess = (h: Harness, tool: string, access: 'ask' | 'on' | 'off') =>
+    h.host.handleRenderer(
+      {
+        type: 'mcp:setPointPolicy',
+        requestId: 90,
+        point: { kind: 'default' },
+        tool,
+        patch: { access },
+      } as McpRendererMessage,
+      () => undefined,
+      1,
+    );
+  const grantPaths = (h: Harness) => h.host.uiState().policy.grants.map((g) => g.on);
+
+  it('a target grant on a two-target open_file makes one grant per target, live and late', async () => {
+    const kinds = {
+      '/w': 'dir' as const,
+      '/w/a.ts': 'file' as const,
+      '/w/b.ts': 'file' as const,
+      '/w/c.ts': 'file' as const,
+      '/w/d.ts': 'file' as const,
+    };
+    const { h, c } = await asking({ kinds, manualTimers: true });
+    await setDefaultAccess(h, 'open_file', 'ask');
+    c.call(1, 'open_file', { paths: ['/w/a.ts', '/w/b.ts'] });
+    await until(() => asksOf(h).length === 1);
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:permissionAnswer',
+        requestId: askIdOf(h, 1),
+        answer: { outcome: 'allowed', grant: { who: 'session', on: 'target', for: '1h' } },
+      },
+      () => undefined,
+      1,
+    );
+    expect(grantPaths(h)).toMatchObject([
+      { kind: 'path', path: '/w/a.ts' },
+      { kind: 'path', path: '/w/b.ts' },
+    ]);
+
+    c.call(2, 'open_file', { paths: ['/w/c.ts', '/w/d.ts'] });
+    await until(() => asksOf(h).length === 2);
+    h.advance(10 * 60_000);
+    const replies: HostToWebview[] = [];
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:permissionAnswer',
+        requestId: askIdOf(h, 2),
+        answer: { outcome: 'allowed', grant: { who: 'session', on: 'target', for: '1h' } },
+      },
+      (m) => replies.push(m),
+      1,
+    );
+    expect(replies).toEqual([{ type: 'mcp:permissionResult', requestId: askIdOf(h, 2), ok: true }]);
+    expect(grantPaths(h)).toMatchObject([
+      { kind: 'path', path: '/w/a.ts' },
+      { kind: 'path', path: '/w/b.ts' },
+      { kind: 'path', path: '/w/c.ts' },
+      { kind: 'path', path: '/w/d.ts' },
+    ]);
+  });
+
+  it('a target grant on open_url, which has no target, refuses the answer and the ask keeps waiting', async () => {
+    const { h, c } = await asking({ manualTimers: true });
+    await setDefaultAccess(h, 'open_url', 'ask');
+    c.call(1, 'open_url', { url: 'https://example.com/' });
+    await until(() => asksOf(h).length === 1);
+    const requestId = askIdOf(h);
+    const replies: HostToWebview[] = [];
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:permissionAnswer',
+        requestId,
+        answer: { outcome: 'allowed', grant: { who: 'session', on: 'target', for: '1h' } },
+      },
+      (m) => replies.push(m),
+      1,
+    );
+    expect(replies).toEqual([
+      {
+        type: 'mcp:permissionResult',
+        requestId,
+        ok: false,
+        reason: 'invalid_answer',
+        message: "that scope isn't available for every target",
+      },
+    ]);
+    expect(closedOf(h)).toEqual([]);
+    expect(asksOf(h)).toHaveLength(1);
+    expect(grantPaths(h)).toEqual([]);
+  });
+
+  it('a folder grant on a single-target open_session makes one folder grant', async () => {
+    const { h, c } = await asking({ manualTimers: true });
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:permissionAnswer',
+        requestId: askIdOf(h),
+        answer: { outcome: 'allowed', grant: { who: 'session', on: 'folder', for: '1h' } },
+      },
+      () => undefined,
+      1,
+    );
+    expect(grantPaths(h)).toMatchObject([{ kind: 'folder' }]);
+    expect(grantPaths(h)).toHaveLength(1);
+  });
+
+  it('a late grant from a sender with no known window is refused and leaves no grant', async () => {
+    const { h, c } = await asking({ manualTimers: true });
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    const requestId = askIdOf(h);
+    h.advance(10 * 60_000);
+    expect(c.errorOf(await c.reply(1))).toBe('approval_timeout');
+    const replies: HostToWebview[] = [];
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:permissionAnswer',
+        requestId,
+        answer: {
+          outcome: 'allowed',
+          grant: { who: 'session', on: 'anywhere', for: 'session-end' },
+        },
+      },
+      (m) => replies.push(m),
+      0,
+    );
+    expect(replies).toMatchObject([{ ok: false, reason: 'not_answerable' }]);
+    expect(grantPaths(h)).toEqual([]);
+  });
+
   it('a late grant on an expired card creates the grant, never runs the call, and the requester is told it can retry', async () => {
     const { h, c } = await asking({ manualTimers: true });
     c.call(1, 'open_session', OPEN);
