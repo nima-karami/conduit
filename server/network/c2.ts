@@ -4,6 +4,7 @@ import { RpcFault } from '../transport/pipe';
 import type { LinkManager } from './link-manager';
 import { parseHostPort } from './listener';
 import type { PairingService } from './pairing-service';
+import type { createViewRelay } from './view-relay';
 
 // C2 methods for linked machines (plan "C2 additions"). Every parameter is checked here; the
 // services behind them trust their inputs.
@@ -15,6 +16,8 @@ export interface NetworkCallDeps {
   pairing: PairingService;
   manager: LinkManager;
   state(): NetworkState;
+  relay: ReturnType<typeof createViewRelay>;
+  peer?: object;
 }
 
 type Params = Record<string, unknown>;
@@ -65,10 +68,19 @@ export function handleNetworkCall(
     case 'pairing.cancel':
       d.pairing.cancel(str(p, 'pairingId'));
       return Promise.resolve({});
+    case 'remote.attach':
+      if (!d.peer) throw new RpcFault('invalid', 'Expected connection');
+      return d.relay.attach(d.peer, str(p, 'machineId'), str(p, 'sessionId'));
+    case 'remote.detach':
+      if (!d.peer) throw new RpcFault('invalid', 'Expected connection');
+      d.relay.detach(d.peer, str(p, 'viewId'));
+      return Promise.resolve({});
     case 'link.list':
       return Promise.resolve(d.state());
     case 'link.revoke': {
       const machineId = str(p, 'machineId');
+      if (!d.manager.view(machineId)) throw new RpcFault('not_found', `No link to ${machineId}`);
+      d.relay.revoking(machineId);
       known(d.manager.revoke(machineId), machineId);
       return Promise.resolve({});
     }

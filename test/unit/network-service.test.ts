@@ -24,6 +24,8 @@ function server(name: string) {
     settings: () => ({ networkBindHost: '127.0.0.1', networkPort: 0, networkSelfName: name }),
     emit: (s) => states.push(s),
     log: quiet,
+    observe: async () => null,
+    emitTo: () => {},
     monitor: {
       sessions: () => [],
       requests: () => [],

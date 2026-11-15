@@ -1,3 +1,4 @@
+import type { DirectoryEntry } from '../../src/conduit-mcp/tools';
 import type {
   Capabilities,
   LinkFrame,
@@ -5,6 +6,7 @@ import type {
   MonitorSession,
   MonitorSnapshot,
 } from '../../src/contracts/link-protocol';
+import type { SessionView } from '../../src/contracts/server-protocol';
 
 // Pushes this server's sessions, attention and asks to each linked peer (plan T5.3). What a peer
 // gets follows what *I* enable on its link (NET §4.1): session rows for messaging or monitor,
@@ -16,6 +18,38 @@ export interface MonitorSource {
   youUnread(): number;
   ownerPresence(): 'here' | 'away';
   agents(): MonitorSnapshot['agents'];
+}
+
+export function monitorRows(
+  sessions: SessionView[],
+  directory: DirectoryEntry[],
+): MonitorSession[] {
+  const bySession = new Map(directory.map((entry) => [entry.sessionId, entry]));
+  return sessions.map((session) => {
+    const entry = bySession.get(session.id);
+    return {
+      sessionId: session.id,
+      handle: entry?.handle ?? null,
+      label: session.name,
+      agent: entry?.agent ?? session.agentId,
+      presence:
+        entry?.presence ??
+        (session.status === 'running' ? (session.busy ? 'busy' : 'idle') : 'exited'),
+      messaging: entry?.messaging ?? 'unavailable',
+      messageable: entry ? entry.connectable || entry.messaging === 'connected' : false,
+      notices: entry?.notices ?? 'pull',
+      home: session.home,
+      roots: session.roots,
+      attention: {
+        attentionReason: session.attentionReason ?? null,
+        completions: session.completions ?? 0,
+        ...(session.stuckReason === undefined ? {} : { stuckReason: session.stuckReason }),
+      },
+      completions: session.completions ?? 0,
+      limit: null,
+      status: session.status,
+    };
+  });
 }
 
 export interface PublisherLink {

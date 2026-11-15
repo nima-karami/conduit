@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createMonitorPublisher,
   type MonitorSource,
+  monitorRows,
   type PublisherLink,
   snapshotFor,
 } from '../../server/network/monitor-publisher';
@@ -112,4 +113,36 @@ describe('monitor publisher', () => {
     fire();
     expect(sent).toEqual([]);
   });
+});
+
+it('includes non-MCP sessions in the monitor snapshot without granting messaging', () => {
+  const rows = monitorRows(
+    [
+      {
+        id: 'echo',
+        name: 'Echo',
+        agentId: 'echo',
+        home: '/w',
+        roots: [],
+        status: 'running',
+        attentionReason: null,
+        completions: 0,
+        createdAt: 0,
+        lastActiveAt: 0,
+        runtime: { generation: null, spawn: 'none', reportedStatus: null, lastSize: null },
+      },
+    ],
+    [],
+  );
+  expect(rows).toMatchObject([
+    {
+      sessionId: 'echo',
+      handle: null,
+      label: 'Echo',
+      agent: 'echo',
+      messaging: 'unavailable',
+      messageable: false,
+      notices: 'pull',
+    },
+  ]);
 });
