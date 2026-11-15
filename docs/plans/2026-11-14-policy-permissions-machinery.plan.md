@@ -606,6 +606,14 @@ Failing tests:
 - The grant enums have one source (grant-store.ts or policy-types.ts), used by request-args and policy-file.
 - request-file drops a record whose kind/permission pairing is broken.
 - Ten request test fixtures gain `permission: null`.
+*T3.1 review rulings (2026-11-15):*
+- `RequestAnswerResult.request` stays `RequestView`. Queue `answer`/`answerLate` return an internal `QueueAnswerResult` carrying the record, and the service maps it.
+- **C9 change for T3.2:** `onPermissionAnswer` returns its own `PermissionAnswerResult = {ok:true} | {ok:false; reason; message}`. `mcp:permissionAnswer` is answered by `{type:'mcp:permissionResult'; requestId; ok; reason?; message?}`, not mcp:requestResult.
+- The renderer's request answer path refuses permission records (not_answerable).
+- Agent request tools never see policy records (wait/withdraw answer not_found, list filters them).
+- Requests file: a persisted grant tolerates unknown keys.
+- The ended-history cap and the server open cap count only visible/non-policy records.
+- On load, an open policy record is withdrawn by Conduit ("Conduit restarted").
 
 #### Task 3.2 (serial): ask becomes a request
 **Files:** `call-flow.ts`, `request-service.ts`, `host.ts`, `use-conduit-mcp.ts` (`answerPermission`); tests `conduit-mcp-call-flow.test.ts`, `request-service.test.ts`.
