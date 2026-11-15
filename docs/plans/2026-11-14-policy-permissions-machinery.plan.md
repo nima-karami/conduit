@@ -173,7 +173,7 @@ export interface PolicyDecision {
   grantId: string | null; overrideId: string | null;
   grantIds: readonly string[];            // every grant that allowed a target (S1 review)
   deniedTarget: PolicyTarget | null;      // the resolved target an explicit deny decided on (S2-2 review), for allowOnce
-  overrideIds: readonly string[];         // every one-use override that passed its own target this call (S2-2 re-review); overrideId = overrideIds[0] ?? null
+  overrideIds: readonly string[];         // every one-use override that passed its own target this call (S2-2 re-review); overrideId is set only when reason.by === 'override' (S2-2 r2), like grantId
 }
 export type PermissionAnswer =
   | { outcome: 'allowed'; grant?: GrantChoice }
@@ -375,6 +375,8 @@ export interface PolicyUiState {
   - A new deny withdraws the request (`withdrawnBy: 'conduit'`, reason = `reasonText`), and the call returns `tool_disabled` with that reason.
   - A late answer with a grant creates the grant, calls `answerLate`, and appends the notice "You can retry <tool> now" to the requester's inbox through the CON-21 hidden late-answer thread path. It never runs the call.
 
+- **Overrides across an ask (S2-2 r2 ruling).** The service uses up `overrideIds` when it returns the ask decision. At answer time, `decide` re-runs with the original decision's `overrideIds` counted as passing their own targets, for this call only. A declined or withdrawn ask does not restore them: "Allow this once" was spent on a call the human then refused.
+
 ## Seams with CON-27 (agreed with claude-22, lead-approved, 2026-11-14)
 1. `src/contracts/remote-principal.ts` is created **byte-identical** on both branches: `Capability = 'messaging'|'monitor'|'drive'`, `Capabilities`, `RemotePrincipal {kind:'remote'; handle; machineId; trust:'own'}`, `principalAddress`. C1's remote principal becomes `RemotePrincipal & { capabilities: Capabilities }`; C1 drops its own `Capability` type and `remoteSessionId`. Orchestrate tools are denied to remote principals until `orchestrate` joins `Capability` (v1).
 2. NET enforces the capability floor at its inbound boundary. POL's floor (d) stays as a second check on `principal.capabilities`, which the composer fills from NET's `capabilitiesOf(machineId)`; null or false means deny.
@@ -537,6 +539,11 @@ Failing tests:
 - `gateToolCall` (`tool-policy.ts:429`, sole caller `host.ts:1356`).
 - `setSessionPolicy` callers `host.ts:1247` (card "always", replaced in Slice 3; until then it calls `createGrant`) and `host.ts:2419`.
 - `syncToolLists` (`host.ts:1691`) → `visibleTools`.
+
+**Carried from the S2-2 r2 review (do first):**
+- (a) The engine reports `overrideIds` only when the strictest decision is `allow` or `ask`. A denied call never ran, so its one-use override stays. Add an engine test: explicit deny passed by override + another target's profile deny → `deny`, `overrideIds: []`. The service test checks the override is still saved. Files: `policy-engine.ts`, `policy-service.ts` (tests only), `test/unit/policy-engine.test.ts`, `test/unit/policy-service.test.ts`.
+- (b) Until Slice 3, an approved ask runs on the original decision without calling `decide` again (the overrides that decision reported are already used up). Slice 3's answer-time re-decide must pass the original decision's `overrideIds` through, so an approved ask isn't refused at its explicit-deny target. That is a T3.2 ruling, recorded under C9.
+- (c) A host unit test: explicit deny + "Allow this once" + another target asks + the card is approved → the call runs once, and a second identical call is refused.
 
 Every tool call writes one Activity row with the decision, `reasonText`, outcome and duration. `request_input` rows carry `requestId` (POL-D17). Build the principal from `runtime.defAdapter` (`launchedCli`), `Session.cwd` and `Session.projectId`.
 
