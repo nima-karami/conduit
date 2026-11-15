@@ -88,6 +88,10 @@ export class FakeRuntime implements TerminalRuntime {
   get(sessionId: string): RuntimeTerminal | undefined {
     return this.terminals.get(sessionId);
   }
+  async observe(sessionId: string) {
+    const terminal = this.terminals.get(sessionId);
+    return terminal ? { firstPaint: '', size: terminal.size, close() {} } : null;
+  }
   async screen(sessionId: string) {
     const lines = this.screens.get(sessionId);
     return lines ? { lines, cursorY: lines.length - 1, cursorX: 0, cursorRowStyles: '' } : null;
