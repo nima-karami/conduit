@@ -600,6 +600,13 @@ Failing tests:
 - 'allowed/denied valid only for permission'.
 - 'permission record round-trips the file'.
 
+*T3.1 rulings (2026-11-15):*
+- `RequestView` (the renderer's type) covers non-permission records only, so its kind is `Exclude<RequestKind,'permission'>`. One exported type guard in request-types.ts filters before any view is built (request-queue `view`, request-service `view` and `ui()`), so the renderer's kind switches stay exhaustive with no 'permission' arm.
+- answerLate refuses a second late grant.
+- The grant enums have one source (grant-store.ts or policy-types.ts), used by request-args and policy-file.
+- request-file drops a record whose kind/permission pairing is broken.
+- Ten request test fixtures gain `permission: null`.
+
 #### Task 3.2 (serial): ask becomes a request
 **Files:** `call-flow.ts`, `request-service.ts`, `host.ts`, `use-conduit-mcp.ts` (`answerPermission`); tests `conduit-mcp-call-flow.test.ts`, `request-service.test.ts`.
 Failing tests:
