@@ -171,9 +171,12 @@ async function run() {
     log(`B agent address ${address}`);
 
     const first = await callTool(a, aa, 'send_message', { to: [address], body: 'tier2 first' });
+    // B stores a peer's message under an id it derives (CON-27 B1), so each one is found by its
+    // unique body inside the frame, never by A's id.
+    const bodies = new Map([[first.message_id, 'tier2 first']]);
     const inboxOf = async (id) =>
       ((await b.tool(ba.sessionId, 'read_inbox', { unread_only: false })).messages ?? []).filter(
-        (m) => m.message_id === id,
+        (m) => m.body.includes(`\n${bodies.get(id)}\n`),
       );
     await eventually(
       'B reads the first message',
@@ -187,6 +190,7 @@ async function run() {
       to: [address],
       body: 'tier2 during blip',
     });
+    bodies.set(blip.message_id, 'tier2 during blip');
     assert(blip.recipients?.[0]?.status === 'queued', `send during blip: ${JSON.stringify(blip)}`);
     await eventually('A notices the link is not up', async () => {
       const sa = await a.c2.call('link.list', {});
@@ -209,6 +213,7 @@ async function run() {
     vm('pause');
     const pausedAt = Date.now();
     const long = await callTool(a, aa, 'send_message', { to: [address], body: 'tier2 long blip' });
+    bodies.set(long.message_id, 'tier2 long blip');
     assert(
       await until(async () => {
         const sa = await a.c2.call('link.list', {});
