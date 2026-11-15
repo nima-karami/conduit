@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -13,6 +13,7 @@ import {
   type WireMessage,
 } from '../../src/contracts/link-protocol';
 import { encodeFrame } from '../../src/network/frame-codec';
+import { type OutboxEntry, serializeOutboxFile } from '../../src/network/outbox';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -31,9 +32,11 @@ const wire: WireMessage = {
   body: 'hello',
   attachments: [],
 };
-function setup() {
+function setup(seed: OutboxEntry[] = []) {
   const dir = mkdtempSync(join(tmpdir(), 'messaging-'));
   dirs.push(dir);
+  // Seeded before the service loads, so a test can start with a full outbox without N writes.
+  if (seed.length > 0) writeFileSync(join(dir, 'outbox.json'), serializeOutboxFile(seed));
   const caps = { messaging: true, monitor: true, drive: false, orchestrate: false };
   const link: MessagingLink = {
     machineId: machine,
@@ -374,6 +377,22 @@ const frameN = (i: number, over: Partial<WireMessage> = {}): Extract<LinkFrame, 
 });
 const ackFrames = (frames: LinkFrame[]) =>
   frames.filter((f): f is Extract<LinkFrame, { t: 'ack' }> => f.t === 'ack');
+
+// CON-27 review, minor 6: a full outbox refuses the send to that machine, and says so.
+it('refuses a send that finds the outbox full, as outbox_full, and stores nothing for it', () => {
+  const full: OutboxEntry[] = Array.from({ length: 1000 }, (_, i) => ({
+    machineId: machine,
+    message: { ...wire, messageId: ident('m', i), threadId: ident('t', i) },
+    addresses: [`agent-2@${machine}`],
+    enqueuedAt: 0,
+    state: 'queued',
+  }));
+  const h = setup(full);
+  expect(h.svc.enqueue(h.msg, [h.recipient])).toEqual([
+    { address: h.recipient.address, status: 'refused', reason: 'outbox_full' },
+  ]);
+  expect(JSON.parse(readFileSync(join(h.dir, 'outbox.json'), 'utf8')).entries).toHaveLength(1000);
+});
 
 // CON-27 security review M2: a peer cannot fill the disk through one link.
 it('refuses the 121st message frame from one link in a minute, and accepts again a minute later', () => {
