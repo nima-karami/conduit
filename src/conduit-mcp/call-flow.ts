@@ -573,7 +573,10 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
 
     answerPermission(askId, answer, fromWindowId) {
       if (fromWindowId === NO_OWNER_WINDOW) return false;
-      return waits.answer(askId, fromWindowId, answer);
+      const w = waits.pending().find((x) => x.id === askId);
+      if (w === undefined || !waits.answer(askId, fromWindowId, answer)) return false;
+      deps.sendToOwner(w.callerSessionId, { type: 'mcp:askClosed', askId, outcome: 'answered' });
+      return true;
     },
 
     requestUi,

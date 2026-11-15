@@ -636,6 +636,11 @@ describe('createCallFlow', () => {
     expect(c.out.done).toBe(false);
     expect(t.flow.answerPermission('perm-1', { outcome: 'denied' }, 1)).toBe(true);
     expect(errCode(await c.promise)).toBe('denied');
+    expect(t.closed()).toContainEqual({
+      type: 'mcp:askClosed',
+      askId: 'perm-1',
+      outcome: 'answered',
+    });
   });
 
   it('answerPermission from a sender with no known window (NO_OWNER_WINDOW) is refused', async () => {

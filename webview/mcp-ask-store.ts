@@ -46,6 +46,11 @@ subscribe((m) => {
     return;
   }
   if (m.type !== 'mcp:askClosed') return;
+  if (m.outcome === 'answered') {
+    answered.delete(m.askId);
+    setAsks(asks.filter((a) => a.askId !== m.askId));
+    return;
+  }
   const waiting = asks.find((a) => a.askId === m.askId);
   const closed = waiting ?? answered.get(m.askId);
   if (!closed) return;

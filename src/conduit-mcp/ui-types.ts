@@ -22,7 +22,7 @@ import type {
 export type McpGateState = 'open' | 'pull-only' | GateClosedReason;
 
 export type AskAnswer = 'approve' | 'deny' | 'always';
-export type AskClosedOutcome = 'expired' | 'cancelled';
+export type AskClosedOutcome = 'expired' | 'cancelled' | 'answered';
 /** Placeholder values for the card's per-tool summary template (MCP_STR.ask.summary). */
 export type AskSummary =
   | {
