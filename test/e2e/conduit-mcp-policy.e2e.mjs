@@ -291,18 +291,27 @@ await runScenario(
     await clickAskAnswer(page, 'always');
     const always = await resultAfter(a.sessionId, before, 15_000);
     assert(always?.session_id, `always: ${JSON.stringify(always)}`);
-    const policyOf = async () =>
-      (await mcpState(page))?.policy?.legacy?.sessions?.[a.sessionId]?.open_session;
+    // Always is a session grant now, not a session-layer write (plan C9).
+    const grantOf = async () =>
+      (await mcpState(page))?.policy?.grants?.find(
+        (g) =>
+          g.state === 'active' &&
+          g.tool === 'open_session' &&
+          g.who.kind === 'session' &&
+          g.who.sessionId === a.sessionId &&
+          g.on.kind === 'anywhere' &&
+          g.for === 'session-end',
+      );
     assert(
-      await until(async () => (await policyOf())?.access === 'on', 5_000),
-      `A's session layer: ${JSON.stringify(await policyOf())}`,
+      await until(async () => (await grantOf()) !== undefined, 5_000),
+      `A's grants: ${JSON.stringify((await mcpState(page))?.policy?.grants)}`,
     );
     before = await startCall(page, a.sessionId, 'open_session', openArgs(false));
     const quiet = await until(async () => (await card.count()) > 0, 1_000);
     assert(!quiet, 'a card showed after Always for this session');
     const unasked = await resultAfter(a.sessionId, before, 15_000);
     assert(unasked?.session_id, `after Always: ${JSON.stringify(unasked)}`);
-    log('Always writes access:on and stops asking ✓');
+    log('Always grants this session and stops asking ✓');
 
     phase('viewing refusal');
     await makeActive(b.sessionId);
