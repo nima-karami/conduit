@@ -32,6 +32,7 @@ import {
 import { createMessaging } from './messaging';
 import { createMonitorPublisher, type MonitorSource } from './monitor-publisher';
 import { createPairingService, type PairingService } from './pairing-service';
+import { createSnapshotCoalescer } from './snapshot-coalescer';
 import { createViewRelay } from './view-relay';
 
 // The one composer for linked machines (plan "Technical decisions" 1): services.ts only builds,
@@ -162,6 +163,17 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     }, EMIT_COALESCE_MS);
   };
 
+  // A peer's snapshots are applied at most once per window, so a burst costs one recompute.
+  const snapshots = createSnapshotCoalescer({
+    now,
+    after,
+    apply: (machineId, snapshot) => {
+      directory.apply(machineId, snapshot);
+      for (const l of portListeners) l();
+      changed();
+    },
+  });
+
   let listener: LinkListener | null = null;
   let bound: { host: string; port: number } | null = null;
   let listening: Promise<string[]> | null = null;
@@ -177,12 +189,8 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     rand: Math.random,
     after,
     onFrame: (machineId, f) => {
-      if (f.t === 'snapshot') {
-        directory.apply(machineId, f.snapshot);
-        for (const l of portListeners) l();
-        changed();
-      } else if (f.t === 'msg' || f.t === 'ack' || f.t === 'receipt')
-        messaging.onFrame(machineId, f);
+      if (f.t === 'snapshot') snapshots.offer(machineId, f.snapshot);
+      else if (f.t === 'msg' || f.t === 'ack' || f.t === 'receipt') messaging.onFrame(machineId, f);
       else if (
         f.t === 'drive.input' ||
         f.t === 'drive.resize' ||
@@ -438,6 +446,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     },
     async stop() {
       emitTimer?.();
+      snapshots.stop();
       closePairingPort();
       relay.stop();
       drive.stop();
