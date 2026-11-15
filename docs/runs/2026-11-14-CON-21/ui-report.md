@@ -35,7 +35,7 @@ On hold by the lead's ruling: the floating waiting notice. The pill and the stat
   - `reqtpl-review-tab.png` vs iter-7/21: layout matches (draft with Edited / Original / Changes left; three options, note and Send right; Open terminal | Skip). Gaps: the tab title is the generic "Request", not "Review: {title}"; the draft has no line numbers.
   - `needs-away.png` vs iter-5/14: banner matches. Found a bug: the status-bar Away button was unreadable while away (no button reset). Fixed in c96236d5.
   - `needs-digest.png` vs iter-5/15: the "While you were away" card with window, duration, counts and Dismiss matches. Found a bug: an answered review tab stayed open. Fixed in c96236d5 (a tab answered there closes; one withdrawn elsewhere keeps its ending banner).
-  - The two fixes are not re-shot (load was over 20 again); they are covered by unit tests and the remote `requests-ui` run.
+  - Re-shot after the fixes (local `requests-ui` PASS): `needs-digest.png` shows the answered review tab closed (terminal back in front, the agent reading the late answer) and a readable "Away" in the status bar. Remote: `requests-ui` + `status-bar` PASS on c96236d5 (run 43655451460).
 
 ## Deviations
 - Request tabs are excluded from persistence by an explicit rule. The plan's "like review" was wrong: review tabs are persisted.

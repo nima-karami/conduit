@@ -263,11 +263,11 @@ If a task's assumption turns out wrong (the piece it builds on is misaligned, or
 
 ## State and next steps (2026-11-14, for whoever continues)
 - **Done** on `CON-21-request-queue-machinery`: CON-21 machinery and CON-20 U0–U5. Verify 0 at c96236d5. Full e2e PASS at 7591622c (run 43652942374). Run reports: `docs/runs/2026-11-14-CON-21/report.md` and `ui-report.md`.
-- **Pending check:** remote `requests-ui` + `status-bar` on c96236d5 (the Away button and tab-close fixes). If it fails, read the runner log and screenshot first; earlier `requests-ui` failures were wrong selectors.
+- **Checked:** remote `requests-ui` + `status-bar` PASS on c96236d5 (run 43655451460).
 - **Open, not started:**
   - (a) the request tab title "Review: {title}" instead of "Request";
   - (b) line numbers in the review draft;
-  - (c) re-shoot `needs-away` / `needs-digest` after the fixes, only when the load average is below 6;
+  - (c) done: re-shot after the fixes;
   - (d) the floating waiting notice (on hold until the owner decides).
 - **Not this card:** permission requests (CON-18), sidebar Needs you markers and the app-closed OS notification (lead's follow-up cards).
 - **Not done here on purpose:** no merge to main, no push, no release. Those are the owner's call.
