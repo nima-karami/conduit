@@ -150,8 +150,8 @@ describe('request queue', () => {
     expect(second.ok).toBe(false);
     if (second.ok) return;
     expect(second.reason).toBe('already_ended');
-    expect(second.request?.state).toBe('answered');
-    expect(second.request?.answer?.outcome).toBe('approved');
+    expect(h.queue.get(out.request.id)?.state).toBe('answered');
+    expect(h.queue.get(out.request.id)?.answer?.outcome).toBe('approved');
   });
 
   it('expiry with a default answers with answeredBy default', () => {

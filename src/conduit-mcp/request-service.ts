@@ -434,7 +434,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     return ids;
   };
 
-  const actOnScheduler = (r: RequestView, sessionId: string): void => {
+  const actOnScheduler = (r: VisibleRequestRecord, sessionId: string): void => {
     const answer = r.answer;
     if (answer === null) return;
     if (answer.outcome === 'dismissed') {
@@ -565,18 +565,29 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
 
       const result = queue.answer(requestId, answer, { kind: 'you', windowId });
       if (!result.ok) {
+        const after = queue.get(requestId);
         return {
-          ...result,
-          request: result.request === null ? null : view(result.request),
+          ok: false,
+          reason: result.reason,
+          message: result.message,
+          request: after === undefined ? null : viewOf(after),
         };
       }
-      if (result.request === null) return { ok: true, request: null };
-      if (result.request.source === 'scheduler' && result.request.session !== null) {
-        // Before acting: acting can re-enter onAttention synchronously while the issue persists.
-        handledIssues.set(result.request.session, result.request.body);
-        actOnScheduler(result.request, result.request.session);
+      const answered = result.record;
+      if (!isVisibleRequest(answered)) {
+        return {
+          ok: false,
+          reason: 'not_answerable',
+          message: 'permission requests are answered through the policy',
+          request: null,
+        };
       }
-      return { ok: true, request: view(result.request) };
+      if (answered.source === 'scheduler' && answered.session !== null) {
+        // Before acting: acting can re-enter onAttention synchronously while the issue persists.
+        handledIssues.set(answered.session, answered.body);
+        actOnScheduler(answered, answered.session);
+      }
+      return { ok: true, request: view(answered) };
     },
 
     setAway,

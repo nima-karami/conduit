@@ -1,13 +1,7 @@
 // Node-free: the renderer may import this. Clock and timers are injected so the
 // lifecycle is testable without real time.
 import { type CreateInput, contentKeyOf, validateAnswer } from './request-args';
-import {
-  type AnsweredBy,
-  isVisibleRequest,
-  type RequestAnswerResult,
-  type RequestRecord,
-  type RequestView,
-} from './request-types';
+import type { AnsweredBy, QueueAnswerResult, RequestRecord } from './request-types';
 import { type Handle, type ToolError, toolError } from './types';
 
 export const CAP_OPEN_PER_REQUESTER = 5;
@@ -65,8 +59,8 @@ export interface RequestQueue {
     fields: Pick<RequestRecord, 'title' | 'body' | 'permission'>,
     expiresAt: string,
   ): RequestRecord;
-  answerLate(id: string, grantId: string): RequestAnswerResult;
-  answer(id: string, input: unknown, by: AnsweredBy): RequestAnswerResult;
+  answerLate(id: string, grantId: string): QueueAnswerResult;
+  answer(id: string, input: unknown, by: AnsweredBy): QueueAnswerResult;
   withdraw(id: string, by: 'requester' | 'conduit', reason: string | null): RequestRecord | null;
   resolve(id: string): RequestRecord | null;
   orphanSession(sessionId: string): RequestRecord[];
@@ -90,9 +84,6 @@ export function createRequestQueue(deps: QueueDeps): RequestQueue {
 
   let store = new Map<string, RequestRecord>();
   const timers = new Map<string, unknown>();
-
-  const view = (r: RequestRecord): RequestView | null =>
-    isVisibleRequest(r) ? { ...clone(r), waiting: false, waitingUntil: null } : null;
 
   const disarm = (id: string): void => {
     if (!timers.has(id)) return;
@@ -375,54 +366,42 @@ export function createRequestQueue(deps: QueueDeps): RequestQueue {
     answerLate(id, grantId) {
       const r = store.get(id);
       if (r === undefined) {
-        return { ok: false, reason: 'not_found', message: `no request ${id}`, request: null };
+        return { ok: false, reason: 'not_found', message: `no request ${id}` };
       }
       if (r.permission === null || r.state !== 'expired' || r.permission.lateGrant !== null) {
         return {
           ok: false,
           reason: 'not_answerable',
           message: `request ${id} is not an expired permission without a late grant`,
-          request: view(r),
         };
       }
       r.permission.lateGrant = grantId;
       deps.onChanged();
-      return { ok: true, request: view(r) };
+      return { ok: true, record: clone(r) };
     },
 
     answer(id, input, by) {
       const r = store.get(id);
       if (r === undefined) {
-        return { ok: false, reason: 'not_found', message: `no request ${id}`, request: null };
+        return { ok: false, reason: 'not_found', message: `no request ${id}` };
       }
       if (r.state !== 'open') {
-        return {
-          ok: false,
-          reason: 'already_ended',
-          message: `request ${id} already ${r.state}`,
-          request: view(r),
-        };
+        return { ok: false, reason: 'already_ended', message: `request ${id} already ${r.state}` };
       }
       if (r.kind === 'attend') {
         return {
           ok: false,
           reason: 'not_answerable',
           message: 'attention requests are answered in the app, not here',
-          request: view(r),
         };
       }
       const checked = validateAnswer(r, input);
       if (!checked.ok) {
-        return {
-          ok: false,
-          reason: 'invalid_answer',
-          message: checked.error.message,
-          request: view(r),
-        };
+        return { ok: false, reason: 'invalid_answer', message: checked.error.message };
       }
       r.answer = { ...checked.value, answeredBy: by, at: iso(deps.now()) };
       finish(r, 'answered');
-      return { ok: true, request: view(r) };
+      return { ok: true, record: clone(r) };
     },
 
     withdraw(id, by, reason) {

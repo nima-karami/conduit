@@ -115,11 +115,17 @@ export interface RequestsUiState {
   presence: HumanPresence;
 }
 
+export type AnswerRefusal = 'not_found' | 'already_ended' | 'not_answerable' | 'invalid_answer';
+
+export type QueueAnswerResult =
+  | { ok: true; record: RequestRecord }
+  | { ok: false; reason: AnswerRefusal; message: string };
+
 export type RequestAnswerResult =
-  | { ok: true; request: RequestView | null }
+  | { ok: true; request: RequestView }
   | {
       ok: false;
-      reason: 'not_found' | 'already_ended' | 'not_answerable' | 'invalid_answer';
+      reason: AnswerRefusal;
       message: string;
       request: RequestView | null;
     };
