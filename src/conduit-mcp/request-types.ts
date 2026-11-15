@@ -121,6 +121,10 @@ export type QueueAnswerResult =
   | { ok: true; record: RequestRecord }
   | { ok: false; reason: AnswerRefusal; message: string };
 
+export type PermissionAnswerResult =
+  | { ok: true }
+  | { ok: false; reason: AnswerRefusal; message: string };
+
 export type RequestAnswerResult =
   | { ok: true; request: RequestView }
   | {

@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { PermissionAnswer } from '../../src/conduit-mcp/policy-types';
 import {
   createRequestService,
   PERSIST_COALESCE_MS,
   type RequestService,
 } from '../../src/conduit-mcp/request-service';
 import type { QuestionMessage, SessionNeedsYou } from '../../src/conduit-mcp/request-sources';
-import type { RequestRecord } from '../../src/conduit-mcp/request-types';
+import type {
+  AnsweredBy,
+  PermissionAnswerResult,
+  RequestRecord,
+} from '../../src/conduit-mcp/request-types';
 import type { Caller } from '../../src/conduit-mcp/tools';
 import type { CallKey } from '../../src/conduit-mcp/window-waits';
 
@@ -77,6 +82,11 @@ interface Harness {
   deliver: ReturnType<typeof vi.fn<(r: RequestRecord) => Promise<boolean>>>;
   reply: ReturnType<typeof vi.fn<(r: RequestRecord, text: string) => Promise<boolean>>>;
   onNew: ReturnType<typeof vi.fn<(r: RequestRecord) => void>>;
+  onPermissionAnswer: ReturnType<
+    typeof vi.fn<
+      (r: RequestRecord, a: PermissionAnswer, by: AnsweredBy) => Promise<PermissionAnswerResult>
+    >
+  >;
   scheduler: {
     resumeNow: ReturnType<typeof vi.fn<(sessionId: string) => Promise<boolean>>>;
     autoResumeOn: ReturnType<typeof vi.fn<(sessionId: string) => boolean>>;
@@ -92,6 +102,15 @@ function harness(opts: { initial?: string | null; budgetMs?: number } = {}): Har
   const deliver = vi.fn(async (_r: RequestRecord) => true);
   const reply = vi.fn(async (_r: RequestRecord, _text: string) => true);
   const onNew = vi.fn((_r: RequestRecord) => undefined);
+  const onPermissionAnswer = vi.fn(
+    async (
+      _r: RequestRecord,
+      _a: PermissionAnswer,
+      _by: AnsweredBy,
+    ): Promise<PermissionAnswerResult> => ({
+      ok: true,
+    }),
+  );
   const scheduler = {
     resumeNow: vi.fn(async (_sessionId: string) => true),
     autoResumeOn: vi.fn((_sessionId: string) => true),
@@ -114,9 +133,10 @@ function harness(opts: { initial?: string | null; budgetMs?: number } = {}): Har
     onNew,
     replyToQuestion: reply,
     scheduler,
+    onPermissionAnswer,
   });
   service.start();
-  return { c, service, store, warnings, deliver, reply, onNew, scheduler };
+  return { c, service, store, warnings, deliver, reply, onNew, scheduler, onPermissionAnswer };
 }
 
 const aliceFact = (over: Partial<SessionNeedsYou> = {}): SessionNeedsYou => ({
@@ -784,5 +804,96 @@ describe('permission records stay out of the agent tools and the UI', () => {
     const ui = h.service.ui();
     expect(ui.open.map((r) => r.id)).toEqual([]);
     expect(ui.ended.map((r) => r.id)).toEqual(['r-agent-1']);
+  });
+});
+
+describe('permission requests in the service', () => {
+  const EXPIRY = new Date(T0 + HOUR).toISOString();
+  const you = { kind: 'you' as const, windowId: 1 };
+  const fields = {
+    requester: 'alice',
+    title: 'close_session',
+    body: 'Closes claude-4',
+    permission: { tool: 'close_session' as const, why: 'reach', targets: [], lateGrant: null },
+  };
+
+  it('createPermission opens a permission record and answerPermission hands the answer to onPermissionAnswer', async () => {
+    const h = harness();
+    const r = h.service.createPermission('s-alice', fields, EXPIRY);
+    expect(r).toMatchObject({
+      kind: 'permission',
+      source: 'policy',
+      state: 'open',
+      requester: 'alice',
+    });
+    const out = await h.service.answerPermission(r.id, { outcome: 'allowed' }, you);
+    expect(out).toEqual({ ok: true });
+    expect(h.onPermissionAnswer).toHaveBeenCalledTimes(1);
+    expect(h.onPermissionAnswer.mock.calls[0]?.[1]).toEqual({ outcome: 'allowed' });
+  });
+
+  it('a live permission stays out of ui().open', () => {
+    const h = harness();
+    h.service.createPermission('s-alice', fields, EXPIRY);
+    expect(h.service.ui().open).toEqual([]);
+  });
+
+  it('answerPermission refuses an agent request as not_answerable', async () => {
+    const h = harness({
+      initial: fileOf([
+        seedRecord({
+          id: 'r-agent-open',
+          state: 'open',
+          endedAt: null,
+          answer: null,
+          expiresAt: null,
+          kind: 'confirm',
+        }),
+      ]),
+    });
+    const out = await h.service.answerPermission('r-agent-open', { outcome: 'allowed' }, you);
+    expect(out).toMatchObject({ ok: false, reason: 'not_answerable' });
+    expect(h.onPermissionAnswer).not.toHaveBeenCalled();
+  });
+
+  it('answerPermission refuses an unknown request as not_found', async () => {
+    const h = harness();
+    const out = await h.service.answerPermission('r-missing', { outcome: 'allowed' }, you);
+    expect(out).toMatchObject({ ok: false, reason: 'not_found' });
+  });
+
+  it('answerPermission refuses an answer the permission does not take as invalid_answer', async () => {
+    const h = harness();
+    const r = h.service.createPermission('s-alice', fields, EXPIRY);
+    const out = await h.service.answerPermission(r.id, { outcome: 'approved' }, you);
+    expect(out).toMatchObject({ ok: false, reason: 'invalid_answer' });
+    expect(h.onPermissionAnswer).not.toHaveBeenCalled();
+  });
+
+  it('answerPermission refuses an ended permission as already_ended', async () => {
+    const h = harness();
+    const r = h.service.createPermission('s-alice', fields, EXPIRY);
+    h.service.endPermission(r.id, 'answered', { outcome: 'denied' }, null);
+    const out = await h.service.answerPermission(r.id, { outcome: 'denied' }, you);
+    expect(out).toMatchObject({ ok: false, reason: 'already_ended' });
+    expect(h.onPermissionAnswer).not.toHaveBeenCalled();
+  });
+
+  it('endPermission answered records the answer; withdrawn records conduit and its reason', async () => {
+    const h = harness();
+    const a = h.service.createPermission('s-alice', fields, EXPIRY);
+    const b = h.service.createPermission('s-alice', fields, EXPIRY);
+    h.service.endPermission(a.id, 'answered', { outcome: 'allowed' }, null);
+    h.service.endPermission(b.id, 'withdrawn', null, 'the policy now denies it');
+    h.c.advance(PERSIST_COALESCE_MS);
+    await flush();
+    const saved = JSON.parse(h.store.current() ?? '{}') as { requests: RequestRecord[] };
+    const byId = new Map(saved.requests.map((r) => [r.id, r]));
+    expect(byId.get(a.id)).toMatchObject({ state: 'answered', answer: { outcome: 'allowed' } });
+    expect(byId.get(b.id)).toMatchObject({
+      state: 'withdrawn',
+      withdrawnBy: 'conduit',
+      withdrawReason: 'the policy now denies it',
+    });
   });
 });

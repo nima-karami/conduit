@@ -1,6 +1,7 @@
 // Node-free: the renderer imports these. See spec 2026-11-14-policy-and-permissions §4.
 
 import type { Capabilities, RemotePrincipal } from '../contracts/remote-principal';
+import type { GrantChoice } from './grant-store';
 import type {
   CliKind,
   CliPolicyLayers,
@@ -145,6 +146,10 @@ export interface PolicyDecision {
   overrideIds: readonly string[];
   deniedTarget: PolicyTarget | null;
 }
+
+export type PermissionAnswer =
+  | { outcome: 'allowed'; grant?: GrantChoice }
+  | { outcome: 'denied'; reason?: string };
 
 // see plan C8
 export interface PolicyUiState {

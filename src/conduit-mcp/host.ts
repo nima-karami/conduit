@@ -720,6 +720,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
     onChanged: () => scheduleBroadcast(),
     onNew: (r) => notices.added(r),
+    onPermissionAnswer: async () => ({
+      ok: false,
+      reason: 'not_answerable',
+      message: 'permission answers are not wired yet',
+    }),
     scheduler: deps.domain.limit,
     replyToQuestion: async (r, text) => {
       const sent = await tools.sendMessage(

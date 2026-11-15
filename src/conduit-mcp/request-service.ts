@@ -1,3 +1,4 @@
+import type { PermissionAnswer } from './policy-types';
 import {
   type CreateInput,
   parseListRequests,
@@ -17,9 +18,12 @@ import {
   type SourceAction,
 } from './request-sources';
 import {
+  type AnsweredBy,
+  type AnswerInput,
   type HumanPresence,
   isVisibleRequest,
   type ListRequestsOutput,
+  type PermissionAnswerResult,
   type RequestAnswer,
   type RequestAnswerOut,
   type RequestAnswerResult,
@@ -36,10 +40,14 @@ import {
   requestWaitMs,
 } from './request-waits';
 import type { Caller } from './tools';
-import { type Result, toolError } from './types';
+import { type Handle, type Result, toolError } from './types';
 import type { CallKey } from './window-waits';
 
 export const PERSIST_COALESCE_MS = 250;
+
+export type PermissionFields = Pick<RequestRecord, 'title' | 'body' | 'permission'> & {
+  requester: Handle;
+};
 
 export interface RequestServiceDeps {
   io: RequestsIo;
@@ -55,6 +63,11 @@ export interface RequestServiceDeps {
   onChanged(): void;
   onNew(r: RequestRecord): void;
   replyToQuestion(r: RequestRecord, text: string): Promise<boolean>;
+  onPermissionAnswer(
+    r: RequestRecord,
+    a: PermissionAnswer,
+    by: AnsweredBy,
+  ): Promise<PermissionAnswerResult>;
   scheduler: {
     resumeNow(sessionId: string): Promise<boolean>;
     autoResumeOn(sessionId: string): boolean;
@@ -97,6 +110,18 @@ export interface RequestService {
   purge(): void;
   ui(): RequestsUiState;
   presence(): HumanPresence;
+  createPermission(sessionId: string, fields: PermissionFields, expiresAt: string): RequestRecord;
+  endPermission(
+    id: string,
+    end: 'answered' | 'expired' | 'withdrawn',
+    answer: AnswerInput | null,
+    reason: string | null,
+  ): void;
+  answerPermission(
+    requestId: string,
+    answer: unknown,
+    by: AnsweredBy,
+  ): Promise<PermissionAnswerResult>;
 }
 
 interface Timer {
@@ -130,6 +155,16 @@ const isAgentEnd = (r: RequestRecord): boolean =>
   r.source === 'agent' && (r.state === 'answered' || r.state === 'expired');
 
 const iso = (ms: number): string => new Date(ms).toISOString();
+
+const toPermissionAnswer = (a: AnswerInput): PermissionAnswer | null => {
+  if (a.outcome === 'allowed') {
+    return a.grant === undefined ? { outcome: 'allowed' } : { outcome: 'allowed', grant: a.grant };
+  }
+  if (a.outcome === 'denied') {
+    return a.reason === undefined ? { outcome: 'denied' } : { outcome: 'denied', reason: a.reason };
+  }
+  return null;
+};
 
 export function createRequestService(deps: RequestServiceDeps): RequestService {
   let writable = true;
@@ -641,6 +676,64 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
 
     presence() {
       return presence;
+    },
+    createPermission(sessionId, fields, expiresAt) {
+      return queue.createBound(
+        { requester: fields.requester, ...deps.stampOf(sessionId) },
+        { title: fields.title, body: fields.body, permission: fields.permission },
+        expiresAt,
+      );
+    },
+
+    endPermission(id, end, answer, reason) {
+      if (end === 'answered') {
+        const res = queue.answer(id, answer, { kind: 'you', windowId: null });
+        if (!res.ok) deps.warn('a permission could not be answered', { id, reason: res.reason });
+        return;
+      }
+      if (end === 'withdrawn') {
+        queue.withdraw(id, 'conduit', reason);
+        return;
+      }
+      // The queue's own timer ends a permission at its deadline, which is the call's deadline.
+      const r = queue.get(id);
+      if (r !== undefined && r.state === 'open') {
+        deps.warn('a permission is still open at its deadline', { id });
+      }
+    },
+
+    async answerPermission(requestId, answer, by) {
+      const r = queue.get(requestId);
+      if (r === undefined)
+        return { ok: false, reason: 'not_found', message: `no request ${requestId}` };
+      if (r.permission === null) {
+        return {
+          ok: false,
+          reason: 'not_answerable',
+          message: 'only permission requests are answered here',
+        };
+      }
+      const checked = validateAnswer(r, answer);
+      if (!checked.ok) {
+        return { ok: false, reason: 'invalid_answer', message: checked.error.message };
+      }
+      const lateGrant =
+        r.state === 'expired' &&
+        r.permission.lateGrant === null &&
+        checked.value.outcome === 'allowed' &&
+        checked.value.grant !== undefined;
+      if (r.state !== 'open' && !lateGrant) {
+        return {
+          ok: false,
+          reason: 'already_ended',
+          message: `request ${requestId} already ${r.state}`,
+        };
+      }
+      const a = toPermissionAnswer(checked.value);
+      if (a === null) {
+        return { ok: false, reason: 'invalid_answer', message: 'not an answer to a permission' };
+      }
+      return deps.onPermissionAnswer(r, a, by);
     },
   };
 }
