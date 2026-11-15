@@ -730,9 +730,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
     onChanged: () => scheduleBroadcast(),
     onNew: (r) => notices.added(r),
-    onPermissionAnswer: async (r, a) => {
+    onPermissionAnswer: async (r, a, by) => {
       if (r.state === 'open') {
-        return flow.answerPermission(r.id, a)
+        const answered =
+          by.kind === 'you' && by.windowId !== null && flow.answerPermission(r.id, a, by.windowId);
+        return answered
           ? { ok: true }
           : { ok: false, reason: 'not_answerable', message: 'nothing is waiting on this request' };
       }

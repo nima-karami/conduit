@@ -152,7 +152,7 @@ export interface CallFlow {
   recheck(): void;
   /** false unless the ask exists, is waiting, and `fromWindowId` is its window. */
   answer(askId: string, fromWindowId: number, answer: AskAnswer): boolean;
-  answerPermission(askId: string, answer: PermissionAnswer): boolean;
+  answerPermission(askId: string, answer: PermissionAnswer, fromWindowId: number): boolean;
   /**
    * Sends mcp:ui to `windowId` and waits ≤ UI_TIMEOUT_MS for that window's answer. Keyed by the
    * in-flight's call key, so every cancel path ends it. An unready window or a throwing send ⇒
@@ -571,9 +571,9 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
 
     answer: (askId, fromWindowId, answer) => waits.answer(askId, fromWindowId, cardAnswer(answer)),
 
-    answerPermission(askId, answer) {
-      const w = waits.pending().find((x) => x.id === askId);
-      return w !== undefined && waits.answer(askId, w.windowId, answer);
+    answerPermission(askId, answer, fromWindowId) {
+      if (fromWindowId === NO_OWNER_WINDOW) return false;
+      return waits.answer(askId, fromWindowId, answer);
     },
 
     requestUi,

@@ -9,6 +9,7 @@ import {
   type GrantOutcome,
   type InFlight,
   MAX_ASKS_PER_CALLER,
+  NO_OWNER_WINDOW,
   type PermissionEnd,
   type PermissionRaise,
   UI_TIMEOUT_MS,
@@ -626,12 +627,35 @@ describe('createCallFlow', () => {
     expect(t.reDecides[0]).toEqual(['ov-held']);
   });
 
+  it("answerPermission from a window that is not the ask's owner is refused and the ask keeps waiting", async () => {
+    const t = setup();
+    const c = t.call();
+    await t.flush();
+    expect(t.flow.answerPermission('perm-1', { outcome: 'denied' }, 2)).toBe(false);
+    expect(t.asks()).toHaveLength(1);
+    expect(c.out.done).toBe(false);
+    expect(t.flow.answerPermission('perm-1', { outcome: 'denied' }, 1)).toBe(true);
+    expect(errCode(await c.promise)).toBe('denied');
+  });
+
+  it('answerPermission from a sender with no known window (NO_OWNER_WINDOW) is refused', async () => {
+    const t = setup();
+    t.owners.set(CALLER, null);
+    t.state.appUp = false;
+    const c = t.call();
+    await t.flush();
+    expect(t.flow.answerPermission('perm-1', { outcome: 'denied' }, NO_OWNER_WINDOW)).toBe(false);
+    expect(c.out.done).toBe(false);
+    t.advance(ASK_TIMEOUT_MS.claude);
+    expect(errCode(await c.promise)).toBe('approval_timeout');
+  });
+
   it('answerPermission ends a live ask with the given answer; an unknown id is false', async () => {
     const t = setup();
     const c = t.call();
     await t.flush();
-    expect(t.flow.answerPermission('perm-missing', { outcome: 'denied' })).toBe(false);
-    expect(t.flow.answerPermission('perm-1', { outcome: 'denied' })).toBe(true);
+    expect(t.flow.answerPermission('perm-missing', { outcome: 'denied' }, 1)).toBe(false);
+    expect(t.flow.answerPermission('perm-1', { outcome: 'denied' }, 1)).toBe(true);
     expect(errCode(await c.promise)).toBe('denied');
   });
 

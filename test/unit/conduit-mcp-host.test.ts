@@ -4772,6 +4772,32 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(h.opens).toEqual([]);
   });
 
+  it('mcp:permissionAnswer from a window that does not own the ask is refused; the owner window answers', async () => {
+    const { h, c } = await asking();
+    const replies: HostToWebview[] = [];
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    const requestId = askIdOf(h);
+    await h.host.handleRenderer(
+      { type: 'mcp:permissionAnswer', requestId, answer: { outcome: 'denied' } },
+      (m) => replies.push(m),
+      2,
+    );
+    expect(replies.at(-1)).toMatchObject({
+      type: 'mcp:permissionResult',
+      ok: false,
+      reason: 'not_answerable',
+    });
+    expect(closedOf(h)).toEqual([]);
+    await h.host.handleRenderer(
+      { type: 'mcp:permissionAnswer', requestId, answer: { outcome: 'denied' } },
+      (m) => replies.push(m),
+      1,
+    );
+    expect(replies.at(-1)).toEqual({ type: 'mcp:permissionResult', requestId, ok: true });
+    expect(c.errorOf(await c.reply(1))).toBe('denied');
+  });
+
   it('mcp:permissionAnswer answers a waiting ask with mcp:permissionResult; a bad answer leaves it waiting', async () => {
     const { h, c } = await asking();
     const replies: HostToWebview[] = [];
