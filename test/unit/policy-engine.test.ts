@@ -881,6 +881,57 @@ describe('decide', () => {
 });
 
 describe('visibleTools', () => {
+  it('hides an anywhere deny', () => {
+    const assignments = {
+      default: assignment('worker', [
+        except('open_session', { kind: 'anywhere' }, { decision: 'deny' }),
+      ]),
+    };
+    expect(visibleTools(state(assignments), session(), NOW)).not.toContain('open_session');
+  });
+
+  it('hides an anywhere deny even when a grant matches', () => {
+    const assignments = {
+      default: assignment('worker', [
+        except('open_session', { kind: 'anywhere' }, { decision: 'deny' }),
+      ]),
+    };
+    expect(visibleTools(state(assignments, { grants: [grant()] }), session(), NOW)).not.toContain(
+      'open_session',
+    );
+  });
+
+  it('keeps an anywhere deny visible for a matching one-use override', () => {
+    const s = state(
+      {
+        default: assignment('worker', [
+          except('open_session', { kind: 'anywhere' }, { decision: 'deny' }),
+        ]),
+      },
+      {
+        overrides: [
+          {
+            id: 'o1',
+            sessionId: 's1',
+            tool: 'open_session',
+            target: target({ sessionId: 's2' }),
+            createdAt: iso(NOW),
+          },
+        ],
+      },
+    );
+    expect(visibleTools(s, session(), NOW)).toContain('open_session');
+  });
+
+  it('keeps a folder deny visible', () => {
+    const s = state({
+      default: assignment('worker', [
+        except('open_session', { kind: 'folder', path: '/w' }, { decision: 'deny' }),
+      ]),
+    });
+    expect(visibleTools(s, session(), NOW)).toContain('open_session');
+  });
+
   it('visibleTools hides an unconditional deny', () => {
     const visible = visibleTools(state(worker), session(), NOW);
     expect(visible).toContain('open_session');

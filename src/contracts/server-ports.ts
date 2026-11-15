@@ -33,7 +33,7 @@ import type { LaunchIds, TerminalRuntime } from './terminal-runtime';
  */
 export type SessionStorePort = Pick<
   SessionManager,
-  'get' | 'list' | 'setMcp' | 'setMcpToolPolicy' | 'touch' | 'setStatus' | 'onChange'
+  'get' | 'list' | 'setMcp' | 'touch' | 'setStatus' | 'onChange'
 > & {
   /**
    * Reads the session record's persisted `lastGeneration` (sessions.json, C4 PersistedLaunchCounter),

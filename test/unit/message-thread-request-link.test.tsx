@@ -1,3 +1,4 @@
+import { emptyPolicyUi } from '../../src/conduit-mcp/ui-types';
 // @vitest-environment jsdom
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -104,6 +105,7 @@ function fakeApi(open: RequestView[], ended: RequestView[] = []): ConduitMcpApi 
     notConnected: {},
     awaitingApproval: [],
     waitingAsks: 0,
+    policy: emptyPolicyUi(),
     requests: {
       open,
       ended,

@@ -1,3 +1,4 @@
+import { emptyPolicyUi } from '../../src/conduit-mcp/ui-types';
 import { describe, expect, it, vi } from 'vitest';
 import { THREAD_AGENT_LIMIT } from '../../src/conduit-mcp/types';
 import type { McpGateState, McpThreadSummary, McpUiState } from '../../src/conduit-mcp/ui-types';
@@ -42,6 +43,7 @@ function state(o: Partial<McpUiState> = {}): McpUiState {
     notConnected: {},
     awaitingApproval: [],
     waitingAsks: 0,
+    policy: emptyPolicyUi(),
     requests: {
       open: [],
       ended: [],

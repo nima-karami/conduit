@@ -91,7 +91,6 @@ export interface PolicyService {
   ui(
     sessions: ReadonlyArray<{
       sessionId: string;
-      handleCli: CliKind | null;
       launchedCli: CliKind | null;
     }>,
   ): PolicyUiState;
@@ -516,9 +515,9 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
           label: isPlain ? null : `${profile.name}${exceptions ? ` +${exceptions}` : ''}`,
         };
         const lower: AssignmentPoint =
-          row.handleCli !== null &&
-          st.assignments.has(pointKey({ kind: 'cli', cli: row.handleCli }))
-            ? { kind: 'cli', cli: row.handleCli }
+          row.launchedCli !== null &&
+          st.assignments.has(pointKey({ kind: 'cli', cli: row.launchedCli }))
+            ? { kind: 'cli', cli: row.launchedCli }
             : { kind: 'default' };
         sessionLegacy[row.sessionId] = projectLegacyLayer(
           st,

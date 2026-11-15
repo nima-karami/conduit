@@ -9,6 +9,9 @@ import { createTokenStore } from '../../server/runtime/testing/token-store';
 import { AgentRegistry } from '../../src/agent-registry';
 import type { StuckScreen } from '../../src/cli-stuck-screens';
 import { MCP_ADAPTERS } from '../../src/conduit-mcp/adapters';
+import type { ActivityIo } from '../../src/conduit-mcp/activity-log';
+import { serializePolicyFile } from '../../src/conduit-mcp/policy-file';
+import type { RequestsIo } from '../../src/conduit-mcp/request-file-fs';
 import type { McpFileRequest, McpOpenRequest, PathKind } from '../../src/conduit-mcp/control-tools';
 import {
   type ConduitMcpHost,
@@ -211,6 +214,9 @@ function harness(
     registry?: AgentRegistry;
     messagingOn?: () => boolean;
     storeIo?: StoreIo;
+    policyIo?: RequestsIo;
+    grantsIo?: RequestsIo;
+    activityIo?: ActivityIo;
     listen?: boolean;
     platform?: ConduitMcpHostDeps['platform'];
     holdGaps?: boolean;
@@ -390,18 +396,6 @@ function harness(
       Object.assign(s, patch);
       return true;
     },
-    setMcpToolPolicy: (
-      id: string,
-      tool: ToolName,
-      patch: Parameters<typeof withPolicyPatch>[2],
-    ) => {
-      const s = sessions.get(id);
-      if (!s) return false;
-      const next = withPolicyPatch(s.mcpToolPolicy, tool, patch);
-      if (next) s.mcpToolPolicy = next;
-      else delete s.mcpToolPolicy;
-      return true;
-    },
     touch: (id: string, at: number) => {
       const s = sessions.get(id);
       if (!s) return false;
@@ -548,6 +542,9 @@ function harness(
   };
   host = createConduitMcpHost({
     dir,
+    policyIo: opts.policyIo,
+    grantsIo: opts.grantsIo,
+    activityIo: opts.activityIo,
     hookClientPath: opts.hookClientPath ?? null,
     gitBashPath: opts.gitBashPath ?? (() => undefined),
     homeDir: dir,
@@ -836,6 +833,16 @@ async function lastState(h: Harness) {
 }
 
 describe('createConduitMcpHost — launch', () => {
+  it('exposes the policy profiles in host state', async () => {
+    const h = harness({ listen: false });
+    await h.host.start();
+    expect(h.host.uiState()).toMatchObject({
+      policy: {
+        profiles: expect.arrayContaining([{ id: 'worker', name: 'Worker', builtIn: true }]),
+      },
+    });
+    await h.host.stop();
+  });
   it('leaves Cursor launch unchanged and reports cursor-not-connected without the user entry', async () => {
     const h = harness();
     await h.host.start();
@@ -2451,14 +2458,34 @@ describe('a launch waits for the endpoint (conductor decision: restored sessions
   });
 });
 
+async function setHostPolicy(h: Harness, id: string, layer: PolicyLayer | undefined) {
+  const current = h.host.uiState().policy.legacy.sessions[id] ?? {};
+  for (const tool of TOOL_NAMES) {
+    const old = current[tool];
+    const next = layer?.[tool];
+    if (!old && !next) continue;
+    const patch = {
+      ...(old?.access !== undefined ? { access: 'inherit' as const } : {}),
+      ...(old?.when !== undefined ? { when: 'inherit' as const } : {}),
+      ...(old?.reach !== undefined ? { reach: 'inherit' as const } : {}),
+      ...(old?.move !== undefined ? { move: 'inherit' as const } : {}),
+      ...next,
+    };
+    let answer: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:setToolPolicy', requestId: 1, sessionId: id, tool, patch },
+      (m) => {
+        answer = m;
+      },
+      1,
+    );
+    expect(answer).toEqual({ type: 'mcp:toolPolicyResult', requestId: 1, ok: true });
+  }
+}
+
 describe('control tools: gate, effective tool list, list_changed, session layer (spec 2026-10-30-conduit-mcp-tool-policy §3.3)', () => {
   // Every tool but open_terminal defaults to ask or on (tool-policy spec §3.2).
   const DEFAULT_LIST = TOOL_NAMES.filter((t) => t !== 'open_terminal');
-  const policyOf = (h: Harness, id: string, layer: PolicyLayer | undefined) => {
-    const s = h.sessions.get(id);
-    if (!s) throw new Error(`no session ${id}`);
-    s.mcpToolPolicy = layer;
-  };
   const settleNotes = () => new Promise((r) => setTimeout(r, 30));
 
   it('master off → messaging_off for open_session and send_message; tools/list lists every tool', async () => {
@@ -2493,11 +2520,11 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     await h.host.start();
     const a = await launch(h, 's1');
     const c = await client(h.ep, a.token);
-    policyOf(h, 's1', { send_message: { access: 'off' } });
+    await setHostPolicy(h, 's1', { send_message: { access: 'off' } });
     expect((await c.call('send_message', { to: ['x'], body: 'b' })).body.error.code).toBe(
       'tool_disabled',
     );
-    policyOf(h, 's1', undefined);
+    await setHostPolicy(h, 's1', undefined);
     expect((await c.call('send_message', { to: ['x'], body: 'b' })).body.error.code).toBe(
       'store_unavailable',
     );
@@ -2508,7 +2535,7 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     await h.host.start();
     const a = await launch(h, 's1');
     const b = await launch(h, 's2');
-    policyOf(h, 's1', { open_terminal: { access: 'ask' } });
+    await setHostPolicy(h, 's1', { open_terminal: { access: 'ask' } });
     const ca = await client(h.ep, a.token);
     const cb = await client(h.ep, b.token);
     expect(await ca.listed()).toEqual([...TOOL_NAMES]);
@@ -2550,19 +2577,27 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     expect(raw.notifications).toEqual([]);
   });
 
-  it('settings change via refresh() sends list_changed to affected connections only', async () => {
-    let global: GlobalPolicy = DEFAULT_TOOL_POLICY;
-    const h = harness({ toolPolicy: () => ({ global, byCli: {} }) });
+  it('default policy edits send list_changed to affected connections only', async () => {
+    const h = harness();
     await h.host.start();
     const a = await launch(h, 's1');
     const b = await launch(h, 's2');
-    policyOf(h, 's2', { open_terminal: { access: 'off' } });
+    await setHostPolicy(h, 's2', { open_terminal: { access: 'off' } });
     const ca = await client(h.ep, a.token);
     const cb = await client(h.ep, b.token);
     await ca.listed();
     await cb.listed();
-    global = { ...global, open_terminal: { ...global.open_terminal, access: 'on' } };
-    h.host.refresh();
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:setPointPolicy',
+        requestId: 1,
+        point: { kind: 'default' },
+        tool: 'open_terminal',
+        patch: { access: 'on' },
+      },
+      () => undefined,
+      1,
+    );
     await settleNotes();
     expect(ca.notifications).toEqual(['notifications/tools/list_changed']);
     expect(cb.notifications).toEqual([]);
@@ -3629,6 +3664,85 @@ async function until<T>(f: () => T | undefined | false, ms = 3_000): Promise<T> 
 }
 
 describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-policy §2.3–§2.4, §3.3)', () => {
+  it('spends an allow-once override across an approved multi-target ask', async () => {
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line) as Record<string, unknown>);
+      },
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const policy = serializePolicyFile({
+      version: 1,
+      profiles: [],
+      overrides: [],
+      migratedFrom: null,
+      notes: { onScreenOnlyOffered: [] },
+      assignments: [
+        {
+          point: { kind: 'session', sessionId: 's1' },
+          assignment: {
+            profileId: 'worker',
+            onScreenOnly: false,
+            exceptions: [
+              {
+                tool: 'open_file',
+                scope: { kind: 'path', path: '/w/a.ts' },
+                rule: { decision: 'deny' },
+              },
+              {
+                tool: 'open_file',
+                scope: { kind: 'path', path: '/w/b.ts' },
+                rule: { decision: 'ask' },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const policyIo: RequestsIo = { read: () => policy, write: async () => undefined };
+    const grantsIo: RequestsIo = { read: () => null, write: async () => undefined };
+    const h = harness({
+      kinds: { '/w/a.ts': 'file', '/w/b.ts': 'file' },
+      policyIo,
+      grantsIo,
+      activityIo,
+      manualTimers: true,
+    });
+    await h.host.start();
+    const launched = await launch(h, 's1');
+    const c = await rawClient(h.ep, launched.token);
+    const args = { paths: ['/w/a.ts', '/w/b.ts'] };
+    c.call(1, 'open_file', args);
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    const denied = rows.find((row) => row.decision === 'deny');
+    expect(denied?.id).toEqual(expect.any(String));
+    let reply: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:allowOnce', requestId: 1, activityId: String(denied?.id) },
+      (m) => {
+        reply = m;
+      },
+      1,
+    );
+    expect(reply).toEqual({ type: 'mcp:policyResult', requestId: 1, ok: true });
+    c.call(2, 'open_file', args);
+    const ask = await until(() => h.toOwner.find((item) => item.msg.type === 'mcp:ask'));
+    if (ask.msg.type !== 'mcp:ask') throw new Error('expected ask');
+    await h.host.handleRenderer(
+      { type: 'mcp:askAnswer', askId: ask.msg.askId, answer: 'approve' },
+      () => undefined,
+      1,
+    );
+    expect(c.errorOf(await c.reply(2))).toBe('ok');
+    expect(h.files).toHaveLength(2);
+    c.call(3, 'open_file', args);
+    expect(c.errorOf(await c.reply(3))).toBe('tool_disabled');
+    expect(h.files).toHaveLength(2);
+  });
   const asksOf = (h: Harness) =>
     h.toOwner.flatMap((s) => (s.msg.type === 'mcp:ask' ? [{ to: s.to, ...s.msg }] : []));
   const closedOf = (h: Harness) =>
@@ -3641,11 +3755,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     await until(() => c.lines.some((l) => l.id === id) || asksOf(h).length > 0);
     return asksOf(h).length > 0 ? 'asked' : c.errorOf(c.lines.find((l) => l.id === id));
   };
-  const setPolicy = (h: Harness, layer: PolicyLayer | undefined) => {
-    const s = h.sessions.get('s1');
-    if (!s) throw new Error('no session s1');
-    s.mcpToolPolicy = layer;
-  };
+  const setPolicy = (h: Harness, layer: PolicyLayer | undefined) => setHostPolicy(h, 's1', layer);
 
   async function asking(over: Parameters<typeof harness>[0] = {}) {
     const h = harness({ kinds: { '/w': 'dir', '/w/a.ts': 'file' }, ...over });
@@ -3658,7 +3768,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
   it('gate precedence', async () => {
     const { h, c } = await asking();
     h.presence.ready.delete(1);
-    setPolicy(h, { open_terminal: { access: 'off' } });
+    await setPolicy(h, { open_terminal: { access: 'off' } });
     c.call(1, 'open_terminal', { path: '/w', command: 'node' });
     expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
     c.call(2, 'open_session', OPEN);
@@ -3674,7 +3784,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect([h.opens, h.files]).toEqual([[], []]);
     // when:always skips the on-screen step; messaging never reaches steps 4–5.
     h.owners.delete('s1');
-    setPolicy(h, { open_file: { when: 'always' } });
+    await setPolicy(h, { open_file: { when: 'always' } });
     c.call(5, 'open_file', { path: '/w/a.ts' });
     expect(c.errorOf(await c.reply(5))).toBe('ok');
     h.presence.ready.delete(1);
@@ -3687,7 +3797,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       const h = harness({ kinds: { '/w': 'dir' } });
       await h.host.start();
       const a = await launch(h, 's1');
-      setPolicy(h, { open_session: { access: 'on' } });
+      await setPolicy(h, { open_session: { access: 'on' } });
       const c = await client(h.ep, a.token);
       if (owner === 'unready') h.presence.ready.delete(1);
       else h.owners.set('s1', null);
@@ -3708,7 +3818,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     });
     const { h, c } = await asking({ kinds: { '/w': 'dir', '/usr/bin/kiro': 'file' } });
     try {
-      setPolicy(h, { open_session: { access: 'on' } });
+      await setPolicy(h, { open_session: { access: 'on' } });
       c.call(1, 'open_session', { path: '/w', agent: 'kiro' });
       expect(await replyOrAsk(h, c, 1)).toBe('asked');
       expect(asksOf(h)[0]?.summary).toMatchObject({
@@ -3723,7 +3833,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
 
   it('a registered agent under an on policy opens without asking', async () => {
     const { h, c } = await asking();
-    setPolicy(h, { open_session: { access: 'on' } });
+    await setPolicy(h, { open_session: { access: 'on' } });
     c.call(1, 'open_session', OPEN);
     expect(await replyOrAsk(h, c, 1)).toBe('ok');
     expect(asksOf(h)).toEqual([]);
@@ -3736,7 +3846,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     const h = harness({ kinds: { '/w': 'dir', '/w/wt': 'dir' }, registry });
     await h.host.start();
     const a = await launch(h, 's1');
-    setPolicy(h, { open_session: { access: 'on' } });
+    await setPolicy(h, { open_session: { access: 'on' } });
     const c = await client(h.ep, a.token);
     const r = await c.call('open_session', { path: 'wt', agent: 'claude', focus: false });
     expect(r.isError).toBe(false);
@@ -3798,11 +3908,17 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
   });
 
   it('session layer beats the CLI layer', async () => {
-    const byCli: CliPolicyLayers = { agent: { open_file: { access: 'off' } } };
-    const { h, c } = await asking({ toolPolicy: () => ({ global: DEFAULT_TOOL_POLICY, byCli }) });
+    const byCli: CliPolicyLayers = { claude: { open_file: { access: 'off' } } };
+    const h = harness({
+      kinds: { '/w/a.ts': 'file' },
+      toolPolicy: () => ({ global: DEFAULT_TOOL_POLICY, byCli }),
+    });
+    await h.host.start();
+    const launched = await launch(h, 's1', CLAUDE);
+    const c = await rawClient(h.ep, launched.token);
     c.call(1, 'open_file', { path: '/w/a.ts' });
     expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
-    setPolicy(h, { open_file: { access: 'on' } });
+    await setPolicy(h, { open_file: { access: 'on' } });
     c.call(2, 'open_file', { path: '/w/a.ts' });
     expect(c.errorOf(await c.reply(2))).toBe('ok');
   });
@@ -3997,16 +4113,24 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(closedOf(h)).toEqual([]);
   });
 
-  it('refresh after access → off cancels the waiting ask', async () => {
-    let global: GlobalPolicy = DEFAULT_TOOL_POLICY;
-    const { h, c } = await asking({ toolPolicy: () => ({ global, byCli: {} }) });
+  it('a policy edit that hides a tool cancels its waiting ask', async () => {
+    const { h, c } = await asking();
     c.call(1, 'open_session', OPEN);
     await until(() => asksOf(h).length === 1);
     h.host.refresh();
     await c.barrier(2);
     expect(closedOf(h)).toEqual([]);
-    global = { ...global, open_session: { ...global.open_session, access: 'off' } };
-    h.host.refresh();
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:setPointPolicy',
+        requestId: 1,
+        point: { kind: 'default' },
+        tool: 'open_session',
+        patch: { access: 'off' },
+      },
+      () => undefined,
+      1,
+    );
     expect(c.errorOf(await c.reply(1))).toBe('cancelled');
   });
 
@@ -4033,7 +4157,14 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(h.host.uiState().awaitingApproval).toEqual(['s1']);
     await answer(h, 'ask-2', 'always');
     expect(c.errorOf(await c.reply(2))).toBe('ok');
-    expect(h.sessions.get('s1')?.mcpToolPolicy).toEqual({ open_session: { access: 'on' } });
+    expect(h.host.uiState().policy.grants).toMatchObject([
+      {
+        tool: 'open_session',
+        who: { kind: 'session', sessionId: 's1' },
+        on: { kind: 'anywhere' },
+        for: 'session-end',
+      },
+    ]);
     expect(h.host.uiState().awaitingApproval).toEqual([]);
     c.call(3, 'open_session', OPEN);
     expect(c.errorOf(await c.reply(3))).toBe('ok');
@@ -4070,8 +4201,9 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(
       await set({ sessionId: 's1', tool: 'open_terminal', patch: { access: 'ask', move: 'no' } }),
     ).toEqual([{ type: 'mcp:toolPolicyResult', requestId: 9, ok: true }]);
-    expect(h.sessions.get('s1')?.mcpToolPolicy).toEqual({
-      open_terminal: { access: 'ask', move: 'no' },
+    expect(h.host.uiState().policy.legacy.sessions.s1?.open_terminal).toMatchObject({
+      access: 'ask',
+      move: 'no',
     });
     await until(() => c.notifications.length === 1);
     expect(c.notifications).toEqual(['notifications/tools/list_changed']);

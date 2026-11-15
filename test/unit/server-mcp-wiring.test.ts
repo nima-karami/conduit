@@ -109,7 +109,6 @@ function harness(opts: { manualTimers?: boolean; policy?: GlobalPolicy } = {}) {
         if (s) Object.assign(s, patch);
         return s !== undefined;
       },
-      setMcpToolPolicy: () => true,
       touch: (id: string, minIntervalMs?: number) => {
         log.push(`touch ${id} ${minIntervalMs}`);
         return true;

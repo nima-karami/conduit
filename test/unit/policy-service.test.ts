@@ -194,6 +194,35 @@ beforeEach(() => {
 });
 
 describe('policy service', () => {
+  it.each([
+    { handleCli: 'claude' as const, launchedCli: null },
+    { handleCli: 'claude' as const, launchedCli: 'codex' as const },
+  ])(
+    'projects session overrides against the launched CLI, not the handle ($launchedCli)',
+    (row) => {
+      const h = harness({
+        policy: policyText({
+          assignments: [
+            {
+              point: { kind: 'cli', cli: 'claude' },
+              assignment: { profileId: 'observer', exceptions: [], onScreenOnly: false },
+            },
+            {
+              point: { kind: 'cli', cli: 'codex' },
+              assignment: { profileId: 'worker', exceptions: [], onScreenOnly: false },
+            },
+            {
+              point: { kind: 'session', sessionId: 's1' },
+              assignment: { profileId: 'worker', exceptions: [], onScreenOnly: false },
+            },
+          ],
+        }),
+      });
+      h.service.start();
+      expect(h.service.ui([{ sessionId: 's1', ...row }]).legacy.sessions.s1).toEqual({});
+    },
+  );
+
   it('rejects a legacy patch for a scoped assignment without changing or writing policy', async () => {
     const h = harness({
       policy: policyText({

@@ -11,12 +11,8 @@ import {
 } from '../../src/conduit-mcp/call-flow';
 import type { Prepared, PreparedCall } from '../../src/conduit-mcp/control-tools';
 import type { JsonRpcId } from '../../src/conduit-mcp/json-rpc';
-import type {
-  CliKind,
-  ToolName,
-  ToolPolicy,
-  ToolPolicyPatch,
-} from '../../src/conduit-mcp/tool-policy';
+import type { PolicyDecision } from '../../src/conduit-mcp/policy-types';
+import type { CliKind, ToolName } from '../../src/conduit-mcp/tool-policy';
 import type { Result } from '../../src/conduit-mcp/types';
 import {
   MAX_CLOSE_RESULTS,
@@ -26,8 +22,17 @@ import {
 import type { HostToWebview } from '../../src/protocol';
 
 const CALLER = 'caller-1';
-const ASK: ToolPolicy = { access: 'ask', when: 'viewing', move: 'yes' };
-const ON: ToolPolicy = { access: 'on', when: 'viewing', move: 'yes' };
+const ASK: PolicyDecision = {
+  decision: 'ask',
+  reason: { by: 'profile', point: { kind: 'default' }, profileId: 'worker' },
+  rule: { when: 'viewing', move: 'yes', reach: null },
+  grantId: null,
+  overrideId: null,
+  grantIds: [],
+  overrideIds: [],
+  deniedTarget: null,
+};
+const ON: PolicyDecision = { ...ASK, decision: 'allow' };
 
 /** A deferred: `hold()` returns a promise the test releases with `go()`. */
 function gate() {
@@ -55,12 +60,12 @@ function setup() {
   let ask = 0;
   const sent: Array<{ to: string; msg: HostToWebview }> = [];
   const flashed: string[] = [];
-  const writes: Array<{ id: string; tool: ToolName; patch: ToolPolicyPatch }> = [];
+  const writes: Array<{ id: string; tool: ToolName }> = [];
   const owners = new Map<string, number | null>([
     [CALLER, 1],
     ['caller-2', 2],
   ]);
-  const policies = new Map<string, ToolPolicy>([
+  const policies = new Map<string, PolicyDecision>([
     [CALLER, ASK],
     ['caller-2', ASK],
   ]);
@@ -87,11 +92,11 @@ function setup() {
     appConnected: () => state.appUp,
     sendToOwner: (to, msg) => sent.push({ to, msg }),
     flashOwner: (id) => flashed.push(id),
-    resolve: (id) => policies.get(id) ?? null,
+    stillVisible: (id) => policies.has(id) && policies.get(id)?.decision !== 'deny',
     messagingOn: () => state.messagingOn,
-    setSessionPolicy: (id, tool, patch) => {
+    grantAlways: (id, tool) => {
       if (!policies.has(id)) return false;
-      writes.push({ id, tool, patch });
+      writes.push({ id, tool });
       return true;
     },
     onPolicyWritten: () => state.policyWritten++,
@@ -116,7 +121,7 @@ function setup() {
   const call = (
     o: {
       caller?: string;
-      policy?: ToolPolicy;
+      policy?: PolicyDecision;
       requestId?: JsonRpcId | null;
       connId?: number;
       prepareGate?: ReturnType<typeof gate>;
@@ -158,7 +163,7 @@ function setup() {
       kind: o.kind ?? 'claude',
       wiredAtLaunch: o.wiredAtLaunch ?? false,
       tool: 'open_session',
-      policy: o.policy ?? policies.get(caller) ?? ASK,
+      decision: o.policy ?? policies.get(caller) ?? ASK,
       source: 'global',
       args: { path: '/repo', agent: 'claude' },
       prepare: async () => {
@@ -283,7 +288,7 @@ describe('createCallFlow', () => {
     const onOn = t.call({ policy: ON, prepareResult: { ok: true, value: { done } } });
     expect(await onOn.promise).toEqual(done);
     const off = t.call({
-      policy: { ...ASK, access: 'off' },
+      policy: { ...ASK, decision: 'deny' },
       prepareResult: { ok: true, value: { done } },
     });
     expect(await off.promise).toEqual({
@@ -427,7 +432,7 @@ describe('createCallFlow', () => {
     await t.flush();
     answerLast(t, t.flow, 'always');
     expect(await c.promise).toEqual({ ok: true, value: 'opened' });
-    expect(t.writes).toEqual([{ id: CALLER, tool: 'open_session', patch: { access: 'on' } }]);
+    expect(t.writes).toEqual([{ id: CALLER, tool: 'open_session' }]);
     expect(t.state.policyWritten).toBe(1);
     expect(c.spies.run).toBe(1);
   });
@@ -561,7 +566,7 @@ describe('createCallFlow', () => {
     t.flow.recheck();
     await t.flush();
     expect([a.out.done, b.out.done]).toEqual([false, false]);
-    t.policies.set(CALLER, { ...ASK, access: 'off' });
+    t.policies.set(CALLER, { ...ASK, decision: 'deny' });
     t.flow.recheck();
     expect(errCode(await a.promise)).toBe('cancelled');
     await t.flush();

@@ -1,3 +1,4 @@
+import { emptyPolicyUi } from '../src/conduit-mcp/ui-types';
 import { type ArchDoc, seedArchitecture } from '../src/architecture';
 import { type BoardData, seedBoard } from '../src/board';
 import { formatCommandLine } from '../src/command-line';
@@ -675,6 +676,7 @@ function mockHost(msg: WebviewToHost) {
           notConnected: {},
           awaitingApproval: [],
           waitingAsks: 0,
+          policy: emptyPolicyUi(),
           requests: {
             open: [],
             ended: [],

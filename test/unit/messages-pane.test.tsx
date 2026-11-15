@@ -1,3 +1,4 @@
+import { emptyPolicyUi } from '../../src/conduit-mcp/ui-types';
 // @vitest-environment jsdom
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -81,6 +82,7 @@ function uiState(o: Partial<McpUiState> = {}): McpUiState {
     notConnected: {},
     awaitingApproval: [],
     waitingAsks: 0,
+    policy: emptyPolicyUi(),
     requests: {
       open: [],
       ended: [],

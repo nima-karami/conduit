@@ -4089,6 +4089,10 @@ app.whenReady().then(() => {
         case 'mcp:pause':
         case 'mcp:attachment:get':
         case 'mcp:retry':
+        case 'mcp:setAssignment':
+        case 'mcp:setPointPolicy':
+        case 'mcp:revokeGrant':
+        case 'mcp:allowOnce':
         case 'mcp:setToolPolicy':
         case 'mcp:askAnswer':
         case 'mcp:uiResult':

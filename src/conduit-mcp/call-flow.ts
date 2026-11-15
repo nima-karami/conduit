@@ -4,12 +4,11 @@
 import type { HostToWebview } from '../protocol';
 import type { Prepared, PreparedCall } from './control-tools';
 import type { JsonRpcId } from './json-rpc';
+import type { PolicyDecision } from './policy-types';
 import {
   type CliKind,
   type PolicySource,
   type ToolName,
-  type ToolPolicy,
-  type ToolPolicyPatch,
   toolDisabled,
   windowNotReady,
 } from './tool-policy';
@@ -61,7 +60,7 @@ export interface ControlCall<T> {
   /** The session runs a Conduit launch whose CLI args carry Conduit's MCP wiring. */
   wiredAtLaunch: boolean;
   tool: ToolName;
-  policy: ToolPolicy;
+  decision: PolicyDecision;
   /** The layer that set `access` (for the card's reason line). */
   source: PolicySource;
   args: unknown;
@@ -77,10 +76,10 @@ export interface CallFlowDeps {
   sendToOwner(sessionId: string, msg: HostToWebview): void;
   flashOwner(sessionId: string): void;
   /** Current resolved policy for a waiting ask's caller and tool; null when the session is gone. */
-  resolve(sessionId: string, tool: ToolName): ToolPolicy | null;
+  stillVisible(sessionId: string, tool: ToolName): boolean;
   messagingOn(): boolean;
   /** false when the session no longer exists. */
-  setSessionPolicy(sessionId: string, tool: ToolName, patch: ToolPolicyPatch): boolean;
+  grantAlways(sessionId: string, tool: ToolName): boolean;
   /** After Always wrote the session layer: the host re-syncs tool lists. */
   onPolicyWritten(): void;
   /** The waiting set changed: the host re-broadcasts mcp:state. */
@@ -301,7 +300,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       return { ok: false, error: toolError('denied', 'the human declined the request') };
     if (end.answer === 'always') {
       // spec D2: a persistent session override; the session may have closed while the card waited.
-      if (!deps.setSessionPolicy(caller, c.tool, { access: 'on' }))
+      if (!deps.grantAlways(caller, c.tool))
         return {
           ok: false,
           error: toolError('cancelled', 'the session closed before the request ran'),
@@ -417,7 +416,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       const p = prepared.value;
       // Already answered at prepare, with no token held: nothing to ask or run, but 'off' still refuses.
       if ('done' in p) {
-        if (c.policy.access === 'off') return { ok: false, error: toolDisabled(c.tool) };
+        if (c.decision.decision === 'deny') return { ok: false, error: toolDisabled(c.tool) };
         return c.inflight.cancelled ? null : p.done;
       }
       if (c.inflight.cancelled) {
@@ -425,13 +424,13 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
         return null;
       }
       // A bare command is not one the human registered, so 'on' still asks (flexible-agent-contracts §3.1).
-      const access = p.alwaysAsk && c.policy.access === 'on' ? 'ask' : c.policy.access;
+      const access = p.alwaysAsk && c.decision.decision === 'allow' ? 'ask' : c.decision.decision;
       switch (access) {
-        case 'on':
+        case 'allow':
           return runNow(c, p);
         case 'ask':
           return ask(c, p);
-        case 'off':
+        case 'deny':
           p.release();
           return { ok: false, error: toolDisabled(c.tool) };
       }
@@ -466,8 +465,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
         return;
       }
       waits.cancel((w) => {
-        const now = deps.resolve(w.callerSessionId, w.meta.tool);
-        return now === null || now.access === 'off';
+        return !deps.stillVisible(w.callerSessionId, w.meta.tool);
       }, true);
     },
 

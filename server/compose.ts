@@ -1,3 +1,4 @@
+import { emptyPolicyUi } from '../src/conduit-mcp/ui-types';
 import { emptyPresence } from '../src/conduit-mcp/request-file';
 import {
   SERVER_PROTOCOL_GENERATION,
@@ -52,6 +53,7 @@ export function emptySnapshot(): Omit<ServerSnapshot, 'seq' | 'runtime'> {
       notConnected: {},
       awaitingApproval: [],
       waitingAsks: 0,
+      policy: emptyPolicyUi(),
       requests: { open: [], ended: [], presence: emptyPresence(0) },
     },
     pendingAsks: [],
