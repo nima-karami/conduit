@@ -209,7 +209,7 @@ Engine invariants:
 - **Defaults.** A target with no session or path matches the caller's `homeFolder`. Floor (c): a local session with `toYou` on `send_message` or `request_input` is always allowed.
 - **Every result carries exactly one `Reason`.**
 - **Explicit denies (review ruling).** Only exception denies are explicit (step 2). A profile deny is decided at step 4, so a grant can pass it: Guest is a deny profile that Share grants pass (§1 success 5). "Rule" in §4.3 step 2 means the v1 user-made rules. Explicit denies come only from the chosen assignment, which replaces lower ones.
-- **Hidden tools.** `visibleTools` hides a tool only when it is denied for every target: a non-master floor, or a profile deny with no non-deny exception and no matching grant.
+- **Hidden tools.** `visibleTools` hides a tool only when it is denied for every target: a non-master floor, or a profile deny with no non-deny exception and no matching grant. T2.3 ruling: an **anywhere** deny exception at the winning assignment also hides it, unless this session holds a one-use override for the tool. Grants don't pass explicit denies, so they don't count. Narrower deny exceptions never hide a tool. A session's send_message/request_input stay visible.
 
 ### C3 Stores — `policy-file.ts`, `grant-store.ts` (Slice 1, lane B)
 ```ts
