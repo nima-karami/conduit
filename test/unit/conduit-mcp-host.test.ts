@@ -26,6 +26,7 @@ import {
   NOTICE_SPACING_MS,
 } from '../../src/conduit-mcp/notice-gate';
 import { composeNotice } from '../../src/conduit-mcp/notice-text';
+import { reasonText } from '../../src/conduit-mcp/policy-engine';
 import { parsePolicyFile, serializePolicyFile } from '../../src/conduit-mcp/policy-file';
 import type { RequestsIo } from '../../src/conduit-mcp/request-file-fs';
 import type { AnswerInput } from '../../src/conduit-mcp/request-types';
@@ -4095,6 +4096,14 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
         .map((r) => `${String(r.decision)}/${String(r.outcome)}`)
         .sort(),
     ).toEqual(['allow/ok', 'deny/denied']);
+    const refusedRow = rows.slice(before).find((r) => r.outcome === 'denied');
+    expect(refusedRow).toMatchObject({
+      decision: 'deny',
+      decidedBy: reasonText({ by: 'deny', point: { kind: 'session', sessionId: 's1' } }, 'deny', {
+        profileName: (id) => id,
+        cliName: (k) => k,
+      }),
+    });
   });
 
   it('an override is kept when the ask that would spend it is refused for rate_limited', async () => {

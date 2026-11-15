@@ -1475,10 +1475,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           appConnected: deps.appConnected(),
         });
         if (refused) return { ok: false, error: refused };
-        // A concurrent call may have spent the override this decision relies on.
+        // A concurrent call may have spent the override this decision relies on; the re-decide
+        // is pure, and it names the decision the call now meets.
         const commitResolved = (): boolean => {
           if (policyService.commit(resolved) !== null) return true;
           evaluated.spent = true;
+          evaluated.current = { input: policyInput, decision: policyService.decide(policyInput) };
           return false;
         };
         const caller = { handle, sessionId };
@@ -1555,7 +1557,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         action: name,
         target: record?.input.targets[0]?.path ?? record?.input.targets[0]?.sessionId ?? null,
         summary: null,
-        decision: evaluated.spent ? 'deny' : (decision?.decision ?? null),
+        decision: decision?.decision ?? null,
         decidedBy: decision
           ? reasonText(decision.reason, decision.decision, {
               profileName: (id) => policyService.profileName(id) ?? id,
