@@ -36,7 +36,7 @@ import { registeredIdFor } from './agent-resolve';
 import { createAppControlHandlers } from './app-control-tools';
 import { snapshotAttachment } from './attachments';
 import { type AttentionEvent, reduceAttention, youAttention } from './attention-items';
-import { askBudgetMs, createCallFlow } from './call-flow';
+import { type AskCommit, askBudgetMs, createCallFlow, type InFlight } from './call-flow';
 import {
   bindsTypedLine,
   type ClientKind,
@@ -83,7 +83,13 @@ import { type AttentionRaise, bannerCandidates, createNotifier, type Notifier } 
 import { reasonText } from './policy-engine';
 import { createPolicyService } from './policy-service';
 import { resolveTargets } from './policy-targets';
-import type { AssignmentPoint, PolicyDecision, PolicyInput, Principal } from './policy-types';
+import type {
+  AssignmentPoint,
+  PolicyDecision,
+  PolicyInput,
+  PolicyTarget,
+  Principal,
+} from './policy-types';
 import { createRequestsIo, type RequestsIo } from './request-file-fs';
 import { createRequestNotices } from './request-notices';
 import { createRequestService, type RequestService } from './request-service';
@@ -1276,6 +1282,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     if (point.kind === 'peer') return 'machineId' in point && typeof point.machineId === 'string';
     return point.kind === 'cli' && 'cli' in point && CLI_KINDS.some((kind) => kind === point.cli);
   };
+  /** The permission each raised call waits on; its call row carries that request id. */
+  const raisedRequests = new Map<InFlight, string>();
+  const reasonOf = (decision: PolicyDecision): string =>
+    reasonText(decision.reason, decision.decision, {
+      profileName: (id) => policyService.profileName(id) ?? id,
+      cliName: (kind) => kind,
+    });
   const sourceOf = (decision: PolicyDecision): PolicySource => {
     const reason = decision.reason;
     if (!('point' in reason)) return 'global';
@@ -1304,22 +1317,39 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       return p !== null && policyService.visibleTools(p).includes(tool);
     },
     messagingOn: () => deps.domain.messagingOn(),
-    grantAlways: (sessionId, tool) => {
-      const p = principalOf(sessionId);
-      return (
-        p !== null &&
-        policyService.createGrant(
-          { who: 'session', on: 'anywhere', for: 'session-end' },
-          p,
-          tool,
-          { sessionId: null, path: null, folder: null, projectId: null },
-          null,
-        ) !== null
+    openPermission: (r) => {
+      const record = requestService.createPermission(
+        r.caller.sessionId,
+        {
+          requester: r.caller.handle,
+          title: r.tool,
+          body: r.why,
+          permission: { tool: r.tool, why: r.why, targets: [...r.targets], lateGrant: null },
+        },
+        new Date(r.expiresAt).toISOString(),
       );
+      policyService.activity.record({
+        lane: 'conduit',
+        principal: { handle: r.caller.handle, sessionId: r.caller.sessionId, machineId: null },
+        cli: launchedCli(r.caller.sessionId),
+        action: r.tool,
+        target: r.targets[0]?.path ?? r.targets[0]?.sessionId ?? null,
+        summary: null,
+        decision: 'ask',
+        decidedBy: r.why,
+        outcome: 'asked',
+        durationMs: null,
+        requestId: record.id,
+        count: null,
+      });
+      policyService.activity.recordAskArgs(record.id, r.args);
+      raisedRequests.set(r.inflight, record.id);
+      return record.id;
     },
-    onPolicyWritten: () => {
-      syncToolLists();
-      scheduleBroadcast();
+    settlePermission: (e) => {
+      if (e.end === 'answered')
+        requestService.endPermission(e.requestId, 'answered', e.answer, null);
+      else requestService.endPermission(e.requestId, e.end, null, e.reason);
     },
     onAwaitingChanged: () => scheduleBroadcast(),
     sendToWindow: (windowId, msg) => sendToWindow(windowId, msg),
@@ -1469,6 +1499,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         };
         const resolved = policyService.decide(policyInput);
         evaluated.current = { input: policyInput, decision: resolved };
+        const emptyTarget: PolicyTarget = {
+          sessionId: null,
+          path: null,
+          folder: null,
+          projectId: null,
+        };
         const windowId = deps.ownerWindowOf(sessionId);
         const refused = gateToolCall({
           sessionId,
@@ -1483,12 +1519,14 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         // A concurrent call may have spent the override this decision relies on. decide and commit
         // run back to back, so the re-decide sees the state the commit did: a second override for
         // the target can stand in for the spent one.
-        const commitResolved = (): PolicyDecision | null => {
-          if (policyService.commit(resolved) !== null) return resolved;
+        const commitResolved = (): AskCommit | null => {
+          const held = policyService.commit(resolved);
+          if (held !== null) return { decision: resolved, held };
           const again = policyService.decide(policyInput);
-          if (again.decision === 'allow' && policyService.commit(again) !== null) {
+          const heldAgain = again.decision === 'allow' ? policyService.commit(again) : null;
+          if (heldAgain !== null) {
             evaluated.current = { input: policyInput, decision: again };
-            return again;
+            return { decision: again, held: heldAgain };
           }
           evaluated.spent = true;
           evaluated.current = { input: policyInput, decision: again };
@@ -1529,6 +1567,29 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           tool: name,
           decision: resolved,
           commit: commitResolved,
+          permission: { why: reasonOf(resolved), targets },
+          reDecide: (grant, held, requestId) => {
+            const p = principalOf(sessionId);
+            const target = targets[0] ?? emptyTarget;
+            if (
+              grant !== undefined &&
+              (p === null || policyService.createGrant(grant, p, name, target, requestId) === null)
+            )
+              return { kind: 'refused', reason: 'grant' };
+            const again = policyService.decide({ ...policyInput, heldOverrides: held });
+            evaluated.current = { input: policyInput, decision: again };
+            if (again.decision === 'deny') return { kind: 'withdraw', reason: reasonOf(again) };
+            if (
+              policyService.commit(
+                again,
+                held.map((o) => o.id),
+              ) === null
+            ) {
+              evaluated.spent = true;
+              return { kind: 'refused', reason: 'spent' };
+            }
+            return { kind: 'run' };
+          },
           source: sourceOf(resolved),
           args,
           prepare: () => prepareControl(caller, name, args, controlCtx),
@@ -1549,12 +1610,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           ? result.value
           : null;
       const requestId =
-        name === 'request_input' &&
+        raisedRequests.get(inflight) ??
+        (name === 'request_input' &&
         value &&
         'request_id' in value &&
         typeof value.request_id === 'string'
           ? value.request_id
-          : null;
+          : null);
       const decision = record?.decision;
       const outcomeOfError = (code: string): ActivityOutcome => {
         if (code === 'denied' || decision?.decision === 'deny') return 'denied';
@@ -1569,12 +1631,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         target: record?.input.targets[0]?.path ?? record?.input.targets[0]?.sessionId ?? null,
         summary: null,
         decision: decision?.decision ?? null,
-        decidedBy: decision
-          ? reasonText(decision.reason, decision.decision, {
-              profileName: (id) => policyService.profileName(id) ?? id,
-              cliName: (kind) => kind,
-            })
-          : 'unknown',
+        decidedBy: decision ? reasonOf(decision) : 'unknown',
         outcome: cancelled
           ? 'withdrawn'
           : result.ok
@@ -1595,6 +1652,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         ? built
         : { ...built, content: [...built.content, { type: 'text', text: banner }] };
     } finally {
+      raisedRequests.delete(inflight);
       inflight.end();
     }
   };

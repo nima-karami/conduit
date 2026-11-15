@@ -3799,6 +3799,8 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     h.toOwner.flatMap((s) => (s.msg.type === 'mcp:ask' ? [{ to: s.to, ...s.msg }] : []));
   const closedOf = (h: Harness) =>
     h.toOwner.flatMap((s) => (s.msg.type === 'mcp:askClosed' ? [s.msg] : []));
+  /** An ask's id is its permission request's id, so tests read it from the card that went out. */
+  const askIdOf = (h: Harness, n = 1) => asksOf(h)[n - 1]?.askId ?? '';
   const answer = (h: Harness, askId: string, a: 'approve' | 'deny' | 'always', senderId = 1) =>
     h.host.handleRenderer({ type: 'mcp:askAnswer', askId, answer: a }, () => undefined, senderId);
   const OPEN = { path: '/w', agent: 'e2e-fake-mcp' };
@@ -4429,7 +4431,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     one.c.cancel(1);
     await until(() => closedOf(one.h).length === 1);
     expect(closedOf(one.h)).toEqual([
-      { type: 'mcp:askClosed', askId: 'ask-1', outcome: 'cancelled' },
+      { type: 'mcp:askClosed', askId: askIdOf(one.h), outcome: 'cancelled' },
     ]);
     await one.c.barrier(2);
     expect(one.c.lines.some((l) => l.id === 1)).toBe(false);
@@ -4494,7 +4496,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     await c.barrier(2);
     await other.barrier(3);
     expect(closedOf(h)).toEqual([]);
-    await answer(h, 'ask-1', 'approve');
+    await answer(h, askIdOf(h), 'approve');
     expect(c.errorOf(await c.reply(1))).toBe('ok');
   });
 
@@ -4518,7 +4520,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       end(h);
       expect(c.errorOf(await c.reply(1))).toBe('cancelled');
       expect(closedOf(h)).toEqual([
-        { type: 'mcp:askClosed', askId: 'ask-1', outcome: 'cancelled' },
+        { type: 'mcp:askClosed', askId: askIdOf(h), outcome: 'cancelled' },
       ]);
       expect(h.opens).toEqual([]);
     }
@@ -4605,10 +4607,10 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     c.call(2, 'open_session', OPEN);
     await until(() => asksOf(h).length === 2);
     expect(h.host.uiState().awaitingApproval).toEqual(['s1']);
-    await answer(h, 'ask-1', 'deny');
+    await answer(h, askIdOf(h, 1), 'deny');
     expect(c.errorOf(await c.reply(1))).toBe('denied');
     expect(h.host.uiState().awaitingApproval).toEqual(['s1']);
-    await answer(h, 'ask-2', 'always');
+    await answer(h, askIdOf(h, 2), 'always');
     expect(c.errorOf(await c.reply(2))).toBe('ok');
     expect(h.host.uiState().policy.grants).toMatchObject([
       {
@@ -4640,9 +4642,10 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       const { h, c } = await asking({ activityIo: activityIoRecording(rows) });
       c.call(1, 'open_session', OPEN);
       await until(() => asksOf(h).length === 1);
-      await answer(h, 'ask-1', 'deny');
+      await answer(h, askIdOf(h), 'deny');
       expect(c.errorOf(await c.reply(1))).toBe('denied');
       expect(rows.filter((r) => r.action === 'open_session').map((r) => r.outcome)).toEqual([
+        'asked',
         'denied',
       ]);
     });
@@ -4658,6 +4661,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       h.advance(10 * 60_000);
       expect(c.errorOf(await c.reply(1))).toBe('approval_timeout');
       expect(rows.filter((r) => r.action === 'open_session').map((r) => r.outcome)).toEqual([
+        'asked',
         'expired',
       ]);
     });
@@ -4707,7 +4711,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     };
     c.call(1, 'open_session', OPEN);
     await until(() => asksOf(h).length === 1);
-    await answer(h, 'ask-1', 'always');
+    await answer(h, askIdOf(h, 1), 'always');
     expect(c.errorOf(await c.reply(1))).toBe('ok');
     const [grant] = h.host.uiState().policy.grants;
     expect(await post({ type: 'mcp:revokeGrant', requestId: 1, grantId: 'missing' })).toEqual([
@@ -4719,7 +4723,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(h.host.uiState().policy.grants).toMatchObject([{ id: grant.id, state: 'revoked' }]);
     c.call(2, 'open_session', OPEN);
     await until(() => asksOf(h).length === 2);
-    await answer(h, 'ask-2', 'deny');
+    await answer(h, askIdOf(h, 2), 'deny');
     expect(c.errorOf(await c.reply(2))).toBe('denied');
 
     const point = { kind: 'session', sessionId: 's1' };

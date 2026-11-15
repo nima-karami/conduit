@@ -3,8 +3,15 @@
 // call-flow contract). The host only wires it.
 import type { HostToWebview } from '../protocol';
 import type { Prepared, PreparedCall } from './control-tools';
+import type { GrantChoice } from './grant-store';
 import type { JsonRpcId } from './json-rpc';
-import type { PolicyDecision } from './policy-types';
+import type {
+  OneUseOverride,
+  PermissionAnswer,
+  PolicyDecision,
+  PolicyTarget,
+} from './policy-types';
+import type { AnswerInput } from './request-types';
 import {
   type CliKind,
   type PolicySource,
@@ -53,6 +60,16 @@ export interface InFlight {
   /** Drops the in-flight entry; called in the host's finally. Idempotent. */
   end(): void;
 }
+/** The decision the call goes ahead on, and the one-use overrides its commit spent. */
+export interface AskCommit {
+  decision: PolicyDecision;
+  held: readonly OneUseOverride[];
+}
+/** What an answered ask does: run, withdraw with the policy's reason, or refuse. */
+export type AnswerDecision =
+  | { kind: 'run' }
+  | { kind: 'withdraw'; reason: string }
+  | { kind: 'refused'; reason: 'grant' | 'spent' };
 export interface ControlCall<T> {
   inflight: InFlight;
   caller: { sessionId: string; handle: Handle };
@@ -62,14 +79,42 @@ export interface ControlCall<T> {
   tool: ToolName;
   decision: PolicyDecision;
   /**
-   * Spends the decision's grants and one-use overrides once the call goes ahead. Returns the
-   * decision the call goes ahead on, which can be a re-decided allow; null when it is refused.
+   * Spends the decision's grants and one-use overrides once the call goes ahead. A null result is
+   * a refusal. The overrides in an ask's result are held until its request is answered.
    */
-  commit(): PolicyDecision | null;
+  commit(): AskCommit | null;
+  /** The permission request's body: why the policy asks, and what it asks about. */
+  permission: { why: string; targets: readonly PolicyTarget[] };
+  /**
+   * Run once an ask is approved: creates the grant, re-decides with the held overrides, and
+   * commits them when the call runs.
+   */
+  reDecide(
+    grant: GrantChoice | undefined,
+    held: readonly OneUseOverride[],
+    requestId: string,
+  ): AnswerDecision;
   /** Only for the card's reason line: the gate reads decision, never source. */
   source: PolicySource;
   args: unknown;
   prepare(): Promise<Result<Prepared<T>>>;
+}
+export interface PermissionRaise {
+  inflight: InFlight;
+  caller: { sessionId: string; handle: Handle };
+  tool: ToolName;
+  args: unknown;
+  why: string;
+  targets: readonly PolicyTarget[];
+  expiresAt: number;
+}
+export interface PermissionEnd {
+  requestId: string;
+  caller: { sessionId: string; handle: Handle };
+  tool: ToolName;
+  end: 'answered' | 'expired' | 'withdrawn';
+  answer: AnswerInput | null;
+  reason: string | null;
 }
 export interface CallFlowDeps {
   now(): number;
@@ -83,10 +128,9 @@ export interface CallFlowDeps {
   // see plan T2.3 call-flow seam ruling (visibility is pure)
   stillVisible(sessionId: string, tool: ToolName): boolean;
   messagingOn(): boolean;
-  /** false when the session no longer exists. */
-  grantAlways(sessionId: string, tool: ToolName): boolean;
-  /** Always adds a session grant, which can change what is listed: tool lists re-sync. */
-  onPolicyWritten(): void;
+  /** Opens the permission request an ask waits on; its id is the askId. */
+  openPermission(r: PermissionRaise): string;
+  settlePermission(e: PermissionEnd): void;
   /** The waiting set changed: the host re-broadcasts mcp:state. */
   onAwaitingChanged(): void;
   /** Sends to one window by id; main guards isDestroyed. May still throw. */
@@ -124,6 +168,8 @@ export interface CallFlow {
   recheck(): void;
   /** false unless the ask exists, is waiting, and `fromWindowId` is its window. */
   answer(askId: string, fromWindowId: number, answer: AskAnswer): boolean;
+  /** false unless an ask is waiting on `askId`; it ends with that answer. */
+  answerPermission(askId: string, answer: PermissionAnswer): boolean;
   /**
    * Sends mcp:ui to `windowId` and waits ≤ UI_TIMEOUT_MS for that window's answer. Keyed by the
    * in-flight's call key, so every cancel path ends it. An unready window or a throwing send ⇒
@@ -154,6 +200,21 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 const isStrings = (v: unknown): v is string[] =>
   Array.isArray(v) && v.every((x) => typeof x === 'string');
 const approvalTimeout = () => toolError('approval_timeout', 'the human did not answer in time');
+const ALWAYS_GRANT: GrantChoice = { who: 'session', on: 'anywhere', for: 'session-end' };
+const cardAnswer = (a: AskAnswer): PermissionAnswer =>
+  a === 'approve'
+    ? { outcome: 'allowed' }
+    : a === 'deny'
+      ? { outcome: 'denied' }
+      : { outcome: 'allowed', grant: ALWAYS_GRANT };
+const answerInputOf = (a: PermissionAnswer): AnswerInput =>
+  a.outcome === 'allowed'
+    ? a.grant === undefined
+      ? { outcome: 'allowed' }
+      : { outcome: 'allowed', grant: a.grant }
+    : a.reason === undefined
+      ? { outcome: 'denied' }
+      : { outcome: 'denied', reason: a.reason };
 const SKIP_REASONS: ReadonlySet<unknown> = new Set(['unsaved', 'not_open']);
 
 /** A renderer failure message reaches an agent's terminal: no escape sequences, C0 or C1
@@ -214,7 +275,7 @@ function parseUiResult(kind: McpUiAction['kind'], v: unknown): McpUiResult | nul
 export function createCallFlow(deps: CallFlowDeps): CallFlow {
   /** By connId, then requestId: a Map keeps 1 and '1' apart, as JSON-RPC does. */
   const inflight = new Map<number, Map<JsonRpcId, Entry>>();
-  const waits = createWindowWaits<AskAnswer, AskMeta>({
+  const waits = createWindowWaits<PermissionAnswer, AskMeta>({
     now: deps.now,
     setTimer: deps.setTimer,
     clearTimer: deps.clearTimer,
@@ -273,11 +334,26 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       return { ok: false, error: toolDisabled(c.tool) };
     }
     // The card guards a decision that is still an ask; a recovered allow has nothing to guard.
-    if (committed.decision === 'allow' && !p.alwaysAsk) return runNow(c, p);
-    const askId = deps.newAskId();
+    if (committed.decision.decision === 'allow' && !p.alwaysAsk) return runNow(c, p);
+    const requestId = deps.openPermission({
+      inflight: c.inflight,
+      caller: c.caller,
+      tool: c.tool,
+      args: c.args,
+      why: c.permission.why,
+      targets: c.permission.targets,
+      expiresAt: deps.now() + askMs,
+    });
+    const held = committed.held;
+    const settle = (
+      end: PermissionEnd['end'],
+      answer: AnswerInput | null,
+      reason: string | null,
+    ): void =>
+      deps.settlePermission({ requestId, caller: c.caller, tool: c.tool, end, answer, reason });
     deps.sendToOwner(caller, {
       type: 'mcp:ask',
-      askId,
+      askId: requestId,
       callerSessionId: caller,
       callerHandle: c.caller.handle,
       tool: c.tool,
@@ -287,7 +363,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     });
     const ended = waits.open(
       {
-        id: askId,
+        id: requestId,
         callerSessionId: caller,
         key,
         windowId,
@@ -303,28 +379,45 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     // Unanswered ends keep the rate token: it caps card spam (spec §3.3 "Rate").
     switch (end.kind) {
       case 'expired':
+        settle('expired', null, null);
         return { ok: false, error: approvalTimeout() };
       case 'cancelled':
+        settle('withdrawn', null, 'the call was cancelled');
         return end.reply
           ? { ok: false, error: toolError('cancelled', 'the request was cancelled') }
           : null;
       case 'answered':
         break;
     }
-    if (end.answer === 'deny')
+    const answer = end.answer;
+    if (answer.outcome === 'denied') {
+      settle('answered', answerInputOf(answer), null);
       return { ok: false, error: toolError('denied', 'the human declined the request') };
-    if (end.answer === 'always') {
-      // The session-end grant is anchored to its session, which may have closed while the card
-      // waited.
-      if (!deps.grantAlways(caller, c.tool))
-        return {
-          ok: false,
-          error: toolError('cancelled', 'the session closed before the request ran'),
-        };
-      deps.onPolicyWritten();
     }
     // Approved, then cancelled before it ran: still a cancelled ask, so the token stays spent.
-    if (c.inflight.cancelled) return null;
+    if (c.inflight.cancelled) {
+      settle('withdrawn', null, 'the call was cancelled');
+      return null;
+    }
+    const decided = c.reDecide(answer.grant, held, requestId);
+    switch (decided.kind) {
+      case 'withdraw':
+        settle('withdrawn', null, decided.reason);
+        return { ok: false, error: toolError('tool_disabled', decided.reason) };
+      case 'refused':
+        if (decided.reason === 'grant') {
+          settle('withdrawn', null, 'the session closed before the request ran');
+          return {
+            ok: false,
+            error: toolError('cancelled', 'the session closed before the request ran'),
+          };
+        }
+        settle('withdrawn', null, 'the policy changed while the request waited');
+        return { ok: false, error: toolDisabled(c.tool) };
+      case 'run':
+        break;
+    }
+    settle('answered', answerInputOf(answer), null);
     return runNow(c, p);
   }
 
@@ -492,7 +585,12 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       }, true);
     },
 
-    answer: (askId, fromWindowId, answer) => waits.answer(askId, fromWindowId, answer),
+    answer: (askId, fromWindowId, answer) => waits.answer(askId, fromWindowId, cardAnswer(answer)),
+
+    answerPermission(askId, answer) {
+      const w = waits.pending().find((x) => x.id === askId);
+      return w !== undefined && waits.answer(askId, w.windowId, answer);
+    },
 
     requestUi,
 
