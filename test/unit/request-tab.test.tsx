@@ -121,10 +121,10 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function mount(id: string): Promise<void> {
+async function mount(id: string, onTitle?: (title: string) => void): Promise<void> {
   root = createRoot(host);
   await act(async () => {
-    root?.render(<RequestTab requestId={id} sessionName="Build" />);
+    root?.render(<RequestTab requestId={id} sessionName="Build" onTitle={onTitle} />);
   });
 }
 
@@ -157,5 +157,16 @@ describe('RequestTab', () => {
     });
     expect(closeTab).not.toHaveBeenCalled();
     expect(host.querySelector('.reqtpl-ended')).not.toBeNull();
+  });
+
+  it('names the tab by type and title', async () => {
+    const onTitle = vi.fn();
+    setRequests([review(), view({ id: 'b', kind: 'choose', title: 'Drop nested rows?' })]);
+    await mount('a', onTitle);
+    expect(onTitle).toHaveBeenLastCalledWith('Review: Changelog');
+    await act(async () => root?.unmount());
+    root = null;
+    await mount('b', onTitle);
+    expect(onTitle).toHaveBeenLastCalledWith('Answer: Drop nested rows?');
   });
 });

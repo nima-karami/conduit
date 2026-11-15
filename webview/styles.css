@@ -16124,8 +16124,7 @@ button.toggle--on .toggle__knob {
   font-size: 12px;
   color: var(--text-dim);
 }
-.reqtpl-field__input,
-.reqtpl-edit {
+.reqtpl-field__input {
   box-sizing: border-box;
   width: 100%;
   min-height: 56px;
@@ -16136,10 +16135,6 @@ button.toggle--on .toggle__knob {
   border: 1px solid var(--border-2);
   border-radius: var(--r-sm);
   resize: vertical;
-}
-.reqtpl-edit {
-  min-height: 160px;
-  font-family: ui-monospace, monospace;
 }
 .reqtpl-views {
   display: inline-flex;
@@ -16164,13 +16159,55 @@ button.toggle--on .toggle__knob {
   background: var(--raise);
   --rest-shadow: inset 0 0 0 1px var(--border-2);
 }
+/* Gutter and text share one line box so each number sits beside its line (see .reqtpl-edit). */
+.reqtpl-draft {
+  --draft-line: 18px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 160px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  line-height: var(--draft-line);
+  background: var(--panel-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+}
+.reqtpl-draft__gutter {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 8px 8px 10px;
+  color: var(--text-dim);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  border-right: 1px solid var(--border-2);
+  user-select: none;
+}
+.reqtpl-draft__ln {
+  height: var(--draft-line);
+}
+.reqtpl-draft__ln--edited {
+  color: var(--text);
+  box-shadow: inset -2px 0 0 var(--accent);
+}
+/* rows= sizes the editor to its lines and wrap="off" keeps one line per number; the draft
+   box grows instead of the editor scrolling, which would slide the text past the gutter. */
+.reqtpl-edit,
 .reqtpl-original {
+  box-sizing: border-box;
+  width: 100%;
   margin: 0;
   padding: 8px 10px;
-  font-family: ui-monospace, monospace;
-  white-space: pre-wrap;
-  background: var(--panel-2);
-  border-radius: var(--r-sm);
+  font: inherit;
+  line-height: inherit;
+  color: var(--text);
+  white-space: pre;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: none;
+  border: 0;
+}
+.reqtpl-edit {
+  resize: none;
 }
 .reqtpl-changes {
   font-size: 12px;

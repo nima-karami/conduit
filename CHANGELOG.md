@@ -6,6 +6,10 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Changed
+- A request open as a tab is named after it, for example "Review: v0.65.0 changelog", instead of "Request".
+- A draft to review shows line numbers, and the lines you changed are marked beside their numbers.
+
 ## [0.65.0] — 2026-11-15
 
 ### Added
