@@ -4,11 +4,13 @@
  * in for the Worker callers and the close targets; this page is the owner window, so its
  * mcp:permissionAnswer is the card's answer:
  *   - an unanswered close_session ask ends approval_timeout and the target stays open;
- *   - a later identical ask answered with a session/target/1h grant closes the target, and its
- *     Activity row is that ask's, outcome ok;
+ *   - a late answer to that timed-out ask keeps a session/target/1h grant but runs nothing: the
+ *     target stays open and W's inbox gets the retry notice; the retry closes the target with no
+ *     card, its row reads "allowed by grant", and the grant expires with its target;
  *   - a session-level access off (an anywhere deny exception) refuses; mcp:allowOnce on that
  *     refusal's row lets one close through, and the next target is refused again;
- *   - mcp:revokeGrant marks the grant revoked, and the next close asks again.
+ *   - an anywhere/1h grant answered on a card closes that target, then covers the next close
+ *     with no card; revoking it brings the card back, and a deny keeps the target open.
  */
 import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -219,13 +221,17 @@ await runScenario(
     const hasRetryNotice = async () => {
       const inbox = await callTool(page, w.sessionId, 'read_inbox', {});
       return (inbox.messages ?? []).some(
-        (m) => typeof m.body === 'string' && m.body.includes('You can retry close_session now'),
+        (m) =>
+          typeof m.body === 'string' &&
+          m.body.includes('You can retry close_session now') &&
+          m.request_id === ask1.askId,
       );
     };
     assert(
       await until(hasRetryNotice, 15_000),
       "W's inbox never got 'You can retry close_session now'",
     );
+    assert(await stillOpen(t1.sessionId), 'the late answer ran the call after the inbox wait');
     log('late allowed+grant → t1 still open, retry notice in W’s inbox ✓');
 
     phase('retry after the late grant closes t1 with no card');
@@ -373,7 +379,27 @@ await runScenario(
         (await mcpState(page))?.policy?.grants,
       )}`,
     );
-    log('anywhere grant answered → T4 closes ✓');
+    assert(
+      await until(
+        () =>
+          activityRows().some(
+            (r) =>
+              r.action === 'close_session' &&
+              r.principal?.sessionId === w.sessionId &&
+              r.target === t4.sessionId &&
+              r.requestId === askA.askId &&
+              r.outcome === 'ok' &&
+              typeof r.decidedBy === 'string' &&
+              r.decidedBy.startsWith('Ask:') &&
+              !r.decidedBy.startsWith('allowed by grant'),
+          ),
+        10_000,
+      ),
+      `no ask-decided row for T4 carrying ${askA.askId}: ${JSON.stringify(
+        activityRows().filter((r) => r.target === t4.sessionId),
+      )}`,
+    );
+    log('anywhere grant answered → T4 closes, its row is the ask’s ✓');
 
     // (b) A later close under the grant runs with no card, and its row says so.
     await makeActive(w.sessionId);
