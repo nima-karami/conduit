@@ -5,7 +5,7 @@
  * mcp:permissionAnswer is the card's answer:
  *   - an unanswered close_session ask ends approval_timeout and the target stays open;
  *   - a later identical ask answered with a session/target/1h grant closes the target, and its
- *     Activity row reads "allowed by grant";
+ *     Activity row is that ask's, outcome ok;
  *   - a session-level access off (an anywhere deny exception) refuses; mcp:allowOnce on that
  *     refusal's row lets one close through, and the next target is refused again;
  *   - mcp:revokeGrant marks the grant revoked, and the next close asks again.
@@ -223,12 +223,13 @@ await runScenario(
               r.action === 'close_session' &&
               r.principal?.sessionId === w.sessionId &&
               r.outcome === 'ok' &&
-              typeof r.decidedBy === 'string' &&
-              r.decidedBy.startsWith('allowed by grant'),
+              r.requestId === ask2.askId,
           ),
         10_000,
       ),
-      `no "allowed by grant" Activity row: ${JSON.stringify(
+      // The approved call runs on its own ask (plan C9: re-decide before the grant exists), so
+      // its row is that ask's; "allowed by grant" is proved in step 4 on a call the grant covers.
+      `no ran row for the answered ask: ${JSON.stringify(
         activityRows().filter((r) => r.action === 'close_session'),
       )}`,
     );
@@ -251,7 +252,7 @@ await runScenario(
         (await mcpState(page))?.policy?.grants,
       )}`,
     );
-    log('later ask answered allowed+grant → close runs, row "allowed by grant" ✓');
+    log('later ask answered allowed+grant → the asked close runs, grant saved ✓');
 
     phase('exception deny refuses; allowOnce lets one close through');
     // Scoped exceptions cannot be written at runtime, so the deny is the session's own legacy
