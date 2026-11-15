@@ -24,13 +24,13 @@ import { createLinkManager, type LinkManager } from './link-manager';
 import { openLinkStore } from './link-store';
 import {
   type LinkListener,
-  type Listener,
   listenLinks,
   listenPairing,
   type NetLog,
 } from './listener';
 import { createMessaging } from './messaging';
 import { createMonitorPublisher, type MonitorSource } from './monitor-publisher';
+import { createPairingPort } from './pairing-port';
 import { createPairingService, type PairingService } from './pairing-service';
 import { createSnapshotCoalescer } from './snapshot-coalescer';
 import { createViewRelay } from './view-relay';
@@ -315,26 +315,18 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     return listening;
   };
 
-  let pairingPort: Listener | null = null;
-  const openPairingPort = async (): Promise<string[]> => {
-    closePairingPort();
+  // The pairing port sits next to the link port; an ephemeral link port (tests) gets one too.
+  const pairingPort = createPairingPort(() => {
     const s = deps.settings();
-    // The pairing port sits next to the link port; an ephemeral link port (tests) gets one too.
-    const port = s.networkPort === 0 ? 0 : s.networkPort + 1;
-    const opened = await listenPairing({
+    return listenPairing({
       hosts: hosts(),
-      port,
+      port: s.networkPort === 0 ? 0 : s.networkPort + 1,
       onPairing: (sock) => pairing.onPairingSocket(sock),
       log: deps.log,
     });
-    pairingPort = opened;
-    return opened.addresses();
-  };
-  const closePairingPort = (): void => {
-    const p = pairingPort;
-    pairingPort = null;
-    void p?.close();
-  };
+  });
+  const openPairingPort = (): Promise<string[]> => pairingPort.open();
+  const closePairingPort = (): void => pairingPort.close();
 
   const onOwnerKey = (pair: { publicKey: string; privateKey: string }): boolean => {
     try {
