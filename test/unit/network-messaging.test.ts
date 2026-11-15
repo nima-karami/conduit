@@ -155,7 +155,7 @@ it.each([
       {
         name: 'x',
         mime: 'text/plain',
-        data: Buffer.alloc(25 * 1024 * 1024 + 1).toString('base64'),
+        data: Buffer.alloc(10 * 1024 * 1024 + 1).toString('base64'),
       },
     ],
   },

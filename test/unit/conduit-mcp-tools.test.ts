@@ -475,6 +475,35 @@ describe('sendMessage to another machine', () => {
   const queuedAll = (entries: RemoteEntry[]) =>
     entries.map((e) => ({ address: e.address, status: 'queued' as const, reason: null }));
 
+  it('rejects remote attachments above 10 MiB before storing or enqueueing', async () => {
+    const enqueued: string[] = [];
+    const h = await harness({
+      resolve: resolvePeer,
+      enqueueRemote: (msg, entries) => {
+        enqueued.push(msg.messageId);
+        return queuedAll(entries);
+      },
+    });
+    const bytes = new Uint8Array(6 * 1024 * 1024);
+    h.files.one = { ok: true, value: snap('one.txt', 'text/plain', bytes, 'one') };
+    h.files.two = { ok: true, value: snap('two.txt', 'text/plain', bytes, 'two') };
+    const attachments = [{ path: 'one' }, { path: 'two' }];
+    const result = await h.tools.sendMessage(CLAUDE, {
+      to: ['codex-2', 'x@m-0123abcd'],
+      body: 'test',
+      attachments,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: 'too_large', message: expect.stringContaining('10 MiB') },
+    });
+    expect(h.store.threads()).toEqual([]);
+    expect(enqueued).toEqual([]);
+    expect(
+      (await h.tools.sendMessage(CLAUDE, { to: ['codex-2'], body: 'local', attachments })).ok,
+    ).toBe(true);
+  });
+
   it('a remote recipient is stored by its canonical address, enqueued, and reported queued', async () => {
     const enq: Array<[string, string[]]> = [];
     const { tools, store } = await harness({

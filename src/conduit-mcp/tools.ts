@@ -5,6 +5,7 @@ import {
   MAX_ATTACHMENTS,
   MAX_IMAGE_BYTES,
   MAX_MESSAGE_ATTACHMENT_BYTES,
+  MAX_REMOTE_ATTACHMENT_BYTES,
   textPage,
 } from './attachments';
 import type { ToolCallResult } from './json-rpc';
@@ -431,6 +432,8 @@ export function createToolHandlers(deps: ToolDeps): ToolHandlers {
         total += s.value.data.byteLength;
         if (total > MAX_MESSAGE_ATTACHMENT_BYTES)
           return fail('too_large', 'attachments over 25 MB');
+        if (remote.length > 0 && total > MAX_REMOTE_ATTACHMENT_BYTES)
+          return fail('too_large', 'remote attachments over 10 MiB');
         snapshots.push(s.value);
       }
     }

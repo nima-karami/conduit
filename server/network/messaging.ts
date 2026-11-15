@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { atomicWriteFileSync } from '../../src/atomic-write';
-import { MAX_MESSAGE_ATTACHMENT_BYTES } from '../../src/conduit-mcp/attachments';
+import { MAX_REMOTE_ATTACHMENT_BYTES } from '../../src/conduit-mcp/attachments';
 import type {
   McpNetworkPort,
   RemoteEntry,
@@ -204,7 +204,7 @@ export function createMessaging(deps: MessagingDeps): Messaging {
       Buffer.byteLength(wire.body, 'utf8') > MAX_BODY_BYTES ||
       wire.subject.length > 200 ||
       wire.attachments.reduce((n, a) => n + Buffer.byteLength(a.data, 'base64'), 0) >
-        MAX_MESSAGE_ATTACHMENT_BYTES
+        MAX_REMOTE_ATTACHMENT_BYTES
     ) {
       deps.send(machineId, {
         t: 'ack',
