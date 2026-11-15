@@ -122,6 +122,7 @@ export function createPairingService(deps: PairingDeps): PairingService {
   let current: Pairing | null = null;
   // Bumped by every start/join so a call overtaken while it awaits the listener gives up.
   let seq = 0;
+  let openSeq = 0;
   const dialTimeoutMs = deps.dialTimeoutMs ?? 10_000;
 
   const expiresAt = (): string => new Date(deps.now() + PAIRING_WINDOW_MS).toISOString();
@@ -296,11 +297,17 @@ export function createPairingService(deps: PairingDeps): PairingService {
   return {
     async start() {
       const mine = ++seq;
+      const opening = ++openSeq;
       cancelCurrent();
       const code = newCode(deps.rand);
       const addresses = await deps.linkAddresses();
       const shown = await deps.openPairingPort();
-      if (mine !== seq) throw new Error('superseded');
+      if (mine !== seq) {
+        // The port this call opened is orphaned: no pairing will ever own it. Only the newest
+        // opener may close the shared port, or it would shut a pairing that has since started.
+        if (opening === openSeq) deps.closePairingPort();
+        throw new Error('superseded');
+      }
       const pairingId = deps.newId();
       const expires = expiresAt();
       const p: Pairing = {
