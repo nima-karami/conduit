@@ -2,7 +2,11 @@ import { createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes } f
 import os from 'node:os';
 import path from 'node:path';
 import type { McpNetworkPort, NetworkPort } from '../../src/conduit-mcp/remote-routing';
-import { type LinkState, OWN_DEFAULT_CAPABILITIES } from '../../src/contracts/link-protocol';
+import {
+  type Capabilities,
+  type LinkState,
+  OWN_DEFAULT_CAPABILITIES,
+} from '../../src/contracts/link-protocol';
 import type { NetworkState } from '../../src/contracts/network-state';
 import type { ServerEventSink } from '../../src/contracts/server-ports';
 import type { ServerSettings } from '../../src/contracts/server-protocol';
@@ -112,7 +116,10 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
   const directory = createRemoteDirectory();
   /** The last state each link was seen in, to act once on up and down. */
   const seen = new Map<string, LinkState>();
+  /** My capabilities per link as last seen, to push a fresh snapshot when they change. */
+  const capsSeen = new Map<string, string>();
   const live = (st: LinkState | undefined) => st === 'up' || st === 'degraded';
+  const capsKey = (c: Capabilities): string => `${c.messaging}/${c.monitor}/${c.drive}`;
 
   // Runs on every link change, synchronously, so remote rows and the outbox follow at once;
   // only the C2 broadcast below is coalesced.
@@ -130,10 +137,16 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     for (const v of views) {
       const before = seen.get(v.machineId);
       seen.set(v.machineId, v.state);
+      const capsBefore = capsSeen.get(v.machineId);
+      const capsNow = capsKey(v.capabilities);
+      capsSeen.set(v.machineId, capsNow);
       if (live(v.state) && !live(before)) {
         messaging.linkUp(v.machineId);
         publisher.pushTo(v.machineId);
       } else if (!live(v.state) && live(before)) messaging.linkDown(v.machineId);
+      // What the peer sees depends on these, so a change is pushed at once, not only on up.
+      else if (live(v.state) && capsBefore !== undefined && capsBefore !== capsNow)
+        publisher.pushTo(v.machineId);
       relay.linkChanged(v.machineId);
       drive.linkChanged(v.machineId);
     }

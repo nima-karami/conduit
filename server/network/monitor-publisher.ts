@@ -84,12 +84,33 @@ export function snapshotFor(
   seq: number,
 ): MonitorSnapshot | null {
   if (!caps.messaging && !caps.monitor) return null;
+  if (!caps.monitor) {
+    // A messaging-only peer gets the addressing it needs and nothing about the rest of my work.
+    return {
+      seq,
+      sessions: source
+        .sessions()
+        .filter((s) => s.handle !== null)
+        .map((s) => ({
+          ...s,
+          home: '',
+          roots: [],
+          attention: { attentionReason: null, completions: 0 },
+          completions: 0,
+          limit: null,
+        })),
+      requests: [],
+      youUnread: 0,
+      ownerPresence: 'here',
+      agents: caps.drive ? source.agents() : [],
+    };
+  }
   return {
     seq,
     sessions: source.sessions(),
-    requests: caps.monitor ? source.requests() : [],
-    youUnread: caps.monitor ? source.youUnread() : 0,
-    ownerPresence: caps.monitor ? source.ownerPresence() : 'here',
+    requests: source.requests(),
+    youUnread: source.youUnread(),
+    ownerPresence: source.ownerPresence(),
     agents: caps.drive ? source.agents() : [],
   };
 }
