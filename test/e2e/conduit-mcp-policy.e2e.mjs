@@ -306,6 +306,11 @@ await runScenario(
       await until(async () => (await grantOf()) !== undefined, 5_000),
       `A's grants: ${JSON.stringify((await mcpState(page))?.policy?.grants)}`,
     );
+    const sessionLayer = (await mcpState(page))?.policy?.legacy?.sessions?.[a.sessionId];
+    assert(
+      sessionLayer?.open_session?.access !== 'on',
+      `Always wrote the session layer: ${JSON.stringify(sessionLayer)}`,
+    );
     before = await startCall(page, a.sessionId, 'open_session', openArgs(false));
     const quiet = await until(async () => (await card.count()) > 0, 1_000);
     assert(!quiet, 'a card showed after Always for this session');
@@ -340,18 +345,23 @@ await runScenario(
     // Asking again means revoking the Always grant; the session layer never held access:on.
     const grant = await grantOf();
     const revoked = await page.evaluate(
-      (grantId) =>
-        new Promise((resolve) => {
+      ({ grantId, ms }) =>
+        new Promise((resolve, reject) => {
           window.__policyReq = (window.__policyReq ?? 900_000) + 1;
           const requestId = window.__policyReq;
+          const timer = setTimeout(() => {
+            off();
+            reject(new Error(`mcp:revokeGrant ${grantId}: no mcp:policyResult in ${ms} ms`));
+          }, ms);
           const off = window.agentDeck.subscribe((m) => {
             if (m.type !== 'mcp:policyResult' || m.requestId !== requestId) return;
+            clearTimeout(timer);
             off();
             resolve(m.ok);
           });
           window.agentDeck.post({ type: 'mcp:revokeGrant', requestId, grantId });
         }),
-      grant.id,
+      { grantId: grant.id, ms: 10_000 },
     );
     assert(revoked, `mcp:revokeGrant refused ${grant.id}`);
     assert(

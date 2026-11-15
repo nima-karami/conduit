@@ -109,12 +109,17 @@ const policyOf = async (page, id) => (await mcpState(page))?.policy?.sessions?.[
 async function setAssignment(page, sessionId, profileId) {
   await tapMcp(page);
   const reply = await page.evaluate(
-    ({ s, p }) =>
-      new Promise((resolve) => {
+    ({ s, p, ms }) =>
+      new Promise((resolve, reject) => {
         window.__assignReq = (window.__assignReq ?? 800_000) + 1;
         const requestId = window.__assignReq;
+        const timer = setTimeout(() => {
+          off();
+          reject(new Error(`mcp:setAssignment ${p} on ${s}: no mcp:policyResult in ${ms} ms`));
+        }, ms);
         const off = window.agentDeck.subscribe((m) => {
           if (m.type !== 'mcp:policyResult' || m.requestId !== requestId) return;
+          clearTimeout(timer);
           off();
           resolve(m);
         });
@@ -125,7 +130,7 @@ async function setAssignment(page, sessionId, profileId) {
           profileId: p,
         });
       }),
-    { s: sessionId, p: profileId },
+    { s: sessionId, p: profileId, ms: 10_000 },
   );
   assert(
     reply.ok === true,
@@ -172,16 +177,38 @@ await runScenario(
     );
     log('a Worker-allowed call resolves as before ✓');
 
+    phase('Lead +1 session: asks nothing on screen, refused off screen');
+    // Worker's open_session asks, so an on-screen open with no card is the profile's doing.
+    const onScreen = await callTool(page, SEEDED_ID, 'open_session', {
+      path: target,
+      agent: FAKE_AGENT_ID,
+      focus: false,
+    });
+    assert(onScreen?.session_id, `Lead +1 open on screen: ${JSON.stringify(onScreen)}`);
+    assert((await page.locator('.askcard').count()) === 0, 'Lead +1 asked on screen');
+    log('Lead +1 open with focus:false on screen asks nothing ✓');
+
+    const dirO = temp('other');
+    const other = await openFake(page, dirO);
+    await makeActive(other.sessionId);
+    const offScreen = await callTool(page, SEEDED_ID, 'open_session', {
+      path: target,
+      agent: FAKE_AGENT_ID,
+      focus: false,
+    });
+    assert(
+      errCode(offScreen) === 'caller_not_visible',
+      `Lead +1 open off screen: ${JSON.stringify(offScreen)}`,
+    );
+    log('Lead +1 open off screen refused caller_not_visible ✓');
+
     phase('Lead profile on a session opens off screen without an ask');
     const caller = await openFake(page, dirC);
     const active = await openFake(page, dirE);
     await makeActive(active.sessionId);
     await setAssignment(page, caller.sessionId, 'lead');
     assert(
-      await until(
-        async () => (await policyOf(page, caller.sessionId))?.label?.startsWith('Lead'),
-        10_000,
-      ),
+      await until(async () => (await policyOf(page, caller.sessionId))?.label === 'Lead', 10_000),
       `caller label after Lead: ${JSON.stringify(await policyOf(page, caller.sessionId))}`,
     );
 
@@ -238,7 +265,9 @@ await runScenario(
       await until(async () => (await sessions(page)).length === 0, 15_000),
       'sessions survived kill',
     );
-    for (const d of [dirC, dirE, target, seededHome]) await removeDir(d, { budgetMs: 10_000 });
+    for (const d of [dirC, dirE, dirO, target, seededHome]) {
+      await removeDir(d, { budgetMs: 10_000 });
+    }
   },
   { userDataDir },
 );

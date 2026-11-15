@@ -55,7 +55,8 @@ await runScenario(
     const work = mkdtempSync(join(tmpdir(), 'asks-no-window-'));
     const extra = mkdtempSync(join(tmpdir(), 'asks-no-window-extra-'));
     const a = await openFake(page, work);
-    await setSessionPolicy(page, a.sessionId, 'attach_folder', { access: 'ask', when: 'always' });
+    // Worker's attach_folder access is already ask, so only `when` is set.
+    await setSessionPolicy(page, a.sessionId, 'attach_folder', { when: 'always' });
 
     phase('ask waits, then the app quits');
     const before = await startCall(page, a.sessionId, 'attach_folder', { path: extra });
