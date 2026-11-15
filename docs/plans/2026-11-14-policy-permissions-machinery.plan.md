@@ -508,6 +508,7 @@ Failing tests:
 *T2.3 ruling, result union (2026-11-15):* `mcp:toolPolicyResult`'s error union gains `'read-only' | 'scoped'`, with the same message shape. T2.4 shows them as a failed save.
 *T2.3 ruling, required policy field (2026-11-15):* `McpUiState.policy` is required. `ui-types.ts` exports `emptyPolicyUi()`, used by `server/compose.ts` (placeholder state), `webview/bridge.ts` (fake shell) and four test fixtures (`conduit-mcp-view-model`, `message-thread-request-link`, `messages-pane`, `request-popup`). These files join T2.3.
 *T2.3 ruling, projection lower point (2026-11-15):* the legacy session projection's lower point follows `launchedCli` (POL-D5), never the handle's CLI. The `policy-service.ts` implementation joins T2.3 for this change.
+*T2.3 ruling, name clash (2026-11-15):* `policy-targets.ts`'s `TargetSession` becomes `PolicyTargetSession`, because fallow flags a duplicate export with `control-tools.ts`.
 
 #### Task 2.1: migration and projection
 **Files:** create `policy-migration.ts`, `policy-projection.ts`; tests `test/unit/policy-migration.test.ts`, `test/unit/policy-projection.test.ts`.
