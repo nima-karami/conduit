@@ -1093,6 +1093,14 @@ SCRIPT_CANDIDATES: 2
 - **T7.4 ruling:** remote attachments are capped at 10 MiB decoded per message
   (`MAX_REMOTE_ATTACHMENT_BYTES`) so a `msg` frame fits the 16 MiB frame cap. The outbox holds
   blob references, read at flush; a blob gone at flush marks the recipients `undelivered`.
+- **Slice 7 complete.** T7.4 merged (attachments: outbox v2 holds blob references read at flush;
+  10 MiB remote cap both ways). CI run 43749144590: verify green; `net-monitor`, `net-messaging`
+  (now with an attachment), `net-pairing` pass remotely.
+- **Slice 8 rulings (serving side; drive is remote execution):** every `drive.*` frame re-checks my
+  record's `drive` at that moment. `sessionId` must name a live local session. `drive.input` data
+  is capped at 64 KiB per frame. `drive.open` takes only a registered agent id (no command line)
+  and an absolute folder that exists as a directory. Remote open/close exist only as C2 methods,
+  never as MCP tools.
 - **Lanes are Conduit sessions** (`open_session`: codex with gpt-6.1-terra, or cursor-agent with
   composer-2.5). codex-6 works in `/home/namemenima/projects/.wt/conduit/CON-27-s6net`. Remove
   each lane worktree once its last branch merges, because /tmp is a shared quota.
