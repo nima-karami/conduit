@@ -125,6 +125,10 @@ export interface MessageRecord {
   requestId?: string;
   /** The origin machine id when the message arrived over a link; absent means local. */
   origin?: string;
+  /** The origin's own message id, when it arrived over a link (the local id is derived from it). */
+  originMessageId?: string;
+  /** The origin's own thread id, when it arrived over a link. */
+  originThreadId?: string;
   /** Set when a message from `you` on an own-linked machine whose link has drive on is framed as from the human, plan decision 12. */
   originHuman?: true;
 }

@@ -48,6 +48,8 @@ function setup() {
     localDirectory: () => [],
     hasMessage: vi.fn(() => false),
     readBlob: vi.fn(async () => undefined),
+    threadExportedTo: vi.fn(() => false),
+    wireThreadFor: vi.fn((threadId: string) => threadId),
     deliverInbound: vi.fn(async (msg: MessageRecord) =>
       msg.to.map((handle) => ({ handle, status: 'delivered' as const, reason: null })),
     ),

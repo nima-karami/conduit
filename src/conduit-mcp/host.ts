@@ -2645,6 +2645,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       localDirectory: () => directory(),
       hasMessage: (id) => store.has(id),
       readBlob: (sha256) => store.readBlob(sha256),
+      threadExportedTo: () => {
+        throw new Error('CON-27 B1: threadExportedTo is not implemented yet');
+      },
+      wireThreadFor: () => {
+        throw new Error('CON-27 B1: wireThreadFor is not implemented yet');
+      },
       deliverInbound,
       setRemoteStatus: async (messageId, address, status) => {
         // 'queued' is the state a remote recipient starts in, so there is nothing to record.

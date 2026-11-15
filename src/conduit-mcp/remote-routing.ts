@@ -64,9 +64,19 @@ export interface McpNetworkPort {
     blobs: { name: string; mime: string; bytes: Buffer }[],
     framedAsHuman: boolean,
   ): Promise<WireRecipientOutcome[]>;
+  /** True when the local thread already carried a message to a recipient on that machine. */
+  threadExportedTo(threadId: string, machineId: string): boolean;
+  /**
+   * The thread id that machine knows a local thread by: the wire id it sent when the thread came
+   * from there (MessageRecord.originThreadId), otherwise the local id. CON-27 review B1.
+   */
+  wireThreadFor(threadId: string, machineId: string): string;
   /** A receipt or failure for a remote recipient of a message sent from here. */
   setRemoteStatus(messageId: string, address: string, status: RecipientStatus): Promise<void>;
-  /** Fires when a local recipient of a message that came over a link is noticed or reads it. */
+  /**
+   * Fires when a local recipient of a message that came over a link is noticed or reads it.
+   * `messageId` is the origin's own (wire) id, MessageRecord.originMessageId, never the local one.
+   */
   onLocalStatus(
     listener: (
       messageId: string,
