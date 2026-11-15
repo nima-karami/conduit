@@ -1,6 +1,7 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
+  adoptOwnerKey,
   type Identity,
   type IdentityIo,
   type LoadedIdentity,
@@ -141,5 +142,51 @@ describe('readOnlyMachineId', () => {
     });
     expect(readOnlyMachineId(DIR, io)).toBeNull();
     expect(readOnlyMachineId(DIR, memoryIo().io)).toBeNull();
+  });
+});
+
+describe('adoptOwnerKey', () => {
+  const encodeOwner = () => {
+    const k = generateKeyPairSync('ed25519');
+    return {
+      publicKey: k.publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
+      privateKey: k.privateKey.export({ type: 'pkcs8', format: 'der' }).toString('base64'),
+    };
+  };
+  const ownerOf = (id: Identity) =>
+    id.ownerKey?.publicKey.export({ type: 'spki', format: 'der' }).toString('base64') ?? null;
+
+  it('a late owner key does not replace one this server already holds', () => {
+    const { io } = memoryIo();
+    const loaded = loadIdentity(DIR, io);
+    if (loaded.kind === 'newer') throw new Error('unexpected');
+    const first = encodeOwner();
+    const adopted = adoptOwnerKey(DIR, loaded.identity, first, io);
+    if (adopted === null) throw new Error('the first owner key is accepted');
+    expect(adoptOwnerKey(DIR, adopted, encodeOwner(), io)).toBeNull();
+    const reloaded = loadIdentity(DIR, io);
+    if (reloaded.kind === 'newer') throw new Error('unexpected');
+    expect(ownerOf(reloaded.identity)).toBe(first.publicKey);
+  });
+
+  it('the owner key this server already holds is accepted again', () => {
+    const { io } = memoryIo();
+    const loaded = loadIdentity(DIR, io);
+    if (loaded.kind === 'newer') throw new Error('unexpected');
+    const first = encodeOwner();
+    const adopted = adoptOwnerKey(DIR, loaded.identity, first, io);
+    if (adopted === null) throw new Error('the first owner key is accepted');
+    expect(adoptOwnerKey(DIR, adopted, first, io)).not.toBeNull();
+  });
+
+  it('an owner key whose public half does not match its private half is refused', () => {
+    const { io } = memoryIo();
+    const loaded = loadIdentity(DIR, io);
+    if (loaded.kind === 'newer') throw new Error('unexpected');
+    const a = encodeOwner();
+    const b = encodeOwner();
+    expect(
+      adoptOwnerKey(DIR, loaded.identity, { publicKey: a.publicKey, privateKey: b.privateKey }, io),
+    ).toBeNull();
   });
 });
