@@ -1175,10 +1175,10 @@ describe('policy service', () => {
     expect(first).toMatchObject({ decision: 'allow', overrideIds: ['o1'], grantIds: ['g-s2'] });
     expect(second).toMatchObject({ decision: 'allow', overrideIds: ['o1'], grantIds: ['g-s2'] });
 
-    expect(h.service.commit(first)).toBe(true);
+    expect(h.service.commit(first)).not.toBeNull();
     const afterFirst = h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt]);
     h.advance(MIN);
-    expect(h.service.commit(second)).toBe(false);
+    expect(h.service.commit(second)).toBeNull();
     expect(h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt])).toEqual(afterFirst);
     expect(h.service.decide(input).decision).toBe('deny');
   });
@@ -1231,6 +1231,103 @@ describe('policy service', () => {
     h.service.commit(first);
     expect(h.changed()).toBe(before + 1);
     expect(h.service.decide(input).decision).toBe('deny');
+  });
+
+  it('commit returns the override records it removed, and null once they are spent', () => {
+    const override: OneUseOverride = {
+      id: 'oa',
+      sessionId: 's1',
+      tool: 'open_file',
+      target: target({ path: '/w/a/x.ts', folder: '/w/a' }),
+      createdAt: iso(T0),
+    };
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: {
+              profileId: 'worker',
+              onScreenOnly: false,
+              exceptions: [
+                {
+                  tool: 'open_file',
+                  scope: { kind: 'folder', path: '/w/a' },
+                  rule: { decision: 'deny' },
+                },
+              ],
+            },
+          },
+        ],
+        overrides: [override],
+      }),
+    });
+    h.service.start();
+    const first = h.service.decide({
+      principal: session(),
+      tool: 'open_file',
+      targets: [target({ path: '/w/a/x.ts', folder: '/w/a' })],
+      masterOn: true,
+      toYou: false,
+    });
+    expect(h.service.commit(first)).toEqual([override]);
+    expect(h.service.commit(first)).toBeNull();
+  });
+
+  it('a held override passes the still-saved check after its commit removed it, and only grants are touched', () => {
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: {
+              profileId: 'worker',
+              onScreenOnly: false,
+              exceptions: [
+                {
+                  tool: 'open_session',
+                  scope: { kind: 'session', sessionId: 's9' },
+                  rule: { decision: 'deny' },
+                },
+              ],
+            },
+          },
+        ],
+        overrides: [
+          {
+            id: 'o1',
+            sessionId: 's1',
+            tool: 'open_session',
+            target: target({ sessionId: 's9' }),
+            createdAt: iso(T0),
+          },
+        ],
+      }),
+      grants: serializeGrantsFile({
+        version: 1,
+        grants: [grant({ id: 'g-s2', on: { kind: 'session', sessionId: 's2' } })],
+      }),
+    });
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_session' as const,
+      targets: [target({ sessionId: 's9' }), target({ sessionId: 's2' })],
+      masterOn: true,
+      toYou: false,
+    };
+    const removed = h.service.commit(h.service.decide(input));
+    expect(removed).toEqual([expect.objectContaining({ id: 'o1' })]);
+
+    h.advance(MIN);
+    const answer = h.service.decide({ ...input, heldOverrides: removed ?? [] });
+    expect(answer).toMatchObject({ decision: 'allow', overrideIds: ['o1'], grantIds: ['g-s2'] });
+    const before = h.changed();
+    expect(h.service.commit(answer, ['o1'])).toEqual([]);
+    expect(h.changed()).toBe(before);
+    expect(h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt])).toEqual([
+      ['g-s2', iso(h.now())],
+    ]);
   });
 
   it('retains a passed override when another target is denied by the profile', async () => {

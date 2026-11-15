@@ -31,6 +31,7 @@ import type {
   Assignment,
   AssignmentPoint,
   Grant,
+  OneUseOverride,
   PolicyDecision,
   PolicyInput,
   PolicyState,
@@ -66,7 +67,7 @@ export interface PolicyService {
   start(): void;
   stop(): Promise<void>;
   decide(input: Omit<PolicyInput, 'now'>): PolicyDecision;
-  commit(decision: PolicyDecision): boolean;
+  commit(decision: PolicyDecision, held?: readonly string[]): OneUseOverride[] | null;
   noteDecision(activityId: string, input: Omit<PolicyInput, 'now'>, decision: PolicyDecision): void;
   visibleTools(p: Principal): ToolName[];
   setAssignment(
@@ -362,21 +363,24 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       return decideEngine(stateNow(), { ...input, now: deps.now() });
     },
 
-    commit(decision) {
-      // A concurrent call decided on the same override; the first commit spent it.
+    commit(decision, held = []) {
+      // A concurrent call decided on the same override; the first commit spent it. A held id was
+      // spent when its card was raised, so it is not checked against the saved list again.
+      const heldIds = new Set(held);
       const saved = new Set(file.overrides.map((o) => o.id));
-      if (decision.overrideIds.some((id) => !saved.has(id))) return false;
+      if (decision.overrideIds.some((id) => !saved.has(id) && !heldIds.has(id))) return null;
       if (decision.grantIds.length > 0) {
         for (const id of decision.grantIds) grants.touch(id);
         markGrants();
       }
-      if (decision.overrideIds.length > 0) {
-        const used = new Set(decision.overrideIds);
+      const used = new Set(decision.overrideIds.filter((id) => !heldIds.has(id)));
+      const removed = file.overrides.filter((o) => used.has(o.id));
+      if (removed.length > 0) {
         file.overrides = file.overrides.filter((o) => !used.has(o.id));
         markPolicy();
         deps.onChanged();
       }
-      return true;
+      return removed;
     },
 
     noteDecision(activityId, input, decision) {

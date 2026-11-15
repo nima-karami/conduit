@@ -1476,7 +1476,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         if (refused) return { ok: false, error: refused };
         const caller = { handle, sessionId };
         if (isRequestTool(name)) {
-          if (!policyService.commit(resolved)) return { ok: false, error: toolDisabled(name) };
+          if (policyService.commit(resolved) === null)
+            return { ok: false, error: toolDisabled(name) };
           return runRequest(caller, name, args, ctx);
         }
         if (isMessagingTool(name)) {
@@ -1486,7 +1487,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               error: toolError('store_unavailable', storeError ?? 'message store unavailable'),
             };
           }
-          if (!policyService.commit(resolved)) return { ok: false, error: toolDisabled(name) };
+          if (policyService.commit(resolved) === null)
+            return { ok: false, error: toolDisabled(name) };
           return runMessaging(caller, name, args, ctx);
         }
         const controlCtx: ControlCallContext = {
@@ -1508,7 +1510,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           wiredAtLaunch: wiredAtLaunch(sessionId),
           tool: name,
           decision: resolved,
-          commit: () => policyService.commit(resolved),
+          commit: () => policyService.commit(resolved) !== null,
           source: sourceOf(resolved),
           args,
           prepare: () => prepareControl(caller, name, args, controlCtx),
