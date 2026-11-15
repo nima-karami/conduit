@@ -492,6 +492,25 @@ describe('permission requests', () => {
     expect(kept.map((r) => r.id)).toEqual([a2.request.id, a1.request.id]);
   });
 
+  it('the server cap ignores permission records', () => {
+    const h = harness();
+    for (let i = 0; i < CAP_OPEN_PER_SERVER; i++) {
+      h.queue.createBound(stamp({ requester: `p${i}` }), PERMISSION_FIELDS, iso(h.now() + 60_000));
+    }
+    const out = h.queue.createAgent(stamp({ requester: 'late', session: 'sl' }), input());
+    expect(out.kind).toBe('created');
+  });
+
+  it('createBound is uncapped for one requester', () => {
+    const h = harness();
+    const count = CAP_OPEN_PER_SERVER + 1;
+    for (let i = 0; i < count; i++) {
+      const r = h.queue.createBound(stamp(), PERMISSION_FIELDS, iso(h.now() + 60_000));
+      expect(r.state).toBe('open');
+    }
+    expect(h.queue.open()).toHaveLength(count);
+  });
+
   it('answerLate only on an expired permission', () => {
     const h = harness();
     const perm = h.queue.createBound(stamp(), PERMISSION_FIELDS, iso(START + 60_000));
@@ -519,7 +538,9 @@ describe('permission requests', () => {
     expect(notPermission.reason).toBe('not_answerable');
 
     const answered = h.queue.createBound(stamp(), PERMISSION_FIELDS, iso(h.now() + 60_000));
-    h.queue.answer(answered.id, { outcome: 'allowed' }, YOU);
+    const answeredResult = h.queue.answer(answered.id, { outcome: 'allowed' }, YOU);
+    expect(answeredResult.ok).toBe(true);
+    expect(h.queue.get(answered.id)?.state).toBe('answered');
     const afterAnswer = h.queue.answerLate(answered.id, 'g_answered');
     expect(afterAnswer.ok).toBe(false);
     expect(h.queue.get(answered.id)?.permission?.lateGrant).toBeNull();

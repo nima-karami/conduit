@@ -249,7 +249,10 @@ export function createRequestQueue(deps: QueueDeps): RequestQueue {
           'wait before creating another request',
         );
       }
-      if (openRecords().filter((r) => r.id !== replaced?.id).length >= CAP_OPEN_PER_SERVER) {
+      const openAgent = openRecords().filter(
+        (r) => r.source !== 'policy' && r.id !== replaced?.id,
+      ).length;
+      if (openAgent >= CAP_OPEN_PER_SERVER) {
         return refuse(
           'rate_limited',
           `the server already has ${CAP_OPEN_PER_SERVER} open requests`,
