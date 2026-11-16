@@ -832,4 +832,9 @@ So a Codex orchestrator can take over if Claude stops. The lead (claude-3) recei
   - Hook posts are rate-limited at the endpoint, before parsing, to 600 per minute per session token.
   - m5 adds `stripUnprintable` beside `printableName` (which only validates), sharing its regex source.
   - Accepted residuals: today's Activity file isn't size-capped (the 120-rows-per-minute session budget bounds growth; card candidate: a daily cap); a single turn whose span exceeds 32 MiB is baselined, so its gaps go unreported (card candidate: chunked reads).
+- *Security re-review rulings (lane A):*
+  - Missing-profile fallbacks (engine, projection, service) and a custom profile's missing rules all use Observer.
+  - `PolicyState.failClosed`: in the no-good-copy fallback, every principal, peers included, resolves the Observer assignment (remote floors still narrow on top).
+  - m2: commit takes `(input, decision, held: OneUseOverride[])` and refuses when any decision grant is no longer live, or when a fresh decide ranks lower (deny < ask < allow).
+  - The last-good copy is written immediately on load.
 
