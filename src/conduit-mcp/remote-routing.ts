@@ -255,6 +255,7 @@ const ADDRESS_ARG_TOOLS: ReadonlySet<RoutedTool> = new Set<RoutedTool>([
   'read_screen',
   'send_input',
   'close_session',
+  'attach_folder',
 ]);
 const MAX_MACHINE_CHARS = 128;
 
@@ -482,6 +483,11 @@ export function routedAskSummary(
       return { tool: 'read_screen', target: shown ?? target.machine };
     case 'close_session':
       return { tool: 'close_session', target: shown ?? target.machine };
+    case 'attach_folder': {
+      const path = str(args.path);
+      if (path === null) return null;
+      return { tool: 'attach_folder', path, target: shown ?? target.machine };
+    }
     case 'send_input': {
       const text = str(args.text) ?? '';
       const keys = Array.isArray(args.keys)

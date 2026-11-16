@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   FS_MIN_MINOR,
+  FS_WRITE_DATA_MAX,
+  FS_WRITE_MIN_MINOR,
   GIT_MIN_MINOR,
   helloPlatform,
   LINK_PROTOCOL,
@@ -183,6 +185,14 @@ const SAMPLES: { [K in LinkFrame['t']]: Extract<LinkFrame, { t: K }> } = {
   },
   'fs.watch': { t: 'fs.watch', watchId: 'w-1', sessionId: 's-1', path: '/home/u/work' },
   'fs.unwatch': { t: 'fs.unwatch', watchId: 'w-1' },
+  'fs.write': {
+    t: 'fs.write',
+    id: 'f-3',
+    sessionId: 's-1',
+    path: '/home/u/work/a.txt',
+    data: 'hello\n',
+    expect: 'a'.repeat(64),
+  },
   'fs.changed': { t: 'fs.changed', watchId: 'w-1', paths: ['/home/u/work/a.txt'] },
   'git.req': {
     t: 'git.req',
@@ -403,8 +413,8 @@ describe('call and call.result frames (protocol 1.2)', () => {
     expect(parseLinkFrame(frame)).toEqual(frame);
   });
 
-  it('exposes the minor version and the six routed tools', () => {
-    expect(LINK_PROTOCOL).toEqual({ major: 1, minor: 6 });
+  it('exposes the minor version and the seven routed tools', () => {
+    expect(LINK_PROTOCOL).toEqual({ major: 1, minor: 8 });
     expect([...ROUTED_TOOLS]).toEqual([
       'list_agents',
       'open_session',
@@ -412,20 +422,14 @@ describe('call and call.result frames (protocol 1.2)', () => {
       'send_input',
       'read_screen',
       'close_session',
+      'attach_folder',
     ]);
   });
 
   it('accepts each routed tool and rejects any other tool name', () => {
     for (const tool of ROUTED_TOOLS)
       expect(parseLinkFrame({ ...ROUTED_CALL, tool })).not.toBeNull();
-    for (const tool of [
-      'focus_session',
-      'attach_folder',
-      'drive_session',
-      'OPEN_SESSION',
-      '',
-      'open_session ',
-    ])
+    for (const tool of ['focus_session', 'drive_session', 'OPEN_SESSION', '', 'open_session '])
       expect(parseLinkFrame({ ...ROUTED_CALL, tool }), tool).toBeNull();
   });
 
@@ -753,9 +757,87 @@ describe('fs frames (protocol 1.4)', () => {
   });
 });
 
+describe('fs.write and the conflict error (protocol 1.7)', () => {
+  const HASH = 'ab'.repeat(32);
+  const WRITE = {
+    t: 'fs.write',
+    id: 'f-3',
+    sessionId: 's-1',
+    path: '/w/a.txt',
+    data: 'x',
+    expect: HASH,
+  };
+  it('is the minor that added fs.write, not the current one', () => {
+    expect(FS_WRITE_MIN_MINOR).toBe(7);
+  });
+  it('takes a 64-hex expect or null, and nothing else', () => {
+    expect(parseLinkFrame(structuredClone(WRITE))).toEqual(WRITE);
+    expect(parseLinkFrame({ ...WRITE, expect: null })).not.toBeNull();
+    expect(parseLinkFrame({ ...WRITE, expect: HASH.toUpperCase() })).toBeNull();
+    expect(parseLinkFrame({ ...WRITE, expect: HASH.slice(1) })).toBeNull();
+    expect(parseLinkFrame({ ...WRITE, expect: undefined })).toBeNull();
+    expect(parseLinkFrame({ ...WRITE, data: 3 })).toBeNull();
+    expect(parseLinkFrame({ ...WRITE, machineId: 'm-1' })).toBeNull();
+  });
+  it('bounds data in UTF-8 bytes, not characters', () => {
+    // Each € is 3 UTF-8 bytes, so this string is exactly the cap in bytes but well under it in chars.
+    const atCap = '\u20ac'.repeat(FS_WRITE_DATA_MAX / 4) + 'x'.repeat(FS_WRITE_DATA_MAX / 4);
+    expect(parseLinkFrame({ ...WRITE, data: atCap })).not.toBeNull();
+    expect(parseLinkFrame({ ...WRITE, data: `${atCap}\u20ac` })).toBeNull();
+  });
+  it('a write result carries a hash', () => {
+    const res = { t: 'fs.res', id: 'f-3', ok: true, result: { op: 'write', hash: HASH } };
+    expect(parseLinkFrame(structuredClone(res))).toEqual(res);
+    expect(parseLinkFrame({ ...res, result: { op: 'write', hash: 'x' } })).toBeNull();
+  });
+  it('a conflict carries currentHash, and no other error may', () => {
+    const conflict = (currentHash: unknown) => ({
+      t: 'fs.res',
+      id: 'f-3',
+      ok: false,
+      error: { code: 'conflict', message: 'changed on B', currentHash },
+    });
+    expect(parseLinkFrame(conflict(HASH))).not.toBeNull();
+    expect(parseLinkFrame(conflict(null))).not.toBeNull();
+    expect(parseLinkFrame(conflict('nope'))).toBeNull();
+    const bare = conflict(HASH);
+    expect(
+      parseLinkFrame({ ...bare, error: { code: 'conflict', message: 'changed on B' } }),
+    ).toBeNull();
+    expect(
+      parseLinkFrame({ ...bare, error: { code: 'refused', message: 'no', currentHash: HASH } }),
+    ).toBeNull();
+    expect(
+      parseLinkFrame({
+        t: 'git.res',
+        id: 'g-1',
+        ok: false,
+        error: { code: 'conflict', message: 'no', currentHash: HASH },
+      }),
+    ).toBeNull();
+  });
+  it('a read may carry the hash of the bytes B read', () => {
+    const file = {
+      path: '/w/a',
+      content: 'x',
+      language: 'plaintext',
+      truncated: false,
+      binary: false,
+    };
+    const res = (f: unknown) => ({
+      t: 'fs.res',
+      id: 'f-2',
+      ok: true,
+      result: { op: 'read', file: f },
+    });
+    expect(parseLinkFrame(res({ ...file, hash: HASH }))).not.toBeNull();
+    expect(parseLinkFrame(res({ ...file, hash: 'zz' }))).toBeNull();
+  });
+});
+
 describe('git frames (protocol 1.6)', () => {
-  it('serves git reads from the current minor', () => {
-    expect(GIT_MIN_MINOR).toBe(LINK_PROTOCOL.minor);
+  it('serves git reads from minor 6', () => {
+    expect(GIT_MIN_MINOR).toBe(6);
   });
   it('refuses a git.req with a bad sha, an oversized limit, an unknown op or an extra arg', () => {
     const ok = {

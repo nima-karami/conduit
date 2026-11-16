@@ -1,4 +1,5 @@
 import type { GroupIndex } from './doc-groups';
+import type { OpenDoc } from './docs';
 import { createPathRegistry } from './path-registry';
 import { activeDocPath } from './save-registry';
 
@@ -24,7 +25,7 @@ export function registerChangeNav(
 }
 
 function changeNavForActiveDoc(
-  docs: readonly { id: string; path: string }[],
+  docs: readonly Pick<OpenDoc, 'id' | 'path' | 'kind'>[],
   activeId: string | null,
   group: GroupIndex,
 ): ChangeNavEntry | undefined {
@@ -39,7 +40,7 @@ function changeNavForActiveDoc(
  * announcement, which is why an empty file still reaches this.
  */
 export function goToChangeInActiveDoc(
-  docs: readonly { id: string; path: string }[],
+  docs: readonly Pick<OpenDoc, 'id' | 'path' | 'kind'>[],
   activeId: string | null,
   direction: 'next' | 'prev',
   group: GroupIndex = 1,

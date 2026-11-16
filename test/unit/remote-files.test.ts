@@ -6,7 +6,12 @@ import {
 } from '../../electron/remote-files';
 import { ServerCallError, type ServerCallOptions } from '../../electron/server-client';
 import type { ServerEvents, ServerMethods } from '../../src/contracts/server-protocol';
-import type { FileContentDTO, HostToWebview, WebviewToHost } from '../../src/protocol';
+import type {
+  FileContentDTO,
+  HostToWebview,
+  RemoteWriteResult,
+  WebviewToHost,
+} from '../../src/protocol';
 
 const file: FileContentDTO = {
   path: '/w/a.txt',
@@ -24,10 +29,12 @@ function rig() {
   const logs: string[] = [];
   let nextWatch = 0;
   let failWith: { method: RemoteFilesMethod; error: Error } | null = null;
+  let writeReply: RemoteWriteResult = { kind: 'written', hash: 'h1' };
   // Each watch mints a fresh watch id, so a test can tell the watches apart.
   const replies: { [M in RemoteFilesMethod]: () => ServerMethods[M]['result'] } = {
     'remote.fs.list': () => ({ path: '/w', entries: [{ name: 'a.txt', kind: 'file' }] }),
     'remote.fs.read': () => file,
+    'remote.fs.write': () => writeReply,
     'remote.fs.stat': () => ({ kind: 'file', size: 5, mtimeMs: 0 }),
     'remote.fs.watch': () => {
       nextWatch += 1;
@@ -57,8 +64,24 @@ function rig() {
     failNext: (method: RemoteFilesMethod, error: Error) => {
       failWith = { method, error };
     },
+    setWriteReply: (result: RemoteWriteResult) => {
+      writeReply = result;
+    },
   };
 }
+
+const writeMsg = (
+  requestId: number,
+  expect: string | null,
+): Extract<WebviewToHost, { type: 'remoteFs:write' }> => ({
+  type: 'remoteFs:write',
+  requestId,
+  machineId: 'm',
+  sessionId: 's',
+  path: '/w/a.txt',
+  data: 'new text',
+  expect,
+});
 
 const watchMsg = (key: string): Extract<WebviewToHost, { type: 'remoteFs:watch' }> => ({
   type: 'remoteFs:watch',
@@ -256,6 +279,82 @@ describe('remote files routing', () => {
           requestId: 8,
           result: { ok: false, error: 'timeout' },
         },
+      },
+    ]);
+  });
+
+  it('a written save replies to the asking window with its requestId', async () => {
+    const { files, sent } = rig();
+
+    await files.write(4, writeMsg(11, 'h0'));
+
+    expect(sent).toEqual([
+      {
+        windowId: 4,
+        message: {
+          type: 'remoteFs:written',
+          requestId: 11,
+          result: { kind: 'written', hash: 'h1' },
+        },
+      },
+    ]);
+  });
+
+  it('a conflict whose file is gone passes currentHash null through', async () => {
+    const { files, setWriteReply, sent } = rig();
+    setWriteReply({ kind: 'conflict', currentHash: null });
+
+    await files.write(1, writeMsg(12, 'h0'));
+
+    expect(sent).toEqual([
+      {
+        windowId: 1,
+        message: {
+          type: 'remoteFs:written',
+          requestId: 12,
+          result: { kind: 'conflict', currentHash: null },
+        },
+      },
+    ]);
+  });
+
+  it('a failed write replies kind error with the fault code', async () => {
+    const { files, failNext, sent } = rig();
+    failNext(
+      'remote.fs.write',
+      new ServerCallError('peer_incompatible', 'B predates fs.write; update Conduit there'),
+    );
+
+    await files.write(1, writeMsg(13, null));
+
+    expect(sent).toEqual([
+      {
+        windowId: 1,
+        message: {
+          type: 'remoteFs:written',
+          requestId: 13,
+          result: { kind: 'error', error: 'peer_incompatible' },
+        },
+      },
+    ]);
+  });
+
+  it('the write reaches C2 with exactly the saved fields and the write budget', async () => {
+    const { files, calls } = rig();
+
+    await files.write(1, writeMsg(14, 'h0'));
+
+    expect(calls).toEqual([
+      {
+        method: 'remote.fs.write',
+        params: {
+          machineId: 'm',
+          sessionId: 's',
+          path: '/w/a.txt',
+          data: 'new text',
+          expect: 'h0',
+        },
+        opts: { timeoutMs: 35_000 },
       },
     ]);
   });

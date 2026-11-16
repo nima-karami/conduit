@@ -79,6 +79,27 @@ const FILE_ERROR: Record<string, string> = {
   timeout: 'That machine didn’t answer in time.',
 };
 
+/** Why a remote save failed, by the code the host reports; the save never says what it can't know. */
+const SAVE_ERROR: Record<string, (machine: string) => string> = {
+  peer_incompatible: (m) => `Update Conduit on ${m} to save files there.`,
+  refused: (m) => `${m} won’t let this file be saved.`,
+  too_large: () => 'This file is too large to save on another machine.',
+  not_found: (m) => `The folder for this file isn’t there on ${m} anymore.`,
+  // B may have written it before the answer was lost; the next save will conflict if it did.
+  timeout: (m) => `${m} didn’t answer. The save may or may not have landed.`,
+  peer_unreachable: (m) => `${m} isn’t reachable. The save may or may not have landed.`,
+};
+
+/** Why a git read on B failed, by the code the host reports; the default names only the machine. */
+const GIT_ERROR: Record<string, (machine: string) => string> = {
+  refused: (m) => `${m} won’t show this.`,
+  not_found: (m) => `That file or folder isn’t there on ${m} anymore.`,
+  timeout: (m) => `${m} didn’t answer in time.`,
+  peer_unreachable: (m) => `${m} isn’t reachable right now.`,
+  peer_incompatible: (m) => `Update Conduit on ${m} to read its git history.`,
+  history_failed: (m) => `Couldn’t read this repository’s history on ${m}.`,
+};
+
 const PANE_ERROR: Record<string, string> = {
   peer_unreachable: 'That machine isn’t reachable right now.',
   peer_revoked: 'That machine was removed.',
@@ -190,6 +211,18 @@ export const MACHINES_STR = {
   filesLoading: 'Loading…',
   /** A remote file tab's read-only banner: its text is the machine's, never this computer's. */
   remoteFileReadOnly: (machine: string) => `Read-only: this file is on ${machine}`,
+  /** A remote save refused because B's file changed since this editor loaded it. */
+  remoteFileChanged: (machine: string) => `The file changed on ${machine}.`,
+  remoteFileDeleted: (machine: string) => `The file was deleted on ${machine}.`,
+  remoteConflictShowDiff: 'Show diff',
+  remoteConflictHideDiff: 'Hide diff',
+  /** Saves the edit over the version just reported, and only that version. */
+  remoteConflictReapply: 'Save mine anyway',
+  remoteConflictDiscard: (machine: string) => `Use ${machine}’s version`,
+  /** Discard could not re-read a remote file; the tab keeps what it shows. */
+  remoteFileReloadFailed: (machine: string) => `Couldn’t reload this file from ${machine}.`,
+  remoteSaveError: (code: string, machine: string) =>
+    SAVE_ERROR[code]?.(machine) ?? `Couldn’t save this file on ${machine}.`,
   anotherMachine: 'another machine',
   fileError: (code: string) => FILE_ERROR[code] ?? 'This file couldn’t be read on that machine.',
   filesRetry: 'Retry',
@@ -207,4 +240,20 @@ export const MACHINES_STR = {
   changesHistory: 'History',
   changesOffline: (machine: string) => `${machine} is offline`,
   changesList: (machine: string) => `Changes on ${machine}`,
+  // Remote diff and history tabs (plan CON-45 G5).
+  gitNoTarget: 'Conduit doesn’t know which repository to show.',
+  /** A git read that B refused or failed; `machine` is named in each sentence. */
+  gitError: (code: string, machine: string) =>
+    GIT_ERROR[code]?.(machine) ?? `Couldn’t read git on ${machine}.`,
+  historyLoading: 'Loading history…',
+  historyEmpty: 'No commits yet.',
+  historyList: (machine: string) => `Commits on ${machine}`,
+  historyLoadMore: 'Load more',
+  historyLoadingMore: 'Loading more…',
+  historyPick: 'Pick a commit to see what it changed.',
+  historyLoadingCommit: 'Loading this commit…',
+  historyTruncated: 'Only part of this commit is shown.',
+  historyNoFiles: 'This commit changes no files.',
+  historyFiles: 'Files in this commit',
+  diffLoading: 'Loading diff…',
 };

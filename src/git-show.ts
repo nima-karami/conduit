@@ -21,6 +21,9 @@ export interface GitShow {
   headShaFor(root: string): Promise<string | null>;
   gitShow(absPath: string, ref?: DiffBase): Promise<string | Unmerged>;
   gitShowBuffer(absPath: string, ref?: DiffBase): Promise<Buffer | null | Unmerged>;
+  /** The same reads, in a repo whose top level the caller has already chosen (never recomputed). */
+  gitShowIn(root: string, absPath: string, ref?: DiffBase): Promise<string | Unmerged>;
+  gitShowBufferIn(root: string, absPath: string, ref?: DiffBase): Promise<Buffer | null | Unmerged>;
 }
 
 /**
@@ -89,9 +92,13 @@ export function createGitShow(): GitShow {
       return r.ok ? r.stdout.trim() || null : null;
     });
 
-  const gitShow = async (absPath: string, ref: DiffBase = 'head'): Promise<string | Unmerged> => {
-    const root = await repoTopLevel(path.dirname(absPath));
-    const rel = root ? repoRelPath(root, absPath) : null;
+  /** The text blob of `absPath` in the repo whose top level is `root`, which the caller checked. */
+  const gitShowIn = async (
+    root: string,
+    absPath: string,
+    ref: DiffBase = 'head',
+  ): Promise<string | Unmerged> => {
+    const rel = repoRelPath(root, absPath);
     if (!rel) return '';
     const res = await gitShowBlob(root, rel, ref);
     if (res.ok) return res.bytes.toString('utf8');
@@ -99,15 +106,15 @@ export function createGitShow(): GitShow {
   };
 
   /**
-   * Binary-safe blob read. Resolves `null` when the ref has no blob for the path (new/untracked
-   * file) or the read fails — the caller treats that as "added".
+   * Binary-safe blob read in the repo whose top level is `root`. Resolves `null` when the ref has
+   * no blob for the path (new/untracked file) or the read fails — the caller treats that as "added".
    */
-  const gitShowBuffer = async (
+  const gitShowBufferIn = async (
+    root: string,
     absPath: string,
     ref: DiffBase = 'head',
   ): Promise<Buffer | null | Unmerged> => {
-    const root = await repoTopLevel(path.dirname(absPath));
-    const rel = root ? repoRelPath(root, absPath) : null;
+    const rel = repoRelPath(root, absPath);
     if (!rel) return null;
     const res = await gitShowBlob(root, rel, ref, IMAGE_BLOB_MAX_BUFFER);
     if (res.ok) {
@@ -121,5 +128,18 @@ export function createGitShow(): GitShow {
     return ref === 'index' && (await indexUnmerged(root, rel)) ? UNMERGED : null;
   };
 
-  return { repoTopLevel, headShaFor, gitShow, gitShowBuffer };
+  const gitShow = async (absPath: string, ref: DiffBase = 'head'): Promise<string | Unmerged> => {
+    const root = await repoTopLevel(path.dirname(absPath));
+    return root ? gitShowIn(root, absPath, ref) : '';
+  };
+
+  const gitShowBuffer = async (
+    absPath: string,
+    ref: DiffBase = 'head',
+  ): Promise<Buffer | null | Unmerged> => {
+    const root = await repoTopLevel(path.dirname(absPath));
+    return root ? gitShowBufferIn(root, absPath, ref) : null;
+  };
+
+  return { repoTopLevel, headShaFor, gitShow, gitShowBuffer, gitShowIn, gitShowBufferIn };
 }

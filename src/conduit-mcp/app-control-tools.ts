@@ -1,8 +1,9 @@
 // The seven app-control tools (spec 2026-10-30-conduit-mcp-app-control §2.1) on the shared
 // prepared() pipeline. Node-free: git, folders, windows and the renderer step are deps.
-import { extname } from 'node:path';
+import { extname, isAbsolute, resolve } from 'node:path';
 import { folderKey } from '../folder-key';
 import type { RefEndpoint } from '../git-range';
+import { isDenied } from '../network/fs-deny';
 import { decodePatchBytes, MAX_PATCH_BYTES, parsePatch, patchOverSizeCap } from '../patch-parse';
 import type { CommitNode } from '../protocol';
 import type { SessionOpener } from '../types';
@@ -515,16 +516,29 @@ export function createAppControlHandlers(
       }),
 
     prepareAttachFolder: (caller, raw, ctx) =>
-      preparedLocal('attach_folder', caller, async (who) => {
+      prepared('attach_folder', caller, async (who) => {
         const o = parseObject(raw, ['path', 'session']);
         if (isFail(o)) return o;
-        // Relative to the caller's home, whichever session it attaches to (spec §2.1).
-        const abs = deps.resolvePath(who.home, o.path as string);
         const named = o.session !== undefined;
-        let target: { sessionId: string; handle: string } = {
-          sessionId: who.sessionId,
-          handle: caller.handle,
-        };
+        let abs: string;
+        if (isLocalWho(who)) {
+          // Relative to the caller's home, whichever session it attaches to (spec §2.1).
+          abs = deps.resolvePath(who.home, o.path as string);
+        } else {
+          // A remote lead has no home here, so its path must name the folder outright (CON-44 W5).
+          if (!isAbsolute(o.path as string))
+            return fail('invalid_args', `use an absolute path on ${deps.selfName()}`);
+          abs = resolve(o.path as string);
+          const real = (await deps.realPath(abs)) ?? abs;
+          if (isDenied(abs) || isDenied(real))
+            return fail(
+              'attach_refused',
+              `can't attach ${abs}: credential and agent folders are never served`,
+            );
+        }
+        let target: { sessionId: string; handle: string } | undefined = isLocalWho(who)
+          ? { sessionId: who.sessionId, handle: caller.handle }
+          : undefined;
         if (named) {
           const t = resolveTarget(o.session, 'attach_folder', who, ctx.reach);
           if (isFail(t)) return t;
@@ -532,6 +546,8 @@ export function createAppControlHandlers(
           if (out) return out;
           target = t;
         }
+        if (target === undefined)
+          return fail('invalid_args', 'name the session on this machine that the folder joins');
         return {
           summary: { tool: 'attach_folder', path: abs, target: target.handle },
           exec: async (token) => {

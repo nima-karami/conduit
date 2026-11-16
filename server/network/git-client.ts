@@ -32,6 +32,7 @@ const GIT_ERROR_KIND: Record<FsErrorCode, ServerErrorKind> = {
   too_large: 'too_large',
   unavailable: 'unavailable',
   failed: 'unavailable',
+  conflict: 'conflict',
 };
 
 type GitResFrame = Extract<LinkFrame, { t: 'git.res' }>;

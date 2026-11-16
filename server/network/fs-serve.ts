@@ -8,6 +8,7 @@ import type {
   LinkFrame,
   LinkState,
 } from '../../src/contracts/link-protocol';
+import { MAX_BYTES } from '../../src/file-service';
 import { mediaKindForPath, pdfKindForPath } from '../../src/media-kind';
 import { confineFsPath } from '../../src/network/fs-confine';
 import { isDenied } from '../../src/network/fs-deny';
@@ -15,11 +16,15 @@ import type { LinkRecord } from '../../src/network/link-file';
 import type { DirEntryDTO, FileContentDTO } from '../../src/protocol';
 import type { AuditSink } from './audit-log';
 import { isInboundSsh } from './calls';
+import { sha256Of } from './sha256';
 
 // B serves files to its ssh controller (CON-43 plan decisions 1-6). A peer's path is confined and
 // deny-listed here, never on the far side; a refusal touches no file.
 
-export type FsServeFrame = Extract<LinkFrame, { t: 'fs.req' | 'fs.watch' | 'fs.unwatch' }>;
+export type FsServeFrame = Extract<
+  LinkFrame,
+  { t: 'fs.req' | 'fs.write' | 'fs.watch' | 'fs.unwatch' }
+>;
 
 /** At most one `fs.refused` audit entry per link in this window, as calls.ts does. */
 export const FS_REFUSAL_AUDIT_MS = 60_000;
@@ -79,6 +84,10 @@ export interface FsServeDeps {
   readDir(absPath: string): Promise<DirEntryDTO[]>;
   readFile(absPath: string): Promise<FileContentDTO>;
   stat(absPath: string): Promise<FsStat>;
+  /** SHA-256 hex of the file's raw bytes; null when there is no such file. */
+  hashFile(absPath: string): Promise<string | null>;
+  /** Writes UTF-8 text so the target is only ever the old or the new content. */
+  writeFileAtomic(absPath: string, data: string): Promise<void>;
   watchDir: typeof watchDir;
   send(machineId: string, frame: LinkFrame): void;
   audit: AuditSink;
@@ -94,7 +103,10 @@ export interface FsServe {
   watchCount(machineId: string): number;
 }
 
-type Reply = { ok: true; result: FsResult } | { ok: false; code: FsErrorCode; message: string };
+type Reply =
+  | { ok: true; result: FsResult }
+  | { ok: false; code: Exclude<FsErrorCode, 'conflict'>; message: string }
+  | { ok: false; code: 'conflict'; message: string; currentHash: string | null };
 
 interface Watch {
   close(): void;
@@ -124,7 +136,15 @@ export function createFsServe(deps: FsServeDeps): FsServe {
       machineId,
       r.ok
         ? { t: 'fs.res', id, ok: true, result: r.result }
-        : { t: 'fs.res', id, ok: false, error: { code: r.code, message: r.message } },
+        : {
+            t: 'fs.res',
+            id,
+            ok: false,
+            error:
+              r.code === 'conflict'
+                ? { code: r.code, message: r.message, currentHash: r.currentHash }
+                : { code: r.code, message: r.message },
+          },
     );
   };
 
@@ -134,11 +154,27 @@ export function createFsServe(deps: FsServeDeps): FsServe {
     const media = mediaKindForPath(real) !== null || pdfKindForPath(real);
     if (media && st.size > RAW_MEDIA_MAX)
       return { ok: false, code: 'too_large', message: 'the file is over 6 MiB' };
+    // Hashed before the read: a change in between leaves the content newer than the hash, so the
+    // next save conflicts instead of overwriting what the editor never saw. A file a read can
+    // return whole is at most MAX_BYTES, so a larger one is not hashed at all.
+    const before = !media && st.size <= MAX_BYTES ? await deps.hashFile(real) : null;
     const file = await deps.readFile(real);
+    const editable =
+      !file.binary &&
+      !file.truncated &&
+      file.error === undefined &&
+      file.readOnlyReason === undefined;
     // A's tab keys its content by the path it asked for, not by where B found it.
     return {
       ok: true,
-      result: { op: 'read', file: { ...file, path: requested, readOnlyReason: 'remote' } },
+      result: {
+        op: 'read',
+        file: {
+          ...file,
+          path: requested,
+          ...(editable && before !== null ? { hash: before } : {}),
+        },
+      },
     };
   };
 
@@ -187,6 +223,71 @@ export function createFsServe(deps: FsServeDeps): FsServe {
     }
     if (answer.ok && JSON.stringify(answer.result).length > ENCODED_RESULT_MAX)
       answer = { ok: false, code: 'too_large', message: 'the result is over 8 MiB' };
+    reply(machineId, frame.id, answer);
+  };
+
+  /** A write's parent must be a folder now; a missing one is not_found, not a failed write. */
+  const statIfThere = async (p: string): Promise<FsStat | null> => {
+    try {
+      return await deps.stat(p);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw err;
+    }
+  };
+
+  const serveWrite = async (machineId: string, frame: Extract<FsServeFrame, { t: 'fs.write' }>) => {
+    if (!servable(machineId)) {
+      refuse(machineId, 'not_controller');
+      return reply(machineId, frame.id, { ok: false, code: 'refused', message: NOT_SERVED });
+    }
+    const roots = deps.sessionRoots(frame.sessionId);
+    if (roots === null)
+      return reply(machineId, frame.id, { ok: false, code: 'not_found', message: NO_SESSION });
+    const confined = await confineFsPath(frame.path, roots, { allowMissing: true });
+    if (!confined.ok) {
+      if (confined.code === 'refused') {
+        refuse(machineId, 'path');
+        return reply(machineId, frame.id, { ok: false, code: 'refused', message: NOT_SERVED });
+      }
+      return reply(machineId, frame.id, { ok: false, code: 'not_found', message: NOT_FOUND });
+    }
+    if (isDenied(frame.path) || isDenied(confined.real)) {
+      refuse(machineId, 'path');
+      return reply(machineId, frame.id, { ok: false, code: 'refused', message: NOT_SERVED });
+    }
+    // The write goes to the resolved file, never the named path: a symlink inside the roots is
+    // written through, so it stays a symlink.
+    let answer: Reply;
+    try {
+      const parent = await statIfThere(path.dirname(confined.real));
+      if (parent?.kind !== 'dir') answer = { ok: false, code: 'not_found', message: NOT_FOUND };
+      else {
+        const existing = await statIfThere(confined.real);
+        if (existing !== null && existing.kind !== 'file')
+          answer = { ok: false, code: 'failed', message: FAILED };
+        else {
+          const current = await deps.hashFile(confined.real);
+          const stale = frame.expect === null ? current !== null : current !== frame.expect;
+          if (stale)
+            answer = {
+              ok: false,
+              code: 'conflict',
+              message: 'the file changed since it was loaded',
+              currentHash: current,
+            };
+          else {
+            await deps.writeFileAtomic(confined.real, frame.data);
+            answer = {
+              ok: true,
+              result: { op: 'write', hash: sha256Of(Buffer.from(frame.data, 'utf8')) },
+            };
+          }
+        }
+      }
+    } catch (err) {
+      answer = errorReply(err);
+    }
     reply(machineId, frame.id, answer);
   };
 
@@ -297,6 +398,7 @@ export function createFsServe(deps: FsServeDeps): FsServe {
   return {
     async onFrame(machineId, frame) {
       if (frame.t === 'fs.req') return serveRequest(machineId, frame);
+      if (frame.t === 'fs.write') return serveWrite(machineId, frame);
       if (frame.t === 'fs.watch') return openWatch(machineId, frame);
       closeWatch(machineId, frame.watchId);
     },

@@ -150,11 +150,14 @@ export function resolveTargets(
           deps,
         ),
       );
-    case 'attach_folder':
+    case 'attach_folder': {
+      // A session on another machine: its folder is that machine's to check (callAsRemote), so none is named here.
+      const onAnotherMachine = oneString(args.session).some((s) => s.includes('@'));
       return [
         ...sessionTargets(handleRefs(oneString(args.session), deps)),
-        ...folderTargets(oneString(args.path), caller, deps),
+        ...(onAnotherMachine ? [] : folderTargets(oneString(args.path), caller, deps)),
       ];
+    }
     case 'open_session':
     case 'open_terminal':
       // A path on another machine is no folder of mine, so it names no folder target (CON-40 S3).

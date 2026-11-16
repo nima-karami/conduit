@@ -23,6 +23,7 @@ import type {
   DirEntryDTO,
   FileContentDTO,
   HostToWebview,
+  RemoteWriteResult,
   TermGeometry,
   TermStartMode,
   WebviewToHost,
@@ -579,6 +580,17 @@ export interface ServerMethods {
   'remote.fs.read': {
     params: { machineId: string; sessionId: string; path: string };
     result: FileContentDTO;
+  };
+  /** A save, written by B only if the file still hashes to `expect` (plan CON-44). */
+  'remote.fs.write': {
+    params: {
+      machineId: string;
+      sessionId: string;
+      path: string;
+      data: string;
+      expect: string | null;
+    };
+    result: RemoteWriteResult;
   };
   'remote.fs.stat': {
     params: { machineId: string; sessionId: string; path: string };

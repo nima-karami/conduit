@@ -3,7 +3,11 @@ import type { AuditEvent } from '../../server/network/audit-log';
 import { handleFsCall } from '../../server/network/c2';
 import { createFsClient, FS_REQ_MS } from '../../server/network/fs-client';
 import type { LinkFrame, LinkState } from '../../src/contracts/link-protocol';
-import { OWN_DEFAULT_CAPABILITIES } from '../../src/contracts/link-protocol';
+import {
+  FS_WRITE_DATA_MAX,
+  FS_WRITE_MIN_MINOR,
+  OWN_DEFAULT_CAPABILITIES,
+} from '../../src/contracts/link-protocol';
 import type { LinkRecord } from '../../src/network/link-file';
 
 // A asks a machine it dialed over ssh for files (CON-43 T2, plan decisions 1, 7 and 8). Requests
@@ -359,5 +363,212 @@ describe('remote.fs C2 methods refuse bad params as invalid (CON-43 T2)', () => 
     const out = handleFsCall('remote.fs.list', good, { fs: s.fs, peer });
     s.fs.onFrame(machine, { t: 'fs.res', id: 'r-1', ok: true, result: listing });
     expect(await out).toEqual({ path: '/a', entries: listing.entries });
+  });
+});
+
+const expectHash = 'a'.repeat(64);
+const writtenHash = 'b'.repeat(64);
+
+describe('fs write: A saves on a dialed machine (CON-44 W2)', () => {
+  const save = (s: ReturnType<typeof setup>, signal?: AbortSignal) =>
+    s.fs.write(machine, 'sess', '/a/x.txt', 'hi', expectHash, signal);
+  const writeFrame = {
+    t: 'fs.write',
+    id: 'r-1',
+    sessionId: 'sess',
+    path: '/a/x.txt',
+    data: 'hi',
+    expect: expectHash,
+  };
+
+  it('a save resolves written with the hash B wrote, and sends exactly one fs.write', async () => {
+    const s = setup({ minor: FS_WRITE_MIN_MINOR });
+    const pending = save(s);
+    expect(s.sent).toEqual([{ machineId: machine, frame: writeFrame }]);
+    s.fs.onFrame(machine, {
+      t: 'fs.res',
+      id: 'r-1',
+      ok: true,
+      result: { op: 'write', hash: writtenHash },
+    });
+    expect(await pending).toEqual({ kind: 'written', hash: writtenHash });
+  });
+
+  it('a conflict with a hash resolves as a conflict carrying the hash B has now', async () => {
+    const s = setup({ minor: FS_WRITE_MIN_MINOR });
+    const pending = save(s);
+    s.fs.onFrame(machine, {
+      t: 'fs.res',
+      id: 'r-1',
+      ok: false,
+      error: { code: 'conflict', message: 'changed', currentHash: writtenHash },
+    });
+    expect(await pending).toEqual({ kind: 'conflict', currentHash: writtenHash });
+  });
+
+  it('a conflict on a file that is gone resolves as a conflict with a null hash', async () => {
+    const s = setup({ minor: FS_WRITE_MIN_MINOR });
+    const pending = save(s);
+    s.fs.onFrame(machine, {
+      t: 'fs.res',
+      id: 'r-1',
+      ok: false,
+      error: { code: 'conflict', message: 'gone', currentHash: null },
+    });
+    expect(await pending).toEqual({ kind: 'conflict', currentHash: null });
+  });
+
+  it('a refusal rejects with its kind', async () => {
+    const s = setup({ minor: FS_WRITE_MIN_MINOR });
+    const pending = save(s);
+    s.fs.onFrame(machine, {
+      t: 'fs.res',
+      id: 'r-1',
+      ok: false,
+      error: { code: 'refused', message: 'the deny-list' },
+    });
+    await expect(pending).rejects.toMatchObject({ kind: 'refused', message: 'the deny-list' });
+  });
+
+  it('a peer below FS_WRITE_MIN_MINOR is refused peer_incompatible and nothing is sent', async () => {
+    const s = setup({ minor: FS_WRITE_MIN_MINOR - 1 });
+    await expect(save(s)).rejects.toMatchObject({ kind: 'peer_incompatible' });
+    expect(s.sent).toEqual([]);
+  });
+
+  it('a machine not dialed over ssh is refused and nothing is sent', async () => {
+    const s = setup({ minor: FS_WRITE_MIN_MINOR, link: sshInbound() });
+    await expect(save(s)).rejects.toMatchObject({ kind: 'refused' });
+    expect(s.sent).toEqual([]);
+  });
+
+  it('a link drop while the save is pending rejects peer_unreachable and is not re-sent', async () => {
+    const s = setup({ minor: FS_WRITE_MIN_MINOR });
+    const pending = save(s);
+    s.setState('down');
+    s.fs.linksChanged([{ machineId: machine, state: 'down' }]);
+    await expect(pending).rejects.toMatchObject({ kind: 'peer_unreachable' });
+    expect(s.sent).toHaveLength(1);
+  });
+
+  it('a timeout rejects peer_unreachable, says the save may have landed, and is not re-sent', async () => {
+    const s = setup({ minor: FS_WRITE_MIN_MINOR });
+    const pending = save(s);
+    expect(s.timers.map((t) => t.ms)).toEqual([FS_REQ_MS]);
+    s.fire();
+    await expect(pending).rejects.toMatchObject({
+      kind: 'peer_unreachable',
+      message: expect.stringContaining('may or may not have landed'),
+    });
+    expect(s.sent).toHaveLength(1);
+  });
+
+  it('an abort rejects unavailable', async () => {
+    const s = setup({ minor: FS_WRITE_MIN_MINOR });
+    const controller = new AbortController();
+    const pending = save(s, controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ kind: 'unavailable' });
+  });
+
+  it('an answer that is not a write is unavailable', async () => {
+    const s = setup({ minor: FS_WRITE_MIN_MINOR });
+    const pending = save(s);
+    s.fs.onFrame(machine, { t: 'fs.res', id: 'r-1', ok: true, result: listing });
+    await expect(pending).rejects.toMatchObject({ kind: 'unavailable' });
+  });
+
+  it('a read answered with a write, or with a conflict, is unavailable', async () => {
+    const s = setup({});
+    const read = s.fs.request(machine, 'list', 'sess', '/a');
+    s.fs.onFrame(machine, {
+      t: 'fs.res',
+      id: 'r-1',
+      ok: true,
+      result: { op: 'write', hash: writtenHash },
+    });
+    await expect(read).rejects.toMatchObject({ kind: 'unavailable' });
+    const conflicted = s.fs.request(machine, 'read', 'sess', '/a');
+    s.fs.onFrame(machine, {
+      t: 'fs.res',
+      id: 'r-2',
+      ok: false,
+      error: { code: 'conflict', message: 'x', currentHash: null },
+    });
+    await expect(conflicted).rejects.toMatchObject({ kind: 'unavailable' });
+  });
+});
+
+describe('remote.fs.write C2 method (CON-44 W2)', () => {
+  const peer = { name: 'app' };
+  const good = {
+    machineId: machine,
+    sessionId: 'sess',
+    path: '/a/x.txt',
+    data: 'hi',
+    expect: null,
+  };
+  const fault = (f: () => unknown): unknown => {
+    try {
+      f();
+    } catch (e) {
+      return e;
+    }
+    return undefined;
+  };
+
+  it.each([
+    ['a short expect', { ...good, expect: 'abc' }],
+    ['an expect in uppercase hex', { ...good, expect: 'A'.repeat(64) }],
+    ['an expect that is missing', { ...good, expect: undefined }],
+    ['data that is not a string', { ...good, data: 3 }],
+  ])('refuses %s as invalid', (_name, params) => {
+    const s = setup({ minor: FS_WRITE_MIN_MINOR });
+    expect(fault(() => handleFsCall('remote.fs.write', params, { fs: s.fs, peer }))).toMatchObject({
+      kind: 'invalid',
+    });
+    expect(s.sent).toEqual([]);
+  });
+
+  it('refuses data over the cap as too_large', () => {
+    const s = setup({ minor: FS_WRITE_MIN_MINOR });
+    const data = 'x'.repeat(FS_WRITE_DATA_MAX + 1);
+    expect(
+      fault(() => handleFsCall('remote.fs.write', { ...good, data }, { fs: s.fs, peer })),
+    ).toMatchObject({ kind: 'too_large' });
+    expect(s.sent).toEqual([]);
+  });
+
+  it('counts multi-byte data in UTF-8 bytes: two-byte characters past the cap are too_large', () => {
+    const s = setup({ minor: FS_WRITE_MIN_MINOR });
+    const data = 'é'.repeat(4_300_000); // 4.3M units, 8.6M bytes
+    expect(
+      fault(() => handleFsCall('remote.fs.write', { ...good, data }, { fs: s.fs, peer })),
+    ).toMatchObject({ kind: 'too_large' });
+  });
+
+  it('a good call passes through: the frame is sent and the answer resolves', async () => {
+    const s = setup({ minor: FS_WRITE_MIN_MINOR });
+    const out = handleFsCall('remote.fs.write', good, { fs: s.fs, peer });
+    expect(s.sent).toEqual([
+      {
+        machineId: machine,
+        frame: {
+          t: 'fs.write',
+          id: 'r-1',
+          sessionId: 'sess',
+          path: '/a/x.txt',
+          data: 'hi',
+          expect: null,
+        },
+      },
+    ]);
+    s.fs.onFrame(machine, {
+      t: 'fs.res',
+      id: 'r-1',
+      ok: true,
+      result: { op: 'write', hash: writtenHash },
+    });
+    expect(await out).toEqual({ kind: 'written', hash: writtenHash });
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { goToChangeInActiveDoc, registerChangeNav } from '../../webview/change-nav-registry';
 
-const docs = [{ id: 'file:/a.ts', path: '/a.ts' }];
+const docs = [{ id: 'file:/a.ts', path: '/a.ts', kind: 'file' as const }];
 
 function entry() {
   return { next: vi.fn(), prev: vi.fn(), hasChanges: () => true };

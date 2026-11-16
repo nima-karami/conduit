@@ -238,7 +238,18 @@ export interface FileContentDTO {
   /** The content is the whole file, but saving it could change bytes the user never touched
    *  (spec 2026-10-08-language-support §2.4), so the doc opens read-only. */
   readOnlyReason?: 'invalid-utf8' | 'mixed-eol' | 'remote';
+  /** Remote reads only: the SHA-256 of the file's bytes on B, the `expect` of its next save
+   *  (plan CON-44 decision 3). Absent when the file can't be edited there. */
+  hash?: string;
 }
+
+/** A save on B (plan CON-44): it landed, or B's file changed since the editor loaded it. */
+export type RemoteWriteResult =
+  | { kind: 'written'; hash: string }
+  /** B left the file as it was; `currentHash` is what it has now, null when the file is gone. */
+  | { kind: 'conflict'; currentHash: string | null };
+/** A remote save as the renderer hears of it: B's answer, or why it never got one. */
+export type RemoteWriteOutcome = RemoteWriteResult | { kind: 'error'; error: string };
 
 export interface FileDiffDTO {
   path: string;
@@ -673,6 +684,7 @@ export type HostToWebview =
       result: { ok: true; file: FileContentDTO } | { ok: false; error: string };
     }
   | { type: 'remoteFs:changed'; key: string; paths: string[] }
+  | { type: 'remoteFs:written'; requestId: number; result: RemoteWriteOutcome }
   | {
       type: 'remoteGit:result';
       requestId: number;
@@ -1414,6 +1426,16 @@ export type WebviewToHost =
   // Remote files (plan CON-43): never readDir/readFile, so no path-keyed local code sees them.
   | { type: 'remoteFs:list'; requestId: number; machineId: string; sessionId: string; path: string }
   | { type: 'remoteFs:read'; requestId: number; machineId: string; sessionId: string; path: string }
+  | {
+      type: 'remoteFs:write';
+      requestId: number;
+      machineId: string;
+      sessionId: string;
+      path: string;
+      data: string;
+      /** The hash the editor loaded, or B's currentHash for a Re-apply; null creates. */
+      expect: string | null;
+    }
   | { type: 'remoteFs:watch'; key: string; machineId: string; sessionId: string; path: string }
   | { type: 'remoteFs:unwatch'; key: string }
   | {

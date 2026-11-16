@@ -28,7 +28,13 @@ export function RemoteDocView({ doc, machineName }: { doc: RemoteFileDoc; machin
     <CodeViewer
       doc={file}
       viewStateId={stateKey}
-      source={{ kind: 'remote', machineId: target.machine.machineId, machineName }}
+      source={{
+        kind: 'remote',
+        key: target.id,
+        machineId: target.machine.machineId,
+        machineName,
+        sessionId: target.machine.sessionId,
+      }}
     />
   );
 }

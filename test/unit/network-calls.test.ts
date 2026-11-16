@@ -386,6 +386,45 @@ describe('call: the A-side router (CON-40 S3, plan decision 1 and 5)', () => {
     expect(s.sent).toEqual([]);
   });
 
+  it('attach_folder to a peer below minor 8 is peer_incompatible, and nothing is sent (CON-44 W5)', async () => {
+    const attach = {
+      tool: 'attach_folder' as const,
+      args: { path: '/w/x', session: 'h' },
+      principal: 'claude-3',
+    };
+    const s = setup({ link: dialedSsh(), minor: 7 });
+    const out = await s.calls.call(machine, attach.tool, attach.args, attach.principal, never);
+    expect(out).toMatchObject({
+      ok: false,
+      error: {
+        code: 'peer_incompatible',
+        message: "laptop runs a Conduit that can't attach folders from another machine",
+        hint: 'update Conduit on laptop',
+      },
+    });
+    expect(s.sent).toEqual([]);
+  });
+
+  it('attach_folder to a peer at minor 8 is sent', async () => {
+    const attach = {
+      tool: 'attach_folder' as const,
+      args: { path: '/w/x', session: 'h' },
+      principal: 'claude-3',
+    };
+    const s = setup({ link: dialedSsh(), minor: 8 });
+    const pending = s.calls.call(machine, attach.tool, attach.args, attach.principal, never);
+    expect(s.sent).toHaveLength(1);
+    const frame = s.sent[0]?.frame;
+    if (frame?.t !== 'call') throw new Error('expected a call frame');
+    s.calls.onResult(machine, {
+      t: 'call.result',
+      id: frame.id,
+      ok: true,
+      result: { attached: true },
+    });
+    expect(await pending).toMatchObject({ ok: true });
+  });
+
   it('a link that is not up is peer_unreachable, with a hint to connect the machine first', async () => {
     for (const state of ['down', 'connecting', null] as const) {
       const s = setup({ link: dialedSsh(), state });

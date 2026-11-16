@@ -196,7 +196,7 @@ export const TOOL_SPECS: Readonly<{
     access: ACCESS_VALUES,
     reach: REACH_TO_WINDOW,
     budget: 'act',
-    defaults: { access: 'ask', when: 'viewing', reach: 'self' },
+    defaults: { access: 'ask', when: 'viewing', reach: 'opened' },
   },
   close_files: VIEW_SPEC,
   open_review: VIEW_SPEC,

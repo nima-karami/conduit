@@ -22,14 +22,22 @@ export type { Capabilities, Capability } from './remote-principal';
 // minor 5 added `policy.changed` / `policy.push` / `policy.pushed` / `policy.revoke` (plan
 // 2026-11-16-remote-ssh-rules, Technical decisions 3).
 // minor 6 added `git.req` / `git.res` (spec 5.3, CON-45).
-export const LINK_PROTOCOL = { major: 1, minor: 6 } as const;
+// minor 7 added `fs.write`, the `write` fs result, the `conflict` fs error and a read's `hash` (CON-44).
+// minor 8 added the routed attach_folder tool (CON-44).
+export const LINK_PROTOCOL = { major: 1, minor: 8 } as const;
 /** The lowest peer minor that serves `call` frames: a routed call to an older peer is refused, not sent. */
 export const ROUTED_CALLS_MIN_MINOR = 2;
+/** The lowest peer minor that serves a routed attach_folder: an older peer is refused, not sent it. */
+export const ROUTED_ATTACH_MIN_MINOR = 8;
 /** The lowest peer minor that serves request frames: an older peer gets no mirror and no answers. */
 export const REQUEST_MIRROR_MIN_MINOR = 3;
 /** The lowest peer minor that serves fs frames: a file request to an older peer is refused, not sent. */
 export const FS_MIN_MINOR = 4;
 export const FS_OPS = ['list', 'read', 'stat'] as const;
+/** The lowest peer minor that writes files: an older peer's files stay read-only (plan CON-44). */
+export const FS_WRITE_MIN_MINOR = 7;
+/** An `fs.write`'s data, in UTF-8 bytes (spec 5.3: 8 MiB per frame's payload). */
+export const FS_WRITE_DATA_MAX = 8 * 1024 * 1024;
 /** The lowest peer minor that serves git reads (plan CON-45). */
 export const GIT_MIN_MINOR = 6;
 export const GIT_OPS = ['status', 'diff', 'log', 'show'] as const;
@@ -61,13 +69,22 @@ export const FS_ERROR_CODES = [
   'too_large',
   'unavailable',
   'failed',
+  /** fs.write only: the file no longer has the content the editor loaded (RS-D17 a). */
+  'conflict',
 ] as const;
 export type FsErrorCode = (typeof FS_ERROR_CODES)[number];
+/**
+ * An `fs.res` error. `currentHash` comes with `conflict` and only with it: the SHA-256 of the file
+ * B has now, or null when it no longer exists, so a Re-apply can name exactly what it overwrites.
+ */
+export type FsError = { code: FsErrorCode; message: string; currentHash?: string | null };
 /** One `fs.res` result; list entries never include a deny-listed name (plan CON-43 decision 3). */
 export type FsResult =
   | { op: 'list'; path: string; entries: DirEntryDTO[] }
   | { op: 'read'; file: FileContentDTO }
-  | { op: 'stat'; kind: 'file' | 'dir'; size: number; mtimeMs: number };
+  | { op: 'stat'; kind: 'file' | 'dir'; size: number; mtimeMs: number }
+  /** The SHA-256 of the bytes B wrote: the `expect` of the next save. */
+  | { op: 'write'; hash: string };
 /** The lowest peer minor that serves policy frames: an older peer gets no snapshot and refuses pushes. */
 export const POLICY_MIN_MINOR = 5;
 export const LINK_FEATURES = ['messaging', 'monitor', 'drive', 'view'] as const;
@@ -80,6 +97,7 @@ export const ROUTED_TOOLS = [
   'send_input',
   'read_screen',
   'close_session',
+  'attach_folder',
 ] as const;
 export type RoutedTool = (typeof ROUTED_TOOLS)[number];
 // The argument blob is re-serialized into a tool call on the far side; the cap keeps one frame
@@ -224,7 +242,19 @@ export type LinkFrame =
   /** A file request from A's owner, served only on an inbound ssh controller link (plan CON-43). */
   | { t: 'fs.req'; id: string; op: FsOp; sessionId: string; path: string }
   | { t: 'fs.res'; id: string; ok: true; result: FsResult }
-  | { t: 'fs.res'; id: string; ok: false; error: { code: FsErrorCode; message: string } }
+  | { t: 'fs.res'; id: string; ok: false; error: FsError }
+  /**
+   * A save from A's owner, served like fs.req. `expect` is the SHA-256 of the content the editor
+   * loaded, or null for "create; it must not exist yet". Never replayed (plan CON-44 decision 1).
+   */
+  | {
+      t: 'fs.write';
+      id: string;
+      sessionId: string;
+      path: string;
+      data: string;
+      expect: string | null;
+    }
   /** Re-sent by A after a reconnect, never replayed; B drops a link's watches when it goes down. */
   | { t: 'fs.watch'; watchId: string; sessionId: string; path: string }
   | { t: 'fs.unwatch'; watchId: string }
@@ -582,6 +612,20 @@ export function parseLinkFrame(raw: unknown): LinkFrame | null {
         : null;
     case 'fs.unwatch':
       return frame(raw, 'fs.unwatch', ['watchId'], (r) => isCallId(r.watchId)) ? raw : null;
+    case 'fs.write':
+      return frame(
+        raw,
+        'fs.write',
+        ['id', 'sessionId', 'path', 'data', 'expect'],
+        (r) =>
+          isCallId(r.id) &&
+          isPrintableCapped(r.sessionId, FS_SESSION_ID_MAX) &&
+          isFsPath(r.path) &&
+          isWriteData(r.data) &&
+          (r.expect === null || isSha256(r.expect)),
+      )
+        ? raw
+        : null;
     case 'fs.changed':
       return frame(
         raw,
@@ -1003,13 +1047,35 @@ function parseFsRes(r: Rec): LinkFrame | null {
   if (!isCallId(r.id) || !bool(r.ok)) return null;
   if (r.ok)
     return frame(r, 'fs.res', ['id', 'ok', 'result'], (x) => isFsResult(x.result)) ? r : null;
-  return frame(r, 'fs.res', ['id', 'ok', 'error'], (x) => isFsError(x.error)) ? r : null;
+  return frame(r, 'fs.res', ['id', 'ok', 'error'], (x) => isFsResError(x.error)) ? r : null;
 }
 
+/** A content hash on the wire: lowercase SHA-256 hex, as B computes it (plan CON-44 decision 3). */
+export const SHA256_HEX = /^[0-9a-f]{64}$/;
+const isSha256 = (v: unknown): boolean => str(v) && SHA256_HEX.test(v);
+const utf8 = new TextEncoder();
+/** Bounded in UTF-8 bytes, as B will write them; the cheap length test skips encoding most saves. */
+const isWriteData = (v: unknown): v is string =>
+  str(v) && (v.length * 3 <= FS_WRITE_DATA_MAX || utf8.encode(v).length <= FS_WRITE_DATA_MAX);
+
+/** An fs.res error: `currentHash` is present exactly when the code is `conflict`. */
+function isFsResError(v: unknown): boolean {
+  if (!isRec(v)) return false;
+  if (v.code !== 'conflict') return isFsError(v);
+  return (
+    hasKeys(v, ['code', 'message', 'currentHash']) &&
+    str(v.message) &&
+    v.message.length <= ERROR_MESSAGE_MAX &&
+    (v.currentHash === null || isSha256(v.currentHash))
+  );
+}
+
+/** An error without a hash: `conflict` answers only an fs.write, through isFsResError. */
 function isFsError(v: unknown): boolean {
   return (
     hasKeys(v, ['code', 'message']) &&
     oneOf(v.code, FS_ERROR_CODES) &&
+    v.code !== 'conflict' &&
     str(v.message) &&
     v.message.length <= ERROR_MESSAGE_MAX
   );
@@ -1040,6 +1106,8 @@ function isFsResult(v: unknown): boolean {
         int(v.size) &&
         num(v.mtimeMs)
       );
+    case 'write':
+      return hasKeys(v, ['op', 'hash']) && isSha256(v.hash);
     default:
       return false;
   }
@@ -1051,7 +1119,7 @@ function isFileContent(v: unknown): boolean {
     hasKeys(
       v,
       ['path', 'content', 'language', 'truncated', 'binary'],
-      ['error', 'image', 'pdf', 'window', 'readOnlyReason'],
+      ['error', 'image', 'pdf', 'window', 'readOnlyReason', 'hash'],
     ) &&
     isFsPath(v.path) &&
     str(v.content) &&
@@ -1068,7 +1136,8 @@ function isFileContent(v: unknown): boolean {
       (hasKeys(v.pdf, ['dataUrl', 'bytes']) && str(v.pdf.dataUrl) && int(v.pdf.bytes))) &&
     (v.window === undefined || v.window === 'tail') &&
     (v.readOnlyReason === undefined ||
-      oneOf(v.readOnlyReason, ['invalid-utf8', 'mixed-eol', 'remote'] as const))
+      oneOf(v.readOnlyReason, ['invalid-utf8', 'mixed-eol', 'remote'] as const)) &&
+    (v.hash === undefined || isSha256(v.hash))
   );
 }
 

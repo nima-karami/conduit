@@ -32,11 +32,12 @@ describe('local path of a doc', () => {
     const dirty = new RecordingSet([PATH]);
     expect(localPathOf(remote)).toBeNull();
     expect(isDocDirty(remote, dirty)).toBe(false);
-    expect(dirty.consulted).toEqual([]);
+    // A remote file is keyed by its doc id, so the question is asked of that id and never of PATH.
+    expect(dirty.consulted).toEqual([remote.id]);
 
     // The same path as a local doc is the dirty file, so the check above is not vacuous.
     expect(localPathOf(local)).toBe(PATH);
     expect(isDocDirty(local, dirty)).toBe(true);
-    expect(dirty.consulted).toEqual([PATH]);
+    expect(dirty.consulted).toEqual([remote.id, PATH]);
   });
 });

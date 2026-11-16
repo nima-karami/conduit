@@ -12,12 +12,19 @@ import {
 
 describe('activeDocPath — routes the active tab to its file path', () => {
   const docs = [
-    { id: 'file:/a.ts', path: '/a.ts' },
-    { id: 'file:/b.ts', path: '/b.ts' },
+    { id: 'file:/a.ts', path: '/a.ts', kind: 'file' as const },
+    { id: 'file:/b.ts', path: '/b.ts', kind: 'file' as const },
+    { id: 'remote-file@M1:/a.ts', path: '/a.ts', kind: 'remote-file' as const },
+    { id: 'remote-diff@M1:/a.ts', path: '/a.ts', kind: 'remote-diff' as const },
   ];
 
   it('returns the path of the active doc', () => {
     expect(activeDocPath(docs, 'file:/b.ts')).toBe('/b.ts');
+  });
+
+  it('routes a remote file by its doc id, never to the local file of the same path', () => {
+    expect(activeDocPath(docs, 'remote-file@M1:/a.ts')).toBe('remote-file@M1:/a.ts');
+    expect(activeDocPath(docs, 'remote-diff@M1:/a.ts')).toBe(null);
   });
 
   it('returns null when the Terminal tab is active (null id)', () => {
@@ -64,7 +71,7 @@ describe('saveActiveDoc — invokes the active doc’s registered save', () => {
   it('calls save() for the active doc’s path', () => {
     const save = vi.fn();
     registerSave('/active.ts', { save });
-    const docs = [{ id: 'file:/active.ts', path: '/active.ts' }];
+    const docs = [{ id: 'file:/active.ts', path: '/active.ts', kind: 'file' as const }];
     saveActiveDoc(docs, 'file:/active.ts');
     expect(save).toHaveBeenCalledTimes(1);
   });
@@ -72,12 +79,12 @@ describe('saveActiveDoc — invokes the active doc’s registered save', () => {
   it('is a no-op when the Terminal tab is active', () => {
     const save = vi.fn();
     registerSave('/t.ts', { save });
-    saveActiveDoc([{ id: 'file:/t.ts', path: '/t.ts' }], null);
+    saveActiveDoc([{ id: 'file:/t.ts', path: '/t.ts', kind: 'file' as const }], null);
     expect(save).not.toHaveBeenCalled();
   });
 
   it('is a no-op when the active doc has no registered entry', () => {
-    const docs = [{ id: 'file:/unreg.ts', path: '/unreg.ts' }];
+    const docs = [{ id: 'file:/unreg.ts', path: '/unreg.ts', kind: 'file' as const }];
     // No registration for /unreg.ts -> must not throw, must do nothing.
     expect(() => saveActiveDoc(docs, 'file:/unreg.ts')).not.toThrow();
   });
@@ -134,7 +141,7 @@ describe('save-registry — routing helpers save as manual', () => {
   it('routing helpers call save with no argument', async () => {
     const save = vi.fn(async () => true);
     const off = registerSave('/r.ts', { save });
-    saveActiveDoc([{ id: 'file:/r.ts', path: '/r.ts' }], 'file:/r.ts');
+    saveActiveDoc([{ id: 'file:/r.ts', path: '/r.ts', kind: 'file' as const }], 'file:/r.ts');
     saveDocByPath('/r.ts');
     await saveAllDirtyDocs(new Set(['/r.ts']));
     expect(save).toHaveBeenCalledTimes(3);

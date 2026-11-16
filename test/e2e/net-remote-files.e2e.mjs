@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,8 +18,11 @@ import { ECHO_AGENT, linkView, networkState, startServer } from './net-helpers.m
 
 // The remote Files tab over one ssh link, on fake-ssh: B's session folder holds a.txt, .env,
 // .ssh/id_rsa and sub/b.txt. A's Files tree for the remote session lists a.txt and sub, not the
-// denied .env or .ssh; a click opens a read-only remote tab with B's text, and a change on B shows
-// up in that tab. Over A's C2, B refuses the denied and out-of-folder reads. Optional screenshots:
+// denied .env or .ssh; a click opens a remote tab with B's text, and a change on B shows up in
+// that tab. Over A's C2, B refuses the denied and out-of-folder reads. Then editing (CON-44): a
+// typed edit saved with Mod+S lands on B; a save after B moved on is refused with a conflict
+// banner and a diff, and "Save mine anyway" or B's version resolves it; B refuses denied writes;
+// a lead's routed attach_folder adds a B folder to the session. Optional screenshots:
 // CONDUIT_E2E_SHOTS=<dir>.
 
 const WAIT_MS = 15_000;
@@ -120,6 +124,18 @@ async function run(page, userDataDir, log) {
       writeFileSync(join(bWork, '.ssh', 'id_rsa'), 'key');
       mkdirSync(join(bWork, 'sub'));
       writeFileSync(join(bWork, 'sub', 'b.txt'), 'nested');
+      // A repo, so the Changes, diff and history phases (CON-45) have B's git state to show.
+      const git = (...args) =>
+        execFileSync(
+          'git',
+          ['-c', 'user.name=e2e', '-c', 'user.email=e2e@example.invalid', ...args],
+          {
+            cwd: bWork,
+          },
+        );
+      git('init', '-q');
+      git('add', '.');
+      git('commit', '-qm', 'first on B');
 
       phase('1. A adds B over ssh; a Lead agent on A opens a session on B; its remote row shows');
       const added = await appC2.call('link.sshAdd', {
@@ -207,12 +223,13 @@ async function run(page, userDataDir, log) {
         `the remote tab never showed "hello from B": ${JSON.stringify(await remoteTab(page))}`,
       );
       const tab = await remoteTab(page);
+      // B runs this build, which saves files, so the tab takes edits (CON-44).
       assert(
-        tab.readOnly === true,
-        `the remote tab's editor is not read-only: ${JSON.stringify(tab)}`,
+        tab.readOnly === false,
+        `the remote tab's editor is read-only: ${JSON.stringify(tab)}`,
       );
       await shot('2', 'remote-tab', page.locator('.viewer__monaco').first());
-      log(`remote tab ${tab.uri} reads "hello from B" and is read-only ✓`);
+      log(`remote tab ${tab.uri} reads "hello from B" and is editable ✓`);
 
       phase('4. a change on B reaches the open remote tab');
       writeFileSync(join(bWork, 'a.txt'), 'changed on B');
@@ -264,6 +281,169 @@ async function run(page, userDataDir, log) {
         `expanding sub never listed b.txt: ${JSON.stringify(await treeLabels(tree))}`,
       );
       log('sub expanded, b.txt listed ✓');
+
+      phase('7. a typed edit saved with Mod+S lands on B');
+      const editor = page.locator('.viewer__monaco').first();
+      const typeAtEnd = async (text) => {
+        await editor.click();
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type(text);
+      };
+      const bText = () => readFileSync(join(bWork, 'a.txt'), 'utf8');
+      await typeAtEnd(' +A1');
+      await page.keyboard.press('Control+s');
+      assert(
+        await pollUntil(async () => bText() === 'changed on B +A1', WAIT_MS, 200),
+        `the save never landed on B: ${JSON.stringify(bText())}`,
+      );
+      log('typed edit saved to B ✓');
+
+      phase('8. B moves on under a dirty tab: the save is refused, the diff shows, mine wins');
+      await typeAtEnd(' +A2');
+      writeFileSync(join(bWork, 'a.txt'), 'B moved on');
+      // Saved at once: B's file already differs from what the tab loaded, so B refuses it whether
+      // or not the watch's re-read has landed (a dirty buffer is never refreshed: unit-tested in
+      // remote-file-saves.test.ts).
+      await page.keyboard.press('Control+s');
+      const banner = page.locator('.viewer__banner--warn', { hasText: `changed on ${bName}` });
+      await banner.waitFor({ state: 'visible', timeout: WAIT_MS });
+      assert(bText() === 'B moved on', `B's file changed despite the conflict: ${bText()}`);
+      const held = await remoteTab(page);
+      assert(
+        held?.text === 'changed on B +A1 +A2',
+        `the conflicted tab lost the edit: ${JSON.stringify(held)}`,
+      );
+      await banner.getByRole('button', { name: 'Show diff' }).click();
+      await page.locator('.remote-conflict__diff').waitFor({ state: 'visible', timeout: WAIT_MS });
+      await shot('3', 'remote-conflict', page.locator('.viewer').first());
+      await banner.getByRole('button', { name: 'Save mine anyway' }).click();
+      assert(
+        await pollUntil(async () => bText() === 'changed on B +A1 +A2', WAIT_MS, 200),
+        `"Save mine anyway" never landed: ${JSON.stringify(bText())}`,
+      );
+      await banner.waitFor({ state: 'hidden', timeout: WAIT_MS });
+      log('conflict refused, diff shown, re-apply landed ✓');
+
+      phase("9. B moves on again: taking B's version replaces the edit");
+      await typeAtEnd(' +A3');
+      writeFileSync(join(bWork, 'a.txt'), 'B wins');
+      await page.keyboard.press('Control+s');
+      await banner.waitFor({ state: 'visible', timeout: WAIT_MS });
+      await banner.getByRole('button', { name: `Use ${bName}’s version` }).click();
+      assert(
+        await pollUntil(async () => (await remoteTab(page))?.text === 'B wins', WAIT_MS, 200),
+        `the tab never took B's version: ${JSON.stringify(await remoteTab(page))}`,
+      );
+      assert(bText() === 'B wins', `taking B's version wrote to B: ${bText()}`);
+      log("B's version taken, nothing written ✓");
+
+      phase('10. B refuses denied and out-of-folder writes');
+      const writes = [
+        ['the .env in the session folder', join(bWork, '.env')],
+        ['a file outside the session', join(b.userData, 'planted.txt')],
+      ];
+      for (const [what, path] of writes) {
+        const message = await rejectionOf(
+          appC2.call('remote.fs.write', {
+            machineId: bId,
+            sessionId: remoteId,
+            path,
+            data: 'x',
+            expect: null,
+          }),
+        );
+        assert(
+          message?.includes(REFUSED),
+          `remote.fs.write of ${what} did not refuse: ${message ?? 'it resolved'}`,
+        );
+        log(`remote.fs.write ${what} refused ✓`);
+      }
+      assert(readFileSync(join(bWork, '.env'), 'utf8') === 'SECRET=1', '.env changed');
+      assert(!existsSync(join(b.userData, 'planted.txt')), 'a file was planted outside');
+
+      phase("11. a lead's routed attach_folder adds a B folder to the session");
+      const extra = join(b.userData, 'extra');
+      mkdirSync(extra);
+      writeFileSync(join(extra, 'c.txt'), 'attached');
+      const before = await rejectionOf(
+        appC2.call('remote.fs.list', { machineId: bId, sessionId: remoteId, path: extra }),
+      );
+      assert(before?.includes(REFUSED), `the folder was served before attach: ${before}`);
+      const attached = await callAppTool(page, lead.sessionId, 'attach_folder', {
+        path: extra,
+        // open_session already answers with the address form, handle@machine.
+        session: opened.handle,
+      });
+      assert(attached !== null && !attached.error, `attach_folder: ${JSON.stringify(attached)}`);
+      assert(
+        await pollUntil(
+          async () => {
+            try {
+              const r = await appC2.call('remote.fs.list', {
+                machineId: bId,
+                sessionId: remoteId,
+                path: extra,
+              });
+              return r.entries.some((e) => e.name === 'c.txt');
+            } catch {
+              return false;
+            }
+          },
+          WAIT_MS,
+          250,
+        ),
+        'the attached folder never became readable in the session',
+      );
+      log('attach_folder added the B folder ✓');
+
+      phase("12. Changes lists B's modified file, never a denied one; a click opens B's diff");
+      await showRightView(page, 'changes');
+      const changes = page.getByRole('list', { name: `Changes on ${bName}` });
+      await changes.waitFor({ state: 'visible', timeout: WAIT_MS });
+      const changePaths = () => changes.locator('.remote-changes__path').allTextContents();
+      assert(
+        await pollUntil(async () => (await changePaths()).includes('a.txt'), WAIT_MS, 250),
+        `remote Changes never listed a.txt: ${JSON.stringify(await changePaths())}`,
+      );
+      assert(
+        !(await changePaths()).some((p) => p.includes('.env') || p.includes('.ssh')),
+        `remote Changes shows a denied path: ${JSON.stringify(await changePaths())}`,
+      );
+      await changes.locator('.remote-changes__row', { hasText: 'a.txt' }).click();
+      const diffSides = () =>
+        page.evaluate(() => (window.monaco?.editor.getModels() ?? []).map((m) => m.getValue()));
+      assert(
+        await pollUntil(
+          async () => {
+            const sides = await diffSides();
+            return sides.includes('hello from B') && sides.includes('B wins');
+          },
+          WAIT_MS,
+          250,
+        ),
+        "the remote diff never showed HEAD's text against B's file",
+      );
+      await shot('4', 'remote-changes', page.locator('#right-pane'));
+      log('remote Changes lists a.txt, its diff shows HEAD vs B ✓');
+
+      phase("13. History lists B's commit, and the commit's files");
+      await changes.getByRole('button', { name: 'History' }).first().click();
+      const commit = page.locator('.remote-history__commit', { hasText: 'first on B' });
+      await commit.waitFor({ state: 'visible', timeout: WAIT_MS });
+      await commit.click();
+      await page
+        .locator('.remote-history__file-row', { hasText: 'a.txt' })
+        .waitFor({ state: 'visible', timeout: WAIT_MS });
+      await shot('5', 'remote-history', page.locator('.remote-history__detail').first());
+      log("history shows B's commit and its files ✓");
+
+      phase('14. a new file on B shows up in Changes on its own');
+      writeFileSync(join(bWork, 'fresh.txt'), 'new on B');
+      assert(
+        await pollUntil(async () => (await changePaths()).includes('fresh.txt'), 15_000, 500),
+        `remote Changes never picked up fresh.txt: ${JSON.stringify(await changePaths())}`,
+      );
+      log('remote Changes refreshed with fresh.txt ✓');
     } finally {
       appC2.close();
     }

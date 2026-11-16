@@ -15,6 +15,7 @@ import {
   getRangeDiff,
   parseCommits,
   parseNameStatusZ,
+  parseRawZ,
   searchHistory,
 } from '../../src/git-history';
 import type { CommitNode } from '../../src/protocol';
@@ -99,6 +100,26 @@ describe('parseCommits', () => {
     const commits = parseCommits(stdout);
     expect(commits).toHaveLength(1);
     expect(commits[0].sha).toBe('a');
+  });
+});
+
+describe('parseRawZ', () => {
+  const A = 'a'.repeat(40);
+  const B = 'b'.repeat(40);
+  const Z = '0'.repeat(40);
+  it('gives each side its blob id, null for the side a commit adds or deletes', () => {
+    const stdout = `:100644 100644 ${A} ${B} M\0m.ts\0:000000 100644 ${Z} ${B} A\0n.ts\0:100644 000000 ${A} ${Z} D\0d.ts\0`;
+    expect(parseRawZ(stdout)).toEqual([
+      { status: 'M', rel: 'm.ts', headBlob: A, workBlob: B },
+      { status: 'A', rel: 'n.ts', headBlob: null, workBlob: B },
+      { status: 'D', rel: 'd.ts', headBlob: A, workBlob: null },
+    ]);
+  });
+  it('reads both paths of a rename, the old one as the head side', () => {
+    const stdout = `:100644 100644 ${A} ${B} R090\0old.ts\0new.ts\0`;
+    expect(parseRawZ(stdout)).toEqual([
+      { status: 'R090', rel: 'new.ts', oldPath: 'old.ts', headBlob: A, workBlob: B },
+    ]);
   });
 });
 

@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { registerSelection, selectionInActiveDoc } from '../../webview/selection-registry';
 
 const docs = [
-  { id: 'file:/a.ts', path: '/a.ts' },
-  { id: 'file:/b.ts', path: '/b.ts' },
+  { id: 'file:/a.ts', path: '/a.ts', kind: 'file' as const },
+  { id: 'file:/b.ts', path: '/b.ts', kind: 'file' as const },
 ];
 
 describe('selectionInActiveDoc — routes the active tab to its registered selection', () => {

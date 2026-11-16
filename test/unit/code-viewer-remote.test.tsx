@@ -233,9 +233,18 @@ import { CodeViewer } from '../../webview/components/code-viewer';
 import { seedLspState } from '../../webview/lsp-status';
 import { registerNavEditor } from '../../webview/nav-editors';
 import { fileUri } from '../../webview/project-index';
+import { closeRemoteBuffer } from '../../webview/remote-file-saves';
 
 const PATH = '/home/me/proj/src/a.ts';
-const REMOTE = { kind: 'remote' as const, machineId: 'M1', machineName: 'build-box' };
+const KEY = 'remote-file@M1:/home/me/proj/src/a.ts';
+const REMOTE = {
+  kind: 'remote' as const,
+  key: KEY,
+  machineId: 'M1',
+  machineName: 'build-box',
+  sessionId: 's1',
+};
+const HASH = 'ab'.repeat(32);
 
 const fileDoc = (content: string, overrides: Partial<FileContentDTO> = {}): FileContentDTO => ({
   path: PATH,
@@ -248,6 +257,8 @@ const fileDoc = (content: string, overrides: Partial<FileContentDTO> = {}): File
 
 const remoteDoc = (content: string): FileContentDTO =>
   fileDoc(content, { readOnlyReason: 'remote' });
+/** A file from a B that can save: it carries the hash of what B read. */
+const writableRemoteDoc = (content: string): FileContentDTO => fileDoc(content, { hash: HASH });
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -294,6 +305,8 @@ afterEach(async () => {
     await act(async () => root.unmount());
     host.remove();
   }
+  // The remote store holds a buffer until its tab closes; each test starts with none.
+  closeRemoteBuffer(KEY);
 });
 
 describe('CodeViewer with a remote source', () => {
@@ -337,7 +350,7 @@ describe('CodeViewer with a remote source', () => {
     expect(m.fileSaves.attach).toHaveBeenCalledWith(PATH, expect.anything());
   });
 
-  it('a remote model is disposed on unmount', async () => {
+  it('a remote model outlives its editor and goes when its tab closes', async () => {
     const remoteRoot = await mount(
       createElement(CodeViewer, {
         doc: remoteDoc('remote text'),
@@ -353,9 +366,39 @@ describe('CodeViewer with a remote source', () => {
 
     await unmount(remoteRoot);
     await unmount(localRoot);
-    expect(remoteModel?.isDisposed()).toBe(true);
-    // A local model is the tab's buffer and may be reused by the next tab on the same path.
+    // A tab switch unmounts the editor; an unsaved remote edit must survive it (plan CON-44 d8).
+    expect(remoteModel?.isDisposed()).toBe(false);
     expect(localModel?.isDisposed()).toBe(false);
+    closeRemoteBuffer(KEY);
+    expect(remoteModel?.isDisposed()).toBe(true);
+  });
+
+  it('a remote file B can save is editable, and Save sends B the hash it read', async () => {
+    await mount(
+      createElement(CodeViewer, {
+        doc: writableRemoteDoc('remote text'),
+        viewStateId: KEY,
+        source: REMOTE,
+      }),
+    );
+    const editor = m.editors.at(-1);
+    expect(editor?.options.readOnly).toBe(false);
+    await act(async () => {
+      editor?.getModel()?.setValue('edited');
+      editor?.actions.find((a) => a.id === 'agentdeck.saveFile')?.run();
+    });
+    expect(m.bus.posted).toContainEqual(
+      expect.objectContaining({
+        type: 'remoteFs:write',
+        machineId: 'M1',
+        sessionId: 's1',
+        path: PATH,
+        data: 'edited',
+        expect: HASH,
+      }),
+    );
+    // Never the local store: the path is another machine's.
+    expect(m.fileSaves.save).not.toHaveBeenCalled();
   });
 
   it('a remote editor never saves or triggers a save of the local file of its path', async () => {
