@@ -518,13 +518,23 @@ describe.sequential('compose: NET audit and link revoke reach the MCP side', () 
     if (!('result' in a)) throw new Error(`${method} failed: ${JSON.stringify(a)}`);
     return a.result as T;
   };
-  const readLines = (dir: string): Array<Record<string, unknown>> => {
+  const jsonlFile = (file: string): Array<Record<string, unknown>> => {
+    if (!fs.existsSync(file)) return [];
+    return fs
+      .readFileSync(file, 'utf8')
+      .trim()
+      .split('\n')
+      .filter((l) => l !== '')
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+  };
+  const auditLines = (userData: string) => jsonlFile(path.join(userData, 'network', 'audit.jsonl'));
+  const activityLines = (userData: string) => {
+    const dir = path.join(userData, 'conduit-mcp', 'activity');
     if (!fs.existsSync(dir)) return [];
     return fs
       .readdirSync(dir)
-      .flatMap((f) => fs.readFileSync(path.join(dir, f), 'utf8').trim().split('\n'))
-      .filter((l) => l !== '')
-      .map((l) => JSON.parse(l) as Record<string, unknown>);
+      .filter((f) => f.endsWith('.jsonl'))
+      .flatMap((f) => jsonlFile(path.join(dir, f)));
   };
   const eventually = async (check: () => boolean, ms = 10_000) => {
     const end = Date.now() + ms;
@@ -553,13 +563,9 @@ describe.sequential('compose: NET audit and link revoke reach the MCP side', () 
       sock.once('error', reject);
     });
     sock.destroy();
+    await eventually(() => auditLines(h.userData).some((r) => r.kind === 'pairing.failed'));
     await eventually(() =>
-      readLines(path.join(h.userData, 'network')).some((r) => r.kind === 'pairing.failed'),
-    );
-    await eventually(() =>
-      readLines(path.join(h.userData, 'conduit-mcp', 'activity')).some(
-        (r) => r.lane === 'note' && r.action === 'pairing.failed',
-      ),
+      activityLines(h.userData).some((r) => r.lane === 'note' && r.action === 'pairing.failed'),
     );
   });
 
