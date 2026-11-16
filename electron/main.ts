@@ -4160,6 +4160,9 @@ app.whenReady().then(() => {
         case 'remoteFs:read':
           await remoteFiles.read(senderId, m);
           break;
+        case 'remoteGit:request':
+          await remoteFiles.git(senderId, m);
+          break;
         case 'remoteFs:watch':
           await remoteFiles.watch(senderId, m);
           break;
