@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   FS_MIN_MINOR,
+  GIT_MIN_MINOR,
   helloPlatform,
   LINK_PROTOCOL,
   type LinkFrame,
@@ -161,6 +162,20 @@ const SAMPLES: { [K in LinkFrame['t']]: Extract<LinkFrame, { t: K }> } = {
   'fs.watch': { t: 'fs.watch', watchId: 'w-1', sessionId: 's-1', path: '/home/u/work' },
   'fs.unwatch': { t: 'fs.unwatch', watchId: 'w-1' },
   'fs.changed': { t: 'fs.changed', watchId: 'w-1', paths: ['/home/u/work/a.txt'] },
+  'git.req': {
+    t: 'git.req',
+    id: 'g-1',
+    op: 'diff',
+    sessionId: 's-1',
+    root: '/w',
+    args: { path: '/w/a.txt' },
+  },
+  'git.res': {
+    t: 'git.res',
+    id: 'g-1',
+    ok: true,
+    result: { op: 'show', files: [], truncated: false },
+  },
 };
 
 const FRAME_TYPES = Object.keys(SAMPLES) as LinkFrame['t'][];
@@ -363,7 +378,7 @@ describe('call and call.result frames (protocol 1.2)', () => {
   });
 
   it('exposes the minor version and the six routed tools', () => {
-    expect(LINK_PROTOCOL).toEqual({ major: 1, minor: 4 });
+    expect(LINK_PROTOCOL).toEqual({ major: 1, minor: 5 });
     expect([...ROUTED_TOOLS]).toEqual([
       'list_agents',
       'open_session',
@@ -657,8 +672,8 @@ describe('request.mirror, request.answer and request.answered frames (protocol 1
 });
 
 describe('fs frames (protocol 1.4)', () => {
-  it('serves files from the current minor', () => {
-    expect(FS_MIN_MINOR).toBe(LINK_PROTOCOL.minor);
+  it('serves files from minor 4', () => {
+    expect(FS_MIN_MINOR).toBe(4);
   });
   it('refuses an fs.req with an unknown op, a control character in the path, or an extra key', () => {
     const ok = { t: 'fs.req', id: 'f-1', op: 'read', sessionId: 's-1', path: '/w/a.txt' };
@@ -708,6 +723,45 @@ describe('fs frames (protocol 1.4)', () => {
     expect(parseLinkFrame({ t: 'fs.changed', watchId: 'w-1', paths })).toBeNull();
     expect(
       parseLinkFrame({ t: 'fs.changed', watchId: 'w-1', paths: paths.slice(1) }),
+    ).not.toBeNull();
+  });
+});
+
+describe('git frames (protocol 1.5)', () => {
+  it('serves git reads from the current minor', () => {
+    expect(GIT_MIN_MINOR).toBe(LINK_PROTOCOL.minor);
+  });
+  it('refuses a git.req with a bad sha, an oversized limit, an unknown op or an extra arg', () => {
+    const ok = {
+      t: 'git.req',
+      id: 'g-1',
+      op: 'log',
+      sessionId: 's-1',
+      root: '/w',
+      args: { limit: 50 },
+    };
+    expect(parseLinkFrame(structuredClone(ok))).toEqual(ok);
+    expect(parseLinkFrame({ ...ok, args: { limit: 501 } })).toBeNull();
+    expect(parseLinkFrame({ ...ok, op: 'commit' })).toBeNull();
+    expect(parseLinkFrame({ ...ok, op: 'show', args: { sha: 'HEAD; rm -rf /' } })).toBeNull();
+    expect(parseLinkFrame({ ...ok, op: 'diff', args: {} })).toBeNull();
+    expect(parseLinkFrame({ ...ok, op: 'status', args: { path: '/w/a' } })).toBeNull();
+    expect(parseLinkFrame({ ...ok, args: { limit: 5, ref: 'main' } })).toBeNull();
+  });
+  it('checks a git.res result by its op', () => {
+    const res = (result: unknown) => ({ t: 'git.res', id: 'g-1', ok: true, result });
+    expect(parseLinkFrame(res({ op: 'diff', file: { path: '/w/a' } }))).not.toBeNull();
+    expect(parseLinkFrame(res({ op: 'diff', files: [] }))).toBeNull();
+    expect(
+      parseLinkFrame(res({ op: 'log', commits: [], layout: {}, hasMore: false, state: 'odd' })),
+    ).toBeNull();
+    expect(
+      parseLinkFrame({
+        t: 'git.res',
+        id: 'g-1',
+        ok: false,
+        error: { code: 'refused', message: 'no' },
+      }),
     ).not.toBeNull();
   });
 });
