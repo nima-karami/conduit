@@ -837,4 +837,10 @@ So a Codex orchestrator can take over if Claude stops. The lead (claude-3) recei
   - `PolicyState.failClosed`: in the no-good-copy fallback, every principal, peers included, resolves the Observer assignment (remote floors still narrow on top).
   - m2: commit takes `(input, decision, held: OneUseOverride[])` and refuses when any decision grant is no longer live, or when a fresh decide ranks lower (deny < ask < allow).
   - The last-good copy is written immediately on load.
+- *M1 re-review rulings:*
+  - Propagation cascades level by level: default → its CLI assignments → their sessions, each compared with its own lower point's before-value.
+  - An assignment qualifies only if its profileId and onScreenOnly equal the edited point's pre-edit ones (copies the old dialogs made). An explicit profile choice is never touched, which keeps "assignment replaces wholesale".
+  - Sessions resolve their launched CLI from persisted data; if it's unknown, they're skipped (never guessed).
+  - A missing policy.json loads last-good before ever migrating from legacy.
+  - Accepted (CON-25 card): one scoped exception refuses a whole legacy edit.
 
