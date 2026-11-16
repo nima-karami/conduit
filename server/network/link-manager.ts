@@ -333,14 +333,18 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
   const pinSshPeer = (
     hello: HelloFrame,
     ssh: SshEndpoint | null,
-  ): { record: LinkRecord } | { error: 'identity-changed' | 'identity-conflict' } => {
+  ):
+    | { record: LinkRecord }
+    | { error: 'identity-changed' }
+    | { error: 'identity-conflict'; machine: string } => {
     const live = deps.store.get(hello.machineId);
     if (live !== null) {
-      if (live.transport !== 'ssh') return { error: 'identity-conflict' };
+      // The conflict names the record it collides with: the hint tells the agent to connect that one.
+      if (live.transport !== 'ssh') return { error: 'identity-conflict', machine: live.name };
       if (live.serverKey !== hello.serverKey) return { error: 'identity-changed' };
       if (ssh === null) return { record: live };
       if (live.ssh === null || live.ssh.target !== ssh.target)
-        return { error: 'identity-conflict' };
+        return { error: 'identity-conflict', machine: live.name };
       if (JSON.stringify(live.ssh) === JSON.stringify(ssh)) return { record: live };
       return { record: deps.store.update(live.machineId, { ssh }) ?? live };
     }
@@ -524,7 +528,13 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     if ('error' in pinned) {
       if (pinned.error === 'identity-changed') markIdentityChanged(hello.machineId);
       opened.close(pinned.error);
-      return { ok: false, error: { code: pinned.error } };
+      return {
+        ok: false,
+        error:
+          pinned.error === 'identity-changed'
+            ? { code: 'identity-changed' }
+            : { code: 'identity-conflict', machine: pinned.machine },
+      };
     }
     // An explicit add is the owner asking for this machine, so a disabled one comes back on before its
     // link attaches; attach refuses a disabled peer (its disconnect check), and the add must not lose.

@@ -119,7 +119,7 @@ function machineErrorOf(e: BootstrapFailure): MachineError {
     case 'identity-changed':
       return { code: 'identity_changed', detail: {} };
     case 'identity-conflict':
-      return { code: 'identity_conflict', detail: {} };
+      return { code: 'identity_conflict', detail: { machine: e.machine } };
     case 'incompatible':
       return { code: 'peer_incompatible', detail: {} };
     case 'bad-hello':

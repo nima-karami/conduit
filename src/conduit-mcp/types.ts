@@ -55,7 +55,15 @@ export type ToolErrorCode =
   | 'peer_unsupported'
   | 'peer_revoked'
   | 'outbox_full'
-  | 'refused';
+  | 'refused'
+  | 'machine_unknown'
+  | 'ssh_needs_person'
+  | 'ssh_unreachable'
+  | 'ssh_auth_failed'
+  | 'remote_unsupported'
+  | 'install_failed'
+  | 'identity_changed'
+  | 'identity_conflict';
 export interface ToolError {
   code: ToolErrorCode;
   message: string;
@@ -80,6 +88,8 @@ const RETRYABLE: ReadonlySet<ToolErrorCode> = new Set([
   'server_stopping',
   'session_restarting',
   'peer_unreachable',
+  'ssh_unreachable',
+  'install_failed',
 ]);
 
 export interface ToolErrorDetail {

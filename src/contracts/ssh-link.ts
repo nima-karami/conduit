@@ -55,7 +55,7 @@ export type AddSshPeerResult =
       error:
         | SshFailure
         | { code: 'identity-changed' }
-        | { code: 'identity-conflict' }
+        | { code: 'identity-conflict'; machine: string }
         | { code: 'bad-hello' }
         | { code: 'incompatible' }
         | { code: 'timeout' };
