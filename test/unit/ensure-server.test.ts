@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   type EnsureDeps,
   type EnsureHello,
+  ensureServerArgs,
   runEnsureServer,
   SCOPE_PREFIX,
 } from '../../server/lifecycle/ensure-server';
+import { supervisorArgs } from '../../server/lifecycle/hc-supervisor';
 
 const HELLO_WAIT_MS = 30_000;
 
@@ -215,6 +217,19 @@ describe('runEnsureServer', () => {
     expect(r.trace).not.toContain('startSupervisor');
   });
 
+  it('windows-task with an older running server fails fast, without a restart', async () => {
+    const w = world({ running: hello('0.9.0', 5) });
+    const r = await run('windows-task', w, { version: '1.0.0' });
+    expect(r.code).toBe(3);
+    expect(resultLine(r.out)).toEqual({
+      ok: false,
+      step: 'start',
+      detail: 'windows_upgrade_pending',
+    });
+    expect(r.trace).not.toContain('restart');
+    expect(r.trace).not.toContain('startCore');
+  });
+
   it('windows-task with no server times out at step start', async () => {
     const w = world({ spawn: null });
     const r = await run('windows-task', w);
@@ -244,5 +259,22 @@ describe('runEnsureServer', () => {
       step: 'start',
       detail: expect.stringContaining('bad argv'),
     });
+  });
+});
+
+describe('ensureServerArgs', () => {
+  it('forwards --shim-dir to the server through the supervisor argv', () => {
+    const serverArgs = ensureServerArgs({ shimDir: '/s/shim' });
+    expect(serverArgs).toEqual(['--shim-dir', '/s/shim']);
+    const argv = supervisorArgs('/rt/hc', {
+      superviseJs: '/rt/server/supervise.js',
+      userData: '/u',
+      serverArgs,
+    });
+    expect(argv.slice(-2)).toEqual(['--shim-dir', '/s/shim']);
+  });
+
+  it('is empty without a shim dir, as the app passes nothing it did not build', () => {
+    expect(ensureServerArgs({})).toEqual([]);
   });
 });

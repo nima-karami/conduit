@@ -23,4 +23,25 @@ describe('--ensure-server dispatch', () => {
     );
     expect(existsSync(join(dir, 'server-secret'))).toBe(false);
   });
+
+  it('exits 2 for a relative --shim-dir before any start', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'ensure-shim-'));
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const result = await runServer([
+      '--ensure-server',
+      '--user-data',
+      dir,
+      '--start',
+      'plain',
+      '--survives-logout',
+      'yes',
+      '--shim-dir',
+      'relative/shim',
+    ]);
+    expect(result.code).toBe(2);
+    expect(stderr.mock.calls.map((c) => String(c[0])).join('')).toMatch(
+      /--shim-dir must be an absolute path/,
+    );
+    expect(existsSync(join(dir, 'server-secret'))).toBe(false);
+  });
 });

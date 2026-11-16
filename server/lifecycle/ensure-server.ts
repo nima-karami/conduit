@@ -56,6 +56,10 @@ const POLL_MS = 250;
 /** A name_taken from hc means a supervisor of this instance is already live (plan decision 3). */
 const NAME_TAKEN = /name_taken|already named/i;
 
+/** The server's own argv from the ensure flags: the same `--shim-dir` the app passes its supervisor. */
+export const ensureServerArgs = (a: Pick<EnsureArgs, 'shimDir'>): string[] =>
+  a.shimDir ? ['--shim-dir', a.shimDir] : [];
+
 const prefixOf = (method: StartMethod): readonly string[] =>
   method === 'scope' ? SCOPE_PREFIX : [];
 
@@ -100,6 +104,9 @@ export async function runEnsureServer(o: EnsureRunOptions, d: EnsureDeps): Promi
       { generation: first.generation, version: first.serverVersion },
     );
     if (order !== 'appNewer') return up(first.serverVersion);
+    // Plan decision 5: on this path nothing starts a server after server.restart, so restarting
+    // would only wait out the timeout. Refused now; the scheduled task has to be re-registered.
+    if (o.method === 'windows-task') return fail('windows_upgrade_pending');
 
     await d.restart();
     const gone = await waitFor(d, WAIT_MS, async () => ((await d.hello()) === null ? true : null));
@@ -186,7 +193,7 @@ export async function runEnsureServerMain(
         nodeExe: process.execPath,
         superviseJs: superviseJsOf(),
         userData: a.userData,
-        serverArgs: [],
+        serverArgs: ensureServerArgs(a),
       }),
     supervisorLive: () => supervisorLive(names, env, log),
     hello: async () => {

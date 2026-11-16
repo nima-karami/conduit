@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import { argValue } from './cli-args';
 
 /** How the core and supervisor are started on this machine; decided by the probe (plan decision 4). */
@@ -10,10 +11,12 @@ export interface EnsureArgs {
   /** Decided by the caller from the probe: linger, KillUserProcesses. Reported back, not checked here. */
   survivesLogout: boolean;
   hc?: string;
+  /** Forwarded to the server, which runs its MCP shim from here (see server/main.ts). */
+  shimDir?: string;
 }
 
 const ENSURE_USAGE =
-  'usage: main.js --ensure-server --user-data <dir> --start scope|plain|windows-task --survives-logout yes|no [--hc <path>]';
+  'usage: main.js --ensure-server --user-data <dir> --start scope|plain|windows-task --survives-logout yes|no [--hc <path>] [--shim-dir <abs path>]';
 
 export type EnsureArgsResult = { ok: true; args: EnsureArgs } | { ok: false; error: string };
 
@@ -31,6 +34,11 @@ export function parseEnsureArgs(args: readonly string[]): EnsureArgsResult {
   if (survives !== 'yes' && survives !== 'no')
     return { ok: false, error: `--survives-logout must be yes or no\n${ENSURE_USAGE}` };
   const hc = argValue(args, '--hc');
+  // Presence is decided by the token, not by the value: `--shim-dir --hc x` must not read as absent.
+  const shimPresent = args.some((a) => a === '--shim-dir' || a.startsWith('--shim-dir='));
+  const shimDir = shimPresent ? argValue(args, '--shim-dir') : undefined;
+  if (shimPresent && (!shimDir || !isAbsolute(shimDir)))
+    return { ok: false, error: `--shim-dir must be an absolute path\n${ENSURE_USAGE}` };
   return {
     ok: true,
     args: {
@@ -38,6 +46,7 @@ export function parseEnsureArgs(args: readonly string[]): EnsureArgsResult {
       method: start as StartMethod,
       survivesLogout: survives === 'yes',
       ...(hc ? { hc } : {}),
+      ...(shimDir ? { shimDir } : {}),
     },
   };
 }
