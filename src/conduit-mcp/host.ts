@@ -453,6 +453,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     deps.clearTimer ??
     ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout> | undefined));
   const observedBudget = new Map<string, ObservedBudget>();
+  // Rows arriving while a delete is pending must not revive the session's budget.
+  const deleting = new Set<string>();
   const noteRow = (sessionId: string, cli: AgentCli, action: string, summary: string): void => {
     policyService.activity.record({
       lane: 'note',
@@ -2892,33 +2894,39 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
 
     async onSessionDeleted(sessionId) {
-      forgetBudget(sessionId);
-      const closing = closingWhenDone.get(sessionId);
-      if (closing) closing.deleted = true;
-      // Before the drain: the session's waiting asks end now, so their cancelled replies are owed.
-      flow.sessionGone(sessionId);
-      sessionWaits.cancel((w) => w.caller.sessionId === sessionId);
-      requestService.onSessionDeleted(sessionId);
-      policyService.sessionEnded(sessionId);
-      const handle = handleOf(sessionId);
-      sessionWaits.forget(sessionId, handle);
-      // Awaited after the teardown: the caller removes the session as soon as this yields.
-      const revoked = deps.tokens.revoke({ sessionId });
-      drainConnectionsOf(sessionId);
-      screens.release(sessionId);
-      notifier?.forget(sessionId);
-      cancelLateEcho(sessionId);
-      deps.typing.forget(sessionId);
-      runtime.delete(sessionId);
-      await revoked;
-      await removeConfig(sessionId);
-      if (!handle) return;
-      for (const m of store.pending(handle)) {
-        const r = await store.setStatus(m.messageId, handle, 'undelivered');
-        if (!r.ok) deps.log.warn('conduit-mcp', 'undelivered mark failed', { code: r.error.code });
+      deleting.add(sessionId);
+      try {
+        forgetBudget(sessionId);
+        const closing = closingWhenDone.get(sessionId);
+        if (closing) closing.deleted = true;
+        // Before the drain: the session's waiting asks end now, so their cancelled replies are owed.
+        flow.sessionGone(sessionId);
+        sessionWaits.cancel((w) => w.caller.sessionId === sessionId);
+        requestService.onSessionDeleted(sessionId);
+        policyService.sessionEnded(sessionId);
+        const handle = handleOf(sessionId);
+        sessionWaits.forget(sessionId, handle);
+        // Awaited after the teardown: the caller removes the session as soon as this yields.
+        const revoked = deps.tokens.revoke({ sessionId });
+        drainConnectionsOf(sessionId);
+        screens.release(sessionId);
+        notifier?.forget(sessionId);
+        cancelLateEcho(sessionId);
+        deps.typing.forget(sessionId);
+        runtime.delete(sessionId);
+        await revoked;
+        await removeConfig(sessionId);
+        if (!handle) return;
+        for (const m of store.pending(handle)) {
+          const r = await store.setStatus(m.messageId, handle, 'undelivered');
+          if (!r.ok)
+            deps.log.warn('conduit-mcp', 'undelivered mark failed', { code: r.error.code });
+        }
+        dispatch({ t: 'session-gone', handle });
+        scheduleBroadcast();
+      } finally {
+        deleting.delete(sessionId);
       }
-      dispatch({ t: 'session-gone', handle });
-      scheduleBroadcast();
     },
 
     onWindowReset(windowId) {
@@ -3202,7 +3210,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
     recordObserved(sessionId, cli, entry) {
       // A late row for a deleted session must not create a budget that nothing will ever clear.
-      if (deps.sessions.get(sessionId) === undefined) return;
+      if (stopped || deleting.has(sessionId) || deps.sessions.get(sessionId) === undefined) return;
       if ('action' in entry) {
         const t = now();
         const minute = Math.floor(t / MINUTE_MS);

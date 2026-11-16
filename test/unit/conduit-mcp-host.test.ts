@@ -6950,4 +6950,31 @@ describe('recordObserved', () => {
     h.advance(120_000);
     expect(rows.filter((r) => r.action === 'feed-throttled')).toEqual([]);
   });
+
+  it('a row that arrives while a session delete is pending creates no budget', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = seededHarness({ activityIo, manualTimers: true });
+    await h.host.start();
+    const pendingBefore = h.timerCount();
+    const deleted = h.host.onSessionDeleted('s1');
+    for (let i = 0; i < 121; i += 1) {
+      h.host.recordObserved('s1', 'claude', {
+        action: { kind: 'command', command: 'npm test', cwd: '/w' },
+      });
+    }
+    await deleted;
+    expect(rows.filter((r) => r.lane === 'observed')).toEqual([]);
+    expect(h.timerCount()).toBe(pendingBefore);
+  });
+
+  it('a row after stop is ignored', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = seededHarness({ activityIo });
+    await h.host.start();
+    await h.host.stop();
+    h.host.recordObserved('s1', 'claude', {
+      action: { kind: 'command', command: 'npm test', cwd: '/w' },
+    });
+    expect(rows.filter((r) => r.lane === 'observed')).toEqual([]);
+  });
 });
