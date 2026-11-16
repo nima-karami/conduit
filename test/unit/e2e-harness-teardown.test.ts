@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { supervisorEnv } from '../../electron/hc-cli';
 import { serverChildEnv, serverProcessEnv } from '../../server/hc-cli';
+import { supervisorEnv } from '../../server/lifecycle/hc-supervisor';
 import {
   SERVER_PROTOCOL_GENERATION,
   STOP_ALL_ANSWER_TIMEOUT_MS,

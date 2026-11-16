@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { type HcCliDeps, startSupervisor, supervisorArgs } from '../server/lifecycle/hc-supervisor';
 import type { HcClient, HcEvent } from '../src/contracts/hc';
 import {
   APP_HELLO_TIMEOUT_MS,
@@ -12,7 +13,7 @@ import {
 import type { InstanceNames } from '../src/contracts/session-identity';
 import type { AppLaunch } from '../src/contracts/tray-protocol';
 import { HcRpcError } from '../src/hc-client';
-import { type HcCliDeps, killSupervisor, startSupervisor, supervisorArgs } from './hc-cli';
+import { killSupervisor } from './hc-cli';
 import type { createHcEvents } from './hc-events';
 import type { RuntimeLayout } from './runtime-layout';
 import { type AppLog, type CloseReason, ServerCallError, type ServerClient } from './server-client';

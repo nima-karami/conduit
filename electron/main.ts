@@ -20,7 +20,9 @@ import {
   webContents,
 } from 'electron';
 import { directStopAll, hcClient, startCore, stopCore } from '../server/hc-cli';
+import { type HcCliDeps, supervisorEnv } from '../server/lifecycle/hc-supervisor';
 import { stopAll } from '../server/lifecycle/stop-all';
+import { collectRuntimeGarbage } from '../server/runtime-dir/gc';
 import { CURRENT_SHIM_GENERATION, prepareRuntime } from '../server/runtime-dir/prepare';
 import { activeCwd, sessionGitRoot } from '../src/active-cwd';
 import { repoForPath, requestGitRoot, resolveRequestRepoRoot } from '../src/active-repo';
@@ -240,7 +242,6 @@ import {
 import { createDragOutHost } from './drag-out-host';
 import { execFileBounded } from './exec-bounded';
 import { createFolderPicker } from './folder-picker';
-import { type HcCliDeps, supervisorEnv } from './hc-cli';
 import { createHcEvents } from './hc-events';
 import { jumpListTasks, runStopAllAgents, STOP_ALL_AGENTS_FLAG } from './jump-list';
 import { Logger } from './logger';
@@ -265,7 +266,6 @@ import { ProjectWatcher } from './project-watcher';
 import { ProposalWatcher } from './proposal-watcher';
 import { stopAgentsBeforeQuit } from './quit-stop';
 import { createRepoTrackerHost } from './repo-tracker-host';
-import { collectRuntimeGarbage } from './runtime-gc';
 import { runtimeLayout } from './runtime-layout';
 import {
   createServerCalls,

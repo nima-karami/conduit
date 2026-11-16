@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppSessionStore } from '../../electron/app-session-store';
-import { type HcCliDeps, supervisorArgs } from '../../electron/hc-cli';
 import { createHcEvents } from '../../electron/hc-events';
 import { ServerClient } from '../../electron/server-client';
 import { createServerEventRouter } from '../../electron/server-events';
@@ -9,6 +8,7 @@ import {
   type ServerLifecycleState,
   VANISHED_RESTART_BUDGET,
 } from '../../electron/server-lifecycle';
+import { type HcCliDeps, supervisorArgs } from '../../server/lifecycle/hc-supervisor';
 import type { HcTerminal } from '../../src/contracts/hc';
 import {
   SERVER_ERROR_RPC_CODE,

@@ -1,6 +1,6 @@
 import { join } from 'node:path';
-import { versionOrder } from '../src/contracts/server-protocol';
-import { SHIM_RUNTIME_DIR } from '../src/contracts/session-identity';
+import { versionOrder } from '../../src/contracts/server-protocol';
+import { SHIM_RUNTIME_DIR } from '../../src/contracts/session-identity';
 
 export interface RuntimeGcDeps {
   readdir(d: string): Promise<string[]>;

@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { collectRuntimeGarbage, type RuntimeGcDeps } from '../../electron/runtime-gc';
+import { collectRuntimeGarbage, type RuntimeGcDeps } from '../../server/runtime-dir/gc';
 
 const ROOT = join('/u', 'runtime');
 const HC = join(ROOT, 'hc');
