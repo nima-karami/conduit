@@ -26,6 +26,9 @@ const REFUSALS: readonly AnswerRefusal[] = [
   'already_ended',
   'not_answerable',
   'invalid_answer',
+  'peer_unreachable',
+  'peer_incompatible',
+  'peer_revoked',
 ];
 const refusalOf = (reason: string | undefined): AnswerRefusal =>
   REFUSALS.find((r) => r === reason) ?? 'not_answerable';
