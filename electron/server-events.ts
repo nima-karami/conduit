@@ -182,6 +182,8 @@ export function createServerEventRouter(d: ServerEventRouterDeps): {
     // Consumed by the Machines UI (CON-28).
     'network.changed': (state) => d.broadcast({ type: 'network:state', state }),
     'remote.data': (data) => d.remotePanes.data(data),
+    // The remote Files view consumes it once its routing lands (plan CON-43 T3).
+    'remote.fs.changed': () => {},
     'remote.state': (data) => d.remotePanes.state(data),
     'server.stopping': (data) => {
       d.noteStopping?.(data.reason);

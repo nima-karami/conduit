@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  FS_MIN_MINOR,
   helloPlatform,
   LINK_PROTOCOL,
   type LinkFrame,
@@ -150,6 +151,16 @@ const SAMPLES: { [K in LinkFrame['t']]: Extract<LinkFrame, { t: K }> } = {
     answer: { outcome: 'chosen', values: ['main'] },
   },
   'request.answered': { t: 'request.answered', answerId: 'a-1', ok: true },
+  'fs.req': { t: 'fs.req', id: 'f-1', op: 'read', sessionId: 's-1', path: '/home/u/work/a.txt' },
+  'fs.res': {
+    t: 'fs.res',
+    id: 'f-1',
+    ok: true,
+    result: { op: 'list', path: '/home/u/work', entries: [{ name: 'a.txt', kind: 'file' }] },
+  },
+  'fs.watch': { t: 'fs.watch', watchId: 'w-1', sessionId: 's-1', path: '/home/u/work' },
+  'fs.unwatch': { t: 'fs.unwatch', watchId: 'w-1' },
+  'fs.changed': { t: 'fs.changed', watchId: 'w-1', paths: ['/home/u/work/a.txt'] },
 };
 
 const FRAME_TYPES = Object.keys(SAMPLES) as LinkFrame['t'][];
@@ -352,7 +363,7 @@ describe('call and call.result frames (protocol 1.2)', () => {
   });
 
   it('exposes the minor version and the six routed tools', () => {
-    expect(LINK_PROTOCOL).toEqual({ major: 1, minor: 3 });
+    expect(LINK_PROTOCOL).toEqual({ major: 1, minor: 4 });
     expect([...ROUTED_TOOLS]).toEqual([
       'list_agents',
       'open_session',
@@ -514,8 +525,8 @@ describe('request.mirror, request.answer and request.answered frames (protocol 1
     error: { code: 'peer_unreachable', message: 'link dropped', retryable: true },
   } as const;
 
-  it('exposes minor 3 and the lowest minor that serves the mirror', () => {
-    expect(REQUEST_MIRROR_MIN_MINOR).toBe(LINK_PROTOCOL.minor);
+  it('serves the mirror from minor 3', () => {
+    expect(REQUEST_MIRROR_MIN_MINOR).toBe(3);
   });
 
   it('round-trips the mirror with an answered permission, a draft and an expiry', () => {
@@ -642,5 +653,61 @@ describe('request.mirror, request.answer and request.answered frames (protocol 1
     expect(parseLinkFrame(mirror({ session: null }))).toBeNull();
     expect(parseLinkFrame(mirror({ kind: 'attend-me' }))).toBeNull();
     expect(parseLinkFrame(mirror({ state: 'lost' }))).toBeNull();
+  });
+});
+
+describe('fs frames (protocol 1.4)', () => {
+  it('serves files from the current minor', () => {
+    expect(FS_MIN_MINOR).toBe(LINK_PROTOCOL.minor);
+  });
+  it('refuses an fs.req with an unknown op, a control character in the path, or an extra key', () => {
+    const ok = { t: 'fs.req', id: 'f-1', op: 'read', sessionId: 's-1', path: '/w/a.txt' };
+    expect(parseLinkFrame(structuredClone(ok))).toEqual(ok);
+    expect(parseLinkFrame({ ...ok, op: 'write' })).toBeNull();
+    expect(parseLinkFrame({ ...ok, path: '/w/a\u0000.txt' })).toBeNull();
+    expect(parseLinkFrame({ ...ok, machineId: 'm-1' })).toBeNull();
+  });
+  it('refuses an fs.res whose ok and fields disagree or whose code is unknown', () => {
+    expect(
+      parseLinkFrame({
+        t: 'fs.res',
+        id: 'f-1',
+        ok: false,
+        error: { code: 'refused', message: 'no' },
+      }),
+    ).not.toBeNull();
+    expect(
+      parseLinkFrame({ t: 'fs.res', id: 'f-1', ok: false, error: { code: 'nope', message: 'no' } }),
+    ).toBeNull();
+    expect(
+      parseLinkFrame({
+        t: 'fs.res',
+        id: 'f-1',
+        ok: true,
+        error: { code: 'refused', message: 'no' },
+      }),
+    ).toBeNull();
+  });
+  it('round-trips a read result with an image and refuses an unknown read-only reason', () => {
+    const file = {
+      path: '/w/p.png',
+      content: '',
+      language: 'plaintext',
+      truncated: false,
+      binary: true,
+      image: { mime: 'image/png', dataUrl: 'data:image/png;base64,AA==', bytes: 1 },
+    };
+    const res = { t: 'fs.res', id: 'f-2', ok: true, result: { op: 'read', file } };
+    expect(parseLinkFrame(structuredClone(res))).toEqual(res);
+    expect(
+      parseLinkFrame({ ...res, result: { op: 'read', file: { ...file, readOnlyReason: 'x' } } }),
+    ).toBeNull();
+  });
+  it('caps fs.changed at 256 paths', () => {
+    const paths = Array.from({ length: 257 }, (_, i) => `/w/${i}`);
+    expect(parseLinkFrame({ t: 'fs.changed', watchId: 'w-1', paths })).toBeNull();
+    expect(
+      parseLinkFrame({ t: 'fs.changed', watchId: 'w-1', paths: paths.slice(1) }),
+    ).not.toBeNull();
   });
 });

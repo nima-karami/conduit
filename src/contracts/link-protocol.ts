@@ -1,4 +1,5 @@
 import type { MessageKind, Presence, Priority } from '../conduit-mcp/types';
+import type { DirEntryDTO, FileContentDTO } from '../protocol';
 import type { SessionAttentionFacts } from '../types';
 import type { Capabilities, Capability } from './remote-principal';
 
@@ -8,11 +9,29 @@ export type { Capabilities, Capability } from './remote-principal';
 // minor 1 added the hello's platform and version (spec 5.3): a peer at minor 0 omits them.
 // minor 2 added the routed `call` / `call.result` frames (spec 5.3, CON-40).
 // minor 3 added `request.mirror` / `request.answer` / `request.answered` (spec 5.3, CON-42).
-export const LINK_PROTOCOL = { major: 1, minor: 3 } as const;
+// minor 4 added `fs.req` / `fs.res` / `fs.watch` / `fs.unwatch` / `fs.changed` (spec 5.3, CON-43).
+export const LINK_PROTOCOL = { major: 1, minor: 4 } as const;
 /** The lowest peer minor that serves `call` frames: a routed call to an older peer is refused, not sent. */
 export const ROUTED_CALLS_MIN_MINOR = 2;
 /** The lowest peer minor that serves request frames: an older peer gets no mirror and no answers. */
 export const REQUEST_MIRROR_MIN_MINOR = 3;
+/** The lowest peer minor that serves fs frames: a file request to an older peer is refused, not sent. */
+export const FS_MIN_MINOR = 4;
+export const FS_OPS = ['list', 'read', 'stat'] as const;
+export type FsOp = (typeof FS_OPS)[number];
+export const FS_ERROR_CODES = [
+  'refused',
+  'not_found',
+  'too_large',
+  'unavailable',
+  'failed',
+] as const;
+export type FsErrorCode = (typeof FS_ERROR_CODES)[number];
+/** One `fs.res` result; list entries never include a deny-listed name (plan CON-43 decision 3). */
+export type FsResult =
+  | { op: 'list'; path: string; entries: DirEntryDTO[] }
+  | { op: 'read'; file: FileContentDTO }
+  | { op: 'stat'; kind: 'file' | 'dir'; size: number; mtimeMs: number };
 export const LINK_FEATURES = ['messaging', 'monitor', 'drive', 'view'] as const;
 export type LinkFeature = (typeof LINK_FEATURES)[number];
 // The session tools a lead may route to a peer; anything else in a `call` is a malformed frame.
@@ -164,6 +183,15 @@ export type LinkFrame =
       ok: false;
       error: { code: string; message: string; retryable: boolean; hint?: string };
     }
+  /** A file request from A's owner, served only on an inbound ssh controller link (plan CON-43). */
+  | { t: 'fs.req'; id: string; op: FsOp; sessionId: string; path: string }
+  | { t: 'fs.res'; id: string; ok: true; result: FsResult }
+  | { t: 'fs.res'; id: string; ok: false; error: { code: FsErrorCode; message: string } }
+  /** Re-sent by A after a reconnect, never replayed; B drops a link's watches when it goes down. */
+  | { t: 'fs.watch'; watchId: string; sessionId: string; path: string }
+  | { t: 'fs.unwatch'; watchId: string }
+  /** Changed paths under a watch; an empty list means "re-read everything under it". */
+  | { t: 'fs.changed'; watchId: string; paths: string[] }
   /** B's open requests plus those that ended in the last 10 min; a newer seq replaces the old set. */
   | { t: 'request.mirror'; seq: number; requests: RequestMirror[] }
   /** A's owner answering a mirrored request on B. Never replayed: a drop is `peer_unreachable`. */
@@ -470,6 +498,48 @@ export function parseLinkFrame(raw: unknown): LinkFrame | null {
         : null;
     case 'request.answered':
       return parseRequestAnswered(raw);
+    case 'fs.req':
+      return frame(
+        raw,
+        'fs.req',
+        ['id', 'op', 'sessionId', 'path'],
+        (r) =>
+          isCallId(r.id) &&
+          oneOf(r.op, FS_OPS) &&
+          isPrintableCapped(r.sessionId, FS_SESSION_ID_MAX) &&
+          isFsPath(r.path),
+      )
+        ? raw
+        : null;
+    case 'fs.res':
+      return parseFsRes(raw);
+    case 'fs.watch':
+      return frame(
+        raw,
+        'fs.watch',
+        ['watchId', 'sessionId', 'path'],
+        (r) =>
+          isCallId(r.watchId) &&
+          isPrintableCapped(r.sessionId, FS_SESSION_ID_MAX) &&
+          isFsPath(r.path),
+      )
+        ? raw
+        : null;
+    case 'fs.unwatch':
+      return frame(raw, 'fs.unwatch', ['watchId'], (r) => isCallId(r.watchId)) ? raw : null;
+    case 'fs.changed':
+      return frame(
+        raw,
+        'fs.changed',
+        ['watchId', 'paths'],
+        (r) =>
+          isCallId(r.watchId) &&
+          Array.isArray(r.paths) &&
+          r.paths.length <= FS_CHANGED_MAX &&
+          r.paths.every(isFsPath),
+      )
+        ? raw
+        : null;
     default:
       return null;
   }
@@ -758,6 +828,88 @@ function parseCallResult(r: Rec): LinkFrame | null {
   if (r.ok)
     return frame(r, 'call.result', ['id', 'ok', 'result'], (x) => isRec(x.result)) ? r : null;
   return frame(r, 'call.result', ['id', 'ok', 'error'], (x) => isRoutedError(x.error)) ? r : null;
+}
+
+// A path names a file on the peer and reaches its file system, so it is printable and bounded; the
+// serving side still confines it (src/network/fs-confine.ts) — the parser only bounds the shape.
+const FS_PATH_MAX = 4096;
+const FS_SESSION_ID_MAX = 64;
+const FS_CHANGED_MAX = 256;
+const FS_NAME_MAX = 1024;
+const isFsPath = (v: unknown): boolean => isPrintableCapped(v, FS_PATH_MAX);
+
+/** `ok` picks the variant; each variant has exactly its own field, so the other is an extra key. */
+function parseFsRes(r: Rec): LinkFrame | null {
+  if (!isCallId(r.id) || !bool(r.ok)) return null;
+  if (r.ok)
+    return frame(r, 'fs.res', ['id', 'ok', 'result'], (x) => isFsResult(x.result)) ? r : null;
+  return frame(r, 'fs.res', ['id', 'ok', 'error'], (x) => isFsError(x.error)) ? r : null;
+}
+
+function isFsError(v: unknown): boolean {
+  return (
+    hasKeys(v, ['code', 'message']) &&
+    oneOf(v.code, FS_ERROR_CODES) &&
+    str(v.message) &&
+    v.message.length <= ERROR_MESSAGE_MAX
+  );
+}
+
+function isFsResult(v: unknown): boolean {
+  if (!isRec(v)) return false;
+  switch (v.op) {
+    case 'list':
+      return (
+        hasKeys(v, ['op', 'path', 'entries']) &&
+        isFsPath(v.path) &&
+        arrayOf(
+          v.entries,
+          (e) =>
+            hasKeys(e, ['name', 'kind'], ['ignored']) &&
+            isPrintableCapped(e.name, FS_NAME_MAX) &&
+            oneOf(e.kind, ['dir', 'file'] as const) &&
+            (e.ignored === undefined || bool(e.ignored)),
+        )
+      );
+    case 'read':
+      return hasKeys(v, ['op', 'file']) && isFileContent(v.file);
+    case 'stat':
+      return (
+        hasKeys(v, ['op', 'kind', 'size', 'mtimeMs']) &&
+        oneOf(v.kind, ['file', 'dir'] as const) &&
+        int(v.size) &&
+        num(v.mtimeMs)
+      );
+    default:
+      return false;
+  }
+}
+
+/** FileContentDTO as B's file-service builds it (src/protocol.ts); data URLs are bounded by the frame. */
+function isFileContent(v: unknown): boolean {
+  return (
+    hasKeys(
+      v,
+      ['path', 'content', 'language', 'truncated', 'binary'],
+      ['error', 'image', 'pdf', 'window', 'readOnlyReason'],
+    ) &&
+    isFsPath(v.path) &&
+    str(v.content) &&
+    isPrintableCapped(v.language, 64) &&
+    bool(v.truncated) &&
+    bool(v.binary) &&
+    (v.error === undefined || (str(v.error) && v.error.length <= ERROR_MESSAGE_MAX)) &&
+    (v.image === undefined ||
+      (hasKeys(v.image, ['mime', 'dataUrl', 'bytes']) &&
+        isPrintableCapped(v.image.mime, 128) &&
+        str(v.image.dataUrl) &&
+        int(v.image.bytes))) &&
+    (v.pdf === undefined ||
+      (hasKeys(v.pdf, ['dataUrl', 'bytes']) && str(v.pdf.dataUrl) && int(v.pdf.bytes))) &&
+    (v.window === undefined || v.window === 'tail') &&
+    (v.readOnlyReason === undefined ||
+      oneOf(v.readOnlyReason, ['invalid-utf8', 'mixed-eol', 'remote'] as const))
+  );
 }
 
 /** `ok` picks the variant: a success has no error, a failure must say why. */

@@ -20,6 +20,8 @@ import type { McpUiState } from '../conduit-mcp/ui-types';
 import type { DroppedRoot } from '../folder-validation';
 import type { LauncherDTO } from '../launchers';
 import type {
+  DirEntryDTO,
+  FileContentDTO,
   HostToWebview,
   TermGeometry,
   TermStartMode,
@@ -569,6 +571,24 @@ export interface ServerMethods {
     result: { sessionId: string };
   };
   'remote.close': { params: { machineId: string; sessionId: string }; result: Empty };
+  /** Files in a remote session's folders, served and confined by B (plan CON-43). */
+  'remote.fs.list': {
+    params: { machineId: string; sessionId: string; path: string };
+    result: { path: string; entries: DirEntryDTO[] };
+  };
+  'remote.fs.read': {
+    params: { machineId: string; sessionId: string; path: string };
+    result: FileContentDTO;
+  };
+  'remote.fs.stat': {
+    params: { machineId: string; sessionId: string; path: string };
+    result: { kind: 'file' | 'dir'; size: number; mtimeMs: number };
+  };
+  'remote.fs.watch': {
+    params: { machineId: string; sessionId: string; path: string };
+    result: { watchId: string };
+  };
+  'remote.fs.unwatch': { params: { watchId: string }; result: Empty };
 
   // ── UI facts from the app ──
   'ui.presence': { params: { windows: WindowPresence[] }; result: Empty };
@@ -666,6 +686,7 @@ export interface ServerEvents {
   'server.stopping': { reason: 'update' | 'user' | 'idle' | 'stopAll' };
   'network.changed': NetworkState;
   'remote.data': { viewId: string; data: string };
+  'remote.fs.changed': { watchId: string; paths: string[] };
   'remote.state': {
     viewId: string;
     state: 'live' | 'frozen' | 'exited' | 'resyncing';
