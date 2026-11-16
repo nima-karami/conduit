@@ -143,6 +143,8 @@ function machineErrorOf(e: BootstrapFailure): MachineError {
       return { code: 'peer_incompatible', detail: {} };
     case 'bad-hello':
       return { code: 'ssh_unreachable', detail: { detail: 'bad_hello' } };
+    case 'bad-proof':
+      return { code: 'ssh_unreachable', detail: { detail: 'bad_proof' } };
     case 'timeout':
       return { code: 'ssh_unreachable', detail: { detail: 'timeout' } };
   }

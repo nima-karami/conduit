@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -5,8 +6,8 @@ import { Duplex, PassThrough } from 'node:stream';
 import type tls from 'node:tls';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AuditEvent } from '../../server/network/audit-log';
-import { type Identity, loadIdentity } from '../../server/network/identity';
-import { openConnection } from '../../server/network/link-connection';
+import { type Identity, loadIdentity, signProof } from '../../server/network/identity';
+import { type HelloProof, openConnection } from '../../server/network/link-connection';
 import { createLinkManager, type LinkManager } from '../../server/network/link-manager';
 import { type LinkStore, openLinkStore } from '../../server/network/link-store';
 import { dial, type LinkListener, listenLinks } from '../../server/network/listener';
@@ -373,17 +374,23 @@ describe('link manager', { timeout: 60_000 }, () => {
 const pemOf = (id: Identity): string =>
   id.serverPrivateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
 
-function helloOf(of: Node) {
+/** A hello as an ssh node of `id` sends it: the current minor, a fresh nonce, the key it names. */
+function helloFor(id: Identity): HelloFrame {
   return {
-    t: 'hello' as const,
+    t: 'hello',
     protocol: { major: LINK_PROTOCOL.major, minor: LINK_PROTOCOL.minor },
-    machineId: of.id.machineId,
-    serverKey: of.id.serverKeyRaw.toString('base64'),
-    ownerKey: ownerPub(of.id),
+    machineId: id.machineId,
+    serverKey: id.serverKeyRaw.toString('base64'),
+    ownerKey: ownerPub(id),
     selfName: 'peer',
     features: [...LINK_FEATURES],
     capabilities: { ...OWN_DEFAULT_CAPABILITIES },
+    nonce: randomBytes(32).toString('base64'),
   };
+}
+
+function helloOf(of: Node): HelloFrame {
+  return helloFor(of.id);
 }
 
 async function orderedPair(): Promise<[Identity, Identity]> {
@@ -572,10 +579,29 @@ async function sshPair(bHasOwnerKey = true) {
   return { a, b, ssh: toB };
 }
 
-/** A stream whose far end speaks as `hello` would: what a remote says on its ssh stream. */
-function forgingStream(hello: HelloFrame): Duplex {
+/**
+ * A proof as a stranger who holds `key` sends it. It signs as the id its hello claims, so the only
+ * question left for the far end is whether `key` is the one that hello names. `opts` overrides the
+ * nonce or the bound machine id, for the replay and mis-binding cases. The forger's own check of
+ * our proof accepts anything: it is not under test.
+ */
+function forgedProof(
+  key: Identity,
+  claimedId: string,
+  opts: { nonce?: string; bound?: string } = {},
+): HelloProof {
+  const claimed = { ...key, machineId: claimedId };
+  return {
+    sign: (peerNonce, peerMachineId) =>
+      signProof(claimed, opts.nonce ?? peerNonce, opts.bound ?? peerMachineId),
+    verify: () => true,
+  };
+}
+
+/** A stream whose far end speaks as `hello` would, proving with `proof`: what a remote says on its ssh stream. */
+function forgingStream(hello: HelloFrame, proof: HelloProof): Duplex {
   const [near, far] = streamPair();
-  void openConnection(far, { hello, now: Date.now, log: quiet });
+  void openConnection(far, { hello, now: Date.now, log: quiet, proof });
   return near;
 }
 
@@ -769,7 +795,12 @@ describe('ssh links', { timeout: 60_000 }, () => {
     });
     a.manager.acceptStream(y);
     const frames: LinkFrame[] = [];
-    const conn = await openConnection(x, { hello: helloOf(b), now: Date.now, log: quiet });
+    const conn = await openConnection(x, {
+      hello: helloOf(b),
+      now: Date.now,
+      log: quiet,
+      proof: forgedProof(b.id, b.id.machineId),
+    });
     if ('error' in conn) throw new Error('connection failed');
     conn.start({ onFrame: (f) => frames.push(f), onClose: () => undefined });
     await until(() => frames.some((f) => f.t === 'revoked'));
@@ -814,10 +845,11 @@ describe('ssh links', { timeout: 60_000 }, () => {
     // Another key claiming A's machine id is not a sound hello (the id is the key's hash), so it is
     // refused before any identity rule runs, and the pinned record and link are untouched.
     const impostor = identity();
-    await acceptForged(b, {
-      ...helloOf(a),
-      serverKey: impostor.serverKeyRaw.toString('base64'),
-    });
+    await acceptForged(
+      b,
+      { ...helloOf(a), serverKey: impostor.serverKeyRaw.toString('base64') },
+      forgedProof(impostor, a.id.machineId),
+    );
     expect(b.warns).toContain(HELLO_REFUSED);
     expect(b.store.get(a.id.machineId)?.serverKey).toBe(a.id.serverKeyRaw.toString('base64'));
     expect(b.manager.view(a.id.machineId)?.state).toBe('up');
@@ -885,17 +917,21 @@ describe('ssh links', { timeout: 60_000 }, () => {
 
 const SELF_LINK = 'link: ssh self-link refused';
 const HELLO_REFUSED = 'link: ssh hello refused';
+const PROOF_REFUSED = 'link: ssh proof refused';
 
-/** Accepts a stream whose far end sends `hello`, and resolves once the acceptor closes it. */
-async function acceptForged(target: Node, hello: HelloFrame): Promise<void> {
+/**
+ * Accepts a stream whose far end sends `hello` and proves with `proof`. A refused handshake returns
+ * at once, since the far end never comes up; an accepted one resolves when the acceptor closes it.
+ */
+async function acceptForged(target: Node, hello: HelloFrame, proof: HelloProof): Promise<void> {
   const [x, y] = streamPair();
   cleanup.push(async () => {
     x.destroy();
     y.destroy();
   });
   target.manager.acceptStream(y);
-  const conn = await openConnection(x, { hello, now: Date.now, log: quiet });
-  if ('error' in conn) throw new Error('hello was not exchanged');
+  const conn = await openConnection(x, { hello, now: Date.now, log: quiet, proof });
+  if ('error' in conn) return;
   await new Promise<void>((resolve) =>
     conn.start({ onFrame: () => undefined, onClose: () => resolve() }),
   );
@@ -904,21 +940,31 @@ async function acceptForged(target: Node, hello: HelloFrame): Promise<void> {
 describe('ssh hello identity and per-host pinning', { timeout: 60_000 }, () => {
   it('a hello whose machine id is not the hash of its key is refused on accept', async () => {
     const { a, b } = await sshPair();
-    await acceptForged(b, { ...helloOf(a), machineId: 'm-00000000' });
+    await acceptForged(
+      b,
+      { ...helloOf(a), machineId: 'm-00000000' },
+      forgedProof(a.id, 'm-00000000'),
+    );
     expect(b.store.links()).toEqual([]);
     expect(b.warns).toContain(HELLO_REFUSED);
   });
 
   it('a hello whose key is not a raw 32-byte key is refused on accept', async () => {
     const { a, b } = await sshPair();
-    await acceptForged(b, { ...helloOf(a), serverKey: 'not-a-key' });
+    // A key that is not 32 raw bytes cannot verify a proof, so the proof refuses it before
+    // helloRefused runs: the refusal is the proof's, and nothing is stored.
+    await acceptForged(
+      b,
+      { ...helloOf(a), serverKey: 'not-a-key' },
+      forgedProof(a.id, a.id.machineId),
+    );
     expect(b.store.links()).toEqual([]);
-    expect(b.warns).toContain(HELLO_REFUSED);
+    expect(b.warns).toContain(PROOF_REFUSED);
   });
 
   it('a hello naming this machine is refused as a self-link on accept', async () => {
     const { b } = await sshPair();
-    await acceptForged(b, helloOf(b));
+    await acceptForged(b, helloOf(b), forgedProof(b.id, b.id.machineId));
     expect(b.store.links()).toEqual([]);
     expect(b.warns).toContain(SELF_LINK);
   });
@@ -928,7 +974,10 @@ describe('ssh hello identity and per-host pinning', { timeout: 60_000 }, () => {
     const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
     const c = await node(identity(ownerKey), 'c-box');
     const a = await node(identity(ownerKey), 'linux-box', 0, () => ({
-      stream: forgingStream({ ...helloOf(c), machineId: 'm-00000000' }),
+      stream: forgingStream(
+        { ...helloOf(c), machineId: 'm-00000000' },
+        forgedProof(c.id, 'm-00000000'),
+      ),
       failure: async () => null,
     }));
     a.manager.start();
@@ -964,7 +1013,10 @@ describe('ssh hello identity and per-host pinning', { timeout: 60_000 }, () => {
     const a = await node(identity(ownerKey), 'linux-box', 0, (ssh) =>
       ssh.target === 'c-target'
         ? toC.dial(ssh)
-        : { stream: forgingStream(helloOf(c)), failure: async () => null },
+        : {
+            stream: forgingStream(helloOf(c), forgedProof(c.id, c.id.machineId)),
+            failure: async () => null,
+          },
     );
     c.manager.start();
     a.manager.start();
@@ -995,7 +1047,13 @@ describe('ssh hello identity and per-host pinning', { timeout: 60_000 }, () => {
     let reinstalledAnswers = false;
     const a = await node(identity(ownerKey), 'linux-box', 0, (ssh) =>
       reinstalledAnswers
-        ? { stream: forgingStream(helloOf(reinstalled)), failure: async () => null }
+        ? {
+            stream: forgingStream(
+              helloOf(reinstalled),
+              forgedProof(reinstalled.id, reinstalled.id.machineId),
+            ),
+            failure: async () => null,
+          }
         : toB.dial(ssh),
     );
     b.manager.start();
@@ -1121,7 +1179,7 @@ describe('ssh hello identity and per-host pinning', { timeout: 60_000 }, () => {
     const real = await node(identity(), 'real');
     const impostor = await node(identity(), 'impostor');
     const dial: SshDial = () => ({
-      stream: forgingStream(helloOf(impostor)),
+      stream: forgingStream(helloOf(impostor), forgedProof(impostor.id, impostor.id.machineId)),
       failure: async () => null,
     });
     const a = await node(identity(), 'ctl', 0, dial);
@@ -1631,11 +1689,14 @@ describe("an ssh peer's hello writes its machine block (protocol 1.1)", () => {
     const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
     const c = await node(identity(ownerKey), 'c-box');
     const a = await node(identity(ownerKey), 'linux-box', 0, () => ({
-      stream: forgingStream({
-        ...helloOf(c),
-        platform: { os: 'other', arch: 'x64' },
-        version: '9.9.9',
-      }),
+      stream: forgingStream(
+        {
+          ...helloOf(c),
+          platform: { os: 'other', arch: 'x64' },
+          version: '9.9.9',
+        },
+        forgedProof(c.id, c.id.machineId),
+      ),
       failure: async () => null,
     }));
     a.manager.start();
@@ -1649,7 +1710,7 @@ describe("an ssh peer's hello writes its machine block (protocol 1.1)", () => {
     const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
     const c = await node(identity(ownerKey), 'c-box');
     const a = await node(identity(ownerKey), 'linux-box', 0, () => ({
-      stream: forgingStream(helloOf(c)),
+      stream: forgingStream(helloOf(c), forgedProof(c.id, c.id.machineId)),
       failure: async () => null,
     }));
     a.manager.start();
@@ -1662,11 +1723,14 @@ describe("an ssh peer's hello writes its machine block (protocol 1.1)", () => {
     const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
     const c = await node(identity(ownerKey), 'c-box');
     const a = await node(identity(ownerKey), 'linux-box', 0, () => ({
-      stream: forgingStream({
-        ...helloOf(c),
-        platform: { os: 'linux', arch: 'arm64' },
-        version: '9.9.9',
-      }),
+      stream: forgingStream(
+        {
+          ...helloOf(c),
+          platform: { os: 'linux', arch: 'arm64' },
+          version: '9.9.9',
+        },
+        forgedProof(c.id, c.id.machineId),
+      ),
       failure: async () => null,
     }));
     a.manager.start();
@@ -1786,5 +1850,127 @@ describe('forget and the drive grant', { timeout: 60_000 }, () => {
     const changes = a.changes;
     expect(a.manager.forget('m-99999999')).toBe(false);
     expect(a.changes).toBe(changes);
+  });
+});
+
+describe('ssh proof of possession (plan F1)', { timeout: 60_000 }, () => {
+  const refusals = (n: Node) => n.audit.filter((e) => e.kind === 'link.refused');
+  const refusalOf = (peer: Identity, reason: string) => ({
+    kind: 'link.refused',
+    peer: peer.machineId,
+    detail: { transport: 'ssh', reason },
+  });
+
+  it('both ends of an ssh link prove their keys, and the link is up on both', async () => {
+    const { a, b } = await sshPair();
+    expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
+    await until(
+      () =>
+        a.manager.view(b.id.machineId)?.state === 'up' &&
+        b.manager.view(a.id.machineId)?.state === 'up',
+    );
+    expect(refusals(a)).toEqual([]);
+    expect(refusals(b)).toEqual([]);
+  });
+
+  it('a proof signed by another key is refused, audited, and nothing is pinned', async () => {
+    const t = await node(identity(), 'win-box');
+    t.manager.start();
+    const victim = identity();
+    const mallory = identity();
+    await acceptForged(t, helloFor(victim), forgedProof(mallory, victim.machineId));
+    await until(() => refusals(t).length > 0);
+    expect(refusals(t)).toEqual([refusalOf(victim, 'bad-proof')]);
+    expect(t.warns).toContain(PROOF_REFUSED);
+    expect(t.store.links()).toEqual([]);
+  });
+
+  it('a proof over an older nonce is a replay: refused, audited, and nothing is pinned', async () => {
+    const t = await node(identity(), 'win-box');
+    t.manager.start();
+    const victim = identity();
+    const stale = Buffer.alloc(32, 3).toString('base64');
+    await acceptForged(
+      t,
+      helloFor(victim),
+      forgedProof(victim, victim.machineId, { nonce: stale }),
+    );
+    await until(() => refusals(t).length > 0);
+    expect(refusals(t)).toEqual([refusalOf(victim, 'bad-proof')]);
+    expect(t.store.links()).toEqual([]);
+  });
+
+  it('a proof that binds other machine ids is refused, audited, and nothing is pinned', async () => {
+    const t = await node(identity(), 'win-box');
+    t.manager.start();
+    const victim = identity();
+    const bystander = identity();
+    await acceptForged(
+      t,
+      helloFor(victim),
+      forgedProof(victim, victim.machineId, { bound: bystander.machineId }),
+    );
+    await until(() => refusals(t).length > 0);
+    expect(refusals(t)).toEqual([refusalOf(victim, 'bad-proof')]);
+    expect(t.store.links()).toEqual([]);
+  });
+
+  it('a hello with no nonce is refused as bad-proof, audited, and nothing is pinned', async () => {
+    const t = await node(identity(), 'win-box');
+    t.manager.start();
+    const victim = identity();
+    const { nonce: _nonce, ...noNonce } = helloFor(victim);
+    await acceptForged(t, noNonce, forgedProof(victim, victim.machineId));
+    await until(() => refusals(t).length > 0);
+    expect(refusals(t)).toEqual([refusalOf(victim, 'bad-proof')]);
+    expect(t.store.links()).toEqual([]);
+  });
+
+  it('a peer below the proof minor is refused as incompatible, audited, and nothing is pinned', async () => {
+    const t = await node(identity(), 'win-box');
+    t.manager.start();
+    const victim = identity();
+    const { nonce: _nonce, ...noNonce } = helloFor(victim);
+    await acceptForged(
+      t,
+      { ...noNonce, protocol: { major: LINK_PROTOCOL.major, minor: 6 } },
+      forgedProof(victim, victim.machineId),
+    );
+    await until(() => refusals(t).length > 0);
+    expect(refusals(t)).toEqual([refusalOf(victim, 'incompatible')]);
+    expect(t.store.links()).toEqual([]);
+  });
+
+  it('a peer that sends its hello and never its proof is refused at the hello timeout', async () => {
+    const t = await node(identity(), 'win-box');
+    t.manager.start();
+    const victim = identity();
+    const [x, y] = streamPair();
+    cleanup.push(async () => {
+      x.destroy();
+      y.destroy();
+    });
+    t.manager.acceptStream(y);
+    x.resume();
+    x.write(encodeFrame(helloFor(victim)));
+    await until(() => refusals(t).length > 0, 15_000);
+    expect(refusals(t)).toEqual([refusalOf(victim, 'bad-proof')]);
+    expect(t.store.links()).toEqual([]);
+  });
+
+  it('an ssh dial whose target fails the proof is bad-proof, audited, and nothing is pinned', async () => {
+    const victim = identity();
+    const mallory = identity();
+    const a = await node(identity(), 'linux-box', 0, () => ({
+      stream: forgingStream(helloFor(victim), forgedProof(mallory, victim.machineId)),
+      failure: async () => null,
+    }));
+    a.manager.start();
+    expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({
+      ok: false,
+      error: { code: 'bad-proof' },
+    });
+    expect(refusals(a)).toEqual([refusalOf(victim, 'bad-proof')]);
+    expect(a.store.links()).toEqual([]);
   });
 });
