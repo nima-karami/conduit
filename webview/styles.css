@@ -2995,7 +2995,7 @@ body.resizing .panel__resize::after {
   font-size: calc(11.5px * var(--font-scale));
   color: var(--text-dim);
 }
-.agent-setup__state[data-installed='true'] {
+.agent-setup__state[data-installed="true"] {
   color: var(--success);
 }
 .agent-setup__error {
