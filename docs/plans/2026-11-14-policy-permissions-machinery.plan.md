@@ -843,4 +843,7 @@ So a Codex orchestrator can take over if Claude stops. The lead (claude-3) recei
   - Sessions resolve their launched CLI from persisted data; if it's unknown, they're skipped (never guessed).
   - A missing policy.json loads last-good before ever migrating from legacy.
   - Accepted (CON-25 card): one scoped exception refuses a whole legacy edit.
+- *Lane B second re-review rulings:*
+  - `transcript_path` is confined before any fs call: absolute, local, no UNC or device prefix, under `<claude home>/projects/` (resolved by the existing function). The size lookup is an async stat inside the timed check.
+  - The hook limiter counts only live session tokens, keyed by sessionId.
 
