@@ -43,6 +43,7 @@ import { createCalls, isDialedSsh } from './calls';
 import { createDrive, type Drive, type DriveDeps } from './drive';
 import { createFsClient } from './fs-client';
 import { createFsServe } from './fs-serve';
+import { createGitOps, createGitServe } from './git-serve';
 import { adoptOwnerKey, type Identity, setOwnerKey } from './identity';
 import { createLinkManager, type LinkManager } from './link-manager';
 import { openLinkStore } from './link-store';
@@ -339,6 +340,10 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
         void fsServe
           .onFrame(machineId, f)
           .catch((err: unknown) => deps.log.error('fs frame failed', { message: String(err) }));
+      else if (f.t === 'git.req')
+        void gitServe
+          .onFrame(machineId, f)
+          .catch((err: unknown) => deps.log.error('git frame failed', { message: String(err) }));
       else if (f.t === 'request.mirror' || f.t === 'request.answer' || f.t === 'request.answered')
         void requests
           .onFrame(machineId, f)
@@ -490,6 +495,17 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       };
     },
     watchDir,
+    send: (machineId, frame) => {
+      manager.send(machineId, frame);
+    },
+    audit,
+    now,
+  });
+  const gitServe = createGitServe({
+    linkOf: (machineId) => store.get(machineId),
+    linkState: (machineId) => manager.view(machineId)?.state ?? null,
+    sessionRoots: deps.sessionRoots,
+    git: createGitOps(),
     send: (machineId, frame) => {
       manager.send(machineId, frame);
     },
