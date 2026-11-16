@@ -52,6 +52,25 @@ function logSpy() {
 }
 
 describe('link store', () => {
+  // The endpoint is set once an ssh peer's record needs one; a tls record never gets one.
+  it('update sets ssh on an ssh record and is refused on a tls record', () => {
+    const { io } = memoryIo();
+    const store = openLinkStore(FILE, { now: () => T0, log: logSpy(), io });
+    store.put(rec('m-aaaaaaaa'));
+    store.addSsh({
+      machineId: 'm-bbbbbbbb',
+      serverKey: 'key-bbbbbbbb',
+      ownerKey: null,
+      name: 'r',
+      ssh: null,
+    });
+    const ssh = { target: 'vm', node: '/usr/bin/node', mainJs: '/m.js', userData: '/u' };
+    expect(store.update('m-bbbbbbbb', { ssh })?.ssh).toEqual(ssh);
+    expect(store.get('m-bbbbbbbb')?.ssh).toEqual(ssh);
+    expect(store.update('m-aaaaaaaa', { ssh })).toBeNull();
+    expect(store.get('m-aaaaaaaa')?.ssh).toBeNull();
+  });
+
   // An ssh peer has no certificate; it must never widen the listener's trusted CAs.
   it('trustedCerts skips ssh records', () => {
     const { io } = memoryIo();

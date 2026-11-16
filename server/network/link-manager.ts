@@ -269,13 +269,16 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
    */
   const pinSshPeer = (
     hello: HelloFrame,
-    ownerKey: string,
     ssh: SshEndpoint | null,
   ): { record: LinkRecord } | { error: 'identity-changed' | 'identity-conflict' } => {
     const live = deps.store.get(hello.machineId);
     if (live !== null) {
       if (live.transport !== 'ssh') return { error: 'identity-conflict' };
       if (live.serverKey !== hello.serverKey) return { error: 'identity-changed' };
+      // A record first pinned from the peer's side has no endpoint; the first dial that has one fills it.
+      if (live.ssh === null && ssh !== null) {
+        return { record: deps.store.update(live.machineId, { ssh }) ?? live };
+      }
       return { record: live };
     }
     if (deps.store.conflicts(hello.machineId, hello.serverKey))
@@ -285,7 +288,8 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       record: deps.store.addSsh({
         machineId: hello.machineId,
         serverKey: hello.serverKey,
-        ownerKey,
+        // Owner keys are never compared on ssh links, so a server without one still links.
+        ownerKey: hello.ownerKey,
         name,
         ssh,
       }),
@@ -374,12 +378,6 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     });
     if ('error' in opened) return;
     const hello = opened.peerHello;
-    if (hello.ownerKey === null) {
-      // A pinned ssh record stores the peer's owner key (plan decision 5); without one there is nothing to pin.
-      deps.log.warn('link: ssh peer without an owner key refused', { peer: hello.machineId });
-      opened.close('bad-hello');
-      return;
-    }
     // A revoked peer that dials us only hears that it was revoked, as over TLS (tombstones by key).
     const tomb = deps.store.byServerKey(hello.serverKey);
     if (tomb !== null && 'tombstone' in tomb) {
@@ -387,7 +385,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       opened.close('revoked');
       return;
     }
-    const pinned = pinSshPeer(hello, hello.ownerKey, null);
+    const pinned = pinSshPeer(hello, null);
     if ('error' in pinned) {
       if (pinned.error === 'identity-changed') markIdentityChanged(hello.machineId);
       opened.close(pinned.error);
@@ -417,21 +415,20 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       return { ok: false, error: { code: opened.error } };
     }
     const hello = opened.peerHello;
-    if (hello.ownerKey === null) {
-      opened.close('bad-hello');
-      return { ok: false, error: { code: 'bad-hello' } };
-    }
-    const pinned = pinSshPeer(hello, hello.ownerKey, ssh);
+    const pinned = pinSshPeer(hello, ssh);
     if ('error' in pinned) {
       if (pinned.error === 'identity-changed') markIdentityChanged(hello.machineId);
       opened.close(pinned.error);
       return { ok: false, error: { code: pinned.error } };
     }
     const p = ensurePeer(pinned.record);
+    // An explicit add re-adds a peer that was revoked or refused, as add() does for TLS.
+    p.revokedBy = null;
+    if (terminal(p)) p.sm = initialLinkState(deps.now());
     attach(p, opened, sent, deps.identity().machineId);
     // attach keeps a live connection over a duplicate and refuses a terminal peer; only a link
     // that is up for this target counts as added.
-    if (p.conn === null) return { ok: false, error: { code: 'ssh_failed', detail: 'not adopted' } };
+    if (p.conn === null) return { ok: false, error: { code: 'ssh_failed', detail: 'not_adopted' } };
     return { ok: true, machineId: hello.machineId };
   };
 

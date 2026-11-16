@@ -385,6 +385,8 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       createdAt: new Date(now()).toISOString(),
       cert: outcome.peer.cert,
       ownerTransfer: outcome.ownerTransfer,
+      transport: 'tls',
+      ssh: null,
     });
     listener?.refreshTrust();
     void ensureListening().catch((err: Error) =>

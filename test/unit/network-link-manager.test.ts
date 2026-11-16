@@ -552,11 +552,10 @@ function fakeSsh(into: () => Node): FakeSsh {
 }
 
 /** `a` dials `b` over a fake ssh; `b` only accepts, as an ssh target does. */
-async function sshPair() {
-  // A hello without an owner key is refused on ssh; these peers carry one, as paired servers do.
+async function sshPair(bHasOwnerKey = true) {
   const owner = identity();
   const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
-  const b = await node(identity(ownerKey), 'win-box');
+  const b = await node(bHasOwnerKey ? identity(ownerKey) : identity(), 'win-box');
   const ssh = fakeSsh(() => b);
   const a = await node(identity(ownerKey), 'linux-box', 0, ssh.dial);
   a.manager.start();
@@ -631,6 +630,68 @@ function messagingOver(n: Node, mcp: McpNetworkPort): Messaging {
 }
 
 describe('ssh links', { timeout: 60_000 }, () => {
+  it('an ssh link to a server with no owner key works', async () => {
+    const { a, b } = await sshPair(false);
+    expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({ ok: true, machineId: b.id.machineId });
+    await until(() => b.manager.view(a.id.machineId)?.state === 'up');
+    expect(a.manager.view(b.id.machineId)?.state).toBe('up');
+    expect(a.store.get(b.id.machineId)?.ownerKey).toBeNull();
+  });
+
+  it('acceptStream answers a tombstoned peer with revoked and does not re-link it', async () => {
+    const { a, b } = await sshPair();
+    const bKey = b.id.serverKeyRaw.toString('base64');
+    a.store.addSsh({
+      machineId: b.id.machineId,
+      serverKey: bKey,
+      ownerKey: null,
+      name: 'win-box',
+      ssh: null,
+    });
+    a.store.revoke(b.id.machineId, Date.now());
+    const [x, y] = streamPair();
+    cleanup.push(async () => {
+      x.destroy();
+      y.destroy();
+    });
+    a.manager.acceptStream(y);
+    const frames: LinkFrame[] = [];
+    const conn = await openConnection(x, { hello: helloOf(b), now: Date.now, log: quiet });
+    if ('error' in conn) throw new Error('connection failed');
+    conn.start({ onFrame: (f) => frames.push(f), onClose: () => undefined });
+    await until(() => frames.some((f) => f.t === 'revoked'));
+    expect(a.store.get(b.id.machineId)).toBeNull();
+  });
+
+  it('addSshPeer re-adds a revoked peer and clears its tombstone', async () => {
+    const { a, b } = await sshPair();
+    const bKey = b.id.serverKeyRaw.toString('base64');
+    await a.manager.addSshPeer(ENDPOINT);
+    await until(() => b.manager.view(a.id.machineId)?.state === 'up');
+    // B is away while A revokes it, so B never learns of the revoke and keeps no tombstone.
+    await b.manager.stop();
+    expect(a.manager.revoke(b.id.machineId)).toBe(true);
+    b.manager.start();
+    expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
+    expect(a.manager.view(b.id.machineId)?.state).toBe('up');
+    expect(a.store.get(b.id.machineId)).toMatchObject({ transport: 'ssh', ssh: ENDPOINT });
+    expect('tombstone' in (a.store.byServerKey(bKey) ?? {})).toBe(false);
+  });
+
+  it('addSshPeer stores its endpoint on an existing ssh record that has none', async () => {
+    const { a, b } = await sshPair();
+    const bKey = b.id.serverKeyRaw.toString('base64');
+    a.store.addSsh({
+      machineId: b.id.machineId,
+      serverKey: bKey,
+      ownerKey: null,
+      name: 'win-box',
+      ssh: null,
+    });
+    expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
+    expect(a.store.get(b.id.machineId)?.ssh).toEqual(ENDPOINT);
+  });
+
   it('acceptStream pins a new controller and a second stream with another serverKey is identity-changed', async () => {
     const { a, b } = await sshPair();
     expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({ ok: true, machineId: b.id.machineId });

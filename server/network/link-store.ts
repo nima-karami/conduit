@@ -32,7 +32,7 @@ export interface LinkStore {
   addSsh(r: {
     machineId: string;
     serverKey: string;
-    ownerKey: string;
+    ownerKey: string | null;
     name: string;
     ssh: SshEndpoint | null;
   }): LinkRecord;
@@ -41,9 +41,12 @@ export interface LinkStore {
    * ids are 32 bits, so a second key could be ground to collide; it must not take over the record.
    */
   conflicts(machineId: string, serverKey: string): boolean;
+  /** `ssh` may only be set on an ssh record; on a tls record the update is refused (null). */
   update(
     machineId: string,
-    patch: Partial<Pick<LinkRecord, 'addresses' | 'capabilities' | 'name' | 'ownerTransfer'>>,
+    patch: Partial<
+      Pick<LinkRecord, 'addresses' | 'capabilities' | 'name' | 'ownerTransfer' | 'ssh'>
+    >,
   ): LinkRecord | null;
   /** Removes the live record and keeps a tombstone for TOMBSTONE_TTL_MS. */
   revoke(machineId: string, at: number): Tombstone | null;
@@ -184,6 +187,7 @@ export function openLinkStore(
     update(machineId, patch) {
       const found = state.links.find((l) => l.machineId === machineId);
       if (!found) return null;
+      if (patch.ssh !== undefined && found.transport !== 'ssh') return null;
       const next = copyLink({ ...found, ...patch });
       state = {
         ...state,

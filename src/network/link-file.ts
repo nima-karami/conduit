@@ -7,7 +7,8 @@ export interface LinkRecord {
   linkId: string;
   machineId: string;
   serverKey: string;
-  ownerKey: string;
+  /** Null only for an ssh peer whose server has no owner key; a tls link always has one. */
+  ownerKey: string | null;
   name: string;
   trust: 'own';
   addresses: string[];
@@ -62,7 +63,7 @@ const isLink = (v: unknown): boolean =>
   isStr(v.linkId) &&
   isMachineId(v.machineId) &&
   isStr(v.serverKey) &&
-  isStr(v.ownerKey) &&
+  (v.transport === 'ssh' ? v.ownerKey === null || isStr(v.ownerKey) : isStr(v.ownerKey)) &&
   isStr(v.name) &&
   v.trust === 'own' &&
   Array.isArray(v.addresses) &&

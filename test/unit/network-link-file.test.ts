@@ -71,6 +71,23 @@ describe('links file', () => {
     expect(parseLinksFile(serializeLinksFile(f), NOW)).toEqual({ kind: 'ok', file: f });
   });
 
+  // A server without an owner key has nothing to put here, and only ssh links may say so.
+  it('an ssh record with no owner key round-trips', () => {
+    const f: LinksFile = {
+      version: 1,
+      links: [{ ...link, ownerKey: null, transport: 'ssh', ssh: null, cert: '' }],
+      tombstones: [],
+    };
+    expect(parseLinksFile(serializeLinksFile(f), NOW)).toEqual({ kind: 'ok', file: f });
+  });
+
+  it('a tls record with a null ownerKey is corrupt', () => {
+    const bad = { ...link, ownerKey: null, transport: 'tls', ssh: null };
+    expect(parseLinksFile(JSON.stringify({ ...sample, links: [bad] }), NOW)).toEqual({
+      kind: 'corrupt',
+    });
+  });
+
   it('an ssh endpoint with an empty field is corrupt', () => {
     const bad = {
       ...link,
