@@ -156,6 +156,8 @@ export interface ControlCallContext {
   reach: Reach | undefined;
   /** Bound by the host to flow.requestUi with this call's in-flight entry and caller. */
   ui(windowId: number, routedSessionId: string, action: McpUiAction): Promise<Result<McpUiResult>>;
+  /** The call's cancel: a notifications/cancelled or a closed connection aborts it. */
+  signal: AbortSignal;
 }
 export interface ControlHandlers {
   prepareOpenSession(

@@ -175,6 +175,7 @@ function context(
   const ctx: ControlCallContext = {
     move: o.move,
     reach: o.reach,
+    signal: new AbortController().signal,
     ui: async (w, routed, action) => {
       calls.push({ w, routed, action });
       return answer(action);
@@ -1364,6 +1365,7 @@ describe('open_git_history', () => {
     const throwing: ControlCallContext = {
       move: undefined,
       reach: undefined,
+      signal: new AbortController().signal,
       ui: async () => {
         throw new Error('send blew up');
       },

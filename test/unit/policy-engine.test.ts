@@ -1167,3 +1167,44 @@ describe('missing profile and fail-closed', () => {
     expect(closed).toBe('deny');
   });
 });
+
+describe('a machine never added asks under every profile (spec 4.6, RS-D6)', () => {
+  const connect = (over: Partial<PolicyInput> = {}) => input({ tool: 'connect_machine', ...over });
+
+  it('a lead allow becomes an ask for a target that is not added, and the reason says so', () => {
+    const d = decide(state({ default: assignment('lead') }), connect({ forceAsk: true }));
+    expect(d.decision).toBe('ask');
+    expect(d.reason).toEqual({ by: 'profile', point: { kind: 'default' }, profileId: 'lead' });
+  });
+
+  it('a lead allow stands for a machine already added', () => {
+    expect(decide(state({ default: assignment('lead') }), connect()).decision).toBe('allow');
+  });
+
+  it('worker asks to connect, with or without the force', () => {
+    expect(decide(state(worker), connect()).decision).toBe('ask');
+    expect(decide(state(worker), connect({ forceAsk: true })).decision).toBe('ask');
+  });
+
+  it('an observer denial stays a denial for a target that is not added', () => {
+    expect(
+      decide(state({ default: assignment('observer') }), connect({ forceAsk: true })).decision,
+    ).toBe('deny');
+  });
+
+  it('a grant still passes a forced ask, as it passes any ask', () => {
+    const d = decide(
+      state({ default: assignment('lead') }, { grants: [grant({ tool: 'connect_machine' })] }),
+      connect({ forceAsk: true }),
+    );
+    expect(d.decision).toBe('allow');
+    expect(d.reason).toEqual({ by: 'grant', grantId: 'g1' });
+  });
+
+  it('list_machines is allowed under observer, worker and lead, like list_sessions', () => {
+    for (const id of ['observer', 'worker', 'lead'] as const) {
+      const d = decide(state({ default: assignment(id) }), input({ tool: 'list_machines' }));
+      expect(d.decision, id).toBe('allow');
+    }
+  });
+});

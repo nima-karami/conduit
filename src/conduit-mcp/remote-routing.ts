@@ -130,3 +130,8 @@ export function mergeDirectory(
 export function isRemote(e: DirectoryEntry | RemoteEntry): e is RemoteEntry {
   return 'address' in e;
 }
+
+/** A machine is known when a pinned one answers to the name, id or ssh target given (plan decision 5). */
+export function isKnownMachine(machines: readonly MachineView[], ref: string): boolean {
+  return machines.some((m) => m.machine === ref || m.machine_id === ref || m.target === ref);
+}

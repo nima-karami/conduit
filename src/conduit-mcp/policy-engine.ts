@@ -31,7 +31,12 @@ import type {
 import { type CliKind, TOOL_NAMES, type ToolName } from './tool-policy';
 
 // see NET §4.1 (R21)
+// The machine tools are not in NET's table: a read of this side's links is monitor, and adding or
+// dropping a link is orchestrate (off for every remote in v1), so a peer cannot reshape our fleet.
 const CAPABILITY_OF: Record<ToolName, Capability | 'orchestrate'> = {
+  list_machines: 'monitor',
+  connect_machine: 'orchestrate',
+  disconnect_machine: 'orchestrate',
   list_sessions: 'messaging',
   send_message: 'messaging',
   read_inbox: 'messaging',
@@ -172,8 +177,12 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
   const profile = profileById(state, assignment.profileId) ?? OBSERVER;
   const targets = resolveTargets(input.targets, principal);
   const primary = targets[0];
-  const ruleFor = (t: PolicyTarget): ToolRule =>
-    forPrincipal(principal, effectiveRule(profile, assignment, tool, t));
+  // A forced ask (spec 4.6, RS-D6) only turns an allow into an ask: a profile's deny is still a deny,
+  // and a grant can still pass the ask, as it passes any ask.
+  const ruleFor = (t: PolicyTarget): ToolRule => {
+    const rule = forPrincipal(principal, effectiveRule(profile, assignment, tool, t));
+    return input.forceAsk && rule.decision === 'allow' ? { ...rule, decision: 'ask' } : rule;
+  };
 
   if (!masterOn && tool !== 'list_agents')
     return done('deny', { by: 'floor', floor: 'master-off' }, ruleFor(primary));

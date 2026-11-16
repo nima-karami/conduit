@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  forcesAsk,
   resolveTargets,
   type TargetCaller,
   type TargetDeps,
@@ -120,5 +121,35 @@ describe('resolveTargets', () => {
     );
     expect(targets.map((t) => t.sessionId)).toEqual(['s-alpha']);
     expect(asked).toEqual(['alpha']);
+  });
+});
+
+describe('forcesAsk: a machine never added always asks (spec 4.6, RS-D6)', () => {
+  const known =
+    (...refs: string[]) =>
+    (ref: string) =>
+      refs.includes(ref);
+
+  it('connect_machine to an ssh target that is not added forces an ask', () => {
+    expect(forcesAsk('connect_machine', { machine: 'new.example' }, known())).toBe(true);
+  });
+
+  it('connect_machine to a machine already added does not', () => {
+    expect(forcesAsk('connect_machine', { machine: 'win-box' }, known('win-box'))).toBe(false);
+  });
+
+  it('a value that is not an ssh target never reaches a dial, so it does not ask', () => {
+    expect(forcesAsk('connect_machine', { machine: 'not a target!' }, known())).toBe(false);
+    expect(forcesAsk('connect_machine', { machine: '-oProxyCommand=x' }, known())).toBe(false);
+  });
+
+  it('the other machine tools never force an ask', () => {
+    expect(forcesAsk('disconnect_machine', { machine: 'new.example' }, known())).toBe(false);
+    expect(forcesAsk('list_machines', {}, known())).toBe(false);
+  });
+
+  it('a missing or empty machine argument does not ask', () => {
+    expect(forcesAsk('connect_machine', {}, known())).toBe(false);
+    expect(forcesAsk('connect_machine', { machine: '' }, known())).toBe(false);
   });
 });

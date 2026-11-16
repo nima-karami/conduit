@@ -24,7 +24,12 @@ const leafOf = (c: string) => c.split(/[/]/).pop() ?? '';
 const noUi: ControlCallContext['ui'] = async () => {
   throw new Error('the open tools never ask the renderer');
 };
-const ctxOf = (move?: Move): ControlCallContext => ({ move, reach: undefined, ui: noUi });
+const ctxOf = (move?: Move): ControlCallContext => ({
+  move,
+  reach: undefined,
+  ui: noUi,
+  signal: new AbortController().signal,
+});
 
 interface Harness {
   deps: ControlDeps;

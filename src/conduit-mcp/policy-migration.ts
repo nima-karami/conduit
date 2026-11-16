@@ -13,6 +13,7 @@ import {
   type CliKind,
   type CliPolicyLayers,
   type GlobalPolicy,
+  isMachineTool,
   type PolicyLayer,
   resolvePolicy,
   TOOL_NAMES,
@@ -55,7 +56,8 @@ const pinsOf = (layer: PolicyLayer): string[] =>
 
 function assignmentFor(today: TodayOf, pins: readonly string[] = []): Assignment {
   const lead: Assignment = { profileId: 'lead', exceptions: [], onScreenOnly: true };
-  const leadMatches = TOOL_NAMES.every((tool) =>
+  // A v0.64 all-on layer never set the machine tools, so only the tools it could set decide Lead.
+  const leadMatches = TOOL_NAMES.filter((tool) => !isMachineTool(tool)).every((tool) =>
     sameLegacy(legacyPolicyOf(effectiveRule(LEAD_PROFILE, lead, tool, null), tool), today(tool)),
   );
   if (leadMatches) return withPinned(lead, pins);

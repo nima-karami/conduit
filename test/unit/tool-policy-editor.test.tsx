@@ -102,11 +102,23 @@ describe('ToolPolicyEditor', () => {
       MCP_STR.tools.group.requests,
       MCP_STR.tools.group.sessions,
       MCP_STR.tools.group.editor,
+      MCP_STR.tools.group.machines,
     ]);
     for (const t of TOOL_NAMES) {
       expect(row(t)?.querySelector('code')?.textContent).toBe(t);
       expect(row(t)?.textContent).toContain(MCP_STR.tools.description[t]);
       expect(group(t)).not.toBeNull();
+    }
+  });
+
+  it('the machine tools sit in the Machines group, each with its access control', async () => {
+    await mount(props());
+    for (const t of ['list_machines', 'connect_machine', 'disconnect_machine'] as const) {
+      const labelled = row(t)?.closest('[role="group"]')?.getAttribute('aria-labelledby') ?? '';
+      expect(document.getElementById(labelled)?.textContent).toBe(MCP_STR.tools.group.machines);
+      expect(
+        document.querySelector(`[aria-label="${MCP_STR.tools.fieldAria(t, 'access')}"]`),
+      ).not.toBeNull();
     }
   });
 

@@ -279,6 +279,10 @@ export const MCP_STR = {
       open_diff: 'Lets an agent show a unified diff in Review without applying it.',
       open_git_history: 'Lets an agent open the commit history at a commit or branch.',
       open_url: 'Lets an agent open web pages in a Conduit tab.',
+      list_machines: 'Lets an agent see the machines you have connected and their state.',
+      connect_machine:
+        'Lets an agent connect a machine, and install Conduit on a new one over ssh.',
+      disconnect_machine: 'Lets an agent disconnect a machine; its sessions keep running.',
     } satisfies Record<ToolName, string>,
     overrideNote: 'Sessions can override these from their menu (MCP tools…).',
     masterOffHint: `Turn on “${SETTINGS_TOGGLE}” to use tools`,
@@ -296,6 +300,7 @@ export const MCP_STR = {
       requests: 'Requests',
       sessions: 'Sessions',
       editor: 'Editor & views',
+      machines: 'Machines',
     } satisfies Record<ToolGroup, string>,
     accessLabel: (tool: string) => `${tool} access`,
     fieldAria: (tool: string, field: string) => `${tool} ${field}`,
@@ -360,6 +365,12 @@ export const MCP_STR = {
         s.ref === null ? 'Open the commit history' : `Open the commit history at ${s.ref}`,
       open_url: (s) => `Open ${s.url} in a Conduit tab`,
       list_agents: () => 'List the agents you can open',
+      list_machines: () => 'List your machines',
+      connect_machine: (s) =>
+        s.newMachine
+          ? `Add ${s.machine} and install Conduit on it over ssh`
+          : `Connect ${s.machine}`,
+      disconnect_machine: (s) => `Disconnect ${s.machine}; its sessions keep running`,
     } satisfies { [K in AskSummary['tool']]: (s: Extract<AskSummary, { tool: K }>) => string },
     inputText: (s: Extract<AskSummary, { tool: 'send_input' }>) => s.text,
     inputKeys: (s: Extract<AskSummary, { tool: 'send_input' }>) => s.keys.join(', '),

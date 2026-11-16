@@ -41,12 +41,15 @@ const OBSERVER_ALLOWED: readonly ToolName[] = [
   'send_message',
   'wait_sessions',
   'list_agents',
+  'list_machines',
   'request_input',
   'wait_request',
   'withdraw_request',
   'list_requests',
 ];
 const LEAD_ALLOWED: readonly ToolName[] = [
+  'connect_machine',
+  'disconnect_machine',
   'open_session',
   'open_terminal',
   'send_input',
@@ -100,7 +103,7 @@ describe('built-in profiles', () => {
     });
   });
 
-  it('observer denies all but the ten read and request tools', () => {
+  it('observer denies all but the read and request tools', () => {
     const observer = builtIn('observer');
     for (const tool of TOOL_NAMES) {
       const expected = OBSERVER_ALLOWED.includes(tool)
@@ -110,6 +113,20 @@ describe('built-in profiles', () => {
     }
     expect(observer.name).toBe('Observer');
     expect(observer.builtIn).toBe(true);
+  });
+
+  // Spec 4.6 / RS-D6: a machine is added only by the owner or a Lead, and asks are forced in the engine.
+  it('machines: observer denies connect and disconnect, worker asks, lead allows; list follows list_sessions', () => {
+    const rule = (id: string, tool: ToolName) => builtIn(id).rules[tool].decision;
+    expect(rule('observer', 'connect_machine')).toBe('deny');
+    expect(rule('observer', 'disconnect_machine')).toBe('deny');
+    expect(rule('worker', 'connect_machine')).toBe('ask');
+    expect(rule('worker', 'disconnect_machine')).toBe('ask');
+    expect(rule('lead', 'connect_machine')).toBe('allow');
+    expect(rule('lead', 'disconnect_machine')).toBe('allow');
+    for (const id of ['observer', 'worker', 'lead']) {
+      expect(rule(id, 'list_machines'), id).toBe(rule(id, 'list_sessions'));
+    }
   });
 
   it('profileById finds built-ins and returns null for an unknown id', () => {

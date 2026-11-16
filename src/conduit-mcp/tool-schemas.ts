@@ -458,6 +458,43 @@ const APP_CONTROL_SCHEMAS: readonly ToolSchema[] = [
   },
 ];
 
+// Non-empty is enforced by the handler (invalid_args): B5's flat-keyword guard leaves minLength out.
+// The name is spelled once: hc-network-guard matches an argv array literal that names a subcommand.
+export const MACHINE_ARG = 'machine';
+const MACHINE_NAME = {
+  type: 'string',
+  description: 'A non-empty machine name, machine id, or ssh Host from your ssh config.',
+} as const;
+
+const MACHINE_SCHEMAS: readonly ToolSchema[] = [
+  {
+    name: 'list_machines',
+    description:
+      'List the machines you can reach: machine, machine_id, target, state (up, down or disabled), mode, os, arch, conduit_version, agents, sessions, last_seen.',
+    inputSchema: { ...OBJECT, properties: {} },
+  },
+  {
+    name: 'connect_machine',
+    description:
+      'Connect a machine, installing Conduit on it when it is new. Idempotent: a connection that is up is reused. Waits up to 120 s. ssh_needs_person means the human must connect it once from Machines.',
+    inputSchema: {
+      ...OBJECT,
+      properties: { [MACHINE_ARG]: MACHINE_NAME },
+      required: [MACHINE_ARG],
+    },
+  },
+  {
+    name: 'disconnect_machine',
+    description:
+      'Disconnect a machine. Its remote sessions keep running; it stays added and is not redialled until you connect it again.',
+    inputSchema: {
+      ...OBJECT,
+      properties: { [MACHINE_ARG]: MACHINE_NAME },
+      required: [MACHINE_ARG],
+    },
+  },
+];
+
 /** Every tool in TOOL_NAMES order; callers filter to the effective set. */
 export function toolSchemas(): ToolSchema[] {
   const all = [
@@ -465,6 +502,7 @@ export function toolSchemas(): ToolSchema[] {
     ...REQUEST_SCHEMAS,
     ...controlSchemas(),
     ...APP_CONTROL_SCHEMAS,
+    ...MACHINE_SCHEMAS,
   ];
   const byName = new Map(all.map((s) => [s.name, s]));
   return TOOL_NAMES.map((n) => {

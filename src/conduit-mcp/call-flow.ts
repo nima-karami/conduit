@@ -57,6 +57,8 @@ const askMarginMs = (routesUi: boolean): number => (routesUi ? UI_TIMEOUT_MS : 0
 export interface InFlight {
   /** True once notifications/cancelled named this request. Never true for a null requestId. */
   readonly cancelled: boolean;
+  /** Aborts with the cancel that ends this call, so work started for it stops too. */
+  readonly signal: AbortSignal;
   /** Drops the in-flight entry; called in the host's finally. Idempotent. */
   end(): void;
 }
@@ -177,6 +179,7 @@ interface AskMeta {
 }
 interface Entry extends InFlight {
   cancelled: boolean;
+  readonly aborter: AbortController;
 }
 interface UiMeta {
   kind: McpUiAction['kind'];
@@ -511,8 +514,11 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
 
   return {
     begin(key) {
+      const aborter = new AbortController();
       const entry: Entry = {
         cancelled: false,
+        aborter,
+        signal: aborter.signal,
         end() {
           if (key.requestId === null) return;
           const byId = inflight.get(key.connId);
@@ -570,13 +576,17 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       const entry = inflight.get(connId)?.get(requestId);
       if (!entry) return;
       entry.cancelled = true;
+      entry.aborter.abort();
       const match = sameCall({ connId, requestId });
       waits.cancel(match, false);
       waitsUi.cancel(match, false);
     },
 
     connectionClosed(connId) {
-      for (const entry of inflight.get(connId)?.values() ?? []) entry.cancelled = true;
+      for (const entry of inflight.get(connId)?.values() ?? []) {
+        entry.cancelled = true;
+        entry.aborter.abort();
+      }
       inflight.delete(connId);
       waits.cancel((w) => w.key.connId === connId, false);
       waitsUi.cancel((w) => w.key.connId === connId, false);

@@ -46,6 +46,12 @@ function summaryText(s: AskSummary): string {
       return STR.summary.open_git_history(s);
     case 'list_agents':
       return STR.summary.list_agents();
+    case 'list_machines':
+      return STR.summary.list_machines();
+    case 'connect_machine':
+      return STR.summary.connect_machine(s);
+    case 'disconnect_machine':
+      return STR.summary.disconnect_machine(s);
     case 'open_url':
       return STR.summary.open_url(s);
   }

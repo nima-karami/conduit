@@ -138,6 +138,11 @@ export interface PolicyInput {
   toYou: boolean;
   now: number;
   heldOverrides?: readonly OneUseOverride[];
+  /**
+   * The call's target must be asked about whatever the profile allows: a machine that was never
+   * added (spec 4.6, RS-D6). Computed from the facts by policy-targets' forcesAsk.
+   */
+  forceAsk?: boolean;
 }
 
 export interface PolicyDecision {

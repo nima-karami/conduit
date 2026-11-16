@@ -34,6 +34,9 @@ const LEAD_ALLOWED: readonly ToolName[] = [
   'send_input',
   'close_session',
   'attach_folder',
+  // A machine that is already added connects without a card; a new one is forced to ask (RS-D6).
+  'connect_machine',
+  'disconnect_machine',
 ];
 const OBSERVER_ALLOWED: readonly ToolName[] = [
   'list_sessions',
@@ -42,6 +45,7 @@ const OBSERVER_ALLOWED: readonly ToolName[] = [
   'send_message',
   'wait_sessions',
   'list_agents',
+  'list_machines',
   'request_input',
   'wait_request',
   'withdraw_request',
