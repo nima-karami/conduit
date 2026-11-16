@@ -176,12 +176,12 @@ changes to "the per-start secret from `<userData>/server-secret`; required befor
 | `server/lifecycle/link-stdio-bridge.ts` | create | `runLinkStdioBridge(o): Promise<number>` (exit code) |
 | `server/network/index.ts` | modify | wire `createSshDial`, `listenStdioLink`, `acceptStream` |
 | `server/network/c2.ts` | modify | `link.sshAdd` |
-| `test/helpers/fake-ssh.mjs` | create | test-only ssh stand-in: drops the options, parses the POSIX-quoted remote command, spawns it locally with stdio inherited, echoes ssh-like failures on demand via `FAKE_SSH_FAIL=<stderr text>` |
+| `test/e2e/fixtures/fake-ssh.cjs` | create | test-only ssh stand-in: drops the options, parses the POSIX-quoted remote command, spawns it locally with stdio inherited, echoes ssh-like failures on demand via `FAKE_SSH_FAIL=<stderr text>` |
 | `test/e2e/net-ssh-link.e2e.mjs` | create | two real servers; A adds B over fake-ssh; message → kill bridge → exactly-once after redial; secret-less client refused |
 | tests listed per task | create/modify | |
 
 ## Scripts
-1. `test/helpers/fake-ssh.mjs` (above). It replaces a real sshd in unit and e2e tests. Real sshd is proven by the
+1. `test/e2e/fixtures/fake-ssh.cjs` (above). It replaces a real sshd in unit and e2e tests. Real sshd is proven by the
    orchestrator's VM smoke (Verification).
 2. `test/e2e/c2-auth.mjs`: one helper instead of repeating secret reading in about 12 e2e files.
 
@@ -223,7 +223,7 @@ server-standalone. Fake servers in unit tests (`test/unit/fake-c2-server.ts`) ac
 
 ### Slice 2: link over any Duplex, ssh records, ssh dial (A side) — parallel
 **Check:** `npx vitest run test/unit/network-link-connection.test.ts test/unit/network-link-manager.test.ts test/unit/network-link-file.test.ts test/unit/network-link-store.test.ts test/unit/ssh-argv.test.ts test/unit/ssh-dialer.test.ts`
-**Parallel groups:** G1: T2.1 · G2: T2.2 (file-disjoint: G1 = `server/network/link-*.ts`, `listener.ts`, `src/network/link-file.ts` and their tests; G2 = `src/network/ssh-argv.ts`, `server/network/ssh-dialer.ts`, `test/helpers/fake-ssh.mjs` and their tests)
+**Parallel groups:** G1: T2.1 · G2: T2.2 (file-disjoint: G1 = `server/network/link-*.ts`, `listener.ts`, `src/network/link-file.ts` and their tests; G2 = `src/network/ssh-argv.ts`, `server/network/ssh-dialer.ts`, `test/e2e/fixtures/fake-ssh.cjs` and their tests)
 **Claims:** none (shared entries are in slice 3)
 
 #### Task 2.1: Duplex link, ssh records, acceptStream, addSshPeer
@@ -269,7 +269,7 @@ server-standalone. Fake servers in unit tests (`test/unit/fake-c2-server.ts`) ac
 - [ ] 'messages queued while an ssh link is down are delivered once after redial': reuse the existing messaging test pattern in `test/unit/network-link-manager.test.ts`, or the service test if messaging is composed there.
 
 #### Task 2.2: ssh argv, failure classification, dialer
-**Files:** create `src/network/ssh-argv.ts`, `server/network/ssh-dialer.ts`, `test/helpers/fake-ssh.mjs`; tests
+**Files:** create `src/network/ssh-argv.ts`, `server/network/ssh-dialer.ts`, `test/e2e/fixtures/fake-ssh.cjs`; tests
 `test/unit/ssh-argv.test.ts`, `test/unit/ssh-dialer.test.ts`.
 **Interfaces (produces):**
 - `posixQuote(args: readonly string[]): string | null`: each arg is wrapped in `'…'` with `'` → `'\''`, joined by spaces. Returns `null` if any arg contains `\0`, `\n` or `\r`.
@@ -295,7 +295,7 @@ server-standalone. Fake servers in unit tests (`test/unit/fake-c2-server.ts`) ac
   - destroying the stream kills the child by its PID (`child.kill()`);
   - a `bad_target`/`bad_arg` argv returns an already-destroyed stream whose `failure()` gives `{code:'ssh_failed', detail:'bad_target'|'bad_arg'}`.
 **Steps (red first):** exact-argv test; quoting tests including `'` and a space; refusal of a leading `-`; one
-classifier row per pattern; dialer test with `sshPath = process.execPath` and `fake-ssh.mjs` giving `createSshDial` an optional `sshArgsPrefix: string[]` used ONLY by tests) running a remote `cat`-like node
+classifier row per pattern; dialer test with `sshPath = process.execPath` and `fake-ssh.cjs` giving `createSshDial` an optional `sshArgsPrefix: string[]` used ONLY by tests) running a remote `cat`-like node
 one-liner: bytes round-trip; `FAKE_SSH_FAIL='Host key verification failed.'` → `failure()` gives
 `host_key_unknown`.
 

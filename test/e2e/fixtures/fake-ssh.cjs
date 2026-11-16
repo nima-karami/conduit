@@ -1,8 +1,9 @@
 #!/usr/bin/env node
+// CommonJS on purpose: spawned by path from e2e and unit tests, and the e2e fixtures glob is cjs.
 // Test-only stand-in for the system ssh. It takes the ssh argv that sshArgv builds, runs the
 // POSIX-quoted remote command locally with stdio inherited, and so needs no shell or sshd.
 
-import { spawn } from 'node:child_process';
+const { spawn } = require('node:child_process');
 
 const failText = process.env.FAKE_SSH_FAIL;
 if (failText !== undefined) {

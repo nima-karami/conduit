@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createSshDial } from '../../server/network/ssh-dialer';
 import type { SshEndpoint } from '../../src/contracts/ssh-link';
 
-const FAKE_SSH = path.join(process.cwd(), 'test', 'helpers', 'fake-ssh.mjs');
+const FAKE_SSH = path.join(process.cwd(), 'test', 'e2e', 'fixtures', 'fake-ssh.cjs');
 const created: string[] = [];
 
 afterEach(() => {
