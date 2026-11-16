@@ -10,7 +10,7 @@ import { EmptyState } from './empty-state';
 import { RemoteSessionRow } from './remote-session-row';
 import { RenameInput } from './session-card';
 
-export type MachineAction = 'connect' | 'retry' | 'disconnect' | 'rename' | 'remove' | 'copyFix';
+export type MachineAction = 'connect' | 'retry' | 'disconnect' | 'remove' | 'copyFix';
 
 /** What the status mark shows: each tone has its own shape in CSS, so colour is never the only cue. */
 type Tone = 'up' | 'needs' | 'failed' | 'offline' | 'pending';
@@ -151,6 +151,14 @@ export function MachinesSection({
       case 'End':
         return go(all[all.length - 1]);
     }
+    // The menu key and Shift+F10 open the row's menu, which is where its inline action is reachable.
+    if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+      const owner = machines.find((x) => x.machine_id === el.dataset.machineId);
+      if (!owner) return;
+      e.preventDefault();
+      openRowMenu(owner, el.getBoundingClientRect(), true);
+      return;
+    }
     const machineId = el.dataset.machineId;
     if (machineId !== undefined) {
       const m = machines.find((x) => x.machine_id === machineId);
@@ -195,7 +203,11 @@ export function MachinesSection({
       onConfirm: () => onMachineAction('remove', m),
     });
 
+  // The row's own inline action leads its menu, so a keyboard user reaches it without the pointer.
   const menuItems = (m: MachineView): MenuItem[] => [
+    ...inlineActions(m, machineErrors.get(m.machine))
+      .filter((a) => a.action !== 'remove')
+      .map((a) => ({ label: a.label, onClick: () => onMachineAction(a.action, m) })),
     {
       label: MACHINES_STR.disconnect,
       disabled: m.state === 'disabled' || m.state === 'revoked',
@@ -209,6 +221,9 @@ export function MachinesSection({
       onClick: () => askRemove(m),
     },
   ];
+
+  const openRowMenu = (m: MachineView, rect: DOMRect, keyboard: boolean) =>
+    setMenu({ ...triggerMenu(rect), keyboard, items: menuItems(m) });
 
   const runAction = (
     e: React.MouseEvent<HTMLButtonElement>,
@@ -351,11 +366,8 @@ export function MachinesSection({
                     title={MACHINES_STR.rowMenu(m.machine)}
                     aria-label={MACHINES_STR.rowMenu(m.machine)}
                     onClick={(e) =>
-                      setMenu({
-                        ...triggerMenu(e.currentTarget.getBoundingClientRect()),
-                        keyboard: true,
-                        items: menuItems(m),
-                      })
+                      // A click with no pointer detail came from the keyboard (detail 0).
+                      openRowMenu(m, e.currentTarget.getBoundingClientRect(), e.detail === 0)
                     }
                   >
                     <IconMore size={14} />

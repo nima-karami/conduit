@@ -2504,10 +2504,14 @@ body.resizing .panel__resize::after {
    parent's box never contains its children, a click on a row is always that row, and a row
    changing group keeps its node. Depth
    indents the select button; connectors are drawn per row from the same three lengths. */
-.agents {
+/* The tree lengths are shared by the Agents and Machines trees, so a sub-row indents the same. */
+.agents,
+.machines {
   --agent-pad: 8px;
   --agent-step: 22px;
   --agent-stem: 7px;
+}
+.agents {
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -2755,7 +2759,7 @@ body.resizing .panel__resize::after {
 }
 /* ---------- remote sessions and the Machines band (CON-41, spec §9) ----------
    A remote session row has the local row's geometry, so the two read as one list. Its machine
-   is a text badge in the accent (the accent marks "on", never a colour alone). */
+   is a neutral text badge: the accent stays on selection. */
 .remote-session {
   position: relative;
   display: flex;
@@ -2790,9 +2794,9 @@ body.resizing .panel__resize::after {
 .machine-badge {
   flex: 0 0 auto;
   padding: 0 6px;
-  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border: 1px solid var(--border-2);
   border-radius: var(--r-badge);
-  color: var(--accent);
+  color: var(--text-dim);
   font-family: var(--font-mono);
   font-size: calc(10px * var(--font-scale));
   line-height: 16px;
@@ -2800,7 +2804,6 @@ body.resizing .panel__resize::after {
 }
 
 .machines {
-  --agent-pad: 8px;
   display: flex;
   flex-direction: column;
   gap: 1px;

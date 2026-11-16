@@ -10,6 +10,15 @@ import { remoteKeyId } from '../../webview/remote-sessions';
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  // The row menu's popover measures itself; jsdom has no ResizeObserver.
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    },
+  );
 });
 
 let root: Root | null = null;
@@ -69,6 +78,7 @@ interface Props {
   machineErrors?: Map<string, MachineError>;
   onMachineAction?: (action: string, m: MachineView) => void;
   onAddMachine?: () => void;
+  onConfirm?: (c: { onConfirm: () => void }) => void;
 }
 
 async function render(p: Props) {
@@ -86,7 +96,7 @@ async function render(p: Props) {
         onAddMachine: p.onAddMachine ?? (() => {}),
         onMachineAction: p.onMachineAction ?? (() => {}),
         onRenameMachine: () => {},
-        onConfirm: () => {},
+        onConfirm: p.onConfirm ?? (() => {}),
       }),
     ),
   );
@@ -171,5 +181,44 @@ describe('MachinesSection', () => {
     expect(document.body.textContent).toContain(MACHINES_STR.emptyTitle);
     await click(buttonIn(document.body, MACHINES_STR.addMachine));
     expect(onAddMachine).toHaveBeenCalledTimes(1);
+  });
+
+  it('Retry keeps focus on the machine row', async () => {
+    await render({ machines: [machine({ machine_id: 'm1', machine: 'down-box', state: 'down' })] });
+    await act(async () => buttonIn(row('m1'), MACHINES_STR.retryNow)?.click());
+    expect(document.activeElement).toBe(row('m1'));
+  });
+
+  it('Remove goes through the confirm dialog before it reaches the action', async () => {
+    const onMachineAction = vi.fn();
+    const onConfirm = vi.fn();
+    const broken = machine({ machine_id: 'm1', machine: 'old-box', state: 'incompatible' });
+    await render({ machines: [broken], onMachineAction, onConfirm });
+    await click(buttonIn(row('m1'), MACHINES_STR.remove));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(onMachineAction).not.toHaveBeenCalledWith('remove', expect.anything());
+    onConfirm.mock.calls[0][0].onConfirm();
+    expect(onMachineAction).toHaveBeenCalledWith('remove', broken);
+  });
+
+  it("Shift+F10 opens the row menu, whose first item is the row's inline action", async () => {
+    const onMachineAction = vi.fn();
+    const down = machine({ machine_id: 'm1', machine: 'down-box', state: 'down' });
+    await render({ machines: [down], onMachineAction });
+    await act(async () => row('m1')?.focus());
+    await act(async () =>
+      row('m1')?.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'F10',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+    const first = document.querySelector<HTMLElement>('[role="menuitem"]');
+    expect(first?.textContent).toBe(MACHINES_STR.retryNow);
+    await act(async () => first?.click());
+    expect(onMachineAction).toHaveBeenCalledWith('retry', down);
   });
 });

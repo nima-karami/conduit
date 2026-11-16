@@ -105,6 +105,7 @@ const spies = {
 };
 let bumpFilter: () => void = () => {};
 let setSessions: (next: Session[]) => void = () => {};
+let setRemote: (next: RemoteSessionRow[]) => void = () => {};
 
 async function render(s: Setup) {
   spies.updateUi.mockClear();
@@ -117,6 +118,8 @@ async function render(s: Setup) {
     const [spacesView, setSpacesView] = useState<SpacesView>(DEFAULT_SPACES_VIEW);
     const [sessions, setList] = useState(s.sessions);
     setSessions = setList;
+    const [remoteRows, setRemoteRows] = useState(s.remote ?? []);
+    setRemote = setRemoteRows;
     const value: SidebarTreeContextValue = {
       ui,
       hydrated: true,
@@ -165,7 +168,7 @@ async function render(s: Setup) {
         renamingId: s.renamingId,
         onRowMenu: s.onRowMenu,
         sessionsLoaded: s.sessionsLoaded,
-        remoteRows: s.remote ?? [],
+        remoteRows,
         machines: [],
         machineErrors: new Map(),
         showMachines: false,
@@ -919,5 +922,20 @@ describe('remote rows in the Agents tree', () => {
     await act(async () => q('[data-remote-id="remote:m1:r1"]').focus());
     await key(q('[data-remote-id="remote:m1:r1"]'), 'Enter');
     expect(onSelectRemote).toHaveBeenCalledWith({ machineId: 'm1', sessionId: 'r1' });
+  });
+
+  it('ArrowRight on a lead with only remote children moves into its first remote row', async () => {
+    await render({ sessions: [session('p', { createdAt: 1 })], remote: [remoteRow('r1', 'p')] });
+    await act(async () => rowEl('p').focus());
+    await key(rowEl('p'), 'ArrowRight');
+    expect(document.activeElement).toBe(q('[data-remote-id="remote:m1:r1"]'));
+  });
+
+  it('when a focused remote row vanishes, focus goes to its lead', async () => {
+    await render({ sessions: [session('p', { createdAt: 1 })], remote: [remoteRow('r1', 'p')] });
+    await act(async () => q('[data-remote-id="remote:m1:r1"]').focus());
+    await act(async () => setRemote([]));
+    expect(q('[data-remote-id="remote:m1:r1"]')).toBeNull();
+    expect(document.activeElement).toBe(rowEl('p'));
   });
 });

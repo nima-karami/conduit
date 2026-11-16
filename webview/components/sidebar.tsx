@@ -558,6 +558,12 @@ export function Sidebar({
     [remoteByLead],
   );
   const remoteById = useMemo(() => new Map(remoteRows.map((r) => [r.id, r])), [remoteRows]);
+  // Each remote row's lead as last seen, so a row that vanishes still hands focus to its lead.
+  const leadOfRemote = useRef(new Map<string, string>());
+  useEffect(() => {
+    for (const r of remoteRows)
+      if (r.parentSessionId !== null) leadOfRemote.current.set(r.id, r.parentSessionId);
+  }, [remoteRows]);
   const model = useMemo(
     () =>
       buildAgentTree({
@@ -702,7 +708,7 @@ export function Sidebar({
     if (active && active !== document.body && !treeRef.current?.contains(active)) return;
     let next: string | undefined;
     let p = isRemoteNavId(focusId)
-      ? (remoteById.get(focusId)?.parentSessionId ?? null)
+      ? (remoteById.get(focusId)?.parentSessionId ?? leadOfRemote.current.get(focusId) ?? null)
       : (model.rows[focusId]?.parentId ?? null);
     while (p !== null && next === undefined) {
       if (navIds.includes(p)) next = p;

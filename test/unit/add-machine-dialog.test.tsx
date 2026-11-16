@@ -93,4 +93,43 @@ describe('AddMachineDialog', () => {
     });
     expect(onClose).toHaveBeenCalledTimes(2);
   });
+
+  it('a second submit while dialing does not dial again', async () => {
+    const onSubmit = vi.fn((_m: string) => new Promise<MachineActionResult>(() => {}));
+    await render({ onSubmit });
+    const field = document.querySelector<HTMLInputElement>('input') as HTMLInputElement;
+    await act(async () => type(field, 'user@win'));
+    await act(async () => buttonNamed(MACHINES_STR.connect)?.click());
+    await act(async () => buttonNamed(MACHINES_STR.connect)?.click());
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('[role="status"]')?.textContent).toBe(
+      MACHINES_STR.dialing('user@win'),
+    );
+    expect(field.disabled).toBe(false);
+  });
+
+  it('a failed request shows the unreachable line and leaves the dialog usable', async () => {
+    const onSubmit = vi.fn((_m: string) => Promise.reject(new Error('link down')));
+    await render({ onSubmit });
+    const field = document.querySelector<HTMLInputElement>('input') as HTMLInputElement;
+    await act(async () => type(field, 'user@win'));
+    await act(async () => buttonNamed(MACHINES_STR.connect)?.click());
+    expect(document.querySelector('[role="status"]')?.textContent).toBe(
+      MACHINES_STR.error('ssh_unreachable'),
+    );
+    expect(buttonNamed(MACHINES_STR.connect)?.disabled).toBe(false);
+    await act(async () => buttonNamed(MACHINES_STR.retry)?.click());
+    expect(onSubmit).toHaveBeenCalledTimes(2);
+  });
+
+  it('the fault is announced in the live region and focus moves to its first action', async () => {
+    await render({ onSubmit: () => Promise.resolve(needsPassword) });
+    const field = document.querySelector<HTMLInputElement>('input') as HTMLInputElement;
+    await act(async () => type(field, 'user@win'));
+    await act(async () => buttonNamed(MACHINES_STR.connect)?.click());
+    expect(document.querySelector('[role="status"]')?.textContent).toBe(
+      MACHINES_STR.needsYou('user@win', 'password'),
+    );
+    expect(document.activeElement).toBe(buttonNamed(MACHINES_STR.connectInTerminal));
+  });
 });

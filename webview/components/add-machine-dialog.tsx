@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { MachineActionResult, MachineErrorCode } from '../../src/contracts/machines';
 import { MACHINES_STR } from '../machines-strings';
 import { ModalLayer } from './modal-layer';
@@ -30,33 +30,60 @@ export function AddMachineDialog({
   const [target, setTarget] = useState('');
   const [pending, setPending] = useState<string | null>(null);
   const [fault, setFault] = useState<Fault | null>(null);
+  // A ref, not the pending state: a second click in the same tick must not dial again.
+  const busyRef = useRef(false);
   const lastRef = useRef<string | null>(null);
+  const firstActionRef = useRef<HTMLButtonElement>(null);
+
+  // Dialing has ended with a fault: focus its first action, so the next key lands on it.
+  useEffect(() => {
+    if (pending === null && fault !== null) firstActionRef.current?.focus();
+  }, [pending, fault]);
 
   const submit = async (raw: string) => {
     const machine = raw.trim();
-    if (machine === '' || pending !== null) return;
+    if (machine === '' || busyRef.current) return;
+    busyRef.current = true;
     lastRef.current = machine;
     setTarget(machine);
     setPending(machine);
     setFault(null);
-    const result = await onSubmit(machine);
-    setPending(null);
-    if (result.ok) {
-      onClose();
-      return;
+    try {
+      const result = await onSubmit(machine);
+      if (result.ok) {
+        onClose();
+        return;
+      }
+      const { error } = result;
+      setFault(
+        error.code === 'ssh_needs_person'
+          ? { kind: 'needs', target: machine, reason: error.detail.reason ?? '' }
+          : { kind: 'error', code: error.code },
+      );
+    } catch {
+      // The request itself failed (the link or the server went away): the owner sees the same
+      // line as an unreachable machine, and can retry.
+      setFault({ kind: 'error', code: 'ssh_unreachable' });
+    } finally {
+      busyRef.current = false;
+      setPending(null);
     }
-    const { error } = result;
-    setFault(
-      error.code === 'ssh_needs_person'
-        ? { kind: 'needs', target: machine, reason: error.detail.reason ?? '' }
-        : { kind: 'error', code: error.code },
-    );
   };
 
   const retry = () => {
     const last = lastRef.current;
     if (last !== null) void submit(last);
   };
+
+  // One polite region carries the progress and any fault, so both are announced.
+  const message =
+    pending !== null
+      ? MACHINES_STR.dialing(pending)
+      : fault === null
+        ? ''
+        : fault.kind === 'needs'
+          ? MACHINES_STR.needsYou(fault.target, fault.reason)
+          : MACHINES_STR.error(fault.code);
 
   return (
     <ModalLayer onDismiss={onClose}>
@@ -83,7 +110,6 @@ export function AddMachineDialog({
                   key={host}
                   type="button"
                   className="btn btn--sm"
-                  disabled={pending !== null}
                   onClick={() => void submit(host)}
                 >
                   {host}
@@ -109,31 +135,30 @@ export function AddMachineDialog({
               autoFocus
               value={target}
               placeholder={MACHINES_STR.targetPlaceholder}
-              disabled={pending !== null}
               onChange={(e) => setTarget(e.target.value)}
             />
             <div className="modal__actions">
               <button type="button" className="btn" onClick={onClose}>
                 {MACHINES_STR.cancel}
               </button>
-              <button
-                type="submit"
-                className="btn btn--primary"
-                disabled={pending !== null || target.trim() === ''}
-              >
+              <button type="submit" className="btn btn--primary" disabled={target.trim() === ''}>
                 {MACHINES_STR.connect}
               </button>
             </div>
           </form>
-          <p className="machine-dialog__progress" role="status" aria-live="polite">
-            {pending !== null ? MACHINES_STR.dialing(pending) : ''}
+          <p
+            className={`machine-dialog__progress${fault !== null && pending === null ? ' modal__error' : ''}`}
+            role="status"
+            aria-live="polite"
+          >
+            {message}
           </p>
           {fault?.kind === 'needs' && (
             <div className="machine-dialog__fault">
-              <p className="modal__error">{MACHINES_STR.needsYou(fault.target, fault.reason)}</p>
               <p className="machine-dialog__hint">{MACHINES_STR.needsPersonHint}</p>
               <div className="modal__actions">
                 <button
+                  ref={firstActionRef}
                   type="button"
                   className="btn"
                   onClick={() => onOpenNeedsPerson(fault.target)}
@@ -147,13 +172,10 @@ export function AddMachineDialog({
             </div>
           )}
           {fault?.kind === 'error' && (
-            <div className="machine-dialog__fault">
-              <p className="modal__error">{MACHINES_STR.error(fault.code)}</p>
-              <div className="modal__actions">
-                <button type="button" className="btn" onClick={retry}>
-                  {MACHINES_STR.retry}
-                </button>
-              </div>
+            <div className="modal__actions">
+              <button ref={firstActionRef} type="button" className="btn" onClick={retry}>
+                {MACHINES_STR.retry}
+              </button>
             </div>
           )}
         </div>
