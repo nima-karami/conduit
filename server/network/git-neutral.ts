@@ -47,7 +47,7 @@ const FIXED_OVERRIDES: readonly (readonly [string, string])[] = [
 ];
 
 /** The env that pins a spawn to the checked dirs, before any config is known. */
-export function pinnedEnv(repo: PinnedRepo): Record<string, string> {
+function pinnedEnv(repo: PinnedRepo): Record<string, string> {
   return {
     GIT_DIR: repo.gitDir,
     GIT_COMMON_DIR: repo.commonDir,
