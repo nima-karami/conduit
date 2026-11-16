@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { sshExec } from '../../server/network/ssh-exec';
+import { remoteForTest } from '../../src/network/remote-scripts';
 
 // Driven through fake-ssh.cjs, which runs the remote string on this host with stdio inherited,
 // so stdin, the exit code and stderr all cross the real child-process boundary.
@@ -19,6 +20,21 @@ function scratch(): string {
   return d;
 }
 
+/** True once no process has the pid. A killed child can linger as a zombie for a moment. */
+async function goneWithin(pid: number, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return true;
+      throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
+}
+
 function run(over: Partial<Parameters<typeof sshExec>[0]> & { raw: string }) {
   const { raw, ...rest } = over;
   return sshExec({
@@ -26,7 +42,7 @@ function run(over: Partial<Parameters<typeof sshExec>[0]> & { raw: string }) {
     sshArgsPrefix: [FAKE_SSH],
     controlDir: scratch(),
     target: 'fake',
-    command: { command: raw },
+    command: remoteForTest(raw),
     timeoutMs: 20_000,
     ...rest,
   });
@@ -68,6 +84,10 @@ describe.skipIf(process.platform === 'win32')('sshExec (posix, through fake-ssh)
       code: 'ssh_failed',
       detail: 'timed out after 300 ms',
     });
+    // fake-ssh prints its child's pid; the child must be gone, not merely the ssh stand-in.
+    const pid = Number(/fake-ssh: pid (\d+)/.exec(r.stderr)?.[1]);
+    expect(Number.isInteger(pid) && pid > 0).toBe(true);
+    expect(await goneWithin(pid, 5_000)).toBe(true);
   });
 
   it('classifies an auth refusal from stderr', async () => {

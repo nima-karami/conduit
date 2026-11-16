@@ -8,7 +8,7 @@ import { createBootstrapper } from '../../server/network/bootstrap';
 import type { SshExecOptions, SshExecResult } from '../../server/network/ssh-exec';
 import { HC_PINNED_VERSION } from '../../src/contracts/hc';
 import { LINK_PROTOCOL } from '../../src/contracts/link-protocol';
-import { FAMILY_PROBE, type RemoteCommand } from '../../src/network/remote-scripts';
+import { FAMILY_PROBE } from '../../src/network/remote-scripts';
 
 const sha256 = (data: Buffer): string => createHash('sha256').update(data).digest('hex');
 
@@ -192,7 +192,7 @@ interface Script {
 function remote(script: Script) {
   const calls: { kind: Kind; d: Decoded; stdin?: Buffer; target: string; command: string }[] = [];
   const exec = (o: SshExecOptions): Promise<SshExecResult> => {
-    const command = (o.command as RemoteCommand).command;
+    const command = o.command.command;
     const d = decode(command);
     calls.push({
       kind: d.kind,
@@ -221,7 +221,7 @@ function remote(script: Script) {
 
 /** Pins whose binSha256 is the fixture's own bytes, so a push is checked against what A holds. */
 function fixturePins(f: Fixture, over: { noNodeBinSha?: boolean; noHcBinSha?: boolean } = {}) {
-  const binary = (file: string, name: string, binSha: string | undefined) => ({
+  const binary = (name: string, binSha: string | undefined) => ({
     url: `https://example.invalid/${name}.tar.gz`,
     sha256: 'a'.repeat(64),
     dest: name,
@@ -233,8 +233,8 @@ function fixturePins(f: Fixture, over: { noNodeBinSha?: boolean; noHcBinSha?: bo
   const node = readFileSync(f.nodeExe);
   const hc = readFileSync(f.hcExe);
   const linux = {
-    node: binary(f.nodeExe, 'node', over.noNodeBinSha ? undefined : sha256(node)),
-    hc: binary(f.hcExe, 'conduit-hc', over.noHcBinSha ? undefined : sha256(hc)),
+    node: binary('node', over.noNodeBinSha ? undefined : sha256(node)),
+    hc: binary('conduit-hc', over.noHcBinSha ? undefined : sha256(hc)),
   };
   return { 'linux-x64': linux, 'win32-x64': linux };
 }
@@ -293,14 +293,14 @@ describe('bootstrap: install on a fresh remote', () => {
     expect(r.calls.map((c) => c.kind)).toEqual([
       'family',
       'probe',
+      'download', // hc, into conduit-hc/<hcVersion>.tmp
+      'finalize', // hc is finalized first
       'download', // node, into <ver>.tmp
       'receiveTree', // server, into <ver>.tmp/server
-      'finalize', // <ver>.tmp -> <ver>
-      'download', // hc, into conduit-hc/<hcVersion>.tmp
-      'finalize',
       'receiveTree', // the shim's one pushed file, into shim.tmp
-      'copyNode', // node copied on B from the install just made, never pushed for the shim
-      'finalize',
+      'copyNode', // node copied on B from <ver>.tmp, never pushed for the shim
+      'finalize', // the shim dir
+      'finalize', // <ver>.tmp -> <ver>, last
       'ensure',
     ]);
     expect(outcome).toEqual({
@@ -328,8 +328,8 @@ describe('bootstrap: install on a fresh remote', () => {
     const r = remote(happy);
     await bootstrapper(f, r.exec)(TARGET);
     const downloads = r.calls.filter((c) => c.kind === 'download');
-    expect(downloads[0]?.d.values[0]).toBe('/home/u/.config/conduit/runtime/1.2.3.tmp');
-    expect(downloads[1]?.d.values[0]).toBe('/home/u/.config/conduit/runtime/conduit-hc/0.1.16.tmp');
+    expect(downloads[0]?.d.values[0]).toBe('/home/u/.config/conduit/runtime/conduit-hc/0.1.16.tmp');
+    expect(downloads[1]?.d.values[0]).toBe('/home/u/.config/conduit/runtime/1.2.3.tmp');
   });
 
   it('never asks the remote to fetch a local path (allowLocal stays 0)', async () => {
@@ -346,7 +346,10 @@ describe('bootstrap: install on a fresh remote', () => {
     const f = fixture();
     const r = remote(happy);
     await bootstrapper(f, r.exec, { realPins: true })(TARGET);
-    const node = r.calls.find((c) => c.kind === 'download')?.d.values.join('\n') ?? '';
+    const node =
+      r.calls
+        .find((c) => c.kind === 'download' && c.d.values.join('\n').includes('nodejs.org'))
+        ?.d.values.join('\n') ?? '';
     expect(node).toContain('https://nodejs.org/dist/v24.18.0/node-v24.18.0-linux-x64.tar.gz');
     expect(node).toContain('783130984963db7ba9cbd01089eaf2c2efb055c7c1693c943174b967b3050cb8');
     // The archive yields `node` after its rename, so that is the dest the script checks.
@@ -593,11 +596,12 @@ describe('bootstrap: failures', () => {
     const again = await bootstrap(TARGET);
     expect(again.ok).toBe(true);
     const stagings = r.calls.filter((c) => c.kind === 'download').map((c) => c.d.values[0]);
-    // Calls: run one's node download, then run two's node download and hc download.
+    // Each run downloads hc then node; the second run restages both from scratch.
     expect(stagings).toEqual([
-      '/home/u/.config/conduit/runtime/1.2.3.tmp',
+      '/home/u/.config/conduit/runtime/conduit-hc/0.1.16.tmp',
       '/home/u/.config/conduit/runtime/1.2.3.tmp',
       '/home/u/.config/conduit/runtime/conduit-hc/0.1.16.tmp',
+      '/home/u/.config/conduit/runtime/1.2.3.tmp',
     ]);
   });
 });
@@ -610,7 +614,9 @@ describe('bootstrap: the pins', () => {
       answer: (kind) => (kind === 'ensure' ? ENSURE_OK : result({ ok: true })),
     });
     await bootstrapper(f, r.exec, { realPins: true })(TARGET);
-    const node = r.calls.find((c) => c.kind === 'download');
+    const node = r.calls.find(
+      (c) => c.kind === 'download' && c.d.values.join('\n').includes('node.exe'),
+    );
     expect(node?.command.startsWith('powershell ')).toBe(true);
     expect(node?.d.script).toContain('Invoke-WebRequest');
     expect(node?.d.values.join('\n')).toContain('node.exe');
@@ -660,7 +666,7 @@ describe('bootstrap: the shim and its node', () => {
     const copy = r.calls.find((c) => c.kind === 'copyNode');
     expect(copy?.d.values).toEqual([
       '/home/u/.config/conduit/runtime',
-      '1.2.3',
+      '1.2.3.tmp',
       '/home/u/.config/conduit/runtime/shim',
       'node',
     ]);
@@ -711,5 +717,178 @@ describe('bootstrap: a push is checked against binSha256, and refused without on
     expect(outcome.ok).toBe(false);
     expect(outcome.ok ? '' : JSON.stringify(outcome.error)).toContain('binSha256');
     expect(r.calls.some((c) => c.kind === 'receiveFile')).toBe(false);
+  });
+});
+
+// ── stateful remote: what the probe reports is what the last run finalized ──────────────────────
+
+const RUNTIME = '/home/u/.config/conduit/runtime';
+
+/**
+ * A remote that keeps its finalized version dirs, as the probe reports them. `fail` may answer any
+ * script with a failure; a finalize of a version (not a .tmp) adds it to what the probe sees.
+ */
+function statefulRemote(fail: (kind: Kind, d: Decoded) => SshExecResult | null) {
+  const installed = new Set<string>();
+  const calls: { kind: Kind; d: Decoded }[] = [];
+  const exec = (o: SshExecOptions): Promise<SshExecResult> => {
+    const d = decode(o.command.command);
+    calls.push({ kind: d.kind, d });
+    if (d.kind === 'family') return Promise.resolve(ok('CONDUIT_FAMILY_2_%OS%_\n'));
+    if (d.kind === 'probe') return Promise.resolve(probeLine({ installed: [...installed] }));
+    const failure = fail(d.kind, d);
+    if (failure) return Promise.resolve(failure);
+    if (d.kind === 'finalize' && d.values[0] === RUNTIME && /^[0-9]/.test(d.values[1] ?? '')) {
+      installed.add(d.values[1] ?? '');
+    }
+    if (d.kind === 'ensure') {
+      return Promise.resolve(
+        result({ ok: true, state: 'up', version: '1.2.3', survivesLogout: true }),
+      );
+    }
+    return Promise.resolve(result({ ok: true }));
+  };
+  return { exec, calls, installed };
+}
+
+const isHcDownload = (kind: Kind, d: Decoded) =>
+  kind === 'download' && (d.values[0] ?? '').endsWith('conduit-hc/0.1.16.tmp');
+const isShimPush = (kind: Kind, d: Decoded) =>
+  kind === 'receiveTree' && (d.values[1] ?? '').includes('conduit-mcp-shim.cjs');
+
+describe('bootstrap: a partial install is never counted as installed', () => {
+  it('fails at the hc download, leaves no version dir, and the next run installs in full', async () => {
+    const f = fixture();
+    let hcDown = true;
+    const remoteState = statefulRemote((kind, d) =>
+      hcDown && isHcDownload(kind, d) ? sshFail : null,
+    );
+    const bootstrap = bootstrapper(f, remoteState.exec);
+    const first = await bootstrap(TARGET);
+    expect(first.ok).toBe(false);
+    // Nothing is finalized yet: the probe must not count 1.2.3 as installed.
+    expect(remoteState.installed.has('1.2.3')).toBe(false);
+
+    hcDown = false;
+    const mark = remoteState.calls.length;
+    const second = await bootstrap(TARGET);
+    const later = remoteState.calls.slice(mark).map((c) => c.kind);
+    expect(second.ok).toBe(true);
+    expect(second.ok && second.summary).toMatchObject({ installed: true, reused: false });
+    // The whole install ran again: node, server tree, hc, shim and its node copy, then ensure.
+    expect(later).toEqual([
+      'family',
+      'probe',
+      'download', // hc
+      'finalize',
+      'download', // node
+      'receiveTree', // server
+      'receiveTree', // shim file
+      'copyNode',
+      'finalize', // shim dir
+      'finalize', // <ver>
+      'ensure',
+    ]);
+  });
+
+  it('fails at the shim push, leaves no version dir, and the next run installs in full', async () => {
+    const f = fixture();
+    let shimDown = true;
+    const remoteState = statefulRemote((kind, d) =>
+      shimDown && isShimPush(kind, d)
+        ? result({ ok: false, step: 'unpack', detail: 'tar could not unpack the stream' })
+        : null,
+    );
+    const bootstrap = bootstrapper(f, remoteState.exec);
+    const first = await bootstrap(TARGET);
+    expect(first.ok).toBe(false);
+    expect(remoteState.installed.has('1.2.3')).toBe(false);
+
+    shimDown = false;
+    const mark = remoteState.calls.length;
+    const second = await bootstrap(TARGET);
+    expect(second.ok).toBe(true);
+    expect(second.ok && second.summary).toMatchObject({ installed: true });
+    const later = remoteState.calls.slice(mark).map((c) => c.kind);
+    expect(later).toContain('download');
+    expect(later).toContain('copyNode');
+    expect(remoteState.installed.has('1.2.3')).toBe(true);
+  });
+});
+
+describe('bootstrap: the controller checks its own binary before a push', () => {
+  it('refuses to push a local node that does not match binSha256: checksum, and no bytes sent', async () => {
+    const f = fixture();
+    const pins = fixturePins(f);
+    // A now holds a different node than the pin names: a wrong CONDUIT_NODE_BINARY, say.
+    writeFileSync(f.nodeExe, Buffer.from('not the pinned node'));
+    const script: Script = {
+      answer(kind, call) {
+        if (kind === 'download' && call.d.values[0]?.endsWith('1.2.3.tmp')) {
+          return result({ ok: false, step: 'download', detail: 'could not fetch' });
+        }
+        return result({ ok: true });
+      },
+    };
+    const r = remote(script);
+    const outcome = await bootstrapper(f, r.exec, { pins })(TARGET);
+    expect(outcome).toMatchObject({
+      ok: false,
+      error: { code: 'install_failed', step: 'checksum' },
+    });
+    expect(r.calls.some((c) => c.kind === 'receiveFile')).toBe(false);
+  });
+});
+
+describe('bootstrap: attach, upgrade and survival branches', () => {
+  it('attach with the recorded dir missing and the local version present: no copy, reused', async () => {
+    const f = fixture();
+    const r = remote({
+      probe: {
+        recorded: { version: '9.9.9', linkMajor: LINK_PROTOCOL.major },
+        installed: ['1.2.3'],
+      },
+      answer: (kind) => (kind === 'ensure' ? ENSURE_OK : result({ ok: true })),
+    });
+    const outcome = await bootstrapper(f, r.exec)(TARGET);
+    expect(r.calls.map((c) => c.kind)).toEqual(['family', 'probe', 'ensure']);
+    const ensure = r.calls.find((c) => c.kind === 'ensure');
+    expect(ensure?.d.values[0]).toBe(`${RUNTIME}/1.2.3/node`);
+    expect(outcome.ok && outcome.summary).toMatchObject({ installed: false, reused: true });
+  });
+
+  it('kup true with no linger: ensure is told no, and the summary reports no survival', async () => {
+    const f = fixture();
+    const r = remote({
+      probe: { kup: true, linger: false },
+      // The remote reports the flag it was given, as the real ensure does.
+      answer: (kind, call) =>
+        kind === 'ensure'
+          ? result({
+              ok: true,
+              state: 'up',
+              version: '1.2.3',
+              survivesLogout: call.d.values[4] === 'yes',
+            })
+          : result({ ok: true }),
+    });
+    const outcome = await bootstrapper(f, r.exec)(TARGET);
+    const ensure = r.calls.find((c) => c.kind === 'ensure');
+    expect(ensure?.d.values[4]).toBe('no');
+    expect(outcome.ok && outcome.summary).toMatchObject({ survivesLogout: false });
+  });
+
+  it('an upgrade reports upgraded even when the local version was already installed', async () => {
+    const f = fixture();
+    const r = remote({
+      probe: {
+        recorded: { version: '1.0.0', linkMajor: LINK_PROTOCOL.major },
+        installed: ['1.2.3'],
+      },
+      answer: (kind) => (kind === 'ensure' ? ENSURE_OK : result({ ok: true })),
+    });
+    const outcome = await bootstrapper(f, r.exec)(TARGET);
+    expect(r.calls.map((c) => c.kind)).toEqual(['family', 'probe', 'ensure']);
+    expect(outcome.ok && outcome.summary).toMatchObject({ upgraded: true, installed: false });
   });
 });

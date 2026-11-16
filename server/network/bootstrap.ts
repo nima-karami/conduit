@@ -9,7 +9,7 @@ import {
   copyNodeIntoShimCommand,
   downloadCommand,
   ensureCommand,
-  FAMILY_PROBE,
+  familyProbeCommand,
   finalizeCommand,
   type PinFile,
   parseFamily,
@@ -257,8 +257,9 @@ async function finalize(c: Ctx, root: string, version: string): Promise<Bootstra
 }
 
 /**
- * Lays out one version, as prepareRuntime does (plan decision 3, RS-D11): node and the server tree
- * in <ver>.tmp, the shim dir, and hc in conduit-hc/<hcVersion>.tmp; each renamed into place last.
+ * Lays out one version, as prepareRuntime does (plan decision 3, RS-D11). Every piece is staged
+ * under a .tmp name and finalized in an order where the version dir comes last: the probe counts a
+ * version dir as installed, so a run that fails earlier must leave none, and the next run restages.
  */
 async function install(
   c: Ctx,
@@ -270,21 +271,10 @@ async function install(
   const { rp } = c;
   const appTmp = rp.join(c.runtimeRoot, `${version}.tmp`);
   const hcTmp = rp.join(c.hcRoot, `${HC_PINNED_VERSION}.tmp`);
+  const shimTmp = rp.join(c.runtimeRoot, `${shimName}.tmp`);
   const remotePins = c.pins[c.os === 'windows' ? 'win32-x64' : 'linux-x64'];
 
-  const node = await stageBinary(c, {
-    stagingDir: appTmp,
-    entry: remotePins.node,
-    dest: nodeName,
-    localExe: c.runtime.nodeExe,
-    placed: rp.join(appTmp, nodeName),
-  });
-  if (node) return node;
-  const tree = await pushTree(c, rp.join(appTmp, 'server'), await treeOf(c.runtime.serverDir));
-  if (tree) return tree;
-  const appFinal = await finalize(c, c.runtimeRoot, version);
-  if (appFinal) return appFinal;
-
+  // 1. hc, into conduit-hc/<hcVersion>, finalized on its own.
   const hc = await stageBinary(c, {
     stagingDir: hcTmp,
     entry: remotePins.hc,
@@ -296,9 +286,20 @@ async function install(
   const hcFinal = await finalize(c, c.hcRoot, HC_PINNED_VERSION);
   if (hcFinal) return hcFinal;
 
-  // The shim dir: the shim file is pushed, and the node is copied on B from the install above.
-  // The copy works on any remote that could fetch its node, so it needs no sha check of A's bytes.
-  const shimTmp = c.rp.join(c.runtimeRoot, `${shimName}.tmp`);
+  // 2. Node and the server tree, into <ver>.tmp. Not finalized yet.
+  const node = await stageBinary(c, {
+    stagingDir: appTmp,
+    entry: remotePins.node,
+    dest: nodeName,
+    localExe: c.runtime.nodeExe,
+    placed: rp.join(appTmp, nodeName),
+  });
+  if (node) return node;
+  const tree = await pushTree(c, rp.join(appTmp, 'server'), await treeOf(c.runtime.serverDir));
+  if (tree) return tree;
+
+  // 3. The shim dir: its one pushed file, and a node copied on B from <ver>.tmp (the copy's
+  // version argument takes the tmp name, which the script's checks allow).
   const shim = await pushTree(c, shimTmp, [
     { path: SHIM_LEAF, data: await readFile(c.runtime.shimFile), mode: 0o644 },
   ]);
@@ -306,14 +307,18 @@ async function install(
   const copy = await c.run(
     copyNodeIntoShimCommand(c.family, {
       runtimeRoot: c.runtimeRoot,
-      version,
+      version: `${version}.tmp`,
       shimDir: rp.join(c.runtimeRoot, shimName),
     }),
     FINALIZE_TIMEOUT_MS,
   );
   const copied = scriptError(copy, 'unpack');
   if (copied) return copied;
-  return finalize(c, c.runtimeRoot, shimName);
+  const shimFinal = await finalize(c, c.runtimeRoot, shimName);
+  if (shimFinal) return shimFinal;
+
+  // 4. The version dir last: once it exists, every piece it needs is in place.
+  return finalize(c, c.runtimeRoot, version);
 }
 
 async function bootstrapOnce(o: BootstrapperOptions, target: string): Promise<BootstrapOutcome> {
@@ -327,7 +332,7 @@ async function bootstrapOnce(o: BootstrapperOptions, target: string): Promise<Bo
     });
 
   // 1. The family: which shell the probe must be written for (decision 1).
-  const fam = await run({ command: FAMILY_PROBE }, PROBE_TIMEOUT_MS);
+  const fam = await run(familyProbeCommand(), PROBE_TIMEOUT_MS);
   const family = parseFamily(fam.stdout);
   if (family === null) {
     return fail(
@@ -377,7 +382,8 @@ async function bootstrapOnce(o: BootstrapperOptions, target: string): Promise<Bo
     pins: o.pins ?? DEFAULT_PINS,
     noDownload: o.noDownload,
     runtime: o.runtime,
-    sameOs: o.local.platform === hostPlatform && o.local.arch === 'x64' && probed.arch === 'x64',
+    // A's binaries run only where A's own platform and arch are B's; planInstall already limits B to x64.
+    sameOs: o.local.platform === hostPlatform && o.local.arch === 'x64',
     run,
   };
   if (copied) {
@@ -421,7 +427,8 @@ async function bootstrapOnce(o: BootstrapperOptions, target: string): Promise<Bo
       os,
       arch: 'x64',
       installed: copied && plan.kind !== 'upgrade',
-      upgraded: copied && plan.kind === 'upgrade',
+      // An upgrade restarts the older server even when its version dir was already there.
+      upgraded: plan.kind === 'upgrade',
       reused: !copied,
       survivesLogout: line.survivesLogout === true,
       version: typeof line.version === 'string' ? line.version : version,

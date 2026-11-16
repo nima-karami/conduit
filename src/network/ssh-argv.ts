@@ -1,4 +1,5 @@
 import type { SshFailure, SshNeedsPersonReason } from '../contracts/ssh-link';
+import type { RemoteCommand } from './remote-scripts';
 
 // The remote command is one ssh argument that the remote shell re-parses, so an arg with a line
 // break would split it, and a NUL cannot cross an exec boundary at all. See plan decision 7.
@@ -31,7 +32,7 @@ export function isSshTarget(target: string): boolean {
  */
 export type SshArgvInput = { target: string; controlPath: string } & (
   | { remote: readonly string[] }
-  | { rawRemote: string }
+  | { rawRemote: RemoteCommand }
 );
 
 export function sshArgv(o: SshArgvInput): string[] | { error: 'bad_target' | 'bad_arg' } {
@@ -39,7 +40,7 @@ export function sshArgv(o: SshArgvInput): string[] | { error: 'bad_target' | 'ba
   if (!isSshTarget(o.target)) {
     return { error: 'bad_target' };
   }
-  const remote = 'rawRemote' in o ? rawOf(o.rawRemote) : posixQuote(o.remote);
+  const remote = 'rawRemote' in o ? rawOf(o.rawRemote.command) : posixQuote(o.remote);
   if (remote === null) return { error: 'bad_arg' };
   // Keepalives bound how long a dead link takes to show (docs/runs/2026-11-16-CON-35/gates.md).
   // BatchMode keeps every prompt from blocking: a prompt becomes a typed failure instead.

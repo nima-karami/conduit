@@ -51,7 +51,7 @@ export function sshExec(o: SshExecOptions): Promise<SshExecResult> {
   const argv = sshArgv({
     target: o.target,
     controlPath: path.join(o.controlDir, '%C'),
-    rawRemote: o.command.command,
+    rawRemote: o.command,
   });
   if ('error' in argv) return Promise.resolve(failed({ code: 'ssh_failed', detail: argv.error }));
   const dirFailure = prepareControlDir(o.controlDir);

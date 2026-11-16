@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { remoteForTest } from '../../src/network/remote-scripts';
 import {
   classifySshFailure,
   controlDir,
@@ -34,7 +35,7 @@ describe('sshArgv with a raw remote command', () => {
     const argv = sshArgv({
       target: 'vm',
       controlPath: '/d/%C',
-      rawRemote: script,
+      rawRemote: remoteForTest(script),
     });
     expect(argv).toBeInstanceOf(Array);
     expect((argv as string[]).at(-1)).toBe(script);
@@ -50,7 +51,7 @@ describe('sshArgv with a raw remote command', () => {
     const raw = sshArgv({
       target: 'vm',
       controlPath: '/d/%C',
-      rawRemote: 'node',
+      rawRemote: remoteForTest('node'),
     }) as string[];
     expect(raw.slice(0, -1)).toEqual(quoted.slice(0, -1));
   });
@@ -60,18 +61,22 @@ describe('sshArgv with a raw remote command', () => {
       sshArgv({
         target: '-oProxyCommand=x',
         controlPath: '/d/%C',
-        rawRemote: 'x',
+        rawRemote: remoteForTest('x'),
       }),
     ).toEqual({
       error: 'bad_target',
     });
-    expect(sshArgv({ target: 'a;rm', controlPath: '/d/%C', rawRemote: 'x' })).toEqual({
+    expect(
+      sshArgv({ target: 'a;rm', controlPath: '/d/%C', rawRemote: remoteForTest('x') }),
+    ).toEqual({
       error: 'bad_target',
     });
   });
 
   it('refuses a NUL, which cannot cross the exec boundary', () => {
-    expect(sshArgv({ target: 'vm', controlPath: '/d/%C', rawRemote: 'a\0b' })).toEqual({
+    expect(
+      sshArgv({ target: 'vm', controlPath: '/d/%C', rawRemote: remoteForTest('a\0b') }),
+    ).toEqual({
       error: 'bad_arg',
     });
   });

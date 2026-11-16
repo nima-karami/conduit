@@ -780,6 +780,32 @@ describe('copyNodeIntoShimCommand (PowerShell output)', () => {
 });
 
 describe.skipIf(!posix || !hasSh())('ensure and value passing (sh)', () => {
+  it('passes --survives-logout and --shim-dir together, in the shim-dir branch', () => {
+    const main = join(dir, 'echo-args.mjs');
+    writeFileSync(main, 'console.log(JSON.stringify(process.argv.slice(2)));');
+    const r = runSh(
+      ensureCommand('sh', {
+        node: process.execPath,
+        mainJs: main,
+        userData: '/u',
+        method: 'plain',
+        survivesLogout: false,
+        shimDir: '/u/runtime/shim',
+      }),
+    );
+    expect(JSON.parse(r.stdout.trim())).toEqual([
+      '--ensure-server',
+      '--user-data',
+      '/u',
+      '--start',
+      'plain',
+      '--survives-logout',
+      'no',
+      '--shim-dir',
+      '/u/runtime/shim',
+    ]);
+  });
+
   it('execs node with exactly the decoded arguments', () => {
     const main = join(dir, 'echo-args.mjs');
     writeFileSync(main, 'console.log(JSON.stringify(process.argv.slice(2)));');

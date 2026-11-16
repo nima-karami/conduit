@@ -112,6 +112,14 @@ const isMcpMessage = (m: unknown): m is McpRendererMessage =>
  * launch, W5 needs W4): the two W5 ports are forwarded lazily, and nothing calls them before
  * createServices returns.
  */
+/**
+ * The push-only switch. CONDUIT_E2E_NO_DOWNLOAD counts only under --e2e, as the ssh argv prefix does
+ * (plan decision 5): production never reads it, so the environment cannot force a push.
+ */
+export function noDownloadOf(o: Pick<ServicesOptions, 'e2e' | 'env'>): boolean {
+  return o.e2e && o.env.CONDUIT_E2E_NO_DOWNLOAD === '1';
+}
+
 export function createServices(o: ServicesOptions) {
   const { log } = o;
   let mcp: ServerMcp | undefined;
@@ -277,7 +285,7 @@ export function createServices(o: ServicesOptions) {
           // Only e2e may force the push path; see the net-ssh-bootstrap scenario.
           bootstrap: {
             ...o.selfRuntime,
-            noDownload: o.e2e && o.env.CONDUIT_E2E_NO_DOWNLOAD === '1',
+            noDownload: noDownloadOf(o),
           },
           dir: networkDir,
           userData: o.userData,

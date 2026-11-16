@@ -21,9 +21,32 @@ export function parseFamily(stdout: string): ShellFamily | null {
   return null;
 }
 
+// A command is minted only here. The key is a symbol no other module can name, so a hand-written
+// `{ command }` is a type error, and sshExec or sshArgv cannot be handed a string that was not built
+// by one of this file's builders (plan 4.2.1, spec 8).
+const REMOTE: unique symbol = Symbol('RemoteCommand');
+
 /** The single string ssh runs on the remote; it is passed verbatim, never re-quoted. */
 export interface RemoteCommand {
-  command: string;
+  readonly command: string;
+  readonly [REMOTE]: true;
+}
+
+function remote(command: string): RemoteCommand {
+  return { command, [REMOTE]: true };
+}
+
+/** The family probe, the one command that runs before the shell family is known. */
+export function familyProbeCommand(): RemoteCommand {
+  return remote(FAMILY_PROBE);
+}
+
+/**
+ * Tests only: a raw shell line that is not remote-scripts output, for the ssh plumbing's own tests
+ * (sshExec, sshArgv) that drive a stand-in with arbitrary commands. Production code never calls it.
+ */
+export function remoteForTest(command: string): RemoteCommand {
+  return remote(command);
 }
 
 export interface ProbeResult {
@@ -194,7 +217,7 @@ function shQuote(s: string): string {
 /** Base64 values after the script, which the script decodes with `d`. */
 function shCommand(script: string, values: readonly string[]): RemoteCommand {
   const argv = values.map((v) => shQuote(b64(v)));
-  return { command: ['sh', '-c', shQuote(script), 'conduit', ...argv].join(' ') };
+  return remote(['sh', '-c', shQuote(script), 'conduit', ...argv].join(' '));
 }
 
 /**
@@ -205,9 +228,9 @@ function psCommand(script: string, values: readonly string[]): RemoteCommand {
   const prelude = `$CONDUIT_ARGS = @(${values.map((v) => `'${b64(v)}'`).join(', ')})`;
   const full = `${prelude}\n${PS_HEADER}\n${script}`;
   const encoded = Buffer.from(full, 'utf16le').toString('base64');
-  return {
-    command: `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}`,
-  };
+  return remote(
+    `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}`,
+  );
 }
 
 /** Script text, flush-left and without blank lines, so heredoc terminators match exactly. */
