@@ -39,6 +39,16 @@ describe('activityAuditSink', () => {
     expect(fake.notes).toEqual([{ action: 'message.in', machineId: 'm-7', handle: 'alphax' }]);
   });
 
+  it('writes a peer string that is all control characters as null, not as an empty string', () => {
+    const fake = fakeNotes();
+    activityAuditSink(fake.write).record({
+      kind: 'link.state',
+      peer: '\u0007\u009B',
+      principal: '\u202E\u200B',
+    });
+    expect(fake.notes).toEqual([{ action: 'link.state', machineId: null, handle: null }]);
+  });
+
   it('never copies detail, so message bodies, file contents and keystrokes stay out', () => {
     const fake = fakeNotes();
     const event: AuditEvent = {
