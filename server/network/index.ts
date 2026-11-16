@@ -409,7 +409,13 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
         },
       }),
     },
-    a: { apply: () => {}, setLinkState: () => {} },
+    // The host's store is built after the network, so the mirror reaches it through the MCP port.
+    a: {
+      apply: (machineId, seq, mirror, machineName) => {
+        mcp?.remoteRequests().apply(machineId, seq, mirror, machineName);
+      },
+      setLinkState: (machineId, state) => mcp?.remoteRequests().setLinkState(machineId, state),
+    },
   };
   const requests: Requests = createRequests({
     b: requestPorts.b,
@@ -468,6 +474,10 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       calls.call(machineId, tool, args, principalHandle, signal),
     connectMachine: (machine, signal) => machines.connect(machine, signal),
     disconnectMachine: (machine) => machines.disconnect(machine),
+    answerRemoteRequest: async (machineId, requestId, answer) => {
+      const sent = await requests.answerRemote(machineId, requestId, answer);
+      return sent.ok ? { ok: true, value: null } : sent;
+    },
     selfName,
   };
 
