@@ -34,6 +34,9 @@ import type { ReviewScope } from './review-scope';
 // 'request' is one agent request open as an editor tab; its path is `@request/<id>`.
 export type DocKind =
   | 'file'
+  // A file on another machine (plan CON-43 T4). Its own kind, not a flag on 'file', so every
+  // path keyed on 'file' (local reads, watches, saves, moves, reopen) skips it by construction.
+  | 'remote-file'
   | 'diff'
   | 'review'
   | 'web'
@@ -77,9 +80,10 @@ export interface OpenDoc {
   // git-history: the repo the view shows; commit-diff: the repo its commit was read from.
   // Never persisted — a restored doc falls back per docs/specs/archive/2026-09-23-mf-changes.md §2.5.
   repoRoot?: string;
-  // A file on another machine (plan CON-43 T4 decision 10). Its content comes from that machine
-  // through remote-files-store, never from readFile, so no path-keyed local code treats it as a
-  // local file; `sessionId` is then the remote session's remoteKeyId, an opaque owner id here.
+  // Required on kind 'remote-file' and absent otherwise. The type cannot express that without a
+  // discriminated OpenDoc (every construction site would need narrowing), so idOf and the open
+  // reducer throw when a remote-file arrives without it. `sessionId` is then the remote session's
+  // remoteKeyId, an opaque owner id here.
   machine?: { machineId: string; sessionId: string };
 }
 
@@ -228,12 +232,14 @@ const idOf = (
   path: string,
   diffScope?: DiffTabScope,
   machine?: OpenDoc['machine'],
-) =>
-  machine
-    ? `file@${machine.machineId}:${path}`
-    : kind === 'diff' && diffScope
-      ? `diff@${diffScope}:${path}`
-      : `${kind}:${path}`;
+): string => {
+  if (kind === 'remote-file') {
+    if (!machine) throw new Error(`remote-file doc ${path} opened without its machine`);
+    return `remote-file@${machine.machineId}:${path}`;
+  }
+  if (machine) throw new Error(`${kind} doc ${path} opened with a machine`);
+  return kind === 'diff' && diffScope ? `diff@${diffScope}:${path}` : `${kind}:${path}`;
+};
 
 /** A foreground file or web open for `sessionId` while `shown` is on screen leaves the tab with
  *  `shown` (the shown session already holds it): the open lands nowhere in the caller. Review and
@@ -248,7 +254,7 @@ export function shownKeepsDoc(
   machine?: OpenDoc['machine'],
 ): boolean {
   if (shown === undefined || shown === sessionId) return false;
-  if (kind !== 'file' && kind !== 'web') return false;
+  if (kind !== 'file' && kind !== 'remote-file' && kind !== 'web') return false;
   const id = idOf(kind, path, diffScope, machine);
   return state.docs.some((d) => d.id === id && d.sessionId === shown);
 }
@@ -278,7 +284,8 @@ function initialTitle(kind: DocKind, path: string, diffScope?: DiffTabScope): st
 
 const EMPTY_GROUP: EditorGroup = { tabs: [], active: null };
 const otherGroup = (g: GroupIndex): GroupIndex => (g === 1 ? 2 : 1);
-const isPreviewable = (kind: DocKind | undefined) => kind === 'file' || kind === 'diff';
+const isPreviewable = (kind: DocKind | undefined) =>
+  kind === 'file' || kind === 'remote-file' || kind === 'diff';
 const holds = (group: EditorGroup | undefined, id: string) =>
   group?.tabs.some((t) => t.id === id) ?? false;
 const groupAt = (layout: SessionLayout, g: GroupIndex) => layout.groups[g - 1] ?? EMPTY_GROUP;
@@ -580,8 +587,9 @@ export function backgroundOpenOutcome(
   path: string,
   targetSessionId: string,
   diffScope?: DiffTabScope,
+  machine?: OpenDoc['machine'],
 ): BackgroundOpenResult {
-  const id = idOf(kind, path, diffScope);
+  const id = idOf(kind, path, diffScope, machine);
   const existing = state.docs.find((d) => d.id === id);
   if (existing) {
     const owner = existing.sessionId;
@@ -932,7 +940,7 @@ export function toPersistedDocs(state: DocsState): PersistedDoc[] {
         const d = byId.get(tab.id);
         // A request is server state: a restored tab would point at a request that may be gone.
         // A remote doc's content lives on its machine: restoring it would read a local path.
-        if (!d || d.kind === 'request' || d.machine) return [];
+        if (!d || d.kind === 'request' || d.kind === 'remote-file') return [];
         if (d.kind === 'commit-diff' && parseCommitDiffPath(d.path).file === '') return [];
         return [
           {
@@ -957,7 +965,5 @@ export function toPersistedDocs(state: DocsState): PersistedDoc[] {
  *  `file:${path}`). Each must be released exactly as a closed tab is (dirty flag, save entry), or
  *  an orphaned buffer can still be written by Save All. */
 export function filePathsClosedWithSession(docs: readonly OpenDoc[], sessionId: string): string[] {
-  return docs
-    .filter((d) => d.kind === 'file' && !d.machine && d.sessionId === sessionId)
-    .map((d) => d.path);
+  return docs.filter((d) => d.kind === 'file' && d.sessionId === sessionId).map((d) => d.path);
 }

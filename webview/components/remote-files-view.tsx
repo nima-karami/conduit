@@ -1,21 +1,19 @@
-// The Files tab for a remote session (plan CON-43 T4): B's session folders as a read-only tree.
-// Listings and watches go to B over the link; the local tree's pure helpers do the bookkeeping, so a
-// re-list keeps the user's expansion. Parents key this by row id: a watch is bound to one machine
-// and session for its lifetime.
+// The Files tab for a remote session (plan CON-43 T4): B's session folders as one read-only tree.
+// Listings and watches go to B over the link; the local tree's pure helpers do the bookkeeping.
+// Parents key this by row id: a watch is bound to one machine and session for its lifetime.
 
-import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { folderKey } from '../../src/folder-key';
 import type { OpenMode } from '../docs';
 import { FileTypeIcon } from '../file-icons';
 import {
   applyEntries,
-  collapseNode,
   expandNode,
   findNode,
   nameOf,
   nextVisiblePath,
   parentDir,
   type TreeNode,
-  visibleOrder,
 } from '../file-tree';
 import { IconFolder } from '../icons';
 import { MACHINES_STR } from '../machines-strings';
@@ -24,9 +22,18 @@ import { type RemoteSessionRow, remoteKeyId } from '../remote-sessions';
 import { useSettings } from '../settings';
 import { TreeChevron, TreeChevronSpacer } from './tree-chevron';
 
-/** Folders the owner can browse: the session's home and roots, each once. */
-function remoteFolders(home: string, roots: readonly string[]): string[] {
-  return [...new Set([home, ...roots].filter((p) => p !== ''))];
+/** The session's home and roots as browsed folders. A root equal to another by folder key shows once. */
+function dedupeFolders(home: string, roots: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const p of [home, ...roots]) {
+    if (p === '') continue;
+    const key = folderKey(p);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+  }
+  return out;
 }
 
 /** Every expanded directory under `nodes`, in tree order. */
@@ -36,33 +43,35 @@ function expandedDirs(nodes: TreeNode[]): string[] {
   );
 }
 
-type Item =
-  | { kind: 'node'; folder: string; depth: number; node: TreeNode }
-  | { kind: 'status'; folder: string; dir: string; depth: number; error: string | null };
-
-/** The visible rows of one folder's tree, with a status row under each expanded directory. */
-function flatten(
-  folder: string,
-  nodes: TreeNode[],
-  depth: number,
-  status: (dir: string) => { loading: boolean; error: string | null },
-): Item[] {
-  return nodes.flatMap((node): Item[] => {
-    const row: Item = { kind: 'node', folder, depth, node };
-    if (node.kind !== 'dir' || !node.expanded) return [row];
-    const { loading, error } = status(node.path);
-    const children = node.children
-      ? flatten(folder, node.children, depth + 1, status)
-      : loading
-        ? [{ kind: 'status' as const, folder, dir: node.path, depth: depth + 1, error: null }]
-        : [];
-    const failed =
-      error !== null
-        ? [{ kind: 'status' as const, folder, dir: node.path, depth: depth + 1, error }]
-        : [];
-    return [row, ...children, ...failed];
-  });
+/** Collapse a directory and drop its loaded children, so expanding it again lists it afresh. */
+function collapseForget(nodes: TreeNode[], path: string): TreeNode[] {
+  return nodes.map((n) =>
+    n.path === path
+      ? { ...n, expanded: false, children: undefined }
+      : n.children
+        ? { ...n, children: collapseForget(n.children, path) }
+        : n,
+  );
 }
+
+/** One listing per folder or directory, keyed by folder and path: a root inside home is its own. */
+const slotOf = (folder: string, dir: string): string => JSON.stringify([folder, dir]);
+/** Row keys qualified by folder index, so two folders can show the same path without a collision. */
+const keyOf = (fi: number, path: string): string => `${fi}:${path}`;
+
+type Item =
+  | { kind: 'header'; key: string; fi: number; folder: string; name: string }
+  | { kind: 'node'; key: string; fi: number; folder: string; depth: number; node: TreeNode }
+  | {
+      kind: 'status';
+      key: string;
+      folder: string;
+      depth: number;
+      dir: string;
+      slot: string;
+      status: 'loading' | 'empty' | 'error';
+      error: string;
+    };
 
 export function RemoteFilesView({
   row,
@@ -76,17 +85,20 @@ export function RemoteFilesView({
   const { machineId, sessionId } = row.key;
   const rowKey = remoteKeyId(row.key);
   const offline = row.machineState !== 'up' && row.machineState !== 'degraded';
-  const folders = remoteFolders(row.session.home, row.session.roots);
-  const folderSig = folders.join('\n');
+  const folderSig = dedupeFolders(row.session.home, row.session.roots).join('\n');
+  const folders = useMemo(() => (folderSig === '' ? [] : folderSig.split('\n')), [folderSig]);
 
-  // trees: folder → its roots (undefined until listed). errors and loading: by directory path.
+  // trees: folder → its roots (undefined until listed). errors and loading: by listing slot.
   const [trees, setTrees] = useState<Record<string, TreeNode[] | undefined>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState<Record<string, true>>({});
-  const [focusPath, setFocusPath] = useState<string | null>(null);
+  const [focusKey, setFocusKey] = useState<string | null>(null);
   const inFlight = useRef(new Set<string>());
+  // A change that lands while a listing is in flight asks for one more listing after it.
+  const rerun = useRef(new Set<string>());
   const rowEls = useRef(new Map<string, HTMLElement>());
   const watches = useRef(new Map<string, () => void>());
+  const wasOffline = useRef(false);
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -95,74 +107,95 @@ export function RemoteFilesView({
     };
   }, []);
 
-  // One listing of `dirPath` (a folder itself, or a directory inside it). A reply that arrives
-  // after the view has gone is dropped; a failure stays on the directory until Retry.
+  // One listing of `dirPath` in `folder`. A reply for a directory collapsed meanwhile is dropped,
+  // so a collapsed directory never gets children it would then show without a fresh listing.
   const load = useCallback(
     (folder: string, dirPath: string) => {
-      if (inFlight.current.has(dirPath)) return;
-      inFlight.current.add(dirPath);
-      setLoading((cur) => ({ ...cur, [dirPath]: true }));
-      void listRemoteDir(machineId, sessionId, dirPath).then((r) => {
-        inFlight.current.delete(dirPath);
-        if (!alive.current) return;
-        setLoading(({ [dirPath]: _done, ...rest }) => rest);
-        if (!r.ok) {
-          setErrors((cur) => ({ ...cur, [dirPath]: r.error }));
-          return;
-        }
-        setErrors(({ [dirPath]: _cleared, ...rest }) => rest);
-        setTrees((cur) => ({
-          ...cur,
-          [folder]: applyEntries(cur[folder] ?? [], folder, dirPath, r.entries),
-        }));
-      });
+      const slot = slotOf(folder, dirPath);
+      if (inFlight.current.has(slot)) {
+        rerun.current.add(slot);
+        return;
+      }
+      inFlight.current.add(slot);
+      setLoading((cur) => ({ ...cur, [slot]: true }));
+      const run = async () => {
+        do {
+          rerun.current.delete(slot);
+          const r = await listRemoteDir(machineId, sessionId, dirPath);
+          if (!alive.current) break;
+          if (r.ok) {
+            setErrors(({ [slot]: _cleared, ...rest }) => rest);
+            setTrees((cur) => {
+              const tree = cur[folder] ?? [];
+              if (dirPath !== folder) {
+                const node = findNode(tree, dirPath);
+                if (!node?.expanded) return cur;
+              }
+              return { ...cur, [folder]: applyEntries(tree, folder, dirPath, r.entries) };
+            });
+          } else {
+            setErrors((cur) => ({ ...cur, [slot]: r.error }));
+          }
+        } while (rerun.current.has(slot) && alive.current);
+        inFlight.current.delete(slot);
+        rerun.current.delete(slot);
+        if (alive.current) setLoading(({ [slot]: _done, ...rest }) => rest);
+      };
+      void run();
     },
     [machineId, sessionId],
   );
 
-  // Each folder is listed once when the view appears (or the machine comes back); a failed one
-  // waits for Retry rather than retrying on every render.
+  // Every folder is listed when the view appears, and again when the machine comes back from
+  // offline (with every expanded directory). A folder that failed waits for its Retry.
   useEffect(() => {
-    if (offline) return;
-    for (const folder of folderSig.split('\n')) {
-      if (trees[folder] === undefined && !errors[folder]) load(folder, folder);
+    if (offline) {
+      wasOffline.current = true;
+      return;
     }
-  }, [offline, folderSig, trees, errors, load]);
-
-  // A watch per folder and per expanded directory. Each re-lists its directory on any change.
-  // Folder and directory joined per line, so the effect reads the list from one string dependency.
-  const watchSig = offline
-    ? ''
-    : folders
-        .flatMap((folder) =>
-          [folder, ...expandedDirs(trees[folder] ?? [])].map((dir) => [folder, dir]),
-        )
-        .map(([folder, dir]) => `${folder}\u0000${dir}`)
-        .join('\n');
-  useEffect(() => {
-    const want = new Map<string, string>(
-      watchSig === ''
-        ? []
-        : watchSig.split('\n').map((line) => {
-            const at = line.indexOf('\u0000');
-            return [line.slice(at + 1), line.slice(0, at)];
-          }),
-    );
-    const held = watches.current;
-    for (const [dir, release] of held) {
-      if (!want.has(dir)) {
-        release();
-        held.delete(dir);
+    const reconnect = wasOffline.current;
+    wasOffline.current = false;
+    for (const folder of folders) {
+      const rootSlot = slotOf(folder, folder);
+      if (reconnect || (trees[folder] === undefined && !errors[rootSlot] && !loading[rootSlot])) {
+        load(folder, folder);
+      }
+      if (reconnect) {
+        for (const dir of expandedDirs(trees[folder] ?? [])) load(folder, dir);
       }
     }
-    for (const [dir, folder] of want) {
-      if (held.has(dir)) continue;
+  }, [offline, folders, trees, errors, loading, load]);
+
+  // A watch per folder and per expanded directory. Collapsing a directory drops its watch; going
+  // offline releases each held watch exactly once, and coming back re-watches them.
+  const watchList = useMemo(
+    () =>
+      offline
+        ? []
+        : folders.flatMap((folder) =>
+            [folder, ...expandedDirs(trees[folder] ?? [])].map((dir) => ({ folder, dir })),
+          ),
+    [offline, folders, trees],
+  );
+  useEffect(() => {
+    const want = new Map(watchList.map((w) => [slotOf(w.folder, w.dir), w] as const));
+    const held = watches.current;
+    for (const [slot, release] of held) {
+      if (!want.has(slot)) {
+        release();
+        held.delete(slot);
+      }
+    }
+    for (const [slot, w] of want) {
+      if (held.has(slot)) continue;
       held.set(
-        dir,
-        watchRemote(`${rowKey}|dir|${dir}`, machineId, sessionId, dir, () => load(folder, dir)),
+        slot,
+        watchRemote(`${rowKey}|dir|${slot}`, machineId, sessionId, w.dir, () =>
+          load(w.folder, w.dir),
+        ),
       );
     }
-  }, [watchSig, rowKey, load, machineId, sessionId]);
+  }, [watchList, rowKey, load, machineId, sessionId]);
   useEffect(() => {
     const held = watches.current;
     return () => {
@@ -178,57 +211,132 @@ export function RemoteFilesView({
     const folder = folderOf(node.path);
     if (folder === undefined) return;
     if (node.expanded) {
-      setTrees((cur) => ({ ...cur, [folder]: collapseNode(cur[folder] ?? [], node.path) }));
+      setTrees((cur) => ({ ...cur, [folder]: collapseForget(cur[folder] ?? [], node.path) }));
       return;
     }
     setTrees((cur) => ({ ...cur, [folder]: expandNode(cur[folder] ?? [], node.path) }));
     if (node.children === undefined) load(folder, node.path);
   };
 
-  const focusRow = (path: string) => {
-    setFocusPath(path);
-    rowEls.current.get(path)?.focus();
-  };
+  // The visible rows, depth first, one header per folder. Status lines are not keyboard stops.
+  const items: Item[] = offline
+    ? []
+    : folders.flatMap((folder, fi): Item[] => {
+        const header: Item = {
+          kind: 'header',
+          key: keyOf(fi, folder),
+          fi,
+          folder,
+          name: nameOf(folder),
+        };
+        const rootSlot = slotOf(folder, folder);
+        const tree = trees[folder];
+        const rootStatus = (status: 'loading' | 'empty' | 'error', error = ''): Item => ({
+          kind: 'status',
+          key: `${fi}:status:${rootSlot}`,
+          folder,
+          depth: 0,
+          dir: folder,
+          slot: rootSlot,
+          status,
+          error,
+        });
+        if (tree === undefined) {
+          const err = errors[rootSlot];
+          return [header, err !== undefined ? rootStatus('error', err) : rootStatus('loading')];
+        }
+        const rootErr = errors[rootSlot];
+        const body = (nodes: TreeNode[], depth: number): Item[] =>
+          nodes.flatMap((node): Item[] => {
+            const row: Item = { kind: 'node', key: keyOf(fi, node.path), fi, folder, depth, node };
+            if (node.kind !== 'dir' || !node.expanded) return [row];
+            const slot = slotOf(folder, node.path);
+            const statusLine = (status: 'loading' | 'error', error = ''): Item => ({
+              kind: 'status',
+              key: `${fi}:status:${slot}`,
+              folder,
+              depth: depth + 1,
+              dir: node.path,
+              slot,
+              status,
+              error,
+            });
+            const err = errors[slot];
+            const under: Item[] = node.children
+              ? body(node.children, depth + 1)
+              : loading[slot]
+                ? [statusLine('loading')]
+                : [];
+            const failed: Item[] = err !== undefined ? [statusLine('error', err)] : [];
+            return [row, ...under, ...failed];
+          });
+        const top: Item[] =
+          rootErr !== undefined
+            ? [rootStatus('error', rootErr)]
+            : tree.length === 0
+              ? [rootStatus('empty')]
+              : [];
+        return [header, ...top, ...body(tree, 0)];
+      });
 
-  const items = folders.flatMap((folder) =>
-    flatten(folder, trees[folder] ?? [], 0, (dir) => ({
-      loading: loading[dir] === true,
-      error: errors[dir] ?? null,
-    })),
-  );
-  const order = folders.flatMap((f) => visibleOrder(trees[f] ?? []));
-  const roving = focusPath !== null && order.includes(focusPath) ? focusPath : (order[0] ?? null);
+  const order = items.flatMap((i) => (i.kind === 'status' ? [] : [i.key]));
+  const roving = focusKey !== null && order.includes(focusKey) ? focusKey : (order[0] ?? null);
+  const byKey = new Map(items.map((i) => [i.key, i] as const));
+
+  const focusItem = (key: string) => {
+    setFocusKey(key);
+    rowEls.current.get(key)?.focus();
+  };
 
   const onTreeKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (roving === null) return;
-    const node = findAnyNode(trees, folders, roving);
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    const item = byKey.get(roving);
+    if (!item || item.kind === 'status') return;
+    const move = (dir: 'up' | 'down' | 'first' | 'last') => {
+      const next = nextVisiblePath(order, roving, dir);
+      if (next) focusItem(next);
+    };
+    if (e.key === 'ArrowDown') {
       e.preventDefault();
-      const next = nextVisiblePath(order, roving, e.key === 'ArrowDown' ? 'down' : 'up');
-      if (next) focusRow(next);
-    } else if (e.key === 'Home' || e.key === 'End') {
+      move('down');
+    } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      const next = nextVisiblePath(order, roving, e.key === 'Home' ? 'first' : 'last');
-      if (next) focusRow(next);
-    } else if (e.key === 'ArrowRight' && node?.kind === 'dir') {
+      move('up');
+    } else if (e.key === 'Home') {
       e.preventDefault();
-      if (node.expanded) {
-        const next = nextVisiblePath(order, roving, 'down');
-        if (next) focusRow(next);
-      } else toggle(node);
+      move('first');
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      move('last');
+    } else if (e.key === 'ArrowRight') {
+      if (item.kind === 'node' && item.node.kind === 'dir' && !item.node.expanded) {
+        e.preventDefault();
+        toggle(item.node);
+      } else if (item.kind === 'header' || (item.kind === 'node' && item.node.kind === 'dir')) {
+        e.preventDefault();
+        move('down');
+      }
     } else if (e.key === 'ArrowLeft') {
       e.preventDefault();
-      if (node?.kind === 'dir' && node.expanded) toggle(node);
-      else {
-        const up = parentDir(roving);
-        if (order.includes(up)) focusRow(up);
+      if (item.kind === 'node' && item.node.kind === 'dir' && item.node.expanded) {
+        toggle(item.node);
+      } else if (item.kind === 'node') {
+        // A top-level row's parent is its folder's header; a deeper row's is its directory.
+        const up =
+          item.depth === 0
+            ? keyOf(item.fi, item.folder)
+            : keyOf(item.fi, parentDir(item.node.path));
+        if (byKey.has(up)) focusItem(up);
       }
-    } else if ((e.key === 'Enter' || e.key === ' ') && node) {
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      if (item.kind !== 'node') return;
       e.preventDefault();
-      if (node.kind === 'dir') toggle(node);
-      else onOpenFile?.(node.path, 'permanent');
+      if (item.node.kind === 'dir') toggle(item.node);
+      else onOpenFile?.(item.node.path, 'permanent');
     }
   };
+
+  const retry = (folder: string, dir: string) => load(folder, dir);
 
   return (
     <div className="remote-files">
@@ -237,131 +345,105 @@ export function RemoteFilesView({
           {MACHINES_STR.filesOffline(row.machineName)}
         </p>
       ) : (
-        folders.map((folder) => (
-          <section key={folder} className="remote-files__section">
-            <header className="remote-files__head" title={folder}>
-              <bdi dir="ltr" className="remote-files__name">
-                {nameOf(folder)}
-              </bdi>
-            </header>
-            {folderBody(folder)}
-          </section>
-        ))
+        <div
+          className="remote-files__tree"
+          role="tree"
+          aria-label={MACHINES_STR.filesTree(row.machineName)}
+          onKeyDown={onTreeKeyDown}
+        >
+          {items.map((item) => {
+            if (item.kind === 'header') {
+              return (
+                <div
+                  key={item.key}
+                  ref={(el) => setRowEl(item.key, el)}
+                  className="remote-files__head"
+                  role="treeitem"
+                  aria-level={1}
+                  aria-expanded={true}
+                  tabIndex={item.key === roving ? 0 : -1}
+                  title={item.folder}
+                  onClick={() => focusItem(item.key)}
+                >
+                  <bdi dir="ltr" className="remote-files__name">
+                    {item.name}
+                  </bdi>
+                </div>
+              );
+            }
+            if (item.kind === 'status') {
+              return (
+                <div
+                  key={item.key}
+                  className={`remote-files__status${item.status === 'error' ? ' remote-files__status--error' : ''}`}
+                  role="treeitem"
+                  aria-level={item.depth + 2}
+                  aria-selected={false}
+                  tabIndex={-1}
+                  style={{ paddingInlineStart: `calc(${item.depth} * var(--remote-files-step))` }}
+                >
+                  <span>
+                    {item.status === 'loading'
+                      ? MACHINES_STR.filesLoading
+                      : item.status === 'empty'
+                        ? MACHINES_STR.filesEmpty
+                        : MACHINES_STR.paneError(item.error)}
+                  </span>
+                  {item.status === 'error' ? (
+                    <button
+                      type="button"
+                      className="btn btn--sm"
+                      onClick={() => retry(item.folder, item.dir)}
+                    >
+                      {MACHINES_STR.filesRetry}
+                    </button>
+                  ) : null}
+                </div>
+              );
+            }
+            const { node } = item;
+            const isDir = node.kind === 'dir';
+            return (
+              <div
+                key={item.key}
+                ref={(el) => setRowEl(item.key, el)}
+                className={`remote-files__row${node.ignored ? ' remote-files__row--ignored' : ''}`}
+                role="treeitem"
+                aria-level={item.depth + 2}
+                aria-expanded={isDir ? node.expanded : undefined}
+                tabIndex={item.key === roving ? 0 : -1}
+                style={{ paddingInlineStart: `calc(${item.depth} * var(--remote-files-step))` }}
+                onClick={() => {
+                  setFocusKey(item.key);
+                  if (isDir) toggle(node);
+                  else onOpenFile?.(node.path, 'preview');
+                }}
+                onDoubleClick={() => {
+                  if (!isDir) onOpenFile?.(node.path, 'permanent');
+                }}
+              >
+                {isDir ? <TreeChevron open={node.expanded} /> : <TreeChevronSpacer />}
+                {isDir ? (
+                  <IconFolder size={13} className="remote-files__icon" />
+                ) : (
+                  <FileTypeIcon
+                    name={node.name}
+                    pack={settings.iconPack}
+                    size={13}
+                    className="remote-files__icon"
+                  />
+                )}
+                <span className="remote-files__label">{node.name}</span>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
 
-  function folderBody(folder: string) {
-    const tree = trees[folder];
-    const rootError = errors[folder];
-    if (tree === undefined) {
-      if (rootError === undefined) {
-        return (
-          <p className="remote-files__status" role="status" aria-live="polite">
-            {MACHINES_STR.filesLoading}
-          </p>
-        );
-      }
-      return (
-        <div className="remote-files__status remote-files__status--error" role="status">
-          <span>{MACHINES_STR.paneError(rootError)}</span>
-          <button type="button" className="btn btn--sm" onClick={() => load(folder, folder)}>
-            {MACHINES_STR.filesRetry}
-          </button>
-        </div>
-      );
-    }
-    return (
-      <div
-        className="remote-files__tree"
-        role="tree"
-        aria-label={MACHINES_STR.filesTree}
-        onKeyDown={onTreeKeyDown}
-      >
-        {tree.length === 0 ? (
-          <p className="remote-files__status" role="status">
-            {MACHINES_STR.filesEmpty}
-          </p>
-        ) : null}
-        {items.filter((item) => item.folder === folder).flatMap((item) => renderItem(item))}
-      </div>
-    );
+  function setRowEl(key: string, el: HTMLElement | null) {
+    if (el) rowEls.current.set(key, el);
+    else rowEls.current.delete(key);
   }
-
-  function renderItem(item: Item) {
-    // Depth is the row's indent: a token-sized step per level, so the step lives in the stylesheet.
-    const indent = { paddingInlineStart: `calc(${item.depth} * var(--remote-files-step))` };
-    if (item.kind === 'status') {
-      const { dir, folder, error } = item;
-      return [
-        <div
-          key={`status:${dir}`}
-          className={`remote-files__status${error ? ' remote-files__status--error' : ''}`}
-          role="status"
-          style={indent}
-        >
-          {error === null ? (
-            <span>{MACHINES_STR.filesLoading}</span>
-          ) : (
-            <>
-              <span>{MACHINES_STR.paneError(error)}</span>
-              <button type="button" className="btn btn--sm" onClick={() => load(folder, dir)}>
-                {MACHINES_STR.filesRetry}
-              </button>
-            </>
-          )}
-        </div>,
-      ];
-    }
-    const { node } = item;
-    const isDir = node.kind === 'dir';
-    return [
-      <div
-        key={node.path}
-        ref={(el) => {
-          if (el) rowEls.current.set(node.path, el);
-          else rowEls.current.delete(node.path);
-        }}
-        className={`remote-files__row${node.ignored ? ' remote-files__row--ignored' : ''}`}
-        role="treeitem"
-        aria-level={item.depth + 1}
-        aria-expanded={isDir ? node.expanded : undefined}
-        tabIndex={node.path === roving ? 0 : -1}
-        style={indent}
-        onClick={() => {
-          setFocusPath(node.path);
-          if (isDir) toggle(node);
-          else onOpenFile?.(node.path, 'preview');
-        }}
-        onDoubleClick={() => {
-          if (!isDir) onOpenFile?.(node.path, 'permanent');
-        }}
-      >
-        {isDir ? <TreeChevron open={node.expanded} /> : <TreeChevronSpacer />}
-        {isDir ? (
-          <IconFolder size={13} className="remote-files__icon" />
-        ) : (
-          <FileTypeIcon
-            name={node.name}
-            pack={settings.iconPack}
-            size={13}
-            className="remote-files__icon"
-          />
-        )}
-        <span className="remote-files__label">{node.name}</span>
-      </div>,
-    ];
-  }
-}
-
-function findAnyNode(
-  trees: Record<string, TreeNode[] | undefined>,
-  folders: readonly string[],
-  path: string,
-): TreeNode | undefined {
-  for (const f of folders) {
-    const found = findNode(trees[f] ?? [], path);
-    if (found) return found;
-  }
-  return undefined;
 }

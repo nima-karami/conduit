@@ -162,5 +162,5 @@ export const MACHINES_STR = {
   filesRetry: 'Retry',
   filesEmpty: 'This folder is empty.',
   filesOffline: (machine: string) => `${machine} is offline`,
-  filesTree: 'Files on the other machine',
+  filesTree: (machine: string) => `Files on ${machine}`,
 };

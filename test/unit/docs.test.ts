@@ -1308,27 +1308,40 @@ describe('docsReducer — open into a session that is not shown', () => {
 
 describe('remote file docs (CON-43 T4)', () => {
   const REMOTE_SESSION = 'remote:M1:S1';
+  const MACHINE = { machineId: 'M1', sessionId: 'S1' };
   const openRemote = (s: DocsState, path: string) =>
     docsReducer(s, {
       type: 'open',
-      kind: 'file',
+      kind: 'remote-file',
       path,
       sessionId: REMOTE_SESSION,
       mode: 'permanent',
-      machine: { machineId: 'M1', sessionId: 'S1' },
+      machine: MACHINE,
     });
 
   it('a remote file doc id carries the machine', () => {
     const path = '/home/me/p/a.txt';
     let s = openRemote(initialDocs, path);
-    expect(s.docs[0]?.id).toBe(`file@M1:${path}`);
-    expect(s.docs[0]?.machine).toEqual({ machineId: 'M1', sessionId: 'S1' });
+    expect(s.docs[0]?.id).toBe(`remote-file@M1:${path}`);
+    expect(s.docs[0]?.kind).toBe('remote-file');
+    expect(s.docs[0]?.machine).toEqual(MACHINE);
 
     // A local file with the same path is its own doc, not the remote one.
     s = open(s, 'file', path, 'S1');
-    expect(s.docs.map((d) => d.id)).toEqual([`file@M1:${path}`, `file:${path}`]);
+    expect(s.docs.map((d) => d.id)).toEqual([`remote-file@M1:${path}`, `file:${path}`]);
     expect(shownKeepsDoc(s, 'file', path, 'S2', 'S1')).toBe(true);
     expect(shownKeepsDoc(s, 'file', path, 'S2', REMOTE_SESSION)).toBe(false);
+  });
+
+  it('a remote file doc without its machine is refused', () => {
+    expect(() =>
+      docsReducer(initialDocs, {
+        type: 'open',
+        kind: 'remote-file',
+        path: '/home/me/p/a.txt',
+        sessionId: REMOTE_SESSION,
+      }),
+    ).toThrow(/without its machine/);
   });
 
   it('remote docs are not persisted', () => {
@@ -1339,5 +1352,44 @@ describe('remote file docs (CON-43 T4)', () => {
     s = open(s, 'file', '/home/me/p/local.ts', 'S1');
     expect(toPersistedDocs(s).map((d) => d.path)).toEqual(['/home/me/p/local.ts']);
     expect(filePathsClosedWithSession(s.docs, REMOTE_SESSION)).toEqual([]);
+  });
+
+  it('moving a local file never re-keys a remote tab of the same path', () => {
+    const path = '/home/me/p/a.txt';
+    let s = openRemote(initialDocs, path);
+    s = open(s, 'file', path, 'S1');
+    s = docsReducer(s, {
+      type: 'moveFiles',
+      moves: [{ from: path, to: '/home/me/p/b.txt' }],
+    });
+    expect(s.docs.map((d) => d.id)).toEqual([`remote-file@M1:${path}`, 'file:/home/me/p/b.txt']);
+    expect(s.docs.find((d) => d.kind === 'remote-file')?.path).toBe(path);
+  });
+
+  it('a background open of a remote file reports the remote id', () => {
+    const path = '/home/me/p/a.txt';
+    const outcome = backgroundOpenOutcome(
+      initialDocs,
+      'remote-file',
+      path,
+      'S1',
+      undefined,
+      MACHINE,
+    );
+    expect(outcome.id).toBe(`remote-file@M1:${path}`);
+    expect(outcome.outcome).toBe('opened');
+
+    const opened = docsReducer(initialDocs, {
+      type: 'open',
+      kind: 'remote-file',
+      path,
+      sessionId: 'S1',
+      mode: 'background',
+      machine: MACHINE,
+    });
+    expect(opened.docs.map((d) => d.id)).toEqual([outcome.id]);
+    expect(
+      backgroundOpenOutcome(opened, 'remote-file', path, 'S1', undefined, MACHINE).outcome,
+    ).toBe('already-open');
   });
 });

@@ -89,7 +89,13 @@ export function watchRemote(
 // doc's content lives here so the path-keyed local code never sees it.
 const contents = new Map<string, FileContentDTO>();
 const contentListeners = new Set<() => void>();
-const readers = new Map<string, () => void>();
+const readers = new Map<string, Reader>();
+
+interface Reader {
+  /** Live owners: a doc can mount in two groups, and the read stops only with the last one. */
+  owners: number;
+  stop: () => void;
+}
 
 function publishContent(): void {
   for (const l of [...contentListeners]) l();
@@ -102,25 +108,22 @@ const subscribeContent = (cb: () => void): (() => void) => {
   };
 };
 
+/** Non-hook read of a remote file doc's content, for stores and tests. */
+export function getRemoteFile(docId: string): FileContentDTO | undefined {
+  return contents.get(docId);
+}
+
 /** The loaded content of a remote file doc, or undefined until its first read answers. */
 export function useRemoteFile(docId: string): FileContentDTO | undefined {
   return useSyncExternalStore(
     subscribeContent,
-    () => contents.get(docId),
-    () => contents.get(docId),
+    () => getRemoteFile(docId),
+    () => getRemoteFile(docId),
   );
 }
 
-/**
- * Read a remote file doc's content and re-read it whenever B reports the file changed, until the
- * returned function is called. The first caller for a doc id owns its watch; a later call gets the
- * same release, so the doc stops for everyone when the owner releases it.
- */
-export function loadRemoteDoc(doc: OpenDoc): () => void {
-  if (!doc.machine) throw new Error(`loadRemoteDoc: ${doc.id} is not a remote doc`);
+function startReader(doc: OpenDoc & { machine: NonNullable<OpenDoc['machine']> }): Reader {
   const { machineId, sessionId } = doc.machine;
-  const existing = readers.get(doc.id);
-  if (existing) return existing;
   let live = true;
   const read = async (): Promise<void> => {
     const r = await readRemoteFile(machineId, sessionId, doc.path);
@@ -145,14 +148,41 @@ export function loadRemoteDoc(doc: OpenDoc): () => void {
   const stopWatch = watchRemote(`file|${doc.id}`, machineId, sessionId, doc.path, () => {
     void read();
   });
-  const release = (): void => {
-    if (!live) return;
-    live = false;
-    stopWatch();
-    readers.delete(doc.id);
-    contents.delete(doc.id);
-    publishContent();
+  return {
+    owners: 0,
+    stop: () => {
+      if (!live) return;
+      live = false;
+      stopWatch();
+      contents.delete(doc.id);
+      publishContent();
+    },
   };
-  readers.set(doc.id, release);
-  return release;
+}
+
+/**
+ * Read a remote file doc's content and re-read it whenever B reports the file changed. Each call is
+ * one owner: the read and its watch run until every owner has called its returned release, so a doc
+ * mounted in two groups keeps loading after one of them lets go.
+ */
+export function loadRemoteDoc(doc: OpenDoc): () => void {
+  if (doc.kind !== 'remote-file' || !doc.machine) {
+    throw new Error(`loadRemoteDoc: ${doc.id} is not a remote file doc`);
+  }
+  let reader = readers.get(doc.id);
+  if (!reader) {
+    reader = startReader({ ...doc, machine: doc.machine });
+    readers.set(doc.id, reader);
+  }
+  const owned = reader;
+  owned.owners += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    owned.owners -= 1;
+    if (owned.owners > 0) return;
+    if (readers.get(doc.id) === owned) readers.delete(doc.id);
+    owned.stop();
+  };
 }

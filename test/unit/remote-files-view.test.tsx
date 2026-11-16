@@ -131,7 +131,9 @@ describe('RemoteFilesView', () => {
     answerList('/srv/shared', []);
     await flush();
 
-    expect(host?.querySelectorAll('section')).toHaveLength(2);
+    // One tree; each folder is a level-1 header.
+    expect(host?.querySelectorAll('[role="tree"]')).toHaveLength(1);
+    expect(host?.querySelectorAll('[role="treeitem"][aria-level="1"]')).toHaveLength(2);
     expect(host?.querySelector('[title="/srv/shared"]')).not.toBeNull();
     expect(treeitem('README.md')).toBeDefined();
     expect(treeitem('src')?.getAttribute('aria-expanded')).toBe('false');
@@ -144,7 +146,7 @@ describe('RemoteFilesView', () => {
     expect(treeitem('src')?.getAttribute('aria-expanded')).toBe('true');
     answerList(`${HOME}/src`, [{ name: 'index.ts', kind: 'file' }]);
     await flush();
-    expect(treeitem('index.ts')?.getAttribute('aria-level')).toBe('2');
+    expect(treeitem('index.ts')?.getAttribute('aria-level')).toBe('3');
   });
 
   it('opening a file passes its path and mode', async () => {
@@ -210,5 +212,146 @@ describe('RemoteFilesView', () => {
     });
     await flush();
     expect(listsPosted().filter((m) => m.path === HOME).length).toBe(before + 1);
+  });
+
+  it('a collapsed dir is not watched or re-listed', async () => {
+    await render(rowWith('up'));
+    answerList(HOME, [{ name: 'src', kind: 'dir' }]);
+    answerList('/srv/shared', []);
+    await flush();
+    await act(async () => {
+      treeitem('src')?.click();
+    });
+    await flush();
+    answerList(`${HOME}/src`, [{ name: 'a.ts', kind: 'file' }]);
+    await flush();
+    const watch = watchesPosted().find((m) => m.path === `${HOME}/src`);
+    if (!watch) throw new Error('no watch for the expanded dir');
+
+    await act(async () => {
+      treeitem('src')?.click();
+    });
+    await flush();
+    expect(h.posted).toContainEqual({ type: 'remoteFs:unwatch', key: watch.key });
+    const before = listsPosted().filter((m) => m.path === `${HOME}/src`).length;
+    await act(async () => {
+      emit({ type: 'remoteFs:changed', key: watch.key, paths: [`${HOME}/src/a.ts`] });
+    });
+    await flush();
+    expect(listsPosted().filter((m) => m.path === `${HOME}/src`).length).toBe(before);
+
+    // Expanding again lists it afresh, because collapsing dropped its children.
+    await act(async () => {
+      treeitem('src')?.click();
+    });
+    await flush();
+    expect(listsPosted().filter((m) => m.path === `${HOME}/src`).length).toBe(before + 1);
+  });
+
+  it('coming back online re-lists expanded dirs', async () => {
+    await render(rowWith('up'));
+    answerList(HOME, [{ name: 'src', kind: 'dir' }]);
+    answerList('/srv/shared', []);
+    await flush();
+    await act(async () => {
+      treeitem('src')?.click();
+    });
+    await flush();
+    answerList(`${HOME}/src`, [{ name: 'a.ts', kind: 'file' }]);
+    await flush();
+
+    await act(async () => {
+      root?.render(createElement(RemoteFilesView, { row: rowWith('down') }));
+    });
+    await flush();
+    const offlineUnwatches = h.posted.filter((m) => m.type === 'remoteFs:unwatch');
+    expect(new Set(offlineUnwatches.map((m) => m.key)).size).toBe(offlineUnwatches.length);
+
+    const homeBefore = listsPosted().filter((m) => m.path === HOME).length;
+    const srcBefore = listsPosted().filter((m) => m.path === `${HOME}/src`).length;
+    await act(async () => {
+      root?.render(createElement(RemoteFilesView, { row: rowWith('up') }));
+    });
+    await flush();
+    expect(listsPosted().filter((m) => m.path === HOME).length).toBe(homeBefore + 1);
+    expect(listsPosted().filter((m) => m.path === `${HOME}/src`).length).toBe(srcBefore + 1);
+    expect(watchesPosted().filter((m) => m.path === `${HOME}/src`).length).toBeGreaterThan(1);
+  });
+
+  it('keyboard moves across two folders and opens a file', async () => {
+    const onOpenFile = vi.fn();
+    await render(rowWith('up'), onOpenFile);
+    answerList(HOME, [
+      { name: 'src', kind: 'dir' },
+      { name: 'README.md', kind: 'file' },
+    ]);
+    answerList('/srv/shared', [{ name: 'data.csv', kind: 'file' }]);
+    await flush();
+    const tree = host?.querySelector('[role="tree"]') as HTMLElement;
+    const focused = () => host?.querySelector('[tabindex="0"]')?.textContent;
+    const press = async (key: string) => {
+      await act(async () => {
+        tree.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+      });
+      await flush();
+    };
+    expect(focused()).toBe('p');
+
+    await press('ArrowDown');
+    expect(focused()).toBe('src');
+    await press('ArrowRight');
+    expect(listsPosted().map((m) => m.path)).toContain(`${HOME}/src`);
+    answerList(`${HOME}/src`, [{ name: 'index.ts', kind: 'file' }]);
+    await flush();
+    await press('ArrowRight');
+    expect(focused()).toBe('index.ts');
+    await press('ArrowLeft');
+    expect(focused()).toBe('src');
+    await press('ArrowLeft');
+    expect(treeitem('src')?.getAttribute('aria-expanded')).toBe('false');
+
+    await press('ArrowDown');
+    expect(focused()).toBe('README.md');
+    await press('ArrowDown');
+    expect(focused()).toBe('shared');
+    await press('ArrowDown');
+    expect(focused()).toBe('data.csv');
+    await press('Enter');
+    expect(onOpenFile).toHaveBeenLastCalledWith('/srv/shared/data.csv', 'permanent');
+  });
+
+  it('a change during an in-flight listing re-lists once after it', async () => {
+    await render(rowWith('up'));
+    const watch = watchesPosted().find((m) => m.path === HOME);
+    if (!watch) throw new Error('no watch for the folder');
+    const count = () => listsPosted().filter((m) => m.path === HOME).length;
+    expect(count()).toBe(1);
+
+    await act(async () => {
+      emit({ type: 'remoteFs:changed', key: watch.key, paths: [HOME] });
+    });
+    await flush();
+    expect(count()).toBe(1);
+
+    answerList(HOME, [{ name: 'a.txt', kind: 'file' }]);
+    await flush();
+    expect(count()).toBe(2);
+    answerList('/srv/shared', []);
+    answerList(HOME, [{ name: 'a.txt', kind: 'file' }]);
+    await flush();
+    expect(count()).toBe(2);
+  });
+
+  it('equal roots show once', async () => {
+    root = createRoot(host as HTMLDivElement);
+    await act(async () => {
+      root?.render(
+        createElement(RemoteFilesView, {
+          row: { ...rowWith('up'), session: { ...SESSION, roots: [`${HOME}/`, HOME] } },
+        }),
+      );
+    });
+    await flush();
+    expect(listsPosted().map((m) => m.path)).toEqual([HOME]);
   });
 });
