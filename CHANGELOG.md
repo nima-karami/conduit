@@ -6,6 +6,9 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- Commits from a git worktree now run the pre-commit checks.
+
 ## [0.66.1] — 2026-11-16
 
 ### Fixed
