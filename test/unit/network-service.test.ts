@@ -205,6 +205,7 @@ async function linkedOverSsh(
       message: 'not used by this test',
     }),
     revokeRemoteGrant: () => ({ ok: false, code: 'not_found', message: 'not used by this test' }),
+    remotePolicySink: () => ({ apply: () => undefined, setLinkState: () => undefined }),
   });
   a.net.setMcp(mcp([]));
   b.net.setMcp(mcp(bDelivered));

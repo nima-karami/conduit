@@ -227,11 +227,8 @@ export interface McpNetworkPort {
   applyRemotePolicy(baseRev: number, doc: unknown): RemotePolicyApplyResult;
   /** Revokes a grant of B's, as the controller asked (CON-46 L2). */
   revokeRemoteGrant(grantId: string): RemoteGrantRevokeResult;
-  /**
-   * A's copy of the rules a machine I dialed owns. Optional until the store lands: without it,
-   * snapshots are dropped with an audit, never kept.
-   */
-  remotePolicySink?(): RemotePolicySink;
+  /** A's copy of the rules a machine I dialed owns (CON-46 L4). */
+  remotePolicySink(): RemotePolicySink;
 }
 
 /**
