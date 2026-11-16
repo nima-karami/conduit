@@ -194,9 +194,9 @@ export function parseProbe(stdout: string): ProbeResult | { error: 'bad_probe'; 
 }
 
 /**
- * How the remote starts the server (decision 4, G7). Linger plus systemd-run gives a scope that
- * survives logout. Without linger, KillUserProcesses=no lets hc's own daemonized start survive.
- * Otherwise the start is kept but its survival is unproven, and the result says so.
+ * How the remote starts the server (decision 4, G7). The survival given here is only the controller's
+ * pre-start expectation: hc enables linger itself and keeps its core in user-manager units, so ensure
+ * measures the real survival after the start (decision 4, "Measured", bootstrap-smoke.md).
  */
 export function startMethodOf(p: ProbeResult): { method: StartMethod; survivesLogout: boolean } {
   if (p.os === 'windows') return { method: 'windows-task', survivesLogout: false };
