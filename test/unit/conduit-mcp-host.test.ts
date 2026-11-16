@@ -7953,7 +7953,7 @@ describe('routed session tools on this machine (CON-40 S3, plan decision 5)', ()
     const net = routeNet({ answer: () => ({ closed: 'claude-1' }) });
     const { ca } = await leadSession(net.network);
     const r = await ca.call('close_session', { session: 'claude-1@m-0000000a' });
-    expect(r.body).toEqual({ closed: 'claude-1@win-box' });
+    expect(r.body).toEqual({ closed: 'claude-1' });
     expect(net.sent[0]).toMatchObject({ tool: 'close_session', args: { session: 'claude-1' } });
     const list = await ca.call('close_session', { session: 'claude-1@m-0000000a', children: true });
     expect(list.body.error).toMatchObject({ code: 'invalid_args' });
