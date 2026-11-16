@@ -1,4 +1,5 @@
 import type { Capabilities, LinkFeature, LinkState, MonitorSnapshot } from './link-protocol';
+import type { MachineView } from './machines';
 // The renderer's view of network pairing. Link views are added to this file by later tasks.
 
 export type PairingViewState =
@@ -56,4 +57,6 @@ export interface NetworkState {
   listening: string[];
   links: NetworkLinkView[];
   pairing: NetworkPairingView | null;
+  /** Added ssh machines (the slice 4 registry), for the Machines UI. */
+  machines: MachineView[];
 }

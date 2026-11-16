@@ -560,6 +560,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       .views()
       .map((v) => ({ ...v, trust: 'own' as const, snapshot: directory.snapshotOf(v.machineId) })),
     pairing: pairing.view(),
+    machines: machines.list(),
   });
 
   const closeListener = async (): Promise<void> => {

@@ -37,6 +37,7 @@ import type {
 } from '../types';
 import type { DisplayFacts } from './frames';
 import type { Capability } from './link-protocol';
+import type { ConnectMachineResult, DisconnectMachineResult } from './machines';
 import type { NetworkState } from './network-state';
 import type { Job, LimitEpisode, SessionAutoResume } from './scheduler';
 import type { SessionRuntime } from './session-identity';
@@ -515,6 +516,13 @@ export interface ServerMethods {
   'link.revoke': { params: { machineId: string }; result: Record<string, never> };
   /** The owner's needs-person pane: a visible ssh terminal on the dialer's control dir (spec 4.2). */
   'machines.openNeedsPerson': { params: { target: string }; result: { sessionId: string } };
+  /** The owner's Machines UI runs the same code as the MCP tools (spec 9.1; plan CON-41). */
+  'machines.connect': { params: { machine: string }; result: ConnectMachineResult };
+  'machines.disconnect': { params: { machine: string }; result: DisconnectMachineResult };
+  'machines.rename': { params: { machineId: string; name: string }; result: Record<string, never> };
+  /** Local only: forgets the record without a tombstone, so B's sessions and pin survive (spec 4.2). */
+  'machines.remove': { params: { machineId: string }; result: Record<string, never> };
+  'machines.sshHosts': { params: Record<string, never>; result: { hosts: string[] } };
   'link.setCapability': {
     params: { machineId: string; capability: Capability; on: boolean };
     result: Record<string, never>;
