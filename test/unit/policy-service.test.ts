@@ -147,6 +147,7 @@ function harness(o: Opts = {}) {
       legacyCalls += 1;
       return { global: DEFAULT_TOOL_POLICY, byCli: {}, sessions: [] };
     },
+    launchedCli: () => null,
     onChanged: () => {
       changed += 1;
     },
@@ -280,6 +281,25 @@ describe('policy service', () => {
     h.fire(WRITE_MS);
     await h.service.stop();
     expect(h.policyWrites).toEqual([]);
+  });
+
+  it('a default edit reaches a session tweaked in the old dialog and leaves no override there', () => {
+    const h = harness();
+    h.service.start();
+    expect(
+      h.service.applyLegacyPatch(
+        { kind: 'session', sessionId: 's1' },
+        { kind: 'default' },
+        'open_file',
+        { access: 'off' },
+      ),
+    ).toEqual({ ok: true });
+    expect(
+      h.service.applyLegacyPatch({ kind: 'default' }, null, 'send_input', { access: 'on' }),
+    ).toEqual({ ok: true });
+    const ui = h.service.ui([{ sessionId: 's1', launchedCli: null }]);
+    expect(ui.legacy.sessions.s1).toEqual({ open_file: { access: 'off' } });
+    expect(ui.legacy.global.send_input).toEqual({ access: 'on' });
   });
 
   it('missing policy.json migrates from legacy and persists once', async () => {

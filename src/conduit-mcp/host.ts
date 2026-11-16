@@ -1533,6 +1533,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         cli: s.mcpHandle ? cliKindOfHandle(s.mcpHandle) : null,
       })),
     }),
+    launchedCli: (sessionId) => launchedCli(sessionId),
     onChanged: () => {
       syncToolLists();
       scheduleBroadcast();

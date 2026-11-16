@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { decide } from '../../src/conduit-mcp/policy-engine';
 import {
   effectiveRule,
   pointKey,
@@ -7,8 +8,10 @@ import {
 } from '../../src/conduit-mcp/policy-profiles';
 import {
   applyLegacyPatch,
+  type LegacyWrite,
   legacyLowerPoint,
   projectLegacyLayer,
+  propagateLegacyPatch,
 } from '../../src/conduit-mcp/policy-projection';
 import type {
   Assignment,
@@ -17,6 +20,7 @@ import type {
   ToolRule,
 } from '../../src/conduit-mcp/policy-types';
 import {
+  type CliKind,
   TOOL_GROUPS,
   TOOL_NAMES,
   TOOL_SPECS,
@@ -309,5 +313,121 @@ describe('legacyLowerPoint', () => {
   it('a session launched by claude with no claude cli assignment lowers onto the default', () => {
     const state = stateOf([[{ kind: 'cli', cli: 'codex' }, WORKER_PLAIN]]);
     expect(legacyLowerPoint(state, 'claude')).toEqual(DEFAULT);
+  });
+});
+
+describe('propagateLegacyPatch', () => {
+  const none = () => null;
+  const sessionOf = (sessionId: string): AssignmentPoint => ({ kind: 'session', sessionId });
+  const CLAUDE: AssignmentPoint = { kind: 'cli', cli: 'claude' };
+  const applied = (state: PolicyState, writes: readonly LegacyWrite[]): PolicyState => ({
+    ...state,
+    assignments: new Map([
+      ...state.assignments,
+      ...writes.map((w) => [pointKey(w.point), w.assignment] as const),
+    ]),
+  });
+  const propagated = (
+    state: PolicyState,
+    point: AssignmentPoint,
+    lower: AssignmentPoint | null,
+    tool: ToolName,
+    patch: Parameters<typeof applyLegacyPatch>[4],
+    launchedCliOf: (sessionId: string) => CliKind | null = none,
+  ): LegacyWrite[] => {
+    const writes = propagateLegacyPatch(state, point, lower, tool, patch, launchedCliOf);
+    if (writes === null) throw new Error('legacy patch refused');
+    return writes;
+  };
+  const pointsOf = (writes: readonly LegacyWrite[]) => writes.map((w) => pointKey(w.point)).sort();
+
+  it('a later default restriction reaches a session tweaked in the old dialog', () => {
+    const tweaked = patched(stateOf([]), sessionOf('s1'), DEFAULT, 'open_file', { access: 'off' });
+    let state = stateOf([[sessionOf('s1'), tweaked]]);
+    state = applied(state, propagated(state, DEFAULT, null, 'send_input', { access: 'off' }));
+    const decision = decide(state, {
+      principal: {
+        kind: 'session',
+        sessionId: 's1',
+        handle: 'a',
+        launchedCli: null,
+        homeFolder: '/w',
+        projectId: null,
+      },
+      tool: 'send_input',
+      targets: [],
+      masterOn: true,
+      toYou: false,
+      now: 0,
+    }).decision;
+    expect(decision).toBe('deny');
+  });
+
+  it('a session that explicitly differs from the edited point keeps its value', () => {
+    const observer: Assignment = { profileId: 'observer', exceptions: [], onScreenOnly: false };
+    const state = stateOf([[sessionOf('s1'), observer]]);
+    const writes = propagated(state, DEFAULT, null, 'send_input', { access: 'on' });
+    expect(pointsOf(writes)).toEqual(['default']);
+  });
+
+  it('a cli-point edit reaches only the sessions that launched that cli', () => {
+    const inherits: Assignment = { profileId: 'worker', exceptions: [], onScreenOnly: false };
+    const state = stateOf([
+      [sessionOf('s1'), inherits],
+      [sessionOf('s2'), inherits],
+    ]);
+    const launchedCliOf = (id: string): CliKind | null => (id === 's1' ? 'claude' : 'codex');
+    const writes = propagated(
+      state,
+      CLAUDE,
+      DEFAULT,
+      'send_input',
+      { access: 'off' },
+      launchedCliOf,
+    );
+    expect(pointsOf(writes)).toEqual(['cli:claude', 'session:s1']);
+  });
+
+  it('a widening edit (off to on) also propagates to its inheritors', () => {
+    const offDefault = patched(stateOf([]), DEFAULT, null, 'send_input', { access: 'off' });
+    const state = stateOf([
+      [DEFAULT, offDefault],
+      [sessionOf('s1'), offDefault],
+    ]);
+    const after = applied(state, propagated(state, DEFAULT, null, 'send_input', { access: 'on' }));
+    const decision = decide(after, {
+      principal: {
+        kind: 'session',
+        sessionId: 's1',
+        handle: 'a',
+        launchedCli: null,
+        homeFolder: '/w',
+        projectId: null,
+      },
+      tool: 'send_input',
+      targets: [],
+      masterOn: true,
+      toYou: false,
+      now: 0,
+    }).decision;
+    expect(decision).toBe('allow');
+  });
+
+  it('refuses when an inheritor carries a scoped exception', () => {
+    const scopedSession: Assignment = {
+      profileId: 'worker',
+      exceptions: [
+        {
+          tool: 'send_input',
+          scope: { kind: 'folder', path: '/w' },
+          rule: { decision: 'deny' },
+        },
+      ],
+      onScreenOnly: false,
+    };
+    const state = stateOf([[sessionOf('s1'), scopedSession]]);
+    expect(
+      propagateLegacyPatch(state, DEFAULT, null, 'send_input', { access: 'on' }, none),
+    ).toBeNull();
   });
 });

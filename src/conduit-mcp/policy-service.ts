@@ -22,11 +22,7 @@ import {
 } from './policy-file';
 import { type LegacyPolicy, migrateLegacyPolicy } from './policy-migration';
 import { BUILT_IN_PROFILES, pointKey, profileById, WORKER_PROFILE } from './policy-profiles';
-import {
-  applyLegacyPatch as applyLegacyPatchPure,
-  legacyLowerPoint,
-  projectLegacyLayer,
-} from './policy-projection';
+import { legacyLowerPoint, projectLegacyLayer, propagateLegacyPatch } from './policy-projection';
 import type {
   Assignment,
   AssignmentPoint,
@@ -60,6 +56,7 @@ export interface PolicyServiceDeps {
   clearTimer(t: unknown): void;
   warn(m: string, e?: unknown): void;
   legacy(): LegacyPolicy;
+  launchedCli(sessionId: string): CliKind | null;
   onChanged(): void;
 }
 
@@ -432,9 +429,11 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
 
     applyLegacyPatch(point, lower, tool, patch) {
       if (!policyWritable) return { ok: false, error: 'read-only' };
-      const assignment = applyLegacyPatchPure(stateNow(), point, lower, tool, patch);
-      if (assignment === null) return { ok: false, error: 'scoped' };
-      setPointAssignment(point, assignment);
+      const writes = propagateLegacyPatch(stateNow(), point, lower, tool, patch, (sessionId) =>
+        deps.launchedCli(sessionId),
+      );
+      if (writes === null) return { ok: false, error: 'scoped' };
+      for (const w of writes) setPointAssignment(w.point, w.assignment);
       deps.onChanged();
       return { ok: true };
     },

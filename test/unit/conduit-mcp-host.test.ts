@@ -2618,7 +2618,7 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     await h.host.start();
     const a = await launch(h, 's1');
     const b = await launch(h, 's2');
-    await setHostPolicy(h, 's2', { open_terminal: { access: 'off' } });
+    await setHostPolicy(h, 's2', { open_terminal: { access: 'ask' } });
     const ca = await client(h.ep, a.token);
     const cb = await client(h.ep, b.token);
     await ca.listed();

@@ -18,6 +18,7 @@ import type {
 import {
   ACCESS_VALUES,
   type Access,
+  CLI_KINDS,
   type CliKind,
   type Move,
   type PolicyField,
@@ -191,4 +192,80 @@ export function legacyLowerPoint(state: PolicyState, launchedCli: CliKind | null
   if (launchedCli !== null && state.assignments.has(pointKey({ kind: 'cli', cli: launchedCli })))
     return { kind: 'cli', cli: launchedCli };
   return { kind: 'default' };
+}
+
+export interface LegacyWrite {
+  point: AssignmentPoint;
+  assignment: Assignment;
+}
+
+const isCliKind = (v: string): v is CliKind => (CLI_KINDS as readonly string[]).includes(v);
+
+function pointOfKey(key: string): AssignmentPoint | null {
+  if (key === 'default') return { kind: 'default' };
+  const sep = key.indexOf(':');
+  if (sep < 0) return null;
+  const kind = key.slice(0, sep);
+  const id = key.slice(sep + 1);
+  if (kind === 'session') return { kind: 'session', sessionId: id };
+  if (kind === 'cli' && isCliKind(id)) return { kind: 'cli', cli: id };
+  return null;
+}
+
+// see C6
+function inheritorsOf(
+  state: PolicyState,
+  point: AssignmentPoint,
+  launchedCliOf: (sessionId: string) => CliKind | null,
+): Array<{ point: AssignmentPoint; assignment: Assignment }> {
+  const out: Array<{ point: AssignmentPoint; assignment: Assignment }> = [];
+  for (const [key, assignment] of state.assignments) {
+    const p = pointOfKey(key);
+    if (p === null) continue;
+    const inherits =
+      point.kind === 'default'
+        ? p.kind === 'cli' ||
+          (p.kind === 'session' &&
+            legacyLowerPoint(state, launchedCliOf(p.sessionId)).kind === 'default')
+        : point.kind === 'cli' && p.kind === 'session' && launchedCliOf(p.sessionId) === point.cli;
+    if (inherits) out.push({ point: p, assignment });
+  }
+  return out;
+}
+
+// see C6 (M1)
+export function propagateLegacyPatch(
+  state: PolicyState,
+  point: AssignmentPoint,
+  lower: AssignmentPoint | null,
+  tool: ToolName,
+  patch: ToolPolicyPatch,
+  launchedCliOf: (sessionId: string) => CliKind | null,
+): LegacyWrite[] | null {
+  const edited = applyLegacyPatch(state, point, lower, tool, patch);
+  if (edited === null) return null;
+  const writes: LegacyWrite[] = [{ point, assignment: edited }];
+  const before = legacyPolicyOf(
+    ruleAt(state, state.assignments.get(pointKey(point)) ?? assignmentOrWorker(state, lower), tool),
+    tool,
+  );
+  const after = legacyPolicyOf(ruleAt(state, edited, tool), tool);
+  const changed = (['access', 'when', 'reach', 'move'] as const).filter(
+    (f) => TOOL_SPECS[tool].fields.includes(f) && patch[f] !== undefined && before[f] !== after[f],
+  );
+  if (changed.length === 0) return writes;
+  for (const inheritor of inheritorsOf(state, point, launchedCliOf)) {
+    let current = inheritor.assignment;
+    let touched = false;
+    for (const field of changed) {
+      if (legacyPolicyOf(ruleAt(state, current, tool), tool)[field] !== before[field]) continue;
+      const wanted = after[field];
+      if (wanted === undefined) continue;
+      if (current.exceptions.some((e) => e.scope.kind !== 'anywhere')) return null;
+      current = applyField(state, current, current, tool, field, wanted);
+      touched = true;
+    }
+    if (touched) writes.push({ point: inheritor.point, assignment: current });
+  }
+  return writes;
 }
