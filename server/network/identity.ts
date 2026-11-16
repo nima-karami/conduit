@@ -3,6 +3,8 @@ import {
   createPublicKey,
   generateKeyPairSync,
   type KeyObject,
+  sign,
+  verify as verifySignature,
 } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -77,6 +79,51 @@ function importPrivate(b64: string): KeyObject | null {
   } catch {
     return null;
   }
+}
+
+/** SPKI header of a raw Ed25519 public key (RFC 8410); the 32 key bytes follow it. */
+const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
+
+/**
+ * The bytes an ssh peer signs to show it holds its server key. The peer's nonce and both machine
+ * ids are in them, so a proof cannot be replayed on another connection or for another pair of
+ * machines (plan F1).
+ */
+export function proofPayload(
+  peerNonce: string,
+  ownMachineId: string,
+  peerMachineId: string,
+): Buffer {
+  return Buffer.from(
+    `conduit-link-proof-v1\n${peerNonce}\n${ownMachineId}\n${peerMachineId}`,
+    'utf8',
+  );
+}
+
+/** Our proof for a peer whose hello carried `peerNonce` and named `peerMachineId`. */
+export function signProof(identity: Identity, peerNonce: string, peerMachineId: string): string {
+  const payload = proofPayload(peerNonce, identity.machineId, peerMachineId);
+  return sign(null, payload, identity.serverPrivateKey).toString('base64');
+}
+
+/**
+ * Whether `sig` is the peer's proof over our `ownNonce`, for the key its hello named. The raw key
+ * is wrapped as SPKI so the same importPublic check as stored keys applies.
+ */
+export function verifyProof(
+  peerServerKeyB64: string,
+  sig: string,
+  ownNonce: string,
+  peerMachineId: string,
+  ownMachineId: string,
+): boolean {
+  const raw = Buffer.from(peerServerKeyB64, 'base64');
+  const signature = Buffer.from(sig, 'base64');
+  if (raw.length !== 32 || signature.length !== 64) return false;
+  const key = importPublic(Buffer.concat([ED25519_SPKI_PREFIX, raw]).toString('base64'));
+  if (key === null) return false;
+  const payload = proofPayload(ownNonce, peerMachineId, ownMachineId);
+  return verifySignature(null, payload, key, signature);
 }
 
 function decodePair(stored: { publicKey: string; privateKey: string }): KeyPair | null {

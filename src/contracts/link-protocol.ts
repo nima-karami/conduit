@@ -24,7 +24,15 @@ export type { Capabilities, Capability } from './remote-principal';
 // minor 6 added `git.req` / `git.res` (spec 5.3, CON-45).
 // minor 7 added `fs.write`, the `write` fs result, the `conflict` fs error and a read's `hash` (CON-44).
 // minor 8 added the routed attach_folder tool (CON-44).
-export const LINK_PROTOCOL = { major: 1, minor: 8 } as const;
+// minor 9 added the hello's `nonce` and the `hello.proof` frame (plan 2026-11-16-remote-ssh-followups, F1).
+export const LINK_PROTOCOL = { major: 1, minor: 9 } as const;
+/**
+ * The lowest peer minor an ssh link accepts: such a peer proves its server key with `hello.proof`.
+ * Every ssh-capable build ships this, so no released peer is refused by it.
+ */
+export const HELLO_PROOF_MIN_MINOR = 9;
+/** Bytes of the hello's nonce, which an ssh peer signs into its proof. */
+export const HELLO_NONCE_BYTES = 32;
 /** The lowest peer minor that serves `call` frames: a routed call to an older peer is refused, not sent. */
 export const ROUTED_CALLS_MIN_MINOR = 2;
 /** The lowest peer minor that serves a routed attach_folder: an older peer is refused, not sent it. */
@@ -171,6 +179,8 @@ export interface HelloFrame {
   /** Absent from a minor-0 peer. An ssh controller reads its os and version from these. */
   platform?: HelloPlatform;
   version?: string;
+  /** base64 of HELLO_NONCE_BYTES random bytes, fresh per connection. Absent before minor 7. */
+  nonce?: string;
 }
 
 /** Node's platform and arch names as the hello spells them; anything else is `other`. */
@@ -182,6 +192,8 @@ export function helloPlatform(platform: string, arch: string): HelloPlatform {
 
 export type LinkFrame =
   | HelloFrame
+  /** An ssh peer's signature over our nonce, bound to both machine ids; see server/network/identity.ts. */
+  | { t: 'hello.proof'; sig: string }
   | { t: 'ping' }
   | { t: 'pong' }
   | { t: 'bye'; reason: 'duplicate' | 'revoked' | 'incompatible' | 'shutdown' }
@@ -420,6 +432,10 @@ export function parseLinkFrame(raw: unknown): LinkFrame | null {
   switch (raw.t) {
     case 'hello':
       return parseHello(raw);
+    case 'hello.proof':
+      return frame(raw, 'hello.proof', ['sig'], (r) => isBase64Bytes(r.sig, PROOF_SIG_BYTES))
+        ? raw
+        : null;
     case 'ping':
     case 'pong':
     case 'revoked':
@@ -819,6 +835,8 @@ function parseHello(r: Rec): HelloFrame | null {
   const listed: unknown[] | null = Array.isArray(r.features) ? r.features : null;
   const features = listed?.filter(str) ?? null;
   const ownerKey = r.ownerKey === null ? null : str(r.ownerKey) ? r.ownerKey : undefined;
+  // A nonce that is present must be well formed: a malformed one is a malformed hello.
+  if (r.nonce !== undefined && !isBase64Bytes(r.nonce, HELLO_NONCE_BYTES)) return null;
   if (
     !isRec(p) ||
     !int(p.major) ||
@@ -849,10 +867,21 @@ function parseHello(r: Rec): HelloFrame | null {
     capabilities: { messaging: caps.messaging, monitor: caps.monitor, drive: caps.drive },
     ...(platform === null ? {} : { platform }),
     ...(version === null ? {} : { version }),
+    ...(typeof r.nonce === 'string' ? { nonce: r.nonce } : {}),
   };
 }
 
 const VERSION_SHAPE = /^[A-Za-z0-9._+-]{1,64}$/;
+const PROOF_SIG_BYTES = 64;
+/**
+ * Padded base64 of exactly `bytes` bytes. No Buffer here: this module is also bundled for the
+ * renderer, so the length is checked on the text.
+ */
+function isBase64Bytes(v: unknown, bytes: number): v is string {
+  if (!str(v) || v.length !== Math.ceil(bytes / 3) * 4) return false;
+  const pad = (3 - (bytes % 3)) % 3;
+  return /^[A-Za-z0-9+/]*$/.test(v.slice(0, v.length - pad)) && v.endsWith('='.repeat(pad));
+}
 const HELLO_OSES = ['linux', 'windows', 'other'] as const;
 const HELLO_ARCHES = ['x64', 'arm64', 'other'] as const;
 const isHelloOs = (v: unknown): v is HelloOs => HELLO_OSES.some((o) => o === v);

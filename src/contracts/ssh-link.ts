@@ -57,6 +57,7 @@ export type AddSshPeerResult =
         | { code: 'identity-changed' }
         | { code: 'identity-conflict'; machine: string }
         | { code: 'bad-hello' }
+        | { code: 'bad-proof' }
         | { code: 'incompatible' }
         | { code: 'timeout' };
     };

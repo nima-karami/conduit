@@ -7,6 +7,7 @@ export type AuditKind =
   | 'link.state'
   | 'link.revoked'
   | 'link.capability'
+  | 'link.refused'
   | 'message.in'
   | 'message.out'
   | 'message.refused'

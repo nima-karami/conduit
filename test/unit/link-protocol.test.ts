@@ -4,6 +4,7 @@ import {
   FS_WRITE_DATA_MAX,
   FS_WRITE_MIN_MINOR,
   GIT_MIN_MINOR,
+  HELLO_PROOF_MIN_MINOR,
   helloPlatform,
   LINK_PROTOCOL,
   type LinkFrame,
@@ -212,6 +213,7 @@ const SAMPLES: { [K in LinkFrame['t']]: Extract<LinkFrame, { t: K }> } = {
   'policy.push': { t: 'policy.push', id: 'p-1', baseRev: 3, doc: POLICY_DOC },
   'policy.pushed': { t: 'policy.pushed', id: 'p-1', ok: true, rev: 4 },
   'policy.revoke': { t: 'policy.revoke', id: 'p-2', grantId: 'g-1' },
+  'hello.proof': { t: 'hello.proof', sig: `${'A'.repeat(86)}==` },
 };
 
 const FRAME_TYPES = Object.keys(SAMPLES) as LinkFrame['t'][];
@@ -414,7 +416,7 @@ describe('call and call.result frames (protocol 1.2)', () => {
   });
 
   it('exposes the minor version and the seven routed tools', () => {
-    expect(LINK_PROTOCOL).toEqual({ major: 1, minor: 8 });
+    expect(LINK_PROTOCOL).toEqual({ major: 1, minor: 9 });
     expect([...ROUTED_TOOLS]).toEqual([
       'list_agents',
       'open_session',
@@ -514,6 +516,54 @@ describe('call and call.result frames (protocol 1.2)', () => {
 describe('OWN_DEFAULT_CAPABILITIES', () => {
   it('enables messaging and monitor, leaves drive off', () => {
     expect(OWN_DEFAULT_CAPABILITIES).toEqual({ messaging: true, monitor: true, drive: false });
+  });
+});
+
+describe('hello nonce and hello.proof frame (protocol 1.7)', () => {
+  const NONCE = Buffer.alloc(32, 7).toString('base64');
+  const withNonce = { ...SAMPLES.hello, protocol: { major: 1, minor: 7 }, nonce: NONCE };
+
+  it('the proof minor is the minor that introduced the proof', () => {
+    expect(HELLO_PROOF_MIN_MINOR).toBe(LINK_PROTOCOL.minor);
+  });
+
+  it('round-trips a hello that carries a 32-byte nonce', () => {
+    expect(parseLinkFrame(withNonce)).toEqual(withNonce);
+  });
+
+  it('an older hello without a nonce parses, with no nonce field', () => {
+    const parsed = parseLinkFrame(SAMPLES.hello);
+    expect(parsed).not.toHaveProperty('nonce');
+  });
+
+  it.each([
+    ['31 bytes', Buffer.alloc(31, 7).toString('base64')],
+    ['33 bytes', Buffer.alloc(33, 7).toString('base64')],
+    ['unpadded', NONCE.slice(0, -1)],
+    ['padding in the middle', `${NONCE.slice(0, 10)}=${NONCE.slice(11)}`],
+    ['trailing junk', `${NONCE} `],
+    ['not base64', `${'!'.repeat(44)}`],
+  ])('a hello whose nonce is %s is malformed, not a hello with no nonce', (_name, nonce) => {
+    expect(parseLinkFrame({ ...withNonce, nonce })).toBeNull();
+  });
+
+  it('a hello whose nonce is not a string is malformed', () => {
+    expect(parseLinkFrame({ ...withNonce, nonce: 7 })).toBeNull();
+    expect(parseLinkFrame({ ...withNonce, nonce: null })).toBeNull();
+  });
+
+  it('round-trips a hello.proof carrying a 64-byte signature', () => {
+    const frame = { t: 'hello.proof' as const, sig: Buffer.alloc(64, 9).toString('base64') };
+    expect(parseLinkFrame(frame)).toEqual(frame);
+  });
+
+  it.each([
+    ['63 bytes', Buffer.alloc(63, 9).toString('base64')],
+    ['65 bytes', Buffer.alloc(65, 9).toString('base64')],
+    ['32 bytes', Buffer.alloc(32, 9).toString('base64')],
+    ['empty', ''],
+  ])('a hello.proof whose signature is %s is rejected', (_name, sig) => {
+    expect(parseLinkFrame({ t: 'hello.proof', sig })).toBeNull();
   });
 });
 
@@ -836,7 +886,7 @@ describe('fs.write and the conflict error (protocol 1.7)', () => {
 });
 
 describe('git frames (protocol 1.6)', () => {
-  it('serves git reads from minor 6', () => {
+  it('serves git reads from minor 6, the minor that introduced them', () => {
     expect(GIT_MIN_MINOR).toBe(6);
   });
   it('refuses a git.req with a bad sha, an oversized limit, an unknown op or an extra arg', () => {
