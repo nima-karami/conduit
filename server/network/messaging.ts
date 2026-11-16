@@ -71,6 +71,8 @@ export interface Messaging {
   /** A link came up: resend its queue and the receipts held for it. */
   linkUp(machineId: string): void;
   linkDown(machineId: string): void;
+  /** A live link was swapped for a new one: resend what the old connection may not have carried. */
+  reconnected(machineId: string): void;
   revoked(machineId: string): void;
   onFrame(machineId: string, frame: Extract<LinkFrame, { t: 'msg' | 'ack' | 'receipt' }>): void;
 }
@@ -267,6 +269,12 @@ export function createMessaging(deps: MessagingDeps): Messaging {
         if (flushAgain.delete(machineId) && !stopped && live(linkOf(machineId)?.state ?? 'down'))
           flush(machineId);
       });
+  };
+
+  // Sent-but-unacked entries are queued again; an in-flight flush stops at its next generation check.
+  const abandonFlight = (machineId: string): void => {
+    generations.set(machineId, (generations.get(machineId) ?? 0) + 1);
+    outbox.onDown(machineId);
   };
 
   const sendReceipt = (machineId: string, frame: Extract<LinkFrame, { t: 'receipt' }>): void => {
@@ -537,8 +545,11 @@ export function createMessaging(deps: MessagingDeps): Messaging {
       for (const r of held) sendReceipt(machineId, r);
     },
     linkDown(machineId) {
-      generations.set(machineId, (generations.get(machineId) ?? 0) + 1);
-      outbox.onDown(machineId);
+      abandonFlight(machineId);
+    },
+    reconnected(machineId) {
+      abandonFlight(machineId);
+      flush(machineId);
     },
     revoked(machineId) {
       generations.set(machineId, (generations.get(machineId) ?? 0) + 1);
