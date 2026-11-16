@@ -102,6 +102,7 @@ import { formatDuration } from '../src/timed-messages';
 import type { AgentDefinition, Session } from '../src/types';
 import { DRAG_STAY_INSET_PX, pointWellInside } from '../src/window-registry';
 import { activeTarget } from './active-target';
+import { allSaves } from './all-saves';
 import { AUTO_SAVE_COPY } from './auto-save-copy';
 import { afterCloseSave, type CloseStep, dirtyCloseStep } from './auto-save-policy';
 import { pickAutoSwitch } from './auto-switch';
@@ -737,7 +738,7 @@ export function App() {
     }
     return best;
   }, []);
-  const dirtyClose = useDirtyClose({ saves: fileSaves, rootOf, slot });
+  const dirtyClose = useDirtyClose({ saves: allSaves, rootOf, slot });
   const dirtyCloseRef = useRef(dirtyClose);
   dirtyCloseRef.current = dirtyClose;
   const sessionDirty = useCallback(
@@ -4057,6 +4058,8 @@ export function App() {
       const dirty = getDirtySnapshot();
       const kept = new Set<string>();
       for (const d of docStateRef.current.docs) {
+        // A remote doc's path is another machine's: deleting a local folder never closes it.
+        if (localPathOf(d) === null) continue;
         if (pathBelow(d.path, path) === null) continue;
         if (d.kind === 'file' && dirty.has(d.path)) {
           fileSaves.markConflict(d.path, 'deleted');
