@@ -30,6 +30,7 @@ interface Pending<T> {
 interface SessionGap<T> {
   transcriptPath: string | null;
   offset: number;
+  fingerprint: Buffer | null;
   received: Set<string>;
   pending: Pending<T> | null;
 }
@@ -47,7 +48,13 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
   const stateOf = (sessionId: string): SessionGap<T> => {
     let s = sessions.get(sessionId);
     if (!s) {
-      s = { transcriptPath: null, offset: 0, received: new Set(), pending: null };
+      s = {
+        transcriptPath: null,
+        offset: 0,
+        fingerprint: null,
+        received: new Set(),
+        pending: null,
+      };
       sessions.set(sessionId, s);
     }
     return s;
@@ -60,10 +67,17 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
     size: number,
   ): Promise<void> => {
     // A new file, or one that shrank, has no span to continue: its content so far is history.
-    const baseline = s.transcriptPath !== path || size < s.offset;
-    const start = baseline ? 0 : s.offset;
+    let baseline = s.transcriptPath !== path || size < s.offset;
+    let start = baseline ? 0 : s.offset;
     let bytes: Buffer;
     try {
+      // A file replaced at the same path by a longer one passes the size test; the bytes that
+      // ended the last span tell it apart from a file that only grew.
+      if (!baseline && s.fingerprint !== null) {
+        const seen = await deps.readRange(path, s.offset - s.fingerprint.length, s.offset);
+        baseline = !seen.equals(s.fingerprint);
+        start = baseline ? 0 : s.offset;
+      }
       bytes = await deps.readRange(path, start, size);
     } catch (err) {
       deps.warn('transcript unreadable; feed gap not checked', { sessionId, error: String(err) });
@@ -79,6 +93,12 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
     if (!baseline && missing > 0) deps.record(sessionId, missing);
     s.transcriptPath = path;
     s.offset = start + complete;
+    if (complete > 0) {
+      const previousEnd = complete >= 2 ? bytes.lastIndexOf(NEWLINE, complete - 2) : -1;
+      s.fingerprint = Buffer.from(bytes.subarray(previousEnd + 1, complete));
+    } else if (baseline) {
+      s.fingerprint = null;
+    }
   };
 
   const fire = (sessionId: string, s: SessionGap<T>): void => {

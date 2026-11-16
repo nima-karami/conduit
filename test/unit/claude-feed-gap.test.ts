@@ -237,8 +237,25 @@ describe('claude feed gap', () => {
     await r.settle();
     expect(r.ranges).toEqual([
       [0, firstEnd],
+      [0, firstEnd],
       [firstEnd, firstEnd + use('u1', 't1').length + 1],
     ]);
+  });
+
+  it('a file replaced at the same path by a longer one takes a baseline, not a false gap', async () => {
+    const r = rig();
+    r.append(use('u0', 't0'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    r.replaceTranscript(`${use('x0', 'z0')}\n${use('x1', 'z1')}\n${use('x2', 'z2')}\n`);
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.records).toEqual([]);
+    expect(r.warnings).toEqual([]);
+    r.append(use('x3', 'z3'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.records).toEqual([{ sessionId: 's1', gap: 1 }]);
   });
 
   it('a line cut at the Stop is counted exactly once, on the check after its newline lands', async () => {
