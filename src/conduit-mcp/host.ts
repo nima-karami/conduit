@@ -7,10 +7,12 @@ import {
   claudeSettingsFileOf,
   statusLineWrapFor,
 } from '../claude-hook-settings';
+import type { ClaudeAction } from '../claude-tool-actions';
 import { readUserStatusLine } from '../claude-user-status-line';
 import { detectStuckScreen, type StuckScreen } from '../cli-stuck-screens';
+import type { CodexAction } from '../codex-rollout';
 import type { WireRecipientOutcome } from '../contracts/link-protocol';
-import type { DraftPort, LaunchPort, McpHostDeps } from '../contracts/server-ports';
+import type { DraftPort, LaunchPort, McpHostDeps, ObservedEntry } from '../contracts/server-ports';
 import type { CliBindingRecord } from '../contracts/session-identity';
 import type { LaunchIds } from '../contracts/terminal-runtime';
 import { inputBoxTop } from '../input-box-rows';
@@ -70,7 +72,7 @@ import {
   serializeHandleCounters,
 } from './handles';
 import { readCursorLaunchEntry } from './install';
-import type { AgentCli, UserInstallState } from './install-types';
+import { type AgentCli, CLI_DISPLAY_NAME, type UserInstallState } from './install-types';
 import {
   createMcpServerCore,
   TOOLS_LIST_CHANGED,
@@ -288,7 +290,51 @@ export interface ConduitMcpHost extends LaunchPort, DraftPort {
   peerRevoked(machineId: string): void;
   /** An audit event from the network, shown in the Activity log as a note row. */
   recordNote(note: ActivityNote): void;
+  recordObserved(sessionId: string, cli: AgentCli, entry: ObservedEntry): void;
   stop(): Promise<void>;
+}
+
+// see plan C4 (activity privacy: no output, no arguments; a command keeps its first line only)
+const OBSERVED_SUMMARY_MAX = 200;
+const capSummary = (text: string): string =>
+  Array.from(text).slice(0, OBSERVED_SUMMARY_MAX).join('');
+function observedRow(action: ClaudeAction | CodexAction): {
+  action: string;
+  target: string | null;
+  summary: string | null;
+  durationMs: number | null;
+  exitedNonZero: boolean;
+} {
+  const durationMs = 'durationMs' in action ? action.durationMs : null;
+  const exitedNonZero = 'exitCode' in action && action.exitCode !== null && action.exitCode !== 0;
+  switch (action.kind) {
+    case 'command': {
+      const firstLine = action.command.split(/\r?\n/)[0] ?? '';
+      return {
+        action: 'command',
+        target: action.cwd,
+        summary: capSummary(firstLine),
+        durationMs,
+        exitedNonZero,
+      };
+    }
+    case 'file-change':
+      return {
+        action: 'file-change',
+        target: action.paths[0] ?? null,
+        summary: action.paths.length > 0 ? capSummary(action.paths.join(', ')) : null,
+        durationMs,
+        exitedNonZero,
+      };
+    case 'mcp':
+      return {
+        action: 'mcp',
+        target: action.server,
+        summary: action.tool,
+        durationMs,
+        exitedNonZero,
+      };
+  }
 }
 
 const TICK_MS = 500;
@@ -3091,6 +3137,48 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     peerRevoked(machineId) {
       policyService.peerRevoked(machineId);
+    },
+    recordObserved(sessionId, cli, entry) {
+      const principal = { handle: handleOf(sessionId) ?? null, sessionId, machineId: null };
+      if ('action' in entry) {
+        const row = observedRow(entry.action);
+        policyService.activity.record({
+          lane: 'observed',
+          principal,
+          cli,
+          action: row.action,
+          target: row.target,
+          summary: row.summary,
+          decision: null,
+          decidedBy: `observed: decided by ${CLI_DISPLAY_NAME[cli]}, not Conduit`,
+          outcome: entry.failed || row.exitedNonZero ? 'error' : 'ok',
+          durationMs: row.durationMs,
+          requestId: null,
+          count: null,
+        });
+        return;
+      }
+      const note =
+        'feed' in entry
+          ? { action: 'feed-unavailable', summary: 'Feed unavailable' }
+          : {
+              action: 'feed-gap',
+              summary: `Feed gap: ${entry.gap} ${entry.gap === 1 ? 'action' : 'actions'} not reported`,
+            };
+      policyService.activity.record({
+        lane: 'note',
+        principal,
+        cli,
+        action: note.action,
+        target: null,
+        summary: note.summary,
+        decision: null,
+        decidedBy: 'conduit',
+        outcome: null,
+        durationMs: null,
+        requestId: null,
+        count: null,
+      });
     },
     recordNote(note) {
       policyService.activity.record({

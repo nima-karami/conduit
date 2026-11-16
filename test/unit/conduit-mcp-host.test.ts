@@ -6566,3 +6566,239 @@ describe('NET wiring at the host: a peer link revoke and its audit notes', () =>
     ]);
   });
 });
+
+describe('recordObserved', () => {
+  function observedHarness() {
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line) as Record<string, unknown>);
+      },
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    return { rows, activityIo };
+  }
+
+  it('a Claude command writes one observed row with the command as summary and the cwd as target', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s1', 'claude', {
+      action: { kind: 'command', command: 'npm test', cwd: '/work/repo' },
+    });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        lane: 'observed',
+        principal: { handle: null, sessionId: 's1', machineId: null },
+        cli: 'claude',
+        action: 'command',
+        target: '/work/repo',
+        summary: 'npm test',
+        decision: null,
+        decidedBy: 'observed: decided by Claude Code, not Conduit',
+        outcome: 'ok',
+        requestId: null,
+        count: null,
+      }),
+    ]);
+  });
+
+  it('a Codex file change names the CLI as Codex and records its first path as the target', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s2', 'codex', {
+      action: { kind: 'file-change', paths: ['src/a.ts', 'src/b.ts'] },
+    });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        lane: 'observed',
+        cli: 'codex',
+        action: 'file-change',
+        target: 'src/a.ts',
+        summary: 'src/a.ts, src/b.ts',
+        decidedBy: 'observed: decided by Codex, not Conduit',
+        outcome: 'ok',
+      }),
+    ]);
+  });
+
+  it('an MCP call records the server as target and the tool as summary', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s3', 'claude', {
+      action: { kind: 'mcp', server: 'github', tool: 'list_issues' },
+    });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        lane: 'observed',
+        action: 'mcp',
+        target: 'github',
+        summary: 'list_issues',
+      }),
+    ]);
+  });
+
+  it('a failed action keeps its row with outcome error', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s1', 'claude', {
+      action: { kind: 'command', command: 'false', cwd: null },
+      failed: true,
+    });
+    expect(rows).toEqual([expect.objectContaining({ lane: 'observed', outcome: 'error' })]);
+  });
+
+  it('a feed that went dark writes one note row, Feed unavailable', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s2', 'codex', { feed: 'unavailable' });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        lane: 'note',
+        action: 'feed-unavailable',
+        summary: 'Feed unavailable',
+        cli: 'codex',
+        principal: { handle: null, sessionId: 's2', machineId: null },
+        decidedBy: 'conduit',
+        outcome: null,
+      }),
+    ]);
+  });
+
+  it('a gap writes one note row that counts the actions not reported', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s1', 'claude', { gap: 2 });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        lane: 'note',
+        action: 'feed-gap',
+        summary: 'Feed gap: 2 actions not reported',
+        cli: 'claude',
+        decidedBy: 'conduit',
+      }),
+    ]);
+  });
+  it('a gap of one action says action, not actions', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s1', 'claude', { gap: 1 });
+    expect(rows).toEqual([
+      expect.objectContaining({ action: 'feed-gap', summary: 'Feed gap: 1 action not reported' }),
+    ]);
+  });
+
+  it('a Codex command with a non-zero exit is an error row and keeps its duration', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s2', 'codex', {
+      action: { kind: 'command', command: 'npm test', cwd: '/w', exitCode: 1, durationMs: 420 },
+    });
+    expect(rows).toEqual([expect.objectContaining({ outcome: 'error', durationMs: 420 })]);
+  });
+
+  it('a Codex command with exit zero is ok, and a missing exit code is not an error', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s2', 'codex', {
+      action: { kind: 'command', command: 'ls', cwd: '/w', exitCode: 0, durationMs: 5 },
+    });
+    h.host.recordObserved('s2', 'codex', {
+      action: { kind: 'command', command: 'ls', cwd: '/w', exitCode: null, durationMs: null },
+    });
+    expect(rows.map((r) => r.outcome)).toEqual(['ok', 'ok']);
+  });
+
+  it('a Codex MCP call keeps its duration', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s2', 'codex', {
+      action: { kind: 'mcp', server: 'github', tool: 'list_issues', durationMs: 77 },
+    });
+    expect(rows).toEqual([expect.objectContaining({ action: 'mcp', durationMs: 77 })]);
+  });
+
+  it('a heredoc command stores only its first line in the summary', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s1', 'claude', {
+      action: {
+        kind: 'command',
+        command: "cat <<'EOF' > notes.txt\nTOKEN=secret\nEOF",
+        cwd: '/w',
+      },
+    });
+    expect(rows).toEqual([expect.objectContaining({ summary: "cat <<'EOF' > notes.txt" })]);
+    expect(JSON.stringify(rows)).not.toContain('secret');
+  });
+
+  it('a long first line is capped at 200 characters', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s1', 'claude', {
+      action: { kind: 'command', command: `echo ${'x'.repeat(300)}`, cwd: null },
+    });
+    const summary = `echo ${'x'.repeat(195)}`;
+    expect(summary.length).toBe(200);
+    expect(rows).toEqual([expect.objectContaining({ summary })]);
+  });
+
+  it('the row carries the session handle from its record', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    h.sessions.set('s1', session('s1', { mcpHandle: 'alpha@m-1' }));
+    await h.host.start();
+    h.host.recordObserved('s1', 'claude', {
+      action: { kind: 'command', command: 'npm test', cwd: '/w' },
+    });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        principal: { handle: 'alpha@m-1', sessionId: 's1', machineId: null },
+      }),
+    ]);
+  });
+
+  it('a command summary is its first line, split on CRLF too', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s1', 'claude', {
+      action: { kind: 'command', command: 'npm test\r\nTOKEN=secret', cwd: null },
+    });
+    expect(rows).toEqual([expect.objectContaining({ summary: 'npm test' })]);
+  });
+
+  it('the summary cap counts code points, so an emoji is never cut in half', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s1', 'claude', {
+      action: { kind: 'command', command: '\u{1F642}'.repeat(250), cwd: null },
+    });
+    expect(rows).toEqual([expect.objectContaining({ summary: '\u{1F642}'.repeat(200) })]);
+  });
+
+  it('a file-change summary gets the same 200 cap', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s1', 'claude', {
+      action: { kind: 'file-change', paths: ['a'.repeat(300)] },
+    });
+    expect(rows).toEqual([expect.objectContaining({ summary: 'a'.repeat(200) })]);
+  });
+});

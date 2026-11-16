@@ -23,6 +23,7 @@ import {
 } from '../src/shells';
 import type { AgentDefinition } from '../src/types';
 import { createDomain, type DomainLog } from './domain';
+import { createCodexRolloutWatch } from './domain/codex-rollout-watch';
 import type { ShellCore } from './lifecycle/shell';
 import { type AppEventSink, createMcp, type McpServerDeps, type ServerMcp } from './mcp';
 import { activityAuditSink } from './mcp/activity-audit-sink';
@@ -190,6 +191,10 @@ export function createServices(o: ServicesOptions) {
       },
     },
     drafts: { noteHostInput: (sessionId, data) => m().draft.noteHostInput(sessionId, data) },
+    observed: {
+      record: (sessionId, cli, entry) => m().recordObserved(sessionId, cli, entry),
+    },
+    createCodexWatch: createCodexRolloutWatch,
     scrollback,
     attention,
     typing: rt.typing,

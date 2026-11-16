@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { copyFileSync, existsSync, promises as fsp, readFileSync } from 'node:fs';
+import { copyFileSync, existsSync, promises as fsp, readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
 import { join, resolve } from 'node:path';
 import { watchDir, watchDirWhilePresent } from '../../electron/watch-dir';
@@ -10,6 +10,7 @@ import { AgentScopeTracker } from '../../src/agent-scope-tracker';
 import { atomicWriteFile, atomicWriteFileSync } from '../../src/atomic-write';
 import { claudeSettingsFileOf } from '../../src/claude-hook-settings';
 import { claudeSignalsFromHook } from '../../src/claude-signals';
+import { claudeActionsFromPostToolUse } from '../../src/claude-tool-actions';
 import { adapterFor } from '../../src/conduit-mcp/adapters';
 import type { McpOpenRequest } from '../../src/conduit-mcp/control-tools';
 import { CLI_KINDS, type CliKind } from '../../src/conduit-mcp/tool-policy';
@@ -22,6 +23,7 @@ import type {
   DomainPort,
   DraftPort,
   LaunchPort,
+  ObservedPort,
   ScrollbackPort,
   ServerEventSink,
   SessionStorePort,
@@ -110,8 +112,9 @@ import type {
 } from '../../src/types';
 import { HC_XDG_ISOLATED_ENV } from '../hc-cli';
 import { type RpcAnswer, RpcFault, type RpcRequest } from '../transport/pipe';
+import { createClaudeFeedGap } from './claude-feed-gap';
 import { createRolloutFs } from './codex-rollout-fs';
-import { createCodexRolloutWatch } from './codex-rollout-watch';
+import type { CodexWatch, CodexWatchDeps } from './codex-rollout-watch';
 import { ServerFolderHealth } from './folder-health';
 import { createLimitMonitor } from './limit-monitor';
 import { createLimitRulesSource } from './limit-rules-file';
@@ -135,6 +138,8 @@ export interface DomainDeps {
   runtime: TerminalRuntime;
   launch: LaunchPort;
   drafts: DraftPort;
+  observed: ObservedPort;
+  createCodexWatch(deps: CodexWatchDeps): CodexWatch;
   scrollback: ScrollbackPort;
   attention: AttentionStatusRead;
   typing: TypingPort;
@@ -283,6 +288,9 @@ const str = (p: Record<string, unknown>, key: string): string => {
   if (typeof v !== 'string' || v === '') throw new RpcFault('invalid', `Expected ${key}`);
   return v;
 };
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** The W4 row of the program: everything the server owns about sessions and its stores. */
 export function createDomain(deps: DomainDeps): Domain {
@@ -682,7 +690,41 @@ export function createDomain(deps: DomainDeps): Domain {
   });
   const codexHome = deps.env.CODEX_HOME || join(deps.homeDir, '.codex');
   const metaCapWarned = new Set<string>();
-  const codexWatch = createCodexRolloutWatch({
+  const feedGap = createClaudeFeedGap<ReturnType<typeof setTimeout>>({
+    readRange: async (p, start, end) => {
+      const handle = await fsp.open(p, 'r');
+      try {
+        const buf = Buffer.alloc(end - start);
+        const { bytesRead } = await handle.read(buf, 0, end - start, start);
+        return buf.subarray(0, bytesRead);
+      } finally {
+        await handle.close();
+      }
+    },
+    sizeOf: (p) => statSync(p).size,
+    setTimer: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: (handle) => clearTimeout(handle),
+    record: (sessionId, gap) => deps.observed.record(sessionId, 'claude', { gap }),
+    warn: (msg, data) => log.warn('observed', msg, data && { ...data }),
+  });
+  // see plan T4.3: subagent calls are not in the main transcript the gap check reads
+  const observeClaudePost = (sessionId: string, post: HookPost): void => {
+    // A post that outlives its session's delete must not revive its gap state or write a row.
+    if (!mgr.get(sessionId)) return;
+    const payload = isRecord(post.payload) ? post.payload : {};
+    if (post.event === 'Stop') {
+      if (typeof payload.transcript_path === 'string')
+        feedGap.stop(sessionId, payload.transcript_path);
+      return;
+    }
+    if (post.event !== 'PostToolUse' && post.event !== 'PostToolUseFailure') return;
+    const toolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : null;
+    feedGap.post(sessionId, payload.agent_id !== undefined && payload.agent_id !== null, toolUseId);
+    const failed = post.event === 'PostToolUseFailure';
+    for (const action of claudeActionsFromPostToolUse(payload))
+      deps.observed.record(sessionId, 'claude', { action, failed });
+  };
+  const codexWatch = deps.createCodexWatch({
     sessionsRoot: join(codexHome, 'sessions'),
     now: () => Date.now(),
     localDate: (ms) => {
@@ -701,8 +743,8 @@ export function createDomain(deps: DomainDeps): Domain {
     episodeOpen: (id) => monitor.episodes().some((e) => e.sessionId === id && e.state === 'open'),
     onSignal: (signal) => monitor.signal(signal),
     onBound: (id) => monitor.onAdapterLive(id),
-    onAction: () => {},
-    onFeed: () => {},
+    onAction: (sessionId, action) => deps.observed.record(sessionId, 'codex', { action }),
+    onFeed: (sessionId, state) => deps.observed.record(sessionId, 'codex', { feed: state }),
     log: schedulerLog,
   });
   const settingsAtLoad = settings();
@@ -1346,6 +1388,7 @@ export function createDomain(deps: DomainDeps): Domain {
     timers.onSessionDisposed(id);
     monitor.onSessionClosed(id);
     codexWatch.untrack(id);
+    feedGap.forget(id);
     scrollback.forget(id);
     changed();
     return { ok: true };
@@ -1759,6 +1802,7 @@ export function createDomain(deps: DomainDeps): Domain {
     hookPost: (sessionId: string, post: HookPost) => {
       for (const signal of claudeSignalsFromHook(sessionId, post.event, post.payload, Date.now()))
         monitor.signal(signal);
+      observeClaudePost(sessionId, post);
     },
     humanInput: (sessionId: string) => monitor.onHumanInput(sessionId),
     persist: async () => {
@@ -1773,6 +1817,7 @@ export function createDomain(deps: DomainDeps): Domain {
       timers.stop();
       monitor.dispose();
       codexWatch.dispose();
+      feedGap.dispose();
       rules.dispose();
       unwatchBusy();
       folders.dispose();
