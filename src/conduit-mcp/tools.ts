@@ -1,5 +1,6 @@
 import type { MonitorOpener } from '../contracts/link-protocol';
 import type { RemoteCaller } from '../contracts/remote-principal';
+import { formatAddress } from '../network/addresses';
 import { ID_FORMAT } from '../network/inbound-ids';
 import type { AgentSource } from '../types';
 import {
@@ -160,6 +161,12 @@ function openedByOf(e: DirectoryEntry, handleOf: ReadonlyMap<string, string>): s
   return e.openedBy === null ? null : (handleOf.get(e.openedBy) ?? null);
 }
 
+/** A remote opener has no session here, so its lead is matched by address, not by handle. */
+function isRemoteOpener(senderAddress: Handle, recipient: DirectoryEntry | undefined): boolean {
+  const opener = recipient?.remoteOpener;
+  return opener != null && senderAddress === formatAddress(opener.handle, opener.machineId);
+}
+
 function peerRelation(
   senderHandle: Handle,
   recipientSessionId: string,
@@ -167,6 +174,7 @@ function peerRelation(
 ): PeerRelation {
   if (senderHandle === HUMAN_HANDLE) return 'human';
   const recipient = directory.find((e) => e.sessionId === recipientSessionId);
+  if (isRemoteOpener(senderHandle, recipient)) return 'lead';
   const sender = directory.find((e) => e.handle === senderHandle);
   if (sender && recipient?.openedBy === sender.sessionId) return 'lead';
   if (recipient && sender?.openedBy === recipient.sessionId) return 'helper';
@@ -187,7 +195,12 @@ export function frameBody(
       ? peerRelation(from, recipientSessionId, directory)
       : origin.originHuman
         ? 'human'
-        : 'peer';
+        : isRemoteOpener(
+              from,
+              directory.find((e) => e.sessionId === recipientSessionId),
+            )
+          ? 'lead'
+          : 'peer';
   const shown = headerFrom(from);
   const machine = shown.slice(shown.indexOf('@') + 1);
   let who: string;

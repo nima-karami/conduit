@@ -332,6 +332,19 @@ describe('applyRemoteAnswer', () => {
     expect(h.service.mirrorOf()[0].state).toBe('open');
   });
 
+  it('refuses an answer from a different controller than the one whose call asked', () => {
+    const h = harness();
+    const asked = { handle: 'bob', machineId: 'm-x' };
+    const perm = h.service.createRemotePermission(asked, permFields(), EXPIRY);
+    const other = h.service.applyRemoteAnswer(perm.id, { outcome: 'denied' }, 'a-y', 'm-y');
+    expect(other).toMatchObject({ ok: false, reason: 'invalid_args' });
+    if (!other.ok) expect(other.message).toBe('answered on the machine that asked');
+    expect(h.service.mirrorOf()[0].state).toBe('open');
+    expect(h.service.applyRemoteAnswer(perm.id, { outcome: 'denied' }, 'a-x', 'm-x')).toEqual({
+      ok: true,
+    });
+  });
+
   it('refuses a local policy permission, which is answered on this machine', () => {
     const h = harness();
     const perm = h.service.createPermission(

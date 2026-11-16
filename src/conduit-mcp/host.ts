@@ -2292,6 +2292,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     name: RoutedTool,
     decision: PolicyDecision,
     targets: readonly PolicyTarget[],
+    signal: AbortSignal,
   ): Promise<{ requestId: string; outcome: Result<AnswerInput> }> => {
     const created = requestService.createRemotePermission(
       { handle: remote.handle, machineId: remote.machineId },
@@ -2317,7 +2318,21 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       requestId: created.id,
       count: null,
     });
-    const ended = await created.ended;
+    // The lead has gone (its link dropped or it was revoked), so the owner has nothing to answer for.
+    // An already-aborted signal never fires its listener, so it is withdrawn here at once.
+    const withdraw = (): void =>
+      requestService.endPermission(created.id, 'withdrawn', null, 'the call was cancelled', {
+        kind: 'remote',
+        machineId: remote.machineId,
+      });
+    signal.addEventListener('abort', withdraw, { once: true });
+    if (signal.aborted) withdraw();
+    const ended = await created.ended.finally(() => signal.removeEventListener('abort', withdraw));
+    if (signal.aborted)
+      return {
+        requestId: created.id,
+        outcome: { ok: false, error: toolError('cancelled', 'the call was cancelled') },
+      };
     return { requestId: created.id, outcome: ownerOutcomeOf(ended) };
   };
 
@@ -2330,6 +2345,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     remote: RemoteCaller,
     name: RoutedTool,
     args: unknown,
+    signal: AbortSignal,
   ): Promise<Result<StructuredOutput>> => {
     const startedAt = now();
     const caller: Caller = {
@@ -2363,7 +2379,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         reach: decision.rule.reach ?? undefined,
         // Nothing asks through a window for a remote lead, and close refuses before it would.
         ui: async () => ({ ok: false, error: windowNotReady() }),
-        signal: new AbortController().signal,
+        signal,
       };
       const prepared = await prepareControl(caller, name, args, ctx);
       if (!prepared.ok) return prepared;
@@ -2377,7 +2393,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       const asked = decision.decision === 'ask' || p.alwaysAsk === true;
       try {
         if (asked) {
-          const owner = await askOwner(remote, name, decision, targets);
+          const owner = await askOwner(remote, name, decision, targets, signal);
           raised = owner.requestId;
           if (!owner.outcome.ok) {
             p.release();

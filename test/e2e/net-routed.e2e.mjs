@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { until } from './conduit-mcp-helpers.mjs';
+import { FAKE_AGENT_ID, until } from './conduit-mcp-helpers.mjs';
 import { assert, finishScenario, makeLog, phase, REPO } from './harness.mjs';
 import {
   agentRecords,
@@ -33,6 +33,17 @@ async function eventually(what, check) {
 function pidsOf(pidLog) {
   if (!existsSync(pidLog)) return [];
   return [...readFileSync(pidLog, 'utf8').matchAll(PID_LINE)].map((m) => Number(m[1]));
+}
+
+/** The generation B reports for a session: term.input is refused for any other generation. */
+async function generationOf(server, sessionId) {
+  let generation;
+  await eventually(`B reports a generation for ${sessionId}`, () => {
+    const latest = server.c2.events.filter((e) => e.type === 'sessions.changed').at(-1);
+    generation = latest?.data.sessions.find((s) => s.id === sessionId)?.runtime?.generation;
+    return typeof generation === 'number';
+  });
+  return generation;
 }
 
 /** Gives one agent session the Lead profile through CON-24's assignment message, as the renderer sends it. */
@@ -132,6 +143,36 @@ async function run() {
     );
     const address = opened.handle;
     const remoteId = opened.session_id;
+
+    phase("3b. a message with open_session is stored on B from A's lead, framed as the lead");
+    // The echo probe has no MCP client, so the message is read by the fake MCP agent.
+    const aId = (await networkState(a)).machineId;
+    const withMessage = await callTool(a, aa, 'open_session', {
+      machine: bId,
+      agent: FAKE_AGENT_ID,
+      path: b.work,
+      focus: false,
+      message: 'hello from A',
+    });
+    assert(
+      typeof withMessage?.session_id === 'string' && typeof withMessage.message?.id === 'string',
+      `open_session with a message: ${JSON.stringify(withMessage)}`,
+    );
+    const fresh = {
+      sessionId: withMessage.session_id,
+      generation: await generationOf(b, withMessage.session_id),
+    };
+    await eventually('the fake agent on B is READY', () =>
+      agentRecords(b, fresh.sessionId, 'READY').some((r) => r.tools.includes('read_inbox')),
+    );
+    const inbox = await callTool(b, fresh, 'read_inbox', {});
+    const first = inbox.messages?.find((m) => m.message_id === withMessage.message.id);
+    assert(
+      first?.from === `${me}@${aId}` &&
+        first.body.includes('your lead') &&
+        first.body.includes('hello from A'),
+      `read_inbox on the new session: ${JSON.stringify(inbox)}`,
+    );
 
     phase('4. read_screen by that address returns rows');
     const screen = await callTool(a, aa, 'read_screen', { session: address });

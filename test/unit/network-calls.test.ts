@@ -198,6 +198,7 @@ describe('serveCall: the principal and the answer', () => {
       },
       'open_session',
       { path: '/w' },
+      expect.any(AbortSignal),
     );
   });
 
@@ -598,6 +599,144 @@ describe('the router keeps its pending calls honest (CON-40 S3 review)', () => {
       {
         message: 'routed call serving',
         data: { machineId: machine, tool: 'open_session', id: 'c-1' },
+      },
+    ]);
+  });
+});
+
+describe('serveCall: a drop, a revoke or a removal cancels the call it serves', () => {
+  /** A host call that waits for its owner, and ends cancelled once its signal aborts. */
+  const waitsForOwner = () =>
+    vi.fn<McpNetworkPort['callAsRemote']>((_principal, _tool, args, signal) =>
+      args.quick === true
+        ? Promise.resolve({ ok: true, value: { agents: [] } })
+        : new Promise((resolve) =>
+            signal.addEventListener('abort', () =>
+              resolve({ ok: false, error: toolError('cancelled', 'the call was cancelled') }),
+            ),
+          ),
+    );
+  const signalOf = (m: ReturnType<typeof waitsForOwner>, i = 0): AbortSignal => {
+    const signal = m.mock.calls[i]?.[3];
+    if (signal === undefined) throw new Error('callAsRemote got no signal');
+    return signal;
+  };
+
+  it('a drop aborts the served call and sends no result, since the link is gone', async () => {
+    const callAsRemote = waitsForOwner();
+    const s = setup({ mcp: { callAsRemote } });
+    const served = s.calls.serveCall(machine, call());
+    s.setState('down');
+    s.calls.linkChanged(machine);
+    await served;
+    expect(signalOf(callAsRemote).aborted).toBe(true);
+    expect(s.sent).toEqual([]);
+  });
+
+  it('a revoke aborts the served call and sends no result', async () => {
+    const callAsRemote = waitsForOwner();
+    const s = setup({ mcp: { callAsRemote } });
+    const served = s.calls.serveCall(machine, call());
+    s.setState('revoked');
+    s.calls.linkChanged(machine);
+    await served;
+    expect(signalOf(callAsRemote).aborted).toBe(true);
+    expect(s.sent).toEqual([]);
+  });
+
+  it('a removed record (no link state at all) aborts the served call', async () => {
+    const callAsRemote = waitsForOwner();
+    const s = setup({ mcp: { callAsRemote } });
+    const served = s.calls.serveCall(machine, call());
+    s.setState(null);
+    s.calls.linkChanged(machine);
+    await served;
+    expect(signalOf(callAsRemote).aborted).toBe(true);
+    expect(s.sent).toEqual([]);
+  });
+
+  it('a machine dropped from the link list aborts its served call, via settleAbsent', async () => {
+    const callAsRemote = waitsForOwner();
+    const s = setup({ mcp: { callAsRemote } });
+    const served = s.calls.serveCall(machine, call());
+    s.calls.settleAbsent([]);
+    await served;
+    expect(signalOf(callAsRemote).aborted).toBe(true);
+    expect(s.sent).toEqual([]);
+  });
+
+  it('stop aborts every served call', async () => {
+    const callAsRemote = waitsForOwner();
+    const s = setup({ mcp: { callAsRemote } });
+    const a = s.calls.serveCall(machine, call({ id: 'a' }));
+    const b = s.calls.serveCall(machine, call({ id: 'b' }));
+    s.calls.stop();
+    await Promise.all([a, b]);
+    expect(signalOf(callAsRemote, 0).aborted).toBe(true);
+    expect(signalOf(callAsRemote, 1).aborted).toBe(true);
+    expect(s.sent).toEqual([]);
+  });
+
+  it('a call that answers after its link dropped is not sent: the signal decides, not the host', async () => {
+    let answer: (r: Awaited<ReturnType<McpNetworkPort['callAsRemote']>>) => void = () => undefined;
+    const callAsRemote = vi.fn<McpNetworkPort['callAsRemote']>(
+      () => new Promise((resolve) => (answer = resolve)),
+    );
+    const s = setup({ mcp: { callAsRemote } });
+    const served = s.calls.serveCall(machine, call());
+    s.setState('down');
+    s.calls.linkChanged(machine);
+    const owned = { agents: [] };
+    answer({ ok: true, value: owned });
+    await served;
+    expect(s.sent).toEqual([]);
+  });
+
+  it('a drop on one machine leaves the served calls of other machines running', async () => {
+    const callAsRemote = waitsForOwner();
+    const s = setup({ mcp: { callAsRemote } });
+    const other = 'm-87654321';
+    const mine = s.calls.serveCall(machine, call({ id: 'mine' }));
+    const theirs = s.calls.serveCall(other, call({ id: 'theirs' }));
+    s.setState('down');
+    s.calls.linkChanged(machine);
+    await mine;
+    expect(signalOf(callAsRemote, 0).aborted).toBe(true);
+    expect(signalOf(callAsRemote, 1).aborted).toBe(false);
+    s.calls.settleAbsent([other]);
+    expect(signalOf(callAsRemote, 1).aborted).toBe(false);
+    s.calls.stop();
+    await theirs;
+  });
+
+  it('a batch of aborts logs one line, not one per call', async () => {
+    const callAsRemote = waitsForOwner();
+    const s = setup({ mcp: { callAsRemote } });
+    const a = s.calls.serveCall(machine, call({ id: 'a' }));
+    const b = s.calls.serveCall(machine, call({ id: 'b' }));
+    const before = s.logs.length;
+    s.setState('down');
+    s.calls.linkChanged(machine);
+    await Promise.all([a, b]);
+    expect(s.logs.slice(before)).toEqual([
+      { message: 'routed calls cancelled', data: { count: 2, reason: 'the link dropped' } },
+    ]);
+  });
+
+  it('a call that finished is no longer served: a later drop aborts nothing', async () => {
+    const callAsRemote = waitsForOwner();
+    const s = setup({ mcp: { callAsRemote } });
+    await s.calls.serveCall(machine, call({ id: 'done', args: { quick: true } }));
+    const later = s.calls.serveCall(machine, call({ id: 'later' }));
+    s.setState('down');
+    s.calls.linkChanged(machine);
+    await later;
+    expect(signalOf(callAsRemote, 0).aborted).toBe(false);
+    expect(signalOf(callAsRemote, 1).aborted).toBe(true);
+    expect(s.sent).toEqual([
+      {
+        machineId: machine,
+        frame: { t: 'call.result', id: 'done', ok: true, result: { agents: [] } },
       },
     ]);
   });

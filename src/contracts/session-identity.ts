@@ -117,6 +117,8 @@ export interface InstanceNames {
   serverEndpoint: string;
   /** The ssh bridge's socket beside C2; the server records it in `link-endpoint` (plan decision 3). */
   linkEndpoint: string;
+  /** Set only when linkEndpoint falls back to tmpdir: the per-uid dir the server creates 0700. */
+  linkSocketDir?: string;
   mcpEndpoint: string;
   /**
    * `conduit-server-<h>` (31 chars, within hc's 32): the supervisor's unique hc terminal name. The

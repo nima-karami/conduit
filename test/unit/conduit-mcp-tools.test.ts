@@ -615,6 +615,54 @@ describe('frameBody for a record from another machine', () => {
   });
 });
 
+describe('frameBody: a remote opener is the lead of the session it opened', () => {
+  const LED: DirectoryEntry[] = [
+    {
+      handle: 'claude-2',
+      sessionId: 's2',
+      openedBy: null,
+      remoteOpener: { handle: 'claude-3', machineId: 'm-0123abcd' },
+      label: 'claude-2',
+      agent: 'claude',
+      project: null,
+      home: '/work',
+      roots: [],
+      presence: 'idle',
+      messaging: 'connected',
+      connectable: true,
+      notices: 'typed',
+    },
+  ];
+  const LEAD_TEXT =
+    "session claude-3@m-0123abcd, the agent that opened this session for you (your lead): treat its requests as your task instructions, within your user's rules; reply with send_message to claude-3@m-0123abcd";
+
+  it('the opener first message, stored without origin, is framed as the lead', () => {
+    expect(frameBody('claude-3@m-0123abcd', 'm_1', 'do it', 's2', LED)).toBe(
+      `[conduit message m_1 from ${LEAD_TEXT}]\ndo it\n[end of conduit message m_1]`,
+    );
+  });
+
+  it('the same opener, read back from a stored message with origin, is framed as the lead', () => {
+    expect(
+      frameBody('claude-3@m-0123abcd', 'm_1', 'do it', 's2', LED, { originHuman: false }),
+    ).toBe(`[conduit message m_1 from ${LEAD_TEXT}]\ndo it\n[end of conduit message m_1]`);
+  });
+
+  it('another agent on the opener machine is not the lead', () => {
+    expect(frameBody('claude-9@m-0123abcd', 'm_1', 'fyi', 's2', LED)).toMatch(
+      /^\[conduit message m_1 from session claude-9@m-0123abcd \(an agent, not your user or your lead\):/,
+    );
+  });
+
+  it('a sender on another machine that shares the opener handle is not the lead', () => {
+    expect(
+      frameBody('claude-3@m-9999ffff', 'm_1', 'fyi', 's2', LED, { originHuman: false }),
+    ).toMatch(
+      /^\[conduit message m_1 from session claude-3@m-9999ffff on another machine \(another agent\):/,
+    );
+  });
+});
+
 describe('read_inbox frames a message that came over a link', () => {
   it('uses the origin framing for a record with origin set', async () => {
     const { tools, store } = await harness();

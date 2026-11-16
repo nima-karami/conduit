@@ -1,15 +1,17 @@
-import { generateKeyPairSync } from 'node:crypto';
+import { generateKeyPairSync, randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { Duplex, PassThrough } from 'node:stream';
 import type tls from 'node:tls';
 import { afterEach, describe, expect, it } from 'vitest';
+import { type Identity, signProof, verifyProof } from '../../server/network/identity';
 import {
   type ConnectionOptions,
+  type HelloProof,
   type LinkConnection,
   openConnection,
 } from '../../server/network/link-connection';
 import { dial, type Listener, listenLinks } from '../../server/network/listener';
-import type { HelloFrame, LinkFrame } from '../../src/contracts/link-protocol';
+import { type HelloFrame, LINK_PROTOCOL, type LinkFrame } from '../../src/contracts/link-protocol';
 import { encodeFrame } from '../../src/network/frame-codec';
 import { deriveMachineId } from '../../src/network/identity-file';
 import { rawEd25519, selfSignedCert } from '../../src/network/self-signed-cert';
@@ -299,5 +301,241 @@ describe('send buffer limits', () => {
     expect(c.send({ t: 'view.close', viewId: 'v1' })).toBe(false);
     expect(sock.destroyed).toBe(false);
     expect(closes).toEqual([]);
+  });
+});
+
+/** A node with a real Ed25519 server key; its machine id is the hash of that key. */
+function keyed(): Identity {
+  const k = generateKeyPairSync('ed25519');
+  const raw = rawEd25519(k.publicKey);
+  return {
+    machineId: deriveMachineId(raw),
+    serverPublicKey: k.publicKey,
+    serverPrivateKey: k.privateKey,
+    ownerKey: null,
+    serverKeyRaw: raw,
+  };
+}
+
+const freshNonce = (): string => randomBytes(32).toString('base64');
+
+/** A hello as an ssh node sends it: the minor that carries a nonce, and the key it names. */
+function sshHello(id: Identity, nonce: string = freshNonce()): HelloFrame {
+  return {
+    ...hello(id.machineId),
+    protocol: { major: 1, minor: LINK_PROTOCOL.minor },
+    serverKey: id.serverKeyRaw.toString('base64'),
+    nonce,
+  };
+}
+
+/** The proof a real node runs: its signature over the peer's nonce, checked against its own. */
+function proofOf(id: Identity, ownNonce: string): HelloProof {
+  return {
+    sign: (peerNonce, peerMachineId) => signProof(id, peerNonce, peerMachineId),
+    verify: (peer, sig) => verifyProof(peer.serverKey, sig, ownNonce, peer.machineId, id.machineId),
+  };
+}
+
+/**
+ * Our side is a real connection; the far side is a hand-written peer that sends exactly the frames
+ * a test names, so each malformed handshake can be built on purpose.
+ */
+function handPeer() {
+  const toOurs = new PassThrough();
+  const fromOurs = new PassThrough();
+  const far = {
+    send: (frame: LinkFrame) => {
+      toOurs.write(encodeFrame(frame));
+    },
+  };
+  return { stream: bridge(toOurs, fromOurs), far };
+}
+
+/** Two stream ends, each reading what the other writes: the ssh stream between two nodes. */
+function sshDuplexPair() {
+  const ab = new PassThrough();
+  const ba = new PassThrough();
+  return { sideA: bridge(ba, ab), sideB: bridge(ab, ba) };
+}
+
+const refusedWith = (r: LinkConnection | { error: string }): string =>
+  'error' in r ? r.error : 'up';
+
+describe('ssh proof of possession (plan F1)', () => {
+  it('two real ssh nodes prove their keys to each other and come up', async () => {
+    const A = keyed();
+    const B = keyed();
+    const na = freshNonce();
+    const nb = freshNonce();
+    const { sideA, sideB } = sshDuplexPair();
+    const [ca, cb] = await Promise.all([
+      openConnection(sideA, {
+        hello: sshHello(A, na),
+        now: () => Date.now(),
+        log: quiet,
+        proof: proofOf(A, na),
+      }),
+      openConnection(sideB, {
+        hello: sshHello(B, nb),
+        now: () => Date.now(),
+        log: quiet,
+        proof: proofOf(B, nb),
+      }),
+    ]);
+    if ('error' in ca || 'error' in cb) throw new Error('connection failed');
+    conns.push(ca, cb);
+    expect(ca.peerHello.machineId).toBe(B.machineId);
+    expect(cb.peerHello.machineId).toBe(A.machineId);
+  });
+
+  it('a proof signed by another key is bad-proof, and the peer is named in the refusal', async () => {
+    const A = keyed();
+    const B = keyed();
+    const impostor = keyed();
+    const na = freshNonce();
+    const { stream, far } = handPeer();
+    const pending = openConnection(stream, {
+      hello: sshHello(A, na),
+      now: () => Date.now(),
+      log: quiet,
+      proof: proofOf(A, na),
+    });
+    far.send(sshHello(B));
+    far.send({ t: 'hello.proof', sig: signProof(impostor, na, A.machineId) });
+    const r = await pending;
+    expect('error' in r && r.error).toBe('bad-proof');
+    expect('error' in r ? r.peerHello?.machineId : null).toBe(B.machineId);
+  });
+
+  it('a proof over an older nonce is a replay, and is bad-proof', async () => {
+    const A = keyed();
+    const B = keyed();
+    const na = freshNonce();
+    const { stream, far } = handPeer();
+    const pending = openConnection(stream, {
+      hello: sshHello(A, na),
+      now: () => Date.now(),
+      log: quiet,
+      proof: proofOf(A, na),
+    });
+    far.send(sshHello(B));
+    far.send({ t: 'hello.proof', sig: signProof(B, freshNonce(), A.machineId) });
+    expect(refusedWith(await pending)).toBe('bad-proof');
+  });
+
+  it('a proof that binds other machine ids is bad-proof', async () => {
+    const A = keyed();
+    const B = keyed();
+    const na = freshNonce();
+    const { stream, far } = handPeer();
+    const pending = openConnection(stream, {
+      hello: sshHello(A, na),
+      now: () => Date.now(),
+      log: quiet,
+      proof: proofOf(A, na),
+    });
+    far.send(sshHello(B));
+    far.send({ t: 'hello.proof', sig: signProof(B, na, 'm-00000000') });
+    expect(refusedWith(await pending)).toBe('bad-proof');
+  });
+
+  it('a peer that never sends its proof is bad-proof when the hello timeout passes', async () => {
+    const A = keyed();
+    const B = keyed();
+    const na = freshNonce();
+    const { stream, far } = handPeer();
+    const pending = openConnection(stream, {
+      hello: sshHello(A, na),
+      now: () => Date.now(),
+      log: quiet,
+      proof: proofOf(A, na),
+      helloTimeoutMs: 50,
+    });
+    far.send(sshHello(B));
+    expect(refusedWith(await pending)).toBe('bad-proof');
+  });
+
+  it('a hello with no nonce is bad-proof, not accepted on its key alone', async () => {
+    const A = keyed();
+    const B = keyed();
+    const na = freshNonce();
+    const { stream, far } = handPeer();
+    const pending = openConnection(stream, {
+      hello: sshHello(A, na),
+      now: () => Date.now(),
+      log: quiet,
+      proof: proofOf(A, na),
+    });
+    const { nonce: _nonce, ...withoutNonce } = sshHello(B);
+    far.send(withoutNonce);
+    expect(refusedWith(await pending)).toBe('bad-proof');
+  });
+
+  it('a peer below the proof minor is incompatible, whatever it sends', async () => {
+    const A = keyed();
+    const B = keyed();
+    const na = freshNonce();
+    const { stream, far } = handPeer();
+    const pending = openConnection(stream, {
+      hello: sshHello(A, na),
+      now: () => Date.now(),
+      log: quiet,
+      proof: proofOf(A, na),
+    });
+    const { nonce: _nonce, ...withoutNonce } = sshHello(B);
+    far.send({ ...withoutNonce, protocol: { major: 1, minor: LINK_PROTOCOL.minor - 1 } });
+    const r = await pending;
+    expect('error' in r && r.error).toBe('incompatible');
+    expect('error' in r ? r.peerHello?.machineId : null).toBe(B.machineId);
+  });
+
+  it('a frame that arrives before the proof is a protocol error', async () => {
+    const A = keyed();
+    const B = keyed();
+    const na = freshNonce();
+    const { stream, far } = handPeer();
+    const pending = openConnection(stream, {
+      hello: sshHello(A, na),
+      now: () => Date.now(),
+      log: quiet,
+      proof: proofOf(A, na),
+    });
+    far.send(sshHello(B));
+    far.send({ t: 'ping' });
+    expect(refusedWith(await pending)).toBe('bad-proof');
+  });
+
+  it('a proof sent on a link that never asked for one closes it as bad-proof', async () => {
+    const A = keyed();
+    const B = keyed();
+    const closes: string[] = [];
+    const { stream, far } = handPeer();
+    const pending = openConnection(stream, {
+      hello: hello(A.machineId),
+      now: () => Date.now(),
+      log: quiet,
+    });
+    far.send(hello(B.machineId));
+    far.send({ t: 'hello.proof', sig: signProof(B, freshNonce(), A.machineId) });
+    const c = await pending;
+    if ('error' in c) throw new Error('connection failed');
+    conns.push(c);
+    c.start({ onFrame: () => undefined, onClose: (why) => closes.push(why) });
+    await until(() => closes.length > 0);
+    expect(closes).toEqual(['bad-proof']);
+  });
+
+  it('a link with no proof option still comes up when both hellos carry nonces', async () => {
+    const A = keyed();
+    const B = keyed();
+    const { sideA, sideB } = sshDuplexPair();
+    const [ca, cb] = await Promise.all([
+      openConnection(sideA, { hello: sshHello(A), now: () => Date.now(), log: quiet }),
+      openConnection(sideB, { hello: sshHello(B), now: () => Date.now(), log: quiet }),
+    ]);
+    if ('error' in ca || 'error' in cb) throw new Error('connection failed');
+    conns.push(ca, cb);
+    expect(ca.peerHello.machineId).toBe(B.machineId);
   });
 });

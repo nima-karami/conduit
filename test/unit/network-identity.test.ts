@@ -6,8 +6,11 @@ import {
   type IdentityIo,
   type LoadedIdentity,
   loadIdentity,
+  proofPayload,
   readOnlyMachineId,
   setOwnerKey,
+  signProof,
+  verifyProof,
 } from '../../server/network/identity';
 import { deriveMachineId, serializeIdentityFile } from '../../src/network/identity-file';
 
@@ -188,5 +191,107 @@ describe('adoptOwnerKey', () => {
     expect(
       adoptOwnerKey(DIR, loaded.identity, { publicKey: a.publicKey, privateKey: b.privateKey }, io),
     ).toBeNull();
+  });
+});
+
+describe('hello proof of possession', () => {
+  const NONCE = Buffer.alloc(32, 1).toString('base64');
+  const OTHER_NONCE = Buffer.alloc(32, 2).toString('base64');
+
+  function freshIdentity(): Identity {
+    const { io } = memoryIo();
+    const r = loadIdentity(DIR, io);
+    if (r.kind !== 'created') throw new Error(`unexpected ${r.kind}`);
+    return r.identity;
+  }
+
+  it('a proof over the verifier nonce and the two machine ids verifies', () => {
+    const signer = freshIdentity();
+    const verifier = freshIdentity();
+    const sig = signProof(signer, NONCE, verifier.machineId);
+    expect(
+      verifyProof(
+        signer.serverKeyRaw.toString('base64'),
+        sig,
+        NONCE,
+        signer.machineId,
+        verifier.machineId,
+      ),
+    ).toBe(true);
+  });
+
+  it('the signed text is the documented payload, byte for byte', () => {
+    expect(proofPayload('N', 'm-signer', 'm-verifier').toString('utf8')).toBe(
+      'conduit-link-proof-v1\nN\nm-signer\nm-verifier',
+    );
+  });
+
+  it('a proof for a different nonce does not verify (replay)', () => {
+    const signer = freshIdentity();
+    const verifier = freshIdentity();
+    const sig = signProof(signer, OTHER_NONCE, verifier.machineId);
+    expect(
+      verifyProof(
+        signer.serverKeyRaw.toString('base64'),
+        sig,
+        NONCE,
+        signer.machineId,
+        verifier.machineId,
+      ),
+    ).toBe(false);
+  });
+
+  it('a proof that binds other machine ids does not verify', () => {
+    const signer = freshIdentity();
+    const verifier = freshIdentity();
+    const bystander = freshIdentity();
+    const key = signer.serverKeyRaw.toString('base64');
+    const sigForBystander = signProof(signer, NONCE, bystander.machineId);
+    expect(verifyProof(key, sigForBystander, NONCE, signer.machineId, verifier.machineId)).toBe(
+      false,
+    );
+    const sigAsOther = signProof(signer, NONCE, verifier.machineId);
+    expect(verifyProof(key, sigAsOther, NONCE, bystander.machineId, verifier.machineId)).toBe(
+      false,
+    );
+  });
+
+  it('a proof checked against another key does not verify', () => {
+    const signer = freshIdentity();
+    const verifier = freshIdentity();
+    const other = freshIdentity();
+    const sig = signProof(signer, NONCE, verifier.machineId);
+    expect(
+      verifyProof(
+        other.serverKeyRaw.toString('base64'),
+        sig,
+        NONCE,
+        signer.machineId,
+        verifier.machineId,
+      ),
+    ).toBe(false);
+  });
+
+  it('a flipped signature byte, a short signature and a malformed key do not verify', () => {
+    const signer = freshIdentity();
+    const verifier = freshIdentity();
+    const key = signer.serverKeyRaw.toString('base64');
+    const sig = Buffer.from(signProof(signer, NONCE, verifier.machineId), 'base64');
+    sig[0] = (sig[0] ?? 0) ^ 1;
+    expect(
+      verifyProof(key, sig.toString('base64'), NONCE, signer.machineId, verifier.machineId),
+    ).toBe(false);
+    expect(
+      verifyProof(
+        key,
+        sig.subarray(0, 63).toString('base64'),
+        NONCE,
+        signer.machineId,
+        verifier.machineId,
+      ),
+    ).toBe(false);
+    expect(
+      verifyProof('not-a-key', sig.toString('base64'), NONCE, signer.machineId, verifier.machineId),
+    ).toBe(false);
   });
 });

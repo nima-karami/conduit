@@ -51,6 +51,7 @@ import {
 import { RATE_LIMIT_PER_MIN } from '../../src/conduit-mcp/tools';
 import { type MessageRecord, THREAD_AGENT_LIMIT, toolError } from '../../src/conduit-mcp/types';
 import type { RequestMirror } from '../../src/contracts/link-protocol';
+
 import type {
   ConnectMachineOk,
   ConnectMachineResult,
@@ -71,6 +72,9 @@ import { createPtyWriter } from '../../src/pty-writer';
 import { COMMAND_AGENT_ID, commandDef } from '../../src/session-command';
 import type { AgentDefinition, Session, SpawnSpec } from '../../src/types';
 import { testEndpoint } from '../helpers/test-endpoint';
+
+/** A signal that is never aborted: the routed calls below run to their own answer. */
+const LIVE = new AbortController().signal;
 
 const FAKE: AgentDefinition = {
   id: 'e2e-fake-mcp',
@@ -7576,17 +7580,22 @@ describe('createConduitMcpHost — a remote lead (routed calls, CON-40 S2, plan 
 
   it('list_agents runs for the lead and answers ok', async () => {
     const h = await withLocal();
-    const r = await h.host.networkPort().callAsRemote(LEAD, 'list_agents', {});
+    const r = await h.host.networkPort().callAsRemote(LEAD, 'list_agents', {}, LIVE);
     expect(r.ok).toBe(true);
   });
 
   it('open_session takes an absolute path and records the remote opener', async () => {
     const h = await withLocal();
-    const r = await h.host.networkPort().callAsRemote(LEAD, 'open_session', {
-      path: '/w/wt',
-      agent: 'e2e-fake-mcp',
-      focus: true,
-    });
+    const r = await h.host.networkPort().callAsRemote(
+      LEAD,
+      'open_session',
+      {
+        path: '/w/wt',
+        agent: 'e2e-fake-mcp',
+        focus: true,
+      },
+      LIVE,
+    );
     expect(r).toMatchObject({ ok: true, value: { session_id: 'n1', agent: 'e2e-fake-mcp' } });
     expect(h.opens).toEqual([
       expect.objectContaining({
@@ -7600,10 +7609,15 @@ describe('createConduitMcpHost — a remote lead (routed calls, CON-40 S2, plan 
 
   it('open_session with a relative path is invalid_args, and says where an absolute one goes', async () => {
     const h = await withLocal();
-    const r = await h.host.networkPort().callAsRemote(LEAD, 'open_session', {
-      path: 'wt',
-      agent: 'e2e-fake-mcp',
-    });
+    const r = await h.host.networkPort().callAsRemote(
+      LEAD,
+      'open_session',
+      {
+        path: 'wt',
+        agent: 'e2e-fake-mcp',
+      },
+      LIVE,
+    );
     expect(r).toMatchObject({
       ok: false,
       error: { code: 'invalid_args', hint: 'give an absolute path on this machine' },
@@ -7614,33 +7628,33 @@ describe('createConduitMcpHost — a remote lead (routed calls, CON-40 S2, plan 
   it('a lead reaches the session it opened, and no other', async () => {
     const h = await withLocal();
     const port = h.host.networkPort();
-    await port.callAsRemote(LEAD, 'open_session', { path: '/w/wt', agent: 'e2e-fake-mcp' });
+    await port.callAsRemote(LEAD, 'open_session', { path: '/w/wt', agent: 'e2e-fake-mcp' }, LIVE);
     await launch(h, 'n1');
-    const mine = await port.callAsRemote(LEAD, 'read_screen', { session: 'n1' });
+    const mine = await port.callAsRemote(LEAD, 'read_screen', { session: 'n1' }, LIVE);
     expect(mine.ok).toBe(true);
-    const theirs = await port.callAsRemote(LEAD, 'read_screen', { session: 's1' });
+    const theirs = await port.callAsRemote(LEAD, 'read_screen', { session: 's1' }, LIVE);
     expect(theirs).toMatchObject({ ok: false, error: { code: 'out_of_reach' } });
   });
 
   it('send_input reaches the opened session only', async () => {
     const h = await withLocal();
     const port = h.host.networkPort();
-    await port.callAsRemote(LEAD, 'open_session', { path: '/w/wt', agent: 'e2e-fake-mcp' });
+    await port.callAsRemote(LEAD, 'open_session', { path: '/w/wt', agent: 'e2e-fake-mcp' }, LIVE);
     await launch(h, 'n1');
-    const mine = await port.callAsRemote(LEAD, 'send_input', { session: 'n1', text: 'hi' });
+    const mine = await port.callAsRemote(LEAD, 'send_input', { session: 'n1', text: 'hi' }, LIVE);
     expect(mine).toMatchObject({ ok: true, value: { sent_chars: 2 } });
     expect(h.inputs).toContainEqual(['n1', 'hi']);
-    const theirs = await port.callAsRemote(LEAD, 'send_input', { session: 's1', text: 'x' });
+    const theirs = await port.callAsRemote(LEAD, 'send_input', { session: 's1', text: 'x' }, LIVE);
     expect(theirs).toMatchObject({ ok: false, error: { code: 'out_of_reach' } });
   });
 
   it('close_session closes a session the lead opened, when no window shows it', async () => {
     const h = await withLocal();
     const port = h.host.networkPort();
-    await port.callAsRemote(LEAD, 'open_session', { path: '/w/wt', agent: 'e2e-fake-mcp' });
+    await port.callAsRemote(LEAD, 'open_session', { path: '/w/wt', agent: 'e2e-fake-mcp' }, LIVE);
     await launch(h, 'n1');
     h.owners.set('n1', null);
-    const r = await port.callAsRemote(LEAD, 'close_session', { session: 'n1' });
+    const r = await port.callAsRemote(LEAD, 'close_session', { session: 'n1' }, LIVE);
     expect(r.ok).toBe(true);
     expect(h.closes).toEqual(['n1']);
   });
@@ -7648,9 +7662,9 @@ describe('createConduitMcpHost — a remote lead (routed calls, CON-40 S2, plan 
   it('close_session refuses a session a window shows: that window closes it, with its guard', async () => {
     const h = await withLocal();
     const port = h.host.networkPort();
-    await port.callAsRemote(LEAD, 'open_session', { path: '/w/wt', agent: 'e2e-fake-mcp' });
+    await port.callAsRemote(LEAD, 'open_session', { path: '/w/wt', agent: 'e2e-fake-mcp' }, LIVE);
     await launch(h, 'n1');
-    const r = await port.callAsRemote(LEAD, 'close_session', { session: 'n1' });
+    const r = await port.callAsRemote(LEAD, 'close_session', { session: 'n1' }, LIVE);
     expect(r).toMatchObject({ ok: false, error: { code: 'refused', reason: 'remote_window' } });
     expect(h.closes).toEqual([]);
   });
@@ -7663,6 +7677,7 @@ describe('createConduitMcpHost — a remote lead (routed calls, CON-40 S2, plan 
         { ...LEAD, capabilities: { messaging: true, monitor: false, drive: false } },
         'list_agents',
         {},
+        LIVE,
       );
     expect(r).toMatchObject({ ok: false, error: { code: 'tool_disabled' } });
   });
@@ -7689,7 +7704,12 @@ describe('createConduitMcpHost — a remote lead (routed calls, CON-40 S2, plan 
     });
     const h = await withLocal({ policyIo: { read: () => policy, write: async () => undefined } });
     const port = h.host.networkPort();
-    const call = port.callAsRemote(LEAD, 'open_session', { path: '/w/wt', agent: 'e2e-fake-mcp' });
+    const call = port.callAsRemote(
+      LEAD,
+      'open_session',
+      { path: '/w/wt', agent: 'e2e-fake-mcp' },
+      LIVE,
+    );
     const [asked] = await waitForAsks(h);
     expect(asked).toMatchObject({
       requester: 'claude-3@m-0123abcd',
@@ -7703,10 +7723,15 @@ describe('createConduitMcpHost — a remote lead (routed calls, CON-40 S2, plan 
 
   it('the opener shows in list_sessions as the lead address, on this machine', async () => {
     const h = await withLocal();
-    await h.host.networkPort().callAsRemote(LEAD, 'open_session', {
-      path: '/w/wt',
-      agent: 'e2e-fake-mcp',
-    });
+    await h.host.networkPort().callAsRemote(
+      LEAD,
+      'open_session',
+      {
+        path: '/w/wt',
+        agent: 'e2e-fake-mcp',
+      },
+      LIVE,
+    );
     const a = await launch(h, 's1');
     const c = await client(h.ep, a.token);
     const listed = await c.call('list_sessions');
@@ -7739,7 +7764,7 @@ describe('createConduitMcpHost — a remote lead: the refusals the host adds (CO
     // on PATH and must exist, so the open reaches the always-ask check.
     const h = await withLocal({ kinds: { '/w/wt': 'dir', '/usr/bin/yes': 'file' } });
     const port = h.host.networkPort();
-    const call = port.callAsRemote(LEAD, 'open_session', { path: '/w/wt', agent: 'yes' });
+    const call = port.callAsRemote(LEAD, 'open_session', { path: '/w/wt', agent: 'yes' }, LIVE);
     const [asked] = await waitForAsks(h);
     port.applyRemoteAnswer(asked.id, { outcome: 'denied' }, 'bare-1', LEAD.machineId);
     const r = await call;
@@ -7749,30 +7774,100 @@ describe('createConduitMcpHost — a remote lead: the refusals the host adds (CO
 
   it('with messaging off, a remote open is messaging_off, not a tool_disabled', async () => {
     const h = await withLocal({ messagingOn: () => false });
-    const r = await h.host.networkPort().callAsRemote(LEAD, 'open_session', {
-      path: '/w/wt',
-      agent: 'e2e-fake-mcp',
-    });
+    const r = await h.host.networkPort().callAsRemote(
+      LEAD,
+      'open_session',
+      {
+        path: '/w/wt',
+        agent: 'e2e-fake-mcp',
+      },
+      LIVE,
+    );
     expect(r).toMatchObject({ ok: false, error: { code: 'messaging_off' } });
     expect(h.opens).toEqual([]);
   });
 
-  it('a remote open_session with a message is peer_unsupported, and opens nothing', async () => {
+  // Behaviour change (F3): a remote lead's first message is now delivered, not refused.
+  it('a remote open_session with a message opens the session and stores the message from the lead', async () => {
     const h = await withLocal();
-    const r = await h.host.networkPort().callAsRemote(LEAD, 'open_session', {
-      path: '/w/wt',
-      agent: 'e2e-fake-mcp',
-      message: 'start',
+    const r = await h.host
+      .networkPort()
+      .callAsRemote(
+        LEAD,
+        'open_session',
+        { path: '/w/wt', agent: 'e2e-fake-mcp', message: 'start on T1' },
+        LIVE,
+      );
+    expect(r).toMatchObject({
+      ok: true,
+      value: { session_id: 'n1', message: { id: expect.any(String) } },
     });
-    expect(r).toMatchObject({ ok: false, error: { code: 'peer_unsupported' } });
+    expect(h.opens).toHaveLength(1);
+    const n1 = await launch(h, 'n1');
+    const cb = await client(h.ep, n1.token);
+    const inbox = await cb.call('read_inbox');
+    expect(inbox.body.messages).toHaveLength(1);
+    expect(inbox.body.messages[0]).toMatchObject({
+      message_id: expect.any(String),
+      from: 'claude-3@m-0123abcd',
+    });
+    expect(inbox.body.messages[0].body).toContain('your lead');
+    expect(inbox.body.messages[0].body).toContain('start on T1');
+  });
+
+  it('a remote lead without messaging is tool_disabled, and opens nothing', async () => {
+    const h = await withLocal();
+    const r = await h.host
+      .networkPort()
+      .callAsRemote(
+        { ...LEAD, capabilities: { messaging: false, monitor: true, drive: false } },
+        'open_session',
+        { path: '/w/wt', agent: 'e2e-fake-mcp', message: 'start' },
+        LIVE,
+      );
+    expect(r).toMatchObject({ ok: false, error: { code: 'tool_disabled' } });
     expect(h.opens).toEqual([]);
   });
 
   it('a remote close of children is invalid_args: a remote lead has no children here', async () => {
     const h = await withLocal();
-    const r = await h.host.networkPort().callAsRemote(LEAD, 'close_session', { children: true });
+    const r = await h.host
+      .networkPort()
+      .callAsRemote(LEAD, 'close_session', { children: true }, LIVE);
     expect(r).toMatchObject({ ok: false, error: { code: 'invalid_args' } });
     expect(h.closes).toEqual([]);
+  });
+});
+
+describe('createConduitMcpHost — a routed call cancelled while it waits for the owner (F2)', () => {
+  const LEAD: RemoteCaller = {
+    kind: 'remote',
+    handle: 'claude-3',
+    machineId: 'm-0123abcd',
+    trust: 'own',
+    controller: true,
+    capabilities: { messaging: true, monitor: true, drive: false },
+  };
+
+  it('an ask that is cancelled while the owner has not answered ends cancelled, and its permission is withdrawn', async () => {
+    // /usr/bin/yes is a real coreutils file on the ubuntu CI runner (see the bare-command test above).
+    const h = harness({ kinds: { '/w/wt': 'dir', '/usr/bin/yes': 'file' } });
+    await h.host.start();
+    await launch(h, 's1');
+    const port = h.host.networkPort();
+    const ctl = new AbortController();
+    const call = port.callAsRemote(
+      LEAD,
+      'open_session',
+      { path: '/w/wt', agent: 'yes' },
+      ctl.signal,
+    );
+    const [asked] = await waitForAsks(h);
+    ctl.abort();
+    expect(await call).toMatchObject({ ok: false, error: { code: 'cancelled' } });
+    expect(h.opens).toEqual([]);
+    expect(port.mirrorOf().filter((r) => r.state === 'open' && r.permission !== null)).toEqual([]);
+    expect(port.mirrorOf().find((r) => r.id === asked.id)).toMatchObject({ state: 'withdrawn' });
   });
 });
 
@@ -7835,7 +7930,7 @@ describe('createConduitMcpHost — a routed ask waits for the owner on this mach
   it('an allow runs the call the lead made, once the owner answers', async () => {
     const h = await withAsk();
     const port = h.host.networkPort();
-    const call = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'));
+    const call = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), LIVE);
     const [asked] = await waitForAsks(h);
     expect(asked).toMatchObject({
       requester: 'claude-3@m-0123abcd',
@@ -7853,7 +7948,7 @@ describe('createConduitMcpHost — a routed ask waits for the owner on this mach
   it('a denial gives denied and opens nothing', async () => {
     const h = await withAsk();
     const port = h.host.networkPort();
-    const call = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'));
+    const call = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), LIVE);
     const [asked] = await waitForAsks(h);
     port.applyRemoteAnswer(
       asked.id,
@@ -7867,7 +7962,7 @@ describe('createConduitMcpHost — a routed ask waits for the owner on this mach
 
   it('an ask nobody answers in 45 s gives approval_timeout, and opens nothing', async () => {
     const h = await withAsk();
-    const call = h.host.networkPort().callAsRemote(LEAD, 'open_session', openArgs('/w/wt'));
+    const call = h.host.networkPort().callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), LIVE);
     await waitForAsks(h);
     h.advance(45_000);
     expect(await call).toMatchObject({ ok: false, error: { code: 'approval_timeout' } });
@@ -7877,11 +7972,11 @@ describe('createConduitMcpHost — a routed ask waits for the owner on this mach
   it('an allow with a grant makes a peer grant, and the same call after it runs without asking', async () => {
     const h = await withAsk();
     const port = h.host.networkPort();
-    const first = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'));
+    const first = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), LIVE);
     const [asked] = await waitForAsks(h);
     port.applyRemoteAnswer(asked.id, { outcome: 'allowed', grant: true }, 'g1', LEAD.machineId);
     expect(await first).toMatchObject({ ok: true });
-    const second = await port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'));
+    const second = await port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), LIVE);
     expect(second).toMatchObject({ ok: true });
     expect(h.opens).toHaveLength(2);
     // The second call raised no request: the queue still holds only the first, now answered.
@@ -7891,11 +7986,11 @@ describe('createConduitMcpHost — a routed ask waits for the owner on this mach
   it('a grant covers the folder it was made for: another folder asks again', async () => {
     const h = await withAsk();
     const port = h.host.networkPort();
-    const first = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'));
+    const first = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), LIVE);
     const [asked] = await waitForAsks(h);
     port.applyRemoteAnswer(asked.id, { outcome: 'allowed', grant: true }, 'g2', LEAD.machineId);
     await first;
-    const other = port.callAsRemote(LEAD, 'open_session', openArgs('/w/src'));
+    const other = port.callAsRemote(LEAD, 'open_session', openArgs('/w/src'), LIVE);
     const [again] = await waitForAsks(h);
     expect(again.id).not.toBe(asked.id);
     h.advance(45_000);
@@ -7906,11 +8001,11 @@ describe('createConduitMcpHost — a routed ask waits for the owner on this mach
   it('an allow without a grant makes no grant: the same call asks again', async () => {
     const h = await withAsk();
     const port = h.host.networkPort();
-    const first = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'));
+    const first = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), LIVE);
     const [asked] = await waitForAsks(h);
     port.applyRemoteAnswer(asked.id, { outcome: 'allowed' }, 'n1', LEAD.machineId);
     await first;
-    const second = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'));
+    const second = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), LIVE);
     const [again] = await waitForAsks(h);
     expect(again.id).not.toBe(asked.id);
     h.advance(45_000);
@@ -7919,7 +8014,7 @@ describe('createConduitMcpHost — a routed ask waits for the owner on this mach
 
   it('a stop ends the ask as server_stopping, and the call does not run', async () => {
     const h = await withAsk();
-    const call = h.host.networkPort().callAsRemote(LEAD, 'open_session', openArgs('/w/wt'));
+    const call = h.host.networkPort().callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), LIVE);
     await waitForAsks(h);
     await h.host.stop();
     expect(await call).toMatchObject({ ok: false, error: { code: 'server_stopping' } });
@@ -8386,7 +8481,9 @@ describe('routed session tools on this machine (CON-40 S3, plan decision 5)', ()
       controller: true,
       capabilities: { messaging: true, monitor: true, drive: false },
     };
-    const r = await h.host.networkPort().callAsRemote(lead, 'list_agents', { machine: 'win-box' });
+    const r = await h.host
+      .networkPort()
+      .callAsRemote(lead, 'list_agents', { machine: 'win-box' }, LIVE);
     expect(r).toMatchObject({ ok: false, error: { code: 'peer_unsupported' } });
     expect(net.sent).toEqual([]);
   });

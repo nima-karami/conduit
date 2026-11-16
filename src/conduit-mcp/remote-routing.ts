@@ -159,11 +159,15 @@ export interface RemoteRequestSink {
 /** Implemented by the mcp host; read by server/network. Slice 6 adds its members here. */
 export interface McpNetworkPort {
   localDirectory(): DirectoryEntry[];
-  /** Runs a routed call from a remote lead, as that lead's principal (host.callAsRemote). */
+  /**
+   * Runs a routed call from a remote lead, as that lead's principal (host.callAsRemote). The signal
+   * is the lead's link: once it aborts, the call ends cancelled and nothing is sent back.
+   */
   callAsRemote(
     principal: RemoteCaller,
     tool: RoutedTool,
     args: Record<string, unknown>,
+    signal: AbortSignal,
   ): Promise<Result<StructuredOutput>>;
   hasMessage(messageId: string): boolean;
   readBlob(sha256: string): Promise<Uint8Array | undefined>;

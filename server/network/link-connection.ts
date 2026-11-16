@@ -1,5 +1,6 @@
 import type { Duplex } from 'node:stream';
 import {
+  HELLO_PROOF_MIN_MINOR,
   type HelloFrame,
   LINK_DOWN_MS,
   LINK_FRAME_MAX_BYTES,
@@ -48,6 +49,8 @@ export interface ConnectionOptions {
   helloTimeoutMs?: number;
   /** Repeats fn every ms; returns its cancel. Injected by tests to drive time. */
   every?: (fn: () => void, ms: number) => () => void;
+  /** Set for an ssh link: the handshake is not complete until the peer proves its key. */
+  proof?: HelloProof;
 }
 
 const realEvery = (fn: () => void, ms: number): (() => void) => {
@@ -55,7 +58,19 @@ const realEvery = (fn: () => void, ms: number): (() => void) => {
   return () => clearInterval(handle);
 };
 
-export type ConnectionError = 'incompatible' | 'bad-hello' | 'timeout' | 'closed';
+export type ConnectionError = 'incompatible' | 'bad-hello' | 'bad-proof' | 'timeout' | 'closed';
+
+/**
+ * An ssh link's proof of possession (plan F1). The peer's hello names a server key, and only a
+ * signature from that key shows the peer holds it. TLS proves the same in its handshake, so only
+ * ssh links set this.
+ */
+export interface HelloProof {
+  /** Our signature over the peer's nonce, bound to both machine ids. */
+  sign(peerNonce: string, peerMachineId: string): string;
+  /** Whether `sig` is the peer's signature over our own nonce, for the key its hello named. */
+  verify(peer: HelloFrame, sig: string): boolean;
+}
 
 export function openConnection(
   sock: Duplex,
@@ -69,6 +84,8 @@ export function openConnection(
   let closed = false;
   let cancelTicker: (() => void) | null = null;
   let peerHello: HelloFrame | null = null;
+  // An ssh link sits here between the peer's hello and its proof: nothing but the proof may arrive.
+  let awaitingProof = false;
   let handlers: { onFrame(frame: LinkFrame): void; onClose(why: string): void } | null = null;
   const queued: LinkFrame[] = [];
   let closedWhy: string | null = null;
@@ -95,8 +112,29 @@ export function openConnection(
         setTimeout(() => sock.destroy(), END_GRACE_MS).unref();
       } else sock.destroy();
       if (peerHello === null) settle({ error: why === 'timeout' ? 'timeout' : 'closed' });
+      else if (awaitingProof)
+        settle({ error: why === 'timeout' ? 'bad-proof' : 'closed', peerHello });
       else if (handlers) handlers.onClose(why);
       else closedWhy = why;
+    };
+    /** A refusal before the link is up: the caller learns why, then the socket goes. */
+    const refuse = (
+      result: { error: ConnectionError; peerHello?: HelloFrame },
+      why: string,
+      graceful: boolean,
+    ): void => {
+      clearTimeout(helloTimer);
+      awaitingProof = false;
+      settle(result);
+      finish(why, graceful);
+    };
+    const goLive = (hello: HelloFrame): void => {
+      clearTimeout(helloTimer);
+      cancelTicker = every(() => {
+        if (opts.now() - lastFrameAt >= downMs) finish('silence');
+        else write({ t: 'ping' });
+      }, pingMs);
+      settle(connection(hello));
     };
     const write = (frame: LinkFrame): boolean => {
       if (closed) return false;
@@ -126,24 +164,49 @@ export function openConnection(
     });
 
     const onHello = (frame: LinkFrame | null): void => {
-      clearTimeout(helloTimer);
       if (frame?.t !== 'hello') {
-        settle({ error: 'bad-hello' });
-        finish('bad-hello');
+        refuse({ error: 'bad-hello' }, 'bad-hello', false);
         return;
       }
       if (frame.protocol.major !== opts.hello.protocol.major) {
         write({ t: 'bye', reason: 'incompatible' });
-        settle({ error: 'incompatible', peerHello: frame });
-        finish('incompatible', true);
+        refuse({ error: 'incompatible', peerHello: frame }, 'incompatible', true);
         return;
       }
+      if (opts.proof === undefined) {
+        peerHello = frame;
+        goLive(frame);
+        return;
+      }
+      // Below the proof minor the peer has no proof to send, so it is incompatible, not forged.
+      if (frame.protocol.minor < HELLO_PROOF_MIN_MINOR) {
+        write({ t: 'bye', reason: 'incompatible' });
+        refuse({ error: 'incompatible', peerHello: frame }, 'incompatible', true);
+        return;
+      }
+      if (frame.nonce === undefined) {
+        refuse({ error: 'bad-proof', peerHello: frame }, 'bad-proof', true);
+        return;
+      }
+      // Our proof goes out first, so the peer can check ours while we check its.
       peerHello = frame;
-      cancelTicker = every(() => {
-        if (opts.now() - lastFrameAt >= downMs) finish('silence');
-        else write({ t: 'ping' });
-      }, pingMs);
-      settle(connection(frame));
+      awaitingProof = true;
+      write({ t: 'hello.proof', sig: opts.proof.sign(frame.nonce, frame.machineId) });
+    };
+
+    const onProof = (frame: LinkFrame | null, hello: HelloFrame): void => {
+      if (frame?.t !== 'hello.proof' || opts.proof === undefined) {
+        // Anything before the proof is a protocol error: the peer has not shown it holds its key.
+        refuse({ error: 'bad-proof', peerHello: hello }, 'bad-proof', true);
+        return;
+      }
+      if (!opts.proof.verify(hello, frame.sig)) {
+        opts.log.warn('link: ssh proof refused', { peer: hello.machineId });
+        refuse({ error: 'bad-proof', peerHello: hello }, 'bad-proof', true);
+        return;
+      }
+      awaitingProof = false;
+      goLive(hello);
     };
 
     sock.on('data', (chunk: Buffer) => {
@@ -155,6 +218,16 @@ export function openConnection(
         if (peerHello === null) {
           onHello(frame);
           continue;
+        }
+        if (awaitingProof) {
+          onProof(frame, peerHello);
+          continue;
+        }
+        if (frame?.t === 'hello.proof') {
+          // Only an ssh handshake asks for a proof; a TLS peer that sends one is out of protocol.
+          opts.log.warn('link: unexpected hello.proof', { peer: peerHello.machineId });
+          finish('bad-proof');
+          return;
         }
         if (frame === null) {
           // A frame this version doesn't know: a newer minor peer may send one; skipping keeps

@@ -1,8 +1,10 @@
+import { randomBytes } from 'node:crypto';
 import type { Duplex } from 'node:stream';
 import type tls from 'node:tls';
 import {
   type Capabilities,
   type Capability,
+  HELLO_NONCE_BYTES,
   type HelloFrame,
   helloPlatform,
   LINK_FEATURES,
@@ -32,8 +34,13 @@ import {
 } from '../../src/network/link-state';
 import { MAX_NAME_CHARS } from '../../src/network/pairing-protocol';
 import type { AuditSink } from './audit-log';
-import type { Identity } from './identity';
-import { type ConnectionError, type LinkConnection, openConnection } from './link-connection';
+import { type Identity, signProof, verifyProof } from './identity';
+import {
+  type ConnectionError,
+  type HelloProof,
+  type LinkConnection,
+  openConnection,
+} from './link-connection';
 import type { LinkStore } from './link-store';
 import { dial, type NetLog } from './listener';
 
@@ -171,7 +178,8 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     }
   };
 
-  const ownHello = (capabilities: Capabilities): HelloFrame => {
+  /** A fresh nonce per connection: the peer's proof is over it, so an old proof cannot be replayed. */
+  const ownHello = (capabilities: Capabilities): HelloFrame & { nonce: string } => {
     const id = deps.identity();
     return {
       t: 'hello',
@@ -185,7 +193,31 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       capabilities: { ...capabilities },
       platform: helloPlatform(process.platform, process.arch),
       version: deps.appVersion,
+      nonce: randomBytes(HELLO_NONCE_BYTES).toString('base64'),
     };
+  };
+
+  /**
+   * The proof an ssh handshake runs with (plan F1). The keys are public, so a hello alone shows
+   * nothing; the far end must sign our nonce with the private half of the key its hello names.
+   */
+  const sshProof = (ownNonce: string): HelloProof => ({
+    sign: (peerNonce, peerMachineId) => signProof(deps.identity(), peerNonce, peerMachineId),
+    verify: (peer, sig) =>
+      verifyProof(peer.serverKey, sig, ownNonce, peer.machineId, deps.identity().machineId),
+  });
+
+  /**
+   * A refused ssh handshake is audited, not only logged: a peer that fails the proof is either
+   * broken or an impostor, and the owner needs to be able to see which.
+   */
+  const auditSshRefusal = (refused: { error: ConnectionError; peerHello?: HelloFrame }): void => {
+    if (refused.error !== 'bad-proof' && refused.error !== 'incompatible') return;
+    deps.audit.record({
+      kind: 'link.refused',
+      peer: refused.peerHello?.machineId ?? null,
+      detail: { transport: 'ssh', reason: refused.error },
+    });
   };
 
   /**
@@ -327,13 +359,17 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       return;
     }
     const sentCapabilities = { ...p.record.capabilities };
+    const ourHello = ownHello(sentCapabilities);
+    // Only an ssh dial (the one that passes `dialed`) proves its key here; TLS proves it in its handshake.
     const opened = await openConnection(sock, {
-      hello: ownHello(sentCapabilities),
+      hello: ourHello,
       now: deps.now,
       log: deps.log,
       pingMs: deps.pingMs,
+      proof: dialed === undefined ? undefined : sshProof(ourHello.nonce),
     });
     if ('error' in opened) {
+      auditSshRefusal(opened);
       // The ssh child's exit says why it never got to a hello (host key, auth, bridge refusal).
       // It is kept on the peer before the state moves, so a waiter sees the reason with the down.
       if (dialed !== undefined) {
@@ -514,13 +550,18 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     }
     // An ssh controller already has shell access as this user, so drive adds no power (plan CON-41 decision 3).
     const sent = { ...OWN_DEFAULT_CAPABILITIES, drive: true };
+    const ourHello = ownHello(sent);
     const opened = await openConnection(stream, {
-      hello: ownHello(sent),
+      hello: ourHello,
       now: deps.now,
       log: deps.log,
       pingMs: deps.pingMs,
+      proof: sshProof(ourHello.nonce),
     });
-    if ('error' in opened) return;
+    if ('error' in opened) {
+      auditSshRefusal(opened);
+      return;
+    }
     // Stopped during the hello: nothing is pinned, so nothing is stored for a link that won't run.
     if (stopped) {
       opened.close('shutdown');
@@ -560,13 +601,16 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
   const dialSshPeer = async (ssh: SshEndpoint): Promise<AddSshPeerResult> => {
     const dialed = deps.sshDial(ssh);
     const sent = { ...OWN_DEFAULT_CAPABILITIES };
+    const ourHello = ownHello(sent);
     const opened = await openConnection(dialed.stream, {
-      hello: ownHello(sent),
+      hello: ourHello,
       now: deps.now,
       log: deps.log,
       pingMs: deps.pingMs,
+      proof: sshProof(ourHello.nonce),
     });
     if ('error' in opened) {
+      auditSshRefusal(opened);
       if (opened.error === 'closed')
         return {
           ok: false,
