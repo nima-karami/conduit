@@ -6,7 +6,7 @@ import type { RemoteRequestSink } from './remote-routing';
 import type { ListRequestsOutput, RequestsUiState, RequestView } from './request-types';
 import { type Result, toolError } from './types';
 
-export type RemoteLinkState = 'up' | 'down' | 'gone';
+type RemoteLinkState = 'up' | 'down' | 'gone';
 
 /** A mirrored request as the Needs-you queue shows it. `stale` while its link is down. */
 export interface RemoteRequestView extends RequestView {
@@ -35,7 +35,7 @@ interface MachineSet {
 }
 
 /** `<requestId>@<machineId>`. Machine ids carry no '@', so the last one splits the id. */
-export const remoteRequestId = (requestId: string, machineId: string): string =>
+const remoteRequestId = (requestId: string, machineId: string): string =>
   `${requestId}@${machineId}`;
 
 const splitId = (id: string): { requestId: string; machineId: string } | null => {
