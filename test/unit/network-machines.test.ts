@@ -1,9 +1,12 @@
+import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
+import { type Identity, loadIdentity } from '../../server/network/identity';
+import { createLinkManager, type LinkManager } from '../../server/network/link-manager';
 import { type LinkStoreIo, openLinkStore } from '../../server/network/link-store';
 import { createMachines, type MachinesManager } from '../../server/network/machines';
 import type { LinkState } from '../../src/contracts/link-protocol';
 import type { MachineMeta } from '../../src/contracts/machines';
-import type { BootstrapResult, SshFailure } from '../../src/contracts/ssh-link';
+import type { BootstrapResult, SshDial, SshFailure } from '../../src/contracts/ssh-link';
 
 const quiet = { error: () => undefined };
 const META: MachineMeta = {
@@ -68,7 +71,8 @@ function fakeManager(store: ReturnType<typeof openLinkStore>) {
       states.set(machineId, dialWorks ? 'up' : 'down');
       return true;
     },
-    waitUp: async (machineId) => states.get(machineId) === 'up',
+    waitUp: async (machineId) =>
+      states.get(machineId) === 'up' ? { up: true } : { up: false, failure: null },
   };
   return {
     manager,
@@ -483,6 +487,141 @@ describe('machines: list', () => {
       conduit_version: null,
       survives_logout: null,
       agents: [],
+    });
+  });
+});
+
+/** A clock the manager reads through now and after: timers fire only when the test moves time. */
+function fakeClock(start = Date.parse('2026-11-16T10:00:00.000Z')) {
+  let t = start;
+  const timers: Array<{ at: number; fn: () => void; live: boolean }> = [];
+  const nextDue = (end: number) =>
+    timers.filter((x) => x.live && x.at <= end).sort((a, b) => a.at - b.at)[0];
+  return {
+    now: () => t,
+    after(fn: () => void, ms: number) {
+      const timer = { at: t + ms, fn, live: true };
+      timers.push(timer);
+      return () => {
+        timer.live = false;
+      };
+    },
+    run(ms: number) {
+      const end = t + ms;
+      for (let next = nextDue(end); next; next = nextDue(end)) {
+        next.live = false;
+        t = next.at;
+        next.fn();
+      }
+      t = end;
+    },
+  };
+}
+
+const flush = async () => {
+  for (let i = 0; i < 4; i += 1) await new Promise((r) => setTimeout(r, 0));
+};
+
+/** Every dial's ssh child dies before its hello, and its failure is the one given. */
+const failingDial =
+  (failure: SshFailure): SshDial =>
+  () => {
+    const stream = new PassThrough();
+    stream.destroy();
+    return { stream, failure: async () => failure };
+  };
+
+const nodeIdentity = (): Identity => {
+  const r = loadIdentity('/net', {
+    read: () => null,
+    write: () => undefined,
+    rename: () => undefined,
+  });
+  if (r.kind === 'newer') throw new Error('unexpected');
+  return { ...r.identity, ownerKey: null };
+};
+
+/** The real manager on a fake clock, dialing through the given ssh dial. */
+function realManager(dial: SshDial) {
+  const clock = fakeClock();
+  const store = openLinkStore('/net/links.json', { now: clock.now, log: quiet, io: memIo() });
+  const quietLog = { debug: () => undefined, warn: () => undefined, error: () => undefined };
+  const manager: LinkManager = createLinkManager({
+    identity: nodeIdentity,
+    selfName: () => 'controller',
+    tls: () => ({ cert: '', key: '' }),
+    store,
+    audit: { record: () => undefined },
+    sshDial: dial,
+    log: quietLog,
+    now: clock.now,
+    rand: () => 0.5,
+    after: (fn, ms) => clock.after(fn, ms),
+    onFrame: () => undefined,
+    changed: () => undefined,
+    onOwnerKey: () => false,
+    reconnected: () => undefined,
+  });
+  return { clock, store, manager };
+}
+
+/**
+ * A known machine that is down: its dial is what the connect must wait on. Resolves to the connect's
+ * answer, or to 'pending' if the connect is still waiting after the fake clock has run its dial.
+ */
+async function connectWhileDialFails(failure: SshFailure) {
+  const { clock, store, manager } = realManager(failingDial(failure));
+  store.addSsh({
+    machineId: 'm-00000001',
+    serverKey: Buffer.alloc(32, 1).toString('base64'),
+    ownerKey: null,
+    name: 'vm-a',
+    ssh: { target: 'a.example', node: '/n', mainJs: '/m.js', userData: '/u' },
+  });
+  store.setMachine('m-00000001', { ...META, enabled: false });
+  manager.start();
+  const machines = createMachines({
+    manager,
+    store,
+    bootstrap: async () => ({ ok: false, error: { code: 'ssh_failed', detail: 'unused' } }),
+    directory: { entries: () => [] },
+    sshExit: async () => null,
+  });
+  const started = clock.now();
+  const pending = machines.connect('vm-a', LIVE);
+  clock.run(0);
+  await flush();
+  const winner = await Promise.race([
+    pending,
+    new Promise<'pending'>((r) => setTimeout(() => r('pending'), 50)),
+  ]);
+  manager.stop();
+  return { winner, elapsedMs: clock.now() - started };
+}
+
+describe('machines: a known machine whose dial reports why it failed', () => {
+  it('a host key change is ssh_needs_person with its reason, well before the 30 s wait', async () => {
+    const { winner, elapsedMs } = await connectWhileDialFails({
+      code: 'ssh_needs_person',
+      reason: 'host_key_changed',
+    });
+    expect(winner).toEqual({
+      ok: false,
+      error: { code: 'ssh_needs_person', detail: { reason: 'host_key_changed' } },
+    });
+    expect(elapsedMs).toBeLessThan(30_000);
+  });
+
+  it('an auth refusal is ssh_auth_failed, not a timeout', async () => {
+    const { winner } = await connectWhileDialFails({ code: 'ssh_auth_failed' });
+    expect(winner).toEqual({ ok: false, error: { code: 'ssh_auth_failed', detail: {} } });
+  });
+
+  it('a bridge refusal reaches the caller as ssh_unreachable with the bridge detail', async () => {
+    const { winner } = await connectWhileDialFails({ code: 'bridge_refused' });
+    expect(winner).toEqual({
+      ok: false,
+      error: { code: 'ssh_unreachable', detail: { detail: 'bridge_refused' } },
     });
   });
 });

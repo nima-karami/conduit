@@ -28,7 +28,11 @@ export interface MachinesManager {
   view(machineId: string): { state: LinkState; lastActivity: string | null } | null;
   disconnect(machineId: string): boolean;
   enable(machineId: string): boolean;
-  waitUp(machineId: string, ms: number, signal: AbortSignal): Promise<boolean>;
+  waitUp(
+    machineId: string,
+    ms: number,
+    signal: AbortSignal,
+  ): Promise<{ up: true } | { up: false; failure: SshFailure | null }>;
 }
 
 export interface MachinesDeps {
@@ -217,12 +221,14 @@ export function createMachines(deps: MachinesDeps): Machines {
       return { ok: false, error: { code: 'machine_unknown', detail: {} } };
     }
     // The wait has its own timer, so the caller's budget only needs to stop waiting, not the dial.
-    const up = await deps.manager.waitUp(
+    const waited = await deps.manager.waitUp(
       record.machineId,
       DIAL_WAIT_MS,
       new AbortController().signal,
     );
-    if (!up) {
+    if (!waited.up) {
+      // A dial that reported why it failed answers with that reason; only a silent wait is a timeout.
+      if (waited.failure !== null) return { ok: false, error: machineErrorOf(waited.failure) };
       return { ok: false, error: downErrorOf(deps.manager.view(record.machineId)?.state) };
     }
     return {

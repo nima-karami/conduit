@@ -1186,25 +1186,28 @@ describe('machine lifecycle on the manager', { timeout: 60_000 }, () => {
     expect(manager.disconnect('m-00000002')).toBe(false);
   });
 
-  it('waitUp is false when the link does not come up in time', async () => {
+  it('waitUp reports no failure when the link does not come up in time', async () => {
     const { dial } = refusingDial();
     const { clock, store, manager } = clockedManager(dial);
     pinnedMachine(store, 'm-00000001', 'vm-off', false);
     manager.start();
     const waiting = manager.waitUp('m-00000001', 1_000, new AbortController().signal);
     clock.run(1_000);
-    expect(await waiting).toBe(false);
+    expect(await waiting).toEqual({ up: false, failure: null });
     manager.stop();
   });
 
-  it('waitUp returns at once, false, when its signal is already aborted', async () => {
+  it('waitUp returns at once, with no failure, when its signal is already aborted', async () => {
     const { dial } = refusingDial();
     const { store, manager } = clockedManager(dial);
     pinnedMachine(store, 'm-00000001', 'vm-off', false);
     manager.start();
     const ac = new AbortController();
     ac.abort();
-    expect(await manager.waitUp('m-00000001', 30_000, ac.signal)).toBe(false);
+    expect(await manager.waitUp('m-00000001', 30_000, ac.signal)).toEqual({
+      up: false,
+      failure: null,
+    });
     manager.stop();
   });
 
@@ -1265,5 +1268,57 @@ describe('machine lifecycle on the manager', { timeout: 60_000 }, () => {
     }
     expect(dials.length).toBe(before);
     manager.stop();
+  });
+});
+
+describe('a dial failure is kept on the peer until a dial succeeds', { timeout: 60_000 }, () => {
+  it('waitUp reports the failed dial, and that failure is cleared once a redial is up', async () => {
+    const owner = identity();
+    const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
+    const toB = fakeSsh(() => b);
+    let dials = 0;
+    // The first dial's ssh child dies before any hello with a host key change; later dials reach B.
+    const flaky: SshDial = (ssh) => {
+      dials += 1;
+      if (dials === 1) {
+        const stream = new PassThrough();
+        stream.destroy();
+        return {
+          stream,
+          failure: async () => ({ code: 'ssh_needs_person', reason: 'host_key_changed' }),
+        };
+      }
+      return toB.dial(ssh);
+    };
+    const b = await node(identity(ownerKey), 'win-box', 0, () => {
+      throw new Error('b never dials');
+    });
+    const a = await node(identity(ownerKey), 'linux-box', 0, flaky);
+    a.store.addSsh({
+      machineId: b.id.machineId,
+      serverKey: b.id.serverKeyRaw.toString('base64'),
+      ownerKey: ownerPub(b.id),
+      name: 'win-box',
+      ssh: ENDPOINT,
+    });
+    a.store.setMachine(b.id.machineId, { ...META, enabled: true });
+    b.manager.start();
+    a.manager.start();
+
+    const signal = new AbortController().signal;
+    expect(await a.manager.waitUp(b.id.machineId, 20_000, signal)).toEqual({
+      up: false,
+      failure: { code: 'ssh_needs_person', reason: 'host_key_changed' },
+    });
+    // The retry is the second dial, which reaches B and comes up.
+    await until(() => a.manager.view(b.id.machineId)?.state === 'up');
+    expect(dials).toBe(2);
+
+    // Once up, the old failure must not come back: a link that drops with nothing dialing says so.
+    a.manager.disconnect(b.id.machineId);
+    expect(await a.manager.waitUp(b.id.machineId, 300, signal)).toEqual({
+      up: false,
+      failure: null,
+    });
   });
 });

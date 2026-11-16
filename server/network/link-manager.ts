@@ -17,6 +17,7 @@ import type {
   SshDial,
   SshDialed,
   SshEndpoint,
+  SshFailure,
 } from '../../src/contracts/ssh-link';
 import { printableName } from '../../src/network/addresses';
 import { deriveMachineId } from '../../src/network/identity-file';
@@ -67,6 +68,9 @@ export interface LinkManagerDeps {
   pingMs?: number;
 }
 
+/** A waiter's answer: up, or why the last dial failed (null for a plain timeout or abort). */
+export type WaitUpResult = { up: true } | { up: false; failure: SshFailure | null };
+
 export interface LinkManager {
   start(): void;
   stop(): Promise<void>;
@@ -85,8 +89,12 @@ export interface LinkManager {
   disconnect(machineId: string): boolean;
   /** Sets `enabled` and redials now. False under the same conditions as disconnect. */
   enable(machineId: string): boolean;
-  /** Resolves true once the link is up; false at ms, on abort, or once the peer is terminal. */
-  waitUp(machineId: string, ms: number, signal: AbortSignal): Promise<boolean>;
+  /**
+   * Resolves once the link is up, or once a dial has failed (its reason is then in the result), or at
+   * ms, on abort, or when the peer is terminal. A failure ends the wait at once: a host key prompt
+   * or a refused login does not change while the wait runs.
+   */
+  waitUp(machineId: string, ms: number, signal: AbortSignal): Promise<WaitUpResult>;
   revoke(machineId: string): boolean;
   setCapability(machineId: string, capability: Capability, on: boolean): boolean;
   setAddresses(machineId: string, addresses: string[]): boolean;
@@ -110,6 +118,8 @@ interface Peer {
   peerHello: HelloFrame | null;
   revokedBy: 'me' | 'peer' | null;
   lastActivity: number | null;
+  /** Why the latest dial ended before its hello; cleared when a dial starts, and when the link is up. */
+  lastDialFailure: SshFailure | null;
 }
 
 const TERMINAL: readonly LinkState[] = ['revoked', 'incompatible', 'identity-changed'];
@@ -182,6 +192,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       peerHello: null,
       revokedBy: null,
       lastActivity: null,
+      lastDialFailure: null,
     };
     peers.set(record.machineId, p);
     return p;
@@ -208,6 +219,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     if (stopped || terminal(p) || p.conn || p.dialing || !dialable(p.record)) return;
     if (!enabledInStore(p.record.machineId)) return;
     p.dialing = true;
+    p.lastDialFailure = null;
     event(p, { kind: 'dial', at: deps.now() });
     const ssh = p.record.ssh;
     if (p.record.transport === 'ssh' && ssh !== null) {
@@ -271,11 +283,15 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     });
     if ('error' in opened) {
       // The ssh child's exit says why it never got to a hello (host key, auth, bridge refusal).
-      if (dialed !== undefined)
+      // It is kept on the peer before the state moves, so a waiter sees the reason with the down.
+      if (dialed !== undefined) {
+        const failure = await dialed.failure();
+        p.lastDialFailure = failure;
         deps.log.debug('link: ssh stream ended before hello', {
           peer: p.record.machineId,
-          failure: await dialed.failure(),
+          failure,
         });
+      }
       failed(p, opened.error);
       return;
     }
@@ -399,6 +415,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     p.conn = opened;
     p.dialer = dialer;
     p.attempt = 0;
+    p.lastDialFailure = null;
     p.peerHello = hello;
     p.lastActivity = deps.now();
     // Pairing's name limit applies to a hello name too; one number, owned by pairing.
@@ -753,34 +770,41 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       if (next === null) return false;
       const p = ensurePeer(next);
       p.attempt = 0;
+      // A failure from an earlier attempt is not this wait's answer.
+      p.lastDialFailure = null;
       scheduleDial(p, true);
       deps.changed();
       return true;
     },
     waitUp(machineId, ms, signal) {
-      const isUp = () => peerOf(machineId)?.sm.state === 'up';
-      const isTerminal = () => {
+      const outcome = (): WaitUpResult | null => {
         const p = peerOf(machineId);
-        return p !== null && terminal(p);
+        if (p === null) return null;
+        if (p.sm.state === 'up') return { up: true };
+        if (terminal(p) || p.lastDialFailure !== null) {
+          return { up: false, failure: p.lastDialFailure };
+        }
+        return null;
       };
-      if (isUp()) return Promise.resolve(true);
-      if (signal.aborted || isTerminal()) return Promise.resolve(false);
-      return new Promise<boolean>((resolve) => {
+      const now = outcome();
+      if (now !== null) return Promise.resolve(now);
+      if (signal.aborted) return Promise.resolve({ up: false, failure: null });
+      return new Promise<WaitUpResult>((resolve) => {
         let cancelTimer: (() => void) | null = null;
-        const settleWith = (ok: boolean) => {
+        const settleWith = (result: WaitUpResult) => {
           waiters.delete(check);
           signal.removeEventListener('abort', onAbort);
           cancelTimer?.();
-          resolve(ok);
+          resolve(result);
         };
-        const onAbort = () => settleWith(false);
+        const onAbort = () => settleWith({ up: false, failure: null });
         const check = () => {
-          if (isUp()) settleWith(true);
-          else if (isTerminal()) settleWith(false);
+          const result = outcome();
+          if (result !== null) settleWith(result);
         };
         waiters.add(check);
         signal.addEventListener('abort', onAbort, { once: true });
-        cancelTimer = deps.after(() => settleWith(false), ms);
+        cancelTimer = deps.after(() => settleWith({ up: false, failure: null }), ms);
       });
     },
     revoke(machineId) {
