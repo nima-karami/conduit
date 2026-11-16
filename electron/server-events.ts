@@ -10,6 +10,7 @@ import type {
 import { shouldRaiseOsAttention } from '../src/os-attention';
 import type { HostToWebview } from '../src/protocol';
 import type { AppSessionStore, SessionDiff } from './app-session-store';
+import type { RemotePanes } from './remote-panes';
 import type { AppLog } from './server-client';
 import type { TerminalHost } from './terminal-host';
 
@@ -18,6 +19,7 @@ type OpenFileInEditor = Extract<HostToWebview, { type: 'openFileInEditor' }>;
 export interface ServerEventRouterDeps {
   store: Pick<AppSessionStore, 'applyServer' | 'list'>;
   terminals: Pick<TerminalHost, 'sessionsChanged' | 'show'>;
+  remotePanes: Pick<RemotePanes, 'data' | 'state'>;
   broadcastState(): void;
   broadcast(m: HostToWebview): void;
   sendToWindow(id: number, m: HostToWebview): void;
@@ -179,9 +181,8 @@ export function createServerEventRouter(d: ServerEventRouterDeps): {
     'timers.changed': (data) => d.broadcast({ type: 'timer:state', ...data }),
     // Consumed by the Machines UI (CON-28).
     'network.changed': (state) => d.broadcast({ type: 'network:state', state }),
-    // The remote pane consumes these when its UI is added.
-    'remote.data': () => {},
-    'remote.state': () => {},
+    'remote.data': (data) => d.remotePanes.data(data),
+    'remote.state': (data) => d.remotePanes.state(data),
     'server.stopping': (data) => {
       d.noteStopping?.(data.reason);
       d.log('info', 'server stopping', { reason: data.reason });

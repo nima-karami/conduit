@@ -203,6 +203,7 @@ async function harness(
   const router = createServerEventRouter({
     store: new AppSessionStore(),
     terminals: { sessionsChanged() {}, show() {} },
+    remotePanes: { data() {}, state() {} },
     broadcastState() {},
     broadcast() {},
     sendToWindow() {},

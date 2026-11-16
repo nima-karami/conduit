@@ -10,7 +10,7 @@ import {
   type ServerMethods,
 } from '../src/contracts/server-protocol';
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
-import { ServerCallError, type ServerClient } from './server-client';
+import { ServerCallError, type ServerCallOptions, type ServerClient } from './server-client';
 import type { createServerLifecycle } from './server-lifecycle';
 
 type Lifecycle = Pick<ReturnType<typeof createServerLifecycle>, 'current' | 'onState'>;
@@ -153,6 +153,12 @@ export function createServerCalls(lifecycle: () => ConnectionLifecycle | null) {
     call: async <M extends ServerMethod>(
       method: M,
       params: ServerMethods[M]['params'],
-    ): Promise<ServerMethods[M]['result']> => (await whenConnected()).call(method, params),
+      opts?: ServerCallOptions,
+    ): Promise<ServerMethods[M]['result']> => (await whenConnected()).call(method, params, opts),
   };
+}
+
+/** The fault code a renderer reply carries: the C2 kind, or `failed` for an error with none. */
+export function faultCode(error: unknown): string {
+  return error instanceof ServerCallError ? error.kind : 'failed';
 }

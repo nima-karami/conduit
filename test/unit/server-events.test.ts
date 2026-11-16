@@ -39,6 +39,7 @@ function rig(over: Partial<ServerEventRouterDeps> = {}) {
   const deps: ServerEventRouterDeps = {
     store,
     terminals: { sessionsChanged: () => {}, show: () => {} },
+    remotePanes: { data: () => {}, state: () => {} },
     broadcastState: () => {
       const ids = store.list().map((s) => s.id);
       states.push(ids);
