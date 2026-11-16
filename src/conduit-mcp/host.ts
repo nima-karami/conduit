@@ -296,6 +296,8 @@ export interface ConduitMcpHost extends LaunchPort, DraftPort {
 
 // see plan C4 (activity privacy: no output, no arguments; a command keeps its first line only)
 const OBSERVED_SUMMARY_MAX = 200;
+const capSummary = (text: string): string =>
+  Array.from(text).slice(0, OBSERVED_SUMMARY_MAX).join('');
 function observedRow(action: ClaudeAction | CodexAction): {
   action: string;
   target: string | null;
@@ -307,11 +309,11 @@ function observedRow(action: ClaudeAction | CodexAction): {
   const exitedNonZero = 'exitCode' in action && action.exitCode !== null && action.exitCode !== 0;
   switch (action.kind) {
     case 'command': {
-      const firstLine = action.command.split('\n')[0] ?? '';
+      const firstLine = action.command.split(/\r?\n/)[0] ?? '';
       return {
         action: 'command',
         target: action.cwd,
-        summary: firstLine.slice(0, OBSERVED_SUMMARY_MAX),
+        summary: capSummary(firstLine),
         durationMs,
         exitedNonZero,
       };
@@ -320,7 +322,7 @@ function observedRow(action: ClaudeAction | CodexAction): {
       return {
         action: 'file-change',
         target: action.paths[0] ?? null,
-        summary: action.paths.length > 0 ? action.paths.join(', ') : null,
+        summary: action.paths.length > 0 ? capSummary(action.paths.join(', ')) : null,
         durationMs,
         exitedNonZero,
       };
@@ -3158,15 +3160,18 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       }
       const note =
         'feed' in entry
-          ? 'Feed unavailable'
-          : `Feed gap: ${entry.gap} ${entry.gap === 1 ? 'action' : 'actions'} not reported`;
+          ? { action: 'feed-unavailable', summary: 'Feed unavailable' }
+          : {
+              action: 'feed-gap',
+              summary: `Feed gap: ${entry.gap} ${entry.gap === 1 ? 'action' : 'actions'} not reported`,
+            };
       policyService.activity.record({
         lane: 'note',
         principal,
         cli,
-        action: note,
+        action: note.action,
         target: null,
-        summary: null,
+        summary: note.summary,
         decision: null,
         decidedBy: 'conduit',
         outcome: null,
