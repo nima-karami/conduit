@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { hasDotSegment } from './canonical-path';
 import {
   GIT_TIMEOUT,
   type GitFailure,
@@ -53,6 +54,13 @@ interface StatusEntry {
   /** A rename's or copy's source. */
   orig?: string;
 }
+
+/**
+ * git loads index entries without checking their paths, so a hand-written index can name
+ * `../elsewhere`; status then compares it with that file on disk, and counting its lines would
+ * read it. A real repo path never leaves the top (CON-45 G1 re-review N5).
+ */
+const staysInRepo = (rel: string): boolean => !path.isAbsolute(rel) && !hasDotSegment(rel);
 
 /** Parse `git status --porcelain -z`: NUL-terminated, never C-quoted, and a rename or copy
  *  record is followed by one more field holding its SOURCE path. */
@@ -199,7 +207,9 @@ export async function readRepoChanges(
   );
   const failure = gitFailureOf(statusRun);
   if (failure) return { ok: false, reason: failure };
-  const rawEntries = parseStatusZ(statusRun.stdout);
+  const rawEntries = parseStatusZ(statusRun.stdout).filter(
+    (e) => staysInRepo(e.p) && (e.orig === undefined || staysInRepo(e.orig)),
+  );
   // Same meaning as GitInfo.dirty (non-empty porcelain with --untracked-files=no).
   const trackedDirty = rawEntries.some(({ x, y }) => !(x === '?' && y === '?'));
   if (!opts.lines) return { ok: true, changes: changesFrom(rawEntries), trackedDirty };

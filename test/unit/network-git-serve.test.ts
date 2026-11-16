@@ -52,6 +52,31 @@ async function initRepo(dir: string, message = 'init'): Promise<void> {
   await git(dir, 'commit', '-q', '-m', message);
 }
 
+/** A version-2 index holding `entries` (path, blob id), checksummed as git reads it. */
+function writeIndex(dir: string, entries: [string, string][]): void {
+  const parts: Buffer[] = [];
+  const header = Buffer.alloc(12);
+  header.write('DIRC', 0);
+  header.writeUInt32BE(2, 4);
+  header.writeUInt32BE(entries.length, 8);
+  parts.push(header);
+  for (const [p, id] of [...entries].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    const name = Buffer.from(p);
+    const entry = Buffer.alloc(62);
+    entry.writeUInt32BE(0o100644, 24);
+    entry.writeUInt32BE(3, 36);
+    Buffer.from(id, 'hex').copy(entry, 40);
+    entry.writeUInt16BE(name.length, 60);
+    const raw = Buffer.concat([entry, name]);
+    parts.push(raw, Buffer.alloc(8 - (raw.length % 8)));
+  }
+  const body = Buffer.concat(parts);
+  fs.writeFileSync(
+    path.join(dir, '.git', 'index'),
+    Buffer.concat([body, createHash('sha1').update(body).digest()]),
+  );
+}
+
 beforeEach(() => {
   root = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), 'git-serve-')));
   proj = path.join(root, 'proj');
@@ -561,6 +586,29 @@ describe('git-serve', () => {
     await h.serve.onFrame(CONTROLLER, req('p1', 'show', { sha }));
     expect(replyTo(h.sent, 'p1').ok).toBe(true);
     expect(JSON.stringify(h.sent)).not.toContain(bytes.toString('base64'));
+  });
+
+  it('an index entry naming a path outside the top never reaches status', async () => {
+    await initRepo(proj);
+    fs.writeFileSync(path.join(root, 'pw.txt'), 'user=alice\npassword=hunter2\n');
+    const rel = path.relative(proj, path.join(root, 'pw.txt'));
+    const kept = await git(proj, 'rev-parse', 'HEAD:a.txt');
+    const blob = await runGit(['hash-object', '-w', '--stdin'], {
+      cwd: proj,
+      stdin: 'user=alice\npassword=hunter2\n',
+    });
+    if (!blob.ok) throw new Error('hash-object failed');
+    // git itself refuses to stage such a path, so the index is written by hand, as a writer could.
+    writeIndex(proj, [
+      ['a.txt', kept],
+      [rel, blob.stdout.trim()],
+    ]);
+    const h = harness();
+    await h.serve.onFrame(CONTROLLER, req('n1', 'status', {}));
+    const res = replyTo(h.sent, 'n1');
+    if (!res.ok || res.result.op !== 'status' || res.result.snapshot === null)
+      throw new Error('expected a status');
+    expect(res.result.snapshot.changes.map((c) => c.path)).not.toContain(rel);
   });
 
   it('a repo extension that could fetch or run something is refused before any read', async () => {
