@@ -420,7 +420,7 @@ it('a git-dir watch on the home folder or a filesystem root is refused and logge
   );
   expect(refused.map(([, , data]) => data)).toEqual([
     { commonDir: '/home/u' },
-    { commonDir: 'D:' },
+    { commonDir: 'd:' },
   ]);
   h.host.stop();
 });

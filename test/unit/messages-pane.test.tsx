@@ -9,6 +9,7 @@ import type {
   McpThreadView,
   McpUiState,
 } from '../../src/conduit-mcp/ui-types';
+import { emptyPolicyUi } from '../../src/conduit-mcp/ui-types';
 import type { Session } from '../../src/types';
 import { mcpInstallStatus } from '../../webview/bridge';
 import { MessagesPane, type MessagesPaneProps } from '../../webview/components/messages-pane';
@@ -81,6 +82,7 @@ function uiState(o: Partial<McpUiState> = {}): McpUiState {
     notConnected: {},
     awaitingApproval: [],
     waitingAsks: 0,
+    policy: emptyPolicyUi(),
     requests: {
       open: [],
       ended: [],
@@ -131,6 +133,8 @@ function fakeApi(state: McpUiState | null, o: Partial<ConduitMcpApi> = {}): Cond
     pause: vi.fn(),
     retry: vi.fn(),
     setToolPolicy: vi.fn(async () => true),
+    setPointPolicy: vi.fn(async () => true),
+    answerPermission: vi.fn(async () => ({ ok: true as const })),
     answerRequest: vi.fn(async () => ({
       ok: false as const,
       reason: 'not_found' as const,

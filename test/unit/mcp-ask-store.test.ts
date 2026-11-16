@@ -107,6 +107,14 @@ describe('mcp-ask-store', () => {
     });
   });
 
+  it('answered removes the card and toasts nothing', () => {
+    emit(ask('a1'));
+    emit(ask('a2'));
+    emit({ type: 'mcp:askClosed', askId: 'a1', outcome: 'answered' });
+    expect(store.getAsksSnapshot().map((a) => a.askId)).toEqual(['a2']);
+    expect(toast.pushToast).not.toHaveBeenCalled();
+  });
+
   it('cancelled toasts the cancelled copy', () => {
     emit(ask('a1', 'codex-2'));
     emit({ type: 'mcp:askClosed', askId: 'a1', outcome: 'cancelled' });

@@ -1,3 +1,4 @@
+import { GRANT_CHOICE_ON, GRANT_FORS, GRANT_WHO_KINDS, type GrantChoice } from './grant-store';
 import type {
   AgentRequestKind,
   AnswerInput,
@@ -56,7 +57,10 @@ const OUTCOMES: readonly RequestOutcome[] = [
   'chosen',
   'edited',
   'dismissed',
+  'allowed',
+  'denied',
 ];
+const GRANT_CHOICE_KEYS = ['who', 'on', 'for'] as const;
 const UNIT_MS: Readonly<Record<string, number>> = {
   s: 1_000,
   m: 60_000,
@@ -331,14 +335,23 @@ interface Shape {
   textMax: number;
   values: boolean;
   reason: boolean;
+  grant: boolean;
 }
-const NO_PAYLOAD: Shape = { text: 'none', textMax: TEXT_MAX_BYTES, values: false, reason: false };
+const NO_PAYLOAD: Shape = {
+  text: 'none',
+  textMax: TEXT_MAX_BYTES,
+  values: false,
+  reason: false,
+  grant: false,
+};
 const OPT_TEXT: Shape = { ...NO_PAYLOAD, text: 'optional' };
 const REQ_TEXT: Shape = { ...NO_PAYLOAD, text: 'required' };
 const DECLINED_CONFIRM: Shape = { ...OPT_TEXT, reason: true };
 const DECLINED_REVIEW: Shape = { ...NO_PAYLOAD, reason: true };
 const CHOSEN: Shape = { ...OPT_TEXT, values: true };
 const EDITED: Shape = { ...REQ_TEXT, textMax: DRAFT_MAX_BYTES };
+const ALLOWED: Shape = { ...NO_PAYLOAD, grant: true };
+const DENIED: Shape = { ...NO_PAYLOAD, reason: true };
 
 function shapeFor(
   r: Pick<RequestRecord, 'kind' | 'source'>,
@@ -373,6 +386,9 @@ function shapeFor(
         declined: DECLINED_REVIEW,
         dismissed: NO_PAYLOAD,
       });
+    case 'permission':
+      if (r.source !== 'policy') return null;
+      return pick({ allowed: ALLOWED, denied: DENIED });
     case 'attend':
       return null;
   }
@@ -384,12 +400,26 @@ const isAgentOrScheduler = (source: RequestSource): boolean =>
 const isStringArray = (v: unknown): v is string[] =>
   Array.isArray(v) && v.every((x) => typeof x === 'string');
 
+const oneOfValues = <T extends string>(values: readonly T[], v: unknown): v is T =>
+  values.some((x) => x === v);
+
+function isGrantChoice(v: unknown): v is GrantChoice {
+  const obj = argsObject(v, GRANT_CHOICE_KEYS);
+  if (!obj.ok) return false;
+  const { who, on, for: forDur } = obj.value;
+  return (
+    oneOfValues(GRANT_WHO_KINDS, who) &&
+    oneOfValues(GRANT_CHOICE_ON, on) &&
+    oneOfValues(GRANT_FORS, forDur)
+  );
+}
+
 export function validateAnswer(
   r: Pick<RequestRecord, 'kind' | 'source' | 'options' | 'multi'>,
   a: unknown,
 ): Result<AnswerInput> {
   if (r.kind === 'attend') return fail('invalid_args', 'attend requests are not answered here');
-  const obj = argsObject(a, ['outcome', 'text', 'values', 'reason']);
+  const obj = argsObject(a, ['outcome', 'text', 'values', 'reason', 'grant']);
   if (!obj.ok) return obj;
   const o = obj.value;
 
@@ -397,7 +427,7 @@ export function validateAnswer(
   if (typeof outcome !== 'string' || !(OUTCOMES as readonly string[]).includes(outcome)) {
     return fail(
       'invalid_args',
-      'outcome must be one of approved, declined, answered, chosen, edited, dismissed',
+      'outcome must be one of approved, declined, answered, chosen, edited, dismissed, allowed, denied',
     );
   }
   const answer = outcome as RequestOutcome;
@@ -409,7 +439,7 @@ export function validateAnswer(
     );
   }
 
-  const { text, values, reason } = o;
+  const { text, values, reason, grant } = o;
   if (text !== undefined && typeof text !== 'string')
     return fail('invalid_args', 'text must be a string');
   if (reason !== undefined && typeof reason !== 'string') {
@@ -421,9 +451,17 @@ export function validateAnswer(
   if (text !== undefined && shape.text === 'none')
     return fail('invalid_args', `${answer} takes no text`);
   if (reason !== undefined && !shape.reason)
-    return fail('invalid_args', `reason is only allowed for declined`);
+    return fail('invalid_args', `reason is not allowed for ${answer}`);
   if (values !== undefined && !shape.values)
     return fail('invalid_args', `values are only allowed for chosen`);
+  let chosenGrant: GrantChoice | null = null;
+  if (grant !== undefined) {
+    if (!shape.grant) return fail('invalid_args', `grant is only allowed for allowed`);
+    if (!isGrantChoice(grant)) {
+      return fail('invalid_args', 'grant must be {who, on, for} with known values');
+    }
+    chosenGrant = { who: grant.who, on: grant.on, for: grant.for };
+  }
   if (shape.text === 'required' && (typeof text !== 'string' || text.length === 0)) {
     return fail('invalid_args', `${answer} needs text`);
   }
@@ -437,6 +475,7 @@ export function validateAnswer(
   const value: AnswerInput = { outcome: answer };
   if (typeof text === 'string') value.text = text;
   if (typeof reason === 'string') value.reason = reason;
+  if (chosenGrant !== null) value.grant = chosenGrant;
   if (shape.values) {
     const chosen = validateValues(r, values);
     if (!chosen.ok) return chosen;

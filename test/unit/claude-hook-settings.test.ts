@@ -19,7 +19,31 @@ describe('claudeHookSettings', () => {
           hooks: [hook('Notification')],
         },
       ],
+      PostToolUse: [
+        {
+          matcher: '^(?:Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*)$',
+          hooks: [{ ...hook('PostToolUse'), async: true }],
+        },
+      ],
+      PostToolUseFailure: [
+        {
+          matcher: '^(?:Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*)$',
+          hooks: [{ ...hook('PostToolUseFailure'), async: true }],
+        },
+      ],
     });
+  });
+
+  it('the installed matcher, compiled as Claude does, takes the named tools and no others', () => {
+    const s = claudeHookSettings(NONE);
+    const matcher = (s.hooks as Record<string, { matcher: string }[]>).PostToolUse[0].matcher;
+    const claudeMatch = new RegExp(matcher);
+    for (const name of ['Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'mcp__x__y']) {
+      expect(claudeMatch.test(name), name).toBe(true);
+    }
+    for (const name of ['BashOutput', 'TodoWrite', 'KillBash']) {
+      expect(claudeMatch.test(name), name).toBe(false);
+    }
   });
 
   it('points the status line at the wrapper even with no user status line', () => {
@@ -84,7 +108,7 @@ describe('claudeHookSettings', () => {
   it('with statusLine null injects the hooks but leaves the status line alone (blockers D6)', () => {
     const s = claudeHookSettings({ ...NONE, statusLine: null });
     expect('statusLine' in s).toBe(false);
-    expect(Object.keys(s.hooks as object)).toHaveLength(4);
+    expect(Object.keys(s.hooks as object)).toHaveLength(6);
   });
 
   it('is plain JSON with no undefined values', () => {

@@ -66,7 +66,7 @@ export function contentHash(text: string): string {
  */
 export function normalizeRoot(root: string): string {
   const r = normalizePath(root);
-  return /^[a-zA-Z]:\//.test(r) ? r.toLowerCase() : r;
+  return /^[a-zA-Z]:(\/|$)/.test(r) ? r.toLowerCase() : r;
 }
 
 export function emptyMarksFile(): ReviewMarksFile {

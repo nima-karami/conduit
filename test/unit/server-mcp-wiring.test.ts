@@ -109,7 +109,6 @@ function harness(opts: { manualTimers?: boolean; policy?: GlobalPolicy } = {}) {
         if (s) Object.assign(s, patch);
         return s !== undefined;
       },
-      setMcpToolPolicy: () => true,
       touch: (id: string, minIntervalMs?: number) => {
         log.push(`touch ${id} ${minIntervalMs}`);
         return true;
@@ -769,5 +768,96 @@ describe('REQ-D21c: an ask outlives the app connection', () => {
     expect(h.opens).toEqual([]);
     expect(h.mcp.pendingAsks()).toHaveLength(1);
     expect(c.lines.some((l) => l.id === 5)).toBe(false);
+  });
+});
+
+describe('NET wiring through the server', () => {
+  const peerGrant = (id: string, machineId: string) => ({
+    id,
+    who: { kind: 'peer', machineId },
+    tool: 'send_message',
+    on: { kind: 'anywhere' },
+    for: 'until-revoked',
+    anchorSessionId: null,
+    createdAt: new Date(0).toISOString(),
+    expiresAt: null,
+    lastUsedAt: null,
+    state: 'active',
+    endedAt: null,
+    requestId: null,
+  });
+
+  it('peerRevoked ends that peer grants, as a link revoke does', async () => {
+    const h = harness();
+    fs.writeFileSync(
+      path.join(h.dir, 'grants.json'),
+      JSON.stringify({
+        version: 1,
+        grants: [peerGrant('g-m1', 'm-1'), peerGrant('g-m2', 'm-2')],
+      }),
+    );
+    await h.mcp.start();
+    h.mcp.peerRevoked('m-1');
+    const states = Object.fromEntries(h.mcp.uiState().policy.grants.map((g) => [g.id, g.state]));
+    expect(states).toEqual({ 'g-m1': 'revoked', 'g-m2': 'active' });
+  });
+
+  it('recordNote lands in the Activity log as a note row', async () => {
+    const h = harness();
+    await h.mcp.start();
+    h.mcp.recordNote({ action: 'message.in', machineId: 'm-1', handle: 'alpha@m-1' });
+    const rows = fs
+      .readdirSync(path.join(h.dir, 'activity'))
+      .flatMap((f) =>
+        fs
+          .readFileSync(path.join(h.dir, 'activity', f), 'utf8')
+          .trim()
+          .split('\n'),
+      )
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(rows).toEqual([
+      expect.objectContaining({
+        lane: 'note',
+        action: 'message.in',
+        principal: { handle: 'alpha@m-1', sessionId: null, machineId: 'm-1' },
+      }),
+    ]);
+  });
+
+  it('recordObserved lands in the Activity log as an observed row for the session', async () => {
+    const h = harness();
+    h.sessions.set('s-obs', {
+      id: 's-obs',
+      name: 'S s-obs',
+      agentId: FAKE.id,
+      home: '/w',
+      roots: [],
+      status: 'running',
+      createdAt: 0,
+      lastActiveAt: 0,
+    });
+    await h.mcp.start();
+    h.mcp.recordObserved('s-obs', 'codex', {
+      action: { kind: 'command', command: 'ls', cwd: '/w', exitCode: 0, durationMs: null },
+    });
+    const rows = fs
+      .readdirSync(path.join(h.dir, 'activity'))
+      .flatMap((f) =>
+        fs
+          .readFileSync(path.join(h.dir, 'activity', f), 'utf8')
+          .trim()
+          .split('\n'),
+      )
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(rows).toEqual([
+      expect.objectContaining({
+        lane: 'observed',
+        cli: 'codex',
+        action: 'command',
+        summary: 'ls',
+        principal: { handle: null, sessionId: 's-obs', machineId: null },
+        decidedBy: 'observed: decided by Codex, not Conduit',
+      }),
+    ]);
   });
 });

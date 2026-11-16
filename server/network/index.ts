@@ -25,8 +25,8 @@ import {
   writeLinkEndpoint,
   writeServerVersion,
 } from '../lifecycle/server-secret';
-import { openAuditLog } from './audit-log';
 import { type BootstrapperOptions, createBootstrapper } from './bootstrap';
+import { type AuditSink, openAuditLog, teeAudit } from './audit-log';
 import { handleNetworkCall } from './c2';
 import { createDrive, type Drive, type DriveDeps } from './drive';
 import { adoptOwnerKey, type Identity, setOwnerKey } from './identity';
@@ -105,6 +105,8 @@ export interface NetworkService {
   addSshPeer(ssh: SshEndpoint): Promise<AddSshPeerResult>;
   /** Installs or attaches the remote, then links it: the C2 link.sshBootstrap call lands here. */
   bootstrap(target: string): Promise<BootstrapResult>;
+  /** Every audit event also goes to this sink, set once the MCP side exists. */
+  setAuditTap(tap: AuditSink): void;
   /** What the MCP host reads: remote sessions, address resolution, the outbox. */
   port(): NetworkPort;
   /** The MCP host's side, set once it exists (the host is built after the network). */
@@ -134,10 +136,14 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     return () => clearTimeout(h);
   };
   const store = openLinkStore(path.join(deps.dir, 'links.json'), { now, log: deps.log });
-  const audit = openAuditLog(path.join(deps.dir, 'audit.jsonl'), {
+  const fileAudit = openAuditLog(path.join(deps.dir, 'audit.jsonl'), {
     now,
     onError: (err) => deps.log.error('network audit write failed', { message: err.message }),
   });
+  const tee = teeAudit(fileAudit, (err) =>
+    deps.log.error('network audit tap failed', { message: err.message }),
+  );
+  const audit = tee.sink;
 
   let emitTimer: (() => void) | null = null;
   let mcp: McpNetworkPort | null = null;
@@ -611,6 +617,9 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     onRevoked: (l) => manager.onRevoked(l),
     addSshPeer: (ssh) => manager.addSshPeer(ssh),
     bootstrap: bootstrapAndLink,
+    setAuditTap(tap) {
+      tee.setTap(tap);
+    },
     port: () => networkPort,
     setMcp(port) {
       mcp = port;

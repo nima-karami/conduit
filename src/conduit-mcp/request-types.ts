@@ -1,9 +1,12 @@
 // Node-free: the renderer imports these wire types. See docs/specs/archive/2026-11-14-user-input-requests.md §4.1-4.2.
+import type { GrantChoice } from './grant-store';
+import type { Grant, PolicyTarget } from './policy-types';
+import type { ToolName } from './tool-policy';
 import type { Handle } from './types';
 
-export type RequestSource = 'agent' | 'message' | 'observed' | 'scheduler';
+export type RequestSource = 'agent' | 'message' | 'observed' | 'scheduler' | 'policy';
 export type AgentRequestKind = 'confirm' | 'choose' | 'text' | 'review';
-export type RequestKind = AgentRequestKind | 'attend';
+export type RequestKind = AgentRequestKind | 'attend' | 'permission';
 export type RequestState =
   | 'open'
   | 'answered'
@@ -18,7 +21,9 @@ export type RequestOutcome =
   | 'answered'
   | 'chosen'
   | 'edited'
-  | 'dismissed';
+  | 'dismissed'
+  | 'allowed'
+  | 'denied';
 export type RequestPriority = 'normal' | 'urgent';
 export type BlockedKind = 'permission' | 'question' | 'auth' | null;
 
@@ -32,8 +37,9 @@ export interface AnswerInput {
   text?: string;
   /** choose `chosen`: labels of the request's options. */
   values?: string[];
-  /** `declined` only. */
+  /** `declined` / `denied`. */
   reason?: string;
+  grant?: GrantChoice;
 }
 export type AnsweredBy = { kind: 'you'; windowId: number | null } | { kind: 'default' };
 export interface RequestAnswer extends AnswerInput {
@@ -73,9 +79,23 @@ export interface RequestRecord {
   withdrawReason: string | null;
   supersededBy: string | null;
   deliveredAt: string | null;
+  permission: {
+    tool: ToolName;
+    why: string;
+    targets: PolicyTarget[];
+    lateGrant: Grant['id'] | null;
+  } | null;
 }
 
-export interface RequestView extends RequestRecord {
+export type VisibleRequestRecord = Omit<RequestRecord, 'kind' | 'permission'> & {
+  kind: Exclude<RequestKind, 'permission'>;
+  permission: null;
+};
+
+export const isVisibleRequest = (r: RequestRecord): r is VisibleRequestRecord =>
+  r.kind !== 'permission';
+
+export interface RequestView extends VisibleRequestRecord {
   /** Live, never persisted: a call is blocked on it right now. */
   waiting: boolean;
   /** Live: when the latest waiting call gives up (ISO UTC), so views count down; null when none waits. */
@@ -95,11 +115,21 @@ export interface RequestsUiState {
   presence: HumanPresence;
 }
 
+export type AnswerRefusal = 'not_found' | 'already_ended' | 'not_answerable' | 'invalid_answer';
+
+export type QueueAnswerResult =
+  | { ok: true; record: RequestRecord }
+  | { ok: false; reason: AnswerRefusal; message: string };
+
+export type PermissionAnswerResult =
+  | { ok: true }
+  | { ok: false; reason: AnswerRefusal; message: string };
+
 export type RequestAnswerResult =
   | { ok: true; request: RequestView }
   | {
       ok: false;
-      reason: 'not_found' | 'already_ended' | 'not_answerable' | 'invalid_answer';
+      reason: AnswerRefusal;
       message: string;
       request: RequestView | null;
     };
@@ -121,7 +151,7 @@ export type RequestCallOutput =
 export interface ListRequestsOutput {
   requests: Array<{
     request_id: string;
-    kind: RequestKind;
+    kind: Exclude<RequestKind, 'permission'>;
     title: string;
     state: RequestState;
     created_at: string;

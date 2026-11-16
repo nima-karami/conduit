@@ -5,6 +5,7 @@ import {
   type CodexWatchDeps,
   createCodexRolloutWatch,
 } from '../../server/domain/codex-rollout-watch';
+import type { CodexAction } from '../../src/codex-rollout';
 import type { LimitSignal } from '../../src/contracts/auto-resume';
 
 const FIXTURES = join(__dirname, '..', 'fixtures', 'codex-rollout');
@@ -12,6 +13,7 @@ const fixture = (name: string): string => readFileSync(join(FIXTURES, name), 'ut
 const PRIMARY = fixture('primary-meta.jsonl');
 const GUARDIAN = fixture('guardian-meta.jsonl');
 const LIMIT_TASK_COMPLETE = fixture('limit.jsonl').split('\n')[2] ?? '';
+const ACTION_LINES = fixture('actions.jsonl').split('\n');
 
 const ROOT = '/sessions';
 const DAY12 = '/sessions/2026/11/12';
@@ -35,6 +37,8 @@ function harness() {
   const opened: string[] = [];
   const bound: string[] = [];
   const signals: LimitSignal[] = [];
+  const actions: { sessionId: string; action: CodexAction }[] = [];
+  const feeds: { sessionId: string; state: string }[] = [];
   const warnings: string[] = [];
   const deps: CodexWatchDeps = {
     sessionsRoot: ROOT,
@@ -75,13 +79,28 @@ function harness() {
     episodeOpen: () => false,
     onSignal: (s) => signals.push(s),
     onBound: (id) => bound.push(id),
+    onAction: (sessionId, action) => actions.push({ sessionId, action }),
+    onFeed: (sessionId, state) => feeds.push({ sessionId, state }),
     log: {
       debug: () => {},
       warn: (msg) => warnings.push(msg),
     },
   };
   const emit = (dir: string, name: string | null) => live.get(dir)?.onEvent('rename', name);
-  return { deps, files, dirs, live, failWatch, opened, signals, warnings, emit, bound };
+  return {
+    deps,
+    files,
+    dirs,
+    live,
+    failWatch,
+    opened,
+    signals,
+    actions,
+    feeds,
+    warnings,
+    emit,
+    bound,
+  };
 }
 
 async function flush(): Promise<void> {
@@ -356,5 +375,87 @@ describe('codex rollout watch', () => {
     watch.track('s2', { cwd: '/work/project', launchAt: LAUNCH });
     await flush();
     expect(openWarnings()).toHaveLength(2);
+  });
+  it('replay emits no actions', async () => {
+    const h = harness();
+    h.files.set(FILE_A, `${[PRIMARY, ...ACTION_LINES].join('\n')}\n`);
+    const watch = createCodexRolloutWatch(h.deps);
+    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    await flush();
+    expect(watch.boundFile('s1')).toBe(FILE_A);
+    expect(h.actions).toEqual([]);
+  });
+
+  it('new item_completed emits one action', async () => {
+    const h = harness();
+    const watch = createCodexRolloutWatch(h.deps);
+    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    await flush();
+    h.files.set(FILE_A, `${PRIMARY}\n`);
+    h.emit(DAY12, 'rollout-a.jsonl');
+    await flush();
+    expect(watch.boundFile('s1')).toBe(FILE_A);
+
+    h.files.set(FILE_A, `${PRIMARY}\n${ACTION_LINES[1]}\n`);
+    h.emit(DAY12, 'rollout-a.jsonl');
+    vi.advanceTimersByTime(250);
+    await flush();
+    expect(h.actions).toEqual([
+      {
+        sessionId: 's1',
+        action: {
+          kind: 'command',
+          command: 'echo hi',
+          cwd: '/work/project',
+          exitCode: 0,
+          durationMs: 0,
+        },
+      },
+    ]);
+  });
+
+  it('new FileChange item emits one file-change action with its paths only', async () => {
+    const h = harness();
+    const watch = createCodexRolloutWatch(h.deps);
+    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    await flush();
+    h.files.set(FILE_A, `${PRIMARY}\n`);
+    h.emit(DAY12, 'rollout-a.jsonl');
+    await flush();
+
+    h.files.set(FILE_A, `${PRIMARY}\n${ACTION_LINES[2]}\n`);
+    h.emit(DAY12, 'rollout-a.jsonl');
+    vi.advanceTimersByTime(250);
+    await flush();
+    expect(h.actions).toEqual([
+      {
+        sessionId: 's1',
+        action: { kind: 'file-change', paths: ['/work/project/a.txt', '/work/project/b.txt'] },
+      },
+    ]);
+  });
+
+  it('ambiguous bind reports unavailable once per session', async () => {
+    const h = harness();
+    const watch = createCodexRolloutWatch(h.deps);
+    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s2', { cwd: '/work/project', launchAt: LAUNCH });
+    await flush();
+    h.files.set(FILE_A, `${PRIMARY}\n`);
+    h.emit(DAY12, 'rollout-a.jsonl');
+    await flush();
+    expect(h.feeds).toEqual([
+      { sessionId: 's1', state: 'unavailable' },
+      { sessionId: 's2', state: 'unavailable' },
+    ]);
+
+    const later = PRIMARY.replace(
+      '01a1d190-1af2-7db3-ae44-cb9dacc349ed',
+      '01a1d190-bbbb-7db3-ae44-cb9dacc349ed',
+    );
+    h.files.set(FILE_B, `${later}\n`);
+    h.emit(DAY12, 'rollout-b.jsonl');
+    await flush();
+    expect(h.feeds).toHaveLength(2);
   });
 });

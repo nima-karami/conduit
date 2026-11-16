@@ -1,6 +1,6 @@
 import { folderKey } from './folder-key';
 
-// After folderKey: '' is posix `/`, `C:` a drive (case is folded only when a path follows),
+// After folderKey: '' is posix `/`, `C:` a drive,
 // `//host/share` a UNC share — and `//?/c:`, a long-path drive, has that same shape.
 const FILESYSTEM_ROOT = /^(|[a-z]:|\/\/[^/]+\/[^/]+)$/i;
 

@@ -27,6 +27,7 @@
 //   {cue:'hook', event, notificationType?}   UserPromptSubmit | Stop | Notification
 //   {cue:'config', onSubmit:'none'|'prompt-hook'|'limit', resetsInS?}   what Enter does next
 //   {cue:'bracketed', on}             turn bracketed paste on or off
+//   {cue:'post-tool-use', payload}   PostToolUse with the given payload (source user|conduit)
 //   {cue:'quit'}
 // The screen never prints a limit notice: the limit rules scan it, and these scenarios are about
 // the structured signal.
@@ -349,6 +350,10 @@ async function runCue(c) {
     case 'bracketed':
       pasteOn = c.on === true;
       write(pasteOn ? `${ESC}[?2004h` : `${ESC}[?2004l`);
+      break;
+    case 'post-tool-use':
+      // The scenario supplies the payload: the tool call Claude just made.
+      await fireHook('PostToolUse', c.payload, c.payload.tool_name);
       break;
     case 'quit':
       record('CUE_DONE', { id: c.id });

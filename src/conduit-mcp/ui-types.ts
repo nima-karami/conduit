@@ -6,6 +6,7 @@ import type { RefEndpoint } from '../git-range';
 import type { ParsedPatchFile } from '../patch-parse';
 import type { CommitNode } from '../protocol';
 import type { AgentCli, UserInstallState } from './install-types';
+import type { PolicyUiState } from './policy-types';
 import type { RequestsUiState } from './request-types';
 import type {
   GateClosedReason,
@@ -21,7 +22,7 @@ import type {
 export type McpGateState = 'open' | 'pull-only' | GateClosedReason;
 
 export type AskAnswer = 'approve' | 'deny' | 'always';
-export type AskClosedOutcome = 'expired' | 'cancelled';
+export type AskClosedOutcome = 'expired' | 'cancelled' | 'answered';
 /** Placeholder values for the card's per-tool summary template (MCP_STR.ask.summary). */
 export type AskSummary =
   | {
@@ -124,6 +125,16 @@ export interface McpThreadView {
   messages: McpThreadMessage[];
 }
 
+export function emptyPolicyUi(): PolicyUiState {
+  return {
+    profiles: [],
+    sessions: {},
+    grants: [],
+    legacy: { global: {}, byCli: {}, sessions: {} },
+    readOnly: false,
+  };
+}
+
 export interface McpUiState {
   enabled: boolean;
   storeError: string | null;
@@ -146,6 +157,7 @@ export interface McpUiState {
   /** How many tool-policy asks are waiting right now (the tray counts each). */
   waitingAsks: number;
   requests: RequestsUiState;
+  policy: PolicyUiState;
 }
 
 /** A session where an agent CLI was started but never reached this host (spec 2026-10-27-conduit-mcp-install §2.5). */

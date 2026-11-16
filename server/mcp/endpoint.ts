@@ -62,6 +62,37 @@ function welcomeFor(hello: { token: string | null }, rows: TokenRows): ShimWelco
 }
 
 const HOOK_LINE_PREFIX = '{"conduitHook"';
+const HOOK_POSTS_PER_MINUTE = 600;
+const MINUTE_MS = 60_000;
+
+export interface HookLimiter {
+  check(sessionId: string): { allowed: boolean; firstExcessThisMinute: boolean };
+  size(): number;
+}
+
+// see plan review S2: keyed by the live session, so the map is bounded by live sessions
+export function createHookLimiter(now: () => number): HookLimiter {
+  let minute = -1;
+  const counts = new Map<string, number>();
+  const warned = new Set<string>();
+  return {
+    check(sessionId) {
+      const current = Math.floor(now() / MINUTE_MS);
+      if (current !== minute) {
+        minute = current;
+        counts.clear();
+        warned.clear();
+      }
+      const count = (counts.get(sessionId) ?? 0) + 1;
+      counts.set(sessionId, count);
+      if (count <= HOOK_POSTS_PER_MINUTE) return { allowed: true, firstExcessThisMinute: false };
+      const firstExcessThisMinute = !warned.has(sessionId);
+      warned.add(sessionId);
+      return { allowed: false, firstExcessThisMinute };
+    },
+    size: () => counts.size,
+  };
+}
 
 /**
  * Reads a first line's kind from its leading whitespace and its first characters only, so it can be
@@ -92,6 +123,8 @@ const HOOK_EVENTS: Record<HookEvent, true> = {
   Stop: true,
   Notification: true,
   StatusLine: true,
+  PostToolUse: true,
+  PostToolUseFailure: true,
 };
 const isHookEvent = (v: unknown): v is HookEvent =>
   typeof v === 'string' && Object.hasOwn(HOOK_EVENTS, v);
@@ -135,10 +168,13 @@ export function createShimEndpoint(opts: {
   log: EndpointLog;
   tokens: Pick<TokenStorePort, 'rows'>;
   closeFlushMs?: number;
+  now?: () => number;
+  hookLimiter?: HookLimiter;
 }): McpEndpoint {
   const closeFlushMs = opts.closeFlushMs ?? CLOSE_FLUSH_MS;
   const sockets = new Set<net.Socket>();
   let nextId = 1;
+  const limiter = opts.hookLimiter ?? createHookLimiter(opts.now ?? (() => Date.now()));
 
   const accept = (socket: net.Socket) => {
     sockets.add(socket);
@@ -221,6 +257,16 @@ export function createShimEndpoint(opts: {
       const row = post ? liveRow(post.token, opts.tokens.rows()) : undefined;
       if (!post || !row) {
         opts.log.debug('conduit-mcp', 'hook post refused', { id });
+        write(JSON.stringify(ack(false)));
+        return close();
+      }
+      const verdict = limiter.check(row.sessionId);
+      if (!verdict.allowed) {
+        if (verdict.firstExcessThisMinute) {
+          opts.log.warn('conduit-mcp', 'hook posts throttled for this session this minute', {
+            limit: HOOK_POSTS_PER_MINUTE,
+          });
+        }
         write(JSON.stringify(ack(false)));
         return close();
       }

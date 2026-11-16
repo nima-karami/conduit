@@ -3,7 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RequestView } from '../../src/conduit-mcp/request-types';
-import type { McpUiState } from '../../src/conduit-mcp/ui-types';
+import { emptyPolicyUi, type McpUiState } from '../../src/conduit-mcp/ui-types';
 import type { HostToWebview } from '../../src/protocol';
 
 const bridge = vi.hoisted(() => ({
@@ -61,6 +61,7 @@ function view(over: Partial<RequestView> & Pick<RequestView, 'id'>): RequestView
     deliveredAt: null,
     waiting: false,
     waitingUntil: null,
+    permission: null,
     ...over,
   };
 }
@@ -68,6 +69,7 @@ function view(over: Partial<RequestView> & Pick<RequestView, 'id'>): RequestView
 function mcpState(open: RequestView[], ended: RequestView[] = []): McpUiState {
   return {
     enabled: true,
+    policy: emptyPolicyUi(),
     storeError: null,
     loading: false,
     sessions: {},

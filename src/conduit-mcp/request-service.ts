@@ -1,3 +1,4 @@
+import type { PermissionAnswer } from './policy-types';
 import {
   type CreateInput,
   parseListRequests,
@@ -16,16 +17,21 @@ import {
   type SessionNeedsYou,
   type SourceAction,
 } from './request-sources';
-import type {
-  HumanPresence,
-  ListRequestsOutput,
-  RequestAnswer,
-  RequestAnswerOut,
-  RequestAnswerResult,
-  RequestCallOutput,
-  RequestRecord,
-  RequestsUiState,
-  RequestView,
+import {
+  type AnsweredBy,
+  type AnswerInput,
+  type HumanPresence,
+  isVisibleRequest,
+  type ListRequestsOutput,
+  type PermissionAnswerResult,
+  type RequestAnswer,
+  type RequestAnswerOut,
+  type RequestAnswerResult,
+  type RequestCallOutput,
+  type RequestRecord,
+  type RequestsUiState,
+  type RequestView,
+  type VisibleRequestRecord,
 } from './request-types';
 import {
   createRequestWaits,
@@ -34,10 +40,14 @@ import {
   requestWaitMs,
 } from './request-waits';
 import type { Caller } from './tools';
-import { type Result, toolError } from './types';
+import { type Handle, type Result, toolError } from './types';
 import type { CallKey } from './window-waits';
 
 export const PERSIST_COALESCE_MS = 250;
+
+export type PermissionFields = Pick<RequestRecord, 'title' | 'body' | 'permission'> & {
+  requester: Handle;
+};
 
 export interface RequestServiceDeps {
   io: RequestsIo;
@@ -53,6 +63,11 @@ export interface RequestServiceDeps {
   onChanged(): void;
   onNew(r: RequestRecord): void;
   replyToQuestion(r: RequestRecord, text: string): Promise<boolean>;
+  onPermissionAnswer(
+    r: RequestRecord,
+    a: PermissionAnswer,
+    by: AnsweredBy,
+  ): Promise<PermissionAnswerResult>;
   scheduler: {
     resumeNow(sessionId: string): Promise<boolean>;
     autoResumeOn(sessionId: string): boolean;
@@ -95,6 +110,20 @@ export interface RequestService {
   purge(): void;
   ui(): RequestsUiState;
   presence(): HumanPresence;
+  createPermission(sessionId: string, fields: PermissionFields, expiresAt: string): RequestRecord;
+  endPermission(
+    id: string,
+    end: 'answered' | 'withdrawn',
+    answer: AnswerInput | null,
+    reason: string | null,
+    by: AnsweredBy,
+  ): void;
+  answerPermission(
+    requestId: string,
+    answer: unknown,
+    by: AnsweredBy,
+  ): Promise<PermissionAnswerResult>;
+  answerLate(requestId: string, grantId: string): PermissionAnswerResult;
 }
 
 interface Timer {
@@ -124,10 +153,23 @@ const outputOf = (r: RequestRecord): RequestCallOutput => {
   };
 };
 
+// A permission's late grant is the one answer the requester's inbox hears about.
 const isAgentEnd = (r: RequestRecord): boolean =>
-  r.source === 'agent' && (r.state === 'answered' || r.state === 'expired');
+  r.permission !== null
+    ? r.state === 'expired' && r.permission.lateGrant !== null
+    : r.source === 'agent' && (r.state === 'answered' || r.state === 'expired');
 
 const iso = (ms: number): string => new Date(ms).toISOString();
+
+const toPermissionAnswer = (a: AnswerInput): PermissionAnswer | null => {
+  if (a.outcome === 'allowed') {
+    return a.grant === undefined ? { outcome: 'allowed' } : { outcome: 'allowed', grant: a.grant };
+  }
+  if (a.outcome === 'denied') {
+    return a.reason === undefined ? { outcome: 'denied' } : { outcome: 'denied', reason: a.reason };
+  }
+  return null;
+};
 
 export function createRequestService(deps: RequestServiceDeps): RequestService {
   let writable = true;
@@ -137,7 +179,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
   let awayTimer: Timer | null = null;
   const inFlight = new Set<string>();
 
-  const view = (r: RequestRecord): RequestView => {
+  const view = (r: VisibleRequestRecord): RequestView => {
     const until = waits.waitingUntil(r.id);
     return {
       ...r,
@@ -145,6 +187,13 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
       waitingUntil: until === null ? null : new Date(until).toISOString(),
     };
   };
+
+  const viewOf = (r: RequestRecord): RequestView | null => (isVisibleRequest(r) ? view(r) : null);
+
+  const visibleOnly = (rs: RequestRecord[]): VisibleRequestRecord[] =>
+    rs.flatMap((r) => (isVisibleRequest(r) ? [r] : []));
+
+  const isNonPolicy = (r: RequestRecord): boolean => r.source !== 'policy';
 
   const markDirty = (): void => {
     if (!writable) return;
@@ -344,7 +393,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     if (!parsed.ok) return parsed;
     const { requestId, waitS } = parsed.value;
     const r = queue.get(requestId);
-    if (r === undefined || r.session !== sessionId) {
+    if (r === undefined || r.session !== sessionId || r.source === 'policy') {
       return {
         ok: false,
         error: toolError('not_found', `no request ${requestId} of yours`, sessionId),
@@ -367,7 +416,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     if (!parsed.ok) return parsed;
     const { requestId, reason } = parsed.value;
     const r = queue.get(requestId);
-    if (r === undefined || r.session !== sessionId || r.state !== 'open') {
+    if (r === undefined || r.session !== sessionId || r.source === 'policy' || r.state !== 'open') {
       return {
         ok: false,
         error: toolError('not_found', `no open request ${requestId} of yours`, sessionId),
@@ -383,7 +432,8 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     const parsed = parseListRequests(args);
     if (!parsed.ok) return parsed;
     const requests = queue
-      .bySession(sessionId, parsed.value.state, parsed.value.limit)
+      .bySession(sessionId, parsed.value.state, parsed.value.limit, isNonPolicy)
+      .flatMap((r) => (isVisibleRequest(r) ? [r] : []))
       .map((r) => ({
         request_id: r.id,
         kind: r.kind,
@@ -430,7 +480,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     return ids;
   };
 
-  const actOnScheduler = (r: RequestView, sessionId: string): void => {
+  const actOnScheduler = (r: VisibleRequestRecord, sessionId: string): void => {
     const answer = r.answer;
     if (answer === null) return;
     if (answer.outcome === 'dismissed') {
@@ -521,6 +571,14 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
 
     async answerFromRenderer(requestId, answer, windowId) {
       const record = queue.get(requestId);
+      if (record !== undefined && !isVisibleRequest(record)) {
+        return {
+          ok: false,
+          reason: 'not_answerable',
+          message: 'permission requests are answered through the policy',
+          request: null,
+        };
+      }
       if (record !== undefined && record.source === 'message' && record.state === 'open') {
         const checked = validateAnswer(record, answer);
         if (!checked.ok) {
@@ -528,7 +586,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
             ok: false,
             reason: 'invalid_answer',
             message: checked.error.message,
-            request: view(record),
+            request: viewOf(record),
           };
         }
         const { outcome, text } = checked.value;
@@ -538,7 +596,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
               ok: false,
               reason: 'not_answerable',
               message: 'the reply is already being sent',
-              request: view(record),
+              request: viewOf(record),
             };
           }
           if (record.messageId !== null) replying.add(record.messageId);
@@ -553,7 +611,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
               ok: false,
               reason: 'not_answerable',
               message: 'the reply could not be sent; try again',
-              request: view(record),
+              request: viewOf(record),
             };
           }
         }
@@ -561,17 +619,29 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
 
       const result = queue.answer(requestId, answer, { kind: 'you', windowId });
       if (!result.ok) {
+        const after = queue.get(requestId);
         return {
-          ...result,
-          request: result.request === null ? null : view(result.request),
+          ok: false,
+          reason: result.reason,
+          message: result.message,
+          request: after === undefined ? null : viewOf(after),
         };
       }
-      if (result.request.source === 'scheduler' && result.request.session !== null) {
-        // Before acting: acting can re-enter onAttention synchronously while the issue persists.
-        handledIssues.set(result.request.session, result.request.body);
-        actOnScheduler(result.request, result.request.session);
+      const answered = result.record;
+      if (!isVisibleRequest(answered)) {
+        return {
+          ok: false,
+          reason: 'not_answerable',
+          message: 'permission requests are answered through the policy',
+          request: null,
+        };
       }
-      return { ok: true, request: view(result.request) };
+      if (answered.source === 'scheduler' && answered.session !== null) {
+        // Before acting: acting can re-enter onAttention synchronously while the issue persists.
+        handledIssues.set(answered.session, answered.body);
+        actOnScheduler(answered, answered.session);
+      }
+      return { ok: true, request: view(answered) };
     },
 
     setAway,
@@ -603,14 +673,71 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
 
     ui() {
       return {
-        open: queue.open().map(view),
-        ended: queue.ended(ENDED_IN_UI).map(view),
+        open: visibleOnly(queue.open()).map(view),
+        ended: visibleOnly(queue.ended(ENDED_IN_UI, isVisibleRequest)).map(view),
         presence,
       };
     },
 
     presence() {
       return presence;
+    },
+    createPermission(sessionId, fields, expiresAt) {
+      return queue.createBound(
+        { requester: fields.requester, ...deps.stampOf(sessionId) },
+        { title: fields.title, body: fields.body, permission: fields.permission },
+        expiresAt,
+      );
+    },
+
+    endPermission(id, end, answer, reason, by) {
+      if (end === 'answered') {
+        const res = queue.answer(id, answer, by);
+        if (!res.ok) deps.warn('a permission could not be answered', { id, reason: res.reason });
+        return;
+      }
+      queue.withdraw(id, 'conduit', reason);
+    },
+
+    answerLate(requestId, grantId) {
+      const res = queue.answerLate(requestId, grantId);
+      if (!res.ok) return { ok: false, reason: res.reason, message: res.message };
+      void deliverOne(requestId);
+      return { ok: true };
+    },
+
+    async answerPermission(requestId, answer, by) {
+      const r = queue.get(requestId);
+      if (r === undefined)
+        return { ok: false, reason: 'not_found', message: `no request ${requestId}` };
+      if (r.permission === null) {
+        return {
+          ok: false,
+          reason: 'not_answerable',
+          message: 'only permission requests are answered here',
+        };
+      }
+      const checked = validateAnswer(r, answer);
+      if (!checked.ok) {
+        return { ok: false, reason: 'invalid_answer', message: checked.error.message };
+      }
+      const lateGrant =
+        r.state === 'expired' &&
+        r.permission.lateGrant === null &&
+        checked.value.outcome === 'allowed' &&
+        checked.value.grant !== undefined;
+      if (r.state !== 'open' && !lateGrant) {
+        return {
+          ok: false,
+          reason: 'already_ended',
+          message: `request ${requestId} already ${r.state}`,
+        };
+      }
+      const a = toPermissionAnswer(checked.value);
+      if (a === null) {
+        return { ok: false, reason: 'invalid_answer', message: 'not an answer to a permission' };
+      }
+      return deps.onPermissionAnswer(r, a, by);
     },
   };
 }

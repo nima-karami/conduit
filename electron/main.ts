@@ -4092,10 +4092,15 @@ app.whenReady().then(() => {
         case 'mcp:pause':
         case 'mcp:attachment:get':
         case 'mcp:retry':
+        case 'mcp:setAssignment':
+        case 'mcp:setPointPolicy':
+        case 'mcp:revokeGrant':
+        case 'mcp:allowOnce':
         case 'mcp:setToolPolicy':
         case 'mcp:askAnswer':
         case 'mcp:uiResult':
         case 'mcp:requestAnswer':
+        case 'mcp:permissionAnswer':
         case 'mcp:setAway': {
           const r = await callServer('mcp.fromRenderer', { windowId: senderId, message: m });
           if (r.reply) replyHere(r.reply);

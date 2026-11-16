@@ -1,6 +1,7 @@
 // Node-free: the renderer imports the catalog and resolution for Settings and the session dialog.
 // Model: docs/specs/archive/2026-10-30-conduit-mcp-tool-policy.md §3.
 import type { ClientKind } from './client-info';
+import type { PolicyDecision } from './policy-types';
 import { type ToolError, toolError } from './types';
 
 export const MESSAGING_TOOL_NAMES = [
@@ -430,7 +431,7 @@ export function gateToolCall(i: {
   sessionId: string | null;
   messagingOn: boolean;
   tool: ToolName;
-  policy: ToolPolicy;
+  decision: Pick<PolicyDecision, 'decision' | 'rule'>;
   ownerReady: () => boolean;
   onScreen: () => boolean;
   appConnected: boolean;
@@ -442,22 +443,22 @@ export function gateToolCall(i: {
   // The agent catalog answers with the master switch off: a 'none' row says why nothing messages.
   if (!i.messagingOn && i.tool !== 'list_agents')
     return toolError('messaging_off', 'Conduit messaging is turned off');
-  if (i.policy.access === 'off') return toolDisabled(i.tool);
+  if (i.decision.decision === 'deny') return toolDisabled(i.tool);
   if (isMessagingTool(i.tool) || isRequestTool(i.tool)) return null;
   // REQ-D21c: with no app at all, an always-ask may wait for one, but only for a server action, which
   // can run once approved without a window (docs/specs/archive/2026-11-14-user-input-requests.md §4.3).
   if (
     !i.appConnected &&
-    i.policy.access === 'ask' &&
-    i.policy.when === 'always' &&
+    i.decision.decision === 'ask' &&
+    i.decision.rule.when === 'always' &&
     SERVER_ACTIONS.has(i.tool)
   )
     return null;
   // Without a ready window there is no card to ask on and no visibility to trust; an `on` server
   // action needs neither (architecture D8).
   if (!i.ownerReady())
-    return i.policy.access === 'on' && SERVER_ACTIONS.has(i.tool) ? null : windowNotReady();
-  if (i.policy.when === 'viewing' && !i.onScreen())
+    return i.decision.decision === 'allow' && SERVER_ACTIONS.has(i.tool) ? null : windowNotReady();
+  if (i.decision.rule.when === 'viewing' && !i.onScreen())
     return toolError('caller_not_visible', `${i.tool} only runs while your session is on screen`);
   return null;
 }

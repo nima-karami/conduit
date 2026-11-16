@@ -493,3 +493,172 @@ describe('conduit-hook.cjs statusLineOutput on win32', () => {
     expect(fs.readFileSync(record, 'utf8')).toBe(`-c\n${command}\n`);
   });
 });
+
+describe('conduit-hook.cjs hook PostToolUse', () => {
+  const FOUR_MIB = 4 * 1024 * 1024;
+
+  it('forwards only the fields Activity reads, and the Edit path alone from tool_input', async () => {
+    const p = await peer('ack');
+    const fixture = JSON.parse(fixtureText('post-tool-use-edit.json'));
+    const r = await run(
+      ['hook', 'PostToolUse'],
+      envFor({ config: roots.root(), endpoint: p.path, token: TOKEN }),
+      JSON.stringify(fixture),
+    );
+    expect(r.code).toBe(0);
+    expect(p.lines).toHaveLength(1);
+    expect(p.lines[0]).not.toMatch(/FIXTURE-CONTENT|tool_response|originalFile|structuredPatch/);
+    expect(JSON.parse(p.lines[0]).payload).toEqual({
+      hook_event_name: fixture.hook_event_name,
+      session_id: fixture.session_id,
+      transcript_path: fixture.transcript_path,
+      cwd: fixture.cwd,
+      tool_name: 'Edit',
+      tool_use_id: fixture.tool_use_id,
+      tool_input: { file_path: '/work/project/a.txt' },
+    });
+  });
+
+  it('drops the Bash output and every input field but the command', async () => {
+    const p = await peer('ack');
+    const r = await run(
+      ['hook', 'PostToolUse'],
+      envFor({ config: roots.root(), endpoint: p.path, token: TOKEN }),
+      fixtureText('post-tool-use-bash.json'),
+    );
+    expect(r.code).toBe(0);
+    expect(p.lines[0]).not.toContain('FIXTURE-OUTPUT');
+    expect(JSON.parse(p.lines[0]).payload.tool_input).toEqual({ command: 'echo hi' });
+  });
+
+  it('drops the content of a MultiEdit at any depth', async () => {
+    const p = await peer('ack');
+    const o = JSON.parse(fixtureText('post-tool-use-edit.json'));
+    o.tool_name = 'MultiEdit';
+    o.tool_input = {
+      file_path: '/work/project/b.txt',
+      content: 'FIXTURE-TOP-CONTENT',
+      edits: [{ old_string: 'FIXTURE-NESTED-OLD', new_string: 'FIXTURE-NESTED-NEW' }],
+      deep: { list: [{ inner: { content: 'FIXTURE-DEEP-CONTENT' } }] },
+    };
+    const r = await run(
+      ['hook', 'PostToolUse'],
+      envFor({ config: roots.root(), endpoint: p.path, token: TOKEN }),
+      JSON.stringify(o),
+    );
+    expect(r.code).toBe(0);
+    expect(p.lines[0]).not.toMatch(/FIXTURE-(TOP|NESTED|DEEP)/);
+    expect(JSON.parse(p.lines[0]).payload.tool_input).toEqual({ file_path: '/work/project/b.txt' });
+  });
+
+  it('a NotebookEdit forwards its path and never new_source', async () => {
+    const p = await peer('ack');
+    const o = JSON.parse(fixtureText('post-tool-use-edit.json'));
+    o.tool_name = 'NotebookEdit';
+    o.tool_input = {
+      notebook_path: '/work/project/n.ipynb',
+      cell_id: 'FIXTURE-CELL',
+      new_source: 'FIXTURE-NOTEBOOK-SOURCE',
+      edit_mode: 'replace',
+    };
+    const r = await run(
+      ['hook', 'PostToolUse'],
+      envFor({ config: roots.root(), endpoint: p.path, token: TOKEN }),
+      JSON.stringify(o),
+    );
+    expect(r.code).toBe(0);
+    expect(p.lines[0]).not.toMatch(/FIXTURE-NOTEBOOK-SOURCE|new_source/);
+    expect(JSON.parse(p.lines[0]).payload.tool_input).toEqual({
+      notebook_path: '/work/project/n.ipynb',
+    });
+  });
+
+  it('an MCP call forwards its name and no arguments', async () => {
+    const p = await peer('ack');
+    const r = await run(
+      ['hook', 'PostToolUse'],
+      envFor({ config: roots.root(), endpoint: p.path, token: TOKEN }),
+      fixtureText('post-tool-use-mcp.json'),
+    );
+    expect(r.code).toBe(0);
+    expect(p.lines[0]).not.toMatch(/FIXTURE-ARG|FIXTURE-OUTPUT/);
+    const payload = JSON.parse(p.lines[0]).payload;
+    expect(payload.tool_name).toBe('mcp__example__do_thing');
+    expect('tool_input' in payload).toBe(false);
+  });
+
+  it('forwards agent_id when the hook fires inside a subagent', async () => {
+    const p = await peer('ack');
+    const o = JSON.parse(fixtureText('post-tool-use-bash.json'));
+    o.agent_id = 'agent-FIXTURE-1';
+    const r = await run(
+      ['hook', 'PostToolUse'],
+      envFor({ config: roots.root(), endpoint: p.path, token: TOKEN }),
+      JSON.stringify(o),
+    );
+    expect(r.code).toBe(0);
+    expect(JSON.parse(p.lines[0]).payload).toMatchObject({ agent_id: 'agent-FIXTURE-1' });
+  });
+
+  it('a non-string tool_input value is not forwarded', async () => {
+    const p = await peer('ack');
+    const o = JSON.parse(fixtureText('post-tool-use-bash.json'));
+    o.tool_input = { command: { text: 'FIXTURE-OBJECT-COMMAND' } };
+    const r = await run(
+      ['hook', 'PostToolUse'],
+      envFor({ config: roots.root(), endpoint: p.path, token: TOKEN }),
+      JSON.stringify(o),
+    );
+    expect(r.code).toBe(0);
+    expect(p.lines[0]).not.toContain('FIXTURE-OBJECT-COMMAND');
+    expect(JSON.parse(p.lines[0]).payload.tool_input).toEqual({});
+  });
+
+  it('a failed Bash forwards its name and command, and never the error', async () => {
+    const p = await peer('ack');
+    const fixture = JSON.parse(fixtureText('post-tool-use-failure-bash.json'));
+    const r = await run(
+      ['hook', 'PostToolUseFailure'],
+      envFor({ config: roots.root(), endpoint: p.path, token: TOKEN }),
+      JSON.stringify(fixture),
+    );
+    expect(r.code).toBe(0);
+    expect(p.lines).toHaveLength(1);
+    expect(p.lines[0]).not.toMatch(/FIXTURE-ERROR|"error"|is_interrupt/);
+    expect(JSON.parse(p.lines[0]).payload).toEqual({
+      hook_event_name: 'PostToolUseFailure',
+      session_id: fixture.session_id,
+      transcript_path: fixture.transcript_path,
+      cwd: fixture.cwd,
+      tool_name: 'Bash',
+      tool_use_id: fixture.tool_use_id,
+      tool_input: { command: 'echo hi' },
+    });
+  });
+
+  it('a tool response over the post cap is still posted, because it is dropped before the post', async () => {
+    const p = await peer('ack');
+    const o = JSON.parse(fixtureText('post-tool-use-bash.json'));
+    o.tool_response = { stdout: 'x'.repeat(1024 * 1024) };
+    const r = await run(
+      ['hook', 'PostToolUse'],
+      envFor({ config: roots.root(), endpoint: p.path, token: TOKEN }),
+      JSON.stringify(o),
+    );
+    expect(r.code).toBe(0);
+    expect(p.lines).toHaveLength(1);
+  });
+
+  it('stdin over 4 MiB is not posted', async () => {
+    const p = await peer('ack');
+    const o = JSON.parse(fixtureText('post-tool-use-bash.json'));
+    o.tool_response = { stdout: 'x'.repeat(FOUR_MIB + 1) };
+    const r = await run(
+      ['hook', 'PostToolUse'],
+      envFor({ config: roots.root(), endpoint: p.path, token: TOKEN }),
+      JSON.stringify(o),
+    );
+    expect(r.code).toBe(0);
+    expect(p.lines).toEqual([]);
+  });
+});

@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { PermissionAnswer } from '../../src/conduit-mcp/policy-types';
 import {
   createRequestService,
   PERSIST_COALESCE_MS,
   type RequestService,
 } from '../../src/conduit-mcp/request-service';
 import type { QuestionMessage, SessionNeedsYou } from '../../src/conduit-mcp/request-sources';
-import type { RequestRecord } from '../../src/conduit-mcp/request-types';
+import type {
+  AnsweredBy,
+  PermissionAnswerResult,
+  RequestRecord,
+} from '../../src/conduit-mcp/request-types';
 import type { Caller } from '../../src/conduit-mcp/tools';
 import type { CallKey } from '../../src/conduit-mcp/window-waits';
 
@@ -77,6 +82,11 @@ interface Harness {
   deliver: ReturnType<typeof vi.fn<(r: RequestRecord) => Promise<boolean>>>;
   reply: ReturnType<typeof vi.fn<(r: RequestRecord, text: string) => Promise<boolean>>>;
   onNew: ReturnType<typeof vi.fn<(r: RequestRecord) => void>>;
+  onPermissionAnswer: ReturnType<
+    typeof vi.fn<
+      (r: RequestRecord, a: PermissionAnswer, by: AnsweredBy) => Promise<PermissionAnswerResult>
+    >
+  >;
   scheduler: {
     resumeNow: ReturnType<typeof vi.fn<(sessionId: string) => Promise<boolean>>>;
     autoResumeOn: ReturnType<typeof vi.fn<(sessionId: string) => boolean>>;
@@ -92,6 +102,15 @@ function harness(opts: { initial?: string | null; budgetMs?: number } = {}): Har
   const deliver = vi.fn(async (_r: RequestRecord) => true);
   const reply = vi.fn(async (_r: RequestRecord, _text: string) => true);
   const onNew = vi.fn((_r: RequestRecord) => undefined);
+  const onPermissionAnswer = vi.fn(
+    async (
+      _r: RequestRecord,
+      _a: PermissionAnswer,
+      _by: AnsweredBy,
+    ): Promise<PermissionAnswerResult> => ({
+      ok: true,
+    }),
+  );
   const scheduler = {
     resumeNow: vi.fn(async (_sessionId: string) => true),
     autoResumeOn: vi.fn((_sessionId: string) => true),
@@ -114,9 +133,10 @@ function harness(opts: { initial?: string | null; budgetMs?: number } = {}): Har
     onNew,
     replyToQuestion: reply,
     scheduler,
+    onPermissionAnswer,
   });
   service.start();
-  return { c, service, store, warnings, deliver, reply, onNew, scheduler };
+  return { c, service, store, warnings, deliver, reply, onNew, scheduler, onPermissionAnswer };
 }
 
 const aliceFact = (over: Partial<SessionNeedsYou> = {}): SessionNeedsYou => ({
@@ -665,5 +685,269 @@ describe('request service: needs-you sources', () => {
     await h.service.answerFromRenderer(request.id, { outcome: 'answered', text: 'yes' }, 1);
     h.service.onQuestions([aliceQuestion()]);
     expect(h.service.ui().open).toHaveLength(0);
+  });
+});
+
+function seedRecord(over: Partial<RequestRecord>): RequestRecord {
+  return {
+    id: 'r-agent-1',
+    origin: 'm-00000001',
+    source: 'agent',
+    kind: 'confirm',
+    requester: 'alice',
+    session: 's-alice',
+    space: 'proj',
+    lead: null,
+    machine: 'm-00000001',
+    title: 'Deploy?',
+    body: '',
+    options: [],
+    multi: false,
+    draft: null,
+    thread: null,
+    messageId: null,
+    blocked: null,
+    priority: 'normal',
+    createdAt: new Date(T0 - HOUR).toISOString(),
+    expiresAt: null,
+    default: null,
+    contentKey: 'k',
+    state: 'answered',
+    endedAt: new Date(T0 - 60_000).toISOString(),
+    answer: {
+      outcome: 'approved',
+      answeredBy: { kind: 'default' },
+      at: new Date(T0 - 60_000).toISOString(),
+    },
+    withdrawnBy: null,
+    withdrawReason: null,
+    supersededBy: null,
+    deliveredAt: null,
+    permission: null,
+    ...over,
+  };
+}
+
+const permissionRecord = (over: Partial<RequestRecord> = {}): RequestRecord =>
+  seedRecord({
+    id: 'r-perm-1',
+    source: 'policy',
+    kind: 'permission',
+    state: 'expired',
+    answer: null,
+    permission: { tool: 'send_message', why: 'reach s2', targets: [], lateGrant: null },
+    createdAt: new Date(T0 - 30 * 60_000).toISOString(),
+    ...over,
+  });
+
+const fileOf = (requests: RequestRecord[]): string => JSON.stringify({ version: 1, requests });
+
+describe('permission records stay out of the agent tools and the UI', () => {
+  it('answerFromRenderer refuses a permission record with not_answerable', async () => {
+    const h = harness({ initial: fileOf([permissionRecord()]) });
+    const out = await h.service.answerFromRenderer('r-perm-1', { outcome: 'allowed' }, 1);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.reason).toBe('not_answerable');
+  });
+
+  it('wait_request answers not_found for a permission record', async () => {
+    const h = harness({ initial: fileOf([permissionRecord()]) });
+    const out = await h.service.tools.waitRequest(alice, { request_id: 'r-perm-1' }, key(1));
+    expect(out).not.toBeNull();
+    if (out === null || out.ok) throw new Error('expected a refusal');
+    expect(out.error.code).toBe('not_found');
+  });
+
+  it('withdraw_request on a live permission from its own session is not_found, and it stays open', async () => {
+    const h = harness();
+    const r = h.service.createPermission(
+      's-alice',
+      {
+        requester: 'alice',
+        title: 'close_session',
+        body: 'Closes claude-4',
+        permission: { tool: 'close_session', why: 'reach', targets: [], lateGrant: null },
+      },
+      new Date(T0 + HOUR).toISOString(),
+    );
+    const out = h.service.tools.withdrawRequest(alice, { request_id: r.id });
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error.code).toBe('not_found');
+    const still = await h.service.answerPermission(
+      r.id,
+      { outcome: 'denied' },
+      { kind: 'you', windowId: 1 },
+    );
+    expect(still).toEqual({ ok: true });
+  });
+
+  it('list_requests leaves permission records out, before its limit applies', () => {
+    const h = harness({ initial: fileOf([seedRecord({}), permissionRecord()]) });
+    const all = h.service.tools.listRequests(alice, { state: 'all' });
+    expect(all.ok).toBe(true);
+    if (!all.ok) return;
+    expect(all.value.requests.map((r) => r.request_id)).toEqual(['r-agent-1']);
+    const one = h.service.tools.listRequests(alice, { state: 'all', limit: 1 });
+    expect(one.ok).toBe(true);
+    if (!one.ok) return;
+    expect(one.value.requests.map((r) => r.request_id)).toEqual(['r-agent-1']);
+  });
+
+  it('ui() keeps permission records out of open and ended', () => {
+    const h = harness({
+      initial: fileOf([
+        seedRecord({}),
+        permissionRecord(),
+        permissionRecord({
+          id: 'r-perm-open',
+          state: 'open',
+          endedAt: null,
+          expiresAt: new Date(T0 + HOUR).toISOString(),
+        }),
+      ]),
+    });
+    const ui = h.service.ui();
+    expect(ui.open.map((r) => r.id)).toEqual([]);
+    expect(ui.ended.map((r) => r.id)).toEqual(['r-agent-1']);
+  });
+});
+
+describe('permission requests in the service', () => {
+  const EXPIRY = new Date(T0 + HOUR).toISOString();
+  const you = { kind: 'you' as const, windowId: 1 };
+  const fields = {
+    requester: 'alice',
+    title: 'close_session',
+    body: 'Closes claude-4',
+    permission: { tool: 'close_session' as const, why: 'reach', targets: [], lateGrant: null },
+  };
+
+  it('createPermission opens a permission record and answerPermission hands the answer to onPermissionAnswer', async () => {
+    const h = harness();
+    const r = h.service.createPermission('s-alice', fields, EXPIRY);
+    expect(r).toMatchObject({
+      kind: 'permission',
+      source: 'policy',
+      state: 'open',
+      requester: 'alice',
+    });
+    const out = await h.service.answerPermission(r.id, { outcome: 'allowed' }, you);
+    expect(out).toEqual({ ok: true });
+    expect(h.onPermissionAnswer).toHaveBeenCalledTimes(1);
+    expect(h.onPermissionAnswer.mock.calls[0]?.[1]).toEqual({ outcome: 'allowed' });
+  });
+
+  it('a live permission stays out of ui().open', () => {
+    const h = harness();
+    h.service.createPermission('s-alice', fields, EXPIRY);
+    expect(h.service.ui().open).toEqual([]);
+  });
+
+  it('answerPermission refuses an agent request as not_answerable', async () => {
+    const h = harness({
+      initial: fileOf([
+        seedRecord({
+          id: 'r-agent-open',
+          state: 'open',
+          endedAt: null,
+          answer: null,
+          expiresAt: null,
+          kind: 'confirm',
+        }),
+      ]),
+    });
+    const out = await h.service.answerPermission('r-agent-open', { outcome: 'allowed' }, you);
+    expect(out).toMatchObject({ ok: false, reason: 'not_answerable' });
+    expect(h.onPermissionAnswer).not.toHaveBeenCalled();
+  });
+
+  it('answerPermission refuses an unknown request as not_found', async () => {
+    const h = harness();
+    const out = await h.service.answerPermission('r-missing', { outcome: 'allowed' }, you);
+    expect(out).toMatchObject({ ok: false, reason: 'not_found' });
+  });
+
+  it('answerPermission refuses an answer the permission does not take as invalid_answer', async () => {
+    const h = harness();
+    const r = h.service.createPermission('s-alice', fields, EXPIRY);
+    const out = await h.service.answerPermission(r.id, { outcome: 'approved' }, you);
+    expect(out).toMatchObject({ ok: false, reason: 'invalid_answer' });
+    expect(h.onPermissionAnswer).not.toHaveBeenCalled();
+  });
+
+  it('answerPermission refuses an ended permission as already_ended', async () => {
+    const h = harness();
+    const r = h.service.createPermission('s-alice', fields, EXPIRY);
+    h.service.endPermission(r.id, 'answered', { outcome: 'denied' }, null, you);
+    const out = await h.service.answerPermission(r.id, { outcome: 'denied' }, you);
+    expect(out).toMatchObject({ ok: false, reason: 'already_ended' });
+    expect(h.onPermissionAnswer).not.toHaveBeenCalled();
+  });
+
+  it('endPermission answered records the answer; withdrawn records conduit and its reason', async () => {
+    const h = harness();
+    const a = h.service.createPermission('s-alice', fields, EXPIRY);
+    const b = h.service.createPermission('s-alice', fields, EXPIRY);
+    h.service.endPermission(a.id, 'answered', { outcome: 'allowed' }, null, {
+      kind: 'you',
+      windowId: 7,
+    });
+    h.service.endPermission(b.id, 'withdrawn', null, 'the policy now denies it', you);
+    h.c.advance(PERSIST_COALESCE_MS);
+    await flush();
+    const saved = JSON.parse(h.store.current() ?? '{}') as { requests: RequestRecord[] };
+    const byId = new Map(saved.requests.map((r) => [r.id, r]));
+    expect(byId.get(a.id)).toMatchObject({
+      state: 'answered',
+      answer: { outcome: 'allowed', answeredBy: { kind: 'you', windowId: 7 } },
+    });
+    expect(byId.get(b.id)).toMatchObject({
+      state: 'withdrawn',
+      withdrawnBy: 'conduit',
+      withdrawReason: 'the policy now denies it',
+    });
+  });
+
+  it('a late grant on an expired permission is delegated, recorded once, and its notice delivered once', async () => {
+    const h = harness({ initial: fileOf([permissionRecord()]) });
+    const out = await h.service.answerPermission(
+      'r-perm-1',
+      { outcome: 'allowed', grant: { who: 'session', on: 'anywhere', for: 'session-end' } },
+      you,
+    );
+    expect(out).toEqual({ ok: true });
+    expect(h.onPermissionAnswer).toHaveBeenCalledTimes(1);
+    expect(h.service.answerLate('r-perm-1', 'g-late')).toEqual({ ok: true });
+    await flush();
+    expect(h.deliver).toHaveBeenCalledTimes(1);
+    expect(h.deliver.mock.calls[0]?.[0]).toMatchObject({
+      id: 'r-perm-1',
+      state: 'expired',
+      permission: { lateGrant: 'g-late' },
+    });
+  });
+
+  it('a second late grant on the same permission is refused as not_answerable', () => {
+    const h = harness({
+      initial: fileOf([
+        permissionRecord({
+          permission: { tool: 'send_message', why: 'reach s2', targets: [], lateGrant: 'g-first' },
+        }),
+      ]),
+    });
+    expect(h.service.answerLate('r-perm-1', 'g-second')).toMatchObject({
+      ok: false,
+      reason: 'not_answerable',
+    });
+    expect(h.deliver).not.toHaveBeenCalled();
+  });
+
+  it('an expired permission answered without a grant is already_ended', async () => {
+    const h = harness({ initial: fileOf([permissionRecord()]) });
+    const out = await h.service.answerPermission('r-perm-1', { outcome: 'allowed' }, you);
+    expect(out).toMatchObject({ ok: false, reason: 'already_ended' });
+    expect(h.onPermissionAnswer).not.toHaveBeenCalled();
   });
 });

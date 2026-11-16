@@ -26,7 +26,11 @@ import {
 import { sessionExitAction, shouldConfirmClose } from '../src/close-decision';
 import type { AgentCli } from '../src/conduit-mcp/install-types';
 import type { Handle } from '../src/conduit-mcp/types';
-import type { McpNotConnected, McpSessionBadge } from '../src/conduit-mcp/ui-types';
+import {
+  emptyPolicyUi,
+  type McpNotConnected,
+  type McpSessionBadge,
+} from '../src/conduit-mcp/ui-types';
 import {
   type DeleteOutcome,
   permanentConfirmMessage,
@@ -5619,8 +5623,7 @@ export function App() {
                 <McpToolsDialog
                   key={target.id}
                   session={target}
-                  global={settings.mcpToolPolicy}
-                  byCli={settings.mcpToolPolicyByCli}
+                  legacy={mcp.state?.policy.legacy ?? emptyPolicyUi().legacy}
                   masterOn={settings.conduitMcp}
                   connected={mcp.state?.sessions[target.id]?.connected === true}
                   onChange={(tool, patch) => mcp.setToolPolicy(target.id, tool, patch)}

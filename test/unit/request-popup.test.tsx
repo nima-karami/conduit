@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RequestView } from '../../src/conduit-mcp/request-types';
 import type { McpUiState } from '../../src/conduit-mcp/ui-types';
+import { emptyPolicyUi } from '../../src/conduit-mcp/ui-types';
 import type { HostToWebview } from '../../src/protocol';
 
 const bridge = vi.hoisted(() => ({
@@ -59,6 +60,7 @@ function view(over: Partial<RequestView> & Pick<RequestView, 'id'>): RequestView
     withdrawReason: null,
     supersededBy: null,
     deliveredAt: null,
+    permission: null,
     waiting: false,
     waitingUntil: null,
     ...over,
@@ -80,6 +82,7 @@ function mcpState(open: RequestView[], ended: RequestView[] = []): McpUiState {
     notConnected: {},
     awaitingApproval: [],
     waitingAsks: 0,
+    policy: emptyPolicyUi(),
     requests: {
       open,
       ended,

@@ -1,10 +1,4 @@
 import type { AgentRegistry } from './agent-registry';
-import {
-  type ToolName,
-  type ToolPolicy,
-  type ToolPolicyPatch,
-  withPolicyPatch,
-} from './conduit-mcp/tool-policy';
 import type { SessionAutoResume } from './contracts/scheduler';
 import { folderKey } from './folder-key';
 import { COMMAND_AGENT_ID, effectiveDef } from './session-command';
@@ -12,16 +6,6 @@ import { iconKindFromText } from './session-icon';
 import { sessionNameFromPath } from './session-name';
 import { resolveTitleSync } from './session-title';
 import type { BriefState, Session, SessionCommand, SessionOpener, SessionStatus } from './types';
-
-/** Field equality for one tool's session-layer entry so setMcpToolPolicy only emits on a change. */
-function samePolicyEntry(
-  a: Partial<ToolPolicy> | undefined,
-  b: Partial<ToolPolicy> | undefined,
-): boolean {
-  return (
-    a?.access === b?.access && a?.when === b?.when && a?.reach === b?.reach && a?.move === b?.move
-  );
-}
 
 export interface SessionCreateOpts {
   name?: string;
@@ -317,18 +301,6 @@ export class SessionManager {
     if ((s.autoResume ?? 'inherit') === mode) return true;
     if (mode === 'inherit') delete s.autoResume;
     else s.autoResume = mode;
-    this.emit();
-    return true;
-  }
-
-  /** false for an unknown id; no emit when the tool's entry is unchanged. */
-  setMcpToolPolicy(id: string, tool: ToolName, patch: ToolPolicyPatch): boolean {
-    const s = this.sessions.get(id);
-    if (!s) return false;
-    const next = withPolicyPatch(s.mcpToolPolicy, tool, patch);
-    if (samePolicyEntry(s.mcpToolPolicy?.[tool], next?.[tool])) return true;
-    if (next) s.mcpToolPolicy = next;
-    else delete s.mcpToolPolicy;
     this.emit();
     return true;
   }

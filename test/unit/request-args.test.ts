@@ -470,6 +470,65 @@ describe('validateAnswer', () => {
     ).toBe('too_large');
   });
 
+  it('allowed/denied valid only for permission', () => {
+    const perm = rec('permission', 'policy');
+    expect(unwrap(validateAnswer(perm, { outcome: 'allowed' }))).toEqual({ outcome: 'allowed' });
+    expect(unwrap(validateAnswer(perm, { outcome: 'denied', reason: 'no' }))).toEqual({
+      outcome: 'denied',
+      reason: 'no',
+    });
+    expect(
+      unwrap(
+        validateAnswer(perm, {
+          outcome: 'allowed',
+          grant: { who: 'session', on: 'target', for: '1h' },
+        }),
+      ),
+    ).toEqual({ outcome: 'allowed', grant: { who: 'session', on: 'target', for: '1h' } });
+    expect(
+      codeOf(
+        validateAnswer(perm, {
+          outcome: 'allowed',
+          grant: { who: 'nobody', on: 'target', for: '1h' },
+        }),
+      ),
+    ).toBe('invalid_args');
+    expect(
+      codeOf(
+        validateAnswer(perm, {
+          outcome: 'allowed',
+          grant: { who: 'session', on: 'target', for: '1h', extra: true },
+        }),
+      ),
+    ).toBe('invalid_args');
+    expect(
+      codeOf(
+        validateAnswer(perm, {
+          outcome: 'denied',
+          grant: { who: 'session', on: 'target', for: '1h' },
+        }),
+      ),
+    ).toBe('invalid_args');
+    expect(codeOf(validateAnswer(perm, { outcome: 'allowed', text: 'x' }))).toBe('invalid_args');
+    for (const outcome of ['approved', 'declined', 'answered', 'chosen', 'edited', 'dismissed']) {
+      expect(codeOf(validateAnswer(perm, { outcome })), outcome).toBe('invalid_args');
+    }
+    const others = [
+      rec('confirm', 'agent'),
+      rec('review', 'agent'),
+      rec('text', 'message'),
+      rec('choose', 'agent', OPTIONS),
+      rec('permission', 'agent'),
+      rec('permission', 'observed'),
+    ];
+    for (const other of others) {
+      expect(codeOf(validateAnswer(other, { outcome: 'allowed' })), other.kind).toBe(
+        'invalid_args',
+      );
+      expect(codeOf(validateAnswer(other, { outcome: 'denied' })), other.kind).toBe('invalid_args');
+    }
+  });
+
   it('dismissed takes no payload on any kind', () => {
     expect(unwrap(validateAnswer(rec('confirm', 'agent'), { outcome: 'dismissed' }))).toEqual({
       outcome: 'dismissed',

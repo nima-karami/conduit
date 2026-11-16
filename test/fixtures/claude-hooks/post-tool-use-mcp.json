@@ -1,0 +1,23 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000000",
+  "transcript_path": "/work/.claude/projects/-work-project/00000000-0000-4000-8000-000000000000.jsonl",
+  "cwd": "/work/project",
+  "prompt_id": "00000000-0000-4000-8000-000000000000",
+  "permission_mode": "acceptEdits",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "mcp__example__do_thing",
+  "tool_input": {
+    "query": "FIXTURE-ARG"
+  },
+  "tool_response": [
+    {
+      "type": "text",
+      "text": "FIXTURE-OUTPUT-mcp"
+    }
+  ],
+  "tool_use_id": "toolu_fixture_mcp",
+  "duration_ms": 42
+}

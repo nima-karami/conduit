@@ -1,7 +1,7 @@
 // Node-free: the renderer may import this. Clock and timers are injected so the
 // lifecycle is testable without real time.
 import { type CreateInput, contentKeyOf, validateAnswer } from './request-args';
-import type { AnsweredBy, RequestAnswerResult, RequestRecord, RequestView } from './request-types';
+import type { AnsweredBy, QueueAnswerResult, RequestRecord } from './request-types';
 import { type Handle, type ToolError, toolError } from './types';
 
 export const CAP_OPEN_PER_REQUESTER = 5;
@@ -54,21 +54,32 @@ export interface RequestQueue {
       | 'priority'
     >,
   ): RequestRecord;
-  answer(id: string, input: unknown, by: AnsweredBy): RequestAnswerResult;
+  createBound(
+    stamp: Stamp,
+    fields: Pick<RequestRecord, 'title' | 'body' | 'permission'>,
+    expiresAt: string,
+  ): RequestRecord;
+  answerLate(id: string, grantId: string): QueueAnswerResult;
+  answer(id: string, input: unknown, by: AnsweredBy): QueueAnswerResult;
   withdraw(id: string, by: 'requester' | 'conduit', reason: string | null): RequestRecord | null;
   resolve(id: string): RequestRecord | null;
   orphanSession(sessionId: string): RequestRecord[];
   markDelivered(id: string): void;
   get(id: string): RequestRecord | undefined;
   open(): RequestRecord[];
-  ended(limit: number): RequestRecord[];
-  bySession(sessionId: string, state: 'open' | 'all', limit: number): RequestRecord[];
+  ended(limit: number, keep: (r: RequestRecord) => boolean): RequestRecord[];
+  bySession(
+    sessionId: string,
+    state: 'open' | 'all',
+    limit: number,
+    keep: (r: RequestRecord) => boolean,
+  ): RequestRecord[];
   purge(): number;
   records(): RequestRecord[];
   dispose(): void;
 }
 
-const clone = (r: RequestRecord): RequestRecord => JSON.parse(JSON.stringify(r));
+const clone = <T>(r: T): T => JSON.parse(JSON.stringify(r));
 
 const isCountable = (r: RequestRecord): boolean => r.source === 'agent' || r.source === 'message';
 
@@ -78,12 +89,6 @@ export function createRequestQueue(deps: QueueDeps): RequestQueue {
 
   let store = new Map<string, RequestRecord>();
   const timers = new Map<string, unknown>();
-
-  const view = (r: RequestRecord): RequestView => ({
-    ...clone(r),
-    waiting: false,
-    waitingUntil: null,
-  });
 
   const disarm = (id: string): void => {
     if (!timers.has(id)) return;
@@ -181,6 +186,12 @@ export function createRequestQueue(deps: QueueDeps): RequestQueue {
           expire(r);
           continue;
         }
+        if (r.source === 'policy') {
+          r.withdrawnBy = 'conduit';
+          r.withdrawReason = 'Conduit restarted';
+          finish(r, 'withdrawn');
+          continue;
+        }
         arm(r);
       }
       // A pure restore changes nothing on disk; every transition above already reported itself.
@@ -194,7 +205,12 @@ export function createRequestQueue(deps: QueueDeps): RequestQueue {
       let replaced: RequestRecord | null = null;
       if (input.replaces !== null) {
         const old = store.get(input.replaces);
-        if (old === undefined || old.state !== 'open' || old.session !== stamp.session) {
+        if (
+          old === undefined ||
+          old.state !== 'open' ||
+          old.session !== stamp.session ||
+          old.source === 'policy'
+        ) {
           return refuse('not_found', `no open request ${input.replaces} of yours`, stamp.session);
         }
         replaced = old;
@@ -239,7 +255,10 @@ export function createRequestQueue(deps: QueueDeps): RequestQueue {
           'wait before creating another request',
         );
       }
-      if (openRecords().filter((r) => r.id !== replaced?.id).length >= CAP_OPEN_PER_SERVER) {
+      const openAgent = openRecords().filter(
+        (r) => r.source !== 'policy' && r.id !== replaced?.id,
+      ).length;
+      if (openAgent >= CAP_OPEN_PER_SERVER) {
         return refuse(
           'rate_limited',
           `the server already has ${CAP_OPEN_PER_SERVER} open requests`,
@@ -278,6 +297,7 @@ export function createRequestQueue(deps: QueueDeps): RequestQueue {
         withdrawReason: null,
         supersededBy: null,
         deliveredAt: null,
+        permission: null,
       });
 
       if (replaced !== null) {
@@ -319,44 +339,88 @@ export function createRequestQueue(deps: QueueDeps): RequestQueue {
         withdrawReason: null,
         supersededBy: null,
         deliveredAt: null,
+        permission: null,
       });
       deps.onChanged();
       return created;
     },
 
+    createBound(stamp, fields, expiresAt) {
+      const created = insert({
+        id: deps.newId(),
+        origin: deps.machineId,
+        source: 'policy',
+        kind: 'permission',
+        requester: stamp.requester,
+        session: stamp.session,
+        space: stamp.space,
+        lead: stamp.lead,
+        machine: deps.machineId,
+        title: fields.title,
+        body: fields.body,
+        options: [],
+        multi: false,
+        draft: null,
+        thread: null,
+        messageId: null,
+        blocked: null,
+        priority: 'normal',
+        createdAt: iso(deps.now()),
+        expiresAt,
+        default: null,
+        contentKey: '',
+        state: 'open',
+        endedAt: null,
+        answer: null,
+        withdrawnBy: null,
+        withdrawReason: null,
+        supersededBy: null,
+        deliveredAt: null,
+        permission: fields.permission,
+      });
+      deps.onChanged();
+      return created;
+    },
+
+    answerLate(id, grantId) {
+      const r = store.get(id);
+      if (r === undefined) {
+        return { ok: false, reason: 'not_found', message: `no request ${id}` };
+      }
+      if (r.permission === null || r.state !== 'expired' || r.permission.lateGrant !== null) {
+        return {
+          ok: false,
+          reason: 'not_answerable',
+          message: `request ${id} is not an expired permission without a late grant`,
+        };
+      }
+      r.permission.lateGrant = grantId;
+      deps.onChanged();
+      return { ok: true, record: clone(r) };
+    },
+
     answer(id, input, by) {
       const r = store.get(id);
       if (r === undefined) {
-        return { ok: false, reason: 'not_found', message: `no request ${id}`, request: null };
+        return { ok: false, reason: 'not_found', message: `no request ${id}` };
       }
       if (r.state !== 'open') {
-        return {
-          ok: false,
-          reason: 'already_ended',
-          message: `request ${id} already ${r.state}`,
-          request: view(r),
-        };
+        return { ok: false, reason: 'already_ended', message: `request ${id} already ${r.state}` };
       }
       if (r.kind === 'attend') {
         return {
           ok: false,
           reason: 'not_answerable',
           message: 'attention requests are answered in the app, not here',
-          request: view(r),
         };
       }
       const checked = validateAnswer(r, input);
       if (!checked.ok) {
-        return {
-          ok: false,
-          reason: 'invalid_answer',
-          message: checked.error.message,
-          request: view(r),
-        };
+        return { ok: false, reason: 'invalid_answer', message: checked.error.message };
       }
       r.answer = { ...checked.value, answeredBy: by, at: iso(deps.now()) };
       finish(r, 'answered');
-      return { ok: true, request: view(r) };
+      return { ok: true, record: clone(r) };
     },
 
     withdraw(id, by, reason) {
@@ -399,17 +463,19 @@ export function createRequestQueue(deps: QueueDeps): RequestQueue {
         .map(clone);
     },
 
-    ended(limit) {
+    ended(limit, keep) {
       return [...store.values()]
-        .filter((r) => r.state !== 'open' && r.endedAt !== null)
+        .filter((r) => r.state !== 'open' && r.endedAt !== null && keep(r))
         .sort((a, b) => timeOf(b.endedAt ?? '') - timeOf(a.endedAt ?? ''))
         .slice(0, limit)
         .map(clone);
     },
 
-    bySession(sessionId, state, limit) {
+    bySession(sessionId, state, limit, keep) {
       return [...store.values()]
-        .filter((r) => r.session === sessionId && (state === 'all' || r.state === 'open'))
+        .filter(
+          (r) => r.session === sessionId && (state === 'all' || r.state === 'open') && keep(r),
+        )
         .sort((a, b) => timeOf(b.createdAt) - timeOf(a.createdAt))
         .slice(0, limit)
         .map(clone);

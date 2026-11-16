@@ -16,6 +16,7 @@ import type { TermGeometry } from '../../../src/protocol';
 import type { SubmitOutcome } from '../../../src/pty-writer';
 import type { AgentDefinition, SpawnSpec } from '../../../src/types';
 import { RpcFault } from '../../transport/pipe';
+import type { CodexWatch, CodexWatchDeps } from '../codex-rollout-watch';
 import { createDomain, type Domain, type DomainDeps } from '../index';
 
 export interface SpawnCall {
@@ -151,6 +152,8 @@ export interface HarnessOptions {
   stopping?: boolean;
   e2e?: boolean;
   env?: Record<string, string>;
+  /** Replaces the feed gap's Stop-time size lookup. */
+  transcriptSize?: (path: string) => Promise<number>;
   platform?: NodeJS.Platform;
   resolveCommand?: (command: string) => string | undefined;
   /** Default true: the first reconcile (`adopted([])`) has run, so starts can spawn. */
@@ -188,6 +191,9 @@ export function harness(opts: HarnessOptions = {}) {
   const lastSizes = new Map<string, TermGeometry>();
   const written: { sessionId: string; data: string; generation?: number }[] = [];
   const drafts: { sessionId: string; data: string }[] = [];
+  const observed: { sessionId: string; cli: string; entry: unknown }[] = [];
+  let codexWatchDeps: CodexWatchDeps | null = null;
+  const codexWatchCalls: string[] = [];
   const submitted: {
     sessionId: string;
     text: string;
@@ -212,6 +218,7 @@ export function harness(opts: HarnessOptions = {}) {
     instance: 'inst',
     e2e: opts.e2e ?? false,
     env: opts.env ?? {},
+    transcriptSize: opts.transcriptSize,
     runtime,
     launch: {
       whenLaunchReady: async () => {
@@ -230,6 +237,18 @@ export function harness(opts: HarnessOptions = {}) {
       },
     },
     drafts: { noteHostInput: (sessionId, data) => drafts.push({ sessionId, data }) },
+    observed: {
+      record: (sessionId, cli, entry) => observed.push({ sessionId, cli, entry }),
+    },
+    createCodexWatch: (watchDeps): CodexWatch => {
+      codexWatchDeps = watchDeps;
+      return {
+        track: (id) => codexWatchCalls.push(`track:${id}`),
+        untrack: (id) => codexWatchCalls.push(`untrack:${id}`),
+        boundFile: () => null,
+        dispose: () => undefined,
+      };
+    },
     scrollback: {
       replayForColdStart: (id) => {
         calls.push(`replay:${id}`);
@@ -338,6 +357,14 @@ export function harness(opts: HarnessOptions = {}) {
     lastSizes,
     written,
     drafts,
+    observed,
+    codexWatch: {
+      calls: codexWatchCalls,
+      deps: (): CodexWatchDeps => {
+        if (codexWatchDeps === null) throw new Error('the domain created no codex watch');
+        return codexWatchDeps;
+      },
+    },
     submitted,
     resumeIssues,
     /** Tells the domain attention changed (after flipping `state.busy`). */

@@ -1,8 +1,9 @@
 import type { AgentScopeReason } from './add-dir-delivery';
 import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
+import type { AssignmentPoint, PermissionAnswer, ProfileId } from './conduit-mcp/policy-types';
 import type { AnswerInput, RequestAnswerResult } from './conduit-mcp/request-types';
-import type { PolicySource, ToolName, ToolPolicyPatch } from './conduit-mcp/tool-policy';
+import type { CliKind, PolicySource, ToolName, ToolPolicyPatch } from './conduit-mcp/tool-policy';
 import type { Handle, MessageKind, Priority, ToolErrorCode } from './conduit-mcp/types';
 import type {
   AskAnswer,
@@ -622,6 +623,13 @@ export type HostToWebview =
   | { type: 'network:state'; state: NetworkState }
   | { type: 'mcp:state'; state: McpUiState }
   | { type: 'mcp:requestResult'; requestId: string; result: RequestAnswerResult }
+  | {
+      type: 'mcp:permissionResult';
+      requestId: string;
+      ok: boolean;
+      reason?: string;
+      message?: string;
+    }
   | { type: 'mcp:thread'; requestId: number; thread: McpThreadView | null }
   | { type: 'mcp:sent'; requestId: number; result: McpSendResult }
   // Ask details go to the caller's owner window only (spec 2026-10-30-conduit-mcp-tool-policy §2.4).
@@ -651,12 +659,14 @@ export type HostToWebview =
   // An app-control tool's UI step (spec 2026-10-30-conduit-mcp-app-control §2.3). sessionId is
   // always the caller; closeSession names its target in the action.
   | { type: 'mcp:ui'; requestId: string; sessionId: string; action: McpUiAction }
+  | { type: 'mcp:policyResult'; requestId: number; ok: true }
+  | { type: 'mcp:policyResult'; requestId: number; ok: false; error: string }
   | { type: 'mcp:toolPolicyResult'; requestId: number; ok: true }
   | {
       type: 'mcp:toolPolicyResult';
       requestId: number;
       ok: false;
-      error: 'unknown-session' | 'unknown-tool' | 'invalid-value';
+      error: 'unknown-session' | 'unknown-tool' | 'invalid-value' | 'read-only' | 'scoped';
     }
   | {
       type: 'mcp:attachment';
@@ -1167,6 +1177,22 @@ export type WebviewToHost =
   | { type: 'mcp:attachment:get'; requestId: number; messageId: string; attachmentId: string }
   | { type: 'mcp:retry' }
   | { type: 'mcp:requestAnswer'; requestId: string; answer: AnswerInput }
+  | { type: 'mcp:permissionAnswer'; requestId: string; answer: PermissionAnswer }
+  | {
+      type: 'mcp:setAssignment';
+      requestId: number;
+      point: AssignmentPoint;
+      profileId: ProfileId | null;
+    }
+  | {
+      type: 'mcp:setPointPolicy';
+      requestId: number;
+      point: { kind: 'default' } | { kind: 'cli'; cli: CliKind };
+      tool: string;
+      patch: unknown;
+    }
+  | { type: 'mcp:revokeGrant'; requestId: number; grantId: string }
+  | { type: 'mcp:allowOnce'; requestId: number; activityId: string }
   | { type: 'mcp:setAway'; away: boolean; until: string | null }
   // Answer from the approval card; counts only from the window the ask was sent to
   // (spec 2026-10-30-conduit-mcp-tool-policy §2.4). The host re-validates every field.

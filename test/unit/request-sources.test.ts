@@ -40,6 +40,7 @@ function record(overrides: Partial<RequestRecord>): RequestRecord {
     withdrawReason: null,
     supersededBy: null,
     deliveredAt: null,
+    permission: null,
     ...overrides,
   };
 }

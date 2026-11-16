@@ -7,10 +7,12 @@ import {
   claudeSettingsFileOf,
   statusLineWrapFor,
 } from '../claude-hook-settings';
+import type { ClaudeAction } from '../claude-tool-actions';
 import { readUserStatusLine } from '../claude-user-status-line';
 import { detectStuckScreen, type StuckScreen } from '../cli-stuck-screens';
+import type { CodexAction } from '../codex-rollout';
 import type { WireRecipientOutcome } from '../contracts/link-protocol';
-import type { DraftPort, LaunchPort, McpHostDeps } from '../contracts/server-ports';
+import type { DraftPort, LaunchPort, McpHostDeps, ObservedEntry } from '../contracts/server-ports';
 import type { CliBindingRecord } from '../contracts/session-identity';
 import type { LaunchIds } from '../contracts/terminal-runtime';
 import { inputBoxTop } from '../input-box-rows';
@@ -23,6 +25,8 @@ import { readCappedBytes } from '../read-capped';
 import { COMMAND_AGENT_ID } from '../session-command';
 import { PTY_SETTLE_MS } from '../timed-messages';
 import type { AgentDefinition, SpawnSpec } from '../types';
+import type { ActivityIo, ActivityOutcome } from './activity-log';
+import { createActivityIo } from './activity-log-fs';
 import {
   adapterFor,
   MCP_ADAPTERS,
@@ -36,7 +40,14 @@ import { registeredIdFor } from './agent-resolve';
 import { createAppControlHandlers } from './app-control-tools';
 import { snapshotAttachment } from './attachments';
 import { type AttentionEvent, reduceAttention, youAttention } from './attention-items';
-import { askBudgetMs, createCallFlow } from './call-flow';
+import {
+  type AskCommit,
+  askBudgetMs,
+  createCallFlow,
+  type InFlight,
+  NO_OWNER_WINDOW,
+  SCOPE_UNAVAILABLE,
+} from './call-flow';
 import {
   bindsTypedLine,
   type ClientKind,
@@ -51,6 +62,7 @@ import {
   type Prepared,
 } from './control-tools';
 import { isCountedInput, nextDraftState, settleDraft, stripTerminalReplies } from './draft-input';
+import { type GrantChoice, grantScopeFor, grantWhoFor } from './grant-store';
 import {
   agentHandlePrefix,
   cliKindOfHandle,
@@ -60,7 +72,7 @@ import {
   serializeHandleCounters,
 } from './handles';
 import { readCursorLaunchEntry } from './install';
-import type { AgentCli, UserInstallState } from './install-types';
+import { type AgentCli, CLI_DISPLAY_NAME, type UserInstallState } from './install-types';
 import {
   createMcpServerCore,
   TOOLS_LIST_CHANGED,
@@ -79,8 +91,19 @@ import {
 } from './notice-gate';
 import { composeUnreadBanner } from './notice-text';
 import { type AttentionRaise, bannerCandidates, createNotifier, type Notifier } from './notifier';
+import { reasonText } from './policy-engine';
+import { createPolicyService } from './policy-service';
+import { resolveTargets } from './policy-targets';
+import type {
+  AssignmentPoint,
+  Grant,
+  PolicyDecision,
+  PolicyInput,
+  PolicyTarget,
+  Principal,
+} from './policy-types';
 import type { McpNetworkPort, RemoteRecipientOutcome, RemoteResolution } from './remote-routing';
-import { createRequestsIo } from './request-file-fs';
+import { createRequestsIo, type RequestsIo } from './request-file-fs';
 import { createRequestNotices } from './request-notices';
 import { createRequestService, type RequestService } from './request-service';
 import type { QuestionMessage, SessionNeedsYou } from './request-sources';
@@ -98,16 +121,18 @@ import {
 import { createMessageStore, type StoreIo } from './store';
 import { createFsStoreIo } from './store-fs';
 import {
+  CLI_KINDS,
+  type CliKind,
   coercePolicyPatch,
   gateToolCall,
   isMessagingTool,
   isRequestTool,
   isToolName,
   NOT_IN_SESSION_HINT,
-  type ResolvedPolicy,
-  resolvePolicy,
+  type PolicySource,
   TOOL_NAMES,
   type ToolName,
+  toolDisabled,
 } from './tool-policy';
 import { CONDUIT_INSTRUCTIONS, toolSchemas } from './tool-schemas';
 import {
@@ -192,6 +217,9 @@ export interface ConduitMcpHostDeps extends Omit<McpHostDeps, 'attention'> {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   storeIo?: StoreIo;
+  policyIo?: RequestsIo;
+  grantsIo?: RequestsIo;
+  activityIo?: ActivityIo;
   listen?: boolean;
   tickMs?: number;
   createEndpoint(opts: {
@@ -209,6 +237,13 @@ export interface ConduitMcpHostDeps extends Omit<McpHostDeps, 'attention'> {
   clearTimer?: (handle: unknown) => void;
 }
 export type McpRendererMessage = Extract<WebviewToHost, { type: `mcp:${string}` }>;
+
+/** A note row for a fact that has no session or call behind it (NET audit events). */
+export interface ActivityNote {
+  action: string;
+  machineId: string | null;
+  handle: string | null;
+}
 
 export interface ConduitMcpHost extends LaunchPort, DraftPort {
   start(): Promise<void>;
@@ -251,7 +286,66 @@ export interface ConduitMcpHost extends LaunchPort, DraftPort {
   ): Promise<void>;
   tick(): Promise<void>;
   networkPort(): McpNetworkPort;
+  /** A peer's link was revoked: its grants end. */
+  peerRevoked(machineId: string): void;
+  /** An audit event from the network, shown in the Activity log as a note row. */
+  recordNote(note: ActivityNote): void;
+  recordObserved(sessionId: string, cli: AgentCli, entry: ObservedEntry): void;
   stop(): Promise<void>;
+}
+
+// see plan C4 (activity privacy: no output, no arguments; a command keeps its first line only)
+const OBSERVED_SUMMARY_MAX = 200;
+const capSummary = (text: string): string =>
+  Array.from(text).slice(0, OBSERVED_SUMMARY_MAX).join('');
+const capOrNull = (text: string | null): string | null => (text === null ? null : capSummary(text));
+// see plan m3: a busy agent must not flood the Activity log; the excess is counted, not stored
+const OBSERVED_ROWS_PER_MINUTE = 120;
+interface ObservedBudget {
+  minute: number;
+  cli: AgentCli;
+  rows: number;
+  dropped: number;
+  timer: { handle: unknown } | null;
+}
+const MINUTE_MS = 60_000;
+function observedRow(action: ClaudeAction | CodexAction): {
+  action: string;
+  target: string | null;
+  summary: string | null;
+  durationMs: number | null;
+  exitedNonZero: boolean;
+} {
+  const durationMs = 'durationMs' in action ? action.durationMs : null;
+  const exitedNonZero = 'exitCode' in action && action.exitCode !== null && action.exitCode !== 0;
+  switch (action.kind) {
+    case 'command': {
+      const firstLine = action.command.split(/\r\n|\r|\n/)[0] ?? '';
+      return {
+        action: 'command',
+        target: action.cwd,
+        summary: capSummary(firstLine),
+        durationMs,
+        exitedNonZero,
+      };
+    }
+    case 'file-change':
+      return {
+        action: 'file-change',
+        target: action.paths[0] ?? null,
+        summary: action.paths.length > 0 ? capSummary(action.paths.join(', ')) : null,
+        durationMs,
+        exitedNonZero,
+      };
+    case 'mcp':
+      return {
+        action: 'mcp',
+        target: action.server,
+        summary: action.tool,
+        durationMs,
+        exitedNonZero,
+      };
+  }
 }
 
 const TICK_MS = 500;
@@ -354,6 +448,58 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   const sleep =
     deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const detectGraceMs = deps.detectGraceMs ?? DETECT_GRACE_MS;
+  const setTimer = deps.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
+  const clearTimer =
+    deps.clearTimer ??
+    ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout> | undefined));
+  const observedBudget = new Map<string, ObservedBudget>();
+  // Rows arriving while a delete is pending must not revive the session's budget.
+  const deleting = new Set<string>();
+  const noteRow = (sessionId: string, cli: AgentCli, action: string, summary: string): void => {
+    policyService.activity.record({
+      lane: 'note',
+      principal: { handle: handleOf(sessionId) ?? null, sessionId, machineId: null },
+      cli,
+      action: capSummary(action),
+      target: null,
+      summary: capSummary(summary),
+      decision: null,
+      decidedBy: 'conduit',
+      outcome: null,
+      durationMs: null,
+      requestId: null,
+      count: null,
+    });
+  };
+  const flushThrottle = (sessionId: string, budget: ObservedBudget): void => {
+    if (budget.timer !== null) {
+      clearTimer(budget.timer.handle);
+      budget.timer = null;
+    }
+    if (budget.dropped === 0) return;
+    const n = budget.dropped;
+    budget.dropped = 0;
+    noteRow(
+      sessionId,
+      budget.cli,
+      'feed-throttled',
+      `Feed throttled: ${n} ${n === 1 ? 'action' : 'actions'} not logged`,
+    );
+  };
+  const budgetFor = (sessionId: string, cli: AgentCli, minute: number): ObservedBudget => {
+    const current = observedBudget.get(sessionId);
+    if (current && current.minute === minute) return current;
+    if (current) flushThrottle(sessionId, current);
+    const fresh: ObservedBudget = { minute, cli, rows: 0, dropped: 0, timer: null };
+    observedBudget.set(sessionId, fresh);
+    return fresh;
+  };
+  const forgetBudget = (sessionId: string): void => {
+    const budget = observedBudget.get(sessionId);
+    if (!budget) return;
+    if (budget.timer !== null) clearTimer(budget.timer.handle);
+    observedBudget.delete(sessionId);
+  };
   const store = createMessageStore(deps.storeIo ?? createFsStoreIo(deps.dir));
   const screens = deps.screens;
   const registry = createSessionRegistry();
@@ -847,7 +993,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         kind: 'inform',
         priority: 'normal',
         sentAt: new Date(now()).toISOString(),
-        body: JSON.stringify({ request_id: r.id, state: r.state, answer: answerBody }),
+        body:
+          r.permission === null
+            ? JSON.stringify({ request_id: r.id, state: r.state, answer: answerBody })
+            : `You can retry ${r.permission.tool} now`,
         attachments: [],
         requestId: r.id,
       };
@@ -864,6 +1013,51 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
     onChanged: () => scheduleBroadcast(),
     onNew: (r) => notices.added(r),
+    onPermissionAnswer: async (r, a, by) => {
+      const perm = r.permission;
+      if (perm === null) {
+        return { ok: false, reason: 'not_answerable', message: 'not a permission request' };
+      }
+      const p = r.session === null ? null : principalOf(r.session);
+      if (
+        a.outcome === 'allowed' &&
+        a.grant !== undefined &&
+        p !== null &&
+        grantTargetsFor(a.grant, p, perm.targets) === null
+      ) {
+        return { ok: false, reason: 'invalid_answer', message: SCOPE_UNAVAILABLE };
+      }
+      if (r.state === 'open') {
+        const answered =
+          by.kind === 'you' && by.windowId !== null && flow.answerPermission(r.id, a, by.windowId);
+        return answered
+          ? { ok: true }
+          : { ok: false, reason: 'not_answerable', message: 'nothing is waiting on this request' };
+      }
+      if (by.kind !== 'you' || by.windowId === null || by.windowId === NO_OWNER_WINDOW) {
+        return {
+          ok: false,
+          reason: 'not_answerable',
+          message: 'a window that shows this request must answer it',
+        };
+      }
+      if (a.outcome !== 'allowed' || a.grant === undefined) {
+        return { ok: false, reason: 'invalid_answer', message: 'a late answer needs a grant' };
+      }
+      if (p === null) {
+        return {
+          ok: false,
+          reason: 'not_answerable',
+          message: 'the session closed before the grant could be made',
+        };
+      }
+      const grants = grantsFor(a.grant, p, perm.tool, perm.targets, r.id);
+      const [first] = grants ?? [];
+      if (first === undefined) {
+        return { ok: false, reason: 'not_answerable', message: 'the grant could not be made' };
+      }
+      return requestService.answerLate(r.id, first.id);
+    },
     scheduler: deps.domain.limit,
     replyToQuestion: async (r, text) => {
       const sent = await tools.sendMessage(
@@ -1370,18 +1564,106 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     control.prepared,
   );
 
-  /** Session > CLI kind (the persisted handle's prefix) > global, per field (spec §3.1). */
-  const resolveFor = (sessionId: string, tool: ToolName): ResolvedPolicy => {
-    const { global, byCli } = deps.domain.toolPolicy();
-    const session = deps.sessions.get(sessionId);
-    const handle = session?.mcpHandle;
-    return resolvePolicy(tool, {
-      session: session?.mcpToolPolicy,
-      cli: handle ? byCli[cliKindOfHandle(handle)] : undefined,
-      global,
-    });
+  const launchedCli = (sessionId: string): CliKind | null => {
+    const id = runtime.get(sessionId)?.defAdapter?.id;
+    return CLI_KINDS.find((kind) => kind === id) ?? null;
   };
-
+  // A sleeping session has no runtime adapter, but its persisted agent definition names the CLI.
+  const persistedLaunchedCli = (sessionId: string): CliKind | null | undefined => {
+    const def = deps.domain.defOf(sessionId);
+    if (def === undefined) return undefined;
+    const adapter = adapterFor(def, { e2e: deps.e2e });
+    return CLI_KINDS.find((kind) => kind === adapter?.id) ?? null;
+  };
+  // A running session reports its adapter; a sleeping one falls back to its persisted definition.
+  const knownLaunchedCli = (sessionId: string): CliKind | null =>
+    launchedCli(sessionId) ?? persistedLaunchedCli(sessionId) ?? null;
+  const principalOf = (sessionId: string): Extract<Principal, { kind: 'session' }> | null => {
+    const session = deps.sessions.get(sessionId);
+    if (!session?.mcpHandle) return null;
+    return {
+      kind: 'session',
+      sessionId,
+      handle: session.mcpHandle,
+      launchedCli: launchedCli(sessionId),
+      homeFolder: session.home,
+      projectId: session.projectId ?? null,
+    };
+  };
+  const policyService = createPolicyService({
+    policyIo: deps.policyIo ?? createRequestsIo(path.join(deps.dir, 'policy.json')),
+    lastGoodIo: createRequestsIo(path.join(deps.dir, 'policy.last-good.json')),
+    grantsIo: deps.grantsIo ?? createRequestsIo(path.join(deps.dir, 'grants.json')),
+    activityIo: deps.activityIo ?? createActivityIo(deps.dir),
+    now,
+    newId: () => randomBytes(12).toString('hex'),
+    ...requestTimers,
+    warn: (message, error) => deps.log.warn('conduit-mcp', message, { error: String(error) }),
+    legacy: () => ({
+      ...deps.domain.toolPolicy(),
+      sessions: deps.sessions.list().map((s) => ({
+        sessionId: s.id,
+        layer: s.mcpToolPolicy ?? {},
+        cli: s.mcpHandle ? cliKindOfHandle(s.mcpHandle) : null,
+      })),
+    }),
+    launchedCli: (sessionId) => persistedLaunchedCli(sessionId),
+    onChanged: () => {
+      syncToolLists();
+      scheduleBroadcast();
+    },
+  });
+  const validPoint = (point: unknown): point is AssignmentPoint => {
+    if (typeof point !== 'object' || point === null || !('kind' in point)) return false;
+    if (point.kind === 'default') return true;
+    if (point.kind === 'session')
+      return 'sessionId' in point && typeof point.sessionId === 'string';
+    if (point.kind === 'peer') return 'machineId' in point && typeof point.machineId === 'string';
+    return point.kind === 'cli' && 'cli' in point && CLI_KINDS.some((kind) => kind === point.cli);
+  };
+  const raisedRequests = new Map<InFlight, string>();
+  const emptyTarget: PolicyTarget = { sessionId: null, path: null, folder: null, projectId: null };
+  /** The targets an answer's grants cover, or null when a target cannot resolve the scope. */
+  const grantTargetsFor = (
+    choice: GrantChoice,
+    p: Principal,
+    targets: readonly PolicyTarget[],
+  ): readonly PolicyTarget[] | null => {
+    if (grantWhoFor(choice.who, p) === null) return null;
+    if (choice.on === 'anywhere') return [emptyTarget];
+    if (targets.length === 0) return null;
+    return targets.every((t) => grantScopeFor(choice.on, t, p) !== null) ? targets : null;
+  };
+  /** One grant per covered target, all or none. */
+  const grantsFor = (
+    choice: GrantChoice,
+    p: Principal,
+    tool: ToolName,
+    targets: readonly PolicyTarget[],
+    requestId: string,
+  ): Grant[] | null => {
+    const scopes = grantTargetsFor(choice, p, targets);
+    if (scopes === null) return null;
+    const made = scopes.flatMap((t) => {
+      const g = policyService.createGrant(choice, p, tool, t, requestId);
+      return g === null ? [] : [g];
+    });
+    return made.length === scopes.length ? made : null;
+  };
+  const reasonOf = (decision: PolicyDecision): string =>
+    reasonText(decision.reason, decision.decision, {
+      profileName: (id) => policyService.profileName(id) ?? id,
+      cliName: (kind) => kind,
+    });
+  const sourceOf = (decision: PolicyDecision): PolicySource => {
+    const reason = decision.reason;
+    if (!('point' in reason)) return 'global';
+    return reason.point.kind === 'session'
+      ? 'session'
+      : reason.point.kind === 'cli'
+        ? 'cli'
+        : 'global';
+  };
   const flow = createCallFlow({
     now,
     setTimer: deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms)),
@@ -1396,14 +1678,44 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     appConnected: () => deps.appConnected(),
     sendToOwner: (sessionId, msg) => sendToOwner(sessionId, msg),
     flashOwner: (sessionId) => flashOwner(sessionId),
-    resolve: (sessionId, tool) =>
-      deps.sessions.get(sessionId) ? resolveFor(sessionId, tool).policy : null,
+    stillVisible: (sessionId, tool) => {
+      const p = principalOf(sessionId);
+      return p !== null && policyService.visibleTools(p).includes(tool);
+    },
     messagingOn: () => deps.domain.messagingOn(),
-    setSessionPolicy: (sessionId, tool, patch) =>
-      deps.sessions.setMcpToolPolicy(sessionId, tool, patch),
-    onPolicyWritten: () => {
-      syncToolLists();
-      scheduleBroadcast();
+    openPermission: (r) => {
+      const record = requestService.createPermission(
+        r.caller.sessionId,
+        {
+          requester: r.caller.handle,
+          title: r.tool,
+          body: r.why,
+          permission: { tool: r.tool, why: r.why, targets: [...r.targets], lateGrant: null },
+        },
+        new Date(r.expiresAt).toISOString(),
+      );
+      policyService.activity.record({
+        lane: 'conduit',
+        principal: { handle: r.caller.handle, sessionId: r.caller.sessionId, machineId: null },
+        cli: launchedCli(r.caller.sessionId),
+        action: r.tool,
+        target: r.targets[0]?.path ?? r.targets[0]?.sessionId ?? null,
+        summary: null,
+        decision: 'ask',
+        decidedBy: r.why,
+        outcome: 'asked',
+        durationMs: null,
+        requestId: record.id,
+        count: null,
+      });
+      policyService.activity.recordAskArgs(record.id, r.args);
+      raisedRequests.set(r.inflight, record.id);
+      return record.id;
+    },
+    settlePermission: (e) => {
+      if (e.end === 'answered')
+        requestService.endPermission(e.requestId, 'answered', e.answer, null, e.by);
+      else requestService.endPermission(e.requestId, e.end, null, e.reason, e.by);
     },
     onAwaitingChanged: () => scheduleBroadcast(),
     sendToWindow: (windowId, msg) => sendToWindow(windowId, msg),
@@ -1462,10 +1774,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
    * What a session's connection lists (spec 2026-10-27-conduit-mcp-control-tools §3.4): with the
    * master off, everything, so the CLI's calls get messaging_off rather than an unknown tool.
    */
-  const listedTools = (sessionId: string): readonly ToolName[] =>
-    deps.domain.messagingOn()
-      ? TOOL_NAMES.filter((t) => resolveFor(sessionId, t).policy.access !== 'off')
-      : TOOL_NAMES;
+  const listedTools = (sessionId: string): readonly ToolName[] => {
+    if (!deps.domain.messagingOn()) return TOOL_NAMES;
+    const principal = principalOf(sessionId);
+    return principal ? policyService.visibleTools(principal) : [];
+  };
 
   type CallContext = ToolCallContext & { connId: number };
 
@@ -1483,6 +1796,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   ): Promise<ToolCallResult | null> => {
     // Before the first await: a notifications/cancelled read right after this line must find it.
     const inflight = flow.begin({ connId: ctx.connId, requestId: ctx.requestId });
+    const startedAt = now();
+    const evaluated: {
+      current: { input: Omit<PolicyInput, 'now'>; decision: PolicyDecision } | null;
+      spent: boolean;
+    } = { current: null, spent: false };
+    let reDecided: PolicyDecision | null = null;
     try {
       const handle = sessionId ? handleOf(sessionId) : undefined;
       const result = await (async (): Promise<Result<unknown> | null> => {
@@ -1490,7 +1809,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         if (!isToolName(name)) {
           return { ok: false, error: toolError('invalid_args', `unknown tool: ${name}`) };
         }
-        if (!sessionId || !handle) {
+        const principal = sessionId && handle ? principalOf(sessionId) : null;
+        if (!sessionId || !handle || principal === null) {
           return {
             ok: false,
             error: toolError(
@@ -1501,20 +1821,84 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             ),
           };
         }
-        const resolved = resolveFor(sessionId, name);
+        const rawArgs =
+          typeof args === 'object' && args !== null && !Array.isArray(args)
+            ? (args as Record<string, unknown>)
+            : {};
+        const targets = resolveTargets(
+          name,
+          rawArgs,
+          { sessionId, home: principal.homeFolder },
+          {
+            sessionByHandle: (ref) => {
+              const s = deps.sessions.get(ref) ?? deps.sessions.get(sessionOfHandle(ref) ?? '');
+              return s ? { id: s.id, cwd: s.home, projectId: s.projectId ?? null } : null;
+            },
+            childrenOf: (id) =>
+              deps.sessions
+                .list()
+                .filter((s) => s.openedBy?.sessionId === id)
+                .map((s) => ({ id: s.id, cwd: s.home, projectId: s.projectId ?? null })),
+            realPath: (p) => {
+              try {
+                return fs.realpathSync(p);
+              } catch (error) {
+                deps.log.warn('conduit-mcp', 'policy target realpath failed', {
+                  path: p,
+                  error: String(error),
+                });
+                return null;
+              }
+            },
+          },
+        );
+        const policyInput = {
+          principal,
+          tool: name,
+          targets,
+          masterOn: deps.domain.messagingOn(),
+          toYou:
+            name === 'request_input' ||
+            (name === 'send_message' &&
+              Array.isArray(rawArgs.to) &&
+              rawArgs.to.length > 0 &&
+              rawArgs.to.every((recipient) => recipient === HUMAN_HANDLE)),
+        };
+        const resolved = policyService.decide(policyInput);
+        evaluated.current = { input: policyInput, decision: resolved };
         const windowId = deps.ownerWindowOf(sessionId);
         const refused = gateToolCall({
           sessionId,
           messagingOn: deps.domain.messagingOn(),
           tool: name,
-          policy: resolved.policy,
+          decision: resolved,
           ownerReady: () => windowId !== null && deps.windowReady(windowId),
           onScreen: () => windowId !== null && deps.onScreen(windowId, sessionId),
           appConnected: deps.appConnected(),
         });
         if (refused) return { ok: false, error: refused };
+        // A concurrent call may have spent the override this decision relies on. decide and commit
+        // run back to back, so the re-decide sees the state the commit did: a second override for
+        // the target can stand in for the spent one.
+        const commitResolved = (): AskCommit | null => {
+          const held = policyService.commit(policyInput, resolved);
+          if (held !== null) return { decision: resolved, held };
+          const again = policyService.decide(policyInput);
+          const heldAgain =
+            again.decision === 'allow' ? policyService.commit(policyInput, again) : null;
+          if (heldAgain !== null) {
+            evaluated.current = { input: policyInput, decision: again };
+            return { decision: again, held: heldAgain };
+          }
+          evaluated.spent = true;
+          evaluated.current = { input: policyInput, decision: again };
+          return null;
+        };
         const caller = { handle, sessionId };
-        if (isRequestTool(name)) return runRequest(caller, name, args, ctx);
+        if (isRequestTool(name)) {
+          if (commitResolved() === null) return { ok: false, error: toolDisabled(name) };
+          return runRequest(caller, name, args, ctx);
+        }
         if (isMessagingTool(name)) {
           if (!store.available()) {
             return {
@@ -1522,11 +1906,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               error: toolError('store_unavailable', storeError ?? 'message store unavailable'),
             };
           }
+          if (commitResolved() === null) return { ok: false, error: toolDisabled(name) };
           return runMessaging(caller, name, args, ctx);
         }
         const controlCtx: ControlCallContext = {
-          move: resolved.policy.move,
-          reach: resolved.policy.reach,
+          move: resolved.rule.move ?? undefined,
+          reach: resolved.rule.reach ?? undefined,
           ui: (windowId, routedSessionId, action) =>
             flow.requestUi({
               inflight,
@@ -1542,8 +1927,36 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           kind: cliKindOfHandle(handle),
           wiredAtLaunch: wiredAtLaunch(sessionId),
           tool: name,
-          policy: resolved.policy,
-          source: resolved.source.access,
+          decision: resolved,
+          commit: commitResolved,
+          permission: { why: reasonOf(resolved), targets },
+          denyReason: (held) => {
+            const d = policyService.decide({ ...policyInput, heldOverrides: held });
+            return d.decision === 'deny' ? reasonOf(d) : null;
+          },
+          reDecide: (held) => {
+            const again = policyService.decide({ ...policyInput, heldOverrides: held });
+            evaluated.current = { input: policyInput, decision: again };
+            reDecided = again;
+            if (again.decision === 'deny') return { kind: 'withdraw', reason: reasonOf(again) };
+            return { kind: 'ready' };
+          },
+          grant: (choice, requestId) => {
+            const p = principalOf(sessionId);
+            if (p === null) return 'session-gone';
+            return grantsFor(choice, p, name, policyInput.targets, requestId) === null
+              ? 'scope'
+              : 'made';
+          },
+          commitAnswered: (held) => {
+            if (reDecided === null) return false;
+            if (policyService.commit(policyInput, reDecided, held) === null) {
+              evaluated.spent = true;
+              return false;
+            }
+            return true;
+          },
+          source: sourceOf(resolved),
           args,
           prepare: () => prepareControl(caller, name, args, controlCtx),
         });
@@ -1557,6 +1970,47 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           ? { cancelled: true }
           : { ok: result.ok, ...(result.ok ? {} : { code: result.error.code }) }),
       });
+      const record = evaluated.current;
+      const value =
+        result?.ok && typeof result.value === 'object' && result.value !== null
+          ? result.value
+          : null;
+      const requestId =
+        raisedRequests.get(inflight) ??
+        (name === 'request_input' &&
+        value &&
+        'request_id' in value &&
+        typeof value.request_id === 'string'
+          ? value.request_id
+          : null);
+      const decision = record?.decision;
+      const outcomeOfError = (code: string): ActivityOutcome => {
+        if (code === 'denied' || decision?.decision === 'deny') return 'denied';
+        if (code === 'approval_timeout') return 'expired';
+        return 'error';
+      };
+      const activityId = policyService.activity.record({
+        lane: 'conduit',
+        principal: { handle: handle ?? null, sessionId, machineId: null },
+        cli: sessionId ? launchedCli(sessionId) : null,
+        action: name,
+        target: record?.input.targets[0]?.path ?? record?.input.targets[0]?.sessionId ?? null,
+        summary: null,
+        decision: decision?.decision ?? null,
+        decidedBy: decision ? reasonOf(decision) : 'unknown',
+        outcome: cancelled
+          ? 'withdrawn'
+          : result.ok
+            ? 'ok'
+            : evaluated.spent
+              ? 'denied'
+              : outcomeOfError(result.error.code),
+        durationMs: now() - startedAt,
+        requestId,
+        count: null,
+      });
+
+      if (record) policyService.noteDecision(activityId, record.input, record.decision);
       if (cancelled) return null;
       const built = toToolCallResult(result);
       const banner = unreadBannerFor(handle, name);
@@ -1564,6 +2018,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         ? built
         : { ...built, content: [...built.content, { type: 'text', text: banner }] };
     } finally {
+      raisedRequests.delete(inflight);
       inflight.end();
     }
   };
@@ -1963,6 +2418,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       awaitingApproval: flow.awaitingApproval(),
       waitingAsks: flow.waitingAskCount(),
       requests: requestService.ui(),
+      policy: policyService.ui(
+        deps.sessions.list().map((s) => ({ sessionId: s.id, launchedCli: knownLaunchedCli(s.id) })),
+      ),
     };
   }
 
@@ -2235,8 +2693,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       })();
       await startupSweep;
       if (stopped) return;
-      // Listening first: a launch wired before then would point its shim at nothing, and one
-      // wired while the store loads only meets store_unavailable, which it can retry.
+      // Policy first: a connection accepted before it is loaded would be judged on empty settings.
+      policyService.start();
+      // Listening before the store loads: a launch wired before then would point its shim at
+      // nothing, and one wired while the store loads only meets store_unavailable, which it can retry.
       // A listen that throws is a down endpoint like a refused one; either way the launches
       // waiting on it go now, as endpoint-down, rather than at the bound.
       try {
@@ -2442,31 +2902,39 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
 
     async onSessionDeleted(sessionId) {
-      const closing = closingWhenDone.get(sessionId);
-      if (closing) closing.deleted = true;
-      // Before the drain: the session's waiting asks end now, so their cancelled replies are owed.
-      flow.sessionGone(sessionId);
-      sessionWaits.cancel((w) => w.caller.sessionId === sessionId);
-      requestService.onSessionDeleted(sessionId);
-      const handle = handleOf(sessionId);
-      sessionWaits.forget(sessionId, handle);
-      // Awaited after the teardown: the caller removes the session as soon as this yields.
-      const revoked = deps.tokens.revoke({ sessionId });
-      drainConnectionsOf(sessionId);
-      screens.release(sessionId);
-      notifier?.forget(sessionId);
-      cancelLateEcho(sessionId);
-      deps.typing.forget(sessionId);
-      runtime.delete(sessionId);
-      await revoked;
-      await removeConfig(sessionId);
-      if (!handle) return;
-      for (const m of store.pending(handle)) {
-        const r = await store.setStatus(m.messageId, handle, 'undelivered');
-        if (!r.ok) deps.log.warn('conduit-mcp', 'undelivered mark failed', { code: r.error.code });
+      deleting.add(sessionId);
+      try {
+        forgetBudget(sessionId);
+        const closing = closingWhenDone.get(sessionId);
+        if (closing) closing.deleted = true;
+        // Before the drain: the session's waiting asks end now, so their cancelled replies are owed.
+        flow.sessionGone(sessionId);
+        sessionWaits.cancel((w) => w.caller.sessionId === sessionId);
+        requestService.onSessionDeleted(sessionId);
+        policyService.sessionEnded(sessionId);
+        const handle = handleOf(sessionId);
+        sessionWaits.forget(sessionId, handle);
+        // Awaited after the teardown: the caller removes the session as soon as this yields.
+        const revoked = deps.tokens.revoke({ sessionId });
+        drainConnectionsOf(sessionId);
+        screens.release(sessionId);
+        notifier?.forget(sessionId);
+        cancelLateEcho(sessionId);
+        deps.typing.forget(sessionId);
+        runtime.delete(sessionId);
+        await revoked;
+        await removeConfig(sessionId);
+        if (!handle) return;
+        for (const m of store.pending(handle)) {
+          const r = await store.setStatus(m.messageId, handle, 'undelivered');
+          if (!r.ok)
+            deps.log.warn('conduit-mcp', 'undelivered mark failed', { code: r.error.code });
+        }
+        dispatch({ t: 'session-gone', handle });
+        scheduleBroadcast();
+      } finally {
+        deleting.delete(sessionId);
       }
-      dispatch({ t: 'session-gone', handle });
-      scheduleBroadcast();
     },
 
     onWindowReset(windowId) {
@@ -2598,11 +3066,92 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           // The renderer is never load-bearing: the patch is re-checked here.
           const patch = coercePolicyPatch(m.tool, m.patch);
           if (!patch) return refuse('invalid-value');
-          deps.sessions.setMcpToolPolicy(m.sessionId, m.tool, patch);
-          reply({ type: 'mcp:toolPolicyResult', requestId: m.requestId, ok: true });
+          const result = policyService.applyLegacyPatch(
+            { kind: 'session', sessionId: m.sessionId },
+            policyService.legacyLowerPoint(knownLaunchedCli(m.sessionId)),
+            m.tool,
+            patch,
+          );
+          reply({ type: 'mcp:toolPolicyResult', requestId: m.requestId, ...result });
           syncToolLists();
           flow.recheck();
           scheduleBroadcast();
+          return;
+        }
+        case 'mcp:setAssignment': {
+          if (!validPoint(m.point) || (m.profileId !== null && typeof m.profileId !== 'string')) {
+            reply({
+              type: 'mcp:policyResult',
+              requestId: m.requestId,
+              ok: false,
+              error: 'invalid-value',
+            });
+            return;
+          }
+          if (m.point.kind === 'session' && !deps.sessions.get(m.point.sessionId)) {
+            reply({
+              type: 'mcp:policyResult',
+              requestId: m.requestId,
+              ok: false,
+              error: 'unknown-session',
+            });
+            return;
+          }
+          const result = policyService.setAssignment(m.point, m.profileId);
+          reply({ type: 'mcp:policyResult', requestId: m.requestId, ...result });
+          flow.recheck();
+          return;
+        }
+        case 'mcp:setPointPolicy': {
+          if (
+            !validPoint(m.point) ||
+            (m.point.kind !== 'default' && m.point.kind !== 'cli') ||
+            !isToolName(m.tool)
+          ) {
+            reply({
+              type: 'mcp:policyResult',
+              requestId: m.requestId,
+              ok: false,
+              error: 'invalid-value',
+            });
+            return;
+          }
+          const patch = coercePolicyPatch(m.tool, m.patch);
+          if (!patch) {
+            reply({
+              type: 'mcp:policyResult',
+              requestId: m.requestId,
+              ok: false,
+              error: 'invalid-value',
+            });
+            return;
+          }
+          const result = policyService.applyLegacyPatch(
+            m.point,
+            m.point.kind === 'cli' ? { kind: 'default' } : null,
+            m.tool,
+            patch,
+          );
+          reply({ type: 'mcp:policyResult', requestId: m.requestId, ...result });
+          flow.recheck();
+          return;
+        }
+        case 'mcp:revokeGrant': {
+          const ok = typeof m.grantId === 'string' && policyService.revokeGrant(m.grantId);
+          reply(
+            ok
+              ? { type: 'mcp:policyResult', requestId: m.requestId, ok: true }
+              : { type: 'mcp:policyResult', requestId: m.requestId, ok: false, error: 'not-found' },
+          );
+          flow.recheck();
+          return;
+        }
+        case 'mcp:allowOnce': {
+          const result =
+            typeof m.activityId === 'string'
+              ? policyService.allowOnce(m.activityId)
+              : { ok: false as const, error: 'not-found' };
+          reply({ type: 'mcp:policyResult', requestId: m.requestId, ...result });
           return;
         }
         case 'mcp:askAnswer': {
@@ -2630,6 +3179,20 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           reply({ type: 'mcp:requestResult', requestId: m.requestId, result });
           return;
         }
+        case 'mcp:permissionAnswer': {
+          const result = await requestService.answerPermission(m.requestId, m.answer, {
+            kind: 'you',
+            windowId: senderId,
+          });
+          reply({
+            type: 'mcp:permissionResult',
+            requestId: m.requestId,
+            ...(result.ok
+              ? { ok: true }
+              : { ok: false, reason: result.reason, message: result.message }),
+          });
+          return;
+        }
         case 'mcp:setAway':
           requestService.setAway(m.away, m.until);
           return;
@@ -2649,6 +3212,73 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
 
     tick,
+
+    peerRevoked(machineId) {
+      policyService.peerRevoked(machineId);
+    },
+    recordObserved(sessionId, cli, entry) {
+      // A late row for a deleted session must not create a budget that nothing will ever clear.
+      if (stopped || deleting.has(sessionId) || deps.sessions.get(sessionId) === undefined) return;
+      if ('action' in entry) {
+        const t = now();
+        const minute = Math.floor(t / MINUTE_MS);
+        const budget = budgetFor(sessionId, cli, minute);
+        if (budget.rows >= OBSERVED_ROWS_PER_MINUTE) {
+          budget.dropped += 1;
+          if (budget.timer === null) {
+            // see plan m3: a dropped batch is noted at its minute's end, even if no later row comes
+            budget.timer = {
+              handle: setTimer(
+                () => flushThrottle(sessionId, budget),
+                (minute + 1) * MINUTE_MS - t,
+              ),
+            };
+          }
+          return;
+        }
+        budget.rows += 1;
+        const row = observedRow(entry.action);
+        policyService.activity.record({
+          lane: 'observed',
+          principal: { handle: handleOf(sessionId) ?? null, sessionId, machineId: null },
+          cli,
+          action: capSummary(row.action),
+          target: capOrNull(row.target),
+          summary: capOrNull(row.summary),
+          decision: null,
+          decidedBy: `observed: decided by ${CLI_DISPLAY_NAME[cli]}, not Conduit`,
+          outcome: entry.failed || row.exitedNonZero ? 'error' : 'ok',
+          durationMs: row.durationMs,
+          requestId: null,
+          count: null,
+        });
+        return;
+      }
+      const note =
+        'feed' in entry
+          ? { action: 'feed-unavailable', summary: 'Feed unavailable' }
+          : {
+              action: 'feed-gap',
+              summary: `Feed gap: ${entry.gap} ${entry.gap === 1 ? 'action' : 'actions'} not reported`,
+            };
+      noteRow(sessionId, cli, note.action, note.summary);
+    },
+    recordNote(note) {
+      policyService.activity.record({
+        lane: 'note',
+        principal: { handle: note.handle, sessionId: null, machineId: note.machineId },
+        cli: null,
+        action: note.action,
+        target: null,
+        summary: null,
+        decision: null,
+        decidedBy: 'conduit',
+        outcome: null,
+        durationMs: null,
+        requestId: null,
+        count: null,
+      });
+    },
 
     networkPort: (): McpNetworkPort => ({
       localDirectory: () => directory(),
@@ -2709,6 +3339,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     async stop() {
       stopped = true;
+      for (const sessionId of [...observedBudget.keys()]) forgetBudget(sessionId);
       stopRuntime();
       settleEndpoint();
       if (tickTimer) clearInterval(tickTimer);
@@ -2723,6 +3354,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       for (const c of conns.values()) c.close();
       notices.dispose();
       await requestService.stop();
+      await policyService.stop();
       const storeStopped = store.stop();
       await endpoint?.close();
       await startupSweep;

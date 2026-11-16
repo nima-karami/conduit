@@ -39,6 +39,7 @@ function req(over: Partial<RequestView> = {}): RequestView {
     withdrawReason: null,
     supersededBy: null,
     deliveredAt: null,
+    permission: null,
     waiting: false,
     waitingUntil: null,
     ...over,

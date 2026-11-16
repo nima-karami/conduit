@@ -9,7 +9,13 @@ All notable user-facing changes to Conduit. Format follows
 ### Security
 - The Background service now only takes commands from this app and from Conduit's own tools: each start writes a fresh secret that only your user account can read. Other accounts on the same computer, and on Windows other computers on the network, can no longer drive it. If the app ever can't prove itself, it stops retrying after a few tries and says so, instead of looking connected.
 
+### Changed
+- Groundwork for permission profiles: what each session may do now comes from a profile (Observer, Worker or Lead) with optional exceptions, instead of per-tool overrides. Your existing settings carry over exactly; a session where you'd turned every tool on becomes "Lead +1" and behaves as before. The MCP tool settings and the session's MCP tools dialog work as they did. The screens for profiles arrive in a later release.
+- "Always" on an approval card now allows that tool for the session until the session ends, and the permission lapses after 7 days unused.
+- If the permissions file can't be read, Conduit uses the last copy that could. If there's none, every session gets the Observer profile until the file is fixed. A session whose custom profile is missing also gets Observer.
+
 ### Added
+- Conduit keeps an activity log of agents' tool calls for 30 days: who asked, what was decided and why, and how it ended, without message bodies, command output or file contents. Commands and file edits that Claude Code and Codex run on their own are logged too, marked as decided by that CLI. Conduit adds a hook to Claude Code's settings for this. The screen for the log arrives in a later release.
 - Groundwork for controlling your other machines over SSH: Conduit can now link to the Background service on another machine through your normal `ssh` login, with no extra port or pairing. The screens and agent tools for this arrive in later releases.
 - Conduit can now set itself up on another Linux machine over SSH: it checks what the machine has, installs the same version as yours (verified against pinned checksums), starts the Background service there and links to it. The screens and agent tools for this arrive in later releases.
 
