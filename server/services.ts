@@ -285,6 +285,9 @@ export function createServices(o: ServicesOptions) {
   if (sshArgs.kind === 'invalid') {
     log.warn('network', 'CONDUIT_E2E_SSH_ARGS_PREFIX is not a JSON string array; ignored', {});
   }
+  // The request service lives in the MCP host, which is composed after the network: the ports reach
+  // it through `mcp`, and mirror changes are bridged to the network once the host exists.
+  const mirrorListeners = new Set<() => void>();
   network =
     loaded.kind === 'newer'
       ? null
@@ -327,6 +330,46 @@ export function createServices(o: ServicesOptions) {
             closeSession,
           },
           openCommandSession,
+          requestPorts: {
+            b: {
+              mirrorOf: () => mcp?.networkPort().mirrorOf() ?? [],
+              hasEnded: () => mcp?.networkPort().requestsHasEnded() ?? false,
+              onMirrorChange: (fn) => {
+                mirrorListeners.add(fn);
+                return () => {
+                  mirrorListeners.delete(fn);
+                };
+              },
+              // An owner's answer lands on the host's applyRemoteAnswer. Until the host is up there is
+              // nothing to apply it to, so it is refused, never taken silently.
+              applyRemoteAnswer: async (requestId, answer, answerId, machineId) => {
+                const port = mcp?.networkPort();
+                if (port === undefined) {
+                  return {
+                    ok: false,
+                    error: {
+                      code: 'refused',
+                      message: 'this machine is not ready to take remote answers',
+                      retryable: false,
+                    },
+                  };
+                }
+                const res = port.applyRemoteAnswer(requestId, answer, answerId, machineId);
+                if (res.ok) return { ok: true };
+                return {
+                  ok: false,
+                  error: { code: res.reason, message: res.message, retryable: false },
+                };
+              },
+            },
+            a: {
+              apply: (machineId, seq, requests, machineName) => {
+                mcp?.networkPort().remoteRequests().apply(machineId, seq, requests, machineName);
+              },
+              setLinkState: (machineId, state) =>
+                mcp?.networkPort().remoteRequests().setLinkState(machineId, state),
+            },
+          },
           monitor: {
             sessions: () => monitorSessions(),
             requests: () => mcp?.networkPort().requestsSummary() ?? [],
@@ -409,6 +452,9 @@ export function createServices(o: ServicesOptions) {
   });
   const server = mcp;
   network?.setMcp(server.networkPort());
+  server.networkPort().onRequestsMirrorChange(() => {
+    for (const fn of mirrorListeners) fn();
+  });
   network?.setAuditTap(activityAuditSink(server.recordNote));
   network?.onRevoked((machineId) => server.peerRevoked(machineId));
 

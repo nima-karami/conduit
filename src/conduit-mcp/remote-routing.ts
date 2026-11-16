@@ -18,6 +18,9 @@ import type {
 } from '../contracts/machines';
 import type { RemoteCaller } from '../contracts/remote-principal';
 import { parseAddress } from '../network/addresses';
+import type { GrantChoice } from './grant-store';
+import type { RemoteAnswerResult } from './request-service';
+import type { AnswerInput } from './request-types';
 import type { WaitReading } from './session-waits';
 import type { DirectoryEntry, StructuredOutput } from './tools';
 import {
@@ -157,6 +160,31 @@ export interface McpNetworkPort {
   requestsSummary(): MonitorSnapshot['requests'];
   /** The A-side mirror of remote requests; the link writes into it (CON-42 L3). */
   remoteRequests(): RemoteRequestSink;
+  /** B's open requests plus those that ended in the last 10 min, as the link sends them (CON-42 L4). */
+  mirrorOf(): RequestMirror[];
+  /**
+   * Applies a controller's answer to a request on this machine. Refusals are the request service's;
+   * a local policy ask is not answered this way yet (CON-42 L5a).
+   */
+  applyRemoteAnswer(
+    requestId: string,
+    answer: RequestAnswerBody,
+    answerId: string,
+    machineId: string,
+  ): RemoteAnswerResult;
+  /** True while the mirror holds an ended entry, so the snapshot is re-sent until it ages out (CON-42 L5b). */
+  requestsHasEnded(): boolean;
+  /** Fires when a mirrored request changes; returns its unsubscribe (CON-42 L5b). */
+  onRequestsMirrorChange(listener: () => void): () => void;
+}
+
+/**
+ * The grant an owner's answer to a remote ask may make. Only an allow of a grantable ask grants: a
+ * forced ask (RS-D6) is approve-once, whatever the answer carries.
+ */
+export function remoteGrantOf(answer: AnswerInput, grantable: boolean): GrantChoice | null {
+  if (answer.outcome !== 'allowed' || answer.grant === undefined || !grantable) return null;
+  return answer.grant;
 }
 
 /** The tools that take `machine`: they run on that machine, or on this one when it is absent. */

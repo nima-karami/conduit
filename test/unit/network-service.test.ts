@@ -89,6 +89,18 @@ function server(name: string, endpointIn?: (root: string) => string, opts: Serve
       },
       closeSession: async () => {},
     },
+    requestPorts: {
+      b: {
+        mirrorOf: () => [],
+        hasEnded: () => false,
+        onMirrorChange: () => () => {},
+        applyRemoteAnswer: async () => ({
+          ok: false,
+          error: { code: 'refused', message: 'not wired in this fixture', retryable: false },
+        }),
+      },
+      a: { apply: () => {}, setLinkState: () => {} },
+    },
     monitor: {
       sessions: () => opts.sessions ?? [],
       requests: () => [],
@@ -163,6 +175,10 @@ async function linkedOverSsh(
     requestsSummary: () => [],
     callAsRemote: () => Promise.reject(new Error('not used by this test')),
     remoteRequests: () => ({ apply: () => false, setLinkState: () => {} }),
+    mirrorOf: () => [],
+    applyRemoteAnswer: () => ({ ok: false, reason: 'not_found', message: 'not used by this test' }),
+    requestsHasEnded: () => false,
+    onRequestsMirrorChange: () => () => {},
   });
   a.net.setMcp(mcp([]));
   b.net.setMcp(mcp(bDelivered));

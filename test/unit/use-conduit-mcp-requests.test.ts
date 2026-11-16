@@ -73,6 +73,19 @@ describe('answerPermission', () => {
     await expect(p).resolves.toMatchObject({ ok: false, reason: 'not_answerable' });
     expect(bridge.listeners.length).toBe(baseline);
   });
+
+  it('a peer refusal keeps its reason, so the card can say why', async () => {
+    const api = await mountApi();
+    const p = api.answerPermission('perm-2', { outcome: 'allowed' });
+    emit({
+      type: 'mcp:permissionResult',
+      requestId: 'perm-2',
+      ok: false,
+      reason: 'peer_revoked',
+      message: 'the link was removed',
+    });
+    await expect(p).resolves.toMatchObject({ ok: false, reason: 'peer_revoked' });
+  });
 });
 
 describe('answerRequest', () => {

@@ -132,7 +132,18 @@ export interface RequestsUiState {
   presence: HumanPresence;
 }
 
-export type AnswerRefusal = 'not_found' | 'already_ended' | 'not_answerable' | 'invalid_answer';
+/**
+ * The peer_* refusals are a remote owner's answer that did not reach its machine: the link is down,
+ * the peer is too old to take it, or the link was removed (CON-42 decision 3).
+ */
+export type AnswerRefusal =
+  | 'not_found'
+  | 'already_ended'
+  | 'not_answerable'
+  | 'invalid_answer'
+  | 'peer_unreachable'
+  | 'peer_incompatible'
+  | 'peer_revoked';
 
 export type QueueAnswerResult =
   | { ok: true; record: RequestRecord }

@@ -121,6 +121,7 @@ import {
   type RemoteRecipientOutcome,
   type RemoteResolution,
   type RoutedIntent,
+  remoteGrantOf,
   routedAskSummary,
   routedIntentOf,
   routedName,
@@ -130,7 +131,12 @@ import { createRequestsIo, type RequestsIo } from './request-file-fs';
 import { createRequestNotices } from './request-notices';
 import { createRequestService, type RequestService } from './request-service';
 import type { QuestionMessage, SessionNeedsYou } from './request-sources';
-import type { AnswerInput, AnswerRefusal, RequestAnswerResult } from './request-types';
+import type {
+  AnswerInput,
+  AnswerRefusal,
+  RequestAnswerResult,
+  RequestRecord,
+} from './request-types';
 import { createScreenToolHandlers } from './screen-tools';
 import { type ScreenSnapshot, screenVerdict } from './screen-verdict';
 import { assignHandle, createSessionRegistry } from './session-registry';
@@ -188,7 +194,6 @@ import {
   type ScreenVerdict,
   THREAD_AGENT_LIMIT,
   type ThreadSummary,
-  type ToolError,
   toolError,
 } from './types';
 import type {
@@ -383,6 +388,45 @@ const SUBMIT_CONFIRM_WAIT_MS = 2_000;
 const RETENTION_EVERY_MS = 6 * 60 * 60 * 1000;
 const BROADCAST_COALESCE_MS = 150;
 const MAX_UI_THREADS = 500;
+// A remote lead's ask waits this long for the owner, inside the lead's 60 s routed cap (CON-42 decision 1).
+const REMOTE_ASK_MS = 45_000;
+
+/** How the owner's end of a remote ask reads to the lead's call: an allow, or the refusal it means. */
+const ownerOutcomeOf = (r: RequestRecord): Result<AnswerInput> => {
+  if (r.state === 'answered' && r.answer !== null) {
+    return r.answer.outcome === 'allowed'
+      ? { ok: true, value: r.answer }
+      : { ok: false, error: toolError('denied', 'the owner declined the request') };
+  }
+  if (r.state === 'expired')
+    return { ok: false, error: toolError('approval_timeout', 'the owner did not answer in time') };
+  if (r.state === 'withdrawn')
+    return {
+      ok: false,
+      error: toolError('server_stopping', 'Conduit stopped before the owner answered'),
+    };
+  return {
+    ok: false,
+    error: toolError('cancelled', 'the request ended before the owner answered'),
+  };
+};
+
+/** The peer refusal a failed remote answer carries to the renderer; other failures stay not_answerable. */
+const peerRefusalOf = (code: string): AnswerRefusal =>
+  code === 'peer_unreachable' || code === 'peer_incompatible' || code === 'peer_revoked'
+    ? code
+    : 'not_answerable';
+
+const outcomeOfRemoteError = (
+  code: string,
+  decision: PolicyDecision['decision'],
+): ActivityOutcome => {
+  if (code === 'denied' || decision === 'deny') return 'denied';
+  if (code === 'approval_timeout') return 'expired';
+  if (code === 'server_stopping') return 'withdrawn';
+  return 'error';
+};
+
 const LAUNCH_DIR = 'launch';
 const HANDLES_FILE = 'handles.json';
 const VERSION = '1';
@@ -1831,17 +1875,6 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return r?.defAdapter !== undefined && r.defAdapter.wiring !== 'cursor-global' && !r.unavailable;
   };
 
-  const remoteAsk = (name: ToolName): ToolError =>
-    toolError(
-      'refused',
-      `${name} needs the owner's approval, which a remote lead can't ask for`,
-      undefined,
-      {
-        reason: 'remote_ask',
-        hint: `this needs the owner on ${deps.network?.selfName() ?? 'this machine'}; answer it there`,
-      },
-    );
-
   /** The remote opener a session names, so reach and list_sessions can show it. */
   const remoteOpenerOf = (
     o: SessionOpener | undefined,
@@ -2234,9 +2267,47 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   };
 
   /**
+   * The owner's answer to a remote lead's ask (CON-42 decision 1): a permission in this machine's
+   * queue, mirrored to the controller whose owner answers it there. The call waits on that answer.
+   */
+  const askOwner = async (
+    remote: RemoteCaller,
+    name: RoutedTool,
+    decision: PolicyDecision,
+    targets: readonly PolicyTarget[],
+  ): Promise<{ requestId: string; outcome: Result<AnswerInput> }> => {
+    const created = requestService.createRemotePermission(
+      { handle: remote.handle, machineId: remote.machineId },
+      {
+        tool: name,
+        why: reasonOf(decision),
+        targets: [...targets],
+        grantable: !decision.forcedAsk,
+      },
+      new Date(now() + REMOTE_ASK_MS).toISOString(),
+    );
+    policyService.activity.record({
+      lane: 'conduit',
+      principal: { handle: remote.handle, sessionId: null, machineId: remote.machineId },
+      cli: null,
+      action: name,
+      target: targets[0]?.path ?? targets[0]?.sessionId ?? null,
+      summary: null,
+      decision: 'ask',
+      decidedBy: reasonOf(decision),
+      outcome: 'asked',
+      durationMs: null,
+      requestId: created.id,
+      count: null,
+    });
+    const ended = await created.ended;
+    return { requestId: created.id, outcome: ownerOutcomeOf(ended) };
+  };
+
+  /**
    * A routed call from a remote lead (plan decision 4): the same policy decision, commit and prepare
-   * as a local call, under the remote principal, with no session, home or window. A remote lead has
-   * no owner on this side to answer an ask, so an ask is refused here.
+   * as a local call, under the remote principal, with no session, home or window. An ask or a bare
+   * command waits for the owner of this machine, through a permission in its queue (CON-42).
    */
   const callAsRemote = async (
     remote: RemoteCaller,
@@ -2265,13 +2336,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       toYou: false,
     };
     const decision = policyService.decide(policyInput);
+    let raised: string | null = null;
     const result = await (async (): Promise<Result<StructuredOutput>> => {
       if (!policyInput.masterOn && name !== 'list_agents')
         return { ok: false, error: toolError('messaging_off', 'Conduit messaging is turned off') };
       if (decision.decision === 'deny') return { ok: false, error: toolDisabled(name) };
-      if (decision.decision === 'ask') return { ok: false, error: remoteAsk(name) };
-      if (policyService.commit(policyInput, decision) === null)
-        return { ok: false, error: toolDisabled(name) };
       const ctx: ControlCallContext = {
         move: decision.rule.move ?? undefined,
         reach: decision.rule.reach ?? undefined,
@@ -2282,13 +2351,35 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       const prepared = await prepareControl(caller, name, args, ctx);
       if (!prepared.ok) return prepared;
       const p = prepared.value;
-      if ('done' in p) return p.done;
-      // A bare command is never a registered agent, so an allow still asks (flexible-agent-contracts §3.1).
-      if (p.alwaysAsk) {
-        p.release();
-        return { ok: false, error: remoteAsk(name) };
+      if ('done' in p) {
+        if (policyService.commit(policyInput, decision) === null)
+          return { ok: false, error: toolDisabled(name) };
+        return p.done;
       }
+      // A bare command is never a registered agent, so an allow still asks (flexible-agent-contracts §3.1).
+      const asked = decision.decision === 'ask' || p.alwaysAsk === true;
       try {
+        if (asked) {
+          const owner = await askOwner(remote, name, decision, targets);
+          raised = owner.requestId;
+          if (!owner.outcome.ok) {
+            p.release();
+            return owner.outcome;
+          }
+          // The grant is the owner's to make only when the ask allowed it (remoteGrantOf).
+          const choice = remoteGrantOf(owner.outcome.value, !decision.forcedAsk);
+          if (
+            choice !== null &&
+            grantsFor(choice, remote, name, targets, owner.requestId) === null
+          ) {
+            p.release();
+            return { ok: false, error: toolError('refused', SCOPE_UNAVAILABLE) };
+          }
+        }
+        if (policyService.commit(policyInput, decision) === null) {
+          p.release();
+          return { ok: false, error: toolDisabled(name) };
+        }
         return await p.run();
       } finally {
         p.budget?.dispose();
@@ -2303,15 +2394,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       summary: null,
       decision: decision.decision,
       decidedBy: reasonOf(decision),
-      outcome: result.ok
-        ? 'ok'
-        : result.error.reason === 'remote_ask'
-          ? 'refused'
-          : decision.decision === 'deny'
-            ? 'denied'
-            : 'error',
+      outcome: result.ok ? 'ok' : outcomeOfRemoteError(result.error.code, decision.decision),
       durationMs: now() - startedAt,
-      requestId: null,
+      requestId: raised,
       count: null,
     });
     policyService.noteDecision(activityId, policyInput, decision);
@@ -2628,11 +2713,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       request: ref.view,
     });
     if (ref.view.stale || deps.network === undefined)
-      return refuse('not_answerable', unreachableRemote(ref.view.machineName).message);
+      return refuse('peer_unreachable', unreachableRemote(ref.view.machineName).message);
     const checked = checkRemoteAnswer(ref, answer);
     if (!checked.ok) return refuse(checked.reason, checked.message);
     const sent = await deps.network.answerRemoteRequest(ref.machineId, ref.requestId, checked.body);
-    if (!sent.ok) return refuse('not_answerable', sent.error.message);
+    if (!sent.ok) return refuse(peerRefusalOf(sent.error.code), sent.error.message);
     return { ok: true, request: ref.view };
   }
 
@@ -3573,6 +3658,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       localDirectory: () => directory(),
       callAsRemote,
       remoteRequests: () => remoteRequests,
+      mirrorOf: () => requestService.mirrorOf(),
+      requestsHasEnded: () => requestService.hasEnded(),
+      onRequestsMirrorChange: (fn) => requestService.onMirrorChange(fn),
+      applyRemoteAnswer: (requestId, answer, answerId, machineId) =>
+        requestService.applyRemoteAnswer(requestId, answer, answerId, machineId),
       hasMessage: (id) => store.has(id),
       readBlob: (sha256) => store.readBlob(sha256),
       // A thread is exported to a machine once a message in it went there (to its recipient) or

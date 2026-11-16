@@ -7,6 +7,7 @@ import {
   type NetworkPort,
   nameOnMachine,
   type RemoteEntry,
+  remoteGrantOf,
   remoteTargetRefusal,
   routedAskSummary,
   routedIntentOf,
@@ -245,5 +246,25 @@ describe('routed machines: which machine a name means, and how a result names it
       const m = view(name, 'm-0000cccc');
       expect(addressableName([m], m)).toBe('m-0000cccc');
     }
+  });
+});
+
+describe('remoteGrantOf (CON-42 L5a: only an allow of a grantable ask grants)', () => {
+  const peer = { who: 'peer', on: 'target', for: 'until-revoked' } as const;
+
+  it('an allow of a grantable ask with a grant makes that grant', () => {
+    expect(remoteGrantOf({ outcome: 'allowed', grant: peer }, true)).toEqual(peer);
+  });
+
+  it('a forced ask never grants, whatever the answer carries (RS-D6)', () => {
+    expect(remoteGrantOf({ outcome: 'allowed', grant: peer }, false)).toBeNull();
+  });
+
+  it('an allow without a grant makes none', () => {
+    expect(remoteGrantOf({ outcome: 'allowed' }, true)).toBeNull();
+  });
+
+  it('a denial makes none, even with a grant attached', () => {
+    expect(remoteGrantOf({ outcome: 'denied', grant: peer }, true)).toBeNull();
   });
 });
