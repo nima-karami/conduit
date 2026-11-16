@@ -303,7 +303,7 @@ const titleOf = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() || p
 // file/diff title is its basename; review has a fixed human title.
 function initialTitle(kind: DocKind, path: string, diffScope?: DiffTabScope): string {
   if (kind === 'review') return REVIEW_DOC_TITLE;
-  if (kind === 'git-history') return GIT_HISTORY_DOC_TITLE;
+  if (kind === 'git-history' || kind === 'remote-history') return GIT_HISTORY_DOC_TITLE;
   // The kind alone is known at open time, so the title is generic; the tab names the request.
   if (kind === 'request') return REQ_STR.reqTab.title;
   if (kind === 'web') return displayTitleForUrl(path);

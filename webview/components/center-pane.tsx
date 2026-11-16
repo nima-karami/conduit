@@ -51,7 +51,9 @@ import { GitHistoryView } from './git-history-view';
 import { McpSetupBanner } from './mcp-setup-banner';
 import { MissingHomeState, StartRefusedState } from './missing-home-state';
 import type { DockHandlers } from './panel-frame';
+import { RemoteDiffView } from './remote-diff-view';
 import { RemoteDocView } from './remote-doc-view';
+import { RemoteHistoryView } from './remote-history-view';
 import { RemotePane } from './remote-pane';
 import { RequestPopup } from './request-popup';
 import { RequestTab } from './request-tab';
@@ -348,16 +350,20 @@ export function CenterPane({
     return v ? { group: v.group, visible: v.activeDocId === id } : null;
   };
 
+  // A remote doc names its machine and B's session; the row for that pair carries the name.
+  const machineNameOf = (doc: OpenDoc): string =>
+    remoteRows.find(
+      (r) =>
+        r.key.machineId === doc.machine?.machineId && r.key.sessionId === doc.machine?.sessionId,
+    )?.machineName ?? MACHINES_STR.anotherMachine;
+
   const renderDocBody = (doc: OpenDoc, group: GroupIndex) =>
     isRemoteFileDoc(doc) ? (
-      <RemoteDocView
-        key={doc.id}
-        doc={doc}
-        machineName={
-          remoteRows.find((r) => r.id === doc.machine.sessionId)?.machineName ??
-          MACHINES_STR.anotherMachine
-        }
-      />
+      <RemoteDocView key={doc.id} doc={doc} machineName={machineNameOf(doc)} />
+    ) : doc.kind === 'remote-diff' ? (
+      <RemoteDiffView key={doc.id} doc={doc} machineName={machineNameOf(doc)} />
+    ) : doc.kind === 'remote-history' ? (
+      <RemoteHistoryView key={doc.id} doc={doc} machineName={machineNameOf(doc)} />
     ) : doc.kind === 'review' ? (
       <ReviewView
         reviewRepos={reviewRepos}

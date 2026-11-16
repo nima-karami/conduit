@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -123,6 +124,18 @@ async function run(page, userDataDir, log) {
       writeFileSync(join(bWork, '.ssh', 'id_rsa'), 'key');
       mkdirSync(join(bWork, 'sub'));
       writeFileSync(join(bWork, 'sub', 'b.txt'), 'nested');
+      // A repo, so the Changes, diff and history phases (CON-45) have B's git state to show.
+      const git = (...args) =>
+        execFileSync(
+          'git',
+          ['-c', 'user.name=e2e', '-c', 'user.email=e2e@example.invalid', ...args],
+          {
+            cwd: bWork,
+          },
+        );
+      git('init', '-q');
+      git('add', '.');
+      git('commit', '-qm', 'first on B');
 
       phase('1. A adds B over ssh; a Lead agent on A opens a session on B; its remote row shows');
       const added = await appC2.call('link.sshAdd', {
@@ -358,7 +371,8 @@ async function run(page, userDataDir, log) {
       assert(before?.includes(REFUSED), `the folder was served before attach: ${before}`);
       const attached = await callAppTool(page, lead.sessionId, 'attach_folder', {
         path: extra,
-        session: `${opened.handle}@${bId}`,
+        // open_session already answers with the address form, handle@machine.
+        session: opened.handle,
       });
       assert(attached !== null && !attached.error, `attach_folder: ${JSON.stringify(attached)}`);
       assert(
@@ -381,6 +395,55 @@ async function run(page, userDataDir, log) {
         'the attached folder never became readable in the session',
       );
       log('attach_folder added the B folder ✓');
+
+      phase("12. Changes lists B's modified file, never a denied one; a click opens B's diff");
+      await showRightView(page, 'changes');
+      const changes = page.getByRole('list', { name: `Changes on ${bName}` });
+      await changes.waitFor({ state: 'visible', timeout: WAIT_MS });
+      const changePaths = () => changes.locator('.remote-changes__path').allTextContents();
+      assert(
+        await pollUntil(async () => (await changePaths()).includes('a.txt'), WAIT_MS, 250),
+        `remote Changes never listed a.txt: ${JSON.stringify(await changePaths())}`,
+      );
+      assert(
+        !(await changePaths()).some((p) => p.includes('.env') || p.includes('.ssh')),
+        `remote Changes shows a denied path: ${JSON.stringify(await changePaths())}`,
+      );
+      await changes.locator('.remote-changes__row', { hasText: 'a.txt' }).click();
+      const diffSides = () =>
+        page.evaluate(() => (window.monaco?.editor.getModels() ?? []).map((m) => m.getValue()));
+      assert(
+        await pollUntil(
+          async () => {
+            const sides = await diffSides();
+            return sides.includes('hello from B') && sides.includes('B wins');
+          },
+          WAIT_MS,
+          250,
+        ),
+        "the remote diff never showed HEAD's text against B's file",
+      );
+      await shot('4', 'remote-changes', page.locator('#right-pane'));
+      log('remote Changes lists a.txt, its diff shows HEAD vs B ✓');
+
+      phase("13. History lists B's commit, and the commit's files");
+      await changes.getByRole('button', { name: 'History' }).first().click();
+      const commit = page.locator('.remote-history__commit', { hasText: 'first on B' });
+      await commit.waitFor({ state: 'visible', timeout: WAIT_MS });
+      await commit.click();
+      await page
+        .locator('.remote-history__file-row', { hasText: 'a.txt' })
+        .waitFor({ state: 'visible', timeout: WAIT_MS });
+      await shot('5', 'remote-history', page.locator('.remote-history__detail').first());
+      log("history shows B's commit and its files ✓");
+
+      phase('14. a new file on B shows up in Changes on its own');
+      writeFileSync(join(bWork, 'fresh.txt'), 'new on B');
+      assert(
+        await pollUntil(async () => (await changePaths()).includes('fresh.txt'), 15_000, 500),
+        `remote Changes never picked up fresh.txt: ${JSON.stringify(await changePaths())}`,
+      );
+      log('remote Changes refreshed with fresh.txt ✓');
     } finally {
       appC2.close();
     }
