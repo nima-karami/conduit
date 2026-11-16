@@ -6,6 +6,7 @@ import type { ServerCallOptions } from './server-client';
 export type RemoteFsMethod =
   | 'remote.fs.list'
   | 'remote.fs.read'
+  | 'remote.fs.write'
   | 'remote.fs.stat'
   | 'remote.fs.watch'
   | 'remote.fs.unwatch';
@@ -14,6 +15,9 @@ type Message<T extends WebviewToHost['type']> = Extract<WebviewToHost, { type: T
 
 /** B bounds its own git read at 30 s; C2 waits longer so B's answer, not our timeout, is what the window gets. */
 const GIT_TIMEOUT_MS = 35_000;
+
+/** A's file client gives B 30 s for an fs.res (server/network/fs-client.ts FS_REQ_MS); C2 waits a little longer, as for git. */
+const WRITE_TIMEOUT_MS = 35_000;
 
 export interface RemoteFilesDeps {
   call<M extends RemoteFilesMethod>(
@@ -116,6 +120,37 @@ export function createRemoteFiles(d: RemoteFilesDeps) {
     });
   };
 
+  // The file content is never logged or echoed back: the reply carries only B's verdict.
+  const write = async (windowId: number, m: Message<'remoteFs:write'>): Promise<void> => {
+    let result: ServerMethods['remote.fs.write']['result'];
+    try {
+      result = await d.call(
+        'remote.fs.write',
+        {
+          machineId: m.machineId,
+          sessionId: m.sessionId,
+          path: m.path,
+          data: m.data,
+          expect: m.expect,
+        },
+        { timeoutMs: WRITE_TIMEOUT_MS },
+      );
+    } catch (error) {
+      d.log('warn', 'remote fs write failed', {
+        machineId: m.machineId,
+        sessionId: m.sessionId,
+        err: String(error),
+      });
+      d.sendTo(windowId, {
+        type: 'remoteFs:written',
+        requestId: m.requestId,
+        result: { kind: 'error', error: faultCode(error) },
+      });
+      return;
+    }
+    d.sendTo(windowId, { type: 'remoteFs:written', requestId: m.requestId, result });
+  };
+
   const git = async (windowId: number, m: Message<'remoteGit:request'>): Promise<void> => {
     let value: ServerMethods['remote.git']['result'];
     try {
@@ -196,6 +231,7 @@ export function createRemoteFiles(d: RemoteFilesDeps) {
   return {
     list,
     read,
+    write,
     git,
     watch,
     unwatch,
