@@ -40,6 +40,7 @@ import {
   type HelloProof,
   type LinkConnection,
   openConnection,
+  type Refused,
 } from './link-connection';
 import type { LinkStore } from './link-store';
 import { dial, type NetLog } from './listener';
@@ -77,6 +78,15 @@ export interface LinkManagerDeps {
   dialTimeoutMs?: number;
   pingMs?: number;
 }
+
+/**
+ * Why an ssh peer's claimed identity is refused before any signature or store write. `markId` is the
+ * record whose state the refusal moves, and `machine` the record a conflict names.
+ */
+type ClaimRefusal =
+  | { reason: 'bad-hello' }
+  | { reason: 'identity-changed'; markId: string }
+  | { reason: 'identity-conflict'; machine: string };
 
 /** A waiter's answer: up, or why the last dial failed (null for a plain timeout or abort). */
 export type WaitUpResult = { up: true } | { up: false; failure: SshFailure | null };
@@ -200,24 +210,38 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
   /**
    * The proof an ssh handshake runs with (plan F1). The keys are public, so a hello alone shows
    * nothing; the far end must sign our nonce with the private half of the key its hello names.
+   * `beforeProof` runs first, so a claim we would refuse is never answered with a signature.
    */
-  const sshProof = (ownNonce: string): HelloProof => ({
+  const sshProof = (
+    ownNonce: string,
+    beforeProof: (peer: HelloFrame) => ClaimRefusal | null,
+  ): HelloProof<ClaimRefusal> => ({
+    beforeProof,
     sign: (peerNonce, peerMachineId) => signProof(deps.identity(), peerNonce, peerMachineId),
     verify: (peer, sig) =>
       verifyProof(peer.serverKey, sig, ownNonce, peer.machineId, deps.identity().machineId),
   });
 
   /**
-   * A refused ssh handshake is audited, not only logged: a peer that fails the proof is either
-   * broken or an impostor, and the owner needs to be able to see which.
+   * A refused ssh handshake is audited, not only logged: a peer that fails the proof, or is refused
+   * before one is signed, is either broken or an impostor, and the owner needs to be able to see which.
    */
-  const auditSshRefusal = (refused: { error: ConnectionError; peerHello?: HelloFrame }): void => {
-    if (refused.error !== 'bad-proof' && refused.error !== 'incompatible') return;
-    deps.audit.record({
-      kind: 'link.refused',
-      peer: refused.peerHello?.machineId ?? null,
-      detail: { transport: 'ssh', reason: refused.error },
-    });
+  const auditSshRefusal = (refused: Refused<ClaimRefusal>): void => {
+    if (refused.error === 'incompatible' || refused.error === 'bad-proof') {
+      deps.audit.record({
+        kind: 'link.refused',
+        peer: refused.peerHello?.machineId ?? null,
+        detail: { transport: 'ssh', reason: refused.error },
+      });
+      return;
+    }
+    if (refused.error === 'refused') {
+      deps.audit.record({
+        kind: 'link.refused',
+        peer: refused.peerHello.machineId,
+        detail: { transport: 'ssh', reason: refused.refusal.reason },
+      });
+    }
   };
 
   /**
@@ -366,10 +390,15 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       now: deps.now,
       log: deps.log,
       pingMs: deps.pingMs,
-      proof: dialed === undefined ? undefined : sshProof(ourHello.nonce),
+      // A redial answers only for the record it dials: another machine or key is refused unsigned.
+      proof:
+        dialed === undefined
+          ? undefined
+          : sshProof(ourHello.nonce, (peer) => claimRefusal(peer, p.record.ssh, p.record)),
     });
     if ('error' in opened) {
       auditSshRefusal(opened);
+      if (opened.error === 'refused') markRefused(opened.refusal);
       // The ssh child's exit says why it never got to a hello (host key, auth, bridge refusal).
       // It is kept on the peer before the state moves, so a waiter sees the reason with the down.
       if (dialed !== undefined) {
@@ -387,57 +416,84 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
   };
 
   /**
-   * What an ssh hello must satisfy before it may name a record. The machine id is the hash of the
-   * key it arrives with, as pairing checks it over TLS: the store and the outbox key by machine id,
-   * so an unbound id would let one peer take another's record. A hello naming this machine is a
-   * loop back to ourselves, refused the same way.
+   * Why an ssh peer's claimed identity may not be proven to or pinned, or null. It is the one place
+   * the pre-sign check (before a signature) and pinSshPeer (before a store write) both ask. The
+   * machine id is the hash of the key it arrives with, as pairing checks it over TLS: the store and
+   * the outbox key by machine id, so an unbound id would let one peer take another's record. A hello
+   * naming this machine is a loop back to ourselves. `ssh` is the target we dial, or null for a peer
+   * that dialed us; `expected` is the record a redial is for, which a hello must match exactly.
    */
-  const helloRefused = (hello: HelloFrame): boolean => {
+  const claimRefusal = (
+    hello: HelloFrame,
+    ssh: SshEndpoint | null,
+    expected: LinkRecord | null,
+  ): ClaimRefusal | null => {
     const raw = Buffer.from(hello.serverKey, 'base64');
     if (raw.length !== 32 || raw.toString('base64') !== hello.serverKey) {
       deps.log.warn('link: ssh hello refused', { peer: hello.machineId, reason: 'malformed key' });
-      return true;
+      return { reason: 'bad-hello' };
     }
     if (hello.machineId !== deriveMachineId(raw)) {
       deps.log.warn('link: ssh hello refused', {
         peer: hello.machineId,
         reason: 'forged machine id',
       });
-      return true;
+      return { reason: 'bad-hello' };
     }
     if (hello.machineId === deps.identity().machineId) {
       deps.log.warn('link: ssh self-link refused', { peer: hello.machineId });
-      return true;
+      return { reason: 'bad-hello' };
     }
-    return false;
+    if (
+      expected !== null &&
+      (expected.machineId !== hello.machineId || expected.serverKey !== hello.serverKey)
+    )
+      return { reason: 'identity-changed', markId: expected.machineId };
+    // A known target that answers with another machine id is a reinstall or an impostor. The old
+    // pin stays until the owner acts (spec 6); a second record for the same target is never made.
+    if (ssh !== null) {
+      const elsewhere = deps.store
+        .links()
+        .find(
+          (l) =>
+            l.transport === 'ssh' &&
+            l.ssh?.target === ssh.target &&
+            l.machineId !== hello.machineId,
+        );
+      if (elsewhere !== undefined)
+        return { reason: 'identity-changed', markId: elsewhere.machineId };
+    }
+    // The conflict names the record it collides with: the hint tells the agent to connect that one.
+    const live = deps.store.get(hello.machineId);
+    if (live !== null) {
+      if (live.transport !== 'ssh') return { reason: 'identity-conflict', machine: live.name };
+      if (live.serverKey !== hello.serverKey)
+        return { reason: 'identity-changed', markId: hello.machineId };
+      if (ssh !== null && (live.ssh === null || live.ssh.target !== ssh.target))
+        return { reason: 'identity-conflict', machine: live.name };
+      return null;
+    }
+    if (deps.store.conflicts(hello.machineId, hello.serverKey))
+      return { reason: 'identity-changed', markId: hello.machineId };
+    return null;
   };
 
   /**
-   * The peer's record for a sound ssh hello, or why it can't be pinned. One transport per peer
-   * while TLS is parked; a changed server key is never accepted. A dial reaches only the host the
-   * record was pinned for (spec 4.2.5): a controller record (no endpoint) or another target is a
-   * conflict, and the same target may move its node, mainJs or userData.
+   * The peer's record for a sound ssh hello, or why it can't be pinned. A dial reaches only the host
+   * the record was pinned for (spec 4.2.5), and the same target may move its node, mainJs or userData.
    */
   const pinSshPeer = (
     hello: HelloFrame,
     ssh: SshEndpoint | null,
-  ):
-    | { record: LinkRecord }
-    | { error: 'identity-changed' }
-    | { error: 'identity-conflict'; machine: string } => {
+  ): { record: LinkRecord } | ClaimRefusal => {
+    const refused = claimRefusal(hello, ssh, null);
+    if (refused !== null) return refused;
     const live = deps.store.get(hello.machineId);
     if (live !== null) {
-      // The conflict names the record it collides with: the hint tells the agent to connect that one.
-      if (live.transport !== 'ssh') return { error: 'identity-conflict', machine: live.name };
-      if (live.serverKey !== hello.serverKey) return { error: 'identity-changed' };
       if (ssh === null) return { record: live };
-      if (live.ssh === null || live.ssh.target !== ssh.target)
-        return { error: 'identity-conflict', machine: live.name };
       if (JSON.stringify(live.ssh) === JSON.stringify(ssh)) return { record: live };
       return { record: deps.store.update(live.machineId, { ssh }) ?? live };
     }
-    if (deps.store.conflicts(hello.machineId, hello.serverKey))
-      return { error: 'identity-changed' };
     // An ssh record we dial is named by the target the owner gave, not by the peer's own text (spec 4.1).
     const name =
       ssh !== null
@@ -461,6 +517,18 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     const live = deps.store.get(machineId);
     if (live !== null) event(ensurePeer(live), { kind: 'identity-changed', at: deps.now() });
   };
+
+  /** Only an identity-changed verdict moves a record's state; the others just end the handshake. */
+  const markRefused = (refusal: ClaimRefusal): void => {
+    if (refusal.reason === 'identity-changed') markIdentityChanged(refusal.markId);
+  };
+
+  const refusalError = (
+    refusal: ClaimRefusal,
+  ): Extract<AddSshPeerResult, { ok: false }>['error'] =>
+    refusal.reason === 'identity-conflict'
+      ? { code: 'identity-conflict', machine: refusal.machine }
+      : { code: refusal.reason };
 
   /**
    * Identity check, duplicate resolution and up, for a connection whose hello has arrived. TLS
@@ -556,10 +624,11 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       now: deps.now,
       log: deps.log,
       pingMs: deps.pingMs,
-      proof: sshProof(ourHello.nonce),
+      proof: sshProof(ourHello.nonce, (peer) => claimRefusal(peer, null, null)),
     });
     if ('error' in opened) {
       auditSshRefusal(opened);
+      if (opened.error === 'refused') markRefused(opened.refusal);
       return;
     }
     // Stopped during the hello: nothing is pinned, so nothing is stored for a link that won't run.
@@ -568,10 +637,6 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       return;
     }
     const hello = opened.peerHello;
-    if (helloRefused(hello)) {
-      opened.close('bad-hello');
-      return;
-    }
     // A revoked peer that dials us only hears that it was revoked, as over TLS (tombstones by key).
     const tomb = deps.store.byServerKey(hello.serverKey);
     if (tomb !== null && 'tombstone' in tomb) {
@@ -580,9 +645,9 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       return;
     }
     const pinned = pinSshPeer(hello, null);
-    if ('error' in pinned) {
-      if (pinned.error === 'identity-changed') markIdentityChanged(hello.machineId);
-      opened.close(pinned.error);
+    if (!('record' in pinned)) {
+      markRefused(pinned);
+      opened.close(pinned.reason);
       return;
     }
     // Only a record the peer dialed to us is a controller's: one we dial is ours, and drive stays off.
@@ -607,10 +672,14 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       now: deps.now,
       log: deps.log,
       pingMs: deps.pingMs,
-      proof: sshProof(ourHello.nonce),
+      proof: sshProof(ourHello.nonce, (peer) => claimRefusal(peer, ssh, null)),
     });
     if ('error' in opened) {
       auditSshRefusal(opened);
+      if (opened.error === 'refused') {
+        markRefused(opened.refusal);
+        return { ok: false, error: refusalError(opened.refusal) };
+      }
       if (opened.error === 'closed')
         return {
           ok: false,
@@ -624,34 +693,11 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       return { ok: false, error: { code: 'ssh_failed', detail: 'not_adopted' } };
     }
     const hello = opened.peerHello;
-    if (helloRefused(hello)) {
-      opened.close('bad-hello');
-      return { ok: false, error: { code: 'bad-hello' } };
-    }
-    // A known target that answers with another machine id is a reinstall or an impostor. The old
-    // pin stays until the owner acts (spec 6); a second record for the same target is never made.
-    const pinnedElsewhere = deps.store
-      .links()
-      .find(
-        (l) =>
-          l.transport === 'ssh' && l.ssh?.target === ssh.target && l.machineId !== hello.machineId,
-      );
-    if (pinnedElsewhere !== undefined) {
-      markIdentityChanged(pinnedElsewhere.machineId);
-      opened.close('identity-changed');
-      return { ok: false, error: { code: 'identity-changed' } };
-    }
     const pinned = pinSshPeer(hello, ssh);
-    if ('error' in pinned) {
-      if (pinned.error === 'identity-changed') markIdentityChanged(hello.machineId);
-      opened.close(pinned.error);
-      return {
-        ok: false,
-        error:
-          pinned.error === 'identity-changed'
-            ? { code: 'identity-changed' }
-            : { code: 'identity-conflict', machine: pinned.machine },
-      };
+    if (!('record' in pinned)) {
+      markRefused(pinned);
+      opened.close(pinned.reason);
+      return { ok: false, error: refusalError(pinned) };
     }
     // An explicit add is the owner asking for this machine, so a disabled one comes back on before its
     // link attaches; attach refuses a disabled peer (its disconnect check), and the add must not lose.
@@ -697,7 +743,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     conn.send({ t: 'owner.ack' });
   };
 
-  const failed = (p: Peer, error: ConnectionError): void => {
+  const failed = (p: Peer, error: ConnectionError | 'refused'): void => {
     if (error === 'incompatible') {
       event(p, { kind: 'incompatible', at: deps.now() });
       return;

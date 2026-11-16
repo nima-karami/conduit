@@ -40,7 +40,7 @@ export interface LinkConnection {
   readonly peerHello: HelloFrame;
 }
 
-export interface ConnectionOptions {
+export interface ConnectionOptions<R = never> {
   hello: HelloFrame;
   now(): number;
   log: NetLog;
@@ -50,7 +50,7 @@ export interface ConnectionOptions {
   /** Repeats fn every ms; returns its cancel. Injected by tests to drive time. */
   every?: (fn: () => void, ms: number) => () => void;
   /** Set for an ssh link: the handshake is not complete until the peer proves its key. */
-  proof?: HelloProof;
+  proof?: HelloProof<R>;
 }
 
 const realEvery = (fn: () => void, ms: number): (() => void) => {
@@ -61,21 +61,35 @@ const realEvery = (fn: () => void, ms: number): (() => void) => {
 export type ConnectionError = 'incompatible' | 'bad-hello' | 'bad-proof' | 'timeout' | 'closed';
 
 /**
+ * A handshake that did not come up. `refused` is the pre-sign check's verdict: the peer's hello was
+ * read, and nothing was signed for it. The caller maps the verdict to its own result.
+ */
+export type Refused<R> =
+  | { error: ConnectionError; peerHello?: HelloFrame }
+  | { error: 'refused'; peerHello: HelloFrame; refusal: R };
+
+/**
  * An ssh link's proof of possession (plan F1). The peer's hello names a server key, and only a
  * signature from that key shows the peer holds it. TLS proves the same in its handshake, so only
  * ssh links set this.
  */
-export interface HelloProof {
+export interface HelloProof<R = never> {
+  /**
+   * Runs on the peer's hello before we sign anything for it. A verdict closes the link with
+   * `refused`, so a peer that claims an identity we would refuse never gets a signature over our
+   * nonce: a signature is an answer to any hello that names a key, not only to the owner's own.
+   */
+  beforeProof?(peer: HelloFrame): R | null;
   /** Our signature over the peer's nonce, bound to both machine ids. */
   sign(peerNonce: string, peerMachineId: string): string;
   /** Whether `sig` is the peer's signature over our own nonce, for the key its hello named. */
   verify(peer: HelloFrame, sig: string): boolean;
 }
 
-export function openConnection(
+export function openConnection<R = never>(
   sock: Duplex,
-  opts: ConnectionOptions,
-): Promise<LinkConnection | { error: ConnectionError; peerHello?: HelloFrame }> {
+  opts: ConnectionOptions<R>,
+): Promise<LinkConnection | Refused<R>> {
   const decoder = new FrameDecoder(LINK_FRAME_MAX_BYTES);
   const every = opts.every ?? realEvery;
   const pingMs = opts.pingMs ?? LINK_PING_MS;
@@ -96,7 +110,7 @@ export function openConnection(
 
   return new Promise((resolve) => {
     let settled = false;
-    const settle = (v: LinkConnection | { error: ConnectionError; peerHello?: HelloFrame }) => {
+    const settle = (v: LinkConnection | Refused<R>) => {
       if (settled) return;
       settled = true;
       resolve(v);
@@ -118,11 +132,7 @@ export function openConnection(
       else closedWhy = why;
     };
     /** A refusal before the link is up: the caller learns why, then the socket goes. */
-    const refuse = (
-      result: { error: ConnectionError; peerHello?: HelloFrame },
-      why: string,
-      graceful: boolean,
-    ): void => {
+    const refuse = (result: Refused<R>, why: string, graceful: boolean): void => {
       clearTimeout(helloTimer);
       awaitingProof = false;
       settle(result);
@@ -188,8 +198,14 @@ export function openConnection(
         refuse({ error: 'bad-proof', peerHello: frame }, 'bad-proof', true);
         return;
       }
-      // Our proof goes out first, so the peer can check ours while we check its.
       peerHello = frame;
+      // Checked before the signature: a refused identity must not get one (review M1).
+      const refusal = opts.proof.beforeProof?.(frame) ?? null;
+      if (refusal !== null) {
+        refuse({ error: 'refused', peerHello: frame, refusal }, 'refused', true);
+        return;
+      }
+      // Our proof goes out first, so the peer can check ours while we check its.
       awaitingProof = true;
       write({ t: 'hello.proof', sig: opts.proof.sign(frame.nonce, frame.machineId) });
     };

@@ -24,6 +24,7 @@ import {
   LINK_PROTOCOL,
   type LinkFrame,
   OWN_DEFAULT_CAPABILITIES,
+  parseLinkFrame,
   type WireMessage,
 } from '../../src/contracts/link-protocol';
 import type { SshDial, SshEndpoint } from '../../src/contracts/ssh-link';
@@ -605,6 +606,36 @@ function forgingStream(hello: HelloFrame, proof: HelloProof): Duplex {
   return near;
 }
 
+/**
+ * A far end that answers our hello with `claim(ourHello)` and records every frame we write to it.
+ * `ended` settles once we close our side, so `sent` is complete when it resolves.
+ */
+function claimingStream(claim: (ours: HelloFrame) => HelloFrame): {
+  stream: Duplex;
+  sent: LinkFrame[];
+  ended: Promise<void>;
+} {
+  const [near, far] = streamPair();
+  const sent: LinkFrame[] = [];
+  const decoder = new FrameDecoder(LINK_FRAME_MAX_BYTES);
+  let answered = false;
+  far.on('data', (chunk: Buffer) => {
+    for (const raw of decoder.push(chunk).frames) {
+      const f = parseLinkFrame(raw);
+      if (f === null) continue;
+      sent.push(f);
+      if (!answered && f.t === 'hello') {
+        answered = true;
+        far.write(encodeFrame(claim(f)));
+      }
+    }
+  });
+  const ended = new Promise<void>((resolve) => far.on('end', () => resolve()));
+  return { stream: near, sent, ended };
+}
+
+const proofFrames = (sent: LinkFrame[]): LinkFrame[] => sent.filter((f) => f.t === 'hello.proof');
+
 const wire: WireMessage = {
   messageId: 'm_abcdefghijklmnop',
   threadId: 't_abcdefghijklmnop',
@@ -949,17 +980,17 @@ describe('ssh hello identity and per-host pinning', { timeout: 60_000 }, () => {
     expect(b.warns).toContain(HELLO_REFUSED);
   });
 
-  it('a hello whose key is not a raw 32-byte key is refused on accept', async () => {
+  it('a hello whose key is not a raw 32-byte key is refused on accept, before any proof', async () => {
     const { a, b } = await sshPair();
-    // A key that is not 32 raw bytes cannot verify a proof, so the proof refuses it before
-    // helloRefused runs: the refusal is the proof's, and nothing is stored.
+    // The malformed key is refused by the pre-sign identity check, so no proof is ever signed for it.
     await acceptForged(
       b,
       { ...helloOf(a), serverKey: 'not-a-key' },
       forgedProof(a.id, a.id.machineId),
     );
     expect(b.store.links()).toEqual([]);
-    expect(b.warns).toContain(PROOF_REFUSED);
+    expect(b.warns).toContain(HELLO_REFUSED);
+    expect(b.warns).not.toContain(PROOF_REFUSED);
   });
 
   it('a hello naming this machine is refused as a self-link on accept', async () => {
@@ -1972,5 +2003,86 @@ describe('ssh proof of possession (plan F1)', { timeout: 60_000 }, () => {
     });
     expect(refusals(a)).toEqual([refusalOf(victim, 'bad-proof')]);
     expect(a.store.links()).toEqual([]);
+  });
+});
+
+describe('ssh pre-sign identity check (review M1)', { timeout: 60_000 }, () => {
+  const refusals = (n: Node) => n.audit.filter((e) => e.kind === 'link.refused');
+
+  it('a dialed peer that echoes our own identity and nonce (reflection) gets no proof from us', async () => {
+    const claims: ReturnType<typeof claimingStream>[] = [];
+    const a = await node(identity(), 'linux-box', 0, () => {
+      // The far end is us: it claims our machine id, our key and our nonce.
+      const c = claimingStream((ours) => ours);
+      claims.push(c);
+      return { stream: c.stream, failure: async () => null };
+    });
+    a.manager.start();
+    expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({
+      ok: false,
+      error: { code: 'bad-hello' },
+    });
+    await claims[0]?.ended;
+    expect(proofFrames(claims[0]?.sent ?? [])).toEqual([]);
+    expect(refusals(a)).toHaveLength(1);
+  });
+
+  it('a dial to a target whose hello claims a machine already pinned on another target gets no proof', async () => {
+    const owner = identity();
+    const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
+    const c = await node(identity(ownerKey), 'c-box');
+    const toC = fakeSsh(() => c);
+    const claims: ReturnType<typeof claimingStream>[] = [];
+    const a = await node(identity(ownerKey), 'linux-box', 0, (ssh) => {
+      if (ssh.target === 'c-target') return toC.dial(ssh);
+      // B answers as C: C's identity, with the nonce we just sent.
+      const spy = claimingStream((ours) => ({ ...helloOf(c), nonce: ours.nonce }));
+      claims.push(spy);
+      return { stream: spy.stream, failure: async () => null };
+    });
+    c.manager.start();
+    a.manager.start();
+    expect((await a.manager.addSshPeer({ ...ENDPOINT, target: 'c-target' })).ok).toBe(true);
+    await until(() => a.manager.view(c.id.machineId)?.state === 'up');
+    const before = a.store.get(c.id.machineId);
+
+    expect(await a.manager.addSshPeer({ ...ENDPOINT, target: 'b-target' })).toEqual({
+      ok: false,
+      error: { code: 'identity-conflict', machine: 'c-target' },
+    });
+    await claims[0]?.ended;
+    expect(proofFrames(claims[0]?.sent ?? [])).toEqual([]);
+    expect(a.store.get(c.id.machineId)).toEqual(before);
+  });
+
+  it('a redial whose peer presents another key is identity-changed before any proof is signed', async () => {
+    const real = await node(identity(), 'real');
+    const impostor = await node(identity(), 'impostor');
+    const claims: ReturnType<typeof claimingStream>[] = [];
+    const dial: SshDial = () => {
+      const spy = claimingStream((ours) => ({ ...helloOf(impostor), nonce: ours.nonce }));
+      claims.push(spy);
+      return { stream: spy.stream, failure: async () => null };
+    };
+    const a = await node(identity(), 'ctl', 0, dial);
+    a.store.addSsh({
+      machineId: real.id.machineId,
+      serverKey: real.id.serverKeyRaw.toString('base64'),
+      ownerKey: null,
+      name: 'real',
+      ssh: ENDPOINT,
+    });
+    a.manager.start();
+    await until(() => a.manager.view(real.id.machineId)?.state === 'identity-changed');
+    await until(() => claims.length > 0);
+    await claims[0]?.ended;
+    expect(proofFrames(claims[0]?.sent ?? [])).toEqual([]);
+    expect(refusals(a)).toEqual([
+      {
+        kind: 'link.refused',
+        peer: impostor.id.machineId,
+        detail: { transport: 'ssh', reason: 'identity-changed' },
+      },
+    ]);
   });
 });

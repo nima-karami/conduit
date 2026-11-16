@@ -11,8 +11,14 @@ import {
   openConnection,
 } from '../../server/network/link-connection';
 import { dial, type Listener, listenLinks } from '../../server/network/listener';
-import { type HelloFrame, LINK_PROTOCOL, type LinkFrame } from '../../src/contracts/link-protocol';
-import { encodeFrame } from '../../src/network/frame-codec';
+import {
+  type HelloFrame,
+  LINK_FRAME_MAX_BYTES,
+  LINK_PROTOCOL,
+  type LinkFrame,
+  parseLinkFrame,
+} from '../../src/contracts/link-protocol';
+import { encodeFrame, FrameDecoder } from '../../src/network/frame-codec';
 import { deriveMachineId } from '../../src/network/identity-file';
 import { rawEd25519, selfSignedCert } from '../../src/network/self-signed-cert';
 
@@ -537,5 +543,92 @@ describe('ssh proof of possession (plan F1)', () => {
     if ('error' in ca || 'error' in cb) throw new Error('connection failed');
     conns.push(ca, cb);
     expect(ca.peerHello.machineId).toBe(B.machineId);
+  });
+});
+
+/**
+ * A far end that records every frame we write to it. `ended` settles once we have closed our side,
+ * so a test can read `sent` knowing nothing more will arrive.
+ */
+function spyPeer() {
+  const toOurs = new PassThrough();
+  const fromOurs = new PassThrough();
+  const sent: LinkFrame[] = [];
+  const decoder = new FrameDecoder(LINK_FRAME_MAX_BYTES);
+  fromOurs.on('data', (chunk: Buffer) => {
+    for (const raw of decoder.push(chunk).frames) {
+      const f = parseLinkFrame(raw);
+      if (f !== null) sent.push(f);
+    }
+  });
+  const ended = new Promise<void>((resolve) => fromOurs.on('end', () => resolve()));
+  return {
+    stream: bridge(toOurs, fromOurs),
+    far: { send: (frame: LinkFrame) => toOurs.write(encodeFrame(frame)) },
+    sent,
+    ended,
+  };
+}
+
+describe('ssh pre-sign identity check (review M1)', () => {
+  it('a refused identity is closed before any hello.proof is written, and nothing is signed', async () => {
+    const A = keyed();
+    const B = keyed();
+    const na = freshNonce();
+    const signed: string[] = [];
+    const spy = spyPeer();
+    const proof: HelloProof<{ reason: string }> = {
+      beforeProof: () => ({ reason: 'identity-changed' }),
+      sign: (peerNonce, peerMachineId) => {
+        signed.push(peerNonce);
+        return signProof(A, peerNonce, peerMachineId);
+      },
+      verify: () => true,
+    };
+    const pending = openConnection(spy.stream, {
+      hello: sshHello(A, na),
+      now: () => Date.now(),
+      log: quiet,
+      proof,
+    });
+    spy.far.send(sshHello(B));
+    const r = await pending;
+    if (!('error' in r) || r.error !== 'refused') throw new Error('expected a pre-sign refusal');
+    expect(r.refusal).toEqual({ reason: 'identity-changed' });
+    expect(r.peerHello.machineId).toBe(B.machineId);
+    await spy.ended;
+    expect(signed).toEqual([]);
+    expect(spy.sent.some((f) => f.t === 'hello.proof')).toBe(false);
+  });
+
+  it('the check sees the peer hello before the proof is signed, and an allowed peer still proves', async () => {
+    const A = keyed();
+    const B = keyed();
+    const na = freshNonce();
+    const order: string[] = [];
+    const spy = spyPeer();
+    const pending = openConnection(spy.stream, {
+      hello: sshHello(A, na),
+      now: () => Date.now(),
+      log: quiet,
+      proof: {
+        beforeProof: (peer) => {
+          order.push(`check:${peer.machineId}`);
+          return null;
+        },
+        sign: (peerNonce, peerMachineId) => {
+          order.push('sign');
+          return signProof(A, peerNonce, peerMachineId);
+        },
+        verify: () => true,
+      },
+    });
+    spy.far.send(sshHello(B));
+    spy.far.send({ t: 'hello.proof', sig: signProof(B, na, A.machineId) });
+    const r = await pending;
+    if ('error' in r) throw new Error('connection failed');
+    conns.push(r);
+    expect(order).toEqual([`check:${B.machineId}`, 'sign']);
+    expect(spy.sent.some((f) => f.t === 'hello.proof')).toBe(true);
   });
 });
