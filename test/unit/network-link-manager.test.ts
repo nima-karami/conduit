@@ -672,9 +672,13 @@ describe('ssh links', { timeout: 60_000 }, () => {
     expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
     await until(() => b.manager.view(a.id.machineId)?.state === 'up');
     await until(() => a.manager.view(b.id.machineId)?.state === 'up');
-    // Both sides of an ssh link carry messaging and monitor, and not drive (spec 4.5).
+    // Both sides of an ssh link carry messaging and monitor. The dialer's record for B has no drive;
+    // B's record for its controller does (plan CON-41 decision 3).
     expect(a.store.get(b.id.machineId)?.capabilities).toEqual(OWN_DEFAULT_CAPABILITIES);
-    expect(b.store.get(a.id.machineId)?.capabilities).toEqual(OWN_DEFAULT_CAPABILITIES);
+    expect(b.store.get(a.id.machineId)?.capabilities).toEqual({
+      ...OWN_DEFAULT_CAPABILITIES,
+      drive: true,
+    });
     const session: MonitorSession = {
       sessionId: 'sid-claude-1',
       handle: 'claude-1',
@@ -1653,5 +1657,51 @@ describe("an ssh peer's hello writes its machine block (protocol 1.1)", () => {
     expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({ ok: true, machineId: c.id.machineId });
     expect(a.store.get(c.id.machineId)?.machine).toBeNull();
     expect(a.warns.some((w) => w.includes('platform'))).toBe(true);
+  });
+});
+
+describe('forget and the drive grant', { timeout: 60_000 }, () => {
+  it('an ssh controller is granted drive on accept, and the hello it gets says so', async () => {
+    const { a, b } = await sshPair();
+    expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
+    await until(() => b.manager.view(a.id.machineId)?.state === 'up');
+    // B's record for its controller is the one drive.ts reads; A's record for B stays read-only.
+    expect(b.store.get(a.id.machineId)?.capabilities.drive).toBe(true);
+    expect(a.manager.view(b.id.machineId)?.peerCapabilities?.drive).toBe(true);
+    expect(a.store.get(b.id.machineId)?.capabilities.drive).toBe(false);
+  });
+
+  it('forget closes without a revoked frame and leaves no tombstone', async () => {
+    const { a, b } = await sshPair();
+    await a.manager.addSshPeer(ENDPOINT);
+    await until(() => b.manager.view(a.id.machineId)?.state === 'up');
+    const changes = a.changes;
+    expect(a.manager.forget(b.id.machineId)).toBe(true);
+    expect(a.changes).toBeGreaterThan(changes);
+    expect(a.store.get(b.id.machineId)).toBeNull();
+    expect(a.store.byServerKey(b.id.serverKeyRaw.toString('base64'))).toBeNull();
+    expect(a.manager.view(b.id.machineId)).toBeNull();
+    expect(a.audit.some((e) => e.kind === 'link.revoked')).toBe(false);
+    // The far side sees a plain close, never a revoke: its record and its state are its own.
+    await until(() => b.manager.view(a.id.machineId)?.state === 'down');
+    expect(b.manager.view(a.id.machineId)?.revokedBy).toBeNull();
+    expect(b.store.get(a.id.machineId)).not.toBeNull();
+  });
+
+  it('forget stops redialing the machine', async () => {
+    const { a, b, ssh } = await sshPair();
+    await a.manager.addSshPeer(ENDPOINT);
+    await until(() => b.manager.view(a.id.machineId)?.state === 'up');
+    expect(a.manager.forget(b.id.machineId)).toBe(true);
+    const dials = ssh.args.length;
+    await new Promise((r) => setTimeout(r, 300));
+    expect(ssh.args.length).toBe(dials);
+  });
+
+  it('forget of an unknown machine is false and changes nothing', async () => {
+    const { a } = await sshPair();
+    const changes = a.changes;
+    expect(a.manager.forget('m-99999999')).toBe(false);
+    expect(a.changes).toBe(changes);
   });
 });

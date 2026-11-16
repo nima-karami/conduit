@@ -1,4 +1,5 @@
 import { createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes } from 'node:crypto';
+import * as fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { McpNetworkPort, NetworkPort } from '../../src/conduit-mcp/remote-routing';
@@ -14,6 +15,7 @@ import type { ServerSettings } from '../../src/contracts/server-protocol';
 import type { AddSshPeerResult, BootstrapResult, SshEndpoint } from '../../src/contracts/ssh-link';
 import type { TerminalRuntime } from '../../src/contracts/terminal-runtime';
 import { bindableAddresses } from '../../src/network/bind-addresses';
+import { parseSshConfigHosts } from '../../src/network/ssh-config-hosts';
 import type { PairingOutcome } from '../../src/network/pairing-protocol';
 import { createRemoteDirectory } from '../../src/network/remote-directory';
 import { selfSignedCert } from '../../src/network/self-signed-cert';
@@ -96,6 +98,18 @@ export interface NetworkDeps {
   openCommandSession(command: SessionCommand, folder: string): Promise<string>;
   /** This server's own runtime and platform, for pushing it to a remote (bootstrap.ts). */
   bootstrap: NetworkBootstrapDeps;
+  /** The user's ssh config text, or null when there is none. Production reads ~/.ssh/config. */
+  readSshConfig?: () => string | null;
+}
+
+/** ~/.ssh/config as text; a missing file is null, any other read error is the caller's to see. */
+function readUserSshConfig(): string | null {
+  try {
+    return fs.readFileSync(path.join(os.homedir(), '.ssh', 'config'), 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
+  }
 }
 
 export type NetworkBootstrapDeps = Pick<BootstrapperOptions, 'local' | 'runtime' | 'noDownload'>;
@@ -327,6 +341,11 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     bootstrap: bootstrapAndLink,
     directory,
   });
+
+  const sshHosts = (): string[] => {
+    const text = (deps.readSshConfig ?? readUserSshConfig)();
+    return text === null ? [] : parseSshConfigHosts(text);
+  };
 
   const linkInfo = () =>
     manager.views().map((v) => ({
@@ -661,6 +680,8 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
         drive,
         bootstrap: bootstrapAndLink,
         openNeedsPerson,
+        machines,
+        sshHosts,
         peer,
       }),
     disconnected: (peer) => relay.disconnected(peer),

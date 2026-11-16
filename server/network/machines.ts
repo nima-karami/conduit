@@ -9,6 +9,7 @@ import type {
 import type { BootstrapResult, SshFailure } from '../../src/contracts/ssh-link';
 import type { LinkRecord } from '../../src/network/link-file';
 import { isSshTarget } from '../../src/network/ssh-argv';
+import { RpcFault } from '../transport/pipe';
 import type { LinkStore } from './link-store';
 
 // The machines an agent sees: the pinned ssh records (plan Architecture, one source of truth), with
@@ -28,6 +29,7 @@ export interface MachinesManager {
   view(machineId: string): { state: LinkState; lastActivity: string | null } | null;
   disconnect(machineId: string): boolean;
   enable(machineId: string): boolean;
+  forget(machineId: string): boolean;
   waitUp(
     machineId: string,
     ms: number,
@@ -37,7 +39,7 @@ export interface MachinesManager {
 
 export interface MachinesDeps {
   manager: MachinesManager;
-  store: Pick<LinkStore, 'links'>;
+  store: Pick<LinkStore, 'links' | 'update'>;
   /** Pins a target (bootstrapAndLink): on success the peer is linked and its machine block written. */
   bootstrap(target: string): Promise<BootstrapResult>;
   /** The remote directory: a machine's sessions are the rows its id owns. */
@@ -49,7 +51,14 @@ export interface Machines {
   /** The caller's budget is `signal`: when it fires the work keeps going and still records its result. */
   connect(machine: string, signal: AbortSignal): Promise<ConnectMachineResult>;
   disconnect(machine: string): Promise<DisconnectMachineResult>;
+  /** Renames an ssh machine. Throws RpcFault: invalid for a bad name or a non-ssh record, not_found. */
+  rename(machineId: string, name: string): void;
+  /** Forgets an ssh machine locally (manager.forget). Throws RpcFault like rename. */
+  remove(machineId: string): void;
 }
+
+/** A machine's display name is 1 to 64 characters once trimmed, with no control characters. */
+const MAX_MACHINE_NAME = 64;
 
 interface Pinned {
   record: LinkRecord;
@@ -141,6 +150,16 @@ function downErrorOf(state: LinkState | undefined): MachineError {
     default:
       return { code: 'ssh_unreachable', detail: { detail: 'timeout' } };
   }
+}
+
+/** The one record a rename or remove may touch: an ssh record that exists. */
+function sshRecordOf(store: Pick<LinkStore, 'links'>, machineId: string): LinkRecord {
+  const record = store.links().find((l) => l.machineId === machineId);
+  if (record === undefined) throw new RpcFault('not_found', `No machine ${machineId}`);
+  if (record.transport !== 'ssh') {
+    throw new RpcFault('invalid', 'Only an ssh machine can be changed here');
+  }
+  return record;
 }
 
 export function createMachines(deps: MachinesDeps): Machines {
@@ -313,6 +332,22 @@ export function createMachines(deps: MachinesDeps): Machines {
       // No master exit here: the batch dialer's ControlMaster expires by itself (ControlPersist 60), and
       // the owner's needs-person pane shares that ControlPath, so closing it would end their session.
       return { ok: true, value: { machine: record.name, state: 'down' } };
+    },
+
+    rename(machineId, name) {
+      const record = sshRecordOf(deps.store, machineId);
+      const trimmed = name.trim();
+      if (trimmed.length === 0 || trimmed.length > MAX_MACHINE_NAME || /\p{Cc}/u.test(trimmed)) {
+        throw new RpcFault('invalid', `A machine name is 1 to ${MAX_MACHINE_NAME} printable characters`);
+      }
+      deps.store.update(record.machineId, { name: trimmed });
+    },
+
+    remove(machineId) {
+      const record = sshRecordOf(deps.store, machineId);
+      if (!deps.manager.forget(record.machineId)) {
+        throw new RpcFault('not_found', `No machine ${machineId}`);
+      }
     },
   };
 }

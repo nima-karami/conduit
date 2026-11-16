@@ -99,6 +99,12 @@ export interface LinkManager {
    */
   waitUp(machineId: string, ms: number, signal: AbortSignal): Promise<WaitUpResult>;
   revoke(machineId: string): boolean;
+  /**
+   * Drops a machine we no longer keep: its connection closes with no revoked frame (the far side
+   * keeps its own record), it never redials, pending calls end, and its record is deleted with no
+   * tombstone. False for a machine this manager does not know.
+   */
+  forget(machineId: string): boolean;
   setCapability(machineId: string, capability: Capability, on: boolean): boolean;
   setAddresses(machineId: string, addresses: string[]): boolean;
   /** Null when the link isn't up; otherwise whether the socket still has room. */
@@ -504,7 +510,8 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       stream.destroy();
       return;
     }
-    const sent = { ...OWN_DEFAULT_CAPABILITIES };
+    // An ssh controller already has shell access as this user, so drive adds no power (plan CON-41 decision 3).
+    const sent = { ...OWN_DEFAULT_CAPABILITIES, drive: true };
     const opened = await openConnection(stream, {
       hello: ownHello(sent),
       now: deps.now,
@@ -535,7 +542,12 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       opened.close(pinned.error);
       return;
     }
-    attach(ensurePeer(pinned.record), opened, sent, hello.machineId);
+    const granted = pinned.record.capabilities.drive
+      ? pinned.record
+      : (deps.store.update(pinned.record.machineId, {
+          capabilities: { ...pinned.record.capabilities, drive: true },
+        }) ?? pinned.record);
+    attach(ensurePeer(granted), opened, sent, hello.machineId);
   };
 
   /** One ssh dial at a time per target: concurrent callers share its result. */
@@ -885,6 +897,25 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
         signal.addEventListener('abort', onAbort, { once: true });
         cancelTimer = deps.after(() => settleWith({ up: false, failure: null }), ms);
       });
+    },
+    forget(machineId) {
+      const p = peerOf(machineId);
+      if (p) {
+        p.cancelRetry?.();
+        p.cancelRetry = null;
+        // Terminal before it leaves the map, so a dial already in flight cannot attach to a peer nobody holds.
+        p.sm = { state: 'revoked', since: deps.now() };
+        const conn = p.conn;
+        p.conn = null;
+        p.dialer = null;
+        conn?.close('forgotten');
+        peers.delete(machineId);
+      }
+      const removed = deps.store.remove(machineId);
+      if (p === null && !removed) return false;
+      // The change path is what ends this machine's pending calls: it is no longer in views().
+      deps.changed();
+      return true;
     },
     revoke(machineId) {
       const p = peerOf(machineId);

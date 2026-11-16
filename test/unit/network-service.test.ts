@@ -12,12 +12,16 @@ import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { writeServerSecret } from '../../server/lifecycle/server-secret';
 import type { AuditEvent } from '../../server/network/audit-log';
+import { handleMachineCall } from '../../server/network/c2';
 import { loadIdentity } from '../../server/network/identity';
 import { createNetwork, type NetworkService } from '../../server/network/index';
 import type { McpNetworkPort, RemoteEntry } from '../../src/conduit-mcp/remote-routing';
 import type { MessageRecord } from '../../src/conduit-mcp/types';
 import { LINK_PROTOCOL } from '../../src/contracts/link-protocol';
+import type { Machines } from '../../server/network/machines';
+import { CONNECT_BUDGET_MS } from '../../src/conduit-mcp/machine-tools';
 import type { NetworkState } from '../../src/contracts/network-state';
+import { RpcFault } from '../../server/transport/pipe';
 import { personSshArgv } from '../../src/network/ssh-argv';
 import {
   LINK_ENDPOINT_FILE,
@@ -33,7 +37,11 @@ afterEach(async () => {
   for (const c of cleanup.splice(0).reverse()) await c();
 });
 
-function server(name: string, endpointIn?: (root: string) => string) {
+function server(
+  name: string,
+  endpointIn?: (root: string) => string,
+  sshConfig: () => string | null = () => null,
+) {
   const root = mkdtempSync(join(tmpdir(), 'conduit-net-'));
   const dir = join(root, 'network');
   const loaded = loadIdentity(dir);
@@ -50,6 +58,7 @@ function server(name: string, endpointIn?: (root: string) => string) {
     secret: () => secret,
     identity: loaded.identity,
     settings: () => ({ networkBindHost: '127.0.0.1', networkPort: 0, networkSelfName: name }),
+    readSshConfig: sshConfig,
     emit: (s) => states.push(s),
     log: { ...quiet, info: () => undefined },
     observe: async () => null,
@@ -418,4 +427,80 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
       expect(delivered).toEqual(['over ssh']);
     },
   );
+});
+
+describe('machines C2 methods', () => {
+  /** Stub Machines: every method records its arguments and answers as the real one would. */
+  function stubMachines(connect: Machines['connect'] = () => new Promise(() => undefined)) {
+    const seen: string[] = [];
+    const machines: Machines = {
+      list: () => [],
+      connect,
+      disconnect: async (machine) => {
+        seen.push(`disconnect ${machine}`);
+        return { ok: true, value: { machine, state: 'down' } };
+      },
+      rename: (machineId, name) => {
+        seen.push(`rename ${machineId} ${name}`);
+      },
+      remove: (machineId) => {
+        seen.push(`remove ${machineId}`);
+      },
+    };
+    return { machines, seen };
+  }
+
+  it('machines.sshHosts lists the Host aliases of the ssh config, and no config means none', async () => {
+    const withConfig = server('net-a', undefined, () => 'Host build\nHost *\nhost=staging\n');
+    expect(await call(withConfig.net, 'machines.sshHosts', {})).toEqual({
+      hosts: ['build', 'staging'],
+    });
+    const without = server('net-b');
+    expect(await call(without.net, 'machines.sshHosts', {})).toEqual({ hosts: [] });
+  });
+
+  it('every machines.* method refuses a bad parameter as invalid, before any work', async () => {
+    const { machines, seen } = stubMachines();
+    const d = { machines, sshHosts: () => [] };
+    const bad: Array<[string, unknown]> = [
+      ['machines.connect', { machine: 3 }],
+      ['machines.connect', {}],
+      ['machines.disconnect', { machine: '' }],
+      ['machines.rename', { machineId: 'm-1', name: 5 }],
+      ['machines.rename', { machineId: 1, name: 'x' }],
+      ['machines.remove', { machineId: null }],
+    ];
+    for (const [method, params] of bad) {
+      expect(() => handleMachineCall(method, params, d)).toThrow(RpcFault);
+    }
+    expect(seen).toEqual([]);
+  });
+
+  it('machines.connect gives the connect a signal that aborts at the MCP connect budget', async () => {
+    vi.useFakeTimers();
+    try {
+      const signals: AbortSignal[] = [];
+      const { machines } = stubMachines((_machine, signal) => {
+        signals.push(signal);
+        return new Promise(() => undefined);
+      });
+      void handleMachineCall('machines.connect', { machine: 'build' }, { machines, sshHosts: () => [] });
+      expect(signals).toHaveLength(1);
+      const [signal] = signals;
+      vi.advanceTimersByTime(CONNECT_BUDGET_MS - 1);
+      expect(signal?.aborted).toBe(false);
+      vi.advanceTimersByTime(1);
+      expect(signal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('machines.rename and machines.remove pass their arguments to the machines service', async () => {
+    const { machines, seen } = stubMachines();
+    const d = { machines, sshHosts: () => [] };
+    await handleMachineCall('machines.rename', { machineId: 'm-1', name: 'box' }, d);
+    await handleMachineCall('machines.remove', { machineId: 'm-1' }, d);
+    expect(seen).toEqual(['rename m-1 box', 'remove m-1']);
+  });
 });

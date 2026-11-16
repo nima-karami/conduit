@@ -1,5 +1,6 @@
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
+import { RpcFault } from '../../server/transport/pipe';
 import { type Identity, loadIdentity } from '../../server/network/identity';
 import { createLinkManager, type LinkManager } from '../../server/network/link-manager';
 import { type LinkStoreIo, openLinkStore } from '../../server/network/link-store';
@@ -71,6 +72,11 @@ function fakeManager(store: ReturnType<typeof openLinkStore>) {
       if (!meta || !store.setMachine(machineId, { ...meta, enabled: true })) return false;
       states.set(machineId, dialWorks ? 'up' : 'down');
       return true;
+    },
+    forget: (machineId) => {
+      calls.push(`forget ${machineId}`);
+      states.delete(machineId);
+      return store.remove(machineId);
     },
     waitUp: async (machineId) =>
       states.get(machineId) === 'up' && waitFailure === null
@@ -666,5 +672,88 @@ describe('machines: a target that claims a machine already added under another n
       ok: false,
       error: { code: 'identity_conflict', detail: { machine: 'office-pc' } },
     });
+  });
+});
+
+/** The fault a call threw, so a test can assert its kind as well as its message. */
+function faultOf(fn: () => unknown): RpcFault {
+  try {
+    fn();
+  } catch (e) {
+    if (e instanceof RpcFault) return e;
+    throw e;
+  }
+  throw new Error('expected a RpcFault');
+}
+
+describe('machines: rename', () => {
+  it('trims the name and stores it on the ssh record', () => {
+    const { store, fake, machines } = setup();
+    pin(store, fake, { id: 'm-00000001', name: 'vm-a', target: 'a.example', n: 1 });
+    machines.rename('m-00000001', '  Build box  ');
+    expect(store.get('m-00000001')?.name).toBe('Build box');
+  });
+
+  it('refuses an empty, 65-character or control-character name as invalid, and stores nothing', () => {
+    const { store, fake, machines } = setup();
+    pin(store, fake, { id: 'm-00000001', name: 'vm-a', target: 'a.example', n: 1 });
+    for (const name of ['   ', 'x'.repeat(65), 'bad\tname', 'bad\nname']) {
+      expect(faultOf(() => machines.rename('m-00000001', name)).kind).toBe('invalid');
+    }
+    expect(store.get('m-00000001')?.name).toBe('vm-a');
+  });
+
+  it('accepts a 64-character name', () => {
+    const { store, fake, machines } = setup();
+    pin(store, fake, { id: 'm-00000001', name: 'vm-a', target: 'a.example', n: 1 });
+    machines.rename('m-00000001', 'x'.repeat(64));
+    expect(store.get('m-00000001')?.name).toHaveLength(64);
+  });
+
+  it('an unknown machine id is not_found', () => {
+    const { machines } = setup();
+    expect(faultOf(() => machines.rename('m-99999999', 'ok')).kind).toBe('not_found');
+  });
+
+  it('only an ssh record can be renamed: a tls record is invalid', () => {
+    const { store, machines } = setup();
+    store.put({
+      linkId: 'l-tls',
+      machineId: 'm-0000000t',
+      serverKey: keyOf(7),
+      ownerKey: null,
+      name: 'paired',
+      trust: 'own',
+      addresses: ['127.0.0.1:1'],
+      capabilities: { messaging: true, monitor: true, drive: false },
+      fingerprint: 'fp',
+      createdAt: '2026-11-16T00:00:00.000Z',
+      cert: 'PEM',
+      ownerTransfer: null,
+      transport: 'tls',
+      ssh: null,
+      machine: null,
+    });
+    expect(faultOf(() => machines.rename('m-0000000t', 'new')).kind).toBe('invalid');
+    expect(store.get('m-0000000t')?.name).toBe('paired');
+  });
+});
+
+describe('machines: remove', () => {
+  it('remove forgets the machine: the manager closes it and its record is gone', () => {
+    const { store, fake, machines } = setup();
+    pin(store, fake, { id: 'm-00000001', name: 'vm-a', target: 'a.example', n: 1, state: 'up' });
+    machines.remove('m-00000001');
+    expect(fake.calls).toEqual(['forget m-00000001']);
+    expect(store.get('m-00000001')).toBeNull();
+    expect(store.byServerKey(keyOf(1))).toBeNull();
+  });
+
+  it('an unknown machine is not_found and nothing is forgotten', () => {
+    const { store, fake, machines } = setup();
+    pin(store, fake, { id: 'm-00000001', name: 'vm-a', target: 'a.example', n: 1 });
+    expect(faultOf(() => machines.remove('m-99999999')).kind).toBe('not_found');
+    expect(fake.calls).toEqual([]);
+    expect(store.get('m-00000001')).not.toBeNull();
   });
 });
