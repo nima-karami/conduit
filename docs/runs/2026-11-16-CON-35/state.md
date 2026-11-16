@@ -3,7 +3,7 @@
 Updated 2026-11-16 ~12:05Z. Read this first after a compaction or handover. Ledger: `.autoloop/` (tasks.yaml, blockers.md, learnings.md, evidence/).
 
 ## Branch
-`CON-35-remote-ssh` (worktree /home/namemenima/projects/.wt/conduit/CON-35). Tip 1a0b063e. Never pushed to main (claude-3 owns main/releases).
+`CON-35-remote-ssh` (worktree /home/namemenima/projects/.wt/conduit/CON-35). Tip 8a8b6328. Never pushed to main (claude-3 owns main/releases).
 CON-24@fc6f68bd (independently approved) is merged in at efd97325 so CON-39 could use the profiles.
 
 ## Done (each: Opus-reviewed lanes, verify EXIT=0 after every merge, e2e:remote green, reported to claude-3)
@@ -18,7 +18,7 @@ CON-24@fc6f68bd (independently approved) is merged in at efd97325 so CON-39 coul
 - Proof-of-possession for ssh hello; machine-scoped grants (no CON-24 scope kind); cross-platform push; hc re-download.
 
 ## Next
-CON-40 slice 5 (routed session tools): plan at docs/plans/2026-11-16-remote-ssh-routed-tools.plan.md (being written). Then slices 6–12 per spec §10.
+CON-40 slice 5 (routed session tools): plan docs/plans/2026-11-16-remote-ssh-routed-tools.plan.md. Slices 1-2 merged (8a8b6328, verify 0). Slice 3 (A routes calls + net-routed e2e) lane con40-d4-route running.
 
 ## VM
 ~/.cache/conduit-vm/con27, QEMU PID 199137 running idle, defaults restored (KUP false, linger yes, no drop-in). Stop only by its PID when CON-35 is finished.
