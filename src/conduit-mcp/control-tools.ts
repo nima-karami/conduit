@@ -21,6 +21,7 @@ import {
   type Reach,
   TOOL_SPECS,
   type ToolName,
+  toolDisabled,
 } from './tool-policy';
 import {
   type AgentListing,
@@ -664,6 +665,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
         id: null,
         error: { code: 'open_failed', message: 'opened, but it has no handle to message' },
       };
+    // A remote lead's caller already carries handle@machine, so the message is stored from its address.
     const sent = await deps.sendMessage(caller, { to: [handle], body }, { allowUnconnected: true });
     if (!sent.ok)
       return { id: null, error: { code: sent.error.code, message: sent.error.message } };
@@ -698,12 +700,12 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     resolve: () => Promise<Result<Resolved>>,
   ): Promise<Result<Prepared<OpenSessionOutput>>> {
     return prepared(tool, caller, async (who) => {
-      // A remote lead has no window to focus, and its first message is not carried yet.
+      // A remote lead has no window to focus.
       const focus = a.focus && isLocalWho(who);
-      if (!isLocalWho(who) && a.message !== undefined)
-        return fail('peer_unsupported', 'a remote lead cannot send the first message yet', {
-          hint: 'open the session, then message it from its own machine',
-        });
+      // open_session needs orchestrate, but the first message is a send: it needs messaging too,
+      // or a lead could message a session that its own link may not message.
+      if (!isLocalWho(who) && a.message !== undefined && !who.remote.capabilities.messaging)
+        return { ok: false, error: toolDisabled('send_message') };
       const resolved = resolveFor(deps, who, a.path);
       if (!resolved.ok) return resolved;
       const abs = resolved.value;
