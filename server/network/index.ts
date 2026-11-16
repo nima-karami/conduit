@@ -462,6 +462,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       ownerTransfer: outcome.ownerTransfer,
       transport: 'tls',
       ssh: null,
+      machine: null,
     });
     listener?.refreshTrust();
     void ensureListening().catch((err: Error) =>

@@ -25,6 +25,7 @@ const link: LinkRecord = {
   ownerTransfer: null,
   transport: 'tls',
   ssh: null,
+  machine: null,
 };
 
 const tombstone = (revokedDaysAgo: number) => ({
@@ -35,7 +36,27 @@ const tombstone = (revokedDaysAgo: number) => ({
   cert: 'PEM-OLD',
 });
 
-const sample: LinksFile = { version: 2, links: [link], tombstones: [tombstone(1)] };
+const meta = {
+  os: 'linux' as const,
+  arch: 'x64' as const,
+  version: '0.9.0',
+  mode: 'full' as const,
+  agents: ['claude', 'codex'],
+  enabled: true,
+  survivesLogout: false,
+};
+const sshLink: LinkRecord = {
+  ...link,
+  machineId: 'm-0badcafe',
+  cert: '',
+  fingerprint: '',
+  addresses: [],
+  transport: 'ssh',
+  ssh: { target: 'vm', node: '/usr/bin/node', mainJs: '/m.js', userData: '/u' },
+  machine: meta,
+};
+
+const sample: LinksFile = { version: 3, links: [link], tombstones: [tombstone(1)] };
 
 describe('links file', () => {
   it('round-trips links and tombstones', () => {
@@ -43,7 +64,7 @@ describe('links file', () => {
   });
 
   it('round-trips an empty file', () => {
-    const empty: LinksFile = { version: 2, links: [], tombstones: [] };
+    const empty: LinksFile = { version: 3, links: [], tombstones: [] };
     expect(parseLinksFile(serializeLinksFile(empty), NOW)).toEqual({ kind: 'ok', file: empty });
   });
 
@@ -67,15 +88,15 @@ describe('links file', () => {
       transport: 'ssh',
       ssh: null,
     };
-    const f: LinksFile = { version: 2, links: [sshLink], tombstones: [] };
+    const f: LinksFile = { version: 3, links: [sshLink], tombstones: [] };
     expect(parseLinksFile(serializeLinksFile(f), NOW)).toEqual({ kind: 'ok', file: f });
   });
 
   // A server without an owner key has nothing to put here, and only ssh links may say so.
   it('an ssh record with no owner key round-trips', () => {
     const f: LinksFile = {
-      version: 2,
-      links: [{ ...link, ownerKey: null, transport: 'ssh', ssh: null, cert: '' }],
+      version: 3,
+      links: [{ ...link, ownerKey: null, transport: 'ssh', ssh: null, cert: '', machine: null }],
       tombstones: [],
     };
     expect(parseLinksFile(serializeLinksFile(f), NOW)).toEqual({ kind: 'ok', file: f });
@@ -90,9 +111,52 @@ describe('links file', () => {
 
   // Version 2 is what this build writes; a version 1 file (no ssh records) still loads as tls.
   it('a version 1 file loads, and its records are tls', () => {
-    const { transport: _t, ssh: _s, ...legacy } = link;
+    const { transport: _t, ssh: _s, machine: _m, ...legacy } = link;
     const parsed = parseLinksFile(JSON.stringify({ ...sample, version: 1, links: [legacy] }), NOW);
-    expect(parsed).toEqual({ kind: 'ok', file: { ...sample, version: 2 } });
+    expect(parsed).toEqual({ kind: 'ok', file: { ...sample, version: 3 } });
+  });
+
+  // Version 2 predates machine metadata; its ssh records load with none, shown as unknown os.
+  it('a version 2 file loads, and its ssh records have no machine metadata', () => {
+    const { machine: _m, ...v2Ssh } = sshLink;
+    const parsed = parseLinksFile(
+      JSON.stringify({ version: 2, links: [v2Ssh], tombstones: [] }),
+      NOW,
+    );
+    expect(parsed).toEqual({
+      kind: 'ok',
+      file: { version: 3, links: [{ ...sshLink, machine: null }], tombstones: [] },
+    });
+  });
+
+  it('a version 3 ssh record round-trips its machine metadata', () => {
+    const f: LinksFile = { version: 3, links: [sshLink], tombstones: [] };
+    expect(parseLinksFile(serializeLinksFile(f), NOW)).toEqual({ kind: 'ok', file: f });
+  });
+
+  it('a tls record carrying machine metadata is corrupt', () => {
+    const bad = { ...link, machine: meta };
+    expect(parseLinksFile(JSON.stringify({ ...sample, links: [bad] }), NOW)).toEqual({
+      kind: 'corrupt',
+    });
+  });
+
+  it('machine metadata with an unknown os is corrupt', () => {
+    const bad = { ...sshLink, machine: { ...meta, os: 'darwin' } };
+    expect(
+      parseLinksFile(JSON.stringify({ version: 3, links: [bad], tombstones: [] }), NOW),
+    ).toEqual({
+      kind: 'corrupt',
+    });
+  });
+
+  it('machine metadata whose agents are not all strings is corrupt', () => {
+    const bad = { ...sshLink, machine: { ...meta, agents: ['claude', 3] } };
+    expect(
+      parseLinksFile(JSON.stringify({ version: 3, links: [bad], tombstones: [] }), NOW),
+    ).toEqual({
+      kind: 'corrupt',
+    });
   });
 
   it('a tls record carrying an ssh endpoint is corrupt', () => {
@@ -122,7 +186,7 @@ describe('links file', () => {
   });
 
   it('a newer version is newer', () => {
-    expect(parseLinksFile(JSON.stringify({ ...sample, version: 3 }), NOW)).toEqual({
+    expect(parseLinksFile(JSON.stringify({ ...sample, version: 4 }), NOW)).toEqual({
       kind: 'newer',
     });
   });
@@ -155,7 +219,7 @@ describe('links file', () => {
 
   it('drops a tombstone revoked 31 days ago and keeps one revoked 29 days ago', () => {
     const f: LinksFile = {
-      version: 2,
+      version: 3,
       links: [],
       tombstones: [tombstone(31), { ...tombstone(29), linkId: 'l-recent' }],
     };

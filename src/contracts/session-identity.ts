@@ -203,7 +203,7 @@ export const SERVER_FILE_VERSION = {
   'scrollback-<id>.json': 2,
   'server-exhausted.json': 1,
   'network/identity.json': 1,
-  'network/links.json': 2,
+  'network/links.json': 3,
   'network/outbox.json': 2,
 } as const;
 export type ServerFile = keyof typeof SERVER_FILE_VERSION;

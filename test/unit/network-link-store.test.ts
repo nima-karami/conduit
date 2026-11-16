@@ -43,6 +43,7 @@ function rec(machineId: string, over: Partial<LinkRecord> = {}): LinkRecord {
     ownerTransfer: null,
     transport: 'tls',
     ssh: null,
+    machine: null,
     ...over,
   };
 }
@@ -195,7 +196,7 @@ describe('link store', () => {
   });
 
   it('a newer file is read-only: put works in memory and nothing is written', () => {
-    const newer = JSON.stringify({ version: 3, links: [], tombstones: [] });
+    const newer = JSON.stringify({ version: 4, links: [], tombstones: [] });
     const { io, files, writes } = memoryIo({ [FILE]: newer });
     const log = logSpy();
     const store = openLinkStore(FILE, { now: () => T0, log, io });
@@ -248,5 +249,73 @@ describe('link store', () => {
     expect(fresh?.addresses).toEqual(['127.0.0.1:47391']);
     expect(fresh?.capabilities.drive).toBe(false);
     expect(fresh?.name).toBe('laptop');
+  });
+});
+
+describe('link store: machine metadata', () => {
+  const meta = {
+    os: 'linux' as const,
+    arch: 'x64' as const,
+    version: '0.9.0',
+    mode: 'full' as const,
+    agents: ['claude'],
+    enabled: true,
+    survivesLogout: true,
+  };
+  const endpoint = { target: 'vm', node: '/n', mainJs: '/m.js', userData: '/u' };
+
+  it('setMachine stores the meta on an ssh record and returns the record', () => {
+    const { io } = memoryIo();
+    const store = openLinkStore(FILE, { now: () => T0, log: logSpy(), io });
+    store.addSsh({
+      machineId: 'm-aaaaaaaa',
+      serverKey: 'key-m-aaaaaaaa',
+      ownerKey: null,
+      name: 'vm',
+      ssh: endpoint,
+    });
+    const updated = store.setMachine('m-aaaaaaaa', meta);
+    expect(updated).toMatchObject({ machineId: 'm-aaaaaaaa', machine: meta });
+    expect(store.get('m-aaaaaaaa')?.machine).toEqual(meta);
+  });
+
+  it('setMachine survives a reopen of the same file', () => {
+    const { io } = memoryIo();
+    const first = openLinkStore(FILE, { now: () => T0, log: logSpy(), io });
+    first.addSsh({
+      machineId: 'm-aaaaaaaa',
+      serverKey: 'key-m-aaaaaaaa',
+      ownerKey: null,
+      name: 'vm',
+      ssh: endpoint,
+    });
+    first.setMachine('m-aaaaaaaa', { ...meta, enabled: false });
+    const reopened = openLinkStore(FILE, { now: () => T0, log: logSpy(), io });
+    expect(reopened.get('m-aaaaaaaa')?.machine).toEqual({ ...meta, enabled: false });
+  });
+
+  it('setMachine is refused on a tls record, and on an unknown machine', () => {
+    const { io } = memoryIo();
+    const store = openLinkStore(FILE, { now: () => T0, log: logSpy(), io });
+    store.put(rec('m-bbbbbbbb'));
+    expect(store.setMachine('m-bbbbbbbb', meta)).toBeNull();
+    expect(store.get('m-bbbbbbbb')?.machine).toBeNull();
+    expect(store.setMachine('m-cccccccc', meta)).toBeNull();
+  });
+
+  it('setMachine copies its argument: a later edit to the caller does not change the store', () => {
+    const { io } = memoryIo();
+    const store = openLinkStore(FILE, { now: () => T0, log: logSpy(), io });
+    store.addSsh({
+      machineId: 'm-aaaaaaaa',
+      serverKey: 'key-m-aaaaaaaa',
+      ownerKey: null,
+      name: 'vm',
+      ssh: endpoint,
+    });
+    const mine = { ...meta, agents: ['claude'] };
+    store.setMachine('m-aaaaaaaa', mine);
+    mine.agents.push('codex');
+    expect(store.get('m-aaaaaaaa')?.machine?.agents).toEqual(['claude']);
   });
 });

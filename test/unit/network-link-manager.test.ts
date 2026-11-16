@@ -184,6 +184,7 @@ function record(of: Node, name: string, overrides: Partial<LinkRecord> = {}): Li
     ownerTransfer: null,
     transport: 'tls',
     ssh: null,
+    machine: null,
     ...overrides,
   };
 }
