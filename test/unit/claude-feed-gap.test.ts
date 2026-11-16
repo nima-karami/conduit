@@ -7,12 +7,12 @@ interface Timer {
   cancelled: boolean;
 }
 
-const toolLine = (uuid: string, names: string[]): string =>
+const use = (uuid: string, toolUseId: string, name = 'Bash'): string =>
   JSON.stringify({
     type: 'assistant',
     uuid,
     isSidechain: false,
-    message: { content: names.map((name) => ({ type: 'tool_use', name })) },
+    message: { content: [{ type: 'tool_use', id: toolUseId, name }] },
   });
 
 function rig() {
@@ -20,12 +20,13 @@ function rig() {
   let readError: Error | null = null;
   const timers: Timer[] = [];
   const records: Array<{ sessionId: string; gap: number }> = [];
-  const warnings: Array<{ msg: string; data?: object }> = [];
+  const warnings: string[] = [];
   const gap = createClaudeFeedGap<Timer>({
     readFile: async () => {
       if (readError) throw readError;
-      return transcript;
+      return Buffer.from(transcript, 'utf8');
     },
+    sizeOf: () => Buffer.byteLength(transcript, 'utf8'),
     setTimer: (fn, ms) => {
       const timer = { fn, ms, cancelled: false };
       timers.push(timer);
@@ -35,13 +36,16 @@ function rig() {
       timer.cancelled = true;
     },
     record: (sessionId, n) => records.push({ sessionId, gap: n }),
-    warn: (msg, data) => warnings.push({ msg, data }),
+    warn: (msg) => warnings.push(msg),
   });
-  const appendTools = (uuid: string, names: string[]) => {
-    transcript += `${toolLine(uuid, names)}\n`;
+  const append = (line: string): void => {
+    transcript += `${line}\n`;
   };
-  /** Fires every pending settle timer, then waits for the checks they started. */
-  const settle = async () => {
+  const replaceTranscript = (text: string): void => {
+    transcript = text;
+  };
+  /** Fires the settle timers that are still live, then waits for the checks they queued. */
+  const settle = async (): Promise<void> => {
     for (const timer of timers.splice(0)) if (!timer.cancelled) timer.fn();
     await gap.settled();
   };
@@ -50,7 +54,8 @@ function rig() {
     timers,
     records,
     warnings,
-    appendTools,
+    append,
+    replaceTranscript,
     settle,
     setReadError: (e: Error | null) => {
       readError = e;
@@ -62,105 +67,157 @@ describe('claude feed gap', () => {
   it('schedules the check FEED_GAP_SETTLE_MS after a Stop', () => {
     const r = rig();
     r.gap.stop('s1', '/t/a.jsonl');
-    expect(r.timers.map((t) => t.ms)).toEqual([FEED_GAP_SETTLE_MS]);
+    expect(r.timers.map((t) => t.ms)).toEqual([3_000]);
     expect(FEED_GAP_SETTLE_MS).toBe(3_000);
   });
 
   it('takes a baseline on the first Stop and reports nothing', async () => {
     const r = rig();
-    r.appendTools('u1', ['Bash', 'Edit']);
+    r.append(use('u1', 't1'));
     r.gap.stop('s1', '/t/a.jsonl');
     await r.settle();
     expect(r.records).toEqual([]);
     expect(r.warnings).toEqual([]);
   });
 
-  it('reports no gap when the posts match the tool calls since the last Stop', async () => {
+  it('reports no gap when every tool call since the last Stop has a post', async () => {
     const r = rig();
-    r.appendTools('u1', ['Bash']);
+    r.append(use('u0', 't0'));
     r.gap.stop('s1', '/t/a.jsonl');
     await r.settle();
-    r.appendTools('u2', ['Bash']);
-    r.gap.post('s1', false);
+    r.append(use('u1', 't1'));
+    r.gap.post('s1', false, 't1');
     r.gap.stop('s1', '/t/a.jsonl');
     await r.settle();
     expect(r.records).toEqual([]);
   });
 
-  it('records a gap note for the calls whose posts never arrived', async () => {
+  it('a lost post is a gap of one', async () => {
     const r = rig();
-    r.appendTools('u1', ['Bash']);
+    r.append(use('u0', 't0'));
     r.gap.stop('s1', '/t/a.jsonl');
     await r.settle();
-    r.appendTools('u2', ['Bash', 'Edit']);
-    r.gap.post('s1', false);
+    r.append(use('u1', 't1'));
+    r.append(use('u2', 't2'));
+    r.gap.post('s1', false, 't1');
     r.gap.stop('s1', '/t/a.jsonl');
     await r.settle();
     expect(r.records).toEqual([{ sessionId: 's1', gap: 1 }]);
   });
 
-  it('a post with agent_id does not count toward the main session', async () => {
+  it('a post with agent_id does not match a main-session tool call', async () => {
     const r = rig();
-    r.appendTools('u1', []);
+    r.append(use('u0', 't0'));
     r.gap.stop('s1', '/t/a.jsonl');
     await r.settle();
-    r.appendTools('u2', ['Bash']);
-    r.gap.post('s1', true);
+    r.append(use('u1', 't1'));
+    r.gap.post('s1', true, 't1');
     r.gap.stop('s1', '/t/a.jsonl');
     await r.settle();
     expect(r.records).toEqual([{ sessionId: 's1', gap: 1 }]);
   });
 
-  it('a post that lands inside the settle window counts', async () => {
+  it('a late post for the ended turn, arriving inside the settle window, matches', async () => {
     const r = rig();
-    r.appendTools('u1', []);
+    r.append(use('u0', 't0'));
     r.gap.stop('s1', '/t/a.jsonl');
     await r.settle();
-    r.appendTools('u2', ['Bash']);
+    r.append(use('u1', 't1'));
     r.gap.stop('s1', '/t/a.jsonl');
-    r.gap.post('s1', false);
+    r.gap.post('s1', false, 't1');
     await r.settle();
     expect(r.records).toEqual([]);
   });
 
-  it('a transcript path change takes a fresh baseline, then the next Stop checks it', async () => {
+  it('a tool call appended after the Stop is not in that span; its post may arrive after the check', async () => {
     const r = rig();
-    r.appendTools('u1', ['Bash']);
+    r.append(use('u0', 't0'));
     r.gap.stop('s1', '/t/a.jsonl');
     await r.settle();
-    r.appendTools('u2', ['Bash', 'Bash', 'Bash']);
+    r.append(use('u1', 't1'));
+    r.gap.post('s1', false, 't1');
+    r.gap.stop('s1', '/t/a.jsonl');
+    r.append(use('u2', 't2'));
+    await r.settle();
+    expect(r.records).toEqual([]);
+    r.gap.post('s1', false, 't2');
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.records).toEqual([]);
+  });
+
+  it('a transcript path change takes a fresh baseline, and the next Stop checks the new span', async () => {
+    const r = rig();
+    r.append(use('u0', 't0'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    r.append(use('u1', 't1'));
     r.gap.stop('s1', '/t/b.jsonl');
     await r.settle();
     expect(r.records).toEqual([]);
-    r.appendTools('u3', ['Write']);
+    r.append(use('u2', 't2'));
     r.gap.stop('s1', '/t/b.jsonl');
+    await r.settle();
+    expect(r.records).toEqual([{ sessionId: 's1', gap: 1 }]);
+  });
+
+  it('a lastUuid that is no longer in the transcript takes a baseline, not a count from the start', async () => {
+    const r = rig();
+    r.append(use('u0', 't0'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    r.replaceTranscript(`${use('x1', 't9')}\n`);
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.records).toEqual([]);
+    r.append(use('u2', 't2'));
+    r.gap.stop('s1', '/t/a.jsonl');
     await r.settle();
     expect(r.records).toEqual([{ sessionId: 's1', gap: 1 }]);
   });
 
   it('a transcript read failure warns with no gap row', async () => {
     const r = rig();
-    r.appendTools('u1', ['Bash']);
+    r.append(use('u0', 't0'));
     r.gap.stop('s1', '/t/a.jsonl');
     await r.settle();
     r.setReadError(new Error('ENOENT'));
-    r.appendTools('u2', ['Bash']);
+    r.append(use('u1', 't1'));
     r.gap.stop('s1', '/t/a.jsonl');
     await r.settle();
     expect(r.records).toEqual([]);
-    expect(r.warnings).toEqual([expect.objectContaining({ msg: expect.any(String) })]);
+    expect(r.warnings).toHaveLength(1);
   });
 
   it('the counts reset at each Stop', async () => {
     const r = rig();
-    r.appendTools('u1', []);
+    r.append(use('u0', 't0'));
     r.gap.stop('s1', '/t/a.jsonl');
     await r.settle();
-    r.appendTools('u2', ['Bash']);
-    r.gap.post('s1', false);
+    r.append(use('u1', 't1'));
+    r.gap.post('s1', false, 't1');
     r.gap.stop('s1', '/t/a.jsonl');
     await r.settle();
-    r.appendTools('u3', ['Bash']);
+    r.append(use('u2', 't2'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.records).toEqual([{ sessionId: 's1', gap: 1 }]);
+  });
+
+  it('forget cancels the pending check and drops the session state', async () => {
+    const r = rig();
+    r.append(use('u0', 't0'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    r.append(use('u1', 't1'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    r.gap.forget('s1');
+    expect(r.timers.at(-1)?.cancelled).toBe(true);
+    await r.settle();
+    expect(r.records).toEqual([]);
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    r.append(use('u2', 't2'));
     r.gap.stop('s1', '/t/a.jsonl');
     await r.settle();
     expect(r.records).toEqual([{ sessionId: 's1', gap: 1 }]);

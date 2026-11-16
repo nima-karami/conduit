@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { copyFileSync, existsSync, promises as fsp, readFileSync } from 'node:fs';
+import { copyFileSync, existsSync, promises as fsp, readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
 import { join, resolve } from 'node:path';
 import { watchDir, watchDirWhilePresent } from '../../electron/watch-dir';
@@ -690,7 +690,8 @@ export function createDomain(deps: DomainDeps): Domain {
   const codexHome = deps.env.CODEX_HOME || join(deps.homeDir, '.codex');
   const metaCapWarned = new Set<string>();
   const feedGap = createClaudeFeedGap<ReturnType<typeof setTimeout>>({
-    readFile: (p) => fsp.readFile(p, 'utf8'),
+    readFile: (p) => fsp.readFile(p),
+    sizeOf: (p) => statSync(p).size,
     setTimer: (fn, ms) => setTimeout(fn, ms),
     clearTimer: (handle) => clearTimeout(handle),
     record: (sessionId, gap) => deps.observed.record(sessionId, 'claude', { gap }),
@@ -705,7 +706,8 @@ export function createDomain(deps: DomainDeps): Domain {
       return;
     }
     if (post.event !== 'PostToolUse' && post.event !== 'PostToolUseFailure') return;
-    feedGap.post(sessionId, payload.agent_id !== undefined && payload.agent_id !== null);
+    const toolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : null;
+    feedGap.post(sessionId, payload.agent_id !== undefined && payload.agent_id !== null, toolUseId);
     const failed = post.event === 'PostToolUseFailure';
     for (const action of claudeActionsFromPostToolUse(payload))
       deps.observed.record(sessionId, 'claude', { action, failed });
