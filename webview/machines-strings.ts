@@ -191,6 +191,7 @@ export const MACHINES_STR = {
   changesNoChanges: 'No changes.',
   changesStale: 'Could not read the latest status. Showing the last one that worked.',
   changesStaged: 'staged',
+  changesUnstaged: 'unstaged',
   changesHistory: 'History',
   changesOffline: (machine: string) => `${machine} is offline`,
   changesList: (machine: string) => `Changes on ${machine}`,

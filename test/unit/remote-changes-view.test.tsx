@@ -19,6 +19,7 @@ vi.mock('../../webview/bridge', () => ({
 }));
 
 import { RemoteChangesView } from '../../webview/components/remote-changes-view';
+import { MACHINES_STR } from '../../webview/machines-strings';
 import type { RemoteSessionRow } from '../../webview/remote-sessions';
 
 const emit = (m: HostToWebview) => {
@@ -27,7 +28,7 @@ const emit = (m: HostToWebview) => {
 
 const flush = () =>
   act(async () => {
-    await new Promise((r) => setTimeout(r, 0));
+    await vi.advanceTimersByTimeAsync(0);
   });
 
 const HOME = '/home/me/p';
@@ -49,35 +50,46 @@ const SESSION: MonitorSession = {
   status: 'running',
 };
 
-function rowWith(machineState: RemoteSessionRow['machineState']): RemoteSessionRow {
+function rowWith(
+  machineState: RemoteSessionRow['machineState'],
+  session: MonitorSession = SESSION,
+): RemoteSessionRow {
   return {
     key: { machineId: 'M1', sessionId: 'S1' },
     id: 'remote:M1:S1',
     machineName: 'box',
     machineState,
-    session: SESSION,
+    session,
     parentSessionId: null,
   };
 }
 
-const snapshot = (changes: RepoSnapshot['changes'], lines = true): RepoSnapshot => ({
-  changes,
-  lines,
-  refreshedAt: 1,
-});
+const snapshot = (
+  changes: RepoSnapshot['changes'],
+  extra: Partial<RepoSnapshot> = {},
+): RepoSnapshot => ({ changes, lines: true, refreshedAt: 1, ...extra });
 
 const statusReqs = (root: string) =>
   h.posted.flatMap((m) => (m.type === 'remoteGit:request' && m.root === root ? [m] : []));
 
-/** Answer the newest status request for `root` with `snap`. */
-function answerStatus(root: string, snap: RepoSnapshot) {
-  const req = statusReqs(root).at(-1);
-  if (!req) throw new Error(`no status request for ${root}`);
+/** Answer the newest status request for `folder` with an ok status reply. */
+function answerStatus(folder: string, value: { root: string; snap: RepoSnapshot | null }) {
+  const req = statusReqs(folder).at(-1);
+  if (!req) throw new Error(`no status request for ${folder}`);
   emit({
     type: 'remoteGit:result',
     requestId: req.requestId,
-    result: { ok: true, value: { op: 'status', root, snapshot: snap } },
+    result: {
+      ok: true,
+      value: { op: 'status', root: value.root, snapshot: value.snap },
+    },
   });
+}
+
+function failStatus(folder: string, error: string) {
+  const req = statusReqs(folder).at(-1);
+  if (!req) throw new Error(`no status request for ${folder}`);
+  emit({ type: 'remoteGit:result', requestId: req.requestId, result: { ok: false, error } });
 }
 
 let root: Root | null = null;
@@ -88,6 +100,7 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+  vi.useFakeTimers();
   h.posted.length = 0;
   host = document.createElement('div');
   document.body.appendChild(host);
@@ -99,6 +112,7 @@ afterEach(() => {
   host?.remove();
   host = null;
   h.listeners.clear();
+  vi.useRealTimers();
 });
 
 async function render(
@@ -125,17 +139,22 @@ const headerButton = (label: string) =>
     (el) => el.textContent === label,
   ) as HTMLElement | undefined;
 
+const retryButtons = () =>
+  [...(host?.querySelectorAll('.remote-changes__note button') ?? [])].filter(
+    (el) => el.textContent === MACHINES_STR.changesRetry,
+  ) as HTMLElement[];
+
 /** Both folders of the session answer: home with two changes, the shared folder clean. */
 async function answerBoth() {
   await act(async () => {
-    answerStatus(
-      HOME,
-      snapshot([
+    answerStatus(HOME, {
+      root: HOME,
+      snap: snapshot([
         { path: 'src/a.ts', kind: 'M', added: 3, removed: 1, staged: false },
         { path: 'b.ts', kind: 'A', added: 10, removed: 0, staged: true },
       ]),
-    );
-    answerStatus(SHARED, snapshot([]));
+    });
+    answerStatus(SHARED, { root: SHARED, snap: snapshot([]) });
   });
   await flush();
 }
@@ -152,6 +171,7 @@ describe('remote Changes view', () => {
     expect(names).toEqual(['p', 'shared']);
     expect(changeRow('src/a.ts')?.textContent).toContain('+3');
     expect(changeRow('src/a.ts')?.textContent).toContain('−1');
+    expect(changeRow('src/a.ts')?.textContent).toContain('unstaged');
     expect(changeRow('b.ts')?.textContent).toContain('staged');
     expect(host?.textContent).toContain('No changes.');
   });
@@ -176,30 +196,123 @@ describe('remote Changes view', () => {
     expect(onOpenHistory).toHaveBeenCalledWith(HOME);
   });
 
-  it('a change under the folder re-requests status once (debounced)', async () => {
+  it('a .git change re-requests once after 300 ms and not before', async () => {
     await render(rowWith('up'));
     await answerBoth();
     const before = statusReqs(HOME).length;
 
-    // Three change events in a burst ask for one status, once the burst has been quiet 300 ms.
+    // Three events in a burst ask for one status, and none before the 300 ms quiet period.
     act(() => {
       for (let i = 0; i < 3; i += 1) {
-        emit({
-          type: 'remoteFs:changed',
-          key: `remote:M1:S1|git|${HOME}`,
-          paths: [`${HOME}/a.ts`],
-        });
+        emit({ type: 'remoteFs:changed', key: `remote:M1:S1|git|${HOME}/.git`, paths: [] });
       }
     });
     await act(async () => {
-      await new Promise((r) => setTimeout(r, 350));
+      await vi.advanceTimersByTimeAsync(299);
     });
+    expect(statusReqs(HOME).length).toBe(before);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(statusReqs(HOME).length - before).toBe(1);
+  });
+
+  it('polls status every 5 s while shown and stops on unmount', async () => {
+    await render(rowWith('up'));
+    await answerBoth();
+    const first = statusReqs(HOME).length;
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4_999);
+    });
+    expect(statusReqs(HOME).length).toBe(first);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(statusReqs(HOME).length).toBe(first + 1);
+
+    act(() => root?.unmount());
+    root = null;
+    const atUnmount = statusReqs(HOME).length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+    expect(statusReqs(HOME).length).toBe(atUnmount);
+  });
+
+  it('a folder with no repo shows No git repository, not an error', async () => {
+    await render(rowWith('up'));
+    await act(async () => {
+      answerStatus(HOME, { root: HOME, snap: null });
+      answerStatus(SHARED, { root: SHARED, snap: null });
+    });
+    await flush();
+
+    expect(host?.textContent).toContain('No git repository in this session’s folders.');
+    expect(retryButtons()).toEqual([]);
+  });
+
+  it('a real error on a folder shows on its section with Retry even when another folder has a repo', async () => {
+    await render(rowWith('up'));
+    await act(async () => {
+      answerStatus(HOME, {
+        root: HOME,
+        snap: snapshot([{ path: 'a.ts', kind: 'M', added: 1, removed: 0, staged: false }]),
+      });
+      failStatus(SHARED, 'refused');
+    });
+    await flush();
+
+    expect(changeRow('a.ts')).toBeDefined();
+    const errorNote = [...(host?.querySelectorAll('.remote-changes__note') ?? [])].find((el) =>
+      el.textContent?.includes('That machine refused.'),
+    );
+    expect(errorNote?.textContent).toContain('shared');
+    expect(retryButtons()).toHaveLength(1);
+
+    const before = statusReqs(SHARED).length;
+    await act(async () => retryButtons()[0]?.click());
+    expect(statusReqs(SHARED).length - before).toBe(1);
+  });
+
+  it('repos are keyed by the root B returned: two folders in one repo show once', async () => {
+    const sub = `${HOME}/sub`;
+    await render(rowWith('up', { ...SESSION, roots: [HOME, sub] }));
+    await act(async () => {
+      answerStatus(HOME, { root: HOME, snap: snapshot([]) });
+      // The sub folder sits inside the same repo, so B answers with the repo's own root.
+      answerStatus(sub, { root: HOME, snap: snapshot([]) });
+    });
+    await flush();
+
+    const names = [...(host?.querySelectorAll('.remote-changes__name') ?? [])].map(
+      (el) => el.textContent,
+    );
+    expect(names).toEqual(['p']);
+  });
+
+  it('Retry on a stale repo asks its folder again', async () => {
+    await render(rowWith('up'));
+    await act(async () => {
+      answerStatus(HOME, {
+        root: HOME,
+        snap: snapshot([], { error: 'failed' }),
+      });
+      answerStatus(SHARED, { root: SHARED, snap: snapshot([]) });
+    });
+    await flush();
+
+    expect(host?.textContent).toContain('Could not read the latest status.');
+    const before = statusReqs(HOME).length;
+    await act(async () => retryButtons()[0]?.click());
     expect(statusReqs(HOME).length - before).toBe(1);
   });
 
   it('offline sends nothing', async () => {
     await render(rowWith('down'));
-    await flush();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
     expect(h.posted.filter((m) => m.type === 'remoteGit:request')).toEqual([]);
     expect(h.posted.filter((m) => m.type === 'remoteFs:watch')).toEqual([]);
     expect(host?.textContent).toContain('box is offline');

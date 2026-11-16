@@ -4,6 +4,7 @@
 import type { MonitorSession } from '../src/contracts/link-protocol';
 import type { MachineState } from '../src/contracts/machines';
 import type { NetworkState } from '../src/contracts/network-state';
+import { folderKey } from '../src/folder-key';
 import type { Session } from '../src/types';
 
 export interface RemoteKey {
@@ -22,6 +23,20 @@ export interface RemoteSessionRow {
   session: MonitorSession;
   /** The local lead that opened it, or null: then it shows only under its machine. */
   parentSessionId: string | null;
+}
+
+/** The session's home and roots as folders to browse or ask about. A root equal to another by folder key shows once. */
+export function remoteFolders(row: RemoteSessionRow): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const p of [row.session.home, ...row.session.roots]) {
+    if (p === '') continue;
+    const key = folderKey(p);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+  }
+  return out;
 }
 
 export function remoteSessionRows(

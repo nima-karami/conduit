@@ -6,13 +6,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GitOp, GitReqArgs, GitResult } from '../src/contracts/link-protocol';
 import { folderKey } from '../src/folder-key';
 import type { RepoSnapshot } from '../src/protocol';
+import { joinPath } from './file-tree';
 import { requestHost } from './host-request';
 import { REMOTE_TIMEOUT, watchRemote } from './remote-files-store';
-import { type RemoteSessionRow, remoteKeyId } from './remote-sessions';
+import { type RemoteSessionRow, remoteFolders, remoteKeyId } from './remote-sessions';
 
 // A status walks every changed file of a repo on B, so it gets more room than a directory listing.
 const GIT_TIMEOUT_MS = 40_000;
-/** A burst of changes under a folder asks for one status once it has been quiet this long. */
+/** A repo's status is asked again this often while the Changes tab is shown. */
+const POLL_MS = 5_000;
+/** A burst of changes to a repo's `.git` asks for one status once it has been quiet this long. */
 const REFRESH_DEBOUNCE_MS = 300;
 
 export type RemoteGitResult = { ok: true; value: GitResult } | { ok: false; error: string };
@@ -33,51 +36,44 @@ export async function remoteGit(
   return reply ? reply.result : { ok: false, error: REMOTE_TIMEOUT };
 }
 
-/** A repository the session's folders sit in, as B reported it. */
+/** A repository a session folder sits in, keyed by the root B returned for it. */
 export interface RemoteRepo {
+  /** The session folder that reported this repo first. */
+  folder: string;
   root: string;
   snapshot: RepoSnapshot;
 }
 
+/** One block of the view, in folder order: a repo, or a folder whose status request failed. */
+export type RemoteSection =
+  | { kind: 'repo'; repo: RemoteRepo }
+  | { kind: 'error'; folder: string; error: string };
+
 export interface RemoteStatus {
   /** The machine is down: nothing is asked and nothing watched. */
   offline: boolean;
-  /** Online and no folder has answered yet. */
+  /** Online, and some folder has not answered yet while none has produced a section. */
   loading: boolean;
-  /** One entry per distinct repo root, in folder order. */
-  repos: RemoteRepo[];
-  /** B's error for each folder whose status failed, in folder order. */
-  errors: string[];
-  /** Ask again for every folder whose status failed. */
-  retry: () => void;
+  sections: RemoteSection[];
+  /** Ask B for `folder`'s status again. */
+  retry: (folder: string) => void;
 }
 
-type FolderAnswer = { ok: true; repo: RemoteRepo } | { ok: false; error: string };
-
-/** The session's home and roots, one per folder key: a root equal to another shows once. */
-function foldersOf(row: RemoteSessionRow): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const p of [row.session.home, ...row.session.roots]) {
-    if (p === '') continue;
-    const key = folderKey(p);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(p);
-  }
-  return out;
-}
+/** A folder's answer. `snapshot: null` is B saying the folder is in no repo: an answer, not an error. */
+type FolderAnswer =
+  | { ok: true; root: string; snapshot: RepoSnapshot | null }
+  | { ok: false; error: string };
 
 /**
- * The git status of every folder of a remote session row. Each folder asks B for its status; a
- * change under a folder (CON-43 watch) asks again once it has been quiet for 300 ms; a machine
- * coming back online asks every folder again. A row's hook lives as long as its view.
+ * The git status of every folder of a remote session row. Each folder is asked when the row
+ * appears, every POLL_MS while it is shown, and again when the machine comes back online. A change
+ * to a repo's `.git` (CON-43 watch) asks for that repo's folder once it has been quiet for 300 ms.
  */
 export function useRemoteStatus(row: RemoteSessionRow): RemoteStatus {
   const { machineId, sessionId } = row.key;
   const rowKey = remoteKeyId(row.key);
   const offline = row.machineState !== 'up' && row.machineState !== 'degraded';
-  const folderSig = foldersOf(row).join('\n');
+  const folderSig = remoteFolders(row).join('\n');
   const folders = useMemo(() => (folderSig === '' ? [] : folderSig.split('\n')), [folderSig]);
 
   const [answers, setAnswers] = useState<Record<string, FolderAnswer | undefined>>({});
@@ -102,7 +98,7 @@ export function useRemoteStatus(row: RemoteSessionRow): RemoteStatus {
         const answer: FolderAnswer = !r.ok
           ? { ok: false, error: r.error }
           : r.value.op === 'status'
-            ? { ok: true, repo: { root: r.value.root, snapshot: r.value.snapshot } }
+            ? { ok: true, root: r.value.root, snapshot: r.value.snapshot }
             : { ok: false, error: 'unexpected_reply' };
         setAnswers((cur) => ({ ...cur, [folder]: answer }));
       });
@@ -110,55 +106,78 @@ export function useRemoteStatus(row: RemoteSessionRow): RemoteStatus {
     [machineId, sessionId],
   );
 
-  // Online: every folder is asked when the row appears, and again when the machine comes back.
+  // Online: every folder is asked now and every POLL_MS while the view is shown.
   useEffect(() => {
     if (offline) return;
-    for (const folder of folders) ask(folder);
+    const askAll = () => {
+      for (const folder of folders) ask(folder);
+    };
+    askAll();
+    const id = setInterval(askAll, POLL_MS);
+    return () => clearInterval(id);
   }, [offline, folders, ask]);
 
-  // Online: a change under a folder asks for that folder's status once it has been quiet.
+  const sections: RemoteSection[] = [];
+  const seen = new Set<string>();
+  let pending = false;
+  for (const folder of folders) {
+    const a = answers[folder];
+    if (a === undefined) {
+      pending = true;
+      continue;
+    }
+    if (!a.ok) {
+      sections.push({ kind: 'error', folder, error: a.error });
+      continue;
+    }
+    if (a.snapshot === null) continue;
+    const key = folderKey(a.root);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    sections.push({ kind: 'repo', repo: { folder, root: a.root, snapshot: a.snapshot } });
+  }
+
+  // Online: a change to a repo's `.git` asks for its folder once the burst has been quiet.
+  const repoSig = sections
+    .flatMap((s) => (s.kind === 'repo' ? [`${s.repo.folder}\n${s.repo.root}`] : []))
+    .join('\u0000');
   useEffect(() => {
     if (offline) return;
-    const pending = timers.current;
-    const releases = folders.map((folder) =>
-      watchRemote(`${rowKey}|git|${folder}`, machineId, sessionId, folder, () => {
-        const old = pending.get(folder);
+    const pendingTimers = timers.current;
+    const releases = repoTargets(repoSig).map(({ folder, root }) => {
+      const gitDir = joinPath(root, '.git');
+      return watchRemote(`${rowKey}|git|${gitDir}`, machineId, sessionId, gitDir, () => {
+        const old = pendingTimers.get(folder);
         if (old !== undefined) clearTimeout(old);
-        pending.set(
+        pendingTimers.set(
           folder,
           setTimeout(() => {
-            pending.delete(folder);
+            pendingTimers.delete(folder);
             ask(folder);
           }, REFRESH_DEBOUNCE_MS),
         );
-      }),
-    );
+      });
+    });
     return () => {
       for (const release of releases) release();
-      for (const t of pending.values()) clearTimeout(t);
-      pending.clear();
+      for (const t of pendingTimers.values()) clearTimeout(t);
+      pendingTimers.clear();
     };
-  }, [offline, folders, rowKey, machineId, sessionId, ask]);
+  }, [offline, repoSig, rowKey, machineId, sessionId, ask]);
 
-  const loading =
-    !offline && folders.length > 0 && folders.every((folder) => answers[folder] === undefined);
-  const repos: RemoteRepo[] = [];
-  const seen = new Set<string>();
-  const errors: string[] = [];
-  for (const folder of folders) {
-    const a = answers[folder];
-    if (!a) continue;
-    if (!a.ok) {
-      errors.push(a.error);
-      continue;
-    }
-    const key = folderKey(a.repo.root);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    repos.push(a.repo);
-  }
-  const retry = () => {
-    for (const folder of folders) if (answers[folder]?.ok === false) ask(folder);
+  return {
+    offline,
+    loading: !offline && pending && sections.length === 0,
+    sections,
+    retry: ask,
   };
-  return { offline, loading, repos, errors, retry };
+}
+
+/** The repos a `repoSig` names, back as folder and root pairs. */
+function repoTargets(sig: string): { folder: string; root: string }[] {
+  if (sig === '') return [];
+  return sig.split('\u0000').map((entry) => {
+    const [folder = '', root = ''] = entry.split('\n');
+    return { folder, root };
+  });
 }

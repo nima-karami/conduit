@@ -1,6 +1,12 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import type { PersistedDoc } from '../../src/protocol';
-import { groupActive, groupDocs, previewIdsOf, tabPreview } from '../../webview/doc-groups';
+import {
+  groupActive,
+  groupDocs,
+  previewIdsOf,
+  splitBehavior,
+  tabPreview,
+} from '../../webview/doc-groups';
 import {
   backgroundOpenOutcome,
   type DocsState,
@@ -1440,6 +1446,11 @@ describe('remote-diff and remote-history docs (CON-45 G4)', () => {
     });
     expect(s.docs.map((d) => d.id)).toContain(`diff:${path}`);
     expect(toPersistedDocs(s).map((d) => d.kind)).toEqual(['diff']);
+  });
+
+  it('remote-history splits like git-history: it moves rather than duplicates', () => {
+    expect(splitBehavior('remote-history')).toBe(splitBehavior('git-history'));
+    expect(splitBehavior('remote-history')).toBe('move');
   });
 
   it('a remote diff or history names its machine at the type level', () => {

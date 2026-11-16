@@ -17372,7 +17372,7 @@ button.toggle--on .toggle__knob {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.remote-changes__staged {
+.remote-changes__side {
   flex: none;
   padding: 0 4px;
   border-radius: 3px;
