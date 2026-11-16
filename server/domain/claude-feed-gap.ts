@@ -73,9 +73,9 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
     if (sessions.get(sessionId) !== s) return;
     // A line cut at the Stop stays unread until its newline lands, so it is counted exactly once.
     const complete = bytes.lastIndexOf(NEWLINE) + 1;
-    const scan = matchedToolUseIds(bytes.subarray(0, complete).toString('utf8'), null);
-    const missing = scan.ids.filter((id) => !s.received.has(id)).length;
-    for (const id of scan.ids) s.received.delete(id);
+    const ids = matchedToolUseIds(bytes.subarray(0, complete).toString('utf8'));
+    const missing = ids.filter((id) => !s.received.has(id)).length;
+    for (const id of ids) s.received.delete(id);
     if (!baseline && missing > 0) deps.record(sessionId, missing);
     s.transcriptPath = path;
     s.offset = start + complete;
