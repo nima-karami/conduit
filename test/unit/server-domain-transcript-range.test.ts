@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { readTranscriptRange } from '../../server/domain/index';
+import { readTranscriptRange } from '../../server/domain/transcript-range';
 
 const dirs: string[] = [];
 const scratch = (): string => {
@@ -16,9 +16,12 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
+// Probed by making a FIFO rather than by asking for mkfifo's version: a shell that has the tool
+// but cannot make a pipe in this directory must still skip the FIFO case, not fail it.
 const fifoSupported = (): boolean => {
+  const dir = scratch();
   try {
-    execFileSync('mkfifo', ['--version'], { stdio: 'ignore' });
+    execFileSync('mkfifo', [join(dir, 'probe')], { stdio: 'ignore' });
     return true;
   } catch {
     return false;
