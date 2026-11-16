@@ -1,5 +1,13 @@
 import type { MessageKind, Presence, Priority } from '../conduit-mcp/types';
-import type { DirEntryDTO, FileContentDTO } from '../protocol';
+import type {
+  CommitNode,
+  DirEntryDTO,
+  FileContentDTO,
+  FileDiffDTO,
+  GraphLayout,
+  HistoryState,
+  RepoSnapshot,
+} from '../protocol';
 import type { SessionAttentionFacts } from '../types';
 import type { RemotePolicyDoc, RemotePolicySnapshot } from './remote-policy';
 import type { Capabilities, Capability } from './remote-principal';
@@ -13,7 +21,8 @@ export type { Capabilities, Capability } from './remote-principal';
 // minor 4 added `fs.req` / `fs.res` / `fs.watch` / `fs.unwatch` / `fs.changed` (spec 5.3, CON-43).
 // minor 5 added `policy.changed` / `policy.push` / `policy.pushed` / `policy.revoke` (plan
 // 2026-11-16-remote-ssh-rules, Technical decisions 3).
-export const LINK_PROTOCOL = { major: 1, minor: 5 } as const;
+// minor 6 added `git.req` / `git.res` (spec 5.3, CON-45).
+export const LINK_PROTOCOL = { major: 1, minor: 6 } as const;
 /** The lowest peer minor that serves `call` frames: a routed call to an older peer is refused, not sent. */
 export const ROUTED_CALLS_MIN_MINOR = 2;
 /** The lowest peer minor that serves request frames: an older peer gets no mirror and no answers. */
@@ -21,6 +30,30 @@ export const REQUEST_MIRROR_MIN_MINOR = 3;
 /** The lowest peer minor that serves fs frames: a file request to an older peer is refused, not sent. */
 export const FS_MIN_MINOR = 4;
 export const FS_OPS = ['list', 'read', 'stat'] as const;
+/** The lowest peer minor that serves git reads (plan CON-45). */
+export const GIT_MIN_MINOR = 6;
+export const GIT_OPS = ['status', 'diff', 'log', 'show'] as const;
+export type GitOp = (typeof GIT_OPS)[number];
+/** One `git.req`'s arguments; which ones apply depends on `op` (plan CON-45 decision 1). */
+export interface GitReqArgs {
+  /** diff: the file inside `root`. */
+  path?: string;
+  /** show: the commit. */
+  sha?: string;
+  /** log: page size and cursor. */
+  limit?: number;
+  before?: string;
+}
+/**
+ * One `git.res` result. Its payloads are the existing renderer DTOs, which B's own git code built;
+ * like `call.result`, the parser checks the shape and the frame limit bounds the size.
+ */
+export type GitResult =
+  /** `snapshot: null` means the folder is in no git repo: an answer, not a failure (CON-45 G4 review). */
+  | { op: 'status'; root: string; snapshot: RepoSnapshot | null }
+  | { op: 'diff'; file: FileDiffDTO }
+  | { op: 'log'; commits: CommitNode[]; layout: GraphLayout; hasMore: boolean; state: HistoryState }
+  | { op: 'show'; files: FileDiffDTO[]; truncated: boolean };
 export type FsOp = (typeof FS_OPS)[number];
 export const FS_ERROR_CODES = [
   'refused',
@@ -197,6 +230,10 @@ export type LinkFrame =
   | { t: 'fs.unwatch'; watchId: string }
   /** Changed paths under a watch; an empty list means "re-read everything under it". */
   | { t: 'fs.changed'; watchId: string; paths: string[] }
+  /** A read of B's git state for a session's repo, served like fs.req (plan CON-45). */
+  | { t: 'git.req'; id: string; op: GitOp; sessionId: string; root: string; args: GitReqArgs }
+  | { t: 'git.res'; id: string; ok: true; result: GitResult }
+  | { t: 'git.res'; id: string; ok: false; error: { code: FsErrorCode; message: string } }
   /** B's open requests plus those that ended in the last 10 min; a newer seq replaces the old set. */
   | { t: 'request.mirror'; seq: number; requests: RequestMirror[] }
   /** A's owner answering a mirrored request on B. Never replayed: a drop is `peer_unreachable`. */
@@ -558,6 +595,22 @@ export function parseLinkFrame(raw: unknown): LinkFrame | null {
       )
         ? raw
         : null;
+    case 'git.req':
+      return frame(
+        raw,
+        'git.req',
+        ['id', 'op', 'sessionId', 'root', 'args'],
+        (r) =>
+          isCallId(r.id) &&
+          oneOf(r.op, GIT_OPS) &&
+          isPrintableCapped(r.sessionId, FS_SESSION_ID_MAX) &&
+          isFsPath(r.root) &&
+          isGitArgs(r.op, r.args),
+      )
+        ? raw
+        : null;
+    case 'git.res':
+      return parseGitRes(raw);
     case 'policy.changed':
       return frame(
         raw,
@@ -589,6 +642,65 @@ export function parseLinkFrame(raw: unknown): LinkFrame | null {
         : null;
     default:
       return null;
+  }
+}
+
+const GIT_SHA = /^[0-9a-f]{7,40}$/;
+const GIT_LOG_MAX = 500;
+
+/** Each op takes exactly its own arguments, so a request can't carry one the server would ignore. */
+function isGitArgs(op: unknown, v: unknown): boolean {
+  switch (op) {
+    case 'status':
+      return hasKeys(v, []);
+    case 'diff':
+      return hasKeys(v, ['path']) && isFsPath(v.path);
+    case 'show':
+      return hasKeys(v, ['sha']) && str(v.sha) && GIT_SHA.test(v.sha);
+    case 'log':
+      return (
+        hasKeys(v, [], ['limit', 'before']) &&
+        (v.limit === undefined || (int(v.limit) && v.limit >= 1 && v.limit <= GIT_LOG_MAX)) &&
+        (v.before === undefined || (str(v.before) && GIT_SHA.test(v.before)))
+      );
+    default:
+      return false;
+  }
+}
+
+/** `ok` picks the variant; the result's op picks its fields (payloads are B's own DTOs, see GitResult). */
+function parseGitRes(r: Rec): LinkFrame | null {
+  if (!isCallId(r.id) || !bool(r.ok)) return null;
+  if (!r.ok)
+    return frame(r, 'git.res', ['id', 'ok', 'error'], (x) => isFsError(x.error)) ? r : null;
+  return frame(r, 'git.res', ['id', 'ok', 'result'], (x) => isGitResult(x.result)) ? r : null;
+}
+
+function isGitResult(v: unknown): boolean {
+  if (!isRec(v)) return false;
+  switch (v.op) {
+    case 'status':
+      return (
+        hasKeys(v, ['op', 'root', 'snapshot']) &&
+        isFsPath(v.root) &&
+        (v.snapshot === null || isRec(v.snapshot))
+      );
+    case 'diff':
+      return hasKeys(v, ['op', 'file']) && isRec(v.file);
+    case 'log':
+      return (
+        hasKeys(v, ['op', 'commits', 'layout', 'hasMore', 'state']) &&
+        Array.isArray(v.commits) &&
+        isRec(v.layout) &&
+        bool(v.hasMore) &&
+        oneOf(v.state, ['ok', 'empty', 'error'] as const)
+      );
+    case 'show':
+      return (
+        hasKeys(v, ['op', 'files', 'truncated']) && arrayOf(v.files, isRec) && bool(v.truncated)
+      );
+    default:
+      return false;
   }
 }
 

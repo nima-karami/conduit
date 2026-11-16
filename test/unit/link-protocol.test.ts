@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   FS_MIN_MINOR,
+  GIT_MIN_MINOR,
   helloPlatform,
   LINK_PROTOCOL,
   type LinkFrame,
@@ -183,6 +184,20 @@ const SAMPLES: { [K in LinkFrame['t']]: Extract<LinkFrame, { t: K }> } = {
   'fs.watch': { t: 'fs.watch', watchId: 'w-1', sessionId: 's-1', path: '/home/u/work' },
   'fs.unwatch': { t: 'fs.unwatch', watchId: 'w-1' },
   'fs.changed': { t: 'fs.changed', watchId: 'w-1', paths: ['/home/u/work/a.txt'] },
+  'git.req': {
+    t: 'git.req',
+    id: 'g-1',
+    op: 'diff',
+    sessionId: 's-1',
+    root: '/w',
+    args: { path: '/w/a.txt' },
+  },
+  'git.res': {
+    t: 'git.res',
+    id: 'g-1',
+    ok: true,
+    result: { op: 'show', files: [], truncated: false },
+  },
   'policy.changed': { t: 'policy.changed', rev: 3, doc: POLICY_DOC, grants: [GRANT_VIEW] },
   'policy.push': { t: 'policy.push', id: 'p-1', baseRev: 3, doc: POLICY_DOC },
   'policy.pushed': { t: 'policy.pushed', id: 'p-1', ok: true, rev: 4 },
@@ -389,7 +404,7 @@ describe('call and call.result frames (protocol 1.2)', () => {
   });
 
   it('exposes the minor version and the six routed tools', () => {
-    expect(LINK_PROTOCOL).toEqual({ major: 1, minor: 5 });
+    expect(LINK_PROTOCOL).toEqual({ major: 1, minor: 6 });
     expect([...ROUTED_TOOLS]).toEqual([
       'list_agents',
       'open_session',
@@ -683,7 +698,7 @@ describe('request.mirror, request.answer and request.answered frames (protocol 1
 });
 
 describe('fs frames (protocol 1.4)', () => {
-  it('serves files from the current minor', () => {
+  it('serves files from minor 4', () => {
     expect(FS_MIN_MINOR).toBe(4);
   });
   it('refuses an fs.req with an unknown op, a control character in the path, or an extra key', () => {
@@ -738,6 +753,47 @@ describe('fs frames (protocol 1.4)', () => {
   });
 });
 
+describe('git frames (protocol 1.6)', () => {
+  it('serves git reads from the current minor', () => {
+    expect(GIT_MIN_MINOR).toBe(LINK_PROTOCOL.minor);
+  });
+  it('refuses a git.req with a bad sha, an oversized limit, an unknown op or an extra arg', () => {
+    const ok = {
+      t: 'git.req',
+      id: 'g-1',
+      op: 'log',
+      sessionId: 's-1',
+      root: '/w',
+      args: { limit: 50 },
+    };
+    expect(parseLinkFrame(structuredClone(ok))).toEqual(ok);
+    expect(parseLinkFrame({ ...ok, args: { limit: 501 } })).toBeNull();
+    expect(parseLinkFrame({ ...ok, op: 'commit' })).toBeNull();
+    expect(parseLinkFrame({ ...ok, op: 'show', args: { sha: 'HEAD; rm -rf /' } })).toBeNull();
+    expect(parseLinkFrame({ ...ok, op: 'diff', args: {} })).toBeNull();
+    expect(parseLinkFrame({ ...ok, op: 'status', args: { path: '/w/a' } })).toBeNull();
+    expect(parseLinkFrame({ ...ok, args: { limit: 5, ref: 'main' } })).toBeNull();
+  });
+  it('checks a git.res result by its op', () => {
+    const res = (result: unknown) => ({ t: 'git.res', id: 'g-1', ok: true, result });
+    expect(parseLinkFrame(res({ op: 'diff', file: { path: '/w/a' } }))).not.toBeNull();
+    expect(parseLinkFrame(res({ op: 'status', root: '/w', snapshot: null }))).not.toBeNull();
+    expect(parseLinkFrame(res({ op: 'status', root: '/w', snapshot: 'x' }))).toBeNull();
+    expect(parseLinkFrame(res({ op: 'diff', files: [] }))).toBeNull();
+    expect(
+      parseLinkFrame(res({ op: 'log', commits: [], layout: {}, hasMore: false, state: 'odd' })),
+    ).toBeNull();
+    expect(
+      parseLinkFrame({
+        t: 'git.res',
+        id: 'g-1',
+        ok: false,
+        error: { code: 'refused', message: 'no' },
+      }),
+    ).not.toBeNull();
+  });
+});
+
 describe('policy frames (protocol 1.5)', () => {
   const PUSH = SAMPLES['policy.push'];
   const CHANGED = SAMPLES['policy.changed'];
@@ -748,9 +804,8 @@ describe('policy frames (protocol 1.5)', () => {
     error: { code: 'policy_conflict', message: 'the remote moved on', retryable: true },
   } as const;
 
-  it('exposes minor 5 and the lowest minor that serves the policy frames', () => {
+  it('serves the policy frames from minor 5', () => {
     expect(POLICY_MIN_MINOR).toBe(5);
-    expect(LINK_PROTOCOL.minor).toBe(POLICY_MIN_MINOR);
   });
 
   it('round-trips a failed push with a hint and the current remote doc', () => {

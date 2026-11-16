@@ -178,8 +178,14 @@ async function run(page, userDataDir, log) {
       const args = pane.command?.args ?? [];
       assert(args.includes('-t'), `the setup pane has no -t: ${JSON.stringify(pane.command)}`);
       const remoteCommand = args.at(-1) ?? '';
+      // The table picks the installer by B's OS, and fake-ssh's "remote" is the runner itself
+      // (Windows on CI, Linux locally), so the expected installer follows what B reported.
+      const bOs = (await appC2.call('link.list', {})).machines.find(
+        (m) => m.machine_id === bId,
+      )?.os;
+      const installer = bOs === 'windows' ? 'claude.ai/install.ps1' : 'claude.ai/install.sh';
       assert(
-        typeof remoteCommand === 'string' && remoteCommand.includes('claude.ai/install.sh'),
+        typeof remoteCommand === 'string' && remoteCommand.includes(installer),
         `the setup pane's command does not end with the installer: ${JSON.stringify(pane.command)}`,
       );
       const paneItem = page.locator(`[role="treeitem"][data-sessionid="${pane.id}"]`);

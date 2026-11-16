@@ -188,7 +188,7 @@ import {
   tabPreview,
 } from './doc-groups';
 import { reorderDock } from './dock-reorder';
-import type { DocKind, DocsState, OpenDoc, OpenMode } from './docs';
+import type { DocsState, LocalDocKind, OpenDoc, OpenMode } from './docs';
 import {
   backgroundOpenOutcome,
   commitDiffPath,
@@ -196,6 +196,8 @@ import {
   filePathsClosedWithSession,
   GIT_HISTORY_DOC_PATH,
   initialDocs,
+  isDocDirty,
+  localPathOf,
   REVIEW_DOC_ID,
   REVIEW_DOC_PATH,
   type ReviewSource,
@@ -1325,13 +1327,18 @@ export function App() {
   // 2026-09-22-middle-click-new-tab §3). The session is named only when it isn't the active one.
   const reportBackgroundOpen = useCallback(
     (
-      kind: DocKind,
+      kind: LocalDocKind,
       path: string,
       targetSessionId: string,
       group: GroupIndex,
       diffScope?: DiffTabScope,
     ) => {
-      const r = backgroundOpenOutcome(docStateRef.current, kind, path, targetSessionId, diffScope);
+      const r = backgroundOpenOutcome(
+        docStateRef.current,
+        { kind, diffScope },
+        path,
+        targetSessionId,
+      );
       const sessionName =
         r.ownerSessionId === activeIdRef.current
           ? null
@@ -1894,11 +1901,14 @@ export function App() {
   // Editor tabs are scoped to their session: only the active session's docs are shown,
   // so you never see another session's editors. Switching sessions restores that
   // session's remembered view (its last active doc, or the Terminal).
+  // A remote session owns its own tabs (remote-file docs carry its row id), so while one is shown
+  // the centre shows its docs, never the local session's behind it (plan CON-43 decision 10).
+  const docOwnerId = activeRemote ? remoteKeyId(activeRemote) : activeId;
   const visibleDocs = useMemo(
-    () => docState.docs.filter((d) => d.sessionId === activeId),
-    [docState.docs, activeId],
+    () => docState.docs.filter((d) => d.sessionId === docOwnerId),
+    [docState.docs, docOwnerId],
   );
-  const layout = useMemo(() => centerLayout(docState, activeId), [docState, activeId]);
+  const layout = useMemo(() => centerLayout(docState, docOwnerId), [docState, docOwnerId]);
   // Spec §10: a collapse that stranded focus in the closed group hands it to group 1; focus the
   // user put anywhere else stays. Keyed by session, so switching to a session with one group is
   // not a collapse. A layout effect for the same reason as the one below: flushed late, it would
@@ -2906,7 +2916,13 @@ export function App() {
     (id: string): Promise<Exclude<CloseStep, { type: 'save' }>> => {
       const doc = docState.docs.find((d) => d.id === id);
       if (!doc) return Promise.resolve({ type: 'close' });
-      const entry = getSaveEntry(doc.path);
+      // A remote file has no local buffer: its close never reads the local file's save or dirty state.
+      const path = localPathOf(doc);
+      if (path === null) {
+        forceCloseDoc(id);
+        return Promise.resolve({ type: 'close' });
+      }
+      const entry = getSaveEntry(path);
       return new Promise((resolve) => {
         const run = (step: CloseStep) => {
           if (step.type === 'close') {
@@ -2917,17 +2933,11 @@ export function App() {
             void entry
               ?.save({ kind: 'auto' })
               .then((ok) =>
-                run(
-                  afterCloseSave(
-                    ok,
-                    getDirtySnapshot().has(doc.path),
-                    fileSaves.getStatus(doc.path),
-                  ),
-                ),
+                run(afterCloseSave(ok, getDirtySnapshot().has(path), fileSaves.getStatus(path))),
               );
           }
         };
-        run(dirtyCloseStep(settings.autoSave, fileSaves.getStatus(doc.path), entry !== undefined));
+        run(dirtyCloseStep(settings.autoSave, fileSaves.getStatus(path), entry !== undefined));
       });
     },
     [docState.docs, forceCloseDoc, settings.autoSave],
@@ -2937,7 +2947,8 @@ export function App() {
     (id: string): Promise<boolean> => {
       const doc = docState.docs.find((d) => d.id === id);
       if (!doc) return Promise.resolve(true);
-      if (!dirtySet.has(doc.path)) {
+      const path = localPathOf(doc);
+      if (path === null || !dirtySet.has(path)) {
         forceCloseDoc(id);
         return Promise.resolve(true);
       }
@@ -2946,7 +2957,7 @@ export function App() {
           forceCloseDoc(id);
           resolve(true);
         };
-        const fileName = baseName(doc.path);
+        const fileName = baseName(path);
         const prompt = (reason: string | null) => {
           const message = `"${fileName}" has unsaved changes. Save before closing, or discard them?`;
           showConfirm({
@@ -2958,7 +2969,7 @@ export function App() {
             onCancel: () => resolve(false),
             onSecondary: close,
             onConfirm: () => {
-              const entry = getSaveEntry(doc.path);
+              const entry = getSaveEntry(path);
               if (!entry) {
                 // No registry entry (shouldn't happen for a dirty doc, but be safe).
                 close();
@@ -3154,7 +3165,7 @@ export function App() {
         ) &&
         !(
           nav.keepActive &&
-          shownKeepsDoc(docStateRef.current, 'file', path, effectiveSessionId, shown)
+          shownKeepsDoc(docStateRef.current, { kind: 'file' }, path, effectiveSessionId, shown)
         )
       ) {
         setReveal(path, nav.reveal, g);
@@ -3496,7 +3507,10 @@ export function App() {
     closeFiles: (id, target) =>
       runCloseFiles(planCloseFiles(docStateRef.current.docs, id, target), {
         kindOf: (d) => docStateRef.current.docs.find((x) => x.id === d)?.kind,
-        pathOf: (d) => docStateRef.current.docs.find((x) => x.id === d)?.path,
+        pathOf: (d) => {
+          const doc = docStateRef.current.docs.find((x) => x.id === d);
+          return doc ? (localPathOf(doc) ?? undefined) : undefined;
+        },
         isDirty: (p) => getDirtySnapshot().has(p),
         forceClose: forceCloseDoc,
         closeDirtyUnprompted,
@@ -4996,7 +5010,7 @@ export function App() {
           },
         );
       }
-      if (dirtySet.has(activeDoc.path)) {
+      if (isDocDirty(activeDoc, dirtySet)) {
         cmds.push({
           id: 'cmd:revertFile',
           title: 'Revert File',
@@ -5489,6 +5503,21 @@ export function App() {
         barless
       >
         <RightPane
+          remote={
+            activeRemote
+              ? (remoteRows.find((r) => r.id === remoteKeyId(activeRemote)) ?? null)
+              : null
+          }
+          onOpenRemoteFile={(row, path, mode) =>
+            dispatchDocs({
+              type: 'open',
+              kind: 'remote-file',
+              machine: { machineId: row.key.machineId, sessionId: row.key.sessionId },
+              path,
+              sessionId: row.id,
+              mode,
+            })
+          }
           onMoveMenu={(anchor) =>
             setMenu({
               x: anchor.left,

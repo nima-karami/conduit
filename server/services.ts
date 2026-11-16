@@ -307,6 +307,11 @@ export function createServices(o: ServicesOptions) {
           secret: o.secret,
           identity: loaded.identity,
           settings: () => domain.settings(),
+          // A peer reads a session's own folders only (fs-serve.ts), never an arbitrary path.
+          sessionRoots: (sessionId) => {
+            const s = domain.sessions.list().find((x) => x.id === sessionId);
+            return s === undefined ? null : [s.home, ...s.roots];
+          },
           emit: (state) => o.emit('network.changed', state),
           emitTo: o.emitTo,
           observe: (sessionId, events) => runtime.observe(sessionId, events),

@@ -18,6 +18,7 @@ import type {
 } from './conduit-mcp/ui-types';
 import type { SearchFileResult, SearchQuery, TruncatedBy } from './content-search';
 import type { DisplayFacts } from './contracts/frames';
+import type { GitOp, GitReqArgs, GitResult } from './contracts/link-protocol';
 import type { AgentSetupStep, MachineActionResult, MachineMode } from './contracts/machines';
 import type { NetworkState } from './contracts/network-state';
 import type { Job, LimitEpisode } from './contracts/scheduler';
@@ -672,6 +673,11 @@ export type HostToWebview =
       result: { ok: true; file: FileContentDTO } | { ok: false; error: string };
     }
   | { type: 'remoteFs:changed'; key: string; paths: string[] }
+  | {
+      type: 'remoteGit:result';
+      requestId: number;
+      result: { ok: true; value: GitResult } | { ok: false; error: string };
+    }
   | { type: 'mcp:state'; state: McpUiState }
   | { type: 'mcp:requestResult'; requestId: string; result: RequestAnswerResult }
   | {
@@ -1404,6 +1410,15 @@ export type WebviewToHost =
   | { type: 'remoteFs:read'; requestId: number; machineId: string; sessionId: string; path: string }
   | { type: 'remoteFs:watch'; key: string; machineId: string; sessionId: string; path: string }
   | { type: 'remoteFs:unwatch'; key: string }
+  | {
+      type: 'remoteGit:request';
+      requestId: number;
+      machineId: string;
+      sessionId: string;
+      root: string;
+      op: GitOp;
+      args: GitReqArgs;
+    }
   | { type: 'updateCheck' }
   | { type: 'updateRelaunch' }
   // Replies to `confirmQuit`, each disarming one guard timeout (dirty-quit-guard spec §2).

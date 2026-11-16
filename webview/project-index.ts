@@ -24,6 +24,25 @@ export function fileUri(path: string): monaco.Uri {
   return uri;
 }
 
+/**
+ * A remote file's model. Its own scheme keeps it out of every path-keyed map here: the same path
+ * on this computer is a different file.
+ */
+const REMOTE_MODEL_SCHEME = 'conduit-remote';
+
+export function remoteModelUri(machineId: string, path: string): monaco.Uri {
+  const posix = path.replace(/\\/g, '/');
+  return monaco.Uri.from({
+    scheme: REMOTE_MODEL_SCHEME,
+    authority: machineId,
+    path: posix.startsWith('/') ? posix : `/${posix}`,
+  });
+}
+
+export function isRemoteModel(model: monaco.editor.ITextModel): boolean {
+  return model.uri.scheme === REMOTE_MODEL_SCHEME;
+}
+
 /** The canonical path behind a model / navigation-result URI. */
 export function pathForUri(uri: monaco.Uri): string {
   return uriToPath.get(uri.toString()) ?? canonicalPath(uri.path);

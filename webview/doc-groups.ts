@@ -19,7 +19,11 @@ export const EMPTY_LAYOUT: SessionLayout = { groups: [{ tabs: [], active: null }
 /** How Split Right / a cross-group open treats a kind (spec §2.3). */
 export type SplitBehavior = 'duplicate' | 'move';
 export function splitBehavior(kind: DocKind): SplitBehavior {
-  return kind === 'web' || kind === 'review' || kind === 'git-history' || kind === 'request'
+  return kind === 'web' ||
+    kind === 'review' ||
+    kind === 'git-history' ||
+    kind === 'remote-history' ||
+    kind === 'request'
     ? 'move'
     : 'duplicate';
 }

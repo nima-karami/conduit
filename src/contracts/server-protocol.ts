@@ -39,7 +39,7 @@ import type {
   SessionOpener,
 } from '../types';
 import type { DisplayFacts } from './frames';
-import type { Capability } from './link-protocol';
+import type { Capability, GitOp, GitReqArgs, GitResult } from './link-protocol';
 import type {
   AgentSetupStep,
   ConnectMachineResult,
@@ -589,6 +589,11 @@ export interface ServerMethods {
     result: { watchId: string };
   };
   'remote.fs.unwatch': { params: { watchId: string }; result: Empty };
+  /** A read of B's git state for a remote session's repo, served and confined by B (plan CON-45). */
+  'remote.git': {
+    params: { machineId: string; sessionId: string; root: string; op: GitOp; args: GitReqArgs };
+    result: GitResult;
+  };
 
   // ── UI facts from the app ──
   'ui.presence': { params: { windows: WindowPresence[] }; result: Empty };

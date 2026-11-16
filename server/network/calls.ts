@@ -47,6 +47,13 @@ const ERROR_HINT_MAX = 512;
 export const isDialedSsh = (record: LinkRecord | null): boolean =>
   record !== null && record.transport === 'ssh' && record.ssh !== null;
 
+/**
+ * An inbound ssh controller: the peer reached me over its own ssh session, so its record has no
+ * ssh endpoint. Only these are served (calls, and file reads of CON-43).
+ */
+export const isInboundSsh = (record: LinkRecord | null): record is LinkRecord =>
+  record !== null && record.transport === 'ssh' && record.ssh === null;
+
 export interface CallsDeps {
   /** My record of the link to a machine: what it is and what I let it do. */
   linkOf(machineId: string): LinkRecord | null;
@@ -159,9 +166,7 @@ export function createCalls(deps: CallsDeps): Calls {
 
   const serveCall = async (machineId: string, frame: CallFrame): Promise<void> => {
     const link = deps.linkOf(machineId);
-    // An inbound ssh record: the peer reached us over its own ssh session, and the record has no
-    // ssh endpoint because we never dialed it.
-    if (link === null || link.transport !== 'ssh' || link.ssh !== null)
+    if (link === null || !isInboundSsh(link))
       return refuse(
         machineId,
         frame.id,

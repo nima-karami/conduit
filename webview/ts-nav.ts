@@ -45,11 +45,16 @@ import {
   unresolvedSpecifierSpans,
 } from './nav-outcome';
 import { navSignal } from './nav-signal';
-import { fileUri, openDefinitionFile, pathForUri } from './project-index';
+import { fileUri, isRemoteModel, openDefinitionFile, pathForUri } from './project-index';
 import { indexStatus, isIndexReady } from './ts-project';
 
 /** Language ids whose navigation is backed by the TS/JS worker. */
 const TS_LANGS = new Set(['typescript', 'javascript']);
+
+/** Monaco's TS worker syncs every model of these languages into the project. */
+export function isTsLanguage(languageId: string): boolean {
+  return TS_LANGS.has(languageId);
+}
 
 /** Whether a language has any navigation at all: the TS worker's, or a host language server's. */
 export function hasCodeNavigation(languageId: string): boolean {
@@ -537,6 +542,8 @@ async function runNavCommandInner(
   const position = editor.getPosition();
   const requested = navCommandKind(commandId);
   if (!model || !position || !requested) return { kind: 'none' };
+  // A remote file's text has no place in the local project: its URI maps back to a local path.
+  if (isRemoteModel(model)) return { kind: 'none' };
 
   const languageId = model.getLanguageId();
   const server = lspLanguage(languageId);
