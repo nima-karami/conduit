@@ -62,8 +62,6 @@ import {
   readDiffReply,
   readDir,
   readFile,
-  UNMERGED,
-  type Unmerged,
   writeFile,
 } from '../src/file-service';
 import { folderKey } from '../src/folder-key';
@@ -90,12 +88,11 @@ import {
   searchHistory,
 } from '../src/git-history';
 import { isDirty, listBranches, listRefs, switchBranch } from '../src/git-info';
-import { resolveLfsImage } from '../src/git-lfs';
 import { gitIgnoredNames, gitListedFiles, LISTING_MAX_BUFFER } from '../src/git-listing';
-import { createAsyncMemo } from '../src/git-memo';
 import { fullyQualifiedRef, type RefEndpoint, rangeKey } from '../src/git-range';
+import { createGitShow, gitShowBlob } from '../src/git-show';
 import { decideSwitch, isKnownRef } from '../src/git-switch';
-import { type HeadBlobShow, readHeadBlob } from '../src/head-blob';
+import { readHeadBlob } from '../src/head-blob';
 import { IgnoreCache } from '../src/ignore-cache';
 import { importClosure } from '../src/import-graph';
 import { staleIndexRoots } from '../src/index-resync';
@@ -138,7 +135,6 @@ import { buildPreviewUrl, isPreviewUrl } from '../src/preview-url';
 import { createProjectFileIndex, repoSetOf } from '../src/project-file-index';
 import type {
   AboutInfo,
-  DiffBase,
   HostToWebview,
   PersistedDoc,
   RepoDTO,
@@ -159,7 +155,6 @@ import {
   upsertAttachedRepo,
   upsertRepo,
 } from '../src/repo-history';
-import { repoRelPath } from '../src/repo-rel';
 import { detectRepos, scanSessionRepos } from '../src/repo-scan';
 import { createRepoScanScheduler } from '../src/repo-scan-scheduler';
 import { revealActionFor } from '../src/reveal-action';
@@ -845,109 +840,9 @@ async function ignoredEntriesCached(dir: string, names: string[]): Promise<Set<s
   return fresh;
 }
 
-/** Text blobs keep readDiff's original ceiling; only the image side, which reads raw bytes,
- *  needs the larger one. One show path, two caps — never one loosened cap for both. */
-const TEXT_BLOB_MAX_BUFFER = 8 * 1024 * 1024;
-const IMAGE_BLOB_MAX_BUFFER = 32 * 1024 * 1024;
-
-/**
- * A directory's repo top level, and a root's HEAD sha. Memoised because one `fsChanged` wakes
- * EVERY open editor at once: without this, N editors meant N `rev-parse --show-toplevel` plus
- * N `rev-parse HEAD` before the first blob was read. See spec 2026-08-27-review-supercharge
- * §2 Lane A ("N shows, not 2N spawns"). The toplevel of a directory is effectively immutable
- * for a session; HEAD is not, hence the much shorter TTL — long enough to collapse one burst.
- */
-const repoRootMemo = createAsyncMemo<string>({ ttlMs: 30_000, max: 200 });
-const headShaMemo = createAsyncMemo<string | null>({ ttlMs: 1_000, max: 50 });
-
-function repoTopLevel(dir: string): Promise<string> {
-  return repoRootMemo.get(dir, async () => {
-    const r = await runGit(['rev-parse', '--show-toplevel'], {
-      cwd: dir,
-      timeoutMs: GIT_TIMEOUT.metadata,
-    });
-    return r.ok ? r.stdout.trim() : '';
-  });
-}
-
-/** Cache KEY only: with a 1 s TTL this can lag the blob's real HEAD by a commit, which costs
- *  one stale cache hit that the next fsChanged corrects — never a wrong baseline, because the
- *  blob itself is always read fresh. */
-function headShaFor(root: string): Promise<string | null> {
-  return headShaMemo.get(root, async () => {
-    const r = await runGit(['rev-parse', 'HEAD'], { cwd: root, timeoutMs: GIT_TIMEOUT.metadata });
-    return r.ok ? r.stdout.trim() || null : null;
-  });
-}
-
-/**
- * THE `git show` blob path for this process — readDiff's text and image sides (at either
- * baseline) and the editor's change decorations all come through here, so there is one cap,
- * one timeout and one set of outcome flags rather than a second implementation per caller.
- */
-async function gitShowBlob(
-  root: string,
-  rel: string,
-  ref: DiffBase,
-  maxBuffer = TEXT_BLOB_MAX_BUFFER,
-): Promise<HeadBlobShow> {
-  const res = await runGit(['show', ref === 'index' ? `:${rel}` : `HEAD:${rel}`], {
-    cwd: root,
-    timeoutMs: GIT_TIMEOUT.diff,
-    maxBuffer,
-  });
-  return {
-    ok: res.ok,
-    bytes: res.stdoutBuffer,
-    code: res.code,
-    failed: res.notFound || res.timedOut || res.aborted || res.truncated,
-  };
-}
-
-/**
- * Is this path unmerged (a conflict, so no stage-0 blob)? Spawned ONLY after an index read
- * already failed: a failed `git show :<rel>` is equally a staged deletion or an untracked
- * file, and only those cases pay for the extra call.
- */
-async function indexUnmerged(root: string, rel: string): Promise<boolean> {
-  const res = await runGit(['--literal-pathspecs', 'ls-files', '--unmerged', '--', rel], {
-    cwd: root,
-    timeoutMs: GIT_TIMEOUT.metadata,
-  });
-  return res.ok && res.stdout.trim() !== '';
-}
-
-async function gitShow(absPath: string, ref: DiffBase = 'head'): Promise<string | Unmerged> {
-  const root = await repoTopLevel(path.dirname(absPath));
-  const rel = root ? repoRelPath(root, absPath) : null;
-  if (!rel) return '';
-  const res = await gitShowBlob(root, rel, ref);
-  if (res.ok) return res.bytes.toString('utf8');
-  return ref === 'index' && (await indexUnmerged(root, rel)) ? UNMERGED : '';
-}
-
-/**
- * Binary-safe blob read. Resolves `null` when the ref has no blob for the path (new/untracked
- * file) or the read fails — the caller treats that as "added".
- */
-async function gitShowBuffer(
-  absPath: string,
-  ref: DiffBase = 'head',
-): Promise<Buffer | null | Unmerged> {
-  const root = await repoTopLevel(path.dirname(absPath));
-  const rel = root ? repoRelPath(root, absPath) : null;
-  if (!rel) return null;
-  const res = await gitShowBlob(root, rel, ref, IMAGE_BLOB_MAX_BUFFER);
-  if (res.ok) {
-    return resolveLfsImage(res.bytes, {
-      gitBin: 'git',
-      cwd: root,
-      timeoutMs: GIT_TIMEOUT.metadata,
-      maxBytes: IMAGE_BLOB_MAX_BUFFER,
-    });
-  }
-  return ref === 'index' && (await indexUnmerged(root, rel)) ? UNMERGED : null;
-}
+// The `git show` path lives in src/git-show (shared with the remote server). One instance per
+// process: its memos collapse the N-editor burst from one fsChanged into one spawn.
+const { repoTopLevel, headShaFor, gitShow, gitShowBuffer } = createGitShow();
 
 // Three explicit routes replace the old single-window `send` (multi-window Slice A):
 //  - broadcast: path-tagged artifact/watcher pushes the renderer keys by path and
