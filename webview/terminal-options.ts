@@ -25,9 +25,12 @@ export function baseTerminalOptions(o: {
     cursorBlink: true,
     // xterm's default ring is 1000 lines — roughly eight seconds of a working agent.
     // Once the ring is full, a scrolled-up reader is pushed AWAY from the bottom on
-    // every trimmed line, so a small ring turns ordinary reading into a runaway scroll.
+    // every trimmed line (see TerminalPane's follow-state listener), so a small ring turns
+    // ordinary reading into the runaway-scroll bug. Bigger ring, rarer trimming.
     scrollback: 10000,
-    // Canvas stays transparent; the configurable surface lives on the `.termwrap` container.
+    // Canvas stays transparent (R4.3b); the configurable surface (colour × opacity) lives on the
+    // `.termwrap` container via `--term-surface`, so opacity changes cascade through CSS without
+    // re-theming. Each pane's re-theme effect re-applies foreground/ANSI colours.
     theme: buildXtermTheme(),
     allowProposedApi: true,
     ...windowsPtyOptions(o.windowsPty),

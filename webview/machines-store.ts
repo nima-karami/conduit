@@ -111,8 +111,11 @@ export async function sshHosts(): Promise<string[]> {
 // of its own. network-store never imports this module, so the dependency is one way.
 const subscribe = (cb: () => void): (() => void) => {
   listeners.add(cb);
-  if (listeners.size === 1)
+  if (listeners.size === 1) {
     stopNetwork = subscribeNetworkState(() => clearUpMachines(getNetworkState()));
+    // A machine may have come up while nobody was listening; don't wait for the next push.
+    clearUpMachines(getNetworkState());
+  }
   return () => {
     listeners.delete(cb);
     if (listeners.size === 0) {
