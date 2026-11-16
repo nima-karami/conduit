@@ -26,6 +26,10 @@ export interface MachineView {
   last_seen: string | null;
   survives_logout: boolean | null;
 }
+/** list_machines' structuredContent: MCP requires an object, so the rows sit under `machines`. */
+export interface ListMachinesOutput {
+  machines: MachineView[];
+}
 export interface ConnectMachineOk {
   machine: string;
   machine_id: string;

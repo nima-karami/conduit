@@ -69,7 +69,9 @@ async function run() {
     await assignLead(a, aa.sessionId);
 
     const listed = await callTool(a, aa, 'list_machines', {});
-    const row = Array.isArray(listed) ? listed.find((m) => m.machine_id === bId) : undefined;
+    const row = Array.isArray(listed?.machines)
+      ? listed.machines.find((m) => m.machine_id === bId)
+      : undefined;
     assert(row?.state === 'up', `list_machines: ${JSON.stringify(listed)}`);
 
     const reused = await callTool(a, aa, 'connect_machine', { machine: 'net-b' });

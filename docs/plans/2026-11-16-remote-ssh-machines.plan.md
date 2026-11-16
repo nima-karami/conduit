@@ -209,4 +209,5 @@ If a task's assumption turns out wrong, that task **stops**, and fixing the misa
 ## Review notes (orchestrator)
 - connect_machine's 120 s budget starts when the call arrives and includes the owner's ask (spec §7: it must stay under Codex's 180 s MCP timeout); review-c2 nit.
 - `list_machines` rows also carry `survives_logout` (measured after start, CON-38); a deliberate addition to §5.1's list.
+- `list_machines` returns `{ machines: [...] }`, not the bare `[...]` §5.1 shows: MCP structuredContent must be an object, and list_sessions already wraps its rows the same way (CON-39 smoke).
 - RS-D6 forced ask is marked under every non-deny profile, so no grant ever passes it (review-c2 B1).

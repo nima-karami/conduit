@@ -639,13 +639,16 @@ export function createToolHandlers(deps: ToolDeps): ToolHandlers {
   };
 }
 
+// MCP requires structuredContent to be an object; `length?: never` makes an array a compile error.
+export type StructuredOutput = object & { readonly length?: never };
+
 function isImageOutput(v: unknown): v is Extract<ReadAttachmentOutput, { kind: 'image' }> {
   if (typeof v !== 'object' || v === null) return false;
   const o = v as { kind?: unknown; base64?: unknown };
   return o.kind === 'image' && typeof o.base64 === 'string';
 }
 
-export function toToolCallResult(r: Result<unknown>): ToolCallResult {
+export function toToolCallResult(r: Result<StructuredOutput>): ToolCallResult {
   if (!r.ok) {
     const { error } = r;
     // content[0] is always the JSON payload; the hint also goes in its own item for text-only clients.

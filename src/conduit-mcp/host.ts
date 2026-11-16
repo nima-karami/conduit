@@ -148,6 +148,7 @@ import {
   type DirectoryEntry,
   RATE_LIMIT_PER_MIN,
   RATE_WINDOW_MS,
+  type StructuredOutput,
   toToolCallResult,
 } from './tools';
 import {
@@ -1820,7 +1821,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     let reDecided: PolicyDecision | null = null;
     try {
       const handle = sessionId ? handleOf(sessionId) : undefined;
-      const result = await (async (): Promise<Result<unknown> | null> => {
+      const result = await (async (): Promise<Result<StructuredOutput> | null> => {
         // The core refused names outside the catalog already; this only narrows the type.
         if (!isToolName(name)) {
           return { ok: false, error: toolError('invalid_args', `unknown tool: ${name}`) };
@@ -1943,7 +1944,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             }),
           signal: inflight.signal,
         };
-        return flow.runControl<unknown>({
+        return flow.runControl<StructuredOutput>({
           inflight,
           caller,
           kind: cliKindOfHandle(handle),
@@ -2161,7 +2162,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     name: ToolName,
     args: unknown,
     ctx: CallContext,
-  ): Promise<Result<unknown> | null> => {
+  ): Promise<Result<StructuredOutput> | null> => {
     const key = { connId: ctx.connId, requestId: ctx.requestId };
     switch (name) {
       case 'request_input':
@@ -2181,7 +2182,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     name: ToolName,
     args: unknown,
     ctx: ControlCallContext,
-  ): Promise<Result<Prepared<unknown>>> => {
+  ): Promise<Result<Prepared<StructuredOutput>>> => {
     switch (name) {
       case 'list_agents':
         return control.prepareListAgents(caller, args);
