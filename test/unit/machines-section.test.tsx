@@ -79,6 +79,7 @@ interface Props {
   onMachineAction?: (action: string, m: MachineView) => void;
   onAddMachine?: () => void;
   onConfirm?: (c: { onConfirm: () => void }) => void;
+  onSetUpAgents?: (m: MachineView) => void;
 }
 
 async function render(p: Props) {
@@ -97,6 +98,7 @@ async function render(p: Props) {
         onMachineAction: p.onMachineAction ?? (() => {}),
         onRenameMachine: () => {},
         onConfirm: p.onConfirm ?? (() => {}),
+        onSetUpAgents: p.onSetUpAgents,
       }),
     ),
   );
@@ -220,5 +222,24 @@ describe('MachinesSection', () => {
     expect(first?.textContent).toBe(MACHINES_STR.retryNow);
     await act(async () => first?.click());
     expect(onMachineAction).toHaveBeenCalledWith('retry', down);
+  });
+  it('row menu offers Set up agents when the handler is given', async () => {
+    const onSetUpAgents = vi.fn();
+    const up = machine({ machine_id: 'm1', machine: 'up-box', state: 'up' });
+    await render({ machines: [up], onSetUpAgents });
+    await click(document.querySelector(`[aria-label="${MACHINES_STR.rowMenu('up-box')}"]`));
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (el) => el.textContent === MACHINES_STR.setUpAgents,
+    );
+    expect(item).toBeDefined();
+    await act(async () => item?.click());
+    expect(onSetUpAgents).toHaveBeenCalledWith(up);
+  });
+
+  it('row menu has no Set up agents item without a handler', async () => {
+    await render({ machines: [machine({ machine_id: 'm1', machine: 'up-box' })] });
+    await click(document.querySelector(`[aria-label="${MACHINES_STR.rowMenu('up-box')}"]`));
+    const labels = [...document.querySelectorAll('[role="menuitem"]')].map((el) => el.textContent);
+    expect(labels).not.toContain(MACHINES_STR.setUpAgents);
   });
 });
