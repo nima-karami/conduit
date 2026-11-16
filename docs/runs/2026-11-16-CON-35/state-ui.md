@@ -2,9 +2,13 @@
 
 Read first after a compaction. Ledger: `.autoloop/` in /home/namemenima/projects/.wt/conduit/CON-35-ui (tasks.yaml, learnings.md, blockers.md, evidence/). Brief: `.autoloop-ui-brief.md`.
 
-## Now
-CON-41 (slice 6): plan docs/plans/2026-11-16-remote-ssh-machines-ui.plan.md. All four lanes Opus-reviewed and merged into CON-35-ui (L2 9ca0e7fd, L4, L3, L1); lane worktrees removed. Wiring 5025bbdb (app.tsx activeRemote, Sidebar/CenterPane props, AddMachineDialog, palette, machinesUi setting 0602d5e0, CHANGELOG). Running: full verify on CON-35-ui (.autoloop/evidence/con41-verify-ui-1.log); e2e lane CON-41-e2e writing test/e2e/net-machines-ui.e2e.mjs (+ screenshots to scratchpad/shots for the visual check). Next: merge e2e, look at screenshots, merge protocol onto CON-35-remote-ssh (tell claude-24 first), e2e:remote affected, report to claude-3.
-Follow-up card queued: CON-42-ui (Needs-you answer UI for mirrored remote permission asks + machine names on request cards), see .autoloop/tasks.yaml.
+## Now (updated ~16:20Z)
+- CON-41 DONE: merged 0599abdb on CON-35-remote-ssh, reported to claude-3.
+- CON-47 merged 718b90ba (claude-24 merged; verify 0); e2e:remote --affected running from worktree ../CON-47-check (log .autoloop/evidence/con47-e2e-remote-affected.log); then report. Task 0 VM measurement blocked (blockers.md).
+- CON-43: all 4 lanes + wiring merged in CON-35-ui; lane CON-43-R (remote tab renderer on its own Monaco model, readOnlyState 'remote') building; then e2e net-remote-files, verify, merge request to claude-24 (link minor 4 is CON-43's).
+- CON-45: plan + contracts b99e7809 (link minor 5 on this branch — renumber at merge if CON-46 lands first; minors are cumulative so assign at merge). Lanes G0 (git-show extraction), G2 (git-client + C2), G3 (electron) building; G1 (B git-serve) after G0; G4 renderer after R.
+- CON-44: plan a640328e; starts after CON-43 lands (needs fs.write frame, next free minor).
+- Follow-up CON-42-ui (Needs-you answer UI for mirrored remote asks) queued in tasks.yaml.
 
 ## Coordination
 claude-24 (server track) agreed: drive grant to inbound ssh controller; forget = local remove (no tombstone). calls.ts settleAbsent already rejects pending calls for removed machines. Their slice 7 edits index.ts frame dispatch (auto-merge expected). Message them before every merge.

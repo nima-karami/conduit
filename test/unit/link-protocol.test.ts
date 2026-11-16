@@ -751,6 +751,8 @@ describe('git frames (protocol 1.5)', () => {
   it('checks a git.res result by its op', () => {
     const res = (result: unknown) => ({ t: 'git.res', id: 'g-1', ok: true, result });
     expect(parseLinkFrame(res({ op: 'diff', file: { path: '/w/a' } }))).not.toBeNull();
+    expect(parseLinkFrame(res({ op: 'status', root: '/w', snapshot: null }))).not.toBeNull();
+    expect(parseLinkFrame(res({ op: 'status', root: '/w', snapshot: 'x' }))).toBeNull();
     expect(parseLinkFrame(res({ op: 'diff', files: [] }))).toBeNull();
     expect(
       parseLinkFrame(res({ op: 'log', commits: [], layout: {}, hasMore: false, state: 'odd' })),
