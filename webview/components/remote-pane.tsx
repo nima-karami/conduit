@@ -12,6 +12,7 @@ import { matchConhostCellWidths } from '../terminal-conpty';
 import { terminalGpu } from '../terminal-gpu';
 import { attachTerminalGpu, baseTerminalOptions } from '../terminal-options';
 import { registerTerminalQuerySwallowHandlers } from '../terminal-query-replies';
+import { exposeTerminal, unexposeTerminal } from '../test-terminals';
 import { buildXtermTheme } from '../xterm-theme';
 import { disposeTerminal } from './safe-dispose';
 
@@ -199,6 +200,7 @@ export function RemotePane({ remote, machineName, label, visible, onClosed }: Re
       matchConhostCellWidths(t);
       t.open(host);
       unregisterGpu = attachTerminalGpu(t, { visible: visibleRef.current });
+      exposeTerminal(remoteKeyId({ machineId, sessionId }), t);
       t.write(result.firstPaint);
       t.onData((data) => {
         if (!driveOn || ended) return;
@@ -221,7 +223,10 @@ export function RemotePane({ remote, machineName, label, visible, onClosed }: Re
       unsubscribe();
       resizeObserver.disconnect();
       unregisterGpu?.();
-      if (term) disposeTerminal(term, []);
+      if (term) {
+        unexposeTerminal(remoteKeyId({ machineId, sessionId }), term);
+        disposeTerminal(term, []);
+      }
       termRef.current = null;
       host.replaceChildren();
       if (viewId !== null) post({ type: 'remote:detach', viewId });
