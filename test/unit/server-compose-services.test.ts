@@ -587,7 +587,8 @@ describe.sequential('compose: NET audit and link revoke reach the MCP side', () 
     await eventually(() => lastNetState(a.sent)?.pairing?.state === 'confirm');
     await rpcResult(a.services, 'pairing.confirm', { pairingId: started.pairingId });
     await rpcResult(b.services, 'pairing.confirm', { pairingId: joined.pairingId });
-    const bId = lastNetState(b.sent)?.machineId ?? '';
+    // link.list reads the state directly; B's coalesced network.changed may not have gone out yet.
+    const bId = (await rpcResult<{ machineId: string }>(b.services, 'link.list', {})).machineId;
     await eventually(() =>
       Boolean(lastNetState(a.sent)?.links.some((l) => l.machineId === bId && l.state === 'up')),
     );
