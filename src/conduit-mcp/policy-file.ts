@@ -277,6 +277,8 @@ export function validateRemotePolicyDoc(v: unknown): RemoteDocCheck {
   for (const [i, raw] of v.profiles.entries()) {
     const at = `profiles[${i}]`;
     if (!isProfile(raw)) return refuse(`${at} is malformed`);
+    // Built-in profiles come from policy-profiles on every machine; a pushed copy would only shadow them.
+    if (!raw.id.startsWith('p-')) return refuse(`${at}.id is not a custom profile id`);
     if (raw.name.length > REMOTE_POLICY_NAME_MAX) return refuse(`${at}.name too long`);
     if (!printableName(raw.name, REMOTE_POLICY_NAME_MAX))
       return refuse(raw.name.trim() === '' ? `${at}.name empty` : `${at}.name not printable`);
@@ -305,6 +307,9 @@ export function validateRemotePolicyDoc(v: unknown): RemoteDocCheck {
       );
     for (const [j, ex] of assignment.exceptions.entries()) {
       const scope = ex.scope;
+      // A session id names one B-local session; it has no meaning on any other machine.
+      if (scope.kind === 'session')
+        return refuse(`${at}.assignment.exceptions[${j}].scope is session-kind`);
       if (
         (scope.kind === 'folder' || scope.kind === 'path') &&
         scope.path.length > REMOTE_POLICY_PATH_MAX

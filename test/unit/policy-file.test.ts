@@ -491,6 +491,39 @@ describe('validateRemotePolicyDoc', () => {
     );
   });
 
+  it.each(['observer', 'worker', 'lead'])(
+    'refuses the built-in profile id %s: a pushed profile is a custom p-* copy',
+    (id) => {
+      expect(refusal(remoteDoc({ profiles: [remoteProfile(0, { id })] }))).toBe(
+        'profiles[0].id is not a custom profile id',
+      );
+    },
+  );
+
+  it('refuses an exception scoped to a session, since session ids never travel', () => {
+    expect(
+      refusal(
+        remoteDoc({
+          assignments: [
+            remoteEntry({
+              assignment: {
+                profileId: 'worker',
+                onScreenOnly: false,
+                exceptions: [
+                  {
+                    tool: 'open_file',
+                    scope: { kind: 'session', sessionId: 's1' },
+                    rule: { decision: 'deny' },
+                  },
+                ],
+              },
+            }),
+          ],
+        }),
+      ),
+    ).toBe('assignments[0].assignment.exceptions[0].scope is session-kind');
+  });
+
   it('refuses an assignment that names an unknown profile', () => {
     expect(
       refusal(

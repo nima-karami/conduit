@@ -2001,7 +2001,7 @@ describe('remote policy doc', () => {
     const h = harness({ policy: seeded() });
     h.service.start();
     const before = h.changed();
-    const result = h.service.applyRemoteDoc(0, pushed(), 'm-owner');
+    const result = h.service.applyRemoteDoc(0, pushed());
     expect(result).toEqual({ ok: true, rev: 1 });
     expect(h.changed()).toBe(before + 1);
     expect(h.service.remoteDoc().rev).toBe(1);
@@ -2023,14 +2023,12 @@ describe('remote policy doc', () => {
   it('applyRemoteDoc refuses a stale baseRev with policy_conflict and the current copy, and changes nothing', async () => {
     const h = harness({ policy: seeded() });
     h.service.start();
-    expect(h.service.applyRemoteDoc(0, pushed(), 'm-owner')).toEqual({ ok: true, rev: 1 });
+    expect(h.service.applyRemoteDoc(0, pushed())).toEqual({ ok: true, rev: 1 });
     const current = h.service.remoteDoc();
     const changed = h.changed();
     h.fire(WRITE_MS);
     const writes = h.policyWrites.length;
-    expect(
-      h.service.applyRemoteDoc(0, pushed({ profiles: [profile('p-2', 'Stale')] }), 'm-owner'),
-    ).toEqual({
+    expect(h.service.applyRemoteDoc(0, pushed({ profiles: [profile('p-2', 'Stale')] }))).toEqual({
       ok: false,
       code: 'policy_conflict',
       message: expect.any(String),
@@ -2049,7 +2047,6 @@ describe('remote policy doc', () => {
     const result = h.service.applyRemoteDoc(
       0,
       pushed({ assignments: [entry({ kind: 'session', sessionId: 's9' }, 'worker')] }),
-      'm-owner',
     );
     expect(result).toMatchObject({ ok: false, code: 'invalid_args' });
     expect(result.ok ? '' : result.message).toMatch(/^assignments\[0\]\.point/);
@@ -2070,17 +2067,28 @@ describe('remote policy doc', () => {
   ])('applyRemoteDoc refuses a doc over the %s cap', (_label, doc, path) => {
     const h = harness({ policy: seeded() });
     h.service.start();
-    const result = h.service.applyRemoteDoc(0, doc, 'm-owner');
+    const result = h.service.applyRemoteDoc(0, doc);
     expect(result).toMatchObject({ ok: false, code: 'invalid_args' });
     expect(result.ok ? '' : result.message).toMatch(path);
     expect(h.service.remoteDoc().rev).toBe(0);
+  });
+
+  it('a pushed doc with no default assignment applies, and the engine falls back to the built-in default', () => {
+    const h = harness({ policy: seeded() });
+    h.service.start();
+    const result = h.service.applyRemoteDoc(0, {
+      profiles: [],
+      assignments: [entry({ kind: 'peer', machineId: 'm-1' }, 'observer')],
+    });
+    expect(result).toEqual({ ok: true, rev: 1 });
+    expect(h.service.ui([sessionRow('s2')]).sessions.s2?.profileId).toBe('worker');
   });
 
   it('applyRemoteDoc on a readOnly policy is policy_unavailable', () => {
     const h = harness({ policy: '{"version":99}' });
     h.service.start();
     expect(h.service.ui([]).readOnly).toBe(true);
-    expect(h.service.applyRemoteDoc(0, pushed(), 'm-owner')).toMatchObject({
+    expect(h.service.applyRemoteDoc(0, pushed())).toMatchObject({
       ok: false,
       code: 'policy_unavailable',
     });
@@ -2098,7 +2106,7 @@ describe('remote policy doc', () => {
     expect(seen).toEqual([]);
     h.service.setAssignment({ kind: 'default' }, 'lead');
     expect(seen).toEqual([1]);
-    h.service.applyRemoteDoc(1, pushed(), 'm-owner');
+    h.service.applyRemoteDoc(1, pushed());
     expect(seen).toEqual([1, 2]);
     off();
     h.service.setAssignment({ kind: 'default' }, 'worker');
@@ -2140,13 +2148,13 @@ describe('remote policy doc', () => {
       grants: serializeGrantsFile({ version: 1, grants: [grant({ id: 'g-keep' })] }),
     });
     h.service.start();
-    expect(h.service.revokeGrantByRemote('g-keep', 'm-owner')).toEqual({ ok: true });
+    expect(h.service.revokeGrantByRemote('g-keep')).toEqual({ ok: true });
     expect(h.service.grantsView()).toEqual([]);
-    expect(h.service.revokeGrantByRemote('g-keep', 'm-owner')).toMatchObject({
+    expect(h.service.revokeGrantByRemote('g-keep')).toMatchObject({
       ok: false,
       code: 'not_found',
     });
-    expect(h.service.revokeGrantByRemote('g-nope', 'm-owner')).toMatchObject({
+    expect(h.service.revokeGrantByRemote('g-nope')).toMatchObject({
       ok: false,
       code: 'not_found',
     });

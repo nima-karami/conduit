@@ -122,11 +122,10 @@ export interface PolicyService {
   /** The portable projection: human-made profiles and non-session assignments, at the current rev. */
   remoteDoc(): { rev: number; doc: RemotePolicyDoc };
   onRemoteDocChange(fn: () => void): () => void;
-  applyRemoteDoc(baseRev: number, doc: unknown, machineId: string): RemoteApplyResult;
+  applyRemoteDoc(baseRev: number, doc: unknown): RemoteApplyResult;
   grantsView(): RemoteGrantView[];
   revokeGrantByRemote(
     grantId: string,
-    machineId: string,
   ): { ok: true } | { ok: false; code: 'not_found'; message: string };
 }
 
@@ -651,7 +650,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       };
     },
 
-    applyRemoteDoc(baseRev, doc, _machineId) {
+    applyRemoteDoc(baseRev, doc) {
       if (!policyWritable)
         return {
           ok: false,
@@ -696,8 +695,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
         }));
     },
 
-    // machineId names the owner that asked; it is for the revoke audit, which waits on the audit-sink decision (plan L2).
-    revokeGrantByRemote(grantId, _machineId) {
+    revokeGrantByRemote(grantId) {
       if (revokeGrantById(grantId)) return { ok: true };
       return { ok: false, code: 'not_found', message: 'no live grant with that id' };
     },
