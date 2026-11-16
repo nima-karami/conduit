@@ -83,6 +83,7 @@ const copyLink = (r: LinkRecord): LinkRecord => ({
   ...r,
   addresses: [...r.addresses],
   capabilities: { ...r.capabilities },
+  ssh: r.ssh === null ? null : { ...r.ssh },
 });
 
 const copyTombstone = (t: Tombstone): Tombstone => ({ ...t });
@@ -99,7 +100,7 @@ export function openLinkStore(
   const cutoff = () => opts.now() - TOMBSTONE_TTL_MS;
   const isLive = (t: Tombstone) => Date.parse(t.revokedAt) >= cutoff();
 
-  let state: LinksFile = { version: 1, links: [], tombstones: [] };
+  let state: LinksFile = { version: 2, links: [], tombstones: [] };
   let writable = true;
 
   const text = io.read(file);
@@ -123,7 +124,7 @@ export function openLinkStore(
   const persist = () => {
     if (!writable) return;
     const dropped: LinksFile = {
-      version: 1,
+      version: 2,
       links: state.links,
       tombstones: state.tombstones.filter(isLive),
     };

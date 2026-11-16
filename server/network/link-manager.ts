@@ -19,6 +19,7 @@ import type {
   SshEndpoint,
 } from '../../src/contracts/ssh-link';
 import { printableName } from '../../src/network/addresses';
+import { deriveMachineId } from '../../src/network/identity-file';
 import type { LinkRecord } from '../../src/network/link-file';
 import {
   backoffMs,
@@ -264,8 +265,36 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
   };
 
   /**
-   * The peer's record for an ssh hello, or why the hello can't pin one. One transport per peer
-   * while TLS is parked; a changed server key under a known machine id is never accepted.
+   * What an ssh hello must satisfy before it may name a record. The machine id is the hash of the
+   * key it arrives with, as pairing checks it over TLS: the store and the outbox key by machine id,
+   * so an unbound id would let one peer take another's record. A hello naming this machine is a
+   * loop back to ourselves, refused the same way.
+   */
+  const helloRefused = (hello: HelloFrame): boolean => {
+    const raw = Buffer.from(hello.serverKey, 'base64');
+    if (raw.length !== 32 || raw.toString('base64') !== hello.serverKey) {
+      deps.log.warn('link: ssh hello refused', { peer: hello.machineId, reason: 'malformed key' });
+      return true;
+    }
+    if (hello.machineId !== deriveMachineId(raw)) {
+      deps.log.warn('link: ssh hello refused', {
+        peer: hello.machineId,
+        reason: 'forged machine id',
+      });
+      return true;
+    }
+    if (hello.machineId === deps.identity().machineId) {
+      deps.log.warn('link: ssh self-link refused', { peer: hello.machineId });
+      return true;
+    }
+    return false;
+  };
+
+  /**
+   * The peer's record for a sound ssh hello, or why it can't be pinned. One transport per peer
+   * while TLS is parked; a changed server key is never accepted. A dial reaches only the host the
+   * record was pinned for (spec 4.2.5): a controller record (no endpoint) or another target is a
+   * conflict, and the same target may move its node, mainJs or userData.
    */
   const pinSshPeer = (
     hello: HelloFrame,
@@ -275,11 +304,11 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     if (live !== null) {
       if (live.transport !== 'ssh') return { error: 'identity-conflict' };
       if (live.serverKey !== hello.serverKey) return { error: 'identity-changed' };
-      // A record first pinned from the peer's side has no endpoint; the first dial that has one fills it.
-      if (live.ssh === null && ssh !== null) {
-        return { record: deps.store.update(live.machineId, { ssh }) ?? live };
-      }
-      return { record: live };
+      if (ssh === null) return { record: live };
+      if (live.ssh === null || live.ssh.target !== ssh.target)
+        return { error: 'identity-conflict' };
+      if (JSON.stringify(live.ssh) === JSON.stringify(ssh)) return { record: live };
+      return { record: deps.store.update(live.machineId, { ssh }) ?? live };
     }
     if (deps.store.conflicts(hello.machineId, hello.serverKey))
       return { error: 'identity-changed' };
@@ -377,7 +406,16 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       pingMs: deps.pingMs,
     });
     if ('error' in opened) return;
+    // Stopped during the hello: nothing is pinned, so nothing is stored for a link that won't run.
+    if (stopped) {
+      opened.close('shutdown');
+      return;
+    }
     const hello = opened.peerHello;
+    if (helloRefused(hello)) {
+      opened.close('bad-hello');
+      return;
+    }
     // A revoked peer that dials us only hears that it was revoked, as over TLS (tombstones by key).
     const tomb = deps.store.byServerKey(hello.serverKey);
     if (tomb !== null && 'tombstone' in tomb) {
@@ -414,7 +452,16 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
         };
       return { ok: false, error: { code: opened.error } };
     }
+    // Stopped during the hello: no record is pinned for a link that will not run.
+    if (stopped) {
+      opened.close('shutdown');
+      return { ok: false, error: { code: 'ssh_failed', detail: 'not_adopted' } };
+    }
     const hello = opened.peerHello;
+    if (helloRefused(hello)) {
+      opened.close('bad-hello');
+      return { ok: false, error: { code: 'bad-hello' } };
+    }
     const pinned = pinSshPeer(hello, ssh);
     if ('error' in pinned) {
       if (pinned.error === 'identity-changed') markIdentityChanged(hello.machineId);
@@ -425,10 +472,8 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     // An explicit add re-adds a peer that was revoked or refused, as add() does for TLS.
     p.revokedBy = null;
     if (terminal(p)) p.sm = initialLinkState(deps.now());
+    // A duplicate keeps the live connection, which then answers for this target too.
     attach(p, opened, sent, deps.identity().machineId);
-    // attach keeps a live connection over a duplicate and refuses a terminal peer; only a link
-    // that is up for this target counts as added.
-    if (p.conn === null) return { ok: false, error: { code: 'ssh_failed', detail: 'not_adopted' } };
     return { ok: true, machineId: hello.machineId };
   };
 

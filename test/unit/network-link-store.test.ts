@@ -85,6 +85,9 @@ describe('link store', () => {
     });
     expect(store.get('m-bbbbbbbb')?.transport).toBe('ssh');
     expect(store.trustedCerts()).toEqual(['PEM-m-aaaaaaaa']);
+    // A revoked ssh peer leaves a tombstone with no certificate: an empty PEM is not a CA.
+    store.revoke('m-bbbbbbbb', T0);
+    expect(store.trustedCerts()).toEqual(['PEM-m-aaaaaaaa']);
   });
 
   it('a missing file opens as an empty writable store without writing', () => {
@@ -192,7 +195,7 @@ describe('link store', () => {
   });
 
   it('a newer file is read-only: put works in memory and nothing is written', () => {
-    const newer = JSON.stringify({ version: 2, links: [], tombstones: [] });
+    const newer = JSON.stringify({ version: 3, links: [], tombstones: [] });
     const { io, files, writes } = memoryIo({ [FILE]: newer });
     const log = logSpy();
     const store = openLinkStore(FILE, { now: () => T0, log, io });

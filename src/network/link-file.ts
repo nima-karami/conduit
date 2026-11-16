@@ -35,7 +35,7 @@ export interface Tombstone {
 }
 
 export interface LinksFile {
-  version: 1;
+  version: 2;
   links: LinkRecord[];
   tombstones: Tombstone[];
 }
@@ -58,7 +58,7 @@ const isSshEndpoint = (v: unknown): v is SshEndpoint =>
 const isCapabilities = (v: unknown): v is Capabilities =>
   isObj(v) && isBool(v.messaging) && isBool(v.monitor) && isBool(v.drive);
 
-const isLink = (v: unknown): boolean =>
+const isLink = (v: unknown): v is Obj =>
   isObj(v) &&
   isStr(v.linkId) &&
   isMachineId(v.machineId) &&
@@ -74,6 +74,8 @@ const isLink = (v: unknown): boolean =>
   isStr(v.cert) &&
   (v.ownerTransfer === 'send' || v.ownerTransfer === 'receive' || v.ownerTransfer === null) &&
   (v.transport === undefined || v.transport === 'tls' || v.transport === 'ssh') &&
+  // Only an ssh record may carry an endpoint; a tls record with one is not a record we wrote.
+  (v.transport === 'ssh' || v.ssh === undefined || v.ssh === null) &&
   (v.ssh === undefined || v.ssh === null || isSshEndpoint(v.ssh));
 
 const withTransportDefaults = (v: Obj): LinkRecord => ({
@@ -104,15 +106,19 @@ export function parseLinksFile(
   const verdict = judgePersistedVersion('network/links.json', raw.version);
   if (verdict === 'newer') return { kind: 'newer' };
   if (verdict === 'invalid') return { kind: 'corrupt' };
-  if (!Array.isArray(raw.links) || !raw.links.every(isLink)) return { kind: 'corrupt' };
+  if (!Array.isArray(raw.links)) return { kind: 'corrupt' };
   if (!Array.isArray(raw.tombstones) || !raw.tombstones.every(isTombstone)) {
     return { kind: 'corrupt' };
   }
   // see docs/plans/2026-11-14-conduit-network-machinery.plan.md, Slice 1 T1.2
   const cutoff = now - TOMBSTONE_TTL_MS;
   const tombstones = raw.tombstones.filter((t) => Date.parse(t.revokedAt) >= cutoff);
-  const links = (raw.links as Obj[]).map(withTransportDefaults);
-  return { kind: 'ok', file: { version: 1, links, tombstones } };
+  const links: LinkRecord[] = [];
+  for (const l of raw.links) {
+    if (!isLink(l)) return { kind: 'corrupt' };
+    links.push(withTransportDefaults(l));
+  }
+  return { kind: 'ok', file: { version: 2, links, tombstones } };
 }
 
 export function serializeLinksFile(f: LinksFile): string {
