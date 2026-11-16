@@ -1,7 +1,7 @@
 {
   "scenarios": {
     "scrollback-inrun": {
-      "reason": "herdr-core 0.1.16's attach history paint hard-breaks soft-wrapped lines with CRLF at the paint width, so a reload splits wrapped lines ('ech' / 'o R2-END'); everything else in the scenario passes (earlier runs, order, no duplicates, PTY = xterm). Upstream request filed in the run report; lift when hc keeps soft wraps.",
+      "reason": "herdr-core's attach history paint hard-breaks soft-wrapped lines with CRLF at the paint width. A reload at a narrow width bakes those breaks into the xterm; a later reload at a wider width repaints them joined, so the screen changes with no resize (reload 1), and the line count shifts under ConPTY's cursor, so the next typed command overwrites R2-END (reload 2 then can't find it). Re-checked 2026-11-16 (CON-51): fails the same on hc 0.1.16 (run 43948758841) and on the latest hc 0.1.21 (run 43953477247, experiment only; hc stays pinned). Lift when hc keeps soft wraps in the history paint; upstream request in docs/runs/2026-11-02-three-process-build/report.md.",
       "since": "2026-11-02"
     }
   }
