@@ -2,6 +2,7 @@ import { AGENT_CLIS, type AgentCli } from '../../src/conduit-mcp/install-types';
 import { CONNECT_BUDGET_MS } from '../../src/conduit-mcp/machine-tools';
 import {
   type Capability,
+  FS_WRITE_DATA_MAX,
   GIT_OPS,
   type GitOp,
   type GitReqArgs,
@@ -28,6 +29,9 @@ const MAX_ADDRESSES = 16;
 const MAX_PATH = 4096;
 // The fs frames carry at most 64 chars of session id (link-protocol FS_SESSION_ID_MAX).
 const FS_SESSION_MAX = 64;
+// The content hash a save's `expect` takes: lowercase SHA-256 hex (link-protocol isSha256).
+const SHA256 = /^[0-9a-f]{64}$/;
+const utf8 = new TextEncoder();
 // The git frames take the same commit and page bounds the frame parser enforces on B.
 const GIT_SHA = /^[0-9a-f]{7,40}$/;
 const GIT_LOG_MAX = 500;
@@ -231,6 +235,16 @@ export function handleFsCall(
           if (r.op !== 'read') throw new RpcFault('unavailable', 'the answer was not a file');
           return r.file;
         });
+    case 'remote.fs.write': {
+      const machineId = str(p, 'machineId');
+      const sessionId = str(p, 'sessionId', FS_SESSION_MAX);
+      const path = str(p, 'path', MAX_PATH);
+      const data = writeData(p.data);
+      const expect = p.expect;
+      if (expect !== null && (typeof expect !== 'string' || !SHA256.test(expect)))
+        throw new RpcFault('invalid', 'Expected expect: null or a sha256 hex');
+      return d.fs.write(machineId, sessionId, path, data, expect);
+    }
     case 'remote.fs.stat':
       return d.fs
         .request(
@@ -259,6 +273,20 @@ export function handleFsCall(
     default:
       return null;
   }
+}
+
+/**
+ * A save's data, bounded as B bounds it: in UTF-8 bytes. A UTF-16 unit is at least one byte, so a
+ * string longer than the cap is too large without encoding it; one within a third of the cap
+ * fits by length alone, and only the rest need encoding to be counted.
+ */
+function writeData(v: unknown): string {
+  if (typeof v !== 'string') throw new RpcFault('invalid', 'Expected data');
+  const tooLarge =
+    v.length > FS_WRITE_DATA_MAX ||
+    (v.length * 3 > FS_WRITE_DATA_MAX && utf8.encode(v).length > FS_WRITE_DATA_MAX);
+  if (tooLarge) throw new RpcFault('too_large', `Expected data up to ${FS_WRITE_DATA_MAX} bytes`);
+  return v;
 }
 
 /** Git reads of a remote session's repo, through A's git client (plan CON-45). */

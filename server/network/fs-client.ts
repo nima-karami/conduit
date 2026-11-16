@@ -5,10 +5,11 @@ import type {
   LinkFrame,
   LinkState,
 } from '../../src/contracts/link-protocol';
-import { FS_MIN_MINOR } from '../../src/contracts/link-protocol';
+import { FS_MIN_MINOR, FS_WRITE_MIN_MINOR } from '../../src/contracts/link-protocol';
 import type { ServerEventSink } from '../../src/contracts/server-ports';
 import type { ServerErrorKind } from '../../src/contracts/server-protocol';
 import type { LinkRecord } from '../../src/network/link-file';
+import type { RemoteWriteResult } from '../../src/protocol';
 import { RpcFault } from '../transport/pipe';
 import type { AuditSink } from './audit-log';
 import { isDialedSsh } from './calls';
@@ -43,6 +44,16 @@ const FS_ERROR_KIND: Record<FsErrorCode, ServerErrorKind> = {
 type FsResFrame = Extract<LinkFrame, { t: 'fs.res' }>;
 type FsChangedFrame = Extract<LinkFrame, { t: 'fs.changed' }>;
 
+/** What a request's answer is worth: the value it resolves with, or the fault it rejects with. */
+type Read<T> = { ok: true; value: T } | { ok: false; fault: RpcFault };
+/** A peer's protocol minor a request needs, and how the refusal names what it lacks. */
+interface Capability {
+  minor: number;
+  lacks: string;
+}
+const CAN_READ: Capability = { minor: FS_MIN_MINOR, lacks: 'without file access' };
+const CAN_WRITE: Capability = { minor: FS_WRITE_MIN_MINOR, lacks: "that can't save files" };
+
 export interface FsClientDeps {
   /** My record of the link to a machine: only one I dialed over ssh may be asked or answer. */
   linkOf(machineId: string): LinkRecord | null;
@@ -73,6 +84,18 @@ export interface FsClient {
     path: string,
     signal?: AbortSignal,
   ): Promise<FsResult>;
+  /**
+   * Asks a machine I dialed to save a file, which B writes only if it still hashes to `expect`.
+   * A conflict resolves: it is B's answer, not a failure. Never re-sent.
+   */
+  write(
+    machineId: string,
+    sessionId: string,
+    path: string,
+    data: string,
+    expect: string | null,
+    signal?: AbortSignal,
+  ): Promise<RemoteWriteResult>;
   /** Registers a watch for an app peer; sent now if its link is up, else when it comes up. */
   watch(peer: object, machineId: string, sessionId: string, path: string): string;
   /** Drops a watch the peer owns; throws not_found for any other. */
@@ -91,13 +114,11 @@ export interface FsClient {
   stop(): void;
 }
 
-type Outcome = { ok: true; value: FsResult } | { ok: false; fault: RpcFault };
-
 interface Pending {
   machineId: string;
-  op: FsOp;
   cancel(): void;
-  settle(outcome: Outcome): void;
+  /** Ends the request with B's answer, or with the fault that ends it before one comes. */
+  settle(answer: FsResFrame | RpcFault): void;
 }
 
 interface Watch {
@@ -121,18 +142,18 @@ export function createFsClient(deps: FsClientDeps): FsClient {
   /** Whether each link was live at the last link change, to act once on up and down. */
   const lastLive = new Map<string, boolean>();
 
-  const finish = (id: string, outcome: Outcome): void => {
+  const finish = (id: string, answer: FsResFrame | RpcFault): void => {
     const p = pending.get(id);
     if (!p) return;
     pending.delete(id);
     p.cancel();
-    p.settle(outcome);
+    p.settle(answer);
   };
 
   const unreachable = (message: string): RpcFault => new RpcFault('peer_unreachable', message);
 
   /** Why a machine cannot be asked right now, or null when it can. Only a dialed, live, current peer. */
-  const gate = (machineId: string): RpcFault | null => {
+  const gate = (machineId: string, need: Capability): RpcFault | null => {
     const record = deps.linkOf(machineId);
     if (record === null) return unreachable('no link to that machine');
     if (!isDialedSsh(record))
@@ -140,13 +161,53 @@ export function createFsClient(deps: FsClientDeps): FsClient {
     if (!live(deps.linkState(machineId))) return unreachable(`${record.name} is not connected`);
     const minor = deps.peerMinor(machineId);
     if (minor === null) return unreachable(`${record.name} has not said hello yet`);
-    if (minor < FS_MIN_MINOR)
-      return new RpcFault('peer_incompatible', `${record.name} runs a Conduit without file access`);
+    if (minor < need.minor)
+      return new RpcFault('peer_incompatible', `${record.name} runs a Conduit ${need.lacks}`);
     return null;
   };
 
+  /**
+   * Sends one request and settles with B's answer, read by `read`. The one place a request is
+   * sent, timed out, cancelled or ended by a drop, so every file op shares those rules.
+   */
+  const ask = <T>(
+    machineId: string,
+    frameFor: (id: string) => LinkFrame,
+    timeoutMessage: string,
+    read: (answer: FsResFrame) => Read<T>,
+    signal?: AbortSignal,
+  ): Promise<T> => {
+    if (signal?.aborted)
+      return Promise.reject(new RpcFault('unavailable', 'the request was cancelled'));
+    return new Promise<T>((resolve, reject) => {
+      const id = deps.newId();
+      const cancelTimer = deps.after(() => finish(id, unreachable(timeoutMessage)), FS_REQ_MS);
+      const onAbort = () => finish(id, new RpcFault('unavailable', 'the request was cancelled'));
+      signal?.addEventListener('abort', onAbort, { once: true });
+      pending.set(id, {
+        machineId,
+        cancel: () => {
+          cancelTimer();
+          signal?.removeEventListener('abort', onAbort);
+        },
+        settle: (answer) => {
+          if (answer instanceof RpcFault) {
+            reject(answer);
+            return;
+          }
+          const r = read(answer);
+          if (r.ok) resolve(r.value);
+          else reject(r.fault);
+        },
+      });
+      const sent = deps.send(machineId, frameFor(id));
+      // Refused at once: nothing was sent, so nothing can run.
+      if (sent !== true) finish(id, unreachable('the file request was not sent'));
+    });
+  };
+
   const sendWatch = (w: Watch): void => {
-    if (w.sent || gate(w.machineId) !== null) return;
+    if (w.sent || gate(w.machineId, CAN_READ) !== null) return;
     w.sent =
       deps.send(w.machineId, {
         t: 'fs.watch',
@@ -163,7 +224,7 @@ export function createFsClient(deps: FsClientDeps): FsClient {
 
   const settleMachine = (machineId: string, message: string): void => {
     for (const [id, p] of [...pending]) {
-      if (p.machineId === machineId) finish(id, { ok: false, fault: unreachable(message) });
+      if (p.machineId === machineId) finish(id, unreachable(message));
     }
   };
 
@@ -189,36 +250,59 @@ export function createFsClient(deps: FsClientDeps): FsClient {
 
   return {
     request(machineId, op, sessionId, path, signal) {
-      const fault = gate(machineId);
+      const fault = gate(machineId, CAN_READ);
       if (fault !== null) return Promise.reject(fault);
-      if (signal?.aborted)
-        return Promise.reject(new RpcFault('unavailable', 'the request was cancelled'));
-      return new Promise<FsResult>((resolve, reject) => {
-        const id = deps.newId();
-        const cancelTimer = deps.after(
-          () => finish(id, { ok: false, fault: unreachable('the file request timed out') }),
-          FS_REQ_MS,
-        );
-        const onAbort = () =>
-          finish(id, {
-            ok: false,
-            fault: new RpcFault('unavailable', 'the request was cancelled'),
-          });
-        signal?.addEventListener('abort', onAbort, { once: true });
-        pending.set(id, {
-          machineId,
-          op,
-          cancel: () => {
-            cancelTimer();
-            signal?.removeEventListener('abort', onAbort);
-          },
-          settle: (outcome) => (outcome.ok ? resolve(outcome.value) : reject(outcome.fault)),
-        });
-        const sent = deps.send(machineId, { t: 'fs.req', id, op, sessionId, path });
-        // Refused at once: nothing was sent, so nothing can run.
-        if (sent !== true)
-          finish(id, { ok: false, fault: unreachable('the file request was not sent') });
-      });
+      return ask<FsResult>(
+        machineId,
+        (id) => ({ t: 'fs.req', id, op, sessionId, path }),
+        'the file request timed out',
+        (answer) => {
+          if (!answer.ok) {
+            // A conflict answers only a save; a read that gets one is a peer that misbehaves.
+            if (answer.error.code === 'conflict')
+              return { ok: false, fault: new RpcFault('unavailable', 'the answer was a conflict') };
+            return {
+              ok: false,
+              fault: new RpcFault(FS_ERROR_KIND[answer.error.code], answer.error.message),
+            };
+          }
+          if (answer.result.op !== op)
+            return {
+              ok: false,
+              fault: new RpcFault('unavailable', `the answer to ${op} was not a ${op}`),
+            };
+          return { ok: true, value: answer.result };
+        },
+        signal,
+      );
+    },
+
+    write(machineId, sessionId, path, data, expect, signal) {
+      const fault = gate(machineId, CAN_WRITE);
+      if (fault !== null) return Promise.reject(fault);
+      return ask<RemoteWriteResult>(
+        machineId,
+        (id) => ({ t: 'fs.write', id, sessionId, path, data, expect }),
+        'the save timed out; B may have written the file, so it may or may not have landed',
+        (answer) => {
+          if (!answer.ok) {
+            // B left the file as it was. That is an answer the owner decides on, not a failure.
+            if (answer.error.code === 'conflict')
+              return {
+                ok: true,
+                value: { kind: 'conflict', currentHash: answer.error.currentHash ?? null },
+              };
+            return {
+              ok: false,
+              fault: new RpcFault(FS_ERROR_KIND[answer.error.code], answer.error.message),
+            };
+          }
+          if (answer.result.op !== 'write')
+            return { ok: false, fault: new RpcFault('unavailable', 'the answer was not a write') };
+          return { ok: true, value: { kind: 'written', hash: answer.result.hash } };
+        },
+        signal,
+      );
     },
 
     watch(peer, machineId, sessionId, path) {
@@ -255,21 +339,7 @@ export function createFsClient(deps: FsClientDeps): FsClient {
       if (frame.t === 'fs.res') {
         const p = pending.get(frame.id);
         if (!p || p.machineId !== machineId) return;
-        if (!frame.ok) {
-          finish(frame.id, {
-            ok: false,
-            fault: new RpcFault(FS_ERROR_KIND[frame.error.code], frame.error.message),
-          });
-          return;
-        }
-        if (frame.result.op !== p.op) {
-          finish(frame.id, {
-            ok: false,
-            fault: new RpcFault('unavailable', `the answer to ${p.op} was not a ${p.op}`),
-          });
-          return;
-        }
-        finish(frame.id, { ok: true, value: frame.result });
+        finish(frame.id, frame);
         return;
       }
       const w = watches.get(frame.watchId);
@@ -312,7 +382,7 @@ export function createFsClient(deps: FsClientDeps): FsClient {
 
     stop() {
       for (const id of [...pending.keys()])
-        finish(id, { ok: false, fault: unreachable('Conduit is stopping the network') });
+        finish(id, unreachable('Conduit is stopping the network'));
     },
   };
 }
