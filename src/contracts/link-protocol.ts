@@ -46,7 +46,8 @@ export interface GitReqArgs {
  * like `call.result`, the parser checks the shape and the frame limit bounds the size.
  */
 export type GitResult =
-  | { op: 'status'; root: string; snapshot: RepoSnapshot }
+  /** `snapshot: null` means the folder is in no git repo: an answer, not a failure (CON-45 G4 review). */
+  | { op: 'status'; root: string; snapshot: RepoSnapshot | null }
   | { op: 'diff'; file: FileDiffDTO }
   | { op: 'log'; commits: CommitNode[]; layout: GraphLayout; hasMore: boolean; state: HistoryState }
   | { op: 'show'; files: FileDiffDTO[]; truncated: boolean };
@@ -632,7 +633,11 @@ function isGitResult(v: unknown): boolean {
   if (!isRec(v)) return false;
   switch (v.op) {
     case 'status':
-      return hasKeys(v, ['op', 'root', 'snapshot']) && isFsPath(v.root) && isRec(v.snapshot);
+      return (
+        hasKeys(v, ['op', 'root', 'snapshot']) &&
+        isFsPath(v.root) &&
+        (v.snapshot === null || isRec(v.snapshot))
+      );
     case 'diff':
       return hasKeys(v, ['op', 'file']) && isRec(v.file);
     case 'log':

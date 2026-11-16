@@ -33,7 +33,7 @@ fs.changed (CON-43 watch) under a repo → store re-requests status / open remot
 3. **Confinement:** `root` must confine to the session's roots; `path` (diff) must confine to `root` and pass the deny-list; `sha` matches `/^[0-9a-f]{7,40}$/`; `limit` ≤ 500.
 4. **C2:** `remote.git.status|diff|log|show {machineId, sessionId, root, …}`.
 5. **Renderer:** `remoteGit:*` request messages (never overloading `readDiff`/`git:history`); `webview/remote-git-store.ts`; `RemoteChangesView` (read-only list per repo: status letter, path, +/− lines; click opens `'remote-diff'`); `'remote-diff'` renders through `DiffViewer` with a remote model scheme (same rule as CON-43 R); `'remote-history'` reuses `git-history-view.tsx`'s rendering with a data-source prop (no local `git:history` calls when remote).
-6. **Refresh:** the store subscribes to the remote folder watches CON-43 already holds (`watchRemote` keys) and debounces re-requests 300 ms.
+6. **Refresh (revised after the G4 review):** B's folder watches are not recursive, so a nested edit never fires. The remote Changes store polls `status` every 5 s while the Changes tab is visible, and also watches `<repo>/.git` for an immediate refresh after a stage/commit/checkout, debounced 300 ms. A folder in no repo is answered `{ op:'status', root, snapshot: null }` — shown as "No git repository", never as an error. The remote diff and history viewers are built in Slice 2 (orchestrator wiring), not G4.
 
 ## Spec staleness
 - §5.3 "the owner's git actions in Review run as routed calls": no routed git tool exists (`ROUTED_TOOLS` has six session tools). Out of this slice; Decisions Needed.
@@ -56,5 +56,6 @@ Lanes: both tsc configs + biome + named vitest. Orchestrator: full verify per me
 If a task's assumption turns out wrong — the piece it builds on is misaligned, a locked signature doesn't fit reality — that task **stops** and fixing the misaligned piece becomes the work. Never a shim, second copy, special case, widened type, fallback, or an override patched in place of its semantic source.
 
 ## Decisions Needed
+- [normal] B's `git status --numstat` and `git show` read deny-listed files internally (e.g. a line count for a modified `.env`) before the filter drops them; no content leaves B. Default: accepted; a pathspec-exclude derived from the deny-list is a follow-up.
 - [normal] Git actions on B (stage/discard/commit from Review) need a routed path; not in this slice. Default: read-only remote git in MVP.
 - [normal] Remote Changes is a separate read-only view rather than `changes-view.tsx` with a source. Default taken.
