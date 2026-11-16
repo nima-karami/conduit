@@ -703,6 +703,7 @@ Failing tests:
   - Privacy: an observed command summary is its first line, capped at 200 characters.
   - Observed rows carry the session's handle; note rows use decidedBy 'conduit'.
   - "No activity feed" is CON-25's to render for CLIs with no observed lane; no row is written.
+  - *Superseded in Slice 5:* `matchedToolUseIds(jsonl): string[]` (ids only); a baseline comes from a path change, a shrink, or a fingerprint mismatch (the last ≤256 bytes before the offset).
   - Re-review: the gap check reads incrementally, only [last checked offset, size at Stop), with the offset advanced to the last complete line; a shrink or a new path means a baseline.
   - `received` post ids are bounded: pruned on baseline, capped at 1,000, and posts for unknown sessions are ignored.
   - Observed note rows use machine actions `feed-gap` / `feed-unavailable` with the sentence in summary.
