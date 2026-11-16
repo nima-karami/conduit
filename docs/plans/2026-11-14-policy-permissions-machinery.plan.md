@@ -847,3 +847,6 @@ So a Codex orchestrator can take over if Claude stops. The lead (claude-3) recei
   - `transcript_path` is confined before any fs call: absolute, local, no UNC or device prefix, under `<claude home>/projects/` (resolved by the existing function). The size lookup is an async stat inside the timed check.
   - The hook limiter counts only live session tokens, keyed by sessionId.
 
+- *Second pass rulings (claude-3):*
+  - A session's explicit value is pinned per field (`${tool}.${field}` on the session assignment). A default or CLI edit skips a pinned field on that session, and an `inherit` on the session unpins it. Migration pins every field the v0.64 session layer set, even one equal to global.
+  - A session whose launched CLI cannot be resolved lowers onto the default, as a session with no CLI does. A default edit reaches it, and a CLI-point edit does not.
