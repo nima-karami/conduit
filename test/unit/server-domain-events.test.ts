@@ -675,5 +675,47 @@ describe('server domain: observed lane wiring', () => {
         rmSync(dir, { recursive: true, force: true });
       }
     });
+
+    it('a Stop and a PostToolUse that arrive after the session is deleted write no row and start no gap state', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'obs-gap-'));
+      const gone = join(dir, 'gone.jsonl');
+      const other = join(dir, 'other.jsonl');
+      try {
+        const h = harness();
+        const idGone = await live(h, { agentId: 'claude' });
+        const idOther = await live(h, { agentId: 'claude' });
+        writeFileSync(gone, `${use('u0', 'toolu_0')}\n`);
+        writeFileSync(other, `${use('u0', 'toolu_0')}\n`);
+        await h.call('sessions.remove', { sessionId: idGone });
+        await withSettle(async () => {
+          // The feed-gap check is one queue: the other session's row lands only after the deleted
+          // session's checks have run, so its row is the signal that they have drained.
+          h.domain.hookPost(idGone, post('Stop', { transcript_path: gone }));
+          vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
+          appendFileSync(gone, `${use('u1', 'toolu_1')}\n`);
+          h.domain.hookPost(idGone, post('Stop', { transcript_path: gone }));
+          h.domain.hookPost(
+            idGone,
+            post('PostToolUse', {
+              tool_name: 'Bash',
+              tool_input: { command: 'ls' },
+              tool_use_id: 'toolu_2',
+            }),
+          );
+          vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
+          h.domain.hookPost(idOther, post('Stop', { transcript_path: other }));
+          vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
+          appendFileSync(other, `${use('u1', 'toolu_1')}\n`);
+          h.domain.hookPost(idOther, post('Stop', { transcript_path: other }));
+          vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
+          await vi.waitFor(() =>
+            expect(gapRows(h)).toEqual([{ sessionId: idOther, cli: 'claude', entry: { gap: 1 } }]),
+          );
+        });
+        expect(h.observed.filter((o) => o.sessionId === idGone)).toEqual([]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 });
