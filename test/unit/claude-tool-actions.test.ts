@@ -41,6 +41,12 @@ describe('claudeActionsFromPostToolUse', () => {
     ).toEqual([{ kind: 'file-change', paths: ['/w/n.ipynb'] }]);
   });
 
+  it('an mcp payload with no tool_input still yields its mcp action', () => {
+    expect(claudeActionsFromPostToolUse({ tool_name: 'mcp__github__create__issue' })).toEqual([
+      { kind: 'mcp', server: 'github', tool: 'create__issue' },
+    ]);
+  });
+
   it('unknown tools and malformed payloads give nothing', () => {
     expect(
       claudeActionsFromPostToolUse({ tool_name: 'Read', tool_input: { file_path: '/w/a' } }),

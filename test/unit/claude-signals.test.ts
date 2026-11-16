@@ -37,6 +37,23 @@ describe('claudeSignalsFromHook', () => {
     ]);
   });
 
+  it('PostToolUse is not a signal, whatever its payload', () => {
+    expect(
+      claudeSignalsFromHook(SESSION, 'PostToolUse', fixture('post-tool-use-bash.json'), NOW),
+    ).toEqual([]);
+  });
+
+  it('PostToolUseFailure is not a signal, whatever its payload', () => {
+    expect(
+      claudeSignalsFromHook(
+        SESSION,
+        'PostToolUseFailure',
+        fixture('post-tool-use-failure-bash.json'),
+        NOW,
+      ),
+    ).toEqual([]);
+  });
+
   it('Stop is not a resume', () => {
     expect(claudeSignalsFromHook(SESSION, 'Stop', fixture('stop.json'), NOW)).toEqual([]);
   });

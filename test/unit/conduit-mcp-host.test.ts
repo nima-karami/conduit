@@ -957,6 +957,8 @@ describe('createConduitMcpHost — launch', () => {
       'UserPromptSubmit',
       'Stop',
       'Notification',
+      'PostToolUse',
+      'PostToolUseFailure',
     ]);
     expect(settings.statusLine.command).toContain('conduit-hook-abc.cjs');
     await h.host.onSessionDeleted('c1');
@@ -978,7 +980,7 @@ describe('createConduitMcpHost — launch', () => {
       fs.readFileSync(path.join(h.dir, 'launch', 'c1.settings.json'), 'utf8'),
     );
     expect('statusLine' in settings).toBe(false);
-    expect(Object.keys(settings.hooks)).toHaveLength(4);
+    expect(Object.keys(settings.hooks)).toHaveLength(6);
     expect(rec.of('status line not wrapped')).toHaveLength(1);
   });
 

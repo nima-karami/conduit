@@ -92,6 +92,8 @@ const HOOK_EVENTS: Record<HookEvent, true> = {
   Stop: true,
   Notification: true,
   StatusLine: true,
+  PostToolUse: true,
+  PostToolUseFailure: true,
 };
 const isHookEvent = (v: unknown): v is HookEvent =>
   typeof v === 'string' && Object.hasOwn(HOOK_EVENTS, v);
