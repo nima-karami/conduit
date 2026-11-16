@@ -695,6 +695,14 @@ Failing tests:
   - The transcript fixture is synthetic content in the real 2.1.325 shape.
   - For T4.3: compare the transcript count with received posts (not with observed actions, which drop mcp__conduit__*), and allow slack for async posts that land after the Stop.
   - For T4.3: subagent tool calls fire the hooks with `agent_id` (forwarded), but they live in subagents/*.jsonl, not the main transcript. The gap check counts only posts without agent_id. The reader counts main-session `assistant` lines only (blob and sidechain lines are skipped).
+- *T4.3 review rulings (2026-11-16):*
+  - The feed-gap check matches by `tool_use_id`. `matchedToolUseIds(jsonl, sinceUuid)` replaces countMatchedToolUses. The span is bounded at the transcript size when the Stop arrives, and a gap is a transcript id with no received (non-subagent) post. A missing sinceUuid or a new transcript means a baseline.
+  - Codex rows carry outcome from exitCode, plus durationMs.
+  - The gap state is forgotten on session delete.
+  - The domain takes a `createCodexWatch` factory, so no real waits in tests.
+  - Privacy: an observed command summary is its first line, capped at 200 characters.
+  - Observed rows carry the session's handle; note rows use decidedBy 'conduit'.
+  - "No activity feed" is CON-25's to render for CLIs with no observed lane; no row is written.
 - *T4.2 ruling (2026-11-15, revised after review):* no no-bind timer. Codex creates its rollout file lazily, at the first turn (CON-11 spike §S3), so a no-bind timeout would falsely report idle sessions. `onFeed('unavailable')` fires only for an ambiguous bind, once per session.
 - **T4.1b Claude feed-gap check (lead condition on the async hook).** An async PostToolUse post can be lost without Conduit knowing. On each `Stop` hook (sync, already delivered), the host reads the transcript (`transcript_path`), counts the `tool_use` entries since the previous Stop whose tool names match the PostToolUse matcher, and compares that with the PostToolUse posts received for the session over the same span. A shortfall writes one `note` row ("Feed gap: N actions not reported"). The reader is `src/claude-transcript-tools.ts` (`countMatchedToolUses(jsonl: string, sinceUuid: string | null): {count: number; lastUuid: string | null}`), tested against a scrubbed transcript fixture.
 - **T4.3 (serial) wiring.**
