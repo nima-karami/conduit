@@ -4,6 +4,7 @@ import {
   type EnsureDeps,
   type EnsureHello,
   ensureServerArgs,
+  lingerOf,
   runEnsureServer,
   SCOPE_PREFIX,
 } from '../../server/lifecycle/ensure-server';
@@ -34,6 +35,8 @@ function world(o: {
   supervisorLiveThrows?: string;
   /** Once the old supervisor is seen gone, an older app relaunches its own server first. */
   relaunchOnExit?: EnsureHello;
+  /** What loginctl reports after the start: true, false, or null when it cannot be read. */
+  linger?: boolean | null;
 }) {
   let now = 0;
   let running: EnsureHello | null = o.running ?? null;
@@ -87,6 +90,10 @@ function world(o: {
       trace.push('hello');
       return running;
     },
+    linger: async () => {
+      trace.push('linger');
+      return o.linger === undefined ? true : o.linger;
+    },
     restart: async () => {
       trace.push('restart');
       if (o.restartError) return o.restartError;
@@ -107,7 +114,7 @@ function world(o: {
 function run(
   method: 'scope' | 'plain' | 'windows-task',
   w: ReturnType<typeof world>,
-  opts: { version?: string; survivesLogout?: boolean; deadlineMs?: number } = {},
+  opts: { version?: string; deadlineMs?: number } = {},
 ) {
   let out = '';
   const stdout = {
@@ -119,7 +126,6 @@ function run(
   return runEnsureServer(
     {
       method,
-      survivesLogout: opts.survivesLogout ?? true,
       version: opts.version ?? '1.0.0',
       stdout,
       ...(opts.deadlineMs !== undefined ? { deadlineMs: opts.deadlineMs } : {}),
@@ -153,7 +159,7 @@ describe('runEnsureServer', () => {
       version: '1.0.0',
       survivesLogout: true,
     });
-    expect(r.trace).toEqual(['gc', 'startCore', 'startSupervisor', 'hello']);
+    expect(r.trace).toEqual(['gc', 'startCore', 'startSupervisor', 'hello', 'linger']);
   });
 
   it('plain passes no prefix to the core start', async () => {
@@ -164,7 +170,7 @@ describe('runEnsureServer', () => {
 
   it('scope passes the systemd-run prefix as argv', async () => {
     const w = world({ spawn: hello('1.0.0', 10) });
-    const r = await run('scope', w, { survivesLogout: true });
+    const r = await run('scope', w);
     expect(w.prefixes).toEqual([['systemd-run', '--user', '--scope', '--quiet', '--']]);
     expect(SCOPE_PREFIX).toEqual(['systemd-run', '--user', '--scope', '--quiet', '--']);
     expect(resultLine(r.out)).toMatchObject({ ok: true, survivesLogout: true });
@@ -235,7 +241,7 @@ describe('runEnsureServer', () => {
 
   it('windows-task skips the core and the supervisor and only waits for hello', async () => {
     const w = world({ running: hello('1.0.0', 9) });
-    const r = await run('windows-task', w, { survivesLogout: false });
+    const r = await run('windows-task', w);
     expect(r.code).toBe(0);
     expect(resultLine(r.out)).toEqual({
       ok: true,
@@ -289,6 +295,61 @@ describe('runEnsureServer', () => {
       ok: false,
       step: 'start',
       detail: expect.stringContaining('bad argv'),
+    });
+  });
+
+  describe('survivesLogout is measured after the start', () => {
+    it('reports linger on as survival', async () => {
+      const w = world({ spawn: hello('1.0.0', 10), linger: true });
+      const r = await run('plain', w);
+      expect(resultLine(r.out)).toEqual({
+        ok: true,
+        state: 'up',
+        version: '1.0.0',
+        survivesLogout: true,
+      });
+    });
+
+    it('reports linger off as no survival', async () => {
+      const w = world({ spawn: hello('1.0.0', 10), linger: false });
+      const r = await run('scope', w);
+      expect(resultLine(r.out)).toEqual({
+        ok: true,
+        state: 'up',
+        version: '1.0.0',
+        survivesLogout: false,
+      });
+    });
+
+    it('reads linger after the hello, once the core and supervisor are up', async () => {
+      const w = world({ spawn: hello('1.0.0', 10), linger: true });
+      await run('plain', w);
+      expect(w.trace).toEqual(['gc', 'startCore', 'startSupervisor', 'hello', 'linger']);
+    });
+
+    it('a linger reading that fails is no survival, and says it is unknown', async () => {
+      const w = world({ spawn: hello('1.0.0', 10), linger: null });
+      const r = await run('plain', w);
+      expect(r.code).toBe(0);
+      expect(resultLine(r.out)).toEqual({
+        ok: true,
+        state: 'up',
+        version: '1.0.0',
+        survivesLogout: false,
+        survivesLogoutUnknown: true,
+      });
+    });
+
+    it('windows-task reports no survival and never reads linger', async () => {
+      const w = world({ running: hello('1.0.0', 9), linger: true });
+      const r = await run('windows-task', w);
+      expect(resultLine(r.out)).toEqual({
+        ok: true,
+        state: 'up',
+        version: '1.0.0',
+        survivesLogout: false,
+      });
+      expect(r.trace).not.toContain('linger');
     });
   });
 
@@ -396,6 +457,26 @@ describe('runEnsureServer', () => {
       ).rejects.toThrow('supervisor lookup timed out');
       await expect(bounded(Promise.resolve(7), 10, 'x')).resolves.toBe(7);
     });
+  });
+});
+
+describe('lingerOf', () => {
+  const calls: string[][] = [];
+  const fakeExec = (code: number, stdout: string) => async (file: string, args: string[]) => {
+    calls.push([file, ...args]);
+    return { code, stdout };
+  };
+
+  it('asks loginctl for the user linger by argv and reads yes and no', async () => {
+    calls.length = 0;
+    await expect(lingerOf('conduit', fakeExec(0, 'yes\n'))).resolves.toBe(true);
+    await expect(lingerOf('conduit', fakeExec(0, 'no\n'))).resolves.toBe(false);
+    expect(calls[0]).toEqual(['loginctl', 'show-user', 'conduit', '-p', 'Linger', '--value']);
+  });
+
+  it('is null when loginctl fails or says neither yes nor no', async () => {
+    await expect(lingerOf('conduit', fakeExec(1, ''))).resolves.toBeNull();
+    await expect(lingerOf('conduit', fakeExec(0, 'maybe'))).resolves.toBeNull();
   });
 });
 

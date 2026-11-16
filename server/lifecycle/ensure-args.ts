@@ -10,7 +10,10 @@ const isStartMethod = (x: string | undefined): x is StartMethod =>
 export interface EnsureArgs {
   userData: string;
   method: StartMethod;
-  /** Decided by the caller from the probe: linger, KillUserProcesses. Reported back, not checked here. */
+  /**
+   * The controller's pre-start expectation. Parsed for compatibility and not used: ensure reports the
+   * linger it measures after the start (ensure-server.ts), because hc turns linger on at its start.
+   */
   survivesLogout: boolean;
   hc?: string;
   /** Forwarded to the server, which runs its MCP shim from here (see server/main.ts). */

@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { readdir, rename, rm } from 'node:fs/promises';
 import { connect } from 'node:net';
-import { tmpdir } from 'node:os';
+import { tmpdir, userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
 import { HC_PINNED_VERSION } from '../../src/contracts/hc';
 import {
@@ -34,6 +34,12 @@ export interface EnsureDeps {
   /** Null when no server answers C2 hello with the secret. */
   hello(): Promise<EnsureHello | null>;
   /**
+   * The user's linger, read after the start: hc turns it on when it starts the core, so the probe's
+   * reading before the start can be wrong (see docs/runs/2026-11-16-CON-35/bootstrap-smoke.md).
+   * Null when it cannot be read.
+   */
+  linger(): Promise<boolean | null>;
+  /**
    * `server.restart`. Null when it was sent: the server exits right after replying, so a lost reply
    * is normal. Otherwise the error the server replied with, which is the caller's failure detail.
    */
@@ -44,7 +50,6 @@ export interface EnsureDeps {
 
 export interface EnsureRunOptions {
   method: StartMethod;
-  survivesLogout: boolean;
   /** This build's version: the one ensure brings up, and the one a running server is compared to. */
   version: string;
   stdout: { write(chunk: string): unknown };
@@ -53,7 +58,13 @@ export interface EnsureRunOptions {
 }
 
 type EnsureResult =
-  | { ok: true; state: 'up'; version: string; survivesLogout: boolean }
+  | {
+      ok: true;
+      state: 'up';
+      version: string;
+      survivesLogout: boolean;
+      survivesLogoutUnknown?: true;
+    }
   | { ok: false; step: 'start'; detail: string };
 
 /** How long any wait for C2 (hello, the restart's exit, the supervisor's exit) may take. */
@@ -63,6 +74,7 @@ const POLL_MS = 250;
 const RUN_DEADLINE_MS = 90_000;
 /** As electron/server-lifecycle.ts's SUPERVISOR_LOOKUP_TIMEOUT_MS: a lookup past this is a core not answering. */
 const SUPERVISOR_LOOKUP_TIMEOUT_MS = 5_000;
+const LINGER_TIMEOUT_MS = 5_000;
 /** A name_taken from hc means a supervisor of this instance is already live (plan decision 3). */
 const NAME_TAKEN = /name_taken|already named/i;
 
@@ -103,8 +115,24 @@ export async function runEnsureServer(o: EnsureRunOptions, d: EnsureDeps): Promi
     return printResult(o.stdout, result);
   };
   const fail = (detail: string) => finish({ ok: false, step: 'start', detail });
-  const up = (version: string) =>
-    finish({ ok: true, state: 'up', version, survivesLogout: o.survivesLogout });
+  // Measured here, after the start, not taken from the flag: see EnsureDeps.linger. windows-task is
+  // not measured: there is no systemd user manager to hold a linger on Windows.
+  const up = async (version: string) => {
+    if (o.method === 'windows-task') {
+      return finish({ ok: true, state: 'up', version, survivesLogout: false });
+    }
+    const linger = await d.linger();
+    if (linger === null) {
+      return finish({
+        ok: true,
+        state: 'up',
+        version,
+        survivesLogout: false,
+        survivesLogoutUnknown: true,
+      });
+    }
+    return finish({ ok: true, state: 'up', version, survivesLogout: linger });
+  };
   const startAll = async (): Promise<string | null> => {
     try {
       await d.startCore(prefixOf(o.method));
@@ -177,6 +205,22 @@ export async function runEnsureServer(o: EnsureRunOptions, d: EnsureDeps): Promi
   }
 }
 
+/**
+ * The user's linger from loginctl, by argv and never through a shell. Null when loginctl is missing,
+ * fails, or says neither yes nor no.
+ */
+export async function lingerOf(
+  user: string,
+  exec: (file: string, args: string[]) => Promise<{ code: number; stdout: string }>,
+): Promise<boolean | null> {
+  const r = await exec('loginctl', ['show-user', user, '-p', 'Linger', '--value']);
+  if (r.code !== 0) return null;
+  const value = r.stdout.trim();
+  if (value === 'yes') return true;
+  if (value === 'no') return false;
+  return null;
+}
+
 /** Polls until `check` yields a value or the wait runs out (null). */
 async function waitFor<T>(
   d: Pick<EnsureDeps, 'sleep' | 'now'>,
@@ -214,6 +258,18 @@ export async function runEnsureServerMain(
       const client = hcClient(names, env, log);
       clients.push(client);
       return client;
+    };
+    const lingerOfUser = async (): Promise<boolean | null> => {
+      // An account the OS cannot name has no linger to read: unknown, reported as such.
+      let user: string;
+      try {
+        user = userInfo().username;
+      } catch {
+        return null;
+      }
+      return lingerOf(user, (file, args) =>
+        runExecFile(file, args, { env, cwd: tmpdir(), timeoutMs: LINGER_TIMEOUT_MS }),
+      );
     };
     const cli: HcCliDeps = {
       hcExe: hcBin,
@@ -253,6 +309,7 @@ export async function runEnsureServerMain(
           serverArgs: ensureServerArgs(a),
         }),
       supervisorLive: () => supervisorLive(names.supervisorName, open),
+      linger: () => lingerOfUser(),
       hello: async () => {
         const secret = readServerSecret(a.userData);
         return secret === null
@@ -267,10 +324,7 @@ export async function runEnsureServerMain(
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       now: Date.now,
     };
-    return await runEnsureServer(
-      { method: a.method, survivesLogout: a.survivesLogout, version: o.version, stdout: o.stdout },
-      deps,
-    );
+    return await runEnsureServer({ method: a.method, version: o.version, stdout: o.stdout }, deps);
   } catch (error) {
     return printResult(o.stdout, { ok: false, step: 'start', detail: message(error) });
   } finally {

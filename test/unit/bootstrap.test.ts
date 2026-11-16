@@ -878,6 +878,29 @@ describe('bootstrap: attach, upgrade and survival branches', () => {
     expect(outcome.ok && outcome.summary).toMatchObject({ survivesLogout: false });
   });
 
+  it('the summary takes survival from the ensure result, not the probe: probe off, ensure on', async () => {
+    const f = fixture();
+    const r = remote({
+      probe: { linger: false, kup: true },
+      answer: (kind) => (kind === 'ensure' ? ENSURE_OK : result({ ok: true })),
+    });
+    const outcome = await bootstrapper(f, r.exec)(TARGET);
+    expect(outcome.ok && outcome.summary).toMatchObject({ survivesLogout: true });
+  });
+
+  it('the summary takes survival from the ensure result, not the probe: probe on, ensure off', async () => {
+    const f = fixture();
+    const r = remote({
+      probe: { linger: true },
+      answer: (kind) =>
+        kind === 'ensure'
+          ? result({ ok: true, state: 'up', version: '1.2.3', survivesLogout: false })
+          : result({ ok: true }),
+    });
+    const outcome = await bootstrapper(f, r.exec)(TARGET);
+    expect(outcome.ok && outcome.summary).toMatchObject({ survivesLogout: false });
+  });
+
   it('an upgrade reports upgraded even when the local version was already installed', async () => {
     const f = fixture();
     const r = remote({

@@ -1,7 +1,7 @@
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { connect } from 'node:net';
-import { homedir, tmpdir } from 'node:os';
+import { homedir, tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { version } from '../../package.json';
@@ -123,12 +123,17 @@ describe.skipIf(!enabled)('--ensure-server (real process)', () => {
     ];
     const first = await run(args);
     expect(first.code, first.stderr).toBe(0);
-    expect(resultOf(first.stdout)).toEqual({
-      ok: true,
-      state: 'up',
-      version,
-      survivesLogout: true,
-    });
+    // The survival is the host's linger, measured after the start: the test does not fix it.
+    expect(resultOf(first.stdout)).toMatchObject({ ok: true, state: 'up', version });
+    // survivesLogout is measured after the start (linger), so it must match this host's linger state.
+    const linger = execFileSync(
+      'loginctl',
+      ['show-user', userInfo().username, '-p', 'Linger', '--value'],
+      {
+        encoding: 'utf8',
+      },
+    ).trim();
+    expect(resultOf(first.stdout).survivesLogout).toBe(linger === 'yes');
 
     const secret = readServerSecret(dir);
     expect(secret).not.toBeNull();
