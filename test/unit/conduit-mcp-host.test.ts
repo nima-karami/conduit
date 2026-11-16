@@ -4574,6 +4574,27 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(h.host.uiState().awaitingApproval).toEqual([]);
   });
 
+  it('a pushed doc that now denies a waiting ask re-decides it at once', async () => {
+    const { h, c } = await asking();
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1 && asksOf(h));
+    expect(h.host.uiState().awaitingApproval).toEqual(['s1']);
+    const port = h.host.networkPort();
+    const applied = port.applyRemotePolicy(port.policyDoc().rev, {
+      profiles: [],
+      assignments: [
+        {
+          point: { kind: 'default' },
+          assignment: { profileId: 'observer', exceptions: [], onScreenOnly: false },
+        },
+      ],
+    });
+    expect(applied.ok).toBe(true);
+    expect(h.host.uiState().awaitingApproval).toEqual([]);
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    expect(h.opens).toHaveLength(0);
+  });
+
   it('askAnswer from another window is ignored', async () => {
     const { h, c } = await asking();
     c.call(1, 'open_session', OPEN);

@@ -30,7 +30,6 @@ import {
   type RecipientStatus,
   type Result,
   type ToolError,
-  type ToolErrorCode,
   toolError,
 } from './types';
 import type { AskSummary } from './ui-types';
@@ -68,29 +67,16 @@ export interface RemoteRecipientOutcome {
     | null;
 }
 
-/** The codes the policy frames add to the tool error set (CON-46): a peer may send them, a tool may not yet return them. */
-export const REMOTE_POLICY_CODES = [
-  'policy_conflict',
-  'policy_unavailable',
-  'not_controller',
-] as const;
-export type RemotePolicyCode = (typeof REMOTE_POLICY_CODES)[number];
-
-/** A tool error whose code may also be one of the policy codes; the rest of its fields are ToolError's. */
-export interface PolicyError extends Omit<ToolError, 'code'> {
-  code: ToolErrorCode | RemotePolicyCode;
-}
-
 /** B's rules as a conflict reports them: the rev a push must have started from, and the doc there. */
 export interface RemotePolicyCurrent {
   rev: number;
   doc: RemotePolicyDoc;
 }
 
-/** A policy call's answer. A conflict keeps B's `current`, so the caller can show what it lost to. */
-export type PolicyResult<T> =
-  | { ok: true; value: T }
-  | { ok: false; error: PolicyError; current?: RemotePolicyCurrent };
+/** A push's answer. Only a conflict carries B's `current`, so the caller can show what it lost to. */
+export type RemotePolicyPushResult =
+  | Result<{ rev: number }>
+  | { ok: false; error: ToolError; current: RemotePolicyCurrent };
 
 /** What the link feeds A's copy of a machine's rules. `apply` takes a full snapshot; the states mark it stale or drop it. */
 export interface RemotePolicySink {
@@ -156,9 +142,9 @@ export interface NetworkPort {
     machineId: string,
     baseRev: number,
     doc: RemotePolicyDoc,
-  ): Promise<PolicyResult<{ rev: number }>>;
+  ): Promise<RemotePolicyPushResult>;
   /** Revokes one of a dialed machine's grants on that machine (CON-46). Same call rules as pushPolicy. */
-  revokeRemoteGrant(machineId: string, grantId: string): Promise<PolicyResult<null>>;
+  revokeRemoteGrant(machineId: string, grantId: string): Promise<Result<null>>;
 }
 
 /**

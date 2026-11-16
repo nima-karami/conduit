@@ -1,12 +1,15 @@
-import {
-  type PolicyError,
-  type PolicyResult,
-  REMOTE_POLICY_CODES,
-  type RemotePolicyApplyResult,
-  type RemotePolicyCode,
-  type RemotePolicySink,
+import type {
+  RemotePolicyApplyResult,
+  RemotePolicyCurrent,
+  RemotePolicyPushResult,
+  RemotePolicySink,
 } from '../../src/conduit-mcp/remote-routing';
-import { isToolErrorCode, type ToolErrorCode, toolError } from '../../src/conduit-mcp/types';
+import {
+  isToolErrorCode,
+  type Result,
+  type ToolError,
+  toolError,
+} from '../../src/conduit-mcp/types';
 import {
   type LinkFrame,
   type LinkState,
@@ -58,13 +61,9 @@ export interface PolicySync {
   /** Any change to a link's state; B re-evaluates who is owed a snapshot, A reports states and ends pushes. */
   linksChanged(): void;
   /** A's side: pushes a whole doc to a dialed machine as an edit from `baseRev`. Resolves once. */
-  push(
-    machineId: string,
-    baseRev: number,
-    doc: RemotePolicyDoc,
-  ): Promise<PolicyResult<{ rev: number }>>;
+  push(machineId: string, baseRev: number, doc: RemotePolicyDoc): Promise<RemotePolicyPushResult>;
   /** A's side: revokes one of a dialed machine's grants. Resolves once. */
-  revoke(machineId: string, grantId: string): Promise<PolicyResult<null>>;
+  revoke(machineId: string, grantId: string): Promise<Result<null>>;
   pendingCount(): number;
   stop(): void;
 }
@@ -76,10 +75,13 @@ const POLICY_COALESCE_MS = 250;
 const ERROR_MESSAGE_MAX = 1024;
 const ERROR_HINT_MAX = 512;
 
+/** A push's reply inside this module: a conflict carries B's current, every other failure does not. */
+type PushReply = Result<{ rev: number }> & { current?: RemotePolicyCurrent };
+
 interface Pending {
   machineId: string;
   cancel(): void;
-  resolve(result: PolicyResult<{ rev: number }>): void;
+  resolve(result: PushReply): void;
 }
 
 const live = (state: LinkState | undefined): boolean => state === 'up' || state === 'degraded';
@@ -94,15 +96,13 @@ const printable = (s: string, max: number): string =>
     .slice(0, max)
     .join('');
 
-const REMOTE_POLICY_CODE_SET: ReadonlySet<string> = new Set<string>(REMOTE_POLICY_CODES);
-const isRemotePolicyCode = (code: string): code is RemotePolicyCode =>
-  REMOTE_POLICY_CODE_SET.has(code);
-
 /** A code this build does not know is `refused`: the peer's message still reaches the caller. */
-const codeOf = (code: string): ToolErrorCode | RemotePolicyCode => {
-  if (isToolErrorCode(code)) return code;
-  if (isRemotePolicyCode(code)) return code;
-  return 'refused';
+const codeOf = (code: string): ToolError['code'] => (isToolErrorCode(code) ? code : 'refused');
+
+const toPushResult = (r: PushReply): RemotePolicyPushResult => {
+  if (r.ok) return { ok: true, value: r.value };
+  if (r.current === undefined) return { ok: false, error: r.error };
+  return { ok: false, error: r.error, current: r.current };
 };
 
 /** The mirror store sees a degraded link as up: it still carries frames, as calls treat it. */
@@ -163,11 +163,7 @@ export function createPolicySync(deps: PolicySyncDeps): PolicySync {
   const unsubscribeChange = deps.b.onPolicyDocChange(scheduleChange);
 
   /** B's reply to a controller's push or revoke. The machine it names is always the link's. */
-  const replyPushed = (
-    machineId: string,
-    id: string,
-    result: PolicyResult<{ rev: number }>,
-  ): void => {
+  const replyPushed = (machineId: string, id: string, result: PushReply): void => {
     if (result.ok) {
       deps.send(machineId, { t: 'policy.pushed', id, ok: true, rev: result.value.rev });
       return;
@@ -311,7 +307,7 @@ export function createPolicySync(deps: PolicySyncDeps): PolicySync {
     else if (frame.t === 'policy.pushed') onPushed(machineId, frame);
   };
 
-  const settle = (id: string, result: PolicyResult<{ rev: number }>): void => {
+  const settle = (id: string, result: PushReply): void => {
     const p = pending.get(id);
     if (!p) return;
     pending.delete(id);
@@ -319,14 +315,14 @@ export function createPolicySync(deps: PolicySyncDeps): PolicySync {
     p.resolve(result);
   };
 
-  const unreachable = (message: string, hint?: string): PolicyError => ({
+  const unreachable = (message: string, hint?: string): ToolError => ({
     ...toolError('peer_unreachable', message, undefined, hint === undefined ? undefined : { hint }),
   });
 
   /** Whether a push or revoke may be sent to this machine now, and under what name it is called. */
   const gate = (
     machineId: string,
-  ): { ok: true; name: string } | { ok: false; error: PolicyError } => {
+  ): { ok: true; name: string } | { ok: false; error: ToolError } => {
     const record = deps.linkOf(machineId);
     if (record === null) return { ok: false, error: unreachable('no link to that machine') };
     const name = record.name;
@@ -364,14 +360,11 @@ export function createPolicySync(deps: PolicySyncDeps): PolicySync {
    * Sends one call-like frame and waits for its reply. A timeout, a drop or a refused send ends it
    * as peer_unreachable; nothing here re-sends it, so the frame goes out at most once.
    */
-  const dispatch = (
-    machineId: string,
-    frameFor: (id: string) => LinkFrame,
-  ): Promise<PolicyResult<{ rev: number }>> => {
+  const dispatch = (machineId: string, frameFor: (id: string) => LinkFrame): Promise<PushReply> => {
     const g = gate(machineId);
     if (!g.ok) return Promise.resolve({ ok: false, error: g.error });
     const { name } = g;
-    return new Promise<PolicyResult<{ rev: number }>>((resolve) => {
+    return new Promise<PushReply>((resolve) => {
       const id = deps.newId();
       const cancelTimer = deps.after(
         () =>
@@ -452,19 +445,12 @@ export function createPolicySync(deps: PolicySyncDeps): PolicySync {
     machineId: string,
     baseRev: number,
     doc: RemotePolicyDoc,
-  ): Promise<PolicyResult<{ rev: number }>> =>
-    dispatch(machineId, (id) => ({ t: 'policy.push', id, baseRev, doc }));
+  ): Promise<RemotePolicyPushResult> =>
+    dispatch(machineId, (id) => ({ t: 'policy.push', id, baseRev, doc })).then(toPushResult);
 
-  const revoke = (machineId: string, grantId: string): Promise<PolicyResult<null>> =>
+  const revoke = (machineId: string, grantId: string): Promise<Result<null>> =>
     dispatch(machineId, (id) => ({ t: 'policy.revoke', id, grantId })).then(
-      (r): PolicyResult<null> =>
-        r.ok
-          ? { ok: true, value: null }
-          : {
-              ok: false,
-              error: r.error,
-              ...(r.current === undefined ? {} : { current: r.current }),
-            },
+      (r): Result<null> => (r.ok ? { ok: true, value: null } : { ok: false, error: r.error }),
     );
 
   return {
