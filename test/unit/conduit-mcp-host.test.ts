@@ -2724,9 +2724,9 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
       expect(answer).toEqual({ type: 'mcp:policyResult', requestId, ok: true });
     };
     await setPoint(2, { kind: 'cli', cli: 'claude' }, { access: 'off' });
+    // s1 inherits cli:claude's send_input, so it is not an override of its own.
     expect(h.host.uiState().policy.legacy.sessions.s1).toEqual({
       open_file: { access: 'off' },
-      send_input: { access: 'off' },
     });
     // Explicit, not inherited: s1 must keep this value when the default moves off it.
     let explicit: HostToWebview | undefined;
@@ -2748,6 +2748,78 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     expect(h.host.uiState().policy.legacy.sessions.s1).toEqual({
       open_file: { access: 'off' },
       send_input: { access: 'ask' },
+    });
+  });
+
+  it('a sleeping codex session takes its cli:codex point when its dialog edit copies the layer', async () => {
+    const h = harness();
+    h.sessions.set('s1', session('s1', { agentId: 'codex' }));
+    await h.host.start();
+    let point: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:setPointPolicy',
+        requestId: 1,
+        point: { kind: 'cli', cli: 'codex' },
+        tool: 'send_input',
+        patch: { access: 'off' },
+      },
+      (m) => {
+        point = m;
+      },
+      1,
+    );
+    expect(point).toEqual({ type: 'mcp:policyResult', requestId: 1, ok: true });
+    let edit: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:setToolPolicy',
+        requestId: 2,
+        sessionId: 's1',
+        tool: 'open_file',
+        patch: { access: 'off' },
+      },
+      (m) => {
+        edit = m;
+      },
+      1,
+    );
+    expect(edit).toEqual({ type: 'mcp:toolPolicyResult', requestId: 2, ok: true });
+    // The default stays ask; s1's send_input equals cli:codex, so it is inherited, not an override.
+    expect(h.host.uiState().policy.legacy.global.send_input).toBeUndefined();
+    expect(h.host.uiState().policy.legacy.sessions.s1).toEqual({
+      open_file: { access: 'off' },
+    });
+    // The copied assignment wins wholesale on relaunch, so the CLI's deny must still hold.
+    const a = await launch(h, 's1', CODEX, spec('/usr/bin/codex'));
+    const c = await client(h.ep, a.token);
+    expect(await c.listed()).not.toContain('send_input');
+    expect(await c.listed()).not.toContain('open_file');
+  });
+
+  it('a sleeping codex session shows a field equal to cli:codex as inherited, not as an override', async () => {
+    const h = harness();
+    h.sessions.set('s1', session('s1', { agentId: 'codex' }));
+    await h.host.start();
+    let point: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:setPointPolicy',
+        requestId: 1,
+        point: { kind: 'cli', cli: 'codex' },
+        tool: 'send_input',
+        patch: { access: 'off' },
+      },
+      (m) => {
+        point = m;
+      },
+      1,
+    );
+    expect(point).toEqual({ type: 'mcp:policyResult', requestId: 1, ok: true });
+    await setHostPolicy(h, 's1', { open_file: { access: 'off' } });
+    // s1 holds an assignment of its own, so only its differences from cli:codex are overrides.
+    expect(h.host.uiState().policy.legacy.sessions.s1).toEqual({
+      open_file: { access: 'off' },
     });
   });
 
