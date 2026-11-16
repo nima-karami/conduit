@@ -41,3 +41,33 @@ export async function machineActionReply(
   }
   return { type: 'machines:result', requestId, result };
 }
+
+/** The setup pane's session id, or the fault code the Machines UI shows instead. */
+export async function openSetupPaneReply(
+  requestId: number,
+  run: () => Promise<{ sessionId: string }>,
+  warn: (message: string, data: Record<string, unknown>) => void,
+): Promise<Extract<HostToWebview, { type: 'machines:paneOpened' }>> {
+  try {
+    const r = await run();
+    return { type: 'machines:paneOpened', requestId, sessionId: r.sessionId, error: null };
+  } catch (error) {
+    warn('openSetupPane failed', { err: String(error) });
+    return { type: 'machines:paneOpened', requestId, sessionId: null, error: faultCode(error) };
+  }
+}
+
+/** The probe's CLI list, or the fault code; the dialog keeps its last list on a fault. */
+export async function probeAgentsReply(
+  requestId: number,
+  run: () => Promise<{ agents: string[] }>,
+  warn: (message: string, data: Record<string, unknown>) => void,
+): Promise<Extract<HostToWebview, { type: 'machines:agents' }>> {
+  try {
+    const r = await run();
+    return { type: 'machines:agents', requestId, agents: r.agents, error: null };
+  } catch (error) {
+    warn('probeAgents failed', { err: String(error) });
+    return { type: 'machines:agents', requestId, agents: null, error: faultCode(error) };
+  }
+}

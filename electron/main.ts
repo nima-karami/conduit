@@ -248,7 +248,13 @@ import { Logger } from './logger';
 import { LspManager } from './lsp-manager';
 import { startLanguageServer } from './lsp-server';
 import { watchServerRoot } from './lsp-watcher';
-import { disconnectOutcome, MACHINE_OK, machineActionReply } from './machine-replies';
+import {
+  disconnectOutcome,
+  MACHINE_OK,
+  machineActionReply,
+  openSetupPaneReply,
+  probeAgentsReply,
+} from './machine-replies';
 import { NotesWatcher } from './notes-watcher';
 import { OpenFileWatcher } from './open-file-watcher';
 import { createOsFileClipboard, spawnPowerShell } from './os-file-clipboard';
@@ -520,6 +526,8 @@ function sendToWindow(windowId: number, msg: HostToWebview) {
 
 /** The server gives a connect 120 s (spec §7); a client that gives up first loses its real answer. */
 const MACHINES_CONNECT_TIMEOUT_MS = 130_000;
+/** The probe is a full ssh round trip, so it needs more budget than a local C2 call. */
+const MACHINES_PROBE_TIMEOUT_MS = 60_000;
 
 type E2eHoldPoint = 'index' | 'closure' | 'scan' | 'topup';
 /** Smoke-only (installed under CONDUIT_E2E): parks an index build between reading the repo set
@@ -4207,6 +4215,47 @@ app.whenReady().then(() => {
               error: faultCode(err),
             });
           }
+          break;
+        case 'machines:setMode':
+          replyHere(
+            await machineActionReply(
+              m.requestId,
+              'setMode',
+              () =>
+                callServer('machines.setMode', { machineId: m.machineId, mode: m.mode }).then(
+                  () => MACHINE_OK,
+                ),
+              warnMachines,
+            ),
+          );
+          break;
+        case 'machines:openSetupPane':
+          replyHere(
+            await openSetupPaneReply(
+              m.requestId,
+              () =>
+                callServer('machines.openSetupPane', {
+                  machineId: m.machineId,
+                  cli: m.cli,
+                  step: m.step,
+                }),
+              warnMachines,
+            ),
+          );
+          break;
+        case 'machines:probeAgents':
+          replyHere(
+            await probeAgentsReply(
+              m.requestId,
+              () =>
+                callServer(
+                  'machines.probeAgents',
+                  { machineId: m.machineId },
+                  { timeoutMs: MACHINES_PROBE_TIMEOUT_MS },
+                ),
+              warnMachines,
+            ),
+          );
           break;
         case 'machines:sshHosts': {
           let hosts: string[] = [];
