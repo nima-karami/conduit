@@ -1,49 +1,27 @@
-# CON-35 orchestrator state (handover, 2026-11-16)
+# CON-35 orchestrator state (claude-24, Claude-only build loop)
 
-Claude orchestrator (claude-23) stopped on claude-3's order. A Codex orchestrator takes over from here.
-No lane sessions were opened. Nothing is merged. Slice 1 (CON-36) has started; no gate is measured yet.
+Updated 2026-11-16 ~12:05Z. Read this first after a compaction or handover. Ledger: `.autoloop/` (tasks.yaml, blockers.md, learnings.md, evidence/).
 
-## VM (Linux remote for G7 and the Linux gates)
-- Dir: `~/.cache/conduit-vm/con27` (Ubuntu 26.04.1 cloud image, the one CON-27 used).
-- **Running now**: QEMU PID 199137 (restarted 2026-11-16; was 63797) (`~/.cache/conduit-vm/con27/run/qemu.pid`). Headless
-  (`-display none -vga none -monitor none`), serial to `serial.log`, only forward `127.0.0.1:47422 -> :22`.
-  Stop it by that PID only, when idle.
-- Start command (from the VM dir):
-  `qemu-system-x86_64 -enable-kvm -m 2048 -smp 2 -display none -vga none -monitor none -serial file:$PWD/serial.log -drive file=disk.qcow2,if=virtio -drive file=seed-con35.iso,format=raw,if=virtio,readonly=on -nic user,hostfwd=tcp:127.0.0.1:47422-:22 -pidfile $PWD/run/qemu.pid -daemonize`
-- **Re-seeded for CON-35**: new cloud-init instance-id `conduit-con35` (`seed/`, `seed-con35.iso`),
-  which grants user `conduit` passwordless sudo (needed to set `KillUserProcesses` and toggle linger for G7).
-  The CON-27 seed is kept as `seed/*.con27.bak`.
-- **Host key regenerated** by the re-seed. The new ED25519 key was taken from the serial console's
-  cloud-init print, and its fingerprint matches: `SHA256:vGK53SGPox9uDoVK3Wh35qT4oYHdXpRMJRmKqChq15s`.
-  `known_hosts` now holds only that key, as `[127.0.0.1]:47422`. The old file is `known_hosts.con27.bak`.
-- SSH access: put this in an ssh config file and run `ssh -F <file> vm`:
-  ```
-  Host vm
-    HostName 127.0.0.1
-    Port 47422
-    HostKeyAlias [127.0.0.1]:47422
-    User conduit
-    IdentityFile ~/.cache/conduit-vm/con27/id_ed25519
-    IdentitiesOnly yes
-    UserKnownHostsFile ~/.cache/conduit-vm/con27/known_hosts
-    StrictHostKeyChecking yes
-    BatchMode yes
-  ```
+## Branch
+`CON-35-remote-ssh` (worktree /home/namemenima/projects/.wt/conduit/CON-35). Tip 1a0b063e. Never pushed to main (claude-3 owns main/releases).
+CON-24@fc6f68bd (independently approved) is merged in at efd97325 so CON-39 could use the profiles.
 
-## Measured so far (read only, before any change)
-- OpenSSH 10.2p1 (sshd and client). `MaxSessions` isn't set in `/etc/ssh/sshd_config`
-  (`#MaxSessions 10`), so it's the default; confirm with `sudo sshd -T | grep maxsessions`.
-- logind: `KillUserProcesses` isn't set (`#KillUserProcesses=no`), so it's Ubuntu's default, no.
-- `conduit` has **Linger=yes** already (`/var/lib/systemd/linger/conduit`). G7 must test with linger off too.
-- `systemctl --user` is running; `XDG_RUNTIME_DIR=/run/user/1000`; `systemd-run` and `setsid` are present.
-- The SSH login is session `Type=tty Class=user`. Disk: 4.5 GB free of 6.7 GB.
+## Done (each: Opus-reviewed lanes, verify EXIT=0 after every merge, e2e:remote green, reported to claude-3)
+- CON-36 slice 1: Linux gates measured -> gates.md (+ fresh-manager G7 re-run). Windows gates pending a box.
+- CON-37 slice 2: C2 per-start secret (RS-D8); link over Duplex; ssh records pinned per Host; ssh dialer; --link-stdio bridge + secret-gated endpoint; link.sshAdd. Smoke: ssh-link-smoke.md.
+- CON-38 slice 3: bootstrap (probe/install scripts, binSha256 pins, --ensure-server, link.sshBootstrap). Smoke: bootstrap-smoke.md.
+- CON-39 slice 4: machines registry (ssh LinkRecord `machine` meta, links.json v3), connect/list/disconnect_machine, §5.2 errors, RS-D6 forced ask, needs-person pane (C2 machines.openNeedsPerson), hello platform/version (link 1.1). Smoke: machines-smoke.md. FINAL e2e on 1a0b063e RUNNING (evidence/con39-final-e2e.log); report to claude-3 when green.
 
-## Not done (the next owner picks these up)
-- G7 matrix (not run): `KillUserProcesses` yes|no × linger on|off × start method (`nohup &`, `setsid -f`,
-  `systemd-run --user --scope`, `systemd-run --user --unit`), each started from its own ssh session that
-  exits, then checked from a fresh login after ~15 s. Restore the defaults afterwards
-  (remove the logind drop-in, re-enable linger).
-- Payload size (linux-x64), MaxSessions over one ControlMaster, the stdio bridge byte-transparency
-  over sshd (random binary through `ssh -T vm cat` plus a node pipe, compared by SHA-256).
-- Windows gates G1–G6, G8, G9: pending until there's a Windows box.
-- Report goes to `docs/runs/2026-11-16-CON-35/gates.md`; then the plan for slices 2–3 and the contracts.
+## Open owner decisions (in .autoloop/blockers.md)
+- [high] hc 0.1.16 enables linger by itself (RS-D14 conflict; affects local app). Linger left as hc leaves it.
+- [high] Windows: start path (RS-D5 task), cmd.exe 8191-char limit (certain), node.exe code-signing vs pins, SMB pipe exposure — all need a Windows box.
+- Proof-of-possession for ssh hello; machine-scoped grants (no CON-24 scope kind); cross-platform push; hc re-download.
+
+## Next
+CON-40 slice 5 (routed session tools): plan at docs/plans/2026-11-16-remote-ssh-routed-tools.plan.md (being written). Then slices 6–12 per spec §10.
+
+## VM
+~/.cache/conduit-vm/con27, QEMU PID 199137 running idle, defaults restored (KUP false, linger yes, no drop-in). Stop only by its PID when CON-35 is finished.
+
+## How lanes run
+Haiku builders in /tmp/claude-1000/-home-namemenima-projects--wt-conduit-CON-35/7e0abefc-f499-4ed4-883c-1e77266b51a9/scratchpad/lanes/<name> (node_modules symlink); gates per lane: `node esbuild.mjs && npm run verify:quick`, `npx fallow --skip health` (dead code empty), `rm -rf out`. Opus review each lane with mutation testing; orchestrator merges --no-ff with main's identity and runs full `npm run verify` per merge. Contracts land with their first importer (fallow). Every ssh call in smokes under `timeout`; never `hc server status`.
