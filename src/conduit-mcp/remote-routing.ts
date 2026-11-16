@@ -168,6 +168,8 @@ export type RoutedIntent =
       tool: RoutedTool;
       kind: 'address';
       handle: string;
+      /** The machine part as typed: a name, machine id or ssh target. */
+      machine: string;
       address: string;
       args: Record<string, unknown>;
     };
@@ -224,6 +226,7 @@ export function routedIntentOf(tool: string, rawArgs: unknown): Result<RoutedInt
         tool,
         kind: 'address',
         handle: parsed.handle,
+        machine: parsed.machine,
         address: args.session,
         args: { ...args, session: parsed.handle },
       },
@@ -272,30 +275,11 @@ export function machineTarget(
   };
 }
 
-/** The machine a session address names, from the directory: its session's label and home there. */
-export function addressTarget(
-  network: Pick<NetworkPort, 'resolve'>,
-  address: string,
-): Result<RoutedTarget> {
-  const found = network.resolve(address);
-  if (found.kind !== 'remote')
-    return {
-      ok: false,
-      error: toolError('unknown_session', `no session "${address}" in list_sessions`, undefined, {
-        hint: found.kind === 'unknown' ? found.hint : 'use a handle from list_sessions',
-      }),
-    };
-  const { entry } = found;
-  return {
-    ok: true,
-    value: {
-      machineId: entry.machineId,
-      machine: entry.machine,
-      label: entry.label,
-      home: entry.home,
-    },
-  };
-}
+/*
+ * A session address is resolved on the machine that owns the session, never from A's snapshot of it:
+ * a snapshot lags and depends on B's monitor capability. A resolves only the machine part here, and
+ * B decides whether the handle exists there.
+ */
 
 /** The name a session on another machine goes by in a result: handle@<machine name>, as list_sessions shows it. */
 export function routedName(handle: string, machine: string): string {

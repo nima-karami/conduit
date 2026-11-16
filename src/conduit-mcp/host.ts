@@ -105,7 +105,6 @@ import type {
   Principal,
 } from './policy-types';
 import {
-  addressTarget,
   isKnownMachine,
   isRoutedCall,
   type McpNetworkPort,
@@ -2339,23 +2338,22 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               { hint: 'no linked machines' },
             ),
           };
+    // A session address resolves only its machine part here; the handle is B's to resolve (CON-40 S3).
+    const found = machineTarget(network, intent.machine);
+    if (!found.ok) return found;
     const target =
-      intent.kind === 'machine'
-        ? machineTarget(network, intent.machine)
-        : addressTarget(network, intent.address);
-    if (!target.ok) return target;
-    const shown =
-      intent.kind === 'address' ? routedName(intent.handle, target.value.machine) : null;
-    const summary = routedAskSummary(intent, target.value, shown);
+      intent.kind === 'address' ? { ...found.value, label: intent.handle } : found.value;
+    const shown = intent.kind === 'address' ? routedName(intent.handle, target.machine) : null;
+    const summary = routedAskSummary(intent, target, shown);
     if (summary === null)
       return {
         ok: false,
         error: toolError(
           'invalid_args',
-          `${intent.tool} on ${target.value.machine} needs its arguments as text`,
+          `${intent.tool} on ${target.machine} needs its arguments as text`,
         ),
       };
-    const { machineId, machine } = target.value;
+    const { machineId, machine } = target;
     return {
       ok: true,
       value: {

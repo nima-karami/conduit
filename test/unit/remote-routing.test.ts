@@ -130,6 +130,7 @@ describe('routed session tools: where a call goes (CON-40 S3)', () => {
         tool: 'send_input',
         kind: 'address',
         handle: 'claude-1',
+        machine: 'm-0000aaaa',
         address: 'claude-1@m-0000aaaa',
         args: { session: 'claude-1', text: 'hi' },
       },

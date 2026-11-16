@@ -7790,6 +7790,7 @@ describe('routed session tools on this machine (CON-40 S3, plan decision 5)', ()
   /** A network whose routed calls are recorded; `answer` is what B says for each. */
   function routeNet(over: {
     machines?: MachineView[];
+    entries?: RemoteEntry[];
     answer?: (tool: string, args: Record<string, unknown>) => unknown;
   }) {
     const sent: Sent[] = [];
@@ -7797,7 +7798,7 @@ describe('routed session tools on this machine (CON-40 S3, plan decision 5)', ()
       throw new Error('not used by the routed tools');
     };
     const network: NetworkPort = {
-      remoteEntries: () => [REMOTE_CLAUDE],
+      remoteEntries: () => over.entries ?? [REMOTE_CLAUDE],
       resolve: (target) =>
         target === REMOTE_CLAUDE.address
           ? { kind: 'remote', entry: REMOTE_CLAUDE }
@@ -7959,11 +7960,24 @@ describe('routed session tools on this machine (CON-40 S3, plan decision 5)', ()
     expect(net.sent).toHaveLength(1);
   });
 
-  it('an address to a session that is not on a linked machine stays unknown, and is not sent', async () => {
+  it('a routed read_screen to a handle A has no snapshot of still routes, and B answers for it', async () => {
+    const net = routeNet({
+      entries: [],
+      answer: () => ({ session: 'e2e-echo-1', rows: ['ready'] }),
+    });
+    const { ca } = await leadSession(net.network);
+    const r = await ca.call('read_screen', { session: 'e2e-echo-1@m-0000000a' });
+    expect(r.body).toMatchObject({ session: 'e2e-echo-1@win-box', rows: ['ready'] });
+    expect(net.sent).toEqual([
+      expect.objectContaining({ tool: 'read_screen', args: { session: 'e2e-echo-1' } }),
+    ]);
+  });
+
+  it('a routed address whose machine part is not an added machine is machine_unknown, and is not sent', async () => {
     const net = routeNet({});
     const { ca } = await leadSession(net.network);
-    const r = await ca.call('read_screen', { session: 'claude-7@m-0000000a' });
-    expect(r.body.error).toMatchObject({ code: 'unknown_session' });
+    const r = await ca.call('read_screen', { session: 'claude-1@nowhere' });
+    expect(r.body.error).toMatchObject({ code: 'machine_unknown' });
     expect(net.sent).toEqual([]);
   });
 
