@@ -23,9 +23,9 @@ export const FS_REQ_MS = 30_000;
  * B caps the watches it holds per link at 64 (plan decision 6). A stops asking first, so the
  * 65th watch is refused here and never reaches B.
  */
-export const FS_WATCHES_PER_MACHINE = 64;
+const FS_WATCHES_PER_MACHINE = 64;
 /** At most one `fs.refused` audit entry per link in this window, as calls and drive do. */
-export const FS_REFUSAL_AUDIT_MS = 60_000;
+const FS_REFUSAL_AUDIT_MS = 60_000;
 
 /**
  * How a B refusal reaches the C2 caller. Each FsErrorCode has the ServerErrorKind of the same
