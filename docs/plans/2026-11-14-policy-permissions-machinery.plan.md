@@ -703,6 +703,9 @@ Failing tests:
   - Privacy: an observed command summary is its first line, capped at 200 characters.
   - Observed rows carry the session's handle; note rows use decidedBy 'conduit'.
   - "No activity feed" is CON-25's to render for CLIs with no observed lane; no row is written.
+  - Re-review: the gap check reads incrementally, only [last checked offset, size at Stop), with the offset advanced to the last complete line; a shrink or a new path means a baseline.
+  - `received` post ids are bounded: pruned on baseline, capped at 1,000, and posts for unknown sessions are ignored.
+  - Observed note rows use machine actions `feed-gap` / `feed-unavailable` with the sentence in summary.
 - *T4.2 ruling (2026-11-15, revised after review):* no no-bind timer. Codex creates its rollout file lazily, at the first turn (CON-11 spike §S3), so a no-bind timeout would falsely report idle sessions. `onFeed('unavailable')` fires only for an ambiguous bind, once per session.
 - **T4.1b Claude feed-gap check (lead condition on the async hook).** An async PostToolUse post can be lost without Conduit knowing. On each `Stop` hook (sync, already delivered), the host reads the transcript (`transcript_path`), counts the `tool_use` entries since the previous Stop whose tool names match the PostToolUse matcher, and compares that with the PostToolUse posts received for the session over the same span. A shortfall writes one `note` row ("Feed gap: N actions not reported"). The reader is `src/claude-transcript-tools.ts` (`countMatchedToolUses(jsonl: string, sinceUuid: string | null): {count: number; lastUuid: string | null}`), tested against a scrubbed transcript fixture.
 - **T4.3 (serial) wiring.**
