@@ -100,6 +100,7 @@ export const MACHINES_STR = {
   removeTitle: (name: string) => `Remove ${name}?`,
   removeBody:
     'Conduit forgets this machine here. Sessions running on it keep running, and you can add it again.',
+  rowMenu: (name: string) => `${name} actions`,
   renameLabel: 'Machine name',
   renameHint: '1–64 characters',
   // Palette.

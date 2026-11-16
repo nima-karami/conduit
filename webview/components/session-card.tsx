@@ -56,6 +56,7 @@ export type AgentRowModel = Pick<
   | 'childIds'
   | 'descendantCount'
   | 'childState'
+  | 'remoteChildCount'
   | 'folded'
 >;
 
@@ -125,7 +126,7 @@ export function AgentRow({
     onEditEnd();
   };
 
-  const hasKids = row.childIds.length > 0;
+  const hasKids = row.childIds.length > 0 || row.remoteChildCount > 0;
   const child = row.depth > 0;
   const attention = row.effectiveState === 'blocked';
   const relaunchable = session.status !== 'running' && canRelaunch(session);
@@ -291,6 +292,7 @@ const PREVIEW_ROW: AgentRowModel = {
   childIds: [],
   descendantCount: 0,
   childState: null,
+  remoteChildCount: 0,
   folded: false,
 };
 

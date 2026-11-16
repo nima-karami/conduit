@@ -36,6 +36,7 @@ const ROW: AgentRowModel = {
   childIds: [],
   descendantCount: 0,
   childState: null,
+  remoteChildCount: 0,
   folded: false,
 };
 
