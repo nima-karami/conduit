@@ -1,8 +1,15 @@
-import { createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes } from 'node:crypto';
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+  randomBytes,
+} from 'node:crypto';
 import * as fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { watchDir } from '../../electron/watch-dir';
+import { atomicWriteFileSync } from '../../src/atomic-write';
 import type {
   McpNetworkPort,
   NetworkPort,
@@ -348,7 +355,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       else if (f.t === 'call.result') calls.onResult(machineId, f);
       else if (f.t === 'fs.res' || f.t === 'fs.changed') fsClient.onFrame(machineId, f);
       else if (f.t === 'git.res') gitClient.onFrame(machineId, f);
-      else if (f.t === 'fs.req' || f.t === 'fs.watch' || f.t === 'fs.unwatch')
+      else if (f.t === 'fs.req' || f.t === 'fs.write' || f.t === 'fs.watch' || f.t === 'fs.unwatch')
         void fsServe
           .onFrame(machineId, f)
           .catch((err: unknown) => deps.log.error('fs frame failed', { message: String(err) }));
@@ -523,6 +530,23 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
         size: st.size,
         mtimeMs: st.mtimeMs,
       };
+    },
+    hashFile: async (absPath) => {
+      try {
+        return createHash('sha256')
+          .update(await fs.promises.readFile(absPath))
+          .digest('hex');
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+        throw err;
+      }
+    },
+    writeFileAtomic: async (absPath, data) => {
+      // The existing file's mode survives the swap, as a local save keeps it.
+      const mode = (await fs.promises.stat(absPath).catch(() => null))?.mode;
+      atomicWriteFileSync(absPath, data, fs, {
+        mode: mode === undefined ? undefined : mode & 0o7777,
+      });
     },
     watchDir,
     send: (machineId, frame) => {
