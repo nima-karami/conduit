@@ -5,7 +5,6 @@ import {
   constants as fsConstants,
   promises as fsp,
   readFileSync,
-  statSync,
 } from 'node:fs';
 import * as path from 'node:path';
 import { join, resolve } from 'node:path';
@@ -126,7 +125,7 @@ import { ServerFolderHealth } from './folder-health';
 import { createLimitMonitor } from './limit-monitor';
 import { createLimitRulesSource } from './limit-rules-file';
 import { ServerSettingsStore } from './server-settings';
-import { readTranscriptRange } from './transcript-range';
+import { confineTranscriptPath, readTranscriptRange, readTranscriptSize } from './transcript-range';
 
 export type DomainLogLevel = 'debug' | 'info' | 'warn' | 'error';
 export type DomainLog = Record<
@@ -698,9 +697,11 @@ export function createDomain(deps: DomainDeps): Domain {
   });
   const codexHome = deps.env.CODEX_HOME || join(deps.homeDir, '.codex');
   const metaCapWarned = new Set<string>();
+  // see plan review B: transcript_path is agent-controlled, so the feed gap only reads under here
+  const claudeHome = deps.env.CLAUDE_CONFIG_DIR || join(deps.homeDir, '.claude');
   const feedGap = createClaudeFeedGap<ReturnType<typeof setTimeout>>({
     readRange: readTranscriptRange,
-    sizeOf: (p) => statSync(p).size,
+    sizeOf: readTranscriptSize,
     setTimer: (fn, ms) => setTimeout(fn, ms),
     clearTimer: (handle) => clearTimeout(handle),
     record: (sessionId, gap) => deps.observed.record(sessionId, 'claude', { gap }),
@@ -712,8 +713,21 @@ export function createDomain(deps: DomainDeps): Domain {
     if (!mgr.get(sessionId)) return;
     const payload = isRecord(post.payload) ? post.payload : {};
     if (post.event === 'Stop') {
-      if (typeof payload.transcript_path === 'string')
-        feedGap.stop(sessionId, payload.transcript_path);
+      if (typeof payload.transcript_path === 'string') {
+        const transcript = confineTranscriptPath(payload.transcript_path, claudeHome);
+        if (transcript === null) {
+          log.warn(
+            'observed',
+            'transcript path outside the Claude projects dir; feed gap not checked',
+            {
+              sessionId,
+              path: payload.transcript_path,
+            },
+          );
+        } else {
+          feedGap.stop(sessionId, transcript);
+        }
+      }
       return;
     }
     if (post.event !== 'PostToolUse' && post.event !== 'PostToolUseFailure') return;

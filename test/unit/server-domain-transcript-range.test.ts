@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { readTranscriptRange } from '../../server/domain/transcript-range';
+import { confineTranscriptPath, readTranscriptRange } from '../../server/domain/transcript-range';
 
 const dirs: string[] = [];
 const scratch = (): string => {
@@ -53,4 +53,28 @@ describe('readTranscriptRange', () => {
       await expect(readTranscriptRange(fifo, 0, 1)).rejects.toThrow(/not a regular file/);
     },
   );
+});
+
+describe('confineTranscriptPath', () => {
+  const claudeHome = join('/home', 'u', '.claude');
+  const projects = join(claudeHome, 'projects');
+
+  it('accepts a transcript nested under the projects dir, normalised', () => {
+    const nested = join(projects, 'p', 's.jsonl');
+    expect(confineTranscriptPath(nested, claudeHome)).toBe(resolve(nested));
+  });
+
+  it.each([
+    ['a relative path', join('projects', 'p', 's.jsonl')],
+    ['a dot-dot escape out of projects', join(projects, '..', '..', 'x.jsonl')],
+    ['a sibling that shares the prefix', join(claudeHome, 'projects-evil', 'x.jsonl')],
+    ['the projects dir itself', projects],
+    ['a path outside claude home', join('/home', 'u', 'other', 'x.jsonl')],
+    ['a UNC path', '\\\\server\\share\\x'],
+    ['a forward-slash UNC path', '//server/share/x'],
+    ['a long-path device prefix', '\\\\?\\C:\\x'],
+    ['a device pipe', '\\\\.\\pipe\\x'],
+  ])('rejects %s', (_label, p) => {
+    expect(confineTranscriptPath(p, claudeHome)).toBeNull();
+  });
 });

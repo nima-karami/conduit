@@ -5,7 +5,7 @@ export const FEED_GAP_SETTLE_MS = 3_000;
 
 interface FeedGapDeps<T> {
   readRange(path: string, start: number, end: number): Promise<Buffer>;
-  sizeOf(path: string): number;
+  sizeOf(path: string): Promise<number>;
   setTimer(fn: () => void, ms: number): T;
   clearTimer(handle: T): void;
   record(sessionId: string, gap: number): void;
@@ -24,7 +24,8 @@ export interface ClaudeFeedGap {
 
 interface Pending<T> {
   path: string;
-  size: number;
+  // see docs/plans/2026-11-14-policy-permissions-machinery.plan.md, "Lane B second re-review rulings"
+  size: Promise<number>;
   timer: T;
 }
 
@@ -74,10 +75,20 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
     sessionId: string,
     s: SessionGap<T>,
     path: string,
-    size: number,
+    sizeOf: Promise<number>,
     guard: { abandoned: boolean },
   ): Promise<void> => {
     try {
+      let size: number;
+      try {
+        size = await sizeOf;
+      } catch (err) {
+        deps.warn('transcript not statable; feed gap not checked', {
+          sessionId,
+          error: String(err),
+        });
+        return;
+      }
       // A new file, or one that shrank, has no span to continue: its content so far is history.
       let baseline =
         s.transcriptPath !== path || size < s.offset || size - s.offset > MAX_SPAN_BYTES;
@@ -122,7 +133,12 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
     }
   };
 
-  const run = (sessionId: string, s: SessionGap<T>, path: string, size: number): Promise<void> => {
+  const run = (
+    sessionId: string,
+    s: SessionGap<T>,
+    path: string,
+    size: Promise<number>,
+  ): Promise<void> => {
     const guard = { abandoned: false };
     const timeout: { handle: T | null } = { handle: null };
     const timedOut = new Promise<void>((resolve) => {
@@ -168,17 +184,11 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
     },
     stop(sessionId, transcriptPath) {
       const s = stateOf(sessionId);
-      let size: number;
-      try {
-        size = deps.sizeOf(transcriptPath);
-      } catch (err) {
-        deps.warn('transcript not statable at Stop; feed gap not checked', {
-          sessionId,
-          error: String(err),
-        });
-        return;
-      }
       if (s.pending !== null) deps.clearTimer(s.pending.timer);
+      const size = deps.sizeOf(transcriptPath);
+      // A stat that fails before the settle timer fires must not be an unhandled rejection;
+      // check() still awaits the original and reports it.
+      size.catch(() => {});
       const timer = deps.setTimer(() => fire(sessionId, s), FEED_GAP_SETTLE_MS);
       s.pending = { path: transcriptPath, size, timer };
     },
