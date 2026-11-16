@@ -70,6 +70,8 @@ export interface BootstrapSummary {
   reused: boolean;
   survivesLogout: boolean;
   version: string;
+  /** The agent CLIs the probe found on the remote; they are what the machine record lists. */
+  agents: string[];
 }
 
 export type BootstrapResult =
