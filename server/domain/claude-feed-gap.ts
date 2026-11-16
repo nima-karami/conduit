@@ -46,6 +46,8 @@ const RECEIVED_CAP = 1_000;
 const BASELINE_TAIL_BYTES = 64 * 1024;
 // a span this long is not one turn's feed, so it is taken as a baseline rather than counted
 const MAX_SPAN_BYTES = 32 * 1024 * 1024;
+// see plan review B: a check that never returns (a stuck filesystem) must not hold the queue
+const FEED_GAP_CHECK_TIMEOUT_MS = 10_000;
 
 export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
   const sessions = new Map<string, SessionGap<T>>();
@@ -72,6 +74,7 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
     s: SessionGap<T>,
     path: string,
     size: number,
+    guard: { abandoned: boolean },
   ): Promise<void> => {
     try {
       // A new file, or one that shrank, has no span to continue: its content so far is history.
@@ -95,14 +98,15 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
         });
         return;
       }
-      // A forgotten session's check must not write into its successor's span.
-      if (sessions.get(sessionId) !== s) return;
+      // A forgotten session's check must not write into its successor's span, and a timed-out
+      // check must not write behind the queue's back.
+      if (sessions.get(sessionId) !== s || guard.abandoned) return;
       // A line cut at the Stop stays unread until its newline lands, so it is counted exactly once.
       const complete = bytes.lastIndexOf(NEWLINE) + 1;
       const ids = matchedToolUseIds(bytes.subarray(0, complete).toString('utf8'));
       const missing = ids.filter((id) => !s.received.has(id)).length;
-      for (const id of ids) s.received.delete(id);
       if (!baseline && missing > 0) deps.record(sessionId, missing);
+      for (const id of ids) s.received.delete(id);
       s.transcriptPath = path;
       s.offset = start + complete;
       if (complete > 0) {
@@ -117,12 +121,27 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
     }
   };
 
+  const run = (sessionId: string, s: SessionGap<T>, path: string, size: number): Promise<void> => {
+    const guard = { abandoned: false };
+    const timeout: { handle: T | null } = { handle: null };
+    const timedOut = new Promise<void>((resolve) => {
+      timeout.handle = deps.setTimer(() => {
+        guard.abandoned = true;
+        deps.warn('feed gap check timed out; later checks continue', { sessionId });
+        resolve();
+      }, FEED_GAP_CHECK_TIMEOUT_MS);
+    });
+    return Promise.race([check(sessionId, s, path, size, guard), timedOut]).finally(() => {
+      if (timeout.handle !== null) deps.clearTimer(timeout.handle);
+    });
+  };
+
   const fire = (sessionId: string, s: SessionGap<T>): void => {
     const pending = s.pending;
     if (pending === null) return;
     s.pending = null;
     queue = queue
-      .then(() => check(sessionId, s, pending.path, pending.size))
+      .then(() => run(sessionId, s, pending.path, pending.size))
       .catch((err: unknown) => {
         deps.warn('feed gap check rejected; later checks continue', {
           sessionId,

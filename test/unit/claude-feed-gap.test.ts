@@ -21,6 +21,8 @@ function rig() {
   let failAt: number | null = null;
   let failure: Error = new Error('unarmed');
   let recordFailure: Error | null = null;
+  let hangAt: number | null = null;
+  let release: (() => void) | null = null;
   const ranges: Array<[number, number]> = [];
   const timers: Timer[] = [];
   const records: Array<{ sessionId: string; gap: number }> = [];
@@ -29,6 +31,12 @@ function rig() {
     readRange: async (_path, start, end) => {
       ranges.push([start, end]);
       readCount += 1;
+      if (readCount === hangAt) {
+        hangAt = null;
+        return new Promise<Buffer>((resolve) => {
+          release = () => resolve(Buffer.from(transcript, 'utf8').subarray(start, end));
+        });
+      }
       if (readCount === failAt) {
         failAt = null;
         throw failure;
@@ -80,6 +88,12 @@ function rig() {
     },
     failNextRecord: (error: Error) => {
       recordFailure = error;
+    },
+    hangRead: (nth: number) => {
+      hangAt = readCount + nth;
+    },
+    releaseHungRead: () => {
+      release?.();
     },
   };
 }
@@ -380,7 +394,7 @@ describe('claude feed gap', () => {
     r.gap.stop('s1', '/t/a.jsonl');
     await r.settle();
     const huge = JSON.stringify({
-      type: 'user',
+      type: 'assistant',
       uuid: 'big',
       message: {
         content: [
@@ -419,4 +433,63 @@ describe('claude feed gap', () => {
     expect(r.records).toEqual([{ sessionId: 's1', gap: 2 }]);
     expect(r.warnings).toHaveLength(1);
   });
+
+  it('a failed record keeps the matched posts, so the retry still counts the calls they cover', async () => {
+    const r = rig();
+    r.append(use('u0', 't0'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    r.append(use('u1', 't1'));
+    r.append(use('u2', 't2'));
+    r.gap.post('s1', false, 't1');
+    r.failNextRecord(new Error('sink full'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.records).toEqual([]);
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.records).toEqual([{ sessionId: 's1', gap: 1 }]);
+  });
+
+  it('a hung check times out, warns, and the queue moves on to the next session', async () => {
+    const r = rig();
+    r.append(use('u0', 't0'));
+    r.gap.stop('b', '/t/b.jsonl');
+    await r.settle();
+    r.append(use('u1', 't1'));
+    r.hangRead(1);
+    r.gap.stop('a', '/t/a.jsonl');
+    r.gap.stop('b', '/t/b.jsonl');
+    for (const t of r.timers.filter((x) => x.ms === 3_000 && !x.cancelled)) t.fn();
+    await flushMicrotasks();
+    for (const t of r.timers.filter((x) => x.ms === 10_000 && !x.cancelled)) t.fn();
+    await r.gap.settled();
+    expect(r.records).toEqual([{ sessionId: 'b', gap: 1 }]);
+    expect(r.warnings.some((w) => w.includes('timed out'))).toBe(true);
+  });
+
+  it('a timed-out check that finishes late writes nothing, so the next Stop counts from the old offset', async () => {
+    const r = rig();
+    r.append(use('u0', 't0'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    r.append(use('u1', 't1'));
+    r.hangRead(2);
+    r.gap.stop('s1', '/t/a.jsonl');
+    for (const t of r.timers.filter((x) => x.ms === 3_000 && !x.cancelled)) t.fn();
+    await flushMicrotasks();
+    for (const t of r.timers.filter((x) => x.ms === 10_000 && !x.cancelled)) t.fn();
+    await flushMicrotasks();
+    r.releaseHungRead();
+    await flushMicrotasks();
+    expect(r.records).toEqual([]);
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.records).toEqual([{ sessionId: 's1', gap: 1 }]);
+  });
 });
+
+/** Lets the queued check start, since the test drives timers directly rather than through settle(). */
+async function flushMicrotasks(): Promise<void> {
+  for (let i = 0; i < 5; i += 1) await Promise.resolve();
+}
