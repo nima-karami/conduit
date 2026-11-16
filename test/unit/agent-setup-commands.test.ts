@@ -25,33 +25,37 @@ describe('setupCommand', () => {
     }
   });
 
-  it('uses the plan decision 3 linux commands', () => {
+  it('uses the plan decision 3 linux commands, with ~/.local/bin on PATH', () => {
+    const P = 'PATH="$HOME/.local/bin:$PATH"; ';
     expect(setupCommand('claude', 'linux', 'install')).toBe(
-      `curl -fsSL https://claude.ai/install.sh | bash${DONE}`,
+      `${P}curl -fsSL https://claude.ai/install.sh | bash${DONE}`,
     );
     expect(setupCommand('codex', 'linux', 'install')).toBe(
-      `npm install -g --prefix "$HOME/.local" @openai/codex${DONE}`,
+      `${P}npm install -g --prefix "$HOME/.local" @openai/codex${DONE}`,
     );
     expect(setupCommand('cursor', 'linux', 'install')).toBe(
-      `curl https://cursor.com/install -fsS | bash${DONE}`,
+      `${P}curl https://cursor.com/install -fsS | bash${DONE}`,
     );
     expect(setupCommand('opencode', 'linux', 'install')).toBe(
-      `curl -fsSL https://opencode.ai/install | bash${DONE}`,
+      `${P}curl -fsSL https://opencode.ai/install | bash${DONE}`,
     );
-    expect(setupCommand('claude', 'linux', 'login')).toBe(`claude${DONE}`);
-    expect(setupCommand('codex', 'linux', 'login')).toBe(`codex login --device-auth${DONE}`);
-    expect(setupCommand('cursor', 'linux', 'login')).toBe(`cursor-agent login${DONE}`);
-    expect(setupCommand('opencode', 'linux', 'login')).toBe(`opencode auth login${DONE}`);
+    expect(setupCommand('claude', 'linux', 'login')).toBe(`${P}claude${DONE}`);
+    expect(setupCommand('codex', 'linux', 'login')).toBe(`${P}codex login --device-auth${DONE}`);
+    expect(setupCommand('cursor', 'linux', 'login')).toBe(`${P}cursor-agent login${DONE}`);
+    expect(setupCommand('opencode', 'linux', 'login')).toBe(`${P}opencode auth login${DONE}`);
   });
 
-  it('gives claude its documented Windows installer, and a not-available pause for the rest', () => {
+  it('runs every Windows row through PowerShell itself and waits before closing', () => {
+    const wrap = (script: string) =>
+      `powershell -NoProfile -ExecutionPolicy Bypass -Command "${script}; Read-Host '[done - press Enter to close]'"`;
     expect(setupCommand('claude', 'windows', 'install')).toBe(
-      'irm https://claude.ai/install.ps1 | iex',
+      wrap('irm https://claude.ai/install.ps1 | iex'),
     );
+    expect(setupCommand('claude', 'windows', 'login')).toBe(wrap('claude'));
     for (const cli of ['codex', 'cursor', 'opencode'] as const) {
       for (const step of STEPS) {
         expect(setupCommand(cli, 'windows', step)).toBe(
-          'echo Not available on Windows yet & pause',
+          wrap("Write-Host 'Not available on Windows yet'"),
         );
       }
     }
