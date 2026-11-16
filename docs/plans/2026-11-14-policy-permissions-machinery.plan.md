@@ -798,3 +798,11 @@ So a Codex orchestrator can take over if Claude stops. The lead (claude-3) recei
 - Carried to Slice 5 (from the seams re-review, test-only): server-compose-services `readLines` reads only audit.jsonl and activity/*.jsonl; the grant-store peerRevoked test title ("or suspended", with no suspended grant); a network-audit-log test title.
 - Next: Slice 4 (observed lane + T4.1b gap check), then Slice 5 (CHANGELOG incl. the drive-root key note, run report).
 
+**Slice 5 cleanup list (carried from Slice 4 reviews, 2026-11-16):**
+- Observed command summary splits on `/\r\n|\r|\n/` (a lone CR; privacy).
+- Domain test: live session → delete → Stop + PostToolUse → no rows and no gap state.
+- Narrow `matchedToolUseIds(jsonl): string[]` (sinceUuid/lastUuid now unused).
+- Feed-gap baseline on a same-path replacement (a fingerprint of the span end).
+- A one-line WHY on `receivedCount`.
+- Plus the three seams-review test nits already listed above.
+
