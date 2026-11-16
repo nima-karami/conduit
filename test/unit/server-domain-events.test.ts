@@ -517,7 +517,7 @@ describe('server domain: observed lane wiring', () => {
 
   describe('Claude feed gap through the domain', () => {
     const gapRows = (h: ReturnType<typeof harness>) =>
-      h.observed.filter((o) => typeof (o.entry as { gap?: unknown }).gap === 'number');
+      h.observed.filter((o) => typeof o.entry === 'object' && o.entry !== null && 'gap' in o.entry);
 
     /** Runs `body` with the gap check's settle timer on fake timers; the file I/O is real. */
     const withSettle = async (body: () => Promise<void>): Promise<void> => {
