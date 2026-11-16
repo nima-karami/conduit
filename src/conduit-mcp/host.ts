@@ -3682,6 +3682,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       mirrorOf: () => requestService.mirrorOf(),
       requestsHasEnded: () => requestService.hasEnded(),
       onRequestsMirrorChange: (fn) => requestService.onMirrorChange(fn),
+      policyDoc: () => ({ ...policyService.remoteDoc(), grants: policyService.grantsView() }),
+      onPolicyDocChange: (fn) => policyService.onRemoteDocChange(fn),
+      applyRemotePolicy: (baseRev, doc) => policyService.applyRemoteDoc(baseRev, doc),
+      revokeRemoteGrant: (grantId) => policyService.revokeGrantByRemote(grantId),
       applyRemoteAnswer: (requestId, answer, answerId, machineId) =>
         requestService.applyRemoteAnswer(requestId, answer, answerId, machineId),
       hasMessage: (id) => store.has(id),

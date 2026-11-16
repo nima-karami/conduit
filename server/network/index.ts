@@ -2,7 +2,11 @@ import { createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes } f
 import * as fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { McpNetworkPort, NetworkPort } from '../../src/conduit-mcp/remote-routing';
+import type {
+  McpNetworkPort,
+  NetworkPort,
+  RemotePolicySink,
+} from '../../src/conduit-mcp/remote-routing';
 import {
   type Capabilities,
   LINK_PROTOCOL,
@@ -11,6 +15,7 @@ import {
   type RequestAnswerBody,
 } from '../../src/contracts/link-protocol';
 import type { NetworkState } from '../../src/contracts/network-state';
+import type { RemotePolicyDoc } from '../../src/contracts/remote-policy';
 import type { ServerEventSink } from '../../src/contracts/server-ports';
 import type { ServerSettings } from '../../src/contracts/server-protocol';
 import type { AddSshPeerResult, BootstrapResult, SshEndpoint } from '../../src/contracts/ssh-link';
@@ -50,6 +55,7 @@ import { createMonitorPublisher, type MonitorSource } from './monitor-publisher'
 import { createNeedsPerson, createSetupPane } from './needs-person';
 import { createPairingPort } from './pairing-port';
 import { createPairingService, type PairingService } from './pairing-service';
+import { createPolicySync, type PolicyDocSource } from './policy';
 import {
   createRequests,
   type RemoteAnswerResult,
@@ -116,6 +122,8 @@ export interface NetworkDeps {
   readSshConfig?: () => string | null;
   /** The request service's two ports (CON-42): B's requests and answer path, and A's mirror store. */
   requestPorts: { b: RequestMirrorSource; a: RequestMirrorSink };
+  /** The policy service's two ports (CON-46): B's rules and their push path, and A's copy of a machine's rules. */
+  policyPorts: { b: PolicyDocSource; a: () => RemotePolicySink | null };
 }
 
 /** ~/.ssh/config as text; a missing file is null, any other read error is the caller's to see. */
@@ -244,6 +252,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     calls.settleAbsent(views.map((v) => v.machineId));
     fsClient.linksChanged(views);
     requests.linksChanged();
+    policy.linksChanged();
     for (const l of portListeners) l();
   };
 
@@ -328,6 +337,13 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
           .catch((err: unknown) => deps.log.error('call failed', { message: String(err) }));
       else if (f.t === 'call.result') calls.onResult(machineId, f);
       else if (f.t === 'fs.res' || f.t === 'fs.changed') fsClient.onFrame(machineId, f);
+      else if (
+        f.t === 'policy.changed' ||
+        f.t === 'policy.push' ||
+        f.t === 'policy.pushed' ||
+        f.t === 'policy.revoke'
+      )
+        policy.onFrame(machineId, f);
       else if (f.t === 'request.mirror' || f.t === 'request.answer' || f.t === 'request.answered')
         void requests
           .onFrame(machineId, f)
@@ -476,6 +492,18 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     after,
     newId: () => `q_${randomBytes(12).toString('hex')}`,
   });
+  const policy = createPolicySync({
+    b: deps.policyPorts.b,
+    a: deps.policyPorts.a,
+    links: () => manager.views().map((v) => ({ machineId: v.machineId, state: v.state })),
+    linkOf: (machineId) => store.get(machineId),
+    peerMinor: (machineId) => manager.peerMinor(machineId),
+    send: (machineId, frame) => manager.send(machineId, frame),
+    audit,
+    now,
+    after,
+    newId: () => `pp_${randomBytes(12).toString('hex')}`,
+  });
   const messaging = createMessaging({
     file: path.join(deps.dir, 'outbox.json'),
     machineId: () => identity.machineId,
@@ -525,6 +553,9 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       const sent = await requests.answerRemote(machineId, requestId, answer);
       return sent.ok ? { ok: true, value: null } : sent;
     },
+    pushPolicy: (machineId: string, baseRev: number, doc: RemotePolicyDoc) =>
+      policy.push(machineId, baseRev, doc),
+    revokeRemoteGrant: (machineId: string, grantId: string) => policy.revoke(machineId, grantId),
     selfName,
   };
 
@@ -760,6 +791,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       calls.stop();
       fsClient.stop();
       requests.stop();
+      policy.stop();
       publisher.stop();
       messaging.stop();
       await manager.stop();

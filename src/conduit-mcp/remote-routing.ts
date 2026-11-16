@@ -16,6 +16,7 @@ import type {
   DisconnectMachineResult,
   MachineView,
 } from '../contracts/machines';
+import type { RemotePolicyDoc, RemotePolicySnapshot } from '../contracts/remote-policy';
 import type { RemoteCaller } from '../contracts/remote-principal';
 import { parseAddress } from '../network/addresses';
 import type { GrantChoice } from './grant-store';
@@ -29,6 +30,7 @@ import {
   type RecipientStatus,
   type Result,
   type ToolError,
+  type ToolErrorCode,
   toolError,
 } from './types';
 import type { AskSummary } from './ui-types';
@@ -66,6 +68,50 @@ export interface RemoteRecipientOutcome {
     | null;
 }
 
+/** The codes the policy frames add to the tool error set (CON-46): a peer may send them, a tool may not yet return them. */
+export const REMOTE_POLICY_CODES = [
+  'policy_conflict',
+  'policy_unavailable',
+  'not_controller',
+] as const;
+export type RemotePolicyCode = (typeof REMOTE_POLICY_CODES)[number];
+
+/** A tool error whose code may also be one of the policy codes; the rest of its fields are ToolError's. */
+export interface PolicyError extends Omit<ToolError, 'code'> {
+  code: ToolErrorCode | RemotePolicyCode;
+}
+
+/** B's rules as a conflict reports them: the rev a push must have started from, and the doc there. */
+export interface RemotePolicyCurrent {
+  rev: number;
+  doc: RemotePolicyDoc;
+}
+
+/** A policy call's answer. A conflict keeps B's `current`, so the caller can show what it lost to. */
+export type PolicyResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: PolicyError; current?: RemotePolicyCurrent };
+
+/** What the link feeds A's copy of a machine's rules. `apply` takes a full snapshot; the states mark it stale or drop it. */
+export interface RemotePolicySink {
+  apply(machineId: string, snap: RemotePolicySnapshot): void;
+  setLinkState(machineId: string, state: 'up' | 'down' | 'gone'): void;
+}
+
+/** B's policy service, as the link calls it: `applyRemotePolicy` refuses a stale rev with `current`. */
+export type RemotePolicyApplyResult =
+  | { ok: true; rev: number }
+  | {
+      ok: false;
+      code: 'policy_conflict' | 'invalid_args' | 'policy_unavailable';
+      message: string;
+      current?: RemotePolicyCurrent;
+    };
+
+export type RemoteGrantRevokeResult =
+  | { ok: true }
+  | { ok: false; code: 'not_found'; message: string };
+
 export interface NetworkPort {
   remoteEntries(): RemoteEntry[];
   /**
@@ -102,6 +148,17 @@ export interface NetworkPort {
     requestId: string,
     answer: RequestAnswerBody,
   ): Promise<Result<null>>;
+  /**
+   * Pushes a whole portable doc to a machine I dialed over ssh, as the edit that started from
+   * `baseRev` (CON-46). Resolves once; a drop or timeout is peer_unreachable and is never re-sent.
+   */
+  pushPolicy(
+    machineId: string,
+    baseRev: number,
+    doc: RemotePolicyDoc,
+  ): Promise<PolicyResult<{ rev: number }>>;
+  /** Revokes one of a dialed machine's grants on that machine (CON-46). Same call rules as pushPolicy. */
+  revokeRemoteGrant(machineId: string, grantId: string): Promise<PolicyResult<null>>;
 }
 
 /**
@@ -176,6 +233,19 @@ export interface McpNetworkPort {
   requestsHasEnded(): boolean;
   /** Fires when a mirrored request changes; returns its unsubscribe (CON-42 L5b). */
   onRequestsMirrorChange(listener: () => void): () => void;
+  /** B's rules, their rev and live grants, as a controller sees them (CON-46 L2). */
+  policyDoc(): RemotePolicySnapshot;
+  /** Fires when B's rules or grants change; returns its unsubscribe (CON-46 L2). */
+  onPolicyDocChange(listener: () => void): () => void;
+  /** Applies a controller's pushed doc to B's rules; B validates it and refuses a stale rev (CON-46 L2). */
+  applyRemotePolicy(baseRev: number, doc: unknown): RemotePolicyApplyResult;
+  /** Revokes a grant of B's, as the controller asked (CON-46 L2). */
+  revokeRemoteGrant(grantId: string): RemoteGrantRevokeResult;
+  /**
+   * A's copy of the rules a machine I dialed owns. Optional until the store lands: without it,
+   * snapshots are dropped with an audit, never kept.
+   */
+  remotePolicySink?(): RemotePolicySink;
 }
 
 /**

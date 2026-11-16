@@ -5901,6 +5901,8 @@ describe('createConduitMcpHost — wait_sessions', () => {
       }),
       selfName: () => 'this-machine',
       answerRemoteRequest: () => Promise.reject(new Error('not used by this test')),
+      pushPolicy: () => Promise.reject(new Error('not used by this test')),
+      revokeRemoteGrant: () => Promise.reject(new Error('not used by this test')),
     };
     return {
       network,
@@ -7276,6 +7278,8 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
         (async () => ({ ok: true, value: { machine: 'win-box', state: 'down' } })),
       selfName: () => 'this-machine',
       answerRemoteRequest: () => Promise.reject(new Error('not used by this test')),
+      pushPolicy: () => Promise.reject(new Error('not used by this test')),
+      revokeRemoteGrant: () => Promise.reject(new Error('not used by this test')),
     };
     return { network, connects };
   }
@@ -7939,6 +7943,8 @@ describe('createConduitMcpHost — a remote answer that does not reach its machi
       disconnectMachine: unused,
       selfName: () => 'this-machine',
       answerRemoteRequest: vi.fn(answer),
+      pushPolicy: () => Promise.reject(new Error('not used by this test')),
+      revokeRemoteGrant: () => Promise.reject(new Error('not used by this test')),
     };
     return network;
   }
@@ -8054,6 +8060,8 @@ describe('routed session tools on this machine (CON-40 S3, plan decision 5)', ()
       disconnectMachine: unused,
       selfName: () => 'this-machine',
       answerRemoteRequest: () => Promise.reject(new Error('not used by this test')),
+      pushPolicy: () => Promise.reject(new Error('not used by this test')),
+      revokeRemoteGrant: () => Promise.reject(new Error('not used by this test')),
     };
     return { network, sent };
   }
@@ -8404,6 +8412,8 @@ describe('createConduitMcpHost — remote requests (CON-42 A side)', () => {
       disconnectMachine: unused,
       selfName: () => 'this-machine',
       answerRemoteRequest,
+      pushPolicy: () => Promise.reject(new Error('not used by this test')),
+      revokeRemoteGrant: () => Promise.reject(new Error('not used by this test')),
     };
     return { network, answerRemoteRequest };
   }

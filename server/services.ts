@@ -288,6 +288,7 @@ export function createServices(o: ServicesOptions) {
   // The request service lives in the MCP host, which is composed after the network: the ports reach
   // it through `mcp`, and mirror changes are bridged to the network once the host exists.
   const mirrorListeners = new Set<() => void>();
+  const policyListeners = new Set<() => void>();
   network =
     loaded.kind === 'newer'
       ? null
@@ -369,6 +370,40 @@ export function createServices(o: ServicesOptions) {
               setLinkState: (machineId, state) =>
                 mcp?.networkPort().remoteRequests().setLinkState(machineId, state),
             },
+          },
+          // B's rules reach the link through the host's policy service; until the host is up there
+          // are none to send, and a push or revoke is refused rather than taken silently (CON-46).
+          policyPorts: {
+            b: {
+              policyDoc: () => mcp?.networkPort().policyDoc() ?? null,
+              onPolicyDocChange: (fn) => {
+                policyListeners.add(fn);
+                return () => {
+                  policyListeners.delete(fn);
+                };
+              },
+              applyRemotePolicy: (baseRev, doc) => {
+                const port = mcp?.networkPort();
+                if (port === undefined)
+                  return {
+                    ok: false,
+                    code: 'policy_unavailable',
+                    message: 'this machine is not ready to take remote policy',
+                  };
+                return port.applyRemotePolicy(baseRev, doc);
+              },
+              revokeRemoteGrant: (grantId) => {
+                const port = mcp?.networkPort();
+                if (port === undefined)
+                  return {
+                    ok: false,
+                    code: 'policy_unavailable',
+                    message: 'this machine is not ready to take remote policy',
+                  };
+                return port.revokeRemoteGrant(grantId);
+              },
+            },
+            a: () => mcp?.networkPort().remotePolicySink?.() ?? null,
           },
           monitor: {
             sessions: () => monitorSessions(),
@@ -454,6 +489,9 @@ export function createServices(o: ServicesOptions) {
   network?.setMcp(server.networkPort());
   server.networkPort().onRequestsMirrorChange(() => {
     for (const fn of mirrorListeners) fn();
+  });
+  server.networkPort().onPolicyDocChange(() => {
+    for (const fn of policyListeners) fn();
   });
   network?.setAuditTap(activityAuditSink(server.recordNote));
   network?.onRevoked((machineId) => server.peerRevoked(machineId));
