@@ -7,7 +7,7 @@ export type MessageKind = 'inform' | 'request' | 'question' | 'done';
 /** Agent messages per thread before it pauses for the human (spec §2 loop guard). */
 export const THREAD_AGENT_LIMIT = 20;
 export type RecipientStatus = 'queued' | 'noticed' | 'read' | 'undelivered' | 'expired';
-export const TOOL_ERROR_CODES = [
+const TOOL_ERROR_CODES = [
   'not_in_session',
   'unknown_session',
   'not_messageable',

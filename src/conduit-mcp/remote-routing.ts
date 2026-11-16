@@ -154,7 +154,7 @@ const MAX_MACHINE_CHARS = 128;
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
-export const isRoutedTool = (name: string): name is RoutedTool =>
+const isRoutedTool = (name: string): name is RoutedTool =>
   ROUTED_TOOLS.some((tool) => tool === name);
 
 /**
