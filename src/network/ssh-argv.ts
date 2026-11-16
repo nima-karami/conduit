@@ -80,11 +80,15 @@ export function personSshArgv(o: {
   controlPath: string;
 }): string[] | { error: 'bad_target' } {
   if (!isSshTarget(o.target)) return { error: 'bad_target' };
+  return [...personOptions(o.controlPath), '--', o.target];
+}
+
+function personOptions(controlPath: string): string[] {
   return [
     '-o',
     'ControlMaster=yes',
     '-o',
-    `ControlPath=${o.controlPath}`,
+    `ControlPath=${controlPath}`,
     '-o',
     'ControlPersist=8h',
     '-o',
@@ -93,9 +97,21 @@ export function personSshArgv(o: {
     'ForwardAgent=no',
     '-o',
     'ForwardX11=no',
-    '--',
-    o.target,
   ];
+}
+
+/**
+ * The argv of an agent-setup pane: the needs-person options with a forced tty (-t) for the one
+ * fixed remote command, which comes after the target. The command is a setup-table string, never
+ * user text (agent-setup-commands.ts).
+ */
+export function setupSshArgv(o: {
+  target: string;
+  controlPath: string;
+  command: string;
+}): string[] | { error: 'bad_target' } {
+  if (!isSshTarget(o.target)) return { error: 'bad_target' };
+  return [...personOptions(o.controlPath), '-t', '--', o.target, o.command];
 }
 
 // OpenSSH's mux listener binds `<ControlPath>.<16 random chars>` and renames it into place, so the

@@ -728,6 +728,8 @@ describe('ssh links', { timeout: 60_000 }, () => {
       store: a.store,
       bootstrap: () => Promise.reject(new Error('not used: the machine is pinned')),
       directory,
+      probe: () => Promise.reject(new Error('not used: no probe is run')),
+      changed: () => undefined,
     });
     await until(() =>
       machines.list().some((m) => m.machine_id === b.id.machineId && m.sessions === 1),

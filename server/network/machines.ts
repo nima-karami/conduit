@@ -4,12 +4,14 @@ import type {
   DisconnectMachineResult,
   MachineError,
   MachineMeta,
+  MachineMode,
   MachineView,
 } from '../../src/contracts/machines';
 import type { BootstrapResult, SshFailure } from '../../src/contracts/ssh-link';
 import type { LinkRecord } from '../../src/network/link-file';
 import { isSshTarget } from '../../src/network/ssh-argv';
 import { RpcFault } from '../transport/pipe';
+import type { AgentProbe } from './bootstrap';
 import type { LinkStore } from './link-store';
 
 // The machines an agent sees: the pinned ssh records (plan Architecture, one source of truth), with
@@ -39,11 +41,15 @@ export interface MachinesManager {
 
 export interface MachinesDeps {
   manager: MachinesManager;
-  store: Pick<LinkStore, 'links' | 'update'>;
+  store: Pick<LinkStore, 'links' | 'update' | 'setMachine'>;
   /** Pins a target (bootstrapAndLink): on success the peer is linked and its machine block written. */
   bootstrap(target: string): Promise<BootstrapResult>;
   /** The remote directory: a machine's sessions are the rows its id owns. */
   directory: { entries(): ReadonlyArray<{ machineId: string }> };
+  /** The agent re-probe of one target (bootstrap.ts createAgentProbe). */
+  probe(target: string): Promise<AgentProbe>;
+  /** Something a peer may see changed: a mode or an agent list was written. */
+  changed(): void;
 }
 
 export interface Machines {
@@ -55,6 +61,17 @@ export interface Machines {
   rename(machineId: string, name: string): void;
   /** Forgets an ssh machine locally (manager.forget). Throws RpcFault like rename. */
   remove(machineId: string): void;
+  /** Sets an ssh machine's mode. Throws RpcFault like rename; a machine with no block is invalid. */
+  setMode(machineId: string, mode: MachineMode): void;
+  /** The mode of the machine a connect would resolve `machine` to; null for a target or no match. */
+  modeOf(machine: string): MachineMode | null;
+  /** Re-probes the machine's CLIs and writes only meta.agents. Throws RpcFault on a failed probe. */
+  probeAgents(machineId: string): Promise<{ agents: string[] }>;
+}
+
+/** What a light machine lists to an agent: no CLIs, so nothing routes to it (spec F8). */
+export function agentsForMode(mode: MachineMode | null, agents: string[]): string[] {
+  return mode === 'light' ? [] : agents;
 }
 
 /** A machine's display name is 1 to 64 characters once trimmed, with no control characters. */
@@ -152,14 +169,27 @@ function downErrorOf(state: LinkState | undefined): MachineError {
   }
 }
 
+/** The record a machine id names, or undefined. */
+function recordOf(store: Pick<LinkStore, 'links'>, machineId: string): LinkRecord | undefined {
+  return store.links().find((l) => l.machineId === machineId);
+}
+
 /** The one record a rename or remove may touch: an ssh record that exists. */
 function sshRecordOf(store: Pick<LinkStore, 'links'>, machineId: string): LinkRecord {
-  const record = store.links().find((l) => l.machineId === machineId);
+  const record = recordOf(store, machineId);
   if (record === undefined) throw new RpcFault('not_found', `No machine ${machineId}`);
   if (record.transport !== 'ssh') {
     throw new RpcFault('invalid', 'Only an ssh machine can be changed here');
   }
   return record;
+}
+
+/** A machine block is written by a connect; a record without one has no mode or agents to keep. */
+function requireBlock(record: LinkRecord): MachineMeta {
+  if (record.machine === null) {
+    throw new RpcFault('invalid', 'Connect the machine once before changing it');
+  }
+  return record.machine;
 }
 
 export function createMachines(deps: MachinesDeps): Machines {
@@ -195,7 +225,7 @@ export function createMachines(deps: MachinesDeps): Machines {
   };
 
   const nameOf = (machineId: string): string | null =>
-    deps.store.links().find((l) => l.machineId === machineId)?.name ?? null;
+    recordOf(deps.store, machineId)?.name ?? null;
 
   // The one wait for a link to be up, shared by both paths: a bootstrap's pin does not mean up (the
   // link may still be settling), and a redial must not be reported before its dial finishes.
@@ -217,6 +247,11 @@ export function createMachines(deps: MachinesDeps): Machines {
     }
     const notUp = await waitForUp(r.machineId);
     if (notUp !== null) return { ok: false, error: notUp };
+    // Read after the wait: the owner may have changed the mode while the link came up.
+    const mode = recordOf(deps.store, r.machineId)?.machine?.mode;
+    if (mode === undefined) {
+      return { ok: false, error: { code: 'ssh_unreachable', detail: { detail: 'not_recorded' } } };
+    }
     return {
       ok: true,
       value: {
@@ -225,7 +260,7 @@ export function createMachines(deps: MachinesDeps): Machines {
         state: 'up',
         os: r.summary.os,
         arch: r.summary.arch,
-        mode: 'full',
+        mode,
         conduit_version: r.summary.version,
         reused: false,
         installed: r.summary.installed,
@@ -351,6 +386,31 @@ export function createMachines(deps: MachinesDeps): Machines {
       if (!deps.manager.forget(record.machineId)) {
         throw new RpcFault('not_found', `No machine ${machineId}`);
       }
+    },
+
+    setMode(machineId, mode) {
+      const record = sshRecordOf(deps.store, machineId);
+      const meta = requireBlock(record);
+      deps.store.setMachine(record.machineId, { ...meta, mode });
+      deps.changed();
+    },
+
+    modeOf(machine) {
+      const r = resolve(deps.store, machine);
+      return r.kind === 'pinned' ? (r.pinned.record.machine?.mode ?? null) : null;
+    },
+
+    async probeAgents(machineId) {
+      const record = sshRecordOf(deps.store, machineId);
+      requireBlock(record);
+      if (record.ssh === null) throw new RpcFault('invalid', 'Only an ssh machine can be probed');
+      const probed = await deps.probe(record.ssh.target);
+      if (!probed.ok) throw new RpcFault('unavailable', probed.detail);
+      // The probe is a round trip: the record is read again, so a mode set meanwhile is kept.
+      const current = requireBlock(sshRecordOf(deps.store, machineId));
+      deps.store.setMachine(machineId, { ...current, agents: probed.agents });
+      deps.changed();
+      return { agents: probed.agents };
     },
   };
 }

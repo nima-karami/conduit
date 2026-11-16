@@ -6,6 +6,7 @@ import {
   personSshArgv,
   posixQuote,
   readE2eSshArgsPrefix,
+  setupSshArgv,
   sshArgv,
 } from '../../src/network/ssh-argv';
 
@@ -438,5 +439,40 @@ describe('personSshArgv', () => {
     for (const target of ['a;rm -rf x', 'a b', '']) {
       expect(personSshArgv({ target, controlPath: '/d/%C' })).toEqual({ error: 'bad_target' });
     }
+  });
+});
+
+describe('setupSshArgv', () => {
+  it('is the pane options plus -t before --, then the target and the command', () => {
+    expect(
+      setupSshArgv({
+        target: 'vm',
+        controlPath: '/u/ssh/%C',
+        command: 'claude; read _',
+      }),
+    ).toEqual([
+      '-o',
+      'ControlMaster=yes',
+      '-o',
+      'ControlPath=/u/ssh/%C',
+      '-o',
+      'ControlPersist=8h',
+      '-o',
+      'ClearAllForwardings=yes',
+      '-o',
+      'ForwardAgent=no',
+      '-o',
+      'ForwardX11=no',
+      '-t',
+      '--',
+      'vm',
+      'claude; read _',
+    ]);
+  });
+
+  it('refuses a target a leading dash would read as an option, with bad_target', () => {
+    expect(
+      setupSshArgv({ target: '-oProxyCommand=x', controlPath: '/u/ssh/%C', command: 'claude' }),
+    ).toEqual({ error: 'bad_target' });
   });
 });
