@@ -13,9 +13,11 @@ import {
   type FsServeFrame,
   type FsStat,
 } from '../../server/network/fs-serve';
+import { sha256Of } from '../../server/network/sha256';
+import { atomicWriteFileSync } from '../../src/atomic-write';
 import type { LinkFrame, LinkState } from '../../src/contracts/link-protocol';
 import { OWN_DEFAULT_CAPABILITIES } from '../../src/contracts/link-protocol';
-import { readDir, readFile } from '../../src/file-service';
+import { MAX_BYTES, readDir, readFile } from '../../src/file-service';
 import type { LinkRecord } from '../../src/network/link-file';
 import type { DirEntryDTO } from '../../src/protocol';
 
@@ -78,6 +80,16 @@ const tlsLink = (machineId: string): LinkRecord => ({
   transport: 'tls',
 });
 
+/** The real hash and atomic write, as index.ts wires them; the tests read the disk, not a stub. */
+const hashOf = async (p: string): Promise<string | null> => {
+  try {
+    return sha256Of(await fs.promises.readFile(p));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
+  }
+};
+
 const statOf = async (p: string): Promise<FsStat> => {
   const st = await fs.promises.stat(p);
   return {
@@ -122,6 +134,8 @@ function harness(
     readDir: vi.fn(readDir),
     readFile: vi.fn(readFile),
     stat: vi.fn(statOf),
+    hashFile: hashOf,
+    writeFileAtomic: async (p, data) => atomicWriteFileSync(p, data),
     watchDir: fakeWatchDir,
     send: (machineId, frame) => {
       sent.push({ machineId, frame });
@@ -170,13 +184,23 @@ describe('fs-serve reads', () => {
     const read = req('read', path.join(proj, 'a.txt'));
     await h.serve.onFrame(CONTROLLER, read);
     const got = resOf(h.sent, read.id);
+    // A plain text read is editable on B, so it carries the hash of its bytes (the next save's
+    // `expect`) and no `readOnlyReason`. The old `readOnlyReason: 'remote'` was B refusing to let
+    // any tab save; B can save at this minor, so only the file's own reason remains.
     expect(got).toMatchObject({
       ok: true,
       result: {
         op: 'read',
-        file: { path: path.join(proj, 'a.txt'), content: 'hello', readOnlyReason: 'remote' },
+        file: {
+          path: path.join(proj, 'a.txt'),
+          content: 'hello',
+          hash: sha256Of(Buffer.from('hello')),
+        },
       },
     });
+    expect(
+      got?.t === 'fs.res' && got.ok && got.result.op === 'read' ? got.result.file : null,
+    ).not.toHaveProperty('readOnlyReason');
   });
 
   it("refuses a path outside the session's folders and reads nothing", async () => {
@@ -448,5 +472,185 @@ describe('fs-serve symlinks and live links', () => {
       ok: true,
       result: { op: 'read', file: { content: 'hello' } },
     });
+  });
+});
+
+describe('fs-serve reads: hash', () => {
+  it('a truncated read and an invalid-utf8 read carry no hash', async () => {
+    const h = harness();
+    const big = path.join(proj, 'big.txt');
+    fs.writeFileSync(big, 'a'.repeat(MAX_BYTES + 10));
+    const trunc = req('read', big);
+    await h.serve.onFrame(CONTROLLER, trunc);
+    const t = resOf(h.sent, trunc.id);
+    expect(t).toMatchObject({ ok: true, result: { op: 'read', file: { truncated: true } } });
+    expect(
+      t?.t === 'fs.res' && t.ok && t.result.op === 'read' ? t.result.file : null,
+    ).not.toHaveProperty('hash');
+
+    const bad = path.join(proj, 'bad.txt');
+    fs.writeFileSync(bad, Buffer.from([0x61, 0xff, 0xfe, 0x62]));
+    const invalid = req('read', bad);
+    await h.serve.onFrame(CONTROLLER, invalid);
+    const i = resOf(h.sent, invalid.id);
+    expect(i).toMatchObject({
+      ok: true,
+      result: { op: 'read', file: { readOnlyReason: 'invalid-utf8' } },
+    });
+    expect(
+      i?.t === 'fs.res' && i.ok && i.result.op === 'read' ? i.result.file : null,
+    ).not.toHaveProperty('hash');
+  });
+});
+
+describe('fs-serve writes', () => {
+  const wr = (
+    p: string,
+    data: string,
+    expect: string | null,
+    sessionId = SESSION,
+  ): Extract<FsServeFrame, { t: 'fs.write' }> => ({
+    t: 'fs.write',
+    id: `w${seq++}`,
+    sessionId,
+    path: p,
+    data,
+    expect,
+  });
+  const H = (s: string) => sha256Of(Buffer.from(s, 'utf8'));
+  const text = (p: string) => fs.readFileSync(p, 'utf8');
+
+  it('a write whose expect matches lands, and replies with the hash of the data', async () => {
+    const h = harness();
+    const f = wr(path.join(proj, 'a.txt'), 'bye', H('hello'));
+    await h.serve.onFrame(CONTROLLER, f);
+    expect(resOf(h.sent, f.id)).toEqual({
+      t: 'fs.res',
+      id: f.id,
+      ok: true,
+      result: { op: 'write', hash: H('bye') },
+    });
+    expect(text(path.join(proj, 'a.txt'))).toBe('bye');
+  });
+
+  it('a wrong expect is a conflict with the file on disk hash, and the file is unchanged', async () => {
+    const h = harness();
+    const f = wr(path.join(proj, 'a.txt'), 'bye', H('stale'));
+    await h.serve.onFrame(CONTROLLER, f);
+    expect(resOf(h.sent, f.id)).toEqual({
+      t: 'fs.res',
+      id: f.id,
+      ok: false,
+      error: { code: 'conflict', message: expect.any(String), currentHash: H('hello') },
+    });
+    expect(text(path.join(proj, 'a.txt'))).toBe('hello');
+  });
+
+  it('expect null on an existing file is a conflict; on a missing file in a folder it creates it', async () => {
+    const h = harness();
+    const exists = wr(path.join(proj, 'a.txt'), 'x', null);
+    await h.serve.onFrame(CONTROLLER, exists);
+    expect(resOf(h.sent, exists.id)).toMatchObject({
+      ok: false,
+      error: { code: 'conflict', currentHash: H('hello') },
+    });
+    expect(text(path.join(proj, 'a.txt'))).toBe('hello');
+
+    const created = wr(path.join(proj, 'new.txt'), 'fresh', null);
+    await h.serve.onFrame(CONTROLLER, created);
+    expect(resOf(h.sent, created.id)).toMatchObject({
+      ok: true,
+      result: { op: 'write', hash: H('fresh') },
+    });
+    expect(text(path.join(proj, 'new.txt'))).toBe('fresh');
+  });
+
+  it('an expect hash for a file that is gone is a conflict with null, and creates nothing', async () => {
+    const h = harness();
+    const gone = path.join(proj, 'missing.txt');
+    const f = wr(gone, 'x', H('was here'));
+    await h.serve.onFrame(CONTROLLER, f);
+    expect(resOf(h.sent, f.id)).toMatchObject({
+      ok: false,
+      error: { code: 'conflict', currentHash: null },
+    });
+    expect(fs.existsSync(gone)).toBe(false);
+  });
+
+  it('refuses .env, .ssh/x and the session .git/config, and writes nothing', async () => {
+    const h = harness();
+    const targets = [
+      path.join(proj, '.env'),
+      path.join(proj, '.ssh', 'id'),
+      path.join(proj, '.git', 'config'),
+    ];
+    for (const p of targets) {
+      const f = wr(p, 'pwned', null);
+      await h.serve.onFrame(CONTROLLER, f);
+      expect(resOf(h.sent, f.id)).toMatchObject({ ok: false, error: { code: 'refused' } });
+    }
+    expect(text(path.join(proj, '.env'))).toBe('TOKEN=1');
+    expect(text(path.join(proj, '.ssh', 'id'))).toBe('key');
+    expect(fs.existsSync(path.join(proj, '.git'))).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'refuses a path outside the roots, and one whose parent is a link out of them',
+    async () => {
+      fs.symlinkSync(root, path.join(proj, 'escape'));
+      const h = harness();
+      const outside = wr(path.join(root, 'outside.txt'), 'pwned', H('secret'));
+      await h.serve.onFrame(CONTROLLER, outside);
+      expect(resOf(h.sent, outside.id)).toMatchObject({ ok: false, error: { code: 'refused' } });
+      expect(text(path.join(root, 'outside.txt'))).toBe('secret');
+
+      const via = wr(path.join(proj, 'escape', 'new.txt'), 'pwned', null);
+      await h.serve.onFrame(CONTROLLER, via);
+      expect(resOf(h.sent, via.id)).toMatchObject({ ok: false, error: { code: 'refused' } });
+      expect(fs.existsSync(path.join(root, 'new.txt'))).toBe(false);
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'a symlink inside the roots gets its target written, and stays a symlink',
+    async () => {
+      fs.writeFileSync(path.join(proj, 'target.txt'), 'tgt');
+      fs.symlinkSync(path.join(proj, 'target.txt'), path.join(proj, 'link.txt'));
+      const h = harness();
+      const f = wr(path.join(proj, 'link.txt'), 'new', H('tgt'));
+      await h.serve.onFrame(CONTROLLER, f);
+      expect(resOf(h.sent, f.id)).toMatchObject({ ok: true, result: { op: 'write' } });
+      expect(text(path.join(proj, 'target.txt'))).toBe('new');
+      expect(fs.lstatSync(path.join(proj, 'link.txt')).isSymbolicLink()).toBe(true);
+    },
+  );
+
+  it('a TLS link and a dialed ssh record cannot write', async () => {
+    const h = harness({
+      links: {
+        [CONTROLLER]: inbound(CONTROLLER),
+        [OTHER]: tlsLink(OTHER),
+        'm-dial': dialed('m-dial'),
+      },
+    });
+    for (const m of [OTHER, 'm-dial']) {
+      const f = wr(path.join(proj, 'a.txt'), 'pwned', H('hello'));
+      await h.serve.onFrame(m, f);
+      expect(resOf(h.sent, f.id)).toMatchObject({ ok: false, error: { code: 'refused' } });
+    }
+    expect(text(path.join(proj, 'a.txt'))).toBe('hello');
+  });
+
+  it('a missing parent folder is not_found, and a parent that is a file is not_found too', async () => {
+    const h = harness();
+    const noDir = wr(path.join(proj, 'nope', 'x.txt'), 'x', null);
+    await h.serve.onFrame(CONTROLLER, noDir);
+    expect(resOf(h.sent, noDir.id)).toMatchObject({ ok: false, error: { code: 'not_found' } });
+    expect(fs.existsSync(path.join(proj, 'nope'))).toBe(false);
+
+    const underFile = wr(path.join(proj, 'a.txt', 'x.txt'), 'x', null);
+    await h.serve.onFrame(CONTROLLER, underFile);
+    expect(resOf(h.sent, underFile.id)).toMatchObject({ ok: false, error: { code: 'not_found' } });
+    expect(text(path.join(proj, 'a.txt'))).toBe('hello');
   });
 });
