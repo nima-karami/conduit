@@ -615,6 +615,14 @@ function fakeMcp(inbox: string[]): McpNetworkPort {
     applyRemoteAnswer: () => ({ ok: false, reason: 'not_found', message: 'not used by this test' }),
     requestsHasEnded: () => false,
     onRequestsMirrorChange: () => () => {},
+    policyDoc: () => ({ rev: 0, doc: { profiles: [], assignments: [] }, grants: [] }),
+    onPolicyDocChange: () => () => {},
+    applyRemotePolicy: () => ({
+      ok: false,
+      code: 'policy_unavailable',
+      message: 'not used by this test',
+    }),
+    revokeRemoteGrant: () => ({ ok: false, code: 'not_found', message: 'not used by this test' }),
   };
 }
 

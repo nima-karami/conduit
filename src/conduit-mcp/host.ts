@@ -3682,6 +3682,20 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       mirrorOf: () => requestService.mirrorOf(),
       requestsHasEnded: () => requestService.hasEnded(),
       onRequestsMirrorChange: (fn) => requestService.onMirrorChange(fn),
+      policyDoc: () => ({ ...policyService.remoteDoc(), grants: policyService.grantsView() }),
+      onPolicyDocChange: (fn) => policyService.onRemoteDocChange(fn),
+      // A pushed doc or a revoke can allow or deny an ask that waits on it, so the waiting asks are
+      // re-decided at once, as refresh() does after a local change.
+      applyRemotePolicy: (baseRev, doc) => {
+        const res = policyService.applyRemoteDoc(baseRev, doc);
+        if (res.ok) flow.recheck();
+        return res;
+      },
+      revokeRemoteGrant: (grantId) => {
+        const res = policyService.revokeGrantByRemote(grantId);
+        if (res.ok) flow.recheck();
+        return res;
+      },
       applyRemoteAnswer: (requestId, answer, answerId, machineId) =>
         requestService.applyRemoteAnswer(requestId, answer, answerId, machineId),
       hasMessage: (id) => store.has(id),

@@ -101,6 +101,23 @@ function server(name: string, endpointIn?: (root: string) => string, opts: Serve
       },
       a: { apply: () => {}, setLinkState: () => {} },
     },
+    policyPorts: {
+      b: {
+        policyDoc: () => null,
+        onPolicyDocChange: () => () => {},
+        applyRemotePolicy: () => ({
+          ok: false,
+          code: 'policy_unavailable',
+          message: 'not wired in this fixture',
+        }),
+        revokeRemoteGrant: () => ({
+          ok: false,
+          code: 'policy_unavailable',
+          message: 'not wired in this fixture',
+        }),
+      },
+      a: () => null,
+    },
     monitor: {
       sessions: () => opts.sessions ?? [],
       requests: () => [],
@@ -179,6 +196,14 @@ async function linkedOverSsh(
     applyRemoteAnswer: () => ({ ok: false, reason: 'not_found', message: 'not used by this test' }),
     requestsHasEnded: () => false,
     onRequestsMirrorChange: () => () => {},
+    policyDoc: () => ({ rev: 0, doc: { profiles: [], assignments: [] }, grants: [] }),
+    onPolicyDocChange: () => () => {},
+    applyRemotePolicy: () => ({
+      ok: false,
+      code: 'policy_unavailable',
+      message: 'not used by this test',
+    }),
+    revokeRemoteGrant: () => ({ ok: false, code: 'not_found', message: 'not used by this test' }),
   });
   a.net.setMcp(mcp([]));
   b.net.setMcp(mcp(bDelivered));
