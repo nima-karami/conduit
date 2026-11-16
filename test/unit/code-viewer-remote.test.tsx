@@ -230,10 +230,10 @@ vi.mock('../../webview/monaco-warmup', () => ({
 }));
 
 import { CodeViewer } from '../../webview/components/code-viewer';
-import { closeRemoteBuffer } from '../../webview/remote-file-saves';
 import { seedLspState } from '../../webview/lsp-status';
 import { registerNavEditor } from '../../webview/nav-editors';
 import { fileUri } from '../../webview/project-index';
+import { closeRemoteBuffer } from '../../webview/remote-file-saves';
 
 const PATH = '/home/me/proj/src/a.ts';
 const KEY = 'remote-file@M1:/home/me/proj/src/a.ts';
