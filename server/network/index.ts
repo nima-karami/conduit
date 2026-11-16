@@ -2,6 +2,7 @@ import { createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes } f
 import * as fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { watchDir } from '../../electron/watch-dir';
 import type { McpNetworkPort, NetworkPort } from '../../src/conduit-mcp/remote-routing';
 import {
   type Capabilities,
@@ -15,6 +16,7 @@ import type { ServerEventSink } from '../../src/contracts/server-ports';
 import type { ServerSettings } from '../../src/contracts/server-protocol';
 import type { AddSshPeerResult, BootstrapResult, SshEndpoint } from '../../src/contracts/ssh-link';
 import type { TerminalRuntime } from '../../src/contracts/terminal-runtime';
+import { readDir, readFile } from '../../src/file-service';
 import { bindableAddresses } from '../../src/network/bind-addresses';
 import type { PairingOutcome } from '../../src/network/pairing-protocol';
 import { createRemoteDirectory } from '../../src/network/remote-directory';
@@ -34,6 +36,7 @@ import { type BootstrapperOptions, createBootstrapper, machineMetaOf } from './b
 import { handleNetworkCall } from './c2';
 import { createCalls, isDialedSsh } from './calls';
 import { createDrive, type Drive, type DriveDeps } from './drive';
+import { createFsServe } from './fs-serve';
 import { adoptOwnerKey, type Identity, setOwnerKey } from './identity';
 import { createLinkManager, type LinkManager } from './link-manager';
 import { openLinkStore } from './link-store';
@@ -107,6 +110,8 @@ export interface NetworkDeps {
   openCommandSession(command: SessionCommand, folder: string): Promise<string>;
   /** This server's own runtime and platform, for pushing it to a remote (bootstrap.ts). */
   bootstrap: NetworkBootstrapDeps;
+  /** A session's home and roots on this machine, or null for an unknown session (fs-serve.ts). */
+  sessionRoots(sessionId: string): readonly string[] | null;
   /** The user's ssh config text, or null when there is none. Production reads ~/.ssh/config. */
   readSshConfig?: () => string | null;
   /**
@@ -228,6 +233,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       relay.linkChanged(v.machineId);
       drive.linkChanged(v.machineId);
       calls.linkChanged(v.machineId);
+      if (!live(v.state)) fsServe.linkDown(v.machineId);
     }
     // A forgotten link has no view left, so the hooks run for the id it had and its maps are cleared.
     const linkedNow = new Set(views.map((v) => v.machineId));
@@ -238,6 +244,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       if (live(before)) messaging.linkDown(machineId);
       relay.linkChanged(machineId);
       drive.linkChanged(machineId);
+      fsServe.linkDown(machineId);
     }
     calls.settleAbsent(views.map((v) => v.machineId));
     requests.linksChanged();
@@ -324,6 +331,10 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
           .serveCall(machineId, f)
           .catch((err: unknown) => deps.log.error('call failed', { message: String(err) }));
       else if (f.t === 'call.result') calls.onResult(machineId, f);
+      else if (f.t === 'fs.req' || f.t === 'fs.watch' || f.t === 'fs.unwatch')
+        void fsServe
+          .onFrame(machineId, f)
+          .catch((err: unknown) => deps.log.error('fs frame failed', { message: String(err) }));
       else if (f.t === 'request.mirror' || f.t === 'request.answer' || f.t === 'request.answered')
         void requests
           .onFrame(machineId, f)
@@ -424,6 +435,26 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     newId: () => `c_${randomBytes(12).toString('hex')}`,
     after,
     log: (message, data) => deps.log.info(message, data),
+  });
+  const fsServe = createFsServe({
+    linkOf: (machineId) => store.get(machineId),
+    sessionRoots: deps.sessionRoots,
+    readDir,
+    readFile,
+    stat: async (absPath) => {
+      const st = await fs.promises.stat(absPath);
+      return {
+        kind: st.isDirectory() ? 'dir' : st.isFile() ? 'file' : 'other',
+        size: st.size,
+        mtimeMs: st.mtimeMs,
+      };
+    },
+    watchDir,
+    send: (machineId, frame) => {
+      manager.send(machineId, frame);
+    },
+    audit,
+    now,
   });
   const requestPorts = deps.requestPorts ?? {
     b: {
