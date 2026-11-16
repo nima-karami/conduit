@@ -143,6 +143,7 @@ Error strings in `remote:attached`/`remote:closed`/`needsPersonOpened` are the C
 | `webview/components/add-machine-dialog.tsx` | create | Add dialog |
 | `src/agent-tree.ts` | modify | optional `remoteChildren` input |
 | `webview/components/sidebar.tsx` | modify | inject remote rows, keyboard, mount Machines section |
+| `webview/components/session-card.tsx` | modify | a lead with only remote children shows its fold control (added after the L4 review) |
 | `webview/styles.css` | modify | all new classes (one owner: L4) |
 | `webview/app.tsx`, `webview/components/modal-layer.tsx`, palette command source, `src/settings.ts`, settings UI | modify (serial) | `activeRemote`, dialog wiring, palette commands, `machinesUi` |
 | `test/e2e/net-machines-ui.e2e.mjs` | create | headless app A + server B over fake-ssh |
@@ -236,7 +237,8 @@ showMachines: boolean;
 activeRemoteId: string | null;
 onSelectRemote(key: RemoteKey): void;
 onAddMachine(): void;
-onMachineAction(action: 'connect' | 'retry' | 'disconnect' | 'rename' | 'remove' | 'copyFix', machine: MachineView): void;
+onMachineAction(action: 'connect' | 'retry' | 'disconnect' | 'remove' | 'copyFix', machine: MachineView): void;
+onRenameMachine(machine: MachineView, name: string): void; // revised after the L4 review: rename carries a name
 ```
 `AddMachineDialog(props: { hosts: readonly string[]; onSubmit(machine: string): Promise<MachineActionResult>; onOpenNeedsPerson(target: string): void; onClose(): void })`: `role="dialog"`, list of Hosts (buttons), a text field for `user@host[:port]`, Connect (primary); progress in a polite live region ("Connecting to <name>…"); on `ssh_needs_person` shows the reason and a "Connect in a terminal" button (→ onOpenNeedsPerson); other errors show their text + Retry; success closes. Esc closes.
 Machines section: decision 9; machine row shows name, OS word, mode, `N sessions`, state text; inline action per §9.1 (up: none; down: "Retry now"; disabled: "Connect"; needs-person error: "Connect" → onMachineAction('connect') which the app turns into openNeedsPerson; incompatible/identity-changed: reason + "Copy fix"/"Remove"); context menu Disconnect, Rename, Remove (Rename uses the existing `RenameInput` pattern in session-card.tsx; Remove asks through the existing ConfirmState flow — never `confirm()`). Arrow keys/Enter as the Agents tree.
