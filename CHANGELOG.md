@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.66.1] — 2026-11-16
+
 ### Fixed
 - Linked machines now always see each other's sessions after pairing; a rare timing could leave the list empty until something changed.
 - A message that was on its way when a link to another machine reconnected is sent again, and still arrives only once.
