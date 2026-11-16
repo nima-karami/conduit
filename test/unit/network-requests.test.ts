@@ -99,12 +99,14 @@ function setup(opts: { sendOk?: boolean | null } = {}) {
   const timers: Timer[] = [];
   const clock = { t: 1_000_000 };
   let rows: RequestMirror[] = [mirror()];
+  let ended = false;
   let sendOk: boolean | null = opts.sendOk === undefined ? true : opts.sendOk;
   let n = 0;
   const mirrorListeners = new Set<() => void>();
 
   const b = {
     mirrorOf: vi.fn<RequestMirrorSource['mirrorOf']>(() => rows),
+    hasEnded: vi.fn<RequestMirrorSource['hasEnded']>(() => ended),
     onMirrorChange: vi.fn<RequestMirrorSource['onMirrorChange']>((fn) => {
       mirrorListeners.add(fn);
       return () => {
@@ -181,6 +183,9 @@ function setup(opts: { sendOk?: boolean | null } = {}) {
     changed: () => req.linksChanged(),
     setRows(next: RequestMirror[]) {
       rows = next;
+    },
+    setEnded(next: boolean) {
+      ended = next;
     },
     fireMirrorChange() {
       for (const fn of mirrorListeners) fn();
@@ -297,6 +302,67 @@ describe('B: mirror snapshots are full on up, coalesced on change, and seq rises
     w.setState(CTRL, 'degraded');
     w.changed();
     expect(w.frames('request.mirror', CTRL)).toHaveLength(1);
+  });
+});
+
+describe('B: an ended entry is re-sent every 60 s until it ages out of the window', () => {
+  /** Fires the one armed timer of that length, without firing the timers it arms in turn. */
+  const fireArmed = (w: ReturnType<typeof setup>, ms: number) => {
+    const t = w.timers.find((x) => !x.cancelled && x.ms === ms);
+    if (t === undefined) throw new Error(`no ${ms} ms timer armed`);
+    t.cancelled = true;
+    t.fn();
+  };
+  const armed = (w: ReturnType<typeof setup>) =>
+    w.timers.filter((t) => !t.cancelled).map((t) => t.ms);
+
+  it('re-sends the snapshot 60 s after the last one while an ended entry is held, then stops', () => {
+    const w = setup();
+    w.setEnded(true);
+    w.put(controller(CTRL), 'up', 3);
+    w.changed();
+    expect(armed(w)).toEqual([60_000]);
+    fireArmed(w, 60_000);
+    expect(w.frames('request.mirror', CTRL)).toHaveLength(2);
+    expect(armed(w)).toEqual([60_000]);
+    w.setEnded(false);
+    fireArmed(w, 60_000);
+    expect(w.frames('request.mirror', CTRL)).toHaveLength(3);
+    expect(armed(w)).toEqual([]);
+  });
+
+  it('arms nothing when no entry has ended', () => {
+    const w = setup();
+    w.put(controller(CTRL), 'up', 3);
+    w.changed();
+    expect(armed(w)).toEqual([]);
+  });
+
+  it('arms nothing when no controller is mirrorable, even with an ended entry', () => {
+    const w = setup();
+    w.setEnded(true);
+    w.put(controller(CTRL), 'down', 3);
+    w.changed();
+    expect(armed(w)).toEqual([]);
+  });
+
+  it('restarts the 60 s clock on every snapshot, not only on the re-send', () => {
+    const w = setup();
+    w.setEnded(true);
+    w.put(controller(CTRL), 'up', 3);
+    w.changed();
+    w.fireMirrorChange();
+    fireArmed(w, 250);
+    expect(armed(w)).toEqual([60_000]);
+  });
+
+  it('cancels the pending re-send when the mirror stops', () => {
+    const w = setup();
+    w.setEnded(true);
+    w.put(controller(CTRL), 'up', 3);
+    w.changed();
+    w.req.stop();
+    expect(armed(w)).toEqual([]);
   });
 });
 
