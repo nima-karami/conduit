@@ -1,3 +1,4 @@
+import type tls from 'node:tls';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AuditEvent } from '../../server/network/audit-log';
 import { type Identity, loadIdentity } from '../../server/network/identity';
@@ -56,6 +57,7 @@ interface Node {
   address: string;
   audit: AuditEvent[];
   changes: number;
+  reconnects: string[];
 }
 
 async function node(id: Identity, name: string, port = 0): Promise<Node> {
@@ -67,7 +69,7 @@ async function node(id: Identity, name: string, port = 0): Promise<Node> {
   const key = id.serverPrivateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
   const audit: AuditEvent[] = [];
   const ownerKeys: Array<{ publicKey: string; privateKey: string }> = [];
-  const n = { audit, changes: 0, ownerKeys };
+  const n = { audit, changes: 0, ownerKeys, reconnects: [] as string[] };
   const manager = createLinkManager({
     identity: () => id,
     selfName: () => name,
@@ -89,6 +91,9 @@ async function node(id: Identity, name: string, port = 0): Promise<Node> {
     onOwnerKey: (pair) => {
       n.ownerKeys.push(pair);
       return true;
+    },
+    reconnected: (machineId) => {
+      n.reconnects.push(machineId);
     },
   });
   const listener = await listenLinks({
@@ -310,5 +315,115 @@ describe('link manager', { timeout: 60_000 }, () => {
     b.manager.start();
     await until(() => a.manager.view(b.id.machineId)?.state === 'identity-changed');
     expect(a.manager.send(b.id.machineId, { t: 'revoked' })).toBeNull();
+  });
+});
+
+const pemOf = (id: Identity): string =>
+  id.serverPrivateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+
+function helloOf(of: Node) {
+  return {
+    t: 'hello' as const,
+    protocol: { major: LINK_PROTOCOL.major, minor: LINK_PROTOCOL.minor },
+    machineId: of.id.machineId,
+    serverKey: of.id.serverKeyRaw.toString('base64'),
+    ownerKey: ownerPub(of.id),
+    selfName: 'peer',
+    features: [...LINK_FEATURES],
+    capabilities: { ...OWN_DEFAULT_CAPABILITIES },
+  };
+}
+
+async function orderedPair(): Promise<[Identity, Identity]> {
+  const owner = identity();
+  const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
+  const x = identity(ownerKey);
+  const y = identity(ownerKey);
+  return x.machineId < y.machineId ? [x, y] : [y, x];
+}
+
+/**
+ * `gated` dials `peer` at a stand-in listener that holds its hello. The peer connects in
+ * first and `gated` adopts it; opening the gate then lets `gated`'s own dial finish, so that
+ * adoption finds a live connection.
+ */
+async function gatedDuplicate(gatedId: Identity, peerId: Identity) {
+  const gated = await node(gatedId, 'gated');
+  const peer = await node(peerId, 'peer');
+  const gateSocks: tls.TLSSocket[] = [];
+  const gate = await listenLinks({
+    hosts: ['127.0.0.1'],
+    port: 0,
+    cert: peer.cert,
+    key: pemOf(peer.id),
+    trustedCerts: () => [gated.cert],
+    knows: () => true,
+    onLink: (s) => {
+      s.resume();
+      gateSocks.push(s);
+    },
+    log: quiet,
+  });
+  cleanup.push(async () => {
+    for (const s of gateSocks) s.destroy();
+    await gate.close();
+  });
+  gated.link(record(peer, 'peer', { addresses: [gate.addresses()[0] ?? ''] }));
+  gated.manager.start();
+  await until(() => gateSocks.length === 1);
+  const gateSock = gateSocks[0];
+  if (!gateSock) throw new Error('gate socket missing');
+  let gateClosed = false;
+  gateSock.once('close', () => {
+    gateClosed = true;
+  });
+
+  const { sock } = await dial({
+    address: gated.address,
+    cert: peer.cert,
+    key: pemOf(peer.id),
+    peerCert: gated.cert,
+    peerMachineId: gated.id.machineId,
+    expectKeyRaw: gated.id.serverKeyRaw,
+    timeoutMs: 5000,
+  });
+  cleanup.push(async () => {
+    sock.destroy();
+  });
+  sock.write(encodeFrame(helloOf(peer)));
+  await until(() => gated.manager.view(peer.id.machineId)?.state === 'up');
+
+  return {
+    gated,
+    peer,
+    isGateClosed: () => gateClosed,
+    openGate: () => {
+      gateSock.write(encodeFrame(helloOf(peer)));
+    },
+  };
+}
+
+describe('a connection swapped while up', { timeout: 60_000 }, () => {
+  it('a first connection coming up does not re-send to the peer', async () => {
+    const [lo, hi] = await orderedPair();
+    const { gated } = await gatedDuplicate(lo, hi);
+    expect(gated.reconnects).toEqual([]);
+  });
+
+  it('a duplicate the manager rejects does not re-send to the peer', async () => {
+    const [lo, hi] = await orderedPair();
+    const { gated, peer, openGate, isGateClosed } = await gatedDuplicate(hi, lo);
+    openGate();
+    await until(isGateClosed);
+    expect(gated.reconnects).toEqual([]);
+    expect(gated.manager.view(peer.id.machineId)?.state).toBe('up');
+  });
+
+  it('a duplicate that replaces a live connection re-sends to the peer once', async () => {
+    const [lo, hi] = await orderedPair();
+    const { gated, peer, openGate } = await gatedDuplicate(lo, hi);
+    openGate();
+    await until(() => gated.reconnects.length > 0);
+    expect(gated.reconnects).toEqual([peer.id.machineId]);
   });
 });

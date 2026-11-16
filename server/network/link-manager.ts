@@ -49,6 +49,8 @@ export interface LinkManagerDeps {
   changed(): void;
   /** The owner private key arrived over this link: verify and store it; false refuses it. */
   onOwnerKey(pair: { publicKey: string; privateKey: string }): boolean;
+  /** A live connection was swapped for a new one: frames on the old one may never have landed. */
+  reconnected?(machineId: string): void;
   dialTimeoutMs?: number;
   pingMs?: number;
 }
@@ -240,6 +242,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       event(p, { kind: 'identity-changed', at: deps.now() });
       return;
     }
+    let replaced = false;
     if (p.conn) {
       const keep = keepConnection({ dialerMachineId: p.dialer ?? '' }, { dialerMachineId: dialer });
       if (keep === 'a') {
@@ -251,6 +254,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       p.conn = null;
       old.send({ t: 'bye', reason: 'duplicate' });
       old.close('duplicate');
+      replaced = true;
     }
     p.cancelRetry?.();
     p.cancelRetry = null;
@@ -269,6 +273,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     if (!sameCapabilities(sentCapabilities, p.record.capabilities))
       opened.send({ t: 'caps', capabilities: { ...p.record.capabilities } });
     if (p.record.ownerTransfer === 'send') sendOwnerKey(p, opened);
+    if (replaced) deps.reconnected?.(p.record.machineId);
     deps.changed();
   };
 

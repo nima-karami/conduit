@@ -210,6 +210,10 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     },
     changed,
     onOwnerKey: (pair) => onOwnerKey(pair),
+    reconnected: (machineId) => {
+      messaging.linkUp(machineId);
+      publisher.pushTo(machineId);
+    },
   });
 
   const linkInfo = () =>
