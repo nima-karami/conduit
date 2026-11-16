@@ -1,10 +1,4 @@
-import {
-  createHash,
-  createPrivateKey,
-  createPublicKey,
-  generateKeyPairSync,
-  randomBytes,
-} from 'node:crypto';
+import { createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -75,6 +69,7 @@ import {
   type RequestMirrorSource,
   type Requests,
 } from './requests';
+import { sha256Of } from './sha256';
 import { createSnapshotCoalescer } from './snapshot-coalescer';
 import { createSshDial, prepareControlDir } from './ssh-dialer';
 import { sshExec } from './ssh-exec';
@@ -533,9 +528,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     },
     hashFile: async (absPath) => {
       try {
-        return createHash('sha256')
-          .update(await fs.promises.readFile(absPath))
-          .digest('hex');
+        return sha256Of(await fs.promises.readFile(absPath));
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
         throw err;
