@@ -1575,6 +1575,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const adapter = adapterFor(def, { e2e: deps.e2e });
     return CLI_KINDS.find((kind) => kind === adapter?.id) ?? null;
   };
+  // A running session reports its adapter; a sleeping one falls back to its persisted definition.
+  const knownLaunchedCli = (sessionId: string): CliKind | null =>
+    launchedCli(sessionId) ?? persistedLaunchedCli(sessionId) ?? null;
   const principalOf = (sessionId: string): Extract<Principal, { kind: 'session' }> | null => {
     const session = deps.sessions.get(sessionId);
     if (!session?.mcpHandle) return null;
@@ -2416,7 +2419,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       waitingAsks: flow.waitingAskCount(),
       requests: requestService.ui(),
       policy: policyService.ui(
-        deps.sessions.list().map((s) => ({ sessionId: s.id, launchedCli: launchedCli(s.id) })),
+        deps.sessions.list().map((s) => ({ sessionId: s.id, launchedCli: knownLaunchedCli(s.id) })),
       ),
     };
   }
@@ -3065,7 +3068,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           if (!patch) return refuse('invalid-value');
           const result = policyService.applyLegacyPatch(
             { kind: 'session', sessionId: m.sessionId },
-            policyService.legacyLowerPoint(launchedCli(m.sessionId)),
+            policyService.legacyLowerPoint(knownLaunchedCli(m.sessionId)),
             m.tool,
             patch,
           );
