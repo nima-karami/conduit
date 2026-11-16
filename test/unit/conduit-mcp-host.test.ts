@@ -6812,4 +6812,56 @@ describe('recordObserved', () => {
     });
     expect(rows).toEqual([expect.objectContaining({ summary: 'a'.repeat(200) })]);
   });
+
+  it('caps a long cwd, a long file path and a long MCP server name at 200 characters', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s1', 'claude', {
+      action: { kind: 'command', command: 'ls', cwd: `/${'c'.repeat(300)}` },
+    });
+    h.host.recordObserved('s1', 'claude', {
+      action: { kind: 'file-change', paths: [`/${'p'.repeat(300)}`] },
+    });
+    h.host.recordObserved('s1', 'codex', {
+      action: { kind: 'mcp', server: 's'.repeat(300), tool: 't', durationMs: null },
+    });
+    expect(rows.map((r) => r.target)).toEqual([
+      `/${'c'.repeat(199)}`,
+      `/${'p'.repeat(199)}`,
+      's'.repeat(200),
+    ]);
+  });
+
+  it('caps an MCP tool name in the summary at 200 characters', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s2', 'codex', {
+      action: { kind: 'mcp', server: 'github', tool: 'T'.repeat(300), durationMs: null },
+    });
+    expect(rows).toEqual([expect.objectContaining({ summary: 'T'.repeat(200) })]);
+  });
+
+  it('keeps 120 observed rows a minute, drops the excess, and notes the count on rollover', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    const command = { kind: 'command' as const, command: 'npm test', cwd: '/w' };
+    for (let i = 0; i < 121; i += 1) {
+      h.host.recordObserved('s1', 'claude', { action: command });
+    }
+    expect(rows).toHaveLength(120);
+    h.clock.t += 60_000;
+    h.host.recordObserved('s1', 'claude', { action: command });
+    expect(rows).toHaveLength(122);
+    expect(rows.slice(120)).toEqual([
+      expect.objectContaining({
+        lane: 'note',
+        action: 'feed-throttled',
+        summary: 'Feed throttled: 1 actions not logged',
+      }),
+      expect.objectContaining({ lane: 'observed', action: 'command' }),
+    ]);
+  });
 });

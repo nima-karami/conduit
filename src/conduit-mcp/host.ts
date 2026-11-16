@@ -298,6 +298,10 @@ export interface ConduitMcpHost extends LaunchPort, DraftPort {
 const OBSERVED_SUMMARY_MAX = 200;
 const capSummary = (text: string): string =>
   Array.from(text).slice(0, OBSERVED_SUMMARY_MAX).join('');
+const capOrNull = (text: string | null): string | null => (text === null ? null : capSummary(text));
+// see plan m3: a busy agent must not flood the Activity log; the excess is counted, not stored
+const OBSERVED_ROWS_PER_MINUTE = 120;
+const MINUTE_MS = 60_000;
 function observedRow(action: ClaudeAction | CodexAction): {
   action: string;
   target: string | null;
@@ -437,6 +441,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   const sleep =
     deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const detectGraceMs = deps.detectGraceMs ?? DETECT_GRACE_MS;
+  const observedBudget = new Map<string, { minute: number; rows: number; dropped: number }>();
   const store = createMessageStore(deps.storeIo ?? createFsStoreIo(deps.dir));
   const screens = deps.screens;
   const registry = createSessionRegistry();
@@ -3140,15 +3145,44 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
     recordObserved(sessionId, cli, entry) {
       const principal = { handle: handleOf(sessionId) ?? null, sessionId, machineId: null };
+      const writeNote = (action: string, summary: string) =>
+        policyService.activity.record({
+          lane: 'note',
+          principal,
+          cli,
+          action: capSummary(action),
+          target: null,
+          summary: capSummary(summary),
+          decision: null,
+          decidedBy: 'conduit',
+          outcome: null,
+          durationMs: null,
+          requestId: null,
+          count: null,
+        });
       if ('action' in entry) {
+        const minute = Math.floor(now() / MINUTE_MS);
+        let budget = observedBudget.get(sessionId);
+        if (!budget || budget.minute !== minute) {
+          if (budget && budget.dropped > 0) {
+            writeNote('feed-throttled', `Feed throttled: ${budget.dropped} actions not logged`);
+          }
+          budget = { minute, rows: 0, dropped: 0 };
+          observedBudget.set(sessionId, budget);
+        }
+        if (budget.rows >= OBSERVED_ROWS_PER_MINUTE) {
+          budget.dropped += 1;
+          return;
+        }
+        budget.rows += 1;
         const row = observedRow(entry.action);
         policyService.activity.record({
           lane: 'observed',
           principal,
           cli,
-          action: row.action,
-          target: row.target,
-          summary: row.summary,
+          action: capSummary(row.action),
+          target: capOrNull(row.target),
+          summary: capOrNull(row.summary),
           decision: null,
           decidedBy: `observed: decided by ${CLI_DISPLAY_NAME[cli]}, not Conduit`,
           outcome: entry.failed || row.exitedNonZero ? 'error' : 'ok',
@@ -3165,20 +3199,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               action: 'feed-gap',
               summary: `Feed gap: ${entry.gap} ${entry.gap === 1 ? 'action' : 'actions'} not reported`,
             };
-      policyService.activity.record({
-        lane: 'note',
-        principal,
-        cli,
-        action: note.action,
-        target: null,
-        summary: note.summary,
-        decision: null,
-        decidedBy: 'conduit',
-        outcome: null,
-        durationMs: null,
-        requestId: null,
-        count: null,
-      });
+      writeNote(note.action, note.summary);
     },
     recordNote(note) {
       policyService.activity.record({
