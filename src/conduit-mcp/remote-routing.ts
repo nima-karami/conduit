@@ -6,6 +6,11 @@ import type {
   MonitorSnapshot,
   WireRecipientOutcome,
 } from '../contracts/link-protocol';
+import type {
+  ConnectMachineResult,
+  DisconnectMachineResult,
+  MachineView,
+} from '../contracts/machines';
 import { parseAddress } from '../network/addresses';
 import type { WaitReading } from './session-waits';
 import type { DirectoryEntry } from './tools';
@@ -53,6 +58,12 @@ export interface NetworkPort {
   /** What that machine lets me do (its record of the link), not what I let it do. */
   peerCapabilitiesOf(machineId: string): Capabilities | null;
   onChange(listener: () => void): () => void;
+  /** Every pinned machine with its state, meta and session count (list_machines). */
+  listMachines(): MachineView[];
+  /** Connects by name, id or ssh target within the caller's budget (connect_machine). */
+  connectMachine(machine: string, signal: AbortSignal): Promise<ConnectMachineResult>;
+  /** Closes a machine and clears its enabled flag; its remote sessions keep running (disconnect_machine). */
+  disconnectMachine(machine: string): Promise<DisconnectMachineResult>;
 }
 
 /** Implemented by the mcp host; read by server/network. Slice 6 adds its members here. */

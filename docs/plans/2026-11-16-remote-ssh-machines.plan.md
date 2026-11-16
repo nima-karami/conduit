@@ -23,7 +23,7 @@ agent → MCP connect_machine{machine} → host prepareControl → NetworkPort.c
      unknown target (passes allowlist)→ bootstrap(target) (≤ 120 s total)       → pins, meta → result | typed error
    errors → toToolError (codes + hints from spec §5.2)
 agent → list_machines → NetworkPort.listMachines() → MachineView[] (state, meta, sessions from remote directory)
-agent → disconnect_machine{machine} → NetworkPort.disconnectMachine → manager.disconnect(id): enabled=false, close, `ssh -O exit`
+agent → disconnect_machine{machine} → NetworkPort.disconnectMachine → manager.disconnect(id): enabled=false, close (no `ssh -O exit`: see decision 3)
 owner → C2 machines.openNeedsPerson{target} → domain openSession(command = ssh … ControlMaster=yes …)  (visible pane)
 manager tick: gap > 3 × tick interval ⇒ wake ⇒ redial every enabled down ssh peer now
 ```
@@ -42,7 +42,7 @@ manager tick: gap > 3 × tick interval ⇒ wake ⇒ redial every enabled down ss
 ## Technical decisions this plan makes
 1. **Machine metadata on the ssh LinkRecord.** `machine: MachineMeta | null`, present on A-side ssh records only. `links.json` goes to v3; v2 records load with `machine: null` and are shown as unknown os until the next bootstrap or connect refreshes it. Bootstrap writes the meta; connect refreshes `version` from the peer hello.
 2. **No pending records.** A target that has never pinned isn't stored. A `needs-person` connect leaves nothing behind.
-3. **`enabled`** (meta field, default true). False: the dial loop skips the peer and its state shows `disabled`. `connect_machine` sets it true.
+3. **`enabled`** (meta field, default true). False: the dial loop skips the peer and its state shows `disabled`. `connect_machine` sets it true. Disconnect does not run `ssh -O exit` (review CON-39 T1, B2): the owner's needs-person pane shares the ControlPath, and the batch master expires on its own (ControlPersist 60). An explicit add re-enables a disabled machine before its link attaches (review B1).
 4. **Wake detection runs on the server**, because powerMonitor is Electron-only. In the manager's existing tick (link-manager.ts:381-387), a tick that arrives more than 3 × its interval late counts as a wake and redials every enabled, down ssh peer now. The CON-27 backoff cap is already 60 s (link-state.ts:56-59).
 5. **Resolving `machine`:**
    1. exact machine id;
@@ -133,8 +133,7 @@ export type DisconnectMachineResult = { ok: true; value: { machine: string; stat
 | `src/network/link-file.ts`, `server/network/link-store.ts`, `src/contracts/session-identity.ts` | modify | `machine` meta, v3, `setMachine(id, patch)` |
 | `server/network/link-manager.ts` | modify | `disconnect(id)`, `enable(id)`, the `enabled` dial skip, wake redial, `waitUp(id, ms, signal)` |
 | `server/network/bootstrap.ts` | modify | write meta after pinning (os, arch, version, agents, survivesLogout, mode `full`) |
-| `server/network/machines.ts` | create | `createMachines({ manager, store, bootstrap, directory, sshExit })`: resolve, list, connect, disconnect |
-| `server/network/ssh-exec.ts` (or a sibling) | modify | `sshControlExit(target)`: `ssh -O exit` with the same ControlPath, timeout 10 s |
+| `server/network/machines.ts` | create | `createMachines({ manager, store, bootstrap, directory })`: resolve, list, connect, disconnect (no master exit, review B2) |
 | `server/network/index.ts` | modify | the NetworkPort machine ops, C2 `machines.openNeedsPerson` |
 | `server/network/c2.ts`, `src/contracts/server-protocol.ts` | modify | `machines.list`, `machines.openNeedsPerson` |
 | `src/conduit-mcp/machine-errors.ts` | create | `machineToolError(e: MachineError, name: string): ToolError` |
@@ -161,7 +160,6 @@ export type DisconnectMachineResult = { ok: true; value: { machine: string; stat
   - needs-person → typed error and nothing stored;
   - a disconnect of a down machine is a no-op;
   - disconnect keeps B's sessions (manager close only);
-  - `-O exit` is called;
   - two concurrent connects share one run;
   - the abort at 120 s.
 

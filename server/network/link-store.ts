@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { atomicWriteFileSync } from '../../src/atomic-write';
 import { OWN_DEFAULT_CAPABILITIES, TOMBSTONE_TTL_MS } from '../../src/contracts/link-protocol';
+import type { MachineMeta } from '../../src/contracts/machines';
 import type { SshEndpoint } from '../../src/contracts/ssh-link';
 import {
   type LinkRecord,
@@ -41,6 +42,11 @@ export interface LinkStore {
    * ids are 32 bits, so a second key could be ground to collide; it must not take over the record.
    */
   conflicts(machineId: string, serverKey: string): boolean;
+  /**
+   * Stores a pinned machine's metadata. Refused (null) for an unknown machine or a tls record, which
+   * never carries it. Whole-value: a caller changing one field passes the rest back unchanged.
+   */
+  setMachine(machineId: string, meta: MachineMeta): LinkRecord | null;
   /** `ssh` may only be set on an ssh record; on a tls record the update is refused (null). */
   update(
     machineId: string,
@@ -56,6 +62,7 @@ export interface LinkStore {
 }
 
 const CORRUPT_FILE = 'links.corrupt.json';
+const LINKS_VERSION = 3;
 
 const isMissing = (e: unknown): boolean =>
   typeof e === 'object' && e !== null && (e as NodeJS.ErrnoException).code === 'ENOENT';
@@ -84,6 +91,7 @@ const copyLink = (r: LinkRecord): LinkRecord => ({
   addresses: [...r.addresses],
   capabilities: { ...r.capabilities },
   ssh: r.ssh === null ? null : { ...r.ssh },
+  machine: r.machine === null ? null : { ...r.machine, agents: [...r.machine.agents] },
 });
 
 const copyTombstone = (t: Tombstone): Tombstone => ({ ...t });
@@ -100,7 +108,7 @@ export function openLinkStore(
   const cutoff = () => opts.now() - TOMBSTONE_TTL_MS;
   const isLive = (t: Tombstone) => Date.parse(t.revokedAt) >= cutoff();
 
-  let state: LinksFile = { version: 2, links: [], tombstones: [] };
+  let state: LinksFile = { version: LINKS_VERSION, links: [], tombstones: [] };
   let writable = true;
 
   const text = io.read(file);
@@ -124,7 +132,7 @@ export function openLinkStore(
   const persist = () => {
     if (!writable) return;
     const dropped: LinksFile = {
-      version: 2,
+      version: LINKS_VERSION,
       links: state.links,
       tombstones: state.tombstones.filter(isLive),
     };
@@ -181,9 +189,21 @@ export function openLinkStore(
         ownerTransfer: null,
         transport: 'ssh',
         ssh: r.ssh,
+        machine: null,
       };
       putLink(record);
       return copyLink(record);
+    },
+    setMachine(machineId, meta) {
+      const found = state.links.find((l) => l.machineId === machineId);
+      if (found?.transport !== 'ssh') return null;
+      const next = copyLink({ ...found, machine: meta });
+      state = {
+        ...state,
+        links: state.links.map((l) => (l.machineId === machineId ? next : l)),
+      };
+      persist();
+      return copyLink(next);
     },
     update(machineId, patch) {
       const found = state.links.find((l) => l.machineId === machineId);

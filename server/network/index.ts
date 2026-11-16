@@ -26,13 +26,14 @@ import {
   writeServerVersion,
 } from '../lifecycle/server-secret';
 import { type AuditSink, openAuditLog, teeAudit } from './audit-log';
-import { type BootstrapperOptions, createBootstrapper } from './bootstrap';
+import { type BootstrapperOptions, createBootstrapper, machineMetaOf } from './bootstrap';
 import { handleNetworkCall } from './c2';
 import { createDrive, type Drive, type DriveDeps } from './drive';
 import { adoptOwnerKey, type Identity, setOwnerKey } from './identity';
 import { createLinkManager, type LinkManager } from './link-manager';
 import { openLinkStore } from './link-store';
 import { type LinkListener, listenLinks, listenPairing, type NetLog } from './listener';
+import { createMachines, type Machines } from './machines';
 import { createMessaging } from './messaging';
 import { createMonitorPublisher, type MonitorSource } from './monitor-publisher';
 import { createPairingPort } from './pairing-port';
@@ -288,8 +289,19 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     if (!outcome.ok) return { ok: false, error: outcome.error };
     const linked = await manager.addSshPeer(outcome.ssh);
     if (!linked.ok) return { ok: false, error: linked.error };
+    // The pin just made is an ssh record, so the meta always lands; a null here is a store bug.
+    if (store.setMachine(linked.machineId, machineMetaOf(outcome.summary)) === null) {
+      return { ok: false, error: { code: 'ssh_failed', detail: 'machine record not written' } };
+    }
     return { ok: true, machineId: linked.machineId, ssh: outcome.ssh, summary: outcome.summary };
   };
+
+  const machines: Machines = createMachines({
+    manager,
+    store,
+    bootstrap: bootstrapAndLink,
+    directory,
+  });
 
   const linkInfo = () =>
     manager.views().map((v) => ({
@@ -358,6 +370,9 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       portListeners.add(listener);
       return () => portListeners.delete(listener);
     },
+    listMachines: () => machines.list(),
+    connectMachine: (machine, signal) => machines.connect(machine, signal),
+    disconnectMachine: (machine) => machines.disconnect(machine),
   };
 
   const hosts = (): string[] => {
@@ -462,6 +477,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       ownerTransfer: outcome.ownerTransfer,
       transport: 'tls',
       ssh: null,
+      machine: null,
     });
     listener?.refreshTrust();
     void ensureListening().catch((err: Error) =>

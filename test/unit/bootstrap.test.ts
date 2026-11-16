@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import pins from '../../build/runtime-pins.json';
-import { createBootstrapper } from '../../server/network/bootstrap';
+import { createBootstrapper, machineMetaOf } from '../../server/network/bootstrap';
 import type { SshExecOptions, SshExecResult } from '../../server/network/ssh-exec';
 import { HC_PINNED_VERSION } from '../../src/contracts/hc';
 import { LINK_PROTOCOL } from '../../src/contracts/link-protocol';
@@ -136,6 +136,7 @@ interface Probe {
   os?: 'linux' | 'windows' | 'other';
   arch?: 'x64' | 'arm64' | 'other';
   installed?: string[];
+  agents?: string[];
   recorded?: { version: string; linkMajor: number } | null;
   userData?: string;
   linger?: boolean | null;
@@ -155,7 +156,7 @@ function probeLine(p: Probe = {}): SshExecResult {
     systemdRun: true,
     installed: p.installed ?? [],
     recorded: p.recorded ?? null,
-    agents: [],
+    agents: p.agents ?? [],
   });
 }
 
@@ -319,7 +320,32 @@ describe('bootstrap: install on a fresh remote', () => {
         reused: false,
         survivesLogout: true,
         version: '1.2.3',
+        agents: [],
       },
+    });
+  });
+
+  // The machine's agents are what the probe found on it, so the pinned record can show them.
+  it('the summary carries the agent CLIs the probe found on the remote', async () => {
+    const f = fixture();
+    const r = remote({ ...happy, probe: { agents: ['claude', 'codex'] } });
+    const outcome = await bootstrapper(f, r.exec)(TARGET);
+    expect(outcome.ok && outcome.summary.agents).toEqual(['claude', 'codex']);
+  });
+
+  // A pinned machine is written as a full machine, enabled, with what this bootstrap measured.
+  it('machineMetaOf writes the summary as an enabled full machine', async () => {
+    const f = fixture();
+    const outcome = await bootstrapper(f, remote(happy).exec)(TARGET);
+    if (!outcome.ok) throw new Error('bootstrap failed');
+    expect(machineMetaOf({ ...outcome.summary, agents: ['claude'] })).toEqual({
+      os: 'linux',
+      arch: 'x64',
+      version: '1.2.3',
+      mode: 'full',
+      agents: ['claude'],
+      enabled: true,
+      survivesLogout: true,
     });
   });
 

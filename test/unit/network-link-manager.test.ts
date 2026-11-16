@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Duplex, PassThrough } from 'node:stream';
 import type tls from 'node:tls';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AuditEvent } from '../../server/network/audit-log';
 import { type Identity, loadIdentity } from '../../server/network/identity';
 import { openConnection } from '../../server/network/link-connection';
@@ -184,6 +184,7 @@ function record(of: Node, name: string, overrides: Partial<LinkRecord> = {}): Li
     ownerTransfer: null,
     transport: 'tls',
     ssh: null,
+    machine: null,
     ...overrides,
   };
 }
@@ -1032,5 +1033,415 @@ describe('ssh hello identity and per-host pinning', { timeout: 60_000 }, () => {
     });
     a.manager.start();
     await until(() => a.manager.view(real.id.machineId)?.state === 'identity-changed');
+  });
+});
+
+const META = {
+  os: 'linux' as const,
+  arch: 'x64' as const,
+  version: '0.9.0',
+  mode: 'full' as const,
+  agents: [] as string[],
+  enabled: true,
+  survivesLogout: false,
+};
+
+/** A clock the manager reads through now and after: timers fire only when the test moves time. */
+function fakeClock(start = Date.parse('2026-11-16T10:00:00.000Z')) {
+  let t = start;
+  const timers: Array<{ at: number; fn: () => void; live: boolean }> = [];
+  const nextDue = (end: number) =>
+    timers.filter((x) => x.live && x.at <= end).sort((a, b) => a.at - b.at)[0];
+  return {
+    now: () => t,
+    after(fn: () => void, ms: number) {
+      const timer = { at: t + ms, fn, live: true };
+      timers.push(timer);
+      return () => {
+        timer.live = false;
+      };
+    },
+    /** Moves time, firing each timer at its own instant on the way. */
+    run(ms: number) {
+      const end = t + ms;
+      for (let next = nextDue(end); next; next = nextDue(end)) {
+        next.live = false;
+        t = next.at;
+        next.fn();
+      }
+      t = end;
+    },
+    /** Moves time at once: everything due fires late, as after the machine slept. */
+    jump(ms: number) {
+      t += ms;
+      for (let next = nextDue(t); next; next = nextDue(t)) {
+        next.live = false;
+        next.fn();
+      }
+    },
+  };
+}
+
+const settle = async () => {
+  for (let i = 0; i < 4; i += 1) await new Promise((r) => setTimeout(r, 0));
+};
+
+/** Every dial fails at once: a stream that is already closed, as a refused ssh child leaves it. */
+function refusingDial() {
+  const dials: string[] = [];
+  const dial: SshDial = (ssh) => {
+    dials.push(ssh.target);
+    const stream = new PassThrough();
+    stream.destroy();
+    return { stream, failure: async () => null };
+  };
+  return { dial, dials };
+}
+
+function clockedManager(dial: SshDial, pingMs?: number) {
+  const clock = fakeClock();
+  const id = identity();
+  const store = openLinkStore('/net/links.json', { now: clock.now, log: quiet, io: memIo() });
+  const manager = createLinkManager({
+    identity: () => id,
+    selfName: () => 'controller',
+    tls: () => ({ cert: '', key: '' }),
+    store,
+    audit: { record: () => undefined },
+    sshDial: dial,
+    log: quiet,
+    now: clock.now,
+    rand: () => 0.5,
+    after: (fn, ms) => clock.after(fn, ms),
+    onFrame: () => undefined,
+    changed: () => undefined,
+    onOwnerKey: () => false,
+    reconnected: () => undefined,
+    pingMs,
+  });
+  return { clock, store, manager };
+}
+
+/** An ssh machine we pinned, with its machine block as bootstrap writes it. */
+function pinnedMachine(store: LinkStore, machineId: string, target: string, enabled = true) {
+  const endpoint = { ...ENDPOINT, target };
+  store.addSsh({
+    machineId,
+    serverKey: Buffer.alloc(32, machineId.length).toString('base64'),
+    ownerKey: null,
+    name: target,
+    ssh: endpoint,
+  });
+  store.setMachine(machineId, { ...META, enabled });
+}
+
+/**
+ * Drives a peer that keeps failing until its backoff has reached the 60 s cap, so the next retry
+ * is far away: a wake must then be the thing that redials it.
+ */
+async function backedOffToCap(clock: ReturnType<typeof fakeClock>) {
+  for (let i = 0; i < 150; i += 1) {
+    clock.run(1_000);
+    await settle();
+  }
+}
+
+describe('machine lifecycle on the manager', { timeout: 60_000 }, () => {
+  it('a disabled ssh peer is not dialed when the manager starts', async () => {
+    const { dial, dials } = refusingDial();
+    const { clock, store, manager } = clockedManager(dial);
+    pinnedMachine(store, 'm-00000001', 'vm-off', false);
+    manager.start();
+    clock.run(0);
+    await settle();
+    expect(dials).toEqual([]);
+    manager.stop();
+  });
+
+  it('enable clears the disabled flag and dials at once', async () => {
+    const { dial, dials } = refusingDial();
+    const { clock, store, manager } = clockedManager(dial);
+    pinnedMachine(store, 'm-00000001', 'vm-off', false);
+    manager.start();
+    expect(manager.enable('m-00000001')).toBe(true);
+    clock.run(0);
+    expect(dials).toEqual(['vm-off']);
+    expect(store.get('m-00000001')?.machine?.enabled).toBe(true);
+    manager.stop();
+  });
+
+  it('enable and disconnect of an unknown peer, or one with no machine block, are refused', () => {
+    const { dial } = refusingDial();
+    const { store, manager } = clockedManager(dial);
+    store.addSsh({
+      machineId: 'm-00000002',
+      serverKey: Buffer.alloc(32, 2).toString('base64'),
+      ownerKey: null,
+      name: 'legacy',
+      ssh: ENDPOINT,
+    });
+    expect(manager.enable('m-00000009')).toBe(false);
+    expect(manager.disconnect('m-00000009')).toBe(false);
+    expect(manager.enable('m-00000002')).toBe(false);
+    expect(manager.disconnect('m-00000002')).toBe(false);
+  });
+
+  it('waitUp reports no failure when the link does not come up in time', async () => {
+    const { dial } = refusingDial();
+    const { clock, store, manager } = clockedManager(dial);
+    pinnedMachine(store, 'm-00000001', 'vm-off', false);
+    manager.start();
+    const waiting = manager.waitUp('m-00000001', 1_000, new AbortController().signal);
+    clock.run(1_000);
+    expect(await waiting).toEqual({ up: false, failure: null });
+    manager.stop();
+  });
+
+  it('waitUp returns at once, with no failure, when its signal is already aborted', async () => {
+    const { dial } = refusingDial();
+    const { store, manager } = clockedManager(dial);
+    pinnedMachine(store, 'm-00000001', 'vm-off', false);
+    manager.start();
+    const ac = new AbortController();
+    ac.abort();
+    expect(await manager.waitUp('m-00000001', 30_000, ac.signal)).toEqual({
+      up: false,
+      failure: null,
+    });
+    manager.stop();
+  });
+
+  it('disconnect clears enabled, closes the link, and nothing redials it', async () => {
+    const { a, b, ssh } = await sshPair();
+    expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
+    await until(() => b.manager.view(a.id.machineId)?.state === 'up');
+    a.store.setMachine(b.id.machineId, { ...META, enabled: true });
+    expect(a.manager.disconnect(b.id.machineId)).toBe(true);
+    expect(a.store.get(b.id.machineId)?.machine?.enabled).toBe(false);
+    await until(() => a.manager.view(b.id.machineId)?.state === 'down');
+    const dialsAfterDisconnect = ssh.args.length;
+    await new Promise((r) => setTimeout(r, 300));
+    expect(ssh.args.length).toBe(dialsAfterDisconnect);
+    expect(a.manager.view(b.id.machineId)?.state).toBe('down');
+  });
+
+  it('enable on a disconnected peer brings the link back up over a redial', async () => {
+    const { a, b } = await sshPair();
+    expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
+    await until(() => b.manager.view(a.id.machineId)?.state === 'up');
+    a.store.setMachine(b.id.machineId, { ...META, enabled: true });
+    a.manager.disconnect(b.id.machineId);
+    await until(() => a.manager.view(b.id.machineId)?.state === 'down');
+    expect(a.manager.enable(b.id.machineId)).toBe(true);
+    await until(() => a.manager.view(b.id.machineId)?.state === 'up');
+  });
+
+  it('a tick more than 3 intervals after the last one redials each enabled, down ssh peer at once', async () => {
+    const { dial, dials } = refusingDial();
+    const { clock, store, manager } = clockedManager(dial);
+    pinnedMachine(store, 'm-00000001', 'vm-on');
+    pinnedMachine(store, 'm-00000002', 'vm-off', false);
+    manager.start();
+    clock.run(0);
+    await settle();
+    await backedOffToCap(clock);
+    const before = dials.length;
+    // The 60 s retry is still far off; only the wake can dial now.
+    clock.jump(20_000);
+    expect(dials.slice(before)).toEqual(['vm-on']);
+    await settle();
+    manager.stop();
+  });
+
+  it('a tick on time does not redial a peer that is waiting out its backoff', async () => {
+    const { dial, dials } = refusingDial();
+    const { clock, store, manager } = clockedManager(dial);
+    pinnedMachine(store, 'm-00000001', 'vm-on');
+    manager.start();
+    clock.run(0);
+    await settle();
+    await backedOffToCap(clock);
+    const before = dials.length;
+    for (let i = 0; i < 5; i += 1) {
+      clock.run(1_000);
+      await settle();
+    }
+    expect(dials.length).toBe(before);
+    manager.stop();
+  });
+});
+
+describe('a dial failure is kept on the peer until a dial succeeds', { timeout: 60_000 }, () => {
+  it('waitUp reports the failed dial, and that failure is cleared once a redial is up', async () => {
+    const owner = identity();
+    const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
+    const toB = fakeSsh(() => b);
+    let dials = 0;
+    // The first dial's ssh child dies before any hello with a host key change; later dials reach B.
+    const flaky: SshDial = (ssh) => {
+      dials += 1;
+      if (dials === 1) {
+        const stream = new PassThrough();
+        stream.destroy();
+        return {
+          stream,
+          failure: async () => ({ code: 'ssh_needs_person', reason: 'host_key_changed' }),
+        };
+      }
+      return toB.dial(ssh);
+    };
+    const b = await node(identity(ownerKey), 'win-box', 0, () => {
+      throw new Error('b never dials');
+    });
+    const a = await node(identity(ownerKey), 'linux-box', 0, flaky);
+    a.store.addSsh({
+      machineId: b.id.machineId,
+      serverKey: b.id.serverKeyRaw.toString('base64'),
+      ownerKey: ownerPub(b.id),
+      name: 'win-box',
+      ssh: ENDPOINT,
+    });
+    a.store.setMachine(b.id.machineId, { ...META, enabled: true });
+    b.manager.start();
+    a.manager.start();
+
+    const signal = new AbortController().signal;
+    expect(await a.manager.waitUp(b.id.machineId, 20_000, signal)).toEqual({
+      up: false,
+      failure: { code: 'ssh_needs_person', reason: 'host_key_changed' },
+    });
+    // The retry is the second dial, which reaches B and comes up.
+    await until(() => a.manager.view(b.id.machineId)?.state === 'up');
+    expect(dials).toBe(2);
+
+    // Once up, the old failure must not come back: a link that drops with nothing dialing says so.
+    a.manager.disconnect(b.id.machineId);
+    expect(await a.manager.waitUp(b.id.machineId, 300, signal)).toEqual({
+      up: false,
+      failure: null,
+    });
+  });
+});
+
+describe('re-adding and disconnecting a machine', { timeout: 60_000 }, () => {
+  // The reviewer's probe: an explicit add of a disabled machine must come up when the add returns, and
+  // its machine block then reads enabled. No wait for B first: a re-add right after the disconnect is the
+  // case that used to race B's stale stream (review CON-39 T1, B3).
+  it('re-adding a disabled machine enables it before its link attaches, so it comes up', async () => {
+    const { a, b } = await sshPair();
+    expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
+    await until(() => b.manager.view(a.id.machineId)?.state === 'up');
+    a.store.setMachine(b.id.machineId, { ...META, enabled: true });
+    a.manager.disconnect(b.id.machineId);
+    await until(() => a.manager.view(b.id.machineId)?.state === 'down');
+    expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
+    expect(a.manager.view(b.id.machineId)?.state).toBe('up');
+    a.store.setMachine(b.id.machineId, { ...META, enabled: true });
+    // B's stale close must not arrive and take the link down after the add has reported it up.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(a.manager.view(b.id.machineId)?.state).toBe('up');
+    expect(a.store.get(b.id.machineId)?.machine?.enabled).toBe(true);
+  });
+
+  // The disconnect check in attach: a disconnect that lands while an established peer's hello is in
+  // flight must close that stream, not bring the link up.
+  it('a disconnect during a peer hello closes that stream rather than bringing the link up', async () => {
+    const owner = identity();
+    const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
+    const b = await node(identity(ownerKey), 'win-box');
+    let far: Duplex | undefined;
+    const a = await node(identity(ownerKey), 'linux-box', 0, () => {
+      const [near, peer] = streamPair();
+      far = peer;
+      return { stream: near, failure: async () => null };
+    });
+    a.store.addSsh({
+      machineId: b.id.machineId,
+      serverKey: b.id.serverKeyRaw.toString('base64'),
+      ownerKey: ownerPub(b.id),
+      name: 'win-box',
+      ssh: ENDPOINT,
+    });
+    a.store.setMachine(b.id.machineId, { ...META, enabled: true });
+    a.manager.start();
+    await until(() => far !== undefined);
+    expect(a.manager.disconnect(b.id.machineId)).toBe(true);
+    // B's hello arrives only now, after the disconnect.
+    if (far === undefined) throw new Error('no ssh stream');
+    void openConnection(far, { hello: helloOf(b), now: Date.now, log: quiet });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(a.manager.view(b.id.machineId)?.state).not.toBe('up');
+  });
+});
+
+describe('enable and waitUp, from the outside', () => {
+  it('enable clears the last failed dial, so a wait it starts does not return that failure', async () => {
+    const dial: SshDial = () => {
+      const stream = new PassThrough();
+      stream.destroy();
+      return { stream, failure: async () => ({ code: 'ssh_auth_failed' }) };
+    };
+    const { clock, store, manager } = clockedManager(dial);
+    pinnedMachine(store, 'm-00000001', 'vm-off', false);
+    manager.start();
+    expect(manager.enable('m-00000001')).toBe(true);
+    clock.run(0);
+    await settle();
+    expect(await manager.waitUp('m-00000001', 1_000, new AbortController().signal)).toEqual({
+      up: false,
+      failure: { code: 'ssh_auth_failed' },
+    });
+
+    // A new attempt: its wait must not answer with the old failure before the new dial has run.
+    expect(manager.enable('m-00000001')).toBe(true);
+    let answered = false;
+    const waiting = manager.waitUp('m-00000001', 1_000, new AbortController().signal);
+    void waiting.then(() => {
+      answered = true;
+    });
+    await settle();
+    expect(answered).toBe(false);
+    manager.stop();
+  });
+
+  it('waitUp leaves no timer behind once it is aborted or times out', async () => {
+    vi.useFakeTimers();
+    try {
+      const store = openLinkStore('/net/links.json', { now: Date.now, log: quiet, io: memIo() });
+      const manager = createLinkManager({
+        identity,
+        selfName: () => 'controller',
+        tls: () => ({ cert: '', key: '' }),
+        store,
+        audit: { record: () => undefined },
+        sshDial: refusingDial().dial,
+        log: quiet,
+        now: Date.now,
+        rand: () => 0.5,
+        after: (fn, ms) => {
+          const handle = setTimeout(fn, ms);
+          return () => clearTimeout(handle);
+        },
+        onFrame: () => undefined,
+        changed: () => undefined,
+        onOwnerKey: () => false,
+        reconnected: () => undefined,
+      });
+      pinnedMachine(store, 'm-00000001', 'vm-off', false);
+      const ac = new AbortController();
+      const aborted = manager.waitUp('m-00000001', 30_000, ac.signal);
+      expect(vi.getTimerCount()).toBe(1);
+      ac.abort();
+      expect(await aborted).toEqual({ up: false, failure: null });
+      expect(vi.getTimerCount()).toBe(0);
+
+      const timed = manager.waitUp('m-00000001', 30_000, new AbortController().signal);
+      expect(vi.getTimerCount()).toBe(1);
+      vi.advanceTimersByTime(30_000);
+      expect(await timed).toEqual({ up: false, failure: null });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

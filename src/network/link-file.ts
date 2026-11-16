@@ -1,4 +1,5 @@
 import { TOMBSTONE_TTL_MS } from '../contracts/link-protocol';
+import type { MachineMeta } from '../contracts/machines';
 import type { Capabilities } from '../contracts/remote-principal';
 import { judgePersistedVersion } from '../contracts/session-identity';
 import type { SshEndpoint } from '../contracts/ssh-link';
@@ -23,6 +24,8 @@ export interface LinkRecord {
   transport: 'tls' | 'ssh';
   /** How this side dials an ssh peer; null where the peer only dials us. */
   ssh: SshEndpoint | null;
+  /** A machine we pinned by ssh; present on the controller's ssh records only (plan decision 1). */
+  machine: MachineMeta | null;
 }
 
 export interface Tombstone {
@@ -35,7 +38,7 @@ export interface Tombstone {
 }
 
 export interface LinksFile {
-  version: 2;
+  version: 3;
   links: LinkRecord[];
   tombstones: Tombstone[];
 }
@@ -54,6 +57,36 @@ const isSshEndpoint = (v: unknown): v is SshEndpoint =>
   isNonEmptyStr(v.node) &&
   isNonEmptyStr(v.mainJs) &&
   isNonEmptyStr(v.userData);
+
+const stringsOf = (v: unknown): string[] | null => {
+  if (!Array.isArray(v) || !v.every(isStr)) return null;
+  return v;
+};
+
+/** Machine metadata as bootstrap writes it; any other shape is not a record we wrote. */
+const parseMachine = (v: unknown): MachineMeta | undefined => {
+  if (!isObj(v)) return undefined;
+  const agents = stringsOf(v.agents);
+  if (
+    (v.os !== 'linux' && v.os !== 'windows') ||
+    v.arch !== 'x64' ||
+    !isStr(v.version) ||
+    (v.mode !== 'full' && v.mode !== 'light') ||
+    agents === null ||
+    !isBool(v.enabled) ||
+    !isBool(v.survivesLogout)
+  )
+    return undefined;
+  return {
+    os: v.os,
+    arch: v.arch,
+    version: v.version,
+    mode: v.mode,
+    agents,
+    enabled: v.enabled,
+    survivesLogout: v.survivesLogout,
+  };
+};
 
 const isCapabilities = (v: unknown): v is Capabilities =>
   isObj(v) && isBool(v.messaging) && isBool(v.monitor) && isBool(v.drive);
@@ -84,6 +117,9 @@ const parseLink = (v: Obj): LinkRecord | null => {
     v.ssh === undefined || v.ssh === null ? null : isSshEndpoint(v.ssh) ? v.ssh : undefined;
   // Only an ssh record may carry an endpoint; a tls record with one is not a record we wrote.
   if (ssh === undefined || (transport === 'tls' && ssh !== null)) return null;
+  // Version 2 files have no machine block: their records load with none, as the next bootstrap adds it.
+  const machine = v.machine === undefined || v.machine === null ? null : parseMachine(v.machine);
+  if (machine === undefined || (transport === 'tls' && machine !== null)) return null;
   // An ssh peer's server may have no owner key; a tls link always has one.
   const ownerKey = isStr(v.ownerKey)
     ? v.ownerKey
@@ -125,6 +161,7 @@ const parseLink = (v: Obj): LinkRecord | null => {
     ownerTransfer,
     transport,
     ssh,
+    machine,
   };
 };
 
@@ -163,7 +200,7 @@ export function parseLinksFile(
     if (link === null) return { kind: 'corrupt' };
     links.push(link);
   }
-  return { kind: 'ok', file: { version: 2, links, tombstones } };
+  return { kind: 'ok', file: { version: 3, links, tombstones } };
 }
 
 export function serializeLinksFile(f: LinksFile): string {

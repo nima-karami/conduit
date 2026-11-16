@@ -3,6 +3,7 @@ import path from 'node:path';
 import pinsJson from '../../build/runtime-pins.json';
 import { SHIM_LEAF } from '../../src/conduit-mcp/install-entries';
 import { HC_PINNED_VERSION } from '../../src/contracts/hc';
+import type { MachineMeta } from '../../src/contracts/machines';
 import type { BootstrapResult, BootstrapSummary, SshEndpoint } from '../../src/contracts/ssh-link';
 import { planInstall } from '../../src/network/install-plan';
 import {
@@ -432,7 +433,24 @@ async function bootstrapOnce(o: BootstrapperOptions, target: string): Promise<Bo
       reused: !copied,
       survivesLogout: line.survivesLogout === true,
       version: typeof line.version === 'string' ? line.version : version,
+      agents: probed.agents,
     },
+  };
+}
+
+/**
+ * The machine block a pinned ssh record carries (plan decision 1). Written by the composer once the
+ * peer is pinned: the pin is the record this block belongs to, and the bootstrap has no store.
+ */
+export function machineMetaOf(summary: BootstrapSummary): MachineMeta {
+  return {
+    os: summary.os,
+    arch: summary.arch,
+    version: summary.version,
+    mode: 'full',
+    agents: [...summary.agents],
+    enabled: true,
+    survivesLogout: summary.survivesLogout,
   };
 }
 
