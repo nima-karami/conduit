@@ -1,5 +1,12 @@
 import { randomBytes } from 'node:crypto';
-import { copyFileSync, existsSync, promises as fsp, readFileSync, statSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  constants as fsConstants,
+  promises as fsp,
+  readFileSync,
+  statSync,
+} from 'node:fs';
 import * as path from 'node:path';
 import { join, resolve } from 'node:path';
 import { watchDir, watchDirWhilePresent } from '../../electron/watch-dir';
@@ -119,6 +126,24 @@ import { ServerFolderHealth } from './folder-health';
 import { createLimitMonitor } from './limit-monitor';
 import { createLimitRulesSource } from './limit-rules-file';
 import { ServerSettingsStore } from './server-settings';
+
+// O_NONBLOCK: opening a FIFO with no writer would otherwise block the feed-gap queue for good.
+// Windows has no such flag; a named pipe there is refused by the isFile check below.
+const TRANSCRIPT_OPEN_FLAGS =
+  process.platform === 'win32' ? 'r' : fsConstants.O_RDONLY | fsConstants.O_NONBLOCK;
+
+export async function readTranscriptRange(p: string, start: number, end: number): Promise<Buffer> {
+  if (end <= start) return Buffer.alloc(0);
+  const handle = await fsp.open(p, TRANSCRIPT_OPEN_FLAGS);
+  try {
+    if (!(await handle.stat()).isFile()) throw new Error(`transcript is not a regular file: ${p}`);
+    const buf = Buffer.alloc(end - start);
+    const { bytesRead } = await handle.read(buf, 0, end - start, start);
+    return buf.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
 
 export type DomainLogLevel = 'debug' | 'info' | 'warn' | 'error';
 export type DomainLog = Record<
@@ -691,16 +716,7 @@ export function createDomain(deps: DomainDeps): Domain {
   const codexHome = deps.env.CODEX_HOME || join(deps.homeDir, '.codex');
   const metaCapWarned = new Set<string>();
   const feedGap = createClaudeFeedGap<ReturnType<typeof setTimeout>>({
-    readRange: async (p, start, end) => {
-      const handle = await fsp.open(p, 'r');
-      try {
-        const buf = Buffer.alloc(end - start);
-        const { bytesRead } = await handle.read(buf, 0, end - start, start);
-        return buf.subarray(0, bytesRead);
-      } finally {
-        await handle.close();
-      }
-    },
+    readRange: readTranscriptRange,
     sizeOf: (p) => statSync(p).size,
     setTimer: (fn, ms) => setTimeout(fn, ms),
     clearTimer: (handle) => clearTimeout(handle),
