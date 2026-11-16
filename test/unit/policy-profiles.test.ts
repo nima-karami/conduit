@@ -12,6 +12,7 @@ import type {
   PolicyState,
   PolicyTarget,
   Principal,
+  Profile,
   ToolRule,
 } from '../../src/conduit-mcp/policy-types';
 import {
@@ -183,6 +184,33 @@ describe('pointKey', () => {
 });
 
 describe('effectiveRule', () => {
+  it('attach_folder defaults to sessions the caller opened, and a reach the owner chose wins', () => {
+    const lead = builtIn('lead');
+    expect(
+      effectiveRule(lead, assignment({ profileId: 'lead' }), 'attach_folder', null).reach,
+    ).toBe('opened');
+    // An exception the owner set keeps its narrower reach: the default moved, never a stored choice.
+    const narrowed = assignment({
+      profileId: 'lead',
+      exceptions: [{ tool: 'attach_folder', scope: { kind: 'anywhere' }, rule: { reach: 'self' } }],
+    });
+    expect(effectiveRule(lead, narrowed, 'attach_folder', null).reach).toBe('self');
+    // So does a custom profile that stored `self` before the default changed.
+    const custom: Profile = {
+      ...lead,
+      id: 'p-custom',
+      name: 'Custom',
+      builtIn: false,
+      rules: {
+        ...lead.rules,
+        attach_folder: { ...lead.rules.attach_folder, reach: 'self' as const },
+      },
+    };
+    expect(
+      effectiveRule(custom, assignment({ profileId: 'p-custom' }), 'attach_folder', null).reach,
+    ).toBe('self');
+  });
+
   it('keeps profile fields that an exception does not set', () => {
     const rule = effectiveRule(
       builtIn('worker'),

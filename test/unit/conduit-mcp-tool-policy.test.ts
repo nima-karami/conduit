@@ -506,10 +506,12 @@ describe('Part B catalog rows (app-control spec, tool-policy spec §3.2)', () =>
       when: 'viewing',
       reach: 'opened',
     });
+    // `opened` since CON-44 (lead decision 2026-11-16): a remote lead has no session of its own on
+    // the machine it routes to, so `self` let it attach nothing. Access still asks every time.
     expect(DEFAULT_TOOL_POLICY.attach_folder).toStrictEqual({
       access: 'ask',
       when: 'viewing',
-      reach: 'self',
+      reach: 'opened',
     });
     for (const t of [
       'close_files',
