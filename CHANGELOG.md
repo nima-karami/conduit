@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.67.0] — 2026-11-16
+
 ### Security
 - A connected machine must now prove it holds its own identity key when the SSH link starts, so a machine can't pass itself off as another one you've added.
 - The Background service now only takes commands from this app and from Conduit's own tools: each start writes a fresh secret that only your user account can read. Other accounts on the same computer, and on Windows other computers on the network, can no longer drive it. If the app ever can't prove itself, it stops retrying after a few tries and says so, instead of looking connected.
