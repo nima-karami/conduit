@@ -8021,6 +8021,67 @@ describe('routed session tools on this machine (CON-40 S3, plan decision 5)', ()
     expect(net.sent).toHaveLength(1);
   });
 
+  it('a routed result names the machine by its id when two added machines share its name', async () => {
+    const twin: MachineView = { ...WIN, machine_id: 'm-0000000b' };
+    const net = routeNet({
+      machines: [WIN, twin],
+      answer: () => ({ session_id: 'b-3', handle: 'claude-9', label: 'x', agent: 'claude' }),
+    });
+    const { ca } = await leadSession(net.network);
+    const r = await ca.call('open_session', {
+      machine: 'm-0000000a',
+      path: 'C:\\w',
+      agent: 'claude',
+    });
+    expect(r.body).toMatchObject({ handle: 'claude-9@m-0000000a' });
+  });
+
+  it('a local address that is not a session here is unknown, and nothing is sent', async () => {
+    const net = routeNet({});
+    const { ca } = await leadSession(net.network);
+    const r = await ca.call('read_screen', { session: 'nobody' });
+    expect(r.body.error).toMatchObject({ code: 'unknown_session' });
+    expect(net.sent).toEqual([]);
+  });
+
+  it('an address on my own machine is not a routed call: its machine is not added, so machine_unknown', async () => {
+    const net = routeNet({ machines: [] });
+    const { ca } = await leadSession(net.network);
+    const r = await ca.call('read_screen', { session: 'claude-1@m-0123abcd' });
+    expect(r.body.error).toMatchObject({ code: 'machine_unknown' });
+    expect(net.sent).toEqual([]);
+  });
+
+  it('an ask on A for a routed call shows its machine, sends nothing until approved, and sends nothing when denied', async () => {
+    const net = routeNet({
+      answer: () => ({ session_id: 'b-4', handle: 'claude-8', label: 'x', agent: 'claude' }),
+    });
+    const { h, ca } = await leadSession(net.network);
+    await setHostPolicy(h, 's1', { open_session: { access: 'ask', when: 'always' } });
+    const asks = () => h.toOwner.flatMap((s) => (s.msg.type === 'mcp:ask' ? [s.msg] : []));
+    const first = ca.call('open_session', { machine: 'win-box', path: 'C:\\w', agent: 'claude' });
+    await expect.poll(() => asks().length).toBe(1);
+    expect(asks()[0]?.summary).toMatchObject({ tool: 'open_session', machine: 'win-box' });
+    expect(net.sent).toEqual([]);
+    await h.host.handleRenderer(
+      { type: 'mcp:askAnswer', askId: asks()[0]?.askId ?? '', answer: 'deny' },
+      () => undefined,
+      1,
+    );
+    expect((await first).body.error).toBeDefined();
+    expect(net.sent).toEqual([]);
+
+    const second = ca.call('open_session', { machine: 'win-box', path: 'C:\\w', agent: 'claude' });
+    await expect.poll(() => asks().length).toBe(2);
+    await h.host.handleRenderer(
+      { type: 'mcp:askAnswer', askId: asks()[1]?.askId ?? '', answer: 'approve' },
+      () => undefined,
+      1,
+    );
+    expect((await second).body).toMatchObject({ handle: 'claude-8@win-box' });
+    expect(net.sent).toHaveLength(1);
+  });
+
   it('a remote lead cannot route a call on to another machine', async () => {
     const net = routeNet({});
     const h = harness({ network: net.network });

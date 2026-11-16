@@ -174,6 +174,13 @@ export type RoutedIntent =
       args: Record<string, unknown>;
     };
 
+/** The machine a routed call names, as the lead typed it: a machine ref, or the address it reaches. */
+export function routedRefOf(tool: string, args: unknown): string | null {
+  const routed = routedIntentOf(tool, args);
+  if (!routed.ok || routed.value === null) return null;
+  return routed.value.kind === 'machine' ? routed.value.machine : routed.value.address;
+}
+
 /**
  * Whether a session tool call names another machine by its args. A malformed one counts too, so it is
  * refused as bad arguments, not as a window it never needed.
@@ -271,8 +278,27 @@ export function machineTarget(
     };
   return {
     ok: true,
-    value: { machineId: only.machine_id, machine: only.machine, label: '', home: '' },
+    value: {
+      machineId: only.machine_id,
+      machine: addressableName(network.listMachines(), only),
+      label: '',
+      home: '',
+    },
   };
+}
+
+/**
+ * The name a machine's results carry: its name when that is unique among the added machines and
+ * survives as the machine part of an address; otherwise its id, so the address a result names is
+ * always one the lead can send back (CON-40 S3 review).
+ */
+export function addressableName(
+  machines: readonly Pick<MachineView, 'machine' | 'machine_id'>[],
+  m: Pick<MachineView, 'machine' | 'machine_id'>,
+): string {
+  const sameName = machines.filter((x) => x.machine === m.machine).length;
+  const usable = parseAddress(`handle@${m.machine}`)?.machine === m.machine;
+  return sameName === 1 && usable ? m.machine : m.machine_id;
 }
 
 /*

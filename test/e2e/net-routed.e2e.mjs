@@ -49,6 +49,19 @@ async function assignLead(server, sessionId) {
   assert(r.reply?.ok === true, `setAssignment lead on ${server.label}: ${JSON.stringify(r)}`);
 }
 
+/** How many of B's log lines say it started serving a call of this tool (the line is written before the effect). */
+function servingLines(server, tool) {
+  const file = join(server.userData, 'server.log');
+  if (!existsSync(file)) return 0;
+  return readFileSync(file, 'utf8')
+    .split('\n')
+    .filter((line) => line.includes('routed call serving') && line.includes(`"tool":"${tool}"`))
+    .length;
+}
+
+/** A pause in real time, for a race the test has no signal for. */
+const beat = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /** Types a tool call into an agent without waiting for its answer; returns how many answers existed. */
 function typeCall(server, agent, tool, args) {
   const before = agentRecords(server, agent.sessionId, 'RESULT').length;
@@ -135,9 +148,14 @@ async function run() {
     );
 
     phase("6. A lists B's session as its own lead's opening");
-    const rows = await callTool(a, aa, 'list_sessions', {});
-    const row = rows.sessions?.find((s) => s.session_id === remoteId);
-    assert(row?.opened_by === me, `list_sessions opened_by for ${address}: ${JSON.stringify(row)}`);
+    // list_sessions is a snapshot from B's monitor, so the row can trail the open by a moment.
+    assert(
+      await until(async () => {
+        const rows = await callTool(a, aa, 'list_sessions', {});
+        return rows.sessions?.some((s) => s.session_id === remoteId && s.opened_by === me) === true;
+      }, 15_000),
+      `list_sessions never showed ${address} opened by ${me}`,
+    );
 
     phase('7. close_session by that address closes it on B');
     const closed = await callTool(a, aa, 'close_session', { session: address });
@@ -148,44 +166,50 @@ async function run() {
     });
 
     phase(
-      '8. the bridge is killed during a routed open: peer_unreachable or a completed open, once on B',
+      '8. the bridge is killed while B is serving a routed open: the drop, or the open, once on B',
     );
     const countBefore = (await callTool(b, ba, 'list_sessions', {})).sessions?.length ?? -1;
     const [bridgePid] = pidsOf(pidLog).slice(-1);
     assert(bridgePid !== undefined, 'no fake-ssh pid recorded for the bridge');
+    const servingBefore = servingLines(b, 'open_session');
     const answersBefore = typeCall(a, aa, 'open_session', {
       machine: bId,
       agent: ECHO_AGENT,
       path: b.work,
       focus: false,
     });
+    // Kill only once B's own log says it is serving the open. B keeps running after its bridge dies,
+    // so the open runs exactly once on B either way; only the answer can be lost.
+    await eventually(
+      'B is serving the open',
+      () => servingLines(b, 'open_session') > servingBefore,
+    );
     // The pid is the bridge's own, read from the stand-in's stderr this scenario started.
     process.kill(bridgePid, 'SIGKILL');
     await eventually(
       'the routed open is answered',
       () => agentRecords(a, aa.sessionId, 'RESULT').length > answersBefore,
     );
-    // The race is not observable from here: the kill may land before B gets the call, or after B has
-    // run it and before the answer returns. Both are allowed, and each has one exact outcome: an error
-    // is peer_unreachable with B having run it at most once; a result is a completed open, B having run
-    // it exactly once.
     const answer = agentRecords(a, aa.sessionId, 'RESULT').at(-1)?.result;
     await eventually('A redials B with a new bridge', async () => {
       const pids = pidsOf(pidLog);
       const view = await linkView(a.c2, bId);
       return view?.state === 'up' && pids.length >= 2 && pids.at(-1) !== bridgePid;
     });
+    await beat(2000);
     const countAfter = (await callTool(b, ba, 'list_sessions', {})).sessions?.length ?? -1;
     const delta = countAfter - countBefore;
+    assert(delta === 1, `B must run the open exactly once: ${countBefore} -> ${countAfter}`);
     if (answer?.error !== undefined) {
+      // The answer was lost with the bridge: the error is the drop, not a "not connected" pre-check.
       assert(
-        answer.error.code === 'peer_unreachable' && delta <= 1,
-        `open_session across a dead bridge: ${JSON.stringify(answer)}, B ${countBefore} -> ${countAfter}`,
+        answer.error.code === 'peer_unreachable' && /dropped/.test(answer.error.message),
+        `open_session across a dead bridge: ${JSON.stringify(answer)}`,
       );
     } else {
       assert(
-        typeof answer?.session_id === 'string' && delta === 1,
-        `open_session completed: ${JSON.stringify(answer)}, B ${countBefore} -> ${countAfter}`,
+        typeof answer?.session_id === 'string',
+        `open_session completed: ${JSON.stringify(answer)}`,
       );
     }
   } catch (error) {

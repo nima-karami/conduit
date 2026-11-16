@@ -47,6 +47,23 @@ describe('resolveTargets', () => {
     expect(none.map((t) => t.sessionId)).toEqual(['s-alpha']);
   });
 
+  it('a routed open names no folder target here: its path is on another machine (CON-40 S3)', () => {
+    expect(resolveTargets('open_session', { machine: 'desk', path: '/w/a' }, caller, deps)).toEqual(
+      [],
+    );
+    expect(
+      resolveTargets(
+        'open_terminal',
+        { machine: 'desk', path: '/w/a', command: 'x' },
+        caller,
+        deps,
+      ),
+    ).toEqual([]);
+    expect(
+      resolveTargets('open_session', { path: '/w/a' }, caller, deps).map((t) => t.folder),
+    ).toEqual(['/w/a']);
+  });
+
   it('attach_folder gives a real-path folder target', () => {
     expect(resolveTargets('attach_folder', { path: '/link' }, caller, deps)).toEqual([
       { sessionId: null, path: '/real', folder: '/real', projectId: null },

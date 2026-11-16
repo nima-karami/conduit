@@ -70,7 +70,10 @@ export interface NetworkDeps {
   identity: Identity;
   settings(): NetworkSettings;
   emit(state: NetworkState): void;
-  log: NetLog & { error(msg: string, data?: Record<string, unknown>): void };
+  log: NetLog & {
+    info(msg: string, data?: Record<string, unknown>): void;
+    error(msg: string, data?: Record<string, unknown>): void;
+  };
   now?: () => number;
   interfaces?: () => NodeJS.Dict<os.NetworkInterfaceInfo[]>;
   hostname?: () => string;
@@ -192,6 +195,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       drive.linkChanged(v.machineId);
       calls.linkChanged(v.machineId);
     }
+    calls.settleAbsent(views.map((v) => v.machineId));
     for (const l of portListeners) l();
   };
 
@@ -363,6 +367,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     now,
     newId: () => `c_${randomBytes(12).toString('hex')}`,
     after,
+    log: (message, data) => deps.log.info(message, data),
   });
   const messaging = createMessaging({
     file: path.join(deps.dir, 'outbox.json'),

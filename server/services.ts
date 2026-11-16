@@ -308,6 +308,7 @@ export function createServices(o: ServicesOptions) {
           observe: (sessionId, events) => runtime.observe(sessionId, events),
           log: {
             debug: (msg, data) => log.debug('network', msg, data),
+            info: (msg, data) => log.info('network', msg, data),
             warn: (msg, data) => log.warn('network', msg, data),
             error: (msg, data) => log.error('network', msg, data),
           },

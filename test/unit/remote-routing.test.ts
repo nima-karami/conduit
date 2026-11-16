@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addressableName,
   isRemote,
+  machineTarget,
   mergeDirectory,
+  type NetworkPort,
   nameOnMachine,
   type RemoteEntry,
   remoteTargetRefusal,
@@ -9,6 +12,7 @@ import {
   routedIntentOf,
 } from '../../src/conduit-mcp/remote-routing';
 import type { DirectoryEntry } from '../../src/conduit-mcp/tools';
+import type { MachineView } from '../../src/contracts/machines';
 
 function local(handle: string): DirectoryEntry {
   return {
@@ -185,5 +189,59 @@ describe('routed session tools: where a call goes (CON-40 S3)', () => {
       focus: true,
       machine: 'win-box',
     });
+  });
+});
+
+describe('routed machines: which machine a name means, and how a result names it (CON-40 S3 review)', () => {
+  const view = (machine: string, machine_id: string): MachineView => ({
+    machine,
+    machine_id,
+    target: machine,
+    state: 'up',
+    mode: 'full',
+    os: 'linux',
+    arch: 'x64',
+    conduit_version: '1.0.0',
+    agents: [],
+    sessions: 0,
+    last_seen: null,
+    survives_logout: true,
+  });
+  const port = (machines: MachineView[]): Pick<NetworkPort, 'listMachines'> => ({
+    listMachines: () => machines,
+  });
+
+  it('picks the machine a name names when two are added', () => {
+    const two = [view('laptop', 'm-0000aaaa'), view('desk', 'm-0000bbbb')];
+    expect(machineTarget(port(two), 'desk')).toMatchObject({
+      ok: true,
+      value: { machineId: 'm-0000bbbb', machine: 'desk' },
+    });
+    expect(machineTarget(port(two), 'm-0000aaaa')).toMatchObject({
+      ok: true,
+      value: { machineId: 'm-0000aaaa', machine: 'laptop' },
+    });
+    expect(machineTarget(port(two), 'nowhere')).toMatchObject({
+      ok: false,
+      error: { code: 'machine_unknown' },
+    });
+  });
+
+  it('names a machine by its name when the name is unique and usable in an address', () => {
+    expect(addressableName([view('laptop', 'm-0000aaaa')], view('laptop', 'm-0000aaaa'))).toBe(
+      'laptop',
+    );
+  });
+
+  it('names a machine by its id when another added machine has the same name', () => {
+    const twin = [view('win-box', 'm-0000aaaa'), view('win-box', 'm-0000bbbb')];
+    expect(addressableName(twin, twin[0] ?? view('x', 'm-0000aaaa'))).toBe('m-0000aaaa');
+  });
+
+  it('names a machine by its id when its name would not survive as an address part', () => {
+    for (const name of ['my laptop', 'a@b', 'desk (m-0000bbbb)']) {
+      const m = view(name, 'm-0000cccc');
+      expect(addressableName([m], m)).toBe('m-0000cccc');
+    }
   });
 });

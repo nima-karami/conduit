@@ -116,6 +116,7 @@ import {
   routedAskSummary,
   routedIntentOf,
   routedName,
+  routedRefOf,
 } from './remote-routing';
 import { createRequestsIo, type RequestsIo } from './request-file-fs';
 import { createRequestNotices } from './request-notices';
@@ -2062,7 +2063,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         principal: { handle: handle ?? null, sessionId, machineId: null },
         cli: sessionId ? launchedCli(sessionId) : null,
         action: name,
-        target: record?.input.targets[0]?.path ?? record?.input.targets[0]?.sessionId ?? null,
+        // A routed call names the machine it runs on, or the address it reaches (CON-40 S3 review).
+        target:
+          record?.input.targets[0]?.path ??
+          record?.input.targets[0]?.sessionId ??
+          routedRefOf(name, args),
         summary: null,
         decision: decision?.decision ?? null,
         decidedBy: decision ? reasonOf(decision) : 'unknown',

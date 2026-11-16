@@ -62,6 +62,7 @@ function setup(opts: {
   const sent: Array<{ machineId: string; frame: LinkFrame }> = [];
   const audit: AuditEvent[] = [];
   const timers: Array<{ fn: () => void; ms: number; cancelled: boolean }> = [];
+  const logs: Array<{ message: string; data: Record<string, unknown> }> = [];
   let link: LinkRecord | null = opts.link === undefined ? sshController() : opts.link;
   let state: LinkState | null = opts.state === undefined ? 'up' : opts.state;
   let minor: number | null = opts.minor === undefined ? 2 : opts.minor;
@@ -83,6 +84,7 @@ function setup(opts: {
     linkState: () => state,
     peerMinor: () => minor,
     newId: () => `r-${++n}`,
+    log: (message, data) => logs.push({ message, data }),
     after: (fn, ms) => {
       const t = { fn, ms, cancelled: false };
       timers.push(t);
@@ -101,6 +103,7 @@ function setup(opts: {
   return {
     calls,
     sent,
+    logs,
     audit,
     callAsRemote,
     clock,
@@ -383,7 +386,7 @@ describe('call: the A-side router (CON-40 S3, plan decision 1 and 5)', () => {
   });
 
   it('a link that is not up is peer_unreachable, with a hint to connect the machine first', async () => {
-    for (const state of ['down', 'degraded', 'connecting', null] as const) {
+    for (const state of ['down', 'connecting', null] as const) {
       const s = setup({ link: dialedSsh(), state });
       const out = await s.calls.call(machine, ask.tool, ask.args, ask.principal, never);
       expect(out).toMatchObject({
@@ -392,6 +395,20 @@ describe('call: the A-side router (CON-40 S3, plan decision 1 and 5)', () => {
       });
       expect(s.sent).toEqual([]);
     }
+  });
+
+  it('a degraded link refuses a new call with a hint to try again, not to connect', async () => {
+    const s = setup({ link: dialedSsh(), state: 'degraded' });
+    const out = await s.calls.call(machine, ask.tool, ask.args, ask.principal, never);
+    expect(out).toMatchObject({
+      ok: false,
+      error: {
+        code: 'peer_unreachable',
+        message: 'the link to laptop is degraded',
+        hint: 'try again shortly; the call was not sent',
+      },
+    });
+    expect(s.sent).toEqual([]);
   });
 
   it('a revoked link is peer_revoked before anything is sent', async () => {
@@ -460,5 +477,89 @@ describe('call: the A-side router (CON-40 S3, plan decision 1 and 5)', () => {
     const pending = s.calls.call(machine, ask.tool, ask.args, ask.principal, never);
     s.calls.stop();
     expect(await pending).toMatchObject({ ok: false, error: { code: 'peer_unreachable' } });
+  });
+});
+
+describe('the router keeps its pending calls honest (CON-40 S3 review)', () => {
+  const ask = { tool: 'list_agents' as const, args: { x: 1 }, principal: 'claude-3' };
+  const never = new AbortController().signal;
+  const okResult = (id: string) => ({
+    t: 'call.result' as const,
+    id,
+    ok: true as const,
+    result: { agents: [] },
+  });
+
+  it('a settled call leaves the pending map: a timeout, an answer or an abort each clear it', async () => {
+    const timedOut = setup({ link: dialedSsh() });
+    const p1 = timedOut.calls.call(machine, ask.tool, ask.args, ask.principal, never);
+    expect(timedOut.calls.pendingCount()).toBe(1);
+    timedOut.fire();
+    await p1;
+    expect(timedOut.calls.pendingCount()).toBe(0);
+
+    const answered = setup({ link: dialedSsh() });
+    const p2 = answered.calls.call(machine, ask.tool, ask.args, ask.principal, never);
+    answered.calls.onResult(machine, okResult('r-1'));
+    await p2;
+    expect(answered.calls.pendingCount()).toBe(0);
+
+    const aborted = setup({ link: dialedSsh() });
+    const ctl = new AbortController();
+    const p3 = aborted.calls.call(machine, ask.tool, ask.args, ask.principal, ctl.signal);
+    ctl.abort();
+    await p3;
+    expect(aborted.calls.pendingCount()).toBe(0);
+  });
+
+  it('refuses arguments over the 64 KiB a routed call carries, and sends nothing', async () => {
+    const s = setup({ link: dialedSsh() });
+    const out = await s.calls.call(
+      machine,
+      ask.tool,
+      { text: 'x'.repeat(64 * 1024 + 1) },
+      ask.principal,
+      never,
+    );
+    expect(out).toMatchObject({ ok: false, error: { code: 'too_large' } });
+    expect(s.sent).toEqual([]);
+    expect(s.calls.pendingCount()).toBe(0);
+  });
+
+  it('an already-aborted signal sends nothing and does not wait out the budget', async () => {
+    const s = setup({ link: dialedSsh() });
+    const ctl = new AbortController();
+    ctl.abort();
+    const out = await s.calls.call(machine, ask.tool, ask.args, ask.principal, ctl.signal);
+    expect(out).toMatchObject({ ok: false, error: { code: 'cancelled' } });
+    expect(s.sent).toEqual([]);
+    expect(s.timers).toEqual([]);
+  });
+
+  it('a machine that drops out of the link list ends its pending calls as peer_revoked', async () => {
+    const s = setup({ link: dialedSsh() });
+    const pending = s.calls.call(machine, ask.tool, ask.args, ask.principal, never);
+    s.calls.settleAbsent(['m-99999999']);
+    expect(await pending).toMatchObject({ ok: false, error: { code: 'peer_revoked' } });
+    expect(s.sent).toHaveLength(1);
+  });
+
+  it('a removed record (no link state at all) ends its pending calls as peer_revoked, at once', async () => {
+    const s = setup({ link: dialedSsh() });
+    const pending = s.calls.call(machine, ask.tool, ask.args, ask.principal, never);
+    s.setState(null);
+    s.calls.linkChanged(machine);
+    expect(await pending).toMatchObject({ ok: false, error: { code: 'peer_revoked' } });
+  });
+
+  it('logs a routed call as it starts being served, before it runs', async () => {
+    const s = setup({});
+    await s.calls.serveCall(machine, call({ tool: 'open_session', args: { path: '/w' } }));
+    expect(s.logs).toEqual([
+      {
+        message: 'routed call serving',
+        data: { machineId: machine, tool: 'open_session', id: 'c-1' },
+      },
+    ]);
   });
 });

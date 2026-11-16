@@ -61,6 +61,8 @@ export interface CallsDeps {
   now(): number;
   newId(): string;
   after(fn: () => void, ms: number): () => void;
+  /** Logged as a call starts being served, so an operator (and the e2e) can see it is in flight. */
+  log(message: string, data: Record<string, unknown>): void;
 }
 
 export interface Calls {
@@ -80,6 +82,10 @@ export interface Calls {
   linkChanged(machineId: string): void;
   /** Shutdown: every pending call ends as peer_unreachable. */
   stop(): void;
+  /** A machine that is no longer in the link list: its pending calls end as peer_revoked. */
+  settleAbsent(linkedMachineIds: readonly string[]): void;
+  /** How many calls are still waiting for an answer. */
+  pendingCount(): number;
 }
 
 /** Control characters never reach the far side's parser; text is cut to the frame's caps. */
@@ -173,6 +179,7 @@ export function createCalls(deps: CallsDeps): Calls {
       );
       return;
     }
+    deps.log('routed call serving', { machineId, tool: frame.tool, id: frame.id });
     // The machine id is the link's own, never the frame's: a peer cannot name another machine.
     const principal: RemoteCaller = {
       kind: 'remote',
@@ -193,6 +200,11 @@ export function createCalls(deps: CallsDeps): Calls {
     p.cancel();
     p.settle(result);
   };
+
+  const revokedError = (): Result<StructuredOutput> => ({
+    ok: false,
+    error: toolError('peer_revoked', "the machine was removed from this machine's links"),
+  });
 
   const unreachable = (message: string, hint?: string): Result<StructuredOutput> => ({
     ok: false,
@@ -226,6 +238,13 @@ export function createCalls(deps: CallsDeps): Calls {
         ok: false,
         error: toolError('peer_revoked', `${record.name} is revoked`),
       });
+    if (state === 'degraded')
+      return Promise.resolve(
+        unreachable(
+          `the link to ${record.name} is degraded`,
+          'try again shortly; the call was not sent',
+        ),
+      );
     if (state !== 'up')
       return Promise.resolve(
         unreachable(`${record.name} is not connected`, `connect_machine ${record.name} first`),
@@ -317,17 +336,23 @@ export function createCalls(deps: CallsDeps): Calls {
     },
     linkChanged(machineId) {
       if (live(deps.linkState(machineId))) return;
-      const revoked = deps.linkState(machineId) === 'revoked';
+      // No record at all is a machine that was removed, which is as final as a revoke.
+      const state = deps.linkState(machineId);
+      const gone = state === 'revoked' || state === null;
       for (const [id, p] of [...pending]) {
         if (p.machineId !== machineId) continue;
         finish(
           id,
-          revoked
-            ? { ok: false, error: toolError('peer_revoked', 'the link was revoked') }
-            : unreachable('the link dropped before the answer came back'),
+          gone ? revokedError() : unreachable('the link dropped before the answer came back'),
         );
       }
     },
+    settleAbsent(linkedMachineIds) {
+      for (const [id, p] of [...pending]) {
+        if (!linkedMachineIds.includes(p.machineId)) finish(id, revokedError());
+      }
+    },
+    pendingCount: () => pending.size,
     stop() {
       for (const id of [...pending.keys()])
         finish(id, unreachable('Conduit is stopping the network'));
