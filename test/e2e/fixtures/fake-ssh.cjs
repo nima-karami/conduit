@@ -67,20 +67,29 @@ if (dashdash < 0 || argv.length !== dashdash + 3) {
 
 const remoteText = argv[dashdash + 2];
 const posixArgv = posixArgvOf(remoteText);
+// A scenario that needs a remote with none of this machine's CLIs points HOME at an empty dir: the
+// probe reads ~/.local/bin, where the installers put them.
+const remoteEnv =
+  process.env.FAKE_SSH_HOME === undefined
+    ? process.env
+    : { ...process.env, HOME: process.env.FAKE_SSH_HOME };
 const child = posixArgv
   ? spawn(posixArgv[0], posixArgv.slice(1), {
       stdio: 'inherit',
       windowsHide: true,
+      env: remoteEnv,
     })
   : process.platform === 'win32'
     ? spawn('cmd.exe', ['/d', '/s', '/c', `"${remoteText}"`], {
         stdio: 'inherit',
         windowsHide: true,
         windowsVerbatimArguments: true,
+        env: remoteEnv,
       })
     : spawn('/bin/sh', ['-c', remoteText], {
         stdio: 'inherit',
         windowsHide: true,
+        env: remoteEnv,
       });
 const pidLine = `fake-ssh: pid ${child.pid}\n`;
 process.stderr.write(pidLine);
