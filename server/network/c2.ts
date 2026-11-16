@@ -5,6 +5,7 @@ import type { BootstrapResult } from '../../src/contracts/ssh-link';
 import { isSshTarget } from '../../src/network/ssh-argv';
 import { RpcFault } from '../transport/pipe';
 import { DRIVE_INPUT_MAX_BYTES, type Drive } from './drive';
+import type { FsClient } from './fs-client';
 import type { LinkManager } from './link-manager';
 import { parseHostPort } from './listener';
 import type { Machines } from './machines';
@@ -17,6 +18,8 @@ import type { createViewRelay } from './view-relay';
 const CAPABILITIES: readonly Capability[] = ['messaging', 'monitor', 'drive'];
 const MAX_ADDRESSES = 16;
 const MAX_PATH = 4096;
+// The fs frames carry at most 64 chars of session id (link-protocol FS_SESSION_ID_MAX).
+const FS_SESSION_MAX = 64;
 const MAX_DIMENSION = 10_000;
 const isDimension = (v: unknown): v is number =>
   typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= MAX_DIMENSION;
@@ -32,6 +35,8 @@ export interface NetworkCallDeps {
   /** Opens the needs-person pane for one target; resolves with its session id. */
   openNeedsPerson(target: string): Promise<string>;
   machines: Machines;
+  /** A's file client for remote.fs.* (plan CON-43). */
+  fs: FsClient;
   /** The Host aliases in the user's ssh config, for the Add dialog's list. */
   sshHosts(): string[];
   peer?: object;
@@ -170,7 +175,69 @@ export function handleNetworkCall(
       return Promise.resolve({});
     }
     default:
-      return handleMachineCall(method, raw, d);
+      return handleFsCall(method, raw, d) ?? handleMachineCall(method, raw, d);
+  }
+}
+
+/** Files on a remote session's folders, read through A's file client (plan CON-43). */
+export function handleFsCall(
+  method: string,
+  raw: unknown,
+  d: Pick<NetworkCallDeps, 'fs' | 'peer'>,
+): Promise<unknown> | null {
+  const p = paramsOf(raw);
+  switch (method) {
+    case 'remote.fs.list':
+      return d.fs
+        .request(
+          str(p, 'machineId'),
+          'list',
+          str(p, 'sessionId', FS_SESSION_MAX),
+          str(p, 'path', MAX_PATH),
+        )
+        .then((r) => {
+          if (r.op !== 'list') throw new RpcFault('unavailable', 'the answer was not a listing');
+          return { path: r.path, entries: r.entries };
+        });
+    case 'remote.fs.read':
+      return d.fs
+        .request(
+          str(p, 'machineId'),
+          'read',
+          str(p, 'sessionId', FS_SESSION_MAX),
+          str(p, 'path', MAX_PATH),
+        )
+        .then((r) => {
+          if (r.op !== 'read') throw new RpcFault('unavailable', 'the answer was not a file');
+          return r.file;
+        });
+    case 'remote.fs.stat':
+      return d.fs
+        .request(
+          str(p, 'machineId'),
+          'stat',
+          str(p, 'sessionId', FS_SESSION_MAX),
+          str(p, 'path', MAX_PATH),
+        )
+        .then((r) => {
+          if (r.op !== 'stat') throw new RpcFault('unavailable', 'the answer was not a stat');
+          return { kind: r.kind, size: r.size, mtimeMs: r.mtimeMs };
+        });
+    case 'remote.fs.watch': {
+      const machineId = str(p, 'machineId');
+      const sessionId = str(p, 'sessionId', FS_SESSION_MAX);
+      const path = str(p, 'path', MAX_PATH);
+      if (!d.peer) throw new RpcFault('invalid', 'Expected connection');
+      return Promise.resolve({ watchId: d.fs.watch(d.peer, machineId, sessionId, path) });
+    }
+    case 'remote.fs.unwatch': {
+      const watchId = str(p, 'watchId', FS_SESSION_MAX);
+      if (!d.peer) throw new RpcFault('invalid', 'Expected connection');
+      d.fs.unwatch(d.peer, watchId);
+      return Promise.resolve({});
+    }
+    default:
+      return null;
   }
 }
 
