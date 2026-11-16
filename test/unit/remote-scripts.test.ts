@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -14,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  copyNodeIntoShimCommand,
   downloadCommand,
   ensureCommand,
   FAMILY_PROBE,
@@ -729,7 +731,81 @@ describe.skipIf(!posix || !hasSh())('finalize (sh)', () => {
   });
 });
 
+describe.skipIf(!posix || !hasSh())('copyNodeIntoShimCommand (sh)', () => {
+  const shimDir = () => join(dir, 'shim');
+
+  it('copies the installed node into <shim>.tmp, executable', () => {
+    mkdirSync(join(dir, '1.0.0'));
+    writeFileSync(join(dir, '1.0.0', 'node'), 'NODE');
+    mkdirSync(join(dir, 'shim.tmp'));
+    const r = runSh(
+      copyNodeIntoShimCommand('sh', { runtimeRoot: dir, version: '1.0.0', shimDir: shimDir() }),
+    );
+    expect(parseResultLine(r.stdout)).toEqual({ ok: true });
+    expect(readFileSync(join(dir, 'shim.tmp', 'node'), 'utf8')).toBe('NODE');
+    expect(statSync(join(dir, 'shim.tmp', 'node')).mode & 0o777).toBe(0o755);
+  });
+
+  it('refuses when the node is not installed at that version', () => {
+    mkdirSync(join(dir, 'shim.tmp'));
+    const r = runSh(
+      copyNodeIntoShimCommand('sh', { runtimeRoot: dir, version: '1.0.0', shimDir: shimDir() }),
+    );
+    expect(parseResultLine(r.stdout)).toMatchObject({ ok: false, step: 'unpack' });
+  });
+
+  it('refuses a version that is not a plain name', () => {
+    mkdirSync(join(dir, 'shim.tmp'));
+    const r = runSh(
+      copyNodeIntoShimCommand('sh', { runtimeRoot: dir, version: '../x', shimDir: shimDir() }),
+    );
+    expect(parseResultLine(r.stdout)).toMatchObject({ ok: false, step: 'unpack' });
+  });
+});
+
+describe('copyNodeIntoShimCommand (PowerShell output)', () => {
+  it('uses the -EncodedCommand form and copies node.exe', () => {
+    const cmd = copyNodeIntoShimCommand('powershell', {
+      runtimeRoot: 'C:\\rt',
+      version: '1.0.0',
+      shimDir: 'C:\\rt\\shim',
+    });
+    expect(cmd.command.startsWith('powershell -NoProfile')).toBe(true);
+    const script = Buffer.from(cmd.command.split('-EncodedCommand ')[1] ?? '', 'base64').toString(
+      'utf16le',
+    );
+    expect(script).toContain('Copy-Item');
+    expect(script).toContain('$name = Arg 3');
+  });
+});
+
 describe.skipIf(!posix || !hasSh())('ensure and value passing (sh)', () => {
+  it('passes --survives-logout and --shim-dir together, in the shim-dir branch', () => {
+    const main = join(dir, 'echo-args.mjs');
+    writeFileSync(main, 'console.log(JSON.stringify(process.argv.slice(2)));');
+    const r = runSh(
+      ensureCommand('sh', {
+        node: process.execPath,
+        mainJs: main,
+        userData: '/u',
+        method: 'plain',
+        survivesLogout: false,
+        shimDir: '/u/runtime/shim',
+      }),
+    );
+    expect(JSON.parse(r.stdout.trim())).toEqual([
+      '--ensure-server',
+      '--user-data',
+      '/u',
+      '--start',
+      'plain',
+      '--survives-logout',
+      'no',
+      '--shim-dir',
+      '/u/runtime/shim',
+    ]);
+  });
+
   it('execs node with exactly the decoded arguments', () => {
     const main = join(dir, 'echo-args.mjs');
     writeFileSync(main, 'console.log(JSON.stringify(process.argv.slice(2)));');
@@ -739,6 +815,7 @@ describe.skipIf(!posix || !hasSh())('ensure and value passing (sh)', () => {
         mainJs: main,
         userData: '/home/u/.config/conduit',
         method: 'scope',
+        survivesLogout: true,
       }),
     );
     const args = JSON.parse(r.stdout.trim());
@@ -748,6 +825,8 @@ describe.skipIf(!posix || !hasSh())('ensure and value passing (sh)', () => {
       '/home/u/.config/conduit',
       '--start',
       'scope',
+      '--survives-logout',
+      'yes',
     ]);
   });
 
@@ -762,6 +841,7 @@ describe.skipIf(!posix || !hasSh())('ensure and value passing (sh)', () => {
         mainJs: main,
         userData: hostile,
         method: 'plain',
+        survivesLogout: false,
       }),
     );
     expect(JSON.parse(r.stdout.trim())[2]).toBe(hostile);
@@ -803,6 +883,7 @@ describe('PowerShell builders (output only; pwsh is not required)', () => {
         node: 'C:\\n.exe',
         mainJs: 'C:\\m\\main.js',
         userData: 'C:\\u',
+        survivesLogout: false,
         method: 'plain',
       }).command.startsWith(prefix),
     ).toBe(true);
@@ -829,6 +910,7 @@ describe('PowerShell builders (output only; pwsh is not required)', () => {
         node: 'C:\\n.exe',
         mainJs: 'C:\\rt\\1.0.0\\server\\main.js',
         userData: 'C:\\u',
+        survivesLogout: false,
         method: 'windows-task',
         hcExe: 'C:\\rt\\conduit-hc\\0.1.16\\conduit-hc.exe',
       }),
@@ -837,8 +919,8 @@ describe('PowerShell builders (output only; pwsh is not required)', () => {
     expect(script).toContain('Interactive');
     expect(script).toContain('--ensure-server');
     // The action is the supervisor the app runs (esbuild's supervise entry), with the hc binary.
-    expect(script).toContain('$sup = Arg 4');
-    expect(script).toContain('$hc = Arg 5');
+    expect(script).toContain('$sup = Arg 6');
+    expect(script).toContain('$hc = Arg 7');
     expect(script).toContain('--hc');
     const values = [...script.matchAll(/'([A-Za-z0-9+/=]+)'/g)].map((m) =>
       Buffer.from(m[1], 'base64').toString('utf8'),
@@ -853,6 +935,7 @@ describe('PowerShell builders (output only; pwsh is not required)', () => {
         node: 'C:\\n.exe',
         mainJs: 'C:\\rt\\server\\main.js',
         userData: 'C:\\u',
+        survivesLogout: false,
         method: 'windows-task',
       }),
     ).toThrow(/hc executable/);
@@ -861,6 +944,7 @@ describe('PowerShell builders (output only; pwsh is not required)', () => {
         node: 'C:\\n.exe',
         mainJs: 'C:\\rt\\server\\other.js',
         userData: 'C:\\u',
+        survivesLogout: false,
         method: 'plain',
       }),
     ).toThrow(/main\.js/);
@@ -872,6 +956,7 @@ describe('PowerShell builders (output only; pwsh is not required)', () => {
         node: 'C:\\n.exe',
         mainJs: 'C:\\m\\main.js',
         userData: 'C:\\u',
+        survivesLogout: false,
         method: 'plain',
       }),
     );
@@ -911,6 +996,7 @@ describe('PowerShell scripts: automatic variables and argument quoting', () => {
         node: 'C:\\n.exe',
         mainJs: 'C:\\x\\server\\main.js',
         userData: 'C:\\u',
+        survivesLogout: false,
         method: 'windows-task',
         hcExe: 'C:\\h.exe',
       }),
@@ -918,6 +1004,7 @@ describe('PowerShell scripts: automatic variables and argument quoting', () => {
         node: 'C:\\n.exe',
         mainJs: 'C:\\x\\server\\main.js',
         userData: 'C:\\u',
+        survivesLogout: false,
         method: 'plain',
       }),
     ].map(decodePs);

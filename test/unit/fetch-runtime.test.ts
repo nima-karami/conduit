@@ -179,6 +179,45 @@ describe('ensurePinned (tar.gz)', () => {
     if (process.platform !== 'win32') expect(statSync(binary).mode & 0o777).toBe(0o755);
   });
 
+  it('refuses an extracted binary that does not match binSha256, and leaves nothing behind', async () => {
+    const extractTar = vi.fn(async (archive: string, dir: string) => fakeExtract(archive, dir));
+    await expect(
+      ensurePinned(
+        { ...pin, binSha256: sha('not the binary') },
+        { vendorDir, download: serving(bytes), extractTar },
+      ),
+    ).rejects.toThrow(/binSha256/);
+    expect(readdirSync(vendorDir)).toEqual([]);
+  });
+
+  it('accepts a binary that matches binSha256, and skips the next run while it still matches', async () => {
+    const extractTar = vi.fn(async (archive: string, dir: string) => fakeExtract(archive, dir));
+    const withBin = { ...pin, binSha256: sha('node') };
+    const download = serving(bytes);
+    expect(await ensurePinned(withBin, { vendorDir, download, extractTar })).toBe('fetched');
+    expect(await ensurePinned(withBin, { vendorDir, download, extractTar })).toBe('skipped');
+  });
+
+  it('fetches again a cached archive whose binary no longer matches binSha256', async () => {
+    const extractTar = vi.fn(async (archive: string, dir: string) => fakeExtract(archive, dir));
+    const withBin = { ...pin, binSha256: sha('node') };
+    const download = serving(bytes);
+    await ensurePinned(withBin, { vendorDir, download, extractTar });
+    writeFileSync(join(vendorDir, 'node', 'node'), 'tampered');
+    expect(await ensurePinned(withBin, { vendorDir, download, extractTar })).toBe('fetched');
+    expect(readFileSync(join(vendorDir, 'node', 'node'), 'utf8')).toBe('node');
+  });
+
+  it('needs exactly one renamed binary to check binSha256 against', async () => {
+    const extractTar = vi.fn(async (archive: string, dir: string) => fakeExtract(archive, dir));
+    await expect(
+      ensurePinned(
+        { ...pin, rename: {}, binSha256: sha('node') },
+        { vendorDir, download: serving(bytes), extractTar },
+      ),
+    ).rejects.toThrow(/exactly one binary/);
+  });
+
   it('cleans up after extraction fails and leaves a previously fetched runtime intact', async () => {
     mkdirSync(join(vendorDir, 'node'));
     writeFileSync(join(vendorDir, 'node', 'node'), 'previous');
@@ -198,6 +237,16 @@ describe('ensurePinned (tar.gz)', () => {
 });
 
 describe('build/runtime-pins.json', () => {
+  it('pins the extracted linux binaries, which are what a push verifies against', () => {
+    // sha256 of build/vendor/node/node and build/vendor/hc/conduit-hc (the verified linux copies).
+    expect(pins['linux-x64'].node.binSha256).toBe(
+      '41a74efb34cbde5c7632cdac0cf8bd1a14d0b8d73dc1e82755014d9a9ce70f5c',
+    );
+    expect(pins['linux-x64'].hc.binSha256).toBe(
+      '8c4c0930974e2b31978cbbb14b892cd29d5ace917f4c04ce6dfdd5573e1fe193',
+    );
+  });
+
   it('pins node and hc by version and sha256', () => {
     for (const pin of Object.values(pins).flatMap((set) => Object.values(set)) as RuntimePin[]) {
       expect(pin.sha256).toMatch(/^[0-9a-f]{64}$/);

@@ -48,7 +48,7 @@ function dialOne(o: SshDialOptions, ssh: SshEndpoint): SshDialed {
  * directory that already exists, and ssh's mux client does not check who owns the socket it
  * connects to, so a dir another local user created would receive our link's stdio.
  */
-function prepareControlDir(dir: string, log: NetLog): SshFailure | null {
+export function prepareControlDir(dir: string, log?: Pick<NetLog, 'warn'>): SshFailure | null {
   try {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     // Windows has no getuid, and its tmpdir is per-user, so the owner and mode check is posix-only.
@@ -56,11 +56,11 @@ function prepareControlDir(dir: string, log: NetLog): SshFailure | null {
     const stat = lstatSync(dir);
     const ours = stat.isDirectory() && stat.uid === process.getuid?.() && (stat.mode & 0o077) === 0;
     if (ours) return null;
-    log.warn('ssh control dir is not private to this user', { dir });
+    log?.warn('ssh control dir is not private to this user', { dir });
     return { code: 'ssh_failed', detail: 'control_dir_unsafe' };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    log.warn('ssh control dir unavailable', { detail });
+    log?.warn('ssh control dir unavailable', { detail });
     return { code: 'ssh_failed', detail };
   }
 }

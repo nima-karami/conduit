@@ -56,6 +56,10 @@ async function harness(settings: Record<string, unknown> = {}, tokenBlob?: strin
       userData,
       names,
       secret: () => 'recovery-test-secret',
+      selfRuntime: {
+        local: { version: '0.0.0-test', linkMajor: 1, platform: 'linux', arch: 'x64' },
+        runtime: { nodeExe: null, serverDir: userData, hcExe: userData, shimFile: userData },
+      },
       platform: process.platform,
       e2e: true,
       appVersion: '9.9.9',

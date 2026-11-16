@@ -77,7 +77,20 @@ async function downloadVerified(pin, file, download) {
 }
 
 /**
- * A file pin is verified in place. An archive pin is verified as downloaded, then extracted;
+ * The one binary an archive pin yields: its single rename target. binSha256 names that file, so a
+ * pin that asks for it must rename exactly one.
+ */
+function binaryOf(pin) {
+  const names = Object.values(pin.rename ?? {});
+  if (names.length !== 1) {
+    throw new Error(`${pin.url}: a pin with binSha256 must rename exactly one binary`);
+  }
+  return names[0];
+}
+
+/**
+ * A file pin is verified in place. An archive pin is verified as downloaded, then extracted, and its
+ * binary is checked against binSha256 when the pin has one (spec 5.5: the push verifies against it).
  * `<dest>.sha256` records which archive the dir came from, so it sits beside the dir and is never
  * packaged with it.
  */
@@ -93,13 +106,22 @@ export async function ensurePinned(pin, deps) {
     return 'fetched';
   }
 
+  const bin = pin.binSha256 === undefined ? null : binaryOf(pin);
+  const binMatches = async (dir) =>
+    bin === null ||
+    ((await exists(join(dir, bin))) && (await sha256File(join(dir, bin))) === pin.binSha256);
+
   const stamp = `${target}.sha256`;
   if ((await exists(target)) && (await exists(stamp))) {
     // Archive hashes survive packaging layout changes (e.g. hc -> conduit-hc).
     const renamedFiles = await Promise.all(
       Object.values(pin.rename ?? {}).map((file) => exists(join(target, file))),
     );
-    if ((await readFile(stamp, 'utf8')).trim() === pin.sha256 && renamedFiles.every(Boolean))
+    if (
+      (await readFile(stamp, 'utf8')).trim() === pin.sha256 &&
+      renamedFiles.every(Boolean) &&
+      (await binMatches(target))
+    )
       return 'skipped';
   }
   const archive = `${target}.${pin.archive}.tmp`;
@@ -115,6 +137,9 @@ export async function ensurePinned(pin, deps) {
     }
     for (const [from, to] of Object.entries(pin.rename ?? {})) {
       await rename(join(staging, from), join(staging, to));
+    }
+    if (!(await binMatches(staging))) {
+      throw new Error(`${pin.url}: extracted ${bin} does not match binSha256 ${pin.binSha256}`);
     }
     await rm(stamp, { force: true });
     await rm(target, { recursive: true, force: true });

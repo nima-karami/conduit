@@ -2,6 +2,8 @@ export interface RuntimePin {
   version: string;
   url: string;
   sha256: string;
+  /** An archive pin's extracted binary, which a push verifies against (see ensurePinned). */
+  binSha256?: string;
   /** Path under the vendor dir: the file itself, or the dir an archive is extracted into. */
   dest: string;
   archive?: 'zip' | 'tar.gz';

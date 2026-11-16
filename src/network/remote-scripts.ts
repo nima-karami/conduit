@@ -21,9 +21,32 @@ export function parseFamily(stdout: string): ShellFamily | null {
   return null;
 }
 
+// A command is minted only here. The key is a symbol no other module can name, so a hand-written
+// `{ command }` is a type error, and sshExec or sshArgv cannot be handed a string that was not built
+// by one of this file's builders (plan 4.2.1, spec 8).
+const REMOTE: unique symbol = Symbol('RemoteCommand');
+
 /** The single string ssh runs on the remote; it is passed verbatim, never re-quoted. */
 export interface RemoteCommand {
-  command: string;
+  readonly command: string;
+  readonly [REMOTE]: true;
+}
+
+function remote(command: string): RemoteCommand {
+  return { command, [REMOTE]: true };
+}
+
+/** The family probe, the one command that runs before the shell family is known. */
+export function familyProbeCommand(): RemoteCommand {
+  return remote(FAMILY_PROBE);
+}
+
+/**
+ * Tests only: a raw shell line that is not remote-scripts output, for the ssh plumbing's own tests
+ * (sshExec, sshArgv) that drive a stand-in with arbitrary commands. Production code never calls it.
+ */
+export function remoteForTest(command: string): RemoteCommand {
+  return remote(command);
 }
 
 export interface ProbeResult {
@@ -67,6 +90,7 @@ export interface ManifestEntry {
   size: number;
 }
 
+/** How the remote starts the server. The one definition: ensure-args.ts imports it from here. */
 export type StartMethod = 'scope' | 'plain' | 'windows-task';
 
 const RESULT_PREFIX = 'CONDUIT_RESULT ';
@@ -193,7 +217,7 @@ function shQuote(s: string): string {
 /** Base64 values after the script, which the script decodes with `d`. */
 function shCommand(script: string, values: readonly string[]): RemoteCommand {
   const argv = values.map((v) => shQuote(b64(v)));
-  return { command: ['sh', '-c', shQuote(script), 'conduit', ...argv].join(' ') };
+  return remote(['sh', '-c', shQuote(script), 'conduit', ...argv].join(' '));
 }
 
 /**
@@ -204,9 +228,9 @@ function psCommand(script: string, values: readonly string[]): RemoteCommand {
   const prelude = `$CONDUIT_ARGS = @(${values.map((v) => `'${b64(v)}'`).join(', ')})`;
   const full = `${prelude}\n${PS_HEADER}\n${script}`;
   const encoded = Buffer.from(full, 'utf16le').toString('base64');
-  return {
-    command: `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}`,
-  };
+  return remote(
+    `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}`,
+  );
 }
 
 /** Script text, flush-left and without blank lines, so heredoc terminators match exactly. */
@@ -456,13 +480,60 @@ const SH_FINALIZE = `${SH_HEADER}
   ok '{"ok":true,"existed":false}'
 `;
 
+// The shim dir's node is a copy of the node this version installed, never a second push: the
+// copy needs no bytes over ssh, and works on any remote once its own install has succeeded.
+const SH_COPY_NODE = `${SH_HEADER}
+  ROOT=$(d "$1")
+  V=$(d "$2")
+  SD=$(d "$3")
+  NAME=$(d "$4")
+  safe_abs "$ROOT" || fail unpack "the runtime root is not an absolute, safe path"
+  safe_abs "$SD" || fail unpack "the shim dir is not an absolute, safe path"
+  printf '%s' "$V" | grep -Eq '^[0-9A-Za-z.+-]+$' || fail unpack "a malformed version"
+  case "$V" in .*|*..*) fail unpack "a malformed version" ;; esac
+  case "$NAME" in node|node.exe) ;; *) fail unpack "an unexpected node name" ;; esac
+  SRC="$ROOT/$V/$NAME"
+  [ -f "$SRC" ] || fail unpack "node is not installed at $SRC"
+  TMP="$SD.tmp"
+  [ -d "$TMP" ] || fail unpack "nothing is staged at the shim tmp folder"
+  cp "$SRC" "$TMP/$NAME" || fail disk "could not copy node"
+  chmod 755 "$TMP/$NAME"
+  ok '{"ok":true}'
+`;
+
+const PS_COPY_NODE = `
+$phase = 'unpack'
+$root = Arg 0
+$v = Arg 1
+$sd = Arg 2
+$name = Arg 3
+try {
+  if (-not (SafeAbs $root)) { throw 'the runtime root is not an absolute, safe path' }
+  if (-not (SafeAbs $sd)) { throw 'the shim dir is not an absolute, safe path' }
+  if ($v -notmatch '^[0-9A-Za-z.+-]+$' -or $v.StartsWith('.') -or $v.Contains('..')) { throw 'a malformed version' }
+  if ($name -ne 'node.exe') { throw 'an unexpected node name' }
+  $src = Join-Path (Join-Path $root $v) $name
+  if (-not (Test-Path -LiteralPath $src)) { throw "node is not installed at $src" }
+  $tmp = "$sd.tmp"
+  if (-not (Test-Path -LiteralPath $tmp)) { throw 'nothing is staged at the shim tmp folder' }
+  $phase = 'disk'
+  Copy-Item -LiteralPath $src -Destination (Join-Path $tmp $name) -Force
+  Emit @{ ok = $true }
+} catch {
+  Fail $phase $_.Exception.Message
+}`;
+
 // The ensure step is the installed node running the new headless mode; it prints its own result.
+// --survives-logout and --shim-dir are the flags ensure-args.ts parses; --shim-dir is optional.
 const SH_ENSURE = `${SH_HEADER}
   NODE=$(d "$1")
   MAIN=$(d "$2")
   UD=$(d "$3")
   M=$(d "$4")
-  exec "$NODE" "$MAIN" --ensure-server --user-data "$UD" --start "$M"
+  SV=$(d "$5")
+  SD=$(d "$6")
+  if [ -n "$SD" ]; then exec "$NODE" "$MAIN" --ensure-server --user-data "$UD" --start "$M" --survives-logout "$SV" --shim-dir "$SD"; fi
+  exec "$NODE" "$MAIN" --ensure-server --user-data "$UD" --start "$M" --survives-logout "$SV"
 `;
 
 const PS_HEADER = `$ErrorActionPreference = 'Stop'
@@ -726,11 +797,15 @@ $node = Arg 0
 $main = Arg 1
 $ud = Arg 2
 $method = Arg 3
-$sup = Arg 4
-$hc = Arg 5`;
+$sv = Arg 4
+$sd = Arg 5
+$sup = Arg 6
+$hc = Arg 7`;
 
 const PS_ENSURE_RUN = `
-& $node $main --ensure-server --user-data $ud --start $method
+$ensureArgs = @('--ensure-server', '--user-data', $ud, '--start', $method, '--survives-logout', $sv)
+if ($sd) { $ensureArgs += @('--shim-dir', $sd) }
+& $node $main @ensureArgs
 exit $LASTEXITCODE`;
 
 // ── public builders ───────────────────────────────────────────────────────────
@@ -805,11 +880,37 @@ export function finalizeCommand(
   return f === 'sh' ? shCommand(SH_FINALIZE, values) : psCommand(PS_FINALIZE, values);
 }
 
+/** The shim dir's node: a copy of <runtimeRoot>/<version>/node[.exe] into <shimDir>.tmp. */
+export function copyNodeIntoShimCommand(
+  f: ShellFamily,
+  o: { runtimeRoot: string; version: string; shimDir: string },
+): RemoteCommand {
+  const name = f === 'sh' ? 'node' : 'node.exe';
+  const values = [o.runtimeRoot, o.version, o.shimDir, name];
+  return f === 'sh' ? shCommand(SH_COPY_NODE, values) : psCommand(PS_COPY_NODE, values);
+}
+
 export function ensureCommand(
   f: ShellFamily,
-  o: { node: string; mainJs: string; userData: string; method: StartMethod; hcExe?: string },
+  o: {
+    node: string;
+    mainJs: string;
+    userData: string;
+    method: StartMethod;
+    /** Decided by the probe (startMethodOf); the ensure result reports it back. */
+    survivesLogout: boolean;
+    shimDir?: string;
+    hcExe?: string;
+  },
 ): RemoteCommand {
-  const values = [o.node, o.mainJs, o.userData, o.method];
+  const values = [
+    o.node,
+    o.mainJs,
+    o.userData,
+    o.method,
+    o.survivesLogout ? 'yes' : 'no',
+    o.shimDir ?? '',
+  ];
   if (f === 'sh') return shCommand(SH_ENSURE, values);
   // The supervisor is a separate esbuild entry beside main.js, as the app runs it (supervisorArgs).
   if (!o.mainJs.endsWith('main.js')) throw new Error(`mainJs must be the server's main.js`);

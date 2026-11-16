@@ -11,7 +11,7 @@ import {
 import type { NetworkState } from '../../src/contracts/network-state';
 import type { ServerEventSink } from '../../src/contracts/server-ports';
 import type { ServerSettings } from '../../src/contracts/server-protocol';
-import type { AddSshPeerResult, SshEndpoint } from '../../src/contracts/ssh-link';
+import type { AddSshPeerResult, BootstrapResult, SshEndpoint } from '../../src/contracts/ssh-link';
 import type { TerminalRuntime } from '../../src/contracts/terminal-runtime';
 import { bindableAddresses } from '../../src/network/bind-addresses';
 import type { PairingOutcome } from '../../src/network/pairing-protocol';
@@ -26,6 +26,7 @@ import {
   writeServerVersion,
 } from '../lifecycle/server-secret';
 import { openAuditLog } from './audit-log';
+import { type BootstrapperOptions, createBootstrapper } from './bootstrap';
 import { handleNetworkCall } from './c2';
 import { createDrive, type Drive, type DriveDeps } from './drive';
 import { adoptOwnerKey, type Identity, setOwnerKey } from './identity';
@@ -38,6 +39,7 @@ import { createPairingPort } from './pairing-port';
 import { createPairingService, type PairingService } from './pairing-service';
 import { createSnapshotCoalescer } from './snapshot-coalescer';
 import { createSshDial } from './ssh-dialer';
+import { sshExec } from './ssh-exec';
 import { listenStdioLink, type StdioLinkEndpoint } from './stdio-link-endpoint';
 import { createViewRelay } from './view-relay';
 
@@ -83,7 +85,11 @@ export interface NetworkDeps {
     | 'closeSession'
   >;
   emitTo(peer: object, ...event: Parameters<ServerEventSink>): void;
+  /** This server's own runtime and platform, for pushing it to a remote (bootstrap.ts). */
+  bootstrap: NetworkBootstrapDeps;
 }
+
+export type NetworkBootstrapDeps = Pick<BootstrapperOptions, 'local' | 'runtime' | 'noDownload'>;
 
 export interface NetworkService {
   start(): Promise<void>;
@@ -97,6 +103,8 @@ export interface NetworkService {
   onRevoked(listener: (machineId: string) => void): () => void;
   /** Dials an ssh target and links it; the C2 link.sshAdd call lands here. */
   addSshPeer(ssh: SshEndpoint): Promise<AddSshPeerResult>;
+  /** Installs or attaches the remote, then links it: the C2 link.sshBootstrap call lands here. */
+  bootstrap(target: string): Promise<BootstrapResult>;
   /** What the MCP host reads: remote sessions, address resolution, the outbox. */
   port(): NetworkPort;
   /** The MCP host's side, set once it exists (the host is built after the network). */
@@ -209,6 +217,16 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     join: path.join,
   });
 
+  const bootstrapper = createBootstrapper({
+    ...deps.bootstrap,
+    exec: sshExec,
+    ssh: {
+      sshPath: process.env.CONDUIT_SSH_PATH || 'ssh',
+      sshArgsPrefix: deps.sshArgsPrefix,
+      controlDir: sshControlDir,
+    },
+  });
+
   const manager: LinkManager = createLinkManager({
     identity: () => identity,
     sshDial: createSshDial({
@@ -257,6 +275,15 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       publisher.pushTo(machineId);
     },
   });
+
+  // The link is made only after the remote's ensure step has reported its server up.
+  const bootstrapAndLink = async (target: string): Promise<BootstrapResult> => {
+    const outcome = await bootstrapper(target);
+    if (!outcome.ok) return { ok: false, error: outcome.error };
+    const linked = await manager.addSshPeer(outcome.ssh);
+    if (!linked.ok) return { ok: false, error: linked.error };
+    return { ok: true, machineId: linked.machineId, ssh: outcome.ssh, summary: outcome.summary };
+  };
 
   const linkInfo = () =>
     manager.views().map((v) => ({
@@ -560,7 +587,15 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       await closeListener();
     },
     handle: (method, params, peer) =>
-      handleNetworkCall(method, params, { pairing, manager, state, relay, drive, peer }),
+      handleNetworkCall(method, params, {
+        pairing,
+        manager,
+        state,
+        relay,
+        drive,
+        bootstrap: bootstrapAndLink,
+        peer,
+      }),
     disconnected: (peer) => relay.disconnected(peer),
     async settingsChanged() {
       const s = deps.settings();
@@ -575,6 +610,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     state,
     onRevoked: (l) => manager.onRevoked(l),
     addSshPeer: (ssh) => manager.addSshPeer(ssh),
+    bootstrap: bootstrapAndLink,
     port: () => networkPort,
     setMcp(port) {
       mcp = port;

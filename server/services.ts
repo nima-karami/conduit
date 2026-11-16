@@ -28,7 +28,7 @@ import type { ShellCore } from './lifecycle/shell';
 import { type AppEventSink, createMcp, type McpServerDeps, type ServerMcp } from './mcp';
 import { ensureHookClient } from './mcp/hook-client-file';
 import type { PreviousShim } from './mcp/install';
-import { createNetwork, type NetworkService } from './network';
+import { createNetwork, type NetworkBootstrapDeps, type NetworkService } from './network';
 import { loadIdentity, readOnlyMachineId } from './network/identity';
 import { monitorRows } from './network/monitor-publisher';
 import { createRuntimeServices } from './runtime';
@@ -55,6 +55,8 @@ export interface ServicesOptions {
   shim: { execPath: string; shimPath: string };
   packaged?: boolean;
   previousShims?: readonly PreviousShim[];
+  /** This server's own files and platform, which a bootstrap pushes to a remote (network/bootstrap.ts). */
+  selfRuntime: Omit<NetworkBootstrapDeps, 'noDownload'>;
   emit: ServerEventSink;
   emitTo: AppEventSink;
   stopping(): boolean;
@@ -110,6 +112,14 @@ const isMcpMessage = (m: unknown): m is McpRendererMessage =>
  * launch, W5 needs W4): the two W5 ports are forwarded lazily, and nothing calls them before
  * createServices returns.
  */
+/**
+ * The push-only switch. CONDUIT_E2E_NO_DOWNLOAD counts only under --e2e, as the ssh argv prefix does
+ * (plan decision 5): production never reads it, so the environment cannot force a push.
+ */
+export function noDownloadOf(o: Pick<ServicesOptions, 'e2e' | 'env'>): boolean {
+  return o.e2e && o.env.CONDUIT_E2E_NO_DOWNLOAD === '1';
+}
+
 export function createServices(o: ServicesOptions) {
   const { log } = o;
   let mcp: ServerMcp | undefined;
@@ -272,6 +282,11 @@ export function createServices(o: ServicesOptions) {
       ? null
       : createNetwork({
           sshArgsPrefix: sshArgs.kind === 'prefix' ? sshArgs.argv : undefined,
+          // Only e2e may force the push path; see the net-ssh-bootstrap scenario.
+          bootstrap: {
+            ...o.selfRuntime,
+            noDownload: noDownloadOf(o),
+          },
           dir: networkDir,
           userData: o.userData,
           appVersion: o.appVersion,

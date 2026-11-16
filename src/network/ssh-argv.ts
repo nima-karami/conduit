@@ -1,4 +1,5 @@
 import type { SshFailure, SshNeedsPersonReason } from '../contracts/ssh-link';
+import type { RemoteCommand } from './remote-scripts';
 
 // The remote command is one ssh argument that the remote shell re-parses, so an arg with a line
 // break would split it, and a NUL cannot cross an exec boundary at all. See plan decision 7.
@@ -10,20 +11,36 @@ export function posixQuote(args: readonly string[]): string | null {
   return args.map((arg) => `'${arg.replace(/'/g, `'\\''`)}'`).join(' ');
 }
 
+// Only a NUL cannot cross the exec boundary; line breaks are the script's own and pass through.
+function rawOf(text: string): string | null {
+  return text.includes('\0') ? null : text;
+}
+
 // ssh expands %h and %r into a user's ProxyCommand and Match exec lines, so a target with shell
 // metacharacters reaches a local shell (CVE-2023-51385). Only host-name characters are allowed.
 const TARGET_ALLOWED = /^[A-Za-z0-9._@:%+[\]-]+$/;
 
-export function sshArgv(o: {
-  target: string;
-  controlPath: string;
-  remote: readonly string[];
-}): string[] | { error: 'bad_target' | 'bad_arg' } {
+/** The one target rule: C2 checks it before a call reaches ssh, and sshArgv checks it again. */
+export function isSshTarget(target: string): boolean {
+  return TARGET_ALLOWED.test(target) && !target.startsWith('-');
+}
+
+/**
+ * `rawRemote` is for remote-scripts.ts strings only. Its scripts are multi-line sh text the remote
+ * shell must parse as written, and posixQuote would refuse their newlines and re-quote them into one
+ * word. Nothing else may be fed here: an argv is always quoted through `remote`.
+ */
+export type SshArgvInput = { target: string; controlPath: string } & (
+  | { remote: readonly string[] }
+  | { rawRemote: RemoteCommand }
+);
+
+export function sshArgv(o: SshArgvInput): string[] | { error: 'bad_target' | 'bad_arg' } {
   // A leading '-' would be read as an option even after `--` is refused here, not trusted to ssh.
-  if (!TARGET_ALLOWED.test(o.target) || o.target.startsWith('-')) {
+  if (!isSshTarget(o.target)) {
     return { error: 'bad_target' };
   }
-  const remote = posixQuote(o.remote);
+  const remote = 'rawRemote' in o ? rawOf(o.rawRemote.command) : posixQuote(o.remote);
   if (remote === null) return { error: 'bad_arg' };
   // Keepalives bound how long a dead link takes to show (docs/runs/2026-11-16-CON-35/gates.md).
   // BatchMode keeps every prompt from blocking: a prompt becomes a typed failure instead.

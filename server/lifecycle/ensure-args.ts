@@ -1,9 +1,11 @@
 import { isAbsolute } from 'node:path';
+import type { StartMethod } from '../../src/network/remote-scripts';
 import { argValue } from './cli-args';
 
-/** How the core and supervisor are started on this machine; decided by the probe (plan decision 4). */
-const START_METHODS = ['scope', 'plain', 'windows-task'] as const;
-export type StartMethod = (typeof START_METHODS)[number];
+// The one StartMethod is defined beside the probe that decides it (remote-scripts.ts).
+const START_METHODS: readonly StartMethod[] = ['scope', 'plain', 'windows-task'];
+const isStartMethod = (x: string | undefined): x is StartMethod =>
+  START_METHODS.some((m) => m === x);
 
 export interface EnsureArgs {
   userData: string;
@@ -27,7 +29,7 @@ export function parseEnsureArgs(args: readonly string[]): EnsureArgsResult {
   if (!isAbsolute(userData))
     return { ok: false, error: `--user-data must be an absolute path\n${ENSURE_USAGE}` };
   const start = argValue(args, '--start');
-  if (!start || !(START_METHODS as readonly string[]).includes(start))
+  if (!isStartMethod(start))
     return {
       ok: false,
       error: `--start must be one of ${START_METHODS.join(', ')}\n${ENSURE_USAGE}`,
@@ -45,7 +47,7 @@ export function parseEnsureArgs(args: readonly string[]): EnsureArgsResult {
     ok: true,
     args: {
       userData,
-      method: start as StartMethod,
+      method: start,
       survivesLogout: survives === 'yes',
       ...(hc ? { hc } : {}),
       ...(shimDir ? { shimDir } : {}),

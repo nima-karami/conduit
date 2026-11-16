@@ -45,6 +45,7 @@
       "version": "24.18.0",
       "url": "https://nodejs.org/dist/v24.18.0/node-v24.18.0-linux-x64.tar.gz",
       "sha256": "783130984963db7ba9cbd01089eaf2c2efb055c7c1693c943174b967b3050cb8",
+      "binSha256": "41a74efb34cbde5c7632cdac0cf8bd1a14d0b8d73dc1e82755014d9a9ce70f5c",
       "dest": "node",
       "archive": "tar.gz",
       "stripComponents": 1,
@@ -54,6 +55,7 @@
       "version": "0.1.16",
       "url": "https://releases.herdr.dev/core/0.1.16/herdr-core-linux-x86_64.tar.gz",
       "sha256": "58d6861176dc6fe905b58880d5bff07a9959be613a98e5d66b4583b04b6cfa45",
+      "binSha256": "8c4c0930974e2b31978cbbb14b892cd29d5ace917f4c04ce6dfdd5573e1fe193",
       "dest": "hc",
       "archive": "tar.gz",
       "rename": { "herdr-core": "conduit-hc" }
