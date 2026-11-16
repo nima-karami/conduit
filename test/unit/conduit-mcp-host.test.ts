@@ -7757,14 +7757,41 @@ describe('createConduitMcpHost — a remote lead: the refusals the host adds (CO
     expect(h.opens).toEqual([]);
   });
 
-  it('a remote open_session with a message is peer_unsupported, and opens nothing', async () => {
+  // Behaviour change (F3): a remote lead's first message is now delivered, not refused.
+  it('a remote open_session with a message opens the session and stores the message from the lead', async () => {
     const h = await withLocal();
     const r = await h.host.networkPort().callAsRemote(LEAD, 'open_session', {
       path: '/w/wt',
       agent: 'e2e-fake-mcp',
-      message: 'start',
+      message: 'start on T1',
     });
-    expect(r).toMatchObject({ ok: false, error: { code: 'peer_unsupported' } });
+    expect(r).toMatchObject({
+      ok: true,
+      value: { session_id: 'n1', message: { id: expect.any(String) } },
+    });
+    expect(h.opens).toHaveLength(1);
+    const n1 = await launch(h, 'n1');
+    const cb = await client(h.ep, n1.token);
+    const inbox = await cb.call('read_inbox');
+    expect(inbox.body.messages).toHaveLength(1);
+    expect(inbox.body.messages[0]).toMatchObject({
+      message_id: expect.any(String),
+      from: 'claude-3@m-0123abcd',
+    });
+    expect(inbox.body.messages[0].body).toContain('your lead');
+    expect(inbox.body.messages[0].body).toContain('start on T1');
+  });
+
+  it('a remote lead without messaging is tool_disabled, and opens nothing', async () => {
+    const h = await withLocal();
+    const r = await h.host
+      .networkPort()
+      .callAsRemote(
+        { ...LEAD, capabilities: { messaging: false, monitor: true, drive: false } },
+        'open_session',
+        { path: '/w/wt', agent: 'e2e-fake-mcp', message: 'start' },
+      );
+    expect(r).toMatchObject({ ok: false, error: { code: 'tool_disabled' } });
     expect(h.opens).toEqual([]);
   });
 
