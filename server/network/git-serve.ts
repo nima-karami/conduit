@@ -187,17 +187,13 @@ async function ownsGitDir(
 /**
  * Whether a git dir the session can write reads outside it through its own contents. git follows a
  * symlink anywhere under the dir (objects, a pack, a loose object, refs) and an alternates file names
- * extra object stores, so either could serve an outside repo's commits and blobs by sha. Returns
- * the folders it walked, with their mtimes, when the answer may be reused (see ReachMemo).
+ * extra object stores, so either could serve an outside repo's commits and blobs by sha.
  */
-async function walkGitDir(
-  dir: string,
-  roots: readonly string[],
-): Promise<{ reaches: boolean; stamps: Map<string, bigint> | null }> {
+async function gitDirReachesOut(dir: string, roots: readonly string[]): Promise<boolean> {
   for (const alt of ['objects/info/alternates', 'objects/info/http-alternates']) {
     try {
       await fs.promises.lstat(path.join(dir, alt));
-      return { reaches: true, stamps: null };
+      return true;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== 'ENOENT' && code !== 'ENOTDIR') throw err;
@@ -205,61 +201,13 @@ async function walkGitDir(
   }
   // A recursive listing reports symlinks without following them, so a linked dir is never walked.
   const entries = await fs.promises.readdir(dir, { recursive: true, withFileTypes: true });
-  const folders = [dir];
-  let linked = false;
   for (const e of entries) {
-    if (e.isDirectory()) folders.push(path.join(e.parentPath, e.name));
     if (!e.isSymbolicLink()) continue;
-    linked = true;
     // A dangling link counts as outward: its target could be created outside after this check.
     const target = await fs.promises.realpath(path.join(e.parentPath, e.name)).catch(() => null);
-    if (target === null || !isInsideAnyRealRoot(target, roots))
-      return { reaches: true, stamps: null };
+    if (target === null || !isInsideAnyRealRoot(target, roots)) return true;
   }
-  // A link's target can change outside this dir without touching any mtime in it, so a dir holding
-  // one is walked every time.
-  return { reaches: false, stamps: linked ? null : await stampsOf(folders) };
-}
-
-/** Each folder's mtime, or null when one is gone or no longer a folder. */
-async function stampsOf(folders: readonly string[]): Promise<Map<string, bigint> | null> {
-  const stamps = new Map<string, bigint>();
-  for (const f of folders) {
-    const st = await fs.promises.lstat(f, { bigint: true }).catch(() => null);
-    if (st === null || !st.isDirectory()) return null;
-    stamps.set(f, st.mtimeNs);
-  }
-  return stamps;
-}
-
-/**
- * Clean walks of a git dir, reused while no folder in it changed (CON-35 security review M4: every
- * served read, polled every 5 s, walked all of objects/). Adding, removing, renaming or replacing
- * an entry, a planted link or alternates file included, changes its parent folder's mtime, so an
- * unchanged set of folder mtimes means an unchanged set of entries. Only a clean answer is kept.
- */
-type ReachMemo = Map<string, Map<string, bigint>>;
-const REACH_MEMO_MAX = 64;
-
-async function gitDirReachesOut(
-  dir: string,
-  roots: readonly string[],
-  memo: ReachMemo,
-): Promise<boolean> {
-  const key = `${dir}\0${roots.join('\0')}`;
-  const known = memo.get(key);
-  if (known !== undefined) {
-    const now = await stampsOf([...known.keys()]);
-    if (now !== null && [...known].every(([f, t]) => now.get(f) === t)) return false;
-    memo.delete(key);
-  }
-  const { reaches, stamps } = await walkGitDir(dir, roots);
-  if (!reaches && stamps !== null) {
-    // Bounded: a session's repos are few, and a forgotten entry only costs one more walk.
-    if (memo.size >= REACH_MEMO_MAX) memo.clear();
-    memo.set(key, stamps);
-  }
-  return reaches;
+  return false;
 }
 
 /**
@@ -269,10 +217,9 @@ async function gitDirReachesOut(
 async function anyGitDirReachesOut(
   dirs: readonly string[],
   roots: readonly string[],
-  memo: ReachMemo,
 ): Promise<boolean> {
   for (const dir of new Set(dirs.map((d) => realPathLeaf(d)))) {
-    if (isInsideAnyRealRoot(dir, roots) && (await gitDirReachesOut(dir, roots, memo))) return true;
+    if (isInsideAnyRealRoot(dir, roots) && (await gitDirReachesOut(dir, roots))) return true;
   }
   return false;
 }
@@ -280,7 +227,6 @@ async function anyGitDirReachesOut(
 export function createGitServe(deps: GitServeDeps): GitServe {
   /** The last `fs.refused` audit per link, so a flood of refusals audits once per window. */
   const lastRefusal = new Map<string, number>();
-  const reachMemo: ReachMemo = new Map();
 
   const refuse = (machineId: string, reason: string): void => {
     const at = deps.now();
@@ -314,7 +260,7 @@ export function createGitServe(deps: GitServeDeps): GitServe {
     if (gitDir === '' || commonDir === '') return { kind: 'failed' };
     if (
       !(await ownsGitDir(top, gitDir, commonDir, roots)) ||
-      (await anyGitDirReachesOut([gitDir, commonDir], roots, reachMemo))
+      (await anyGitDirReachesOut([gitDir, commonDir], roots))
     ) {
       refuse(machineId, 'git_dir_outside');
       return { kind: 'refused' };

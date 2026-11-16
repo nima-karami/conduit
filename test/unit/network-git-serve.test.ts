@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AuditEvent } from '../../server/network/audit-log';
 import { FS_REFUSAL_AUDIT_MS } from '../../server/network/fs-serve';
 import {
@@ -696,7 +696,7 @@ describe('git-serve', () => {
     expect(link?.added).toBe(1);
   });
 
-  describe('the git-dir check is reused only while nothing in it changed (security review M4)', () => {
+  describe('the git-dir check runs on every request (security review M4: a memo was unsafe)', () => {
     let secret: string;
     let secretSha: string;
     beforeEach(async () => {
@@ -708,65 +708,37 @@ describe('git-serve', () => {
       await initRepo(proj);
     });
 
-    const readdirCalls = (spy: { mock: { calls: unknown[][] } }) =>
-      spy.mock.calls.filter((c) => String(c[0]).includes(`${path.sep}.git`)).length;
-
-    it('a second read of an unchanged repo does not walk its git dir again', async () => {
-      const spy = vi.spyOn(fs.promises, 'readdir');
-      try {
-        const h = harness();
-        await h.serve.onFrame(CONTROLLER, req('m1', 'status', {}));
-        const first = readdirCalls(spy);
-        expect(first).toBeGreaterThan(0);
-        await h.serve.onFrame(CONTROLLER, req('m2', 'status', {}));
-        expect(readdirCalls(spy)).toBe(first);
-        expect(replyTo(h.sent, 'm2').ok).toBe(true);
-      } finally {
-        spy.mockRestore();
-      }
-    });
-
-    it('a link planted in an existing objects folder after a clean check is refused', async () => {
-      const h = harness();
-      await h.serve.onFrame(CONTROLLER, req('p1', 'status', {}));
-      expect(replyTo(h.sent, 'p1').ok).toBe(true);
-      // Into a folder that already exists: only that folder's mtime moves, not objects/.
-      const objects = path.join(proj, '.git', 'objects');
-      const existing = fs.readdirSync(objects).find((d) => /^[0-9a-f]{2}$/.test(d));
-      if (existing === undefined) throw new Error('no loose object folder');
-      fs.symlinkSync(path.join(root, 'outside.txt'), path.join(objects, existing, 'zz-planted'));
-      await h.serve.onFrame(CONTROLLER, req('p2', 'log', {}));
-      const res = replyTo(h.sent, 'p2');
-      if (res.ok) throw new Error('expected a refusal');
-      expect(res.error.code).toBe('refused');
-    });
-
-    it('an alternates file written after a clean check is refused', async () => {
+    it('an alternates file written after a clean read, with its folder mtime set back, is refused', async () => {
       const h = harness();
       await h.serve.onFrame(CONTROLLER, req('a1', 'status', {}));
       expect(replyTo(h.sent, 'a1').ok).toBe(true);
-      fs.writeFileSync(
-        path.join(proj, '.git', 'objects', 'info', 'alternates'),
-        `${path.join(secret, '.git', 'objects')}\n`,
-      );
+      const info = path.join(proj, '.git', 'objects', 'info');
+      const before = fs.statSync(info);
+      fs.writeFileSync(path.join(info, 'alternates'), `${path.join(secret, '.git', 'objects')}\n`);
+      // A writer can put the folder's mtime back; nothing may trust it to skip the check.
+      fs.utimesSync(info, before.atime, before.mtime);
       await h.serve.onFrame(CONTROLLER, req('a2', 'show', { sha: secretSha }));
       const res = replyTo(h.sent, 'a2');
       if (res.ok) throw new Error('expected a refusal');
       expect(res.error.code).toBe('refused');
+      expect(JSON.stringify(h.sent)).not.toContain('TOPSECRET');
     });
 
-    it('a git dir holding a link is walked every time', async () => {
-      fs.symlinkSync(path.join(proj, 'a.txt'), path.join(proj, '.git', 'inside-link'));
-      const spy = vi.spyOn(fs.promises, 'readdir');
-      try {
-        const h = harness();
-        await h.serve.onFrame(CONTROLLER, req('w1', 'status', {}));
-        const first = readdirCalls(spy);
-        await h.serve.onFrame(CONTROLLER, req('w2', 'status', {}));
-        expect(readdirCalls(spy)).toBeGreaterThan(first);
-      } finally {
-        spy.mockRestore();
-      }
+    it('a link planted in an existing objects folder after a clean read is refused', async () => {
+      const h = harness();
+      await h.serve.onFrame(CONTROLLER, req('p1', 'status', {}));
+      expect(replyTo(h.sent, 'p1').ok).toBe(true);
+      const objects = path.join(proj, '.git', 'objects');
+      const existing = fs.readdirSync(objects).find((d) => /^[0-9a-f]{2}$/.test(d));
+      if (existing === undefined) throw new Error('no loose object folder');
+      const folder = path.join(objects, existing);
+      const before = fs.statSync(folder);
+      fs.symlinkSync(path.join(root, 'outside.txt'), path.join(folder, 'zz-planted'));
+      fs.utimesSync(folder, before.atime, before.mtime);
+      await h.serve.onFrame(CONTROLLER, req('p2', 'log', {}));
+      const res = replyTo(h.sent, 'p2');
+      if (res.ok) throw new Error('expected a refusal');
+      expect(res.error.code).toBe('refused');
     });
   });
 
