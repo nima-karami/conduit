@@ -38,19 +38,23 @@ const endpoints: McpEndpoint[] = [];
 const sockets: net.Socket[] = [];
 afterEach(async () => {
   drops.length = 0;
+  warnings.length = 0;
   for (const s of sockets.splice(0)) s.destroy();
   for (const e of endpoints.splice(0)) await e.close();
 });
 
 const drops: string[] = [];
+const warnings: string[] = [];
 const dropLog = {
   debug: (_scope: string, message: string, data?: Record<string, unknown>) => {
     if (message === 'endpoint connection dropped') drops.push(String(data?.why));
   },
-  warn: () => undefined,
+  warn: (_scope: string, message: string) => {
+    warnings.push(message);
+  },
 };
 
-async function serve(rows: () => TokenRows) {
+async function serve(rows: () => TokenRows, opts: { now?: () => number } = {}) {
   const p = testEndpoint();
   const onHook = vi.fn((_sessionId: string, _post: HookPost) => undefined);
   const conns: EndpointConnection[] = [];
@@ -59,6 +63,7 @@ async function serve(rows: () => TokenRows) {
     log: dropLog,
     tokens: { rows },
     onHook,
+    now: opts.now,
     onConnection: (c) => {
       conns.push(c);
     },
@@ -245,5 +250,31 @@ describe('hook posts on the MCP endpoint', () => {
       expect(d.got).toEqual([]);
       expect(drops.at(-1)).toBe('hello too large');
     }
+  });
+
+  it('caps hook posts per session token at 600 a minute, warns once, and starts over on the next minute', async () => {
+    let t = 1_000_000;
+    const { p, onHook } = await serve(live, { now: () => t });
+    // Batches of 100: a larger burst overruns the listen backlog before the endpoint sees it.
+    const first: Array<ReturnType<typeof dial>> = [];
+    for (let batch = 0; batch < 6; batch += 1) {
+      const posts = Array.from({ length: 100 }, () => dial(p));
+      for (const d of posts) d.write(hookLine());
+      await Promise.all(posts.map((d) => d.closed));
+      first.push(...posts);
+    }
+    expect(first.flatMap((d) => d.got)).toEqual(Array(600).fill(ACK_OK));
+    const over = [dial(p), dial(p)];
+    for (const d of over) d.write(hookLine());
+    await Promise.all(over.map((d) => d.closed));
+    expect(over.flatMap((d) => d.got)).toEqual([ACK_REFUSED, ACK_REFUSED]);
+    expect(onHook).toHaveBeenCalledTimes(600);
+    expect(warnings.filter((w) => w.includes('hook posts throttled'))).toHaveLength(1);
+    t += 60_000;
+    const next = dial(p);
+    next.write(hookLine());
+    await next.closed;
+    expect(next.got).toEqual([ACK_OK]);
+    expect(onHook).toHaveBeenCalledTimes(601);
   });
 });

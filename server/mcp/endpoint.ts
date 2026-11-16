@@ -62,6 +62,8 @@ function welcomeFor(hello: { token: string | null }, rows: TokenRows): ShimWelco
 }
 
 const HOOK_LINE_PREFIX = '{"conduitHook"';
+const HOOK_POSTS_PER_MINUTE = 600;
+const MINUTE_MS = 60_000;
 
 /**
  * Reads a first line's kind from its leading whitespace and its first characters only, so it can be
@@ -137,10 +139,34 @@ export function createShimEndpoint(opts: {
   log: EndpointLog;
   tokens: Pick<TokenStorePort, 'rows'>;
   closeFlushMs?: number;
+  now?: () => number;
 }): McpEndpoint {
   const closeFlushMs = opts.closeFlushMs ?? CLOSE_FLUSH_MS;
   const sockets = new Set<net.Socket>();
   let nextId = 1;
+  const now = opts.now ?? (() => Date.now());
+  // see plan review S2: a hook flood must not reach the Activity log unbounded
+  let hookMinute = -1;
+  const hookCounts = new Map<string, number>();
+  const hookWarned = new Set<string>();
+  const hookPostAllowed = (token: string): boolean => {
+    const minute = Math.floor(now() / MINUTE_MS);
+    if (minute !== hookMinute) {
+      hookMinute = minute;
+      hookCounts.clear();
+      hookWarned.clear();
+    }
+    const count = (hookCounts.get(token) ?? 0) + 1;
+    hookCounts.set(token, count);
+    if (count <= HOOK_POSTS_PER_MINUTE) return true;
+    if (!hookWarned.has(token)) {
+      hookWarned.add(token);
+      opts.log.warn('conduit-mcp', 'hook posts throttled for this session this minute', {
+        limit: HOOK_POSTS_PER_MINUTE,
+      });
+    }
+    return false;
+  };
 
   const accept = (socket: net.Socket) => {
     sockets.add(socket);
@@ -219,6 +245,11 @@ export function createShimEndpoint(opts: {
     };
 
     const onHookPost = (obj: Record<string, unknown>) => {
+      if (typeof obj.token === 'string' && !hookPostAllowed(obj.token)) {
+        opts.log.debug('conduit-mcp', 'hook post throttled', { id });
+        write(JSON.stringify(ack(false)));
+        return close();
+      }
       const post = parseHookPost(obj);
       const row = post ? liveRow(post.token, opts.tokens.rows()) : undefined;
       if (!post || !row) {
