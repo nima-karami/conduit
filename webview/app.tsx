@@ -322,6 +322,7 @@ import { createQuitResponder } from './quit-responder';
 import { quitStopFailureDialog } from './quit-stop-dialog';
 import { pushRecentDoc, type RecentDoc, recentPaletteId, recentSubtitle } from './recent-docs';
 import { closeRemoteBuffer } from './remote-file-saves';
+import { remoteRepoPath } from './remote-git-store';
 import { type RemoteKey, remoteKeyId, remoteSessionRows } from './remote-sessions';
 import { openRequest, setRequestOpeners } from './request-open';
 import { sortRequests } from './request-view-model';
@@ -5531,6 +5532,26 @@ export function App() {
               path,
               sessionId: row.id,
               mode,
+            })
+          }
+          onOpenRemoteDiff={(row, path, root) =>
+            dispatchDocs({
+              type: 'open',
+              kind: 'remote-diff',
+              machine: { machineId: row.key.machineId, sessionId: row.key.sessionId },
+              path: remoteRepoPath(root, path),
+              repoRoot: root,
+              sessionId: row.id,
+              mode: 'preview',
+            })
+          }
+          onOpenRemoteHistory={(row, root) =>
+            dispatchDocs({
+              type: 'open',
+              kind: 'remote-history',
+              machine: { machineId: row.key.machineId, sessionId: row.key.sessionId },
+              path: root,
+              sessionId: row.id,
             })
           }
           onMoveMenu={(anchor) =>

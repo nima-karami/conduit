@@ -36,6 +36,15 @@ export async function remoteGit(
   return reply ? reply.result : { ok: false, error: REMOTE_TIMEOUT };
 }
 
+/**
+ * A repo-relative change path (git's `/` form) as B's absolute path, in B's own separator: a
+ * Windows B reports `C:\\repo`, so its file is `C:\\repo\\src\\a.ts`, never a mix.
+ */
+export function remoteRepoPath(root: string, rel: string): string {
+  const sep = root.includes('\\') ? '\\' : '/';
+  return `${root.replace(/[\\/]+$/, '')}${sep}${rel.split('/').join(sep)}`;
+}
+
 /** A repository a session folder sits in, keyed by the root B returned for it. */
 export interface RemoteRepo {
   /** The session folder that reported this repo first. */
