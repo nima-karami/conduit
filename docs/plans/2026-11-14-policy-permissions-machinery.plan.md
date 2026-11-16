@@ -770,3 +770,10 @@ So a Codex orchestrator can take over if Claude stops. The lead (claude-3) recei
 - The lane worktree `scratchpad/lanes/s2-2` is reused for Slice 3.
 - Next: Slice 3 (T3.1, then T3.2 with its carried items: the request-service cap check before commit, the `denied` outcome for a spent override, and the prepared-done commit-false test).
 
+**Slice 3 done; origin/main merged (2026-11-16 00:30 UTC).** The branch tip before this note is c5af6c05.
+- Merges: T3.1 7c04d1c6, T3.2a a6747209, T3.2b 1c73c4e5, Slice 3 e2e 5b635b35; origin/main (CON-27, CON-21, v0.66.0) via 485d1bd7, 40a81fdb and c5af6c05; CON-27 seams 24e223f3.
+- `npm run verify` exit 0 on c5af6c05.
+- e2e remote: `--affected` 43777832616 has 276 PASS, 0 FAIL (scrollback-inrun quarantined); verify job success. policy-permission-requests (late path) passed in 43776821852. The verify job of that run failed once in CON-27's network-service pairing test (a 20 s timeout); it passed 5/5 locally and in 43777832616, so it's recorded as a CI timing flake to watch.
+- Carried to Slice 5 (from the seams re-review, test-only): server-compose-services `readLines` reads only audit.jsonl and activity/*.jsonl; the grant-store peerRevoked test title ("or suspended", with no suspended grant); a network-audit-log test title.
+- Next: Slice 4 (observed lane + T4.1b gap check), then Slice 5 (CHANGELOG incl. the drive-root key note, run report).
+
