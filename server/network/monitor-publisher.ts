@@ -25,6 +25,7 @@ function openerOf(
   entry: DirectoryEntry | undefined,
   bySession: ReadonlyMap<string, DirectoryEntry>,
 ): MonitorSession['openedBy'] {
+  if (entry?.remoteOpener) return { ...entry.remoteOpener };
   if (!entry?.openedBy) return null;
   const opener = bySession.get(entry.openedBy);
   return opener ? { handle: opener.handle, machineId: null } : null;

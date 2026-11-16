@@ -20,7 +20,8 @@ export interface TargetDeps {
 }
 
 export interface TargetCaller {
-  sessionId: string;
+  /** Null for a remote lead, which has no session here (plan decision 4). */
+  sessionId: string | null;
   home: string | null;
 }
 
@@ -131,7 +132,10 @@ export function resolveTargets(
 ): PolicyTarget[] {
   switch (tool) {
     case 'close_session': {
-      const children = args.children === true ? deps.childrenOf(caller.sessionId) : [];
+      const children =
+        args.children === true && caller.sessionId !== null
+          ? deps.childrenOf(caller.sessionId)
+          : [];
       const explicit = handleRefs([...oneString(args.session), ...strings(args.sessions)], deps);
       return sessionTargets([...children, ...explicit]);
     }

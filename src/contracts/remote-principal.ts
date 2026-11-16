@@ -11,3 +11,5 @@ export interface RemotePrincipal {
   controller: boolean;
 }
 export const principalAddress = (p: RemotePrincipal): string => `${p.handle}@${p.machineId}`;
+/** A routed call's lead on a link: the remote principal, with what this side lets that link do. */
+export type RemoteCaller = RemotePrincipal & { capabilities: Capabilities };

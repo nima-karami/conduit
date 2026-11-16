@@ -4,6 +4,7 @@
 import type {
   Capabilities,
   MonitorSnapshot,
+  RoutedTool,
   WireRecipientOutcome,
 } from '../contracts/link-protocol';
 import type {
@@ -11,13 +12,15 @@ import type {
   DisconnectMachineResult,
   MachineView,
 } from '../contracts/machines';
+import type { RemoteCaller } from '../contracts/remote-principal';
 import { parseAddress } from '../network/addresses';
 import type { WaitReading } from './session-waits';
-import type { DirectoryEntry } from './tools';
+import type { DirectoryEntry, StructuredOutput } from './tools';
 import {
   type Handle,
   type MessageRecord,
   type RecipientStatus,
+  type Result,
   type ToolError,
   toolError,
 } from './types';
@@ -64,11 +67,19 @@ export interface NetworkPort {
   connectMachine(machine: string, signal: AbortSignal): Promise<ConnectMachineResult>;
   /** Closes a machine and clears its enabled flag; its remote sessions keep running (disconnect_machine). */
   disconnectMachine(machine: string): Promise<DisconnectMachineResult>;
+  /** This machine's name, shown to a remote lead that must be answered here (remote_ask). */
+  selfName(): string;
 }
 
 /** Implemented by the mcp host; read by server/network. Slice 6 adds its members here. */
 export interface McpNetworkPort {
   localDirectory(): DirectoryEntry[];
+  /** Runs a routed call from a remote lead, as that lead's principal (host.callAsRemote). */
+  callAsRemote(
+    principal: RemoteCaller,
+    tool: RoutedTool,
+    args: Record<string, unknown>,
+  ): Promise<Result<StructuredOutput>>;
   hasMessage(messageId: string): boolean;
   readBlob(sha256: string): Promise<Uint8Array | undefined>;
   /**

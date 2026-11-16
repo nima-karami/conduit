@@ -7,6 +7,7 @@ import { decodePatchBytes, MAX_PATCH_BYTES, parsePatch, patchOverSizeCap } from 
 import type { CommitNode } from '../protocol';
 import { normalizeUrl } from '../web-url';
 import {
+  type Actor,
   type CallWho,
   type CheckResult,
   type ControlCallContext,
@@ -16,9 +17,13 @@ import {
   type Fail,
   fail,
   isFail,
+  isLocalWho,
+  type LocalWho,
+  localOnly,
   type Prepared,
   parseKeys,
   parseObject,
+  reachAdmits,
   type TargetSession,
 } from './control-tools';
 import { classifyRef, lookupCommit, repoRootOf } from './git-refs';
@@ -164,7 +169,7 @@ export function createAppControlHandlers(
   const resolveTarget = (
     v: unknown,
     tool: ReachTool,
-    callerId: string,
+    actor: Actor,
     reach: Reach | undefined,
   ): TargetSession | Fail => {
     if (!validSessionArg(v))
@@ -176,7 +181,7 @@ export function createAppControlHandlers(
     if (remote) return { ok: false, error: remote };
     return fail('unknown_session', `no session "${v}" in list_sessions`, {
       hint: UNKNOWN_SESSION_HINT,
-      valid: all.filter((x) => inReach(tool, reach, callerId, x) === null).map((x) => x.handle),
+      valid: all.filter((x) => inReach(tool, reach, actor, x) === null).map((x) => x.handle),
     });
   };
 
@@ -184,38 +189,56 @@ export function createAppControlHandlers(
   const inReach = (
     tool: ReachTool,
     reach: Reach | undefined,
-    callerId: string,
+    actor: Actor,
     t: TargetSession,
   ): Fail | null => {
     const r: Reach = reach !== undefined && isValidField(tool, 'reach', reach) ? reach : 'self';
-    if (r === 'any' || t.sessionId === callerId) return null;
-    if (r === 'opened' && t.openerSessionId === callerId) return null;
-    if (r === 'window') {
-      const w = deps.ownerWindowOf(t.sessionId);
-      if (w !== null && w === deps.ownerWindowOf(callerId)) return null;
-    }
+    if (r === 'any' || reachAdmits(r, actor, t, deps.ownerWindowOf)) return null;
     return fail('out_of_reach', REACH_REFUSAL[r], {
       hint: `widen ${tool}'s reach in Settings → MCP to act on this session`,
     });
   };
 
+  /** A local-only tool: home() keeps a remote lead out of it, and localOnly narrows the caller. */
+  const preparedLocal = <T>(
+    tool: ControlTool,
+    caller: Caller,
+    check: (who: LocalWho) => Promise<CheckResult<T>>,
+  ) => prepared<T>(tool, caller, localOnly(check));
+
+  /** The close opener a local session records; a remote lead has no session to record. */
+  const closerOf = (caller: Caller, who: CallWho): CloseOpener | undefined =>
+    isLocalWho(who) ? { handle: caller.handle, sessionId: who.sessionId } : undefined;
+
+  /**
+   * A remote lead has no window, so a session whose window is ready is closed there, where the
+   * renderer keeps its unsaved-changes guard. Refused rather than closed around that guard.
+   */
+  const remoteWindowRefusal = (who: CallWho, sessionId: string): Fail | null =>
+    isLocalWho(who) || !windowReadyOf(sessionId)
+      ? null
+      : fail('refused', 'that session has a window on this machine; close it there', {
+          reason: 'remote_window',
+          hint: 'the owner closes it in its window',
+        });
+
   /** The handles this caller may name with this tool: the ones its reach admits. */
-  const validTargets = (tool: ReachTool, callerId: string, reach: Reach | undefined): string[] =>
+  const validTargets = (tool: ReachTool, actor: Actor, reach: Reach | undefined): string[] =>
     deps
       .targets()
-      .filter((x) => inReach(tool, reach, callerId, x) === null)
+      .filter((x) => inReach(tool, reach, actor, x) === null)
       .map((x) => x.handle);
 
   /** Every unknown_session carries the first check's hint and valid list, race path included. */
   const staleSession = (
     message: string,
     tool: ReachTool,
-    callerId: string,
+    actor: Actor,
     reach: Reach | undefined,
   ): Fail =>
     fail('unknown_session', message, {
       hint: UNKNOWN_SESSION_HINT,
-      valid: validTargets(tool, callerId, reach),
+      valid: validTargets(tool, actor, reach),
     });
 
   const routeWindow = (sessionId: string): number | Fail => {
@@ -227,13 +250,12 @@ export function createAppControlHandlers(
   const recheckTarget = (
     tool: 'close_session' | 'focus_session' | 'attach_folder',
     targetId: string,
-    callerId: string,
+    actor: Actor,
     reach: Reach | undefined,
   ): Fail | null => {
     const t = deps.targets().find((x) => x.sessionId === targetId);
-    if (!t)
-      return staleSession('that session is no longer in list_sessions', tool, callerId, reach);
-    return inReach(tool, reach, callerId, t);
+    if (!t) return staleSession('that session is no longer in list_sessions', tool, actor, reach);
+    return inReach(tool, reach, actor, t);
   };
 
   /** The repo must be the caller's own folder: home or an attached root (plan B6). */
@@ -320,7 +342,7 @@ export function createAppControlHandlers(
           : staleSession(
               'that session is not in its window any more',
               'close_session',
-              closedBy.sessionId,
+              { sessionId: closedBy.sessionId },
               ctx.reach,
             ),
       );
@@ -347,16 +369,14 @@ export function createAppControlHandlers(
     });
     if (isFail(e.target)) return refused(e.target);
     const t = e.target;
-    const again = recheckTarget('close_session', t.sessionId, who.sessionId, ctx.reach);
+    const again = recheckTarget('close_session', t.sessionId, who, ctx.reach);
     if (again) return refused(again);
+    const windowed = remoteWindowRefusal(who, t.sessionId);
+    if (windowed) return refused(windowed);
     const charge = who.spend();
     if (isFail(charge)) return refused(charge);
     try {
-      const r = await closeRouted(
-        t.sessionId,
-        { handle: caller.handle, sessionId: who.sessionId },
-        ctx,
-      );
+      const r = await closeRouted(t.sessionId, closerOf(caller, who), ctx);
       // A failed close refunds its token, as a single close does.
       if (!r.ok) {
         charge.refund();
@@ -378,20 +398,30 @@ export function createAppControlHandlers(
     }
   };
 
+  const childrenEntries = (who: CallWho): CloseEntry[] =>
+    isLocalWho(who)
+      ? deps
+          .targets()
+          .filter((t) => t.openerSessionId === who.sessionId && t.sessionId !== who.sessionId)
+          .map((t) => ({ name: t.handle, target: t }))
+      : [];
+
   const closeMany = (
     caller: Caller,
     who: CallWho,
     form: Exclude<CloseForm, { form: 'session' }>,
     ctx: ControlCallContext,
   ): CheckResult<CloseSessionsOutput> => {
+    // A remote lead opened nothing here, so it has no children to close.
+    if (form.form === 'children' && !isLocalWho(who))
+      return fail('invalid_args', 'children needs a local session', {
+        hint: 'name the sessions with session or sessions',
+      });
     const listed: CloseEntry[] =
       form.form === 'children'
-        ? deps
-            .targets()
-            .filter((t) => t.openerSessionId === who.sessionId && t.sessionId !== who.sessionId)
-            .map((t) => ({ name: t.handle, target: t }))
+        ? childrenEntries(who)
         : form.sessions.map((raw) => {
-            const t = resolveTarget(raw, 'close_session', who.sessionId, ctx.reach);
+            const t = resolveTarget(raw, 'close_session', who, ctx.reach);
             return { name: isFail(t) ? raw : t.handle, target: t };
           });
     // A session named twice (handle and id, say) closes once; unknown names have no session to match.
@@ -429,23 +459,21 @@ export function createAppControlHandlers(
         const form = closeFormOf(raw);
         if (isFail(form)) return form;
         if (form.form !== 'session') return closeMany(caller, who, form, ctx);
-        const t = resolveTarget(form.session, 'close_session', who.sessionId, ctx.reach);
+        const t = resolveTarget(form.session, 'close_session', who, ctx.reach);
         if (isFail(t)) return t;
-        const out = inReach('close_session', ctx.reach, who.sessionId, t);
+        const out = inReach('close_session', ctx.reach, who, t);
         if (out) return out;
+        const windowed = remoteWindowRefusal(who, t.sessionId);
+        if (windowed) return windowed;
         const ownerWindow = deps.ownerWindowOf(t.sessionId);
         const windowReady = ownerWindow !== null && deps.windowReady(ownerWindow);
         return {
           summary: { tool: 'close_session', target: t.handle },
           ...(windowReady ? { routesUi: true as const } : {}),
           exec: async (token) => {
-            const again = recheckTarget('close_session', t.sessionId, who.sessionId, ctx.reach);
+            const again = recheckTarget('close_session', t.sessionId, who, ctx.reach);
             if (again) return again;
-            const r = await closeRouted(
-              t.sessionId,
-              { handle: caller.handle, sessionId: who.sessionId },
-              ctx,
-            );
+            const r = await closeRouted(t.sessionId, closerOf(caller, who), ctx);
             if (!r.ok) return r;
             token.keep();
             logged('close_session', caller, { target: t.sessionId });
@@ -455,12 +483,12 @@ export function createAppControlHandlers(
       }),
 
     prepareFocusSession: (caller, raw, ctx) =>
-      prepared('focus_session', caller, async (who) => {
+      preparedLocal('focus_session', caller, async (who) => {
         const o = parseKeys(raw, ['session']);
         if (isFail(o)) return o;
-        const t = resolveTarget(o.session, 'focus_session', who.sessionId, ctx.reach);
+        const t = resolveTarget(o.session, 'focus_session', who, ctx.reach);
         if (isFail(t)) return t;
-        const out = inReach('focus_session', ctx.reach, who.sessionId, t);
+        const out = inReach('focus_session', ctx.reach, who, t);
         if (out) return out;
         if (ctx.move === 'no')
           return fail('move_not_allowed', "focus_session is set to never switch the human's view");
@@ -469,7 +497,7 @@ export function createAppControlHandlers(
         return {
           summary: { tool: 'focus_session', target: t.handle },
           exec: async (token) => {
-            const again = recheckTarget('focus_session', t.sessionId, who.sessionId, ctx.reach);
+            const again = recheckTarget('focus_session', t.sessionId, who, ctx.reach);
             if (again) return again;
             const w2 = routeWindow(t.sessionId);
             if (isFail(w2)) return w2;
@@ -483,7 +511,7 @@ export function createAppControlHandlers(
       }),
 
     prepareAttachFolder: (caller, raw, ctx) =>
-      prepared('attach_folder', caller, async (who) => {
+      preparedLocal('attach_folder', caller, async (who) => {
         const o = parseObject(raw, ['path', 'session']);
         if (isFail(o)) return o;
         // Relative to the caller's home, whichever session it attaches to (spec §2.1).
@@ -494,9 +522,9 @@ export function createAppControlHandlers(
           handle: caller.handle,
         };
         if (named) {
-          const t = resolveTarget(o.session, 'attach_folder', who.sessionId, ctx.reach);
+          const t = resolveTarget(o.session, 'attach_folder', who, ctx.reach);
           if (isFail(t)) return t;
-          const out = inReach('attach_folder', ctx.reach, who.sessionId, t);
+          const out = inReach('attach_folder', ctx.reach, who, t);
           if (out) return out;
           target = t;
         }
@@ -504,12 +532,7 @@ export function createAppControlHandlers(
           summary: { tool: 'attach_folder', path: abs, target: target.handle },
           exec: async (token) => {
             if (named) {
-              const again = recheckTarget(
-                'attach_folder',
-                target.sessionId,
-                who.sessionId,
-                ctx.reach,
-              );
+              const again = recheckTarget('attach_folder', target.sessionId, who, ctx.reach);
               if (again) return again;
             }
             const r = await deps.addRoot(target.sessionId, abs);
@@ -526,7 +549,7 @@ export function createAppControlHandlers(
                   return staleSession(
                     'that session is no longer open',
                     'attach_folder',
-                    who.sessionId,
+                    who,
                     ctx.reach,
                   );
                 default:
@@ -548,7 +571,7 @@ export function createAppControlHandlers(
       }),
 
     prepareCloseFiles: (caller, raw, ctx) =>
-      prepared('close_files', caller, async (who) => {
+      preparedLocal('close_files', caller, async (who) => {
         const o = parseKeys(raw, ['paths', 'all']);
         if (isFail(o)) return o;
         if ((o.paths === undefined) === (o.all === undefined))
@@ -602,7 +625,7 @@ export function createAppControlHandlers(
       }),
 
     prepareOpenReview: (caller, raw, ctx) =>
-      prepared('open_review', caller, async (who) => {
+      preparedLocal('open_review', caller, async (who) => {
         const o = parseKeys(raw, ['source', 'repo']);
         if (isFail(o)) return o;
         const any = parseKeys(o.source, ['kind', 'scope', 'ref', 'base', 'head']);
@@ -688,7 +711,7 @@ export function createAppControlHandlers(
       }),
 
     prepareOpenDiff: (caller, raw, ctx) =>
-      prepared('open_diff', caller, async (who) => {
+      preparedLocal('open_diff', caller, async (who) => {
         const o = parseKeys(raw, ['patch', 'patch_file', 'title', 'focus']);
         if (isFail(o)) return o;
         if ((o.patch === undefined) === (o.patch_file === undefined)) {
@@ -773,7 +796,7 @@ export function createAppControlHandlers(
       }),
 
     prepareOpenGitHistory: (caller, raw, ctx) =>
-      prepared('open_git_history', caller, async (who) => {
+      preparedLocal('open_git_history', caller, async (who) => {
         const o = parseKeys(raw, ['repo', 'ref']);
         if (isFail(o)) return o;
         if (o.ref !== undefined && typeof o.ref !== 'string')
@@ -803,7 +826,7 @@ export function createAppControlHandlers(
       }),
 
     prepareOpenUrl: (caller, raw, ctx) =>
-      prepared('open_url', caller, async (who) => {
+      preparedLocal('open_url', caller, async (who) => {
         const o = parseKeys(raw, ['url', 'focus']);
         if (isFail(o)) return o;
         if (typeof o.url !== 'string' || tooLong(o.url)) return urlTooLong();

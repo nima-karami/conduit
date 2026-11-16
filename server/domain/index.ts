@@ -1336,7 +1336,8 @@ export function createDomain(deps: DomainDeps): Domain {
   async function openSession(req: McpOpenRequest): Promise<DomainOpenOutcome> {
     if (deps.stopping())
       return { ok: false, code: 'server_stopping', message: 'Conduit is stopping' };
-    const caller = mgr.get(req.callerSessionId);
+    // A remote lead has no session here, so there is no caller session to place beside.
+    const caller = req.callerSessionId === null ? undefined : mgr.get(req.callerSessionId);
     const command = req.launch.kind === 'command' ? req.launch.command : undefined;
     const agentId = req.launch.kind === 'agent' ? req.launch.agentId : COMMAND_AGENT_ID;
     const r = await create({
@@ -1350,7 +1351,10 @@ export function createDomain(deps: DomainDeps): Domain {
       openedBy: req.openedBy,
       closeWhenDone: req.closeWhenDone,
       ...(req.model !== undefined ? { model: req.model } : {}),
-      opener: { sessionId: req.callerSessionId, focus: req.focus },
+      opener: {
+        ...(req.callerSessionId === null ? {} : { sessionId: req.callerSessionId }),
+        focus: req.focus,
+      },
     });
     if ('error' in r) {
       return r.error === 'unknown_agent'

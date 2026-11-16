@@ -32,6 +32,7 @@ import {
   serializeGrantsFile,
   serializePolicyFile,
 } from '../../src/conduit-mcp/policy-file';
+import { BUILT_IN_PROFILES } from '../../src/conduit-mcp/policy-profiles';
 import type { OneUseOverride } from '../../src/conduit-mcp/policy-types';
 import type { NetworkPort, RemoteEntry } from '../../src/conduit-mcp/remote-routing';
 import type { RequestsIo } from '../../src/conduit-mcp/request-file-fs';
@@ -54,6 +55,7 @@ import type {
   DisconnectMachineResult,
   MachineView,
 } from '../../src/contracts/machines';
+import type { RemoteCaller } from '../../src/contracts/remote-principal';
 import type { McpHostDeps, NeedsYouFact, TokenStorePort } from '../../src/contracts/server-ports';
 import type { ServerEvents } from '../../src/contracts/server-protocol';
 import type {
@@ -5893,6 +5895,7 @@ describe('createConduitMcpHost — wait_sessions', () => {
         ok: false,
         error: { code: 'machine_unknown', detail: {} },
       }),
+      selfName: () => 'this-machine',
     };
     return {
       network,
@@ -7265,6 +7268,7 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
       disconnectMachine:
         over.disconnectMachine ??
         (async () => ({ ok: true, value: { machine: 'win-box', state: 'down' } })),
+      selfName: () => 'this-machine',
     };
     return { network, connects };
   }
@@ -7518,5 +7522,167 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
     expect(c.lines.find((l) => l.id === 1)).toBeUndefined();
     h.advance(1);
     expect(c.errorOf(await c.reply(1))).toBe('ssh_unreachable');
+  });
+});
+
+describe('createConduitMcpHost — a remote lead (routed calls, CON-40 S2, plan decision 4)', () => {
+  const LEAD: RemoteCaller = {
+    kind: 'remote',
+    handle: 'claude-3',
+    machineId: 'm-0123abcd',
+    trust: 'own',
+    controller: true,
+    capabilities: { messaging: true, monitor: true, drive: false },
+  };
+
+  async function withLocal(over: Parameters<typeof harness>[0] = {}) {
+    const h = harness({ kinds: { '/w/wt': 'dir', '/w/src': 'dir' }, ...over });
+    await h.host.start();
+    await launch(h, 's1');
+    return h;
+  }
+
+  it('list_agents runs for the lead and answers ok', async () => {
+    const h = await withLocal();
+    const r = await h.host.networkPort().callAsRemote(LEAD, 'list_agents', {});
+    expect(r.ok).toBe(true);
+  });
+
+  it('open_session takes an absolute path and records the remote opener', async () => {
+    const h = await withLocal();
+    const r = await h.host.networkPort().callAsRemote(LEAD, 'open_session', {
+      path: '/w/wt',
+      agent: 'e2e-fake-mcp',
+      focus: true,
+    });
+    expect(r).toMatchObject({ ok: true, value: { session_id: 'n1', agent: 'e2e-fake-mcp' } });
+    expect(h.opens).toEqual([
+      expect.objectContaining({
+        callerSessionId: null,
+        openedBy: { handle: 'claude-3', machineId: 'm-0123abcd' },
+        home: '/w/wt',
+        focus: false,
+      }),
+    ]);
+  });
+
+  it('open_session with a relative path is invalid_args, and says where an absolute one goes', async () => {
+    const h = await withLocal();
+    const r = await h.host.networkPort().callAsRemote(LEAD, 'open_session', {
+      path: 'wt',
+      agent: 'e2e-fake-mcp',
+    });
+    expect(r).toMatchObject({
+      ok: false,
+      error: { code: 'invalid_args', hint: 'give an absolute path on this machine' },
+    });
+    expect(h.opens).toEqual([]);
+  });
+
+  it('a lead reaches the session it opened, and no other', async () => {
+    const h = await withLocal();
+    const port = h.host.networkPort();
+    await port.callAsRemote(LEAD, 'open_session', { path: '/w/wt', agent: 'e2e-fake-mcp' });
+    await launch(h, 'n1');
+    const mine = await port.callAsRemote(LEAD, 'read_screen', { session: 'n1' });
+    expect(mine.ok).toBe(true);
+    const theirs = await port.callAsRemote(LEAD, 'read_screen', { session: 's1' });
+    expect(theirs).toMatchObject({ ok: false, error: { code: 'out_of_reach' } });
+  });
+
+  it('send_input reaches the opened session only', async () => {
+    const h = await withLocal();
+    const port = h.host.networkPort();
+    await port.callAsRemote(LEAD, 'open_session', { path: '/w/wt', agent: 'e2e-fake-mcp' });
+    await launch(h, 'n1');
+    const mine = await port.callAsRemote(LEAD, 'send_input', { session: 'n1', text: 'hi' });
+    expect(mine).toMatchObject({ ok: true, value: { sent_chars: 2 } });
+    expect(h.inputs).toContainEqual(['n1', 'hi']);
+    const theirs = await port.callAsRemote(LEAD, 'send_input', { session: 's1', text: 'x' });
+    expect(theirs).toMatchObject({ ok: false, error: { code: 'out_of_reach' } });
+  });
+
+  it('close_session closes a session the lead opened, when no window shows it', async () => {
+    const h = await withLocal();
+    const port = h.host.networkPort();
+    await port.callAsRemote(LEAD, 'open_session', { path: '/w/wt', agent: 'e2e-fake-mcp' });
+    await launch(h, 'n1');
+    h.owners.set('n1', null);
+    const r = await port.callAsRemote(LEAD, 'close_session', { session: 'n1' });
+    expect(r.ok).toBe(true);
+    expect(h.closes).toEqual(['n1']);
+  });
+
+  it('close_session refuses a session a window shows: that window closes it, with its guard', async () => {
+    const h = await withLocal();
+    const port = h.host.networkPort();
+    await port.callAsRemote(LEAD, 'open_session', { path: '/w/wt', agent: 'e2e-fake-mcp' });
+    await launch(h, 'n1');
+    const r = await port.callAsRemote(LEAD, 'close_session', { session: 'n1' });
+    expect(r).toMatchObject({ ok: false, error: { code: 'refused', reason: 'remote_window' } });
+    expect(h.closes).toEqual([]);
+  });
+
+  it('a lead without the monitor capability is denied list_agents', async () => {
+    const h = await withLocal();
+    const r = await h.host
+      .networkPort()
+      .callAsRemote(
+        { ...LEAD, capabilities: { messaging: true, monitor: false, drive: false } },
+        'list_agents',
+        {},
+      );
+    expect(r).toMatchObject({ ok: false, error: { code: 'tool_disabled' } });
+  });
+
+  it('an ask for the lead is refused before any card: the owner answers on this machine', async () => {
+    const policy = serializePolicyFile({
+      version: 1,
+      profiles: [...BUILT_IN_PROFILES],
+      assignments: [
+        {
+          point: { kind: 'peer', machineId: 'm-0123abcd' },
+          assignment: {
+            profileId: 'lead',
+            exceptions: [
+              { tool: 'open_session', scope: { kind: 'anywhere' }, rule: { decision: 'ask' } },
+            ],
+            onScreenOnly: false,
+          },
+        },
+      ],
+      overrides: [],
+      migratedFrom: null,
+      notes: { onScreenOnlyOffered: [] },
+    });
+    const h = await withLocal({ policyIo: { read: () => policy, write: async () => undefined } });
+    const r = await h.host.networkPort().callAsRemote(LEAD, 'open_session', {
+      path: '/w/wt',
+      agent: 'e2e-fake-mcp',
+    });
+    expect(r).toMatchObject({
+      ok: false,
+      error: {
+        code: 'refused',
+        reason: 'remote_ask',
+        hint: 'this needs the owner on this machine; answer it there',
+      },
+    });
+    expect(h.opens).toEqual([]);
+  });
+
+  it('the opener shows in list_sessions as the lead address, on this machine', async () => {
+    const h = await withLocal();
+    await h.host.networkPort().callAsRemote(LEAD, 'open_session', {
+      path: '/w/wt',
+      agent: 'e2e-fake-mcp',
+    });
+    const a = await launch(h, 's1');
+    const c = await client(h.ep, a.token);
+    const listed = await c.call('list_sessions');
+    const rows = (
+      listed.body as { sessions: Array<{ session_id: string; opened_by: string | null }> }
+    ).sessions;
+    expect(rows.find((x) => x.session_id === 'n1')?.opened_by).toBe('claude-3@m-0123abcd');
   });
 });

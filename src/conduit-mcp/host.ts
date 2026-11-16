@@ -11,7 +11,8 @@ import type { ClaudeAction } from '../claude-tool-actions';
 import { readUserStatusLine } from '../claude-user-status-line';
 import { detectStuckScreen, type StuckScreen } from '../cli-stuck-screens';
 import type { CodexAction } from '../codex-rollout';
-import type { WireRecipientOutcome } from '../contracts/link-protocol';
+import type { RoutedTool, WireRecipientOutcome } from '../contracts/link-protocol';
+import type { RemoteCaller } from '../contracts/remote-principal';
 import type { DraftPort, LaunchPort, McpHostDeps, ObservedEntry } from '../contracts/server-ports';
 import type { CliBindingRecord } from '../contracts/session-identity';
 import type { LaunchIds } from '../contracts/terminal-runtime';
@@ -24,7 +25,7 @@ import type { SubmitOutcome } from '../pty-writer';
 import { readCappedBytes } from '../read-capped';
 import { COMMAND_AGENT_ID } from '../session-command';
 import { PTY_SETTLE_MS } from '../timed-messages';
-import type { AgentDefinition, SpawnSpec } from '../types';
+import type { AgentDefinition, SessionOpener, SpawnSpec } from '../types';
 import type { ActivityIo, ActivityOutcome } from './activity-log';
 import { createActivityIo } from './activity-log-fs';
 import {
@@ -139,6 +140,7 @@ import {
   TOOL_NAMES,
   type ToolName,
   toolDisabled,
+  windowNotReady,
 } from './tool-policy';
 import { CONDUIT_INSTRUCTIONS, toolSchemas } from './tool-schemas';
 import {
@@ -169,6 +171,7 @@ import {
   type ScreenVerdict,
   THREAD_AGENT_LIMIT,
   type ThreadSummary,
+  type ToolError,
   toolError,
 } from './types';
 import type {
@@ -776,6 +779,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       handle,
       sessionId: s.id,
       openedBy: s.openedBy?.sessionId ?? null,
+      remoteOpener: remoteOpenerOf(s.openedBy),
       label: s.name,
       // A profile session is its definition's agent whatever client name it sends, as for notices.
       agent: (hasDefAdapter(s.id) ? undefined : liveKinds(s.id).at(-1)) ?? handlePrefix(handle),
@@ -1453,6 +1457,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
   const controlDeps: ControlDeps = {
     ...deps.domain,
+    selfName: () => deps.network?.selfName() ?? 'this machine',
     activateSession: (sessionId, raise) =>
       deps.emit('ui.post', {
         route: { kind: 'owner', sessionId },
@@ -1535,6 +1540,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         sessionId: s.id,
         handle,
         openerSessionId: s.openedBy?.sessionId ?? null,
+        remoteOpener: remoteOpenerOf(s.openedBy),
       })),
     ownerWindowOf: (sessionId) => deps.ownerWindowOf(sessionId),
     windowReady: (windowId) => deps.windowReady(windowId),
@@ -1805,6 +1811,49 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return r?.defAdapter !== undefined && r.defAdapter.wiring !== 'cursor-global' && !r.unavailable;
   };
 
+  /** The target facts a policy decision and a tool's targets read: the listed sessions and folders. */
+  const remoteAsk = (name: ToolName): ToolError =>
+    toolError(
+      'refused',
+      `${name} needs the owner's approval, which a remote lead can't ask for`,
+      undefined,
+      {
+        reason: 'remote_ask',
+        hint: `this needs the owner on ${deps.network?.selfName() ?? 'this machine'}; answer it there`,
+      },
+    );
+
+  /** The remote opener a session names, so reach and list_sessions can show it. */
+  const remoteOpenerOf = (
+    o: SessionOpener | undefined,
+  ): { handle: string; machineId: string } | null =>
+    o !== undefined && o.sessionId === undefined
+      ? { handle: o.handle, machineId: o.machineId }
+      : null;
+
+  const targetDepsOf = (): TargetDeps => ({
+    sessionByHandle: (ref) => {
+      const s = deps.sessions.get(ref) ?? deps.sessions.get(sessionOfHandle(ref) ?? '');
+      return s ? { id: s.id, cwd: s.home, projectId: s.projectId ?? null } : null;
+    },
+    childrenOf: (id) =>
+      deps.sessions
+        .list()
+        .filter((s) => s.openedBy?.sessionId === id)
+        .map((s) => ({ id: s.id, cwd: s.home, projectId: s.projectId ?? null })),
+    realPath: (p: string) => {
+      try {
+        return fs.realpathSync(p);
+      } catch (error) {
+        deps.log.warn('conduit-mcp', 'policy target realpath failed', {
+          path: p,
+          error: String(error),
+        });
+        return null;
+      }
+    },
+  });
+
   const callTool = async (
     sessionId: string | null,
     name: string,
@@ -1842,33 +1891,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           typeof args === 'object' && args !== null && !Array.isArray(args)
             ? (args as Record<string, unknown>)
             : {};
-        const targetDeps: TargetDeps = {
-          sessionByHandle: (ref) => {
-            const s = deps.sessions.get(ref) ?? deps.sessions.get(sessionOfHandle(ref) ?? '');
-            return s ? { id: s.id, cwd: s.home, projectId: s.projectId ?? null } : null;
-          },
-          childrenOf: (id) =>
-            deps.sessions
-              .list()
-              .filter((s) => s.openedBy?.sessionId === id)
-              .map((s) => ({ id: s.id, cwd: s.home, projectId: s.projectId ?? null })),
-          realPath: (p: string) => {
-            try {
-              return fs.realpathSync(p);
-            } catch (error) {
-              deps.log.warn('conduit-mcp', 'policy target realpath failed', {
-                path: p,
-                error: String(error),
-              });
-              return null;
-            }
-          },
-        };
         const targets = resolveTargets(
           name,
           rawArgs,
           { sessionId, home: principal.homeFolder },
-          targetDeps,
+          targetDepsOf(),
         );
         const policyInput = {
           principal,
@@ -2175,6 +2202,90 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         return requestService.tools.listRequests(caller, args);
     }
     throw new Error(`runRequest: ${name} is not a request tool`);
+  };
+
+  /**
+   * A routed call from a remote lead (plan decision 4): the same policy decision, commit and prepare
+   * as a local call, under the remote principal, with no session, home or window. A remote lead has
+   * no owner on this side to answer an ask, so an ask is refused here.
+   */
+  const callAsRemote = async (
+    remote: RemoteCaller,
+    name: RoutedTool,
+    args: unknown,
+  ): Promise<Result<StructuredOutput>> => {
+    const startedAt = now();
+    const caller: Caller = {
+      handle: `${remote.handle}@${remote.machineId}`,
+      sessionId: null,
+      remote,
+    };
+    const rawArgs =
+      typeof args === 'object' && args !== null && !Array.isArray(args)
+        ? (args as Record<string, unknown>)
+        : {};
+    const targets = resolveTargets(name, rawArgs, { sessionId: null, home: null }, targetDepsOf());
+    const policyInput = {
+      principal: remote,
+      tool: name,
+      targets,
+      forceAsk: forcesAsk(name, rawArgs, (ref) =>
+        isKnownMachine(deps.network?.listMachines() ?? [], ref),
+      ),
+      masterOn: deps.domain.messagingOn(),
+      toYou: false,
+    };
+    const decision = policyService.decide(policyInput);
+    const result = await (async (): Promise<Result<StructuredOutput>> => {
+      if (!policyInput.masterOn && name !== 'list_agents')
+        return { ok: false, error: toolError('messaging_off', 'Conduit messaging is turned off') };
+      if (decision.decision === 'deny') return { ok: false, error: toolDisabled(name) };
+      if (decision.decision === 'ask') return { ok: false, error: remoteAsk(name) };
+      if (policyService.commit(policyInput, decision) === null)
+        return { ok: false, error: toolDisabled(name) };
+      const ctx: ControlCallContext = {
+        move: decision.rule.move ?? undefined,
+        reach: decision.rule.reach ?? undefined,
+        // Nothing asks through a window for a remote lead, and close refuses before it would.
+        ui: async () => ({ ok: false, error: windowNotReady() }),
+        signal: new AbortController().signal,
+      };
+      const prepared = await prepareControl(caller, name, args, ctx);
+      if (!prepared.ok) return prepared;
+      const p = prepared.value;
+      if ('done' in p) return p.done;
+      // A bare command is never a registered agent, so an allow still asks (flexible-agent-contracts §3.1).
+      if (p.alwaysAsk) {
+        p.release();
+        return { ok: false, error: remoteAsk(name) };
+      }
+      try {
+        return await p.run();
+      } finally {
+        p.budget?.dispose();
+      }
+    })();
+    const activityId = policyService.activity.record({
+      lane: 'conduit',
+      principal: { handle: remote.handle, sessionId: null, machineId: remote.machineId },
+      cli: null,
+      action: name,
+      target: targets[0]?.path ?? targets[0]?.sessionId ?? null,
+      summary: null,
+      decision: decision.decision,
+      decidedBy: reasonOf(decision),
+      outcome: result.ok ? 'ok' : decision.decision === 'deny' ? 'denied' : 'error',
+      durationMs: now() - startedAt,
+      requestId: null,
+      count: null,
+    });
+    policyService.noteDecision(activityId, policyInput, decision);
+    deps.log.info('conduit-mcp', 'remote call', {
+      tool: name,
+      machineId: remote.machineId,
+      ok: result.ok,
+    });
+    return result;
   };
 
   const prepareControl = (
@@ -3323,6 +3434,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     networkPort: (): McpNetworkPort => ({
       localDirectory: () => directory(),
+      callAsRemote,
       hasMessage: (id) => store.has(id),
       readBlob: (sha256) => store.readBlob(sha256),
       // A thread is exported to a machine once a message in it went there (to its recipient) or

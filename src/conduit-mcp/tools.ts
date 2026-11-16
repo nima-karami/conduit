@@ -1,3 +1,4 @@
+import type { RemoteCaller } from '../contracts/remote-principal';
 import { ID_FORMAT } from '../network/inbound-ids';
 import type { AgentSource } from '../types';
 import {
@@ -38,12 +39,16 @@ import {
 export interface Caller {
   handle: Handle;
   sessionId: string | null;
+  /** A routed call's lead on a peer link (plan decision 4): no session and no home on this side. */
+  remote?: RemoteCaller;
 }
 export interface DirectoryEntry {
   handle: Handle;
   sessionId: string;
   /** Session id that opened this one, if known. */
   openedBy: string | null;
+  /** The remote lead that opened it, when one did: it has no session here. */
+  remoteOpener?: { handle: string; machineId: string } | null;
   label: string;
   agent: string;
   project: string | null;
@@ -137,6 +142,12 @@ type PeerRelation = 'human' | 'lead' | 'helper' | 'peer';
 /** A record that arrived over a link: framed by its origin, not the local directory (decision 12). */
 interface OriginFraming {
   originHuman: boolean;
+}
+
+/** A session's opener as list_sessions shows it: a local handle, or a remote lead's address. */
+function openedByOf(e: DirectoryEntry, handleOf: ReadonlyMap<string, string>): string | null {
+  if (e.remoteOpener) return `${e.remoteOpener.handle}@${e.remoteOpener.machineId}`;
+  return e.openedBy === null ? null : (handleOf.get(e.openedBy) ?? null);
 }
 
 function peerRelation(
@@ -595,7 +606,7 @@ export function createToolHandlers(deps: ToolDeps): ToolHandlers {
         session_id: e.sessionId,
         label: e.label,
         agent: e.agent,
-        opened_by: e.openedBy === null ? null : (handleOf.get(e.openedBy) ?? null),
+        opened_by: openedByOf(e, handleOf),
         project: e.project,
         home: e.home,
         roots: [e.home, ...e.roots],

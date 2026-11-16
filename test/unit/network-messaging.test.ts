@@ -70,6 +70,7 @@ function setup(seed: OutboxEntry[] = []) {
     youUnread: () => 0,
     ownerPresence: () => 'here',
     requestsSummary: () => [],
+    callAsRemote: () => Promise.reject(new Error('not used by this test')),
   };
   const svc = createMessaging({
     file: join(dir, 'outbox.json'),

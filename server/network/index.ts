@@ -388,6 +388,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     listMachines: () => machines.list(),
     connectMachine: (machine, signal) => machines.connect(machine, signal),
     disconnectMachine: (machine) => machines.disconnect(machine),
+    selfName,
   };
 
   const hosts = (): string[] => {

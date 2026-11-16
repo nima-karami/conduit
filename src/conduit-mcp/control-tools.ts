@@ -2,6 +2,9 @@
 // control tool shares; the app-control tools live in app-control-tools.ts. No IO here: stat,
 // registry, command resolution, session creation and git are deps, so tests run on POSIX fakes.
 
+import * as path from 'node:path';
+import { ROUTED_TOOLS } from '../contracts/link-protocol';
+import type { RemoteCaller } from '../contracts/remote-principal';
 import type { DomainOpenOutcome, DomainPort } from '../contracts/server-ports';
 import { coerceModel, coerceSessionCommand, commandLabel } from '../session-command';
 import type { SessionOpResult } from '../session-ops';
@@ -9,6 +12,7 @@ import type { SessionCommand, SessionOpener } from '../types';
 import { listAgentsOutput } from './agent-listing';
 import { isRefusedLeaf, resolveAgentArg } from './agent-resolve';
 import type { GitCall } from './git-refs';
+import { openedByRemote } from './policy-targets';
 import {
   type MESSAGING_TOOL_NAMES,
   type Move,
@@ -64,7 +68,8 @@ export type McpLaunch =
   | { kind: 'agent'; agentId: string }
   | { kind: 'command'; command: SessionCommand };
 export interface McpOpenRequest {
-  callerSessionId: string;
+  /** Null for a remote lead: it has no session here, so nothing is placed beside one. */
+  callerSessionId: string | null;
   openedBy: SessionOpener;
   home: string;
   label: string | undefined;
@@ -104,6 +109,8 @@ export interface ControlDeps {
   now(): number;
   info(message: string, data: Record<string, unknown>): void;
   foldersOf(sessionId: string): { home: string; roots: string[] } | undefined;
+  /** This machine's name, for the hint that sends a remote caller's ask to its owner. */
+  selfName?(): string;
   addRoot(sessionId: string, path: string): Promise<SessionOpResult>;
   /** raise: the target's window isn't the caller's (show + focus it, as moveSessionToWindow does). */
   activateSession(sessionId: string, raise: boolean): void;
@@ -132,7 +139,10 @@ export interface ControlDeps {
 export interface TargetSession {
   sessionId: string;
   handle: Handle;
+  /** A local opener's session. A remote opener has no session here: see remoteOpener. */
   openerSessionId: string | null;
+  /** The remote lead that opened it, when one did (the remote variant of SessionOpener). */
+  remoteOpener?: { handle: string; machineId: string } | null;
 }
 /** A prepare answer: a call to ask about and run, or a result known without acting (no token spent). */
 export type Prepared<T> = PreparedCall<T> | { done: Result<T> };
@@ -400,13 +410,81 @@ class Window {
   }
 }
 
+/**
+ * Who a tool acts for. A local caller has its session and that session's home folder. A remote
+ * lead (plan decision 4) has neither: it reaches only what it opened, and relative paths mean
+ * nothing to it.
+ */
+export type Actor = { sessionId: string | null; remote?: RemoteCaller };
+
 /** One reservation: refunded at most once, and never after it was kept. */
 interface Token {
   refund(): void;
   keep(): void;
 }
 /** spend() takes one more token from the call's budget, for a list call's further targets. */
-export type CallWho = { sessionId: string; home: string; spend(): Token | Fail };
+export type CallerPlace =
+  | { sessionId: string; home: string; remote?: undefined }
+  | { sessionId: null; home: null; remote: RemoteCaller };
+export type CallWho = CallerPlace & { spend(): Token | Fail };
+/** A local-only tool's view of its caller: a remote lead never reaches these (see home()). */
+export type LocalWho = CallWho & { sessionId: string; home: string; remote?: undefined };
+export const isLocalWho = (who: CallWho): who is LocalWho => who.remote === undefined;
+
+/**
+ * Wraps a local-only tool's check: home() already keeps a remote lead out of these tools, so this
+ * only narrows the type the check is written against.
+ */
+export function localOnly<T>(
+  check: (who: LocalWho) => Promise<CheckResult<T>>,
+): (who: CallWho) => Promise<CheckResult<T>> {
+  return async (who) =>
+    isLocalWho(who)
+      ? check(who)
+      : fail('not_in_session', 'this tool is not available to a remote lead', {
+          hint: NOT_IN_SESSION_HINT,
+        });
+}
+
+/**
+ * The reach a target admits (spec 2026-10-30 tool-policy §3.2). A remote lead reaches what it
+ * opened; `window` reads as `opened` for it, as the policy layer maps it (forPrincipal). A local
+ * caller keeps the session and window comparisons.
+ */
+export function reachAdmits(
+  reach: Reach,
+  actor: Actor,
+  t: TargetSession,
+  ownerWindowOf: (sessionId: string) => number | null,
+): boolean {
+  if (reach === 'any') return true;
+  if (actor.remote !== undefined)
+    return reach !== 'self' && openedByRemote(t.remoteOpener ?? null, actor.remote);
+  if (actor.sessionId === null) return false;
+  if (t.sessionId === actor.sessionId) return true;
+  if (reach === 'opened' && t.openerSessionId === actor.sessionId) return true;
+  if (reach === 'window') {
+    const w = ownerWindowOf(t.sessionId);
+    return w !== null && w === ownerWindowOf(actor.sessionId);
+  }
+  return false;
+}
+
+/** The one argument rule for a path a tool was given: relative to the home, or absolute on a remote. */
+function resolveFor(
+  deps: Pick<ControlDeps, 'resolvePath' | 'selfName'>,
+  who: Pick<CallWho, 'home' | 'remote'>,
+  p: string,
+): Result<string> {
+  if (who.home !== null) return { ok: true, value: deps.resolvePath(who.home, p) };
+  if (path.isAbsolute(p)) return { ok: true, value: path.resolve(p) };
+  const on = deps.selfName ? ` on ${deps.selfName()}` : '';
+  return fail('invalid_args', `path must be absolute for a remote caller`, {
+    hint: `give an absolute path${on}`,
+  });
+}
+
+/** One reservation: refunded at most once, and never after it was kept. */
 export type CheckResult<T> =
   | Fail
   | { done: Result<T> }
@@ -471,11 +549,29 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     show: new Budget(SHOW_RATE_PER_CALLER, null, 'view requests'),
   };
 
+  /** A local-only open: home() keeps a remote lead out of it, and localOnly narrows the caller. */
+  const preparedLocal = <T>(
+    tool: ControlTool,
+    caller: Caller,
+    check: (who: LocalWho) => Promise<CheckResult<T>>,
+  ) => prepared<T>(tool, caller, localOnly(check));
+
   function reserve(tool: ControlTool, caller: Caller): Token | Fail {
     return budgets[TOOL_SPECS[tool].budget].reserve(caller.handle, deps.now());
   }
 
-  function home(caller: Caller): { sessionId: string; home: string } | Fail {
+  /**
+   * A remote lead reaches only the routed tools (plan decision 4). Every other tool is a local
+   * session's, so its handlers never see a caller with no session or home.
+   */
+  function home(caller: Caller, tool: ControlTool): CallerPlace | Fail {
+    if (caller.remote !== undefined) {
+      if (!(ROUTED_TOOLS as readonly string[]).includes(tool))
+        return fail('not_in_session', `${tool} is not available to a remote lead`, {
+          hint: 'a remote lead works through the six session tools',
+        });
+      return { sessionId: null, home: null, remote: caller.remote };
+    }
     const home = caller.sessionId === null ? undefined : deps.homeOf(caller.sessionId);
     if (caller.sessionId === null || home === undefined)
       return fail('not_in_session', 'this MCP connection is not a Conduit session', {
@@ -518,7 +614,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     if (isFail(token)) return token;
     let handed = false;
     try {
-      const who = home(caller);
+      const who = home(caller, tool);
       if (isFail(who)) return who;
       let c: CheckResult<T>;
       try {
@@ -585,6 +681,12 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     label: string | undefined;
   }
 
+  /** The opener a session records: this session, or the remote lead that asked for it. */
+  const openerOf = (caller: Caller, who: CallWho): SessionOpener =>
+    isLocalWho(who)
+      ? { handle: caller.handle, sessionId: who.sessionId }
+      : { handle: who.remote.handle, machineId: who.remote.machineId };
+
   const modelFlagOfLaunch = (launch: McpLaunch): string | undefined =>
     launch.kind === 'agent'
       ? deps.modelFlagOf(launch.agentId)
@@ -597,7 +699,15 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     resolve: () => Promise<Result<Resolved>>,
   ): Promise<Result<Prepared<OpenSessionOutput>>> {
     return prepared(tool, caller, async (who) => {
-      const abs = deps.resolvePath(who.home, a.path);
+      // A remote lead has no window to focus, and its first message is not carried yet.
+      const focus = a.focus && isLocalWho(who);
+      if (!isLocalWho(who) && a.message !== undefined)
+        return fail('peer_unsupported', 'a remote lead cannot send the first message yet', {
+          hint: 'open the session, then message it from its own machine',
+        });
+      const resolved = resolveFor(deps, who, a.path);
+      if (!resolved.ok) return resolved;
+      const abs = resolved.value;
       const bad = await checkKind(abs, 'dir');
       if (bad) return bad;
       const target = await resolve();
@@ -620,13 +730,13 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
               tool: 'open_terminal',
               path: abs,
               command: [command.command, ...command.args].join(' '),
-              focus: a.focus,
+              focus,
             }
           : {
               tool: 'open_session',
               path: abs,
               agent,
-              focus: a.focus,
+              focus,
               ...(bare && command !== null ? { command: command.command } : {}),
               ...(a.model !== undefined ? { model: a.model } : {}),
               ...(a.message !== undefined ? { message: Array.from(a.message).length } : {}),
@@ -639,10 +749,10 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
           try {
             outcome = await deps.openSession({
               callerSessionId: who.sessionId,
-              openedBy: { handle: caller.handle, sessionId: who.sessionId },
+              openedBy: openerOf(caller, who),
               home: abs,
               label: a.label ?? label,
-              focus: a.focus,
+              focus,
               launch,
               closeWhenDone: a.closeWhenDone,
               model: a.model,
@@ -775,7 +885,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
       const a = parseFileArgs(raw);
       if (isFail(a)) return a;
       if (a.kind === 'many') {
-        return prepared('open_file', caller, async (who) => {
+        return preparedLocal('open_file', caller, async (who) => {
           const abs = a.paths.map((p) => deps.resolvePath(who.home, p));
           const bad = await Promise.all(abs.map((p) => checkKind(p, 'file')));
           // Focus goes to the last file that will open, so a trailing bad path doesn't steal it.
@@ -819,7 +929,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
           };
         });
       }
-      return prepared('open_file', caller, async (who) => {
+      return preparedLocal('open_file', caller, async (who) => {
         const abs = deps.resolvePath(who.home, a.path);
         const bad = await checkKind(abs, 'file');
         if (bad) return bad;
