@@ -203,6 +203,12 @@ export const MACHINES_STR = {
   remoteFileReadOnly: (machine: string) => `Read-only: this file is on ${machine}`,
   /** A remote save refused because B's file changed since this editor loaded it. */
   remoteFileChanged: (machine: string) => `The file changed on ${machine}.`,
+  remoteFileDeleted: (machine: string) => `The file was deleted on ${machine}.`,
+  remoteConflictShowDiff: 'Show diff',
+  remoteConflictHideDiff: 'Hide diff',
+  /** Saves the edit over the version just reported, and only that version. */
+  remoteConflictReapply: 'Save mine anyway',
+  remoteConflictDiscard: (machine: string) => `Use ${machine}’s version`,
   /** Discard could not re-read a remote file; the tab keeps what it shows. */
   remoteFileReloadFailed: (machine: string) => `Couldn’t reload this file from ${machine}.`,
   remoteSaveError: (code: string, machine: string) =>

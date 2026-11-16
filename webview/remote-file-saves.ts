@@ -8,13 +8,12 @@ import {
   type FileSaveDeps,
   type FileSaveStatus,
   type FileSaves,
-  type ReadOnlyAttach,
   type SaveModel,
 } from './file-save-controller';
 import { requestHost } from './host-request';
 import { MACHINES_STR } from './machines-strings';
 import { remoteModelUri } from './project-index';
-import { readOnlyState, remoteReadOnlyState } from './read-only-doc';
+import { type ReadOnlyState, readOnlyState, remoteReadOnlyState } from './read-only-doc';
 import { REMOTE_TIMEOUT, type RemoteReadResult, readRemoteFile } from './remote-files-store';
 import { registerSave } from './save-registry';
 import { pushToast } from './toast-store';
@@ -83,8 +82,8 @@ interface RemoteBuffer {
   conflict: { currentHash: string | null } | null;
 }
 
-/** A read-only lock for a buffer, or null when it is writable. */
-function readOnlyOf(file: FileContentDTO, machineName: string): ReadOnlyAttach | null {
+/** A remote buffer's read-only lock, or null when it is writable; the editor and the store share it. */
+export function remoteReadOnlyOf(file: FileContentDTO, machineName: string): ReadOnlyState | null {
   const lock = readOnlyState(file);
   if (lock !== null) return lock;
   // An older B cannot save, so its file is shown as the machine's and never written from here.
@@ -158,7 +157,10 @@ export function createRemoteFileSaves(deps: RemoteFileSavesDeps): RemoteFileSave
       b.ref = ref;
       b.hash = file.hash ?? null;
     }
-    files.attach(key, { diskContent: file.content, readOnly: readOnlyOf(file, ref.machineName) });
+    files.attach(key, {
+      diskContent: file.content,
+      readOnly: remoteReadOnlyOf(file, ref.machineName),
+    });
   };
 
   // Discard: reload has cleared the dirty flag, so this read takes B's file and hash as they are.
