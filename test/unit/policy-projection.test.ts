@@ -414,6 +414,66 @@ describe('propagateLegacyPatch', () => {
     expect(decision).toBe('allow');
   });
 
+  it('a default edit cascades through a cli assignment to the sessions that inherit from it', () => {
+    const cliAssignment = patched(stateOf([]), CLAUDE, DEFAULT, 'open_file', { access: 'off' });
+    const sessionAssignment = patched(
+      stateOf([[CLAUDE, cliAssignment]]),
+      sessionOf('s1'),
+      CLAUDE,
+      'read_screen',
+      { access: 'off' },
+    );
+    const state = stateOf([
+      [CLAUDE, cliAssignment],
+      [sessionOf('s1'), sessionAssignment],
+    ]);
+    const launchedCliOf = (id: string): CliKind | null => (id === 's1' ? 'claude' : null);
+    const writes = propagated(state, DEFAULT, null, 'send_input', { access: 'off' }, launchedCliOf);
+    expect(pointsOf(writes)).toEqual(['cli:claude', 'default', 'session:s1']);
+    const after = applied(state, writes);
+    const s1Principal = {
+      kind: 'session' as const,
+      sessionId: 's1',
+      handle: 'a',
+      launchedCli: 'claude' as const,
+      homeFolder: '/w',
+      projectId: null,
+    };
+    const send = decide(after, {
+      principal: s1Principal,
+      tool: 'send_input',
+      targets: [],
+      masterOn: true,
+      toYou: false,
+      now: 0,
+    }).decision;
+    expect(send).toBe('deny');
+    expect(projectLegacyLayer(after, sessionOf('s1'), CLAUDE)).not.toHaveProperty('send_input');
+  });
+
+  it('an explicit profile choice is never an inheritor, even at the same value', () => {
+    const observer: Assignment = { profileId: 'observer', exceptions: [], onScreenOnly: false };
+    const state = stateOf([[sessionOf('s1'), observer]]);
+    const writes = propagated(state, DEFAULT, null, 'open_terminal', { access: 'on' });
+    expect(pointsOf(writes)).toEqual(['default']);
+    const decision = decide(applied(state, writes), {
+      principal: {
+        kind: 'session',
+        sessionId: 's1',
+        handle: 'a',
+        launchedCli: null,
+        homeFolder: '/w',
+        projectId: null,
+      },
+      tool: 'open_terminal',
+      targets: [],
+      masterOn: true,
+      toYou: false,
+      now: 0,
+    }).decision;
+    expect(decision).toBe('deny');
+  });
+
   it('refuses when an inheritor carries a scoped exception', () => {
     const scopedSession: Assignment = {
       profileId: 'worker',
