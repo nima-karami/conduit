@@ -43,6 +43,7 @@ import { createCalls, isDialedSsh } from './calls';
 import { createDrive, type Drive, type DriveDeps } from './drive';
 import { createFsClient } from './fs-client';
 import { createFsServe } from './fs-serve';
+import { createGitClient } from './git-client';
 import { adoptOwnerKey, type Identity, setOwnerKey } from './identity';
 import { createLinkManager, type LinkManager } from './link-manager';
 import { openLinkStore } from './link-store';
@@ -250,6 +251,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     }
     calls.settleAbsent(views.map((v) => v.machineId));
     fsClient.linksChanged(views);
+    gitClient.linksChanged(views);
     requests.linksChanged();
     for (const l of portListeners) l();
   };
@@ -335,6 +337,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
           .catch((err: unknown) => deps.log.error('call failed', { message: String(err) }));
       else if (f.t === 'call.result') calls.onResult(machineId, f);
       else if (f.t === 'fs.res' || f.t === 'fs.changed') fsClient.onFrame(machineId, f);
+      else if (f.t === 'git.res') gitClient.onFrame(machineId, f);
       else if (f.t === 'fs.req' || f.t === 'fs.watch' || f.t === 'fs.unwatch')
         void fsServe
           .onFrame(machineId, f)
@@ -363,6 +366,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       messaging.reconnected(machineId);
       publisher.pushTo(machineId);
       fsClient.reconnected(machineId);
+      gitClient.reconnected(machineId);
     },
   });
 
@@ -473,6 +477,16 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     audit,
     now,
     newId: () => `f_${randomBytes(12).toString('hex')}`,
+    after,
+  });
+  const gitClient = createGitClient({
+    linkOf: (machineId) => store.get(machineId),
+    linkState: (machineId) => manager.view(machineId)?.state ?? null,
+    peerMinor: (machineId) => manager.peerMinor(machineId),
+    send: (machineId, frame) => manager.send(machineId, frame),
+    audit,
+    now,
+    newId: () => `g_${randomBytes(12).toString('hex')}`,
     after,
   });
   const fsServe = createFsServe({
@@ -791,6 +805,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       drive.stop();
       calls.stop();
       fsClient.stop();
+      gitClient.stop();
       requests.stop();
       publisher.stop();
       messaging.stop();
@@ -810,6 +825,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
         machines,
         sshHosts,
         fs: fsClient,
+        git: gitClient,
         peer,
       }),
     disconnected: (peer) => {
