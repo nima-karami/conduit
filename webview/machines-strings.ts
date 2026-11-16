@@ -90,6 +90,16 @@ const SAVE_ERROR: Record<string, (machine: string) => string> = {
   peer_unreachable: (m) => `${m} isn’t reachable. The save may or may not have landed.`,
 };
 
+/** Why a git read on B failed, by the code the host reports; the default names only the machine. */
+const GIT_ERROR: Record<string, (machine: string) => string> = {
+  refused: (m) => `${m} won’t show this.`,
+  not_found: (m) => `That file or folder isn’t there on ${m} anymore.`,
+  timeout: (m) => `${m} didn’t answer in time.`,
+  peer_unreachable: (m) => `${m} isn’t reachable right now.`,
+  peer_incompatible: (m) => `Update Conduit on ${m} to read its git history.`,
+  history_failed: (m) => `Couldn’t read this repository’s history on ${m}.`,
+};
+
 const PANE_ERROR: Record<string, string> = {
   peer_unreachable: 'That machine isn’t reachable right now.',
   peer_revoked: 'That machine was removed.',
@@ -230,4 +240,20 @@ export const MACHINES_STR = {
   changesHistory: 'History',
   changesOffline: (machine: string) => `${machine} is offline`,
   changesList: (machine: string) => `Changes on ${machine}`,
+  // Remote diff and history tabs (plan CON-45 G5).
+  gitNoTarget: 'Conduit doesn’t know which repository to show.',
+  /** A git read that B refused or failed; `machine` is named in each sentence. */
+  gitError: (code: string, machine: string) =>
+    GIT_ERROR[code]?.(machine) ?? `Couldn’t read git on ${machine}.`,
+  historyLoading: 'Loading history…',
+  historyEmpty: 'No commits yet.',
+  historyList: (machine: string) => `Commits on ${machine}`,
+  historyLoadMore: 'Load more',
+  historyLoadingMore: 'Loading more…',
+  historyPick: 'Pick a commit to see what it changed.',
+  historyLoadingCommit: 'Loading this commit…',
+  historyTruncated: 'Only part of this commit is shown.',
+  historyNoFiles: 'This commit changes no files.',
+  historyFiles: 'Files in this commit',
+  diffLoading: 'Loading diff…',
 };
