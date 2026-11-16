@@ -108,7 +108,7 @@ describe('audit tee', () => {
     expect(file.seen[0]?.principal).toBe('h'.repeat(128));
   });
 
-  it('a throwing tap is reported to onError and never reaches the caller or the file', () => {
+  it("a throwing tap goes to onError; the caller doesn't see it and the file still gets the event", () => {
     const file = memorySink();
     const failure = new Error('tap broke');
     const onError = vi.fn();
