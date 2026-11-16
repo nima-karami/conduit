@@ -438,6 +438,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
   });
   const fsServe = createFsServe({
     linkOf: (machineId) => store.get(machineId),
+    linkState: (machineId) => manager.view(machineId)?.state ?? null,
     sessionRoots: deps.sessionRoots,
     readDir,
     readFile,

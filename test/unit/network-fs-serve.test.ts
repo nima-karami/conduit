@@ -7,12 +7,13 @@ import type { AuditEvent } from '../../server/network/audit-log';
 import {
   createFsServe,
   FS_REFUSAL_AUDIT_MS,
+  FS_WATCH_DEBOUNCE_MS,
   FS_WATCH_MAX,
   type FsServeDeps,
   type FsServeFrame,
   type FsStat,
 } from '../../server/network/fs-serve';
-import type { LinkFrame } from '../../src/contracts/link-protocol';
+import type { LinkFrame, LinkState } from '../../src/contracts/link-protocol';
 import { OWN_DEFAULT_CAPABILITIES } from '../../src/contracts/link-protocol';
 import { readDir, readFile } from '../../src/file-service';
 import type { LinkRecord } from '../../src/network/link-file';
@@ -93,8 +94,14 @@ interface FakeWatch {
   closes: number;
 }
 
-function harness(over: Partial<FsServeDeps> & { links?: Record<string, LinkRecord> } = {}) {
+function harness(
+  over: Partial<FsServeDeps> & {
+    links?: Record<string, LinkRecord>;
+    states?: Record<string, LinkState>;
+  } = {},
+) {
   const links: Record<string, LinkRecord> = over.links ?? { [CONTROLLER]: inbound(CONTROLLER) };
+  const states: Record<string, LinkState> = over.states ?? {};
   const sent: Sent[] = [];
   const audits: AuditEvent[] = [];
   const fakes: FakeWatch[] = [];
@@ -110,6 +117,7 @@ function harness(over: Partial<FsServeDeps> & { links?: Record<string, LinkRecor
   };
   const deps: FsServeDeps = {
     linkOf: (machineId) => links[machineId] ?? null,
+    linkState: (machineId) => states[machineId] ?? 'up',
     sessionRoots: (sessionId) => (sessionId === SESSION ? [proj] : null),
     readDir: vi.fn(readDir),
     readFile: vi.fn(readFile),
@@ -270,7 +278,11 @@ describe('fs-serve reads', () => {
 describe('fs-serve controller rule', () => {
   it('refuses fs.req from a TLS link and from an A-side dialed ssh record, and audits once per minute', async () => {
     const h = harness({
-      links: { [CONTROLLER]: inbound(CONTROLLER), tls: tlsLink(OTHER), dial: dialed('m-dial') },
+      links: {
+        [CONTROLLER]: inbound(CONTROLLER),
+        [OTHER]: tlsLink(OTHER),
+        'm-dial': dialed('m-dial'),
+      },
     });
     const ids = [] as string[];
     for (const m of [OTHER, 'm-dial']) {
@@ -361,5 +373,80 @@ describe('fs-serve watches', () => {
         frame: { t: 'fs.changed', watchId: 'w', paths: [path.join(proj, 'a.txt')] },
       },
     ]);
+  });
+});
+
+describe('fs-serve symlinks and live links', () => {
+  it('omits a symlink entry whose target is denied, from a listing and from a change', async () => {
+    vi.useFakeTimers();
+    fs.symlinkSync(path.join(proj, '.ssh'), path.join(proj, 'keys'));
+    const h = harness();
+    const f = req('list', proj);
+    await h.serve.onFrame(CONTROLLER, f);
+    const res = resOf(h.sent, f.id);
+    expect(
+      res?.t === 'fs.res' && res.ok && res.result.op === 'list' ? res.result.entries : null,
+    ).toEqual<DirEntryDTO[]>([{ name: 'a.txt', kind: 'file' }]);
+
+    await h.serve.onFrame(CONTROLLER, {
+      t: 'fs.watch',
+      watchId: 'w',
+      sessionId: SESSION,
+      path: proj,
+    });
+    const w = h.fakes[0];
+    w.onEvent('change', 'keys');
+    w.onEvent('change', 'a.txt');
+    vi.advanceTimersByTime(FS_WATCH_DEBOUNCE_MS);
+    expect(h.sent.filter((s) => s.frame.t === 'fs.changed').map((s) => s.frame)).toEqual([
+      { t: 'fs.changed', watchId: 'w', paths: [path.join(proj, 'a.txt')] },
+    ]);
+  });
+
+  it('a watch confirmed after linkDown is not registered, and a same-id watch after reconnect is accepted', async () => {
+    const states: Record<string, LinkState> = {};
+    let drop = (): void => {};
+    const h = harness({
+      states,
+      stat: async (p) => {
+        drop();
+        return statOf(p);
+      },
+    });
+    drop = () => {
+      states[CONTROLLER] = 'down';
+      h.serve.linkDown(CONTROLLER);
+    };
+    await h.serve.onFrame(CONTROLLER, {
+      t: 'fs.watch',
+      watchId: 'w1',
+      sessionId: SESSION,
+      path: proj,
+    });
+    expect(h.serve.watchCount(CONTROLLER)).toBe(0);
+    expect(h.fakes).toHaveLength(0);
+
+    states[CONTROLLER] = 'up';
+    drop = () => {};
+    await h.serve.onFrame(CONTROLLER, {
+      t: 'fs.watch',
+      watchId: 'w1',
+      sessionId: SESSION,
+      path: proj,
+    });
+    expect(h.serve.watchCount(CONTROLLER)).toBe(1);
+    expect(h.audits.filter((e) => e.kind === 'fs.refused')).toHaveLength(0);
+  });
+
+  it('serves reads inside a session root that is itself a symlink', async () => {
+    const alias = path.join(root, 'alias');
+    fs.symlinkSync(proj, alias);
+    const h = harness({ sessionRoots: (sid) => (sid === SESSION ? [alias] : null) });
+    const f = req('read', path.join(alias, 'a.txt'));
+    await h.serve.onFrame(CONTROLLER, f);
+    expect(resOf(h.sent, f.id)).toMatchObject({
+      ok: true,
+      result: { op: 'read', file: { content: 'hello' } },
+    });
   });
 });

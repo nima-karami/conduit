@@ -15,6 +15,7 @@ beforeEach(() => {
   fs.mkdirSync(proj);
   fs.writeFileSync(path.join(proj, 'a.txt'), 'hi');
   fs.writeFileSync(path.join(root, 'outside.txt'), 'nope');
+  fs.writeFileSync(path.join(proj, '.env'), 'TOKEN=1');
 });
 
 afterEach(() => {
@@ -57,6 +58,34 @@ describe('confineFsPath', () => {
       fs.symlinkSync(path.join(root, 'outside.txt'), path.join(proj, 'link.txt'));
       const r = await confineFsPath(path.join(proj, 'link.txt'), [proj]);
       expect(r).toEqual({ ok: false, code: 'refused' });
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'refuses a symlink inside the folder that points at a denied entry inside it',
+    async () => {
+      fs.symlinkSync(path.join(proj, '.env'), path.join(proj, 'cfg'));
+      expect(await confineFsPath(path.join(proj, 'cfg'), [proj])).toEqual({
+        ok: false,
+        code: 'refused',
+      });
+      fs.mkdirSync(path.join(root, '.ssh'));
+      fs.writeFileSync(path.join(root, '.ssh', 'id_rsa'), 'key');
+      fs.symlinkSync(path.join(root, '.ssh', 'id_rsa'), path.join(proj, 'k'));
+      expect(await confineFsPath(path.join(proj, 'k'), [root])).toEqual({
+        ok: false,
+        code: 'refused',
+      });
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'serves a path under a root that is itself a symlink',
+    async () => {
+      const alias = path.join(root, 'alias');
+      fs.symlinkSync(proj, alias);
+      const r = await confineFsPath(path.join(alias, 'a.txt'), [alias]);
+      expect(r).toEqual({ ok: true, real: fs.realpathSync.native(path.join(proj, 'a.txt')) });
     },
   );
 
