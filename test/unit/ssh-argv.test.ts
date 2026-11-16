@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { classifySshFailure, controlDir, posixQuote, sshArgv } from '../../src/network/ssh-argv';
+import {
+  classifySshFailure,
+  controlDir,
+  posixQuote,
+  readE2eSshArgsPrefix,
+  sshArgv,
+} from '../../src/network/ssh-argv';
 
 const join = (...p: string[]) => p.join('/');
 
@@ -279,5 +285,27 @@ describe('classifySshFailure', () => {
 
   it('returns null for exit 0 with empty stderr', () => {
     expect(classifySshFailure(0, '')).toBeNull();
+  });
+});
+
+describe('readE2eSshArgsPrefix', () => {
+  it('reads a JSON string array only in e2e mode', () => {
+    const raw = '["/repo/test/e2e/fixtures/fake-ssh.cjs"]';
+    expect(readE2eSshArgsPrefix(raw, true)).toEqual({
+      kind: 'prefix',
+      argv: ['/repo/test/e2e/fixtures/fake-ssh.cjs'],
+    });
+    // Production never reads the variable: the ssh argv is fixed (plan 4.2.1).
+    expect(readE2eSshArgsPrefix(raw, false)).toEqual({ kind: 'none' });
+  });
+
+  it('is none when unset', () => {
+    expect(readE2eSshArgsPrefix(undefined, true)).toEqual({ kind: 'none' });
+  });
+
+  it('refuses anything that is not a JSON array of strings', () => {
+    for (const raw of ['not json', '"a string"', '{"a":1}', '["ok", 3]', '[null]']) {
+      expect(readE2eSshArgsPrefix(raw, true)).toEqual({ kind: 'invalid' });
+    }
   });
 });

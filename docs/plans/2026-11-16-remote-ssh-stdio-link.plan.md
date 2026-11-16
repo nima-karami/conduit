@@ -58,7 +58,7 @@ down: ssh child exit = stream 'close' → link down → redial with CON-27 backo
 3. **A separate link endpoint,** not a mode of C2: `names.linkEndpoint` = `<userData>/conduit-link.sock`, falling
    back to `<tmpdir>/conduit-link-<instance>.sock` past 100 bytes (the same rule as C2), or
    `\\.\pipe\conduit-link-<instance>` on Windows. It is started by `createNetwork` only (network on), and stopped
-   with it.
+   with it. The server records the endpoint it listens on in `<userData>/link-endpoint` after listen and removes it on stop; the bridge reads that record and never derives a path, since sshd's TMPDIR can differ from the app's.
 4. **`Duplex`, not a new socket type.** `openConnection(sock: Duplex, …)` and `adopt(p, sock: Duplex, …)`.
    `listener.ts` keeps `tls.TLSSocket` for its TLS-only calls and passes the socket on as a `Duplex`.
 5. **ssh peers are `LinkRecord`s** with `transport: 'ssh'` plus `ssh: SshEndpoint | null`:
@@ -335,7 +335,7 @@ one-liner: bytes round-trip; `FAKE_SSH_FAIL='Host key verification failed.'` →
 `server/main.ts` (when `--link-stdio` is present: `process.exitCode = await runLinkStdioBridge({...})`, and skip
 everything else; `--user-data` is still required).
 **Interfaces:**
-- Produces `runLinkStdioBridge(o: { userData: string; platform: NodeJS.Platform; stdin: Readable; stdout: Writable; stderr: Writable; connect?: (endpoint: string) => Duplex }): Promise<number>`.
+- Produces `runLinkStdioBridge(o: { userData: string; stdin: Readable; stdout: Writable; stderr: Writable; connect?: (endpoint: string) => Duplex }): Promise<number>`; it reads the endpoint from `<userData>/link-endpoint` and exits 3 `no_server` when that record is missing.
 - Exit codes:
   - `0` when either side ended cleanly;
   - `BRIDGE_EXIT_CODE` with `conduit-bridge: no_secret` (no file) or `no_server` (connect ENOENT/ECONNREFUSED);

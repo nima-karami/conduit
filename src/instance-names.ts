@@ -40,6 +40,7 @@ export function instanceNames(
         : !fitsSocket(profileServerEndpoint, MAX_SOCKET_PATH_BYTES)
           ? posix.join(tmpdir, `conduit-server-${instance}.sock`)
           : profileServerEndpoint,
+    linkEndpoint: linkEndpointOf(userData, platform, tmpdir),
     mcpEndpoint: endpointPath(userData, platform === 'win32' ? 'win32' : 'posix', tmpdir),
     supervisorName: `conduit-server-${instance}`,
     hcSession: `conduit-${instance}`,
@@ -56,6 +57,23 @@ export function instanceNames(
     (options.log ?? console.warn)(`hc endpoint unavailable: ${names.hcEndpointError}`);
   }
   return names;
+}
+
+/**
+ * The stdio link endpoint: the bridge from sshd's stdio connects here. Pure, so the bridge (which
+ * runs before any server state exists) derives the same name the server listens on.
+ */
+function linkEndpointOf(
+  userData: string,
+  platform: NodeJS.Platform | 'posix',
+  tmpdir: string,
+): string {
+  const instance = instanceDigest(userData, platform === 'win32' ? 'win32' : 'posix');
+  if (platform === 'win32') return `\\\\.\\pipe\\conduit-link-${instance}`;
+  const profileLinkEndpoint = join(userData, 'conduit-link.sock');
+  return fitsSocket(profileLinkEndpoint, MAX_SOCKET_PATH_BYTES)
+    ? profileLinkEndpoint
+    : posix.join(tmpdir, `conduit-link-${instance}.sock`);
 }
 
 function selectHcSocket(

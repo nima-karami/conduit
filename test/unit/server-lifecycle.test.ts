@@ -134,6 +134,7 @@ async function harness(
   const names: InstanceNames = {
     instance: 'abc',
     serverEndpoint: c2.endpoint,
+    linkEndpoint: '/u/link.sock',
     mcpEndpoint: '/u/mcp.sock',
     supervisorName: SUPERVISOR,
     hcSession: 'conduit-abc',

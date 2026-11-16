@@ -5,10 +5,22 @@ import path from 'node:path';
 /** The per-start C2 secret, in the user's userData: user-only on posix and Windows alike. */
 export const SERVER_SECRET_FILE = 'server-secret';
 
+/** The endpoint the ssh bridge connects to, recorded by the server that listens on it. */
+export const LINK_ENDPOINT_FILE = 'link-endpoint';
+
 /** Null only when no server has started in this userData; any other read error is real and throws. */
 export function readServerSecret(userData: string): string | null {
+  return readRecord(userData, SERVER_SECRET_FILE);
+}
+
+/** Null when no server has recorded its link endpoint here, which is also what a stopped server leaves. */
+export function readLinkEndpoint(userData: string): string | null {
+  return readRecord(userData, LINK_ENDPOINT_FILE);
+}
+
+function readRecord(userData: string, file: string): string | null {
   try {
-    return readFileSync(path.join(userData, SERVER_SECRET_FILE), 'utf8').trim();
+    return readFileSync(path.join(userData, file), 'utf8').trim();
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;

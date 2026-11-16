@@ -11,6 +11,7 @@ import { readServerSecret } from '../src/server-secret';
 import { compose } from './compose';
 import { directStopAll, hcBinaryOf, hcClient, serverChildEnv, startCore, stopCore } from './hc-cli';
 import { argValue, requireUserData } from './lifecycle/cli-args';
+import { runLinkStdioBridge } from './lifecycle/link-stdio-bridge';
 import { writeServerSecret } from './lifecycle/server-secret';
 import type { ShellCore } from './lifecycle/shell';
 import { stopAll } from './lifecycle/stop-all';
@@ -38,6 +39,16 @@ export async function runServer(
   close?(): Promise<void>;
 }> {
   const userData = requireUserData(args);
+  // The ssh bridge is a stdio relay, not a server: it binds nothing, writes no secret, composes nothing.
+  if (args.includes('--link-stdio')) {
+    const code = await runLinkStdioBridge({
+      userData,
+      stdin: process.stdin,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+    return { code };
+  }
   const serverVersion =
     args.includes('--e2e') && !argValue(args, '--shim-dir')
       ? argValue(args, '--e2e-app-version') || version
@@ -103,6 +114,7 @@ export async function runServer(
       hcBin,
       transport,
       shell: () => composed,
+      secret: () => secret,
     });
   }
   const core = dependencies.core ?? services?.core;
@@ -188,6 +200,7 @@ function createServerServices(o: {
   transport: PipeTransport;
   /** Undefined while the services are being built, before compose exists. */
   shell: () => ReturnType<typeof compose> | undefined;
+  secret: () => string;
 }): Services {
   const at =
     (level: 'debug' | 'info' | 'warn' | 'error') =>
@@ -205,6 +218,7 @@ function createServerServices(o: {
   return createServices({
     userData: o.userData,
     names: o.names,
+    secret: o.secret,
     platform: o.platform,
     e2e: o.e2e,
     appVersion: o.appVersion,

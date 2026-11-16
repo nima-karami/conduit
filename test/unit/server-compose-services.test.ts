@@ -58,6 +58,7 @@ async function harness(options: Partial<ServicesOptions> = {}, userDataOf?: stri
   const services = createServices({
     userData,
     names,
+    secret: () => SECRET,
     platform: process.platform,
     e2e: true,
     appVersion: '9.9.9',
@@ -153,6 +154,39 @@ describe('compose: startup order (F1.4)', () => {
     const startup = vi.spyOn(h.services.mcp, 'installStartup');
     await h.services.core.start();
     expect(startup).not.toHaveBeenCalled();
+  });
+
+  it('the ssh bridge endpoint admits only the secret the services were built with', async () => {
+    const h = await harness();
+    await h.services.core.start();
+    const bridgeSocket = (preamble: { t: 'bridge'; v: 1; secret: string }) =>
+      new Promise<{ closed: boolean; bytes: number }>((resolve, reject) => {
+        const sock = createConnection(h.names.linkEndpoint);
+        let bytes = 0;
+        let closed = false;
+        sock.on('data', (chunk: Buffer) => {
+          bytes += chunk.length;
+        });
+        sock.once('close', () => {
+          closed = true;
+        });
+        sock.once('connect', () => {
+          const body = Buffer.from(JSON.stringify(preamble), 'utf8');
+          const prefix = Buffer.alloc(4);
+          prefix.writeUInt32BE(body.length, 0);
+          sock.write(Buffer.concat([prefix, body]));
+        });
+        sock.once('error', reject);
+        // An admitted bridge gets the hello frame and stays open; a refused one is closed with no bytes.
+        setTimeout(() => {
+          resolve({ closed, bytes });
+          sock.destroy();
+        }, 300);
+      });
+    const good = await bridgeSocket({ t: 'bridge', v: 1, secret: SECRET });
+    expect(good.bytes).toBeGreaterThan(0);
+    const bad = await bridgeSocket({ t: 'bridge', v: 1, secret: 'x'.repeat(SECRET.length) });
+    expect(bad).toEqual({ closed: true, bytes: 0 });
   });
 
   it('subscribes, reconciles, adopts, then starts MCP, and only then reports health', async () => {

@@ -4,6 +4,7 @@
 // POSIX-quoted remote command locally with stdio inherited, and so needs no shell or sshd.
 
 const { spawn } = require('node:child_process');
+const { appendFileSync } = require('node:fs');
 
 const failText = process.env.FAKE_SSH_FAIL;
 if (failText !== undefined) {
@@ -61,7 +62,10 @@ try {
 
 const [command, ...args] = remote;
 const child = spawn(command, args, { stdio: 'inherit', windowsHide: true });
-process.stderr.write(`fake-ssh: pid ${child.pid}\n`);
+const pidLine = `fake-ssh: pid ${child.pid}\n`;
+process.stderr.write(pidLine);
+// A scenario reads child pids from this file, so it needs no shell to redirect stderr.
+if (process.env.FAKE_SSH_STDERR_LOG) appendFileSync(process.env.FAKE_SSH_STDERR_LOG, pidLine);
 
 // Signals to the stand-in reach the command it runs, so a test that kills the ssh child does not
 // leave the remote command orphaned.

@@ -55,6 +55,7 @@ async function harness(settings: Record<string, unknown> = {}, tokenBlob?: strin
     createServices({
       userData,
       names,
+      secret: () => 'recovery-test-secret',
       platform: process.platform,
       e2e: true,
       appVersion: '9.9.9',
