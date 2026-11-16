@@ -1,6 +1,11 @@
 import { AGENT_CLIS, type AgentCli } from '../../src/conduit-mcp/install-types';
 import { CONNECT_BUDGET_MS } from '../../src/conduit-mcp/machine-tools';
-import type { Capability } from '../../src/contracts/link-protocol';
+import {
+  type Capability,
+  GIT_OPS,
+  type GitOp,
+  type GitReqArgs,
+} from '../../src/contracts/link-protocol';
 import type { AgentSetupStep, MachineMode } from '../../src/contracts/machines';
 import type { NetworkState } from '../../src/contracts/network-state';
 import type { BootstrapResult } from '../../src/contracts/ssh-link';
@@ -8,6 +13,7 @@ import { isSshTarget } from '../../src/network/ssh-argv';
 import { RpcFault } from '../transport/pipe';
 import { DRIVE_INPUT_MAX_BYTES, type Drive } from './drive';
 import type { FsClient } from './fs-client';
+import type { GitClient } from './git-client';
 import type { LinkManager } from './link-manager';
 import { parseHostPort } from './listener';
 import type { Machines } from './machines';
@@ -22,6 +28,9 @@ const MAX_ADDRESSES = 16;
 const MAX_PATH = 4096;
 // The fs frames carry at most 64 chars of session id (link-protocol FS_SESSION_ID_MAX).
 const FS_SESSION_MAX = 64;
+// The git frames take the same commit and page bounds the frame parser enforces on B.
+const GIT_SHA = /^[0-9a-f]{7,40}$/;
+const GIT_LOG_MAX = 500;
 const MAX_DIMENSION = 10_000;
 const isMachineMode = (v: unknown): v is MachineMode => v === 'full' || v === 'light';
 const isDimension = (v: unknown): v is number =>
@@ -42,6 +51,8 @@ export interface NetworkCallDeps {
   machines: Machines;
   /** A's file client for remote.fs.* (plan CON-43). */
   fs: FsClient;
+  /** A's git client for remote.git (plan CON-45). */
+  git: GitClient;
   /** The Host aliases in the user's ssh config, for the Add dialog's list. */
   sshHosts(): string[];
   peer?: object;
@@ -180,7 +191,11 @@ export function handleNetworkCall(
       return Promise.resolve({});
     }
     default:
-      return handleFsCall(method, raw, d) ?? handleMachineCall(method, raw, d);
+      return (
+        handleFsCall(method, raw, d) ??
+        handleGitCall(method, raw, d) ??
+        handleMachineCall(method, raw, d)
+      );
   }
 }
 
@@ -243,6 +258,71 @@ export function handleFsCall(
     }
     default:
       return null;
+  }
+}
+
+/** Git reads of a remote session's repo, through A's git client (plan CON-45). */
+export function handleGitCall(
+  method: string,
+  raw: unknown,
+  d: Pick<NetworkCallDeps, 'git'>,
+): Promise<unknown> | null {
+  const p = paramsOf(raw);
+  switch (method) {
+    case 'remote.git': {
+      const op = GIT_OPS.find((o) => o === p.op);
+      if (op === undefined) throw new RpcFault('invalid', 'Expected op');
+      return d.git.request(
+        str(p, 'machineId'),
+        op,
+        str(p, 'sessionId', FS_SESSION_MAX),
+        str(p, 'root', MAX_PATH),
+        gitArgs(op, p.args),
+      );
+    }
+    default:
+      return null;
+  }
+}
+
+/** Each op's own arguments, rebuilt from the known keys; B's frame parser re-checks them. */
+function gitArgs(op: GitOp, raw: unknown): GitReqArgs {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
+    throw new RpcFault('invalid', 'Expected args');
+  const a = Object.fromEntries(Object.entries(raw));
+  const only = (keys: readonly string[]) => {
+    if (!Object.keys(a).every((k) => keys.includes(k)))
+      throw new RpcFault('invalid', `Expected only ${keys.join(', ') || 'no args'} for ${op}`);
+  };
+  const sha = (key: string): string => {
+    const v = a[key];
+    if (typeof v !== 'string' || !GIT_SHA.test(v)) throw new RpcFault('invalid', `Expected ${key}`);
+    return v;
+  };
+  switch (op) {
+    case 'status':
+      only([]);
+      return {};
+    case 'diff':
+      only(['path']);
+      return { path: str(a, 'path', MAX_PATH) };
+    case 'show':
+      only(['sha']);
+      return { sha: sha('sha') };
+    case 'log': {
+      only(['limit', 'before']);
+      const limit = a.limit;
+      if (
+        limit !== undefined &&
+        (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > GIT_LOG_MAX)
+      )
+        throw new RpcFault('invalid', 'Expected limit 1 to 500');
+      const before = a.before;
+      return {
+        ...(limit !== undefined && { limit }),
+        ...(before !== undefined && { before: sha('before') }),
+      };
+    }
   }
 }
 
