@@ -1,7 +1,7 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadIdentity } from '../../server/network/identity';
 import { createNetwork, type NetworkService } from '../../server/network/index';
 import type { NetworkState } from '../../src/contracts/network-state';
@@ -20,6 +20,8 @@ function server(name: string) {
   const states: NetworkState[] = [];
   const net = createNetwork({
     dir,
+    userData: root,
+    instance: 'service-test',
     identity: loaded.identity,
     settings: () => ({ networkBindHost: '127.0.0.1', networkPort: 0, networkSelfName: name }),
     emit: (s) => states.push(s),
@@ -171,5 +173,39 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
     // The joiner gets the private key over the first verified link, not during pairing.
     await until(() => ownerOf(b.dir) !== undefined);
     expect(ownerOf(b.dir)).toBe(ownerOf(a.dir));
+  });
+
+  // The composer's dialer is the real one: CONDUIT_SSH_PATH is read at construction, so the wrapper
+  // is set before the server is built. The remote "bridge" is a script that refuses, which proves
+  // the whole chain (env, spawn, fake-ssh, remote command, classification) without a real sshd.
+  it.skipIf(process.platform === 'win32')('createNetwork wires a working sshDial', async () => {
+    const work = mkdtempSync(join(tmpdir(), 'ssh-wire-'));
+    cleanup.push(() => rmSync(work, { recursive: true, force: true }));
+    const fakeSsh = join(process.cwd(), 'test', 'e2e', 'fixtures', 'fake-ssh.cjs');
+    const wrapper = join(work, 'ssh');
+    writeFileSync(wrapper, `#!/bin/sh\nexec '${process.execPath}' '${fakeSsh}' "$@"\n`);
+    chmodSync(wrapper, 0o755);
+    const remoteMain = join(work, 'bridge.cjs');
+    writeFileSync(
+      remoteMain,
+      "process.stderr.write('conduit-bridge: no_server\\n'); process.exit(3);\n",
+    );
+    vi.stubEnv('CONDUIT_SSH_PATH', wrapper);
+    cleanup.push(() => {
+      vi.unstubAllEnvs();
+    });
+
+    const a = server('net-a');
+    await a.net.start();
+    const userData = join(a.dir, '..');
+    const result = await a.net.addSshPeer({
+      target: 'fake-target',
+      node: process.execPath,
+      mainJs: remoteMain,
+      userData,
+    });
+    expect(result).toEqual({ ok: false, error: { code: 'bridge_no_server' } });
+    // The control dir is the one controlDir() chose under userData, created by the dial.
+    expect(existsSync(join(userData, 'ssh'))).toBe(true);
   });
 });
