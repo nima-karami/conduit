@@ -26,10 +26,17 @@ CON-24@fc6f68bd (independently approved) is merged in at efd97325 so CON-39 coul
 - Run up to 4 Haiku lanes in parallel on file-disjoint work; mutation checks only on security-relevant code.
 
 ## Next
-CON-42 slice 7 (remote requests): ALL CODE MERGED at fe18079d (verify 0). e2e running (evidence/con42-e2e.log). Deferred: answering B's local policy asks from A (needs call-flow peer-answer). NEXT: report CON-42, then CON-46 slice 11 (remote rules RS-D16).
+CON-42 slice 7 (remote requests): DONE fe18079d + changelog ad7a6570; e2e 43902166996 7/7. Reported.
 
 ## VM
 ~/.cache/conduit-vm/con27, QEMU PID 199137 running idle, defaults restored (KUP false, linger yes, no drop-in). Stop only by its PID when CON-35 is finished.
 
 ## How lanes run
 Haiku builders in /tmp/claude-1000/-home-namemenima-projects--wt-conduit-CON-35/7e0abefc-f499-4ed4-883c-1e77266b51a9/scratchpad/lanes/<name> (node_modules symlink); gates per lane: `node esbuild.mjs && npm run verify:quick`, `npx fallow --skip health` (dead code empty), `rm -rf out`. Opus review each lane with mutation testing; orchestrator merges --no-ff with main's identity and runs full `npm run verify` per merge. Contracts land with their first importer (fallow). Every ssh call in smokes under `timeout`; never `hc server status`.
+
+## CON-46 slice 11 (remote rules) — in progress (usage pause point, 16:35Z)
+- Plan: docs/plans/2026-11-16-remote-ssh-rules.plan.md (25355ed0). Frames at minor 5 (CON-43 fs took 4).
+- Merged: L1 frames 9be308a1; L2 B policy service 92a34247 (verify 0; 11 mutants red). Also merged from claude-25: CON-41 0599abdb, CON-47 718b90ba (both verify 0).
+- L3 network (branch con46-l3, worktree scratchpad/lanes/c46-l3, first commit e7617010): rebasing onto 92a34247, adding flow.recheck after apply/revoke in host networkPort, policy codes into ToolErrorCode. Merge when its report says verify:quick EXIT=0, then full verify under flock.
+- NEXT (not started, held for usage): L4 A store src/conduit-mcp/remote-policy.ts + host `machine` on edits + mcp:remotePolicy + policy.machines + drafts file; make remotePolicySink required. Then L5 picker in settings McpToolPolicyRows + e2e net-policy. Then e2e:remote, changelog, report.
+- Follow-up: fallow clone cluster server/network/policy.ts vs requests.ts (shared refuse/settle helpers).
