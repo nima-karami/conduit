@@ -21,7 +21,7 @@ const log = makeLog('net');
 const HC = resolveHcBinary();
 const HC_VERSION = '0.1.16';
 const APP_VERSION = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8')).version;
-const ECHO_AGENT = 'e2e-echo';
+export const ECHO_AGENT = 'e2e-echo';
 const FAKE_AGENT_ID = 'e2e-fake-mcp';
 // Raw mode, as fixtures/echo-probe.cjs: on Windows a line-mode stdin reader never learns of a
 // ConPTY resize, so `size` would report the spawn size.

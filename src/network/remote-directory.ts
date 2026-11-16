@@ -8,6 +8,7 @@ import {
   BARE_HANDLE,
   type Capabilities,
   type LinkState,
+  type MonitorOpener,
   type MonitorSession,
   type MonitorSnapshot,
 } from '../contracts/link-protocol';
@@ -61,13 +62,30 @@ function terminalHint(link: RemoteLinkInfo): string | null {
   }
 }
 
+/**
+ * The opener as I name it. A peer names its own local opener with no machine id, so that one is on
+ * the peer. My own machine's opener is my local lead, shown by handle as my own rows are.
+ */
+function openerOf(
+  link: RemoteLinkInfo,
+  opener: MonitorOpener | null | undefined,
+  selfMachineId: string | null,
+): MonitorOpener | null {
+  if (!opener) return null;
+  if (opener.machineId === null) return { handle: opener.handle, machineId: link.machineId };
+  if (opener.machineId === selfMachineId) return { handle: opener.handle, machineId: null };
+  return { handle: opener.handle, machineId: opener.machineId };
+}
+
 function linkOf(state: LinkState): RemoteEntry['link'] {
   if (state === 'up') return 'up';
   if (state === 'degraded') return 'degraded';
   return 'down';
 }
 
-export function createRemoteDirectory(): RemoteDirectory {
+export function createRemoteDirectory(
+  selfMachineId: () => string | null = () => null,
+): RemoteDirectory {
   let links: RemoteLinkInfo[] = [];
   let selfName = '';
   const snapshots = new Map<string, MonitorSnapshot>();
@@ -110,6 +128,7 @@ export function createRemoteDirectory(): RemoteDirectory {
               machine,
               trust: 'own',
               link: linkOf(link.state),
+              opener: openerOf(link, session.openedBy, selfMachineId()),
             },
           },
         ];

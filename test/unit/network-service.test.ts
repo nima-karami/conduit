@@ -51,7 +51,7 @@ function server(name: string, endpointIn?: (root: string) => string) {
     identity: loaded.identity,
     settings: () => ({ networkBindHost: '127.0.0.1', networkPort: 0, networkSelfName: name }),
     emit: (s) => states.push(s),
-    log: quiet,
+    log: { ...quiet, info: () => undefined },
     observe: async () => null,
     emitTo: () => {},
     openCommandSession: async (command, folder) => {

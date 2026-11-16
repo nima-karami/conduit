@@ -8,6 +8,8 @@ export type { Capabilities, Capability } from './remote-principal';
 // minor 1 added the hello's platform and version (spec 5.3): a peer at minor 0 omits them.
 // minor 2 added the routed `call` / `call.result` frames (spec 5.3, CON-40).
 export const LINK_PROTOCOL = { major: 1, minor: 2 } as const;
+/** The lowest peer minor that serves `call` frames: a routed call to an older peer is refused, not sent. */
+export const ROUTED_CALLS_MIN_MINOR = 2;
 export const LINK_FEATURES = ['messaging', 'monitor', 'drive', 'view'] as const;
 export type LinkFeature = (typeof LINK_FEATURES)[number];
 // The session tools a lead may route to a peer; anything else in a `call` is a malformed frame.
@@ -22,7 +24,7 @@ export const ROUTED_TOOLS = [
 export type RoutedTool = (typeof ROUTED_TOOLS)[number];
 // The argument blob is re-serialized into a tool call on the far side; the cap keeps one frame
 // from crowding the link. Result size is bounded by the frame limit instead.
-const CALL_ARGS_MAX_BYTES = 64 * 1024;
+export const CALL_ARGS_MAX_BYTES = 64 * 1024;
 const CALL_ID_MAX = 64;
 const HANDLE_MAX = 64;
 const ERROR_CODE_MAX = 64;

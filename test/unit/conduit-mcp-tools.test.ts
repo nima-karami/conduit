@@ -467,6 +467,7 @@ describe('sendMessage to another machine', () => {
     machine: 'laptop',
     trust: 'own',
     link: 'up',
+    opener: null,
   };
   const resolvePeer = (t: string) =>
     t === 'x@m-0123abcd'
@@ -992,7 +993,21 @@ describe('list_sessions with remote entries', () => {
     machine: 'Laptop',
     trust: 'own',
     link: 'up',
+    opener: null,
   };
+
+  it('shows who opened a remote session: my own lead by handle, a lead on another machine as handle@machine', async () => {
+    const mine: RemoteEntry = { ...REMOTE, opener: { handle: 'claude-3', machineId: null } };
+    const other: RemoteEntry = {
+      ...REMOTE,
+      sessionId: 'r2',
+      address: 'claude-2@m-0123abcd',
+      opener: { handle: 'claude-9', machineId: 'm-0000dddd' },
+    };
+    const h = await harness({ remote: () => [mine, other] });
+    const rows = okValue(h.tools.listSessions(CODEX)).sessions;
+    expect(rows.slice(-2).map((r) => r.opened_by)).toEqual(['claude-3', 'claude-9@m-0000dddd']);
+  });
 
   it('appends one row per remote entry and leaves the local rows byte-identical', async () => {
     const plain = await harness({ remote: () => [] });

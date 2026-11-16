@@ -106,9 +106,17 @@ import type {
 } from './policy-types';
 import {
   isKnownMachine,
+  isRoutedCall,
   type McpNetworkPort,
+  machineTarget,
+  nameOnMachine,
   type RemoteRecipientOutcome,
   type RemoteResolution,
+  type RoutedIntent,
+  routedAskSummary,
+  routedIntentOf,
+  routedName,
+  routedRefOf,
 } from './remote-routing';
 import { createRequestsIo, type RequestsIo } from './request-file-fs';
 import { createRequestNotices } from './request-notices';
@@ -1924,6 +1932,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           ownerReady: () => windowId !== null && deps.windowReady(windowId),
           onScreen: () => windowId !== null && deps.onScreen(windowId, sessionId),
           appConnected: deps.appConnected(),
+          routed: isRoutedCall(name, rawArgs),
         });
         if (refused) return { ok: false, error: refused };
         // A concurrent call may have spent the override this decision relies on. decide and commit
@@ -2054,7 +2063,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         principal: { handle: handle ?? null, sessionId, machineId: null },
         cli: sessionId ? launchedCli(sessionId) : null,
         action: name,
-        target: record?.input.targets[0]?.path ?? record?.input.targets[0]?.sessionId ?? null,
+        // A routed call names the machine it runs on, or the address it reaches (CON-40 S3 review).
+        target:
+          record?.input.targets[0]?.path ??
+          record?.input.targets[0]?.sessionId ??
+          routedRefOf(name, args),
         summary: null,
         decision: decision?.decision ?? null,
         decidedBy: decision ? reasonOf(decision) : 'unknown',
@@ -2294,12 +2307,88 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return result;
   };
 
+  /**
+   * A session call that names another machine (CON-40 S3): the lead's gate has run, and the call
+   * runs there. The machine answers under its own name for the session, so the handle is rewritten
+   * to handle@<machine>. A remote lead can't route on: B never reaches another machine.
+   */
+  const prepareRouted = (
+    caller: Caller,
+    intent: RoutedIntent,
+    ctx: ControlCallContext,
+  ): Result<Prepared<StructuredOutput>> => {
+    const network = deps.network;
+    if (caller.remote !== undefined)
+      return {
+        ok: false,
+        error: toolError(
+          'peer_unsupported',
+          `${intent.tool} on another machine can't be routed from a remote lead`,
+          undefined,
+          { hint: 'send it from the machine the session is on' },
+        ),
+      };
+    if (network === undefined)
+      return intent.kind === 'machine'
+        ? {
+            ok: false,
+            error: toolError('machine_unknown', `no machine is called ${intent.machine}`),
+          }
+        : {
+            ok: false,
+            error: toolError(
+              'unknown_session',
+              `no session "${intent.address}" in list_sessions`,
+              undefined,
+              { hint: 'no linked machines' },
+            ),
+          };
+    // A session address resolves only its machine part here; the handle is B's to resolve (CON-40 S3).
+    const found = machineTarget(network, intent.machine);
+    if (!found.ok) return found;
+    const target =
+      intent.kind === 'address' ? { ...found.value, label: intent.handle } : found.value;
+    const shown = intent.kind === 'address' ? routedName(intent.handle, target.machine) : null;
+    const summary = routedAskSummary(intent, target, shown);
+    if (summary === null)
+      return {
+        ok: false,
+        error: toolError(
+          'invalid_args',
+          `${intent.tool} on ${target.machine} needs its arguments as text`,
+        ),
+      };
+    const { machineId, machine } = target;
+    return {
+      ok: true,
+      value: {
+        summary,
+        routesUi: false,
+        release: () => undefined,
+        run: async () => {
+          const out = await network.call(
+            machineId,
+            intent.tool,
+            intent.args,
+            caller.handle,
+            ctx.signal,
+          );
+          if (!out.ok) return out;
+          return { ok: true, value: nameOnMachine(intent.tool, out.value, machine) };
+        },
+      },
+    };
+  };
+
   const prepareControl = (
     caller: Caller,
     name: ToolName,
     args: unknown,
     ctx: ControlCallContext,
   ): Promise<Result<Prepared<StructuredOutput>>> => {
+    const routed = routedIntentOf(name, args);
+    if (!routed.ok) return Promise.resolve(routed);
+    if (routed.value !== null) return Promise.resolve(prepareRouted(caller, routed.value, ctx));
     switch (name) {
       case 'list_agents':
         return control.prepareListAgents(caller, args);

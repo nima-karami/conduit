@@ -30,13 +30,22 @@ export type AskSummary =
       path: string;
       agent: string;
       focus: boolean;
+      /** The machine a routed call runs on, when it is not this one (CON-40 S3). */
+      machine?: string;
       /** A bare command on PATH: the absolute path that will run. */
       command?: string;
       model?: string;
       /** Characters in the first message, when one is given. */
       message?: number;
     }
-  | { tool: 'open_terminal'; path: string; command: string; focus: boolean }
+  | {
+      tool: 'open_terminal';
+      path: string;
+      command: string;
+      focus: boolean;
+      /** The machine a routed call runs on, when it is not this one (CON-40 S3). */
+      machine?: string;
+    }
   | { tool: 'open_file'; path: string; line: number | null }
   | { tool: 'close_session'; target: Handle }
   /** Several sessions: the first names (at most 8) of `total`. */

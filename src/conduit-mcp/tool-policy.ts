@@ -458,7 +458,11 @@ export const NOT_IN_SESSION_HINT =
 export const windowNotReady = (): ToolError =>
   toolError('window_not_ready', "this session's Conduit window isn't ready; try again shortly");
 
-/** Spec §3.3 steps 1–5; null ⇒ proceed. Steps 4–5 only for non-messaging tools; thunks run lazily. */
+/**
+ * Spec §3.3 steps 1–5; null ⇒ proceed. Steps 4–5 only for non-messaging tools; thunks run lazily.
+ * `routed`: the call names another machine (CON-40 S3). It is a server action on this side (spec 4.6),
+ * so it needs no ready window, and when:viewing never applies to it.
+ */
 export function gateToolCall(i: {
   sessionId: string | null;
   messagingOn: boolean;
@@ -467,6 +471,7 @@ export function gateToolCall(i: {
   ownerReady: () => boolean;
   onScreen: () => boolean;
   appConnected: boolean;
+  routed?: boolean;
 }): ToolError | null {
   if (i.sessionId === null)
     return toolError('not_in_session', 'this MCP connection is not a Conduit session', undefined, {
@@ -477,20 +482,21 @@ export function gateToolCall(i: {
     return toolError('messaging_off', 'Conduit messaging is turned off');
   if (i.decision.decision === 'deny') return toolDisabled(i.tool);
   if (isMessagingTool(i.tool) || isRequestTool(i.tool)) return null;
+  const serverAction = SERVER_ACTIONS.has(i.tool) || i.routed === true;
   // REQ-D21c: with no app at all, an always-ask may wait for one, but only for a server action, which
   // can run once approved without a window (docs/specs/archive/2026-11-14-user-input-requests.md §4.3).
   if (
     !i.appConnected &&
     i.decision.decision === 'ask' &&
     i.decision.rule.when === 'always' &&
-    SERVER_ACTIONS.has(i.tool)
+    serverAction
   )
     return null;
   // Without a ready window there is no card to ask on and no visibility to trust; an `on` server
   // action needs neither (architecture D8).
   if (!i.ownerReady())
-    return i.decision.decision === 'allow' && SERVER_ACTIONS.has(i.tool) ? null : windowNotReady();
-  if (i.decision.rule.when === 'viewing' && !i.onScreen())
+    return i.decision.decision === 'allow' && serverAction ? null : windowNotReady();
+  if (i.decision.rule.when === 'viewing' && !i.onScreen() && i.routed !== true)
     return toolError('caller_not_visible', `${i.tool} only runs while your session is on screen`);
   return null;
 }

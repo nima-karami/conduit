@@ -342,9 +342,10 @@ export const MCP_STR = {
     summary: {
       open_session: (s) =>
         s.command === undefined
-          ? `Open a ${s.agent}${s.model === undefined ? '' : ` (model ${s.model})`} session in ${s.path}${s.message === undefined ? '' : `, with a first message (${s.message} chars)`}${s.focus ? '' : ', in the background'}`
-          : `Run ${s.command} as a new ${s.agent} session in ${s.path}${s.model === undefined ? '' : ` (model ${s.model})`}${s.message === undefined ? '' : `, with a first message (${s.message} chars)`}${s.focus ? '' : ', in the background'}`,
-      open_terminal: (s) => `Run ${s.command} in ${s.path}${s.focus ? '' : ', in the background'}`,
+          ? `Open a ${s.agent}${s.model === undefined ? '' : ` (model ${s.model})`} session in ${s.path}${s.machine === undefined ? '' : ` on ${s.machine}`}${s.message === undefined ? '' : `, with a first message (${s.message} chars)`}${s.focus ? '' : ', in the background'}`
+          : `Run ${s.command} as a new ${s.agent} session in ${s.path}${s.machine === undefined ? '' : ` on ${s.machine}`}${s.model === undefined ? '' : ` (model ${s.model})`}${s.message === undefined ? '' : `, with a first message (${s.message} chars)`}${s.focus ? '' : ', in the background'}`,
+      open_terminal: (s) =>
+        `Run ${s.command} in ${s.path}${s.machine === undefined ? '' : ` on ${s.machine}`}${s.focus ? '' : ', in the background'}`,
       open_file: (s) => `Open ${s.path}${s.line === null ? '' : ` at line ${s.line}`}`,
       close_session: (s) =>
         'target' in s
