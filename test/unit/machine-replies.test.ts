@@ -4,6 +4,8 @@ import {
   MACHINE_OK,
   machineActionReply,
   machineFault,
+  openSetupPaneReply,
+  probeAgentsReply,
 } from '../../electron/machine-replies';
 import { ServerCallError } from '../../electron/server-client';
 import type {
@@ -112,6 +114,95 @@ describe('machineActionReply', () => {
       type: 'machines:result',
       requestId: 3,
       result: { ok: true, value: null },
+    });
+  });
+});
+
+describe('openSetupPaneReply', () => {
+  it('an opened pane replies its session id with no error', async () => {
+    const reply = await openSetupPaneReply(7, async () => ({ sessionId: 's-9' }), vi.fn());
+
+    expect(reply).toEqual({
+      type: 'machines:paneOpened',
+      requestId: 7,
+      sessionId: 's-9',
+      error: null,
+    });
+  });
+
+  it('a C2 fault replies its code with no session id and logs it', async () => {
+    const warn = vi.fn();
+    const reply = await openSetupPaneReply(
+      8,
+      async () => {
+        throw new ServerCallError('peer_unreachable', 'box is down');
+      },
+      warn,
+    );
+
+    expect(reply).toEqual({
+      type: 'machines:paneOpened',
+      requestId: 8,
+      sessionId: null,
+      error: 'peer_unreachable',
+    });
+    expect(warn).toHaveBeenCalledWith('openSetupPane failed', {
+      err: expect.stringContaining('box is down'),
+    });
+  });
+
+  it('a non-fault error replies failed', async () => {
+    const reply = await openSetupPaneReply(
+      9,
+      async () => {
+        throw new Error('boom');
+      },
+      vi.fn(),
+    );
+
+    expect(reply).toEqual({
+      type: 'machines:paneOpened',
+      requestId: 9,
+      sessionId: null,
+      error: 'failed',
+    });
+  });
+});
+
+describe('probeAgentsReply', () => {
+  it('a probe replies the CLI list with no error', async () => {
+    const reply = await probeAgentsReply(
+      10,
+      async () => ({ agents: ['claude', 'codex'] }),
+      vi.fn(),
+    );
+
+    expect(reply).toEqual({
+      type: 'machines:agents',
+      requestId: 10,
+      agents: ['claude', 'codex'],
+      error: null,
+    });
+  });
+
+  it('a C2 fault replies its code with no list and logs it', async () => {
+    const warn = vi.fn();
+    const reply = await probeAgentsReply(
+      11,
+      async () => {
+        throw new ServerCallError('peer_unreachable', 'timed out');
+      },
+      warn,
+    );
+
+    expect(reply).toEqual({
+      type: 'machines:agents',
+      requestId: 11,
+      agents: null,
+      error: 'peer_unreachable',
+    });
+    expect(warn).toHaveBeenCalledWith('probeAgents failed', {
+      err: expect.stringContaining('timed out'),
     });
   });
 });
