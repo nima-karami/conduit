@@ -18,6 +18,7 @@ All notable user-facing changes to Conduit. Format follows
 - Conduit keeps an activity log of agents' tool calls for 30 days: who asked, what was decided and why, and how it ended, without message bodies, command output or file contents. Commands and file edits that Claude Code and Codex run on their own are logged too, marked as decided by that CLI. Conduit adds a hook to Claude Code's settings for this. The screen for the log arrives in a later release.
 - Groundwork for controlling your other machines over SSH: Conduit can now link to the Background service on another machine through your normal `ssh` login, with no extra port or pairing. The screens and agent tools for this arrive in later releases.
 - Conduit can now set itself up on another Linux machine over SSH: it checks what the machine has, installs the same version as yours (verified against pinned checksums), starts the Background service there and links to it. The screens and agent tools for this arrive in later releases.
+- Agents can connect to your other machines with `connect_machine`, see them with `list_machines` and stop the connection with `disconnect_machine` (the remote's sessions keep running). Setting Conduit up on a machine for the first time always asks you first, under every profile. When SSH needs you (an unknown host key, a passphrase), the agent is told to ask you instead of hanging.
 
 ## [0.66.1] — 2026-11-16
 
