@@ -98,16 +98,25 @@ describe('policy file', () => {
     expect(parsePolicyFile(JSON.stringify(raw))).toEqual({ ok: false, reason: 'corrupt' });
   });
 
-  it('normalises pins on read: session points only, sorted and unique', () => {
+  it('normalises pins on read: the default point carries none, cli and session keep theirs, sorted and unique', () => {
     const file = validFile();
     file.assignments = [
+      {
+        point: { kind: 'default' },
+        assignment: {
+          profileId: 'worker',
+          exceptions: [],
+          onScreenOnly: false,
+          pinned: ['send_input.access'],
+        },
+      },
       {
         point: { kind: 'cli', cli: 'claude' },
         assignment: {
           profileId: 'worker',
           exceptions: [],
           onScreenOnly: false,
-          pinned: ['send_input.access'],
+          pinned: ['send_input.access', 'open_file.access', 'send_input.access'],
         },
       },
       {
@@ -123,10 +132,9 @@ describe('policy file', () => {
     const parsed = parsePolicyFile(serializePolicyFile(file));
     if (!parsed.ok) throw new Error('unreadable');
     expect(parsed.file.assignments[0]?.assignment).not.toHaveProperty('pinned');
-    expect(parsed.file.assignments[1]?.assignment.pinned).toEqual([
-      'open_file.access',
-      'send_input.access',
-    ]);
+    const pinsExpected = ['open_file.access', 'send_input.access'];
+    expect(parsed.file.assignments[1]?.assignment.pinned).toEqual(pinsExpected);
+    expect(parsed.file.assignments[2]?.assignment.pinned).toEqual(pinsExpected);
   });
 
   it('corrupt → corrupt, version 2 → newer', () => {
