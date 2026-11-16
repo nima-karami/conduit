@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { copyFileSync, existsSync, promises as fsp, readFileSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, promises as fsp, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { join, resolve } from 'node:path';
 import { watchDir, watchDirWhilePresent } from '../../electron/watch-dir';
@@ -119,6 +119,7 @@ import { ServerFolderHealth } from './folder-health';
 import { createLimitMonitor } from './limit-monitor';
 import { createLimitRulesSource } from './limit-rules-file';
 import { ServerSettingsStore } from './server-settings';
+import { confineTranscriptPath, readTranscriptRange, readTranscriptSize } from './transcript-range';
 
 export type DomainLogLevel = 'debug' | 'info' | 'warn' | 'error';
 export type DomainLog = Record<
@@ -135,6 +136,8 @@ export interface DomainDeps {
   e2e: boolean;
   /** The server's own env (process.env): every session's base env (withServerEnv). */
   env: Readonly<Record<string, string | undefined>>;
+  /** Test seam: the Stop-time size lookup of the feed gap. Production uses readTranscriptSize. */
+  transcriptSize?: (path: string) => Promise<number>;
   runtime: TerminalRuntime;
   launch: LaunchPort;
   drafts: DraftPort;
@@ -690,18 +693,11 @@ export function createDomain(deps: DomainDeps): Domain {
   });
   const codexHome = deps.env.CODEX_HOME || join(deps.homeDir, '.codex');
   const metaCapWarned = new Set<string>();
+  // see plan review B: transcript_path is agent-controlled, so the feed gap only reads under here
+  const claudeHome = deps.env.CLAUDE_CONFIG_DIR || join(deps.homeDir, '.claude');
   const feedGap = createClaudeFeedGap<ReturnType<typeof setTimeout>>({
-    readRange: async (p, start, end) => {
-      const handle = await fsp.open(p, 'r');
-      try {
-        const buf = Buffer.alloc(end - start);
-        const { bytesRead } = await handle.read(buf, 0, end - start, start);
-        return buf.subarray(0, bytesRead);
-      } finally {
-        await handle.close();
-      }
-    },
-    sizeOf: (p) => statSync(p).size,
+    readRange: readTranscriptRange,
+    sizeOf: deps.transcriptSize ?? readTranscriptSize,
     setTimer: (fn, ms) => setTimeout(fn, ms),
     clearTimer: (handle) => clearTimeout(handle),
     record: (sessionId, gap) => deps.observed.record(sessionId, 'claude', { gap }),
@@ -713,8 +709,22 @@ export function createDomain(deps: DomainDeps): Domain {
     if (!mgr.get(sessionId)) return;
     const payload = isRecord(post.payload) ? post.payload : {};
     if (post.event === 'Stop') {
-      if (typeof payload.transcript_path === 'string')
-        feedGap.stop(sessionId, payload.transcript_path);
+      if (typeof payload.transcript_path === 'string') {
+        const transcript = confineTranscriptPath(payload.transcript_path, claudeHome);
+        if (transcript === null) {
+          // the path is agent-supplied: log a bounded prefix, not the whole string
+          log.warn(
+            'observed',
+            'transcript path outside the Claude projects dir; feed gap not checked',
+            {
+              sessionId,
+              path: payload.transcript_path.slice(0, 200),
+            },
+          );
+        } else {
+          feedGap.stop(sessionId, transcript);
+        }
+      }
       return;
     }
     if (post.event !== 'PostToolUse' && post.event !== 'PostToolUseFailure') return;

@@ -826,6 +826,16 @@ describe('NET wiring through the server', () => {
 
   it('recordObserved lands in the Activity log as an observed row for the session', async () => {
     const h = harness();
+    h.sessions.set('s-obs', {
+      id: 's-obs',
+      name: 'S s-obs',
+      agentId: FAKE.id,
+      home: '/w',
+      roots: [],
+      status: 'running',
+      createdAt: 0,
+      lastActiveAt: 0,
+    });
     await h.mcp.start();
     h.mcp.recordObserved('s-obs', 'codex', {
       action: { kind: 'command', command: 'ls', cwd: '/w', exitCode: 0, durationMs: null },

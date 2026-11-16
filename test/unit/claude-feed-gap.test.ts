@@ -20,6 +20,11 @@ function rig() {
   let readCount = 0;
   let failAt: number | null = null;
   let failure: Error = new Error('unarmed');
+  let recordFailure: Error | null = null;
+  let hangAt: number | null = null;
+  let release: (() => void) | null = null;
+  let hangSizeNext = false;
+  let sizeFailure: Error | null = null;
   const ranges: Array<[number, number]> = [];
   const timers: Timer[] = [];
   const records: Array<{ sessionId: string; gap: number }> = [];
@@ -28,13 +33,30 @@ function rig() {
     readRange: async (_path, start, end) => {
       ranges.push([start, end]);
       readCount += 1;
+      if (readCount === hangAt) {
+        hangAt = null;
+        return new Promise<Buffer>((resolve) => {
+          release = () => resolve(Buffer.from(transcript, 'utf8').subarray(start, end));
+        });
+      }
       if (readCount === failAt) {
         failAt = null;
         throw failure;
       }
       return Buffer.from(transcript, 'utf8').subarray(start, end);
     },
-    sizeOf: () => Buffer.byteLength(transcript, 'utf8'),
+    sizeOf: async () => {
+      if (sizeFailure !== null) {
+        const failure = sizeFailure;
+        sizeFailure = null;
+        throw failure;
+      }
+      if (hangSizeNext) {
+        hangSizeNext = false;
+        return new Promise<number>(() => {});
+      }
+      return Buffer.byteLength(transcript, 'utf8');
+    },
     setTimer: (fn, ms) => {
       const timer = { fn, ms, cancelled: false };
       timers.push(timer);
@@ -43,7 +65,14 @@ function rig() {
     clearTimer: (timer) => {
       timer.cancelled = true;
     },
-    record: (sessionId, n) => records.push({ sessionId, gap: n }),
+    record: (sessionId, n) => {
+      if (recordFailure !== null) {
+        const failure = recordFailure;
+        recordFailure = null;
+        throw failure;
+      }
+      records.push({ sessionId, gap: n });
+    },
     warn: (msg) => warnings.push(msg),
   });
   const append = (line: string): void => {
@@ -69,6 +98,21 @@ function rig() {
     failRead: (nth: number, error: Error) => {
       failAt = readCount + nth;
       failure = error;
+    },
+    failNextRecord: (error: Error) => {
+      recordFailure = error;
+    },
+    hangRead: (nth: number) => {
+      hangAt = readCount + nth;
+    },
+    hangSizeNext: () => {
+      hangSizeNext = true;
+    },
+    failSizeNext: (error: Error) => {
+      sizeFailure = error;
+    },
+    releaseHungRead: () => {
+      release?.();
     },
   };
 }
@@ -345,4 +389,169 @@ describe('claude feed gap', () => {
     await r.settle();
     expect(r.records).toEqual([{ sessionId: 's1', gap: 1 }]);
   });
+
+  it('a baseline on a long transcript reads only its 64 KiB tail, and the offset lands after the last line', async () => {
+    const r = rig();
+    const filler = `${JSON.stringify({ type: 'user', text: 'f'.repeat(1000) })}\n`;
+    r.replaceTranscript(filler.repeat(200));
+    r.append(use('u0', 't0'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    const size = Buffer.byteLength(`${filler.repeat(200)}${use('u0', 't0')}\n`);
+    expect(r.ranges).toEqual([[size - 65_536, size]]);
+    expect(r.records).toEqual([]);
+    r.append(use('u1', 't1'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.records).toEqual([{ sessionId: 's1', gap: 1 }]);
+  });
+
+  it('a span over 32 MiB is a baseline: no gap is reported, and the check reads only the tail', async () => {
+    const r = rig();
+    const head = `${use('u0', 't0')}\n`;
+    r.replaceTranscript(head);
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    const huge = JSON.stringify({
+      type: 'assistant',
+      uuid: 'big',
+      message: {
+        content: [
+          { type: 'tool_use', id: 'ghost', name: 'Bash' },
+          { type: 'text', text: 'z'.repeat(33 * 1024 * 1024) },
+        ],
+      },
+    });
+    const body = `${head}${huge}\n`;
+    r.replaceTranscript(body);
+    const size = Buffer.byteLength(body);
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.records).toEqual([]);
+    expect(r.ranges.at(-1)).toEqual([size - 65_536, size]);
+    r.append(use('u1', 't1'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.records).toEqual([{ sessionId: 's1', gap: 1 }]);
+  });
+
+  it('a check that throws warns and never stalls the queue: the next Stop still checks', async () => {
+    const r = rig();
+    r.append(use('u0', 't0'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    r.append(use('u1', 't1'));
+    r.failNextRecord(new Error('sink full'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.records).toEqual([]);
+    expect(r.warnings).toHaveLength(1);
+    r.append(use('u2', 't2'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.records).toEqual([{ sessionId: 's1', gap: 2 }]);
+    expect(r.warnings).toHaveLength(1);
+  });
+
+  it('a failed record keeps the matched posts, so the retry still counts the calls they cover', async () => {
+    const r = rig();
+    r.append(use('u0', 't0'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    r.append(use('u1', 't1'));
+    r.append(use('u2', 't2'));
+    r.gap.post('s1', false, 't1');
+    r.failNextRecord(new Error('sink full'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.records).toEqual([]);
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.records).toEqual([{ sessionId: 's1', gap: 1 }]);
+  });
+
+  it('a hung check times out, warns, and the queue moves on to the next session', async () => {
+    const r = rig();
+    r.append(use('u0', 't0'));
+    r.gap.stop('b', '/t/b.jsonl');
+    await r.settle();
+    r.append(use('u1', 't1'));
+    r.hangRead(1);
+    r.gap.stop('a', '/t/a.jsonl');
+    r.gap.stop('b', '/t/b.jsonl');
+    for (const t of r.timers.filter((x) => x.ms === 3_000 && !x.cancelled)) t.fn();
+    await flushMicrotasks();
+    for (const t of r.timers.filter((x) => x.ms === 10_000 && !x.cancelled)) t.fn();
+    await r.gap.settled();
+    expect(r.records).toEqual([{ sessionId: 'b', gap: 1 }]);
+    expect(r.warnings.some((w) => w.includes('timed out'))).toBe(true);
+  });
+
+  it('a timed-out check that finishes late writes nothing, so the next Stop counts from the old offset', async () => {
+    const r = rig();
+    r.append(use('u0', 't0'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    r.append(use('u1', 't1'));
+    r.hangRead(2);
+    r.gap.stop('s1', '/t/a.jsonl');
+    for (const t of r.timers.filter((x) => x.ms === 3_000 && !x.cancelled)) t.fn();
+    await flushMicrotasks();
+    for (const t of r.timers.filter((x) => x.ms === 10_000 && !x.cancelled)) t.fn();
+    await flushMicrotasks();
+    r.releaseHungRead();
+    await flushMicrotasks();
+    expect(r.records).toEqual([]);
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.records).toEqual([{ sessionId: 's1', gap: 1 }]);
+  });
+
+  it('a size lookup that never resolves times out, and the queue moves on to the next session', async () => {
+    const r = rig();
+    r.append(use('u0', 't0'));
+    r.gap.stop('b', '/t/b.jsonl');
+    await r.settle();
+    r.append(use('u1', 't1'));
+    r.hangSizeNext();
+    r.gap.stop('a', '/t/a.jsonl');
+    r.gap.stop('b', '/t/b.jsonl');
+    for (const t of r.timers.filter((x) => x.ms === 3_000 && !x.cancelled)) t.fn();
+    await flushMicrotasks();
+    for (const t of r.timers.filter((x) => x.ms === 10_000 && !x.cancelled)) t.fn();
+    await r.gap.settled();
+    expect(r.records).toEqual([{ sessionId: 'b', gap: 1 }]);
+    expect(r.warnings).toContain('feed gap check timed out; later checks continue');
+  });
+
+  it('a transcript that cannot be statted warns and is not checked', async () => {
+    const r = rig();
+    r.append(use('u0', 't0'));
+    r.failSizeNext(new Error('ENOENT'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    // Yields to the event loop so an unhandled rejection from the stat is reported before check().
+    await new Promise((resolve) => setImmediate(resolve));
+    await r.settle();
+    expect(r.warnings).toEqual(['transcript not statable; feed gap not checked']);
+    expect(r.ranges).toEqual([]);
+  });
+
+  it('dispose cancels the timeout of a check that is still running', async () => {
+    const r = rig();
+    r.append(use('u0', 't0'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    r.append(use('u1', 't1'));
+    r.hangRead(1);
+    r.gap.stop('s1', '/t/a.jsonl');
+    for (const t of r.timers.filter((x) => x.ms === 3_000 && !x.cancelled)) t.fn();
+    await flushMicrotasks();
+    r.gap.dispose();
+    expect(r.timers.filter((x) => x.ms === 10_000).every((x) => x.cancelled)).toBe(true);
+  });
 });
+
+/** Lets the queued check start, since the test drives timers directly rather than through settle(). */
+async function flushMicrotasks(): Promise<void> {
+  for (let i = 0; i < 5; i += 1) await Promise.resolve();
+}

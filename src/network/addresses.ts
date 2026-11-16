@@ -59,3 +59,7 @@ const UNPRINTABLE = /[\p{Cc}\p{Cf}\u2028\u2029]/u;
 export function printableName(s: string, max = 64): boolean {
   return s.trim() !== '' && s.length <= max && !UNPRINTABLE.test(s);
 }
+
+export function stripUnprintable(s: string): string {
+  return s.replace(new RegExp(UNPRINTABLE.source, 'gu'), '');
+}

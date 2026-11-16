@@ -298,6 +298,17 @@ export interface ConduitMcpHost extends LaunchPort, DraftPort {
 const OBSERVED_SUMMARY_MAX = 200;
 const capSummary = (text: string): string =>
   Array.from(text).slice(0, OBSERVED_SUMMARY_MAX).join('');
+const capOrNull = (text: string | null): string | null => (text === null ? null : capSummary(text));
+// see plan m3: a busy agent must not flood the Activity log; the excess is counted, not stored
+const OBSERVED_ROWS_PER_MINUTE = 120;
+interface ObservedBudget {
+  minute: number;
+  cli: AgentCli;
+  rows: number;
+  dropped: number;
+  timer: { handle: unknown } | null;
+}
+const MINUTE_MS = 60_000;
 function observedRow(action: ClaudeAction | CodexAction): {
   action: string;
   target: string | null;
@@ -437,6 +448,58 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   const sleep =
     deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const detectGraceMs = deps.detectGraceMs ?? DETECT_GRACE_MS;
+  const setTimer = deps.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
+  const clearTimer =
+    deps.clearTimer ??
+    ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout> | undefined));
+  const observedBudget = new Map<string, ObservedBudget>();
+  // Rows arriving while a delete is pending must not revive the session's budget.
+  const deleting = new Set<string>();
+  const noteRow = (sessionId: string, cli: AgentCli, action: string, summary: string): void => {
+    policyService.activity.record({
+      lane: 'note',
+      principal: { handle: handleOf(sessionId) ?? null, sessionId, machineId: null },
+      cli,
+      action: capSummary(action),
+      target: null,
+      summary: capSummary(summary),
+      decision: null,
+      decidedBy: 'conduit',
+      outcome: null,
+      durationMs: null,
+      requestId: null,
+      count: null,
+    });
+  };
+  const flushThrottle = (sessionId: string, budget: ObservedBudget): void => {
+    if (budget.timer !== null) {
+      clearTimer(budget.timer.handle);
+      budget.timer = null;
+    }
+    if (budget.dropped === 0) return;
+    const n = budget.dropped;
+    budget.dropped = 0;
+    noteRow(
+      sessionId,
+      budget.cli,
+      'feed-throttled',
+      `Feed throttled: ${n} ${n === 1 ? 'action' : 'actions'} not logged`,
+    );
+  };
+  const budgetFor = (sessionId: string, cli: AgentCli, minute: number): ObservedBudget => {
+    const current = observedBudget.get(sessionId);
+    if (current && current.minute === minute) return current;
+    if (current) flushThrottle(sessionId, current);
+    const fresh: ObservedBudget = { minute, cli, rows: 0, dropped: 0, timer: null };
+    observedBudget.set(sessionId, fresh);
+    return fresh;
+  };
+  const forgetBudget = (sessionId: string): void => {
+    const budget = observedBudget.get(sessionId);
+    if (!budget) return;
+    if (budget.timer !== null) clearTimer(budget.timer.handle);
+    observedBudget.delete(sessionId);
+  };
   const store = createMessageStore(deps.storeIo ?? createFsStoreIo(deps.dir));
   const screens = deps.screens;
   const registry = createSessionRegistry();
@@ -2831,32 +2894,39 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
 
     async onSessionDeleted(sessionId) {
-      const closing = closingWhenDone.get(sessionId);
-      if (closing) closing.deleted = true;
-      // Before the drain: the session's waiting asks end now, so their cancelled replies are owed.
-      flow.sessionGone(sessionId);
-      sessionWaits.cancel((w) => w.caller.sessionId === sessionId);
-      requestService.onSessionDeleted(sessionId);
-      policyService.sessionEnded(sessionId);
-      const handle = handleOf(sessionId);
-      sessionWaits.forget(sessionId, handle);
-      // Awaited after the teardown: the caller removes the session as soon as this yields.
-      const revoked = deps.tokens.revoke({ sessionId });
-      drainConnectionsOf(sessionId);
-      screens.release(sessionId);
-      notifier?.forget(sessionId);
-      cancelLateEcho(sessionId);
-      deps.typing.forget(sessionId);
-      runtime.delete(sessionId);
-      await revoked;
-      await removeConfig(sessionId);
-      if (!handle) return;
-      for (const m of store.pending(handle)) {
-        const r = await store.setStatus(m.messageId, handle, 'undelivered');
-        if (!r.ok) deps.log.warn('conduit-mcp', 'undelivered mark failed', { code: r.error.code });
+      deleting.add(sessionId);
+      try {
+        forgetBudget(sessionId);
+        const closing = closingWhenDone.get(sessionId);
+        if (closing) closing.deleted = true;
+        // Before the drain: the session's waiting asks end now, so their cancelled replies are owed.
+        flow.sessionGone(sessionId);
+        sessionWaits.cancel((w) => w.caller.sessionId === sessionId);
+        requestService.onSessionDeleted(sessionId);
+        policyService.sessionEnded(sessionId);
+        const handle = handleOf(sessionId);
+        sessionWaits.forget(sessionId, handle);
+        // Awaited after the teardown: the caller removes the session as soon as this yields.
+        const revoked = deps.tokens.revoke({ sessionId });
+        drainConnectionsOf(sessionId);
+        screens.release(sessionId);
+        notifier?.forget(sessionId);
+        cancelLateEcho(sessionId);
+        deps.typing.forget(sessionId);
+        runtime.delete(sessionId);
+        await revoked;
+        await removeConfig(sessionId);
+        if (!handle) return;
+        for (const m of store.pending(handle)) {
+          const r = await store.setStatus(m.messageId, handle, 'undelivered');
+          if (!r.ok)
+            deps.log.warn('conduit-mcp', 'undelivered mark failed', { code: r.error.code });
+        }
+        dispatch({ t: 'session-gone', handle });
+        scheduleBroadcast();
+      } finally {
+        deleting.delete(sessionId);
       }
-      dispatch({ t: 'session-gone', handle });
-      scheduleBroadcast();
     },
 
     onWindowReset(windowId) {
@@ -3139,16 +3209,34 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       policyService.peerRevoked(machineId);
     },
     recordObserved(sessionId, cli, entry) {
-      const principal = { handle: handleOf(sessionId) ?? null, sessionId, machineId: null };
+      // A late row for a deleted session must not create a budget that nothing will ever clear.
+      if (stopped || deleting.has(sessionId) || deps.sessions.get(sessionId) === undefined) return;
       if ('action' in entry) {
+        const t = now();
+        const minute = Math.floor(t / MINUTE_MS);
+        const budget = budgetFor(sessionId, cli, minute);
+        if (budget.rows >= OBSERVED_ROWS_PER_MINUTE) {
+          budget.dropped += 1;
+          if (budget.timer === null) {
+            // see plan m3: a dropped batch is noted at its minute's end, even if no later row comes
+            budget.timer = {
+              handle: setTimer(
+                () => flushThrottle(sessionId, budget),
+                (minute + 1) * MINUTE_MS - t,
+              ),
+            };
+          }
+          return;
+        }
+        budget.rows += 1;
         const row = observedRow(entry.action);
         policyService.activity.record({
           lane: 'observed',
-          principal,
+          principal: { handle: handleOf(sessionId) ?? null, sessionId, machineId: null },
           cli,
-          action: row.action,
-          target: row.target,
-          summary: row.summary,
+          action: capSummary(row.action),
+          target: capOrNull(row.target),
+          summary: capOrNull(row.summary),
           decision: null,
           decidedBy: `observed: decided by ${CLI_DISPLAY_NAME[cli]}, not Conduit`,
           outcome: entry.failed || row.exitedNonZero ? 'error' : 'ok',
@@ -3165,20 +3253,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               action: 'feed-gap',
               summary: `Feed gap: ${entry.gap} ${entry.gap === 1 ? 'action' : 'actions'} not reported`,
             };
-      policyService.activity.record({
-        lane: 'note',
-        principal,
-        cli,
-        action: note.action,
-        target: null,
-        summary: note.summary,
-        decision: null,
-        decidedBy: 'conduit',
-        outcome: null,
-        durationMs: null,
-        requestId: null,
-        count: null,
-      });
+      noteRow(sessionId, cli, note.action, note.summary);
     },
     recordNote(note) {
       policyService.activity.record({
@@ -3256,6 +3331,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     async stop() {
       stopped = true;
+      for (const sessionId of [...observedBudget.keys()]) forgetBudget(sessionId);
       stopRuntime();
       settleEndpoint();
       if (tickTimer) clearInterval(tickTimer);

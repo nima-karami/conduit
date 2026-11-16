@@ -5,7 +5,7 @@ export const FEED_GAP_SETTLE_MS = 3_000;
 
 interface FeedGapDeps<T> {
   readRange(path: string, start: number, end: number): Promise<Buffer>;
-  sizeOf(path: string): number;
+  sizeOf(path: string): Promise<number>;
   setTimer(fn: () => void, ms: number): T;
   clearTimer(handle: T): void;
   record(sessionId: string, gap: number): void;
@@ -22,9 +22,14 @@ export interface ClaudeFeedGap {
   dispose(): void;
 }
 
+// A stat outcome that never rejects, so a stat that fails before check() attaches is not an
+// unhandled rejection.
+type Sized = { ok: true; size: number } | { ok: false; error: string };
+
 interface Pending<T> {
   path: string;
-  size: number;
+  // see docs/plans/2026-11-14-policy-permissions-machinery.plan.md, "Lane B second re-review rulings"
+  size: Promise<Sized>;
   timer: T;
 }
 
@@ -42,9 +47,16 @@ const FINGERPRINT_BYTES = 256;
 // Posts for calls that never reach the main transcript would otherwise pile up for the
 // session's whole life.
 const RECEIVED_CAP = 1_000;
+// see plan m4: a transcript can be hundreds of MB, and a baseline must not read all of it
+const BASELINE_TAIL_BYTES = 64 * 1024;
+// a span this long is not one turn's feed, so it is taken as a baseline rather than counted
+const MAX_SPAN_BYTES = 32 * 1024 * 1024;
+// see plan review B: a check that never returns (a stuck filesystem) must not hold the queue
+const FEED_GAP_CHECK_TIMEOUT_MS = 10_000;
 
 export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
   const sessions = new Map<string, SessionGap<T>>();
+  const activeTimeouts = new Set<T>();
   // One chain: two checks reading and advancing the same span would interleave.
   let queue: Promise<void> = Promise.resolve();
 
@@ -67,49 +79,99 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
     sessionId: string,
     s: SessionGap<T>,
     path: string,
-    size: number,
+    sized: Promise<Sized>,
+    guard: { abandoned: boolean },
   ): Promise<void> => {
-    // A new file, or one that shrank, has no span to continue: its content so far is history.
-    let baseline = s.transcriptPath !== path || size < s.offset;
-    let start = baseline ? 0 : s.offset;
-    let bytes: Buffer;
     try {
-      // A file replaced at the same path by a longer one passes the size test; the bytes that
-      // ended the last span tell it apart from a file that only grew.
-      if (!baseline && s.fingerprint !== null) {
-        const seen = await deps.readRange(path, s.offset - s.fingerprint.length, s.offset);
-        baseline = !seen.equals(s.fingerprint);
-        start = baseline ? 0 : s.offset;
+      const outcome = await sized;
+      if (!outcome.ok) {
+        deps.warn('transcript not statable; feed gap not checked', {
+          sessionId,
+          error: outcome.error,
+        });
+        return;
       }
-      bytes = await deps.readRange(path, start, size);
+      const size = outcome.size;
+      // A new file, or one that shrank, has no span to continue: its content so far is history.
+      let baseline =
+        s.transcriptPath !== path || size < s.offset || size - s.offset > MAX_SPAN_BYTES;
+      let start: number;
+      let bytes: Buffer;
+      try {
+        // A file replaced at the same path by a longer one passes the size test; the bytes that
+        // ended the last span tell it apart from a file that only grew.
+        if (!baseline && s.fingerprint !== null) {
+          const seen = await deps.readRange(path, s.offset - s.fingerprint.length, s.offset);
+          baseline = !seen.equals(s.fingerprint);
+        }
+        start = baseline ? Math.max(0, size - BASELINE_TAIL_BYTES) : s.offset;
+        bytes = await deps.readRange(path, start, size);
+      } catch (err) {
+        deps.warn('transcript unreadable; feed gap not checked', {
+          sessionId,
+          error: String(err),
+        });
+        return;
+      }
+      // A forgotten session's check must not write into its successor's span, and a timed-out
+      // check must not write behind the queue's back.
+      if (sessions.get(sessionId) !== s || guard.abandoned) return;
+      // A line cut at the Stop stays unread until its newline lands, so it is counted exactly once.
+      const complete = bytes.lastIndexOf(NEWLINE) + 1;
+      const ids = matchedToolUseIds(bytes.subarray(0, complete).toString('utf8'));
+      const missing = ids.filter((id) => !s.received.has(id)).length;
+      if (!baseline && missing > 0) deps.record(sessionId, missing);
+      for (const id of ids) s.received.delete(id);
+      s.transcriptPath = path;
+      s.offset = start + complete;
+      if (complete > 0) {
+        const previousEnd = complete >= 2 ? bytes.lastIndexOf(NEWLINE, complete - 2) : -1;
+        const fingerprintStart = Math.max(previousEnd + 1, complete - FINGERPRINT_BYTES);
+        s.fingerprint = Buffer.from(bytes.subarray(fingerprintStart, complete));
+      } else if (baseline) {
+        s.fingerprint = null;
+      }
     } catch (err) {
-      deps.warn('transcript unreadable; feed gap not checked', { sessionId, error: String(err) });
-      return;
+      deps.warn('feed gap check failed; feed gap not checked', { sessionId, error: String(err) });
     }
-    // A forgotten session's check must not write into its successor's span.
-    if (sessions.get(sessionId) !== s) return;
-    // A line cut at the Stop stays unread until its newline lands, so it is counted exactly once.
-    const complete = bytes.lastIndexOf(NEWLINE) + 1;
-    const ids = matchedToolUseIds(bytes.subarray(0, complete).toString('utf8'));
-    const missing = ids.filter((id) => !s.received.has(id)).length;
-    for (const id of ids) s.received.delete(id);
-    if (!baseline && missing > 0) deps.record(sessionId, missing);
-    s.transcriptPath = path;
-    s.offset = start + complete;
-    if (complete > 0) {
-      const previousEnd = complete >= 2 ? bytes.lastIndexOf(NEWLINE, complete - 2) : -1;
-      const fingerprintStart = Math.max(previousEnd + 1, complete - FINGERPRINT_BYTES);
-      s.fingerprint = Buffer.from(bytes.subarray(fingerprintStart, complete));
-    } else if (baseline) {
-      s.fingerprint = null;
-    }
+  };
+
+  const run = (
+    sessionId: string,
+    s: SessionGap<T>,
+    path: string,
+    size: Promise<Sized>,
+  ): Promise<void> => {
+    const guard = { abandoned: false };
+    const timeout: { handle: T | null } = { handle: null };
+    const timedOut = new Promise<void>((resolve) => {
+      timeout.handle = deps.setTimer(() => {
+        guard.abandoned = true;
+        deps.warn('feed gap check timed out; later checks continue', { sessionId });
+        resolve();
+      }, FEED_GAP_CHECK_TIMEOUT_MS);
+    });
+    if (timeout.handle !== null) activeTimeouts.add(timeout.handle);
+    return Promise.race([check(sessionId, s, path, size, guard), timedOut]).finally(() => {
+      if (timeout.handle !== null) {
+        activeTimeouts.delete(timeout.handle);
+        deps.clearTimer(timeout.handle);
+      }
+    });
   };
 
   const fire = (sessionId: string, s: SessionGap<T>): void => {
     const pending = s.pending;
     if (pending === null) return;
     s.pending = null;
-    queue = queue.then(() => check(sessionId, s, pending.path, pending.size));
+    queue = queue
+      .then(() => run(sessionId, s, pending.path, pending.size))
+      .catch((err: unknown) => {
+        deps.warn('feed gap check rejected; later checks continue', {
+          sessionId,
+          error: String(err),
+        });
+      });
   };
 
   return {
@@ -125,19 +187,13 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
     },
     stop(sessionId, transcriptPath) {
       const s = stateOf(sessionId);
-      let size: number;
-      try {
-        size = deps.sizeOf(transcriptPath);
-      } catch (err) {
-        deps.warn('transcript not statable at Stop; feed gap not checked', {
-          sessionId,
-          error: String(err),
-        });
-        return;
-      }
       if (s.pending !== null) deps.clearTimer(s.pending.timer);
+      const sized = deps.sizeOf(transcriptPath).then(
+        (size): Sized => ({ ok: true, size }),
+        (err: unknown): Sized => ({ ok: false, error: String(err) }),
+      );
       const timer = deps.setTimer(() => fire(sessionId, s), FEED_GAP_SETTLE_MS);
-      s.pending = { path: transcriptPath, size, timer };
+      s.pending = { path: transcriptPath, size: sized, timer };
     },
     forget(sessionId) {
       const s = sessions.get(sessionId);
@@ -151,6 +207,8 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
     settled: () => queue,
     dispose() {
       for (const s of sessions.values()) if (s.pending !== null) deps.clearTimer(s.pending.timer);
+      for (const handle of activeTimeouts) deps.clearTimer(handle);
+      activeTimeouts.clear();
       sessions.clear();
     },
   };

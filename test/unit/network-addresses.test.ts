@@ -4,6 +4,7 @@ import {
   formatAddress,
   parseAddress,
   printableName,
+  stripUnprintable,
 } from '../../src/network/addresses';
 
 describe('parseAddress', () => {
@@ -145,5 +146,15 @@ describe('printableName', () => {
   it('takes a longer limit when asked, for attachment names', () => {
     expect(printableName('x'.repeat(200), 200)).toBe(true);
     expect(printableName('x'.repeat(201), 200)).toBe(false);
+  });
+});
+
+describe('stripUnprintable', () => {
+  it('removes C0, C1, bidi and line-separator characters and keeps the rest', () => {
+    expect(stripUnprintable('a\u0000b\u001Bc\u0085d\u202Ee\u200Bf\u2028g')).toBe('abcdefg');
+  });
+
+  it('leaves printable text, including non-ASCII letters and emoji, unchanged', () => {
+    expect(stripUnprintable('Ünïcode \u{1F642} ok')).toBe('Ünïcode \u{1F642} ok');
   });
 });

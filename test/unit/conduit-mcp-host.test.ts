@@ -168,6 +168,8 @@ interface Harness {
   presence: { ready: Set<number>; shown: Map<number, Set<string>> };
   /** With opts.manualTimers: runs every timer due within `ms` from now. */
   advance(ms: number): void;
+  /** With opts.manualTimers: how many timers are still pending. */
+  timerCount(): number;
   addRoots: Array<{ id: string; path: string }>;
   activations: Array<{ id: string; raise: boolean }>;
   closes: string[];
@@ -688,6 +690,7 @@ function harness(
     owners,
     presence,
     advance,
+    timerCount: () => timers.size,
     addRoots,
     activations,
     closes,
@@ -6567,6 +6570,12 @@ describe('NET wiring at the host: a peer link revoke and its audit notes', () =>
   });
 });
 
+function seededHarness(opts: Parameters<typeof harness>[0]): ReturnType<typeof harness> {
+  const h = harness(opts);
+  for (const id of ['s1', 's2', 's3']) h.sessions.set(id, session(id));
+  return h;
+}
+
 describe('recordObserved', () => {
   function observedHarness() {
     const rows: Array<Record<string, unknown>> = [];
@@ -6584,7 +6593,7 @@ describe('recordObserved', () => {
 
   it('a Claude command writes one observed row with the command as summary and the cwd as target', async () => {
     const { rows, activityIo } = observedHarness();
-    const h = harness({ activityIo });
+    const h = seededHarness({ activityIo });
     await h.host.start();
     h.host.recordObserved('s1', 'claude', {
       action: { kind: 'command', command: 'npm test', cwd: '/work/repo' },
@@ -6608,7 +6617,7 @@ describe('recordObserved', () => {
 
   it('a Codex file change names the CLI as Codex and records its first path as the target', async () => {
     const { rows, activityIo } = observedHarness();
-    const h = harness({ activityIo });
+    const h = seededHarness({ activityIo });
     await h.host.start();
     h.host.recordObserved('s2', 'codex', {
       action: { kind: 'file-change', paths: ['src/a.ts', 'src/b.ts'] },
@@ -6628,7 +6637,7 @@ describe('recordObserved', () => {
 
   it('an MCP call records the server as target and the tool as summary', async () => {
     const { rows, activityIo } = observedHarness();
-    const h = harness({ activityIo });
+    const h = seededHarness({ activityIo });
     await h.host.start();
     h.host.recordObserved('s3', 'claude', {
       action: { kind: 'mcp', server: 'github', tool: 'list_issues' },
@@ -6645,7 +6654,7 @@ describe('recordObserved', () => {
 
   it('a failed action keeps its row with outcome error', async () => {
     const { rows, activityIo } = observedHarness();
-    const h = harness({ activityIo });
+    const h = seededHarness({ activityIo });
     await h.host.start();
     h.host.recordObserved('s1', 'claude', {
       action: { kind: 'command', command: 'false', cwd: null },
@@ -6656,7 +6665,7 @@ describe('recordObserved', () => {
 
   it('a feed that went dark writes one note row, Feed unavailable', async () => {
     const { rows, activityIo } = observedHarness();
-    const h = harness({ activityIo });
+    const h = seededHarness({ activityIo });
     await h.host.start();
     h.host.recordObserved('s2', 'codex', { feed: 'unavailable' });
     expect(rows).toEqual([
@@ -6674,7 +6683,7 @@ describe('recordObserved', () => {
 
   it('a gap writes one note row that counts the actions not reported', async () => {
     const { rows, activityIo } = observedHarness();
-    const h = harness({ activityIo });
+    const h = seededHarness({ activityIo });
     await h.host.start();
     h.host.recordObserved('s1', 'claude', { gap: 2 });
     expect(rows).toEqual([
@@ -6689,7 +6698,7 @@ describe('recordObserved', () => {
   });
   it('a gap of one action says action, not actions', async () => {
     const { rows, activityIo } = observedHarness();
-    const h = harness({ activityIo });
+    const h = seededHarness({ activityIo });
     await h.host.start();
     h.host.recordObserved('s1', 'claude', { gap: 1 });
     expect(rows).toEqual([
@@ -6699,7 +6708,7 @@ describe('recordObserved', () => {
 
   it('a Codex command with a non-zero exit is an error row and keeps its duration', async () => {
     const { rows, activityIo } = observedHarness();
-    const h = harness({ activityIo });
+    const h = seededHarness({ activityIo });
     await h.host.start();
     h.host.recordObserved('s2', 'codex', {
       action: { kind: 'command', command: 'npm test', cwd: '/w', exitCode: 1, durationMs: 420 },
@@ -6709,7 +6718,7 @@ describe('recordObserved', () => {
 
   it('a Codex command with exit zero is ok, and a missing exit code is not an error', async () => {
     const { rows, activityIo } = observedHarness();
-    const h = harness({ activityIo });
+    const h = seededHarness({ activityIo });
     await h.host.start();
     h.host.recordObserved('s2', 'codex', {
       action: { kind: 'command', command: 'ls', cwd: '/w', exitCode: 0, durationMs: 5 },
@@ -6722,7 +6731,7 @@ describe('recordObserved', () => {
 
   it('a Codex MCP call keeps its duration', async () => {
     const { rows, activityIo } = observedHarness();
-    const h = harness({ activityIo });
+    const h = seededHarness({ activityIo });
     await h.host.start();
     h.host.recordObserved('s2', 'codex', {
       action: { kind: 'mcp', server: 'github', tool: 'list_issues', durationMs: 77 },
@@ -6732,7 +6741,7 @@ describe('recordObserved', () => {
 
   it('a heredoc command stores only its first line in the summary', async () => {
     const { rows, activityIo } = observedHarness();
-    const h = harness({ activityIo });
+    const h = seededHarness({ activityIo });
     await h.host.start();
     h.host.recordObserved('s1', 'claude', {
       action: {
@@ -6747,7 +6756,7 @@ describe('recordObserved', () => {
 
   it('a lone carriage return ends the summary line too', async () => {
     const { rows, activityIo } = observedHarness();
-    const h = harness({ activityIo });
+    const h = seededHarness({ activityIo });
     await h.host.start();
     h.host.recordObserved('s1', 'claude', {
       action: { kind: 'command', command: 'cmd\rSECRET=x', cwd: null },
@@ -6758,7 +6767,7 @@ describe('recordObserved', () => {
 
   it('a long first line is capped at 200 characters', async () => {
     const { rows, activityIo } = observedHarness();
-    const h = harness({ activityIo });
+    const h = seededHarness({ activityIo });
     await h.host.start();
     h.host.recordObserved('s1', 'claude', {
       action: { kind: 'command', command: `echo ${'x'.repeat(300)}`, cwd: null },
@@ -6770,7 +6779,7 @@ describe('recordObserved', () => {
 
   it('the row carries the session handle from its record', async () => {
     const { rows, activityIo } = observedHarness();
-    const h = harness({ activityIo });
+    const h = seededHarness({ activityIo });
     h.sessions.set('s1', session('s1', { mcpHandle: 'alpha@m-1' }));
     await h.host.start();
     h.host.recordObserved('s1', 'claude', {
@@ -6785,7 +6794,7 @@ describe('recordObserved', () => {
 
   it('a command summary is its first line, split on CRLF too', async () => {
     const { rows, activityIo } = observedHarness();
-    const h = harness({ activityIo });
+    const h = seededHarness({ activityIo });
     await h.host.start();
     h.host.recordObserved('s1', 'claude', {
       action: { kind: 'command', command: 'npm test\r\nTOKEN=secret', cwd: null },
@@ -6795,7 +6804,7 @@ describe('recordObserved', () => {
 
   it('the summary cap counts code points, so an emoji is never cut in half', async () => {
     const { rows, activityIo } = observedHarness();
-    const h = harness({ activityIo });
+    const h = seededHarness({ activityIo });
     await h.host.start();
     h.host.recordObserved('s1', 'claude', {
       action: { kind: 'command', command: '\u{1F642}'.repeat(250), cwd: null },
@@ -6805,11 +6814,167 @@ describe('recordObserved', () => {
 
   it('a file-change summary gets the same 200 cap', async () => {
     const { rows, activityIo } = observedHarness();
-    const h = harness({ activityIo });
+    const h = seededHarness({ activityIo });
     await h.host.start();
     h.host.recordObserved('s1', 'claude', {
       action: { kind: 'file-change', paths: ['a'.repeat(300)] },
     });
     expect(rows).toEqual([expect.objectContaining({ summary: 'a'.repeat(200) })]);
+  });
+
+  it('caps a long cwd, a long file path and a long MCP server name at 200 characters', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = seededHarness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s1', 'claude', {
+      action: { kind: 'command', command: 'ls', cwd: `/${'c'.repeat(300)}` },
+    });
+    h.host.recordObserved('s1', 'claude', {
+      action: { kind: 'file-change', paths: [`/${'p'.repeat(300)}`] },
+    });
+    h.host.recordObserved('s1', 'codex', {
+      action: { kind: 'mcp', server: 's'.repeat(300), tool: 't', durationMs: null },
+    });
+    expect(rows.map((r) => r.target)).toEqual([
+      `/${'c'.repeat(199)}`,
+      `/${'p'.repeat(199)}`,
+      's'.repeat(200),
+    ]);
+  });
+
+  it('caps an MCP tool name in the summary at 200 characters', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = seededHarness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s2', 'codex', {
+      action: { kind: 'mcp', server: 'github', tool: 'T'.repeat(300), durationMs: null },
+    });
+    expect(rows).toEqual([expect.objectContaining({ summary: 'T'.repeat(200) })]);
+  });
+
+  it('keeps 120 observed rows a minute, drops the excess, and notes the count on rollover', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = seededHarness({ activityIo });
+    await h.host.start();
+    const command = { kind: 'command' as const, command: 'npm test', cwd: '/w' };
+    for (let i = 0; i < 121; i += 1) {
+      h.host.recordObserved('s1', 'claude', { action: command });
+    }
+    expect(rows).toHaveLength(120);
+    h.clock.t += 60_000;
+    h.host.recordObserved('s1', 'claude', { action: command });
+    expect(rows).toHaveLength(122);
+    expect(rows.slice(120)).toEqual([
+      expect.objectContaining({
+        lane: 'note',
+        action: 'feed-throttled',
+        summary: 'Feed throttled: 1 action not logged',
+      }),
+      expect.objectContaining({ lane: 'observed', action: 'command' }),
+    ]);
+  });
+
+  it('pluralises the throttle count when more than one action was dropped', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = seededHarness({ activityIo, manualTimers: true });
+    await h.host.start();
+    const command = { kind: 'command' as const, command: 'npm test', cwd: '/w' };
+    for (let i = 0; i < 123; i += 1) h.host.recordObserved('s1', 'claude', { action: command });
+    h.advance(60_000);
+    expect(rows.filter((r) => r.action === 'feed-throttled')).toEqual([
+      expect.objectContaining({ summary: 'Feed throttled: 3 actions not logged' }),
+    ]);
+  });
+
+  it('notes a dropped batch at the end of its minute even when no later row arrives', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = seededHarness({ activityIo, manualTimers: true });
+    await h.host.start();
+    const command = { kind: 'command' as const, command: 'npm test', cwd: '/w' };
+    for (let i = 0; i < 121; i += 1) h.host.recordObserved('s1', 'claude', { action: command });
+    h.advance(60_000);
+    h.advance(120_000);
+    expect(rows.filter((r) => r.action === 'feed-throttled')).toEqual([
+      expect.objectContaining({ summary: 'Feed throttled: 1 action not logged' }),
+    ]);
+  });
+
+  it('a rollover that writes the note first cancels the minute-end timer, so the note is not doubled', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = seededHarness({ activityIo, manualTimers: true });
+    await h.host.start();
+    const pendingBefore = h.timerCount();
+    const command = { kind: 'command' as const, command: 'npm test', cwd: '/w' };
+    for (let i = 0; i < 121; i += 1) h.host.recordObserved('s1', 'claude', { action: command });
+    h.clock.t += 60_000;
+    h.host.recordObserved('s1', 'claude', { action: command });
+    expect(h.timerCount()).toBe(pendingBefore);
+    h.advance(120_000);
+    expect(rows.filter((r) => r.action === 'feed-throttled')).toHaveLength(1);
+  });
+
+  it('deleting a session drops its pending throttle note and forgets its budget', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = seededHarness({ activityIo, manualTimers: true });
+    await h.host.start();
+    const command = { kind: 'command' as const, command: 'npm test', cwd: '/w' };
+    for (let i = 0; i < 121; i += 1) h.host.recordObserved('s1', 'claude', { action: command });
+    await h.host.onSessionDeleted('s1');
+    h.host.recordObserved('s1', 'claude', { action: command });
+    expect(rows.filter((r) => r.lane === 'observed')).toHaveLength(121);
+    h.advance(60_000);
+    expect(rows.filter((r) => r.action === 'feed-throttled')).toEqual([]);
+  });
+
+  it('ignores rows for a session the host does not know, so a late row cannot revive a budget', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo, manualTimers: true });
+    await h.host.start();
+    const pendingBefore = h.timerCount();
+    for (let i = 0; i < 121; i += 1) {
+      h.host.recordObserved('ghost', 'claude', {
+        action: { kind: 'command', command: 'npm test', cwd: '/w' },
+      });
+    }
+    expect(rows).toEqual([]);
+    expect(h.timerCount()).toBe(pendingBefore);
+  });
+
+  it('stop forgets every budget and cancels its timer, so no dropped batch is noted after stop', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = seededHarness({ activityIo, manualTimers: true });
+    await h.host.start();
+    const command = { kind: 'command' as const, command: 'npm test', cwd: '/w' };
+    for (let i = 0; i < 121; i += 1) h.host.recordObserved('s1', 'claude', { action: command });
+    await h.host.stop();
+    h.advance(120_000);
+    expect(rows.filter((r) => r.action === 'feed-throttled')).toEqual([]);
+  });
+
+  it('a row that arrives while a session delete is pending creates no budget', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = seededHarness({ activityIo, manualTimers: true });
+    await h.host.start();
+    const pendingBefore = h.timerCount();
+    const deleted = h.host.onSessionDeleted('s1');
+    for (let i = 0; i < 121; i += 1) {
+      h.host.recordObserved('s1', 'claude', {
+        action: { kind: 'command', command: 'npm test', cwd: '/w' },
+      });
+    }
+    await deleted;
+    expect(rows.filter((r) => r.lane === 'observed')).toEqual([]);
+    expect(h.timerCount()).toBe(pendingBefore);
+  });
+
+  it('a row after stop is ignored', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = seededHarness({ activityIo });
+    await h.host.start();
+    await h.host.stop();
+    h.host.recordObserved('s1', 'claude', {
+      action: { kind: 'command', command: 'npm test', cwd: '/w' },
+    });
+    expect(rows.filter((r) => r.lane === 'observed')).toEqual([]);
   });
 });
