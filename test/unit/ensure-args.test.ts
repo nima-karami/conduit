@@ -59,6 +59,10 @@ describe('parseEnsureArgs', () => {
     ['no --survives-logout', [...base, '--start', 'plain']],
     ['survives value not yes/no', [...base, '--start', 'plain', '--survives-logout', 'true']],
     ['no --user-data', ['--ensure-server', '--start', 'plain', '--survives-logout', 'yes']],
+    [
+      'a relative --user-data',
+      ['--ensure-server', '--user-data', 'data', '--start', 'plain', '--survives-logout', 'yes'],
+    ],
   ])('rejects %s', (_name, args) => {
     const parsed = parseEnsureArgs(args);
     expect(parsed.ok).toBe(false);

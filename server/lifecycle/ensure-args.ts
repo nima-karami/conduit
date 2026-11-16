@@ -24,6 +24,8 @@ export type EnsureArgsResult = { ok: true; args: EnsureArgs } | { ok: false; err
 export function parseEnsureArgs(args: readonly string[]): EnsureArgsResult {
   const userData = argValue(args, '--user-data');
   if (!userData) return { ok: false, error: `missing --user-data\n${ENSURE_USAGE}` };
+  if (!isAbsolute(userData))
+    return { ok: false, error: `--user-data must be an absolute path\n${ENSURE_USAGE}` };
   const start = argValue(args, '--start');
   if (!start || !(START_METHODS as readonly string[]).includes(start))
     return {

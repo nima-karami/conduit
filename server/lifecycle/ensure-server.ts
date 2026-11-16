@@ -32,8 +32,11 @@ export interface EnsureDeps {
   supervisorLive(): Promise<boolean>;
   /** Null when no server answers C2 hello with the secret. */
   hello(): Promise<EnsureHello | null>;
-  /** `server.restart`. The server exits right after replying, so a lost reply is not an error. */
-  restart(): Promise<void>;
+  /**
+   * `server.restart`. Null when it was sent: the server exits right after replying, so a lost reply
+   * is normal. Otherwise the error the server replied with, which is the caller's failure detail.
+   */
+  restart(): Promise<string | null>;
   sleep(ms: number): Promise<void>;
   now(): number;
 }
@@ -44,6 +47,8 @@ export interface EnsureRunOptions {
   /** This build's version: the one ensure brings up, and the one a running server is compared to. */
   version: string;
   stdout: { write(chunk: string): unknown };
+  /** Bounds the whole run, so a hc call that never returns still ends in a result line. */
+  deadlineMs?: number;
 }
 
 type EnsureResult =
@@ -53,17 +58,36 @@ type EnsureResult =
 /** How long any wait for C2 (hello, the restart's exit, the supervisor's exit) may take. */
 const WAIT_MS = 30_000;
 const POLL_MS = 250;
+/** The whole run, as a bound on any single hc call that never returns. */
+const RUN_DEADLINE_MS = 90_000;
+/** As electron/server-lifecycle.ts's SUPERVISOR_LOOKUP_TIMEOUT_MS: a lookup past this is a core not answering. */
+const SUPERVISOR_LOOKUP_TIMEOUT_MS = 5_000;
 /** A name_taken from hc means a supervisor of this instance is already live (plan decision 3). */
 const NAME_TAKEN = /name_taken|already named/i;
+
+const prefixOf = (method: StartMethod): readonly string[] =>
+  method === 'scope' ? SCOPE_PREFIX : [];
 
 /** The server's own argv from the ensure flags: the same `--shim-dir` the app passes its supervisor. */
 export const ensureServerArgs = (a: Pick<EnsureArgs, 'shimDir'>): string[] =>
   a.shimDir ? ['--shim-dir', a.shimDir] : [];
 
-const prefixOf = (method: StartMethod): readonly string[] =>
-  method === 'scope' ? SCOPE_PREFIX : [];
-
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/** The one result line. Written by whoever gets there first; the run may already have ended. */
+function printResult(stdout: EnsureRunOptions['stdout'], result: EnsureResult): number {
+  stdout.write(`CONDUIT_RESULT ${JSON.stringify(result)}\n`);
+  return result.ok ? 0 : 3;
+}
+
+/** Rejects with `what timed out` when `p` has not settled in `ms`: a bound on a call that may never return. */
+export function bounded<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} timed out`)), ms);
+  });
+  return Promise.race([p, expired]).finally(() => clearTimeout(timer));
+}
 
 /**
  * The headless start rule (plan decision 3, spec §4.2.4): gc, core, supervisor, then C2 hello. An
@@ -71,9 +95,11 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
  * never downgraded. `windows-task` only waits, because the scheduled task was registered before.
  */
 export async function runEnsureServer(o: EnsureRunOptions, d: EnsureDeps): Promise<number> {
+  let printed = false;
   const finish = (result: EnsureResult) => {
-    o.stdout.write(`CONDUIT_RESULT ${JSON.stringify(result)}\n`);
-    return result.ok ? 0 : 3;
+    if (printed) return result.ok ? 0 : 3;
+    printed = true;
+    return printResult(o.stdout, result);
   };
   const fail = (detail: string) => finish({ ok: false, step: 'start', detail });
   const up = (version: string) =>
@@ -89,8 +115,13 @@ export async function runEnsureServer(o: EnsureRunOptions, d: EnsureDeps): Promi
     return null;
   };
   const headless = o.method !== 'windows-task';
+  const ours = { generation: SERVER_PROTOCOL_GENERATION, version: o.version };
+  const theirs = (hello: EnsureHello) => ({
+    generation: hello.generation,
+    version: hello.serverVersion,
+  });
 
-  try {
+  const body = async (): Promise<number> => {
     if (headless) {
       await d.collectGarbage();
       const failure = await startAll();
@@ -99,16 +130,13 @@ export async function runEnsureServer(o: EnsureRunOptions, d: EnsureDeps): Promi
 
     const first = await waitFor(d, WAIT_MS, () => d.hello());
     if (first === null) return fail(`no C2 hello within ${WAIT_MS / 1000} s`);
-    const order = versionOrder(
-      { generation: SERVER_PROTOCOL_GENERATION, version: o.version },
-      { generation: first.generation, version: first.serverVersion },
-    );
-    if (order !== 'appNewer') return up(first.serverVersion);
+    if (versionOrder(ours, theirs(first)) !== 'appNewer') return up(first.serverVersion);
     // Plan decision 5: on this path nothing starts a server after server.restart, so restarting
     // would only wait out the timeout. Refused now; the scheduled task has to be re-registered.
     if (o.method === 'windows-task') return fail('windows_upgrade_pending');
 
-    await d.restart();
+    const restartError = await d.restart();
+    if (restartError !== null) return fail(restartError);
     const gone = await waitFor(d, WAIT_MS, async () => ((await d.hello()) === null ? true : null));
     if (gone === null) return fail('the older server did not exit after server.restart');
     if (headless) {
@@ -124,9 +152,27 @@ export async function runEnsureServer(o: EnsureRunOptions, d: EnsureDeps): Promi
       return hello !== null && hello.pid !== first.pid ? hello : null;
     });
     if (fresh === null) return fail('no fresh C2 hello after server.restart');
+    // The restart can lose the race to an older app that relaunched its own supervisor first
+    // (name_taken). The server that answers now is the one that counts.
+    if (versionOrder(ours, theirs(fresh)) === 'appNewer') return fail('older_server_relaunched');
     return up(fresh.serverVersion);
-  } catch (error) {
-    return fail(message(error));
+  };
+
+  const run = async (): Promise<number> => {
+    try {
+      return await body();
+    } catch (error) {
+      return fail(message(error));
+    }
+  };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<number>((resolve) => {
+    timer = setTimeout(() => resolve(fail('timeout')), o.deadlineMs ?? RUN_DEADLINE_MS);
+  });
+  try {
+    return await Promise.race([run(), deadline]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -145,7 +191,7 @@ async function waitFor<T>(
   }
 }
 
-/** `main.js --ensure-server`: the real deps for `runEnsureServer`; the caller prints nothing else. */
+/** `main.js --ensure-server`: the real deps for `runEnsureServer`. Any throw here is still one result line. */
 export async function runEnsureServerMain(
   a: EnsureArgs,
   o: {
@@ -154,63 +200,81 @@ export async function runEnsureServerMain(
     stderr: { write(chunk: string): unknown };
   },
 ): Promise<number> {
-  const names = instanceNames(a.userData, process.platform, tmpdir());
-  const env = serverChildEnv(process.env, names);
-  const hcBin = hcBinaryOf(a.hc, names);
-  const log = (line: string) => {
-    o.stderr.write(`${line}\n`);
-  };
-  const cli: HcCliDeps = {
-    hcExe: hcBin,
-    env,
-    coreCwd: coreCwdOf(names),
-    execFile: runExecFile,
-    startCore: () => startCore(hcBin, names, env, prefixOf(a.method)),
-    connect: () => hcClient(names, env, log),
-  };
-  const deps: EnsureDeps = {
-    collectGarbage: async () => {
-      // Not fatal, as in the app: a failed sweep is a warning and the start goes on.
-      try {
-        const gc = await collectRuntimeGarbage(
-          names.runtimeRoot,
-          { appVersion: o.version, hcVersion: HC_PINNED_VERSION },
-          {
-            readdir: (dir) => readdir(dir),
-            rename: (from, to) => rename(from, to),
-            rmrf: (dir) => rm(dir, { recursive: true, force: true }),
-          },
-        );
-        if (gc.removed.length || gc.inUse.length) log(`runtime gc: ${JSON.stringify(gc)}`);
-      } catch (error) {
-        log(`runtime gc failed: ${message(error)}`);
-      }
-    },
-    startCore: (prefix) => startCore(hcBin, names, env, prefix),
-    startSupervisor: () =>
-      startSupervisor(cli, {
-        names,
-        nodeExe: process.execPath,
-        superviseJs: superviseJsOf(),
-        userData: a.userData,
-        serverArgs: ensureServerArgs(a),
-      }),
-    supervisorLive: () => supervisorLive(names, env, log),
-    hello: async () => {
-      const secret = readServerSecret(a.userData);
-      return secret === null ? null : oneShot(names.serverEndpoint, secret, o.version);
-    },
-    restart: async () => {
-      const secret = readServerSecret(a.userData);
-      if (secret !== null) await oneShot(names.serverEndpoint, secret, o.version, 'server.restart');
-    },
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    now: Date.now,
-  };
-  return runEnsureServer(
-    { method: a.method, survivesLogout: a.survivesLogout, version: o.version, stdout: o.stdout },
-    deps,
-  );
+  const clients: { close(): void }[] = [];
+  try {
+    const names = instanceNames(a.userData, process.platform, tmpdir());
+    const env = serverChildEnv(process.env, names);
+    const hcBin = hcBinaryOf(a.hc, names);
+    const log = (line: string) => {
+      o.stderr.write(`${line}\n`);
+    };
+    // Every client is closed when the run ends, so a call that never returns cannot keep the process up.
+    const open = () => {
+      const client = hcClient(names, env, log);
+      clients.push(client);
+      return client;
+    };
+    const cli: HcCliDeps = {
+      hcExe: hcBin,
+      env,
+      coreCwd: coreCwdOf(names),
+      execFile: runExecFile,
+      startCore: () => startCore(hcBin, names, env, prefixOf(a.method)),
+      connect: open,
+    };
+    const deps: EnsureDeps = {
+      collectGarbage: async () => {
+        // Not fatal, as in the app: a failed sweep is a warning and the start goes on. Staging
+        // dirs are not swept: another writer may be filling one.
+        try {
+          const gc = await collectRuntimeGarbage(
+            names.runtimeRoot,
+            { appVersion: o.version, hcVersion: HC_PINNED_VERSION },
+            {
+              readdir: (dir) => readdir(dir),
+              rename: (from, to) => rename(from, to),
+              rmrf: (dir) => rm(dir, { recursive: true, force: true }),
+            },
+            { sweepStaging: false },
+          );
+          if (gc.removed.length || gc.inUse.length) log(`runtime gc: ${JSON.stringify(gc)}`);
+        } catch (error) {
+          log(`runtime gc failed: ${message(error)}`);
+        }
+      },
+      startCore: (prefix) => startCore(hcBin, names, env, prefix),
+      startSupervisor: () =>
+        startSupervisor(cli, {
+          names,
+          nodeExe: process.execPath,
+          superviseJs: superviseJsOf(),
+          userData: a.userData,
+          serverArgs: ensureServerArgs(a),
+        }),
+      supervisorLive: () => supervisorLive(names.supervisorName, open),
+      hello: async () => {
+        const secret = readServerSecret(a.userData);
+        return secret === null
+          ? null
+          : (await oneShot(names.serverEndpoint, secret, o.version)).hello;
+      },
+      restart: async () => {
+        const secret = readServerSecret(a.userData);
+        if (secret === null) return 'server secret is gone before server.restart';
+        return (await oneShot(names.serverEndpoint, secret, o.version, 'server.restart')).error;
+      },
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      now: Date.now,
+    };
+    return await runEnsureServer(
+      { method: a.method, survivesLogout: a.survivesLogout, version: o.version, stdout: o.stdout },
+      deps,
+    );
+  } catch (error) {
+    return printResult(o.stdout, { ok: false, step: 'start', detail: message(error) });
+  } finally {
+    for (const client of clients) client.close();
+  }
 }
 
 /** The supervisor runs from the same build as this server: supervise.js sits beside main.js. */
@@ -238,13 +302,16 @@ function runExecFile(
 
 /** A supervisor the hc core no longer has is gone; a core that is down has none. */
 async function supervisorLive(
-  names: InstanceNames,
-  env: Record<string, string>,
-  log: (line: string) => void,
+  supervisorName: string,
+  open: () => ReturnType<typeof hcClient>,
 ): Promise<boolean> {
-  const hc = hcClient(names, env, log);
+  const hc = open();
   try {
-    const terminal = await hc.call('terminal.get', { terminal: names.supervisorName });
+    const terminal = await bounded(
+      hc.call('terminal.get', { terminal: supervisorName }),
+      SUPERVISOR_LOOKUP_TIMEOUT_MS,
+      'supervisor lookup',
+    );
     return terminal.state === 'live';
   } catch (error) {
     if (error instanceof HcRpcError && error.kind === 'not_found') return false;
@@ -267,9 +334,14 @@ const isHello = (value: unknown): value is EnsureHello =>
   typeof value.instance === 'string' &&
   typeof value.pid === 'number';
 
+interface C2Reply {
+  hello: EnsureHello | null;
+  /** Set when `server.restart` was asked and the server replied with an error (or never said hello). */
+  error: string | null;
+}
+
 /**
- * One C2 connection: hello with the secret, then optionally `server.restart`. Null when nothing
- * answers hello; the waits in runEnsureServer decide what a null means. A gated method needs the
+ * One C2 connection: hello with the secret, then optionally `server.restart`. A gated method needs the
  * authenticated hello on the same connection (the stop-all client does the same).
  */
 function oneShot(
@@ -277,15 +349,21 @@ function oneShot(
   auth: string,
   appVersion: string,
   method?: 'server.restart',
-): Promise<EnsureHello | null> {
+): Promise<C2Reply> {
   return new Promise((resolve) => {
     const socket = connect(endpoint);
     let hello: EnsureHello | null = null;
+    let error: string | null = null;
     let buffer = '';
+    let finished = false;
     const finish = () => {
+      if (finished) return;
+      finished = true;
       clearTimeout(timer);
       socket.destroy();
-      resolve(hello);
+      if (method !== undefined && hello === null && error === null)
+        error = 'C2 hello failed before server.restart';
+      resolve({ hello, error });
     };
     const timer = setTimeout(finish, C2_ATTEMPT_MS);
     socket.on('connect', () => {
@@ -309,6 +387,11 @@ function oneShot(
           if (method === undefined) return finish();
           socket.write(frame(2, method, { reason: 'update' }));
         } else if (reply.id === 2) {
+          if (reply.error !== undefined)
+            error =
+              isRecord(reply.error) && typeof reply.error.message === 'string'
+                ? reply.error.message
+                : `${method} failed`;
           return finish();
         }
       }

@@ -84,7 +84,7 @@ describe.skipIf(!enabled)('--ensure-server (real process)', () => {
 
   afterAll(async () => {
     // Only the --stop-all path, then the pid this test captured; never a kill by name.
-    if (existsSync(join(dir, 'server-secret'))) await run(['--stop-all', '--user-data', dir]);
+    await run(['--stop-all', '--user-data', dir]);
     if (pid !== undefined) {
       try {
         process.kill(pid, 0);

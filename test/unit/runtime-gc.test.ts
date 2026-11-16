@@ -130,4 +130,29 @@ describe('collectRuntimeGarbage', () => {
       await collectRuntimeGarbage(ROOT, { appVersion: '0.52.0', hcVersion: '0.1.16' }, deps),
     ).toEqual({ removed: [], inUse: [] });
   });
+
+  it('sweeps staging .tmp dirs by default, as the app does', async () => {
+    const { deps } = fakeFs({ [ROOT]: ['0.52.0', '0.51.0', '0.52.0.tmp'], [HC]: [] });
+    const r = await collectRuntimeGarbage(
+      ROOT,
+      { appVersion: '0.52.0', hcVersion: '0.1.16' },
+      deps,
+    );
+    expect(r.removed).toContain(join(ROOT, '0.52.0.tmp'));
+  });
+
+  it("with sweepStaging false, leaves another writer's staging dirs alone", async () => {
+    const { deps, log } = fakeFs({
+      [ROOT]: ['0.52.0', '0.51.0', '0.52.0.tmp', 'shim.tmp'],
+      [HC]: ['0.1.16', '0.1.15.tmp'],
+    });
+    const r = await collectRuntimeGarbage(
+      ROOT,
+      { appVersion: '0.52.0', hcVersion: '0.1.16' },
+      deps,
+      { sweepStaging: false },
+    );
+    expect(r.removed.some((p) => p.endsWith('.tmp'))).toBe(false);
+    expect(log.some((line) => line.includes('.tmp'))).toBe(false);
+  });
 });
