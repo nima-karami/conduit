@@ -67,6 +67,8 @@ describe('projectLegacyLayer', () => {
       close_session: { access: 'on' },
       send_input: { access: 'on' },
       attach_folder: { access: 'on' },
+      connect_machine: { access: 'on' },
+      disconnect_machine: { access: 'on' },
     });
     for (const tool of sessionAndEditor) {
       const inherited = TOOL_SPECS[tool].defaults.access;
@@ -88,6 +90,8 @@ describe('projectLegacyLayer', () => {
       close_session: { access: 'ask' },
       send_input: { access: 'ask' },
       attach_folder: { access: 'ask' },
+      connect_machine: { access: 'ask' },
+      disconnect_machine: { access: 'ask' },
     });
     expect(projectLegacyLayer(state, DEFAULT, DEFAULT)).toEqual({});
   });

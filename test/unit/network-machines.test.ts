@@ -627,3 +627,23 @@ describe('machines: a known machine whose dial reports why it failed', () => {
     });
   });
 });
+
+describe('machines: a target that claims a machine already added under another name', () => {
+  it('identity_conflict carries the name of the machine the target is already added as', async () => {
+    const store = openLinkStore('/net/links.json', { now: Date.now, log: quiet, io: memIo() });
+    const fake = fakeManager(store);
+    const machines = createMachines({
+      manager: fake.manager,
+      store,
+      bootstrap: async () => ({
+        ok: false,
+        error: { code: 'identity-conflict', machine: 'office-pc' },
+      }),
+      directory: { entries: () => [] },
+    });
+    expect(await machines.connect('new.example', LIVE)).toEqual({
+      ok: false,
+      error: { code: 'identity_conflict', detail: { machine: 'office-pc' } },
+    });
+  });
+});

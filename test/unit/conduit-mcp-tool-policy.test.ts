@@ -57,6 +57,7 @@ describe('tool-policy catalog', () => {
       'requests',
       'sessions',
       'editor',
+      'machines',
     ]);
     expect(TOOL_GROUPS.flatMap((g) => g.tools)).toEqual([...TOOL_NAMES]);
   });
@@ -495,5 +496,47 @@ describe('Part B catalog rows (app-control spec, tool-policy spec §3.2)', () =>
       'open_git_history',
       'open_url',
     ]);
+  });
+});
+
+describe('machine tools (spec 4.6 and 5.1)', () => {
+  it('the machines group holds the three tools, in catalog order', () => {
+    expect(TOOL_GROUPS.find((g) => g.group === 'machines')?.tools).toEqual([
+      'list_machines',
+      'connect_machine',
+      'disconnect_machine',
+    ]);
+  });
+
+  it('connect and disconnect offer off, ask and on, and default to ask', () => {
+    for (const tool of ['connect_machine', 'disconnect_machine'] as const) {
+      expect(TOOL_SPECS[tool].access).toEqual(['off', 'ask', 'on']);
+      expect(TOOL_SPECS[tool].defaults).toEqual({ access: 'ask' });
+      expect(TOOL_SPECS[tool].budget).toBe('act');
+    }
+  });
+
+  it('list_machines is a read: off or on, default on, shown in the view budget', () => {
+    expect(TOOL_SPECS.list_machines.access).toEqual(['off', 'on']);
+    expect(TOOL_SPECS.list_machines.defaults).toEqual({ access: 'on' });
+    expect(TOOL_SPECS.list_machines.budget).toBe('show');
+  });
+
+  it('an allowed machine tool with no window still runs: it is a server action', () => {
+    const allow = { decision: 'allow' as const, rule: { when: null, reach: null, move: null } };
+    for (const tool of ['list_machines', 'connect_machine', 'disconnect_machine'] as const) {
+      expect(
+        gateToolCall({
+          sessionId: 's1',
+          messagingOn: true,
+          tool,
+          decision: allow,
+          ownerReady: () => false,
+          onScreen: () => false,
+          appConnected: false,
+        }),
+        tool,
+      ).toBeNull();
+    }
   });
 });

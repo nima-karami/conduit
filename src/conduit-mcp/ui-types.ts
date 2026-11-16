@@ -58,7 +58,11 @@ export type AskSummary =
   | { tool: 'open_diff'; title: string; path?: string }
   | { tool: 'open_git_history'; ref: string | null }
   | { tool: 'open_url'; url: string }
-  | { tool: 'list_agents' };
+  | { tool: 'list_agents' }
+  | { tool: 'list_machines' }
+  /** newMachine: the target was never added, so connecting installs Conduit on it (RS-D6). */
+  | { tool: 'connect_machine'; machine: string; newMachine: boolean }
+  | { tool: 'disconnect_machine'; machine: string };
 
 /** Structurally webview ReviewScope. */
 export type McpReviewScope = 'all' | 'staged' | 'unstaged';

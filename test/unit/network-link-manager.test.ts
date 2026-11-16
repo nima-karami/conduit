@@ -698,7 +698,7 @@ describe('ssh links', { timeout: 60_000 }, () => {
     expect(a.store.get(b.id.machineId)?.ssh).toBeNull();
     expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({
       ok: false,
-      error: { code: 'identity-conflict' },
+      error: { code: 'identity-conflict', machine: 'win-box' },
     });
     expect(a.store.get(b.id.machineId)?.ssh).toBeNull();
   });
@@ -873,7 +873,7 @@ describe('ssh hello identity and per-host pinning', { timeout: 60_000 }, () => {
 
     expect(await a.manager.addSshPeer({ ...ENDPOINT, target: 'b-target' })).toEqual({
       ok: false,
-      error: { code: 'identity-conflict' },
+      error: { code: 'identity-conflict', machine: 'c-box' },
     });
     expect(a.store.get(c.id.machineId)).toEqual(before);
     // The link that was pinned for C still carries its frames to C.
@@ -928,7 +928,7 @@ describe('ssh hello identity and per-host pinning', { timeout: 60_000 }, () => {
     await until(() => b.manager.view(a.id.machineId)?.state === 'up');
     expect(await a.manager.addSshPeer({ ...ENDPOINT, target: 'other-box' })).toEqual({
       ok: false,
-      error: { code: 'identity-conflict' },
+      error: { code: 'identity-conflict', machine: 'win-box' },
     });
     expect(a.store.get(b.id.machineId)?.ssh).toEqual(ENDPOINT);
   });
@@ -938,7 +938,7 @@ describe('ssh hello identity and per-host pinning', { timeout: 60_000 }, () => {
     a.store.put(record(b, 'win-box', { serverKey: Buffer.alloc(32, 7).toString('base64') }));
     expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({
       ok: false,
-      error: { code: 'identity-conflict' },
+      error: { code: 'identity-conflict', machine: 'win-box' },
     });
   });
 

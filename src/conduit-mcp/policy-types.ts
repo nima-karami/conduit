@@ -138,6 +138,11 @@ export interface PolicyInput {
   toYou: boolean;
   now: number;
   heldOverrides?: readonly OneUseOverride[];
+  /**
+   * The call's target must be asked about whatever the profile allows: a machine that was never
+   * added (spec 4.6, RS-D6). Computed from the facts by policy-targets' forcesAsk.
+   */
+  forceAsk?: boolean;
 }
 
 export interface PolicyDecision {
@@ -149,6 +154,8 @@ export interface PolicyDecision {
   overrideId: string | null;
   overrideIds: readonly string[];
   deniedTarget: PolicyTarget | null;
+  /** The ask is a forced one (RS-D6): no grant can pass it, so the card offers no Always. */
+  forcedAsk: boolean;
 }
 
 export type PermissionAnswer =

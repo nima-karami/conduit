@@ -37,6 +37,7 @@ const ASK: PolicyDecision = {
   grantIds: [],
   overrideIds: [],
   deniedTarget: null,
+  forcedAsk: false,
 };
 const ON: PolicyDecision = { ...ASK, decision: 'allow' };
 const HELD: OneUseOverride = {
@@ -203,7 +204,7 @@ function setup() {
         if (o.commitResult === false) return null;
         return { decision: o.commitTo ?? decision, held: o.held ?? [] };
       },
-      permission: { why: 'the policy asks', targets: [] },
+      permission: { why: 'the policy asks', targets: [], grantable: true },
       denyReason: () => o.denyReason ?? null,
       reDecide: (held) => {
         reDecides.push(held.map((h) => h.id));
@@ -322,6 +323,7 @@ describe('createCallFlow', () => {
           summary: { tool: 'open_session', path: '/repo', agent: 'claude', focus: true },
           args: { path: '/repo', agent: 'claude' },
           source: 'global',
+          grantable: true,
         },
       },
     ]);

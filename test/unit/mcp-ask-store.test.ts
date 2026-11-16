@@ -30,6 +30,7 @@ function ask(askId: string, handle = 'fake-1'): HostToWebview {
     summary: { tool: 'open_session', path: '/w', agent: 'claude', focus: true },
     args: { path: '/w' },
     source: 'global',
+    grantable: true,
   };
 }
 
@@ -53,6 +54,7 @@ describe('mcp-ask-store', () => {
       summary: { tool: 'open_session', path: '/w', agent: 'claude', focus: true },
       args: { path: '/w' },
       source: 'global',
+      grantable: true,
     });
   });
 

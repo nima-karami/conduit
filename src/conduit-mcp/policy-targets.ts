@@ -1,5 +1,6 @@
 // see POL §4.1
 import * as path from 'node:path';
+import { isSshTarget } from '../network/ssh-argv';
 import type { PolicyTarget } from './policy-types';
 import type { ToolName } from './tool-policy';
 import { HUMAN_HANDLE } from './types';
@@ -92,6 +93,22 @@ function fileTargets(
     }
   }
   return out;
+}
+
+/**
+ * True when a connect_machine names an ssh target this side has never added (spec 4.6, RS-D6): the
+ * owner must see it whatever the profile says. A value that is no target can't dial, so it isn't
+ * asked about; it fails as machine_unknown instead.
+ */
+export function forcesAsk(
+  tool: ToolName,
+  args: Args,
+  machineKnown: (ref: string) => boolean,
+): boolean {
+  if (tool !== 'connect_machine') return false;
+  const machine = args.machine;
+  if (typeof machine !== 'string' || machine.length === 0) return false;
+  return isSshTarget(machine) && !machineKnown(machine);
 }
 
 export function resolveTargets(

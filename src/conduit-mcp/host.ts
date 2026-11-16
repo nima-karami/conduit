@@ -79,6 +79,7 @@ import {
   type ToolCallContext,
   type ToolCallResult,
 } from './json-rpc';
+import { createMachineTools } from './machine-tools';
 import {
   awaitEnterVerdict,
   ECHO_POLL_MS,
@@ -93,7 +94,7 @@ import { composeUnreadBanner } from './notice-text';
 import { type AttentionRaise, bannerCandidates, createNotifier, type Notifier } from './notifier';
 import { reasonText } from './policy-engine';
 import { createPolicyService } from './policy-service';
-import { resolveTargets } from './policy-targets';
+import { forcesAsk, resolveTargets, type TargetDeps } from './policy-targets';
 import type {
   AssignmentPoint,
   Grant,
@@ -102,7 +103,12 @@ import type {
   PolicyTarget,
   Principal,
 } from './policy-types';
-import type { McpNetworkPort, RemoteRecipientOutcome, RemoteResolution } from './remote-routing';
+import {
+  isKnownMachine,
+  type McpNetworkPort,
+  type RemoteRecipientOutcome,
+  type RemoteResolution,
+} from './remote-routing';
 import { createRequestsIo, type RequestsIo } from './request-file-fs';
 import { createRequestNotices } from './request-notices';
 import { createRequestService, type RequestService } from './request-service';
@@ -1541,6 +1547,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   };
   const control = createControlHandlers(controlDeps);
   const app = createAppControlHandlers(controlDeps, control.prepared);
+  const machines = createMachineTools(
+    { network: () => deps.network, now, setTimer, clearTimer },
+    control.prepared,
+  );
   const screen = createScreenToolHandlers(
     {
       control: controlDeps,
@@ -1690,7 +1700,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           requester: r.caller.handle,
           title: r.tool,
           body: r.why,
-          permission: { tool: r.tool, why: r.why, targets: [...r.targets], lateGrant: null },
+          permission: {
+            tool: r.tool,
+            why: r.why,
+            targets: [...r.targets],
+            lateGrant: null,
+            grantable: r.grantable,
+          },
         },
         new Date(r.expiresAt).toISOString(),
       );
@@ -1825,37 +1841,42 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           typeof args === 'object' && args !== null && !Array.isArray(args)
             ? (args as Record<string, unknown>)
             : {};
+        const targetDeps: TargetDeps = {
+          sessionByHandle: (ref) => {
+            const s = deps.sessions.get(ref) ?? deps.sessions.get(sessionOfHandle(ref) ?? '');
+            return s ? { id: s.id, cwd: s.home, projectId: s.projectId ?? null } : null;
+          },
+          childrenOf: (id) =>
+            deps.sessions
+              .list()
+              .filter((s) => s.openedBy?.sessionId === id)
+              .map((s) => ({ id: s.id, cwd: s.home, projectId: s.projectId ?? null })),
+          realPath: (p: string) => {
+            try {
+              return fs.realpathSync(p);
+            } catch (error) {
+              deps.log.warn('conduit-mcp', 'policy target realpath failed', {
+                path: p,
+                error: String(error),
+              });
+              return null;
+            }
+          },
+        };
         const targets = resolveTargets(
           name,
           rawArgs,
           { sessionId, home: principal.homeFolder },
-          {
-            sessionByHandle: (ref) => {
-              const s = deps.sessions.get(ref) ?? deps.sessions.get(sessionOfHandle(ref) ?? '');
-              return s ? { id: s.id, cwd: s.home, projectId: s.projectId ?? null } : null;
-            },
-            childrenOf: (id) =>
-              deps.sessions
-                .list()
-                .filter((s) => s.openedBy?.sessionId === id)
-                .map((s) => ({ id: s.id, cwd: s.home, projectId: s.projectId ?? null })),
-            realPath: (p) => {
-              try {
-                return fs.realpathSync(p);
-              } catch (error) {
-                deps.log.warn('conduit-mcp', 'policy target realpath failed', {
-                  path: p,
-                  error: String(error),
-                });
-                return null;
-              }
-            },
-          },
+          targetDeps,
         );
         const policyInput = {
           principal,
           tool: name,
           targets,
+          // A machine nobody added is asked about under every profile (spec 4.6, RS-D6).
+          forceAsk: forcesAsk(name, rawArgs, (ref) =>
+            isKnownMachine(deps.network?.listMachines() ?? [], ref),
+          ),
           masterOn: deps.domain.messagingOn(),
           toYou:
             name === 'request_input' ||
@@ -1920,6 +1941,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               windowId,
               action,
             }),
+          signal: inflight.signal,
         };
         return flow.runControl<unknown>({
           inflight,
@@ -1929,16 +1951,26 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           tool: name,
           decision: resolved,
           commit: commitResolved,
-          permission: { why: reasonOf(resolved), targets },
+          permission: { why: reasonOf(resolved), targets, grantable: !resolved.forcedAsk },
           denyReason: (held) => {
             const d = policyService.decide({ ...policyInput, heldOverrides: held });
             return d.decision === 'deny' ? reasonOf(d) : null;
           },
           reDecide: (held) => {
-            const again = policyService.decide({ ...policyInput, heldOverrides: held });
-            evaluated.current = { input: policyInput, decision: again };
+            // The target's facts are re-read: a machine removed while its card waited is now an
+            // unknown target, and the owner approved a card that said "Connect" (RS-D6).
+            const forceAsk = forcesAsk(name, rawArgs, (ref) =>
+              isKnownMachine(deps.network?.listMachines() ?? [], ref),
+            );
+            const again = policyService.decide({ ...policyInput, forceAsk, heldOverrides: held });
+            evaluated.current = { input: { ...policyInput, forceAsk }, decision: again };
             reDecided = again;
             if (again.decision === 'deny') return { kind: 'withdraw', reason: reasonOf(again) };
+            if (again.forcedAsk && !resolved.forcedAsk)
+              return {
+                kind: 'withdraw',
+                reason: `${rawArgs.machine} is no longer added; call connect_machine again to add it`,
+              };
             return { kind: 'ready' };
           },
           grant: (choice, requestId) => {
@@ -2179,6 +2211,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         return app.prepareOpenGitHistory(caller, args, ctx);
       case 'open_url':
         return app.prepareOpenUrl(caller, args, ctx);
+      case 'list_machines':
+        return machines.prepareListMachines(caller, args);
+      case 'connect_machine':
+        return machines.prepareConnectMachine(caller, args, ctx);
+      case 'disconnect_machine':
+        return machines.prepareDisconnectMachine(caller, args);
     }
     throw new Error(`prepareControl: ${name} is not a control tool`);
   };
@@ -2886,6 +2924,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             windowId,
             action,
           }),
+        // No CLI call to cancel: the close outlives any request, so nothing aborts this signal.
+        signal: new AbortController().signal,
       };
       try {
         const r = await app.closeRouted(sessionId, undefined, ctx);

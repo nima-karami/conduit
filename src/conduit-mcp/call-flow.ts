@@ -57,6 +57,8 @@ const askMarginMs = (routesUi: boolean): number => (routesUi ? UI_TIMEOUT_MS : 0
 export interface InFlight {
   /** True once notifications/cancelled named this request. Never true for a null requestId. */
   readonly cancelled: boolean;
+  /** Aborts with the cancel that ends this call, so work started for it stops too. */
+  readonly signal: AbortSignal;
   /** Drops the in-flight entry; called in the host's finally. Idempotent. */
   end(): void;
 }
@@ -76,7 +78,7 @@ export interface ControlCall<T> {
   tool: ToolName;
   decision: PolicyDecision;
   commit(): AskCommit | null;
-  permission: { why: string; targets: readonly PolicyTarget[] };
+  permission: { why: string; targets: readonly PolicyTarget[]; grantable: boolean };
   denyReason(held: readonly OneUseOverride[]): string | null;
   reDecide(held: readonly OneUseOverride[]): AnswerDecision;
   grant(choice: GrantChoice, requestId: string): GrantOutcome;
@@ -93,6 +95,8 @@ export interface PermissionRaise {
   args: unknown;
   why: string;
   targets: readonly PolicyTarget[];
+  /** False for a forced ask (RS-D6): the card and any late answer offer no grant. */
+  grantable: boolean;
   expiresAt: number;
 }
 export interface PermissionEnd {
@@ -177,6 +181,7 @@ interface AskMeta {
 }
 interface Entry extends InFlight {
   cancelled: boolean;
+  readonly aborter: AbortController;
 }
 interface UiMeta {
   kind: McpUiAction['kind'];
@@ -315,14 +320,20 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     }
     // Ask + UI wait must both fit inside the CLI's own call timeout, which started at begin(), not
     // after prepare's git calls (plan B11).
-    const askMs =
+    const cliAskMs =
       startOf(c.inflight) +
       askBudgetMs(c.kind, c.wiredAtLaunch) -
       askMarginMs(p.routesUi) -
       deps.now();
+    // A tool's whole-call budget (spec 7) counts the ask too: when it ends first, the ask ends there,
+    // and the answer is the budget's, not the CLI's.
+    const budgetMs =
+      p.budget === undefined ? Number.POSITIVE_INFINITY : p.budget.deadlineMs - deps.now();
+    const budgetEndsAsk = budgetMs <= cliAskMs;
+    const askMs = budgetEndsAsk ? budgetMs : cliAskMs;
     if (askMs <= 0) {
       p.release();
-      return { ok: false, error: approvalTimeout() };
+      return { ok: false, error: budgetEndsAsk && p.budget ? p.budget.expired : approvalTimeout() };
     }
     const committed = c.commit();
     if (committed === null) {
@@ -338,6 +349,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       args: c.args,
       why: c.permission.why,
       targets: c.permission.targets,
+      grantable: c.permission.grantable,
       expiresAt: deps.now() + askMs,
     });
     const held = committed.held;
@@ -364,6 +376,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       summary: p.summary,
       args: c.args,
       source: c.source,
+      grantable: c.permission.grantable,
     });
     const ended = waits.open(
       {
@@ -387,7 +400,10 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     // Unanswered ends keep the rate token: it caps card spam (spec §3.3 "Rate").
     switch (end.kind) {
       case 'expired':
-        return { ok: false, error: approvalTimeout() };
+        return {
+          ok: false,
+          error: budgetEndsAsk && p.budget ? p.budget.expired : approvalTimeout(),
+        };
       case 'cancelled': {
         const deny = denied.get(requestId);
         denied.delete(requestId);
@@ -403,7 +419,11 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       case 'answered':
         break;
     }
-    const answer = end.answer;
+    // A forced ask (RS-D6) is approve-once: an always answer that reaches it makes no grant.
+    const answer: PermissionAnswer =
+      !c.permission.grantable && end.answer.outcome === 'allowed'
+        ? { outcome: 'allowed' }
+        : end.answer;
     if (answer.outcome === 'denied') {
       settle('answered', answerInputOf(answer), null);
       return { ok: false, error: toolError('denied', declinedMessage(answer.reason)) };
@@ -511,8 +531,11 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
 
   return {
     begin(key) {
+      const aborter = new AbortController();
       const entry: Entry = {
         cancelled: false,
+        aborter,
+        signal: aborter.signal,
         end() {
           if (key.requestId === null) return;
           const byId = inflight.get(key.connId);
@@ -546,23 +569,30 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       }
       if (c.inflight.cancelled) {
         p.release();
+        p.budget?.dispose();
         return null;
       }
       // A bare command is not a registered agent, so an allow still asks
       // (flexible-agent-contracts §3.1).
       const access = p.alwaysAsk && c.decision.decision === 'allow' ? 'ask' : c.decision.decision;
-      switch (access) {
-        case 'allow':
-          if (c.commit() === null) {
+      // The budget's timer is cleared only after the call has finished, dial included, so the
+      // await below is what keeps the deadline live while the run waits.
+      try {
+        switch (access) {
+          case 'allow':
+            if (c.commit() === null) {
+              p.release();
+              return { ok: false, error: toolDisabled(c.tool) };
+            }
+            return await runNow(c, p);
+          case 'ask':
+            return await ask(c, p);
+          case 'deny':
             p.release();
             return { ok: false, error: toolDisabled(c.tool) };
-          }
-          return runNow(c, p);
-        case 'ask':
-          return ask(c, p);
-        case 'deny':
-          p.release();
-          return { ok: false, error: toolDisabled(c.tool) };
+        }
+      } finally {
+        p.budget?.dispose();
       }
     },
 
@@ -570,13 +600,17 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       const entry = inflight.get(connId)?.get(requestId);
       if (!entry) return;
       entry.cancelled = true;
+      entry.aborter.abort();
       const match = sameCall({ connId, requestId });
       waits.cancel(match, false);
       waitsUi.cancel(match, false);
     },
 
     connectionClosed(connId) {
-      for (const entry of inflight.get(connId)?.values() ?? []) entry.cancelled = true;
+      for (const entry of inflight.get(connId)?.values() ?? []) {
+        entry.cancelled = true;
+        entry.aborter.abort();
+      }
       inflight.delete(connId);
       waits.cancel((w) => w.key.connId === connId, false);
       waitsUi.cancel((w) => w.key.connId === connId, false);

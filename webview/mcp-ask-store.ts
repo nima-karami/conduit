@@ -14,6 +14,7 @@ export interface PendingAskView {
   summary: AskSummary;
   args: unknown;
   source: PolicySource;
+  grantable: boolean;
 }
 
 // A module singleton like use-conduit-mcp.ts: an ask can arrive before the card mounts. A reload

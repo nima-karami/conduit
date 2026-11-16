@@ -48,6 +48,12 @@ import {
 } from '../../src/conduit-mcp/tool-policy';
 import { RATE_LIMIT_PER_MIN } from '../../src/conduit-mcp/tools';
 import { type MessageRecord, THREAD_AGENT_LIMIT, toolError } from '../../src/conduit-mcp/types';
+import type {
+  ConnectMachineOk,
+  ConnectMachineResult,
+  DisconnectMachineResult,
+  MachineView,
+} from '../../src/contracts/machines';
 import type { McpHostDeps, NeedsYouFact, TokenStorePort } from '../../src/contracts/server-ports';
 import type { ServerEvents } from '../../src/contracts/server-protocol';
 import type {
@@ -7203,5 +7209,314 @@ describe('recordObserved', () => {
       action: { kind: 'command', command: 'npm test', cwd: '/w' },
     });
     expect(rows.filter((r) => r.lane === 'observed')).toEqual([]);
+  });
+});
+
+describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
+  const VIEW: MachineView = {
+    machine: 'win-box',
+    machine_id: 'm-0000000a',
+    target: 'win-box',
+    state: 'up',
+    mode: 'full',
+    os: 'windows',
+    arch: 'x64',
+    conduit_version: '1.4.0',
+    agents: ['claude'],
+    sessions: 0,
+    last_seen: null,
+    survives_logout: true,
+  };
+  const OK: ConnectMachineOk = {
+    machine: 'win-box',
+    machine_id: 'm-0000000a',
+    state: 'up',
+    os: 'windows',
+    arch: 'x64',
+    mode: 'full',
+    conduit_version: '1.4.0',
+    reused: true,
+    installed: false,
+    upgraded: false,
+  };
+
+  /** A network whose machine calls are the test's; the directory and link calls are unused here. */
+  function machineNet(over: {
+    listMachines?: () => MachineView[];
+    connectMachine?: (machine: string, signal: AbortSignal) => Promise<ConnectMachineResult>;
+    disconnectMachine?: (machine: string) => Promise<DisconnectMachineResult>;
+  }): { network: NetworkPort; connects: string[] } {
+    const connects: string[] = [];
+    const unused = (): never => {
+      throw new Error('not used by the machine tools');
+    };
+    const network: NetworkPort = {
+      remoteEntries: () => [],
+      resolve: unused,
+      enqueue: unused,
+      waitReading: unused,
+      peerCapabilitiesOf: unused,
+      onChange: () => () => undefined,
+      listMachines: over.listMachines ?? (() => [VIEW]),
+      connectMachine: (machine, signal) => {
+        connects.push(machine);
+        return (over.connectMachine ?? (async () => ({ ok: true, value: OK })))(machine, signal);
+      },
+      disconnectMachine:
+        over.disconnectMachine ??
+        (async () => ({ ok: true, value: { machine: 'win-box', state: 'down' } })),
+    };
+    return { network, connects };
+  }
+
+  const setProfile = async (h: Harness, profileId: 'observer' | 'worker' | 'lead') => {
+    let reply: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:setAssignment',
+        requestId: 1,
+        point: { kind: 'session', sessionId: 's1' },
+        profileId,
+      },
+      (m) => {
+        reply = m;
+      },
+      1,
+    );
+    expect(reply).toEqual({ type: 'mcp:policyResult', requestId: 1, ok: true });
+  };
+
+  const asksOf = (h: Harness) =>
+    h.toOwner.flatMap((s) => (s.msg.type === 'mcp:ask' ? [{ to: s.to, ...s.msg }] : []));
+  const answerAsk = (h: Harness, n: number, a: 'approve' | 'deny' | 'always') => {
+    const askId = asksOf(h)[n - 1]?.askId ?? '';
+    return h.host.handleRenderer({ type: 'mcp:askAnswer', askId, answer: a }, () => undefined, 1);
+  };
+  const resultOf = (l: Record<string, unknown> | undefined) =>
+    (l?.result as { structuredContent?: unknown } | undefined)?.structuredContent;
+
+  async function machineSession(over: Parameters<typeof harness>[0] = {}, def = FAKE) {
+    const h = harness(over);
+    await h.host.start();
+    const a = await launch(h, 's1', def);
+    const c = await rawClient(h.ep, a.token);
+    return { h, c };
+  }
+
+  it('the three machine tools are listed for a worker, and not for an observer', async () => {
+    const { network } = machineNet({});
+    const { h, c } = await machineSession({ network });
+    let nextId = 90;
+    const names = async () => {
+      const id = nextId++;
+      c.send({ id, method: 'tools/list' });
+      const r = (await c.reply(id)) as { result: { tools: Array<{ name: string }> } };
+      return r.result.tools.map((t) => t.name);
+    };
+    expect(await names()).toEqual(
+      expect.arrayContaining(['list_machines', 'connect_machine', 'disconnect_machine']),
+    );
+    await setProfile(h, 'observer');
+    const after = await names();
+    expect(after).toContain('list_machines');
+    expect(after).not.toContain('connect_machine');
+    expect(after).not.toContain('disconnect_machine');
+  });
+
+  it('an observer is denied connect_machine: tool_disabled, and no card', async () => {
+    const { network, connects } = machineNet({});
+    const { h, c } = await machineSession({ network });
+    await setProfile(h, 'observer');
+    c.call(1, 'connect_machine', { machine: 'win-box' });
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    expect(connects).toEqual([]);
+    expect(asksOf(h)).toEqual([]);
+  });
+
+  it('a worker is asked before a connect; approve runs it and returns the machine', async () => {
+    const { network, connects } = machineNet({});
+    const { h, c } = await machineSession({ network });
+    c.call(1, 'connect_machine', { machine: 'win-box' });
+    await until(() => asksOf(h).length === 1);
+    expect(connects).toEqual([]);
+    await answerAsk(h, 1, 'approve');
+    expect(c.errorOf(await c.reply(1))).toBe('ok');
+    expect(resultOf(c.lines.find((l) => l.id === 1))).toEqual(OK);
+    expect(connects).toEqual(['win-box']);
+  });
+
+  it('a lead connects a machine already added without a card', async () => {
+    const { network, connects } = machineNet({});
+    const { h, c } = await machineSession({ network });
+    await setProfile(h, 'lead');
+    c.call(1, 'connect_machine', { machine: 'win-box' });
+    expect(c.errorOf(await c.reply(1))).toBe('ok');
+    expect(asksOf(h)).toEqual([]);
+    expect(connects).toEqual(['win-box']);
+  });
+
+  it('a lead is still asked for an ssh target that is not added, and deny stops the dial', async () => {
+    const { network, connects } = machineNet({ listMachines: () => [] });
+    const { h, c } = await machineSession({ network });
+    await setProfile(h, 'lead');
+    c.call(1, 'connect_machine', { machine: 'new.example' });
+    await until(() => asksOf(h).length === 1);
+    await answerAsk(h, 1, 'deny');
+    expect(c.errorOf(await c.reply(1))).toBe('denied');
+    expect(connects).toEqual([]);
+  });
+
+  it('an always answer to a forced ask makes no grant: the next unknown target asks again', async () => {
+    const { network, connects } = machineNet({ listMachines: () => [] });
+    const { h, c } = await machineSession({ network });
+    await setProfile(h, 'lead');
+    c.call(1, 'connect_machine', { machine: 'new.example' });
+    await until(() => asksOf(h).length === 1);
+    await answerAsk(h, 1, 'always');
+    expect(c.errorOf(await c.reply(1))).toBe('ok');
+    expect(h.host.uiState().policy.grants).toEqual([]);
+    c.call(2, 'connect_machine', { machine: 'other.example' });
+    await until(() => asksOf(h).length === 2);
+    expect(connects).toEqual(['new.example']);
+  });
+
+  it('a worker grant for a known machine does not pass an unknown target; its card is not grantable', async () => {
+    const { network, connects } = machineNet({});
+    const { h, c } = await machineSession({ network });
+    c.call(1, 'connect_machine', { machine: 'win-box' });
+    await until(() => asksOf(h).length === 1);
+    await answerAsk(h, 1, 'always');
+    expect(c.errorOf(await c.reply(1))).toBe('ok');
+    expect(h.host.uiState().policy.grants).toHaveLength(1);
+    c.call(2, 'connect_machine', { machine: 'new.example' });
+    await until(() => asksOf(h).length === 2);
+    expect(asksOf(h)[1]).toMatchObject({ grantable: false });
+    await answerAsk(h, 2, 'approve');
+    expect(c.errorOf(await c.reply(2))).toBe('ok');
+    expect(connects).toEqual(['win-box', 'new.example']);
+  });
+
+  it('the budget counts the ask: an ask answered at 100 s leaves the dial 20 s', async () => {
+    const signals: AbortSignal[] = [];
+    const { network } = machineNet({
+      connectMachine: (_machine, signal) => {
+        signals.push(signal);
+        return new Promise<ConnectMachineResult>(() => undefined);
+      },
+    });
+    const { h, c } = await machineSession({ network, manualTimers: true }, CLAUDE);
+    c.call(1, 'connect_machine', { machine: 'win-box' });
+    await until(() => asksOf(h).length === 1);
+    h.advance(100_000);
+    await answerAsk(h, 1, 'approve');
+    await until(() => signals.length === 1);
+    h.advance(19_999);
+    expect(signals[0]?.aborted).toBe(false);
+    h.advance(1);
+    expect(c.errorOf(await c.reply(1))).toBe('ssh_unreachable');
+  });
+
+  it('an ask still waiting at 120 s ends as ssh_unreachable timeout, and its card closes as expired', async () => {
+    const { network, connects } = machineNet({});
+    const { h, c } = await machineSession({ network, manualTimers: true }, CLAUDE);
+    c.call(1, 'connect_machine', { machine: 'new.example' });
+    await until(() => asksOf(h).length === 1);
+    h.advance(120_000);
+    expect(c.errorOf(await c.reply(1))).toBe('ssh_unreachable');
+    expect(connects).toEqual([]);
+    const closed = h.toOwner.flatMap((s) => (s.msg.type === 'mcp:askClosed' ? [s.msg] : []));
+    expect(closed).toEqual([expect.objectContaining({ outcome: 'expired' })]);
+  });
+
+  it('closing the connection aborts a connect in flight', async () => {
+    let aborted = false;
+    let started = false;
+    const { network } = machineNet({
+      connectMachine: (_machine, signal) => {
+        started = true;
+        return new Promise<ConnectMachineResult>(() => {
+          signal.addEventListener('abort', () => {
+            aborted = true;
+          });
+        });
+      },
+    });
+    const { h, c } = await machineSession({ network });
+    await setProfile(h, 'lead');
+    c.call(1, 'connect_machine', { machine: 'win-box' });
+    await until(() => started);
+    c.sock.destroy();
+    await until(() => aborted);
+    expect(aborted).toBe(true);
+  });
+
+  it('a machine removed while its card waits is an unknown target at approval: the approval does not install it', async () => {
+    let known = [VIEW];
+    const { network, connects } = machineNet({ listMachines: () => known });
+    const { h, c } = await machineSession({ network });
+    c.call(1, 'connect_machine', { machine: 'win-box' });
+    await until(() => asksOf(h).length === 1);
+    known = [];
+    await answerAsk(h, 1, 'approve');
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    expect(connects).toEqual([]);
+  });
+
+  it('a lead connecting a machine that is added by its name is not asked', async () => {
+    const { network } = machineNet({});
+    const { h, c } = await machineSession({ network });
+    await setProfile(h, 'lead');
+    c.call(1, 'connect_machine', { machine: 'win-box' });
+    expect(c.errorOf(await c.reply(1))).toBe('ok');
+    expect(asksOf(h)).toEqual([]);
+  });
+
+  it('without a network every machine tool says host_unavailable, and asks nothing first', async () => {
+    const { h, c } = await machineSession({});
+    await setProfile(h, 'lead');
+    c.call(1, 'connect_machine', { machine: 'new.example' });
+    expect(c.errorOf(await c.reply(1))).toBe('host_unavailable');
+    c.call(2, 'list_machines', {});
+    expect(c.errorOf(await c.reply(2))).toBe('host_unavailable');
+    c.call(3, 'disconnect_machine', { machine: 'win-box' });
+    expect(c.errorOf(await c.reply(3))).toBe('host_unavailable');
+    expect(asksOf(h)).toEqual([]);
+  });
+
+  it('cancelling a connect aborts the dial it started and gets no reply', async () => {
+    let aborted = false;
+    let started = false;
+    const { network } = machineNet({
+      connectMachine: (_machine, signal) => {
+        started = true;
+        return new Promise<ConnectMachineResult>(() => {
+          signal.addEventListener('abort', () => {
+            aborted = true;
+          });
+        });
+      },
+    });
+    const { h, c } = await machineSession({ network });
+    await setProfile(h, 'lead');
+    c.call(7, 'connect_machine', { machine: 'win-box' });
+    await until(() => started);
+    c.cancel(7);
+    await c.barrier(9);
+    expect(aborted).toBe(true);
+    expect(c.lines.find((l) => l.id === 7)).toBeUndefined();
+  });
+
+  it('a connect that the network never answers ends at the 120 s budget as ssh_unreachable', async () => {
+    const { network, connects } = machineNet({
+      connectMachine: () => new Promise<ConnectMachineResult>(() => undefined),
+    });
+    const { h, c } = await machineSession({ network, manualTimers: true });
+    await setProfile(h, 'lead');
+    c.call(1, 'connect_machine', { machine: 'win-box' });
+    await until(() => connects.length === 1);
+    h.advance(119_999);
+    expect(c.lines.find((l) => l.id === 1)).toBeUndefined();
+    h.advance(1);
+    expect(c.errorOf(await c.reply(1))).toBe('ssh_unreachable');
   });
 });

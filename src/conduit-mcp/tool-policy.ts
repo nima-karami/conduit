@@ -35,20 +35,23 @@ const EDITOR_TOOL_NAMES = [
   'open_git_history',
   'open_url',
 ] as const;
+const MACHINE_TOOL_NAMES = ['list_machines', 'connect_machine', 'disconnect_machine'] as const;
 export const TOOL_NAMES = [
   ...MESSAGING_TOOL_NAMES,
   ...REQUEST_TOOL_NAMES,
   ...SESSION_TOOL_NAMES,
   ...EDITOR_TOOL_NAMES,
+  ...MACHINE_TOOL_NAMES,
 ] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 
-export type ToolGroup = 'messaging' | 'requests' | 'sessions' | 'editor';
+export type ToolGroup = 'messaging' | 'requests' | 'sessions' | 'editor' | 'machines';
 export const TOOL_GROUPS: readonly { group: ToolGroup; tools: readonly ToolName[] }[] = [
   { group: 'messaging', tools: MESSAGING_TOOL_NAMES },
   { group: 'requests', tools: REQUEST_TOOL_NAMES },
   { group: 'sessions', tools: SESSION_TOOL_NAMES },
   { group: 'editor', tools: EDITOR_TOOL_NAMES },
+  { group: 'machines', tools: MACHINE_TOOL_NAMES },
 ];
 
 export const ACCESS_VALUES = ['off', 'ask', 'on'] as const;
@@ -200,6 +203,25 @@ export const TOOL_SPECS: Readonly<{
   open_diff: VIEW_SPEC,
   open_git_history: VIEW_SPEC,
   open_url: VIEW_SPEC,
+  // A machine's link is the network's, not a window's: nothing here shows on screen (spec 4.6).
+  list_machines: {
+    fields: ['access'],
+    access: ['off', 'on'],
+    budget: 'show',
+    defaults: { access: 'on' },
+  },
+  connect_machine: {
+    fields: ['access'],
+    access: ACCESS_VALUES,
+    budget: 'act',
+    defaults: { access: 'ask' },
+  },
+  disconnect_machine: {
+    fields: ['access'],
+    access: ACCESS_VALUES,
+    budget: 'act',
+    defaults: { access: 'ask' },
+  },
 };
 
 const defaultsCopy = (): GlobalPolicy => {
@@ -219,6 +241,10 @@ const SERVER_ACTIONS: ReadonlySet<ToolName> = new Set([
   'open_terminal',
   'close_session',
   'attach_folder',
+  // They reach the network, not a window, so an allowed one runs without a ready window.
+  'list_machines',
+  'connect_machine',
+  'disconnect_machine',
 ]);
 
 export function isToolName(v: unknown): v is ToolName {
@@ -231,6 +257,12 @@ export function isMessagingTool(t: ToolName): boolean {
 
 export function isRequestTool(t: ToolName): boolean {
   return REQUESTS.has(t);
+}
+
+// v0.64 predates the machine tools: a v0.64 layer never set them, so migration must not read them.
+const MACHINES: ReadonlySet<ToolName> = new Set(MACHINE_TOOL_NAMES);
+export function isMachineTool(t: ToolName): boolean {
+  return MACHINES.has(t);
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>

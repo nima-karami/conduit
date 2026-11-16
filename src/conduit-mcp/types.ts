@@ -55,7 +55,15 @@ export type ToolErrorCode =
   | 'peer_unsupported'
   | 'peer_revoked'
   | 'outbox_full'
-  | 'refused';
+  | 'refused'
+  | 'machine_unknown'
+  | 'ssh_needs_person'
+  | 'ssh_unreachable'
+  | 'ssh_auth_failed'
+  | 'remote_unsupported'
+  | 'install_failed'
+  | 'identity_changed'
+  | 'identity_conflict';
 export interface ToolError {
   code: ToolErrorCode;
   message: string;
@@ -67,6 +75,11 @@ export interface ToolError {
   hint?: string;
   /** The values the caller may retry with, at most MAX_VALID_IDS. */
   valid?: string[];
+  /** Spec 5.2 structured fields: an ssh_needs_person reason, a remote OS or arch, an install step. */
+  reason?: string;
+  os?: string;
+  arch?: string;
+  step?: string;
 }
 export type Result<T> = { ok: true; value: T } | { ok: false; error: ToolError };
 
@@ -80,11 +93,17 @@ const RETRYABLE: ReadonlySet<ToolErrorCode> = new Set([
   'server_stopping',
   'session_restarting',
   'peer_unreachable',
+  'ssh_unreachable',
+  'install_failed',
 ]);
 
 export interface ToolErrorDetail {
   hint?: string;
   valid?: readonly string[];
+  reason?: string;
+  os?: string;
+  arch?: string;
+  step?: string;
 }
 
 export function toolError(
@@ -100,6 +119,10 @@ export function toolError(
     ...(sessionId === undefined ? {} : { sessionId }),
     ...(detail?.hint === undefined ? {} : { hint: detail.hint }),
     ...(detail?.valid === undefined ? {} : { valid: detail.valid.slice(0, MAX_VALID_IDS) }),
+    ...(detail?.reason === undefined ? {} : { reason: detail.reason }),
+    ...(detail?.os === undefined ? {} : { os: detail.os }),
+    ...(detail?.arch === undefined ? {} : { arch: detail.arch }),
+    ...(detail?.step === undefined ? {} : { step: detail.step }),
   };
 }
 

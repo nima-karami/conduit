@@ -19,6 +19,7 @@ import type {
 import {
   DEFAULT_TOOL_POLICY,
   type GlobalPolicy,
+  isMachineTool,
   type PolicyLayer,
   type PolicyLayers,
   resolvePolicy,
@@ -85,7 +86,7 @@ describe('migrateLegacyPolicy', () => {
     });
 
     const state = stateOf([[point, assignmentAt(out, point)]]);
-    for (const tool of TOOL_NAMES) {
+    for (const tool of TOOL_NAMES.filter((t) => !isMachineTool(t))) {
       const today = todayRule(
         resolvePolicy(tool, { session: layer, global: DEFAULT_TOOL_POLICY }).policy,
       );

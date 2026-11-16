@@ -31,7 +31,12 @@ import type {
 import { type CliKind, TOOL_NAMES, type ToolName } from './tool-policy';
 
 // see NET §4.1 (R21)
+// The machine tools are not in NET's table: a read of this side's links is monitor, and adding or
+// dropping a link is orchestrate (off for every remote in v1), so a peer cannot reshape our fleet.
 const CAPABILITY_OF: Record<ToolName, Capability | 'orchestrate'> = {
+  list_machines: 'monitor',
+  connect_machine: 'orchestrate',
+  disconnect_machine: 'orchestrate',
   list_sessions: 'messaging',
   send_message: 'messaging',
   read_inbox: 'messaging',
@@ -138,6 +143,7 @@ function done(
     overrideId: reason.by === 'override' ? (overrideIds[0] ?? null) : null,
     overrideIds,
     deniedTarget,
+    forcedAsk: false,
   };
 }
 
@@ -172,8 +178,14 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
   const profile = profileById(state, assignment.profileId) ?? OBSERVER;
   const targets = resolveTargets(input.targets, principal);
   const primary = targets[0];
-  const ruleFor = (t: PolicyTarget): ToolRule =>
+  // A forced ask (spec 4.6, RS-D6) only turns an allow into an ask: a profile's deny stays a deny.
+  // No grant passes it, because RS-D6 says it is always an ask.
+  const baseRuleFor = (t: PolicyTarget): ToolRule =>
     forPrincipal(principal, effectiveRule(profile, assignment, tool, t));
+  const forcedFor = (t: PolicyTarget): boolean =>
+    input.forceAsk === true && baseRuleFor(t).decision !== 'deny';
+  const ruleFor = (t: PolicyTarget): ToolRule =>
+    forcedFor(t) ? { ...baseRuleFor(t), decision: 'ask' } : baseRuleFor(t);
 
   if (!masterOn && tool !== 'list_agents')
     return done('deny', { by: 'floor', floor: 'master-off' }, ruleFor(primary));
@@ -210,6 +222,7 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
       fromException,
       override: explicitDeny ? overrideFor(t) : undefined,
       explicitDeny,
+      forced: forcedFor(t),
     };
   });
 
@@ -221,15 +234,16 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
   const overrideIds = [...new Set(passing.flatMap((e) => (e.override ? [e.override.id] : [])))];
 
   const decided = evaluated.map((e) => {
-    const grant = e.explicitDeny
-      ? undefined
-      : state.grants.find(
-          (g) =>
-            isLiveGrant(g, now) &&
-            g.tool === tool &&
-            whoMatches(g.who, principal) &&
-            matchesScope(g.on, e.target),
-        );
+    const grant =
+      e.explicitDeny || e.forced
+        ? undefined
+        : state.grants.find(
+            (g) =>
+              isLiveGrant(g, now) &&
+              g.tool === tool &&
+              whoMatches(g.who, principal) &&
+              matchesScope(g.on, e.target),
+          );
     const effective: Decision = e.override || grant ? ALLOW : e.rule.decision;
     return { ...e, grant, effective };
   });
@@ -257,13 +271,16 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
   const reason: Reason = strictest.fromException
     ? { by: 'exception', point, profileId: profile.id }
     : { by: 'profile', point, profileId: profile.id };
-  return done(
-    strictest.effective,
-    reason,
-    strictest.rule,
-    strictest.effective === 'allow' ? grantIds : [],
-    strictest.effective === 'deny' ? [] : overrideIds,
-  );
+  return {
+    ...done(
+      strictest.effective,
+      reason,
+      strictest.rule,
+      strictest.effective === 'allow' ? grantIds : [],
+      strictest.effective === 'deny' ? [] : overrideIds,
+    ),
+    forcedAsk: strictest.forced && strictest.effective === 'ask',
+  };
 }
 
 export function visibleTools(state: PolicyState, principal: Principal, now: number): ToolName[] {

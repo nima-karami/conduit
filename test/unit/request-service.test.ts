@@ -929,6 +929,29 @@ describe('permission requests in the service', () => {
     });
   });
 
+  it('a late grant is refused for a forced ask, which is approve-once at most', async () => {
+    const h = harness({
+      initial: fileOf([
+        permissionRecord({
+          permission: {
+            tool: 'send_message',
+            why: 'connect a new machine',
+            targets: [],
+            lateGrant: null,
+            grantable: false,
+          },
+        }),
+      ]),
+    });
+    const out = await h.service.answerPermission(
+      'r-perm-1',
+      { outcome: 'allowed', grant: { who: 'session', on: 'anywhere', for: 'session-end' } },
+      you,
+    );
+    expect(out).toMatchObject({ ok: false, reason: 'already_ended' });
+    expect(h.onPermissionAnswer).not.toHaveBeenCalled();
+  });
+
   it('a second late grant on the same permission is refused as not_answerable', () => {
     const h = harness({
       initial: fileOf([

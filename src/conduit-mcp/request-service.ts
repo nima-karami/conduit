@@ -724,6 +724,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
       const lateGrant =
         r.state === 'expired' &&
         r.permission.lateGrant === null &&
+        r.permission.grantable !== false &&
         checked.value.outcome === 'allowed' &&
         checked.value.grant !== undefined;
       if (r.state !== 'open' && !lateGrant) {
