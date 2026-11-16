@@ -6745,6 +6745,17 @@ describe('recordObserved', () => {
     expect(JSON.stringify(rows)).not.toContain('secret');
   });
 
+  it('a lone carriage return ends the summary line too', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s1', 'claude', {
+      action: { kind: 'command', command: 'cmd\rSECRET=x', cwd: null },
+    });
+    expect(rows).toEqual([expect.objectContaining({ summary: 'cmd' })]);
+    expect(JSON.stringify(rows)).not.toContain('SECRET');
+  });
+
   it('a long first line is capped at 200 characters', async () => {
     const { rows, activityIo } = observedHarness();
     const h = harness({ activityIo });

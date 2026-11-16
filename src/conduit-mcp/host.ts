@@ -309,7 +309,7 @@ function observedRow(action: ClaudeAction | CodexAction): {
   const exitedNonZero = 'exitCode' in action && action.exitCode !== null && action.exitCode !== 0;
   switch (action.kind) {
     case 'command': {
-      const firstLine = action.command.split(/\r?\n/)[0] ?? '';
+      const firstLine = action.command.split(/\r\n|\r|\n/)[0] ?? '';
       return {
         action: 'command',
         target: action.cwd,
