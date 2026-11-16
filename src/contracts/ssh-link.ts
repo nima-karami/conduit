@@ -25,6 +25,7 @@ export type SshFailure =
   | { code: 'bridge_no_server' }
   | { code: 'bridge_no_secret' }
   | { code: 'bridge_refused' }
+  | { code: 'bridge_untrusted_endpoint' }
   | { code: 'ssh_failed'; detail: string };
 
 export interface SshDialed {
@@ -46,7 +47,7 @@ export interface BridgePreamble {
 
 export const BRIDGE_EXIT_CODE = 3;
 
-export type BridgeFailureCode = 'no_secret' | 'no_server' | 'refused';
+export type BridgeFailureCode = 'no_secret' | 'no_server' | 'refused' | 'untrusted_endpoint';
 
 export type AddSshPeerResult =
   | { ok: true; machineId: string }

@@ -304,6 +304,7 @@ export function createServices(o: ServicesOptions) {
           appVersion: o.appVersion,
           instance: o.names.instance,
           linkEndpoint: o.names.linkEndpoint,
+          linkSocketDir: o.names.linkSocketDir,
           secret: o.secret,
           identity: loaded.identity,
           settings: () => domain.settings(),
