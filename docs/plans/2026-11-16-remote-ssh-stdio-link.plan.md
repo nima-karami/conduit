@@ -77,9 +77,19 @@ down: ssh child exit = stream 'close' → link down → redial with CON-27 backo
    - An element containing NUL, `\n` or `\r` is refused.
    - Windows quoting arrives with the shell-family probe in slice 3. The `SshEndpoint` fields come from slice 3's
      probe; here the caller supplies them.
-8. **ControlPath** `<dir>/%C`, where:
-   - `dir` = `<userData>/ssh` when `byteLength(dir) + 41 ≤ 100`, else `<tmpdir>/conduit-ssh-<instance>`;
-   - the dir is created with mode 0700;
+8. **ControlPath** `<dir>/%C`. Measured on the Linux VM (review of CON-37 T2.2, `scratchpad/lanes/review-t22.md`):
+   a 49-byte dir binds and a 50-byte dir fails with `unix_listener: path … too long`. OpenSSH binds
+   `<ControlPath>.<16 chars>` before it renames into place, so the expanded ControlPath (dir + 41) must be at most 90 bytes.
+   - `controlDir` picks the first candidate that fits (bytes, not characters):
+     (a) `<userData>/ssh`;
+     (b) `<XDG_RUNTIME_DIR>/conduit-ssh-<instance>`, only when `XDG_RUNTIME_DIR` is set and absolute;
+     (c) `<tmpdir>/conduit-ssh-<uid>-<instance>`. The uid keeps another local user from pre-creating the name.
+   - If none fits, `controlDir` returns `null` and the dial fails with `{ code: 'ssh_failed', detail: 'control_dir_too_long' }`.
+   - The dir is created with mode 0700. An existing dir is trusted only after `lstat`: it must be a directory (not a
+     symlink), owned by `process.getuid()`, with no group or other bits. Otherwise the dial fails with
+     `control_dir_unsafe` and ssh is never spawned. The check is posix-only: Windows has no getuid.
+   - Why: ssh's mux client does not check who owns the socket it connects to, so a dir another local user pre-created would
+     receive our link's stdio.
    - gates.md G6 showed that a long scratch path fails `unix_listener: path … too long`.
 9. **Bridge failures are typed.** The bridge exits 3 after writing one stderr line, `conduit-bridge: <code>`, with
    `code ∈ no_secret | no_server | refused`. The dialer maps those lines and ssh's own stderr to `SshFailure`.
@@ -170,18 +180,18 @@ changes to "the per-start secret from `<userData>/server-secret`; required befor
 | `server/network/link-manager.ts` | modify | `Duplex` adopt; `acceptStream`; `addSshPeer`; dial loop branches on `transport`; refuse `owner` frames on ssh |
 | `server/network/listener.ts` | modify | pass `TLSSocket` on as `Duplex` (type only) |
 | `src/network/ssh-argv.ts` | create | `posixQuote`, `sshArgv`, `controlDir`, `classifySshFailure` (pure) |
-| `server/network/ssh-dialer.ts` | create | `createSshDial(o: { sshPath: string; controlDir: string; log }): SshDial` |
+| `server/network/ssh-dialer.ts` | create | `createSshDial(o: { sshPath: string; controlDir: string \| null; log }): SshDial` |
 | `server/network/audit-log.ts` | modify | `AuditKind` gains `'bridge.refused'` (T3.1) |
 | `server/network/stdio-link-endpoint.ts` | create | `listenStdioLink(o): Promise<{ close(): Promise<void> }>` (preamble check, audit, hand-off) |
 | `server/lifecycle/link-stdio-bridge.ts` | create | `runLinkStdioBridge(o): Promise<number>` (exit code) |
 | `server/network/index.ts` | modify | wire `createSshDial`, `listenStdioLink`, `acceptStream` |
 | `server/network/c2.ts` | modify | `link.sshAdd` |
-| `test/helpers/fake-ssh.mjs` | create | test-only ssh stand-in: drops the options, parses the POSIX-quoted remote command, spawns it locally with stdio inherited, echoes ssh-like failures on demand via `FAKE_SSH_FAIL=<stderr text>` |
+| `test/e2e/fixtures/fake-ssh.cjs` | create | test-only ssh stand-in: drops the options, parses the POSIX-quoted remote command, spawns it locally with stdio inherited, echoes ssh-like failures on demand via `FAKE_SSH_FAIL=<stderr text>` |
 | `test/e2e/net-ssh-link.e2e.mjs` | create | two real servers; A adds B over fake-ssh; message → kill bridge → exactly-once after redial; secret-less client refused |
 | tests listed per task | create/modify | |
 
 ## Scripts
-1. `test/helpers/fake-ssh.mjs` (above). It replaces a real sshd in unit and e2e tests. Real sshd is proven by the
+1. `test/e2e/fixtures/fake-ssh.cjs` (above). It replaces a real sshd in unit and e2e tests. Real sshd is proven by the
    orchestrator's VM smoke (Verification).
 2. `test/e2e/c2-auth.mjs`: one helper instead of repeating secret reading in about 12 e2e files.
 
@@ -223,7 +233,7 @@ server-standalone. Fake servers in unit tests (`test/unit/fake-c2-server.ts`) ac
 
 ### Slice 2: link over any Duplex, ssh records, ssh dial (A side) — parallel
 **Check:** `npx vitest run test/unit/network-link-connection.test.ts test/unit/network-link-manager.test.ts test/unit/network-link-file.test.ts test/unit/network-link-store.test.ts test/unit/ssh-argv.test.ts test/unit/ssh-dialer.test.ts`
-**Parallel groups:** G1: T2.1 · G2: T2.2 (file-disjoint: G1 = `server/network/link-*.ts`, `listener.ts`, `src/network/link-file.ts` and their tests; G2 = `src/network/ssh-argv.ts`, `server/network/ssh-dialer.ts`, `test/helpers/fake-ssh.mjs` and their tests)
+**Parallel groups:** G1: T2.1 · G2: T2.2 (file-disjoint: G1 = `server/network/link-*.ts`, `listener.ts`, `src/network/link-file.ts` and their tests; G2 = `src/network/ssh-argv.ts`, `server/network/ssh-dialer.ts`, `test/e2e/fixtures/fake-ssh.cjs` and their tests)
 **Claims:** none (shared entries are in slice 3)
 
 #### Task 2.1: Duplex link, ssh records, acceptStream, addSshPeer
@@ -269,12 +279,12 @@ server-standalone. Fake servers in unit tests (`test/unit/fake-c2-server.ts`) ac
 - [ ] 'messages queued while an ssh link is down are delivered once after redial': reuse the existing messaging test pattern in `test/unit/network-link-manager.test.ts`, or the service test if messaging is composed there.
 
 #### Task 2.2: ssh argv, failure classification, dialer
-**Files:** create `src/network/ssh-argv.ts`, `server/network/ssh-dialer.ts`, `test/helpers/fake-ssh.mjs`; tests
+**Files:** create `src/network/ssh-argv.ts`, `server/network/ssh-dialer.ts`, `test/e2e/fixtures/fake-ssh.cjs`; tests
 `test/unit/ssh-argv.test.ts`, `test/unit/ssh-dialer.test.ts`.
 **Interfaces (produces):**
 - `posixQuote(args: readonly string[]): string | null`: each arg is wrapped in `'…'` with `'` → `'\''`, joined by spaces. Returns `null` if any arg contains `\0`, `\n` or `\r`.
-- `sshArgv(o: { target: string; controlPath: string; remote: readonly string[] }): string[] | { error: 'bad_target' | 'bad_arg' }`. It returns exactly `['-T','-o','BatchMode=yes','-o','ClearAllForwardings=yes','-o','ForwardAgent=no','-o','ForwardX11=no','-o','ServerAliveInterval=5','-o','ServerAliveCountMax=3','-o','ControlMaster=auto','-o',`ControlPath=${controlPath}`,'-o','ControlPersist=60','--',target, posixQuote(remote)]`. The target is refused if it starts with `-`, or is empty or contains whitespace/NUL.
-- `controlDir(o: { userData: string; tmpdir: string; instance: string; join: (...p: string[]) => string }): string`: decision 8.
+- `sshArgv(o: { target: string; controlPath: string; remote: readonly string[] }): string[] | { error: 'bad_target' | 'bad_arg' }`. It returns exactly `['-T','-o','BatchMode=yes','-o','ClearAllForwardings=yes','-o','ForwardAgent=no','-o','ForwardX11=no','-o','ServerAliveInterval=5','-o','ServerAliveCountMax=3','-o','ControlMaster=auto','-o',`ControlPath=${controlPath}`,'-o','ControlPersist=60','--',target, posixQuote(remote)]`. The target must match `^[A-Za-z0-9._@:%+\[\]-]+$` and not start with `-`, else `bad_target` (ssh expands `%h`/`%r` in a user's ProxyCommand, CVE-2023-51385; review of T2.2).
+- `controlDir(o: { userData: string; tmpdir: string; xdgRuntimeDir: string | undefined; uid: number; instance: string; join: (...p: string[]) => string }): string | null`: decision 8 (the first candidate that fits, or `null`).
 - `classifySshFailure(exitCode: number | null, stderr: string): SshFailure | null`, matched case-insensitively:
   - `conduit-bridge: no_server|no_secret|refused` → `bridge_*`;
   - `REMOTE HOST IDENTIFICATION HAS CHANGED` → needs_person `host_key_changed`;
@@ -282,11 +292,11 @@ server-standalone. Fake servers in unit tests (`test/unit/fake-c2-server.ts`) ac
   - `passphrase` → `passphrase`;
   - `password` → `password`;
   - `verification code|one-time|keyboard-interactive` → `mfa`;
-  - `Permission denied` → `ssh_auth_failed`;
+  - `Permission denied \([a-z,-]+\)` → `ssh_auth_failed` (anchored, so a remote EACCES line is not an auth failure; checked before `password`, see deviations);
   - `Could not resolve hostname|Connection timed out|Connection refused|No route to host|Network is unreachable|Timeout, server .* not responding` → `ssh_unreachable` with `detail` = the matched line;
   - otherwise a non-zero exit → `ssh_failed` with the last stderr line (≤200 chars);
   - exit 0 with empty stderr → `null`.
-- `createSshDial(o: { sshPath: string; controlDir: string; log: NetLog }): SshDial`:
+- `createSshDial(o: { sshPath: string; controlDir: string | null; log: NetLog; sshArgsPrefix?: string[] }): SshDial` (`controlDir` is `controlDir()`'s result; `null` fails every dial with `control_dir_too_long`):
   - `mkdirSync(controlDir, {recursive:true, mode:0o700})`;
   - `spawn(sshPath, argv, { stdio: ['pipe','pipe','pipe'], windowsHide: true })`;
   - stderr is collected up to 16 KiB;
@@ -295,7 +305,7 @@ server-standalone. Fake servers in unit tests (`test/unit/fake-c2-server.ts`) ac
   - destroying the stream kills the child by its PID (`child.kill()`);
   - a `bad_target`/`bad_arg` argv returns an already-destroyed stream whose `failure()` gives `{code:'ssh_failed', detail:'bad_target'|'bad_arg'}`.
 **Steps (red first):** exact-argv test; quoting tests including `'` and a space; refusal of a leading `-`; one
-classifier row per pattern; dialer test with `sshPath = process.execPath` and `fake-ssh.mjs` giving `createSshDial` an optional `sshArgsPrefix: string[]` used ONLY by tests) running a remote `cat`-like node
+classifier row per pattern; dialer test with `sshPath = process.execPath` and `fake-ssh.cjs` giving `createSshDial` an optional `sshArgsPrefix: string[]` used ONLY by tests) running a remote `cat`-like node
 one-liner: bytes round-trip; `FAKE_SSH_FAIL='Host key verification failed.'` → `failure()` gives
 `host_key_unknown`.
 
