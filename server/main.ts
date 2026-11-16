@@ -11,6 +11,7 @@ import { readServerSecret } from '../src/server-secret';
 import { compose } from './compose';
 import { directStopAll, hcBinaryOf, hcClient, serverChildEnv, startCore, stopCore } from './hc-cli';
 import { argValue, requireUserData } from './lifecycle/cli-args';
+import { runLinkStdioBridge } from './lifecycle/link-stdio-bridge';
 import { writeServerSecret } from './lifecycle/server-secret';
 import type { ShellCore } from './lifecycle/shell';
 import { stopAll } from './lifecycle/stop-all';
@@ -38,6 +39,17 @@ export async function runServer(
   close?(): Promise<void>;
 }> {
   const userData = requireUserData(args);
+  // The ssh bridge is a stdio relay, not a server: it binds nothing, writes no secret, composes nothing.
+  if (args.includes('--link-stdio')) {
+    const code = await runLinkStdioBridge({
+      userData,
+      platform: process.platform,
+      stdin: process.stdin,
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+    return { code };
+  }
   const serverVersion =
     args.includes('--e2e') && !argValue(args, '--shim-dir')
       ? argValue(args, '--e2e-app-version') || version
