@@ -686,6 +686,10 @@ Failing tests:
 - **T4.2 Codex watch.**
   - Files: `codex-rollout-watch.ts` (`onAction(sessionId, CodexAction)` dep, skips the replay read, reports `onFeed(sessionId, 'unavailable')` on an ambiguous or no bind after the 30 s bind window); test `codex-rollout-watch.test.ts`.
   - Failing tests: 'replay emits no actions'; 'new item_completed emits one action'; 'ambiguous bind reports unavailable'.
+- *T4.1 review rulings (2026-11-15):*
+  - Claude Code 2.1.325 compiles a matcher containing regex characters as an unanchored RegExp, so the shared matcher carries its own anchors: `^(?:Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*)$`.
+  - The hook client strips PostToolUse by allow-list: only the identity fields, plus tool_input `command`/`file_path`/`notebook_path`; no tool_input at all for mcp__*.
+  - Noted for T4.3: when `transcript_path` changes (resume or fork), the gap check takes a baseline instead of reporting a gap.
 - *T4.2 ruling (2026-11-15):* the plan's "30 s bind window" didn't exist in the watch. It becomes `BIND_WINDOW_MS = 30_000` from track(), a setTimeout cleared on bind or untrack, and it reports unavailable once. A later bind reports nothing new.
 - **T4.1b Claude feed-gap check (lead condition on the async hook).** An async PostToolUse post can be lost without Conduit knowing. On each `Stop` hook (sync, already delivered), the host reads the transcript (`transcript_path`), counts the `tool_use` entries since the previous Stop whose tool names match the PostToolUse matcher, and compares that with the PostToolUse posts received for the session over the same span. A shortfall writes one `note` row ("Feed gap: N actions not reported"). The reader is `src/claude-transcript-tools.ts` (`countMatchedToolUses(jsonl: string, sinceUuid: string | null): {count: number; lastUuid: string | null}`), tested against a scrubbed transcript fixture.
 - **T4.3 (serial) wiring.**
