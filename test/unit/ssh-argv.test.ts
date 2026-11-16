@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { classifySshFailure, controlDir, posixQuote, sshArgv } from '../../src/network/ssh-argv';
 
@@ -72,6 +71,20 @@ describe('sshArgv', () => {
     }
   });
 
+  it('refuses shell metacharacters and option-like text in a target', () => {
+    for (const target of [';id', 'a`id`', '$(x)', 'host=x', 'h|x', "it's"]) {
+      expect(sshArgv({ target, controlPath: '/d/%C', remote: ['node'] })).toEqual({
+        error: 'bad_target',
+      });
+    }
+  });
+
+  it('accepts user@host, IPv6 literals, dotted names and zone ids', () => {
+    for (const target of ['user@host', '[::1]', 'host.local', 'fe80::1%eth0']) {
+      expect(sshArgv({ target, controlPath: '/d/%C', remote: ['node'] })).toBeInstanceOf(Array);
+    }
+  });
+
   it('refuses a remote argument that cannot be quoted', () => {
     expect(sshArgv({ target: 'vm', controlPath: '/d/%C', remote: ['node', 'a\nb'] })).toEqual({
       error: 'bad_arg',
@@ -80,45 +93,49 @@ describe('sshArgv', () => {
 });
 
 describe('controlDir', () => {
-  // The ControlPath is `<dir>/%C` and OpenSSH's %C hash is 40 hex characters, so 41 bytes more.
-  const LIMIT = 100 - 41;
+  // The expanded ControlPath (dir + '/' + 40-hex hash) must be at most 90 bytes, so the dir at most
+  // 49. Measured on the Linux VM: 49 binds, 50 fails with "unix_listener: path … too long".
+  const base = { tmpdir: '/tmp', xdgRuntimeDir: undefined, uid: 1000, instance: 'abc' };
+  const at = (length: number) => 'u'.repeat(length - '/ssh'.length);
 
-  it('uses <userData>/ssh when the ControlPath fits in 100 bytes', () => {
-    const userData = 'u'.repeat(LIMIT - '/ssh'.length);
-    const dir = controlDir({ userData, tmpdir: '/tmp', instance: 'abc', join });
-    expect(dir).toBe(`${userData}/ssh`);
-    expect(Buffer.byteLength(dir) + 41).toBe(100);
+  it('uses <userData>/ssh at exactly 49 bytes', () => {
+    const userData = at(49);
+    expect(controlDir({ ...base, userData, join })).toBe(`${userData}/ssh`);
   });
 
-  it('falls back to tmpdir one byte past the limit', () => {
-    const userData = 'u'.repeat(LIMIT - '/ssh'.length + 1);
-    expect(controlDir({ userData, tmpdir: '/tmp', instance: 'abc', join })).toBe(
-      '/tmp/conduit-ssh-abc',
+  it('moves on at 50 bytes, the first length that fails to bind', () => {
+    const userData = at(50);
+    expect(controlDir({ ...base, userData, join })).toBe('/tmp/conduit-ssh-1000-abc');
+  });
+
+  it('prefers XDG_RUNTIME_DIR over tmpdir when userData is too long', () => {
+    expect(controlDir({ ...base, userData: at(60), xdgRuntimeDir: '/run/user/1000', join })).toBe(
+      '/run/user/1000/conduit-ssh-abc',
     );
+  });
+
+  it('ignores a relative XDG_RUNTIME_DIR', () => {
+    expect(controlDir({ ...base, userData: at(60), xdgRuntimeDir: 'run/user', join })).toBe(
+      '/tmp/conduit-ssh-1000-abc',
+    );
+  });
+
+  it('names the tmpdir fallback with the uid, so another user cannot pre-create it', () => {
+    expect(controlDir({ ...base, uid: 4242, userData: at(60), join })).toBe(
+      '/tmp/conduit-ssh-4242-abc',
+    );
+  });
+
+  it('returns null when no candidate fits', () => {
+    expect(controlDir({ ...base, tmpdir: 'T'.repeat(30), userData: at(60), join })).toBeNull();
   });
 
   it('counts bytes, not characters', () => {
-    const userData = 'é'.repeat(30);
-    expect(userData.length + 4 <= LIMIT).toBe(true);
-    expect(Buffer.byteLength(userData) + 4 > LIMIT).toBe(true);
-    expect(controlDir({ userData, tmpdir: '/tmp', instance: 'abc', join })).toBe(
-      '/tmp/conduit-ssh-abc',
-    );
-  });
-
-  it('joins with the injected join, not a platform separator', () => {
-    const calls: string[][] = [];
-    controlDir({
-      userData: '/short',
-      tmpdir: '/tmp',
-      instance: 'abc',
-      join: (...p) => {
-        calls.push(p);
-        return p.join('|');
-      },
-    });
-    expect(calls).toEqual([['/short', 'ssh']]);
-    expect(path.isAbsolute('/short')).toBe(true);
+    // 23 characters but 46 bytes: the dir is 50 bytes once '/ssh' is added, one past the limit.
+    const userData = 'é'.repeat(23);
+    expect(userData.length + '/ssh'.length).toBeLessThanOrEqual(49);
+    expect(new TextEncoder().encode(userData).length + '/ssh'.length).toBeGreaterThan(49);
+    expect(controlDir({ ...base, userData, join })).toBe('/tmp/conduit-ssh-1000-abc');
   });
 });
 
@@ -161,6 +178,18 @@ describe('classifySshFailure', () => {
       { code: 'ssh_needs_person', reason: 'mfa' },
     ],
     ['permission denied', 255, 'vm: Permission denied (publickey).', { code: 'ssh_auth_failed' }],
+    [
+      'permission denied, password method',
+      255,
+      'user@vm: Permission denied (publickey,password).',
+      { code: 'ssh_auth_failed' },
+    ],
+    [
+      'permission denied, keyboard-interactive method',
+      255,
+      'Permission denied (publickey,keyboard-interactive).',
+      { code: 'ssh_auth_failed' },
+    ],
     [
       'could not resolve',
       255,
@@ -235,6 +264,17 @@ describe('classifySshFailure', () => {
   it('caps the ssh_failed detail at 200 characters', () => {
     const failure = classifySshFailure(2, 'x'.repeat(500));
     expect(failure).toEqual({ code: 'ssh_failed', detail: 'x'.repeat(200) });
+  });
+
+  it('does not read a remote EACCES line as an auth failure', () => {
+    expect(classifySshFailure(2, 'EACCES: permission denied, open /x/y')).toEqual({
+      code: 'ssh_failed',
+      detail: 'EACCES: permission denied, open /x/y',
+    });
+    expect(classifySshFailure(127, 'bash: /x/node: Permission denied')).toEqual({
+      code: 'ssh_failed',
+      detail: 'bash: /x/node: Permission denied',
+    });
   });
 
   it('returns null for exit 0 with empty stderr', () => {
