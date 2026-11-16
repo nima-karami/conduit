@@ -46,7 +46,6 @@ import { readBlob } from '../src/config';
 import type { TruncatedBy } from '../src/content-search';
 import { searchContentFs } from '../src/content-search-fs';
 import { HC_PINNED_VERSION } from '../src/contracts/hc';
-import type { MachineActionResult, MachineError } from '../src/contracts/machines';
 import type {
   WindowPresence as C2WindowPresence,
   DataStores,
@@ -249,6 +248,7 @@ import { Logger } from './logger';
 import { LspManager } from './lsp-manager';
 import { startLanguageServer } from './lsp-server';
 import { watchServerRoot } from './lsp-watcher';
+import { disconnectOutcome, MACHINE_OK, machineActionReply } from './machine-replies';
 import { NotesWatcher } from './notes-watcher';
 import { OpenFileWatcher } from './open-file-watcher';
 import { createOsFileClipboard, spawnPowerShell } from './os-file-clipboard';
@@ -520,19 +520,6 @@ function sendToWindow(windowId: number, msg: HostToWebview) {
 
 /** The server gives a connect 120 s (spec §7); a client that gives up first loses its real answer. */
 const MACHINES_CONNECT_TIMEOUT_MS = 130_000;
-
-const MACHINE_OK: MachineActionResult = { ok: true, value: null };
-
-/** A C2 fault from a machine action, in the shape the Machines UI maps to its text (spec 9.1). */
-function machineFault(error: unknown): MachineError {
-  return {
-    code:
-      error instanceof ServerCallError && error.kind === 'not_found'
-        ? 'machine_unknown'
-        : 'ssh_unreachable',
-    detail: { reason: faultCode(error) },
-  };
-}
 
 type E2eHoldPoint = 'index' | 'closure' | 'scan' | 'topup';
 /** Smoke-only (installed under CONDUIT_E2E): parks an index build between reading the repo set
@@ -2683,22 +2670,8 @@ app.whenReady().then(() => {
   powerMonitor.on('resume', () => serverClient()?.notify('system.resumed', {}));
   powerMonitor.on('unlock-screen', () => serverClient()?.notify('system.resumed', {}));
 
-  /** The Machines UI always gets a typed result back, so a C2 fault is mapped rather than dropped. */
-  const machineActionReply = async (
-    reply: Dispatch,
-    requestId: number,
-    action: string,
-    run: () => Promise<MachineActionResult>,
-  ): Promise<void> => {
-    let result: MachineActionResult;
-    try {
-      result = await run();
-    } catch (err: unknown) {
-      log.warn('machines', `${action} failed`, { err: String(err) });
-      result = { ok: false, error: machineFault(err) };
-    }
-    reply({ type: 'machines:result', requestId, result });
-  };
+  const warnMachines = (message: string, data: Record<string, unknown>) =>
+    log.warn('machines', message, data);
 
   async function handle(m: WebviewToHost, e: IpcMainEvent) {
     const senderWin = BrowserWindow.fromWebContents(e.sender);
@@ -4167,31 +4140,53 @@ app.whenReady().then(() => {
           await remotePanes.close(senderId, m);
           break;
         case 'machines:connect':
-          await machineActionReply(replyHere, m.requestId, 'connect', () =>
-            callServer(
-              'machines.connect',
-              { machine: m.machine },
-              { timeoutMs: MACHINES_CONNECT_TIMEOUT_MS },
+          replyHere(
+            await machineActionReply(
+              m.requestId,
+              'connect',
+              () =>
+                callServer(
+                  'machines.connect',
+                  { machine: m.machine },
+                  { timeoutMs: MACHINES_CONNECT_TIMEOUT_MS },
+                ),
+              warnMachines,
             ),
           );
           break;
         case 'machines:disconnect':
-          await machineActionReply(replyHere, m.requestId, 'disconnect', async () => {
-            const r = await callServer('machines.disconnect', { machine: m.machine });
-            // A disconnect's value is its own shape, which the reply does not carry.
-            return r.ok ? { ok: true, value: null } : r;
-          });
+          replyHere(
+            await machineActionReply(
+              m.requestId,
+              'disconnect',
+              async () =>
+                disconnectOutcome(await callServer('machines.disconnect', { machine: m.machine })),
+              warnMachines,
+            ),
+          );
           break;
         case 'machines:rename':
-          await machineActionReply(replyHere, m.requestId, 'rename', () =>
-            callServer('machines.rename', { machineId: m.machineId, name: m.name }).then(
-              () => MACHINE_OK,
+          replyHere(
+            await machineActionReply(
+              m.requestId,
+              'rename',
+              () =>
+                callServer('machines.rename', { machineId: m.machineId, name: m.name }).then(
+                  () => MACHINE_OK,
+                ),
+              warnMachines,
             ),
           );
           break;
         case 'machines:remove':
-          await machineActionReply(replyHere, m.requestId, 'remove', () =>
-            callServer('machines.remove', { machineId: m.machineId }).then(() => MACHINE_OK),
+          replyHere(
+            await machineActionReply(
+              m.requestId,
+              'remove',
+              () =>
+                callServer('machines.remove', { machineId: m.machineId }).then(() => MACHINE_OK),
+              warnMachines,
+            ),
           );
           break;
         case 'machines:openNeedsPerson':

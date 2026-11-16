@@ -2,7 +2,7 @@ import type { ServerEvents, ServerMethods } from '../src/contracts/server-protoc
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
 import { faultCode } from './server-calls';
 
-type RemoteMethod =
+export type RemoteMethod =
   | 'remote.attach'
   | 'remote.detach'
   | 'remote.input'
@@ -96,14 +96,18 @@ export function createRemotePanes(d: RemotePanesDeps) {
 
   // Keystrokes and resizes are fire-and-forget (the pane never waits on them), so their failures
   // are logged here rather than replied.
+  const logFailure =
+    (action: 'remote input' | 'remote resize', m: { machineId: string; sessionId: string }) =>
+    (error: unknown): void =>
+      d.log('warn', `${action} failed`, {
+        machineId: m.machineId,
+        sessionId: m.sessionId,
+        err: String(error),
+      });
+
   const input = (m: Message<'remote:input'>): void => {
     d.call('remote.input', { machineId: m.machineId, sessionId: m.sessionId, data: m.data }).catch(
-      (error: unknown) =>
-        d.log('warn', 'remote input failed', {
-          machineId: m.machineId,
-          sessionId: m.sessionId,
-          err: String(error),
-        }),
+      logFailure('remote input', m),
     );
   };
 
@@ -113,13 +117,7 @@ export function createRemotePanes(d: RemotePanesDeps) {
       sessionId: m.sessionId,
       cols: m.cols,
       rows: m.rows,
-    }).catch((error: unknown) =>
-      d.log('warn', 'remote resize failed', {
-        machineId: m.machineId,
-        sessionId: m.sessionId,
-        err: String(error),
-      }),
-    );
+    }).catch(logFailure('remote resize', m));
   };
 
   // An event can outlive its view (a detach races the last frame of output), so an unowned one

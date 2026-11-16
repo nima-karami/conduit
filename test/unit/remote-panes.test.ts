@@ -1,24 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { createRemotePanes, type RemotePanesDeps } from '../../electron/remote-panes';
+import {
+  createRemotePanes,
+  type RemoteMethod,
+  type RemotePanesDeps,
+} from '../../electron/remote-panes';
 import { ServerCallError } from '../../electron/server-client';
 import type { ServerEvents, ServerMethods } from '../../src/contracts/server-protocol';
 import type { HostToWebview, WebviewToHost } from '../../src/protocol';
-
-type RemoteMethod =
-  | 'remote.attach'
-  | 'remote.detach'
-  | 'remote.input'
-  | 'remote.resize'
-  | 'remote.close';
-type Results = { [M in RemoteMethod]: ServerMethods[M]['result'] };
-
-const attachResult = (viewId: string): Results['remote.attach'] => ({
-  viewId,
-  firstPaint: 'paint',
-  size: { cols: 80, rows: 24 },
-  windowsPty: null,
-  drive: true,
-});
 
 function rig() {
   const calls: Array<{ method: RemoteMethod; params: unknown }> = [];
@@ -26,22 +14,28 @@ function rig() {
   const logs: string[] = [];
   let nextView = 0;
   let failWith: { method: RemoteMethod; error: Error } | null = null;
-  const results: Results = {
-    'remote.attach': attachResult('view-0'),
-    'remote.detach': {},
-    'remote.input': {},
-    'remote.resize': {},
-    'remote.close': {},
+  // Each C2 method's reply; attach mints a fresh view id per call.
+  const replies: { [M in RemoteMethod]: () => ServerMethods[M]['result'] } = {
+    'remote.attach': () => {
+      nextView += 1;
+      return {
+        viewId: `view-${nextView}`,
+        firstPaint: 'paint',
+        size: { cols: 80, rows: 24 },
+        windowsPty: null,
+        drive: true,
+      };
+    },
+    'remote.detach': () => ({}),
+    'remote.input': () => ({}),
+    'remote.resize': () => ({}),
+    'remote.close': () => ({}),
   };
   const deps: RemotePanesDeps = {
     call: async <M extends RemoteMethod>(method: M, params: ServerMethods[M]['params']) => {
       calls.push({ method, params });
       if (failWith?.method === method) throw failWith.error;
-      if (method === 'remote.attach') {
-        nextView += 1;
-        return attachResult(`view-${nextView}`);
-      }
-      return results[method];
+      return replies[method]();
     },
     sendTo: (windowId, message) => sent.push({ windowId, message }),
     log: (level, message) => logs.push(`${level}:${message}`),
