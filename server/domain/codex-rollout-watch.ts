@@ -2,9 +2,11 @@ import { dirname, join } from 'node:path';
 import { type DirWatch, EXISTS_POLL_MS, type watchDir } from '../../electron/watch-dir';
 import {
   bindsTo,
+  type CodexAction,
   LineSplitter,
   parseRolloutMeta,
   type RolloutMeta,
+  rolloutActions,
   rolloutSignals,
 } from '../../src/codex-rollout';
 import type { LimitSignal } from '../../src/contracts/auto-resume';
@@ -27,6 +29,8 @@ export interface CodexWatchDeps {
   onSignal(s: LimitSignal): void;
   /** A session got its rollout file: a structured adapter speaks for it from now on (spec R13). */
   onBound(sessionId: string): void;
+  onAction(sessionId: string, action: CodexAction): void;
+  onFeed(sessionId: string, state: 'unavailable'): void;
   log: { debug(msg: string, data?: object): void; warn(msg: string, data?: object): void };
 }
 
@@ -47,6 +51,7 @@ interface Tracked {
   readAgain: boolean;
   /** The first read after a bind is history, not news (see readBound). */
   replayed: boolean;
+  feedReported: boolean;
   debounce: ReturnType<typeof setTimeout> | null;
 }
 
@@ -200,6 +205,7 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
           file,
           sessionIds: candidates,
         });
+        for (const id of candidates) reportUnavailable(id);
         return;
       }
       const [only] = candidates;
@@ -207,6 +213,13 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
     } finally {
       inspecting.delete(file);
     }
+  };
+
+  const reportUnavailable = (sessionId: string): void => {
+    const s = sessions.get(sessionId);
+    if (!s || s.feedReported) return;
+    s.feedReported = true;
+    deps.onFeed(sessionId, 'unavailable');
   };
 
   const bind = (sessionId: string, file: string): void => {
@@ -282,6 +295,7 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
           if (sessions.get(sessionId) !== s) break;
           const signals = rolloutSignals(sessionId, line, deps.episodeOpen(sessionId), deps.now());
           for (const signal of signals) deps.onSignal(signal);
+          for (const action of rolloutActions(line)) deps.onAction(sessionId, action);
         }
       }
     } catch (err) {
@@ -309,6 +323,7 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
         reading: false,
         readAgain: false,
         replayed: false,
+        feedReported: false,
         debounce: null,
       });
       reconcile();
