@@ -854,3 +854,4 @@ So a Codex orchestrator can take over if Claude stops. The lead (claude-3) recei
 - *Third pass rulings (claude-3):*
   - Pins apply to every non-default point (session, CLI, peer); a default point never carries pins.
   - Accepted (CON-25 card, MINOR): a pin equal to the value it inherits is invisible in the dialog, because the dialog shows only the effective value.
+  - Accepted by the orchestrator: a point created from its lower point starts with no pins, so a session seeded from a CLI point keeps following later CLI edits.

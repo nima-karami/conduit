@@ -662,6 +662,19 @@ describe('explicit session choices are pinned', () => {
     expect(dec(st(m), 'send_input', CODEX)).toBe('deny');
   });
 
+  it('a default edit stops at a pinned CLI point and leaves its unpinned sessions; a CLI edit reaches them', () => {
+    const m: M = new Map();
+    edit(m, D, null, 'send_input', { access: 'off' });
+    edit(m, CX, D, 'send_input', { access: 'off' });
+    const S9: AssignmentPoint = { kind: 'session', sessionId: 's9' };
+    edit(m, S9, CX, 'open_file', { access: 'off' }, codexOf);
+    expect(m.get(pointKey(S9))?.[1].pinned).toEqual(['open_file.access']);
+    edit(m, D, null, 'send_input', { access: 'on' }, codexOf);
+    expect(dec(st(m), 'send_input', CODEX)).toBe('deny');
+    edit(m, CX, D, 'send_input', { access: 'on' }, codexOf);
+    expect(dec(st(m), 'send_input', CODEX)).toBe('allow');
+  });
+
   it('CLI level without migration survives a file round-trip', () => {
     const m: M = new Map();
     edit(m, D, null, 'send_input', { access: 'off' });
