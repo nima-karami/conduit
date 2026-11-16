@@ -272,6 +272,7 @@ import { defaultTreeKillDeps } from './process-tree';
 import { ProjectWatcher } from './project-watcher';
 import { ProposalWatcher } from './proposal-watcher';
 import { stopAgentsBeforeQuit } from './quit-stop';
+import { createRemoteFiles } from './remote-files';
 import { createRemotePanes } from './remote-panes';
 import { createRepoTrackerHost } from './repo-tracker-host';
 import { runtimeLayout } from './runtime-layout';
@@ -2283,6 +2284,11 @@ app.whenReady().then(() => {
     sendTo: sendToWindow,
     log: (level, message, data) => log[level]('remote', message, data),
   });
+  const remoteFiles = createRemoteFiles({
+    call: callServer,
+    sendTo: sendToWindow,
+    log: (level, message, data) => log[level]('remote', message, data),
+  });
   let resolveFirstSnapshot = () => {};
   /** OS opens wait for it: they need the server's agents. */
   const firstSnapshot = new Promise<void>((resolve) => {
@@ -2474,6 +2480,7 @@ app.whenReady().then(() => {
     store,
     terminals,
     remotePanes,
+    remoteFiles,
     broadcastState: () => postState(),
     broadcast: (m) => {
       if (m.type === 'timer:state') lastTimers = m;
@@ -4147,6 +4154,18 @@ app.whenReady().then(() => {
         case 'remote:close':
           await remotePanes.close(senderId, m);
           break;
+        case 'remoteFs:list':
+          await remoteFiles.list(senderId, m);
+          break;
+        case 'remoteFs:read':
+          await remoteFiles.read(senderId, m);
+          break;
+        case 'remoteFs:watch':
+          await remoteFiles.watch(senderId, m);
+          break;
+        case 'remoteFs:unwatch':
+          remoteFiles.unwatch(senderId, m.key);
+          break;
         case 'machines:connect':
           replyHere(
             await machineActionReply(
@@ -4914,6 +4933,7 @@ app.whenReady().then(() => {
         }
         folders.windowClosed(windowId);
         remotePanes.windowClosed(windowId);
+        remoteFiles.windowClosed(windowId);
         log.info('window', 'closed', { windowId });
         // A closed window drops out of the move picker (Slice B).
         broadcastWinList?.();

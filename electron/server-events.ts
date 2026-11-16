@@ -10,6 +10,7 @@ import type {
 import { shouldRaiseOsAttention } from '../src/os-attention';
 import type { HostToWebview } from '../src/protocol';
 import type { AppSessionStore, SessionDiff } from './app-session-store';
+import type { RemoteFiles } from './remote-files';
 import type { RemotePanes } from './remote-panes';
 import type { AppLog } from './server-client';
 import type { TerminalHost } from './terminal-host';
@@ -20,6 +21,7 @@ export interface ServerEventRouterDeps {
   store: Pick<AppSessionStore, 'applyServer' | 'list'>;
   terminals: Pick<TerminalHost, 'sessionsChanged' | 'show'>;
   remotePanes: Pick<RemotePanes, 'data' | 'state'>;
+  remoteFiles: Pick<RemoteFiles, 'changed'>;
   broadcastState(): void;
   broadcast(m: HostToWebview): void;
   sendToWindow(id: number, m: HostToWebview): void;
@@ -182,8 +184,7 @@ export function createServerEventRouter(d: ServerEventRouterDeps): {
     // Consumed by the Machines UI (CON-28).
     'network.changed': (state) => d.broadcast({ type: 'network:state', state }),
     'remote.data': (data) => d.remotePanes.data(data),
-    // The remote Files view consumes it once its routing lands (plan CON-43 T3).
-    'remote.fs.changed': () => {},
+    'remote.fs.changed': (data) => d.remoteFiles.changed(data),
     'remote.state': (data) => d.remotePanes.state(data),
     'server.stopping': (data) => {
       d.noteStopping?.(data.reason);
