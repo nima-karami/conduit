@@ -35,10 +35,11 @@ function setup(overrides: Partial<ShellCore> = {}) {
     logPath: '/log',
     exit,
     writeLog,
+    secret: 'stop-all-test-secret'.padEnd(43, 'x'),
   });
   disposers.push(() => shell.lifecycle.dispose());
   const call = (method: string, params: object = {}) =>
-    shell.handle({ id: 1, method, params }, { subscribed: true, order: 'same' });
+    shell.handle({ id: 1, method, params }, { subscribed: true, order: 'same', authed: true });
   return { shell, core, exit, emitted, writeLog, call };
 }
 

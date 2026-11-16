@@ -9,6 +9,7 @@ import {
   versionOrder,
 } from '../src/contracts/server-protocol';
 import { formatRecord, type LogLevel, levelEnabled } from '../src/logging';
+import { secretMatches } from '../src/server-secret';
 import { DEFAULT_SETTINGS } from '../src/settings';
 import { ServerLifecycle, type ShellCore } from './lifecycle/shell';
 import {
@@ -77,6 +78,8 @@ export interface ComposeOptions {
   /** A peer completed hello. */
   connected?: (peer: Peer) => void;
   writeLog?: (line: string) => void;
+  /** The per-start secret every peer must present in `hello.auth` before any other method. */
+  secret: string;
 }
 
 export function compose(options: ComposeOptions) {
@@ -130,6 +133,8 @@ export function compose(options: ComposeOptions) {
         { generation: p.generation, version: p.appVersion },
         { generation: SERVER_PROTOCOL_GENERATION, version: options.version },
       );
+      // The answer stays auth-free so an app of another version still learns the order (decision 2).
+      peer.authed = secretMatches(options.secret, p.auth);
       const result: ServerMethods['hello']['result'] = {
         serverVersion: options.version,
         generation: SERVER_PROTOCOL_GENERATION,
@@ -137,10 +142,11 @@ export function compose(options: ComposeOptions) {
         pid: process.pid,
         ...(options.supervisor ? { supervisor: options.supervisor } : {}),
       };
-      options.connected?.(peer);
+      if (peer.authed) options.connected?.(peer);
       return { result };
     }
     if (!peer.order) throw new RpcFault('invalid', 'hello required');
+    if (!peer.authed) throw new RpcFault('refused', 'auth required');
     if (request.method === 'events.subscribe') {
       const result: ServerSnapshot = {
         ...options.core.snapshot(),

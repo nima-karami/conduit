@@ -26,6 +26,7 @@ const SHELL: AgentDefinition = {
   color: 'green',
   cwdStrategy: 'workspaceFolder',
 };
+const SECRET = 'services-test-secret'.padEnd(43, 'x');
 const noLog = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
 type Sent = { type: ServerEvent; data: unknown; peer?: object };
 
@@ -465,6 +466,7 @@ describe.sequential('compose: per-peer events', () => {
       },
       connected: (peer) => joined.push(peer),
       disconnected: (peer) => gone.push(peer),
+      secret: SECRET,
     });
     await transport.listen(shell.handle);
     cleanups.push(async () => {
@@ -474,7 +476,7 @@ describe.sequential('compose: per-peer events', () => {
     const a = client(transport.endpoint);
     const b = client(transport.endpoint);
     for (const c of [a, b]) {
-      c.send(1, 'hello', { appVersion: '9.9.9', generation: 1 });
+      c.send(1, 'hello', { appVersion: '9.9.9', generation: 1, auth: SECRET });
       c.send(2, 'events.subscribe');
       c.send(3, 'ping');
     }

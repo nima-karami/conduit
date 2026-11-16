@@ -10,6 +10,7 @@ import { runtimeBinaryName } from '../src/runtime-binary';
 import { compose } from './compose';
 import { directStopAll, hcBinaryOf, hcClient, serverChildEnv, startCore, stopCore } from './hc-cli';
 import { argValue, requireUserData } from './lifecycle/cli-args';
+import { writeServerSecret } from './lifecycle/server-secret';
 import type { ShellCore } from './lifecycle/shell';
 import { stopAll } from './lifecycle/stop-all';
 import type { PreviousShim } from './mcp/install';
@@ -60,6 +61,8 @@ export async function runServer(
     if (!result.ok) process.stderr.write(`${result.reason}\n`);
     return { code: result.ok ? 0 : 1 };
   }
+  // Before listen: a client that connects the moment the endpoint binds must find the new secret.
+  const secret = writeServerSecret(userData);
   let logError = (error: unknown) => console.error(error);
   const transport = new PipeTransport(names.serverEndpoint, platform, (error) => logError(error));
   let handle: RpcHandler = async () => {
@@ -112,6 +115,7 @@ export async function runServer(
     version: serverVersion,
     instance: names.instance,
     logPath,
+    secret,
     ...(supervisorTerminal
       ? { supervisor: { name: names.supervisorName, terminal: supervisorTerminal } }
       : {}),
