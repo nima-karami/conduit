@@ -9,7 +9,11 @@ import {
   type PolicyLayer,
   TOOL_NAMES,
 } from '../../src/conduit-mcp/tool-policy';
-import { emptyPolicyUi, type McpUiState } from '../../src/conduit-mcp/ui-types';
+import {
+  emptyPolicyUi,
+  type McpUiState,
+  type RemotePolicyUi,
+} from '../../src/conduit-mcp/ui-types';
 import type { HostToWebview, WebviewToHost } from '../../src/protocol';
 import { SettingsModal } from '../../webview/components/settings-modal';
 import { MCP_STR } from '../../webview/conduit-mcp-strings';
@@ -40,7 +44,7 @@ const emit = (m: HostToWebview) => {
 
 type Legacy = PolicyUiState['legacy'];
 
-function mcpState(legacy: Legacy): McpUiState {
+function mcpState(legacy: Legacy, machines: RemotePolicyUi[] = []): McpUiState {
   return {
     enabled: true,
     storeError: null,
@@ -55,7 +59,7 @@ function mcpState(legacy: Legacy): McpUiState {
     notConnected: {},
     awaitingApproval: [],
     waitingAsks: 0,
-    policy: { ...emptyPolicyUi(), legacy },
+    policy: { ...emptyPolicyUi(), legacy, machines },
     requests: {
       open: [],
       ended: [],
@@ -64,7 +68,8 @@ function mcpState(legacy: Legacy): McpUiState {
   };
 }
 
-const broadcast = (legacy: Legacy) => emit({ type: 'mcp:state', state: mcpState(legacy) });
+const broadcast = (legacy: Legacy, machines: RemotePolicyUi[] = []) =>
+  emit({ type: 'mcp:state', state: mcpState(legacy, machines) });
 
 const layersOf = (p: { global?: PolicyLayer; byCli?: CliPolicyLayers } = {}): Legacy => ({
   global: p.global ?? {},
@@ -74,6 +79,15 @@ const layersOf = (p: { global?: PolicyLayer; byCli?: CliPolicyLayers } = {}): Le
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  // The machine picker is a SelectField, which opens a Popover that measures itself.
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    },
+  );
 });
 
 let root: Root | null = null;
@@ -91,8 +105,8 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 
-async function mount(legacy: Legacy = layersOf()) {
-  emit({ type: 'mcp:state', state: mcpState(legacy) });
+async function mount(legacy: Legacy = layersOf(), machines: RemotePolicyUi[] = []) {
+  emit({ type: 'mcp:state', state: mcpState(legacy, machines) });
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
@@ -365,5 +379,132 @@ describe('Settings → MCP tools', () => {
     expect(document.body.textContent).toContain(MCP_STR.tools.masterOffHint);
     // The hint names the master switch by the label the user actually sees.
     expect(MCP_STR.tools.masterOffHint).toContain(MCP_STR.settingsToggle);
+  });
+});
+
+const remoteOf = (
+  over: Pick<RemotePolicyUi, 'machineId' | 'name'> & Partial<RemotePolicyUi>,
+): RemotePolicyUi => ({
+  link: 'up',
+  rev: 4,
+  status: 'applied',
+  refusal: null,
+  policy: {
+    profiles: [],
+    sessions: {},
+    grants: [],
+    legacy: layersOf({ global: { open_file: { access: 'off' } } }),
+    readOnly: false,
+  },
+  conflict: null,
+  grants: [],
+  ...over,
+});
+
+const machinePicker = () =>
+  document.body.querySelector<HTMLButtonElement>('.selectfield[aria-label="Machine to edit"]');
+const menuItem = (label: string) =>
+  [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+    (b) => b.textContent?.trim() === label,
+  ) ?? null;
+const pickMachine = async (label: string) => {
+  await click(machinePicker());
+  await click(menuItem(label));
+};
+const buttonNamed = (text: string) =>
+  [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+    (b) => b.textContent === text,
+  ) ?? null;
+const remotePosts = () =>
+  bridge.post.mock.calls
+    .map(([m]) => m as WebviewToHost)
+    .filter(
+      (m): m is Extract<WebviewToHost, { type: 'mcp:remotePolicy' }> =>
+        m.type === 'mcp:remotePolicy',
+    );
+const BOB = { machineId: 'b', name: 'Bob' };
+
+describe('Settings → MCP tools: machine picker', () => {
+  it('is hidden when there are no machines', async () => {
+    await mount();
+    expect(machinePicker()).toBeNull();
+    expect(document.body.textContent).not.toContain('This machine');
+  });
+
+  it('lists this machine and every machine in policy.machines', async () => {
+    await mount(layersOf(), [remoteOf(BOB), remoteOf({ machineId: 'c', name: 'Cy' })]);
+    await click(machinePicker());
+    expect(
+      [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].map((i) =>
+        i.textContent?.trim(),
+      ),
+    ).toEqual(['This machine', 'Bob', 'Cy']);
+  });
+
+  it('selecting a machine renders its rows, and an edit sends that machine', async () => {
+    await mount(layersOf({ global: { open_file: { access: 'on' } } }), [remoteOf(BOB)]);
+    expect(checked('open_file')).toBe('On');
+    await pickMachine('Bob');
+    expect(checked('open_file')).toBe('Off');
+    await click(radio('open_file', 'On'));
+    await flush();
+    expect(lastPointPost()).toMatchObject({
+      point: { kind: 'default' },
+      tool: 'open_file',
+      patch: { access: 'on' },
+      machine: 'b',
+    });
+  });
+
+  it('going back to This machine renders the local rows and sends no machine', async () => {
+    await mount(layersOf({ global: { open_file: { access: 'on' } } }), [remoteOf(BOB)]);
+    await pickMachine('Bob');
+    await pickMachine('This machine');
+    expect(checked('open_file')).toBe('On');
+    await click(radio('open_file', 'Off'));
+    await flush();
+    expect(lastPointPost().machine).toBeUndefined();
+  });
+
+  it('shows applied, waiting, pushing and refused lines for the selected machine only', async () => {
+    await mount(layersOf(), [remoteOf({ ...BOB, status: 'applied' })]);
+    expect(document.body.textContent).not.toContain('Applied on Bob');
+    await pickMachine('Bob');
+    expect(document.body.textContent).toContain('Applied on Bob');
+    broadcast(layersOf(), [remoteOf({ ...BOB, status: 'waiting' })]);
+    expect(document.body.textContent).toContain('Waiting for Bob: applies when it reconnects');
+    broadcast(layersOf(), [remoteOf({ ...BOB, status: 'pushing' })]);
+    expect(document.body.textContent).toContain('Sending to Bob…');
+    broadcast(layersOf(), [remoteOf({ ...BOB, status: 'refused', refusal: 'bad rules' })]);
+    expect(document.body.textContent).toContain('Bob refused: bad rules');
+  });
+
+  it('a conflict shows the notice and the two buttons, which send discard and reapply', async () => {
+    await mount(layersOf(), [
+      remoteOf({ ...BOB, status: 'conflict', conflict: remoteOf(BOB).policy }),
+    ]);
+    await pickMachine('Bob');
+    expect(document.body.textContent).toContain("Bob's rules changed since your edit");
+    expect(buttonNamed("Use Bob's rules")).not.toBeNull();
+    expect(buttonNamed('Apply mine on top')).not.toBeNull();
+    await click(buttonNamed("Use Bob's rules"));
+    expect(remotePosts().at(-1)).toEqual({
+      type: 'mcp:remotePolicy',
+      machine: 'b',
+      action: 'discard',
+    });
+    await click(buttonNamed('Apply mine on top'));
+    expect(remotePosts().at(-1)).toEqual({
+      type: 'mcp:remotePolicy',
+      machine: 'b',
+      action: 'reapply',
+    });
+  });
+
+  it('the conflict buttons only appear on a conflict', async () => {
+    await mount(layersOf(), [remoteOf({ ...BOB, status: 'applied' })]);
+    await pickMachine('Bob');
+    expect(buttonNamed("Use Bob's rules")).toBeNull();
+    expect(buttonNamed('Apply mine on top')).toBeNull();
   });
 });

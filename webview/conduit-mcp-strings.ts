@@ -293,6 +293,18 @@ export const MCP_STR = {
     dialogTitle: (label: string) => `MCP tools — ${label}`,
     relaunchHint: 'Some agents only see newly enabled tools after Relaunch',
     relaunch: 'Relaunch',
+    // Picking the machine whose rules the editor below shows (CON-46 L5).
+    remote: {
+      machineLabel: 'Machine to edit',
+      thisMachine: 'This machine',
+      applied: (name: string) => `Applied on ${name}`,
+      waiting: (name: string) => `Waiting for ${name}: applies when it reconnects`,
+      pushing: (name: string) => `Sending to ${name}…`,
+      refused: (name: string, why: string) => `${name} refused: ${why}`,
+      conflict: (name: string) => `${name}'s rules changed since your edit`,
+      takeTheirs: (name: string) => `Use ${name}'s rules`,
+      applyMine: 'Apply mine on top',
+    },
     saveFailed: 'Couldn’t save. Change it again to retry.',
     announce: (tool: string, value: string, label: string) =>
       `${tool} set to ${value} for ${label}`,

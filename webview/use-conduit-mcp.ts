@@ -51,8 +51,16 @@ export interface ConduitMcpApi {
   retry(): void;
   /** False when the host refused it or didn't answer: the caller reverts. */
   setToolPolicy(sessionId: string, tool: ToolName, patch: ToolPolicyPatch): Promise<boolean>;
-  /** False when the host refused it or didn't answer: the caller reverts. */
-  setPointPolicy(point: PolicyPoint, tool: ToolName, patch: ToolPolicyPatch): Promise<boolean>;
+  /** False when the host refused it or didn't answer: the caller reverts. `machine` edits that
+   *  machine's rules instead of this one's (CON-46). */
+  setPointPolicy(
+    point: PolicyPoint,
+    tool: ToolName,
+    patch: ToolPolicyPatch,
+    machine?: string,
+  ): Promise<boolean>;
+  /** Discard a remote machine's draft, or re-apply it on top of that machine's rules. No reply. */
+  remotePolicy(machine: string, action: 'discard' | 'reapply'): void;
   answerRequest(requestId: string, answer: AnswerInput): Promise<RequestAnswerResult>;
   answerPermission(requestId: string, answer: PermissionAnswer): Promise<PermissionAnswerResult>;
   setAway(away: boolean, until: string | null): void;
@@ -128,13 +136,16 @@ const api: Omit<ConduitMcpApi, 'state'> = {
     );
     return r?.ok === true;
   },
-  async setPointPolicy(point, tool, patch) {
+  async setPointPolicy(point, tool, patch, machine) {
     const r = await requestHost(
-      (requestId) => ({ type: 'mcp:setPointPolicy', requestId, point, tool, patch }),
+      (requestId) => ({ type: 'mcp:setPointPolicy', requestId, point, tool, patch, machine }),
       ['mcp:policyResult'],
       REQUEST_TIMEOUT_MS,
     );
     return r?.ok === true;
+  },
+  remotePolicy(machine, action) {
+    post({ type: 'mcp:remotePolicy', machine, action });
   },
   answerRequest(requestId, answer) {
     // Not requestHost: it correlates by the numeric id it mints, and this reply carries the

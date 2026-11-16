@@ -25,7 +25,7 @@ import {
   type ToolPolicyPatch,
   withPolicyPatch,
 } from '../../src/conduit-mcp/tool-policy';
-import { emptyPolicyUi } from '../../src/conduit-mcp/ui-types';
+import { emptyPolicyUi, type RemotePolicyUi } from '../../src/conduit-mcp/ui-types';
 import type { AutoResumeMode } from '../../src/contracts/scheduler';
 import type { LogLevel } from '../../src/logging';
 import type { AboutInfo } from '../../src/protocol';
@@ -950,6 +950,24 @@ function withPending(
   return next;
 }
 
+const NO_MACHINES: RemotePolicyUi[] = [];
+
+const remoteStatusText = (r: RemotePolicyUi): string => {
+  const R = MCP_STR.tools.remote;
+  switch (r.status) {
+    case 'applied':
+      return R.applied(r.name);
+    case 'waiting':
+      return R.waiting(r.name);
+    case 'pushing':
+      return R.pushing(r.name);
+    case 'refused':
+      return R.refused(r.name, r.refusal ?? '');
+    case 'conflict':
+      return R.conflict(r.name);
+  }
+};
+
 /** The tool policy under the MCP master: the global layer, or one CLI's layer over it
  *  (tool-policy spec §8–§9). Disabled, not hidden, while the master is off so the user can
  *  see what turning it on would allow. */
@@ -963,7 +981,18 @@ function McpToolPolicyRows({
   const idBase = useId();
   const [tab, setTab] = useState<PolicyTab>('all');
   const mcp = useConduitMcp();
-  const legacy = useMemo(() => mcp.state?.policy.legacy ?? emptyPolicyUi().legacy, [mcp.state]);
+  // '' is this machine; a machine's id is never empty.
+  const [machineId, setMachineId] = useState('');
+  const machines = mcp.state?.policy.machines ?? NO_MACHINES;
+  // A machine that has since left the list falls back to this machine's rows.
+  const remote =
+    machineId === '' ? null : (machines.find((m) => m.machineId === machineId) ?? null);
+  const remoteId = remote?.machineId;
+  const localLegacy = mcp.state?.policy.legacy;
+  const legacy = useMemo(
+    () => remote?.policy.legacy ?? localLegacy ?? emptyPolicyUi().legacy,
+    [remote, localLegacy],
+  );
   const [pending, setPending] = useState<PendingPicks>({});
   const [failed, setFailed] = useState<FailedPicks>({});
   const [seenLegacy, setSeenLegacy] = useState(legacy);
@@ -971,6 +1000,9 @@ function McpToolPolicyRows({
   const seqRef = useRef(new Map<string, number>());
   const legacyRef = useRef(legacy);
   legacyRef.current = legacy;
+  // A pick is for the machine it was made on; one that lands after the user switched is dropped.
+  const machineRef = useRef(remoteId);
+  machineRef.current = remoteId;
   const off = !settings.conduitMcp || !serverConnected;
   const global = useMemo(
     () => coerceGlobalPolicy(withPending(legacy.global, pending.all)),
@@ -983,6 +1015,12 @@ function McpToolPolicyRows({
     setSeenLegacy(legacy);
     setPending(dropSettled);
   }
+
+  const selectMachine = (id: string) => {
+    setMachineId(id);
+    setPending({});
+    setFailed({});
+  };
 
   const select = (t: PolicyTab) => {
     setTab(t);
@@ -1005,7 +1043,7 @@ function McpToolPolicyRows({
   };
 
   const pick = async (t: PolicyTab, tool: ToolName, patch: ToolPolicyPatch) => {
-    const key = `${t}:${tool}`;
+    const key = `${remoteId ?? ''}|${t}:${tool}`;
     const seq = (seqRef.current.get(key) ?? 0) + 1;
     seqRef.current.set(key, seq);
     setPending((p) =>
@@ -1017,7 +1055,8 @@ function McpToolPolicyRows({
     );
     setFailed((f) => ({ ...f, [t]: withoutTool(f[t], tool) }));
     const point = t === 'all' ? { kind: 'default' as const } : { kind: 'cli' as const, cli: t };
-    const ok = await mcp.setPointPolicy(point, tool, patch);
+    const ok = await mcp.setPointPolicy(point, tool, patch, remoteId);
+    if (machineRef.current !== remoteId) return;
     const latest = seqRef.current.get(key) === seq;
     if (ok) {
       setPending((p) => {
@@ -1051,6 +1090,47 @@ function McpToolPolicyRows({
   return (
     <>
       {off && <p className="settools__hint">{MCP_STR.tools.masterOffHint}</p>}
+      {machines.length > 0 && (
+        <div className="policycli__bar">
+          <span className="policycli__label" aria-hidden="true">
+            {MCP_STR.tools.remote.machineLabel}
+          </span>
+          <SelectField
+            value={remoteId ?? ''}
+            ariaLabel={MCP_STR.tools.remote.machineLabel}
+            options={[
+              { value: '', label: MCP_STR.tools.remote.thisMachine },
+              ...machines.map((m) => ({ value: m.machineId, label: m.name })),
+            ]}
+            onChange={selectMachine}
+          />
+        </div>
+      )}
+      {remote && (
+        <>
+          <p className="settools__hint" role="status">
+            {remoteStatusText(remote)}
+          </p>
+          {remote.status === 'conflict' && (
+            <div className="policycli__bar">
+              <button
+                type="button"
+                className="btn btn--sm"
+                onClick={() => mcp.remotePolicy(remote.machineId, 'discard')}
+              >
+                {MCP_STR.tools.remote.takeTheirs(remote.name)}
+              </button>
+              <button
+                type="button"
+                className="btn btn--sm"
+                onClick={() => mcp.remotePolicy(remote.machineId, 'reapply')}
+              >
+                {MCP_STR.tools.remote.applyMine}
+              </button>
+            </div>
+          )}
+        </>
+      )}
       <div className="policycli__bar">
         <span className="policycli__label" aria-hidden="true">
           {MCP_STR.tools.defaultsFor}
