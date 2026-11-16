@@ -45,6 +45,11 @@ export interface ServerClientOptions {
   log: AppLog;
 }
 
+/** Per-call budget; without one a call waits on the socket for as long as the server takes. */
+export interface ServerCallOptions {
+  timeoutMs?: number;
+}
+
 type Hello = ServerMethods['hello']['result'];
 interface Pending {
   resolve(value: unknown): void;
@@ -197,10 +202,11 @@ export class ServerClient {
   call<M extends ServerMethod>(
     m: M,
     p: ServerMethods[M]['params'],
+    opts?: ServerCallOptions,
   ): Promise<ServerMethods[M]['result']> {
     if (this.state !== 'open')
       return Promise.reject(new ServerCallError('disconnected', `${m}: not connected`));
-    return this.request(m, p) as Promise<ServerMethods[M]['result']>;
+    return this.request(m, p, opts?.timeoutMs) as Promise<ServerMethods[M]['result']>;
   }
 
   /** D29: never buffered, so a keystroke typed while down can't answer a later prompt. */
@@ -257,12 +263,29 @@ export class ServerClient {
     this.guard('snapshot', () => h.snapshot(snapshot));
   }
 
-  private request(method: ServerMethod, params: unknown): Promise<unknown> {
+  private request(method: ServerMethod, params: unknown, timeoutMs?: number): Promise<unknown> {
     const socket = this.socket;
     if (!socket) return Promise.reject(new ServerCallError('disconnected', `${method}: no socket`));
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      // A timed-out call leaves pending, so a late reply is ignored rather than settling twice.
+      const timer =
+        timeoutMs === undefined
+          ? undefined
+          : setTimeout(() => {
+              this.pending.delete(id);
+              reject(new ServerCallError('timeout', `${method}: no reply within ${timeoutMs} ms`));
+            }, timeoutMs);
+      this.pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      });
       socket.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
     });
   }

@@ -46,6 +46,7 @@ import { readBlob } from '../src/config';
 import type { TruncatedBy } from '../src/content-search';
 import { searchContentFs } from '../src/content-search-fs';
 import { HC_PINNED_VERSION } from '../src/contracts/hc';
+import type { MachineActionResult, MachineError } from '../src/contracts/machines';
 import type {
   WindowPresence as C2WindowPresence,
   DataStores,
@@ -265,10 +266,12 @@ import { defaultTreeKillDeps } from './process-tree';
 import { ProjectWatcher } from './project-watcher';
 import { ProposalWatcher } from './proposal-watcher';
 import { stopAgentsBeforeQuit } from './quit-stop';
+import { createRemotePanes } from './remote-panes';
 import { createRepoTrackerHost } from './repo-tracker-host';
 import { runtimeLayout } from './runtime-layout';
 import {
   createServerCalls,
+  faultCode,
   installDownResult,
   installDownStatus,
   serverDownReply,
@@ -513,6 +516,22 @@ const isLiveWindow = (windowId: number) => {
 /** Window ids, not IPC events, so a closed window's sender is never kept alive or posted to. */
 function sendToWindow(windowId: number, msg: HostToWebview) {
   if (isLiveWindow(windowId)) windows.get(windowId)?.webContents.send('to-webview', msg);
+}
+
+/** The server gives a connect 120 s (spec §7); a client that gives up first loses its real answer. */
+const MACHINES_CONNECT_TIMEOUT_MS = 130_000;
+
+const MACHINE_OK: MachineActionResult = { ok: true, value: null };
+
+/** A C2 fault from a machine action, in the shape the Machines UI maps to its text (spec 9.1). */
+function machineFault(error: unknown): MachineError {
+  return {
+    code:
+      error instanceof ServerCallError && error.kind === 'not_found'
+        ? 'machine_unknown'
+        : 'ssh_unreachable',
+    detail: { reason: faultCode(error) },
+  };
 }
 
 type E2eHoldPoint = 'index' | 'closure' | 'scan' | 'topup';
@@ -2264,6 +2283,11 @@ app.whenReady().then(() => {
   const serverClient = () => lifecycle?.client() ?? null;
   const serverCalls = createServerCalls(() => lifecycle);
   const callServer = serverCalls.call;
+  const remotePanes = createRemotePanes({
+    call: callServer,
+    sendTo: sendToWindow,
+    log: (level, message, data) => log[level]('remote', message, data),
+  });
   let resolveFirstSnapshot = () => {};
   /** OS opens wait for it: they need the server's agents. */
   const firstSnapshot = new Promise<void>((resolve) => {
@@ -2454,6 +2478,7 @@ app.whenReady().then(() => {
   const router = createServerEventRouter({
     store,
     terminals,
+    remotePanes,
     broadcastState: () => postState(),
     broadcast: (m) => {
       if (m.type === 'timer:state') lastTimers = m;
@@ -2657,6 +2682,23 @@ app.whenReady().then(() => {
 
   powerMonitor.on('resume', () => serverClient()?.notify('system.resumed', {}));
   powerMonitor.on('unlock-screen', () => serverClient()?.notify('system.resumed', {}));
+
+  /** The Machines UI always gets a typed result back, so a C2 fault is mapped rather than dropped. */
+  const machineActionReply = async (
+    reply: Dispatch,
+    requestId: number,
+    action: string,
+    run: () => Promise<MachineActionResult>,
+  ): Promise<void> => {
+    let result: MachineActionResult;
+    try {
+      result = await run();
+    } catch (err: unknown) {
+      log.warn('machines', `${action} failed`, { err: String(err) });
+      result = { ok: false, error: machineFault(err) };
+    }
+    reply({ type: 'machines:result', requestId, result });
+  };
 
   async function handle(m: WebviewToHost, e: IpcMainEvent) {
     const senderWin = BrowserWindow.fromWebContents(e.sender);
@@ -4106,6 +4148,81 @@ app.whenReady().then(() => {
           if (r.reply) replyHere(r.reply);
           break;
         }
+        case 'network:get':
+          replyHere({ type: 'network:state', state: await callServer('link.list', {}) });
+          break;
+        case 'remote:attach':
+          await remotePanes.attach(senderId, m);
+          break;
+        case 'remote:detach':
+          await remotePanes.detach(senderId, m.viewId);
+          break;
+        case 'remote:input':
+          remotePanes.input(m);
+          break;
+        case 'remote:resize':
+          remotePanes.resize(m);
+          break;
+        case 'remote:close':
+          await remotePanes.close(senderId, m);
+          break;
+        case 'machines:connect':
+          await machineActionReply(replyHere, m.requestId, 'connect', () =>
+            callServer(
+              'machines.connect',
+              { machine: m.machine },
+              { timeoutMs: MACHINES_CONNECT_TIMEOUT_MS },
+            ),
+          );
+          break;
+        case 'machines:disconnect':
+          await machineActionReply(replyHere, m.requestId, 'disconnect', async () => {
+            const r = await callServer('machines.disconnect', { machine: m.machine });
+            // A disconnect's value is its own shape, which the reply does not carry.
+            return r.ok ? { ok: true, value: null } : r;
+          });
+          break;
+        case 'machines:rename':
+          await machineActionReply(replyHere, m.requestId, 'rename', () =>
+            callServer('machines.rename', { machineId: m.machineId, name: m.name }).then(
+              () => MACHINE_OK,
+            ),
+          );
+          break;
+        case 'machines:remove':
+          await machineActionReply(replyHere, m.requestId, 'remove', () =>
+            callServer('machines.remove', { machineId: m.machineId }).then(() => MACHINE_OK),
+          );
+          break;
+        case 'machines:openNeedsPerson':
+          try {
+            const r = await callServer('machines.openNeedsPerson', { target: m.target });
+            replyHere({
+              type: 'machines:needsPersonOpened',
+              requestId: m.requestId,
+              sessionId: r.sessionId,
+              error: null,
+            });
+          } catch (err: unknown) {
+            log.warn('machines', 'openNeedsPerson failed', { target: m.target, err: String(err) });
+            replyHere({
+              type: 'machines:needsPersonOpened',
+              requestId: m.requestId,
+              sessionId: null,
+              error: faultCode(err),
+            });
+          }
+          break;
+        case 'machines:sshHosts': {
+          let hosts: string[] = [];
+          try {
+            hosts = (await callServer('machines.sshHosts', {})).hosts;
+          } catch (err: unknown) {
+            log.warn('machines', 'sshHosts failed', { err: String(err) });
+          }
+          replyHere({ type: 'machines:sshHosts', requestId: m.requestId, hosts });
+          break;
+        }
         case 'term:input':
           terminals.input(m.sessionId, m.data);
           break;
@@ -4752,6 +4869,7 @@ app.whenReady().then(() => {
           if (!state.streams.size) projectIndexState.delete(root);
         }
         folders.windowClosed(windowId);
+        remotePanes.windowClosed(windowId);
         log.info('window', 'closed', { windowId });
         // A closed window drops out of the move picker (Slice B).
         broadcastWinList?.();

@@ -190,6 +190,16 @@ describe('ServerClient', () => {
     expect(server.calls('sessions.remove')).toEqual([]);
   });
 
+  it('a call with timeoutMs rejects timeout when no reply arrives', async () => {
+    const { server, client } = await setup();
+    await client.open();
+    server.on('sessions.remove', () => new Promise(() => {}));
+    const error = await rejection(
+      client.call('sessions.remove', { sessionId: 's1' }, { timeoutMs: 20 }),
+    );
+    expect(error.kind).toBe('timeout');
+  });
+
   it('notify while closed returns false and writes nothing', async () => {
     const { server, client } = await setup();
     expect(client.notify('system.resumed', {})).toBe(false);
