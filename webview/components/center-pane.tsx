@@ -22,7 +22,12 @@ import type { CenterLayout, GroupIndex, GroupView } from '../doc-groups';
 import { type OpenDoc, type OpenMode, type ReviewSource, requestIdOfPath } from '../docs';
 import { tabStateKey } from '../editor-group-context';
 import { useFileSaveStatuses } from '../file-saves';
-import { registerFocusTarget, terminalFocusKey, terminalTabFocusKey } from '../focus-targets';
+import {
+  registerFocusTarget,
+  requestDocFocus,
+  terminalFocusKey,
+  terminalTabFocusKey,
+} from '../focus-targets';
 import type { GitActionIntent } from '../git-intent';
 import { IconClock } from '../icons';
 import { type RemoteKey, type RemoteSessionRow, remoteKeyId } from '../remote-sessions';
@@ -247,7 +252,8 @@ export function CenterPane({
   /** The remote session shown in place of the local terminal, when one is selected. */
   activeRemote?: RemoteKey | null;
   remoteRows?: readonly RemoteSessionRow[];
-  onRemoteClosed?: () => void;
+  /** The remote pane's session was closed on its machine; the app clears that selection only. */
+  onRemoteClosed?: (remote: RemoteKey) => void;
 }) {
   const [compareOpen, setCompareOpen] = useState(false);
   const saveStatuses = useFileSaveStatuses();
@@ -289,18 +295,29 @@ export function CenterPane({
     );
   });
   const remoteRow = activeRemote
-    ? remoteRows.find((r) => r.id === remoteKeyId(activeRemote))
-    : undefined;
+    ? (remoteRows.find((r) => r.id === remoteKeyId(activeRemote)) ?? null)
+    : null;
   const exitedCard = (s: Session) => s.status === 'exited' && !s.homeMissing && !s.startRefusal;
   const groupOne = layout.groups[0];
+  // One answer for every local terminal: while a doc tab or a remote pane holds the stack, no local
+  // terminal is shown, so its WebGL slot is released and it is not a focus target.
+  const localHidden = groupOne.activeDocId !== null || remoteRow !== null;
+  // The remote pane registers its own xterm; "Focus terminal" reaches it through the local key.
+  const remoteFocusId = remoteRow && activeRemote ? remoteKeyId(activeRemote) : null;
   // A layout effect: the terminal stack is shown in this same commit, and xterm cannot take focus
   // while it is display:none.
   useLayoutEffect(() => {
     if (!activeId || groupOne.activeDocId !== null) return;
+    if (remoteFocusId !== null) {
+      const remoteKey = terminalFocusKey(remoteFocusId);
+      return registerFocusTarget(terminalFocusKey(activeId), {
+        focus: () => requestDocFocus(remoteKey),
+      });
+    }
     return registerFocusTarget(terminalFocusKey(activeId), {
       focus: () => requestTerminalFocus(activeId),
     });
-  }, [activeId, groupOne.activeDocId]);
+  }, [activeId, groupOne.activeDocId, remoteFocusId]);
   const shownDocs = layout.groups.flatMap((v) => v.docs.filter((d) => d.id === v.activeDocId));
   // A diff tab keeps showing what it last rendered while its key is re-read or evicted, so a
   // refresh never flashes "Loading diff…" (spec 2026-09-22-scoped-diff-tabs §2 "Refreshing").
@@ -406,13 +423,10 @@ export function CenterPane({
   const terminalStack = (
     // Terminals stay mounted (hidden while a doc tab is active) so the PTY survives. Split mode
     // shows the active + split sessions side by side.
-    <div
-      className="termstack"
-      style={{ display: groupOne.activeDocId !== null || remoteRow ? 'none' : 'flex' }}
-    >
+    <div className="termstack" style={{ display: localHidden ? 'none' : 'flex' }}>
       {paneMounts.map(({ session: s, mode }) => {
         const isSplit = s.id === splitId && s.id !== activeId;
-        const visible = s.id === activeId || isSplit;
+        const visible = !localHidden && (s.id === activeId || isSplit);
         return (
           <div
             key={s.id}
@@ -616,7 +630,7 @@ export function CenterPane({
               machineName={remoteRow.machineName}
               label={remoteRow.session.label}
               visible={groupOne.activeDocId === null}
-              onClosed={() => onRemoteClosed?.()}
+              onClosed={(key) => onRemoteClosed?.(key)}
             />
           )}
           {g === 1 && terminalStack}

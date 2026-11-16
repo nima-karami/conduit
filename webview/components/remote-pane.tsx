@@ -1,55 +1,49 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { HostToWebview, RemoteAttachResult } from '../../src/protocol';
 import { post, subscribe } from '../bridge';
+import { type FocusTarget, registerFocusTarget, terminalFocusKey } from '../focus-targets';
 import { requestHost } from '../host-request';
 import { MACHINES_STR } from '../machines-strings';
 import { type RemoteKey, remoteKeyId } from '../remote-sessions';
 import { useSettings } from '../settings';
-import { matchConhostCellWidths, windowsPtyOptions } from '../terminal-conpty';
-import { terminalFontFamily } from '../terminal-fonts';
+import { matchConhostCellWidths } from '../terminal-conpty';
 import { terminalGpu } from '../terminal-gpu';
+import { attachTerminalGpu, baseTerminalOptions } from '../terminal-options';
 import { registerTerminalQuerySwallowHandlers } from '../terminal-query-replies';
-import { buildXtermTheme, monoStack } from '../xterm-theme';
+import { buildXtermTheme } from '../xterm-theme';
 import { disposeTerminal } from './safe-dispose';
 
 // Attach can wait on the server's view.open round trip to the peer.
 const ATTACH_TIMEOUT_MS = 20_000;
 const CLOSE_TIMEOUT_MS = 15_000;
 
+type RemoteMessage = Extract<HostToWebview, { type: 'remote:data' | 'remote:state' }>;
+
 export interface RemotePaneProps {
   remote: RemoteKey;
   machineName: string;
   label: string;
   visible: boolean;
-  onClosed(): void;
+  onClosed(remote: RemoteKey): void;
 }
 
 /**
  * A terminal attached to a session on another machine. Input is the remote's, so the pane has no
  * local PTY lifecycle: it attaches, paints, follows remote:data and remote:state, and detaches.
- * The attachment lives in RemoteAttachment; a resync remounts it, so each attach starts clean.
  */
-export function RemotePane(props: RemotePaneProps) {
-  // A resync is a fresh attachment: keyed, so the old one detaches and disposes before the new one.
-  const [epoch, setEpoch] = useState(0);
-  const onResync = useCallback(() => setEpoch((e) => e + 1), []);
-  return <RemoteAttachment key={epoch} {...props} onResync={onResync} />;
-}
-
-function RemoteAttachment({
-  remote,
-  machineName,
-  label,
-  visible,
-  onClosed,
-  onResync,
-}: RemotePaneProps & { onResync(): void }) {
+export function RemotePane({ remote, machineName, label, visible, onClosed }: RemotePaneProps) {
   const { settings } = useSettings();
+  // Read at attach time, so an attach never re-runs for a settings change.
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
   const hostRef = useRef<HTMLDivElement>(null);
-  const visibleRef = useRef(visible);
   const termRef = useRef<Terminal | null>(null);
+  const visibleRef = useRef(visible);
+  // The next keystroke fits the pane and tells the remote, rather than fitting on every change.
+  const staleRef = useRef(true);
+  const mountedRef = useRef(true);
   const [attaching, setAttaching] = useState(true);
   const [attachError, setAttachError] = useState<string | null>(null);
   const [frozen, setFrozen] = useState(false);
@@ -57,10 +51,16 @@ function RemoteAttachment({
   const [drive, setDrive] = useState(false);
   const [closing, setClosing] = useState(false);
   const [closeError, setCloseError] = useState<string | null>(null);
-  const settingsRef = useRef(settings);
-  settingsRef.current = settings;
 
   const { machineId, sessionId } = remote;
+  const remoteId = remoteKeyId(remote);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // A hidden pane must keep its WebGL slot accounting in step with the stack, as TerminalPane does.
   useLayoutEffect(() => {
@@ -69,13 +69,21 @@ function RemoteAttachment({
     if (term) terminalGpu.setVisible(term, visible);
   }, [visible]);
 
-  // Theme and font follow the app; applied after the frame so the CSS variables already switched.
-  // settings.theme is the trigger only: the palette is read off the document's CSS variables.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: same re-theme trigger as TerminalPane.
+  // Focus Terminal (the center's forwarding target) lands here, on this pane's own xterm.
+  useLayoutEffect(() => {
+    const target: FocusTarget = { focus: () => termRef.current?.focus() };
+    return registerFocusTarget(terminalFocusKey(remoteId), target);
+  }, [remoteId]);
+
+  // Theme and font follow the app. A font-size change moves the cell, so the next input refits.
+  // The palette is read off the document's CSS variables, which the frame has not yet switched on
+  // the commit that changed the setting, so the apply waits for the frame.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: settings.theme is the re-theme trigger — the palette is read off <html>'s CSS vars, not from the value.
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
     const id = requestAnimationFrame(() => {
+      if (term.options.fontSize !== settings.terminalFontSize) staleRef.current = true;
       term.options.fontSize = settings.terminalFontSize;
       term.options.theme = buildXtermTheme(settings.surfaceColor);
     });
@@ -91,11 +99,9 @@ function RemoteAttachment({
     let unregisterGpu: (() => void) | null = null;
     let driveOn = false;
     let ended = false;
-    // The remote size is what the terminal opens at; the pane fits only when the owner types.
-    let needFit = true;
     let ready = false;
     // Output can outrun the attach reply; it waits here until the terminal exists.
-    const early: Extract<HostToWebview, { type: 'remote:data' | 'remote:state' }>[] = [];
+    const early: RemoteMessage[] = [];
 
     setAttaching(true);
     setAttachError(null);
@@ -103,13 +109,19 @@ function RemoteAttachment({
     setExited(false);
     setDrive(false);
 
+    // The pane's own size changing (a split, a window) moves the cell count; the next input refits.
+    const resizeObserver = new ResizeObserver(() => {
+      if (driveOn) staleRef.current = true;
+    });
+    resizeObserver.observe(host);
+
     const fitIfVisible = (fit: FitAddon): boolean => {
       if (!visibleRef.current || host.offsetWidth === 0 || host.offsetHeight === 0) return false;
       fit.fit();
       return true;
     };
 
-    const handle = (m: Extract<HostToWebview, { type: 'remote:data' | 'remote:state' }>) => {
+    const handle = (m: RemoteMessage) => {
       if (!term) return;
       if (m.type === 'remote:data') {
         term.write(m.data);
@@ -117,7 +129,7 @@ function RemoteAttachment({
       }
       if (m.size && (m.size.cols !== term.cols || m.size.rows !== term.rows)) {
         term.resize(m.size.cols, m.size.rows);
-        needFit = true;
+        staleRef.current = true;
       }
       switch (m.state) {
         case 'live':
@@ -132,7 +144,8 @@ function RemoteAttachment({
           term.write(`\r\n\x1b[2m${MACHINES_STR.processExited}\x1b[0m\r\n`);
           return;
         case 'resyncing':
-          onResync();
+          // The relay re-opens this same view: its fresh first paint follows as remote:data.
+          term.reset();
           return;
       }
     };
@@ -169,19 +182,13 @@ function RemoteAttachment({
       viewId = result.viewId;
       const s = settingsRef.current;
       const t = new Terminal({
+        ...baseTerminalOptions({
+          fontMono: s.fontMono,
+          fontSize: s.terminalFontSize,
+          windowsPty: result.windowsPty ?? undefined,
+        }),
         cols: result.size.cols,
         rows: result.size.rows,
-        fontFamily: terminalFontFamily() ?? monoStack(s.fontMono),
-        fontSize: s.terminalFontSize,
-        // Must be 1.0 so box-drawing characters connect vertically (see TerminalPane).
-        lineHeight: 1.0,
-        rescaleOverlappingGlyphs: true,
-        cursorBlink: true,
-        scrollback: 10000,
-        theme: buildXtermTheme(),
-        allowProposedApi: true,
-        allowTransparency: true,
-        ...windowsPtyOptions(result.windowsPty ?? undefined),
       });
       term = t;
       termRef.current = t;
@@ -191,14 +198,12 @@ function RemoteAttachment({
       t.loadAddon(fit);
       matchConhostCellWidths(t);
       t.open(host);
-      const reportGpuLoss = () => terminalGpu.reportLoss(t);
-      t.element?.addEventListener('webglcontextlost', reportGpuLoss, true);
-      unregisterGpu = terminalGpu.register(t, undefined, { visible: visibleRef.current });
+      unregisterGpu = attachTerminalGpu(t, { visible: visibleRef.current });
       t.write(result.firstPaint);
       t.onData((data) => {
         if (!driveOn || ended) return;
-        if (needFit && fitIfVisible(fit)) {
-          needFit = false;
+        if (staleRef.current && fitIfVisible(fit)) {
+          staleRef.current = false;
           post({ type: 'remote:resize', machineId, sessionId, cols: t.cols, rows: t.rows });
         }
         post({ type: 'remote:input', machineId, sessionId, data });
@@ -214,13 +219,14 @@ function RemoteAttachment({
     return () => {
       cancelled = true;
       unsubscribe();
+      resizeObserver.disconnect();
       unregisterGpu?.();
       if (term) disposeTerminal(term, []);
       termRef.current = null;
       host.replaceChildren();
       if (viewId !== null) post({ type: 'remote:detach', viewId });
     };
-  }, [machineId, sessionId, onResync]);
+  }, [machineId, sessionId]);
 
   const close = () => {
     setClosing(true);
@@ -230,10 +236,12 @@ function RemoteAttachment({
       ['remote:closed'],
       CLOSE_TIMEOUT_MS,
     ).then((reply) => {
+      // A reply that lands after unmount belongs to a pane the owner has already left.
+      if (!mountedRef.current) return;
       setClosing(false);
       if (!reply) return setCloseError(MACHINES_STR.paneError('failed'));
       if (reply.error) return setCloseError(MACHINES_STR.paneError(reply.error));
-      onClosed();
+      onClosed(remote);
     });
   };
 
@@ -255,7 +263,7 @@ function RemoteAttachment({
       className={frozen ? 'remote-pane remote-pane--frozen' : 'remote-pane'}
       aria-label={label}
       style={visible ? undefined : { display: 'none' }}
-      data-remote-key={remoteKeyId(remote)}
+      data-remote-key={remoteId}
     >
       <header className="remote-pane-head">
         <span>{label}</span>

@@ -9,22 +9,19 @@ let state: NetworkState | null = null;
 let started = false;
 const listeners = new Set<() => void>();
 
-function emit(): void {
-  for (const l of [...listeners]) l();
-}
-
 function start(): void {
   if (started) return;
   started = true;
   subscribeHost((m) => {
     if (m.type !== 'network:state') return;
     state = m.state;
-    emit();
+    for (const l of [...listeners]) l();
   });
   post({ type: 'network:get' });
 }
 
-function subscribe(cb: () => void): () => void {
+/** Non-hook access, for stores outside React. Subscribing is what starts the one host feed. */
+export function subscribeNetworkState(cb: () => void): () => void {
   listeners.add(cb);
   start();
   return () => {
@@ -32,8 +29,8 @@ function subscribe(cb: () => void): () => void {
   };
 }
 
-const snapshot = (): NetworkState | null => state;
+export const getNetworkState = (): NetworkState | null => state;
 
 export function useNetworkState(): NetworkState | null {
-  return useSyncExternalStore(subscribe, snapshot, snapshot);
+  return useSyncExternalStore(subscribeNetworkState, getNetworkState, getNetworkState);
 }

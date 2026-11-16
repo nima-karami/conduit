@@ -3,7 +3,9 @@
 
 import { useSyncExternalStore } from 'react';
 import type { MachineActionResult, MachineError } from '../src/contracts/machines';
+import type { NetworkState } from '../src/contracts/network-state';
 import { requestHost } from './host-request';
+import { getNetworkState, subscribeNetworkState } from './network-store';
 
 // connect may run a 120 s ssh bootstrap on the server; everything else answers at once.
 const CONNECT_TIMEOUT_MS = 135_000;
@@ -17,13 +19,32 @@ const TIMED_OUT: MachineActionResult = {
 
 let errors: ReadonlyMap<string, MachineError> = new Map();
 const listeners = new Set<() => void>();
+let stopNetwork: (() => void) | null = null;
+
+function publish(next: Map<string, MachineError>): void {
+  errors = next;
+  for (const l of [...listeners]) l();
+}
 
 function setError(machine: string, error: MachineError | null): void {
   const next = new Map(errors);
   if (error) next.set(machine, error);
   else next.delete(machine);
-  errors = next;
-  for (const l of [...listeners]) l();
+  publish(next);
+}
+
+/** Decision 10: a row's kept error ends when its machine comes up, whatever made it come up. */
+function clearUpMachines(state: NetworkState | null): void {
+  if (!state) return;
+  const next = new Map(errors);
+  let changed = false;
+  for (const m of state.machines) {
+    if (m.state !== 'up') continue;
+    for (const key of [m.machine, m.target]) {
+      if (next.delete(key)) changed = true;
+    }
+  }
+  if (changed) publish(next);
 }
 
 export async function connectMachine(machine: string): Promise<MachineActionResult> {
@@ -86,15 +107,23 @@ export async function sshHosts(): Promise<string[]> {
   return reply?.hosts ?? [];
 }
 
+// The network feed is held only while someone reads the errors, so the store has no subscription
+// of its own. network-store never imports this module, so the dependency is one way.
 const subscribe = (cb: () => void): (() => void) => {
   listeners.add(cb);
+  if (listeners.size === 1)
+    stopNetwork = subscribeNetworkState(() => clearUpMachines(getNetworkState()));
   return () => {
     listeners.delete(cb);
+    if (listeners.size === 0) {
+      stopNetwork?.();
+      stopNetwork = null;
+    }
   };
 };
 const snapshot = (): ReadonlyMap<string, MachineError> => errors;
 
-/** Last connect error per machine name or target, until a successful connect clears it. */
+/** Last connect error per machine name or target, until a successful connect or an `up` state. */
 export function useMachineErrors(): ReadonlyMap<string, MachineError> {
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }

@@ -61,7 +61,7 @@ import {
 import { initialTermSearchState, termSearchReducer } from '../term-search';
 import { notifyTerminalBus, registerTerminal } from '../terminal-bus';
 import { pasteRoute, terminalClipboardAction } from '../terminal-clipboard';
-import { matchConhostCellWidths, windowsPtyOptions, writeReplay } from '../terminal-conpty';
+import { matchConhostCellWidths, writeReplay } from '../terminal-conpty';
 import { CONTEXT_WINDOW_LINES, inferContextRoot } from '../terminal-context-root';
 import { formatPathForTerminal, TERMINAL_PATH_MIME, terminalDropEffect } from '../terminal-drop';
 import { terminalFontFamily } from '../terminal-fonts';
@@ -75,6 +75,7 @@ import {
   MAX_PATH_TOKENS,
 } from '../terminal-links';
 import { buildLogicalLine, offsetAtCell, toBufferRange } from '../terminal-logical-line';
+import { attachTerminalGpu, baseTerminalOptions } from '../terminal-options';
 import {
   capTokenKeys,
   type LinkTarget,
@@ -91,7 +92,7 @@ import { attachScrollDiagnostics } from '../terminal-scroll-diagnostics';
 import { createPtySizeSync, terminalFaceLoaded } from '../terminal-size';
 import { createTerminalTokenCache } from '../terminal-token-cache';
 import { pushToast } from '../toast-store';
-import { buildXtermTheme, monoStack } from '../xterm-theme';
+import { buildXtermTheme } from '../xterm-theme';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { PathCandidatePicker, type PickerMode } from './path-candidate-picker';
 import { detectedLinkRow, type PickerRow, pickerRows } from './path-candidate-picker-model';
@@ -560,33 +561,14 @@ export function TerminalPane({
     let kittyParserDisposables: { dispose(): void }[] = [];
     // Assigned once the fit/facts helpers below exist; a font refresh only arrives after that.
     let refitAfterFonts = () => {};
-    const reportGpuLoss = () => terminalGpu.reportLoss(term);
     try {
       term = new Terminal({
         // A new pane may mount while the App's selected face is still loading (spec §8).
-        fontFamily: terminalFontFamily() ?? monoStack(fontMonoRef.current),
-        fontSize: termFontRef.current,
-        // Must be 1.0 so box-drawing characters (│ ┌ └) connect vertically; extra
-        // leading breaks them into dashes.
-        lineHeight: 1.0,
-        // A fallback-face glyph wider than the cell (✔ ⏺ from the symbol font) is scaled into it
-        // instead of overlapping its neighbour.
-        rescaleOverlappingGlyphs: true,
-        cursorBlink: true,
-        // xterm's default ring is 1000 lines — roughly eight seconds of a working agent.
-        // Once the ring is full, a scrolled-up reader is pushed AWAY from the bottom on
-        // every trimmed line (see the follow-state listener below), so a small ring turns
-        // ordinary reading into the runaway-scroll bug. Bigger ring, rarer trimming.
-        scrollback: 10000,
-        // Canvas stays transparent (R4.3b); the configurable surface (colour × opacity)
-        // lives on the `.termwrap` container via `--term-surface`, so opacity changes
-        // cascade through CSS without re-theming. The re-theme effect below still
-        // re-applies foreground/ANSI colours on app-theme/font changes.
-        theme: buildXtermTheme(),
-        allowProposedApi: true,
-        ...windowsPtyOptions(windowsPty),
-        // Transparent so the container surface and animated app backdrop show through.
-        allowTransparency: true,
+        ...baseTerminalOptions({
+          fontMono: fontMonoRef.current,
+          fontSize: termFontRef.current,
+          windowsPty,
+        }),
         // OSC 8 hyperlinks — what Claude Code and most modern CLIs emit — are matched by
         // xterm's OWN built-in provider, never by the regex `linkProvider` below, so they
         // need their own handler. Without one xterm falls back to its default: a confirm()
@@ -654,8 +636,6 @@ export function TerminalPane({
       term.loadAddon(search);
       term.open(ref.current);
       term.element?.addEventListener('mousedown', suppressLinkMiddleDown, true);
-      // `webglcontextlost` doesn't bubble out of xterm's canvas; capture still sees it.
-      term.element?.addEventListener('webglcontextlost', reportGpuLoss, true);
       // Restore wheel scrollback scrolling when a TUI enables mouse tracking (NOT Claude
       // Code — it never does; see terminal-scroll.ts): xterm then forwards the wheel to the
       // app and stops scrolling history,
@@ -685,8 +665,9 @@ export function TerminalPane({
       });
       // Last in the try: a throw before it would return from the effect with no cleanup, leaking
       // the terminal's WebGL slot. The renderer draws box/block glyphs to fill the cell (crisper).
-      unregisterGpu = terminalGpu.register(term, () => refitAfterFonts(), {
+      unregisterGpu = attachTerminalGpu(term, {
         visible: visibleRef.current,
+        onFontRefresh: () => refitAfterFonts(),
       });
     } catch (e) {
       logToHost(`xterm init failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -1198,7 +1179,6 @@ export function TerminalPane({
         onData.dispose();
         for (const d of kittyParserDisposables) d.dispose();
         term.element?.removeEventListener('mousedown', suppressLinkMiddleDown, true);
-        term.element?.removeEventListener('webglcontextlost', reportGpuLoss, true);
       } catch {
         /* listener may already be gone */
       }
