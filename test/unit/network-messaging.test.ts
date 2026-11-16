@@ -84,6 +84,7 @@ function setup(seed: OutboxEntry[] = []) {
       message: 'not used by this test',
     }),
     revokeRemoteGrant: () => ({ ok: false, code: 'not_found', message: 'not used by this test' }),
+    remotePolicySink: () => ({ apply: () => undefined, setLinkState: () => undefined }),
   };
   const svc = createMessaging({
     file: join(dir, 'outbox.json'),

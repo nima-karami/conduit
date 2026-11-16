@@ -623,6 +623,7 @@ function fakeMcp(inbox: string[]): McpNetworkPort {
       message: 'not used by this test',
     }),
     revokeRemoteGrant: () => ({ ok: false, code: 'not_found', message: 'not used by this test' }),
+    remotePolicySink: () => ({ apply: () => undefined, setLinkState: () => undefined }),
   };
 }
 
