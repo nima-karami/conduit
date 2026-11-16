@@ -177,6 +177,7 @@ async function render(s: Setup) {
         onAddMachine: () => {},
         onMachineAction: () => {},
         onRenameMachine: () => {},
+        onSetUpAgents: () => {},
       }),
     );
   }

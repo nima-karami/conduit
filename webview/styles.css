@@ -2959,6 +2959,65 @@ body.resizing .panel__resize::after {
   color: var(--text-dim);
 }
 
+/* ---------- the agent setup dialog (spec §9.1, §9.2) ----------
+   Reuses .modal, .modal__body and .seg; these lay out the mode choice and the per-CLI checklist. */
+.agent-setup__mode {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.agent-setup__hint,
+.agent-setup__note {
+  margin: 0;
+  font-size: calc(12px * var(--font-scale));
+  color: var(--text-dim);
+}
+.agent-setup__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.agent-setup__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 4px 10px;
+}
+.agent-setup__name {
+  font-size: calc(12.5px * var(--font-scale));
+  color: var(--text);
+}
+.agent-setup__state {
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-dim);
+}
+.agent-setup__state[data-installed="true"] {
+  color: var(--success);
+}
+.agent-setup__error {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--danger);
+}
+.agent-setup__refresh {
+  display: flex;
+  justify-content: flex-start;
+}
+.agent-setup__status {
+  margin: 0;
+  min-height: 1.2em;
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-dim);
+}
+.agent-setup__status--error {
+  color: var(--danger);
+}
+
 /* ---------- the remote pane (spec §9.1, §9.3) ----------
    A remote terminal is a terminal: the code surface stays dark in every theme. The dimmed body
    is the last screen, kept readable but clearly not live. */

@@ -71,6 +71,8 @@ const SERVER_ERROR_KINDS: readonly ServerErrorKind[] = [
   'peer_revoked',
   'capability_off',
   'pairing_failed',
+  'peer_incompatible',
+  'too_large',
 ];
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

@@ -129,6 +129,7 @@ async function render(
           onAddMachine: noop,
           onMachineAction: noop,
           onRenameMachine: noop,
+          onSetUpAgents: noop,
         }),
       ),
     );

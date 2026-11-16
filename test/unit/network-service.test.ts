@@ -466,6 +466,11 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
 
 describe('machines C2 methods', () => {
   /** Stub Machines: every method records its arguments and answers as the real one would. */
+  /** A pane opener no test here may reach: a call that opens one fails the test loudly. */
+  const noSetupPane = async (): Promise<string> => {
+    throw new Error('no setup pane expected');
+  };
+
   function stubMachines(connect: Machines['connect'] = () => new Promise(() => undefined)) {
     const seen: string[] = [];
     const machines: Machines = {
@@ -480,6 +485,13 @@ describe('machines C2 methods', () => {
       },
       remove: (machineId) => {
         seen.push(`remove ${machineId}`);
+      },
+      setMode: (machineId, mode) => {
+        seen.push(`setMode ${machineId} ${mode}`);
+      },
+      probeAgents: async (machineId) => {
+        seen.push(`probeAgents ${machineId}`);
+        return { agents: ['claude'] };
       },
     };
     return { machines, seen };
@@ -498,7 +510,7 @@ describe('machines C2 methods', () => {
 
   it('every machines.* method refuses a bad parameter as invalid, before any work', async () => {
     const { machines, seen } = stubMachines();
-    const d = { machines, sshHosts: () => [] };
+    const d = { machines, sshHosts: () => [], openSetupPane: noSetupPane };
     const bad: Array<[string, unknown]> = [
       ['machines.connect', { machine: 3 }],
       ['machines.connect', {}],
@@ -524,7 +536,7 @@ describe('machines C2 methods', () => {
       void handleMachineCall(
         'machines.connect',
         { machine: 'build' },
-        { machines, sshHosts: () => [] },
+        { machines, sshHosts: () => [], openSetupPane: noSetupPane },
       );
       expect(signals).toHaveLength(1);
       const [signal] = signals;
@@ -537,9 +549,83 @@ describe('machines C2 methods', () => {
     }
   });
 
+  it('machines.setMode, machines.openSetupPane and machines.probeAgents pass their parameters on', async () => {
+    const { machines, seen } = stubMachines();
+    const panes: string[] = [];
+    const d = {
+      machines,
+      sshHosts: () => [],
+      openSetupPane: async (machineId: string, cli: string, step: string) => {
+        panes.push(`${machineId} ${cli} ${step}`);
+        return 'sess-setup';
+      },
+    };
+    expect(
+      await handleMachineCall('machines.setMode', { machineId: 'm-1', mode: 'light' }, d),
+    ).toEqual({});
+    expect(
+      await handleMachineCall(
+        'machines.openSetupPane',
+        { machineId: 'm-1', cli: 'codex', step: 'login' },
+        d,
+      ),
+    ).toEqual({ sessionId: 'sess-setup' });
+    expect(await handleMachineCall('machines.probeAgents', { machineId: 'm-1' }, d)).toEqual({
+      agents: ['claude'],
+    });
+    expect(seen).toEqual(['setMode m-1 light', 'probeAgents m-1']);
+    expect(panes).toEqual(['m-1 codex login']);
+  });
+
+  it('machines.setMode, machines.openSetupPane and machines.probeAgents refuse a bad parameter as invalid, before any work', () => {
+    const { machines, seen } = stubMachines();
+    const opened: string[] = [];
+    const d = {
+      machines,
+      sshHosts: () => [],
+      openSetupPane: async () => {
+        opened.push('pane');
+        return 'x';
+      },
+    };
+    const bad: Array<[string, unknown]> = [
+      ['machines.setMode', { machineId: 'm-1', mode: 'offline' }],
+      ['machines.setMode', { machineId: 'm-1' }],
+      ['machines.setMode', { machineId: 1, mode: 'full' }],
+      ['machines.openSetupPane', { machineId: 'm-1', cli: 'vim', step: 'install' }],
+      ['machines.openSetupPane', { machineId: 'm-1', cli: 'claude', step: 'uninstall' }],
+      ['machines.openSetupPane', { machineId: 'm-1', cli: 'claude' }],
+      ['machines.probeAgents', {}],
+      ['machines.probeAgents', { machineId: '' }],
+    ];
+    for (const [method, params] of bad) {
+      expect(() => handleMachineCall(method, params, d), method).toThrow(RpcFault);
+    }
+    expect(seen).toEqual([]);
+    expect(opened).toEqual([]);
+  });
+
+  it('machines.setMode, machines.openSetupPane and machines.probeAgents on an unknown machine are not_found over the wire', async () => {
+    const a = server('net-a');
+    await expect(
+      call(a.net, 'machines.setMode', { machineId: 'm-0000ffff', mode: 'light' }),
+    ).rejects.toThrow('No machine');
+    await expect(
+      call(a.net, 'machines.openSetupPane', {
+        machineId: 'm-0000ffff',
+        cli: 'claude',
+        step: 'install',
+      }),
+    ).rejects.toThrow('No machine');
+    await expect(call(a.net, 'machines.probeAgents', { machineId: 'm-0000ffff' })).rejects.toThrow(
+      'No machine',
+    );
+    expect(a.opened).toEqual([]);
+  });
+
   it('machines.rename and machines.remove pass their arguments to the machines service', async () => {
     const { machines, seen } = stubMachines();
-    const d = { machines, sshHosts: () => [] };
+    const d = { machines, sshHosts: () => [], openSetupPane: noSetupPane };
     await handleMachineCall('machines.rename', { machineId: 'm-1', name: 'box' }, d);
     await handleMachineCall('machines.remove', { machineId: 'm-1' }, d);
     expect(seen).toEqual(['rename m-1 box', 'remove m-1']);

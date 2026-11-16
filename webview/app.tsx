@@ -129,6 +129,7 @@ import {
   toClosedTab,
 } from './closed-tabs';
 import { AddMachineDialog } from './components/add-machine-dialog';
+import { AgentSetupDialog } from './components/agent-setup-dialog';
 import { AnimatedBg } from './components/animated-bg';
 import { ApprovalCard } from './components/approval-card';
 import { ArchitectureView } from './components/architecture-view';
@@ -292,8 +293,11 @@ import {
   connectMachine,
   disconnectMachine,
   openNeedsPerson,
+  openSetupPane,
+  probeAgents,
   removeMachine,
   renameMachine,
+  setMachineMode,
   sshHosts,
   useMachineErrors,
 } from './machines-store';
@@ -567,6 +571,8 @@ export function App() {
   // file or git code ever sees it (plan CON-41 decision 7).
   const [activeRemote, setActiveRemote] = useState<RemoteKey | null>(null);
   const [addMachineHosts, setAddMachineHosts] = useState<readonly string[] | null>(null);
+  // By id, not by view: the dialog follows the machine's live state from the network feed.
+  const [setupMachineId, setSetupMachineId] = useState<string | null>(null);
   const [messagesFilterHandle, setMessagesFilterHandle] = useState<Handle | null>(null);
   const [snapshots, setSnapshots] = useState<SessionSnapshots>({});
   // Read by the once-registered subscribe below; assigned where `visible` is posted.
@@ -2245,6 +2251,7 @@ export function App() {
     },
     [machineErrors, openNeedsPersonPane],
   );
+  const onSetUpAgents = useCallback((m: MachineView) => setSetupMachineId(m.machine_id), []);
   const onRenameMachine = useCallback((m: MachineView, name: string) => {
     void renameMachine(m.machine_id, name).then(toastMachineFailure);
   }, []);
@@ -4637,6 +4644,14 @@ export function App() {
         run: openAddMachine,
       },
       ...machines.map(
+        (m): PaletteEntry => ({
+          id: `cmd:setUpAgents:${m.machine_id}`,
+          title: `${MACHINES_STR.setUpAgents}: ${m.machine}`,
+          group: 'Commands',
+          run: () => onSetUpAgents(m),
+        }),
+      ),
+      ...machines.map(
         (m): PaletteEntry =>
           m.state === 'up' || m.state === 'degraded' || m.state === 'connecting'
             ? {
@@ -4653,7 +4668,7 @@ export function App() {
               },
       ),
     ],
-    [machines, openAddMachine, onMachineAction],
+    [machines, openAddMachine, onMachineAction, onSetUpAgents],
   );
   const commandItems: PaletteEntry[] = useMemo(() => {
     // Show each command's bound key combo for discoverability, resolved through the same
@@ -5442,6 +5457,7 @@ export function App() {
             onAddMachine={openAddMachine}
             onMachineAction={onMachineAction}
             onRenameMachine={onRenameMachine}
+            onSetUpAgents={onSetUpAgents}
             onSessionDragEnd={(sessionId, screenX, screenY) => {
               const drop = () => post({ type: 'session:dragEnd', sessionId, screenX, screenY });
               const own = {
@@ -5739,7 +5755,12 @@ export function App() {
           {addMachineHosts !== null && (
             <AddMachineDialog
               hosts={addMachineHosts}
-              onSubmit={connectMachine}
+              onSubmit={async (target) => {
+                const r = await connectMachine(target);
+                // Spec F1: after a machine is added, the owner chooses full or light mode.
+                if (r.ok && r.value) setSetupMachineId(r.value.machine_id);
+                return r;
+              }}
               onOpenNeedsPerson={(target) => {
                 setAddMachineHosts(null);
                 void openNeedsPersonPane(target);
@@ -5747,6 +5768,26 @@ export function App() {
               onClose={() => setAddMachineHosts(null)}
             />
           )}
+          {setupMachineId !== null &&
+            (() => {
+              const target = machines.find((m) => m.machine_id === setupMachineId);
+              return target ? (
+                <AgentSetupDialog
+                  machine={target}
+                  onSetMode={(mode) => setMachineMode(target.machine_id, mode)}
+                  onOpenPane={async (cli, step) => {
+                    const opened = await openSetupPane(target.machine_id, cli, step);
+                    if (opened.sessionId) {
+                      setSetupMachineId(null);
+                      selectAgent(opened.sessionId);
+                    }
+                    return opened;
+                  }}
+                  onRefresh={() => probeAgents(target.machine_id)}
+                  onClose={() => setSetupMachineId(null)}
+                />
+              ) : null;
+            })()}
           {timedMessageFor &&
             (() => {
               const target = sessions.find((s) => s.id === timedMessageFor);

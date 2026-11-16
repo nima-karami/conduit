@@ -23,6 +23,7 @@ All notable user-facing changes to Conduit. Format follows
 - Questions and permission asks from agents on a connected machine show up in your Needs-you list here, marked with that machine, and you can answer them without switching machines. When your agent's action on the other machine needs your OK there, it now waits for your answer instead of failing.
 - Machines in the sidebar (turn on "Show Machines in the sidebar" in Settings until you add one): add a computer from your SSH config or by `user@host`, see whether each one is connected, offline or needs you, and retry, disconnect, rename or remove it. When SSH needs an answer, Connect opens a terminal where you answer it. Removing a machine only forgets it here; its sessions keep running.
 - Sessions an agent opens on another machine show under that agent with an "on <machine>" label, and under the machine. Click one to watch its live terminal, type into it and close it. While the connection drops, the pane says it's reconnecting and repaints when it's back.
+- Set up agents on a machine (from its menu, the command palette, or right after adding it): choose Full or Light. In Full mode each agent CLI shows whether it's installed, with Install and Log in buttons that open a terminal connected to that machine, and Refresh to check again. In Light mode the machine runs no agent CLIs; you and your lead use terminals and files there.
 
 ## [0.66.1] — 2026-11-16
 

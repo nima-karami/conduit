@@ -1050,3 +1050,29 @@ describe('PowerShell scripts: automatic variables and argument quoting', () => {
     ]);
   });
 });
+
+describe('sh probe finds the CLIs the Linux installers put in ~/.local/bin', () => {
+  it('prepends $HOME/.local/bin to PATH before the command -v loop, so a non-login PATH still finds them', () => {
+    const script = probeCommand('sh').command;
+    const prepend = script.indexOf('$HOME/.local/bin');
+    const lookup = script.indexOf('command -v "$BIN"');
+    expect(prepend).toBeGreaterThan(0);
+    expect(prepend).toBeLessThan(lookup);
+  });
+
+  it.skipIf(!posix || !hasSh())(
+    'reports a CLI that exists only under the home ~/.local/bin',
+    () => {
+      const home = join(dir, 'home');
+      mkdirSync(join(home, '.local', 'bin'), { recursive: true });
+      writeFileSync(join(home, '.local', 'bin', 'opencode'), '#!/bin/sh\n');
+      chmodSync(join(home, '.local', 'bin', 'opencode'), 0o755);
+      const p = parseProbe(
+        runSh(probeCommand('sh'), { env: { PATH: '/usr/bin:/bin', HOME: home } }).stdout,
+      );
+      expect(p).not.toHaveProperty('error');
+      if ('error' in p) return;
+      expect(p.agents).toContain('opencode');
+    },
+  );
+});

@@ -299,6 +299,10 @@ const SH_PROBE = `${SH_HEADER}
     RM=$(sed -n 's/.*"linkMajor":\\([0-9][0-9]*\\).*/\\1/p' "$RF" | head -n 1)
     if [ -n "$RV" ] && [ -n "$RM" ]; then REC="{\\"version\\":\\"$RV\\",\\"linkMajor\\":$RM}"; fi
   fi
+  # The Linux installers put their CLIs in ~/.local/bin, which a non-interactive ssh PATH omits, so
+  # the lookup adds it (plan decision 4). PATH is restored after the loop.
+  AG_PATH=$PATH
+  PATH="$HOME/.local/bin:$PATH"
   AG=''
   for P in "$@"; do
     PAIR=$(d "$P")
@@ -310,6 +314,7 @@ const SH_PROBE = `${SH_HEADER}
     done
     if [ "$FOUND" = 1 ]; then AG="$AG,\\"$CLI\\""; fi
   done
+  PATH=$AG_PATH
   AG_JSON="[$(printf '%s' "$AG" | sed 's/^,//')]"
   printf 'CONDUIT_RESULT {"ok":true,"os":"%s","arch":"%s","home":"%s","userData":"%s","freeBytes":%s,"kup":%s,"linger":%s,"systemdRun":%s,"installed":%s,"recorded":%s,"agents":%s}\\n' "$OS" "$ARCH" "$HOME" "$UD" "$FREE" "$KUP" "$LINGER" "$SDR" "$INST_JSON" "$REC" "$AG_JSON"
 `;

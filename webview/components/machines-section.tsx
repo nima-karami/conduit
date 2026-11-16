@@ -82,6 +82,7 @@ export function MachinesSection({
   onMachineAction,
   onRenameMachine,
   onConfirm,
+  onSetUpAgents,
 }: {
   machines: readonly MachineView[];
   remoteRows: readonly Row[];
@@ -93,6 +94,8 @@ export function MachinesSection({
   onMachineAction: (action: MachineAction, machine: MachineView) => void;
   onRenameMachine: (machine: MachineView, name: string) => void;
   onConfirm: (c: ConfirmState) => void;
+  /** Opens the agent setup dialog; the menu item appears only when this is given. */
+  onSetUpAgents?: (machine: MachineView) => void;
 }) {
   const treeRef = useRef<HTMLDivElement>(null);
   // Folded machines; a machine opens by default, so only the folded ones are remembered.
@@ -213,6 +216,9 @@ export function MachinesSection({
       disabled: m.state === 'disabled' || m.state === 'revoked',
       onClick: () => onMachineAction('disconnect', m),
     },
+    ...(onSetUpAgents
+      ? [{ label: MACHINES_STR.setUpAgents, onClick: () => onSetUpAgents(m) }]
+      : []),
     { label: MACHINES_STR.rename, onClick: () => setRenamingId(m.machine_id) },
     {
       label: MACHINES_STR.remove,

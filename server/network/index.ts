@@ -30,10 +30,16 @@ import {
   writeServerVersion,
 } from '../lifecycle/server-secret';
 import { type AuditSink, openAuditLog, teeAudit } from './audit-log';
-import { type BootstrapperOptions, createBootstrapper, machineMetaOf } from './bootstrap';
+import {
+  type BootstrapperOptions,
+  createAgentProbe,
+  createBootstrapper,
+  machineMetaOf,
+} from './bootstrap';
 import { handleNetworkCall } from './c2';
 import { createCalls, isDialedSsh } from './calls';
 import { createDrive, type Drive, type DriveDeps } from './drive';
+import { createFsClient } from './fs-client';
 import { adoptOwnerKey, type Identity, setOwnerKey } from './identity';
 import { createLinkManager, type LinkManager } from './link-manager';
 import { openLinkStore } from './link-store';
@@ -41,7 +47,7 @@ import { type LinkListener, listenLinks, listenPairing, type NetLog } from './li
 import { createMachines, type Machines } from './machines';
 import { createMessaging } from './messaging';
 import { createMonitorPublisher, type MonitorSource } from './monitor-publisher';
-import { createNeedsPerson } from './needs-person';
+import { createNeedsPerson, createSetupPane } from './needs-person';
 import { createPairingPort } from './pairing-port';
 import { createPairingService, type PairingService } from './pairing-service';
 import {
@@ -236,6 +242,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       drive.linkChanged(machineId);
     }
     calls.settleAbsent(views.map((v) => v.machineId));
+    fsClient.linksChanged(views);
     requests.linksChanged();
     for (const l of portListeners) l();
   };
@@ -320,6 +327,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
           .serveCall(machineId, f)
           .catch((err: unknown) => deps.log.error('call failed', { message: String(err) }));
       else if (f.t === 'call.result') calls.onResult(machineId, f);
+      else if (f.t === 'fs.res' || f.t === 'fs.changed') fsClient.onFrame(machineId, f);
       else if (f.t === 'request.mirror' || f.t === 'request.answer' || f.t === 'request.answered')
         void requests
           .onFrame(machineId, f)
@@ -343,6 +351,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     reconnected: (machineId) => {
       messaging.reconnected(machineId);
       publisher.pushTo(machineId);
+      fsClient.reconnected(machineId);
     },
   });
 
@@ -359,13 +368,34 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     return { ok: true, machineId: linked.machineId, ssh: outcome.ssh, summary: outcome.summary };
   };
 
-  const openNeedsPerson = createNeedsPerson({
+  const paneOptions = {
     sshPath: process.env.CONDUIT_SSH_PATH || 'ssh',
     sshArgsPrefix: deps.sshArgsPrefix,
     controlDir: sshControlDir,
-    prepareControlDir: (dir) => prepareControlDir(dir, deps.log),
+    prepareControlDir: (dir: string) => prepareControlDir(dir, deps.log),
     openCommand: deps.openCommandSession,
     home: os.homedir(),
+  };
+  const openNeedsPerson = createNeedsPerson(paneOptions);
+  const openSetupPane = createSetupPane({
+    ...paneOptions,
+    machineOf: (machineId) => {
+      const record = store.get(machineId);
+      if (record === null || record.transport !== 'ssh' || record.ssh === null) return null;
+      return {
+        target: record.ssh.target,
+        os: record.machine?.os ?? null,
+        mode: record.machine?.mode ?? null,
+      };
+    },
+  });
+  const probeAgents = createAgentProbe({
+    ssh: {
+      sshPath: process.env.CONDUIT_SSH_PATH || 'ssh',
+      sshArgsPrefix: deps.sshArgsPrefix,
+      controlDir: sshControlDir,
+    },
+    exec: sshExec,
   });
 
   const machines: Machines = createMachines({
@@ -373,6 +403,8 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     store,
     bootstrap: bootstrapAndLink,
     directory,
+    probe: probeAgents,
+    changed,
   });
 
   const sshHosts = (): string[] => {
@@ -420,6 +452,17 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     newId: () => `c_${randomBytes(12).toString('hex')}`,
     after,
     log: (message, data) => deps.log.info(message, data),
+  });
+  const fsClient = createFsClient({
+    linkOf: (machineId) => store.get(machineId),
+    linkState: (machineId) => manager.view(machineId)?.state ?? null,
+    peerMinor: (machineId) => manager.peerMinor(machineId),
+    send: (machineId, frame) => manager.send(machineId, frame),
+    emitTo: deps.emitTo,
+    audit,
+    now,
+    newId: () => `f_${randomBytes(12).toString('hex')}`,
+    after,
   });
   const requests: Requests = createRequests({
     b: deps.requestPorts.b,
@@ -715,6 +758,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       relay.stop();
       drive.stop();
       calls.stop();
+      fsClient.stop();
       requests.stop();
       publisher.stop();
       messaging.stop();
@@ -730,11 +774,16 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
         drive,
         bootstrap: bootstrapAndLink,
         openNeedsPerson,
+        openSetupPane,
         machines,
         sshHosts,
+        fs: fsClient,
         peer,
       }),
-    disconnected: (peer) => relay.disconnected(peer),
+    disconnected: (peer) => {
+      relay.disconnected(peer);
+      fsClient.peerGone(peer);
+    },
     async settingsChanged() {
       const s = deps.settings();
       if (bound && (bound.host !== s.networkBindHost || bound.port !== s.networkPort)) {

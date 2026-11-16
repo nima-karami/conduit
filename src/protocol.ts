@@ -236,7 +236,7 @@ export interface FileContentDTO {
   window?: 'tail';
   /** The content is the whole file, but saving it could change bytes the user never touched
    *  (spec 2026-10-08-language-support §2.4), so the doc opens read-only. */
-  readOnlyReason?: 'invalid-utf8' | 'mixed-eol';
+  readOnlyReason?: 'invalid-utf8' | 'mixed-eol' | 'remote';
 }
 
 export interface FileDiffDTO {
@@ -661,6 +661,17 @@ export type HostToWebview =
       error: string | null;
     }
   | { type: 'machines:agents'; requestId: number; agents: string[] | null; error: string | null }
+  | {
+      type: 'remoteFs:listed';
+      requestId: number;
+      result: { ok: true; path: string; entries: DirEntryDTO[] } | { ok: false; error: string };
+    }
+  | {
+      type: 'remoteFs:content';
+      requestId: number;
+      result: { ok: true; file: FileContentDTO } | { ok: false; error: string };
+    }
+  | { type: 'remoteFs:changed'; key: string; paths: string[] }
   | { type: 'mcp:state'; state: McpUiState }
   | { type: 'mcp:requestResult'; requestId: string; result: RequestAnswerResult }
   | {
@@ -1388,6 +1399,11 @@ export type WebviewToHost =
       step: AgentSetupStep;
     }
   | { type: 'machines:probeAgents'; requestId: number; machineId: string }
+  // Remote files (plan CON-43): never readDir/readFile, so no path-keyed local code sees them.
+  | { type: 'remoteFs:list'; requestId: number; machineId: string; sessionId: string; path: string }
+  | { type: 'remoteFs:read'; requestId: number; machineId: string; sessionId: string; path: string }
+  | { type: 'remoteFs:watch'; key: string; machineId: string; sessionId: string; path: string }
+  | { type: 'remoteFs:unwatch'; key: string }
   | { type: 'updateCheck' }
   | { type: 'updateRelaunch' }
   // Replies to `confirmQuit`, each disarming one guard timeout (dirty-quit-guard spec §2).

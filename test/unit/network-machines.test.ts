@@ -1,5 +1,6 @@
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
+import type { AgentProbe } from '../../server/network/bootstrap';
 import { type Identity, loadIdentity } from '../../server/network/identity';
 import { createLinkManager, type LinkManager } from '../../server/network/link-manager';
 import { type LinkStoreIo, openLinkStore } from '../../server/network/link-store';
@@ -29,6 +30,16 @@ const SUMMARY = {
   version: '0.9.0',
   agents: ['claude'],
 };
+
+/** What a call threw, or undefined when it returned. */
+function thrownBy(fn: () => unknown): unknown {
+  try {
+    fn();
+  } catch (e) {
+    return e;
+  }
+  return undefined;
+}
 
 function memIo(): LinkStoreIo {
   const files = new Map<string, string>();
@@ -155,6 +166,8 @@ function setup(
   const store = openLinkStore('/net/links.json', { now: Date.now, log: quiet, io: memIo() });
   const fake = fakeManager(store);
   const bootstrapCalls: string[] = [];
+  const events: string[] = [];
+  const probes = { calls: [] as string[], result: { ok: true, agents: ['claude'] } as AgentProbe };
   const machines = createMachines({
     manager: fake.manager,
     store,
@@ -165,8 +178,13 @@ function setup(
       return bootstrapPins(store, fake, pinAs.id, pinAs.name, target, 10);
     },
     directory: { entries: () => entries },
+    probe: async (target) => {
+      probes.calls.push(target);
+      return probes.result;
+    },
+    changed: () => events.push('changed'),
   });
-  return { store, fake, machines, bootstrapCalls };
+  return { store, fake, machines, bootstrapCalls, events, probes };
 }
 
 const LIVE = new AbortController().signal;
@@ -330,6 +348,8 @@ describe('machines: connect', () => {
       store,
       bootstrap: async () => ({ ok: false, error: failure }),
       directory: { entries: () => [] },
+      probe: async () => ({ ok: false, detail: 'unused' }),
+      changed: () => undefined,
     });
     expect(await machines.connect('new.example', LIVE)).toEqual({
       ok: false,
@@ -364,6 +384,8 @@ describe('machines: connect', () => {
         });
       },
       directory: { entries: () => [] },
+      probe: async () => ({ ok: false, detail: 'unused' }),
+      changed: () => undefined,
     });
     const ac = new AbortController();
     const pending = machines.connect('slow.example', ac.signal);
@@ -615,6 +637,8 @@ async function connectWhileDialFails(failure: SshFailure) {
     store,
     bootstrap: async () => ({ ok: false, error: { code: 'ssh_failed', detail: 'unused' } }),
     directory: { entries: () => [] },
+    probe: async () => ({ ok: false, detail: 'unused' }),
+    changed: () => undefined,
   });
   const started = clock.now();
   const pending = machines.connect('vm-a', LIVE);
@@ -667,6 +691,8 @@ describe('machines: a target that claims a machine already added under another n
         error: { code: 'identity-conflict', machine: 'office-pc' },
       }),
       directory: { entries: () => [] },
+      probe: async () => ({ ok: false, detail: 'unused' }),
+      changed: () => undefined,
     });
     expect(await machines.connect('new.example', LIVE)).toEqual({
       ok: false,
@@ -755,5 +781,84 @@ describe('machines: remove', () => {
     expect(faultOf(() => machines.remove('m-99999999')).kind).toBe('not_found');
     expect(fake.calls).toEqual([]);
     expect(store.get('m-00000001')).not.toBeNull();
+  });
+});
+
+describe('machines: mode', () => {
+  it('setMode writes meta.mode and keeps every other field of the machine block, then emits changed', () => {
+    const { store, fake, machines, events } = setup();
+    pin(store, fake, { id: 'm-00000001', name: 'vm-a', target: 'a.example', n: 1, state: 'up' });
+    machines.setMode('m-00000001', 'light');
+    expect(store.get('m-00000001')?.machine).toEqual({ ...META, mode: 'light' });
+    expect(events).toEqual(['changed']);
+    expect(machines.list()[0]).toMatchObject({ mode: 'light', agents: ['claude'] });
+  });
+
+  it('setMode is not_found for an unknown machine, and invalid for a record that is not ssh', () => {
+    const { store, fake, machines, events } = setup();
+    pin(store, fake, { id: 'm-00000001', name: 'vm-a', target: 'a.example', n: 1, state: 'up' });
+    expect(thrownBy(() => machines.setMode('m-0000ffff', 'light'))).toMatchObject({
+      kind: 'not_found',
+    });
+    const ssh = store.get('m-00000001');
+    if (!ssh) throw new Error('expected the pinned record');
+    const tls = { ...ssh, transport: 'tls' as const, ssh: null };
+    const tlsOnly = createMachines({
+      manager: fake.manager,
+      store: { links: () => [tls], update: () => null, setMachine: () => null },
+      bootstrap: async () => {
+        throw new Error('not used');
+      },
+      directory: { entries: () => [] },
+      probe: async () => ({ ok: true, agents: [] }),
+      changed: () => events.push('changed'),
+    });
+    expect(thrownBy(() => tlsOnly.setMode('m-00000001', 'light'))).toBeInstanceOf(RpcFault);
+    expect(events).toEqual([]);
+  });
+});
+
+describe('machines: probeAgents', () => {
+  it('probes the machine target, writes only meta.agents, and returns the agents', async () => {
+    const { store, fake, machines, events, probes } = setup();
+    pin(store, fake, { id: 'm-00000001', name: 'vm-a', target: 'a.example', n: 1, state: 'up' });
+    store.setMachine('m-00000001', { ...META, mode: 'light', version: '0.8.0' });
+    probes.result = { ok: true, agents: ['claude', 'opencode'] };
+    expect(await machines.probeAgents('m-00000001')).toEqual({ agents: ['claude', 'opencode'] });
+    expect(probes.calls).toEqual(['a.example']);
+    expect(store.get('m-00000001')?.machine).toEqual({
+      ...META,
+      mode: 'light',
+      version: '0.8.0',
+      agents: ['claude', 'opencode'],
+    });
+    expect(events).toEqual(['changed']);
+  });
+
+  it('keeps a mode changed while the probe was running', async () => {
+    const { store, fake, machines, probes } = setup();
+    pin(store, fake, { id: 'm-00000001', name: 'vm-a', target: 'a.example', n: 1, state: 'up' });
+    probes.result = { ok: true, agents: ['codex'] };
+    const pending = machines.probeAgents('m-00000001');
+    machines.setMode('m-00000001', 'light');
+    await pending;
+    expect(store.get('m-00000001')?.machine).toMatchObject({ mode: 'light', agents: ['codex'] });
+  });
+
+  it('a probe that fails is unavailable with its detail, and writes nothing', async () => {
+    const { store, fake, machines, events, probes } = setup();
+    pin(store, fake, { id: 'm-00000001', name: 'vm-a', target: 'a.example', n: 1, state: 'up' });
+    probes.result = { ok: false, detail: 'ssh_auth_failed' };
+    const err = await machines.probeAgents('m-00000001').catch((e: unknown) => e);
+    expect(err).toMatchObject({ kind: 'unavailable', message: 'ssh_auth_failed' });
+    expect(store.get('m-00000001')?.machine?.agents).toEqual(['claude']);
+    expect(events).toEqual([]);
+  });
+
+  it('is not_found for an unknown machine, and probes nothing', async () => {
+    const { machines, probes } = setup();
+    const err = await machines.probeAgents('m-0000ffff').catch((e: unknown) => e);
+    expect(err).toMatchObject({ kind: 'not_found' });
+    expect(probes.calls).toEqual([]);
   });
 });
