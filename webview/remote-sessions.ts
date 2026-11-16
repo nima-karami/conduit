@@ -28,7 +28,37 @@ export function remoteSessionRows(
   state: NetworkState,
   localSessions: readonly Pick<Session, 'id' | 'mcpHandle'>[],
 ): RemoteSessionRow[] {
-  throw new Error(
-    `remoteSessionRows: built in plan CON-41 Task 3 (${state.machineId}, ${localSessions.length})`,
+  const machines = new Map(state.machines.map((m) => [m.machine_id, m]));
+  // A handle is the lead's address on this machine; two local sessions never share one.
+  const localByHandle = new Map<string, string>();
+  for (const s of localSessions) if (s.mcpHandle) localByHandle.set(s.mcpHandle, s.id);
+
+  const rows: RemoteSessionRow[] = [];
+  for (const link of state.links) {
+    if (link.transport !== 'ssh' || link.snapshot === null) continue;
+    const machine = machines.get(link.machineId);
+    const machineName = machine?.machine ?? link.name;
+    const machineState: MachineState = machine?.state ?? link.state;
+    for (const session of link.snapshot.sessions) {
+      const opener = session.openedBy ?? null;
+      // Handles are per machine: a remote opener's handle only names a lead on the machine that opened it.
+      const parentSessionId =
+        opener && opener.machineId === state.machineId
+          ? (localByHandle.get(opener.handle) ?? null)
+          : null;
+      const key: RemoteKey = { machineId: link.machineId, sessionId: session.sessionId };
+      rows.push({
+        key,
+        id: remoteKeyId(key),
+        machineName,
+        machineState,
+        session,
+        parentSessionId,
+      });
+    }
+  }
+  return rows.sort(
+    (a, b) =>
+      a.machineName.localeCompare(b.machineName) || a.session.label.localeCompare(b.session.label),
   );
 }
