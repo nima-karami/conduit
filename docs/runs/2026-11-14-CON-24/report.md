@@ -7,9 +7,11 @@ fast-forward) · **Spec** `docs/specs/2026-11-14-policy-and-permissions.md` §15
 
 ## Result
 All five slices are built and merged into the branch. No new screens: CON-25 owns those.
-- **Final tip:** FINAL_TIP.
+- **Final tip:** e1deca08 (code); the commit carrying this report sits on top of it and is docs only.
 - **Verify:** `npm run verify` exits 0 on the final tip.
-- **Remote e2e:** run FINAL_AFFECTED (`--affected`) has FINAL_COUNTS, with CI's verify job green (semgrep and gitleaks included).
+- **Remote e2e:** run 43789121295 (`--affected`, on e1deca08) has 276 PASS, 0 FAIL, 1 FLAKY (`goto-matrix-cap`, passed on retry), 9 excluded, 1 skip and 1 quarantined (`scrollback-inrun`). CI's verify job is green (semgrep and gitleaks included).
+  - Flaky scenarios: one per run, a different one each time (`repo-tracker-fanout` in 43788113624, `terminal-link-menu` in 43788232935, `goto-matrix-cap` in 43789121295).
+  - Each passed on retry. None is in CON-24's diff against main (no Monaco or terminal changes), and none has a flaky history on main. Recorded as runner timing to watch, not cleared.
 - **Gate definitions:** identical to main. Against the baseline, only `package.json` (version) and `.fallowrc.json` (owner commit 808d47ac) differ, and both came in from main.
 
 | Spec §15 item | Slice | Proved by |
@@ -78,6 +80,13 @@ All five slices are built and merged into the branch. No new screens: CON-25 own
     3. view/drive frames on a swapped connection aren't resynced (low).
 - **Pre-commit hook skipped in worktrees:** `core.hooksPath` is `.husky/_`, relative to the worktree, and exists only in the main checkout. Every git worktree silently skips it (see learnings).
 - **Quarantine:** `scrollback-inrun` has been quarantined for more than 14 days; the e2e tool flags it for a re-check.
+
+## Flakes measured and fixed
+- **CON-27 network-service** (`network-service.test.ts:107`): a product lost-update, released as v0.66.1 (see above).
+- **CON-24 compose revoke test** (`server-compose-services.test.ts`): the test read B's machine id from a 50 ms-coalesced event stream before B had emitted, so the id was empty.
+  - Measured 6/360 failures under load before the fix, 0/720 after.
+  - Fixed in e1deca08 by reading the id through `link.list`.
+- **Product finding from that diagnosis (CON-27, card candidate):** in `server/network/index.ts` `onLinked`, the joiner's link record lists the pairing address first. That port is closed after pairing, so the first link dial is refused. That's harmless on loopback, but on a LAN that silently drops packets it costs the 5 s dial timeout.
 
 ## Accepted residuals
 - A send-message or request call refused inside its own checks (invalid args, rate cap, queue refusal) spends its one-use override.
