@@ -7,9 +7,12 @@ export type { Capabilities, Capability } from './remote-principal';
 // see docs/specs/2026-11-14-conduit-network.md — wire version; a major mismatch is `incompatible`
 // minor 1 added the hello's platform and version (spec 5.3): a peer at minor 0 omits them.
 // minor 2 added the routed `call` / `call.result` frames (spec 5.3, CON-40).
-export const LINK_PROTOCOL = { major: 1, minor: 2 } as const;
+// minor 3 added `request.mirror` / `request.answer` / `request.answered` (spec 5.3, CON-42).
+export const LINK_PROTOCOL = { major: 1, minor: 3 } as const;
 /** The lowest peer minor that serves `call` frames: a routed call to an older peer is refused, not sent. */
 export const ROUTED_CALLS_MIN_MINOR = 2;
+/** The lowest peer minor that serves request frames: an older peer gets no mirror and no answers. */
+export const REQUEST_MIRROR_MIN_MINOR = 3;
 export const LINK_FEATURES = ['messaging', 'monitor', 'drive', 'view'] as const;
 export type LinkFeature = (typeof LINK_FEATURES)[number];
 // The session tools a lead may route to a peer; anything else in a `call` is a malformed frame.
@@ -27,6 +30,23 @@ export type RoutedTool = (typeof ROUTED_TOOLS)[number];
 export const CALL_ARGS_MAX_BYTES = 64 * 1024;
 const CALL_ID_MAX = 64;
 const HANDLE_MAX = 64;
+// The mirror is bounded per frame, so a busy peer cannot push an unbounded queue into A's UI.
+export const REQUEST_MIRROR_MAX = 200;
+// Bodies, drafts and text answers are multi-line, so they are capped in bytes: that is what the
+// frame limit and the wire actually count.
+export const REQUEST_BODY_MAX_BYTES = 16 * 1024;
+const REQUEST_TITLE_MAX = 256;
+const REQUESTER_MAX = 64;
+const REQUEST_ID_MAX = 64;
+const REQUEST_OPTION_LABEL_MAX = 256;
+const REQUEST_OPTION_DESCRIPTION_MAX = 1024;
+const REQUEST_TIMESTAMP_MAX = 64;
+const ANSWER_OUTCOME_MAX = 64;
+const ANSWER_VALUES_MAX = 8;
+const ANSWER_VALUE_MAX = 256;
+const ANSWER_REASON_MAX = 200;
+const PERMISSION_TOOL_MAX = 64;
+const PERMISSION_WHY_MAX = 1024;
 const ERROR_CODE_MAX = 64;
 const ERROR_MESSAGE_MAX = 1024;
 const ERROR_HINT_MAX = 512;
@@ -143,7 +163,68 @@ export type LinkFrame =
       id: string;
       ok: false;
       error: { code: string; message: string; retryable: boolean; hint?: string };
+    }
+  /** B's open requests plus those that ended in the last 10 min; a newer seq replaces the old set. */
+  | { t: 'request.mirror'; seq: number; requests: RequestMirror[] }
+  /** A's owner answering a mirrored request on B. Never replayed: a drop is `peer_unreachable`. */
+  | { t: 'request.answer'; answerId: string; requestId: string; answer: RequestAnswerBody }
+  | { t: 'request.answered'; answerId: string; ok: true }
+  | {
+      t: 'request.answered';
+      answerId: string;
+      ok: false;
+      error: { code: string; message: string; retryable: boolean; hint?: string };
     };
+
+export const REQUEST_MIRROR_KINDS = [
+  'confirm',
+  'choose',
+  'text',
+  'review',
+  'attend',
+  'permission',
+] as const;
+export type RequestMirrorKind = (typeof REQUEST_MIRROR_KINDS)[number];
+export const REQUEST_MIRROR_STATES = [
+  'open',
+  'answered',
+  'expired',
+  'withdrawn',
+  'superseded',
+  'resolved',
+  'orphaned',
+] as const;
+export type RequestMirrorState = (typeof REQUEST_MIRROR_STATES)[number];
+
+/**
+ * A request as A renders and answers it. Plain wire types, not B's RequestView: targets, args and
+ * session ids are B's private detail and never cross the link.
+ */
+export interface RequestMirror {
+  id: string;
+  kind: RequestMirrorKind;
+  title: string;
+  body: string;
+  options: { label: string; description?: string }[];
+  multi: boolean;
+  draft: string | null;
+  priority: 'normal' | 'urgent';
+  createdAt: string;
+  expiresAt: string | null;
+  /** A display string, e.g. `handle@machine`; never parsed back into an identity. */
+  requester: string;
+  state: RequestMirrorState;
+  answer: { outcome: string; text?: string; values?: string[]; reason?: string; at: string } | null;
+  permission: { tool: string; why: string; grantable: boolean } | null;
+}
+
+export interface RequestAnswerBody {
+  outcome: string;
+  text?: string;
+  values?: string[];
+  reason?: string;
+  grant?: boolean;
+}
 
 export interface WireMessage {
   messageId: string;
@@ -366,6 +447,29 @@ export function parseLinkFrame(raw: unknown): LinkFrame | null {
         : null;
     case 'call.result':
       return parseCallResult(raw);
+    case 'request.mirror':
+      return frame(
+        raw,
+        'request.mirror',
+        ['seq', 'requests'],
+        (r) => int(r.seq) && isRequestList(r.requests),
+      )
+        ? raw
+        : null;
+    case 'request.answer':
+      return frame(
+        raw,
+        'request.answer',
+        ['answerId', 'requestId', 'answer'],
+        (r) =>
+          isCallId(r.answerId) &&
+          isPrintableCapped(r.requestId, REQUEST_ID_MAX) &&
+          isRequestAnswerBody(r.answer),
+      )
+        ? raw
+        : null;
+    case 'request.answered':
+      return parseRequestAnswered(raw);
     default:
       return null;
   }
@@ -654,6 +758,106 @@ function parseCallResult(r: Rec): LinkFrame | null {
   if (r.ok)
     return frame(r, 'call.result', ['id', 'ok', 'result'], (x) => isRec(x.result)) ? r : null;
   return frame(r, 'call.result', ['id', 'ok', 'error'], (x) => isRoutedError(x.error)) ? r : null;
+}
+
+/** `ok` picks the variant: a success has no error, a failure must say why. */
+function parseRequestAnswered(r: Rec): LinkFrame | null {
+  if (!isCallId(r.answerId) || !bool(r.ok)) return null;
+  if (r.ok) return frame(r, 'request.answered', ['answerId', 'ok'], () => true) ? r : null;
+  return frame(r, 'request.answered', ['answerId', 'ok', 'error'], (x) => isRoutedError(x.error))
+    ? r
+    : null;
+}
+
+/** Multi-line text keeps newlines and tabs; every other control character is refused. */
+const MULTILINE_TEXT = /^(?:[^\p{Cc}]|[\n\r\t])*$/u;
+const isMultilineCapped = (v: unknown, maxBytes: number): boolean =>
+  str(v) && MULTILINE_TEXT.test(v) && new TextEncoder().encode(v).byteLength <= maxBytes;
+
+function isRequestList(v: unknown): boolean {
+  return Array.isArray(v) && v.length <= REQUEST_MIRROR_MAX && v.every(isRequestMirror);
+}
+
+function isRequestMirror(v: unknown): boolean {
+  return (
+    hasKeys(v, [
+      'id',
+      'kind',
+      'title',
+      'body',
+      'options',
+      'multi',
+      'draft',
+      'priority',
+      'createdAt',
+      'expiresAt',
+      'requester',
+      'state',
+      'answer',
+      'permission',
+    ]) &&
+    isPrintableCapped(v.id, REQUEST_ID_MAX) &&
+    oneOf(v.kind, REQUEST_MIRROR_KINDS) &&
+    isPrintableCapped(v.title, REQUEST_TITLE_MAX) &&
+    isMultilineCapped(v.body, REQUEST_BODY_MAX_BYTES) &&
+    arrayOf(v.options, isRequestOption) &&
+    bool(v.multi) &&
+    nullable(v.draft, (x) => isMultilineCapped(x, REQUEST_BODY_MAX_BYTES)) &&
+    oneOf(v.priority, ['normal', 'urgent'] as const) &&
+    isPrintableCapped(v.createdAt, REQUEST_TIMESTAMP_MAX) &&
+    nullable(v.expiresAt, (x) => isPrintableCapped(x, REQUEST_TIMESTAMP_MAX)) &&
+    isPrintableCapped(v.requester, REQUESTER_MAX) &&
+    oneOf(v.state, REQUEST_MIRROR_STATES) &&
+    nullable(v.answer, isRequestMirrorAnswer) &&
+    nullable(v.permission, isRequestMirrorPermission)
+  );
+}
+
+function isRequestOption(v: unknown): boolean {
+  return (
+    hasKeys(v, ['label'], ['description']) &&
+    isPrintableCapped(v.label, REQUEST_OPTION_LABEL_MAX) &&
+    (v.description === undefined ||
+      isPrintableCapped(v.description, REQUEST_OPTION_DESCRIPTION_MAX))
+  );
+}
+
+/** The outcome fields a request answer and a mirrored answer share. */
+function isAnswerFields(v: Rec): boolean {
+  return (
+    isPrintableCapped(v.outcome, ANSWER_OUTCOME_MAX) &&
+    (v.text === undefined || isMultilineCapped(v.text, REQUEST_BODY_MAX_BYTES)) &&
+    (v.values === undefined ||
+      (Array.isArray(v.values) &&
+        v.values.length <= ANSWER_VALUES_MAX &&
+        v.values.every((x) => isPrintableCapped(x, ANSWER_VALUE_MAX)))) &&
+    (v.reason === undefined || isPrintableCapped(v.reason, ANSWER_REASON_MAX))
+  );
+}
+
+function isRequestAnswerBody(v: unknown): boolean {
+  return (
+    hasKeys(v, ['outcome'], ['text', 'values', 'reason', 'grant']) &&
+    isAnswerFields(v) &&
+    (v.grant === undefined || bool(v.grant))
+  );
+}
+
+function isRequestMirrorAnswer(v: unknown): boolean {
+  return (
+    hasKeys(v, ['outcome', 'at'], ['text', 'values', 'reason']) &&
+    isAnswerFields(v) &&
+    isPrintableCapped(v.at, REQUEST_TIMESTAMP_MAX)
+  );
+}
+
+function isRequestMirrorPermission(v: unknown): boolean {
+  return (
+    hasKeys(v, ['tool', 'why', 'grantable']) &&
+    isPrintableCapped(v.tool, PERMISSION_TOOL_MAX) &&
+    isPrintableCapped(v.why, PERMISSION_WHY_MAX) &&
+    bool(v.grantable)
+  );
 }
 
 function isRoutedError(v: unknown): boolean {
