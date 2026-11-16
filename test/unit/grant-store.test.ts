@@ -42,6 +42,7 @@ const remote: Principal = {
   handle: 'r',
   machineId: 'm-1',
   trust: 'own',
+  controller: false,
   capabilities: { messaging: false, monitor: false, drive: false },
 };
 

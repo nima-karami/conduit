@@ -420,6 +420,15 @@ describe('persistence — MCP control fields (control-tools spec §3.3)', () => 
     expect(x.openedBy).toEqual(opener);
   });
 
+  it('keeps the machineId of a remote opener through the round trip', () => {
+    const remoteOpener = { handle: 'claude-3', sessionId: 'caller', machineId: 'm-0000000a' };
+    const live: Session = { ...s, agentId: COMMAND_AGENT_ID, openedBy: remoteOpener };
+    const [x] = sessionsOf(serializeSessions([live]));
+    expect(x.openedBy).toEqual(remoteOpener);
+    const [y] = sessionsOf(v1([{ ...s, agentId: COMMAND_AGENT_ID, openedBy: remoteOpener }]));
+    expect(y.openedBy).toEqual(remoteOpener);
+  });
+
   it('drops malformed ones without dropping the entry', () => {
     const r = parseSessions(
       v1([

@@ -1,6 +1,7 @@
 // see POL §4.1
 import * as path from 'node:path';
 import { isSshTarget } from '../network/ssh-argv';
+import type { SessionOpener } from '../types';
 import type { PolicyTarget } from './policy-types';
 import type { ToolName } from './tool-policy';
 import { HUMAN_HANDLE } from './types';
@@ -93,6 +94,17 @@ function fileTargets(
     }
   }
   return out;
+}
+
+/**
+ * A remote principal reaches a session only when it opened it (reach `opened`). A remote lead's
+ * handle is only unique on its own machine, so the machine must match too.
+ */
+export function openedByRemote(
+  opener: SessionOpener | null | undefined,
+  principal: { handle: string; machineId: string },
+): boolean {
+  return opener?.machineId === principal.machineId && opener.handle === principal.handle;
 }
 
 /**

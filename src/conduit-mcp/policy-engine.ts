@@ -80,6 +80,12 @@ const OWN_PEER_ASSIGNMENT: Assignment = {
   onScreenOnly: false,
 };
 const DEFAULT_ASSIGNMENT: Assignment = { profileId: 'worker', exceptions: [], onScreenOnly: false };
+// see docs/plans/2026-11-16-remote-ssh-routed-tools.plan.md, decision 2: the controller is the lead
+const CONTROLLER_ASSIGNMENT: Assignment = {
+  profileId: 'lead',
+  exceptions: [],
+  onScreenOnly: false,
+};
 const ALLOW: Decision = 'allow';
 const FLOOR_TEXT: Record<FloorId, string> = {
   'master-off': 'Conduit tools are off',
@@ -97,9 +103,10 @@ function resolveTargets(targets: readonly PolicyTarget[], principal: Principal):
 export const samePath = (a: string | null, b: string | null): boolean =>
   a === null || b === null ? a === b : folderKey(a) === folderKey(b);
 
+// see NET §4.1 (R21): orchestrate is never a capability a TLS peer holds, only the ssh controller
 function remoteAllows(principal: Extract<Principal, { kind: 'remote' }>, tool: ToolName): boolean {
   const cap = CAPABILITY_OF[tool];
-  return cap !== 'orchestrate' && principal.capabilities[cap];
+  return cap === 'orchestrate' ? principal.controller : principal.capabilities[cap];
 }
 
 function forPrincipal(principal: Principal, rule: ToolRule): ToolRule {
@@ -160,7 +167,9 @@ export function assignmentFor(
   if (state.failClosed) return { point: { kind: 'default' }, assignment: OBSERVER_ASSIGNMENT };
   if (p.kind === 'remote') {
     const point: AssignmentPoint = { kind: 'peer', machineId: p.machineId };
-    return { point, assignment: state.assignments.get(pointKey(point)) ?? OWN_PEER_ASSIGNMENT };
+    const stored = state.assignments.get(pointKey(point));
+    if (stored) return { point, assignment: stored };
+    return { point, assignment: p.controller ? CONTROLLER_ASSIGNMENT : OWN_PEER_ASSIGNMENT };
   }
   const candidates: AssignmentPoint[] = [{ kind: 'session', sessionId: p.sessionId }];
   if (p.launchedCli !== null) candidates.push({ kind: 'cli', cli: p.launchedCli });

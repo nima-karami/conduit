@@ -78,7 +78,8 @@ export function coerceSessionCommand(v: unknown): SessionCommand | undefined {
 
 export function coerceOpenedBy(v: unknown): SessionOpener | undefined {
   if (!isRecord(v)) return undefined;
-  const { handle, sessionId } = v;
+  const { handle, sessionId, machineId } = v;
   if (typeof handle !== 'string' || typeof sessionId !== 'string') return undefined;
-  return { handle, sessionId };
+  // A remote opener's machine is what makes its handle unique; dropping it would make it local.
+  return typeof machineId === 'string' ? { handle, sessionId, machineId } : { handle, sessionId };
 }

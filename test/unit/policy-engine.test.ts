@@ -40,11 +40,12 @@ const session = (over: Partial<Extract<Principal, { kind: 'session' }>> = {}): P
   projectId: 'p1',
   ...over,
 });
-const remote = (capabilities: Capabilities = ALL_CAPS): Principal => ({
+const remote = (capabilities: Capabilities = ALL_CAPS, controller = false): Principal => ({
   kind: 'remote',
   handle: 'claude-3',
   machineId: 'm-0000000a',
   trust: 'own',
+  controller,
   capabilities,
 });
 const target = (over: Partial<PolicyTarget> = {}): PolicyTarget => ({
@@ -587,6 +588,7 @@ describe('decide', () => {
         handle: 'claude-3',
         machineId: 'm-0000000a',
         trust: 'own',
+        controller: false,
       }),
     ).toBe('claude-3@m-0000000a');
   });
@@ -1277,5 +1279,62 @@ describe('a remote peer reaches the machine tools only through its capability (N
     );
     expect(withoutMonitor.decision).toBe('deny');
     expect(withoutMonitor.reason).toEqual({ by: 'floor', floor: 'remote-capability' });
+  });
+});
+
+// see docs/plans/2026-11-16-remote-ssh-routed-tools.plan.md, decision 2
+describe('an ssh controller is a Lead remote principal (CON-40 G2)', () => {
+  const controller = (capabilities: Capabilities = ALL_CAPS): Principal =>
+    remote(capabilities, true);
+  const ROUTED = [
+    'open_session',
+    'send_input',
+    'read_screen',
+    'close_session',
+    'list_agents',
+  ] as const;
+
+  it('a controller peer with no stored assignment is Lead: the routed tools are allowed', () => {
+    const s = state({});
+    for (const tool of ROUTED) {
+      const d = decide(s, input({ principal: controller(), tool }));
+      expect(d.decision, tool).toBe('allow');
+      expect(d.reason, tool).toEqual({
+        by: 'profile',
+        point: { kind: 'peer', machineId: 'm-0000000a' },
+        profileId: 'lead',
+      });
+    }
+  });
+
+  it('a TLS peer (controller false) with no stored assignment is still denied orchestrate', () => {
+    const s = state({});
+    for (const tool of ROUTED.filter((t) => t !== 'list_agents')) {
+      const d = decide(s, input({ principal: remote(), tool }));
+      expect(d.decision, tool).toBe('deny');
+      expect(d.reason, tool).toEqual({ by: 'floor', floor: 'remote-capability' });
+    }
+  });
+
+  it('a controller with a stored stricter assignment (Observer) is denied', () => {
+    const s = state({ 'peer:m-0000000a': assignment('observer') });
+    const d = decide(s, input({ principal: controller(), tool: 'open_session' }));
+    expect(d.decision).toBe('deny');
+    expect(d.reason).toEqual({
+      by: 'profile',
+      point: { kind: 'peer', machineId: 'm-0000000a' },
+      profileId: 'observer',
+    });
+  });
+
+  it('visibleTools agrees with decide for a controller and for a TLS peer', () => {
+    for (const principal of [controller(), remote()]) {
+      const s = state({});
+      const visible = visibleTools(s, principal, NOW);
+      for (const tool of TOOL_NAMES) {
+        const denied = decide(s, input({ principal, tool })).decision === 'deny';
+        expect(visible.includes(tool), `${principal.kind} ${tool}`).toBe(!denied);
+      }
+    }
   });
 });

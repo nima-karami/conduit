@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   forcesAsk,
+  openedByRemote,
   resolveTargets,
   type TargetCaller,
   type TargetDeps,
@@ -151,5 +152,32 @@ describe('forcesAsk: a machine never added always asks (spec 4.6, RS-D6)', () =>
   it('a missing or empty machine argument does not ask', () => {
     expect(forcesAsk('connect_machine', {}, known())).toBe(false);
     expect(forcesAsk('connect_machine', { machine: '' }, known())).toBe(false);
+  });
+});
+
+describe('openedByRemote: a remote principal reaches only the sessions it opened', () => {
+  const lead = { kind: 'remote' as const, handle: 'claude-3', machineId: 'm-0000000a' };
+
+  it('matches an opener with the same machine and handle', () => {
+    expect(
+      openedByRemote({ handle: 'claude-3', sessionId: 'x', machineId: 'm-0000000a' }, lead),
+    ).toBe(true);
+  });
+
+  it('refuses an opener from a different machine with the same handle', () => {
+    expect(
+      openedByRemote({ handle: 'claude-3', sessionId: 'x', machineId: 'm-0000000b' }, lead),
+    ).toBe(false);
+  });
+
+  it('refuses an opener with the same machine and a different handle', () => {
+    expect(
+      openedByRemote({ handle: 'claude-4', sessionId: 'x', machineId: 'm-0000000a' }, lead),
+    ).toBe(false);
+  });
+
+  it('refuses a local opener, and no opener at all', () => {
+    expect(openedByRemote({ handle: 'claude-3', sessionId: 'x' }, lead)).toBe(false);
+    expect(openedByRemote(undefined, lead)).toBe(false);
   });
 });
