@@ -237,6 +237,12 @@ describe('classifySshFailure', () => {
     ['bridge no_secret', 3, 'conduit-bridge: no_secret', { code: 'bridge_no_secret' }],
     ['bridge refused', 3, 'conduit-bridge: refused', { code: 'bridge_refused' }],
     [
+      'bridge untrusted endpoint',
+      3,
+      'conduit-bridge: untrusted_endpoint',
+      { code: 'bridge_untrusted_endpoint' },
+    ],
+    [
       'host key changed',
       255,
       'WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!',

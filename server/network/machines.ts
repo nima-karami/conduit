@@ -128,6 +128,7 @@ function machineErrorOf(e: BootstrapFailure): MachineError {
     case 'bridge_no_server':
     case 'bridge_no_secret':
     case 'bridge_refused':
+    case 'bridge_untrusted_endpoint':
       return { code: 'ssh_unreachable', detail: { detail: e.code } };
     case 'remote_unsupported':
       return { code: 'remote_unsupported', detail: { os: e.os, arch: e.arch } };

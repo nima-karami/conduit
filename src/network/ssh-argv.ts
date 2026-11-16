@@ -182,6 +182,7 @@ const BRIDGE_RULES: [RegExp, SshFailure][] = [
   [/conduit-bridge:\s*no_server/i, { code: 'bridge_no_server' }],
   [/conduit-bridge:\s*no_secret/i, { code: 'bridge_no_secret' }],
   [/conduit-bridge:\s*refused/i, { code: 'bridge_refused' }],
+  [/conduit-bridge:\s*untrusted_endpoint/i, { code: 'bridge_untrusted_endpoint' }],
 ];
 
 const UNREACHABLE =

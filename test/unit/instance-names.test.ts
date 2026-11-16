@@ -52,11 +52,19 @@ describe('instanceNames', () => {
     expect(names.serverEndpoint).toBe(`/tmp/conduit-server-${names.instance}.sock`);
   });
 
-  it('moves an overlong UTF-8 POSIX link endpoint into tmpdir, beside the server socket', () => {
+  it('moves an overlong UTF-8 POSIX link endpoint into a private per-user dir in tmpdir', () => {
     const userData = '\u00e9'.repeat(45);
     const names = instanceNames(userData, 'posix', '/tmp', posixOptions);
 
-    expect(names.linkEndpoint).toBe(`/tmp/conduit-link-${names.instance}.sock`);
+    expect(names.linkSocketDir).toBe('/tmp/conduit-link-1000');
+    expect(names.linkEndpoint).toBe(`/tmp/conduit-link-1000/conduit-link-${names.instance}.sock`);
+  });
+
+  it('keeps a profile link endpoint in userData with no private dir to create', () => {
+    const names = instanceNames('abc', 'posix', '/tmp', posixOptions);
+
+    expect(names.linkEndpoint).toBe('abc/conduit-link.sock');
+    expect(names.linkSocketDir).toBeUndefined();
   });
 });
 

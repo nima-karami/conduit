@@ -29,6 +29,7 @@ import { createRemoteDirectory } from '../../src/network/remote-directory';
 import { selfSignedCert } from '../../src/network/self-signed-cert';
 import { controlDir } from '../../src/network/ssh-argv';
 import { parseSshConfigHosts } from '../../src/network/ssh-config-hosts';
+import { ensurePrivateSocketDirectory } from '../../src/private-socket-directory';
 import type { SessionCommand } from '../../src/types';
 import { currentWindowsPty } from '../../src/windows-pty-info';
 import {
@@ -92,6 +93,8 @@ export interface NetworkDeps {
   instance: string;
   /** The stdio link endpoint the ssh bridge connects to; the server's names.linkEndpoint. */
   linkEndpoint: string;
+  /** Set when linkEndpoint is a tmpdir fallback: its private dir, created 0700 before the listen. */
+  linkSocketDir?: string;
   /** The per-start secret a bridge's preamble must carry; read at each preamble, never per connection. */
   secret: () => string;
   /** e2e only: the leading argv of the ssh stand-in (readE2eSshArgsPrefix). Absent in production. */
@@ -136,6 +139,11 @@ export interface NetworkDeps {
 }
 
 /** ~/.ssh/config as text; a missing file is null, any other read error is the caller's to see. */
+// Only a tmpdir fallback has a directory of its own to create; the primary sits in userData.
+async function prepareLinkDirectory(dir: string | undefined): Promise<void> {
+  if (dir !== undefined) ensurePrivateSocketDirectory(dir, 'link socket directory');
+}
+
 function readUserSshConfig(): string | null {
   try {
     return fs.readFileSync(path.join(os.homedir(), '.ssh', 'config'), 'utf8');
@@ -805,17 +813,21 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
         });
       }
       // Not fatal: C2 and TLS links still work without the ssh bridge's endpoint.
-      stdioLink = await listenStdioLink({
-        endpoint: deps.linkEndpoint,
-        platform: process.platform,
-        secret: deps.secret,
-        accept: (stream) => manager.acceptStream(stream),
-        audit,
-        log: deps.log,
-      }).catch((err: Error) => {
-        deps.log.error('stdio link endpoint did not start', { message: err.message });
-        return null;
-      });
+      stdioLink = await prepareLinkDirectory(deps.linkSocketDir)
+        .then(() =>
+          listenStdioLink({
+            endpoint: deps.linkEndpoint,
+            platform: process.platform,
+            secret: deps.secret,
+            accept: (stream) => manager.acceptStream(stream),
+            audit,
+            log: deps.log,
+          }),
+        )
+        .catch((err: Error) => {
+          deps.log.error('stdio link endpoint did not start', { message: err.message });
+          return null;
+        });
       if (stdioLink) {
         try {
           writeLinkEndpoint(deps.userData, deps.linkEndpoint);

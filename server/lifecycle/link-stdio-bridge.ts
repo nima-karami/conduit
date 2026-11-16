@@ -1,3 +1,4 @@
+import { lstatSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import type { Duplex, Readable, Writable } from 'node:stream';
 import {
@@ -24,6 +25,17 @@ export interface LinkStdioBridgeOptions {
   stderr: Writable;
   /** Test seam: the default connects to the link endpoint. */
   connect?: (endpoint: string) => Duplex;
+  /** Test seams for the ownership check: our uid and the endpoint's lstat, injectable without root. */
+  uid?: number;
+  lstat?: (path: string) => EndpointStat;
+  platform?: NodeJS.Platform;
+}
+
+/** The fields of an lstat the ownership check reads. */
+export interface EndpointStat {
+  uid: number;
+  isSocket(): boolean;
+  isSymbolicLink(): boolean;
 }
 
 export function runLinkStdioBridge(o: LinkStdioBridgeOptions): Promise<number> {
@@ -33,6 +45,10 @@ export function runLinkStdioBridge(o: LinkStdioBridgeOptions): Promise<number> {
 
   const endpoint = readLinkEndpoint(o.userData);
   if (!endpoint) return failed(o, 'no_server');
+  // Checked before connecting: the secret must never reach a socket another user could have made.
+  const owned = endpointOwnership(o, endpoint);
+  if (owned === 'missing') return failed(o, 'no_server');
+  if (owned === 'untrusted') return failed(o, 'untrusted_endpoint');
   // By path, never by host and port: a record that reads as a number must not dial TCP.
   const sock = (o.connect ?? ((path: string) => createConnection({ path })))(endpoint);
   const preamble: BridgePreamble = { t: 'bridge', v: 1, secret };
@@ -90,6 +106,25 @@ export function runLinkStdioBridge(o: LinkStdioBridgeOptions): Promise<number> {
     sock.once('end', onEnd);
     sock.once('close', onEnd);
   });
+}
+
+/**
+ * A named pipe has no inode to inspect, so Windows keeps the path it always took. On posix the
+ * endpoint must be a socket that is not a symlink and belongs to this user.
+ */
+function endpointOwnership(
+  o: LinkStdioBridgeOptions,
+  endpoint: string,
+): 'owned' | 'missing' | 'untrusted' {
+  if ((o.platform ?? process.platform) === 'win32') return 'owned';
+  let stat: EndpointStat;
+  try {
+    stat = (o.lstat ?? lstatSync)(endpoint);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'untrusted';
+  }
+  const uid = o.uid ?? process.getuid?.();
+  return stat.isSocket() && !stat.isSymbolicLink() && stat.uid === uid ? 'owned' : 'untrusted';
 }
 
 function failed(o: LinkStdioBridgeOptions, code: BridgeFailureCode): Promise<number> {

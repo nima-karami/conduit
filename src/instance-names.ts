@@ -1,10 +1,10 @@
-import { chmodSync, lstatSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, posix, win32 } from 'node:path';
 import { endpointPath } from './conduit-mcp/endpoint-path';
 import type { InstanceNames } from './contracts/session-identity';
 import { resolveHcEndpoint } from './hc-client/endpoint';
 import { instanceDigest } from './instance-digest';
+import { ensurePrivateSocketDirectory, type SocketDirectoryIo } from './private-socket-directory';
 
 export { coreStartEnv } from './contracts/session-identity';
 
@@ -32,6 +32,7 @@ export function instanceNames(
   const path = platform === 'win32' ? win32 : posix;
   const profileServerEndpoint = path.join(userData, 'conduit-server.sock');
 
+  const linkEndpoint = linkEndpointOf(userData, platform, tmpdir, options);
   const names: InstanceNames = {
     instance,
     serverEndpoint:
@@ -40,7 +41,7 @@ export function instanceNames(
         : !fitsSocket(profileServerEndpoint, MAX_SOCKET_PATH_BYTES)
           ? posix.join(tmpdir, `conduit-server-${instance}.sock`)
           : profileServerEndpoint,
-    linkEndpoint: linkEndpointOf(userData, platform, tmpdir),
+    linkEndpoint: linkEndpoint.endpoint,
     mcpEndpoint: endpointPath(userData, platform === 'win32' ? 'win32' : 'posix', tmpdir),
     supervisorName: `conduit-server-${instance}`,
     hcSession: `conduit-${instance}`,
@@ -48,6 +49,7 @@ export function instanceNames(
     hcConfigHome: path.join(userData, 'hc', 'config'),
     hcStateHome: path.join(userData, 'hc', 'state'),
   };
+  if (linkEndpoint.dir !== undefined) names.linkSocketDir = linkEndpoint.dir;
   if (platform === 'win32') return names;
   try {
     const socket = selectHcSocket(names, platform, tmpdir, options);
@@ -61,19 +63,26 @@ export function instanceNames(
 
 /**
  * The stdio link endpoint: the bridge from sshd's stdio connects here. Pure, so the bridge (which
- * runs before any server state exists) derives the same name the server listens on.
+ * runs before any server state exists) derives the same name the server listens on. The tmpdir
+ * fallback sits in a per-uid directory, because a shared tmpdir lets another local user pre-create
+ * the socket name and receive the bridge's secret.
  */
 function linkEndpointOf(
   userData: string,
   platform: NodeJS.Platform | 'posix',
   tmpdir: string,
-): string {
+  options: InstanceOptions,
+): { endpoint: string; dir?: string } {
   const instance = instanceDigest(userData, platform === 'win32' ? 'win32' : 'posix');
-  if (platform === 'win32') return `\\\\.\\pipe\\conduit-link-${instance}`;
+  if (platform === 'win32') return { endpoint: `\\\\.\\pipe\\conduit-link-${instance}` };
   const profileLinkEndpoint = join(userData, 'conduit-link.sock');
-  return fitsSocket(profileLinkEndpoint, MAX_SOCKET_PATH_BYTES)
-    ? profileLinkEndpoint
-    : posix.join(tmpdir, `conduit-link-${instance}.sock`);
+  if (fitsSocket(profileLinkEndpoint, MAX_SOCKET_PATH_BYTES))
+    return { endpoint: profileLinkEndpoint };
+  const uid = options.uid ?? process.getuid?.();
+  if (uid === undefined || !Number.isSafeInteger(uid) || uid < 0)
+    throw new Error('Cannot choose a private link socket directory without a POSIX user id');
+  const dir = posix.join(tmpdir, `conduit-link-${uid}`);
+  return { endpoint: posix.join(dir, `conduit-link-${instance}.sock`), dir };
 }
 
 function selectHcSocket(
@@ -116,37 +125,14 @@ function selectHcSocket(
   return temporary;
 }
 
-interface SocketDirectoryIo {
-  mkdir(path: string, options: { recursive?: boolean; mode?: number }): unknown;
-  chmod(path: string, mode: number): void;
-  lstat(path: string): {
-    uid: number;
-    mode: number;
-    isDirectory(): boolean;
-    isSymbolicLink(): boolean;
-  };
-}
-
 export function ensureHcSocketDirectory(
   names: Pick<InstanceNames, 'hcSocket' | 'hcEndpointError'>,
-  io: SocketDirectoryIo = { mkdir: mkdirSync, lstat: lstatSync, chmod: chmodSync },
+  io?: SocketDirectoryIo,
   uid = process.getuid?.(),
 ): void {
   if (names.hcEndpointError) throw new Error(names.hcEndpointError);
   if (!names.hcSocket) return;
-  const directory = posix.dirname(names.hcSocket);
-  io.mkdir(posix.dirname(directory), { recursive: true });
-  try {
-    io.mkdir(directory, { mode: 0o700 });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-  }
-  const stat = io.lstat(directory);
-  if (stat.isSymbolicLink() || !stat.isDirectory() || stat.uid !== uid)
-    throw new Error(
-      `Unsafe hc socket directory ${directory}: must be owned by uid ${uid} and not a symlink`,
-    );
-  if ((stat.mode & 0o777) !== 0o700) io.chmod(directory, 0o700);
+  ensurePrivateSocketDirectory(posix.dirname(names.hcSocket), 'hc socket directory', io, uid);
 }
 
 /**
