@@ -7,12 +7,14 @@ import {
   type MonitorSession,
   type MonitorSnapshot,
   OWN_DEFAULT_CAPABILITIES,
+  POLICY_MIN_MINOR,
   parseLinkFrame,
   REQUEST_MIRROR_MIN_MINOR,
   type RequestMirror,
   ROUTED_TOOLS,
   type WireMessage,
 } from '../../src/contracts/link-protocol';
+import type { RemoteGrantView, RemotePolicyDoc } from '../../src/contracts/remote-policy';
 
 const CAPS = { messaging: true, monitor: true, drive: false };
 const SIZE = { cols: 120, rows: 40 };
@@ -91,6 +93,26 @@ const PERMISSION_MIRROR: RequestMirror = {
   permission: { tool: 'shell', why: 'run the tests', grantable: true },
 };
 
+const POLICY_DOC: RemotePolicyDoc = {
+  profiles: [],
+  assignments: [
+    {
+      point: { kind: 'default' },
+      assignment: { profileId: 'worker', exceptions: [], onScreenOnly: false },
+    },
+  ],
+};
+const GRANT_VIEW: RemoteGrantView = {
+  id: 'g-1',
+  tool: 'send_input',
+  who: 'claude-3@m-0a1b2c3d',
+  on: { kind: 'anywhere' },
+  for: '1h',
+  createdAt: '2026-11-16T10:00:00.000Z',
+  expiresAt: '2026-11-16T11:00:00.000Z',
+  lastUsedAt: null,
+};
+
 /** One valid sample per frame `t`; the mapped type fails to compile if a frame is missing. */
 const SAMPLES: { [K in LinkFrame['t']]: Extract<LinkFrame, { t: K }> } = {
   hello: {
@@ -161,6 +183,10 @@ const SAMPLES: { [K in LinkFrame['t']]: Extract<LinkFrame, { t: K }> } = {
   'fs.watch': { t: 'fs.watch', watchId: 'w-1', sessionId: 's-1', path: '/home/u/work' },
   'fs.unwatch': { t: 'fs.unwatch', watchId: 'w-1' },
   'fs.changed': { t: 'fs.changed', watchId: 'w-1', paths: ['/home/u/work/a.txt'] },
+  'policy.changed': { t: 'policy.changed', rev: 3, doc: POLICY_DOC, grants: [GRANT_VIEW] },
+  'policy.push': { t: 'policy.push', id: 'p-1', baseRev: 3, doc: POLICY_DOC },
+  'policy.pushed': { t: 'policy.pushed', id: 'p-1', ok: true, rev: 4 },
+  'policy.revoke': { t: 'policy.revoke', id: 'p-2', grantId: 'g-1' },
 };
 
 const FRAME_TYPES = Object.keys(SAMPLES) as LinkFrame['t'][];
@@ -363,7 +389,7 @@ describe('call and call.result frames (protocol 1.2)', () => {
   });
 
   it('exposes the minor version and the six routed tools', () => {
-    expect(LINK_PROTOCOL).toEqual({ major: 1, minor: 4 });
+    expect(LINK_PROTOCOL).toEqual({ major: 1, minor: 5 });
     expect([...ROUTED_TOOLS]).toEqual([
       'list_agents',
       'open_session',
@@ -658,7 +684,7 @@ describe('request.mirror, request.answer and request.answered frames (protocol 1
 
 describe('fs frames (protocol 1.4)', () => {
   it('serves files from the current minor', () => {
-    expect(FS_MIN_MINOR).toBe(LINK_PROTOCOL.minor);
+    expect(FS_MIN_MINOR).toBe(4);
   });
   it('refuses an fs.req with an unknown op, a control character in the path, or an extra key', () => {
     const ok = { t: 'fs.req', id: 'f-1', op: 'read', sessionId: 's-1', path: '/w/a.txt' };
@@ -709,5 +735,105 @@ describe('fs frames (protocol 1.4)', () => {
     expect(
       parseLinkFrame({ t: 'fs.changed', watchId: 'w-1', paths: paths.slice(1) }),
     ).not.toBeNull();
+  });
+});
+
+describe('policy frames (protocol 1.5)', () => {
+  const PUSH = SAMPLES['policy.push'];
+  const CHANGED = SAMPLES['policy.changed'];
+  const PUSHED_ERROR = {
+    t: 'policy.pushed',
+    id: 'p-1',
+    ok: false,
+    error: { code: 'policy_conflict', message: 'the remote moved on', retryable: true },
+  } as const;
+
+  it('exposes minor 5 and the lowest minor that serves the policy frames', () => {
+    expect(POLICY_MIN_MINOR).toBe(5);
+    expect(LINK_PROTOCOL.minor).toBe(POLICY_MIN_MINOR);
+  });
+
+  it('round-trips a failed push with a hint and the current remote doc', () => {
+    const frame = {
+      ...PUSHED_ERROR,
+      error: { ...PUSHED_ERROR.error, hint: 're-apply on top' },
+      current: { rev: 5, doc: POLICY_DOC },
+    };
+    expect(parseLinkFrame(structuredClone(frame))).toEqual(frame);
+    expect(parseLinkFrame(structuredClone(PUSHED_ERROR))).toEqual(PUSHED_ERROR);
+  });
+
+  it('rejects a pushed ok=true that carries an error, and an ok=false one without', () => {
+    expect(parseLinkFrame({ ...SAMPLES['policy.pushed'], error: PUSHED_ERROR.error })).toBeNull();
+    expect(parseLinkFrame({ t: 'policy.pushed', id: 'p-1', ok: false })).toBeNull();
+  });
+
+  it('rejects a pushed ok=false with a current whose rev is not a non-negative integer', () => {
+    for (const rev of [-1, 2.5, '5']) {
+      expect(
+        parseLinkFrame({ ...PUSHED_ERROR, current: { rev, doc: POLICY_DOC } }),
+        String(rev),
+      ).toBeNull();
+    }
+  });
+
+  it('rejects a changed or push frame whose rev or baseRev is negative or fractional', () => {
+    for (const rev of [-1, 1.5, '3', null]) {
+      expect(parseLinkFrame({ ...CHANGED, rev }), `changed ${String(rev)}`).toBeNull();
+      expect(parseLinkFrame({ ...PUSH, baseRev: rev }), `push ${String(rev)}`).toBeNull();
+    }
+    expect(parseLinkFrame({ ...CHANGED, rev: 0 })).not.toBeNull();
+  });
+
+  it('rejects a doc that is not an object with profiles and assignments arrays', () => {
+    const docs = [
+      null,
+      [],
+      'doc',
+      { profiles: [] },
+      { assignments: [] },
+      { profiles: {}, assignments: [] },
+    ];
+    for (const doc of docs) {
+      expect(parseLinkFrame({ ...PUSH, doc }), JSON.stringify(doc)).toBeNull();
+      expect(parseLinkFrame({ ...CHANGED, doc }), JSON.stringify(doc)).toBeNull();
+    }
+  });
+
+  it('rejects a grant view that is not an object with a bounded printable string id', () => {
+    for (const grant of [
+      null,
+      'g-1',
+      { tool: 'shell' },
+      { id: 7 },
+      { id: '' },
+      { id: 'g\u0007' },
+      { id: 'g'.repeat(65) },
+    ]) {
+      expect(parseLinkFrame({ ...CHANGED, grants: [grant] }), JSON.stringify(grant)).toBeNull();
+    }
+    expect(parseLinkFrame({ ...CHANGED, grants: [{ id: 'g'.repeat(64) }] })).not.toBeNull();
+    expect(parseLinkFrame({ ...CHANGED, grants: {} })).toBeNull();
+  });
+
+  it('rejects an empty, over-long or control-character id on push, pushed and revoke', () => {
+    const bad = ['', 'p\u0007', 'p'.repeat(65)];
+    for (const id of bad) {
+      expect(parseLinkFrame({ ...PUSH, id }), `push ${JSON.stringify(id)}`).toBeNull();
+      expect(
+        parseLinkFrame({ ...SAMPLES['policy.pushed'], id }),
+        `pushed ${JSON.stringify(id)}`,
+      ).toBeNull();
+      expect(
+        parseLinkFrame({ ...SAMPLES['policy.revoke'], id }),
+        `revoke ${JSON.stringify(id)}`,
+      ).toBeNull();
+    }
+    expect(parseLinkFrame({ ...SAMPLES['policy.revoke'], grantId: 'g\u0007' })).toBeNull();
+  });
+
+  it('rejects a pushed ok that is not a boolean, and a revoke with an extra key', () => {
+    expect(parseLinkFrame({ ...SAMPLES['policy.pushed'], ok: 'yes' })).toBeNull();
+    expect(parseLinkFrame({ ...SAMPLES['policy.revoke'], extra: true })).toBeNull();
   });
 });
