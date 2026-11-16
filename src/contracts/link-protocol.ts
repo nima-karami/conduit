@@ -6,9 +6,28 @@ export type { Capabilities, Capability } from './remote-principal';
 
 // see docs/specs/2026-11-14-conduit-network.md — wire version; a major mismatch is `incompatible`
 // minor 1 added the hello's platform and version (spec 5.3): a peer at minor 0 omits them.
-export const LINK_PROTOCOL = { major: 1, minor: 1 } as const;
+// minor 2 added the routed `call` / `call.result` frames (spec 5.3, CON-40).
+export const LINK_PROTOCOL = { major: 1, minor: 2 } as const;
 export const LINK_FEATURES = ['messaging', 'monitor', 'drive', 'view'] as const;
 export type LinkFeature = (typeof LINK_FEATURES)[number];
+// The session tools a lead may route to a peer; anything else in a `call` is a malformed frame.
+export const ROUTED_TOOLS = [
+  'list_agents',
+  'open_session',
+  'open_terminal',
+  'send_input',
+  'read_screen',
+  'close_session',
+] as const;
+export type RoutedTool = (typeof ROUTED_TOOLS)[number];
+// The argument blob is re-serialized into a tool call on the far side; the cap keeps one frame
+// from crowding the link. Result size is bounded by the frame limit instead.
+const CALL_ARGS_MAX_BYTES = 64 * 1024;
+const CALL_ID_MAX = 64;
+const HANDLE_MAX = 64;
+const ERROR_CODE_MAX = 64;
+const ERROR_MESSAGE_MAX = 1024;
+const ERROR_HINT_MAX = 512;
 export const LINK_FRAME_MAX_BYTES = 16 * 1024 * 1024;
 export const LINK_PING_MS = 5_000;
 export const LINK_DEGRADED_MS = 10_000;
@@ -107,6 +126,21 @@ export type LinkFrame =
       ok: boolean;
       sessionId: string | null;
       error: string | null;
+    }
+  /** Forwarded by the lead's machine; `principal.handle` is the only identity on the wire. */
+  | {
+      t: 'call';
+      id: string;
+      tool: RoutedTool;
+      args: Record<string, unknown>;
+      principal: { handle: string };
+    }
+  | { t: 'call.result'; id: string; ok: true; result: Record<string, unknown> }
+  | {
+      t: 'call.result';
+      id: string;
+      ok: false;
+      error: { code: string; message: string; retryable: boolean; hint?: string };
     };
 
 export interface WireMessage {
@@ -305,6 +339,21 @@ export function parseLinkFrame(raw: unknown): LinkFrame | null {
       )
         ? raw
         : null;
+    case 'call':
+      return frame(
+        raw,
+        'call',
+        ['id', 'tool', 'args', 'principal'],
+        (r) =>
+          isCallId(r.id) &&
+          oneOf(r.tool, ROUTED_TOOLS) &&
+          isCallArgs(r.args) &&
+          isCallPrincipal(r.principal),
+      )
+        ? raw
+        : null;
+    case 'call.result':
+      return parseCallResult(raw);
     default:
       return null;
   }
@@ -552,5 +601,39 @@ function isSnapshot(v: unknown): boolean {
     num(v.youUnread) &&
     oneOf(v.ownerPresence, ['here', 'away'] as const) &&
     arrayOf(v.agents, (x) => hasKeys(x, ['id', 'label']) && str(x.id) && str(x.label))
+  );
+}
+
+// Control characters are refused: these strings reach the other machine's UI and its logs.
+const PRINTABLE = /^[^\p{Cc}]*$/u;
+const isPrintableCapped = (v: unknown, max: number): boolean =>
+  str(v) && v.length >= 1 && v.length <= max && PRINTABLE.test(v);
+
+const isCallId = (v: unknown): boolean => isPrintableCapped(v, CALL_ID_MAX);
+
+function isCallArgs(v: unknown): boolean {
+  return isRec(v) && new TextEncoder().encode(JSON.stringify(v)).byteLength <= CALL_ARGS_MAX_BYTES;
+}
+
+/** The principal on the wire is a handle only; the machine id is always the link's own. */
+function isCallPrincipal(v: unknown): boolean {
+  return hasKeys(v, ['handle']) && isPrintableCapped(v.handle, HANDLE_MAX);
+}
+
+/** `ok` picks the variant; each variant has exactly its own field, so the other is an extra key. */
+function parseCallResult(r: Rec): LinkFrame | null {
+  if (!isCallId(r.id) || !bool(r.ok)) return null;
+  if (r.ok)
+    return frame(r, 'call.result', ['id', 'ok', 'result'], (x) => isRec(x.result)) ? r : null;
+  return frame(r, 'call.result', ['id', 'ok', 'error'], (x) => isRoutedError(x.error)) ? r : null;
+}
+
+function isRoutedError(v: unknown): boolean {
+  return (
+    hasKeys(v, ['code', 'message', 'retryable'], ['hint']) &&
+    isPrintableCapped(v.code, ERROR_CODE_MAX) &&
+    isPrintableCapped(v.message, ERROR_MESSAGE_MAX) &&
+    bool(v.retryable) &&
+    (v.hint === undefined || isPrintableCapped(v.hint, ERROR_HINT_MAX))
   );
 }
