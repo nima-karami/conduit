@@ -65,6 +65,7 @@ function server(name: string, endpointIn?: (root: string) => string, opts: Serve
     identity: loaded.identity,
     settings: () => ({ networkBindHost: '127.0.0.1', networkPort: 0, networkSelfName: name }),
     readSshConfig: opts.sshConfig ?? (() => null),
+    sessionRoots: () => null,
     emit: (s) => states.push(s),
     log: { ...quiet, info: () => undefined },
     observe: opts.observe ?? (async () => null),
