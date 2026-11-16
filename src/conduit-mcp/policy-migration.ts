@@ -6,7 +6,7 @@ import {
   effectiveRule,
   WORKER_PROFILE,
 } from './policy-profiles';
-import { legacyPolicyOf } from './policy-projection';
+import { legacyPolicyOf, pinKey, withPinned } from './policy-projection';
 import type { Assignment, Exception, Profile, ToolRule } from './policy-types';
 import {
   CLI_KINDS,
@@ -16,6 +16,7 @@ import {
   type PolicyLayer,
   resolvePolicy,
   TOOL_NAMES,
+  TOOL_SPECS,
   type ToolName,
   type ToolPolicy,
 } from './tool-policy';
@@ -44,12 +45,20 @@ const hasFields = (layer: PolicyLayer): boolean =>
 const isPlainWorker = (a: Assignment): boolean =>
   a.profileId === 'worker' && a.exceptions.length === 0 && !a.onScreenOnly;
 
-function assignmentFor(today: TodayOf): Assignment {
+// Every field the v0.64 session layer set is an explicit choice, even one equal to the global value.
+const pinsOf = (layer: PolicyLayer): string[] =>
+  TOOL_NAMES.flatMap((tool) =>
+    TOOL_SPECS[tool].fields
+      .filter((field) => layer[tool]?.[field] !== undefined)
+      .map((field) => pinKey(tool, field)),
+  );
+
+function assignmentFor(today: TodayOf, pins: readonly string[] = []): Assignment {
   const lead: Assignment = { profileId: 'lead', exceptions: [], onScreenOnly: true };
   const leadMatches = TOOL_NAMES.every((tool) =>
     sameLegacy(legacyPolicyOf(effectiveRule(LEAD_PROFILE, lead, tool, null), tool), today(tool)),
   );
-  if (leadMatches) return lead;
+  if (leadMatches) return withPinned(lead, pins);
 
   const exceptions: Exception[] = [];
   for (const tool of TOOL_NAMES) {
@@ -62,7 +71,7 @@ function assignmentFor(today: TodayOf): Assignment {
     if (want.move !== worker.move && want.move !== undefined) rule.move = want.move;
     if (Object.keys(rule).length > 0) exceptions.push({ tool, scope: { kind: 'anywhere' }, rule });
   }
-  return { profileId: 'worker', exceptions, onScreenOnly: false };
+  return withPinned({ profileId: 'worker', exceptions, onScreenOnly: false }, pins);
 }
 
 export function migrateLegacyPolicy(
@@ -90,6 +99,7 @@ export function migrateLegacyPolicy(
     const cliLayer = s.cli === null ? undefined : byCli[s.cli];
     const assignment = assignmentFor(
       (tool) => resolvePolicy(tool, { session: s.layer, cli: cliLayer, global }).policy,
+      pinsOf(s.layer),
     );
     assignments.push({ point: { kind: 'session', sessionId: s.sessionId }, assignment });
     if (assignment.profileId === 'lead') onScreenOnlyOffered.push(s.sessionId);

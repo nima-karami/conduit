@@ -532,6 +532,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
           profileId,
           exceptions: existing?.exceptions ?? [],
           onScreenOnly: existing?.onScreenOnly ?? false,
+          ...(existing?.pinned === undefined ? {} : { pinned: existing.pinned }),
         });
       }
       deps.onChanged();

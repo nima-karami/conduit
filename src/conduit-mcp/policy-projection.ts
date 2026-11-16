@@ -79,7 +79,19 @@ const copyAssignment = (a: Assignment): Assignment => ({
   profileId: a.profileId,
   onScreenOnly: a.onScreenOnly,
   exceptions: a.exceptions.map(copyException),
+  ...(a.pinned === undefined ? {} : { pinned: a.pinned }),
 });
+
+export const pinKey = (tool: ToolName, field: PolicyField): string => `${tool}.${field}`;
+
+// Keeps `pinned` absent when empty, so an unpinned assignment stays byte-identical to before.
+export function withPinned(a: Assignment, keys: Iterable<string>): Assignment {
+  const sorted = [...new Set(keys)].sort();
+  const out: Assignment = { ...a };
+  delete out.pinned;
+  if (sorted.length > 0) out.pinned = sorted;
+  return out;
+}
 
 export function projectLegacyLayer(
   state: PolicyState,
@@ -184,7 +196,16 @@ export function applyLegacyPatch(
   if (patch.when !== undefined) next = applyField(state, lowerA, next, tool, 'when', patch.when);
   if (patch.reach !== undefined) next = applyField(state, lowerA, next, tool, 'reach', patch.reach);
   if (patch.move !== undefined) next = applyField(state, lowerA, next, tool, 'move', patch.move);
-  return next;
+  if (point.kind !== 'session') return next;
+  // A concrete value is an explicit choice; 'inherit' hands the field back to the lower point.
+  const pins = new Set(next.pinned ?? []);
+  for (const field of ['access', 'when', 'reach', 'move'] as const) {
+    const value = patch[field];
+    if (value === undefined || !TOOL_SPECS[tool].fields.includes(field)) continue;
+    if (value === 'inherit') pins.delete(pinKey(tool, field));
+    else pins.add(pinKey(tool, field));
+  }
+  return withPinned(next, pins);
 }
 
 // see POL-D5
@@ -285,6 +306,8 @@ export function propagateLegacyPatch(
         for (const field of changed) {
           if (legacyPolicyOf(ruleAt(state, current, tool), tool)[field] !== beforeV[field])
             continue;
+          // A pinned field is an explicit choice on the inheritor; a default edit does not reach it.
+          if (current.pinned?.includes(pinKey(tool, field))) continue;
           const wanted = afterV[field];
           if (wanted === undefined) continue;
           if (current.exceptions.some((e) => e.scope.kind !== 'anywhere')) return null;

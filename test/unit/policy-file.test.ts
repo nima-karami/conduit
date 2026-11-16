@@ -80,6 +80,24 @@ describe('policy file', () => {
     expect(parsePolicyFile(text)).toEqual({ ok: true, file });
   });
 
+  it('round-trips pinned on a session assignment, and rejects a non-string pin', () => {
+    const file = validFile();
+    file.assignments.push({
+      point: { kind: 'session', sessionId: 's1' },
+      assignment: {
+        profileId: 'worker',
+        exceptions: [],
+        onScreenOnly: false,
+        pinned: ['send_input.access'],
+      },
+    });
+    const text = serializePolicyFile(file);
+    expect(parsePolicyFile(text)).toEqual({ ok: true, file });
+    const raw: { assignments: Array<{ assignment: { pinned?: unknown } }> } = JSON.parse(text);
+    raw.assignments[raw.assignments.length - 1].assignment.pinned = [1];
+    expect(parsePolicyFile(JSON.stringify(raw))).toEqual({ ok: false, reason: 'corrupt' });
+  });
+
   it('corrupt → corrupt, version 2 → newer', () => {
     expect(parsePolicyFile('{not json')).toEqual({ ok: false, reason: 'corrupt' });
     expect(parsePolicyFile('[]')).toEqual({ ok: false, reason: 'corrupt' });

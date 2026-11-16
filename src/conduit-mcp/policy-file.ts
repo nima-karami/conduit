@@ -107,11 +107,13 @@ const isPartialRule = (v: unknown): v is Partial<ToolRule> =>
 const isException = (v: unknown): v is Exception =>
   isObj(v) && isToolName(v.tool) && isScope(v.scope) && isPartialRule(v.rule);
 
+// pinned is additive: an older build drops it, which only lets those sessions follow the default again.
 const isAssignment = (v: unknown): v is Assignment =>
   isObj(v) &&
   isProfileId(v.profileId) &&
   arrayOf(isException)(v.exceptions) &&
-  isBool(v.onScreenOnly);
+  isBool(v.onScreenOnly) &&
+  (v.pinned === undefined || arrayOf(isStr)(v.pinned));
 
 const isPoint = (v: unknown): v is AssignmentPoint =>
   isObj(v) &&

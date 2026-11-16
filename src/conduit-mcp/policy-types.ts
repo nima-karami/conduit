@@ -48,6 +48,8 @@ export interface Assignment {
   profileId: ProfileId;
   exceptions: Exception[];
   onScreenOnly: boolean;
+  /** Session points only: `${tool}.${field}` keys chosen explicitly. see plan second-pass rulings */
+  pinned?: readonly string[];
 }
 
 export type AssignmentPoint =
