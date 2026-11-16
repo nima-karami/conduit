@@ -303,9 +303,11 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
   const mirrorListeners = new Set<() => void>();
 
   const view = (r: VisibleRequestRecord): RequestView => {
+    // The record's `remote` names a peer that asked for a permission; a visible row never carries it.
+    const { remote: _asker, ...visible } = r;
     const until = waits.waitingUntil(r.id);
     return {
-      ...r,
+      ...visible,
       waiting: until !== null,
       waitingUntil: until === null ? null : new Date(until).toISOString(),
     };

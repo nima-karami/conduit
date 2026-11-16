@@ -214,6 +214,8 @@ export const MACHINES_STR = {
   /** A remote save refused because B's file changed since this editor loaded it. */
   remoteFileChanged: (machine: string) => `The file changed on ${machine}.`,
   remoteFileDeleted: (machine: string) => `The file was deleted on ${machine}.`,
+  /** Where an unsaved remote file is, in the close and quit dialogs. */
+  remoteFileWhere: (dir: string, machine: string) => `${dir} on ${machine}`,
   remoteConflictShowDiff: 'Show diff',
   remoteConflictHideDiff: 'Hide diff',
   /** Saves the edit over the version just reported, and only that version. */

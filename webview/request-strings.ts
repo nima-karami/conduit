@@ -14,6 +14,7 @@ export const REQ_STR = {
   conduit: 'Conduit',
   waiting: (secondsLeft: number) => `${mmss(secondsLeft)} waiting`,
   urgent: 'Urgent',
+  offline: (machine: string) => `${machine} offline`,
   expires: (timeLabel: string) => `Expires in ${timeLabel}`,
   tabLines: (n: number) => countNoun(n, 'line', 'lines'),
   inTerminal: 'in terminal',
@@ -133,6 +134,18 @@ export const REQ_STR = {
   },
   reqTpl: {
     close: 'Close',
+    permissionDeny: 'Deny',
+    permissionAllow: 'Allow',
+    permissionAlways: 'Always for this target',
+    sending: 'Sending…',
+    offlineHint: (machine: string) =>
+      `${machine}'s link is down, so this can't be answered until it is back.`,
+    refusal: {
+      alreadyEnded: 'This request already ended.',
+      peerUnreachable: (machine: string) => `${machine} isn't reachable. Your answer wasn't sent.`,
+      peerIncompatible: (machine: string) => `Update Conduit on ${machine} to answer here.`,
+      peerRevoked: (machine: string) => `${machine} was removed.`,
+    },
     answerLabel: 'Your answer',
     draftViews: 'Draft view',
     editedTab: 'Edited',

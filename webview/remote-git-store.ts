@@ -6,7 +6,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GitOp, GitReqArgs, GitResult } from '../src/contracts/link-protocol';
 import { folderKey } from '../src/folder-key';
 import type { RepoSnapshot } from '../src/protocol';
-import { joinPath } from './file-tree';
 import { requestHost } from './host-request';
 import { REMOTE_TIMEOUT, watchRemote } from './remote-files-store';
 import { type RemoteSessionRow, remoteFolders, remoteKeyId } from './remote-sessions';
@@ -146,7 +145,9 @@ export function useRemoteStatus(row: RemoteSessionRow): RemoteStatus {
     sections.push({ kind: 'repo', repo: { folder, root: a.root, snapshot: a.snapshot } });
   }
 
-  // Online: a change to a repo's `.git` asks for its folder once the burst has been quiet.
+  // Online: a change in a repo's top folder asks for its folder once the burst has been quiet.
+  // `.git` itself is never watched: B serves nothing under it (fs-deny), so the poll above is what
+  // sees a stage, commit or checkout (CON-35 security review M4).
   const repoSig = sections
     .flatMap((s) => (s.kind === 'repo' ? [`${s.repo.folder}\n${s.repo.root}`] : []))
     .join('\u0000');
@@ -154,8 +155,7 @@ export function useRemoteStatus(row: RemoteSessionRow): RemoteStatus {
     if (offline) return;
     const pendingTimers = timers.current;
     const releases = repoTargets(repoSig).map(({ folder, root }) => {
-      const gitDir = joinPath(root, '.git');
-      return watchRemote(`${rowKey}|git|${gitDir}`, machineId, sessionId, gitDir, () => {
+      return watchRemote(`${rowKey}|git|${root}`, machineId, sessionId, root, () => {
         const old = pendingTimers.get(folder);
         if (old !== undefined) clearTimeout(old);
         pendingTimers.set(

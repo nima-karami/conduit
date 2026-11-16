@@ -8563,10 +8563,15 @@ describe('createConduitMcpHost — remote requests (CON-42 A side)', () => {
     await h.host.start();
     feed(h, 1, [mirrorOf({ id: 'r1' })]);
     const row = h.host.uiState().requests.open.find((r) => r.id === `r1@${M}`);
-    expect(row).toMatchObject({ machine: M, origin: M, state: 'open', stale: false });
+    expect(row).toMatchObject({
+      machine: M,
+      origin: M,
+      state: 'open',
+      remote: { stale: false },
+    });
     h.host.networkPort().remoteRequests().setLinkState(M, 'down');
     expect(h.host.uiState().requests.open.find((r) => r.id === `r1@${M}`)).toMatchObject({
-      stale: true,
+      remote: { stale: true },
     });
   });
 

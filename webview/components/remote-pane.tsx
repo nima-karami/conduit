@@ -27,6 +27,8 @@ export interface RemotePaneProps {
   machineName: string;
   label: string;
   visible: boolean;
+  /** Asks about the session's unsaved file tabs first; false keeps the session open. */
+  confirmClose?(remote: RemoteKey): Promise<boolean>;
   onClosed(remote: RemoteKey): void;
 }
 
@@ -34,7 +36,14 @@ export interface RemotePaneProps {
  * A terminal attached to a session on another machine. Input is the remote's, so the pane has no
  * local PTY lifecycle: it attaches, paints, follows remote:data and remote:state, and detaches.
  */
-export function RemotePane({ remote, machineName, label, visible, onClosed }: RemotePaneProps) {
+export function RemotePane({
+  remote,
+  machineName,
+  label,
+  visible,
+  confirmClose,
+  onClosed,
+}: RemotePaneProps) {
   const { settings } = useSettings();
   // Read at attach time, so an attach never re-runs for a settings change.
   const settingsRef = useRef(settings);
@@ -233,7 +242,9 @@ export function RemotePane({ remote, machineName, label, visible, onClosed }: Re
     };
   }, [machineId, sessionId]);
 
-  const close = () => {
+  const close = async () => {
+    if (confirmClose && !(await confirmClose(remote))) return;
+    if (!mountedRef.current) return;
     setClosing(true);
     setCloseError(null);
     requestHost(
@@ -273,7 +284,12 @@ export function RemotePane({ remote, machineName, label, visible, onClosed }: Re
       <header className="remote-pane-head">
         <span className="remote-pane-title">{label}</span>
         <span className="machine-badge">{MACHINES_STR.badge(machineName)}</span>
-        <button type="button" className="btn btn--sm" disabled={closing} onClick={close}>
+        <button
+          type="button"
+          className="btn btn--sm"
+          disabled={closing}
+          onClick={() => void close()}
+        >
           {MACHINES_STR.closeSession}
         </button>
       </header>

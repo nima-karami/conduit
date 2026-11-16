@@ -37,19 +37,24 @@ function dirOf(parent: string, root: string | undefined): string {
     .join('/');
 }
 
+/** How a key that is not a local path reads in the dialog: a remote tab's file and machine. */
+export type DirtyLabel = (key: string) => { name: string; dir: string } | undefined;
+
 export function unsavedFiles(
   paths: readonly string[],
   probe: StatusProbe,
   rootOf: (path: string) => string | undefined,
   sessionOf?: (path: string) => string | undefined,
+  labelOf?: DirtyLabel,
 ): DirtyFile[] {
   return paths.map((path) => {
     const sep = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
     const session = sessionOf?.(path);
+    const label = labelOf?.(path);
     return {
       path,
-      name: path.slice(sep + 1),
-      dir: dirOf(path.slice(0, Math.max(sep, 0)), rootOf(path)),
+      name: label?.name ?? path.slice(sep + 1),
+      dir: label?.dir ?? dirOf(path.slice(0, Math.max(sep, 0)), rootOf(path)),
       ...tagOf(path, probe),
       ...(session === undefined ? {} : { session }),
     };
@@ -88,6 +93,10 @@ export function sessionDirtyPaths(
   for (const id of sessionIds) {
     for (const path of filePathsClosedWithSession(docs, id)) {
       if (dirty.has(path)) out.add(path);
+    }
+    // A remote session's file tabs are dirty under their doc id, which the local paths never are.
+    for (const d of docs) {
+      if (d.kind === 'remote-file' && d.sessionId === id && dirty.has(d.id)) out.add(d.id);
     }
   }
   return [...out];

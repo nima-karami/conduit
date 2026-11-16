@@ -16567,6 +16567,16 @@ button.toggle--on .toggle__knob {
   margin: 0;
   color: var(--text-dim);
 }
+.reqtpl-permission {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.reqtpl-sending {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
 .reqtpl-footer {
   display: flex;
   flex-wrap: wrap;

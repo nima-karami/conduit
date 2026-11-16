@@ -2766,8 +2766,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       message,
       request: ref.view,
     });
-    if (ref.view.stale || deps.network === undefined)
-      return refuse('peer_unreachable', unreachableRemote(ref.view.machineName).message);
+    if (ref.view.remote.stale || deps.network === undefined)
+      return refuse('peer_unreachable', unreachableRemote(ref.view.remote.machineName).message);
     const checked = checkRemoteAnswer(ref, answer);
     if (!checked.ok) return refuse(checked.reason, checked.message);
     const sent = await deps.network.answerRemoteRequest(ref.machineId, ref.requestId, checked.body);

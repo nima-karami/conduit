@@ -76,7 +76,7 @@ describe('remote request mirror: link state', () => {
     const { s } = store();
     s.apply('m-aaaa1111', 1, [mirror({ id: 'a' })], 'win-box');
     s.setLinkState('m-aaaa1111', 'down');
-    expect(s.views()).toMatchObject([{ id: 'a@m-aaaa1111', stale: true }]);
+    expect(s.views()).toMatchObject([{ id: 'a@m-aaaa1111', remote: { stale: true } }]);
   });
 
   it('a fresh snapshot clears stale', () => {
@@ -84,7 +84,7 @@ describe('remote request mirror: link state', () => {
     s.apply('m-aaaa1111', 1, [mirror({ id: 'a' })], 'win-box');
     s.setLinkState('m-aaaa1111', 'down');
     s.apply('m-aaaa1111', 2, [mirror({ id: 'b' })], 'win-box');
-    expect(s.views()).toMatchObject([{ id: 'b@m-aaaa1111', stale: false }]);
+    expect(s.views()).toMatchObject([{ id: 'b@m-aaaa1111', remote: { stale: false } }]);
   });
 
   it('up after a drop accepts the next link snapshot even when its seq restarts', () => {
@@ -93,7 +93,7 @@ describe('remote request mirror: link state', () => {
     s.setLinkState('m-aaaa1111', 'down');
     s.setLinkState('m-aaaa1111', 'up');
     expect(s.apply('m-aaaa1111', 1, [mirror({ id: 'b' })], 'win-box')).toBe(true);
-    expect(s.views()).toMatchObject([{ id: 'b@m-aaaa1111', stale: false }]);
+    expect(s.views()).toMatchObject([{ id: 'b@m-aaaa1111', remote: { stale: false } }]);
   });
 
   it('gone clears the machine and a later snapshot is accepted from seq 1', () => {
@@ -158,6 +158,29 @@ describe('remote request mirror: ids and views', () => {
     );
     expect(s.views()[0]).toMatchObject({ kind: 'attend', blocked: 'permission', permission: null });
   });
+
+  it('carries the permission facts, the machine name and stale in remote, never a local permission', () => {
+    const { s } = store();
+    s.apply(
+      'm-aaaa1111',
+      1,
+      [mirror({ id: 'p', kind: 'permission', permission: perm(false) })],
+      'win-box',
+    );
+    expect(s.views()[0]?.remote).toEqual({
+      machineName: 'win-box',
+      stale: false,
+      permission: { tool: 'open_session', why: 'a routed open', grantable: false },
+    });
+    s.setLinkState('m-aaaa1111', 'down');
+    expect(s.views()[0]?.remote).toMatchObject({ machineName: 'win-box', stale: true });
+  });
+
+  it('a question carries no permission facts in remote', () => {
+    const { s } = store();
+    s.apply('m-aaaa1111', 1, [mirror({ id: 'q' })], 'win-box');
+    expect(s.views()[0]?.remote?.permission).toBeNull();
+  });
 });
 
 describe('mergeRemoteRequests', () => {
@@ -186,7 +209,7 @@ describe('mergeRemoteRequests', () => {
     s.apply('m-aaaa1111', 1, [mirror({ id: 'o' })], 'win-box');
     s.setLinkState('m-aaaa1111', 'down');
     const [row] = mergeRemoteRequests(local, s.views()).open as RemoteRequestView[];
-    expect(row?.stale).toBe(true);
+    expect(row?.remote.stale).toBe(true);
   });
 });
 

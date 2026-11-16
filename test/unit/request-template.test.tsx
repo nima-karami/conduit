@@ -461,3 +461,114 @@ describe('RequestTemplate chrome', () => {
     expect(host.querySelector(`button[aria-label="${REQ_STR.reqTpl.close}"]`)).toBeNull();
   });
 });
+
+describe('RequestTemplate remote permission', () => {
+  const remoteAsk = (id: string, grantable: boolean, stale = false): Partial<RequestView> => ({
+    id,
+    kind: 'attend',
+    blocked: 'permission',
+    options: [],
+    body: '',
+    title: 'Open a session on Studio PC?',
+    remote: {
+      machineName: 'Studio PC',
+      stale,
+      permission: { tool: 'open_session', why: 'a routed open', grantable },
+    },
+  });
+
+  it('a grantable permission shows Deny, Allow and Always; Allow sends no grant key', async () => {
+    const m = await mount(remoteAsk('perm-allow', true));
+    expect(buttonNamed(REQ_STR.reqTpl.permissionDeny)).toBeDefined();
+    expect(buttonNamed(REQ_STR.reqTpl.permissionAllow)).toBeDefined();
+    expect(buttonNamed(REQ_STR.reqTpl.permissionAlways)).toBeDefined();
+    expect(rootEl().textContent).toContain('a routed open');
+    expect(buttonNamed(REQ_STR.openTerminal)).toBeUndefined();
+    click(must(buttonNamed(REQ_STR.reqTpl.permissionAllow), 'Allow'));
+    await act(async () => undefined);
+    expect(m.onSend).toHaveBeenCalledTimes(1);
+    const [sent] = m.onSend.mock.calls[0] ?? [];
+    expect(sent).toStrictEqual({ outcome: 'allowed' });
+    expect(sent).not.toHaveProperty('grant');
+  });
+
+  it('Deny sends denied', async () => {
+    const m = await mount(remoteAsk('perm-deny', true));
+    await clickAsync(must(buttonNamed(REQ_STR.reqTpl.permissionDeny), 'Deny'));
+    expect(m.onSend.mock.calls[0]?.[0]).toStrictEqual({ outcome: 'denied' });
+  });
+
+  it('Always for this target sends allowed with the peer, target, until-revoked grant', async () => {
+    const m = await mount(remoteAsk('perm-always', true));
+    await clickAsync(must(buttonNamed(REQ_STR.reqTpl.permissionAlways), 'Always'));
+    expect(m.onSend.mock.calls[0]?.[0]).toStrictEqual({
+      outcome: 'allowed',
+      grant: { who: 'peer', on: 'target', for: 'until-revoked' },
+    });
+  });
+
+  it('a permission that is not grantable has no Always', async () => {
+    await mount(remoteAsk('perm-once', false));
+    expect(buttonNamed(REQ_STR.reqTpl.permissionDeny)).toBeDefined();
+    expect(buttonNamed(REQ_STR.reqTpl.permissionAllow)).toBeDefined();
+    expect(buttonNamed(REQ_STR.reqTpl.permissionAlways)).toBeUndefined();
+  });
+
+  it('a stale machine disables every answer button, with a title saying why', async () => {
+    await mount(remoteAsk('perm-stale', true, true));
+    const hint = REQ_STR.reqTpl.offlineHint('Studio PC');
+    for (const name of [
+      REQ_STR.reqTpl.permissionDeny,
+      REQ_STR.reqTpl.permissionAllow,
+      REQ_STR.reqTpl.permissionAlways,
+    ]) {
+      const b = must(buttonNamed(name), name);
+      expect(b.disabled).toBe(true);
+      expect(b.title).toBe(hint);
+    }
+    expect(host.querySelector('.reqtpl-chip')?.textContent).toBe(REQ_STR.offline('Studio PC'));
+  });
+
+  it('a stale question locks its options and Send', async () => {
+    const m = await mount({
+      id: 'stale-q',
+      remote: { machineName: 'Studio PC', stale: true, permission: null },
+    });
+    expect(optionInput('Reorder within its parent only').disabled).toBe(true);
+    expect(sendBtn().disabled).toBe(true);
+    click(sendBtn());
+    expect(m.onSend).not.toHaveBeenCalled();
+  });
+
+  it('a refused answer shows its copy, naming the machine', async () => {
+    const m = await mount(remoteAsk('perm-refused', true));
+    m.onSend.mockImplementationOnce(async () => ({
+      ok: false,
+      reason: 'peer_unreachable',
+      message: 'raw host text',
+      request: null,
+    }));
+    await clickAsync(must(buttonNamed(REQ_STR.reqTpl.permissionAllow), 'Allow'));
+    expect(rootEl().textContent).toContain(REQ_STR.reqTpl.refusal.peerUnreachable('Studio PC'));
+    expect(rootEl().textContent).not.toContain('raw host text');
+  });
+
+  it('a pending answer disables the permission buttons and says Sending', async () => {
+    const m = await mount(remoteAsk('perm-pending', true));
+    let finish: (r: RequestAnswerResult) => void = () => undefined;
+    m.onSend.mockImplementationOnce(
+      () => new Promise<RequestAnswerResult>((resolve) => (finish = resolve)),
+    );
+    click(must(buttonNamed(REQ_STR.reqTpl.permissionDeny), 'Deny'));
+    expect(rootEl().textContent).toContain(REQ_STR.reqTpl.sending);
+    expect(must(buttonNamed(REQ_STR.reqTpl.permissionAllow), 'Allow').disabled).toBe(true);
+    await act(async () => finish({ ok: true, request: m.request }));
+  });
+
+  it('a local attend row keeps its attend line and no permission buttons', async () => {
+    await mount({ id: 'local-attend', kind: 'attend', options: [], body: '', title: 'Prompt' });
+    expect(rootEl().textContent).toContain(REQ_STR.reqTpl.attendLine);
+    expect(buttonNamed(REQ_STR.reqTpl.permissionAllow)).toBeUndefined();
+    expect(buttonNamed(REQ_STR.openTerminal)).toBeDefined();
+  });
+});

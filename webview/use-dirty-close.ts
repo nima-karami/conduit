@@ -5,7 +5,7 @@ import {
   dirtyCloseCopy,
   dirtySaveStatus,
 } from '../src/quit-guard';
-import { type SaveProbe, saveUnsaved, unsavedFiles } from './unsaved-files';
+import { type DirtyLabel, type SaveProbe, saveUnsaved, unsavedFiles } from './unsaved-files';
 import { type ModalEntry, type ModalSlot, nextModalKey } from './use-modal-slot';
 
 export interface DirtyAsk {
@@ -25,6 +25,8 @@ export type DirtyAnswer = 'saved' | 'discarded' | 'cancel';
 interface DirtyCloseDeps {
   saves: SaveProbe & { subscribe(cb: () => void): () => void };
   rootOf: (path: string) => string | undefined;
+  /** Names a remote tab by its file and machine instead of its doc id. */
+  labelOf?: DirtyLabel;
   slot: ModalSlot;
 }
 
@@ -41,10 +43,10 @@ export function useDirtyClose(deps: DirtyCloseDeps): { ask(req: DirtyAsk): Promi
             resolve('cancel');
             return;
           }
-          const { saves, rootOf, slot } = depsRef.current;
+          const { saves, rootOf, labelOf, slot } = depsRef.current;
           const key = nextModalKey();
           const state: { files: DirtyFile[]; phase: 'ready' | 'saving'; status: string | null } = {
-            files: unsavedFiles(req.paths, saves, rootOf, req.sessionOf),
+            files: unsavedFiles(req.paths, saves, rootOf, req.sessionOf, labelOf),
             phase: 'ready',
             status: null,
           };
@@ -115,6 +117,7 @@ export function useDirtyClose(deps: DirtyCloseDeps): { ask(req: DirtyAsk): Promi
               saves,
               rootOf,
               req.sessionOf,
+              labelOf,
             );
             state.files = fresh.map((f) => {
               if (saves.getStatus(f.path)?.phase !== 'clean') return f;

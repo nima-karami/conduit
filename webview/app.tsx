@@ -102,6 +102,7 @@ import { formatDuration } from '../src/timed-messages';
 import type { AgentDefinition, Session } from '../src/types';
 import { DRAG_STAY_INSET_PX, pointWellInside } from '../src/window-registry';
 import { activeTarget } from './active-target';
+import { allSaves } from './all-saves';
 import { AUTO_SAVE_COPY } from './auto-save-copy';
 import { afterCloseSave, type CloseStep, dirtyCloseStep } from './auto-save-policy';
 import { pickAutoSwitch } from './auto-switch';
@@ -323,7 +324,12 @@ import { quitStopFailureDialog } from './quit-stop-dialog';
 import { pushRecentDoc, type RecentDoc, recentPaletteId, recentSubtitle } from './recent-docs';
 import { closeRemoteBuffer } from './remote-file-saves';
 import { remoteRepoPath } from './remote-git-store';
-import { type RemoteKey, remoteKeyId, remoteSessionRows } from './remote-sessions';
+import {
+  type RemoteKey,
+  type RemoteSessionRow,
+  remoteKeyId,
+  remoteSessionRows,
+} from './remote-sessions';
 import { openRequest, setRequestOpeners } from './request-open';
 import { sortRequests } from './request-view-model';
 import { resolveModuleOnDemand } from './resolve-module';
@@ -737,7 +743,23 @@ export function App() {
     }
     return best;
   }, []);
-  const dirtyClose = useDirtyClose({ saves: fileSaves, rootOf, slot });
+  // Read through a ref: the rows are computed further down, and the dialog asks at close time.
+  const remoteRowsRef = useRef<readonly RemoteSessionRow[]>([]);
+  const labelOf = useCallback((key: string) => {
+    const d = docsRef.current.find((x) => x.kind === 'remote-file' && x.id === key);
+    if (!d?.machine) return undefined;
+    const { machineId, sessionId } = d.machine;
+    const machine =
+      remoteRowsRef.current.find(
+        (r) => r.key.machineId === machineId && r.key.sessionId === sessionId,
+      )?.machineName ?? MACHINES_STR.anotherMachine;
+    const sep = Math.max(d.path.lastIndexOf('/'), d.path.lastIndexOf('\\'));
+    return {
+      name: d.path.slice(sep + 1),
+      dir: MACHINES_STR.remoteFileWhere(d.path.slice(0, Math.max(sep, 0)), machine),
+    };
+  }, []);
+  const dirtyClose = useDirtyClose({ saves: allSaves, rootOf, labelOf, slot });
   const dirtyCloseRef = useRef(dirtyClose);
   dirtyCloseRef.current = dirtyClose;
   const sessionDirty = useCallback(
@@ -780,6 +802,22 @@ export function App() {
         .then((answer) => {
           if (answer !== 'cancel') proceed();
         });
+    },
+    [sessionDirty],
+  );
+  // A remote session's unsaved file tabs ask before it closes, as a local session's files do.
+  const confirmRemoteClose = useCallback(
+    async (key: RemoteKey): Promise<boolean> => {
+      const owner = remoteKeyId(key);
+      const paths = sessionDirty([owner]);
+      if (paths.length === 0) return true;
+      const answer = await dirtyCloseRef.current.ask({
+        reason: 'sessionClose',
+        paths,
+        running: 1,
+        busy: 0,
+      });
+      return answer !== 'cancel';
     },
     [sessionDirty],
   );
@@ -2218,6 +2256,7 @@ export function App() {
     () => (network ? remoteSessionRows(network, sessions) : []),
     [network, sessions],
   );
+  remoteRowsRef.current = remoteRows;
   // A remote pane whose session or machine went away has nothing left to show.
   useEffect(() => {
     if (activeRemote && !remoteRows.some((r) => r.id === remoteKeyId(activeRemote)))
@@ -4057,6 +4096,8 @@ export function App() {
       const dirty = getDirtySnapshot();
       const kept = new Set<string>();
       for (const d of docStateRef.current.docs) {
+        // A remote doc's path is another machine's: deleting a local folder never closes it.
+        if (localPathOf(d) === null) continue;
         if (pathBelow(d.path, path) === null) continue;
         if (d.kind === 'file' && dirty.has(d.path)) {
           fileSaves.markConflict(d.path, 'deleted');
@@ -5351,11 +5392,15 @@ export function App() {
               activeId={activeId}
               activeRemote={activeRemote}
               remoteRows={remoteRows}
-              onRemoteClosed={(key) =>
+              onRemoteClosed={(key) => {
                 setActiveRemote((cur) =>
                   cur && remoteKeyId(cur) === remoteKeyId(key) ? null : cur,
-                )
-              }
+                );
+                // The session is gone on its machine, so its tabs can't read or save: they close too.
+                const owner = remoteKeyId(key);
+                for (const d of docsRef.current) if (d.sessionId === owner) forceCloseDoc(d.id);
+              }}
+              confirmRemoteClose={confirmRemoteClose}
               layout={layout}
               files={files}
               diffs={diffs}

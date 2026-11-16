@@ -696,6 +696,52 @@ describe('git-serve', () => {
     expect(link?.added).toBe(1);
   });
 
+  describe('the git-dir check runs on every request (security review M4: a memo was unsafe)', () => {
+    let secret: string;
+    let secretSha: string;
+    beforeEach(async () => {
+      secret = path.join(root, 'secret');
+      fs.mkdirSync(secret);
+      fs.writeFileSync(path.join(secret, 's.txt'), 'TOPSECRET\n');
+      await initRepo(secret, 'secret commit');
+      secretSha = await git(secret, 'rev-parse', 'HEAD');
+      await initRepo(proj);
+    });
+
+    it('an alternates file written after a clean read, with its folder mtime set back, is refused', async () => {
+      const h = harness();
+      await h.serve.onFrame(CONTROLLER, req('a1', 'status', {}));
+      expect(replyTo(h.sent, 'a1').ok).toBe(true);
+      const info = path.join(proj, '.git', 'objects', 'info');
+      const before = fs.statSync(info);
+      fs.writeFileSync(path.join(info, 'alternates'), `${path.join(secret, '.git', 'objects')}\n`);
+      // A writer can put the folder's mtime back; nothing may trust it to skip the check.
+      fs.utimesSync(info, before.atime, before.mtime);
+      await h.serve.onFrame(CONTROLLER, req('a2', 'show', { sha: secretSha }));
+      const res = replyTo(h.sent, 'a2');
+      if (res.ok) throw new Error('expected a refusal');
+      expect(res.error.code).toBe('refused');
+      expect(JSON.stringify(h.sent)).not.toContain('TOPSECRET');
+    });
+
+    it('a link planted in an existing objects folder after a clean read is refused', async () => {
+      const h = harness();
+      await h.serve.onFrame(CONTROLLER, req('p1', 'status', {}));
+      expect(replyTo(h.sent, 'p1').ok).toBe(true);
+      const objects = path.join(proj, '.git', 'objects');
+      const existing = fs.readdirSync(objects).find((d) => /^[0-9a-f]{2}$/.test(d));
+      if (existing === undefined) throw new Error('no loose object folder');
+      const folder = path.join(objects, existing);
+      const before = fs.statSync(folder);
+      fs.symlinkSync(path.join(root, 'outside.txt'), path.join(folder, 'zz-planted'));
+      fs.utimesSync(folder, before.atime, before.mtime);
+      await h.serve.onFrame(CONTROLLER, req('p2', 'log', {}));
+      const res = replyTo(h.sent, 'p2');
+      if (res.ok) throw new Error('expected a refusal');
+      expect(res.error.code).toBe('refused');
+    });
+  });
+
   it('a result over 8 MiB is too_large', async () => {
     await initRepo(proj);
     const huge = 'x'.repeat(9 * 1024 * 1024);
