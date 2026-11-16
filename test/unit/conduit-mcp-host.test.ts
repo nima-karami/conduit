@@ -6566,3 +6566,123 @@ describe('NET wiring at the host: a peer link revoke and its audit notes', () =>
     ]);
   });
 });
+
+describe('recordObserved', () => {
+  function observedHarness() {
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line) as Record<string, unknown>);
+      },
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    return { rows, activityIo };
+  }
+
+  it('a Claude command writes one observed row with the command as summary and the cwd as target', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s1', 'claude', {
+      action: { kind: 'command', command: 'npm test', cwd: '/work/repo' },
+    });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        lane: 'observed',
+        principal: { handle: null, sessionId: 's1', machineId: null },
+        cli: 'claude',
+        action: 'command',
+        target: '/work/repo',
+        summary: 'npm test',
+        decision: null,
+        decidedBy: 'observed: decided by Claude Code, not Conduit',
+        outcome: 'ok',
+        requestId: null,
+        count: null,
+      }),
+    ]);
+  });
+
+  it('a Codex file change names the CLI as Codex and records its first path as the target', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s2', 'codex', {
+      action: { kind: 'file-change', paths: ['src/a.ts', 'src/b.ts'] },
+    });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        lane: 'observed',
+        cli: 'codex',
+        action: 'file-change',
+        target: 'src/a.ts',
+        summary: 'src/a.ts, src/b.ts',
+        decidedBy: 'observed: decided by Codex, not Conduit',
+        outcome: 'ok',
+      }),
+    ]);
+  });
+
+  it('an MCP call records the server as target and the tool as summary', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s3', 'claude', {
+      action: { kind: 'mcp', server: 'github', tool: 'list_issues' },
+    });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        lane: 'observed',
+        action: 'mcp',
+        target: 'github',
+        summary: 'list_issues',
+      }),
+    ]);
+  });
+
+  it('a failed action keeps its row with outcome error', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s1', 'claude', {
+      action: { kind: 'command', command: 'false', cwd: null },
+      failed: true,
+    });
+    expect(rows).toEqual([expect.objectContaining({ lane: 'observed', outcome: 'error' })]);
+  });
+
+  it('a feed that went dark writes one note row, Feed unavailable', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s2', 'codex', { feed: 'unavailable' });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        lane: 'note',
+        action: 'Feed unavailable',
+        cli: 'codex',
+        principal: { handle: null, sessionId: 's2', machineId: null },
+        decidedBy: 'observed: decided by Codex, not Conduit',
+        outcome: null,
+      }),
+    ]);
+  });
+
+  it('a gap writes one note row that counts the actions not reported', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s1', 'claude', { gap: 2 });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        lane: 'note',
+        action: 'Feed gap: 2 actions not reported',
+        cli: 'claude',
+        decidedBy: 'observed: decided by Claude Code, not Conduit',
+      }),
+    ]);
+  });
+});

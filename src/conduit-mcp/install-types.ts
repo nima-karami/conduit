@@ -1,6 +1,13 @@
 // Wire types and catalog for installing Conduit into agent CLIs (spec 2026-10-27-conduit-mcp-install).
 export const AGENT_CLIS = ['claude', 'codex', 'cursor', 'opencode'] as const;
 export type AgentCli = (typeof AGENT_CLIS)[number];
+// Product names stay untranslated (spec 2026-10-27-conduit-mcp-install §10).
+export const CLI_DISPLAY_NAME: Readonly<Record<AgentCli, string>> = {
+  claude: 'Claude Code',
+  codex: 'Codex',
+  cursor: 'Cursor',
+  opencode: 'OpenCode',
+};
 /** Binary leaves per CLI; the first is the command the restart hint names. */
 export const CLI_BINARIES: Readonly<Record<AgentCli, readonly string[]>> = {
   claude: ['claude'],

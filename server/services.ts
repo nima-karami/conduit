@@ -190,6 +190,9 @@ export function createServices(o: ServicesOptions) {
       },
     },
     drafts: { noteHostInput: (sessionId, data) => m().draft.noteHostInput(sessionId, data) },
+    observed: {
+      record: (sessionId, cli, entry) => m().recordObserved(sessionId, cli, entry),
+    },
     scrollback,
     attention,
     typing: rt.typing,

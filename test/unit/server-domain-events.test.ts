@@ -1,4 +1,12 @@
-import { mkdirSync, rmSync } from 'node:fs';
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -9,6 +17,7 @@ import {
   type RecordedEvent,
 } from '../../server/domain/testing/fakes';
 import { claudeSettingsFileOf } from '../../src/claude-hook-settings';
+import type { HookPost } from '../../src/contracts/hook-protocol';
 import type { SessionView } from '../../src/contracts/server-protocol';
 import type { TimedMessage } from '../../src/timed-messages';
 
@@ -438,5 +447,113 @@ describe('server domain: attention facts', () => {
       .filter((s) => s.id === id);
     expect(views.length).toBeGreaterThan(0);
     for (const v of views) expect(v).toMatchObject({ attentionReason: null, completions: 0 });
+  });
+});
+
+describe('server domain: observed lane wiring', () => {
+  const post = (event: HookPost['event'], payload: unknown): HookPost => ({
+    conduitHook: 1,
+    token: 't',
+    event,
+    payload,
+  });
+  const pad = (n: number): string => String(n).padStart(2, '0');
+
+  it('a Claude PostToolUse reaches the observed lane as its command', async () => {
+    const h = harness();
+    const id = await live(h, { agentId: 'claude' });
+    h.domain.hookPost(
+      id,
+      post('PostToolUse', { tool_name: 'Bash', tool_input: { command: 'npm test' }, cwd: '/w' }),
+    );
+    expect(h.observed).toEqual([
+      {
+        sessionId: id,
+        cli: 'claude',
+        entry: { action: { kind: 'command', command: 'npm test', cwd: '/w' }, failed: false },
+      },
+    ]);
+  });
+
+  it('a PostToolUseFailure keeps its action and marks it failed', async () => {
+    const h = harness();
+    const id = await live(h, { agentId: 'claude' });
+    h.domain.hookPost(
+      id,
+      post('PostToolUseFailure', {
+        tool_name: 'Edit',
+        tool_input: { file_path: 'src/a.ts' },
+      }),
+    );
+    expect(h.observed).toEqual([
+      {
+        sessionId: id,
+        cli: 'claude',
+        entry: { action: { kind: 'file-change', paths: ['src/a.ts'] }, failed: true },
+      },
+    ]);
+  });
+
+  it('a Codex rollout action written after the bind reaches the observed lane as cli codex', async () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'obs-codex-'));
+    try {
+      const h = harness({
+        env: { CODEX_HOME: codexHome },
+        files: {
+          'agents.json': JSON.stringify([
+            {
+              id: 'codex',
+              label: 'Codex',
+              command: 'codex',
+              args: [],
+              icon: 'terminal',
+              color: 'green',
+              cwdStrategy: 'workspaceFolder',
+            },
+          ]),
+        },
+      });
+      const id = await live(h, { agentId: 'codex' });
+      const now = new Date();
+      const day = join(
+        codexHome,
+        'sessions',
+        String(now.getFullYear()),
+        pad(now.getMonth() + 1),
+        pad(now.getDate()),
+      );
+      mkdirSync(day, { recursive: true });
+      const file = join(day, 'rollout-obs.jsonl');
+      const cwd = h.home;
+      writeFileSync(
+        file,
+        `${JSON.stringify({
+          type: 'session_meta',
+          timestamp: now.toISOString(),
+          payload: { id: 'obs-1', cwd, timestamp: now.toISOString() },
+        })}\n`,
+      );
+      const item = readFileSync(
+        join(__dirname, '..', 'fixtures', 'codex-rollout', 'actions.jsonl'),
+        'utf8',
+      ).split('\n')[1];
+      // The first read after a bind is history; lines appended after it are news. The watch reads
+      // after 250 ms of quiet, so append slower than that or no read ever runs.
+      await vi.waitFor(
+        () => {
+          appendFileSync(file, `${item}\n`);
+          expect(h.observed).toContainEqual({
+            sessionId: id,
+            cli: 'codex',
+            entry: expect.objectContaining({
+              action: expect.objectContaining({ kind: 'command' }),
+            }),
+          });
+        },
+        { timeout: 5000, interval: 400 },
+      );
+    } finally {
+      rmSync(codexHome, { recursive: true, force: true });
+    }
   });
 });

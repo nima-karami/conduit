@@ -7,8 +7,10 @@ import {
   claudeSettingsFileOf,
   statusLineWrapFor,
 } from '../claude-hook-settings';
+import type { ClaudeAction } from '../claude-tool-actions';
 import { readUserStatusLine } from '../claude-user-status-line';
 import { detectStuckScreen, type StuckScreen } from '../cli-stuck-screens';
+import type { CodexAction } from '../codex-rollout';
 import type { WireRecipientOutcome } from '../contracts/link-protocol';
 import type { DraftPort, LaunchPort, McpHostDeps } from '../contracts/server-ports';
 import type { CliBindingRecord } from '../contracts/session-identity';
@@ -70,7 +72,7 @@ import {
   serializeHandleCounters,
 } from './handles';
 import { readCursorLaunchEntry } from './install';
-import type { AgentCli, UserInstallState } from './install-types';
+import { type AgentCli, CLI_DISPLAY_NAME, type UserInstallState } from './install-types';
 import {
   createMcpServerCore,
   TOOLS_LIST_CHANGED,
@@ -243,6 +245,11 @@ export interface ActivityNote {
   handle: string | null;
 }
 
+export type ObservedEntry =
+  | { action: ClaudeAction | CodexAction; failed?: boolean }
+  | { feed: 'unavailable' }
+  | { gap: number };
+
 export interface ConduitMcpHost extends LaunchPort, DraftPort {
   start(): Promise<void>;
   /**
@@ -288,7 +295,28 @@ export interface ConduitMcpHost extends LaunchPort, DraftPort {
   peerRevoked(machineId: string): void;
   /** An audit event from the network, shown in the Activity log as a note row. */
   recordNote(note: ActivityNote): void;
+  recordObserved(sessionId: string, cli: AgentCli, entry: ObservedEntry): void;
   stop(): Promise<void>;
+}
+
+// see plan C4 (activity privacy: no output, no arguments)
+function observedRow(action: ClaudeAction | CodexAction): {
+  action: string;
+  target: string | null;
+  summary: string | null;
+} {
+  switch (action.kind) {
+    case 'command':
+      return { action: 'command', target: action.cwd, summary: action.command };
+    case 'file-change':
+      return {
+        action: 'file-change',
+        target: action.paths[0] ?? null,
+        summary: action.paths.length > 0 ? action.paths.join(', ') : null,
+      };
+    case 'mcp':
+      return { action: 'mcp', target: action.server, summary: action.tool };
+  }
 }
 
 const TICK_MS = 500;
@@ -3091,6 +3119,43 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     peerRevoked(machineId) {
       policyService.peerRevoked(machineId);
+    },
+    recordObserved(sessionId, cli, entry) {
+      const decidedBy = `observed: decided by ${CLI_DISPLAY_NAME[cli]}, not Conduit`;
+      const principal = { handle: null, sessionId, machineId: null };
+      if ('action' in entry) {
+        const row = observedRow(entry.action);
+        policyService.activity.record({
+          lane: 'observed',
+          principal,
+          cli,
+          action: row.action,
+          target: row.target,
+          summary: row.summary,
+          decision: null,
+          decidedBy,
+          outcome: entry.failed ? 'error' : 'ok',
+          durationMs: null,
+          requestId: null,
+          count: null,
+        });
+        return;
+      }
+      policyService.activity.record({
+        lane: 'note',
+        principal,
+        cli,
+        action:
+          'feed' in entry ? 'Feed unavailable' : `Feed gap: ${entry.gap} actions not reported`,
+        target: null,
+        summary: null,
+        decision: null,
+        decidedBy,
+        outcome: null,
+        durationMs: null,
+        requestId: null,
+        count: null,
+      });
     },
     recordNote(note) {
       policyService.activity.record({

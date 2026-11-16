@@ -10,8 +10,11 @@ import { AgentScopeTracker } from '../../src/agent-scope-tracker';
 import { atomicWriteFile, atomicWriteFileSync } from '../../src/atomic-write';
 import { claudeSettingsFileOf } from '../../src/claude-hook-settings';
 import { claudeSignalsFromHook } from '../../src/claude-signals';
+import { claudeActionsFromPostToolUse } from '../../src/claude-tool-actions';
 import { adapterFor } from '../../src/conduit-mcp/adapters';
 import type { McpOpenRequest } from '../../src/conduit-mcp/control-tools';
+import type { ObservedEntry } from '../../src/conduit-mcp/host';
+import type { AgentCli } from '../../src/conduit-mcp/install-types';
 import { CLI_KINDS, type CliKind } from '../../src/conduit-mcp/tool-policy';
 import { type AgentsConfig, loadAgentsConfig, readBlob, readFileState } from '../../src/config';
 import type { HookPost } from '../../src/contracts/hook-protocol';
@@ -110,12 +113,17 @@ import type {
 } from '../../src/types';
 import { HC_XDG_ISOLATED_ENV } from '../hc-cli';
 import { type RpcAnswer, RpcFault, type RpcRequest } from '../transport/pipe';
+import { createClaudeFeedGap } from './claude-feed-gap';
 import { createRolloutFs } from './codex-rollout-fs';
 import { createCodexRolloutWatch } from './codex-rollout-watch';
 import { ServerFolderHealth } from './folder-health';
 import { createLimitMonitor } from './limit-monitor';
 import { createLimitRulesSource } from './limit-rules-file';
 import { ServerSettingsStore } from './server-settings';
+
+interface ObservedPort {
+  record(sessionId: string, cli: AgentCli, entry: ObservedEntry): void;
+}
 
 export type DomainLogLevel = 'debug' | 'info' | 'warn' | 'error';
 export type DomainLog = Record<
@@ -135,6 +143,7 @@ export interface DomainDeps {
   runtime: TerminalRuntime;
   launch: LaunchPort;
   drafts: DraftPort;
+  observed: ObservedPort;
   scrollback: ScrollbackPort;
   attention: AttentionStatusRead;
   typing: TypingPort;
@@ -285,6 +294,9 @@ const str = (p: Record<string, unknown>, key: string): string => {
 };
 
 /** The W4 row of the program: everything the server owns about sessions and its stores. */
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
 export function createDomain(deps: DomainDeps): Domain {
   const { userData, runtime, scrollback, log } = deps;
   const file = (name: string) => join(userData, name);
@@ -682,6 +694,27 @@ export function createDomain(deps: DomainDeps): Domain {
   });
   const codexHome = deps.env.CODEX_HOME || join(deps.homeDir, '.codex');
   const metaCapWarned = new Set<string>();
+  const feedGap = createClaudeFeedGap<ReturnType<typeof setTimeout>>({
+    readFile: (p) => fsp.readFile(p, 'utf8'),
+    setTimer: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: (handle) => clearTimeout(handle),
+    record: (sessionId, gap) => deps.observed.record(sessionId, 'claude', { gap }),
+    warn: (msg, data) => log.warn('observed', msg, data && { ...data }),
+  });
+  // see plan T4.3: subagent calls are not in the main transcript the gap check reads
+  const observeClaudePost = (sessionId: string, post: HookPost): void => {
+    const payload = isRecord(post.payload) ? post.payload : {};
+    if (post.event === 'Stop') {
+      if (typeof payload.transcript_path === 'string')
+        feedGap.stop(sessionId, payload.transcript_path);
+      return;
+    }
+    if (post.event !== 'PostToolUse' && post.event !== 'PostToolUseFailure') return;
+    feedGap.post(sessionId, payload.agent_id !== undefined && payload.agent_id !== null);
+    const failed = post.event === 'PostToolUseFailure';
+    for (const action of claudeActionsFromPostToolUse(payload))
+      deps.observed.record(sessionId, 'claude', { action, failed });
+  };
   const codexWatch = createCodexRolloutWatch({
     sessionsRoot: join(codexHome, 'sessions'),
     now: () => Date.now(),
@@ -701,8 +734,8 @@ export function createDomain(deps: DomainDeps): Domain {
     episodeOpen: (id) => monitor.episodes().some((e) => e.sessionId === id && e.state === 'open'),
     onSignal: (signal) => monitor.signal(signal),
     onBound: (id) => monitor.onAdapterLive(id),
-    onAction: () => {},
-    onFeed: () => {},
+    onAction: (sessionId, action) => deps.observed.record(sessionId, 'codex', { action }),
+    onFeed: (sessionId, state) => deps.observed.record(sessionId, 'codex', { feed: state }),
     log: schedulerLog,
   });
   const settingsAtLoad = settings();
@@ -1759,6 +1792,7 @@ export function createDomain(deps: DomainDeps): Domain {
     hookPost: (sessionId: string, post: HookPost) => {
       for (const signal of claudeSignalsFromHook(sessionId, post.event, post.payload, Date.now()))
         monitor.signal(signal);
+      observeClaudePost(sessionId, post);
     },
     humanInput: (sessionId: string) => monitor.onHumanInput(sessionId),
     persist: async () => {
@@ -1773,6 +1807,7 @@ export function createDomain(deps: DomainDeps): Domain {
       timers.stop();
       monitor.dispose();
       codexWatch.dispose();
+      feedGap.dispose();
       rules.dispose();
       unwatchBusy();
       folders.dispose();

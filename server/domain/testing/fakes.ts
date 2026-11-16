@@ -188,6 +188,7 @@ export function harness(opts: HarnessOptions = {}) {
   const lastSizes = new Map<string, TermGeometry>();
   const written: { sessionId: string; data: string; generation?: number }[] = [];
   const drafts: { sessionId: string; data: string }[] = [];
+  const observed: { sessionId: string; cli: string; entry: unknown }[] = [];
   const submitted: {
     sessionId: string;
     text: string;
@@ -230,6 +231,9 @@ export function harness(opts: HarnessOptions = {}) {
       },
     },
     drafts: { noteHostInput: (sessionId, data) => drafts.push({ sessionId, data }) },
+    observed: {
+      record: (sessionId, cli, entry) => observed.push({ sessionId, cli, entry }),
+    },
     scrollback: {
       replayForColdStart: (id) => {
         calls.push(`replay:${id}`);
@@ -338,6 +342,7 @@ export function harness(opts: HarnessOptions = {}) {
     lastSizes,
     written,
     drafts,
+    observed,
     submitted,
     resumeIssues,
     /** Tells the domain attention changed (after flipping `state.busy`). */

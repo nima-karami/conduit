@@ -823,4 +823,31 @@ describe('NET wiring through the server', () => {
       }),
     ]);
   });
+
+  it('recordObserved lands in the Activity log as an observed row for the session', async () => {
+    const h = harness();
+    await h.mcp.start();
+    h.mcp.recordObserved('s-obs', 'codex', {
+      action: { kind: 'command', command: 'ls', cwd: '/w', exitCode: 0, durationMs: null },
+    });
+    const rows = fs
+      .readdirSync(path.join(h.dir, 'activity'))
+      .flatMap((f) =>
+        fs
+          .readFileSync(path.join(h.dir, 'activity', f), 'utf8')
+          .trim()
+          .split('\n'),
+      )
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(rows).toEqual([
+      expect.objectContaining({
+        lane: 'observed',
+        cli: 'codex',
+        action: 'command',
+        summary: 'ls',
+        principal: { handle: null, sessionId: 's-obs', machineId: null },
+        decidedBy: 'observed: decided by Codex, not Conduit',
+      }),
+    ]);
+  });
 });
