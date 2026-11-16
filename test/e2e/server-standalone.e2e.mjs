@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { c2Auth } from './c2-auth.mjs';
 import { C2 } from './c2-peer.mjs';
 import { FAKE_AGENT, sleep, until } from './conduit-mcp-helpers.mjs';
 import { assert, finishScenario, makeLog, phase, REPO, resolveHcBinary } from './harness.mjs';
@@ -31,7 +32,7 @@ const ECHO_PROGRAM = String.raw`process.stdout.write('E2E-READY\n');process.stdi
 const SIZE = { cols: 100, rows: 30 };
 
 /** The app's connect: hello, logging, subscribe, a ready window and its panes' sizes. */
-async function attachApp(endpoint, sessionIds) {
+async function attachApp(endpoint, userData, sessionIds) {
   let c2;
   assert(
     await until(
@@ -48,7 +49,11 @@ async function attachApp(endpoint, sessionIds) {
     ),
     'the server pipe never accepted a connection',
   );
-  const hello = await c2.call('hello', { appVersion: APP_VERSION, generation: 1 });
+  const hello = await c2.call('hello', {
+    appVersion: APP_VERSION,
+    generation: 1,
+    auth: c2Auth(userData),
+  });
   await c2.call('server.setLogging', { logging: true, logLevel: 'debug' });
   const snapshot = await c2.call('events.subscribe');
   await c2.call('ui.presence', {
@@ -186,7 +191,7 @@ async function run() {
     phase('1. supervisor through hc; the server binds and serves C2');
     await startSupervisor();
     client = new NodeHcClient({ session: names.hcSession, env, log: (m, e) => log(m, String(e)) });
-    app = await attachApp(names.serverEndpoint, []);
+    app = await attachApp(names.serverEndpoint, userData, []);
     assert(
       app.hello.supervisor?.name === names.supervisorName,
       `hello.supervisor: ${JSON.stringify(app.hello)}`,
@@ -332,7 +337,7 @@ async function run() {
     downStream.close();
 
     await startSupervisor();
-    app = await attachApp(names.serverEndpoint, [echo, fake, noMcp, exitsWhileDown]);
+    app = await attachApp(names.serverEndpoint, userData, [echo, fake, noMcp, exitsWhileDown]);
     assert(
       await until(() => runtimeState(app.c2, app.snapshot) === 'ready', 30_000),
       'runtime never ready after the restart',

@@ -43,6 +43,19 @@ describe('server entry wiring', () => {
     expect(firstCore.start).toHaveBeenCalledTimes(1);
   });
 
+  it('a second start that loses the bind leaves the live server able to stop', async () => {
+    const dir = await profile();
+    const exit = vi.fn();
+    const server = await runServer(['--user-data', dir], { core: core(), exit });
+    expect(server.transport).toBeDefined();
+    closes.push(() => server.close?.() ?? Promise.resolve());
+    expect((await runServer(['--user-data', dir], { core: core() })).code).toBe(0);
+    const directFallback = vi.fn(async () => 10);
+    const stopped = await runServer(['--user-data', dir, '--stop-all'], { directFallback });
+    expect(stopped.code).toBe(0);
+    expect(directFallback).not.toHaveBeenCalled();
+  });
+
   it('routes --stop-all through the live server without using the direct fallback', async () => {
     const dir = await profile();
     const x = core();

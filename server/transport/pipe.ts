@@ -1,3 +1,4 @@
+import { chmodSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import { createConnection, createServer, type Server, type Socket } from 'node:net';
 import type { ServerEventSink } from '../../src/contracts/server-ports';
@@ -21,6 +22,8 @@ export interface RpcRequest {
 export interface Peer {
   subscribed: boolean;
   order?: VersionOrder;
+  /** Set by hello from `hello.auth`; every method but hello is refused until it is true. */
+  authed?: boolean;
 }
 type AfterReply = () => Promise<void> | void;
 export type RpcAnswer =
@@ -93,6 +96,14 @@ export class PipeTransport {
         server.once('error', failed);
         server.listen(this.endpoint, () => {
           server.off('error', failed);
+          try {
+            // see docs/plans/2026-11-16-remote-ssh-stdio-link.plan.md decision 1 (Windows pipes have no posix mode)
+            if (this.platform === 'posix') chmodSync(this.endpoint, 0o600);
+          } catch (error) {
+            server.close();
+            reject(error);
+            return;
+          }
           server.on('error', this.onError);
           resolve();
         });
@@ -210,7 +221,8 @@ export class PipeTransport {
       answer = { error };
     }
     if ('reply' in answer) return;
-    if ('result' in answer && request.method === 'hello') helloDone();
+    // An unauthed hello must not end the window: that peer would hold a slot without ever authenticating.
+    if ('result' in answer && request.method === 'hello' && peer.authed) helloDone();
     if (!('id' in request)) {
       // A notification has nobody to answer, so only an expected refusal may go unreported.
       if ('error' in answer && !expectedRefusal(answer.error)) this.onError(answer.error);

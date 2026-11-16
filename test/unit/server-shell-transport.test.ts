@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { createConnection, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -11,6 +11,7 @@ import { APP_HELLO_TIMEOUT_MS } from '../../src/contracts/server-protocol';
 import { instanceNames } from '../../src/instance-names';
 import { onLines, writeJsonLine } from '../helpers/line-socket';
 
+const SECRET = 'c2-test-secret-'.padEnd(43, 'x');
 const sockets: Socket[] = [];
 const transports: PipeTransport[] = [];
 const directories: string[] = [];
@@ -56,6 +57,7 @@ async function setup(options: { dispatch?: RpcHandler; eventBufferBound?: number
     logPath: '/log',
     exit,
     writeLog,
+    secret: SECRET,
     ...(options.dispatch ? { dispatch: options.dispatch } : {}),
   });
   disposers.push(() => shell.lifecycle.dispose());
@@ -95,7 +97,7 @@ async function client(endpoint: string) {
   };
 }
 
-const hello = { appVersion: '0.52.0', generation: 1 };
+const hello = { appVersion: '0.52.0', generation: 1, auth: SECRET };
 
 describe('server shell on the real C2 pipe', () => {
   it('binds before slow core startup and a second owner loses without starting core work', async () => {
@@ -111,6 +113,11 @@ describe('server shell on the real C2 pipe', () => {
     expect(await c.call('hello', hello)).toMatchObject({
       result: { serverVersion: '0.52.0', generation: 1, instance: x.names.instance },
     });
+  });
+
+  it.skipIf(process.platform === 'win32')('the posix C2 socket is 0600 after listen', async () => {
+    const x = await setup();
+    expect((await stat(x.names.serverEndpoint)).mode & 0o777).toBe(0o600);
   });
 
   it('answers hello and a starting snapshot before the core is ready; streams versioned events', async () => {
@@ -191,6 +198,21 @@ describe('server shell on the real C2 pipe', () => {
     expect(x.shell.logging).toEqual({ logging: false, logLevel: 'debug' });
     x.shell.log('error', 'disabled');
     expect(x.writeLog).toHaveBeenCalledTimes(1);
+  });
+
+  it('an unauthed hello does not end the hello window', async () => {
+    const x = await setup();
+    vi.useFakeTimers();
+    try {
+      const c = await client(x.names.serverEndpoint);
+      await vi.waitFor(() => expect(x.transport.peers.size).toBe(1));
+      c.send('hello', { appVersion: '0.52.0', generation: 1 });
+      expect(await c.next()).toMatchObject({ result: { serverVersion: '0.52.0' } });
+      await vi.advanceTimersByTimeAsync(APP_HELLO_TIMEOUT_MS);
+      await vi.waitFor(() => expect(c.socket.destroyed).toBe(true));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('closes connections which never send hello within APP_HELLO_TIMEOUT_MS', async () => {

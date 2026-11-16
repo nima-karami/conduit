@@ -15,6 +15,7 @@ import {
   type ServerSnapshot,
 } from '../src/contracts/server-protocol';
 import { LineReader } from '../src/line-reader';
+import { AUTH_REQUIRED_MESSAGE } from '../src/server-secret';
 
 export type AppLog = (
   level: 'info' | 'warn' | 'error',
@@ -32,10 +33,15 @@ export class ServerCallError extends Error {
   }
 }
 
+/** Why a connection ended: `auth` means the server refused our secret, so a redial is the only way back. */
+export type CloseReason = 'eof' | 'error' | 'auth';
+
 export interface ServerClientOptions {
   endpoint: string;
   appVersion: string;
   connect?: () => Duplex;
+  /** Read at every open, so a server restarted under a new secret is joined without a relaunch. */
+  readSecret: () => string | null;
   log: AppLog;
 }
 
@@ -92,7 +98,9 @@ export class ServerClient {
   private state: 'idle' | 'opening' | 'open' | 'closed' = 'idle';
   private nextId = 0;
   private readonly pending = new Map<number, Pending>();
-  private readonly closeListeners = new Set<(why: 'eof' | 'error') => void>();
+  private readonly closeListeners = new Set<(why: CloseReason) => void>();
+  private everSubscribed = false;
+  private authDropped = false;
   private subscriber: Subscriber | undefined;
   /** null while (re)subscribing: no snapshot yet to order events against. */
   private snapshotSeq: number | null = null;
@@ -145,28 +153,44 @@ export class ServerClient {
           reject(new ServerCallError('disconnected', 'connection closed before hello'));
           return;
         }
-        for (const cb of [...this.closeListeners]) cb(failed);
+        for (const cb of [...this.closeListeners]) cb(this.authDropped ? 'auth' : failed);
       });
-      this.request('hello', {
-        appVersion: this.o.appVersion,
-        generation: SERVER_PROTOCOL_GENERATION,
-      }).then(
-        (hello) => {
-          clearTimeout(timer);
-          if (!isHello(hello)) {
-            this.teardown();
-            reject(new ServerCallError('protocol', 'malformed hello reply'));
-            return;
-          }
-          this.state = 'open';
-          resolve(hello);
-        },
-        (error: ServerCallError) => {
+      const sendHello = () => {
+        let auth: string | null;
+        try {
+          auth = this.o.readSecret();
+        } catch (error) {
           clearTimeout(timer);
           this.teardown();
-          reject(error);
-        },
-      );
+          reject(new ServerCallError('disconnected', String(error)));
+          return;
+        }
+        this.request('hello', {
+          appVersion: this.o.appVersion,
+          generation: SERVER_PROTOCOL_GENERATION,
+          ...(auth !== null ? { auth } : {}),
+        }).then(
+          (hello) => {
+            clearTimeout(timer);
+            if (!isHello(hello)) {
+              this.teardown();
+              reject(new ServerCallError('protocol', 'malformed hello reply'));
+              return;
+            }
+            this.state = 'open';
+            resolve(hello);
+          },
+          (error: ServerCallError) => {
+            clearTimeout(timer);
+            this.teardown();
+            reject(error);
+          },
+        );
+      };
+      // The secret is read once the socket is up, so a server that restarted meanwhile is the one
+      // we pair with. An injected duplex has no connect event and is written at once.
+      if (this.o.connect) sendHello();
+      else socket.once('connect', sendHello);
     });
   }
 
@@ -191,7 +215,12 @@ export class ServerClient {
     await this.resubscribe();
   }
 
-  onClose(cb: (why: 'eof' | 'error') => void): () => void {
+  /** True once events.subscribe has succeeded on this connection: it got past the auth gate. */
+  get subscribedOnce(): boolean {
+    return this.everSubscribed;
+  }
+
+  onClose(cb: (why: CloseReason) => void): () => void {
     this.closeListeners.add(cb);
     return () => this.closeListeners.delete(cb);
   }
@@ -205,7 +234,24 @@ export class ServerClient {
     const h = this.subscriber;
     if (!h) return;
     this.snapshotSeq = null;
-    const snapshot = await this.call('events.subscribe', {});
+    let snapshot: ServerSnapshot;
+    try {
+      // A bare await, not a .catch hop: the reply's events must see snapshotSeq set in the same turn.
+      snapshot = await this.call('events.subscribe', {});
+    } catch (error) {
+      // The secret moved on under this connection. Dropping the socket makes the lifecycle redial,
+      // and the redial re-reads the secret.
+      if (
+        error instanceof ServerCallError &&
+        error.kind === 'refused' &&
+        error.message === AUTH_REQUIRED_MESSAGE
+      ) {
+        this.authDropped = true;
+        this.socket?.destroy();
+      }
+      throw error;
+    }
+    this.everSubscribed = true;
     if (this.subscriber !== h || this.state !== 'open') return;
     this.snapshotSeq = snapshot.seq;
     this.guard('snapshot', () => h.snapshot(snapshot));

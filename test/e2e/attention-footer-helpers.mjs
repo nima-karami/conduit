@@ -8,6 +8,7 @@
 import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { c2Auth } from './c2-auth.mjs';
 import { C2 } from './c2-peer.mjs';
 import { assert, REPO, typeLine } from './harness.mjs';
 import { SERVER_PROTOCOL_GENERATION, teardownNames } from './harness-server-teardown.mjs';
@@ -253,7 +254,11 @@ export async function restartServer(userDataDir) {
   const { serverEndpoint } = teardownNames(userDataDir, process.platform, tmpdir());
   const c2 = await C2.open(serverEndpoint);
   const closed = new Promise((resolve) => c2.socket.once('close', resolve));
-  await c2.call('hello', { appVersion: APP_VERSION, generation: SERVER_PROTOCOL_GENERATION });
+  await c2.call('hello', {
+    appVersion: APP_VERSION,
+    generation: SERVER_PROTOCOL_GENERATION,
+    auth: c2Auth(userDataDir),
+  });
   // The server may drop the connection before it answers, which C2 reports as a rejection.
   const outcome = c2.call('server.restart', { reason: 'user' }).then(
     (result) => ({ result }),

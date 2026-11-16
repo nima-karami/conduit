@@ -146,6 +146,7 @@ describe('Electron Jump List native boundaries', () => {
       confirmStopAllAgents: async () => true,
       instanceNames: () => ({ serverEndpoint: '/pipe' }),
       userData: () => '/profile',
+      readServerSecret: () => 'headless-secret',
       os: { tmpdir: () => '/temp' },
       coreStartEnv: () => ({}),
       runtimeLayout: () => ({ hcExe: '/hc.exe' }),
@@ -157,7 +158,9 @@ describe('Electron Jump List native boundaries', () => {
     expect(stop).toHaveBeenCalledWith(
       expect.objectContaining({ endpoint: '/pipe', version: '1.2.3' }),
     );
-    expect(stop.mock.calls[0][0]).not.toHaveProperty('auth');
+    // The headless stop is a C2 client: without the secret the gated server refuses the stop with
+    // 'auth required' and the stop reports failure.
+    expect(stop.mock.calls[0][0]).toMatchObject({ auth: 'headless-secret' });
     expect(app.relaunch).toHaveBeenCalledWith({ args: ['/workspace'] });
     expect(app.quit).toHaveBeenCalledTimes(1);
     expect(app.listenerCount('second-instance')).toBe(0);

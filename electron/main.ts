@@ -172,6 +172,7 @@ import {
 } from '../src/review-marks';
 import { applyNotePatch, notesFingerprint, type ReviewNotesData } from '../src/review-notes';
 import { isIndexScope, searchRootAllowed } from '../src/search-scope';
+import { readServerSecret } from '../src/server-secret';
 import { presentRoots, sessionContains } from '../src/session-folders';
 import { createSessionResourceDemand } from '../src/session-resource-demand';
 import {
@@ -1200,6 +1201,7 @@ async function stopAllAgentsHeadless(): Promise<void> {
         return stopAll({
           endpoint: names.serverEndpoint,
           version: aboutInfo.version,
+          auth: readServerSecret(userData()) ?? undefined,
           directFallback: () =>
             directStopAll(
               hcClient(names, env, (message) => console.warn('hc', message)),
@@ -2591,6 +2593,7 @@ app.whenReady().then(() => {
         new ServerClient({
           endpoint: names.serverEndpoint,
           appVersion: lifecycleVersion,
+          readSecret: () => readServerSecret(userData()),
           log: appLog,
         }),
       hc,

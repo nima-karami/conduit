@@ -15,7 +15,7 @@ import { HcRpcError } from '../src/hc-client';
 import { type HcCliDeps, killSupervisor, startSupervisor, supervisorArgs } from './hc-cli';
 import type { createHcEvents } from './hc-events';
 import type { RuntimeLayout } from './runtime-layout';
-import { type AppLog, ServerCallError, type ServerClient } from './server-client';
+import { type AppLog, type CloseReason, ServerCallError, type ServerClient } from './server-client';
 
 type Hello = ServerMethods['hello']['result'];
 
@@ -31,7 +31,8 @@ export type ServerLifecycleState =
         | 'hello-timeout'
         | 'restart-wait-timeout'
         | 'start-failed'
-        | 'hc-unresponsive';
+        | 'hc-unresponsive'
+        | 'auth-refused';
       logPath: string;
       detail?: string;
     }
@@ -63,6 +64,8 @@ export const VANISHED_RESTART_BUDGET = { attempts: 3, windowMs: 60 * 60_000 } as
 
 const RECONNECT_BACKOFF_MS = { first: 500, max: 5_000 } as const;
 const SUPERVISOR_LOOKUP_TIMEOUT_MS = 5_000;
+/** Consecutive auth refusals (the secret is missing or wrong while the server is up) before giving up. */
+const AUTH_REFUSALS_BEFORE_UNAVAILABLE = 5;
 const ENDED: ReadonlySet<HcEvent['type']> = new Set(['finished', 'lost', 'removed']);
 
 class SupervisorLookupTimeout extends Error {}
@@ -329,8 +332,8 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
       if (await stopAndWait(e, c, hello, 'server.restart')) return startRule(e);
       return;
     }
-    c.onClose(() => {
-      if (conn === c && live(e)) void lostConnection();
+    c.onClose((why) => {
+      if (conn === c && live(e)) void lostConnection(connectionEnded(c, why));
     });
     set({ state: 'connected', hello });
     for (const cb of [...connectedListeners]) {
@@ -402,14 +405,31 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
       return;
     }
     const resumed = begin();
-    c.onClose(() => {
-      if (conn === c && live(resumed)) void lostConnection();
+    c.onClose((why) => {
+      if (conn === c && live(resumed)) void lostConnection(connectionEnded(c, why));
     });
     if (hello?.supervisor) watch(hello.supervisor.terminal);
   };
 
+  /**
+   * Auth refusals in a row, and the delay the next auth redial waits. They carry across redials:
+   * a fresh delay each time would redial every 500 ms forever. Reset once a connection got past
+   * subscribe.
+   */
+  let authRefusals = 0;
+  let authDelay: number = RECONNECT_BACKOFF_MS.first;
+  const connectionEnded = (c: ServerClient, why: CloseReason): 'auth' | 'other' => {
+    if (c.subscribedOnce) {
+      authRefusals = 0;
+      authDelay = RECONNECT_BACKOFF_MS.first;
+    }
+    if (why !== 'auth') return 'other';
+    authRefusals += 1;
+    return 'auth';
+  };
+
   /** C2 dropped: the supervisor restarts the server itself, so the app only reopens. */
-  const lostConnection = async (): Promise<void> => {
+  const lostConnection = async (cause: 'auth' | 'other' = 'other'): Promise<void> => {
     const e = begin();
     conn = null;
     connHello = null;
@@ -424,7 +444,16 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
       await vanished();
       return;
     }
+    if (cause === 'auth' && authRefusals >= AUTH_REFUSALS_BEFORE_UNAVAILABLE) {
+      drop();
+      unavailable('auth-refused');
+      return;
+    }
     let delay: number = RECONNECT_BACKOFF_MS.first;
+    if (cause === 'auth') {
+      delay = authDelay;
+      authDelay = Math.min(authDelay * 2, RECONNECT_BACKOFF_MS.max);
+    }
     for (;;) {
       await sleep(delay);
       if (!live(e)) return;

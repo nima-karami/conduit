@@ -30,6 +30,7 @@ describe('teardown and cross-process identity', () => {
         join(__dirname, '..', 'e2e', 'proc-table.mjs'),
         join(directory, 'proc-table.mjs'),
       );
+      copyFileSync(join(__dirname, '..', 'e2e', 'c2-auth.mjs'), join(directory, 'c2-auth.mjs'));
       const unloaded = await import(pathToFileURL(file).href);
       expect(() => unloaded.assertOwnSession('conduit-test', undefined)).not.toThrow();
     } finally {

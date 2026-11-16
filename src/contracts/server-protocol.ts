@@ -358,10 +358,7 @@ export interface ServerMethods {
     params: {
       appVersion: string;
       generation: number;
-      /**
-       * Reserved, unused: C2 is unauthenticated to same-user processes today (D16). A later client
-       * credential goes here as an optional field, under the extension rule.
-       */
+      /** The per-start secret from `<userData>/server-secret`; required before any other method. */
       auth?: string;
     };
     result: {

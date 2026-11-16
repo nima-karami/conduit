@@ -3,19 +3,27 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ServerCallError, ServerClient } from '../../electron/server-client';
 import {
   APP_HELLO_TIMEOUT_MS,
+  SERVER_ERROR_RPC_CODE,
   SERVER_PROTOCOL_GENERATION,
   type ServerEventEnvelope,
   type ServerSnapshot,
 } from '../../src/contracts/server-protocol';
+import { AUTH_REQUIRED_MESSAGE } from '../../src/server-secret';
 import { FakeC2Server } from './fake-c2-server';
 
 let server: FakeC2Server | undefined;
 let client: ServerClient | undefined;
+const CLIENT_SECRET = 'client-test-secret'.padEnd(43, 'x');
 
 async function setup(): Promise<{ server: FakeC2Server; client: ServerClient }> {
   server = new FakeC2Server();
   await server.listen();
-  client = new ServerClient({ endpoint: server.endpoint, appVersion: '0.52.0', log: () => {} });
+  client = new ServerClient({
+    endpoint: server.endpoint,
+    appVersion: '0.52.0',
+    readSecret: () => CLIENT_SECRET,
+    log: () => {},
+  });
   return { server, client };
 }
 
@@ -72,6 +80,7 @@ describe('ServerClient', () => {
         endpoint: 'memory',
         appVersion: '0.52.0',
         connect: () => socket,
+        readSecret: () => CLIENT_SECRET,
         log: () => {},
       });
       const seen: string[] = [];
@@ -89,6 +98,61 @@ describe('ServerClient', () => {
     },
   );
 
+  it('a subscribe refused for auth drops the connection so the lifecycle redials', async () => {
+    server = new FakeC2Server();
+    await server.listen();
+    server.on('events.subscribe', () => {
+      throw {
+        code: SERVER_ERROR_RPC_CODE,
+        message: AUTH_REQUIRED_MESSAGE,
+        data: { kind: 'refused' },
+      };
+    });
+    client = new ServerClient({
+      endpoint: server.endpoint,
+      appVersion: '0.52.0',
+      readSecret: () => CLIENT_SECRET,
+      log: () => {},
+    });
+    await client.open();
+    const closed = vi.fn();
+    client.onClose(closed);
+    await expect(client.subscribe({ snapshot() {}, event() {} })).rejects.toBeInstanceOf(
+      ServerCallError,
+    );
+    await vi.waitFor(() => expect(closed).toHaveBeenCalledWith('auth'));
+  });
+
+  it('the secret is read when the socket connects, not when open starts', async () => {
+    server = new FakeC2Server();
+    await server.listen();
+    let secret = 'read-at-open';
+    client = new ServerClient({
+      endpoint: server.endpoint,
+      appVersion: '0.52.0',
+      readSecret: () => secret,
+      log: () => {},
+    });
+    const opening = client.open();
+    secret = 'rewritten-before-connect';
+    await opening;
+    expect(server.calls('hello')[0]?.params).toMatchObject({ auth: 'rewritten-before-connect' });
+  });
+
+  it('hello carries auth from readSecret', async () => {
+    server = new FakeC2Server();
+    await server.listen();
+    const secret = 'read-from-disk'.padEnd(43, 'y');
+    client = new ServerClient({
+      endpoint: server.endpoint,
+      appVersion: '0.52.0',
+      readSecret: () => secret,
+      log: () => {},
+    });
+    await client.open();
+    expect(server.calls('hello')[0]?.params).toMatchObject({ auth: secret });
+  });
+
   it('open resolves hello and sends generation', async () => {
     const { server, client } = await setup();
     const hello = await client.open();
@@ -97,6 +161,7 @@ describe('ServerClient', () => {
     expect(request.params).toEqual({
       appVersion: '0.52.0',
       generation: SERVER_PROTOCOL_GENERATION,
+      auth: CLIENT_SECRET,
     });
   });
 
@@ -132,6 +197,7 @@ describe('ServerClient', () => {
     const early = new ServerClient({
       endpoint: server.endpoint,
       appVersion: '0.52.0',
+      readSecret: () => CLIENT_SECRET,
       log: () => {},
     });
     const opening = early.open().catch(() => {});

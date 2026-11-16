@@ -8,6 +8,11 @@ const state = vi.hoisted(() => ({
   unlink: vi.fn(async (_path: string) => {}),
 }));
 vi.mock('node:fs/promises', () => ({ unlink: state.unlink }));
+// The listen mock creates no socket file; the real chmod after listen is proven in server-shell-transport.
+vi.mock('node:fs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:fs')>()),
+  chmodSync: vi.fn(),
+}));
 vi.mock('node:net', async () => {
   const { EventEmitter } = await import('node:events');
   return {

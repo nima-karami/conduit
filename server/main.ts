@@ -7,9 +7,11 @@ import type { InstanceNames } from '../src/contracts/session-identity';
 import { instanceNames } from '../src/instance-names';
 import { formatRecord } from '../src/logging';
 import { runtimeBinaryName } from '../src/runtime-binary';
+import { readServerSecret } from '../src/server-secret';
 import { compose } from './compose';
 import { directStopAll, hcBinaryOf, hcClient, serverChildEnv, startCore, stopCore } from './hc-cli';
 import { argValue, requireUserData } from './lifecycle/cli-args';
+import { writeServerSecret } from './lifecycle/server-secret';
 import type { ShellCore } from './lifecycle/shell';
 import { stopAll } from './lifecycle/stop-all';
 import type { PreviousShim } from './mcp/install';
@@ -48,6 +50,9 @@ export async function runServer(
     const result = await stopAll({
       endpoint: names.serverEndpoint,
       version,
+      // The running server wrote this file at its start. Without it the stop is refused with
+      // 'auth required' and reports failure; it never falls back to hc.
+      auth: readServerSecret(userData) ?? undefined,
       directFallback:
         dependencies.directFallback ??
         (() =>
@@ -66,6 +71,9 @@ export async function runServer(
     throw new Error('Server composition pending');
   };
   if (!(await transport.listen((request, peer) => handle(request, peer)))) return { code: 0 };
+  // Only the winner writes: a second start that loses the bind must not replace the live secret.
+  // Before compose, so no hello is answered until the secret is on disk.
+  const secret = writeServerSecret(userData);
   const logPath = path.join(userData, 'server.log');
   const supervisorTerminal = argValue(args, '--supervisor-terminal');
   const trayProc =
@@ -112,6 +120,7 @@ export async function runServer(
     version: serverVersion,
     instance: names.instance,
     logPath,
+    secret,
     ...(supervisorTerminal
       ? { supervisor: { name: names.supervisorName, terminal: supervisorTerminal } }
       : {}),

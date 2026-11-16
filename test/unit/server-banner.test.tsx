@@ -142,6 +142,15 @@ describe('ServerBanner', () => {
     expect(host.textContent).toContain('terminal supervisor did not respond');
   });
 
+  it('says the credentials were refused for auth-refused', async () => {
+    const { host } = await render({
+      state: 'unavailable',
+      reason: 'auth-refused',
+      logPath: '/tmp/server.log',
+    });
+    expect(host.textContent).toContain("refused this app's credentials");
+  });
+
   it('offers the confirmed update restart only for the pending terminal engine update', async () => {
     const state: ServerUiState = {
       state: 'connected',

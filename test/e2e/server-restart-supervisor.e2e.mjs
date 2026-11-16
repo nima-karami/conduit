@@ -10,6 +10,7 @@
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { c2Auth } from './c2-auth.mjs';
 import { C2 } from './c2-peer.mjs';
 import { sleep, until } from './conduit-mcp-helpers.mjs';
 import {
@@ -35,10 +36,14 @@ const session = (page, id) =>
   page.evaluate((s) => (window.__sessions || []).find((x) => x.id === s) ?? null, id);
 
 /** One C2 request after hello on a fresh connection; resolves once the connection has closed. */
-async function restartServer(endpoint) {
+async function restartServer(endpoint, userData) {
   const c2 = await C2.open(endpoint);
   const closed = new Promise((resolve) => c2.socket.once('close', resolve));
-  await c2.call('hello', { appVersion: APP_VERSION, generation: SERVER_PROTOCOL_GENERATION });
+  await c2.call('hello', {
+    appVersion: APP_VERSION,
+    generation: SERVER_PROTOCOL_GENERATION,
+    auth: c2Auth(userData),
+  });
   // The server may drop the connection before it answers, which C2 reports as a rejection.
   const outcome = c2.call('server.restart', { reason: 'user' }).then(
     (result) => ({ result }),
@@ -93,7 +98,7 @@ await runScenario(
         await sleep(100);
       }
     })();
-    const reply = await restartServer(names.serverEndpoint);
+    const reply = await restartServer(names.serverEndpoint, userDataDir);
     log(`server.restart reply: ${JSON.stringify(reply)}`);
     // The server is gone: these keystrokes must be dropped, not delivered once it is back.
     for (let i = 0; i < 3; i++) {
