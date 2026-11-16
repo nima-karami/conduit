@@ -7,7 +7,7 @@ import {
   serializeGrantsFile,
   serializePolicyFile,
 } from '../../src/conduit-mcp/policy-file';
-import { WORKER_PROFILE } from '../../src/conduit-mcp/policy-profiles';
+import { OBSERVER } from '../../src/conduit-mcp/policy-profiles';
 import type { Decision, ToolRule } from '../../src/conduit-mcp/policy-types';
 import { TOOL_NAMES, type ToolName } from '../../src/conduit-mcp/tool-policy';
 
@@ -222,24 +222,25 @@ describe('policy file', () => {
     expect(parseGrantsFile(text)).toEqual(first);
   });
 
-  it('a profile missing a newer tool parses with that tool at Worker', () => {
+  it('a profile missing a newer tool parses with that tool at Observer', () => {
     const raw = JSON.parse(serializePolicyFile(validFile()));
     delete raw.profiles[0].rules.open_file;
     raw.profiles[0].rules.future_tool = { decision: 'deny', when: null, reach: null, move: null };
     const parsed = parsePolicyFile(JSON.stringify(raw));
     const rules = parsed.ok ? parsed.file.profiles[0].rules : null;
-    expect(rules?.open_file).toEqual(WORKER_PROFILE.rules.open_file);
-    expect(rules?.open_file.decision).not.toBe('ask');
+    expect(rules?.open_file).toEqual(OBSERVER.rules.open_file);
+    expect(rules?.open_file.decision).toBe('deny');
     expect(rules?.list_sessions).toEqual(rulesFor('ask').list_sessions);
     expect(rules && 'future_tool' in rules).toBe(false);
   });
 
-  it('mutating a parsed filled rule leaves WORKER_PROFILE unchanged', () => {
+  it('mutating a parsed filled rule leaves OBSERVER unchanged', () => {
     const raw = JSON.parse(serializePolicyFile(validFile()));
     delete raw.profiles[0].rules.open_file;
     const parsed = parsePolicyFile(JSON.stringify(raw));
     expect(parsed.ok).toBe(true);
-    if (parsed.ok) parsed.file.profiles[0].rules.open_file.decision = 'deny';
-    expect(WORKER_PROFILE.rules.open_file.decision).toBe('allow');
+    const before = { ...OBSERVER.rules.open_file };
+    if (parsed.ok) parsed.file.profiles[0].rules.open_file.decision = 'allow';
+    expect(OBSERVER.rules.open_file).toEqual(before);
   });
 });

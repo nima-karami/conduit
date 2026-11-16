@@ -2621,7 +2621,7 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     await h.host.start();
     const a = await launch(h, 's1');
     const b = await launch(h, 's2');
-    await setHostPolicy(h, 's2', { open_terminal: { access: 'off' } });
+    await setHostPolicy(h, 's2', { open_terminal: { access: 'ask' } });
     const ca = await client(h.ep, a.token);
     const cb = await client(h.ep, b.token);
     await ca.listed();
@@ -2669,6 +2669,86 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     );
     expect(h.host.uiState().policy.legacy.sessions.s1).toEqual({
       open_terminal: { access: 'on' },
+    });
+  });
+
+  it('a sleeping claude session takes a default edit from its persisted agent; an unknown agent is skipped', async () => {
+    const h = harness();
+    h.sessions.set('s1', session('s1', { agentId: 'claude' }));
+    h.sessions.set('gone', session('gone', { agentId: 'removed-profile' }));
+    await h.host.start();
+    await setHostPolicy(h, 's1', { open_file: { access: 'off' } });
+    await setHostPolicy(h, 'gone', { open_file: { access: 'off' } });
+    let answer: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:setPointPolicy',
+        requestId: 2,
+        point: { kind: 'default' },
+        tool: 'send_input',
+        patch: { access: 'on' },
+      },
+      (m) => {
+        answer = m;
+      },
+      1,
+    );
+    expect(answer).toEqual({ type: 'mcp:policyResult', requestId: 2, ok: true });
+    expect(h.host.uiState().policy.legacy.sessions.s1).toEqual({
+      open_file: { access: 'off' },
+    });
+    // The unknown agent keeps its own send_input, which no longer matches the default it skipped.
+    expect(h.host.uiState().policy.legacy.sessions.gone).toEqual({
+      open_file: { access: 'off' },
+      send_input: { access: 'ask' },
+    });
+  });
+
+  it('a sleeping claude session follows its cli:claude point, and a default edit does not pass that point', async () => {
+    const h = harness();
+    h.sessions.set('s1', session('s1', { agentId: 'claude' }));
+    await h.host.start();
+    await setHostPolicy(h, 's1', { open_file: { access: 'off' } });
+    const setPoint = async (
+      requestId: number,
+      point: { kind: 'default' } | { kind: 'cli'; cli: 'claude' },
+      patch: { access: 'on' | 'off' },
+    ) => {
+      let answer: HostToWebview | undefined;
+      await h.host.handleRenderer(
+        { type: 'mcp:setPointPolicy', requestId, point, tool: 'send_input', patch },
+        (m) => {
+          answer = m;
+        },
+        1,
+      );
+      expect(answer).toEqual({ type: 'mcp:policyResult', requestId, ok: true });
+    };
+    await setPoint(2, { kind: 'cli', cli: 'claude' }, { access: 'off' });
+    expect(h.host.uiState().policy.legacy.sessions.s1).toEqual({
+      open_file: { access: 'off' },
+      send_input: { access: 'off' },
+    });
+    // Explicit, not inherited: s1 must keep this value when the default moves off it.
+    let explicit: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:setToolPolicy',
+        requestId: 4,
+        sessionId: 's1',
+        tool: 'send_input',
+        patch: { access: 'ask' },
+      },
+      (m) => {
+        explicit = m;
+      },
+      1,
+    );
+    expect(explicit).toEqual({ type: 'mcp:toolPolicyResult', requestId: 4, ok: true });
+    await setPoint(3, { kind: 'default' }, { access: 'on' });
+    expect(h.host.uiState().policy.legacy.sessions.s1).toEqual({
+      open_file: { access: 'off' },
+      send_input: { access: 'ask' },
     });
   });
 
@@ -4946,6 +5026,76 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       1,
     );
     expect(replies.at(-1)).toMatchObject({ ok: false, reason: 'already_ended' });
+  });
+
+  it('a grant revoked while an allowed open_file waits in prepare refuses the call with tool_disabled', async () => {
+    let releaseKind!: () => void;
+    const kindGate = new Promise<void>((resolve) => {
+      releaseKind = resolve;
+    });
+    let kindAsked = 0;
+    const grantsIo: RequestsIo = {
+      read: () =>
+        serializeGrantsFile({
+          version: 1,
+          grants: [
+            {
+              id: 'g1',
+              who: { kind: 'session', sessionId: 's1' },
+              tool: 'open_file',
+              on: { kind: 'anywhere' },
+              for: 'until-revoked',
+              anchorSessionId: null,
+              createdAt: new Date(0).toISOString(),
+              expiresAt: null,
+              lastUsedAt: null,
+              state: 'active',
+              endedAt: null,
+              requestId: null,
+            },
+          ],
+        }),
+      write: async () => undefined,
+    };
+    const h = harness({
+      kinds: { '/w/a.ts': 'file' },
+      grantsIo,
+      kindOf: async (abs) => {
+        if (abs === '/w/a.ts') {
+          kindAsked += 1;
+          await kindGate;
+        }
+        return 'file';
+      },
+    });
+    await h.host.start();
+    const launched = await launch(h, 's1');
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:setPointPolicy',
+        requestId: 1,
+        point: { kind: 'default' },
+        tool: 'open_file',
+        patch: { access: 'ask' },
+      },
+      () => undefined,
+      1,
+    );
+    const c = await rawClient(h.ep, launched.token);
+    c.call(2, 'open_file', { paths: ['/w/a.ts'] });
+    await until(() => kindAsked === 1);
+    let revoked: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:revokeGrant', requestId: 3, grantId: 'g1' },
+      (m) => {
+        revoked = m;
+      },
+      1,
+    );
+    expect(revoked).toEqual({ type: 'mcp:policyResult', requestId: 3, ok: true });
+    releaseKind();
+    expect(c.errorOf(await c.reply(2))).toBe('tool_disabled');
+    await h.host.stop();
   });
 
   it('mcp:permissionAnswer from a window that does not own the ask is refused; the owner window answers', async () => {

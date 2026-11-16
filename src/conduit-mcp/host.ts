@@ -1568,6 +1568,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const id = runtime.get(sessionId)?.defAdapter?.id;
     return CLI_KINDS.find((kind) => kind === id) ?? null;
   };
+  // A sleeping session has no runtime adapter, but its persisted agent definition names the CLI.
+  const persistedLaunchedCli = (sessionId: string): CliKind | null | undefined => {
+    const def = deps.domain.defOf(sessionId);
+    if (def === undefined) return undefined;
+    const adapter = adapterFor(def, { e2e: deps.e2e });
+    return CLI_KINDS.find((kind) => kind === adapter?.id) ?? null;
+  };
   const principalOf = (sessionId: string): Extract<Principal, { kind: 'session' }> | null => {
     const session = deps.sessions.get(sessionId);
     if (!session?.mcpHandle) return null;
@@ -1582,6 +1589,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   };
   const policyService = createPolicyService({
     policyIo: deps.policyIo ?? createRequestsIo(path.join(deps.dir, 'policy.json')),
+    lastGoodIo: createRequestsIo(path.join(deps.dir, 'policy.last-good.json')),
     grantsIo: deps.grantsIo ?? createRequestsIo(path.join(deps.dir, 'grants.json')),
     activityIo: deps.activityIo ?? createActivityIo(deps.dir),
     now,
@@ -1596,6 +1604,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         cli: s.mcpHandle ? cliKindOfHandle(s.mcpHandle) : null,
       })),
     }),
+    launchedCli: (sessionId) => persistedLaunchedCli(sessionId),
     onChanged: () => {
       syncToolLists();
       scheduleBroadcast();
@@ -1869,10 +1878,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         // run back to back, so the re-decide sees the state the commit did: a second override for
         // the target can stand in for the spent one.
         const commitResolved = (): AskCommit | null => {
-          const held = policyService.commit(resolved);
+          const held = policyService.commit(policyInput, resolved);
           if (held !== null) return { decision: resolved, held };
           const again = policyService.decide(policyInput);
-          const heldAgain = again.decision === 'allow' ? policyService.commit(again) : null;
+          const heldAgain =
+            again.decision === 'allow' ? policyService.commit(policyInput, again) : null;
           if (heldAgain !== null) {
             evaluated.current = { input: policyInput, decision: again };
             return { decision: again, held: heldAgain };
@@ -1937,12 +1947,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           },
           commitAnswered: (held) => {
             if (reDecided === null) return false;
-            if (
-              policyService.commit(
-                reDecided,
-                held.map((o) => o.id),
-              ) === null
-            ) {
+            if (policyService.commit(policyInput, reDecided, held) === null) {
               evaluated.spent = true;
               return false;
             }

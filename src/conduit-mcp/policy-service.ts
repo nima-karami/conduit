@@ -10,6 +10,7 @@ import {
 import {
   assignmentFor,
   decide as decideEngine,
+  isLiveGrant,
   samePath,
   visibleTools as visibleEngine,
 } from './policy-engine';
@@ -21,15 +22,12 @@ import {
   serializePolicyFile,
 } from './policy-file';
 import { type LegacyPolicy, migrateLegacyPolicy } from './policy-migration';
-import { BUILT_IN_PROFILES, pointKey, profileById, WORKER_PROFILE } from './policy-profiles';
-import {
-  applyLegacyPatch as applyLegacyPatchPure,
-  legacyLowerPoint,
-  projectLegacyLayer,
-} from './policy-projection';
+import { BUILT_IN_PROFILES, OBSERVER, pointKey, profileById } from './policy-profiles';
+import { legacyLowerPoint, projectLegacyLayer, propagateLegacyPatch } from './policy-projection';
 import type {
   Assignment,
   AssignmentPoint,
+  Decision,
   Grant,
   OneUseOverride,
   PolicyDecision,
@@ -52,6 +50,7 @@ import {
 
 export interface PolicyServiceDeps {
   policyIo: RequestsIo;
+  lastGoodIo: RequestsIo;
   grantsIo: RequestsIo;
   activityIo: ActivityIo;
   now(): number;
@@ -60,6 +59,7 @@ export interface PolicyServiceDeps {
   clearTimer(t: unknown): void;
   warn(m: string, e?: unknown): void;
   legacy(): LegacyPolicy;
+  launchedCli(sessionId: string): CliKind | null | undefined;
   onChanged(): void;
 }
 
@@ -67,7 +67,11 @@ export interface PolicyService {
   start(): void;
   stop(): Promise<void>;
   decide(input: Omit<PolicyInput, 'now'>): PolicyDecision;
-  commit(decision: PolicyDecision, held?: readonly string[]): OneUseOverride[] | null;
+  commit(
+    input: Omit<PolicyInput, 'now'>,
+    decision: PolicyDecision,
+    held?: readonly OneUseOverride[],
+  ): OneUseOverride[] | null;
   noteDecision(activityId: string, input: Omit<PolicyInput, 'now'>, decision: PolicyDecision): void;
   visibleTools(p: Principal): ToolName[];
   setAssignment(
@@ -104,6 +108,7 @@ export interface PolicyService {
   profileName(id: ProfileId): string | null;
 }
 
+const DECISION_RANK: Record<Decision, number> = { deny: 0, ask: 1, allow: 2 };
 const WRITE_COALESCE_MS = 250;
 const TICK_MS = 60_000;
 const PURGE_MS = 3_600_000;
@@ -127,8 +132,10 @@ const emptyFile = (): PolicyFile => ({
 export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
   let file: PolicyFile = emptyFile();
   let policyWritable = true;
+  let failClosed = false;
   let grantsWritable = true;
   let policyDirty = false;
+  let lastGoodDirty = false;
   let grantsDirty = false;
   let writeTimer: unknown = null;
   let tickTimer: unknown = null;
@@ -153,6 +160,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     assignments: assignmentMap(),
     grants: grants.all(),
     overrides: file.overrides,
+    failClosed,
   });
 
   let stopped = false;
@@ -193,13 +201,34 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     }
   }
 
+  // A load writes the copy at once: a timer here would hold the server's first write window open.
+  function writeLastGood(): void {
+    if (!policyWritable) return;
+    const w = save(deps.lastGoodIo, 'policy.last-good.json', serializePolicyFile(file), () => {
+      lastGoodDirty = true;
+      scheduleWrite();
+    });
+    pending.add(w);
+    void w.then(() => pending.delete(w));
+  }
+
   function flush(): Promise<void> {
     const writes: Promise<void>[] = [];
     if (policyDirty && policyWritable) {
       policyDirty = false;
+      lastGoodDirty = true;
       writes.push(
         save(deps.policyIo, 'policy.json', serializePolicyFile(file), () => {
           policyDirty = true;
+          scheduleWrite();
+        }),
+      );
+    }
+    if (lastGoodDirty && policyWritable) {
+      lastGoodDirty = false;
+      writes.push(
+        save(deps.lastGoodIo, 'policy.last-good.json', serializePolicyFile(file), () => {
+          lastGoodDirty = true;
           scheduleWrite();
         }),
       );
@@ -225,19 +254,70 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     return Promise.all(writes).then(() => undefined);
   }
 
-  // Fail closed: an unreadable file never means an empty policy. The pre-upgrade settings
-  // stay in force, read-only, so nothing a user set before the upgrade stops applying.
-  function unreadablePolicy(why: string, e?: unknown): void {
+  // Only `absent` may migrate from legacy: a copy that exists but can't be used is a fault to
+  // fail closed on, never a reason to rebuild the policy from the old settings.
+  type LastGoodFault = 'unreadable' | 'newer' | 'read-failed';
+  type LastGood =
+    | { kind: 'absent' }
+    | { kind: 'ok'; policy: PolicyFile }
+    | { kind: 'bad'; reason: LastGoodFault };
+  const LAST_GOOD_FAULT_TEXT: Record<LastGoodFault, string> = {
+    unreadable: 'is unreadable',
+    newer: 'is from a newer version',
+    'read-failed': 'could not be read',
+  };
+
+  function readLastGood(): LastGood {
+    let text: string | null;
+    try {
+      text = deps.lastGoodIo.read();
+    } catch (e) {
+      deps.warn('policy.last-good.json could not be read', e);
+      return { kind: 'bad', reason: 'read-failed' };
+    }
+    if (text === null) return { kind: 'absent' };
+    const parsed = parsePolicyFile(text);
+    if (!parsed.ok) {
+      deps.warn(
+        parsed.reason === 'newer'
+          ? 'policy.last-good.json is from a newer version'
+          : 'policy.last-good.json is unreadable',
+      );
+      return { kind: 'bad', reason: parsed.reason === 'newer' ? 'newer' : 'unreadable' };
+    }
+    return { kind: 'ok', policy: parsed.file };
+  }
+
+  // Fail closed: an unreadable file never means an empty or a widened policy. The last copy
+  // this server read or wrote stays in force, read-only; with none, every session is Observer.
+  // `lost` is set when policy.json is missing and the saved copy is the reason we failed closed.
+  function unreadablePolicy(why: string, e?: unknown, lost?: LastGoodFault): void {
     policyWritable = false;
     deps.warn(`${why}; policy is read-only and not saved`, e);
-    file = { ...emptyFile(), ...migrateLegacyPolicy(deps.legacy()) };
+    const good = readLastGood();
+    const usable = good.kind === 'ok' ? good.policy : null;
+    failClosed = usable === null;
+    file = usable ?? {
+      ...emptyFile(),
+      assignments: [
+        {
+          point: { kind: 'default' },
+          assignment: { profileId: 'observer', exceptions: [], onScreenOnly: false },
+        },
+      ],
+    };
     activity.record({
       lane: 'note',
       principal: { handle: null, sessionId: null, machineId: null },
       cli: null,
       action: 'policy-unreadable',
       target: null,
-      summary: 'Permissions file unreadable; using pre-upgrade settings',
+      summary:
+        usable !== null
+          ? 'Permissions file unreadable; using the last saved copy'
+          : lost !== undefined
+            ? `Permissions file missing and its saved copy ${LAST_GOOD_FAULT_TEXT[lost]}; every session is Observer`
+            : 'Permissions file unreadable and no saved copy; every session is Observer',
       decision: null,
       decidedBy: 'conduit',
       outcome: null,
@@ -256,6 +336,21 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       return;
     }
     if (text === null) {
+      // A lost policy.json is rebuilt from the last saved copy; legacy settings only seed a first run.
+      const good = readLastGood();
+      if (good.kind === 'ok') {
+        file = good.policy;
+        markPolicy();
+        return;
+      }
+      if (good.kind === 'bad') {
+        unreadablePolicy(
+          'policy.json is missing and the saved copy is unusable',
+          undefined,
+          good.reason,
+        );
+        return;
+      }
       const migrated = migrateLegacyPolicy(deps.legacy());
       file = { ...emptyFile(), ...migrated };
       for (const a of migrated.assignments) {
@@ -288,6 +383,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       return;
     }
     file = parsed.file;
+    writeLastGood();
   }
 
   function loadGrants(): void {
@@ -364,12 +460,24 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       return decideEngine(stateNow(), { ...input, now: deps.now() });
     },
 
-    commit(decision, held = []) {
-      // A concurrent call decided on the same override; the first commit spent it. A held id was
-      // spent when its card was raised, so it is not checked against the saved list again.
-      const heldIds = new Set(held);
+    commit(input, decision, held = []) {
+      // A concurrent call decided on the same override; the first commit spent it. A held
+      // override was spent when its card was raised, so it is not checked against the saved
+      // list again.
+      const heldIds = new Set(held.map((o) => o.id));
       const saved = new Set(file.overrides.map((o) => o.id));
       if (decision.overrideIds.some((id) => !saved.has(id) && !heldIds.has(id))) return null;
+      // A grant revoked or expired, or an exception added, while the call waited refuses it.
+      const now = deps.now();
+      const live = new Set(
+        grants
+          .all()
+          .filter((g) => isLiveGrant(g, now))
+          .map((g) => g.id),
+      );
+      if (decision.grantIds.some((id) => !live.has(id))) return null;
+      const fresh = decideEngine(stateNow(), { ...input, heldOverrides: held, now });
+      if (DECISION_RANK[fresh.decision] < DECISION_RANK[decision.decision]) return null;
       if (decision.grantIds.length > 0) {
         for (const id of decision.grantIds) grants.touch(id);
         markGrants();
@@ -432,9 +540,11 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
 
     applyLegacyPatch(point, lower, tool, patch) {
       if (!policyWritable) return { ok: false, error: 'read-only' };
-      const assignment = applyLegacyPatchPure(stateNow(), point, lower, tool, patch);
-      if (assignment === null) return { ok: false, error: 'scoped' };
-      setPointAssignment(point, assignment);
+      const writes = propagateLegacyPatch(stateNow(), point, lower, tool, patch, (sessionId) =>
+        deps.launchedCli(sessionId),
+      );
+      if (writes === null) return { ok: false, error: 'scoped' };
+      for (const w of writes) setPointAssignment(w.point, w.assignment);
       deps.onChanged();
       return { ok: true };
     },
@@ -534,7 +644,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
           projectId: null,
         };
         const { point, assignment } = assignmentFor(st, principal);
-        const profile = profileById(st, assignment.profileId) ?? WORKER_PROFILE;
+        const profile = profileById(st, assignment.profileId) ?? OBSERVER;
         const exceptions = assignment.exceptions.length + (assignment.onScreenOnly ? 1 : 0);
         const source =
           point.kind === 'session' ? 'session' : point.kind === 'cli' ? 'cli' : 'default';

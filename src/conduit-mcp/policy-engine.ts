@@ -4,11 +4,11 @@ import { folderKey } from '../folder-key';
 import {
   effectiveRule,
   matchesScope,
+  OBSERVER,
   pointKey,
   profileById,
   resolveTarget,
   STRICTNESS,
-  WORKER_PROFILE,
 } from './policy-profiles';
 import type {
   Assignment,
@@ -106,7 +106,7 @@ function forPrincipal(principal: Principal, rule: ToolRule): ToolRule {
   };
 }
 
-function isLiveGrant(g: Grant, now: number): boolean {
+export function isLiveGrant(g: Grant, now: number): boolean {
   return g.state === 'active' && (g.expiresAt === null || Date.parse(g.expiresAt) > now);
 }
 
@@ -141,10 +141,17 @@ function done(
   };
 }
 
+const OBSERVER_ASSIGNMENT: Assignment = {
+  profileId: 'observer',
+  exceptions: [],
+  onScreenOnly: false,
+};
+
 export function assignmentFor(
   state: PolicyState,
   p: Principal,
 ): { point: AssignmentPoint; assignment: Assignment } {
+  if (state.failClosed) return { point: { kind: 'default' }, assignment: OBSERVER_ASSIGNMENT };
   if (p.kind === 'remote') {
     const point: AssignmentPoint = { kind: 'peer', machineId: p.machineId };
     return { point, assignment: state.assignments.get(pointKey(point)) ?? OWN_PEER_ASSIGNMENT };
@@ -162,7 +169,7 @@ export function assignmentFor(
 export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
   const { principal, tool, masterOn, toYou, now } = input;
   const { point, assignment } = assignmentFor(state, principal);
-  const profile = profileById(state, assignment.profileId) ?? WORKER_PROFILE;
+  const profile = profileById(state, assignment.profileId) ?? OBSERVER;
   const targets = resolveTargets(input.targets, principal);
   const primary = targets[0];
   const ruleFor = (t: PolicyTarget): ToolRule =>
@@ -261,7 +268,7 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
 
 export function visibleTools(state: PolicyState, principal: Principal, now: number): ToolName[] {
   const { assignment } = assignmentFor(state, principal);
-  const profile = profileById(state, assignment.profileId) ?? WORKER_PROFILE;
+  const profile = profileById(state, assignment.profileId) ?? OBSERVER;
   return TOOL_NAMES.filter(
     (tool) => !isDeniedForEveryTarget(state, principal, profile, assignment, tool, now),
   );

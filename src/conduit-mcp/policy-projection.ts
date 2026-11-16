@@ -2,9 +2,9 @@
 import {
   DECISION_OF_ACCESS,
   effectiveRule,
+  OBSERVER,
   pointKey,
   profileById,
-  WORKER_PROFILE,
 } from './policy-profiles';
 import type {
   Assignment,
@@ -18,6 +18,7 @@ import type {
 import {
   ACCESS_VALUES,
   type Access,
+  CLI_KINDS,
   type CliKind,
   type Move,
   type PolicyField,
@@ -60,7 +61,7 @@ const plainWorker = (): Assignment => ({
 });
 
 const profileOf = (state: PolicyState, a: Assignment): Profile =>
-  profileById(state, a.profileId) ?? WORKER_PROFILE;
+  profileById(state, a.profileId) ?? OBSERVER;
 
 const ruleAt = (state: PolicyState, a: Assignment, tool: ToolName): ToolRule =>
   effectiveRule(profileOf(state, a), a, tool, null);
@@ -191,4 +192,111 @@ export function legacyLowerPoint(state: PolicyState, launchedCli: CliKind | null
   if (launchedCli !== null && state.assignments.has(pointKey({ kind: 'cli', cli: launchedCli })))
     return { kind: 'cli', cli: launchedCli };
   return { kind: 'default' };
+}
+
+export interface LegacyWrite {
+  point: AssignmentPoint;
+  assignment: Assignment;
+}
+
+/** undefined: the session's CLI is unknown (no persisted record), so it is never guessed. */
+export type LaunchedCliOf = (sessionId: string) => CliKind | null | undefined;
+
+const isCliKind = (v: string): v is CliKind => (CLI_KINDS as readonly string[]).includes(v);
+
+function pointOfKey(key: string): AssignmentPoint | null {
+  if (key === 'default') return { kind: 'default' };
+  const sep = key.indexOf(':');
+  if (sep < 0) return null;
+  const kind = key.slice(0, sep);
+  const id = key.slice(sep + 1);
+  if (kind === 'session') return { kind: 'session', sessionId: id };
+  if (kind === 'cli' && isCliKind(id)) return { kind: 'cli', cli: id };
+  return null;
+}
+
+// see C6: an inheritor is an assignment whose lower point is this one
+function inheritorsOf(
+  state: PolicyState,
+  point: AssignmentPoint,
+  launchedCliOf: LaunchedCliOf,
+): Array<{ point: AssignmentPoint; assignment: Assignment }> {
+  const out: Array<{ point: AssignmentPoint; assignment: Assignment }> = [];
+  for (const [key, assignment] of state.assignments) {
+    const p = pointOfKey(key);
+    if (p === null) continue;
+    let inherits = false;
+    if (point.kind === 'default') {
+      if (p.kind === 'cli') inherits = true;
+      if (p.kind === 'session') {
+        const cli = launchedCliOf(p.sessionId);
+        inherits = cli !== undefined && legacyLowerPoint(state, cli).kind === 'default';
+      }
+    } else if (point.kind === 'cli' && p.kind === 'session') {
+      inherits = launchedCliOf(p.sessionId) === point.cli;
+    }
+    if (inherits) out.push({ point: p, assignment });
+  }
+  return out;
+}
+
+// see C6 (M1): an edit reaches the inheritors that hold its old value, level by level
+export function propagateLegacyPatch(
+  state: PolicyState,
+  point: AssignmentPoint,
+  lower: AssignmentPoint | null,
+  tool: ToolName,
+  patch: ToolPolicyPatch,
+  launchedCliOf: LaunchedCliOf,
+): LegacyWrite[] | null {
+  const edited = applyLegacyPatch(state, point, lower, tool, patch);
+  if (edited === null) return null;
+  const writes = new Map<string, LegacyWrite>([[pointKey(point), { point, assignment: edited }]]);
+  const fields = (['access', 'when', 'reach', 'move'] as const).filter(
+    (f) => TOOL_SPECS[tool].fields.includes(f) && patch[f] !== undefined,
+  );
+  // Each node is an assignment whose value changed: `before` is its pre-edit state, `after` its new one.
+  let level: Array<{ point: AssignmentPoint; before: Assignment; after: Assignment }> = [
+    {
+      point,
+      before: state.assignments.get(pointKey(point)) ?? assignmentOrWorker(state, lower),
+      after: edited,
+    },
+  ];
+  while (level.length > 0) {
+    const next: typeof level = [];
+    for (const node of level) {
+      const beforeV = legacyPolicyOf(ruleAt(state, node.before, tool), tool);
+      const afterV = legacyPolicyOf(ruleAt(state, node.after, tool), tool);
+      const changed = fields.filter((f) => beforeV[f] !== afterV[f]);
+      if (changed.length === 0) continue;
+      for (const inheritor of inheritorsOf(state, node.point, launchedCliOf)) {
+        const key = pointKey(inheritor.point);
+        if (writes.has(key)) continue;
+        // An explicit profile or on-screen choice is never an inheritance, even at the same value.
+        if (
+          inheritor.assignment.profileId !== node.before.profileId ||
+          inheritor.assignment.onScreenOnly !== node.before.onScreenOnly
+        ) {
+          continue;
+        }
+        let current = inheritor.assignment;
+        let touched = false;
+        for (const field of changed) {
+          if (legacyPolicyOf(ruleAt(state, current, tool), tool)[field] !== beforeV[field])
+            continue;
+          const wanted = afterV[field];
+          if (wanted === undefined) continue;
+          if (current.exceptions.some((e) => e.scope.kind !== 'anywhere')) return null;
+          current = applyField(state, current, current, tool, field, wanted);
+          touched = true;
+        }
+        if (!touched) continue;
+        writes.set(key, { point: inheritor.point, assignment: current });
+        next.push({ point: inheritor.point, before: inheritor.assignment, after: current });
+      }
+    }
+    level = next;
+  }
+  return [...writes.values()];
 }

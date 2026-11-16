@@ -124,6 +124,8 @@ export interface PolicyState {
   assignments: ReadonlyMap<string, Assignment>;
   grants: readonly Grant[];
   overrides: readonly OneUseOverride[];
+  /** see POL §5: an unreadable policy with no saved copy makes every principal Observer. */
+  failClosed: boolean;
 }
 
 export interface PolicyInput {

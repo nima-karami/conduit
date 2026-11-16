@@ -20,7 +20,7 @@ import type {
   Principal,
 } from '../../src/conduit-mcp/policy-types';
 import type { RequestsIo } from '../../src/conduit-mcp/request-file-fs';
-import { DEFAULT_TOOL_POLICY } from '../../src/conduit-mcp/tool-policy';
+import { type CliKind, DEFAULT_TOOL_POLICY } from '../../src/conduit-mcp/tool-policy';
 
 vi.mock('../../src/conduit-mcp/policy-migration', () => ({
   migrateLegacyPolicy: vi.fn(() => ({
@@ -82,6 +82,9 @@ const grant = (over: Partial<Grant> = {}): Grant => ({
 
 interface Opts {
   policy?: string | null;
+  lastGood?: string | null;
+  lastGoodReadThrows?: boolean;
+  launchedCli?: Record<string, CliKind | null | undefined>;
   grants?: string | null;
   activityFails?: boolean;
   writeFails?: boolean;
@@ -103,6 +106,17 @@ function harness(o: Opts = {}) {
     write: async (t) => {
       if (writeDown) throw new Error('disk full');
       policyWrites.push(t);
+    },
+  };
+  const lastGoodWrites: string[] = [];
+  const lastGoodIo: RequestsIo = {
+    read: () => {
+      if (o.lastGoodReadThrows) throw new Error('EIO');
+      return o.lastGood ?? null;
+    },
+    write: async (t) => {
+      if (writeDown) throw new Error('disk full');
+      lastGoodWrites.push(t);
     },
   };
   const grantsIo: RequestsIo = {
@@ -127,6 +141,7 @@ function harness(o: Opts = {}) {
 
   const deps: PolicyServiceDeps = {
     policyIo,
+    lastGoodIo,
     grantsIo,
     activityIo,
     now: () => now,
@@ -147,6 +162,7 @@ function harness(o: Opts = {}) {
       legacyCalls += 1;
       return { global: DEFAULT_TOOL_POLICY, byCli: {}, sessions: [] };
     },
+    launchedCli: (id) => (o.launchedCli && id in o.launchedCli ? o.launchedCli[id] : null),
     onChanged: () => {
       changed += 1;
     },
@@ -167,6 +183,7 @@ function harness(o: Opts = {}) {
     deps,
     fire,
     policyWrites,
+    lastGoodWrites,
     grantWrites,
     activityRows,
     warnings,
@@ -282,6 +299,25 @@ describe('policy service', () => {
     expect(h.policyWrites).toEqual([]);
   });
 
+  it('a default edit reaches a session tweaked in the old dialog and leaves no override there', () => {
+    const h = harness();
+    h.service.start();
+    expect(
+      h.service.applyLegacyPatch(
+        { kind: 'session', sessionId: 's1' },
+        { kind: 'default' },
+        'open_file',
+        { access: 'off' },
+      ),
+    ).toEqual({ ok: true });
+    expect(
+      h.service.applyLegacyPatch({ kind: 'default' }, null, 'send_input', { access: 'on' }),
+    ).toEqual({ ok: true });
+    const ui = h.service.ui([{ sessionId: 's1', launchedCli: null }]);
+    expect(ui.legacy.sessions.s1).toEqual({ open_file: { access: 'off' } });
+    expect(ui.legacy.global.send_input).toEqual({ access: 'on' });
+  });
+
   it('missing policy.json migrates from legacy and persists once', async () => {
     vi.mocked(migrateLegacyPolicy).mockReturnValueOnce({
       assignments: [
@@ -394,37 +430,39 @@ describe('policy service', () => {
     h.service.start();
 
     h.advance(5 * MIN);
-    const used = h.service.decide({
+    const usedInput = {
       principal: session(),
-      tool: 'open_session',
+      tool: 'open_session' as const,
       targets: [target({ sessionId: 's2' }), target({ sessionId: 's3' })],
       masterOn: true,
       toYou: false,
-    });
+    };
+    const used = h.service.decide(usedInput);
     expect(used.decision).toBe('allow');
     expect(used.grantIds).toEqual(['g-s2', 'g-s3']);
     expect(h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt])).toEqual([
       ['g-s2', null],
       ['g-s3', null],
     ]);
-    h.service.commit(used);
+    h.service.commit(usedInput, used);
     expect(h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt])).toEqual([
       ['g-s2', iso(h.now())],
       ['g-s3', iso(h.now())],
     ]);
 
-    const passed = h.service.decide({
+    const passedInput = {
       principal: session(),
-      tool: 'open_session',
+      tool: 'open_session' as const,
       targets: [target({ sessionId: 's9' })],
       masterOn: true,
       toYou: false,
-    });
+    };
+    const passed = h.service.decide(passedInput);
     expect(passed).toMatchObject({
       decision: 'allow',
       reason: { by: 'override', overrideId: 'o1' },
     });
-    h.service.commit(passed);
+    h.service.commit(passedInput, passed);
 
     const again = h.service.decide({
       principal: session(),
@@ -515,7 +553,7 @@ describe('policy service', () => {
       decision: 'allow',
       reason: { by: 'override' },
     });
-    h.service.commit(passed);
+    h.service.commit(input, passed);
     expect(h.service.decide(input).decision).toBe('deny');
   });
 
@@ -1006,20 +1044,41 @@ describe('policy service', () => {
     expect(h.warnings.some((m) => m.includes('grants.json'))).toBe(true);
   });
 
-  it('an unreadable policy.json evaluates the pre-upgrade settings, read-only', async () => {
-    vi.mocked(migrateLegacyPolicy).mockReturnValueOnce({
+  it.each([
+    ['unreadable', '{not json'],
+    ['newer', '{"version":99,"profiles":[],"assignments":[],"overrides":[]}'],
+  ])('a %s policy.json loads the last-good copy, read-only', async (_kind, policy) => {
+    const good = policyText({
       assignments: [
         {
           point: { kind: 'session', sessionId: 's1' },
           assignment: { profileId: 'observer', exceptions: [], onScreenOnly: false },
         },
       ],
-      migratedFrom: 'v0.64',
-      notes: { onScreenOnlyOffered: [] },
     });
-    const h = harness({ policy: '{not json' });
+    const h = harness({ policy, lastGood: good });
     h.service.start();
 
+    expect(h.service.ui([sessionRow('s1')]).sessions.s1?.profileId).toBe('observer');
+    expect(h.service.ui([sessionRow('s1')]).readOnly).toBe(true);
+    expect(migrateLegacyPolicy).not.toHaveBeenCalled();
+    const notes = h.activityRows().filter((r) => r.action === 'policy-unreadable');
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatchObject({
+      lane: 'note',
+      summary: 'Permissions file unreadable; using the last saved copy',
+    });
+    h.fire(WRITE_MS);
+    await h.service.stop();
+    expect(h.policyWrites).toEqual([]);
+    expect(h.lastGoodWrites).toEqual([]);
+  });
+
+  it('an unreadable policy.json with no good copy makes every session Observer, read-only', async () => {
+    const h = harness({ policy: '{not json', lastGood: null });
+    h.service.start();
+
+    expect(migrateLegacyPolicy).not.toHaveBeenCalled();
     expect(h.service.ui([sessionRow('s1')]).sessions.s1?.profileId).toBe('observer');
     expect(h.service.ui([sessionRow('s1')]).readOnly).toBe(true);
     expect(
@@ -1031,15 +1090,116 @@ describe('policy service', () => {
         toYou: false,
       }).decision,
     ).toBe('deny');
-    const notes = h.activityRows().filter((r) => r.action === 'policy-unreadable');
-    expect(notes).toHaveLength(1);
-    expect(notes[0]).toMatchObject({
-      lane: 'note',
-      summary: 'Permissions file unreadable; using pre-upgrade settings',
-    });
     h.fire(WRITE_MS);
     await h.service.stop();
     expect(h.policyWrites).toEqual([]);
+    expect(h.lastGoodWrites).toEqual([]);
+  });
+
+  it('a successful load and a save each write the last-good copy', async () => {
+    const h = harness({ policy: policyText() });
+    h.service.start();
+    h.fire(WRITE_MS);
+    expect(h.lastGoodWrites).toHaveLength(1);
+    expect(parsePolicyFile(h.lastGoodWrites[0] ?? '').ok).toBe(true);
+
+    expect(h.service.setAssignment({ kind: 'default' }, 'lead')).toEqual({ ok: true });
+    h.fire(WRITE_MS);
+    await h.settle();
+    const last = h.lastGoodWrites.at(-1) ?? '';
+    expect(parsePolicyFile(last)).toMatchObject({
+      ok: true,
+      file: { assignments: [{ point: { kind: 'default' }, assignment: { profileId: 'lead' } }] },
+    });
+    await h.service.stop();
+  });
+
+  it('a grant revoked between decide and commit refuses the commit', () => {
+    const h = harness({
+      grants: serializeGrantsFile({
+        version: 1,
+        grants: [grant({ id: 'g-s2', on: { kind: 'session', sessionId: 's2' } })],
+      }),
+    });
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_session' as const,
+      targets: [target({ sessionId: 's2' })],
+      masterOn: true,
+      toYou: false,
+    };
+    const decision = h.service.decide(input);
+    expect(decision).toMatchObject({ decision: 'allow', grantIds: ['g-s2'] });
+    expect(h.service.revokeGrant('g-s2')).toBe(true);
+    expect(h.service.commit(input, decision)).toBeNull();
+  });
+
+  it('a revoked grant refuses the commit even when another grant still allows the call', () => {
+    const h = harness({
+      grants: serializeGrantsFile({
+        version: 1,
+        grants: [
+          grant({ id: 'g-a', on: { kind: 'session', sessionId: 's2' } }),
+          grant({ id: 'g-b', on: { kind: 'session', sessionId: 's2' } }),
+        ],
+      }),
+    });
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_session' as const,
+      targets: [target({ sessionId: 's2' })],
+      masterOn: true,
+      toYou: false,
+    };
+    const decision = h.service.decide(input);
+    expect(decision.decision).toBe('allow');
+    expect(decision.grantIds).toEqual(['g-a']);
+    expect(h.service.revokeGrant('g-a')).toBe(true);
+    expect(h.service.decide(input).decision).toBe('allow');
+    expect(h.service.commit(input, decision)).toBeNull();
+  });
+
+  it('a deny exception added between decide and commit refuses the commit', () => {
+    const h = harness();
+    h.service.start();
+    expect(
+      h.service.applyLegacyPatch({ kind: 'default' }, null, 'open_session', { access: 'on' }),
+    ).toEqual({ ok: true });
+    const input = {
+      principal: session(),
+      tool: 'open_session' as const,
+      targets: [],
+      masterOn: true,
+      toYou: false,
+    };
+    const decision = h.service.decide(input);
+    expect(decision.decision).toBe('allow');
+    expect(
+      h.service.applyLegacyPatch(
+        { kind: 'session', sessionId: 's1' },
+        { kind: 'default' },
+        'open_session',
+        { access: 'off' },
+      ),
+    ).toEqual({ ok: true });
+    expect(h.service.commit(input, decision)).toBeNull();
+  });
+
+  it('a commit whose fresh decide still allows goes through, and an ask still commits', () => {
+    const h = harness();
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_session' as const,
+      targets: [],
+      masterOn: true,
+      toYou: false,
+    };
+    const asked = h.service.decide(input);
+    expect(asked.decision).toBe('ask');
+    expect(h.service.commit(input, asked)).toEqual([]);
   });
 
   it('allowOnce does not duplicate an existing override', async () => {
@@ -1148,7 +1308,7 @@ describe('policy service', () => {
     };
     const passed = h.service.decide(input);
     expect(passed).toMatchObject({ decision: 'allow', overrideIds: ['oa', 'ob'] });
-    h.service.commit(passed);
+    h.service.commit(input, passed);
     expect(h.service.decide(input).decision).toBe('deny');
     h.fire(WRITE_MS);
     await h.service.stop();
@@ -1197,10 +1357,10 @@ describe('policy service', () => {
     expect(first).toMatchObject({ decision: 'allow', overrideIds: ['o1'], grantIds: ['g-s2'] });
     expect(second).toMatchObject({ decision: 'allow', overrideIds: ['o1'], grantIds: ['g-s2'] });
 
-    expect(h.service.commit(first)).not.toBeNull();
+    expect(h.service.commit(input, first)).not.toBeNull();
     const afterFirst = h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt]);
     h.advance(MIN);
-    expect(h.service.commit(second)).toBeNull();
+    expect(h.service.commit(input, second)).toBeNull();
     expect(h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt])).toEqual(afterFirst);
     expect(h.service.decide(input).decision).toBe('deny');
   });
@@ -1248,9 +1408,9 @@ describe('policy service', () => {
     expect(h.service.decide(input)).toMatchObject({ decision: 'allow', overrideIds: ['oa'] });
     expect(h.changed()).toBe(before);
 
-    h.service.commit(first);
+    h.service.commit(input, first);
     expect(h.changed()).toBe(before + 1);
-    h.service.commit(first);
+    h.service.commit(input, first);
     expect(h.changed()).toBe(before + 1);
     expect(h.service.decide(input).decision).toBe('deny');
   });
@@ -1285,15 +1445,16 @@ describe('policy service', () => {
       }),
     });
     h.service.start();
-    const first = h.service.decide({
+    const input = {
       principal: session(),
-      tool: 'open_file',
+      tool: 'open_file' as const,
       targets: [target({ path: '/w/a/x.ts', folder: '/w/a' })],
       masterOn: true,
       toYou: false,
-    });
-    expect(h.service.commit(first)).toEqual([override]);
-    expect(h.service.commit(first)).toBeNull();
+    };
+    const first = h.service.decide(input);
+    expect(h.service.commit(input, first)).toEqual([override]);
+    expect(h.service.commit(input, first)).toBeNull();
   });
 
   it('a held override passes the still-saved check after its commit removed it, and only grants are touched', () => {
@@ -1338,14 +1499,14 @@ describe('policy service', () => {
       masterOn: true,
       toYou: false,
     };
-    const removed = h.service.commit(h.service.decide(input));
+    const removed = h.service.commit(input, h.service.decide(input));
     expect(removed).toEqual([expect.objectContaining({ id: 'o1' })]);
 
     h.advance(MIN);
     const answer = h.service.decide({ ...input, heldOverrides: removed ?? [] });
     expect(answer).toMatchObject({ decision: 'allow', overrideIds: ['o1'], grantIds: ['g-s2'] });
     const before = h.changed();
-    expect(h.service.commit(answer, ['o1'])).toEqual([]);
+    expect(h.service.commit(input, answer, removed ?? [])).toEqual([]);
     expect(h.changed()).toBe(before);
     expect(h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt])).toEqual([
       ['g-s2', iso(h.now())],
@@ -1392,7 +1553,7 @@ describe('policy service', () => {
     };
     const answer = h.service.decide({ ...input, heldOverrides: [held] });
     expect(answer).toMatchObject({ decision: 'allow', overrideIds: ['o1'] });
-    expect(h.service.commit(answer, ['o1'])).toEqual([]);
+    expect(h.service.commit(input, answer, [held])).toEqual([]);
     expect(h.service.decide(input)).toMatchObject({ decision: 'allow', overrideIds: ['o2'] });
   });
 
@@ -1494,7 +1655,7 @@ describe('policy service', () => {
     };
     const asked = h.service.decide(input);
     expect(asked).toMatchObject({ decision: 'ask', overrideIds: ['oa'] });
-    h.service.commit(asked);
+    h.service.commit(input, asked);
     expect(h.service.decide(input).decision).toBe('deny');
   });
 
@@ -1535,5 +1696,154 @@ describe('policy service', () => {
     await h.settle();
     expect(h.policyWrites).toHaveLength(1);
     await h.service.stop();
+  });
+});
+
+describe('fail-closed and missing profile', () => {
+  const peer: Principal = {
+    kind: 'remote',
+    handle: 'claude-3',
+    machineId: 'm-0000000a',
+    trust: 'own',
+    capabilities: { messaging: true, monitor: true, drive: true },
+  };
+
+  it('with no saved copy, a peer decides as Observer, not as the default peer assignment', () => {
+    const closed = harness({ policy: '{not json', lastGood: null });
+    closed.service.start();
+    const open = harness({ policy: policyText() });
+    open.service.start();
+    const input = {
+      principal: peer,
+      tool: 'open_file' as const,
+      targets: [],
+      masterOn: true,
+      toYou: false,
+    };
+    expect(open.service.decide(input).decision).not.toBe('deny');
+    expect(closed.service.decide(input).decision).toBe('deny');
+  });
+
+  it('a session whose launched CLI is unknown is skipped by propagation, never guessed as default', () => {
+    const h = harness({ launchedCli: { s1: undefined } });
+    h.service.start();
+    h.service.applyLegacyPatch(
+      { kind: 'session', sessionId: 's1' },
+      { kind: 'default' },
+      'open_file',
+      {
+        access: 'off',
+      },
+    );
+    h.service.applyLegacyPatch({ kind: 'default' }, null, 'send_input', { access: 'on' });
+    expect(h.service.ui([sessionRow('s1')]).legacy.sessions.s1).toEqual({
+      open_file: { access: 'off' },
+      send_input: { access: 'ask' },
+    });
+  });
+
+  it('a sleeping session whose CLI is known from its persisted record inherits the default', () => {
+    const h = harness({ launchedCli: { s1: 'claude' } });
+    h.service.start();
+    h.service.applyLegacyPatch(
+      { kind: 'session', sessionId: 's1' },
+      { kind: 'default' },
+      'open_file',
+      {
+        access: 'off',
+      },
+    );
+    h.service.applyLegacyPatch({ kind: 'default' }, null, 'send_input', { access: 'on' });
+    expect(h.service.ui([{ sessionId: 's1', launchedCli: 'claude' }]).legacy.sessions.s1).toEqual({
+      open_file: { access: 'off' },
+    });
+  });
+
+  it('a missing policy.json is rebuilt from the last-good copy, and migration is skipped', async () => {
+    const good = policyText({
+      assignments: [
+        {
+          point: { kind: 'default' },
+          assignment: { profileId: 'lead', exceptions: [], onScreenOnly: false },
+        },
+      ],
+    });
+    const h = harness({ policy: null, lastGood: good });
+    h.service.start();
+    expect(migrateLegacyPolicy).not.toHaveBeenCalled();
+    expect(h.service.ui([]).readOnly).toBe(false);
+    h.fire(WRITE_MS);
+    await h.service.stop();
+    expect(parsePolicyFile(h.policyWrites.at(-1) ?? '')).toMatchObject({
+      ok: true,
+      file: { assignments: [{ point: { kind: 'default' }, assignment: { profileId: 'lead' } }] },
+    });
+  });
+
+  it.each([
+    [
+      'is unreadable',
+      { lastGood: '{not json' },
+      'Permissions file missing and its saved copy is unreadable; every session is Observer',
+    ],
+    [
+      'is from a newer version',
+      { lastGood: '{"version":99,"profiles":[],"assignments":[],"overrides":[]}' },
+      'Permissions file missing and its saved copy is from a newer version; every session is Observer',
+    ],
+    [
+      'cannot be read',
+      { lastGoodReadThrows: true },
+      'Permissions file missing and its saved copy could not be read; every session is Observer',
+    ],
+  ])(
+    'a missing policy.json with a last-good copy that %s fails closed and never migrates',
+    async (_kind, saved, summary) => {
+      const h = harness({ policy: null, ...saved });
+      h.service.start();
+
+      expect(migrateLegacyPolicy).not.toHaveBeenCalled();
+      expect(h.legacyCalls()).toBe(0);
+      expect(h.service.ui([sessionRow('s1')]).readOnly).toBe(true);
+      expect(h.service.ui([sessionRow('s1')]).sessions.s1?.profileId).toBe('observer');
+      expect(
+        h.service.decide({
+          principal: session(),
+          tool: 'open_session',
+          targets: [],
+          masterOn: true,
+          toYou: false,
+        }).decision,
+      ).toBe('deny');
+      expect(h.service.setAssignment({ kind: 'default' }, 'lead')).toEqual({
+        ok: false,
+        error: 'read-only',
+      });
+      h.fire(WRITE_MS);
+      await h.service.stop();
+      expect(h.policyWrites).toEqual([]);
+      expect(h.lastGoodWrites).toEqual([]);
+      expect(h.activityRows().filter((r) => r.action === 'policy-unreadable')).toMatchObject([
+        { summary },
+      ]);
+    },
+  );
+
+  it('a session whose stored profile is missing shows Observer in the UI', () => {
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: { profileId: 'p-gone', exceptions: [], onScreenOnly: false },
+          },
+        ],
+      }),
+    });
+    h.service.start();
+    expect(h.service.ui([sessionRow('s1')]).sessions.s1).toMatchObject({
+      profileId: 'p-gone',
+      profileName: 'Observer',
+    });
   });
 });

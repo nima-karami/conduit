@@ -21,7 +21,13 @@ import {
   type ToolName,
 } from '../../src/conduit-mcp/tool-policy';
 
-const emptyState: PolicyState = { profiles: [], assignments: new Map(), grants: [], overrides: [] };
+const emptyState: PolicyState = {
+  profiles: [],
+  assignments: new Map(),
+  grants: [],
+  overrides: [],
+  failClosed: false,
+};
 const DECISION_OF: Record<Access, Decision> = { off: 'deny', ask: 'ask', on: 'allow' };
 const builtIn = (id: string) => {
   const p = BUILT_IN_PROFILES.find((x) => x.id === id);
