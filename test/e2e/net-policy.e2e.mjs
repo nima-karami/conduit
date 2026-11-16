@@ -273,7 +273,10 @@ async function run() {
     assert(revoked.reply?.ok === true, `revoke from A: ${JSON.stringify(revoked)}`);
     await eventually('the grant is gone from A and from B', async () => {
       row = await machineRow(a, bId);
-      const stillOnB = ((await mcpOf(b)).policy?.grants ?? []).some((g) => g.id === grant.id);
+      // B's own list keeps ended grants as history, so "gone" means no longer active there.
+      const stillOnB = ((await mcpOf(b)).policy?.grants ?? []).some(
+        (g) => g.id === grant.id && g.state === 'active',
+      );
       return !row.grants.some((g) => g.id === grant.id) && !stillOnB;
     });
   } catch (error) {
