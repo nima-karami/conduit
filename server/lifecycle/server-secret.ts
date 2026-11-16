@@ -1,7 +1,11 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { LINK_ENDPOINT_FILE, SERVER_SECRET_FILE } from '../../src/server-secret';
+import {
+  LINK_ENDPOINT_FILE,
+  SERVER_SECRET_FILE,
+  SERVER_VERSION_FILE,
+} from '../../src/server-secret';
 
 /**
  * A new value every start, so a secret copied from an earlier run stops working. Written to a
@@ -21,6 +25,23 @@ export function writeLinkEndpoint(userData: string, endpoint: string): void {
 /** Removed on stop: a record left behind would send a bridge to a socket nobody answers. */
 export function removeLinkEndpoint(userData: string): void {
   rmSync(path.join(userData, LINK_ENDPOINT_FILE), { force: true });
+}
+
+/** Recorded after the server listens, so a probe never reads a version that is not up yet. */
+export function writeServerVersion(
+  userData: string,
+  v: { version: string; linkMajor: number },
+): void {
+  writeRecord(
+    userData,
+    SERVER_VERSION_FILE,
+    JSON.stringify({ version: v.version, linkMajor: v.linkMajor }),
+  );
+}
+
+/** Removed on stop: a record left behind would report a version that is no longer running. */
+export function removeServerVersion(userData: string): void {
+  rmSync(path.join(userData, SERVER_VERSION_FILE), { force: true });
 }
 
 function writeRecord(userData: string, file: string, value: string): void {

@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { McpNetworkPort, NetworkPort } from '../../src/conduit-mcp/remote-routing';
 import {
   type Capabilities,
+  LINK_PROTOCOL,
   type LinkState,
   OWN_DEFAULT_CAPABILITIES,
 } from '../../src/contracts/link-protocol';
@@ -18,7 +19,12 @@ import { createRemoteDirectory } from '../../src/network/remote-directory';
 import { selfSignedCert } from '../../src/network/self-signed-cert';
 import { controlDir } from '../../src/network/ssh-argv';
 import { currentWindowsPty } from '../../src/windows-pty-info';
-import { removeLinkEndpoint, writeLinkEndpoint } from '../lifecycle/server-secret';
+import {
+  removeLinkEndpoint,
+  removeServerVersion,
+  writeLinkEndpoint,
+  writeServerVersion,
+} from '../lifecycle/server-secret';
 import { openAuditLog } from './audit-log';
 import { handleNetworkCall } from './c2';
 import { createDrive, type Drive, type DriveDeps } from './drive';
@@ -45,6 +51,8 @@ export interface NetworkDeps {
   dir: string;
   /** The server's userData: the ssh control dir lives beside it. */
   userData: string;
+  /** The server's own version, recorded in `server-version` after it listens. */
+  appVersion: string;
   /** The instance digest: names the ssh control dir's fallback when userData is too long. */
   instance: string;
   /** The stdio link endpoint the ssh bridge connects to; the server's names.linkEndpoint. */
@@ -504,6 +512,16 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
           });
         }
       }
+      try {
+        writeServerVersion(deps.userData, {
+          version: deps.appVersion,
+          linkMajor: LINK_PROTOCOL.major,
+        });
+      } catch (err) {
+        deps.log.error('server version record not written', {
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
       if (store.links().length > 0) {
         await ensureListening().catch((err: Error) =>
           deps.log.warn('link listener did not start', { message: err.message }),
@@ -523,6 +541,13 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
             message: err instanceof Error ? err.message : String(err),
           });
         }
+      }
+      try {
+        removeServerVersion(deps.userData);
+      } catch (err) {
+        deps.log.error('server version record not removed', {
+          message: err instanceof Error ? err.message : String(err),
+        });
       }
       emitTimer?.();
       snapshots.stop();

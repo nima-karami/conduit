@@ -1,4 +1,12 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -7,10 +15,16 @@ import { loadIdentity } from '../../server/network/identity';
 import { createNetwork, type NetworkService } from '../../server/network/index';
 import type { McpNetworkPort, RemoteEntry } from '../../src/conduit-mcp/remote-routing';
 import type { MessageRecord } from '../../src/conduit-mcp/types';
+import { LINK_PROTOCOL } from '../../src/contracts/link-protocol';
 import type { NetworkState } from '../../src/contracts/network-state';
-import { LINK_ENDPOINT_FILE } from '../../src/server-secret';
+import {
+  LINK_ENDPOINT_FILE,
+  readServerVersion,
+  SERVER_VERSION_FILE,
+} from '../../src/server-secret';
 
 const quiet = { debug: () => undefined, warn: () => undefined, error: () => undefined };
+const TEST_APP_VERSION = '9.8.7';
 const cleanup: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
   for (const c of cleanup.splice(0).reverse()) await c();
@@ -28,6 +42,7 @@ function server(name: string, endpointIn?: (root: string) => string) {
     userData: root,
     instance: 'service-test',
     linkEndpoint: endpointIn ? endpointIn(root) : join(root, 'conduit-link.sock'),
+    appVersion: TEST_APP_VERSION,
     secret: () => secret,
     identity: loaded.identity,
     settings: () => ({ networkBindHost: '127.0.0.1', networkPort: 0, networkSelfName: name }),
@@ -231,6 +246,23 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
     await a.net.start();
     expect(existsSync(join(userData, LINK_ENDPOINT_FILE))).toBe(false);
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'records the server version and link major on start, 0600, and removes it on stop',
+    async () => {
+      const a = server('net-a');
+      const userData = join(a.dir, '..');
+      await a.net.start();
+      const file = join(userData, SERVER_VERSION_FILE);
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+      expect(readServerVersion(userData)).toEqual({
+        version: TEST_APP_VERSION,
+        linkMajor: LINK_PROTOCOL.major,
+      });
+      await a.net.stop();
+      expect(existsSync(file)).toBe(false);
+    },
+  );
 
   it('records the link endpoint on start and removes the record on stop', async () => {
     const a = server('net-a');

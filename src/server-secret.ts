@@ -8,6 +8,9 @@ export const SERVER_SECRET_FILE = 'server-secret';
 /** The endpoint the ssh bridge connects to, recorded by the server that listens on it. */
 export const LINK_ENDPOINT_FILE = 'link-endpoint';
 
+/** The version and link major this server runs as, recorded after it listens; a probe reads it as a hint. */
+export const SERVER_VERSION_FILE = 'server-version';
+
 /** Null only when no server has started in this userData; any other read error is real and throws. */
 export function readServerSecret(userData: string): string | null {
   return readRecord(userData, SERVER_SECRET_FILE);
@@ -16,6 +19,30 @@ export function readServerSecret(userData: string): string | null {
 /** Null when no server has recorded its link endpoint here, which is also what a stopped server leaves. */
 export function readLinkEndpoint(userData: string): string | null {
   return readRecord(userData, LINK_ENDPOINT_FILE);
+}
+
+/**
+ * Null for a missing or malformed record: a hint that cannot be trusted reads as unknown, never as a
+ * version. The server's own C2 hello is what the bootstrap relies on.
+ */
+export function readServerVersion(userData: string): { version: string; linkMajor: number } | null {
+  const raw = readRecord(userData, SERVER_VERSION_FILE);
+  if (raw === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed)) return null;
+  const { version, linkMajor } = parsed;
+  if (typeof version !== 'string') return null;
+  if (typeof linkMajor !== 'number' || !Number.isInteger(linkMajor)) return null;
+  return { version, linkMajor };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function readRecord(userData: string, file: string): string | null {
