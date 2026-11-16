@@ -72,7 +72,7 @@ export const WORKER_PROFILE: Profile = {
   rules: ruleSet((_tool, worker) => worker),
 };
 
-const OBSERVER: Profile = {
+export const OBSERVER: Profile = {
   id: 'observer',
   name: 'Observer',
   builtIn: true,

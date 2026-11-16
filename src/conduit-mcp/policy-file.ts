@@ -2,7 +2,7 @@
 // Unknown fields are kept and written back (SERVER_FILE_VERSION reader rule); a narrowing field needs a version bump.
 import { judgePersistedVersion, type ServerFile } from '../contracts/session-identity';
 import { GRANT_FORS } from './grant-store';
-import { WORKER_PROFILE } from './policy-profiles';
+import { OBSERVER } from './policy-profiles';
 import type {
   Assignment,
   AssignmentPoint,
@@ -200,8 +200,8 @@ const toText = (v: unknown): string => `${JSON.stringify(v, null, 2)}\n`;
 
 // Every tool gets its own copy, so a parsed rule never aliases the built-in Worker profile.
 function completeRules(rules: Partial<Record<ToolName, ToolRule>>): Record<ToolName, ToolRule> {
-  const out = { ...WORKER_PROFILE.rules };
-  for (const tool of TOOL_NAMES) out[tool] = { ...(rules[tool] ?? WORKER_PROFILE.rules[tool]) };
+  const out = { ...OBSERVER.rules };
+  for (const tool of TOOL_NAMES) out[tool] = { ...(rules[tool] ?? OBSERVER.rules[tool]) };
   return out;
 }
 

@@ -1693,3 +1693,47 @@ describe('policy service', () => {
     await h.service.stop();
   });
 });
+
+describe('fail-closed and missing profile', () => {
+  const peer: Principal = {
+    kind: 'remote',
+    handle: 'claude-3',
+    machineId: 'm-0000000a',
+    trust: 'own',
+    capabilities: { messaging: true, monitor: true, drive: true },
+  };
+
+  it('with no saved copy, a peer decides as Observer, not as the default peer assignment', () => {
+    const closed = harness({ policy: '{not json', lastGood: null });
+    closed.service.start();
+    const open = harness({ policy: policyText() });
+    open.service.start();
+    const input = {
+      principal: peer,
+      tool: 'open_file' as const,
+      targets: [],
+      masterOn: true,
+      toYou: false,
+    };
+    expect(open.service.decide(input).decision).not.toBe('deny');
+    expect(closed.service.decide(input).decision).toBe('deny');
+  });
+
+  it('a session whose stored profile is missing shows Observer in the UI', () => {
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: { profileId: 'p-gone', exceptions: [], onScreenOnly: false },
+          },
+        ],
+      }),
+    });
+    h.service.start();
+    expect(h.service.ui([sessionRow('s1')]).sessions.s1).toMatchObject({
+      profileId: 'p-gone',
+      profileName: 'Observer',
+    });
+  });
+});

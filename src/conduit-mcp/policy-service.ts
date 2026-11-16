@@ -22,7 +22,7 @@ import {
   serializePolicyFile,
 } from './policy-file';
 import { type LegacyPolicy, migrateLegacyPolicy } from './policy-migration';
-import { BUILT_IN_PROFILES, pointKey, profileById, WORKER_PROFILE } from './policy-profiles';
+import { BUILT_IN_PROFILES, OBSERVER, pointKey, profileById } from './policy-profiles';
 import { legacyLowerPoint, projectLegacyLayer, propagateLegacyPatch } from './policy-projection';
 import type {
   Assignment,
@@ -132,6 +132,7 @@ const emptyFile = (): PolicyFile => ({
 export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
   let file: PolicyFile = emptyFile();
   let policyWritable = true;
+  let failClosed = false;
   let grantsWritable = true;
   let policyDirty = false;
   let lastGoodDirty = false;
@@ -159,6 +160,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     assignments: assignmentMap(),
     grants: grants.all(),
     overrides: file.overrides,
+    failClosed,
   });
 
   let stopped = false;
@@ -275,6 +277,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     policyWritable = false;
     deps.warn(`${why}; policy is read-only and not saved`, e);
     const good = readLastGood();
+    failClosed = good === null;
     file = good ?? {
       ...emptyFile(),
       assignments: [
@@ -605,7 +608,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
           projectId: null,
         };
         const { point, assignment } = assignmentFor(st, principal);
-        const profile = profileById(st, assignment.profileId) ?? WORKER_PROFILE;
+        const profile = profileById(st, assignment.profileId) ?? OBSERVER;
         const exceptions = assignment.exceptions.length + (assignment.onScreenOnly ? 1 : 0);
         const source =
           point.kind === 'session' ? 'session' : point.kind === 'cli' ? 'cli' : 'default';

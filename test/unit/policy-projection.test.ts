@@ -37,6 +37,7 @@ const stateOf = (entries: Array<[AssignmentPoint, Assignment]>): PolicyState => 
   assignments: new Map(entries.map(([p, a]) => [pointKey(p), a])),
   grants: [],
   overrides: [],
+  failClosed: false,
 });
 
 const patched = (...args: Parameters<typeof applyLegacyPatch>): Assignment => {
@@ -429,5 +430,19 @@ describe('propagateLegacyPatch', () => {
     expect(
       propagateLegacyPatch(state, DEFAULT, null, 'send_input', { access: 'on' }, none),
     ).toBeNull();
+  });
+});
+
+describe('missing profile projection', () => {
+  it('a session whose stored profile is missing projects against Observer, as the engine decides', () => {
+    const state = stateOf([
+      [
+        SESSION,
+        { profileId: 'p-gone' as Assignment['profileId'], exceptions: [], onScreenOnly: false },
+      ],
+    ]);
+    expect(projectLegacyLayer(state, SESSION, DEFAULT)).toMatchObject({
+      open_session: { access: 'off' },
+    });
   });
 });

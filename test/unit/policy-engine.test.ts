@@ -71,6 +71,7 @@ const state = (
   assignments: new Map(Object.entries(assignments)),
   grants: [],
   overrides: [],
+  failClosed: false,
   ...over,
 });
 const grant = (over: Partial<Grant> = {}): Grant => ({
@@ -1139,5 +1140,30 @@ describe('reasonText', () => {
     expect(
       reasonText({ by: 'deny', point: { kind: 'peer', machineId: 'm-0000000a' } }, 'deny', names),
     ).toBe('denied by exception (machine)');
+  });
+});
+
+describe('missing profile and fail-closed', () => {
+  it('a session whose stored profile is missing decides as Observer, not Worker', () => {
+    const st = state({ 'session:s1': assignment('p-gone' as ProfileId) });
+    expect(decide(st, input({ principal: session(), tool: 'open_session' })).decision).toBe('deny');
+    expect(decide(st, input({ principal: session(), tool: 'list_sessions' })).decision).toBe(
+      'allow',
+    );
+  });
+
+  it('failClosed makes a session Observer, ignoring its stored Lead assignment', () => {
+    const st = state({ 'session:s1': assignment('lead') }, { failClosed: true });
+    expect(decide(st, input({ principal: session(), tool: 'open_session' })).decision).toBe('deny');
+  });
+
+  it('failClosed makes a peer Observer, ignoring the default peer assignment', () => {
+    const open = decide(state({}), input({ principal: remote(), tool: 'open_file' })).decision;
+    const closed = decide(
+      state({}, { failClosed: true }),
+      input({ principal: remote(), tool: 'open_file' }),
+    ).decision;
+    expect(open).not.toBe('deny');
+    expect(closed).toBe('deny');
   });
 });

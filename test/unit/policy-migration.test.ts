@@ -47,6 +47,7 @@ const stateOf = (entries: Array<[AssignmentPoint, Assignment]>): PolicyState => 
   assignments: new Map(entries.map(([p, a]) => [pointKey(p), a])),
   grants: [],
   overrides: [],
+  failClosed: false,
 });
 
 const assignmentAt = (

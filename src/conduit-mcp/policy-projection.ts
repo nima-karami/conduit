@@ -2,9 +2,9 @@
 import {
   DECISION_OF_ACCESS,
   effectiveRule,
+  OBSERVER,
   pointKey,
   profileById,
-  WORKER_PROFILE,
 } from './policy-profiles';
 import type {
   Assignment,
@@ -61,7 +61,7 @@ const plainWorker = (): Assignment => ({
 });
 
 const profileOf = (state: PolicyState, a: Assignment): Profile =>
-  profileById(state, a.profileId) ?? WORKER_PROFILE;
+  profileById(state, a.profileId) ?? OBSERVER;
 
 const ruleAt = (state: PolicyState, a: Assignment, tool: ToolName): ToolRule =>
   effectiveRule(profileOf(state, a), a, tool, null);
