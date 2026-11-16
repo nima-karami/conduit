@@ -1724,7 +1724,7 @@ describe('fail-closed and missing profile', () => {
     expect(closed.service.decide(input).decision).toBe('deny');
   });
 
-  it('a session whose launched CLI is unknown is skipped by propagation, never guessed as default', () => {
+  it('a session whose launched CLI is unknown lowers onto the default and takes a default edit', () => {
     const h = harness({ launchedCli: { s1: undefined } });
     h.service.start();
     h.service.applyLegacyPatch(
@@ -1738,7 +1738,6 @@ describe('fail-closed and missing profile', () => {
     h.service.applyLegacyPatch({ kind: 'default' }, null, 'send_input', { access: 'on' });
     expect(h.service.ui([sessionRow('s1')]).legacy.sessions.s1).toEqual({
       open_file: { access: 'off' },
-      send_input: { access: 'ask' },
     });
   });
 

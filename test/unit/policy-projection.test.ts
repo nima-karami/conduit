@@ -477,6 +477,33 @@ describe('propagateLegacyPatch', () => {
     expect(decision).toBe('deny');
   });
 
+  it('an unresolved CLI lowers onto the default: a default edit reaches it, a cli edit does not', () => {
+    const unknown = () => undefined;
+    const offDefault = patched(stateOf([]), DEFAULT, null, 'send_input', { access: 'off' });
+    const state = stateOf([
+      [DEFAULT, offDefault],
+      [SESSION, offDefault],
+    ]);
+    const fromDefault = propagateLegacyPatch(
+      state,
+      DEFAULT,
+      null,
+      'send_input',
+      { access: 'on' },
+      unknown,
+    );
+    expect(fromDefault?.map((w) => pointKey(w.point)).sort()).toEqual(['default', 'session:s1']);
+    const fromCli = propagateLegacyPatch(
+      state,
+      { kind: 'cli', cli: 'claude' },
+      DEFAULT,
+      'send_input',
+      { access: 'on' },
+      unknown,
+    );
+    expect(fromCli?.map((w) => pointKey(w.point))).toEqual(['cli:claude']);
+  });
+
   it('refuses when an inheritor carries a scoped exception', () => {
     const scopedSession: Assignment = {
       profileId: 'worker',

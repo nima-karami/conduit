@@ -220,7 +220,7 @@ export interface LegacyWrite {
   assignment: Assignment;
 }
 
-/** undefined: the session's CLI is unknown (no persisted record), so it is never guessed. */
+/** undefined: no persisted record for the session's CLI; it lowers onto the default (see inheritorsOf). */
 export type LaunchedCliOf = (sessionId: string) => CliKind | null | undefined;
 
 const isCliKind = (v: string): v is CliKind => (CLI_KINDS as readonly string[]).includes(v);
@@ -250,8 +250,9 @@ function inheritorsOf(
     if (point.kind === 'default') {
       if (p.kind === 'cli') inherits = true;
       if (p.kind === 'session') {
-        const cli = launchedCliOf(p.sessionId);
-        inherits = cli !== undefined && legacyLowerPoint(state, cli).kind === 'default';
+        // An unresolved CLI lowers onto the default, as a session with no CLI does.
+        const cli = launchedCliOf(p.sessionId) ?? null;
+        inherits = legacyLowerPoint(state, cli).kind === 'default';
       }
     } else if (point.kind === 'cli' && p.kind === 'session') {
       inherits = launchedCliOf(p.sessionId) === point.cli;
