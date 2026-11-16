@@ -11,6 +11,8 @@ import { readServerSecret } from '../src/server-secret';
 import { compose } from './compose';
 import { directStopAll, hcBinaryOf, hcClient, serverChildEnv, startCore, stopCore } from './hc-cli';
 import { argValue, requireUserData } from './lifecycle/cli-args';
+import { parseEnsureArgs } from './lifecycle/ensure-args';
+import { runEnsureServerMain } from './lifecycle/ensure-server';
 import { runLinkStdioBridge } from './lifecycle/link-stdio-bridge';
 import { writeServerSecret } from './lifecycle/server-secret';
 import type { ShellCore } from './lifecycle/shell';
@@ -38,6 +40,22 @@ export async function runServer(
   transport?: PipeTransport;
   close?(): Promise<void>;
 }> {
+  // Headless ensure (plan slice 3): no listen and no secret write in this process; it asks the
+  // server it starts to do that.
+  if (args.includes('--ensure-server')) {
+    const parsed = parseEnsureArgs(args);
+    if (!parsed.ok) {
+      process.stderr.write(`${parsed.error}\n`);
+      return { code: 2 };
+    }
+    return {
+      code: await runEnsureServerMain(parsed.args, {
+        version,
+        stdout: process.stdout,
+        stderr: process.stderr,
+      }),
+    };
+  }
   const userData = requireUserData(args);
   // The ssh bridge is a stdio relay, not a server: it binds nothing, writes no secret, composes nothing.
   if (args.includes('--link-stdio')) {

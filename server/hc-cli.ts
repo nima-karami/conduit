@@ -59,15 +59,15 @@ export const hcBinaryOf = (
   value ??
   join(coreStartCwd(names.runtimeRoot, HC_PINNED_VERSION), runtimeBinaryName('hc', platform));
 
-function runHc(
-  bin: string,
+function runCommand(
+  file: string,
   args: string[],
   env: Record<string, string>,
   cwd?: string,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
-      bin,
+      file,
       args,
       { env, cwd, windowsHide: true, timeout: 20_000 },
       (error, stdout, stderr) => {
@@ -78,17 +78,37 @@ function runHc(
   });
 }
 
+/**
+ * The argv for `hc server start`, with an optional wrapper in front (`systemd-run --user --scope`
+ * for the scope start method). An argv, never a shell line: a path with spaces or `$()` stays one
+ * argument.
+ */
+export function coreStartCommand(
+  bin: string,
+  prefix: readonly string[] = [],
+): { file: string; args: string[] } {
+  const [wrapper, ...wrapperArgs] = prefix;
+  if (wrapper === undefined) return { file: bin, args: ['server', 'start'] };
+  return { file: wrapper, args: [...wrapperArgs, bin, 'server', 'start'] };
+}
+
 /** May start a core, so cwd = coreStartCwd (M21, D23): only a cwd blocks the GC rename. */
-export async function startCore(bin: string, names: InstanceNames, env: Record<string, string>) {
+export async function startCore(
+  bin: string,
+  names: InstanceNames,
+  env: Record<string, string>,
+  prefix: readonly string[] = [],
+) {
   ensureHcSocketDirectory(names);
   const cwd = coreStartCwd(names.runtimeRoot, HC_PINNED_VERSION);
   await mkdir(cwd, { recursive: true });
-  await runHc(bin, ['server', 'start'], env, cwd);
+  const command = coreStartCommand(bin, prefix);
+  await runCommand(command.file, command.args, env, cwd);
 }
 
 /** Only ever in our own HC_SESSION, which `env` carries (serverChildEnv). */
 export async function stopCore(bin: string, env: Record<string, string>) {
-  await runHc(bin, ['server', 'stop'], env);
+  await runCommand(bin, ['server', 'stop'], env);
 }
 
 export function hcClient(
