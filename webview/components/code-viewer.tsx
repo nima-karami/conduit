@@ -25,6 +25,7 @@ import {
   IconWarning,
 } from '../icons';
 import { sendMention } from '../mention-bus';
+import { disposeWhenDetached } from '../model-lifetime';
 import { monacoKeybindingFor } from '../monaco-keybinding';
 import { ensureTokenizer } from '../monaco-languages';
 import { MONACO_KEY_TABLES, registerCodeViewerEditor } from '../monaco-nav-keybindings';
@@ -38,8 +39,14 @@ import {
   revealInEditor,
 } from '../nav-editors';
 import { dropNavChords, formatMonacoHint, isNavOverridden, navMenuHints } from '../nav-keybindings';
-import { fileUri, publishCursor, subscribeReveal, takeReveal } from '../project-index';
-import { readOnlyState } from '../read-only-doc';
+import {
+  fileUri,
+  publishCursor,
+  remoteModelUri,
+  subscribeReveal,
+  takeReveal,
+} from '../project-index';
+import { readOnlyState, remoteReadOnlyState } from '../read-only-doc';
 import { relativeTime } from '../relative-time';
 import { setNoteTarget } from '../review-note-target';
 import { registerSelection } from '../selection-registry';
@@ -126,6 +133,19 @@ const NAV_KEYBINDINGS: Record<string, number[]> = {
 
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 
+/** Stands in for an effect's release when the editor has no local registration to drop. */
+const NOTHING = (): void => {};
+
+/**
+ * A remote file's text, which lives on its machine. Its model, lock and every registration are its
+ * own: nothing keyed by the local path (saves, dirty, nav, reveal, blame, project index) is touched.
+ */
+export interface RemoteSource {
+  kind: 'remote';
+  machineId: string;
+  machineName: string;
+}
+
 // An edit-driven cursor move is never an R3 jump; these reasons back up the content-change flag
 // (docs/plans/2026-09-22-editor-nav-history.plan.md, Settled decisions).
 const EDIT_REASONS: ReadonlySet<monaco.editor.CursorChangeReason> = new Set([
@@ -142,8 +162,11 @@ export function CodeViewer({
   focusKey,
   sessionId,
   onReviewCommit,
+  source,
 }: {
   doc: FileContentDTO;
+  /** Set for a remote file: the text is the machine's, and it shares nothing with a local file. */
+  source?: RemoteSource;
   // Defaults to the `file:` doc id; the markdown "View source" toggle passes a distinct id so
   // its transient Monaco view state can't clobber the rendered-mode scroll under the same path.
   viewStateId?: string;
@@ -159,6 +182,9 @@ export function CodeViewer({
   const group = useEditorGroup();
   const vsId = viewStateId ?? `file:${doc.path}`;
   const focusAs = focusKey ?? vsId;
+  const remoteMachineId = source?.machineId ?? null;
+  const remoteMachineName = source?.machineName ?? null;
+  const local = remoteMachineId === null;
   // Read via refs inside the mount-bound editor effect so a new prop identity (onReviewCommit
   // is a fresh arrow each render) never re-creates the editor.
   const sessionIdRef = useRef(sessionId);
@@ -167,7 +193,7 @@ export function CodeViewer({
   onReviewCommitRef.current = onReviewCommit;
   const ref = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
-  const saveStatus = useFileSaveStatus(doc.path);
+  const saveStatus = useFileSaveStatus(local ? doc.path : null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [resolving, setResolving] = useState(false);
   const { settings, update } = useSettings();
@@ -203,26 +229,35 @@ export function CodeViewer({
     const theme = ensureTheme();
     // Register the grammar BEFORE the model and the editor exist: Monaco's own registration
     // is lazy behind a dynamic import, which makes the first paint plain unstyled text.
-    ensureTokenizer(doc.language);
+    // A remote file in a language this project analyses is shown as plain text: Monaco's TS
+    // worker and the language servers would otherwise index its content against the local project.
+    const modelLanguage =
+      remoteMachineId !== null && hasCodeNavigation(doc.language) ? 'plaintext' : doc.language;
+    ensureTokenizer(modelLanguage);
     // file:// model URI so the TS/JS language service recognises the file
-    // (enables go-to-definition, hover, peek). Reuse an existing model if present.
-    const uri = fileUri(doc.path);
+    // (enables go-to-definition, hover, peek). Reuse an existing model if present. A remote file
+    // has its own scheme so it can never resolve to the local file of the same path.
+    const uri =
+      remoteMachineId === null ? fileUri(doc.path) : remoteModelUri(remoteMachineId, doc.path);
     const existing = monaco.editor.getModel(uri);
     const { content } = docRef.current;
-    const lock = readOnlyState(docRef.current);
+    const lock =
+      remoteMachineName !== null
+        ? remoteReadOnlyState(remoteMachineName)
+        : readOnlyState(docRef.current);
     const readOnly = lock !== null;
     const tail = docRef.current.window === 'tail';
     const model =
-      existing ?? monaco.editor.createModel(doc.binary ? '' : content, doc.language, uri);
+      existing ?? monaco.editor.createModel(doc.binary ? '' : content, modelLanguage, uri);
     // Monaco creates a navigation target's model itself, hardcoding `typescript` as the
     // language (LibFiles.getOrCreateModel). Landing on a .js/.json/.md file that way and
     // then opening it as a tab would leave it tokenized as TypeScript forever.
-    if (existing && !doc.binary && existing.getLanguageId() !== doc.language)
-      monaco.editor.setModelLanguage(existing, doc.language);
+    if (existing && !doc.binary && existing.getLanguageId() !== modelLanguage)
+      monaco.editor.setModelLanguage(existing, modelLanguage);
     // The store owns the baseline, the dirty flag, the save entry and the reseed of a reused
     // clean model (K3), so all of it outlives this editor. Attached before `create` so the
-    // first paint already shows the disk content.
-    if (!doc.binary) {
+    // first paint already shows the disk content. A remote buffer is never the local store's.
+    if (local && !doc.binary) {
       fileSaves.attach(doc.path, { diskContent: content, readOnly: lock });
     }
     const editor = monaco.editor.create(ref.current, {
@@ -261,21 +296,23 @@ export function CodeViewer({
     editorRef.current = editor;
     if (readOnly) silenceReadOnlyPopup(editor);
 
-    const unregisterSelection = registerSelection(
-      doc.path,
-      {
-        getSelectedText: () => {
-          const range = editor.getSelection();
-          return range ? (editor.getModel()?.getValueInRange(range) ?? '') : '';
-        },
-      },
-      group,
-    );
-    saveRef.current = () => fileSaves.save(doc.path, 'manual');
+    const unregisterSelection = local
+      ? registerSelection(
+          doc.path,
+          {
+            getSelectedText: () => {
+              const range = editor.getSelection();
+              return range ? (editor.getModel()?.getValueInRange(range) ?? '') : '';
+            },
+          },
+          group,
+        )
+      : NOTHING;
+    saveRef.current = local ? () => fileSaves.save(doc.path, 'manual') : null;
 
     // If we arrived via cross-file go-to-definition, reveal the target. An explicit reveal WINS
     // over saved-scroll restore (spec 2026-06-30 §3); only restore the saved view state otherwise.
-    const pos = takeReveal(doc.path, group);
+    const pos = local ? takeReveal(doc.path, group) : undefined;
     if (tail) {
       // A tail window is opened for its newest lines, and its content shifts on every append, so
       // a saved scroll position is meaningless here.
@@ -314,7 +351,7 @@ export function CodeViewer({
       const hasSelection = !!sel && !sel.isEmpty();
       const canGoToDefinition = !!mdl && hasCodeNavigation(mdl.getLanguageId());
       const specs = buildEditorMenuItems({
-        readOnly: false,
+        readOnly: !local,
         hasSelection,
         canGoToDefinition,
         hasChanges: (changesRef.current?.markers.length ?? 0) > 0,
@@ -328,35 +365,38 @@ export function CodeViewer({
       setMenu({
         x: e.event.browserEvent.clientX,
         y: e.event.browserEvent.clientY,
-        items: specs.map((s) => ({
-          label: s.label,
-          icon: s.iconKey ? MENU_ICONS[s.iconKey] : undefined,
-          disabled: s.disabled,
-          separatorBefore: s.separatorBefore,
-          hint: s.hint,
-          onClick: () => {
-            editor.focus();
-            if (s.action.kind === 'nav') {
-              navigate(s.action.actionId);
-            } else if (s.action.kind === 'copy') {
-              // Read at click-time (not the build-time closure) so Copy reflects the live selection.
-              const range = editor.getSelection();
-              const text = range ? (editor.getModel()?.getValueInRange(range) ?? '') : '';
-              void navigator.clipboard?.writeText(text);
-            } else if (s.action.kind === 'mention') {
-              const range = editor.getSelection();
-              if (range) {
-                sendMention({
-                  path: doc.path,
-                  startLine: range.startLineNumber,
-                  endLine: range.endLineNumber,
-                });
+        // Send-to-terminal names the file by its local path, which a remote file does not have here.
+        items: specs
+          .filter((s) => local || s.action.kind !== 'mention')
+          .map((s) => ({
+            label: s.label,
+            icon: s.iconKey ? MENU_ICONS[s.iconKey] : undefined,
+            disabled: s.disabled,
+            separatorBefore: s.separatorBefore,
+            hint: s.hint,
+            onClick: () => {
+              editor.focus();
+              if (s.action.kind === 'nav') {
+                navigate(s.action.actionId);
+              } else if (s.action.kind === 'copy') {
+                // Read at click-time (not the build-time closure) so Copy reflects the live selection.
+                const range = editor.getSelection();
+                const text = range ? (editor.getModel()?.getValueInRange(range) ?? '') : '';
+                void navigator.clipboard?.writeText(text);
+              } else if (s.action.kind === 'mention') {
+                const range = editor.getSelection();
+                if (range) {
+                  sendMention({
+                    path: doc.path,
+                    startLine: range.startLineNumber,
+                    endLine: range.endLineNumber,
+                  });
+                }
+              } else {
+                void editor.getAction(s.action.actionId)?.run();
               }
-            } else {
-              void editor.getAction(s.action.actionId)?.run();
-            }
-          },
-        })),
+            },
+          })),
       });
     });
     // Ctrl/Cmd+Click also navigates to definition. A Ctrl+click that lands off a symbol gets
@@ -376,109 +416,114 @@ export function CodeViewer({
     // Drive the breadcrumb bar's cursor position (E3).
     const cursorSub = editor.onDidChangeCursorPosition((e) => {
       const mdl = editor.getModel();
-      if (!mdl) return;
+      if (!mdl || !local) return;
       publishCursor({ path: doc.path, offset: mdl.getOffsetAt(e.position), group });
     });
     // Seed it once so the breadcrumb populates immediately.
     const initPos = editor.getPosition();
-    if (initPos && model)
+    if (initPos && model && local)
       publishCursor({ path: doc.path, offset: model.getOffsetAt(initPos), group });
 
-    // --- Git blame lens (git-blame) --------------------------------------------------------
-    // Low-noise v1: a single trailing lens on the ACTIVE line only (GitLens-style), rendered as
-    // a clickable content widget so a committed line links to its Review; an uncommitted line is
-    // labelled and inert. Blame is fetched on toggle-on and kept in a per-line map.
-    let blameOn = false;
-    let blameByLine = new Map<number, BlameLine>();
-    let blameRoot: string | undefined; // the blamed file's own repo, from git:blameResult
-    const lensNode = document.createElement('div');
-    lensNode.className = 'blame-lens';
-    let lensTarget: BlameLine | null = null; // the commit the lens currently links to (or null)
-    lensNode.addEventListener('click', () => {
-      if (lensTarget && !lensTarget.uncommitted)
-        onReviewCommitRef.current?.(
-          lensTarget.sha,
-          lensTarget.summary,
-          blameRoot,
-          sessionIdRef.current,
-        );
-    });
-    let lensPosition: monaco.IPosition | null = null;
-    const lensWidget: monaco.editor.IContentWidget = {
-      getId: () => 'agentdeck.blameLens',
-      getDomNode: () => lensNode,
-      getPosition: () =>
-        lensPosition
-          ? {
-              position: lensPosition,
-              preference: [monaco.editor.ContentWidgetPositionPreference.EXACT],
-            }
-          : null,
-    };
-    editor.addContentWidget(lensWidget);
+    // Git blame is a local-repo feature: its requests and results are keyed by the local path.
+    let blameCursorSub: monaco.IDisposable | null = null;
+    let blameUnsub: (() => void) | null = null;
+    if (local) {
+      // --- Git blame lens (git-blame) --------------------------------------------------------
+      // Low-noise v1: a single trailing lens on the ACTIVE line only (GitLens-style), rendered as
+      // a clickable content widget so a committed line links to its Review; an uncommitted line is
+      // labelled and inert. Blame is fetched on toggle-on and kept in a per-line map.
+      let blameOn = false;
+      let blameByLine = new Map<number, BlameLine>();
+      let blameRoot: string | undefined; // the blamed file's own repo, from git:blameResult
+      const lensNode = document.createElement('div');
+      lensNode.className = 'blame-lens';
+      let lensTarget: BlameLine | null = null; // the commit the lens currently links to (or null)
+      lensNode.addEventListener('click', () => {
+        if (lensTarget && !lensTarget.uncommitted)
+          onReviewCommitRef.current?.(
+            lensTarget.sha,
+            lensTarget.summary,
+            blameRoot,
+            sessionIdRef.current,
+          );
+      });
+      let lensPosition: monaco.IPosition | null = null;
+      const lensWidget: monaco.editor.IContentWidget = {
+        getId: () => 'agentdeck.blameLens',
+        getDomNode: () => lensNode,
+        getPosition: () =>
+          lensPosition
+            ? {
+                position: lensPosition,
+                preference: [monaco.editor.ContentWidgetPositionPreference.EXACT],
+              }
+            : null,
+      };
+      editor.addContentWidget(lensWidget);
 
-    const renderLens = () => {
-      const mdl = editor.getModel();
-      const p = editor.getPosition();
-      const bl = blameOn && mdl && p ? blameByLine.get(p.lineNumber) : undefined;
-      if (!bl || !mdl || !p) {
-        lensTarget = null;
-        lensPosition = null;
-        lensNode.textContent = '';
-        editor.layoutContentWidget(lensWidget);
-        return;
-      }
-      if (bl.uncommitted) {
-        lensTarget = null;
-        lensNode.textContent = bl.author;
-        lensNode.dataset.clickable = 'false';
-      } else {
-        lensTarget = bl;
-        lensNode.textContent = `${bl.author}, ${relativeTime(bl.authorTime * 1000)} · ${bl.summary}`;
-        lensNode.dataset.clickable = 'true';
-      }
-      lensPosition = { lineNumber: p.lineNumber, column: mdl.getLineMaxColumn(p.lineNumber) };
-      editor.layoutContentWidget(lensWidget);
-    };
-
-    const requestBlame = () => {
-      const sid = sessionIdRef.current;
-      if (sid) post({ type: 'git:blame', sessionId: sid, path: doc.path });
-    };
-    const blameCursorSub = editor.onDidChangeCursorPosition(() => renderLens());
-    const blameUnsub = subscribe((msg: HostToWebview) => {
-      if (
-        msg.type === 'git:blameResult' &&
-        msg.sessionId === sessionIdRef.current &&
-        msg.path === doc.path
-      ) {
-        blameByLine = new Map(msg.lines.map((l) => [l.line, l]));
-        blameRoot = msg.root;
-        if (msg.error) pushToast({ message: msg.error, variant: 'error' });
-        renderLens();
-      }
-    });
-    editor.addAction({
-      id: 'agentdeck.toggleGitBlame',
-      label: 'Toggle Git Blame',
-      run: () => {
-        blameOn = !blameOn;
-        if (blameOn) requestBlame();
-        else {
-          blameByLine = new Map();
-          blameRoot = undefined;
+      const renderLens = () => {
+        const mdl = editor.getModel();
+        const p = editor.getPosition();
+        const bl = blameOn && mdl && p ? blameByLine.get(p.lineNumber) : undefined;
+        if (!bl || !mdl || !p) {
+          lensTarget = null;
+          lensPosition = null;
+          lensNode.textContent = '';
+          editor.layoutContentWidget(lensWidget);
+          return;
         }
-        renderLens();
-      },
-    });
-    onReseedRef.current = () => {
-      if (!blameOn) return;
-      blameByLine = new Map();
-      renderLens();
-      requestBlame();
-    };
+        if (bl.uncommitted) {
+          lensTarget = null;
+          lensNode.textContent = bl.author;
+          lensNode.dataset.clickable = 'false';
+        } else {
+          lensTarget = bl;
+          lensNode.textContent = `${bl.author}, ${relativeTime(bl.authorTime * 1000)} · ${bl.summary}`;
+          lensNode.dataset.clickable = 'true';
+        }
+        lensPosition = { lineNumber: p.lineNumber, column: mdl.getLineMaxColumn(p.lineNumber) };
+        editor.layoutContentWidget(lensWidget);
+      };
 
-    const unregisterNav = registerNavEditor(doc.path, editor, group);
+      const requestBlame = () => {
+        const sid = sessionIdRef.current;
+        if (sid) post({ type: 'git:blame', sessionId: sid, path: doc.path });
+      };
+      blameCursorSub = editor.onDidChangeCursorPosition(() => renderLens());
+      blameUnsub = subscribe((msg: HostToWebview) => {
+        if (
+          msg.type === 'git:blameResult' &&
+          msg.sessionId === sessionIdRef.current &&
+          msg.path === doc.path
+        ) {
+          blameByLine = new Map(msg.lines.map((l) => [l.line, l]));
+          blameRoot = msg.root;
+          if (msg.error) pushToast({ message: msg.error, variant: 'error' });
+          renderLens();
+        }
+      });
+      editor.addAction({
+        id: 'agentdeck.toggleGitBlame',
+        label: 'Toggle Git Blame',
+        run: () => {
+          blameOn = !blameOn;
+          if (blameOn) requestBlame();
+          else {
+            blameByLine = new Map();
+            blameRoot = undefined;
+          }
+          renderLens();
+        },
+      });
+      onReseedRef.current = () => {
+        if (!blameOn) return;
+        blameByLine = new Map();
+        renderLens();
+        requestBlame();
+      };
+    }
+
+    const unregisterNav = local ? registerNavEditor(doc.path, editor, group) : NOTHING;
     const unregisterCodeViewer = registerCodeViewerEditor(editor);
     const unregisterFocus = registerFocusTarget(focusAs, editor);
     // R3 (docs/specs/archive/2026-09-22-editor-nav-history.md §2.2): judged per cursor event against the
@@ -504,14 +549,16 @@ export function CodeViewer({
         edited: !explicit && (contentChanged || EDIT_REASONS.has(e.reason)),
         tagged: e.source === NAV_REVEAL_SOURCE,
       };
-      if (isSignificantJump(move)) emitCursorJump(doc.path, lastPos, next);
+      if (local && isSignificantJump(move)) emitCursorJump(doc.path, lastPos, next);
       lastPos = next;
       contentChanged = false;
       versionAtCursor = model.getVersionId();
     });
     // Widget, not text, blur: focus moving into Monaco's own find/rename widgets isn't leaving
     // the editor (plan run notes C6).
-    const blurSub = editor.onDidBlurEditorWidget(() => fileSaves.trigger(doc.path, 'editorBlur'));
+    const blurSub = editor.onDidBlurEditorWidget(() => {
+      if (local) fileSaves.trigger(doc.path, 'editorBlur');
+    });
     setEditor(editor);
 
     // Only the editor goes: the model is the tab's buffer, released with the tab (idle-models.ts).
@@ -529,16 +576,30 @@ export function CodeViewer({
       ctxSub.dispose();
       cursorSub.dispose();
       blurSub.dispose();
-      blameCursorSub.dispose();
-      blameUnsub();
+      blameCursorSub?.dispose();
+      blameUnsub?.();
       onReseedRef.current = null;
       editor.dispose();
+      // A remote model is its tab's alone, released with the tab; one still showing elsewhere (a
+      // second group) waits for that editor to go.
+      if (remoteMachineId !== null) disposeWhenDetached(model);
       editorRef.current = null;
       setEditor(null);
     };
-  }, [doc.path, doc.language, doc.binary, vsId, focusAs, group]);
+  }, [
+    doc.path,
+    doc.language,
+    doc.binary,
+    vsId,
+    focusAs,
+    group,
+    local,
+    remoteMachineId,
+    remoteMachineName,
+  ]);
 
-  const readOnly = readOnlyState(doc);
+  const readOnly =
+    remoteMachineName !== null ? remoteReadOnlyState(remoteMachineName) : readOnlyState(doc);
   const notice = readOnly?.banner ?? null;
   const refusal = readOnly?.refusal ?? null;
   const partial = readOnly?.partial ?? false;
@@ -556,10 +617,15 @@ export function CodeViewer({
     const version = model?.getVersionId();
     const view = ed?.saveViewState();
     const atEnd = tail && !!ed && isScrolledToEnd(ed);
-    fileSaves.attach(doc.path, {
-      diskContent: doc.content,
-      readOnly: refusal === null ? null : { refusal, partial },
-    });
+    if (local) {
+      fileSaves.attach(doc.path, {
+        diskContent: doc.content,
+        readOnly: refusal === null ? null : { refusal, partial },
+      });
+    } else if (model && model.getValue() !== doc.content) {
+      // A remote buffer is read-only and owned by its tab, so the new read is the whole truth.
+      model.setValue(doc.content);
+    }
     if (!ed || !model || model.getVersionId() === version) return;
     if (atEnd) revealEnd(ed);
     else if (view) ed.restoreViewState(view);
@@ -569,7 +635,7 @@ export function CodeViewer({
       if (p) ed.setPosition(p, NAV_REVEAL_SOURCE);
     }
     onReseedRef.current?.();
-  }, [doc.path, doc.content, refusal, partial, tail, doc.binary]);
+  }, [doc.path, doc.content, refusal, partial, tail, doc.binary, local]);
 
   useEffect(() => {
     editorRef.current?.updateOptions({ wordWrap: settings.wordWrap ? 'on' : 'off' });
@@ -671,12 +737,15 @@ export function CodeViewer({
   // or view-state id change; a flush must fire only when this path leaves the view (§2.2).
   useEffect(() => {
     const path = doc.path;
-    return () => fileSaves.trigger(path, 'viewLeave');
-  }, [doc.path]);
+    return () => {
+      if (local) fileSaves.trigger(path, 'viewLeave');
+    };
+  }, [doc.path, local]);
 
   // Live reveal for an ALREADY-open doc: the onMount reveal won't re-run, so consume
   // the staged target here and center it. New-tab opens go through the onMount path.
   useEffect(() => {
+    if (!local) return;
     return subscribeReveal((path) => {
       const ed = editorRef.current;
       if (!ed) return;
@@ -687,7 +756,7 @@ export function CodeViewer({
       else revealInEditor(ed, pos);
       ed.focus();
     });
-  }, [doc.path, group]);
+  }, [doc.path, group, local]);
 
   // Drive the loading indicator so a slow (cold-worker) go-to-definition shows
   // progress instead of a frozen editor (E1).
@@ -721,7 +790,8 @@ export function CodeViewer({
   // The read-only mirror of Review notes: a glyph in the margin, its body as the hover, and a
   // click that lands the reviewer back on the thread (spec §2 Lane F).
   useNoteMarkers({
-    editor,
+    // A remote file has no review notes: they are keyed by the local path.
+    editor: local ? editor : null,
     path: doc.path,
     onOpenNote: openNote,
   });
@@ -731,7 +801,7 @@ export function CodeViewer({
     path: doc.path,
     // A truncated buffer holds only the first 2 MB, so every line past the cut would read as a
     // deletion against the full HEAD blob.
-    enabled: settings.editorChangeMarkers && !doc.binary && !doc.truncated,
+    enabled: local && settings.editorChangeMarkers && !doc.binary && !doc.truncated,
     themeId: settings.theme,
     ignoreWhitespace: settings.reviewIgnoreWhitespace,
   });
@@ -790,6 +860,7 @@ export function CodeViewer({
   }, [editor]);
 
   useEffect(() => {
+    if (!local) return;
     return registerChangeNav(
       doc.path,
       {
@@ -799,7 +870,7 @@ export function CodeViewer({
       },
       group,
     );
-  }, [doc.path, changes, group]);
+  }, [doc.path, changes, group, local]);
 
   // Image files (including SVG) bypass Monaco — ImageViewer handles them.
   if (doc.image || (doc.binary && doc.error?.includes('too large')))
