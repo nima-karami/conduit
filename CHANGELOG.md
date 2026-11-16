@@ -19,6 +19,7 @@ All notable user-facing changes to Conduit. Format follows
 - Groundwork for controlling your other machines over SSH: Conduit can now link to the Background service on another machine through your normal `ssh` login, with no extra port or pairing. The screens and agent tools for this arrive in later releases.
 - Conduit can now set itself up on another Linux machine over SSH: it checks what the machine has, installs the same version as yours (verified against pinned checksums), starts the Background service there and links to it. The screens and agent tools for this arrive in later releases.
 - Agents can connect to your other machines with `connect_machine`, see them with `list_machines` and stop the connection with `disconnect_machine` (the remote's sessions keep running). Setting Conduit up on a machine for the first time always asks you first, under every profile. When SSH needs you (an unknown host key, a passphrase), the agent is told to ask you instead of hanging.
+- On a connected machine, an agent can list its agents, open a session or terminal, read its screen, type into it and close it (`list_agents`/`open_session`/`open_terminal` with `machine`, and `send_input`/`read_screen`/`close_session` with an address like `codex-2@win-box`). The other machine runs it under that agent's name with the Lead profile by default, its own permission rules still apply, and a call cut off by a dropped connection is never run twice.
 
 ## [0.66.1] — 2026-11-16
 
