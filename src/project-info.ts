@@ -10,6 +10,7 @@ import {
   runGit,
 } from './git-exec';
 import { parseNumstatZ } from './git-history';
+import { isInsideRoot, realPathLeaf } from './path-guard';
 import type { ChangeDTO, ChangeKind } from './protocol';
 
 // Per-file cap for the Changes line-count reads (mirrors file-service's 2 MB diff cap). An
@@ -279,9 +280,16 @@ export async function readRepoChanges(
   // bounded so a big untracked file can never freeze the host (was a synchronous readFileSync loop).
   const fileLineCounts = new Map<string, number>();
   const needFileList = [...needsFile];
-  const counts = await mapWithConcurrency(needFileList, COUNT_CONCURRENCY, (p) =>
-    countLinesOfFile(path.join(cwd, p), MAX_FILE_BYTES),
-  );
+  // A folder in the path may be a symlink out of the repo; only a file that really sits inside
+  // the top is opened, so a count never describes a file elsewhere (CON-45 G1 re-review N6).
+  const realTop = realPathLeaf(cwd);
+  const counts = await mapWithConcurrency(needFileList, COUNT_CONCURRENCY, (p) => {
+    const abs = path.join(cwd, p);
+    // The parent, not the file: a symlink leaf is counted as git stores it (countRegularFile).
+    return isInsideRoot(realPathLeaf(path.dirname(abs)), realTop)
+      ? countLinesOfFile(abs, MAX_FILE_BYTES)
+      : Promise.resolve({ lines: 0, oversize: false });
+  });
   needFileList.forEach((p, i) => {
     fileLineCounts.set(p, counts[i].lines);
   });

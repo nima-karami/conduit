@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { hasDotSegment } from '../../src/canonical-path';
 import type {
   FsErrorCode,
   GitResult,
@@ -127,6 +128,9 @@ const isLive = (state: LinkState | null): boolean => state === 'up' || state ===
 const refusedReply: Reply = { ok: false, code: 'refused', message: NOT_SERVED };
 const repoRefusedReply: Reply = { ok: false, code: 'refused', message: REPO_OUTSIDE };
 const failedReply = (message: string): Reply => ({ ok: false, code: 'failed', message });
+
+/** A tree entry can be named `..` by hand; status drops such paths, and show names none either. */
+const staysInRepo = (rel: string): boolean => !path.isAbsolute(rel) && !hasDotSegment(rel);
 
 /** A path a listing or a commit would name: denied when its own text is, as fs-serve's lists are. */
 const deniedUnder = (dir: string, rel: string): boolean => isDenied(path.join(dir, rel));
@@ -344,6 +348,8 @@ export function createGitServe(deps: GitServeDeps): GitServe {
       const from = shown.renamedFrom?.[f.path];
       const blob = shown.blobs?.[f.path];
       return (
+        staysInRepo(f.path) &&
+        (from === undefined || staysInRepo(from)) &&
         !deniedUnder(top, f.path) &&
         (from === undefined || !deniedUnder(top, from)) &&
         // A file without blob ids can't be checked by content, so it is not shown.

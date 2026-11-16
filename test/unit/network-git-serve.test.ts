@@ -611,6 +611,48 @@ describe('git-serve', () => {
     expect(res.result.snapshot.changes.map((c) => c.path)).not.toContain(rel);
   });
 
+  it('a line count never follows a symlinked folder out of the repo', async () => {
+    await initRepo(proj);
+    const away = path.join(root, 'away');
+    fs.mkdirSync(away);
+    fs.writeFileSync(path.join(away, 'pw.txt'), '1\n2\n3\n4\n5\n6\n7\n');
+    fs.symlinkSync(away, path.join(proj, 'link'));
+    const kept = await git(proj, 'rev-parse', 'HEAD:a.txt');
+    const blob = await runGit(['hash-object', '-w', '--stdin'], { cwd: proj, stdin: 'x\ny\nz\n' });
+    if (!blob.ok) throw new Error('hash-object failed');
+    writeIndex(proj, [
+      ['a.txt', kept],
+      ['link/pw.txt', blob.stdout.trim()],
+    ]);
+    const h = harness();
+    await h.serve.onFrame(CONTROLLER, req('y1', 'status', {}));
+    const res = replyTo(h.sent, 'y1');
+    if (!res.ok || res.result.op !== 'status' || res.result.snapshot === null)
+      throw new Error('expected a status');
+    for (const c of res.result.snapshot.changes) expect(c.added).not.toBe(7);
+  });
+
+  it('show names no path outside the top, even from a tree entry named ..', async () => {
+    await initRepo(proj);
+    const blob = await git(proj, 'rev-parse', 'HEAD:a.txt');
+    const inner = await runGit(['mktree'], {
+      cwd: proj,
+      stdin: `100644 blob ${blob}\tsecret.txt\n`,
+    });
+    if (!inner.ok) throw new Error('mktree failed');
+    const outer = await runGit(['mktree'], {
+      cwd: proj,
+      stdin: `040000 tree ${inner.stdout.trim()}\t..\n`,
+    });
+    if (!outer.ok) throw new Error('mktree failed');
+    const crafted = await git(proj, 'commit-tree', outer.stdout.trim(), '-m', 'x');
+    const h = harness();
+    await h.serve.onFrame(CONTROLLER, req('z1', 'show', { sha: crafted }));
+    const res = replyTo(h.sent, 'z1');
+    if (!res.ok || res.result.op !== 'show') throw new Error('expected a show result');
+    expect(res.result.files.map((f) => f.path)).toEqual([]);
+  });
+
   it('a repo extension that could fetch or run something is refused before any read', async () => {
     await initRepo(proj);
     await git(proj, 'config', 'core.repositoryformatversion', '1');
