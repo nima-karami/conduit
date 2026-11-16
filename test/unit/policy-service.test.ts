@@ -425,37 +425,39 @@ describe('policy service', () => {
     h.service.start();
 
     h.advance(5 * MIN);
-    const used = h.service.decide({
+    const usedInput = {
       principal: session(),
-      tool: 'open_session',
+      tool: 'open_session' as const,
       targets: [target({ sessionId: 's2' }), target({ sessionId: 's3' })],
       masterOn: true,
       toYou: false,
-    });
+    };
+    const used = h.service.decide(usedInput);
     expect(used.decision).toBe('allow');
     expect(used.grantIds).toEqual(['g-s2', 'g-s3']);
     expect(h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt])).toEqual([
       ['g-s2', null],
       ['g-s3', null],
     ]);
-    h.service.commit(used);
+    h.service.commit(usedInput, used);
     expect(h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt])).toEqual([
       ['g-s2', iso(h.now())],
       ['g-s3', iso(h.now())],
     ]);
 
-    const passed = h.service.decide({
+    const passedInput = {
       principal: session(),
-      tool: 'open_session',
+      tool: 'open_session' as const,
       targets: [target({ sessionId: 's9' })],
       masterOn: true,
       toYou: false,
-    });
+    };
+    const passed = h.service.decide(passedInput);
     expect(passed).toMatchObject({
       decision: 'allow',
       reason: { by: 'override', overrideId: 'o1' },
     });
-    h.service.commit(passed);
+    h.service.commit(passedInput, passed);
 
     const again = h.service.decide({
       principal: session(),
@@ -546,7 +548,7 @@ describe('policy service', () => {
       decision: 'allow',
       reason: { by: 'override' },
     });
-    h.service.commit(passed);
+    h.service.commit(input, passed);
     expect(h.service.decide(input).decision).toBe('deny');
   });
 
@@ -1107,6 +1109,94 @@ describe('policy service', () => {
     await h.service.stop();
   });
 
+  it('a grant revoked between decide and commit refuses the commit', () => {
+    const h = harness({
+      grants: serializeGrantsFile({
+        version: 1,
+        grants: [grant({ id: 'g-s2', on: { kind: 'session', sessionId: 's2' } })],
+      }),
+    });
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_session' as const,
+      targets: [target({ sessionId: 's2' })],
+      masterOn: true,
+      toYou: false,
+    };
+    const decision = h.service.decide(input);
+    expect(decision).toMatchObject({ decision: 'allow', grantIds: ['g-s2'] });
+    expect(h.service.revokeGrant('g-s2')).toBe(true);
+    expect(h.service.commit(input, decision)).toBeNull();
+  });
+
+  it('a revoked grant refuses the commit even when another grant still allows the call', () => {
+    const h = harness({
+      grants: serializeGrantsFile({
+        version: 1,
+        grants: [
+          grant({ id: 'g-a', on: { kind: 'session', sessionId: 's2' } }),
+          grant({ id: 'g-b', on: { kind: 'session', sessionId: 's2' } }),
+        ],
+      }),
+    });
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_session' as const,
+      targets: [target({ sessionId: 's2' })],
+      masterOn: true,
+      toYou: false,
+    };
+    const decision = h.service.decide(input);
+    expect(decision.decision).toBe('allow');
+    expect(decision.grantIds).toEqual(['g-a']);
+    expect(h.service.revokeGrant('g-a')).toBe(true);
+    expect(h.service.decide(input).decision).toBe('allow');
+    expect(h.service.commit(input, decision)).toBeNull();
+  });
+
+  it('a deny exception added between decide and commit refuses the commit', () => {
+    const h = harness();
+    h.service.start();
+    expect(
+      h.service.applyLegacyPatch({ kind: 'default' }, null, 'open_session', { access: 'on' }),
+    ).toEqual({ ok: true });
+    const input = {
+      principal: session(),
+      tool: 'open_session' as const,
+      targets: [],
+      masterOn: true,
+      toYou: false,
+    };
+    const decision = h.service.decide(input);
+    expect(decision.decision).toBe('allow');
+    expect(
+      h.service.applyLegacyPatch(
+        { kind: 'session', sessionId: 's1' },
+        { kind: 'default' },
+        'open_session',
+        { access: 'off' },
+      ),
+    ).toEqual({ ok: true });
+    expect(h.service.commit(input, decision)).toBeNull();
+  });
+
+  it('a commit whose fresh decide still allows goes through, and an ask still commits', () => {
+    const h = harness();
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_session' as const,
+      targets: [],
+      masterOn: true,
+      toYou: false,
+    };
+    const asked = h.service.decide(input);
+    expect(asked.decision).toBe('ask');
+    expect(h.service.commit(input, asked)).toEqual([]);
+  });
+
   it('allowOnce does not duplicate an existing override', async () => {
     const exception: Exception = {
       tool: 'open_file',
@@ -1213,7 +1303,7 @@ describe('policy service', () => {
     };
     const passed = h.service.decide(input);
     expect(passed).toMatchObject({ decision: 'allow', overrideIds: ['oa', 'ob'] });
-    h.service.commit(passed);
+    h.service.commit(input, passed);
     expect(h.service.decide(input).decision).toBe('deny');
     h.fire(WRITE_MS);
     await h.service.stop();
@@ -1262,10 +1352,10 @@ describe('policy service', () => {
     expect(first).toMatchObject({ decision: 'allow', overrideIds: ['o1'], grantIds: ['g-s2'] });
     expect(second).toMatchObject({ decision: 'allow', overrideIds: ['o1'], grantIds: ['g-s2'] });
 
-    expect(h.service.commit(first)).not.toBeNull();
+    expect(h.service.commit(input, first)).not.toBeNull();
     const afterFirst = h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt]);
     h.advance(MIN);
-    expect(h.service.commit(second)).toBeNull();
+    expect(h.service.commit(input, second)).toBeNull();
     expect(h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt])).toEqual(afterFirst);
     expect(h.service.decide(input).decision).toBe('deny');
   });
@@ -1313,9 +1403,9 @@ describe('policy service', () => {
     expect(h.service.decide(input)).toMatchObject({ decision: 'allow', overrideIds: ['oa'] });
     expect(h.changed()).toBe(before);
 
-    h.service.commit(first);
+    h.service.commit(input, first);
     expect(h.changed()).toBe(before + 1);
-    h.service.commit(first);
+    h.service.commit(input, first);
     expect(h.changed()).toBe(before + 1);
     expect(h.service.decide(input).decision).toBe('deny');
   });
@@ -1350,15 +1440,16 @@ describe('policy service', () => {
       }),
     });
     h.service.start();
-    const first = h.service.decide({
+    const input = {
       principal: session(),
-      tool: 'open_file',
+      tool: 'open_file' as const,
       targets: [target({ path: '/w/a/x.ts', folder: '/w/a' })],
       masterOn: true,
       toYou: false,
-    });
-    expect(h.service.commit(first)).toEqual([override]);
-    expect(h.service.commit(first)).toBeNull();
+    };
+    const first = h.service.decide(input);
+    expect(h.service.commit(input, first)).toEqual([override]);
+    expect(h.service.commit(input, first)).toBeNull();
   });
 
   it('a held override passes the still-saved check after its commit removed it, and only grants are touched', () => {
@@ -1403,14 +1494,14 @@ describe('policy service', () => {
       masterOn: true,
       toYou: false,
     };
-    const removed = h.service.commit(h.service.decide(input));
+    const removed = h.service.commit(input, h.service.decide(input));
     expect(removed).toEqual([expect.objectContaining({ id: 'o1' })]);
 
     h.advance(MIN);
     const answer = h.service.decide({ ...input, heldOverrides: removed ?? [] });
     expect(answer).toMatchObject({ decision: 'allow', overrideIds: ['o1'], grantIds: ['g-s2'] });
     const before = h.changed();
-    expect(h.service.commit(answer, ['o1'])).toEqual([]);
+    expect(h.service.commit(input, answer, removed ?? [])).toEqual([]);
     expect(h.changed()).toBe(before);
     expect(h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt])).toEqual([
       ['g-s2', iso(h.now())],
@@ -1457,7 +1548,7 @@ describe('policy service', () => {
     };
     const answer = h.service.decide({ ...input, heldOverrides: [held] });
     expect(answer).toMatchObject({ decision: 'allow', overrideIds: ['o1'] });
-    expect(h.service.commit(answer, ['o1'])).toEqual([]);
+    expect(h.service.commit(input, answer, [held])).toEqual([]);
     expect(h.service.decide(input)).toMatchObject({ decision: 'allow', overrideIds: ['o2'] });
   });
 
@@ -1559,7 +1650,7 @@ describe('policy service', () => {
     };
     const asked = h.service.decide(input);
     expect(asked).toMatchObject({ decision: 'ask', overrideIds: ['oa'] });
-    h.service.commit(asked);
+    h.service.commit(input, asked);
     expect(h.service.decide(input).decision).toBe('deny');
   });
 

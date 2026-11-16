@@ -10,6 +10,7 @@ import {
 import {
   assignmentFor,
   decide as decideEngine,
+  isLiveGrant,
   samePath,
   visibleTools as visibleEngine,
 } from './policy-engine';
@@ -26,6 +27,7 @@ import { legacyLowerPoint, projectLegacyLayer, propagateLegacyPatch } from './po
 import type {
   Assignment,
   AssignmentPoint,
+  Decision,
   Grant,
   OneUseOverride,
   PolicyDecision,
@@ -65,7 +67,11 @@ export interface PolicyService {
   start(): void;
   stop(): Promise<void>;
   decide(input: Omit<PolicyInput, 'now'>): PolicyDecision;
-  commit(decision: PolicyDecision, held?: readonly string[]): OneUseOverride[] | null;
+  commit(
+    input: Omit<PolicyInput, 'now'>,
+    decision: PolicyDecision,
+    held?: readonly OneUseOverride[],
+  ): OneUseOverride[] | null;
   noteDecision(activityId: string, input: Omit<PolicyInput, 'now'>, decision: PolicyDecision): void;
   visibleTools(p: Principal): ToolName[];
   setAssignment(
@@ -102,6 +108,7 @@ export interface PolicyService {
   profileName(id: ProfileId): string | null;
 }
 
+const DECISION_RANK: Record<Decision, number> = { deny: 0, ask: 1, allow: 2 };
 const WRITE_COALESCE_MS = 250;
 const TICK_MS = 60_000;
 const PURGE_MS = 3_600_000;
@@ -414,12 +421,24 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       return decideEngine(stateNow(), { ...input, now: deps.now() });
     },
 
-    commit(decision, held = []) {
-      // A concurrent call decided on the same override; the first commit spent it. A held id was
-      // spent when its card was raised, so it is not checked against the saved list again.
-      const heldIds = new Set(held);
+    commit(input, decision, held = []) {
+      // A concurrent call decided on the same override; the first commit spent it. A held
+      // override was spent when its card was raised, so it is not checked against the saved
+      // list again.
+      const heldIds = new Set(held.map((o) => o.id));
       const saved = new Set(file.overrides.map((o) => o.id));
       if (decision.overrideIds.some((id) => !saved.has(id) && !heldIds.has(id))) return null;
+      // A grant revoked or expired, or an exception added, while the call waited refuses it.
+      const now = deps.now();
+      const live = new Set(
+        grants
+          .all()
+          .filter((g) => isLiveGrant(g, now))
+          .map((g) => g.id),
+      );
+      if (decision.grantIds.some((id) => !live.has(id))) return null;
+      const fresh = decideEngine(stateNow(), { ...input, heldOverrides: held, now });
+      if (DECISION_RANK[fresh.decision] < DECISION_RANK[decision.decision]) return null;
       if (decision.grantIds.length > 0) {
         for (const id of decision.grantIds) grants.touch(id);
         markGrants();

@@ -106,7 +106,7 @@ function forPrincipal(principal: Principal, rule: ToolRule): ToolRule {
   };
 }
 
-function isLiveGrant(g: Grant, now: number): boolean {
+export function isLiveGrant(g: Grant, now: number): boolean {
   return g.state === 'active' && (g.expiresAt === null || Date.parse(g.expiresAt) > now);
 }
 

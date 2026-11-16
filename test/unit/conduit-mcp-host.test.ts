@@ -4945,6 +4945,76 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(replies.at(-1)).toMatchObject({ ok: false, reason: 'already_ended' });
   });
 
+  it('a grant revoked while an allowed open_file waits in prepare refuses the call with tool_disabled', async () => {
+    let releaseKind!: () => void;
+    const kindGate = new Promise<void>((resolve) => {
+      releaseKind = resolve;
+    });
+    let kindAsked = 0;
+    const grantsIo: RequestsIo = {
+      read: () =>
+        serializeGrantsFile({
+          version: 1,
+          grants: [
+            {
+              id: 'g1',
+              who: { kind: 'session', sessionId: 's1' },
+              tool: 'open_file',
+              on: { kind: 'anywhere' },
+              for: 'until-revoked',
+              anchorSessionId: null,
+              createdAt: new Date(0).toISOString(),
+              expiresAt: null,
+              lastUsedAt: null,
+              state: 'active',
+              endedAt: null,
+              requestId: null,
+            },
+          ],
+        }),
+      write: async () => undefined,
+    };
+    const h = harness({
+      kinds: { '/w/a.ts': 'file' },
+      grantsIo,
+      kindOf: async (abs) => {
+        if (abs === '/w/a.ts') {
+          kindAsked += 1;
+          await kindGate;
+        }
+        return 'file';
+      },
+    });
+    await h.host.start();
+    const launched = await launch(h, 's1');
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:setPointPolicy',
+        requestId: 1,
+        point: { kind: 'default' },
+        tool: 'open_file',
+        patch: { access: 'ask' },
+      },
+      () => undefined,
+      1,
+    );
+    const c = await rawClient(h.ep, launched.token);
+    c.call(2, 'open_file', { paths: ['/w/a.ts'] });
+    await until(() => kindAsked === 1);
+    let revoked: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:revokeGrant', requestId: 3, grantId: 'g1' },
+      (m) => {
+        revoked = m;
+      },
+      1,
+    );
+    expect(revoked).toEqual({ type: 'mcp:policyResult', requestId: 3, ok: true });
+    releaseKind();
+    expect(c.errorOf(await c.reply(2))).toBe('tool_disabled');
+    await h.host.stop();
+  });
+
   it('mcp:permissionAnswer from a window that does not own the ask is refused; the owner window answers', async () => {
     const { h, c } = await asking();
     const replies: HostToWebview[] = [];

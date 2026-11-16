@@ -1808,10 +1808,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         // run back to back, so the re-decide sees the state the commit did: a second override for
         // the target can stand in for the spent one.
         const commitResolved = (): AskCommit | null => {
-          const held = policyService.commit(resolved);
+          const held = policyService.commit(policyInput, resolved);
           if (held !== null) return { decision: resolved, held };
           const again = policyService.decide(policyInput);
-          const heldAgain = again.decision === 'allow' ? policyService.commit(again) : null;
+          const heldAgain =
+            again.decision === 'allow' ? policyService.commit(policyInput, again) : null;
           if (heldAgain !== null) {
             evaluated.current = { input: policyInput, decision: again };
             return { decision: again, held: heldAgain };
@@ -1876,12 +1877,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           },
           commitAnswered: (held) => {
             if (reDecided === null) return false;
-            if (
-              policyService.commit(
-                reDecided,
-                held.map((o) => o.id),
-              ) === null
-            ) {
+            if (policyService.commit(policyInput, reDecided, held) === null) {
               evaluated.spent = true;
               return false;
             }
