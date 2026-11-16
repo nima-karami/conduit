@@ -2,7 +2,13 @@
 // host, so the renderer keeps only the last connect error per machine, for the row to show.
 
 import { useSyncExternalStore } from 'react';
-import type { MachineActionResult, MachineError } from '../src/contracts/machines';
+import type { AgentCli } from '../src/conduit-mcp/install-types';
+import type {
+  AgentSetupStep,
+  MachineActionResult,
+  MachineError,
+  MachineMode,
+} from '../src/contracts/machines';
 import type { NetworkState } from '../src/contracts/network-state';
 import { requestHost } from './host-request';
 import { getNetworkState, subscribeNetworkState } from './network-store';
@@ -10,6 +16,9 @@ import { getNetworkState, subscribeNetworkState } from './network-store';
 // connect may run a 120 s ssh bootstrap on the server; everything else answers at once.
 const CONNECT_TIMEOUT_MS = 135_000;
 const ACTION_TIMEOUT_MS = 15_000;
+// Opening a setup pane spawns a local terminal; probing runs a bootstrap-style ssh round trip.
+const PANE_TIMEOUT_MS = 15_000;
+const PROBE_TIMEOUT_MS = 65_000;
 
 /** A host that never answered is an unreachable machine as far as the owner can tell. */
 const TIMED_OUT: MachineActionResult = {
@@ -83,6 +92,44 @@ export async function removeMachine(machineId: string): Promise<MachineActionRes
     ACTION_TIMEOUT_MS,
   );
   return reply?.result ?? TIMED_OUT;
+}
+
+export async function setMachineMode(
+  machineId: string,
+  mode: MachineMode,
+): Promise<MachineActionResult> {
+  const reply = await requestHost(
+    (requestId) => ({ type: 'machines:setMode', requestId, machineId, mode }),
+    ['machines:result'],
+    ACTION_TIMEOUT_MS,
+  );
+  return reply?.result ?? TIMED_OUT;
+}
+
+export async function openSetupPane(
+  machineId: string,
+  cli: AgentCli,
+  step: AgentSetupStep,
+): Promise<{ sessionId: string | null; error: string | null }> {
+  const reply = await requestHost(
+    (requestId) => ({ type: 'machines:openSetupPane', requestId, machineId, cli, step }),
+    ['machines:paneOpened'],
+    PANE_TIMEOUT_MS,
+  );
+  return reply
+    ? { sessionId: reply.sessionId, error: reply.error }
+    : { sessionId: null, error: 'timeout' };
+}
+
+export async function probeAgents(
+  machineId: string,
+): Promise<{ agents: string[] | null; error: string | null }> {
+  const reply = await requestHost(
+    (requestId) => ({ type: 'machines:probeAgents', requestId, machineId }),
+    ['machines:agents'],
+    PROBE_TIMEOUT_MS,
+  );
+  return reply ? { agents: reply.agents, error: reply.error } : { agents: null, error: 'timeout' };
 }
 
 export async function openNeedsPerson(

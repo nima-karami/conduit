@@ -22,8 +22,11 @@ vi.mock('../../webview/bridge', () => ({
 import {
   connectMachine,
   disconnectMachine,
+  openSetupPane,
+  probeAgents,
   removeMachine,
   renameMachine,
+  setMachineMode,
   useMachineErrors,
 } from '../../webview/machines-store';
 
@@ -176,6 +179,80 @@ describe('machines-store', () => {
       expect(await disconnect).toEqual(TIMED_OUT);
       // Only connect records its error; the other actions leave the kept error alone.
       expect(errors.get('bee')).toEqual(TIMED_OUT.error);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('the agent-setup calls post their requests, reply, and time out', async () => {
+    vi.useFakeTimers();
+    try {
+      const mode = setMachineMode('m-0000000b', 'light');
+      expect(h.posted[h.posted.length - 1]).toMatchObject({
+        type: 'machines:setMode',
+        machineId: 'm-0000000b',
+        mode: 'light',
+      });
+      await act(async () =>
+        emit({
+          type: 'machines:result',
+          requestId: lastRequestId(),
+          result: { ok: true, value: null },
+        }),
+      );
+      expect(await mode).toEqual({ ok: true, value: null });
+
+      const pane = openSetupPane('m-0000000b', 'codex', 'install');
+      expect(h.posted[h.posted.length - 1]).toMatchObject({
+        type: 'machines:openSetupPane',
+        machineId: 'm-0000000b',
+        cli: 'codex',
+        step: 'install',
+      });
+      await act(async () =>
+        emit({
+          type: 'machines:paneOpened',
+          requestId: lastRequestId(),
+          sessionId: 's-1',
+          error: null,
+        }),
+      );
+      expect(await pane).toEqual({ sessionId: 's-1', error: null });
+
+      const probe = probeAgents('m-0000000b');
+      expect(h.posted[h.posted.length - 1]).toMatchObject({
+        type: 'machines:probeAgents',
+        machineId: 'm-0000000b',
+      });
+      await act(async () =>
+        emit({
+          type: 'machines:agents',
+          requestId: lastRequestId(),
+          agents: ['claude'],
+          error: null,
+        }),
+      );
+      expect(await probe).toEqual({ agents: ['claude'], error: null });
+
+      const timedOutMode = setMachineMode('m-0000000b', 'full');
+      await act(async () => {
+        vi.advanceTimersByTime(15_000);
+      });
+      expect(await timedOutMode).toEqual(TIMED_OUT);
+
+      const timedOutPane = openSetupPane('m-0000000b', 'claude', 'login');
+      await act(async () => {
+        vi.advanceTimersByTime(15_000);
+      });
+      expect(await timedOutPane).toEqual({ sessionId: null, error: 'timeout' });
+
+      const timedOutProbe = probeAgents('m-0000000b');
+      await act(async () => {
+        vi.advanceTimersByTime(64_999);
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(await timedOutProbe).toEqual({ agents: null, error: 'timeout' });
     } finally {
       vi.useRealTimers();
     }
