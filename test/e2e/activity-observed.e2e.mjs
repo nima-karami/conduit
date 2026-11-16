@@ -4,12 +4,12 @@
  *   1. a Conduit-launched fake Codex appends a CommandExecution and a FileChange item to its rollout.
  *      Their output and file contents are FIXTURE-SECRET-* text. Two observed rows must appear: one
  *      carrying the command's first line, one carrying the changed path.
- *   2. a fake Claude's PostToolUse reaches the host through the real hook command Conduit wrote into
- *      the session's --settings file, with the endpoint and token from the launched process's env.
- *      Its tool_response carries FIXTURE-SECRET-* text. One observed row must name Claude Code.
+ *   2. a fake Claude fires PostToolUse through the hook command Conduit wrote into the launch's
+ *      --settings file (the fake's `post-tool-use` cue, the same path as its other hook events).
+ *      The hook client takes its endpoint and token from the launch env, as in a real Claude. Its
+ *      tool_response carries FIXTURE-SECRET-* text. One observed row must name Claude Code.
  * In both, no file under the activity directory may hold any FIXTURE-SECRET-* text.
  */
-import { spawn } from 'node:child_process';
 import {
   appendFileSync,
   chmodSync,
@@ -17,7 +17,6 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
-  readlinkSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -163,73 +162,6 @@ function codexItems(work, filePath) {
   ];
 }
 
-/**
- * The endpoint and token Conduit put in the launched fake's env. The fake does not log its env and
- * the settings file and MCP config do not carry them, so the running process is read from /proc:
- * its argv names this profile's records directory and FAKE_HOOKS, and its cwd is the launch's cwd.
- */
-function launchedEnvOf(start) {
-  if (!existsSync('/proc/self/environ')) throw new Error('reading the launched env needs /proc');
-  const pids = [];
-  for (const pid of readdirSync('/proc')) {
-    if (!/^\d+$/.test(pid)) continue;
-    let argv;
-    let cwd;
-    try {
-      argv = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0');
-      cwd = readlinkSync(`/proc/${pid}/cwd`);
-    } catch {
-      // The process exited between listing and reading; it is not the launched fake.
-      continue;
-    }
-    const dirAt = argv.indexOf('--dir');
-    if (
-      argv.includes(FAKE_HOOKS) &&
-      dirAt >= 0 &&
-      argv[dirAt + 1] === recordsDir &&
-      cwd === start.cwd
-    )
-      pids.push(pid);
-  }
-  assert(
-    pids.length === 1,
-    `expected one launched fake claude in ${start.cwd}, found ${pids.length}: ${pids.join(', ')}`,
-  );
-  const env = {};
-  for (const pair of readFileSync(`/proc/${pids[0]}/environ`, 'utf8').split('\0')) {
-    const eq = pair.indexOf('=');
-    if (eq > 0) env[pair.slice(0, eq)] = pair.slice(eq + 1);
-  }
-  return {
-    CONDUIT_MCP_ENDPOINT: env.CONDUIT_MCP_ENDPOINT,
-    CONDUIT_SESSION_TOKEN: env.CONDUIT_SESSION_TOKEN,
-  };
-}
-
-/** Run the hook command Conduit wrote, with the payload on stdin, as Claude does. */
-function runHookCommand(command, payload, env) {
-  return new Promise((resolve, reject) => {
-    const child = spawn('/bin/sh', ['-c', command], {
-      env: { ...process.env, ...env },
-      stdio: ['pipe', 'ignore', 'ignore'],
-    });
-    const timer = setTimeout(() => {
-      child.kill();
-      reject(new Error('the PostToolUse hook command did not exit within 15 s'));
-    }, 15_000);
-    child.on('error', (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve(code);
-    });
-    child.stdin.on('error', () => undefined);
-    child.stdin.end(JSON.stringify(payload));
-  });
-}
-
 await runScenario(
   'activity-observed',
   async ({ page, log }) => {
@@ -298,34 +230,22 @@ await runScenario(
     assertNoSecret('after the codex rows');
     log('codex command and file-change rows written, no FIXTURE-SECRET text in activity ✓');
 
-    phase('claude PostToolUse through the real hook command');
+    phase('claude PostToolUse through the launch settings hook');
     const claudeWork = workFolder();
     const claudeSid = await openSession(page, { path: claudeWork, agentId: CLAUDE_AGENT_ID });
     assert(
-      await until(() => fakeRecords('claude', 'START').length > 0, 45_000),
-      `the fake claude never started for ${claudeSid}`,
+      await until(() => fakeRecords('claude', 'READY').length > 0, 45_000),
+      `the fake claude never reported READY for ${claudeSid}`,
     );
     const start = fakeRecords('claude', 'START')[0];
-    const argvOf = (flag) => {
-      const at = start.argv.indexOf(flag);
-      assert(at >= 0 && start.argv[at + 1], `the launch has no ${flag}: ${start.argv.join(' ')}`);
-      return start.argv[at + 1];
-    };
-    // What Claude itself reads: the hook settings and the MCP config Conduit wrote for this launch.
-    const settings = JSON.parse(readFileSync(argvOf('--settings'), 'utf8'));
-    const hookGroup = settings.hooks?.PostToolUse?.[0];
-    const hookCommand = hookGroup?.hooks?.[0]?.command;
+    const settingsAt = start.argv.indexOf('--settings');
+    assert(settingsAt >= 0, `the launch has no --settings: ${start.argv.join(' ')}`);
+    // The hook command Conduit wrote for this launch; the fake runs it with the launch env.
+    const settings = JSON.parse(readFileSync(start.argv[settingsAt + 1], 'utf8'));
+    const hookCommand = settings.hooks?.PostToolUse?.[0]?.hooks?.[0]?.command;
     assert(
       typeof hookCommand === 'string' && hookCommand.includes('hook PostToolUse'),
       `no PostToolUse hook command in the launch settings: ${JSON.stringify(settings.hooks)}`,
-    );
-    // The hook client reads its endpoint and token from its own env, which Claude inherits from
-    // the launch (host.ts spawn env). Neither the settings file nor the MCP config carries them.
-    const hookEnv = launchedEnvOf(start);
-    assert(
-      typeof hookEnv.CONDUIT_MCP_ENDPOINT === 'string' &&
-        typeof hookEnv.CONDUIT_SESSION_TOKEN === 'string',
-      `the launched claude has no endpoint or token in its env: ${JSON.stringify(Object.keys(hookEnv))}`,
     );
 
     const fixture = JSON.parse(
@@ -344,8 +264,22 @@ await runScenario(
         stdout: 'FIXTURE-SECRET-claude-stdout',
       },
     };
-    const exit = await runHookCommand(hookCommand, payload, hookEnv);
-    assert(exit === 0, `the PostToolUse hook command exited ${exit}`);
+    const cueId = 'post-tool-use-1';
+    appendFileSync(
+      join(recordsDir, 'claude.cue'),
+      jsonl({ id: cueId, cue: 'post-tool-use', payload }),
+    );
+    assert(
+      await until(() => fakeRecords('claude', 'CUE_DONE').some((r) => r.id === cueId), 30_000),
+      `the fake claude never finished the post-tool-use cue ${cueId}`,
+    );
+    const errors = fakeRecords('claude', 'ERROR');
+    assert(errors.length === 0, `the fake claude failed: ${JSON.stringify(errors)}`);
+    const hooks = fakeRecords('claude', 'HOOK').filter((r) => r.event === 'PostToolUse');
+    assert(
+      hooks.length === 1 && hooks[0].source === 'conduit' && hooks[0].code === 0,
+      `the PostToolUse hook ran as ${JSON.stringify(hooks)}, expected one conduit hook exiting 0`,
+    );
 
     const claudeRows = () => observedFor(claudeSid);
     assert(
