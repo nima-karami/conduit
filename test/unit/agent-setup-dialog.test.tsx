@@ -2,7 +2,8 @@
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { MachineView } from '../../src/contracts/machines';
+import type { AgentCli } from '../../src/conduit-mcp/install-types';
+import type { AgentSetupStep, MachineView } from '../../src/contracts/machines';
 import { AgentSetupDialog } from '../../webview/components/agent-setup-dialog';
 import { MACHINES_STR } from '../../webview/machines-strings';
 
@@ -58,6 +59,10 @@ const buttonNamed = (text: string) =>
   [...document.querySelectorAll('button')].find((b) => b.textContent === text) ?? null;
 const rowOf = (name: string) =>
   [...document.querySelectorAll('li')].find((li) => li.textContent?.includes(name)) ?? null;
+const radio = (text: string) =>
+  [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find(
+    (b) => b.textContent === text,
+  ) ?? null;
 const click = async (el: HTMLElement | null) => act(async () => el?.click());
 
 describe('AgentSetupDialog', () => {
@@ -140,6 +145,92 @@ describe('AgentSetupDialog', () => {
     const onClose = vi.fn();
     await render({ onClose });
     await click(buttonNamed(MACHINES_STR.close));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+  it("a failed mode change reverts to the machine's mode", async () => {
+    await render({
+      machine: machine({ mode: 'full' }),
+      onSetMode: () =>
+        Promise.resolve({ ok: false, error: { code: 'ssh_unreachable', detail: {} } }),
+    });
+    await click(buttonNamed(MACHINES_STR.modeLight));
+    expect(radio(MACHINES_STR.modeFull)?.getAttribute('aria-checked')).toBe('true');
+    expect(radio(MACHINES_STR.modeLight)?.getAttribute('aria-checked')).toBe('false');
+    expect(document.body.textContent).toContain(
+      MACHINES_STR.errorText({ code: 'ssh_unreachable', detail: {} }),
+    );
+  });
+
+  it('the mode control is disabled while a change is pending', async () => {
+    const onSetMode = vi.fn(() => new Promise<typeof ok>(() => {}));
+    await render({ onSetMode });
+    await click(buttonNamed(MACHINES_STR.modeLight));
+    expect(radio(MACHINES_STR.modeFull)?.disabled).toBe(true);
+    expect(radio(MACHINES_STR.modeLight)?.disabled).toBe(true);
+    await click(radio(MACHINES_STR.modeFull));
+    expect(onSetMode).toHaveBeenCalledTimes(1);
+  });
+
+  it('the selected mode takes focus on open', async () => {
+    await render({ machine: machine({ mode: 'light' }) });
+    expect(document.activeElement).toBe(radio(MACHINES_STR.modeLight));
+  });
+
+  it('retrying a row clears its error', async () => {
+    let finish: (v: { sessionId: string | null; error: string | null }) => void = () => {};
+    const onOpenPane = vi
+      .fn<
+        (
+          c: AgentCli,
+          s: AgentSetupStep,
+        ) => Promise<{ sessionId: string | null; error: string | null }>
+      >()
+      .mockResolvedValueOnce({ sessionId: null, error: 'peer_unreachable' })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+    await render({ onOpenPane });
+    await click(buttonNamed(MACHINES_STR.logIn));
+    expect(rowOf('Claude Code')?.textContent).toContain(MACHINES_STR.paneError('peer_unreachable'));
+    await click(buttonNamed(MACHINES_STR.logIn));
+    expect(rowOf('Claude Code')?.textContent).not.toContain(
+      MACHINES_STR.paneError('peer_unreachable'),
+    );
+    await act(async () => finish({ sessionId: 's2', error: null }));
+  });
+
+  it('a timed-out pane request shows the timeout line on its row', async () => {
+    await render({
+      onOpenPane: () => Promise.resolve({ sessionId: null, error: 'timeout' }),
+    });
+    await click(buttonNamed(MACHINES_STR.logIn));
+    expect(rowOf('Claude Code')?.textContent).toContain(MACHINES_STR.paneError('timeout'));
+  });
+
+  it('clicking Install twice sends one request', async () => {
+    const onOpenPane = vi.fn(
+      (_c: AgentCli, _s: AgentSetupStep) =>
+        new Promise<{ sessionId: string | null; error: string | null }>(() => {}),
+    );
+    await render({ machine: machine({ agents: [] }), onOpenPane });
+    const install = rowOf('Codex')?.querySelector('button') ?? null;
+    await act(async () => {
+      install?.click();
+      install?.click();
+    });
+    expect(onOpenPane).toHaveBeenCalledTimes(1);
+    expect(onOpenPane).toHaveBeenCalledWith('codex', 'install');
+  });
+
+  it('Escape calls onClose', async () => {
+    const onClose = vi.fn();
+    await render({ onClose });
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

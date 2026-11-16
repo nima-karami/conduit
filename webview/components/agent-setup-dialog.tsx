@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { AGENT_CLIS, type AgentCli, CLI_DISPLAY_NAME } from '../../src/conduit-mcp/install-types';
 import type {
   AgentSetupStep,
@@ -8,6 +8,7 @@ import type {
 } from '../../src/contracts/machines';
 import { MACHINES_STR } from '../machines-strings';
 import { ModalLayer } from './modal-layer';
+import { SegmentedRadios } from './segmented-radios';
 
 const MODES: { id: MachineMode; label: string }[] = [
   { id: 'full', label: MACHINES_STR.modeFull },
@@ -36,8 +37,16 @@ export function AgentSetupDialog({
   onClose: () => void;
 }) {
   const titleId = useId();
-  const modeLabelId = useId();
-  const [mode, setMode] = useState<MachineMode>(machine.mode ?? 'full');
+  const sourceMode = machine.mode ?? 'full';
+  const [mode, setMode] = useState<MachineMode>(sourceMode);
+  const [saving, setSaving] = useState(false);
+  // A ref as well as the state: a second click in the same tick must not send a second change.
+  const savingRef = useRef(false);
+  // The host's mode is the source of truth: a failed change falls back to it, never to a value
+  // captured before the change, which a quick second toggle would have left stale.
+  const sourceRef = useRef(sourceMode);
+  const modeRef = useRef<HTMLDivElement>(null);
+  const busyRef = useRef(false);
   const [agents, setAgents] = useState<readonly string[]>(machine.agents);
   const [modeError, setModeError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -46,34 +55,54 @@ export function AgentSetupDialog({
   const [paneErrors, setPaneErrors] = useState<Partial<Record<AgentCli, string>>>({});
 
   // The row's network state may arrive after the dialog opened; the newer value wins.
-  useEffect(() => setMode(machine.mode ?? 'full'), [machine.mode]);
+  useEffect(() => {
+    sourceRef.current = sourceMode;
+    setMode(sourceMode);
+  }, [sourceMode]);
   useEffect(() => setAgents(machine.agents), [machine.agents]);
+  // Opening the dialog lands the owner on the mode they are in, so a key press acts on it.
+  useEffect(() => {
+    modeRef.current?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
+  }, []);
 
+  // The control is locked while a change is in flight, so only one change runs at a time.
   const chooseMode = async (next: MachineMode) => {
-    if (next === mode) return;
-    const previous = mode;
+    if (savingRef.current || next === mode) return;
+    savingRef.current = true;
+    setSaving(true);
     setModeError(null);
     setMode(next);
-    const result = await onSetMode(next);
-    if (!result.ok) {
-      setMode(previous);
-      setModeError(MACHINES_STR.errorText(result.error));
+    try {
+      const result = await onSetMode(next);
+      if (!result.ok) {
+        setMode(sourceRef.current);
+        setModeError(MACHINES_STR.errorText(result.error));
+      }
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   };
 
   const runPane = async (cli: AgentCli, step: AgentSetupStep) => {
-    if (opening !== null) return;
+    if (busyRef.current) return;
+    busyRef.current = true;
     setOpening(cli);
+    // Retrying a row starts clean: its last failure stays up only until the next attempt.
     setPaneErrors((cur) => {
       const next = { ...cur };
       delete next[cli];
       return next;
     });
-    const result = await onOpenPane(cli, step);
-    setOpening(null);
-    if (result.error !== null) {
-      const code = result.error;
-      setPaneErrors((cur) => ({ ...cur, [cli]: code }));
+    try {
+      const result = await onOpenPane(cli, step);
+      if (result.error !== null) {
+        const code = result.error;
+        setPaneErrors((cur) => ({ ...cur, [cli]: code }));
+      }
+    } finally {
+      busyRef.current = false;
+      setOpening(null);
     }
   };
 
@@ -109,23 +138,16 @@ export function AgentSetupDialog({
           </span>
         </div>
         <div className="modal__body">
-          <div className="agent-setup__mode" role="group" aria-labelledby={modeLabelId}>
-            <span id={modeLabelId} className="agent-setup__label">
-              {MACHINES_STR.modeLabel}
-            </span>
-            <div className="seg">
-              {MODES.map((o) => (
-                <button
-                  key={o.id}
-                  type="button"
-                  className={`seg__btn${mode === o.id ? ' seg__btn--active' : ''}`}
-                  aria-pressed={mode === o.id}
-                  onClick={() => void chooseMode(o.id)}
-                >
-                  {o.label}
-                </button>
-              ))}
-            </div>
+          <div ref={modeRef} className="agent-setup__mode">
+            <SegmentedRadios
+              label={MACHINES_STR.modeLabel}
+              value={mode}
+              options={MODES}
+              onChange={(next) => void chooseMode(next)}
+              // Each selection is a request to the host, so arrow keys only move focus.
+              selectOnArrow={false}
+              disabled={saving}
+            />
           </div>
           {mode === 'light' ? (
             <p className="agent-setup__hint">{MACHINES_STR.modeLightHint}</p>

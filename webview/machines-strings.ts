@@ -76,6 +76,7 @@ const PANE_ERROR: Record<string, string> = {
   peer_revoked: 'That machine was removed.',
   refused: 'That machine refused.',
   unavailable: 'That session isn’t available.',
+  timeout: 'That machine didn’t answer in time.',
 };
 
 export const MACHINES_STR = {
