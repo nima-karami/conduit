@@ -204,6 +204,7 @@ async function harness(
     store: new AppSessionStore(),
     terminals: { sessionsChanged() {}, show() {} },
     remotePanes: { data() {}, state() {} },
+    remoteFiles: { changed() {} },
     broadcastState() {},
     broadcast() {},
     sendToWindow() {},
