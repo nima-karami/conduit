@@ -8,6 +8,26 @@ const os = require('node:os');
 const path = require('node:path');
 
 const HOOK_POST_MAX_BYTES = 256 * 1024;
+// PostToolUse and PostToolUseFailure are read up to the 4 MiB cap and cut down by allow-list; see plan T4.1 review rulings
+const POST_TOOL_USE_MAX_STDIN_BYTES = 4 * 1024 * 1024;
+// see plan T4.1 review rulings (allow-list)
+const POST_TOOL_USE_FIELDS = [
+  'hook_event_name',
+  'session_id',
+  'transcript_path',
+  'cwd',
+  'tool_name',
+  'tool_use_id',
+  'agent_id',
+];
+const POST_TOOL_USE_EVENTS = new Set(['PostToolUse', 'PostToolUseFailure']);
+const POST_TOOL_USE_INPUT_FIELDS = new Map([
+  ['Bash', ['command']],
+  ['Edit', ['file_path']],
+  ['Write', ['file_path']],
+  ['MultiEdit', ['file_path']],
+  ['NotebookEdit', ['notebook_path']],
+]);
 const STDIN_MS = 2000;
 const POST_MS = 1500;
 const STATUS_POST_MS = 300;
@@ -53,6 +73,28 @@ function parseObject(text) {
   }
 }
 
+function pick(source, keys) {
+  const out = {};
+  for (const key of keys) if (source[key] !== undefined) out[key] = source[key];
+  return out;
+}
+
+function forwardable(event, payload) {
+  if (!POST_TOOL_USE_EVENTS.has(event)) return payload;
+  const name = typeof payload.tool_name === 'string' ? payload.tool_name : '';
+  const out = { ...pick(payload, POST_TOOL_USE_FIELDS), hook_event_name: event };
+  if (name.startsWith('mcp__')) return out;
+  const input =
+    payload.tool_input !== null && typeof payload.tool_input === 'object' ? payload.tool_input : {};
+  return { ...out, tool_input: pickStrings(input, POST_TOOL_USE_INPUT_FIELDS.get(name) ?? []) };
+}
+
+function pickStrings(source, keys) {
+  const out = {};
+  for (const key of keys) if (typeof source[key] === 'string') out[key] = source[key];
+  return out;
+}
+
 function post(endpoint, token, event, payload, ms) {
   const line = JSON.stringify({ conduitHook: 1, token, event, payload });
   if (Buffer.byteLength(line, 'utf8') > HOOK_POST_MAX_BYTES) return Promise.resolve();
@@ -81,12 +123,13 @@ async function hook(event, env) {
   const endpoint = envValue(env, 'CONDUIT_MCP_ENDPOINT');
   const token = envValue(env, 'CONDUIT_SESSION_TOKEN');
   if (!endpoint || !token || !event) return;
-  const { text, overflow } = await readStdin(HOOK_POST_MAX_BYTES);
+  const max = POST_TOOL_USE_EVENTS.has(event) ? POST_TOOL_USE_MAX_STDIN_BYTES : HOOK_POST_MAX_BYTES;
+  const { text, overflow } = await readStdin(max);
   // Nothing to forward: an oversized or non-JSON payload is dropped, since stderr is not allowed.
   if (overflow) return;
   const payload = parseObject(text);
   if (payload === null) return;
-  await post(endpoint, token, event, payload, POST_MS);
+  await post(endpoint, token, event, forwardable(event, payload), POST_MS);
 }
 
 function statusLineCommand(projectDir, configDir) {

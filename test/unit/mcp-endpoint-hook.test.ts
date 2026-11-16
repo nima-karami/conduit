@@ -96,6 +96,34 @@ describe('hook posts on the MCP endpoint', () => {
     });
   });
 
+  it('a PostToolUse post is allowed by the endpoint', async () => {
+    const { p, onHook } = await serve(live);
+    const d = dial(p);
+    d.write(hookLine({ event: 'PostToolUse', payload: { tool_name: 'Bash' } }));
+    await d.closed;
+    expect(d.got).toEqual([ACK_OK]);
+    expect(onHook).toHaveBeenCalledWith('s1', {
+      conduitHook: 1,
+      token: TOKEN,
+      event: 'PostToolUse',
+      payload: { tool_name: 'Bash' },
+    });
+  });
+
+  it('a PostToolUseFailure post is allowed by the endpoint', async () => {
+    const { p, onHook } = await serve(live);
+    const d = dial(p);
+    d.write(hookLine({ event: 'PostToolUseFailure', payload: { tool_name: 'Bash' } }));
+    await d.closed;
+    expect(d.got).toEqual([ACK_OK]);
+    expect(onHook).toHaveBeenCalledWith('s1', {
+      conduitHook: 1,
+      token: TOKEN,
+      event: 'PostToolUseFailure',
+      payload: { tool_name: 'Bash' },
+    });
+  });
+
   it('an unknown token → ok:false, no onHook', async () => {
     const { p, onHook } = await serve(live);
     const d = dial(p);

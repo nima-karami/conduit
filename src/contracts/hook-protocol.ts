@@ -2,7 +2,14 @@
 // shim hello by its `conduitHook` key, so the frozen C6 contract is untouched.
 // Client: resources/conduit-mcp/conduit-hook.cjs. see docs/specs/2026-11-13-scheduler-auto-resume.md §3
 
-export type HookEvent = 'StopFailure' | 'UserPromptSubmit' | 'Stop' | 'Notification' | 'StatusLine';
+export type HookEvent =
+  | 'StopFailure'
+  | 'UserPromptSubmit'
+  | 'Stop'
+  | 'Notification'
+  | 'StatusLine'
+  | 'PostToolUse'
+  | 'PostToolUseFailure';
 
 export interface HookPost {
   conduitHook: 1;

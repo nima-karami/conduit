@@ -1,6 +1,9 @@
 import * as path from 'node:path';
 import type { StatusLineSetting } from './claude-user-status-line';
 
+// see docs/plans/2026-11-14-policy-permissions-machinery.plan.md T4.1b (the gap check counts the same tools)
+export const POST_TOOL_USE_MATCHER = '^(?:Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*)$';
+
 // see docs/plans/2026-11-13-scheduler-auto-resume.plan.md "Settled decisions"
 export interface StatusLineWrap {
   /** The user's effective status line at launch; its display keys are copied. */
@@ -30,6 +33,15 @@ export function claudeHookSettings(i: {
         {
           matcher: 'quota_auto_resume_fired|quota_auto_resume_stale|quota_auto_resume_disabled',
           hooks: [hook('Notification')],
+        },
+      ],
+      PostToolUse: [
+        { matcher: POST_TOOL_USE_MATCHER, hooks: [{ ...hook('PostToolUse'), async: true }] },
+      ],
+      PostToolUseFailure: [
+        {
+          matcher: POST_TOOL_USE_MATCHER,
+          hooks: [{ ...hook('PostToolUseFailure'), async: true }],
         },
       ],
     },

@@ -20,6 +20,7 @@ const CONDUIT_SERVER = 'conduit';
 export function claudeActionsFromPostToolUse(payload: Record<string, unknown>): ClaudeAction[] {
   const tool = payload.tool_name;
   if (typeof tool !== 'string') return [];
+  if (tool.startsWith('mcp__')) return mcpAction(tool);
   const input = asRecord(payload.tool_input);
   if (!input) return [];
   if (tool === 'Bash') {
@@ -37,13 +38,14 @@ export function claudeActionsFromPostToolUse(payload: Record<string, unknown>): 
     const path = input[field];
     return typeof path === 'string' ? [{ kind: 'file-change', paths: [path] }] : [];
   }
-  if (tool.startsWith('mcp__')) {
-    const rest = tool.slice('mcp__'.length);
-    const split = rest.indexOf('__');
-    if (split <= 0 || split + 2 >= rest.length) return [];
-    const server = rest.slice(0, split);
-    if (server === CONDUIT_SERVER) return [];
-    return [{ kind: 'mcp', server, tool: rest.slice(split + 2) }];
-  }
   return [];
+}
+
+function mcpAction(tool: string): ClaudeAction[] {
+  const rest = tool.slice('mcp__'.length);
+  const split = rest.indexOf('__');
+  if (split <= 0 || split + 2 >= rest.length) return [];
+  const server = rest.slice(0, split);
+  if (server === CONDUIT_SERVER) return [];
+  return [{ kind: 'mcp', server, tool: rest.slice(split + 2) }];
 }

@@ -25,6 +25,9 @@ export function claudeSignalsFromHook(
       return [{ kind: 'resumed', sessionId, at: now, by: 'turn', source: 'claude-hook' }];
     case 'Stop':
       return [];
+    case 'PostToolUse':
+    case 'PostToolUseFailure':
+      return [];
     case 'Notification':
       return notificationSignals(sessionId, p.notification_type, now);
     case 'StatusLine': {
