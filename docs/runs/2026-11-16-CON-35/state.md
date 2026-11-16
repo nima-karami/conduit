@@ -5,7 +5,7 @@ No lane sessions were opened. Nothing is merged. Slice 1 (CON-36) has started; n
 
 ## VM (Linux remote for G7 and the Linux gates)
 - Dir: `~/.cache/conduit-vm/con27` (Ubuntu 26.04.1 cloud image, the one CON-27 used).
-- **Running now**: QEMU PID 63797 (`~/.cache/conduit-vm/con27/run/qemu.pid`). Headless
+- **Running now**: QEMU PID 199137 (restarted 2026-11-16; was 63797) (`~/.cache/conduit-vm/con27/run/qemu.pid`). Headless
   (`-display none -vga none -monitor none`), serial to `serial.log`, only forward `127.0.0.1:47422 -> :22`.
   Stop it by that PID only, when idle.
 - Start command (from the VM dir):
