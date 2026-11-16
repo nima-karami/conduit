@@ -51,6 +51,7 @@ const FEED_GAP_CHECK_TIMEOUT_MS = 10_000;
 
 export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
   const sessions = new Map<string, SessionGap<T>>();
+  const activeTimeouts = new Set<T>();
   // One chain: two checks reading and advancing the same span would interleave.
   let queue: Promise<void> = Promise.resolve();
 
@@ -131,8 +132,12 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
         resolve();
       }, FEED_GAP_CHECK_TIMEOUT_MS);
     });
+    if (timeout.handle !== null) activeTimeouts.add(timeout.handle);
     return Promise.race([check(sessionId, s, path, size, guard), timedOut]).finally(() => {
-      if (timeout.handle !== null) deps.clearTimer(timeout.handle);
+      if (timeout.handle !== null) {
+        activeTimeouts.delete(timeout.handle);
+        deps.clearTimer(timeout.handle);
+      }
     });
   };
 
@@ -189,6 +194,8 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
     settled: () => queue,
     dispose() {
       for (const s of sessions.values()) if (s.pending !== null) deps.clearTimer(s.pending.timer);
+      for (const handle of activeTimeouts) deps.clearTimer(handle);
+      activeTimeouts.clear();
       sessions.clear();
     },
   };

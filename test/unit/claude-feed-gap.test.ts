@@ -487,6 +487,20 @@ describe('claude feed gap', () => {
     await r.settle();
     expect(r.records).toEqual([{ sessionId: 's1', gap: 1 }]);
   });
+
+  it('dispose cancels the timeout of a check that is still running', async () => {
+    const r = rig();
+    r.append(use('u0', 't0'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    r.append(use('u1', 't1'));
+    r.hangRead(1);
+    r.gap.stop('s1', '/t/a.jsonl');
+    for (const t of r.timers.filter((x) => x.ms === 3_000 && !x.cancelled)) t.fn();
+    await flushMicrotasks();
+    r.gap.dispose();
+    expect(r.timers.filter((x) => x.ms === 10_000).every((x) => x.cancelled)).toBe(true);
+  });
 });
 
 /** Lets the queued check start, since the test drives timers directly rather than through settle(). */
