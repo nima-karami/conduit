@@ -4,7 +4,7 @@ import type { AgentProbe } from '../../server/network/bootstrap';
 import { type Identity, loadIdentity } from '../../server/network/identity';
 import { createLinkManager, type LinkManager } from '../../server/network/link-manager';
 import { type LinkStoreIo, openLinkStore } from '../../server/network/link-store';
-import { agentsForMode, createMachines, type MachinesManager } from '../../server/network/machines';
+import { createMachines, type MachinesManager } from '../../server/network/machines';
 import { RpcFault } from '../../server/transport/pipe';
 import type { LinkState } from '../../src/contracts/link-protocol';
 import type { MachineMeta } from '../../src/contracts/machines';
@@ -815,23 +815,6 @@ describe('machines: mode', () => {
     });
     expect(thrownBy(() => tlsOnly.setMode('m-00000001', 'light'))).toBeInstanceOf(RpcFault);
     expect(events).toEqual([]);
-  });
-
-  it('modeOf resolves a machine like connect does, and is null for a target or an unknown value', () => {
-    const { store, fake, machines } = setup();
-    pin(store, fake, { id: 'm-00000001', name: 'vm-a', target: 'a.example', n: 1, state: 'up' });
-    store.setMachine('m-00000001', { ...META, mode: 'light' });
-    expect(machines.modeOf('vm-a')).toBe('light');
-    expect(machines.modeOf('m-00000001')).toBe('light');
-    expect(machines.modeOf('a.example')).toBe('light');
-    expect(machines.modeOf('new.example')).toBeNull();
-    expect(machines.modeOf('no spaces allowed')).toBeNull();
-  });
-
-  it('agentsForMode lists no agents on a light machine and every agent otherwise', () => {
-    expect(agentsForMode('light', ['claude', 'codex'])).toEqual([]);
-    expect(agentsForMode('full', ['claude', 'codex'])).toEqual(['claude', 'codex']);
-    expect(agentsForMode(null, ['claude'])).toEqual(['claude']);
   });
 });
 

@@ -36,7 +36,7 @@ import {
   notifiable,
   queuesMidTurn,
 } from './adapters';
-import { agentListing } from './agent-listing';
+import { agentListing, listAgentsOutput } from './agent-listing';
 import { registeredIdFor } from './agent-resolve';
 import { createAppControlHandlers } from './app-control-tools';
 import { snapshotAttachment } from './attachments';
@@ -2460,6 +2460,27 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         ),
       };
     const { machineId, machine } = target;
+    // A light-mode machine runs no agent CLIs (spec F8, S12): A answers for it, so B is never asked.
+    const light =
+      intent.kind === 'machine' &&
+      network.listMachines().find((m) => m.machine_id === machineId)?.mode === 'light';
+    if (light && intent.tool === 'open_session')
+      return {
+        ok: false,
+        error: toolError('unknown_agent', `${machine} runs no agent CLIs (light mode)`, undefined, {
+          hint: `use open_terminal with machine "${machine}" instead`,
+        }),
+      };
+    if (light && intent.tool === 'list_agents')
+      return {
+        ok: true,
+        value: {
+          summary,
+          routesUi: false,
+          release: () => undefined,
+          run: async () => ({ ok: true, value: listAgentsOutput([]) }),
+        },
+      };
     return {
       ok: true,
       value: {

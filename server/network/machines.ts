@@ -63,15 +63,8 @@ export interface Machines {
   remove(machineId: string): void;
   /** Sets an ssh machine's mode. Throws RpcFault like rename; a machine with no block is invalid. */
   setMode(machineId: string, mode: MachineMode): void;
-  /** The mode of the machine a connect would resolve `machine` to; null for a target or no match. */
-  modeOf(machine: string): MachineMode | null;
   /** Re-probes the machine's CLIs and writes only meta.agents. Throws RpcFault on a failed probe. */
   probeAgents(machineId: string): Promise<{ agents: string[] }>;
-}
-
-/** What a light machine lists to an agent: no CLIs, so nothing routes to it (spec F8). */
-export function agentsForMode(mode: MachineMode | null, agents: string[]): string[] {
-  return mode === 'light' ? [] : agents;
 }
 
 /** A machine's display name is 1 to 64 characters once trimmed, with no control characters. */
@@ -393,11 +386,6 @@ export function createMachines(deps: MachinesDeps): Machines {
       const meta = requireBlock(record);
       deps.store.setMachine(record.machineId, { ...meta, mode });
       deps.changed();
-    },
-
-    modeOf(machine) {
-      const r = resolve(deps.store, machine);
-      return r.kind === 'pinned' ? (r.pinned.record.machine?.mode ?? null) : null;
     },
 
     async probeAgents(machineId) {

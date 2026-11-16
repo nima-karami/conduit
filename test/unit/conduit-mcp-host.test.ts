@@ -8102,6 +8102,31 @@ describe('routed session tools on this machine (CON-40 S3, plan decision 5)', ()
     ]);
   });
 
+  it('list_agents on a light machine lists no CLIs and never asks it (S12)', async () => {
+    const net = routeNet({
+      machines: [{ ...WIN, mode: 'light' }],
+      answer: () => ({ agents: [{ id: 'echo', label: 'Echo' }] }),
+    });
+    const { ca } = await leadSession(net.network);
+    const r = await ca.call('list_agents', { machine: 'win-box' });
+    expect(r.body.agents).toEqual([]);
+    expect(net.sent).toEqual([]);
+  });
+
+  it('open_session on a light machine is refused with a hint to open a terminal', async () => {
+    const net = routeNet({ machines: [{ ...WIN, mode: 'light' }] });
+    const { ca } = await leadSession(net.network);
+    const r = await ca.call('open_session', {
+      machine: 'win-box',
+      agent: 'claude',
+      path: '/home/u/work',
+      focus: false,
+    });
+    expect(r.isError).toBe(true);
+    expect(r.body.error.code).toBe('unknown_agent');
+    expect(net.sent).toEqual([]);
+  });
+
   it('open_session with a machine sends the absolute path as typed, and names the new session on that machine', async () => {
     const net = routeNet({
       answer: () => ({ session_id: 'b-7', handle: 'claude-9', label: 'Win', agent: 'claude' }),

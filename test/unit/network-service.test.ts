@@ -486,7 +486,6 @@ describe('machines C2 methods', () => {
       remove: (machineId) => {
         seen.push(`remove ${machineId}`);
       },
-      modeOf: () => null,
       setMode: (machineId, mode) => {
         seen.push(`setMode ${machineId} ${mode}`);
       },
