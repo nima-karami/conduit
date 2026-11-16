@@ -414,6 +414,27 @@ describe('codex rollout watch', () => {
     ]);
   });
 
+  it('new FileChange item emits one file-change action with its paths only', async () => {
+    const h = harness();
+    const watch = createCodexRolloutWatch(h.deps);
+    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    await flush();
+    h.files.set(FILE_A, `${PRIMARY}\n`);
+    h.emit(DAY12, 'rollout-a.jsonl');
+    await flush();
+
+    h.files.set(FILE_A, `${PRIMARY}\n${ACTION_LINES[2]}\n`);
+    h.emit(DAY12, 'rollout-a.jsonl');
+    vi.advanceTimersByTime(250);
+    await flush();
+    expect(h.actions).toEqual([
+      {
+        sessionId: 's1',
+        action: { kind: 'file-change', paths: ['/work/project/a.txt', '/work/project/b.txt'] },
+      },
+    ]);
+  });
+
   it('ambiguous bind reports unavailable once per session', async () => {
     const h = harness();
     const watch = createCodexRolloutWatch(h.deps);
