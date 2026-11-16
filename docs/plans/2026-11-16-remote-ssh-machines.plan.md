@@ -204,3 +204,8 @@ If a task's assumption turns out wrong, that task **stops**, and fixing the misa
 ## Decisions Needed
 - [high] Merge CON-24 into CON-35 now (recommended), or build Slice 4 after CON-24 reaches main. Asked claude-3 on 2026-11-16.
 - [normal] A second ssh target for a known machine is `identity_conflict`, with a hint naming the existing machine. Owner alias confirmation comes in slice 6. Default taken.
+
+## Review notes (orchestrator)
+- connect_machine's 120 s budget starts when the call arrives and includes the owner's ask (spec §7: it must stay under Codex's 180 s MCP timeout); review-c2 nit.
+- `list_machines` rows also carry `survives_logout` (measured after start, CON-38); a deliberate addition to §5.1's list.
+- RS-D6 forced ask is marked under every non-deny profile, so no grant ever passes it (review-c2 B1).
