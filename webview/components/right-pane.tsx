@@ -22,6 +22,7 @@ import { EmptyState } from './empty-state';
 import { FilesView, type FilesViewHandle, type FolderUiCache } from './files-view';
 import { MessagesPane } from './messages-pane';
 import { NeedsYouPanel } from './needs-you-panel';
+import { RemoteChangesView } from './remote-changes-view';
 import { RemoteFilesView } from './remote-files-view';
 import { ReviewNavigator } from './review-navigator';
 import type { SearchPaneHandle, SearchScopeModel } from './search-pane';
@@ -80,6 +81,8 @@ export function RightPane({
   onOpenSettings,
   remote,
   onOpenRemoteFile,
+  onOpenRemoteDiff,
+  onOpenRemoteHistory,
   ...changesProps
 }: Omit<ChangesViewProps, 'model' | 'collapsedRepos'> & {
   sessionId: string | undefined;
@@ -134,6 +137,9 @@ export function RightPane({
   /** The selected remote session: its Files tab browses B's folders instead of the local ones. */
   remote?: RemoteSessionRow | null;
   onOpenRemoteFile?: (row: RemoteSessionRow, path: string, mode: OpenMode) => void;
+  /** The remote Changes tab's rows and History button; absent, the rows still list but open nothing. */
+  onOpenRemoteDiff?: (row: RemoteSessionRow, path: string, root: string) => void;
+  onOpenRemoteHistory?: (row: RemoteSessionRow, root: string) => void;
 }) {
   // Fully controlled: App's chrome state is the one view authority (sidebar-agent-tree plan T1.3).
   const { rightTab: tab } = useWorkbenchChromeState();
@@ -222,7 +228,18 @@ export function RightPane({
           initialThreadId={messagesNav.threadId}
         />
       ) : tab === 'changes' ? (
-        changesModel.kind === 'no-session' ? (
+        remote ? (
+          <RemoteChangesView
+            key={remote.id}
+            row={remote}
+            onOpenDiff={
+              onOpenRemoteDiff ? (path, root) => onOpenRemoteDiff(remote, path, root) : undefined
+            }
+            onOpenHistory={
+              onOpenRemoteHistory ? (root) => onOpenRemoteHistory(remote, root) : undefined
+            }
+          />
+        ) : changesModel.kind === 'no-session' ? (
           <EmptyState
             variant="panel"
             title="No session"

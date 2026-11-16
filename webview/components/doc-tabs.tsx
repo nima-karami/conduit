@@ -11,7 +11,7 @@ import type { ResolvedSessionIcon } from '../../src/session-icon';
 import { AUTO_SAVE_COPY } from '../auto-save-copy';
 import { getDirtySnapshot, subscribeDirty } from '../dirty-store';
 import { type GroupIndex, splitBehavior } from '../doc-groups';
-import type { OpenDoc } from '../docs';
+import { isDocDirty, localPathOf, type OpenDoc } from '../docs';
 import { isPanelDragTarget } from '../drag-guard';
 import { stampFileDrag } from '../file-drag-data';
 import type { FileSaveStatus } from '../file-save-controller';
@@ -39,6 +39,12 @@ function useDirtySet(): ReadonlySet<string> {
 }
 
 const NO_SAVE_STATUSES: ReadonlyMap<string, FileSaveStatus> = new Map();
+
+// A remote file shares its path with a local one, so its tab reads no local save or dirty state.
+const conflictOf = (d: OpenDoc, saves: ReadonlyMap<string, { phase: string }>): boolean => {
+  const path = localPathOf(d);
+  return path !== null && saves.get(path)?.phase === 'conflict';
+};
 
 export function DocTabs({
   group,
@@ -219,7 +225,7 @@ export function DocTabs({
       icon:
         activeId === d.id ? (
           <IconCheck size={14} />
-        ) : saves.get(d.path)?.phase === 'conflict' ? (
+        ) : conflictOf(d, saves) ? (
           <span
             className="tab__conflict tab__conflict--inline"
             role="img"
@@ -227,7 +233,7 @@ export function DocTabs({
           >
             <IconWarning size={12} />
           </span>
-        ) : dirty.has(d.path) ? (
+        ) : isDocDirty(d, dirty) ? (
           <span className="tab__dirty tab__dirty--inline" aria-label="Unsaved" />
         ) : undefined,
       onClick: () => selectAndScroll(d.id),
@@ -318,7 +324,7 @@ export function DocTabs({
               // Preview is signalled visually by italic only; carry it in the accessible
               // name too so it isn't conveyed by styling alone (WCAG 1.4.1, spec §10).
               aria-label={previewIds.has(d.id) ? `${d.title} (preview)` : undefined}
-              className={`tab ${activeId === d.id ? activeClass : ''} ${overId === d.id ? 'tab--dropbefore' : ''} ${dirty.has(d.path) ? 'tab--dirty' : ''} ${previewIds.has(d.id) ? 'tab--preview' : ''} ${flashTab === d.id ? 'tab--flash' : ''}`}
+              className={`tab ${activeId === d.id ? activeClass : ''} ${overId === d.id ? 'tab--dropbefore' : ''} ${isDocDirty(d, dirty) ? 'tab--dirty' : ''} ${previewIds.has(d.id) ? 'tab--preview' : ''} ${flashTab === d.id ? 'tab--flash' : ''}`}
               onClick={() => onSelect(d.id)}
               // Middle-click closes the tab (VS Code parity), routing through the same
               // unsaved-changes path as the × button. `auxclick` (down+up on the element)
@@ -365,7 +371,7 @@ export function DocTabs({
               {d.kind === 'commit-diff' && <IconBranch size={12} className="tab__spark" />}
               {d.kind === 'review' && <IconReview size={12} className="tab__spark" />}
               <span>{d.title}</span>
-              {saves.get(d.path)?.phase === 'conflict' ? (
+              {conflictOf(d, saves) ? (
                 <span
                   className="tab__conflict"
                   role="img"
@@ -375,7 +381,7 @@ export function DocTabs({
                   <IconWarning size={12} />
                 </span>
               ) : (
-                dirty.has(d.path) && (
+                isDocDirty(d, dirty) && (
                   <span
                     className="tab__dirty"
                     role="button"

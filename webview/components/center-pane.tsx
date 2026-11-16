@@ -30,6 +30,8 @@ import {
 } from '../focus-targets';
 import type { GitActionIntent } from '../git-intent';
 import { IconClock } from '../icons';
+import { MACHINES_STR } from '../machines-strings';
+import { isRemoteFileDoc } from '../remote-files-store';
 import { type RemoteKey, type RemoteSessionRow, remoteKeyId } from '../remote-sessions';
 import { reviewRequestRoot } from '../review-repos';
 import type { ReviewScope } from '../review-scope';
@@ -49,6 +51,7 @@ import { GitHistoryView } from './git-history-view';
 import { McpSetupBanner } from './mcp-setup-banner';
 import { MissingHomeState, StartRefusedState } from './missing-home-state';
 import type { DockHandlers } from './panel-frame';
+import { RemoteDocView } from './remote-doc-view';
 import { RemotePane } from './remote-pane';
 import { RequestPopup } from './request-popup';
 import { RequestTab } from './request-tab';
@@ -346,7 +349,16 @@ export function CenterPane({
   };
 
   const renderDocBody = (doc: OpenDoc, group: GroupIndex) =>
-    doc.kind === 'review' ? (
+    isRemoteFileDoc(doc) ? (
+      <RemoteDocView
+        key={doc.id}
+        doc={doc}
+        machineName={
+          remoteRows.find((r) => r.id === doc.machine.sessionId)?.machineName ??
+          MACHINES_STR.anotherMachine
+        }
+      />
+    ) : doc.kind === 'review' ? (
       <ReviewView
         reviewRepos={reviewRepos}
         repoChanges={reviewRepoChanges}

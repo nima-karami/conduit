@@ -196,6 +196,8 @@ import {
   filePathsClosedWithSession,
   GIT_HISTORY_DOC_PATH,
   initialDocs,
+  isDocDirty,
+  localPathOf,
   REVIEW_DOC_ID,
   REVIEW_DOC_PATH,
   type ReviewSource,
@@ -2914,7 +2916,13 @@ export function App() {
     (id: string): Promise<Exclude<CloseStep, { type: 'save' }>> => {
       const doc = docState.docs.find((d) => d.id === id);
       if (!doc) return Promise.resolve({ type: 'close' });
-      const entry = getSaveEntry(doc.path);
+      // A remote file has no local buffer: its close never reads the local file's save or dirty state.
+      const path = localPathOf(doc);
+      if (path === null) {
+        forceCloseDoc(id);
+        return Promise.resolve({ type: 'close' });
+      }
+      const entry = getSaveEntry(path);
       return new Promise((resolve) => {
         const run = (step: CloseStep) => {
           if (step.type === 'close') {
@@ -2925,17 +2933,11 @@ export function App() {
             void entry
               ?.save({ kind: 'auto' })
               .then((ok) =>
-                run(
-                  afterCloseSave(
-                    ok,
-                    getDirtySnapshot().has(doc.path),
-                    fileSaves.getStatus(doc.path),
-                  ),
-                ),
+                run(afterCloseSave(ok, getDirtySnapshot().has(path), fileSaves.getStatus(path))),
               );
           }
         };
-        run(dirtyCloseStep(settings.autoSave, fileSaves.getStatus(doc.path), entry !== undefined));
+        run(dirtyCloseStep(settings.autoSave, fileSaves.getStatus(path), entry !== undefined));
       });
     },
     [docState.docs, forceCloseDoc, settings.autoSave],
@@ -2945,7 +2947,8 @@ export function App() {
     (id: string): Promise<boolean> => {
       const doc = docState.docs.find((d) => d.id === id);
       if (!doc) return Promise.resolve(true);
-      if (!dirtySet.has(doc.path)) {
+      const path = localPathOf(doc);
+      if (path === null || !dirtySet.has(path)) {
         forceCloseDoc(id);
         return Promise.resolve(true);
       }
@@ -2954,7 +2957,7 @@ export function App() {
           forceCloseDoc(id);
           resolve(true);
         };
-        const fileName = baseName(doc.path);
+        const fileName = baseName(path);
         const prompt = (reason: string | null) => {
           const message = `"${fileName}" has unsaved changes. Save before closing, or discard them?`;
           showConfirm({
@@ -2966,7 +2969,7 @@ export function App() {
             onCancel: () => resolve(false),
             onSecondary: close,
             onConfirm: () => {
-              const entry = getSaveEntry(doc.path);
+              const entry = getSaveEntry(path);
               if (!entry) {
                 // No registry entry (shouldn't happen for a dirty doc, but be safe).
                 close();
@@ -3504,7 +3507,10 @@ export function App() {
     closeFiles: (id, target) =>
       runCloseFiles(planCloseFiles(docStateRef.current.docs, id, target), {
         kindOf: (d) => docStateRef.current.docs.find((x) => x.id === d)?.kind,
-        pathOf: (d) => docStateRef.current.docs.find((x) => x.id === d)?.path,
+        pathOf: (d) => {
+          const doc = docStateRef.current.docs.find((x) => x.id === d);
+          return doc ? (localPathOf(doc) ?? undefined) : undefined;
+        },
         isDirty: (p) => getDirtySnapshot().has(p),
         forceClose: forceCloseDoc,
         closeDirtyUnprompted,
@@ -5004,7 +5010,7 @@ export function App() {
           },
         );
       }
-      if (dirtySet.has(activeDoc.path)) {
+      if (isDocDirty(activeDoc, dirtySet)) {
         cmds.push({
           id: 'cmd:revertFile',
           title: 'Revert File',

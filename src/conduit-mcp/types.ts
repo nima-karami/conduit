@@ -64,6 +64,9 @@ const TOOL_ERROR_CODES = [
   'install_failed',
   'identity_changed',
   'identity_conflict',
+  'policy_conflict',
+  'policy_unavailable',
+  'not_controller',
 ] as const;
 export type ToolErrorCode = (typeof TOOL_ERROR_CODES)[number];
 const TOOL_ERROR_CODE_SET: ReadonlySet<string> = new Set(TOOL_ERROR_CODES);

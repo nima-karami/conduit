@@ -11,8 +11,8 @@ import { repoRelPath } from './repo-rel';
 
 /** Text blobs keep readDiff's original ceiling; only the image side, which reads raw bytes,
  *  needs the larger one. One show path, two caps — never one loosened cap for both. */
-export const TEXT_BLOB_MAX_BUFFER = 8 * 1024 * 1024;
-export const IMAGE_BLOB_MAX_BUFFER = 32 * 1024 * 1024;
+const TEXT_BLOB_MAX_BUFFER = 8 * 1024 * 1024;
+const IMAGE_BLOB_MAX_BUFFER = 32 * 1024 * 1024;
 
 export interface GitShow {
   /** Repo top level for a directory; '' when it is not in a repo. */

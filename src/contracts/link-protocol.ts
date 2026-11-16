@@ -9,6 +9,7 @@ import type {
   RepoSnapshot,
 } from '../protocol';
 import type { SessionAttentionFacts } from '../types';
+import type { RemotePolicyDoc, RemotePolicySnapshot } from './remote-policy';
 import type { Capabilities, Capability } from './remote-principal';
 
 export type { Capabilities, Capability } from './remote-principal';
@@ -18,8 +19,10 @@ export type { Capabilities, Capability } from './remote-principal';
 // minor 2 added the routed `call` / `call.result` frames (spec 5.3, CON-40).
 // minor 3 added `request.mirror` / `request.answer` / `request.answered` (spec 5.3, CON-42).
 // minor 4 added `fs.req` / `fs.res` / `fs.watch` / `fs.unwatch` / `fs.changed` (spec 5.3, CON-43).
-// minor 5 added `git.req` / `git.res` (spec 5.3, CON-45); renumbered at merge if another feature lands first.
-export const LINK_PROTOCOL = { major: 1, minor: 5 } as const;
+// minor 5 added `policy.changed` / `policy.push` / `policy.pushed` / `policy.revoke` (plan
+// 2026-11-16-remote-ssh-rules, Technical decisions 3).
+// minor 6 added `git.req` / `git.res` (spec 5.3, CON-45).
+export const LINK_PROTOCOL = { major: 1, minor: 6 } as const;
 /** The lowest peer minor that serves `call` frames: a routed call to an older peer is refused, not sent. */
 export const ROUTED_CALLS_MIN_MINOR = 2;
 /** The lowest peer minor that serves request frames: an older peer gets no mirror and no answers. */
@@ -28,7 +31,7 @@ export const REQUEST_MIRROR_MIN_MINOR = 3;
 export const FS_MIN_MINOR = 4;
 export const FS_OPS = ['list', 'read', 'stat'] as const;
 /** The lowest peer minor that serves git reads (plan CON-45). */
-export const GIT_MIN_MINOR = 5;
+export const GIT_MIN_MINOR = 6;
 export const GIT_OPS = ['status', 'diff', 'log', 'show'] as const;
 export type GitOp = (typeof GIT_OPS)[number];
 /** One `git.req`'s arguments; which ones apply depends on `op` (plan CON-45 decision 1). */
@@ -65,6 +68,8 @@ export type FsResult =
   | { op: 'list'; path: string; entries: DirEntryDTO[] }
   | { op: 'read'; file: FileContentDTO }
   | { op: 'stat'; kind: 'file' | 'dir'; size: number; mtimeMs: number };
+/** The lowest peer minor that serves policy frames: an older peer gets no snapshot and refuses pushes. */
+export const POLICY_MIN_MINOR = 5;
 export const LINK_FEATURES = ['messaging', 'monitor', 'drive', 'view'] as const;
 export type LinkFeature = (typeof LINK_FEATURES)[number];
 // The session tools a lead may route to a peer; anything else in a `call` is a malformed frame.
@@ -239,7 +244,20 @@ export type LinkFrame =
       answerId: string;
       ok: false;
       error: { code: string; message: string; retryable: boolean; hint?: string };
-    };
+    }
+  /** Sent by the machine that owns the policy to the controllers that dialed it in. */
+  | ({ t: 'policy.changed' } & RemotePolicySnapshot)
+  /** `baseRev` is the revision the edit started from; a different current rev is a conflict. */
+  | { t: 'policy.push'; id: string; baseRev: number; doc: RemotePolicyDoc }
+  | { t: 'policy.pushed'; id: string; ok: true; rev: number }
+  | {
+      t: 'policy.pushed';
+      id: string;
+      ok: false;
+      error: { code: string; message: string; retryable: boolean; hint?: string };
+      current?: { rev: number; doc: RemotePolicyDoc };
+    }
+  | { t: 'policy.revoke'; id: string; grantId: string };
 
 export const REQUEST_MIRROR_KINDS = [
   'confirm',
@@ -593,6 +611,35 @@ export function parseLinkFrame(raw: unknown): LinkFrame | null {
         : null;
     case 'git.res':
       return parseGitRes(raw);
+    case 'policy.changed':
+      return frame(
+        raw,
+        'policy.changed',
+        ['rev', 'doc', 'grants'],
+        (r) => int(r.rev) && isPolicyDoc(r.doc) && arrayOf(r.grants, isGrantView),
+      )
+        ? raw
+        : null;
+    case 'policy.push':
+      return frame(
+        raw,
+        'policy.push',
+        ['id', 'baseRev', 'doc'],
+        (r) => isCallId(r.id) && int(r.baseRev) && isPolicyDoc(r.doc),
+      )
+        ? raw
+        : null;
+    case 'policy.pushed':
+      return parsePolicyPushed(raw);
+    case 'policy.revoke':
+      return frame(
+        raw,
+        'policy.revoke',
+        ['id', 'grantId'],
+        (r) => isCallId(r.id) && isPrintableCapped(r.grantId, POLICY_ID_MAX),
+      )
+        ? raw
+        : null;
     default:
       return null;
   }
@@ -924,6 +971,7 @@ const isPrintableCapped = (v: unknown, max: number): boolean =>
   str(v) && v.length >= 1 && v.length <= max && PRINTABLE.test(v);
 
 const isCallId = (v: unknown): boolean => isPrintableCapped(v, CALL_ID_MAX);
+const POLICY_ID_MAX = 64;
 
 function isCallArgs(v: unknown): boolean {
   return isRec(v) && new TextEncoder().encode(JSON.stringify(v)).byteLength <= CALL_ARGS_MAX_BYTES;
@@ -1022,6 +1070,34 @@ function isFileContent(v: unknown): boolean {
     (v.readOnlyReason === undefined ||
       oneOf(v.readOnlyReason, ['invalid-utf8', 'mixed-eol', 'remote'] as const))
   );
+}
+
+/** `ok` picks the variant: a success carries the new rev, a failure says why and may carry the current doc. */
+function parsePolicyPushed(r: Rec): LinkFrame | null {
+  if (!isCallId(r.id) || !bool(r.ok)) return null;
+  if (r.ok) return frame(r, 'policy.pushed', ['id', 'ok', 'rev'], (x) => int(x.rev)) ? r : null;
+  return isPolicyPushedFailure(r) ? r : null;
+}
+
+function isPolicyPushedFailure(v: Rec): v is Rec & FrameOf<'policy.pushed'> {
+  return (
+    hasKeys(v, ['t', 'id', 'ok', 'error'], ['current']) &&
+    isRoutedError(v.error) &&
+    (v.current === undefined || isPolicyCurrent(v.current))
+  );
+}
+
+/** Only the frame shape is checked here; the machine that owns the policy validates the doc deeply. */
+function isPolicyDoc(v: unknown): boolean {
+  return isRec(v) && Array.isArray(v.profiles) && Array.isArray(v.assignments);
+}
+
+function isPolicyCurrent(v: unknown): boolean {
+  return hasKeys(v, ['rev', 'doc']) && int(v.rev) && isPolicyDoc(v.doc);
+}
+
+function isGrantView(v: unknown): boolean {
+  return isRec(v) && isPrintableCapped(v.id, POLICY_ID_MAX);
 }
 
 /** `ok` picks the variant: a success has no error, a failure must say why. */

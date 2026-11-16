@@ -76,8 +76,11 @@ export function moveFileBuffer(from: string, to: string): boolean {
   return true;
 }
 
-export function useFileSaveStatus(path: string): FileSaveStatus | undefined {
-  return useSyncExternalStore(fileSaves.subscribe, () => fileSaves.getStatus(path));
+/** `null` for a doc whose path is not this store's (a remote file shares a local path). */
+export function useFileSaveStatus(path: string | null): FileSaveStatus | undefined {
+  return useSyncExternalStore(fileSaves.subscribe, () =>
+    path === null ? undefined : fileSaves.getStatus(path),
+  );
 }
 
 export function useFileSaveStatuses(): ReadonlyMap<string, FileSaveStatus> {

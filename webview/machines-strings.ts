@@ -71,6 +71,14 @@ const PRESENCE: Record<Presence, string> = {
 };
 
 /** The fault codes a remote pane can get back from C2, as one line of text. */
+/** A remote file read that B refused or failed; the codes are fs-confine's and the read's own. */
+const FILE_ERROR: Record<string, string> = {
+  refused: 'That machine won’t share this file.',
+  not_found: 'That file isn’t there anymore.',
+  too_large: 'This file is too large to open here.',
+  timeout: 'That machine didn’t answer in time.',
+};
+
 const PANE_ERROR: Record<string, string> = {
   peer_unreachable: 'That machine isn’t reachable right now.',
   peer_revoked: 'That machine was removed.',
@@ -180,8 +188,23 @@ export const MACHINES_STR = {
   paneError: (code: string) => PANE_ERROR[code] ?? 'Something went wrong talking to that machine.',
   // Remote Files tree (plan CON-43 T4).
   filesLoading: 'Loading…',
+  /** A remote file tab's read-only banner: its text is the machine's, never this computer's. */
+  remoteFileReadOnly: (machine: string) => `Read-only: this file is on ${machine}`,
+  anotherMachine: 'another machine',
+  fileError: (code: string) => FILE_ERROR[code] ?? 'This file couldn’t be read on that machine.',
   filesRetry: 'Retry',
   filesEmpty: 'This folder is empty.',
   filesOffline: (machine: string) => `${machine} is offline`,
   filesTree: (machine: string) => `Files on ${machine}`,
+  // Remote Changes view (plan CON-45 G4).
+  changesLoading: 'Loading changes…',
+  changesRetry: 'Retry',
+  changesNoRepo: 'No git repository in this session’s folders.',
+  changesNoChanges: 'No changes.',
+  changesStale: 'Could not read the latest status. Showing the last one that worked.',
+  changesStaged: 'staged',
+  changesUnstaged: 'unstaged',
+  changesHistory: 'History',
+  changesOffline: (machine: string) => `${machine} is offline`,
+  changesList: (machine: string) => `Changes on ${machine}`,
 };

@@ -3,7 +3,6 @@
 // Parents key this by row id: a watch is bound to one machine and session for its lifetime.
 
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { folderKey } from '../../src/folder-key';
 import type { OpenMode } from '../docs';
 import { FileTypeIcon } from '../file-icons';
 import {
@@ -18,23 +17,9 @@ import {
 import { IconFolder } from '../icons';
 import { MACHINES_STR } from '../machines-strings';
 import { listRemoteDir, watchRemote } from '../remote-files-store';
-import { type RemoteSessionRow, remoteKeyId } from '../remote-sessions';
+import { type RemoteSessionRow, remoteFolders, remoteKeyId } from '../remote-sessions';
 import { useSettings } from '../settings';
 import { TreeChevron, TreeChevronSpacer } from './tree-chevron';
-
-/** The session's home and roots as browsed folders. A root equal to another by folder key shows once. */
-function dedupeFolders(home: string, roots: readonly string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const p of [home, ...roots]) {
-    if (p === '') continue;
-    const key = folderKey(p);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(p);
-  }
-  return out;
-}
 
 /** Every expanded directory under `nodes`, in tree order. */
 function expandedDirs(nodes: TreeNode[]): string[] {
@@ -85,7 +70,7 @@ export function RemoteFilesView({
   const { machineId, sessionId } = row.key;
   const rowKey = remoteKeyId(row.key);
   const offline = row.machineState !== 'up' && row.machineState !== 'degraded';
-  const folderSig = dedupeFolders(row.session.home, row.session.roots).join('\n');
+  const folderSig = remoteFolders(row).join('\n');
   const folders = useMemo(() => (folderSig === '' ? [] : folderSig.split('\n')), [folderSig]);
 
   // trees: folder → its roots (undefined until listed). errors and loading: by listing slot.

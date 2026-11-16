@@ -96,6 +96,8 @@ function portWith(over: Partial<NetworkPort>): NetworkPort {
     disconnectMachine: async () => ({ ok: true, value: { machine: 'win-box', state: 'down' } }),
     selfName: () => 'this-machine',
     answerRemoteRequest: () => Promise.reject(new Error('not used by this test')),
+    pushPolicy: () => Promise.reject(new Error('not used by this test')),
+    revokeRemoteGrant: () => Promise.reject(new Error('not used by this test')),
     ...over,
   };
 }

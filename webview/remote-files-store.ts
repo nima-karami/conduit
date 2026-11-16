@@ -10,6 +10,11 @@ import type { Machine, OpenDoc } from './docs';
 /** A remote file doc: the only doc kind whose content this store reads. */
 export type RemoteFileDoc = OpenDoc & { kind: 'remote-file'; machine: Machine };
 
+/** Narrows a doc to a remote file doc. A remote-file doc always names its machine (docs.ts). */
+export function isRemoteFileDoc(doc: OpenDoc): doc is RemoteFileDoc {
+  return doc.kind === 'remote-file' && doc.machine !== undefined;
+}
+
 import { requestHost } from './host-request';
 
 const LIST_TIMEOUT_MS = 20_000;

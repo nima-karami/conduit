@@ -16,7 +16,7 @@ import {
 } from './lsp-sync';
 import { ensureTokenizer } from './monaco-languages';
 import { type NavCommandKind, type NavMessage, restrictedText } from './nav-outcome';
-import { fileUri, pathForUri } from './project-index';
+import { fileUri, isRemoteModel, pathForUri } from './project-index';
 
 export interface LspNavProbe {
   locations: monaco.languages.Location[];
@@ -188,6 +188,8 @@ export function registerLspHoverProvider(languageIds: readonly string[]): monaco
   const providers = languageIds.map((languageId) =>
     monaco.languages.registerHoverProvider(languageId, {
       provideHover: async (model, position, token) => {
+        // A remote file's URI maps back to a local path, which would answer with that file's hover.
+        if (isRemoteModel(model)) return null;
         const path = pathForUri(model.uri);
         if (!isLspDocOpen(path)) return null;
         await flushPending(path);

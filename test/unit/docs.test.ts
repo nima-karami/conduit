@@ -1,6 +1,12 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import type { PersistedDoc } from '../../src/protocol';
-import { groupActive, groupDocs, previewIdsOf, tabPreview } from '../../webview/doc-groups';
+import {
+  groupActive,
+  groupDocs,
+  previewIdsOf,
+  splitBehavior,
+  tabPreview,
+} from '../../webview/doc-groups';
 import {
   backgroundOpenOutcome,
   type DocsState,
@@ -1395,5 +1401,63 @@ describe('remote file docs (CON-43 T4)', () => {
     expect(
       backgroundOpenOutcome(opened, { kind: 'remote-file', machine: MACHINE }, path, 'S1').outcome,
     ).toBe('already-open');
+  });
+});
+
+describe('remote-diff and remote-history docs (CON-45 G4)', () => {
+  const REMOTE_SESSION = 'remote:M1:S1';
+  const MACHINE = { machineId: 'M1', sessionId: 'S1' };
+  const ROOT = '/home/me/p';
+
+  it('remote-diff and remote-history ids carry the machine and are never persisted', () => {
+    const path = 'src/a.ts';
+    let s = docsReducer(initialDocs, {
+      type: 'open',
+      kind: 'remote-diff',
+      path,
+      sessionId: REMOTE_SESSION,
+      mode: 'permanent',
+      machine: MACHINE,
+      repoRoot: ROOT,
+    });
+    expect(s.docs[0]?.id).toBe(`remote-diff@M1:${path}`);
+    expect(s.docs[0]?.repoRoot).toBe(ROOT);
+    s = docsReducer(s, {
+      type: 'open',
+      kind: 'remote-history',
+      path: ROOT,
+      sessionId: REMOTE_SESSION,
+      mode: 'permanent',
+      machine: MACHINE,
+    });
+    expect(s.docs.map((d) => d.id)).toEqual([
+      `remote-diff@M1:${path}`,
+      `remote-history@M1:${ROOT}`,
+    ]);
+    expect(toPersistedDocs(s)).toEqual([]);
+
+    // A local diff of the same path is its own doc and is the only one persisted.
+    s = docsReducer(s, {
+      type: 'open',
+      kind: 'diff',
+      path,
+      sessionId: 'S1',
+      mode: 'permanent',
+    });
+    expect(s.docs.map((d) => d.id)).toContain(`diff:${path}`);
+    expect(toPersistedDocs(s).map((d) => d.kind)).toEqual(['diff']);
+  });
+
+  it('remote-history splits like git-history: it moves rather than duplicates', () => {
+    expect(splitBehavior('remote-history')).toBe(splitBehavior('git-history'));
+    expect(splitBehavior('remote-history')).toBe('move');
+  });
+
+  it('a remote diff or history names its machine at the type level', () => {
+    expectTypeOf<{ kind: 'remote-diff' }>().not.toMatchTypeOf<DocTarget>();
+    expectTypeOf<{ kind: 'remote-history' }>().not.toMatchTypeOf<DocTarget>();
+    expectTypeOf<{ kind: 'remote-diff'; machine: Machine }>().toMatchTypeOf<DocTarget>();
+    expectTypeOf<{ kind: 'remote-history'; machine: Machine }>().toMatchTypeOf<DocTarget>();
+    expectTypeOf<{ kind: 'git-history'; machine: Machine }>().not.toMatchTypeOf<DocTarget>();
   });
 });
