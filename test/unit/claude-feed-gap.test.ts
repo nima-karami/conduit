@@ -260,4 +260,29 @@ describe('claude feed gap', () => {
     await r.settle();
     expect(r.records).toEqual([{ sessionId: 's1', gap: 1 }]);
   });
+
+  it('a baseline prunes the posts for the calls it scanned', async () => {
+    const r = rig();
+    r.append(use('u0', 't0'));
+    r.gap.post('s1', false, 't0');
+    expect(r.gap.receivedCount('s1')).toBe(1);
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.gap.receivedCount('s1')).toBe(0);
+  });
+
+  it('caps the received posts at 1000 and drops the oldest, keeping the newest', async () => {
+    const r = rig();
+    r.append(use('u0', 't0'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    r.gap.post('s1', false, 'old');
+    for (let i = 0; i < 1000; i += 1) r.gap.post('s1', false, `x${i}`);
+    expect(r.gap.receivedCount('s1')).toBe(1000);
+    r.append(use('u1', 'old'));
+    r.append(use('u2', 'x999'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.records).toEqual([{ sessionId: 's1', gap: 1 }]);
+  });
 });

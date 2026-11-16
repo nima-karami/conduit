@@ -475,6 +475,15 @@ describe('server domain: observed lane wiring', () => {
     ]);
   });
 
+  it('a PostToolUse for a session the domain does not know writes no row', () => {
+    const h = harness();
+    h.domain.hookPost(
+      'no-such-session',
+      post('PostToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: 't1' }),
+    );
+    expect(h.observed).toEqual([]);
+  });
+
   it('a PostToolUseFailure keeps its action and marks it failed', async () => {
     const h = harness();
     const id = await live(h, { agentId: 'claude' });

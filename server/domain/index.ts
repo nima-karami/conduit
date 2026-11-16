@@ -709,6 +709,8 @@ export function createDomain(deps: DomainDeps): Domain {
   });
   // see plan T4.3: subagent calls are not in the main transcript the gap check reads
   const observeClaudePost = (sessionId: string, post: HookPost): void => {
+    // A post that outlives its session's delete must not revive its gap state or write a row.
+    if (!mgr.get(sessionId)) return;
     const payload = isRecord(post.payload) ? post.payload : {};
     if (post.event === 'Stop') {
       if (typeof payload.transcript_path === 'string')

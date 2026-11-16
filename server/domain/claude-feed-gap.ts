@@ -35,6 +35,9 @@ interface SessionGap<T> {
 }
 
 const NEWLINE = 0x0a;
+// Posts for calls that never reach the main transcript would otherwise pile up for the
+// session's whole life.
+const RECEIVED_CAP = 1_000;
 
 export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
   const sessions = new Map<string, SessionGap<T>>();
@@ -89,7 +92,12 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
     post(sessionId, fromSubagent, toolUseId) {
       // A subagent's calls live in subagents/*.jsonl, never in the main transcript this checks.
       if (fromSubagent || toolUseId === null) return;
-      stateOf(sessionId).received.add(toolUseId);
+      const { received } = stateOf(sessionId);
+      received.add(toolUseId);
+      if (received.size > RECEIVED_CAP) {
+        const oldest = received.values().next();
+        if (!oldest.done) received.delete(oldest.value);
+      }
     },
     stop(sessionId, transcriptPath) {
       const s = stateOf(sessionId);
