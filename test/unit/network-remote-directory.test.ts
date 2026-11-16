@@ -327,3 +327,54 @@ describe('row handles', () => {
     expect(dir.entries().map((e) => e.handle)).toEqual(['claude-1', 'you']);
   });
 });
+
+describe('remote directory: who opened a peer session (CON-40 S3, spec F3)', () => {
+  const SELF = 'm-0000cccc';
+  const dirWithSelf = () => {
+    const dir = createRemoteDirectory(() => SELF);
+    dir.setLinks([link(LAPTOP, 'Laptop', 'up')], 'Mine');
+    return dir;
+  };
+  const openerOfRow = (sessionOpener: MonitorSession['openedBy']) => {
+    const dir = dirWithSelf();
+    dir.apply(LAPTOP, snapshot(1, [session('w', { openedBy: sessionOpener })]));
+    const [entry] = dir.entries();
+    return entry?.opener;
+  };
+
+  it('shows a session my own lead opened as that lead, by its local handle', () => {
+    expect(openerOfRow({ handle: 'claude-3', machineId: SELF })).toEqual({
+      handle: 'claude-3',
+      machineId: null,
+    });
+  });
+
+  it('shows a session the peer opened for itself as the peer', () => {
+    expect(openerOfRow({ handle: 'claude-1', machineId: null })).toEqual({
+      handle: 'claude-1',
+      machineId: LAPTOP,
+    });
+  });
+
+  it('keeps a lead from a third machine with its machine id', () => {
+    expect(openerOfRow({ handle: 'claude-9', machineId: DESKTOP })).toEqual({
+      handle: 'claude-9',
+      machineId: DESKTOP,
+    });
+  });
+
+  it('has no opener for a session nobody opened', () => {
+    expect(openerOfRow(null)).toBeNull();
+    expect(openerOfRow(undefined)).toBeNull();
+  });
+
+  it('names no opener when I do not know my own machine id', () => {
+    const dir = createRemoteDirectory();
+    dir.setLinks([link(LAPTOP, 'Laptop', 'up')], 'Mine');
+    dir.apply(
+      LAPTOP,
+      snapshot(1, [session('w', { openedBy: { handle: 'claude-3', machineId: SELF } })]),
+    );
+    expect(dir.entries()[0]?.opener).toEqual({ handle: 'claude-3', machineId: SELF });
+  });
+});

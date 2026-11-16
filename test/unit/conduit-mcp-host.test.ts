@@ -5862,6 +5862,7 @@ describe('createConduitMcpHost — wait_sessions', () => {
       machine: 'peer',
       trust: 'own',
       link: 'up',
+      opener: null,
     };
     let state: 'idle' | 'exited' | 'unreachable' = 'idle';
     let monitor = true;

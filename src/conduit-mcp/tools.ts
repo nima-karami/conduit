@@ -1,3 +1,4 @@
+import type { MonitorOpener } from '../contracts/link-protocol';
 import type { RemoteCaller } from '../contracts/remote-principal';
 import { ID_FORMAT } from '../network/inbound-ids';
 import type { AgentSource } from '../types';
@@ -142,6 +143,15 @@ type PeerRelation = 'human' | 'lead' | 'helper' | 'peer';
 /** A record that arrived over a link: framed by its origin, not the local directory (decision 12). */
 interface OriginFraming {
   originHuman: boolean;
+}
+
+/**
+ * A remote row's opener as list_sessions shows it: my own lead by its handle, a lead on another
+ * machine as handle@machine (the same form a remote lead's own opener takes).
+ */
+function remoteOpenedByOf(opener: MonitorOpener | null): string | null {
+  if (opener === null) return null;
+  return opener.machineId === null ? opener.handle : `${opener.handle}@${opener.machineId}`;
 }
 
 /** A session's opener as list_sessions shows it: a local handle, or a remote lead's address. */
@@ -621,7 +631,7 @@ export function createToolHandlers(deps: ToolDeps): ToolHandlers {
         session_id: e.sessionId,
         label: e.label,
         agent: e.agent,
-        opened_by: null,
+        opened_by: remoteOpenedByOf(e.opener),
         project: null,
         home: e.home,
         roots: [e.home, ...e.roots],

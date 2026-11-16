@@ -3,6 +3,7 @@
 
 import type {
   Capabilities,
+  MonitorOpener,
   MonitorSnapshot,
   RoutedTool,
   WireRecipientOutcome,
@@ -34,6 +35,11 @@ export interface RemoteEntry extends DirectoryEntry {
   machine: string;
   trust: 'own';
   link: 'up' | 'degraded' | 'down';
+  /**
+   * Who opened it, as I name them: a handle with machineId null is my own lead; otherwise a lead on
+   * the machine named. Null when nobody I can name opened it.
+   */
+  opener: MonitorOpener | null;
 }
 
 export type RemoteResolution =

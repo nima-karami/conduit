@@ -33,6 +33,7 @@ function remote(handle: string): RemoteEntry {
     machine: 'Laptop',
     trust: 'own',
     link: 'up',
+    opener: null,
   };
 }
 

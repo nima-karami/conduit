@@ -154,7 +154,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
   let emitTimer: (() => void) | null = null;
   let mcp: McpNetworkPort | null = null;
   const portListeners = new Set<() => void>();
-  const directory = createRemoteDirectory();
+  const directory = createRemoteDirectory(() => identity.machineId);
   /** The last state each link was seen in, to act once on up and down. */
   const seen = new Map<string, LinkState>();
   /** My capabilities per link as last seen, to push a fresh snapshot when they change. */
