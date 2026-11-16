@@ -684,8 +684,8 @@ Failing tests:
   - Files: `hook-protocol.ts`, `endpoint.ts` (`HOOK_EVENTS`), `claude-hook-settings.ts` (PostToolUse, matcher `Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*`, **`async: true`** — measured: sync adds the client's ~60 ms per call; async adds nothing to the agent's path), `claude-signals.ts` (case → `[]`), `conduit-hook.cjs` (for PostToolUse only: read ≤ 4 MiB, drop `tool_response` and every `content`/`new_string`/`old_string` field, then post). Update `claude-hook-settings.test.ts`.
   - Failing tests: 'PostToolUse is allowed by the endpoint'; 'hook client strips tool_response and contents' (`test/unit/conduit-hook-client.test.ts`).
 - **T4.2 Codex watch.**
-  - Files: `codex-rollout-watch.ts` (`onAction(sessionId, CodexAction)` dep, skips the replay read, reports `onFeed(sessionId, 'unavailable')` on an ambiguous or no bind after the 30 s bind window); test `codex-rollout-watch.test.ts`.
-  - Failing tests: 'replay emits no actions'; 'new item_completed emits one action'; 'ambiguous bind reports unavailable'.
+  - Files: `codex-rollout-watch.ts` (`onAction(sessionId, CodexAction)` dep, skips the replay read, reports `onFeed(sessionId, 'unavailable')` on an ambiguous bind (see the revised T4.2 ruling)); test `codex-rollout-watch.test.ts`.
+  - Failing tests: 'replay emits no actions'; 'new item_completed emits one action'; 'ambiguous bind reports unavailable'; 'new FileChange item emits one file-change action with its paths only'.
 - *T4.1 review rulings (2026-11-15):*
   - Claude Code 2.1.325 compiles a matcher containing regex characters as an unanchored RegExp, so the shared matcher carries its own anchors: `^(?:Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*)$`.
   - The hook client strips PostToolUse by allow-list: only the identity fields, plus tool_input `command`/`file_path`/`notebook_path`; no tool_input at all for mcp__*.
