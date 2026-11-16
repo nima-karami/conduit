@@ -464,6 +464,106 @@ describe('git-serve', () => {
     });
   });
 
+  it('a core.worktree set after a first status moves the top outside and is refused', async () => {
+    await initRepo(proj);
+    const h = harness();
+    await h.serve.onFrame(CONTROLLER, req('t1', 'status', {}));
+    expect(replyTo(h.sent, 't1').ok).toBe(true);
+    await git(proj, 'config', 'core.worktree', root);
+    await h.serve.onFrame(CONTROLLER, req('t2', 'status', {}));
+    const res = replyTo(h.sent, 't2');
+    if (res.ok) throw new Error('expected a refusal');
+    expect(res.error.code).toBe('refused');
+    expect(JSON.stringify(h.sent)).not.toContain('outside.txt');
+  });
+
+  describe('config that would run a program during a read', () => {
+    let marker: string;
+    beforeEach(async () => {
+      marker = path.join(root, 'ran.txt');
+      fs.writeFileSync(path.join(proj, 'big.bin'), 'pointer\n');
+      fs.writeFileSync(
+        path.join(proj, '.gitattributes'),
+        '*.bin filter=lfs diff=lfs\n*.txt diff=conv\n',
+      );
+      await initRepo(proj);
+      // An LFS-style setup, plus every other key the re-review showed running code on B.
+      const run = (tag: string) => `sh -c 'echo ${tag} >> "${marker}"; cat'`;
+      await git(proj, 'config', 'filter.lfs.clean', run('clean'));
+      await git(proj, 'config', 'filter.lfs.smudge', run('smudge'));
+      await git(proj, 'config', 'filter.lfs.process', run('process'));
+      await git(proj, 'config', 'filter.lfs.required', 'true');
+      await git(proj, 'config', 'diff.conv.textconv', run('textconv'));
+      await git(proj, 'config', 'core.fsmonitor', run('fsmonitor'));
+      await git(proj, 'config', 'log.showSignature', 'true');
+      await git(proj, 'config', 'gpg.program', run('gpg'));
+      fs.writeFileSync(marker, '');
+      fs.appendFileSync(path.join(proj, 'big.bin'), 'more\n');
+      fs.appendFileSync(path.join(proj, 'a.txt'), 'more\n');
+    });
+
+    it('status, diff, log and show still answer and nothing runs', async () => {
+      const sha = await git(proj, 'rev-parse', 'HEAD');
+      const h = harness();
+      await h.serve.onFrame(CONTROLLER, req('c1', 'status', {}));
+      await h.serve.onFrame(CONTROLLER, req('c2', 'diff', { path: path.join(proj, 'a.txt') }));
+      await h.serve.onFrame(CONTROLLER, req('c3', 'log', {}));
+      await h.serve.onFrame(CONTROLLER, req('c4', 'show', { sha }));
+      const status = replyTo(h.sent, 'c1');
+      if (!status.ok || status.result.op !== 'status' || status.result.snapshot === null)
+        throw new Error('expected a status');
+      expect(status.result.snapshot.changes.map((c) => c.path).sort()).toEqual([
+        'a.txt',
+        'big.bin',
+      ]);
+      for (const id of ['c2', 'c3', 'c4']) expect(replyTo(h.sent, id).ok).toBe(true);
+      expect(fs.readFileSync(marker, 'utf8')).toBe('');
+    });
+  });
+
+  it('a repo extension that could fetch or run something is refused before any read', async () => {
+    await initRepo(proj);
+    await git(proj, 'config', 'core.repositoryformatversion', '1');
+    await git(proj, 'config', 'extensions.partialClone', 'origin');
+    const h = harness();
+    await h.serve.onFrame(CONTROLLER, req('e1', 'log', {}));
+    const res = replyTo(h.sent, 'e1');
+    if (res.ok) throw new Error('expected a refusal');
+    expect(res.error.code).toBe('refused');
+    expect(h.calls).not.toContain('log');
+  });
+
+  it("show hides a denied file's blob under a harmless name", async () => {
+    await initRepo(proj);
+    const envBlob = await git(proj, 'rev-parse', 'HEAD:.env');
+    const tree = await runGit(['mktree'], {
+      cwd: proj,
+      stdin: `100644 blob ${envBlob}\tinnocent.txt\n`,
+    });
+    if (!tree.ok) throw new Error('mktree failed');
+    // A root commit, so rename detection can't pair it with `.env` and the name filter can't help.
+    const crafted = await git(proj, 'commit-tree', tree.stdout.trim(), '-m', 'x');
+    const h = harness();
+    await h.serve.onFrame(CONTROLLER, req('b1', 'show', { sha: crafted }));
+    const res = replyTo(h.sent, 'b1');
+    if (!res.ok || res.result.op !== 'show') throw new Error('expected a show result');
+    expect(res.result.files.map((f) => f.path)).not.toContain('innocent.txt');
+    expect(JSON.stringify(h.sent)).not.toContain('TOKEN=1');
+  });
+
+  it('an untracked symlink counts as git stores it, never as the file it points at', async () => {
+    await initRepo(proj);
+    fs.writeFileSync(path.join(root, 'many.txt'), 'a\nb\nc\nd\n');
+    fs.symlinkSync(path.join(root, 'many.txt'), path.join(proj, 'l'));
+    const h = harness();
+    await h.serve.onFrame(CONTROLLER, req('l1', 'status', {}));
+    const res = replyTo(h.sent, 'l1');
+    if (!res.ok || res.result.op !== 'status' || res.result.snapshot === null)
+      throw new Error('expected a status');
+    const link = res.result.snapshot.changes.find((c) => c.path === 'l');
+    expect(link?.added).toBe(1);
+  });
+
   it('a result over 8 MiB is too_large', async () => {
     await initRepo(proj);
     const huge = 'x'.repeat(9 * 1024 * 1024);

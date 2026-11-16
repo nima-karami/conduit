@@ -91,6 +91,26 @@ export function countLinesOfFile(
   abs: string,
   capBytes: number,
 ): Promise<{ lines: number; oversize: boolean }> {
+  return countRegularFile(abs, capBytes);
+}
+
+/**
+ * git stores a symlink as a blob holding its target, one line with no newline, so that is what
+ * it counts as; reading through it would count a file anywhere on disk. A FIFO or device is
+ * never opened, since reading one can block forever.
+ */
+async function countRegularFile(
+  abs: string,
+  capBytes: number,
+): Promise<{ lines: number; oversize: boolean }> {
+  let st: fs.Stats;
+  try {
+    st = await fs.promises.lstat(abs);
+  } catch {
+    return { lines: 0, oversize: false };
+  }
+  if (st.isSymbolicLink()) return { lines: 1, oversize: false };
+  if (!st.isFile()) return { lines: 0, oversize: false };
   return new Promise((resolve) => {
     let lines = 0;
     let bytes = 0;

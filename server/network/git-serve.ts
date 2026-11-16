@@ -7,7 +7,7 @@ import type {
   LinkState,
 } from '../../src/contracts/link-protocol';
 import { readDiffReply } from '../../src/file-service';
-import { GIT_TIMEOUT, runGit } from '../../src/git-exec';
+import { GIT_TIMEOUT, runGit, withGitEnv } from '../../src/git-exec';
 import { assignLanes } from '../../src/git-graph-render';
 import { getCommitDiff, getHistory } from '../../src/git-history';
 import { createGitShow } from '../../src/git-show';
@@ -20,6 +20,7 @@ import type { FileDiffDTO } from '../../src/protocol';
 import type { AuditSink } from './audit-log';
 import { isInboundSsh } from './calls';
 import { FS_REFUSAL_AUDIT_MS } from './fs-serve';
+import { readNeutralEnv } from './git-neutral';
 
 // B serves git reads to its ssh controller (CON-45 plan decisions 1-3). As fs-serve does: the root,
 // the repo git will read, the diff path and every entry shown are confined and deny-filtered here,
@@ -61,7 +62,14 @@ export function createGitOps(): GitServeOps {
     return r.ok ? path.resolve(dir, r.stdout.trim()) : '';
   };
   return {
-    repoTopLevel: gitShow.repoTopLevel,
+    // Asked fresh every time: gitShow's memo would keep a top that a new core.worktree has moved.
+    repoTopLevel: async (dir) => {
+      const r = await runGit(['rev-parse', '--show-toplevel'], {
+        cwd: dir,
+        timeoutMs: GIT_TIMEOUT.metadata,
+      });
+      return r.ok ? r.stdout.trim() : '';
+    },
     absoluteGitDir: (dir) => revParse(dir, '--absolute-git-dir'),
     gitCommonDir: (dir) => revParse(dir, '--git-common-dir'),
     status: (top) => readRepoChanges(top, { lines: true }),
@@ -100,7 +108,7 @@ type Reply = { ok: true; result: GitResult } | { ok: false; code: FsErrorCode; m
 /** Where a folder's repo is: none, refused, unreadable, or a top the session may read. */
 type Located =
   | { kind: 'none' }
-  | { kind: 'repo'; top: string }
+  | { kind: 'repo'; top: string; env: Readonly<Record<string, string>> }
   | { kind: 'refused' }
   | { kind: 'failed' };
 
@@ -122,6 +130,22 @@ const failedReply = (message: string): Reply => ({ ok: false, code: 'failed', me
 
 /** A path a listing or a commit would name: denied when its own text is, as fs-serve's lists are. */
 const deniedUnder = (dir: string, rel: string): boolean => isDenied(path.join(dir, rel));
+
+/**
+ * The blob ids at deny-listed paths in the index. A crafted commit can name such a blob under a
+ * harmless path, so show hides content by id as well as by name. The index is what a commit is
+ * built from; a denied file only in an older commit is left to the name filter.
+ */
+async function deniedBlobIds(top: string): Promise<Set<string> | null> {
+  const r = await runGit(['ls-files', '-s', '-z'], { cwd: top, timeoutMs: GIT_TIMEOUT.diff });
+  if (!r.ok) return null;
+  const ids = new Set<string>();
+  for (const entry of r.stdout.split('\0')) {
+    const m = /^\d+ ([0-9a-f]+) \d\t(.+)$/s.exec(entry);
+    if (m && deniedUnder(top, m[2])) ids.add(m[1]);
+  }
+  return ids;
+}
 
 /** git's own back-link from a linked worktree's admin dir to its `.git` file; null when absent. */
 async function readBackLink(file: string): Promise<string | null> {
@@ -237,7 +261,16 @@ export function createGitServe(deps: GitServeDeps): GitServe {
       refuse(machineId, 'git_dir_outside');
       return { kind: 'refused' };
     }
-    return { kind: 'repo', top };
+    const neutral = await readNeutralEnv({
+      gitDir: realPathLeaf(gitDir),
+      commonDir: realPathLeaf(commonDir),
+      top: realPathLeaf(top),
+    });
+    if (!neutral.ok) {
+      refuse(machineId, `git_config_${neutral.reason}`);
+      return { kind: 'refused' };
+    }
+    return { kind: 'repo', top, env: neutral.env };
   };
 
   /** The diff of one file: its path must sit inside the checked top as well as the session folders. */
@@ -303,10 +336,21 @@ export function createGitServe(deps: GitServeDeps): GitServe {
     if (sha === undefined) return failedReply(SHOW_FAILED);
     const shown = await deps.git.show(top, sha);
     if (shown.error !== undefined) return failedReply(SHOW_FAILED);
+    const denied = await deniedBlobIds(top);
+    if (denied === null) return failedReply(SHOW_FAILED);
+    const deniedBlob = (id: string | null): boolean => id !== null && denied.has(id);
     // A renamed file's head side is its old path's blob, so the old name is checked as well.
     const files = shown.files.filter((f) => {
       const from = shown.renamedFrom?.[f.path];
-      return !deniedUnder(top, f.path) && (from === undefined || !deniedUnder(top, from));
+      const blob = shown.blobs?.[f.path];
+      return (
+        !deniedUnder(top, f.path) &&
+        (from === undefined || !deniedUnder(top, from)) &&
+        // A file without blob ids can't be checked by content, so it is not shown.
+        blob !== undefined &&
+        !deniedBlob(blob.head) &&
+        !deniedBlob(blob.work)
+      );
     });
     return {
       ok: true,
@@ -344,17 +388,19 @@ export function createGitServe(deps: GitServeDeps): GitServe {
       case 'repo':
         break;
     }
-    const { top } = located;
-    switch (frame.op) {
-      case 'status':
-        return statusOf(top);
-      case 'diff':
-        return diffOf(machineId, frame, roots, top);
-      case 'log':
-        return logOf(frame, top);
-      case 'show':
-        return showOf(frame, top);
-    }
+    const { top, env } = located;
+    return withGitEnv(env, async () => {
+      switch (frame.op) {
+        case 'status':
+          return statusOf(top);
+        case 'diff':
+          return diffOf(machineId, frame, roots, top);
+        case 'log':
+          return logOf(frame, top);
+        case 'show':
+          return showOf(frame, top);
+      }
+    });
   };
 
   const errorReply = (err: unknown): Reply => {

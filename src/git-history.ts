@@ -54,6 +54,11 @@ interface MultiFileDiff {
   error?: string;
   /** For each renamed or copied file of the commit: its new path → the old one. */
   renamedFrom?: Record<string, string>;
+  /**
+   * For each file shown, the blob ids of its head and work sides (null for an absent side), so a
+   * caller that hides content by name can also hide the same content under another name.
+   */
+  blobs?: Record<string, { head: string | null; work: string | null }>;
 }
 
 /** A blob for display; an image's LFS pointer is swapped for its local object. */
@@ -435,6 +440,37 @@ export function parseNameStatusZ(stdout: string): ChangedFile[] {
   return files;
 }
 
+/** A changed file from `git diff-tree --raw -z`, with the blob id of each side. */
+export interface RawChangedFile extends ChangedFile {
+  headBlob: string | null;
+  workBlob: string | null;
+}
+
+const ZERO_OID = /^0+$/;
+
+/** Parse `git diff-tree -M -r --raw -z`: `:mode mode old new STATUS\0path\0`, two paths for R/C. */
+export function parseRawZ(stdout: string): RawChangedFile[] {
+  const parts = stdout.split('\0').filter((p) => p.length > 0);
+  const files: RawChangedFile[] = [];
+  let i = 0;
+  while (i < parts.length) {
+    const meta = /^:\d+ \d+ ([0-9a-f]+) ([0-9a-f]+) (\S+)$/.exec(parts[i++]);
+    if (!meta) continue;
+    const [, oldId, newId, status] = meta;
+    const headBlob = ZERO_OID.test(oldId) ? null : oldId;
+    const workBlob = ZERO_OID.test(newId) ? null : newId;
+    if (status.startsWith('R') || status.startsWith('C')) {
+      const oldPath = parts[i++];
+      const newPath = parts[i++];
+      if (newPath) files.push({ status, rel: newPath, oldPath, headBlob, workBlob });
+    } else {
+      const p = parts[i++];
+      if (p) files.push({ status, rel: p, headBlob, workBlob });
+    }
+  }
+  return files;
+}
+
 /** Parse `git diff-tree -M --numstat -z` into per-file line counts, keyed by the file's
  *  CURRENT path so it joins against {@link parseNameStatusZ}'s `rel`. -z emits
  *  `ADDED\tREMOVED\tPATH\0` for plain entries and `ADDED\tREMOVED\t\0OLD\0NEW\0` for a
@@ -510,12 +546,12 @@ export async function getCommitDiff(
 
   const nameStatus = await runGit(
     gitBin,
-    ['diff-tree', '-M', '-r', '--no-commit-id', '--name-status', '-z', base, sha],
+    ['diff-tree', '-M', '-r', '--no-commit-id', '--raw', '-z', base, sha],
     cwd,
     timeoutMs,
   );
   if (!nameStatus.ok) return { files: [], error: 'git diff-tree failed or timed out' };
-  const changed = parseNameStatusZ(nameStatus.stdout);
+  const changed = parseRawZ(nameStatus.stdout);
 
   // Badge counts from git, so the renderer never has to diff every file in the commit just
   // to show `+N −N` — see docs/specs/archive/2026-08-20-commit-review-memory-bounds.md §3.
@@ -548,9 +584,12 @@ export async function getCommitDiff(
   const renamedFrom = Object.fromEntries(
     changed.flatMap((f) => (f.oldPath === undefined ? [] : [[f.rel, f.oldPath] as const])),
   );
+  const blobs = Object.fromEntries(
+    capped.map((f) => [f.rel, { head: f.headBlob, work: f.workBlob }] as const),
+  );
   return total > capped.length
-    ? { files, truncated: { shown: capped.length, total }, renamedFrom }
-    : { files, renamedFrom };
+    ? { files, truncated: { shown: capped.length, total }, renamedFrom, blobs }
+    : { files, renamedFrom, blobs };
 }
 
 interface BlameOptions {
