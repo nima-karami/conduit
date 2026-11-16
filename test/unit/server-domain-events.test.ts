@@ -524,6 +524,29 @@ describe('server domain: observed lane wiring', () => {
     ]);
   });
 
+  it('a codex launch tracks the session; deleting it untracks it', async () => {
+    const h = harness({
+      files: {
+        'agents.json': JSON.stringify([
+          {
+            id: 'codex',
+            label: 'Codex',
+            command: 'codex',
+            args: [],
+            icon: 'terminal',
+            color: 'green',
+            cwdStrategy: 'workspaceFolder',
+          },
+        ]),
+      },
+    });
+    const id = await live(h, { agentId: 'codex' });
+    expect(h.codexWatch.calls).toContain(`track:${id}`);
+    const beforeDelete = h.codexWatch.calls.length;
+    await h.call('sessions.remove', { sessionId: id });
+    expect(h.codexWatch.calls.slice(beforeDelete)).toEqual([`untrack:${id}`]);
+  });
+
   describe('Claude feed gap through the domain', () => {
     const gapRows = (h: ReturnType<typeof harness>) =>
       h.observed.filter((o) => typeof o.entry === 'object' && o.entry !== null && 'gap' in o.entry);
