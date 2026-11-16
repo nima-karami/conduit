@@ -611,6 +611,9 @@ function fakeMcp(inbox: string[]): McpNetworkPort {
     requestsSummary: () => [],
     callAsRemote: () => Promise.reject(new Error('not used by this test')),
     remoteRequests: () => ({ apply: () => false, setLinkState: () => {} }),
+    requestsMirror: () => [],
+    requestsHasEnded: () => false,
+    onRequestsMirrorChange: () => () => {},
   };
 }
 

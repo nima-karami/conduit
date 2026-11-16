@@ -157,6 +157,12 @@ export interface McpNetworkPort {
   requestsSummary(): MonitorSnapshot['requests'];
   /** The A-side mirror of remote requests; the link writes into it (CON-42 L3). */
   remoteRequests(): RemoteRequestSink;
+  /** B's open requests plus those that ended in the last 10 min, in the wire form (CON-42 L5b). */
+  requestsMirror(): RequestMirror[];
+  /** True while requestsMirror holds an ended entry (CON-42 L5b). */
+  requestsHasEnded(): boolean;
+  /** Fires when a mirrored request changes; returns its unsubscribe (CON-42 L5b). */
+  onRequestsMirrorChange(listener: () => void): () => void;
 }
 
 /** The tools that take `machine`: they run on that machine, or on this one when it is absent. */

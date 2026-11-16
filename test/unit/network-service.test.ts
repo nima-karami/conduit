@@ -74,6 +74,18 @@ function server(name: string, endpointIn?: (root: string) => string) {
       },
       closeSession: async () => {},
     },
+    requestPorts: {
+      b: {
+        mirrorOf: () => [],
+        hasEnded: () => false,
+        onMirrorChange: () => () => {},
+        applyRemoteAnswer: async () => ({
+          ok: false,
+          error: { code: 'refused', message: 'not wired in this fixture', retryable: false },
+        }),
+      },
+      a: { apply: () => {}, setLinkState: () => {} },
+    },
     monitor: {
       sessions: () => [],
       requests: () => [],
@@ -378,6 +390,9 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
         requestsSummary: () => [],
         callAsRemote: () => Promise.reject(new Error('not used by this test')),
         remoteRequests: () => ({ apply: () => false, setLinkState: () => {} }),
+        requestsMirror: () => [],
+        requestsHasEnded: () => false,
+        onRequestsMirrorChange: () => () => {},
       });
       a.net.setMcp(mcp([]));
       b.net.setMcp(mcp(delivered));

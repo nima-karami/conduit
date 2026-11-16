@@ -52,6 +52,9 @@ function setup(exported = false) {
     requestsSummary: () => [],
     callAsRemote: () => Promise.reject(new Error('not used by this test')),
     remoteRequests: () => ({ apply: () => false, setLinkState: () => {} }),
+    requestsMirror: () => [],
+    requestsHasEnded: () => false,
+    onRequestsMirrorChange: () => () => {},
   };
   const svc = createMessaging({
     file: join(dir, 'outbox.json'),

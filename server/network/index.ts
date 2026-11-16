@@ -43,7 +43,6 @@ import { createNeedsPerson } from './needs-person';
 import { createPairingPort } from './pairing-port';
 import { createPairingService, type PairingService } from './pairing-service';
 import {
-  type ApplyRemoteAnswerResult,
   createRequests,
   type RemoteAnswerResult,
   type RequestMirrorSink,
@@ -105,11 +104,8 @@ export interface NetworkDeps {
   openCommandSession(command: SessionCommand, folder: string): Promise<string>;
   /** This server's own runtime and platform, for pushing it to a remote (bootstrap.ts). */
   bootstrap: NetworkBootstrapDeps;
-  /**
-   * The request service's two ports (CON-42): B's requests and answer path, A's mirror store. Absent
-   * until the request service is wired, which fails closed: nothing is mirrored and no answer lands.
-   */
-  requestPorts?: { b: RequestMirrorSource; a: RequestMirrorSink };
+  /** The request service's two ports (CON-42): B's requests and answer path, and A's mirror store. */
+  requestPorts: { b: RequestMirrorSource; a: RequestMirrorSink };
 }
 
 export type NetworkBootstrapDeps = Pick<BootstrapperOptions, 'local' | 'runtime' | 'noDownload'>;
@@ -396,30 +392,9 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     after,
     log: (message, data) => deps.log.info(message, data),
   });
-  const requestPorts = deps.requestPorts ?? {
-    b: {
-      mirrorOf: () => [],
-      onMirrorChange: () => () => {},
-      applyRemoteAnswer: async (): Promise<ApplyRemoteAnswerResult> => ({
-        ok: false,
-        error: {
-          code: 'refused',
-          message: 'remote requests are not wired on this machine',
-          retryable: false,
-        },
-      }),
-    },
-    // The host's store is built after the network, so the mirror reaches it through the MCP port.
-    a: {
-      apply: (machineId, seq, mirror, machineName) => {
-        mcp?.remoteRequests().apply(machineId, seq, mirror, machineName);
-      },
-      setLinkState: (machineId, state) => mcp?.remoteRequests().setLinkState(machineId, state),
-    },
-  };
   const requests: Requests = createRequests({
-    b: requestPorts.b,
-    a: requestPorts.a,
+    b: deps.requestPorts.b,
+    a: deps.requestPorts.a,
     links: () => manager.views().map((v) => ({ machineId: v.machineId, state: v.state })),
     linkOf: (machineId) => store.get(machineId),
     peerMinor: (machineId) => manager.peerMinor(machineId),
