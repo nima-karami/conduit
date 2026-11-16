@@ -8,6 +8,14 @@ export interface RuntimeGcDeps {
   rmrf(d: string): Promise<void>;
 }
 
+export interface RuntimeGcOptions {
+  /**
+   * A `.tmp` staging dir is another writer's to fill until it is renamed into place: the app's own
+   * start sweeps them (its single-instance lock covers that); a headless ensure must not.
+   */
+  sweepStaging?: boolean;
+}
+
 const SEMVER_DIR = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const KEEP_NEWEST = 2;
 /** A process's cwd (or another open handle) in the tree refuses the rename (M21). */
@@ -20,11 +28,12 @@ const newestFirst = (a: string, b: string) => {
 };
 
 /** Version dirs past the newest two, never `current`; leftovers of an earlier GC or preparation. */
-function candidates(entries: string[], current: string): string[] {
+function candidates(entries: string[], current: string, sweepStaging: boolean): string[] {
   const out: string[] = [];
   const versions = entries.filter((e) => SEMVER_DIR.test(e)).sort(newestFirst);
   for (const v of versions.slice(KEEP_NEWEST)) if (v !== current) out.push(v);
-  for (const e of entries) if (e.endsWith(GC_SUFFIX) || e.endsWith('.tmp')) out.push(e);
+  for (const e of entries)
+    if (e.endsWith(GC_SUFFIX) || (sweepStaging && e.endsWith('.tmp'))) out.push(e);
   return out.filter((e) => !e.startsWith(SHIM_RUNTIME_DIR) || e.endsWith('.tmp'));
 }
 
@@ -36,11 +45,13 @@ export async function collectRuntimeGarbage(
   runtimeRoot: string,
   keep: { appVersion: string; hcVersion: string },
   d: RuntimeGcDeps,
+  opts: RuntimeGcOptions = {},
 ): Promise<{ removed: string[]; inUse: string[] }> {
   const removed: string[] = [];
   const inUse: string[] = [];
+  const sweepStaging = opts.sweepStaging ?? true;
   const sweep = async (dir: string, current: string) => {
-    for (const name of candidates(await listDir(d, dir), current)) {
+    for (const name of candidates(await listDir(d, dir), current, sweepStaging)) {
       const path = join(dir, name);
       let doomed = path;
       if (!name.endsWith(GC_SUFFIX)) {

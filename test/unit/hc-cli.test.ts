@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { killSupervisor } from '../../electron/hc-cli';
 import {
+  coreStartCommand,
   directStopAll,
   directStopSessions,
   HC_XDG_ISOLATED_ENV,
@@ -373,5 +374,19 @@ describe('hc-cli', () => {
     expect(execCalls.map((c) => [c.args, c.cwd])).toEqual([
       [['kill', 'conduit-server-abc'], '/u/runtime/hc/0.1.16'],
     ]);
+  });
+});
+
+describe('coreStartCommand', () => {
+  it('plain starts hc directly', () => {
+    expect(coreStartCommand('/rt/hc', [])).toEqual({ file: '/rt/hc', args: ['server', 'start'] });
+  });
+
+  it('a prefix is argv in front of hc, never a shell line', () => {
+    const bin = '/rt/with space/$(rm -rf x)/hc';
+    expect(coreStartCommand(bin, ['systemd-run', '--user', '--scope', '--quiet', '--'])).toEqual({
+      file: 'systemd-run',
+      args: ['--user', '--scope', '--quiet', '--', bin, 'server', 'start'],
+    });
   });
 });
