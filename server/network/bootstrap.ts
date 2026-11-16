@@ -1,11 +1,12 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import pins from '../../build/runtime-pins.json';
+import pinsJson from '../../build/runtime-pins.json';
 import { SHIM_LEAF } from '../../src/conduit-mcp/install-entries';
 import { HC_PINNED_VERSION } from '../../src/contracts/hc';
 import type { BootstrapResult, BootstrapSummary, SshEndpoint } from '../../src/contracts/ssh-link';
 import { planInstall } from '../../src/network/install-plan';
 import {
+  copyNodeIntoShimCommand,
   downloadCommand,
   ensureCommand,
   FAMILY_PROBE,
@@ -38,9 +39,23 @@ export interface LocalRuntime {
   serverDir: string;
   /** A's conduit-hc, pushed when B cannot fetch its own. */
   hcExe: string;
-  /** A's MCP shim, placed beside a node copy in the shim dir (plan decision 3). */
+  /** A's MCP shim: the one file pushed into the shim dir (its node is copied on B). */
   shimFile: string;
 }
+
+/** One archive or file pin, as build/runtime-pins.json has it. */
+export interface PinEntry {
+  url: string;
+  sha256: string;
+  /** An archive pin's extracted binary; a push verifies against it (spec 5.5). Absent: no push. */
+  binSha256?: string;
+  archive?: string;
+  stripComponents?: number;
+  rename?: Record<string, string>;
+}
+
+export type PinKey = 'linux-x64' | 'win32-x64';
+export type PinSet = Record<PinKey, { node: PinEntry; hc: PinEntry }>;
 
 export interface BootstrapperOptions {
   local: {
@@ -54,6 +69,8 @@ export interface BootstrapperOptions {
   ssh: Pick<SshExecOptions, 'sshPath' | 'sshArgsPrefix' | 'controlDir'>;
   /** CONDUIT_E2E_NO_DOWNLOAD (e2e only): skip the remote download and always push. */
   noDownload: boolean;
+  /** The pins; the build's own by default. A test passes pins whose bytes it holds. */
+  pins?: PinSet;
   exec: (o: SshExecOptions) => Promise<SshExecResult>;
 }
 
@@ -71,15 +88,7 @@ const ENSURE_TIMEOUT_MS = 2 * 60_000;
 
 // ── pins ─────────────────────────────────────────────────────────────────────
 
-type PinKey = 'linux-x64' | 'win32-x64';
-
-interface PinEntry {
-  url: string;
-  sha256: string;
-  archive?: string;
-  stripComponents?: number;
-  rename?: Record<string, string>;
-}
+const DEFAULT_PINS: PinSet = pinsJson;
 
 function archiveOf(name: string | undefined): PinFile['archive'] {
   if (name === undefined) return undefined;
@@ -88,9 +97,9 @@ function archiveOf(name: string | undefined): PinFile['archive'] {
 }
 
 /**
- * A pin in the form the remote scripts take. The file's name is the one the app's layout uses
- * (runtimeBinaryName), not the pin's own dest: for an archive, the dest is the file the archive
- * yields after its renames (remote-scripts.test.ts), which is that name.
+ * A pin in the form the remote scripts take. The dest is the file the install makes: for an
+ * archive, the file the archive yields after its renames (remote-scripts.test.ts), which is the
+ * layout's name for the binary (runtimeBinaryName).
  */
 function pinOf(entry: PinEntry, dest: string): PinFile {
   const archive = archiveOf(entry.archive);
@@ -104,9 +113,14 @@ function pinOf(entry: PinEntry, dest: string): PinFile {
   };
 }
 
-function pinsFor(key: PinKey): { node: PinEntry; hc: PinEntry } {
-  const entry = key === 'linux-x64' ? pins['linux-x64'] : pins['win32-x64'];
-  return { node: entry.node, hc: entry.hc };
+/**
+ * The sha256 a push must find, or null when the pin gives none. A file pin's sha256 is the file's
+ * own. An archive pin's sha256 hashes the archive, so only its binSha256 names the binary, and a pin
+ * without one is never pushed (fail closed, spec 5.5).
+ */
+function pushShaOf(entry: PinEntry): string | null {
+  if (entry.archive === undefined) return entry.sha256;
+  return entry.binSha256 ?? null;
 }
 
 // ── local files ──────────────────────────────────────────────────────────────
@@ -134,12 +148,14 @@ async function treeOf(dir: string, rel = ''): Promise<TreeFile[]> {
 interface Ctx {
   family: ShellFamily;
   rp: typeof path.posix;
-  os: 'linux' | 'windows';
   runtimeRoot: string;
   hcRoot: string;
+  pins: PinSet;
   noDownload: boolean;
   runtime: LocalRuntime;
+  /** True when B is this build's own OS and arch, so A's binaries run there. */
   sameOs: boolean;
+  os: 'linux' | 'windows';
   /** One remote script; its stdin is the value a push sends. */
   run(command: RemoteCommand, timeoutMs: number, stdin?: Buffer): Promise<SshExecResult>;
 }
@@ -159,19 +175,19 @@ function scriptError(
 }
 
 /**
- * Puts one binary at `placed`: the pinned download first; a failed download is pushed from A only
- * when A runs on B's own platform. The push verifies the bytes against A's own file's sha256, not
- * the pin: the pins for linux node and hc hash the archive, which the push does not have.
+ * Puts one binary at `placed`. The pinned download comes first. A failed download is pushed from A
+ * only when A runs on B's own platform and the pin names the binary's sha256, which the push is
+ * checked against on A and on B. Without that sha, the push is refused (fail closed).
  */
 async function stageBinary(
   c: Ctx,
-  o: { stagingDir: string; pin: PinEntry; dest: string; localExe: string | null; placed: string },
+  o: { stagingDir: string; entry: PinEntry; dest: string; localExe: string | null; placed: string },
 ): Promise<BootstrapError | null> {
-  const canPush = c.sameOs && o.localExe !== null;
+  const expected = pushShaOf(o.entry);
+  const canPush = c.sameOs && o.localExe !== null && expected !== null;
   if (!c.noDownload) {
-    const pin = pinOf(o.pin, o.dest);
     const r = await c.run(
-      downloadCommand(c.family, { stagingDir: o.stagingDir, pins: [pin] }),
+      downloadCommand(c.family, { stagingDir: o.stagingDir, pins: [pinOf(o.entry, o.dest)] }),
       DOWNLOAD_TIMEOUT_MS,
     );
     const line = parseResultLine(r.stdout);
@@ -186,24 +202,40 @@ async function stageBinary(
       return {
         code: 'install_failed',
         step: 'download',
-        detail: `${detail}; B needs internet, or a controller on the same OS`,
+        detail: `${detail}; ${pushRefusal(c, o, expected)}`,
       };
     }
+  } else if (!canPush) {
+    return { code: 'install_failed', step: 'download', detail: pushRefusal(c, o, expected) };
   }
-  if (!canPush || o.localExe === null) {
-    return {
-      code: 'install_failed',
-      step: 'download',
-      detail: 'the remote cannot fetch this file and this controller has no copy for its platform',
-    };
+  if (o.localExe === null || expected === null) {
+    return { code: 'install_failed', step: 'download', detail: pushRefusal(c, o, expected) };
   }
   const data = await readFile(o.localExe);
+  if (sha256Of(data) !== expected) {
+    return {
+      code: 'install_failed',
+      step: 'checksum',
+      detail: `this controller's ${o.dest} is not the pinned binary`,
+    };
+  }
   const r = await c.run(
-    receiveFileCommand(c.family, { path: o.placed, sha256: sha256Of(data), size: data.length }),
+    receiveFileCommand(c.family, { path: o.placed, sha256: expected, size: data.length }),
     DOWNLOAD_TIMEOUT_MS,
     data,
   );
   return scriptError(r, 'download');
+}
+
+function pushRefusal(c: Ctx, o: { localExe: string | null }, expected: string | null): string {
+  if (expected === null) {
+    return 'the pin has no binSha256, so this controller will not push the binary (fail closed)';
+  }
+  if (!c.sameOs) return 'B needs internet, or a controller on the same OS';
+  if (o.localExe === null) {
+    return 'this controller has no copy to push (a dev build needs CONDUIT_NODE_BINARY)';
+  }
+  return 'B needs internet, or a controller on the same OS';
 }
 
 /** The server tree: A's bundle packed as ustar, each file checked by the remote (plan decision 6). */
@@ -238,26 +270,24 @@ async function install(
   const { rp } = c;
   const appTmp = rp.join(c.runtimeRoot, `${version}.tmp`);
   const hcTmp = rp.join(c.hcRoot, `${HC_PINNED_VERSION}.tmp`);
-  const key: PinKey = c.os === 'windows' ? 'win32-x64' : 'linux-x64';
-  const remotePins = pinsFor(key);
+  const remotePins = c.pins[c.os === 'windows' ? 'win32-x64' : 'linux-x64'];
 
   const node = await stageBinary(c, {
     stagingDir: appTmp,
-    pin: remotePins.node,
+    entry: remotePins.node,
     dest: nodeName,
     localExe: c.runtime.nodeExe,
     placed: rp.join(appTmp, nodeName),
   });
   if (node) return node;
-  const serverFiles = await treeOf(c.runtime.serverDir);
-  const tree = await pushTree(c, rp.join(appTmp, 'server'), serverFiles);
+  const tree = await pushTree(c, rp.join(appTmp, 'server'), await treeOf(c.runtime.serverDir));
   if (tree) return tree;
   const appFinal = await finalize(c, c.runtimeRoot, version);
   if (appFinal) return appFinal;
 
   const hc = await stageBinary(c, {
     stagingDir: hcTmp,
-    pin: remotePins.hc,
+    entry: remotePins.hc,
     dest: hcName,
     localExe: c.runtime.hcExe,
     placed: rp.join(hcTmp, hcName),
@@ -266,21 +296,23 @@ async function install(
   const hcFinal = await finalize(c, c.hcRoot, HC_PINNED_VERSION);
   if (hcFinal) return hcFinal;
 
-  // The shim dir holds a node copy beside the shim; the node is A's, so it needs A's platform.
-  if (!c.sameOs || c.runtime.nodeExe === null) {
-    return {
-      code: 'install_failed',
-      step: 'download',
-      detail: 'the MCP shim needs a node binary for this platform, and this controller has none',
-    };
-  }
-  const shimFiles: TreeFile[] = [
-    { path: nodeName, data: await readFile(c.runtime.nodeExe), mode: 0o755 },
-    { path: SHIM_LEAF, data: await readFile(c.runtime.shimFile), mode: 0o644 },
-  ];
+  // The shim dir: the shim file is pushed, and the node is copied on B from the install above.
+  // The copy works on any remote that could fetch its node, so it needs no sha check of A's bytes.
   const shimTmp = c.rp.join(c.runtimeRoot, `${shimName}.tmp`);
-  const shim = await pushTree(c, shimTmp, shimFiles);
+  const shim = await pushTree(c, shimTmp, [
+    { path: SHIM_LEAF, data: await readFile(c.runtime.shimFile), mode: 0o644 },
+  ]);
   if (shim) return shim;
+  const copy = await c.run(
+    copyNodeIntoShimCommand(c.family, {
+      runtimeRoot: c.runtimeRoot,
+      version,
+      shimDir: rp.join(c.runtimeRoot, shimName),
+    }),
+    FINALIZE_TIMEOUT_MS,
+  );
+  const copied = scriptError(copy, 'unpack');
+  if (copied) return copied;
   return finalize(c, c.runtimeRoot, shimName);
 }
 
@@ -324,26 +356,32 @@ async function bootstrapOnce(o: BootstrapperOptions, target: string): Promise<Bo
   const runtimeRoot = rp.join(probed.userData, 'runtime');
   const hcRoot = rp.join(runtimeRoot, 'conduit-hc');
   const shimName = shimDirName(CURRENT_SHIM_GENERATION);
+  const nodeName = runtimeBinaryName('node', hostPlatform);
+  const hcName = runtimeBinaryName('hc', hostPlatform);
+
+  // 3. Which version to run, and whether to copy. An attach runs the recorded version when its dir
+  // is there. Otherwise the local build is installed, so ensure has a node and main.js to run; the
+  // running newer server then answers and is never downgraded (ensure-server.ts).
+  const localPresent = probed.installed.includes(o.local.version);
+  const recordedPresent = plan.kind === 'attach' && probed.installed.includes(plan.version);
+  const version = recordedPresent && plan.kind === 'attach' ? plan.version : o.local.version;
+  const needsCopy = plan.kind === 'attach' ? !recordedPresent : !localPresent;
+  const copied = needsCopy && !localPresent;
+
   const ctx: Ctx = {
     family,
     rp,
     os,
     runtimeRoot,
     hcRoot,
+    pins: o.pins ?? DEFAULT_PINS,
     noDownload: o.noDownload,
     runtime: o.runtime,
     sameOs: o.local.platform === hostPlatform && o.local.arch === 'x64' && probed.arch === 'x64',
     run,
   };
-  const hcName = runtimeBinaryName('hc', hostPlatform);
-  const nodeName = runtimeBinaryName('node', hostPlatform);
-
-  // 3. The install, unless the version is already laid out (then nothing is copied).
-  const version = plan.kind === 'attach' ? plan.version : o.local.version;
-  const copied =
-    (plan.kind === 'install' || plan.kind === 'upgrade') && !probed.installed.includes(version);
   if (copied) {
-    const failure = await install(ctx, version, nodeName, hcName, shimName);
+    const failure = await install(ctx, o.local.version, nodeName, hcName, shimName);
     if (failure) return fail(failure);
   }
 
@@ -382,7 +420,7 @@ async function bootstrapOnce(o: BootstrapperOptions, target: string): Promise<Bo
     summary: {
       os,
       arch: 'x64',
-      installed: copied && plan.kind === 'install',
+      installed: copied && plan.kind !== 'upgrade',
       upgraded: copied && plan.kind === 'upgrade',
       reused: !copied,
       survivesLogout: line.survivesLogout === true,

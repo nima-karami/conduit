@@ -58,7 +58,8 @@ async function run() {
     process.env.CONDUIT_E2E_SSH_ARGS_PREFIX = JSON.stringify([FAKE_SSH]);
     // Forces the push path, and only under --e2e (services.ts). A's own node is the one pushed.
     process.env.CONDUIT_E2E_NO_DOWNLOAD = '1';
-    process.env.CONDUIT_NODE_BINARY = process.execPath;
+    // A's node is the pinned vendored one: the push is checked against its binSha256 (runtime-pins.json).
+    process.env.CONDUIT_NODE_BINARY = join(REPO, 'build', 'vendor', 'node', 'node');
     process.env.XDG_CONFIG_HOME = xdg;
     a = await startServer('a');
     const remote = teardownNames(remoteUserData, process.platform, tmpdir());

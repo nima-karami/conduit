@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -65,6 +65,7 @@ type Kind =
   | 'receiveFile'
   | 'receiveTree'
   | 'finalize'
+  | 'copyNode'
   | 'ensure'
   | 'unknown';
 
@@ -84,19 +85,21 @@ function decode(command: string): Decoded {
       'utf16le',
     );
     const values = [...script.matchAll(/'([A-Za-z0-9+/=]+)'/g)].map((m) => b64(m[1] ?? ''));
-    const kind: Kind = script.includes('Invoke-WebRequest')
-      ? 'download'
-      : script.includes('$manText')
-        ? 'receiveTree'
-        : script.includes('$path = Arg 0')
-          ? 'receiveFile'
-          : script.includes('Move-Item -LiteralPath $tmp')
-            ? 'finalize'
-            : script.includes('--ensure-server')
-              ? 'ensure'
-              : script.includes('Get-ChildItem')
-                ? 'probe'
-                : 'unknown';
+    const kind: Kind = script.includes('Copy-Item -LiteralPath $src')
+      ? 'copyNode'
+      : script.includes('Invoke-WebRequest')
+        ? 'download'
+        : script.includes('$manText')
+          ? 'receiveTree'
+          : script.includes('$path = Arg 0')
+            ? 'receiveFile'
+            : script.includes('Move-Item -LiteralPath $tmp')
+              ? 'finalize'
+              : script.includes('--ensure-server')
+                ? 'ensure'
+                : script.includes('Get-ChildItem')
+                  ? 'probe'
+                  : 'unknown';
     return { kind, values, script };
   }
   const t = words(command);
@@ -104,17 +107,19 @@ function decode(command: string): Decoded {
   const values = t.slice(4).map(b64);
   const kind: Kind = script.includes('KillUserProcesses')
     ? 'probe'
-    : script.includes('CONDUIT_RENAMES')
-      ? 'download'
-      : script.includes('CONDUIT_MANIFEST')
-        ? 'receiveTree'
-        : script.includes('cat > "$P.part"')
-          ? 'receiveFile'
-          : script.includes('mv "$TMP" "$FINAL"')
-            ? 'finalize'
-            : script.includes('--ensure-server')
-              ? 'ensure'
-              : 'unknown';
+    : script.includes('cp "$SRC" "$TMP/$NAME"')
+      ? 'copyNode'
+      : script.includes('CONDUIT_RENAMES')
+        ? 'download'
+        : script.includes('CONDUIT_MANIFEST')
+          ? 'receiveTree'
+          : script.includes('cat > "$P.part"')
+            ? 'receiveFile'
+            : script.includes('mv "$TMP" "$FINAL"')
+              ? 'finalize'
+              : script.includes('--ensure-server')
+                ? 'ensure'
+                : 'unknown';
   return { kind, values, script };
 }
 
@@ -214,6 +219,26 @@ function remote(script: Script) {
   return { exec, calls };
 }
 
+/** Pins whose binSha256 is the fixture's own bytes, so a push is checked against what A holds. */
+function fixturePins(f: Fixture, over: { noNodeBinSha?: boolean; noHcBinSha?: boolean } = {}) {
+  const binary = (file: string, name: string, binSha: string | undefined) => ({
+    url: `https://example.invalid/${name}.tar.gz`,
+    sha256: 'a'.repeat(64),
+    dest: name,
+    archive: 'tar.gz',
+    stripComponents: 0,
+    rename: { [name]: name },
+    ...(binSha === undefined ? {} : { binSha256: binSha }),
+  });
+  const node = readFileSync(f.nodeExe);
+  const hc = readFileSync(f.hcExe);
+  const linux = {
+    node: binary(f.nodeExe, 'node', over.noNodeBinSha ? undefined : sha256(node)),
+    hc: binary(f.hcExe, 'conduit-hc', over.noHcBinSha ? undefined : sha256(hc)),
+  };
+  return { 'linux-x64': linux, 'win32-x64': linux };
+}
+
 function bootstrapper(
   f: Fixture,
   exec: (o: SshExecOptions) => Promise<SshExecResult>,
@@ -226,9 +251,12 @@ function bootstrapper(
     };
     noDownload: boolean;
     nodeExe: string | null;
+    realPins: boolean;
+    pins: ReturnType<typeof fixturePins>;
   }> = {},
 ) {
   return createBootstrapper({
+    ...(over.realPins ? {} : { pins: over.pins ?? fixturePins(f) }),
     local: over.local ?? {
       version: '1.2.3',
       linkMajor: LINK_PROTOCOL.major,
@@ -270,7 +298,8 @@ describe('bootstrap: install on a fresh remote', () => {
       'finalize', // <ver>.tmp -> <ver>
       'download', // hc, into conduit-hc/<hcVersion>.tmp
       'finalize',
-      'receiveTree', // the MCP shim dir, into shim.tmp
+      'receiveTree', // the shim's one pushed file, into shim.tmp
+      'copyNode', // node copied on B from the install just made, never pushed for the shim
       'finalize',
       'ensure',
     ]);
@@ -316,7 +345,7 @@ describe('bootstrap: install on a fresh remote', () => {
   it('builds the pins from build/runtime-pins.json for the remote platform, naming the final files', async () => {
     const f = fixture();
     const r = remote(happy);
-    await bootstrapper(f, r.exec)(TARGET);
+    await bootstrapper(f, r.exec, { realPins: true })(TARGET);
     const node = r.calls.find((c) => c.kind === 'download')?.d.values.join('\n') ?? '';
     expect(node).toContain('https://nodejs.org/dist/v24.18.0/node-v24.18.0-linux-x64.tar.gz');
     expect(node).toContain('783130984963db7ba9cbd01089eaf2c2efb055c7c1693c943174b967b3050cb8');
@@ -414,7 +443,10 @@ describe('bootstrap: decision flow', () => {
   it('attaches to an equal running server: probe and ensure only, nothing copied', async () => {
     const f = fixture();
     const r = remote({
-      probe: { recorded: { version: '1.2.3', linkMajor: LINK_PROTOCOL.major } },
+      probe: {
+        recorded: { version: '1.2.3', linkMajor: LINK_PROTOCOL.major },
+        installed: ['1.2.3'],
+      },
       answer: (kind) => (kind === 'ensure' ? ENSURE_OK : result({ ok: true })),
     });
     const outcome = await bootstrapper(f, r.exec)(TARGET);
@@ -425,7 +457,10 @@ describe('bootstrap: decision flow', () => {
   it('attaches to a newer same-major server and never downgrades it', async () => {
     const f = fixture();
     const r = remote({
-      probe: { recorded: { version: '9.9.9', linkMajor: LINK_PROTOCOL.major } },
+      probe: {
+        recorded: { version: '9.9.9', linkMajor: LINK_PROTOCOL.major },
+        installed: ['9.9.9'],
+      },
       answer: (kind) =>
         kind === 'ensure'
           ? result({ ok: true, state: 'up', version: '9.9.9', survivesLogout: false })
@@ -574,7 +609,7 @@ describe('bootstrap: the pins', () => {
       probe: { os: 'windows' },
       answer: (kind) => (kind === 'ensure' ? ENSURE_OK : result({ ok: true })),
     });
-    await bootstrapper(f, r.exec)(TARGET);
+    await bootstrapper(f, r.exec, { realPins: true })(TARGET);
     const node = r.calls.find((c) => c.kind === 'download');
     expect(node?.command.startsWith('powershell ')).toBe(true);
     expect(node?.d.script).toContain('Invoke-WebRequest');
@@ -587,5 +622,94 @@ describe('bootstrap: the pinned hc', () => {
     // The pins' hc version and the directory the install and ensure both use must agree.
     expect(pins['linux-x64'].hc.version).toBe(HC_PINNED_VERSION);
     expect(pins['win32-x64'].hc.version).toBe(HC_PINNED_VERSION);
+  });
+});
+
+describe('bootstrap: attach without a runtime dir for the recorded version', () => {
+  it('installs the local version anyway, so ensure has a node and main.js to run', async () => {
+    const f = fixture();
+    const r = remote({
+      probe: { recorded: { version: '9.9.9', linkMajor: LINK_PROTOCOL.major }, installed: [] },
+      answer: (kind) =>
+        kind === 'ensure'
+          ? result({ ok: true, state: 'up', version: '9.9.9', survivesLogout: false })
+          : result({ ok: true }),
+    });
+    const outcome = await bootstrapper(f, r.exec)(TARGET);
+    expect(r.calls.map((c) => c.kind)).toContain('receiveTree');
+    const ensure = r.calls.find((c) => c.kind === 'ensure');
+    // The local version's node and main.js: ensure then sees the newer 9.9.9 and does not downgrade.
+    expect(ensure?.d.values[0]).toBe('/home/u/.config/conduit/runtime/1.2.3/node');
+    expect(ensure?.d.values[1]).toBe('/home/u/.config/conduit/runtime/1.2.3/server/main.js');
+    expect(outcome.ok && outcome.summary).toMatchObject({
+      installed: true,
+      reused: false,
+      version: '9.9.9',
+    });
+  });
+});
+
+describe('bootstrap: the shim and its node', () => {
+  it('pushes only the shim file, and copies node on B from the version just installed', async () => {
+    const f = fixture();
+    const r = remote(happy);
+    await bootstrapper(f, r.exec)(TARGET);
+    const shimTree = r.calls.filter((c) => c.kind === 'receiveTree').at(-1);
+    const names = (shimTree?.d.values[1] ?? '').split('\n').map((l) => l.split('\t')[2]);
+    expect(names).toEqual(['conduit-mcp-shim.cjs']);
+    const copy = r.calls.find((c) => c.kind === 'copyNode');
+    expect(copy?.d.values).toEqual([
+      '/home/u/.config/conduit/runtime',
+      '1.2.3',
+      '/home/u/.config/conduit/runtime/shim',
+      'node',
+    ]);
+  });
+
+  it('a node the shim copies is never pushed as bytes', async () => {
+    const f = fixture();
+    const r = remote(happy);
+    await bootstrapper(f, r.exec)(TARGET);
+    const pushedNames = r.calls
+      .filter((c) => c.kind === 'receiveTree')
+      .flatMap((c) => (c.d.values[1] ?? '').split('\n').map((l) => l.split('\t')[2]));
+    expect(pushedNames).not.toContain('node');
+  });
+});
+
+describe('bootstrap: a push is checked against binSha256, and refused without one', () => {
+  it('sends the pin binSha256 as the expected sha of the pushed node', async () => {
+    const f = fixture();
+    const script: Script = {
+      answer(kind, call) {
+        if (kind === 'download' && call.d.values[0]?.endsWith('1.2.3.tmp')) {
+          return result({ ok: false, step: 'download', detail: 'could not fetch' });
+        }
+        return kind === 'ensure' ? ENSURE_OK : result({ ok: true });
+      },
+    };
+    const r = remote(script);
+    await bootstrapper(f, r.exec)(TARGET);
+    const push = r.calls.find((c) => c.kind === 'receiveFile');
+    expect(push?.d.values[1]).toBe(sha256(readFileSync(f.nodeExe)));
+  });
+
+  it('refuses the push when the pin has no binSha256, failing closed', async () => {
+    const f = fixture();
+    const script: Script = {
+      answer(kind, call) {
+        if (kind === 'download' && call.d.values[0]?.endsWith('1.2.3.tmp')) {
+          return result({ ok: false, step: 'download', detail: 'could not fetch' });
+        }
+        return result({ ok: true });
+      },
+    };
+    const r = remote(script);
+    const outcome = await bootstrapper(f, r.exec, {
+      pins: fixturePins(f, { noNodeBinSha: true }),
+    })(TARGET);
+    expect(outcome.ok).toBe(false);
+    expect(outcome.ok ? '' : JSON.stringify(outcome.error)).toContain('binSha256');
+    expect(r.calls.some((c) => c.kind === 'receiveFile')).toBe(false);
   });
 });

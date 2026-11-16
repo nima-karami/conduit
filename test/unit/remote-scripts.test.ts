@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -14,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  copyNodeIntoShimCommand,
   downloadCommand,
   ensureCommand,
   FAMILY_PROBE,
@@ -726,6 +728,54 @@ describe.skipIf(!posix || !hasSh())('finalize (sh)', () => {
     expect(parseResultLine(r.stdout)).toMatchObject({ ok: true });
     expect(existsSync(join(dir, '1.0.0.tmp'))).toBe(false);
     expect(readFileSync(join(dir, '1.0.0', 'kept'), 'utf8')).toBe('k');
+  });
+});
+
+describe.skipIf(!posix || !hasSh())('copyNodeIntoShimCommand (sh)', () => {
+  const shimDir = () => join(dir, 'shim');
+
+  it('copies the installed node into <shim>.tmp, executable', () => {
+    mkdirSync(join(dir, '1.0.0'));
+    writeFileSync(join(dir, '1.0.0', 'node'), 'NODE');
+    mkdirSync(join(dir, 'shim.tmp'));
+    const r = runSh(
+      copyNodeIntoShimCommand('sh', { runtimeRoot: dir, version: '1.0.0', shimDir: shimDir() }),
+    );
+    expect(parseResultLine(r.stdout)).toEqual({ ok: true });
+    expect(readFileSync(join(dir, 'shim.tmp', 'node'), 'utf8')).toBe('NODE');
+    expect(statSync(join(dir, 'shim.tmp', 'node')).mode & 0o777).toBe(0o755);
+  });
+
+  it('refuses when the node is not installed at that version', () => {
+    mkdirSync(join(dir, 'shim.tmp'));
+    const r = runSh(
+      copyNodeIntoShimCommand('sh', { runtimeRoot: dir, version: '1.0.0', shimDir: shimDir() }),
+    );
+    expect(parseResultLine(r.stdout)).toMatchObject({ ok: false, step: 'unpack' });
+  });
+
+  it('refuses a version that is not a plain name', () => {
+    mkdirSync(join(dir, 'shim.tmp'));
+    const r = runSh(
+      copyNodeIntoShimCommand('sh', { runtimeRoot: dir, version: '../x', shimDir: shimDir() }),
+    );
+    expect(parseResultLine(r.stdout)).toMatchObject({ ok: false, step: 'unpack' });
+  });
+});
+
+describe('copyNodeIntoShimCommand (PowerShell output)', () => {
+  it('uses the -EncodedCommand form and copies node.exe', () => {
+    const cmd = copyNodeIntoShimCommand('powershell', {
+      runtimeRoot: 'C:\\rt',
+      version: '1.0.0',
+      shimDir: 'C:\\rt\\shim',
+    });
+    expect(cmd.command.startsWith('powershell -NoProfile')).toBe(true);
+    const script = Buffer.from(cmd.command.split('-EncodedCommand ')[1] ?? '', 'base64').toString(
+      'utf16le',
+    );
+    expect(script).toContain('Copy-Item');
+    expect(script).toContain('$name = Arg 3');
   });
 });
 

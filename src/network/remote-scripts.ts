@@ -457,6 +457,49 @@ const SH_FINALIZE = `${SH_HEADER}
   ok '{"ok":true,"existed":false}'
 `;
 
+// The shim dir's node is a copy of the node this version installed, never a second push: the
+// copy needs no bytes over ssh, and works on any remote once its own install has succeeded.
+const SH_COPY_NODE = `${SH_HEADER}
+  ROOT=$(d "$1")
+  V=$(d "$2")
+  SD=$(d "$3")
+  NAME=$(d "$4")
+  safe_abs "$ROOT" || fail unpack "the runtime root is not an absolute, safe path"
+  safe_abs "$SD" || fail unpack "the shim dir is not an absolute, safe path"
+  printf '%s' "$V" | grep -Eq '^[0-9A-Za-z.+-]+$' || fail unpack "a malformed version"
+  case "$V" in .*|*..*) fail unpack "a malformed version" ;; esac
+  case "$NAME" in node|node.exe) ;; *) fail unpack "an unexpected node name" ;; esac
+  SRC="$ROOT/$V/$NAME"
+  [ -f "$SRC" ] || fail unpack "node is not installed at $SRC"
+  TMP="$SD.tmp"
+  [ -d "$TMP" ] || fail unpack "nothing is staged at the shim tmp folder"
+  cp "$SRC" "$TMP/$NAME" || fail disk "could not copy node"
+  chmod 755 "$TMP/$NAME"
+  ok '{"ok":true}'
+`;
+
+const PS_COPY_NODE = `
+$phase = 'unpack'
+$root = Arg 0
+$v = Arg 1
+$sd = Arg 2
+$name = Arg 3
+try {
+  if (-not (SafeAbs $root)) { throw 'the runtime root is not an absolute, safe path' }
+  if (-not (SafeAbs $sd)) { throw 'the shim dir is not an absolute, safe path' }
+  if ($v -notmatch '^[0-9A-Za-z.+-]+$' -or $v.StartsWith('.') -or $v.Contains('..')) { throw 'a malformed version' }
+  if ($name -ne 'node.exe') { throw 'an unexpected node name' }
+  $src = Join-Path (Join-Path $root $v) $name
+  if (-not (Test-Path -LiteralPath $src)) { throw "node is not installed at $src" }
+  $tmp = "$sd.tmp"
+  if (-not (Test-Path -LiteralPath $tmp)) { throw 'nothing is staged at the shim tmp folder' }
+  $phase = 'disk'
+  Copy-Item -LiteralPath $src -Destination (Join-Path $tmp $name) -Force
+  Emit @{ ok = $true }
+} catch {
+  Fail $phase $_.Exception.Message
+}`;
+
 // The ensure step is the installed node running the new headless mode; it prints its own result.
 // --survives-logout and --shim-dir are the flags ensure-args.ts parses; --shim-dir is optional.
 const SH_ENSURE = `${SH_HEADER}
@@ -812,6 +855,16 @@ export function finalizeCommand(
 ): RemoteCommand {
   const values = [o.runtimeRoot, o.version];
   return f === 'sh' ? shCommand(SH_FINALIZE, values) : psCommand(PS_FINALIZE, values);
+}
+
+/** The shim dir's node: a copy of <runtimeRoot>/<version>/node[.exe] into <shimDir>.tmp. */
+export function copyNodeIntoShimCommand(
+  f: ShellFamily,
+  o: { runtimeRoot: string; version: string; shimDir: string },
+): RemoteCommand {
+  const name = f === 'sh' ? 'node' : 'node.exe';
+  const values = [o.runtimeRoot, o.version, o.shimDir, name];
+  return f === 'sh' ? shCommand(SH_COPY_NODE, values) : psCommand(PS_COPY_NODE, values);
 }
 
 export function ensureCommand(
