@@ -363,6 +363,7 @@ const SH_RECEIVE_FILE = `${SH_HEADER}
   printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{64}$' || fail checksum "a malformed sha256"
   printf '%s' "$SIZE" | grep -Eq '^[0-9]+$' || fail checksum "a malformed size"
   mkdir -p "$(dirname "$P")" || fail disk "cannot create the folder"
+  rm -f "$P" "$P.part"
   cat > "$P.part" || { rm -f "$P.part"; fail disk "cannot write the file"; }
   if [ "$(size_of "$P.part")" != "$SIZE" ]; then rm -f "$P.part"; fail checksum "size mismatch"; fi
   if [ "$(sha_of "$P.part")" != "$SHA" ]; then rm -f "$P.part"; fail checksum "sha256 mismatch"; fi
@@ -568,6 +569,9 @@ try {
   New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null
   $part = "$path.part"
   $phase = 'disk'
+  # A half-written file from an interrupted run must not survive into the new one.
+  if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+  if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Force }
   $in = [Console]::OpenStandardInput()
   $out = [IO.File]::Create($part)
   try { $in.CopyTo($out) } finally { $out.Dispose() }
@@ -664,7 +668,7 @@ try {
 // The registration is a prelude of the ensure script, present only for that method.
 const PS_TASK_START = `
 $name = 'ConduitServer'
-$action = New-ScheduledTaskAction -Execute $node -Argument ('"' + $main + '" --user-data "' + $ud + '"')
+$action = New-ScheduledTaskAction -Execute $node -Argument ('"' + $sup + '" --user-data "' + $ud + '" --hc "' + $hc + '"')
 $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
@@ -675,7 +679,9 @@ const PS_ENSURE_PRELUDE = `
 $node = Arg 0
 $main = Arg 1
 $ud = Arg 2
-$method = Arg 3`;
+$method = Arg 3
+$sup = Arg 4
+$hc = Arg 5`;
 
 const PS_ENSURE_RUN = `
 & $node $main --ensure-server --user-data $ud --start $method
@@ -755,13 +761,21 @@ export function finalizeCommand(
 
 export function ensureCommand(
   f: ShellFamily,
-  o: { node: string; mainJs: string; userData: string; method: StartMethod },
+  o: { node: string; mainJs: string; userData: string; method: StartMethod; hcExe?: string },
 ): RemoteCommand {
   const values = [o.node, o.mainJs, o.userData, o.method];
   if (f === 'sh') return shCommand(SH_ENSURE, values);
+  // The supervisor is a separate esbuild entry beside main.js, as the app runs it (supervisorArgs).
+  if (!o.mainJs.endsWith('main.js')) throw new Error(`mainJs must be the server's main.js`);
+  const superviseJs = o.mainJs.slice(0, -'main.js'.length) + 'supervise.js';
+  if (o.method === 'windows-task' && o.hcExe === undefined) {
+    throw new Error('the windows-task start needs the hc executable');
+  }
+  // cmd.exe caps a command line at 8191 characters, and these -EncodedCommand scripts may exceed it. Pending a Windows box.
+  const psValues = [...values, superviseJs, o.hcExe ?? ''];
   const script =
     o.method === 'windows-task'
       ? `${PS_ENSURE_PRELUDE}\n${PS_TASK_START}\n${PS_ENSURE_RUN}`
       : `${PS_ENSURE_PRELUDE}\n${PS_ENSURE_RUN}`;
-  return psCommand(script, values);
+  return psCommand(script, psValues);
 }

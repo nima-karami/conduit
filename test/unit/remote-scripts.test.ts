@@ -462,6 +462,66 @@ describe.skipIf(!posix || !hasSh())('receiveTree (sh)', () => {
   });
 });
 
+describe.skipIf(!posix || !hasSh())('an interrupted run leaves a partial <v>.tmp', () => {
+  /** A half-written staging folder: a wrong-hash node and a file nothing should have left there. */
+  function plantPartial(tmp: string): void {
+    mkdirSync(join(tmp, 'server'), { recursive: true });
+    writeFileSync(join(tmp, 'node'), 'half-written');
+    writeFileSync(join(tmp, 'extra.txt'), 'leftover');
+    writeFileSync(join(tmp, 'server', 'main.js'), 'half');
+    writeFileSync(join(tmp, 'server', 'extra.js'), 'leftover');
+  }
+
+  it('the next download replaces it, and finalize then succeeds', () => {
+    const tmp = join(dir, '1.0.0.tmp');
+    plantPartial(tmp);
+    const src = join(dir, 'node-src');
+    writeFileSync(src, 'fresh-node');
+    const pin: PinFile = { url: src, sha256: sha('fresh-node'), dest: 'node' };
+    const d = runSh(downloadCommand('sh', { stagingDir: tmp, pins: [pin], allowLocal: true }));
+    expect(parseResultLine(d.stdout)).toEqual({ ok: true });
+    expect(existsSync(join(tmp, 'extra.txt'))).toBe(false);
+    expect(existsSync(join(tmp, 'server'))).toBe(false);
+    expect(readFileSync(join(tmp, 'node'), 'utf8')).toBe('fresh-node');
+    const f = runSh(finalizeCommand('sh', { runtimeRoot: dir, version: '1.0.0' }));
+    expect(parseResultLine(f.stdout)).toMatchObject({ ok: true, existed: false });
+    expect(readFileSync(join(dir, '1.0.0', 'node'), 'utf8')).toBe('fresh-node');
+    expect(existsSync(tmp)).toBe(false);
+  });
+
+  it('the next receiveTree replaces a half-written server dir, and finalize succeeds', () => {
+    const tmp = join(dir, '1.0.0.tmp');
+    plantPartial(tmp);
+    const src = join(dir, 'src');
+    mkdirSync(src, { recursive: true });
+    writeFileSync(join(src, 'main.js'), 'good');
+    const tar = execFileSync('tar', ['-cf', '-', '-C', src, '.']);
+    const manifest = [{ path: 'main.js', sha256: sha('good'), size: 4 }];
+    const r = runSh(receiveTreeCommand('sh', { dir: join(tmp, 'server'), manifest }), {
+      input: tar,
+    });
+    expect(parseResultLine(r.stdout)).toEqual({ ok: true });
+    expect(existsSync(join(tmp, 'server', 'extra.js'))).toBe(false);
+    expect(readFileSync(join(tmp, 'server', 'main.js'), 'utf8')).toBe('good');
+    const f = runSh(finalizeCommand('sh', { runtimeRoot: dir, version: '1.0.0' }));
+    expect(parseResultLine(f.stdout)).toMatchObject({ ok: true });
+  });
+
+  it('the next receiveFile replaces a half-written file, and finalize succeeds', () => {
+    const tmp = join(dir, '1.0.0.tmp');
+    plantPartial(tmp);
+    const data = Buffer.from('pushed-node');
+    const r = runSh(
+      receiveFileCommand('sh', { path: join(tmp, 'node'), sha256: sha(data), size: data.length }),
+      { input: data },
+    );
+    expect(parseResultLine(r.stdout)).toEqual({ ok: true });
+    expect(readFileSync(join(tmp, 'node')).equals(data)).toBe(true);
+    const f = runSh(finalizeCommand('sh', { runtimeRoot: dir, version: '1.0.0' }));
+    expect(parseResultLine(f.stdout)).toMatchObject({ ok: true });
+  });
+});
+
 describe.skipIf(!posix || !hasSh())('finalize (sh)', () => {
   it('renames <version>.tmp to <version>', () => {
     mkdirSync(join(dir, '1.0.0.tmp'));
@@ -555,7 +615,7 @@ describe('PowerShell builders (output only; pwsh is not required)', () => {
     expect(
       ensureCommand(f, {
         node: 'C:\\n.exe',
-        mainJs: 'C:\\m.js',
+        mainJs: 'C:\\m\\main.js',
         userData: 'C:\\u',
         method: 'plain',
       }).command.startsWith(prefix),
@@ -577,25 +637,54 @@ describe('PowerShell builders (output only; pwsh is not required)', () => {
     expect(script).toContain('CONDUIT_RESULT');
   });
 
-  it('the Windows-task start registers a logon-only task before ensure runs', () => {
+  it('the Windows-task start registers a logon-only task that runs the supervisor', () => {
     const script = decodePs(
       ensureCommand('powershell', {
         node: 'C:\\n.exe',
-        mainJs: 'C:\\m.js',
+        mainJs: 'C:\\rt\\1.0.0\\server\\main.js',
         userData: 'C:\\u',
         method: 'windows-task',
+        hcExe: 'C:\\rt\\conduit-hc\\0.1.16\\conduit-hc.exe',
       }),
     );
     expect(script).toContain('Register-ScheduledTask');
     expect(script).toContain('Interactive');
     expect(script).toContain('--ensure-server');
+    // The action is the supervisor the app runs (esbuild's supervise entry), with the hc binary.
+    expect(script).toContain('$sup = Arg 4');
+    expect(script).toContain('$hc = Arg 5');
+    expect(script).toContain('--hc');
+    const values = [...script.matchAll(/'([A-Za-z0-9+/=]+)'/g)].map((m) =>
+      Buffer.from(m[1], 'base64').toString('utf8'),
+    );
+    expect(values).toContain('C:\\rt\\1.0.0\\server\\supervise.js');
+    expect(values).toContain('C:\\rt\\conduit-hc\\0.1.16\\conduit-hc.exe');
+  });
+
+  it('refuses a windows-task start without an hc executable, or a mainJs that is not main.js', () => {
+    expect(() =>
+      ensureCommand('powershell', {
+        node: 'C:\\n.exe',
+        mainJs: 'C:\\rt\\server\\main.js',
+        userData: 'C:\\u',
+        method: 'windows-task',
+      }),
+    ).toThrow(/hc executable/);
+    expect(() =>
+      ensureCommand('powershell', {
+        node: 'C:\\n.exe',
+        mainJs: 'C:\\rt\\server\\other.js',
+        userData: 'C:\\u',
+        method: 'plain',
+      }),
+    ).toThrow(/main\.js/);
   });
 
   it('the plain start registers no task', () => {
     const script = decodePs(
       ensureCommand('powershell', {
         node: 'C:\\n.exe',
-        mainJs: 'C:\\m.js',
+        mainJs: 'C:\\m\\main.js',
         userData: 'C:\\u',
         method: 'plain',
       }),
