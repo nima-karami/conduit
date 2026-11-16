@@ -958,6 +958,8 @@ export type HostToWebview =
       releaseNotes?: string;
       percent?: number;
       message?: string;
+      /** A copyable command the user runs by hand when the app can't install an update itself. */
+      command?: string;
     }
   // The close guard's ask to one window (dirty-quit-guard spec §2). A re-sent ask with the same
   // requestId re-probes a dialog already shown; it is not a new attempt.

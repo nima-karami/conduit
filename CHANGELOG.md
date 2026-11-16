@@ -33,6 +33,10 @@ All notable user-facing changes to Conduit. Format follows
 - A lead agent can now ask to attach a folder to a session it opened, not only to its own session; you still approve each one. If you narrowed `attach_folder` in Settings → MCP, your choice stays.
 - Permission asks from agents on a connected machine can now be answered here: Allow, Deny, or Always for this target when that machine allows it. Requests from another machine show that machine's name, and say when it's offline (you can answer once it's back).
 
+### Fixed
+- On Linux, when a `.deb` update can't be installed because your desktop has no password prompt, Conduit now tells you and shows the `sudo apt install` command to run yourself, instead of failing silently.
+- Commits from a git worktree now run the pre-commit checks.
+
 ## [0.66.1] — 2026-11-16
 
 ### Fixed

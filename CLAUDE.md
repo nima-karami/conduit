@@ -38,6 +38,8 @@ spec/ADR/test, not here.
   `disableDomainBlockingFor3DAPIs` is deliberately NOT called (web-tab safety).
 - User config is in `app.getPath('userData')` (`agents.json`, `sessions.json`); the board is
   `<project>/.conduit/board.json` (ADR 0002) — a missing one is an empty board.
+- `.husky/_` is husky's generated output and is tracked, so every worktree gets the hook shims.
+  After bumping `husky`, run `npm install` and commit the regenerated `.husky/_` (guard: `test/unit/hooks-path.test.ts`).
 
 **Security (host-enforced; the renderer is never load-bearing)**
 - `conduit-preview:` confinement is in `electron/preview-protocol.ts`: one token per root = one

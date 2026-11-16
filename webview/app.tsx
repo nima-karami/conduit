@@ -981,6 +981,10 @@ export function App() {
         // dismissed it during a prior download). The Settings → About row reflects the
         // rest of the lifecycle inline, so no toast is needed.
         if (msg.status === 'ready') setUpdateDismissed(false);
+        // An install that failed after "Restart to update" leaves the app running with no visible
+        // change, so the one failure with a fix the user can run gets a toast that stays (CON-48).
+        if (msg.status === 'error' && msg.command !== undefined && msg.message !== undefined)
+          pushToast({ message: msg.message, code: msg.command, variant: 'error', durationMs: 0 });
       } else if (msg.type === 'confirmQuit') {
         void responder.onConfirmQuit(msg);
       } else if (msg.type === 'confirmStopAgentsFailed') {

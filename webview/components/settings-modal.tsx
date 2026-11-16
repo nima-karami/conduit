@@ -1585,7 +1585,11 @@ function UpdatesControl({
             Up to date
           </span>
         )}
-        {s === 'error' && (
+        {s === 'error' && status?.command && (
+          <span className="about__updatestatus about__updatestatus--err">{status.message}</span>
+        )}
+        {s === 'error' && status?.command && <code>{status.command}</code>}
+        {s === 'error' && !status?.command && (
           <span className="about__updatestatus about__updatestatus--err">Check failed</span>
         )}
         <button type="button" className="about__checkbtn" onClick={onCheck} disabled={checking}>
