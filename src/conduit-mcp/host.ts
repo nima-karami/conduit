@@ -104,6 +104,7 @@ import type {
   PolicyTarget,
   Principal,
 } from './policy-types';
+import { createRemotePolicy } from './remote-policy';
 import {
   checkRemoteAnswer,
   createRemoteRequests,
@@ -1013,6 +1014,17 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
   // A's mirror of remote requests: B writes it over the link, nothing is stored (CON-42 decision 2).
   const remoteRequests = createRemoteRequests({ onChanged: () => scheduleBroadcast() });
+  // A's copy of each dialed machine's rules and its drafts (CON-46 L4). Its in-memory edits run on
+  // the same clock and timers as the local policy.
+  const remotePolicy = createRemotePolicy({
+    network: () => deps.network,
+    draftsIo: createRequestsIo(path.join(deps.dir, 'remote-policy.json')),
+    now,
+    newId: () => randomBytes(12).toString('hex'),
+    ...requestTimers,
+    warn: (message, error) => deps.log.warn('conduit-mcp', message, { error: String(error) }),
+  });
+  remotePolicy.onChange(() => scheduleBroadcast());
 
   const requestService: RequestService = createRequestService({
     io: createRequestsIo(path.join(deps.dir, 'requests.json')),
@@ -1671,6 +1683,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       projectId: session.projectId ?? null,
     };
   };
+  const machineName = (machineId: string): string =>
+    deps.network?.listMachines().find((m) => m.machine_id === machineId)?.machine ?? machineId;
   const policyService = createPolicyService({
     policyIo: deps.policyIo ?? createRequestsIo(path.join(deps.dir, 'policy.json')),
     lastGoodIo: createRequestsIo(path.join(deps.dir, 'policy.last-good.json')),
@@ -1702,6 +1716,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     if (point.kind === 'peer') return 'machineId' in point && typeof point.machineId === 'string';
     return point.kind === 'cli' && 'cli' in point && CLI_KINDS.some((kind) => kind === point.cli);
   };
+  /** An optional machine an edit names: a string, or absent for this machine's own rules. */
+  const machineArg = (machine: unknown): machine is string | undefined =>
+    machine === undefined || (typeof machine === 'string' && machine.length > 0);
   const raisedRequests = new Map<InFlight, string>();
   const emptyTarget: PolicyTarget = { sessionId: null, path: null, folder: null, projectId: null };
   /** The targets an answer's grants cover, or null when a target cannot resolve the scope. */
@@ -2806,9 +2823,14 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       awaitingApproval: flow.awaitingApproval(),
       waitingAsks: flow.waitingAskCount(),
       requests: mergeRemoteRequests(requestService.ui(), remoteRequests.views()),
-      policy: policyService.ui(
-        deps.sessions.list().map((s) => ({ sessionId: s.id, launchedCli: knownLaunchedCli(s.id) })),
-      ),
+      policy: {
+        ...policyService.ui(
+          deps.sessions
+            .list()
+            .map((s) => ({ sessionId: s.id, launchedCli: knownLaunchedCli(s.id) })),
+        ),
+        machines: remotePolicy.ui(machineName),
+      },
     };
   }
 
@@ -3469,13 +3491,36 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           return;
         }
         case 'mcp:setAssignment': {
-          if (!validPoint(m.point) || (m.profileId !== null && typeof m.profileId !== 'string')) {
+          if (
+            !validPoint(m.point) ||
+            (m.profileId !== null && typeof m.profileId !== 'string') ||
+            !machineArg(m.machine)
+          ) {
             reply({
               type: 'mcp:policyResult',
               requestId: m.requestId,
               ok: false,
               error: 'invalid-value',
             });
+            return;
+          }
+          const point = m.point;
+          const profileId = m.profileId;
+          if (m.machine !== undefined) {
+            // A session id names one of this machine's own sessions, so it never travels (CON-46).
+            if (point.kind === 'session') {
+              reply({
+                type: 'mcp:policyResult',
+                requestId: m.requestId,
+                ok: false,
+                error: 'invalid_args',
+              });
+              return;
+            }
+            const result = remotePolicy.edit(m.machine, (svc) =>
+              svc.setAssignment(point, profileId),
+            );
+            reply({ type: 'mcp:policyResult', requestId: m.requestId, ...result });
             return;
           }
           if (m.point.kind === 'session' && !deps.sessions.get(m.point.sessionId)) {
@@ -3496,7 +3541,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           if (
             !validPoint(m.point) ||
             (m.point.kind !== 'default' && m.point.kind !== 'cli') ||
-            !isToolName(m.tool)
+            !isToolName(m.tool) ||
+            !machineArg(m.machine)
           ) {
             reply({
               type: 'mcp:policyResult',
@@ -3516,17 +3562,38 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             });
             return;
           }
-          const result = policyService.applyLegacyPatch(
-            m.point,
-            m.point.kind === 'cli' ? { kind: 'default' } : null,
-            m.tool,
-            patch,
-          );
+          const point = m.point;
+          const tool = m.tool;
+          const lower = point.kind === 'cli' ? { kind: 'default' as const } : null;
+          if (m.machine !== undefined) {
+            const result = remotePolicy.edit(m.machine, (svc) =>
+              svc.applyLegacyPatch(point, lower, tool, patch),
+            );
+            reply({ type: 'mcp:policyResult', requestId: m.requestId, ...result });
+            return;
+          }
+          const result = policyService.applyLegacyPatch(point, lower, tool, patch);
           reply({ type: 'mcp:policyResult', requestId: m.requestId, ...result });
           flow.recheck();
           return;
         }
         case 'mcp:revokeGrant': {
+          if (m.machine !== undefined) {
+            const machine = m.machine;
+            const grantId = m.grantId;
+            const res =
+              typeof grantId === 'string' ? await remotePolicy.revoke(machine, grantId) : null;
+            if (res !== null && res.ok)
+              reply({ type: 'mcp:policyResult', requestId: m.requestId, ok: true });
+            else
+              reply({
+                type: 'mcp:policyResult',
+                requestId: m.requestId,
+                ok: false,
+                error: res === null ? 'not-found' : res.error.code,
+              });
+            return;
+          }
           const ok = typeof m.grantId === 'string' && policyService.revokeGrant(m.grantId);
           reply(
             ok
@@ -3534,6 +3601,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               : { type: 'mcp:policyResult', requestId: m.requestId, ok: false, error: 'not-found' },
           );
           flow.recheck();
+          return;
+        }
+        case 'mcp:remotePolicy': {
+          if (typeof m.machine !== 'string') return;
+          if (m.action === 'discard') remotePolicy.discard(m.machine);
+          else if (m.action === 'reapply') void remotePolicy.reapply(m.machine);
           return;
         }
         case 'mcp:allowOnce': {
@@ -3682,6 +3755,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       mirrorOf: () => requestService.mirrorOf(),
       requestsHasEnded: () => requestService.hasEnded(),
       onRequestsMirrorChange: (fn) => requestService.onMirrorChange(fn),
+      remotePolicySink: () => remotePolicy,
       policyDoc: () => ({ ...policyService.remoteDoc(), grants: policyService.grantsView() }),
       onPolicyDocChange: (fn) => policyService.onRemoteDocChange(fn),
       // A pushed doc or a revoke can allow or deny an ask that waits on it, so the waiting asks are

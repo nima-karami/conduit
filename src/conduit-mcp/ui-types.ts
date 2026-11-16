@@ -2,6 +2,7 @@
 // type-only, from node-free modules (./types, ./install-types, ../git-range, ../protocol), so the
 // renderer never reaches a node-backed one (plan ruling 8). The ../protocol ↔ ui-types cycle is
 // type-only and erased at build.
+import type { RemoteGrantView } from '../contracts/remote-policy';
 import type { RefEndpoint } from '../git-range';
 import type { ParsedPatchFile } from '../patch-parse';
 import type { CommitNode } from '../protocol';
@@ -138,13 +139,39 @@ export interface McpThreadView {
   messages: McpThreadMessage[];
 }
 
-export function emptyPolicyUi(): PolicyUiState {
+/** A machine's rules as this machine holds them: its mirror, or its draft over it (CON-46 L4). */
+export type RemotePolicyStatus = 'applied' | 'pushing' | 'waiting' | 'conflict' | 'refused';
+
+export interface RemotePolicyUi {
+  machineId: string;
+  /** The name the machine is shown by. */
+  name: string;
+  link: 'up' | 'down' | 'gone';
+  /** B's rev as last mirrored; null when no copy is held (link gone, or never received). */
+  rev: number | null;
+  status: RemotePolicyStatus;
+  /** B's message when it refused the push; null otherwise. */
+  refusal: string | null;
+  /** The rules the owner sees: the draft over the mirror, else the mirror. */
+  policy: PolicyUiState;
+  /** B's rules when a push hit a newer rev; null otherwise. */
+  conflict: PolicyUiState | null;
+  grants: RemoteGrantView[];
+}
+
+interface McpPolicyUi extends PolicyUiState {
+  /** Every machine with a mirror or a draft, in the order the store holds them. */
+  machines: RemotePolicyUi[];
+}
+
+export function emptyPolicyUi(): McpPolicyUi {
   return {
     profiles: [],
     sessions: {},
     grants: [],
     legacy: { global: {}, byCli: {}, sessions: {} },
     readOnly: false,
+    machines: [],
   };
 }
 
@@ -170,7 +197,7 @@ export interface McpUiState {
   /** How many tool-policy asks are waiting right now (the tray counts each). */
   waitingAsks: number;
   requests: RequestsUiState;
-  policy: PolicyUiState;
+  policy: McpPolicyUi;
 }
 
 /** A session where an agent CLI was started but never reached this host (spec 2026-10-27-conduit-mcp-install §2.5). */

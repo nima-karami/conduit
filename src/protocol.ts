@@ -1255,6 +1255,8 @@ export type WebviewToHost =
       requestId: number;
       point: AssignmentPoint;
       profileId: ProfileId | null;
+      /** The machine whose rules this edits (CON-46); absent edits this machine's rules. */
+      machine?: string;
     }
   | {
       type: 'mcp:setPointPolicy';
@@ -1262,8 +1264,12 @@ export type WebviewToHost =
       point: { kind: 'default' } | { kind: 'cli'; cli: CliKind };
       tool: string;
       patch: unknown;
+      /** The machine whose rules this edits (CON-46); absent edits this machine's rules. */
+      machine?: string;
     }
-  | { type: 'mcp:revokeGrant'; requestId: number; grantId: string }
+  | { type: 'mcp:revokeGrant'; requestId: number; grantId: string; machine?: string }
+  // Discard a machine's draft, or re-apply it on top of that machine's current rules (CON-46).
+  | { type: 'mcp:remotePolicy'; machine: string; action: 'discard' | 'reapply' }
   | { type: 'mcp:allowOnce'; requestId: number; activityId: string }
   | { type: 'mcp:setAway'; away: boolean; until: string | null }
   // Answer from the approval card; counts only from the window the ask was sent to

@@ -8629,3 +8629,201 @@ describe('createConduitMcpHost — remote requests (CON-42 A side)', () => {
     ]);
   });
 });
+
+describe('remote policy edits from this machine (CON-46 L4)', () => {
+  const MACHINE = 'm-00000001';
+  const VIEW_M1: MachineView = {
+    machine: 'win-box',
+    machine_id: MACHINE,
+    target: 'win-box',
+    state: 'up',
+    mode: 'full',
+    os: 'windows',
+    arch: 'x64',
+    conduit_version: '1.4.0',
+    agents: ['claude'],
+    sessions: 0,
+    last_seen: null,
+    survives_logout: true,
+  };
+  const RULES_AT_3 = { rev: 3, doc: { profiles: [], assignments: [] }, grants: [] };
+  const LEAD_DEFAULT = {
+    profiles: [],
+    assignments: [
+      {
+        point: { kind: 'default' },
+        assignment: { profileId: 'lead', exceptions: [], onScreenOnly: false },
+      },
+    ],
+  };
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  /** The drafts as saved on disk, or undefined while the file is not there yet. */
+  const savedDrafts = (dir: string): Record<string, unknown> | undefined => {
+    const file = path.join(dir, 'remote-policy.json');
+    return fs.existsSync(file)
+      ? (JSON.parse(fs.readFileSync(file, 'utf8')).drafts as Record<string, unknown>)
+      : undefined;
+  };
+
+  function remoteNet() {
+    const pushes: Array<[string, number, unknown]> = [];
+    const revokes: Array<[string, string]> = [];
+    const unused = (): never => {
+      throw new Error('not used by the remote policy tests');
+    };
+    const network: NetworkPort = {
+      remoteEntries: () => [],
+      resolve: unused,
+      enqueue: unused,
+      call: unused,
+      waitReading: unused,
+      peerCapabilitiesOf: unused,
+      onChange: () => () => undefined,
+      listMachines: () => [VIEW_M1],
+      connectMachine: unused,
+      disconnectMachine: unused,
+      selfName: () => 'this-machine',
+      answerRemoteRequest: unused,
+      pushPolicy: async (machineId, baseRev, doc) => {
+        pushes.push([machineId, baseRev, doc]);
+        return { ok: true, value: { rev: baseRev + 1 } };
+      },
+      revokeRemoteGrant: async (machineId, grantId) => {
+        revokes.push([machineId, grantId]);
+        return { ok: true, value: null };
+      },
+    };
+    return { network, pushes, revokes };
+  }
+
+  async function post(h: Harness, msg: unknown): Promise<HostToWebview[]> {
+    const replies: HostToWebview[] = [];
+    await h.host.handleRenderer(msg as McpRendererMessage, (m) => replies.push(m), 1);
+    return replies;
+  }
+
+  it('a machine edit is pushed to that machine at its rev, and a local edit is not', async () => {
+    const { network, pushes } = remoteNet();
+    const h = harness({ network, manualTimers: true });
+    await h.host.start();
+    expect(h.host.uiState().policy.machines).toEqual([]);
+    const sink = h.host.networkPort().remotePolicySink();
+    sink.apply(MACHINE, RULES_AT_3);
+    sink.setLinkState(MACHINE, 'up');
+
+    expect(
+      await post(h, {
+        type: 'mcp:setAssignment',
+        requestId: 1,
+        point: { kind: 'default' },
+        profileId: 'lead',
+        machine: MACHINE,
+      }),
+    ).toEqual([{ type: 'mcp:policyResult', requestId: 1, ok: true }]);
+    await settle();
+    expect(pushes).toEqual([[MACHINE, 3, LEAD_DEFAULT]]);
+    expect(h.host.uiState().policy.machines).toMatchObject([
+      { machineId: MACHINE, name: 'win-box', status: 'applied', rev: 3 },
+    ]);
+
+    expect(
+      await post(h, {
+        type: 'mcp:setAssignment',
+        requestId: 2,
+        point: { kind: 'default' },
+        profileId: 'worker',
+      }),
+    ).toEqual([{ type: 'mcp:policyResult', requestId: 2, ok: true }]);
+    await settle();
+    expect(pushes).toHaveLength(1);
+    expect(h.host.uiState().policy.machines).toHaveLength(1);
+  });
+
+  it('a machine edit while down waits as a draft saved to remote-policy.json, and survives a restart', async () => {
+    const { network, pushes } = remoteNet();
+    const h = harness({ network, manualTimers: true });
+    await h.host.start();
+    const sink = h.host.networkPort().remotePolicySink();
+    sink.apply(MACHINE, RULES_AT_3);
+    sink.setLinkState(MACHINE, 'down');
+
+    await post(h, {
+      type: 'mcp:setPointPolicy',
+      requestId: 3,
+      point: { kind: 'default' },
+      tool: 'send_input',
+      patch: { access: 'off' },
+      machine: MACHINE,
+    });
+    await settle();
+    expect(pushes).toEqual([]);
+    expect(h.host.uiState().policy.machines).toMatchObject([
+      { machineId: MACHINE, status: 'waiting', rev: 3 },
+    ]);
+    await until(() => savedDrafts(h.dir)?.[MACHINE] !== undefined);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(h.dir, 'remote-policy.json'), 'utf8')),
+    ).toMatchObject({ version: 1, drafts: { [MACHINE]: { baseRev: 3 } } });
+
+    const again = harness({ dir: h.dir, network, manualTimers: true });
+    await again.host.start();
+    expect(again.host.uiState().policy.machines).toMatchObject([
+      { machineId: MACHINE, status: 'waiting', link: 'down', rev: null },
+    ]);
+  });
+
+  it('a session point is refused for a remote edit, and nothing is pushed', async () => {
+    const { network, pushes } = remoteNet();
+    const h = harness({ network, manualTimers: true });
+    await h.host.start();
+    const sink = h.host.networkPort().remotePolicySink();
+    sink.apply(MACHINE, RULES_AT_3);
+    sink.setLinkState(MACHINE, 'up');
+    expect(
+      await post(h, {
+        type: 'mcp:setAssignment',
+        requestId: 4,
+        point: { kind: 'session', sessionId: 's1' },
+        profileId: 'lead',
+        machine: MACHINE,
+      }),
+    ).toEqual([{ type: 'mcp:policyResult', requestId: 4, ok: false, error: 'invalid_args' }]);
+    await settle();
+    expect(pushes).toEqual([]);
+  });
+
+  it('a revoke with a machine goes to that machine, and without one stays local', async () => {
+    const { network, revokes } = remoteNet();
+    const h = harness({ network, manualTimers: true });
+    await h.host.start();
+    expect(
+      await post(h, { type: 'mcp:revokeGrant', requestId: 5, grantId: 'g-9', machine: MACHINE }),
+    ).toEqual([{ type: 'mcp:policyResult', requestId: 5, ok: true }]);
+    expect(revokes).toEqual([[MACHINE, 'g-9']]);
+    expect(await post(h, { type: 'mcp:revokeGrant', requestId: 6, grantId: 'g-9' })).toEqual([
+      { type: 'mcp:policyResult', requestId: 6, ok: false, error: 'not-found' },
+    ]);
+    expect(revokes).toHaveLength(1);
+  });
+
+  it('mcp:remotePolicy discard clears the draft and returns the machine to applied', async () => {
+    const { network, pushes } = remoteNet();
+    const h = harness({ network, manualTimers: true });
+    await h.host.start();
+    const sink = h.host.networkPort().remotePolicySink();
+    sink.apply(MACHINE, RULES_AT_3);
+    sink.setLinkState(MACHINE, 'down');
+    await post(h, {
+      type: 'mcp:setAssignment',
+      requestId: 7,
+      point: { kind: 'default' },
+      profileId: 'lead',
+      machine: MACHINE,
+    });
+    await post(h, { type: 'mcp:remotePolicy', machine: MACHINE, action: 'discard' });
+    expect(h.host.uiState().policy.machines).toMatchObject([{ status: 'applied' }]);
+    await until(() => Object.keys(savedDrafts(h.dir) ?? { x: 1 }).length === 0);
+    expect(savedDrafts(h.dir)).toEqual({});
+    expect(pushes).toEqual([]);
+  });
+});

@@ -408,7 +408,7 @@ export function createServices(o: ServicesOptions) {
                 return port.revokeRemoteGrant(grantId);
               },
             },
-            a: () => mcp?.networkPort().remotePolicySink?.() ?? null,
+            a: () => mcp?.networkPort().remotePolicySink() ?? null,
           },
           monitor: {
             sessions: () => monitorSessions(),
