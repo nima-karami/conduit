@@ -16,6 +16,7 @@ export interface ClaudeFeedGap {
   post(sessionId: string, fromSubagent: boolean, toolUseId: string | null): void;
   stop(sessionId: string, transcriptPath: string): void;
   forget(sessionId: string): void;
+  // A test seam: pruning of received posts would otherwise show only as memory use.
   receivedCount(sessionId: string): number;
   settled(): Promise<void>;
   dispose(): void;
