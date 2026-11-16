@@ -52,6 +52,7 @@ function fakeManager(store: ReturnType<typeof openLinkStore>) {
   const calls: string[] = [];
   const states = new Map<string, LinkState>();
   let dialWorks = true;
+  let waitFailure: SshFailure | null = null;
   const manager: MachinesManager = {
     view: (machineId) => {
       const state = states.get(machineId);
@@ -72,7 +73,9 @@ function fakeManager(store: ReturnType<typeof openLinkStore>) {
       return true;
     },
     waitUp: async (machineId) =>
-      states.get(machineId) === 'up' ? { up: true } : { up: false, failure: null },
+      states.get(machineId) === 'up' && waitFailure === null
+        ? { up: true }
+        : { up: false, failure: waitFailure },
   };
   return {
     manager,
@@ -80,6 +83,10 @@ function fakeManager(store: ReturnType<typeof openLinkStore>) {
     states,
     setDialWorks(v: boolean) {
       dialWorks = v;
+    },
+    /** What the wait reports after a bootstrap: a dial that failed, or null for a silent wait. */
+    setWaitFailure(f: SshFailure | null) {
+      waitFailure = f;
     },
   };
 }
@@ -265,6 +272,16 @@ describe('machines: connect', () => {
       value: { machine_id: 'm-00000001', reused: false, os: 'linux' },
     });
     expect(store.get('m-00000001')?.machine?.enabled).toBe(true);
+  });
+
+  // The bootstrap pinned the machine, but its link never stayed up: connect must say so, not ok.
+  it('a bootstrap that pins a machine whose link then fails is that failure, not ok', async () => {
+    const { fake, machines } = setup();
+    fake.setWaitFailure({ code: 'ssh_auth_failed' });
+    expect(await machines.connect('new.example', LIVE)).toEqual({
+      ok: false,
+      error: { code: 'ssh_auth_failed', detail: {} },
+    });
   });
 
   it('an unknown target is bootstrapped, and the machine it pins is listed', async () => {

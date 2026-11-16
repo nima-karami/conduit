@@ -178,6 +178,17 @@ export function createMachines(deps: MachinesDeps): Machines {
   const nameOf = (machineId: string): string | null =>
     deps.store.links().find((l) => l.machineId === machineId)?.name ?? null;
 
+  // The one wait for a link to be up, shared by both paths: a bootstrap's pin does not mean up (the
+  // link may still be settling), and a redial must not be reported before its dial finishes.
+  const waitForUp = async (machineId: string): Promise<MachineError | null> => {
+    // The wait has its own timer, so the caller's budget only needs to stop waiting, not the dial.
+    const waited = await deps.manager.waitUp(machineId, DIAL_WAIT_MS, new AbortController().signal);
+    if (waited.up) return null;
+    // A dial that reported why it failed answers with that reason; only a silent wait is a timeout.
+    if (waited.failure !== null) return machineErrorOf(waited.failure);
+    return downErrorOf(deps.manager.view(machineId)?.state);
+  };
+
   const bootstrapTo = async (target: string): Promise<ConnectMachineResult> => {
     const r = await deps.bootstrap(target);
     if (!r.ok) return { ok: false, error: machineErrorOf(r.error) };
@@ -185,6 +196,8 @@ export function createMachines(deps: MachinesDeps): Machines {
     if (name === null) {
       return { ok: false, error: { code: 'ssh_unreachable', detail: { detail: 'not_recorded' } } };
     }
+    const notUp = await waitForUp(r.machineId);
+    if (notUp !== null) return { ok: false, error: notUp };
     return {
       ok: true,
       value: {
@@ -206,17 +219,8 @@ export function createMachines(deps: MachinesDeps): Machines {
     if (!deps.manager.enable(record.machineId)) {
       return { ok: false, error: { code: 'machine_unknown', detail: {} } };
     }
-    // The wait has its own timer, so the caller's budget only needs to stop waiting, not the dial.
-    const waited = await deps.manager.waitUp(
-      record.machineId,
-      DIAL_WAIT_MS,
-      new AbortController().signal,
-    );
-    if (!waited.up) {
-      // A dial that reported why it failed answers with that reason; only a silent wait is a timeout.
-      if (waited.failure !== null) return { ok: false, error: machineErrorOf(waited.failure) };
-      return { ok: false, error: downErrorOf(deps.manager.view(record.machineId)?.state) };
-    }
+    const notUp = await waitForUp(record.machineId);
+    if (notUp !== null) return { ok: false, error: notUp };
     return {
       ok: true,
       value: {

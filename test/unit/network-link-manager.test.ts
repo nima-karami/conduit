@@ -1325,8 +1325,8 @@ describe('a dial failure is kept on the peer until a dial succeeds', { timeout: 
 
 describe('re-adding and disconnecting a machine', { timeout: 60_000 }, () => {
   // The reviewer's probe: an explicit add of a disabled machine must come up when the add returns, and
-  // its machine block then reads enabled. The peer has seen the link go first: a re-add within the
-  // same millisecond races B's stale stream, which B refuses as a duplicate (see the review's B1 note).
+  // its machine block then reads enabled. No wait for B first: a re-add right after the disconnect is the
+  // case that used to race B's stale stream (review CON-39 T1, B3).
   it('re-adding a disabled machine enables it before its link attaches, so it comes up', async () => {
     const { a, b } = await sshPair();
     expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
@@ -1334,10 +1334,11 @@ describe('re-adding and disconnecting a machine', { timeout: 60_000 }, () => {
     a.store.setMachine(b.id.machineId, { ...META, enabled: true });
     a.manager.disconnect(b.id.machineId);
     await until(() => a.manager.view(b.id.machineId)?.state === 'down');
-    await until(() => b.manager.view(a.id.machineId)?.state === 'down');
     expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
+    expect(a.manager.view(b.id.machineId)?.state).toBe('up');
     a.store.setMachine(b.id.machineId, { ...META, enabled: true });
-    await new Promise((r) => setTimeout(r, 1_500));
+    // B's stale close must not arrive and take the link down after the add has reported it up.
+    await new Promise((r) => setTimeout(r, 300));
     expect(a.manager.view(b.id.machineId)?.state).toBe('up');
     expect(a.store.get(b.id.machineId)?.machine?.enabled).toBe(true);
   });

@@ -398,7 +398,12 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     }
     let replaced = false;
     if (p.conn) {
-      const keep = keepConnection({ dialerMachineId: p.dialer ?? '' }, { dialerMachineId: dialer });
+      // Same dialer: that machine only opens a new stream once its side of the old one is gone, so the
+      // old one is stale and the new one stays (review CON-39 T1, B3). Different dialers keep the rule.
+      const keep =
+        p.dialer === dialer
+          ? 'b'
+          : keepConnection({ dialerMachineId: p.dialer ?? '' }, { dialerMachineId: dialer });
       if (keep === 'a') {
         opened.send({ t: 'bye', reason: 'duplicate' });
         opened.close('duplicate');
