@@ -101,6 +101,7 @@ function harness(): Harness {
     return { ok: hit?.ok ?? false, stdout: hit?.stdout ?? '', stderr: hit?.stderr ?? '' };
   };
   h.deps = {
+    selfName: () => 'this machine',
     homeOf: (id) => (h.targets.some((t) => t.sessionId === id) ? HOME : undefined),
     resolvePath: (home, p) => (p.startsWith('/') ? p : `${home}/${p}`),
     kindOf: async () => 'missing',

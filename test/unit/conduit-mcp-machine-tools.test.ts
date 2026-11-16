@@ -93,6 +93,7 @@ function portWith(over: Partial<NetworkPort>): NetworkPort {
     listMachines: () => [],
     connectMachine: async () => ({ ok: true, value: OK }),
     disconnectMachine: async () => ({ ok: true, value: { machine: 'win-box', state: 'down' } }),
+    selfName: () => 'this-machine',
     ...over,
   };
 }

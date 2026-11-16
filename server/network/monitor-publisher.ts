@@ -20,6 +20,17 @@ export interface MonitorSource {
   agents(): MonitorSnapshot['agents'];
 }
 
+/** A local opener is named by its handle; a session whose opener has no listed handle names none. */
+function openerOf(
+  entry: DirectoryEntry | undefined,
+  bySession: ReadonlyMap<string, DirectoryEntry>,
+): MonitorSession['openedBy'] {
+  if (entry?.remoteOpener) return { ...entry.remoteOpener };
+  if (!entry?.openedBy) return null;
+  const opener = bySession.get(entry.openedBy);
+  return opener ? { handle: opener.handle, machineId: null } : null;
+}
+
 export function monitorRows(
   sessions: SessionView[],
   directory: DirectoryEntry[],
@@ -48,6 +59,7 @@ export function monitorRows(
       completions: session.completions ?? 0,
       limit: null,
       status: session.status,
+      openedBy: openerOf(entry, bySession),
     };
   });
 }
@@ -56,7 +68,18 @@ export interface PublisherLink {
   machineId: string;
   state: LinkState;
   capabilities: Capabilities;
+  /** The peer's protocol minor from its hello; absent until the hello lands. */
+  peerMinor?: number;
 }
+
+// see docs/plans/2026-11-16-remote-ssh-routed-tools.plan.md, decision 3: an opener is minor 2
+// only, so a peer below it never sees the field its strict parser would refuse.
+const OPENER_MIN_MINOR = 2;
+const withoutOpeners = (s: MonitorSession): MonitorSession => {
+  const shown = { ...s };
+  delete shown.openedBy;
+  return shown;
+};
 
 export interface MonitorPublisherDeps {
   source: MonitorSource;
@@ -98,6 +121,8 @@ export function snapshotFor(
           attention: { attentionReason: null, completions: 0 },
           completions: 0,
           limit: null,
+          // Lineage is part of the rest of my work, which this peer is not shown.
+          openedBy: null,
         })),
       requests: [],
       youUnread: 0,
@@ -123,7 +148,14 @@ export function createMonitorPublisher(deps: MonitorPublisherDeps): MonitorPubli
     if (!live(link.state)) return;
     seq += 1;
     const snapshot = snapshotFor(link.capabilities, deps.source, seq);
-    if (snapshot) deps.send(link.machineId, { t: 'snapshot', snapshot });
+    if (!snapshot) return;
+    const openers = link.peerMinor !== undefined && link.peerMinor >= OPENER_MIN_MINOR;
+    deps.send(link.machineId, {
+      t: 'snapshot',
+      snapshot: openers
+        ? snapshot
+        : { ...snapshot, sessions: snapshot.sessions.map(withoutOpeners) },
+    });
   };
 
   return {

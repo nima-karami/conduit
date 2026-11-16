@@ -13,6 +13,7 @@ export type AuditKind =
   | 'drive.start'
   | 'drive.stop'
   | 'drive.refused'
+  | 'call.refused'
   | 'bridge.refused';
 
 export interface AuditEvent {

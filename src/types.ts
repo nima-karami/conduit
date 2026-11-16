@@ -96,13 +96,14 @@ export interface SessionCommand {
   command: string;
   args: string[];
 }
-/** Both kept because handles can be reused (spec 2026-10-27-conduit-mcp-control-tools §3.3). */
-export interface SessionOpener {
-  handle: string;
-  sessionId: string;
-  /** A remote lead's machine; see docs/plans/2026-11-16-remote-ssh-routed-tools.plan.md, decision 3 */
-  machineId?: string;
-}
+/**
+ * Both kept because handles can be reused (spec 2026-10-27-conduit-mcp-control-tools §3.3). A remote
+ * lead has no session here, so its opener carries the machine instead; see
+ * docs/plans/2026-11-16-remote-ssh-routed-tools.plan.md, decision 3
+ */
+export type SessionOpener =
+  | { handle: string; sessionId: string; machineId?: undefined }
+  | { handle: string; machineId: string; sessionId?: undefined };
 
 export interface Session {
   id: string;

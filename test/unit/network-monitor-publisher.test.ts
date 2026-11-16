@@ -6,7 +6,9 @@ import {
   type PublisherLink,
   snapshotFor,
 } from '../../server/network/monitor-publisher';
+import type { DirectoryEntry } from '../../src/conduit-mcp/tools';
 import type { Capabilities, LinkFrame, MonitorSession } from '../../src/contracts/link-protocol';
+import type { SessionView } from '../../src/contracts/server-protocol';
 
 const session: MonitorSession = {
   sessionId: 's1',
@@ -65,6 +67,7 @@ describe('snapshotFor', () => {
           attention: { attentionReason: null, completions: 0 },
           completions: 0,
           limit: null,
+          openedBy: null,
         },
       ],
       requests: [],
@@ -72,6 +75,14 @@ describe('snapshotFor', () => {
       ownerPresence: 'here',
       agents: [],
     });
+  });
+  it('messaging only: the opener is not shown either', () => {
+    const opened: MonitorSource = {
+      ...source,
+      sessions: () => [{ ...session, openedBy: { handle: 'claude-0', machineId: null } }],
+    };
+    const snap = snapshotFor(caps(true, false, false), opened, 1);
+    expect(snap?.sessions.map((s) => s.openedBy)).toEqual([null]);
   });
   it('monitor adds asks, unread and presence; drive adds the agent list', () => {
     const s = snapshotFor(caps(true, true, true), source, 4);
@@ -118,6 +129,40 @@ describe('monitor publisher', () => {
     expect(seqs[1]).toBeGreaterThan(seqs[0] ?? 0);
   });
 
+  it('shows an opener only to a peer at protocol minor 2 or above', () => {
+    const opened: MonitorSource = {
+      ...source,
+      sessions: () => [{ ...session, openedBy: { handle: 'claude-0', machineId: null } }],
+    };
+    const sent: Array<{ machineId: string; frame: LinkFrame }> = [];
+    const pub = createMonitorPublisher({
+      source: opened,
+      links: () => [
+        { machineId: 'm-1', state: 'up', capabilities: caps(true, true, false), peerMinor: 1 },
+        { machineId: 'm-2', state: 'up', capabilities: caps(true, true, false), peerMinor: 2 },
+        { machineId: 'm-3', state: 'up', capabilities: caps(true, true, false) },
+      ],
+      send: (machineId, frame) => {
+        sent.push({ machineId, frame });
+        return true;
+      },
+      after: (fn) => {
+        fn();
+        return () => {};
+      },
+    });
+    pub.changed();
+    const row = (machineId: string) => {
+      const frame = sent.find((x) => x.machineId === machineId)?.frame;
+      if (frame?.t !== 'snapshot') throw new Error('no snapshot');
+      const [first] = frame.snapshot.sessions;
+      return first;
+    };
+    expect(row('m-1')).not.toHaveProperty('openedBy');
+    expect(row('m-3')).not.toHaveProperty('openedBy');
+    expect(row('m-2')?.openedBy).toEqual({ handle: 'claude-0', machineId: null });
+  });
+
   it('stop cancels a pending push', () => {
     const { pub, sent, fire } = setup([
       { machineId: 'm-1', state: 'up', capabilities: caps(true, false, false) },
@@ -126,6 +171,62 @@ describe('monitor publisher', () => {
     pub.stop();
     fire();
     expect(sent).toEqual([]);
+  });
+});
+
+function dirEntry(
+  over: Partial<DirectoryEntry> & Pick<DirectoryEntry, 'handle' | 'sessionId'>,
+): DirectoryEntry {
+  return {
+    openedBy: null,
+    label: 'L',
+    agent: 'claude',
+    project: null,
+    home: '/w',
+    roots: [],
+    presence: 'idle',
+    messaging: 'connected',
+    connectable: true,
+    notices: 'typed',
+    ...over,
+  };
+}
+
+const viewOf = (id: string): SessionView => ({
+  id,
+  name: id,
+  agentId: 'claude',
+  home: '/w',
+  roots: [],
+  status: 'running',
+  attentionReason: null,
+  completions: 0,
+  createdAt: 0,
+  lastActiveAt: 0,
+  runtime: { generation: null, spawn: 'none', reportedStatus: null, lastSize: null },
+});
+
+describe('monitorRows: openedBy', () => {
+  it('names a local opener by its handle, machineId null', () => {
+    const rows = monitorRows(
+      [viewOf('s-lead'), viewOf('s-helper')],
+      [
+        dirEntry({ handle: 'claude-1', sessionId: 's-lead' }),
+        dirEntry({ handle: 'claude-2', sessionId: 's-helper', openedBy: 's-lead' }),
+      ],
+    );
+    expect(rows.map((r) => [r.sessionId, r.openedBy])).toEqual([
+      ['s-lead', null],
+      ['s-helper', { handle: 'claude-1', machineId: null }],
+    ]);
+  });
+
+  it('names no opener when the opener has no listed handle', () => {
+    const rows = monitorRows(
+      [viewOf('s-helper')],
+      [dirEntry({ handle: 'claude-2', sessionId: 's-helper', openedBy: 'gone' })],
+    );
+    expect(rows[0]?.openedBy).toBeNull();
   });
 });
 

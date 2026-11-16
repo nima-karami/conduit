@@ -29,6 +29,7 @@ import {
 import { type AuditSink, openAuditLog, teeAudit } from './audit-log';
 import { type BootstrapperOptions, createBootstrapper, machineMetaOf } from './bootstrap';
 import { handleNetworkCall } from './c2';
+import { createCalls } from './calls';
 import { createDrive, type Drive, type DriveDeps } from './drive';
 import { adoptOwnerKey, type Identity, setOwnerKey } from './identity';
 import { createLinkManager, type LinkManager } from './link-manager';
@@ -268,6 +269,12 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
         void drive
           .onFrame(machineId, f)
           .catch((err: unknown) => deps.log.error('drive frame failed', { message: String(err) }));
+      else if (f.t === 'call')
+        void calls
+          .serveCall(machineId, f)
+          .catch((err: unknown) => deps.log.error('call failed', { message: String(err) }));
+      // A call.result answers a call this side sent; nothing here sends calls until the router
+      // lands (slice 3), so there is no pending call for it to resolve.
       else if (
         f.t === 'view.open' ||
         f.t === 'view.opened' ||
@@ -345,6 +352,13 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     after,
     log: (message) => deps.log.warn(message),
   });
+  const calls = createCalls({
+    linkOf: (machineId) => store.get(machineId),
+    mcp: () => mcp,
+    send: (machineId, frame) => manager.send(machineId, frame),
+    audit,
+    now,
+  });
   const messaging = createMessaging({
     file: path.join(deps.dir, 'outbox.json'),
     machineId: () => identity.machineId,
@@ -358,7 +372,8 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
   });
   const publisher = createMonitorPublisher({
     source: deps.monitor,
-    links: linkInfo,
+    links: () =>
+      linkInfo().map((l) => ({ ...l, peerMinor: manager.peerMinor(l.machineId) ?? undefined })),
     send: (machineId, frame) => manager.send(machineId, frame),
     after,
   });
@@ -387,6 +402,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     listMachines: () => machines.list(),
     connectMachine: (machine, signal) => machines.connect(machine, signal),
     disconnectMachine: (machine) => machines.disconnect(machine),
+    selfName,
   };
 
   const hosts = (): string[] => {

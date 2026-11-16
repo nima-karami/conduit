@@ -1,5 +1,6 @@
 import type { TypingPort } from '../contracts/server-ports';
 import {
+  type Actor,
   type ControlCallContext,
   type ControlDeps,
   type ControlHandlers,
@@ -7,6 +8,7 @@ import {
   fail,
   isFail,
   parseKeys,
+  reachAdmits,
   type TargetSession,
 } from './control-tools';
 import { remoteTargetRefusal } from './remote-routing';
@@ -42,23 +44,9 @@ export function createScreenToolHandlers(
   deps: ScreenToolDeps,
   prepared: ControlHandlers['prepared'],
 ) {
-  const inReach = (
-    tool: ScreenTool,
-    reach: Reach | undefined,
-    callerId: string,
-    t: TargetSession,
-  ) => {
+  const inReach = (tool: ScreenTool, reach: Reach | undefined, actor: Actor, t: TargetSession) => {
     const r = reach !== undefined && isValidField(tool, 'reach', reach) ? reach : 'self';
-    if (
-      r === 'any' ||
-      t.sessionId === callerId ||
-      (r === 'opened' && t.openerSessionId === callerId)
-    )
-      return null;
-    if (r === 'window') {
-      const w = deps.control.ownerWindowOf(t.sessionId);
-      if (w !== null && w === deps.control.ownerWindowOf(callerId)) return null;
-    }
+    if (reachAdmits(r, actor, t, deps.control.ownerWindowOf)) return null;
     return fail('out_of_reach', 'this session is outside the tool reach', {
       hint: `widen ${tool}'s reach in Settings → MCP to act on this session`,
     });
@@ -66,7 +54,7 @@ export function createScreenToolHandlers(
   const target = (
     value: unknown,
     tool: ScreenTool,
-    callerId: string,
+    actor: Actor,
     reach: Reach | undefined,
   ): TargetSession | Fail => {
     if (typeof value !== 'string' || value.length === 0 || value.length > 128)
@@ -78,26 +66,23 @@ export function createScreenToolHandlers(
       if (remote) return { ok: false, error: remote };
       return fail('unknown_session', `no session "${value}" in list_sessions`, {
         hint: 'use a handle from valid; list_sessions shows the current ones',
-        valid: all.filter((x) => inReach(tool, reach, callerId, x) === null).map((x) => x.handle),
+        valid: all.filter((x) => inReach(tool, reach, actor, x) === null).map((x) => x.handle),
       });
     }
-    if (t.sessionId === callerId) return fail('self_target', 'cannot target your own session');
-    return inReach(tool, reach, callerId, t) ?? t;
+    // A remote lead has no session here, so only a local caller can name its own.
+    if (actor.remote === undefined && t.sessionId === actor.sessionId)
+      return fail('self_target', 'cannot target your own session');
+    return inReach(tool, reach, actor, t) ?? t;
   };
-  const recheck = (
-    t: TargetSession,
-    tool: ScreenTool,
-    callerId: string,
-    reach: Reach | undefined,
-  ) => {
+  const recheck = (t: TargetSession, tool: ScreenTool, actor: Actor, reach: Reach | undefined) => {
     const current = deps.control.targets().find((x) => x.sessionId === t.sessionId);
     return current
-      ? inReach(tool, reach, callerId, current)
+      ? inReach(tool, reach, actor, current)
       : fail('unknown_session', 'that session is no longer in list_sessions', {
           hint: 'use a handle from valid; list_sessions shows the current ones',
           valid: deps.control
             .targets()
-            .filter((x) => inReach(tool, reach, callerId, x) === null)
+            .filter((x) => inReach(tool, reach, actor, x) === null)
             .map((x) => x.handle),
         });
   };
@@ -120,7 +105,7 @@ export function createScreenToolHandlers(
       prepared('read_screen', caller, async (who) => {
         const o = parseKeys(raw, ['session', 'lines']);
         if (isFail(o)) return o;
-        const t = target(o.session, 'read_screen', who.sessionId, ctx.reach);
+        const t = target(o.session, 'read_screen', who, ctx.reach);
         if (isFail(t)) return t;
         const count = o.lines === undefined ? 60 : o.lines;
         if (typeof count !== 'number' || !Number.isInteger(count) || count < 1 || count > 200)
@@ -128,7 +113,7 @@ export function createScreenToolHandlers(
         return {
           summary: { tool: 'read_screen', target: t.handle },
           exec: async (token) => {
-            const again = recheck(t, 'read_screen', who.sessionId, ctx.reach);
+            const again = recheck(t, 'read_screen', who, ctx.reach);
             if (again) return again;
             const snapshot = await deps.snapshot(t.sessionId);
             const lines = snapshot?.lines.map((line) => line.replace(/ +$/, '')) ?? [];
@@ -157,7 +142,7 @@ export function createScreenToolHandlers(
       prepared('send_input', caller, async (who) => {
         const o = parseKeys(raw, ['session', 'text', 'keys', 'submit']);
         if (isFail(o)) return o;
-        const t = target(o.session, 'send_input', who.sessionId, ctx.reach);
+        const t = target(o.session, 'send_input', who, ctx.reach);
         if (isFail(t)) return t;
         if (o.text !== undefined && (typeof o.text !== 'string' || o.text.length > 4000))
           return fail('invalid_args', 'text must be a string of at most 4000 characters');
@@ -181,13 +166,13 @@ export function createScreenToolHandlers(
             hint: 'use a handle from valid; list_sessions shows the current ones',
             valid: deps.control
               .targets()
-              .filter((x) => inReach('send_input', ctx.reach, who.sessionId, x) === null)
+              .filter((x) => inReach('send_input', ctx.reach, who, x) === null)
               .map((x) => x.handle),
           });
         return {
           summary: { tool: 'send_input', target: t.handle, ...details, text, keys },
           exec: async (token) => {
-            const again = recheck(t, 'send_input', who.sessionId, ctx.reach);
+            const again = recheck(t, 'send_input', who, ctx.reach);
             if (again) return again;
             if (deps.presence(t.sessionId) === 'exited')
               return fail('session_exited', 'the target session has exited');
@@ -199,7 +184,7 @@ export function createScreenToolHandlers(
             const outcome = await deps.typing.sequence(
               t.sessionId,
               () => {
-                refusal = recheck(t, 'send_input', who.sessionId, ctx.reach);
+                refusal = recheck(t, 'send_input', who, ctx.reach);
                 if (refusal) return false;
                 if (deps.presence(t.sessionId) === 'exited') {
                   refusal = fail('session_exited', 'the target session has exited');

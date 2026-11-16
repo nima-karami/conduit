@@ -212,6 +212,32 @@ describe('parseLinkFrame', () => {
     expect(parseLinkFrame({ t: 'snapshot', snapshot: bad })).toBeNull();
   });
 
+  it('reads a snapshot session with an opener, and one from an older peer without it', () => {
+    const local = { ...SESSION, openedBy: { handle: 'claude-1', machineId: null } };
+    const remote = { ...SESSION, openedBy: { handle: 'claude-2', machineId: 'm-0000000a' } };
+    const none = { ...SESSION, openedBy: null };
+    for (const s of [local, remote, none, SESSION])
+      expect(
+        parseLinkFrame({ t: 'snapshot', snapshot: { ...SNAPSHOT, sessions: [s] } }),
+      ).not.toBeNull();
+  });
+
+  it('rejects a snapshot opener with a bad handle, a bad machine id, or an extra key', () => {
+    const bad = [
+      { handle: 'x@m-cccccccc', machineId: null },
+      { handle: 'claude-1', machineId: 'laptop' },
+      { handle: 'claude-1', machineId: null, sessionId: 's' },
+      { handle: 'claude-1' },
+    ];
+    for (const openedBy of bad)
+      expect(
+        parseLinkFrame({
+          t: 'snapshot',
+          snapshot: { ...SNAPSHOT, sessions: [{ ...SESSION, openedBy }] },
+        }),
+      ).toBeNull();
+  });
+
   it('rejects a snapshot session whose handle is not a bare handle (CON-27 N2)', () => {
     for (const handle of ['x@m-cccccccc', 'Bad Handle', 'a\nb'])
       expect(

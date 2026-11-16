@@ -376,6 +376,7 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
         youUnread: () => 0,
         ownerPresence: () => 'here',
         requestsSummary: () => [],
+        callAsRemote: () => Promise.reject(new Error('not used by this test')),
       });
       a.net.setMcp(mcp([]));
       b.net.setMcp(mcp(delivered));

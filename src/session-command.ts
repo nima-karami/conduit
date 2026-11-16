@@ -76,13 +76,22 @@ export function coerceSessionCommand(v: unknown): SessionCommand | undefined {
   return { command, args: [...args] };
 }
 
+/** A local opener only: any machineId on the input is ignored, so an app can never name a remote one. */
+export function coerceLocalOpenedBy(v: unknown): SessionOpener | undefined {
+  if (!isRecord(v)) return undefined;
+  const { handle, sessionId } = v;
+  if (typeof handle !== 'string' || typeof sessionId !== 'string') return undefined;
+  return { handle, sessionId };
+}
+
 export function coerceOpenedBy(v: unknown): SessionOpener | undefined {
   if (!isRecord(v)) return undefined;
-  const { handle, sessionId, machineId } = v;
-  if (typeof handle !== 'string' || typeof sessionId !== 'string') return undefined;
-  if (machineId === undefined) return { handle, sessionId };
+  const { handle, machineId } = v;
+  if (typeof handle !== 'string') return undefined;
+  if (machineId === undefined) return coerceLocalOpenedBy(v);
   // A remote opener's machine is what makes its handle unique; a malformed one must drop the
   // opener, never leave a remote opener reading as a local one.
   if (typeof machineId !== 'string' || !/^m-[0-9a-f]{8}$/.test(machineId)) return undefined;
-  return { handle, sessionId, machineId };
+  // A remote lead has no session here, so no sessionId is carried over from the record.
+  return { handle, machineId };
 }

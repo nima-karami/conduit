@@ -128,3 +128,5 @@ If a task's assumption turns out wrong, that task **stops**, and fixing the misa
 ## Decisions Needed
 - [normal] An ask on B for a routed call returns `refused`/`remote_ask` until slice 7 mirrors asks to A. Default taken. Under the default Lead floor, none of the six tools asks.
 - [normal] Routed results name sessions `handle@<machine name>`, with B's own session id. Default taken.
+- [normal] Follow-up, not in this slice: a revoke while B is running a routed call does not stop that call; only its reply is lost. Stopping it would mean cancelling the call's budget from the link's revoke path.
+- [normal] Follow-up, not in this slice: `createFromApp` used to drop an opener whose machineId was malformed; it now keeps it as a local opener. Harmless today, but the app path should refuse a malformed machineId outright.

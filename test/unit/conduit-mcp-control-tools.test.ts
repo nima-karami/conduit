@@ -65,6 +65,7 @@ function harness(over: Partial<ControlDeps> = {}): Harness {
   } as Harness;
   let n = 0;
   h.deps = {
+    selfName: () => 'this machine',
     homeOf: (id) => (id.startsWith('caller') ? HOME : undefined),
     resolvePath: (home, p) => (p.startsWith('/') ? p : `${home}/${p}`),
     // PATH hits are files unless a test says otherwise.
