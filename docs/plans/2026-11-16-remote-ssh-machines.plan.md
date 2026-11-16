@@ -40,7 +40,8 @@ manager tick: gap > 3 × tick interval ⇒ wake ⇒ redial every enabled down ss
 - Linger stays as hc leaves it (owner decision pending). `survivesLogout` comes from ensure's measured value (CON-38).
 
 ## Technical decisions this plan makes
-1. **Machine metadata on the ssh LinkRecord.** `machine: MachineMeta | null`, present on A-side ssh records only. `links.json` goes to v3; v2 records load with `machine: null` and are shown as unknown os until the next bootstrap or connect refreshes it. Bootstrap writes the meta; connect refreshes `version` from the peer hello.
+1. **Machine metadata on the ssh LinkRecord.** `machine: MachineMeta | null`, present on A-side ssh records only. `links.json` goes to v3; v2 records load with `machine: null` and are shown as unknown os until the next bootstrap or connect refreshes it. Bootstrap writes the meta.
+   - **Hello fields (protocol 1.1, spec 5.3).** The hello carries `platform { os, arch }` and `version`. Both are optional: a minor-0 peer omits them. An ssh controller writes os, arch and version from them on attach. A block that exists keeps its mode, agents, enabled and survivesLogout. With no block, the defaults are mode `full`, agents `[]`, enabled `true` and survivesLogout `null`, where `null` means we never bootstrapped it. An os or arch we do not record (`other`, or arm64) leaves the block untouched and logs it. This is what lets an added machine (`link.sshAdd`) be connected and disconnected without a bootstrap.
 2. **No pending records.** A target that has never pinned isn't stored. A `needs-person` connect leaves nothing behind.
 3. **`enabled`** (meta field, default true). False: the dial loop skips the peer and its state shows `disabled`. `connect_machine` sets it true. Disconnect does not run `ssh -O exit` (review CON-39 T1, B2): the owner's needs-person pane shares the ControlPath, and the batch master expires on its own (ControlPersist 60). An explicit add re-enables a disabled machine before its link attaches (review B1).
 4. **Wake detection runs on the server**, because powerMonitor is Electron-only. In the manager's existing tick (link-manager.ts:381-387), a tick that arrives more than 3 × its interval late counts as a wake and redials every enabled, down ssh peer now. The CON-27 backoff cap is already 60 s (link-state.ts:56-59).
@@ -135,7 +136,7 @@ export type DisconnectMachineResult = { ok: true; value: { machine: string; stat
 | `server/network/bootstrap.ts` | modify | write meta after pinning (os, arch, version, agents, survivesLogout, mode `full`) |
 | `server/network/machines.ts` | create | `createMachines({ manager, store, bootstrap, directory })`: resolve, list, connect, disconnect (no master exit, review B2) |
 | `server/network/index.ts` | modify | the NetworkPort machine ops, C2 `machines.openNeedsPerson` |
-| `server/network/c2.ts`, `src/contracts/server-protocol.ts` | modify | `machines.list`, `machines.openNeedsPerson` |
+| `server/network/c2.ts`, `src/contracts/server-protocol.ts` | modify | `machines.openNeedsPerson` (`machines.list` moves to slice 6: the Machines UI is its only consumer) |
 | `src/conduit-mcp/machine-errors.ts` | create | `machineToolError(e: MachineError, name: string): ToolError` |
 | `src/conduit-mcp/types.ts` | modify | new codes, RETRYABLE additions |
 | `src/conduit-mcp/tool-policy.ts`, `tool-schemas.ts`, `control-tools.ts`, `host.ts` | modify | three tools: name group, specs, schemas, prepare/dispatch, 120 s budget |
