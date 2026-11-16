@@ -140,6 +140,9 @@ export interface AppSettings {
   autoSwitchSession: boolean;
   confirmCloseRunning: boolean;
   reduceMotion: boolean;
+  // Shows the Machines section before any machine is added; it stands in for the spec's network
+  // flag, which never existed (docs/plans/2026-11-16-remote-ssh-machines-ui.plan.md decision 13).
+  machinesUi: boolean;
   wordWrap: boolean; // soft-wrap long lines in the code editor (Alt+Z toggles)
   // Minimap in the code editor. Default ON as of spec 2026-08-27-review-supercharge §5, which
   // deliberately reverses spec 2026-06-11-minimap: the change marks in the minimap are half
@@ -259,6 +262,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoSwitchSession: true,
   confirmCloseRunning: true,
   reduceMotion: false,
+  machinesUi: false,
   wordWrap: false,
   editorMinimap: true,
   editorChangeMarkers: true,
@@ -533,6 +537,7 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     autoSwitchSession: bool(payload.autoSwitchSession, DEFAULT_SETTINGS.autoSwitchSession),
     confirmCloseRunning: bool(payload.confirmCloseRunning, DEFAULT_SETTINGS.confirmCloseRunning),
     reduceMotion: bool(payload.reduceMotion, DEFAULT_SETTINGS.reduceMotion),
+    machinesUi: bool(payload.machinesUi, DEFAULT_SETTINGS.machinesUi),
     wordWrap: bool(payload.wordWrap, DEFAULT_SETTINGS.wordWrap),
     editorMinimap: bool(payload.editorMinimap, DEFAULT_SETTINGS.editorMinimap),
     editorChangeMarkers: bool(payload.editorChangeMarkers, DEFAULT_SETTINGS.editorChangeMarkers),

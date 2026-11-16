@@ -56,6 +56,7 @@ import {
 import { CHROME_STR } from '../chrome-strings';
 import { MCP_STR } from '../conduit-mcp-strings';
 import { IconCheck, IconChevron, IconClose, IconDownload, IconRefreshCw } from '../icons';
+import { MACHINES_STR } from '../machines-strings';
 import { useSettings } from '../settings';
 import { DEFAULT_CUSTOM, validateShader } from '../shader-source';
 import { MONO_FONTS, THEMES, type ThemeDef, UI_FONTS } from '../themes';
@@ -1314,6 +1315,12 @@ function General({
       <SetGroup title="Accessibility">
         <Section title="Reduce motion" desc="Disable the animated background and other motion">
           <Toggle value={settings.reduceMotion} onChange={(v) => update({ reduceMotion: v })} />
+        </Section>
+      </SetGroup>
+
+      <SetGroup title={MACHINES_STR.machines}>
+        <Section title={MACHINES_STR.settingTitle} desc={MACHINES_STR.settingDesc}>
+          <Toggle value={settings.machinesUi} onChange={(v) => update({ machinesUi: v })} />
         </Section>
       </SetGroup>
 

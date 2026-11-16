@@ -2,7 +2,7 @@
 // for the future i18n seam (docs/specs/2026-11-16-remote-ssh.md §9.3), in SIDEBAR_STR's style.
 
 import type { Presence } from '../src/conduit-mcp/types';
-import type { MachineErrorCode, MachineState } from '../src/contracts/machines';
+import type { MachineError, MachineErrorCode, MachineState } from '../src/contracts/machines';
 import type { SshNeedsPersonReason } from '../src/contracts/ssh-link';
 
 const plural = new Intl.PluralRules(undefined);
@@ -45,6 +45,13 @@ const ERROR: Record<MachineErrorCode, string> = {
   peer_incompatible: 'It runs a Conduit version this one can’t talk to.',
 };
 
+/** Faults raised on this computer before the remote was reached (electron/machine-replies.ts). */
+const LOCAL_REASON: Record<string, string> = {
+  timeout: 'Conduit’s background service didn’t answer in time.',
+  disconnected: 'Conduit’s background service isn’t running.',
+  unavailable: 'Conduit’s background service isn’t running.',
+};
+
 /** What a needs-person reason asks of the owner, phrased as the row's status (§9.1). */
 const NEEDS: Record<SshNeedsPersonReason, string> = {
   host_key_unknown: 'accept its host key',
@@ -76,12 +83,23 @@ export const MACHINES_STR = {
   addMachine: 'Add machine',
   emptyTitle: 'Add a machine',
   emptyHint: 'Run agents on your other computers over SSH.',
+  settingTitle: 'Show Machines in the sidebar',
+  settingDesc:
+    'Add other computers over SSH and watch their agents here. Shown anyway once a machine is added',
   state: (s: MachineState) => STATE[s],
   offlineSince: (iso: string | null) =>
     iso ? `Offline since ${clock(iso)} · retrying` : 'Offline · retrying',
   needsYou: (name: string, reason: string) =>
     `${name} needs you: ${isNeedsReason(reason) ? NEEDS[reason] : 'answer an ssh prompt'}`,
   error: (code: MachineErrorCode) => ERROR[code],
+  /**
+   * A machine error as one line. A reason naming the local service (a timeout, a dropped pipe) wins
+   * over the code: the app maps those to ssh_unreachable, but the remote was never asked.
+   */
+  errorText: (e: MachineError) =>
+    typeof e.detail.reason === 'string' && Object.hasOwn(LOCAL_REASON, e.detail.reason)
+      ? LOCAL_REASON[e.detail.reason]
+      : ERROR[e.code],
   sessions: (n: number) => count(n, 'session', 'sessions'),
   os: (os: string | null) =>
     os === 'linux' ? 'Linux' : os === 'windows' ? 'Windows' : 'Unknown OS',
