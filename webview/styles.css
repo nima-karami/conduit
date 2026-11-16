@@ -2803,10 +2803,22 @@ body.resizing .panel__resize::after {
   white-space: nowrap;
 }
 
+/* A region of its own under the Agents scroller: it shrinks and scrolls before it takes more than
+   half the sidebar from the agent list, the heart of the window (UX.md §1). */
+.sidebar__machines {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 50%;
+  display: flex;
+  flex-direction: column;
+}
 .machines {
   display: flex;
   flex-direction: column;
   gap: 1px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--density-sidebar-scroll-pad);
 }
 .machine-row {
   display: grid;

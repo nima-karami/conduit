@@ -40,6 +40,7 @@ import { agentRowTooltip } from '../card-fields';
 import { MCP_STR } from '../conduit-mcp-strings';
 import { requestHost } from '../host-request';
 import { IconBoard, IconPencil, IconPlus, IconSearch, IconSettings, IconTrash } from '../icons';
+import { MACHINES_STR } from '../machines-strings';
 import { cardMcpStatus } from '../mcp-card-status';
 import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
 import { projectAnnouncer } from '../project-announcer';
@@ -1280,7 +1281,12 @@ export function Sidebar({
             )}
           </div>
         )}
-        {(showMachines || machines.length > 0) && (
+      </div>
+
+      {/* Its own region, beside the Agents scroller rather than inside it, so its band header lines
+          up with Spaces and Agents and a long agent list never pushes it out of reach. */}
+      {(showMachines || machines.length > 0) && (
+        <section className="sidebar__machines" aria-label={MACHINES_STR.machines}>
           <MachinesSection
             machines={machines}
             remoteRows={remoteRows}
@@ -1292,8 +1298,8 @@ export function Sidebar({
             onRenameMachine={onRenameMachine}
             onConfirm={onConfirm}
           />
-        )}
-      </div>
+        </section>
+      )}
 
       <div className="sidebar__foot">
         <button
