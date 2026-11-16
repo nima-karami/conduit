@@ -2701,6 +2701,38 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     });
   });
 
+  it('a sleeping claude session follows its cli:claude point, and a default edit does not pass that point', async () => {
+    const h = harness();
+    h.sessions.set('s1', session('s1', { agentId: 'claude' }));
+    await h.host.start();
+    await setHostPolicy(h, 's1', { open_file: { access: 'off' } });
+    const setPoint = async (
+      requestId: number,
+      point: { kind: 'default' } | { kind: 'cli'; cli: 'claude' },
+      patch: { access: 'on' | 'off' },
+    ) => {
+      let answer: HostToWebview | undefined;
+      await h.host.handleRenderer(
+        { type: 'mcp:setPointPolicy', requestId, point, tool: 'send_input', patch },
+        (m) => {
+          answer = m;
+        },
+        1,
+      );
+      expect(answer).toEqual({ type: 'mcp:policyResult', requestId, ok: true });
+    };
+    await setPoint(2, { kind: 'cli', cli: 'claude' }, { access: 'off' });
+    expect(h.host.uiState().policy.legacy.sessions.s1).toEqual({
+      open_file: { access: 'off' },
+      send_input: { access: 'off' },
+    });
+    await setPoint(3, { kind: 'default' }, { access: 'on' });
+    expect(h.host.uiState().policy.legacy.sessions.s1).toEqual({
+      open_file: { access: 'off' },
+      send_input: { access: 'off' },
+    });
+  });
+
   it('uiState.switchable lists sessions whose defOf matches an adapter, before any launch', () => {
     const h = harness();
     h.sessions.set('fake', session('fake'));
