@@ -2726,10 +2726,26 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
       open_file: { access: 'off' },
       send_input: { access: 'off' },
     });
+    // Explicit, not inherited: s1 must keep this value when the default moves off it.
+    let explicit: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:setToolPolicy',
+        requestId: 4,
+        sessionId: 's1',
+        tool: 'send_input',
+        patch: { access: 'ask' },
+      },
+      (m) => {
+        explicit = m;
+      },
+      1,
+    );
+    expect(explicit).toEqual({ type: 'mcp:toolPolicyResult', requestId: 4, ok: true });
     await setPoint(3, { kind: 'default' }, { access: 'on' });
     expect(h.host.uiState().policy.legacy.sessions.s1).toEqual({
       open_file: { access: 'off' },
-      send_input: { access: 'off' },
+      send_input: { access: 'ask' },
     });
   });
 
