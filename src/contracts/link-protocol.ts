@@ -35,18 +35,18 @@ export const REQUEST_MIRROR_MAX = 200;
 // Bodies, drafts and text answers are multi-line, so they are capped in bytes: that is what the
 // frame limit and the wire actually count.
 export const REQUEST_BODY_MAX_BYTES = 16 * 1024;
-const REQUEST_TITLE_MAX = 256;
-const REQUESTER_MAX = 64;
+export const REQUEST_TITLE_MAX = 256;
+export const REQUESTER_MAX = 64;
 const REQUEST_ID_MAX = 64;
-const REQUEST_OPTION_LABEL_MAX = 256;
-const REQUEST_OPTION_DESCRIPTION_MAX = 1024;
+export const REQUEST_OPTION_LABEL_MAX = 256;
+export const REQUEST_OPTION_DESCRIPTION_MAX = 1024;
 const REQUEST_TIMESTAMP_MAX = 64;
 const ANSWER_OUTCOME_MAX = 64;
-const ANSWER_VALUES_MAX = 8;
-const ANSWER_VALUE_MAX = 256;
-const ANSWER_REASON_MAX = 200;
+export const ANSWER_VALUES_MAX = 8;
+export const ANSWER_VALUE_MAX = 256;
+export const ANSWER_REASON_MAX = 200;
 const PERMISSION_TOOL_MAX = 64;
-const PERMISSION_WHY_MAX = 1024;
+export const PERMISSION_WHY_MAX = 1024;
 const ERROR_CODE_MAX = 64;
 const ERROR_MESSAGE_MAX = 1024;
 const ERROR_HINT_MAX = 512;

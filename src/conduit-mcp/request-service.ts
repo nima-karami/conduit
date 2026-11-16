@@ -1,4 +1,19 @@
-import type { PermissionAnswer } from './policy-types';
+import {
+  ANSWER_REASON_MAX,
+  ANSWER_VALUE_MAX,
+  ANSWER_VALUES_MAX,
+  PERMISSION_WHY_MAX,
+  REQUEST_BODY_MAX_BYTES,
+  REQUEST_MIRROR_MAX,
+  REQUEST_OPTION_DESCRIPTION_MAX,
+  REQUEST_OPTION_LABEL_MAX,
+  REQUEST_TITLE_MAX,
+  REQUESTER_MAX,
+  type RequestAnswerBody,
+  type RequestMirror,
+} from '../contracts/link-protocol';
+import type { GrantChoice } from './grant-store';
+import type { PermissionAnswer, PolicyTarget } from './policy-types';
 import {
   type CreateInput,
   parseListRequests,
@@ -24,6 +39,7 @@ import {
   isVisibleRequest,
   type ListRequestsOutput,
   type PermissionAnswerResult,
+  type RemoteRequester,
   type RequestAnswer,
   type RequestAnswerOut,
   type RequestAnswerResult,
@@ -31,6 +47,7 @@ import {
   type RequestRecord,
   type RequestsUiState,
   type RequestView,
+  requesterOfRemote,
   type VisibleRequestRecord,
 } from './request-types';
 import {
@@ -39,11 +56,97 @@ import {
   type RequestWaits,
   requestWaitMs,
 } from './request-waits';
+import type { ToolName } from './tool-policy';
 import type { Caller } from './tools';
 import { type Handle, type Result, toolError } from './types';
 import type { CallKey } from './window-waits';
 
 export const PERSIST_COALESCE_MS = 250;
+// A peer's answer is applied once; the map only has to outlive a duplicated frame, so it is bounded.
+const REMOTE_ANSWER_DEDUPE_MAX = 256;
+// Ended requests stay in the mirror this long, so A can show how they ended.
+const MIRROR_ENDED_MS = 10 * 60_000;
+// The remote Always answer: a grant for the peer on the asked target, until revoked. Scope and
+// lifetime are fixed here, so the wire carries one bit (remote-ssh spec §4.6).
+const REMOTE_GRANT: GrantChoice = { who: 'peer', on: 'target', for: 'until-revoked' };
+
+export type RemoteAnswerResult =
+  | { ok: true }
+  | { ok: false; reason: 'not_found' | 'already_ended' | 'invalid_args'; message: string };
+
+export interface RemotePermissionFields {
+  tool: ToolName;
+  why: string;
+  targets: PolicyTarget[];
+  grantable: boolean;
+}
+
+const capBytes = (s: string, maxBytes: number): string => {
+  const enc = new TextEncoder();
+  let bytes = 0;
+  let out = '';
+  for (const ch of s) {
+    const n = enc.encode(ch).length;
+    if (bytes + n > maxBytes) break;
+    bytes += n;
+    out += ch;
+  }
+  return out;
+};
+
+// The wire refuses control characters in single-line fields, so one stray newline would drop the
+// whole mirror; a space keeps the words apart.
+const sanitizeLine = (s: string, maxBytes: number): string =>
+  capBytes(s.replace(/\p{Cc}/gu, ' ').trim(), maxBytes) || '-';
+
+// Bodies keep their line breaks, which the wire allows.
+const sanitizeText = (s: string, maxBytes: number): string =>
+  capBytes(
+    s.replace(/\p{Cc}/gu, (c) => (c === '\n' || c === '\r' || c === '\t' ? c : ' ')),
+    maxBytes,
+  );
+
+const mirrorAnswerOf = (a: RequestAnswer): RequestMirror['answer'] => ({
+  outcome: a.outcome,
+  ...(a.text === undefined ? {} : { text: sanitizeText(a.text, REQUEST_BODY_MAX_BYTES) }),
+  ...(a.values === undefined
+    ? {}
+    : {
+        values: a.values.slice(0, ANSWER_VALUES_MAX).map((v) => sanitizeLine(v, ANSWER_VALUE_MAX)),
+      }),
+  ...(a.reason === undefined ? {} : { reason: sanitizeLine(a.reason, ANSWER_REASON_MAX) }),
+  at: a.at,
+});
+
+// Targets and args are B's private detail, so the mirror is built field by field, never spread.
+const mirrorOfRecord = (r: RequestRecord): RequestMirror => ({
+  id: r.id,
+  kind: r.kind,
+  title: sanitizeLine(r.title, REQUEST_TITLE_MAX),
+  body: sanitizeText(r.body, REQUEST_BODY_MAX_BYTES),
+  options: r.options.map((o) => ({
+    label: sanitizeLine(o.label, REQUEST_OPTION_LABEL_MAX),
+    ...(o.description === undefined
+      ? {}
+      : { description: sanitizeLine(o.description, REQUEST_OPTION_DESCRIPTION_MAX) }),
+  })),
+  multi: r.multi,
+  draft: r.draft === null ? null : sanitizeText(r.draft, REQUEST_BODY_MAX_BYTES),
+  priority: r.priority,
+  createdAt: r.createdAt,
+  expiresAt: r.expiresAt,
+  requester: sanitizeLine(r.requester, REQUESTER_MAX),
+  state: r.state,
+  answer: r.answer === null ? null : mirrorAnswerOf(r.answer),
+  permission:
+    r.permission === null
+      ? null
+      : {
+          tool: r.permission.tool,
+          why: sanitizeLine(r.permission.why, PERMISSION_WHY_MAX),
+          grantable: r.permission.grantable !== false,
+        },
+});
 
 export type PermissionFields = Pick<RequestRecord, 'title' | 'body' | 'permission'> & {
   requester: Handle;
@@ -111,6 +214,23 @@ export interface RequestService {
   ui(): RequestsUiState;
   presence(): HumanPresence;
   createPermission(sessionId: string, fields: PermissionFields, expiresAt: string): RequestRecord;
+  /** A permission a peer asked for over the link; `ended` settles on its answer or expiry. */
+  createRemotePermission(
+    principal: RemoteRequester,
+    fields: RemotePermissionFields,
+    expiresAt: string,
+  ): { id: string; ended: Promise<RequestRecord> };
+  /** B's open requests plus those that ended in the last 10 min, in the wire form. */
+  mirrorOf(): RequestMirror[];
+  /** True while the mirror holds an ended entry, so the sender re-sends it as the window closes. */
+  hasEnded(): boolean;
+  onMirrorChange(listener: () => void): () => void;
+  applyRemoteAnswer(
+    requestId: string,
+    answer: RequestAnswerBody,
+    answerId: string,
+    machineId: string,
+  ): RemoteAnswerResult;
   endPermission(
     id: string,
     end: 'answered' | 'withdrawn',
@@ -178,6 +298,9 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
   let persistTimer: Timer | null = null;
   let awayTimer: Timer | null = null;
   const inFlight = new Set<string>();
+  const remoteWaits = new Map<string, (r: RequestRecord) => void>();
+  const remoteAnswers = new Map<string, RemoteAnswerResult>();
+  const mirrorListeners = new Set<() => void>();
 
   const view = (r: VisibleRequestRecord): RequestView => {
     const until = waits.waitingUntil(r.id);
@@ -227,6 +350,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
   const changed = (): void => {
     markDirty();
     deps.onChanged();
+    for (const listener of mirrorListeners) listener();
   };
 
   const deliverOne = async (id: string): Promise<void> => {
@@ -257,6 +381,11 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     setTimer: (fn, ms) => deps.setTimer(fn, ms),
     clearTimer: (t) => deps.clearTimer(t),
     onEnded: (r) => {
+      const settle = remoteWaits.get(r.id);
+      if (settle !== undefined) {
+        remoteWaits.delete(r.id);
+        settle(r);
+      }
       // A waiting call returns the answer itself and marks it delivered, so only an unwaited end
       // goes to the inbox.
       const hadWaiter = waits.isWaiting(r.id);
@@ -502,6 +631,40 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     }
   };
 
+  const applyRemote = (
+    requestId: string,
+    answer: RequestAnswerBody,
+    machineId: string,
+  ): RemoteAnswerResult => {
+    const refuse = (
+      reason: 'not_found' | 'already_ended' | 'invalid_args',
+      message: string,
+    ): RemoteAnswerResult => ({ ok: false, reason, message });
+    const r = queue.get(requestId);
+    if (r === undefined) return refuse('not_found', `no request ${requestId}`);
+    if (r.state !== 'open')
+      return refuse('already_ended', `request ${requestId} already ${r.state}`);
+    // A local policy ask is woken by the host's call flow, which a sync answer here cannot reach.
+    if (r.permission !== null && !r.remote) {
+      return refuse('invalid_args', `answer it on ${deps.machineId}`);
+    }
+    // Message questions and scheduler/observed requests carry side effects only the local path runs.
+    if (r.permission === null && r.source !== 'agent') {
+      return refuse('invalid_args', `${r.source} requests are answered on ${deps.machineId}`);
+    }
+    const { grant: wantsGrant, ...rest } = answer;
+    if (wantsGrant === true && (r.permission === null || r.permission.grantable === false)) {
+      return refuse('invalid_args', 'a grant needs a grantable permission');
+    }
+    const input = wantsGrant === true ? { ...rest, grant: REMOTE_GRANT } : rest;
+    const res = queue.answer(requestId, input, { kind: 'remote', machineId });
+    if (res.ok) return { ok: true };
+    if (res.reason === 'not_found' || res.reason === 'already_ended') {
+      return refuse(res.reason, res.message);
+    }
+    return refuse('invalid_args', res.message);
+  };
+
   return {
     onAttention(facts) {
       for (const [sessionId, issue] of handledIssues) {
@@ -552,6 +715,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     },
 
     async stop() {
+      for (const id of [...remoteWaits.keys()]) queue.withdraw(id, 'conduit', 'Conduit stopped');
       if (persistTimer !== null) {
         deps.clearTimer(persistTimer.handle);
         persistTimer = null;
@@ -685,9 +849,69 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     createPermission(sessionId, fields, expiresAt) {
       return queue.createBound(
         { requester: fields.requester, ...deps.stampOf(sessionId) },
-        { title: fields.title, body: fields.body, permission: fields.permission },
+        { title: fields.title, body: fields.body, permission: fields.permission, remote: null },
         expiresAt,
       );
+    },
+
+    createRemotePermission(principal, fields, expiresAt) {
+      const remote: RemoteRequester = { handle: principal.handle, machineId: principal.machineId };
+      const created = queue.createBound(
+        { requester: requesterOfRemote(remote), session: null, space: null, lead: null },
+        {
+          title: fields.tool,
+          body: fields.why,
+          permission: {
+            tool: fields.tool,
+            why: fields.why,
+            targets: [...fields.targets],
+            lateGrant: null,
+            grantable: fields.grantable,
+          },
+          remote,
+        },
+        expiresAt,
+      );
+      const ended = new Promise<RequestRecord>((resolve) => remoteWaits.set(created.id, resolve));
+      return { id: created.id, ended };
+    },
+
+    mirrorOf() {
+      const inWindow = (r: RequestRecord): boolean =>
+        r.endedAt !== null && deps.now() - Date.parse(r.endedAt) <= MIRROR_ENDED_MS;
+      return [...queue.open(), ...queue.ended(REQUEST_MIRROR_MAX, inWindow)]
+        .slice(0, REQUEST_MIRROR_MAX)
+        .map(mirrorOfRecord);
+    },
+
+    hasEnded() {
+      return (
+        queue.ended(
+          1,
+          (r) => r.endedAt !== null && deps.now() - Date.parse(r.endedAt) <= MIRROR_ENDED_MS,
+        ).length > 0
+      );
+    },
+
+    onMirrorChange(listener) {
+      mirrorListeners.add(listener);
+      return () => {
+        mirrorListeners.delete(listener);
+      };
+    },
+
+    applyRemoteAnswer(requestId, answer, answerId, machineId) {
+      const seen = remoteAnswers.get(answerId);
+      if (seen !== undefined) return seen;
+      const result = applyRemote(requestId, answer, machineId);
+      remoteAnswers.set(answerId, result);
+      if (remoteAnswers.size > REMOTE_ANSWER_DEDUPE_MAX) {
+        for (const oldest of remoteAnswers.keys()) {
+          remoteAnswers.delete(oldest);
+          break;
+        }
+      }
+      return result;
     },
 
     endPermission(id, end, answer, reason, by) {

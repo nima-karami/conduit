@@ -41,11 +41,24 @@ export interface AnswerInput {
   reason?: string;
   grant?: GrantChoice;
 }
-export type AnsweredBy = { kind: 'you'; windowId: number | null } | { kind: 'default' };
+export type AnsweredBy =
+  | { kind: 'you'; windowId: number | null }
+  | { kind: 'default' }
+  | { kind: 'remote'; machineId: string };
 export interface RequestAnswer extends AnswerInput {
   answeredBy: AnsweredBy;
   at: string;
 }
+
+/** Who asked on another machine. `requester` holds `handle@machineId` for these records. */
+export interface RemoteRequester {
+  handle: Handle;
+  machineId: string;
+}
+
+/** The one place the display form is derived from the structured identity. */
+export const requesterOfRemote = (remote: RemoteRequester): string =>
+  `${remote.handle}@${remote.machineId}`;
 
 export interface RequestRecord {
   id: string;
@@ -54,6 +67,8 @@ export interface RequestRecord {
   source: RequestSource;
   kind: RequestKind;
   requester: Handle | 'conduit';
+  /** Set only on a permission asked by a peer over the link; absent on records from before CON-42. */
+  remote?: RemoteRequester | null;
   session: string | null;
   /** Stamped at creation so views filter without a lookup (owner, 2026-11-14). */
   space: string | null;

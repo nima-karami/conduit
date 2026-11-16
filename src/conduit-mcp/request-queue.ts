@@ -1,7 +1,12 @@
 // Node-free: the renderer may import this. Clock and timers are injected so the
 // lifecycle is testable without real time.
 import { type CreateInput, contentKeyOf, validateAnswer } from './request-args';
-import type { AnsweredBy, QueueAnswerResult, RequestRecord } from './request-types';
+import type {
+  AnsweredBy,
+  QueueAnswerResult,
+  RemoteRequester,
+  RequestRecord,
+} from './request-types';
 import { type Handle, type ToolError, toolError } from './types';
 
 export const CAP_OPEN_PER_REQUESTER = 5;
@@ -56,7 +61,9 @@ export interface RequestQueue {
   ): RequestRecord;
   createBound(
     stamp: Stamp,
-    fields: Pick<RequestRecord, 'title' | 'body' | 'permission'>,
+    fields: Pick<RequestRecord, 'title' | 'body' | 'permission'> & {
+      remote?: RemoteRequester | null;
+    },
     expiresAt: string,
   ): RequestRecord;
   answerLate(id: string, grantId: string): QueueAnswerResult;
@@ -352,6 +359,7 @@ export function createRequestQueue(deps: QueueDeps): RequestQueue {
         source: 'policy',
         kind: 'permission',
         requester: stamp.requester,
+        remote: fields.remote ?? null,
         session: stamp.session,
         space: stamp.space,
         lead: stamp.lead,

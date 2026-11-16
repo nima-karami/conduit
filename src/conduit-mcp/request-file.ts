@@ -6,6 +6,7 @@ import type {
   AnswerInput,
   BlockedKind,
   HumanPresence,
+  RemoteRequester,
   RequestAnswer,
   RequestKind,
   RequestOption,
@@ -89,7 +90,11 @@ const isAnswerInput = (v: unknown): v is AnswerInput =>
 const isAnsweredBy = (v: unknown): v is AnsweredBy =>
   isObj(v) &&
   (v.kind === 'default' ||
-    (v.kind === 'you' && (v.windowId === null || typeof v.windowId === 'number')));
+    (v.kind === 'you' && (v.windowId === null || typeof v.windowId === 'number')) ||
+    (v.kind === 'remote' && isStr(v.machineId)));
+
+const isRemoteRequester = (v: unknown): v is RemoteRequester =>
+  isObj(v) && isStr(v.handle) && isStr(v.machineId);
 
 const isAnswer = (v: unknown): v is RequestAnswer =>
   isObj(v) && isAnswerInput(v) && isAnsweredBy(v.answeredBy) && isStr(v.at);
@@ -112,6 +117,7 @@ const isRecord = (v: unknown): v is RequestRecord =>
   isSource(v.source) &&
   isKind(v.kind) &&
   isStr(v.requester) &&
+  (v.remote === undefined || v.remote === null || isRemoteRequester(v.remote)) &&
   nullStr(v.session) &&
   nullStr(v.space) &&
   nullStr(v.lead) &&
