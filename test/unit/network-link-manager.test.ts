@@ -1013,4 +1013,24 @@ describe('ssh hello identity and per-host pinning', { timeout: 60_000 }, () => {
     await new Promise((r) => setTimeout(r, 300));
     expect(bInbox).toHaveLength(1);
   });
+
+  // Redials of a stored ssh record pin no key at dial time, so attach's comparison is the only guard.
+  it('a redial of a stored ssh record that meets another key is identity-changed', async () => {
+    const real = await node(identity(), 'real');
+    const impostor = await node(identity(), 'impostor');
+    const dial: SshDial = () => ({
+      stream: forgingStream(helloOf(impostor)),
+      failure: async () => null,
+    });
+    const a = await node(identity(), 'ctl', 0, dial);
+    a.store.addSsh({
+      machineId: real.id.machineId,
+      serverKey: real.id.serverKeyRaw.toString('base64'),
+      ownerKey: null,
+      name: 'real',
+      ssh: ENDPOINT,
+    });
+    a.manager.start();
+    await until(() => a.manager.view(real.id.machineId)?.state === 'identity-changed');
+  });
 });
