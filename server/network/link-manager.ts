@@ -521,7 +521,14 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       opened.close(pinned.error);
       return { ok: false, error: { code: pinned.error } };
     }
-    const p = ensurePeer(pinned.record);
+    // An explicit add is the owner asking for this machine, so a disabled one comes back on before its
+    // link attaches; attach refuses a disabled peer (its disconnect check), and the add must not lose.
+    const meta = pinned.record.machine;
+    const enabledRecord =
+      meta !== null && !meta.enabled
+        ? (deps.store.setMachine(hello.machineId, { ...meta, enabled: true }) ?? pinned.record)
+        : pinned.record;
+    const p = ensurePeer(enabledRecord);
     // An explicit add re-adds a peer that was revoked or refused, as add() does for TLS.
     p.revokedBy = null;
     if (terminal(p)) p.sm = initialLinkState(deps.now());

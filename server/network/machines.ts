@@ -42,8 +42,6 @@ export interface MachinesDeps {
   bootstrap(target: string): Promise<BootstrapResult>;
   /** The remote directory: a machine's sessions are the rows its id owns. */
   directory: { entries(): ReadonlyArray<{ machineId: string }> };
-  /** Closes the ControlMaster the dialer left for a target (sshControlExit). */
-  sshExit(target: string): Promise<SshFailure | null>;
 }
 
 export interface Machines {
@@ -142,18 +140,6 @@ function downErrorOf(state: LinkState | undefined): MachineError {
       return { code: 'machine_unknown', detail: { reason: 'revoked' } };
     default:
       return { code: 'ssh_unreachable', detail: { detail: 'timeout' } };
-  }
-}
-
-function sshDetailOf(f: SshFailure): string {
-  switch (f.code) {
-    case 'ssh_failed':
-    case 'ssh_unreachable':
-      return f.detail;
-    case 'ssh_needs_person':
-      return f.reason;
-    default:
-      return f.code;
   }
 }
 
@@ -309,7 +295,7 @@ export function createMachines(deps: MachinesDeps): Machines {
       const r = resolve(deps.store, machine);
       if (r.kind === 'error') return { ok: false, error: r.error };
       if (r.kind === 'target') return { ok: false, error: { code: 'machine_unknown', detail: {} } };
-      const { record, target } = r.pinned;
+      const { record } = r.pinned;
       // The flag is what keeps a disconnected machine from redialing, and only a machine block holds it.
       if (record.machine === null) {
         return {
@@ -320,14 +306,8 @@ export function createMachines(deps: MachinesDeps): Machines {
       if (!deps.manager.disconnect(record.machineId)) {
         return { ok: false, error: { code: 'machine_unknown', detail: {} } };
       }
-      // Runs even for a machine that is already down: a master may outlive its link.
-      const exit = await deps.sshExit(target);
-      if (exit !== null) {
-        return {
-          ok: false,
-          error: { code: 'ssh_unreachable', detail: { detail: sshDetailOf(exit) } },
-        };
-      }
+      // No master exit here: the batch dialer's ControlMaster expires by itself (ControlPersist 60), and
+      // the owner's needs-person pane shares that ControlPath, so closing it would end their session.
       return { ok: true, value: { machine: record.name, state: 'down' } };
     },
   };

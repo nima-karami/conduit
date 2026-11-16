@@ -40,7 +40,7 @@ import { createPairingPort } from './pairing-port';
 import { createPairingService, type PairingService } from './pairing-service';
 import { createSnapshotCoalescer } from './snapshot-coalescer';
 import { createSshDial } from './ssh-dialer';
-import { sshControlExit, sshExec } from './ssh-exec';
+import { sshExec } from './ssh-exec';
 import { listenStdioLink, type StdioLinkEndpoint } from './stdio-link-endpoint';
 import { createViewRelay } from './view-relay';
 
@@ -301,13 +301,6 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     store,
     bootstrap: bootstrapAndLink,
     directory,
-    sshExit: (target) =>
-      sshControlExit({
-        sshPath: process.env.CONDUIT_SSH_PATH || 'ssh',
-        sshArgsPrefix: deps.sshArgsPrefix,
-        controlDir: sshControlDir,
-        target,
-      }),
   });
 
   const linkInfo = () =>

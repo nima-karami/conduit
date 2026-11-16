@@ -142,7 +142,6 @@ function setup(
   const store = openLinkStore('/net/links.json', { now: Date.now, log: quiet, io: memIo() });
   const fake = fakeManager(store);
   const bootstrapCalls: string[] = [];
-  const exitCalls: string[] = [];
   const machines = createMachines({
     manager: fake.manager,
     store,
@@ -153,12 +152,8 @@ function setup(
       return bootstrapPins(store, fake, pinAs.id, pinAs.name, target, 10);
     },
     directory: { entries: () => entries },
-    sshExit: async (target) => {
-      exitCalls.push(target);
-      return null;
-    },
   });
-  return { store, fake, machines, bootstrapCalls, exitCalls };
+  return { store, fake, machines, bootstrapCalls };
 }
 
 const LIVE = new AbortController().signal;
@@ -292,7 +287,6 @@ describe('machines: connect', () => {
       store,
       bootstrap: async () => ({ ok: false, error: failure }),
       directory: { entries: () => [] },
-      sshExit: async () => null,
     });
     expect(await machines.connect('new.example', LIVE)).toEqual({
       ok: false,
@@ -327,7 +321,6 @@ describe('machines: connect', () => {
         });
       },
       directory: { entries: () => [] },
-      sshExit: async () => null,
     });
     const ac = new AbortController();
     const pending = machines.connect('slow.example', ac.signal);
@@ -349,23 +342,21 @@ describe('machines: connect', () => {
 });
 
 describe('machines: disconnect', () => {
-  it('a disconnect of a down machine is a no-op success, and still exits its master', async () => {
-    const { store, fake, machines, exitCalls } = setup();
+  it('a disconnect of a down machine is a no-op success', async () => {
+    const { store, fake, machines } = setup();
     pin(store, fake, { id: 'm-00000001', name: 'vm-a', target: 'a.example', n: 1, state: 'down' });
     expect(await machines.disconnect('vm-a')).toEqual({
       ok: true,
       value: { machine: 'vm-a', state: 'down' },
     });
-    expect(exitCalls).toEqual(['a.example']);
   });
 
-  it('disconnect clears enabled and then exits the master with the dialer ControlPath', async () => {
-    const { store, fake, machines, exitCalls } = setup();
+  it('disconnect clears enabled and closes the link, leaving the ssh master to expire', async () => {
+    const { store, fake, machines } = setup();
     pin(store, fake, { id: 'm-00000001', name: 'vm-a', target: 'a.example', n: 1, state: 'up' });
     await machines.disconnect('vm-a');
     expect(fake.calls).toEqual(['disconnect m-00000001']);
     expect(store.get('m-00000001')?.machine?.enabled).toBe(false);
-    expect(exitCalls).toEqual(['a.example']);
   });
 
   it('disconnect keeps the remote sessions: it only closes the manager link', async () => {
@@ -377,25 +368,8 @@ describe('machines: disconnect', () => {
     expect(entries).toHaveLength(2);
   });
 
-  it('a failed master exit is reported, not hidden behind success', async () => {
-    const store = openLinkStore('/net/links.json', { now: Date.now, log: quiet, io: memIo() });
-    const fake = fakeManager(store);
-    const machines = createMachines({
-      manager: fake.manager,
-      store,
-      bootstrap: async () => ({ ok: false, error: { code: 'ssh_failed', detail: 'x' } }),
-      directory: { entries: () => [] },
-      sshExit: async () => ({ code: 'ssh_failed', detail: 'mux gone' }),
-    });
-    pin(store, fake, { id: 'm-00000001', name: 'vm-a', target: 'a.example', n: 1, state: 'up' });
-    expect(await machines.disconnect('vm-a')).toEqual({
-      ok: false,
-      error: { code: 'ssh_unreachable', detail: { detail: 'mux gone' } },
-    });
-  });
-
   it('an unknown machine, or a bare target, is machine_unknown', async () => {
-    const { machines, exitCalls } = setup();
+    const { machines } = setup();
     expect(await machines.disconnect('nobody')).toEqual({
       ok: false,
       error: { code: 'machine_unknown', detail: {} },
@@ -404,11 +378,10 @@ describe('machines: disconnect', () => {
       ok: false,
       error: { code: 'machine_unknown', detail: {} },
     });
-    expect(exitCalls).toEqual([]);
   });
 
   it('a machine with no machine block cannot hold enabled, so disconnect says so', async () => {
-    const { store, fake, machines, exitCalls } = setup();
+    const { store, fake, machines } = setup();
     pin(store, fake, {
       id: 'm-00000001',
       name: 'legacy',
@@ -419,8 +392,21 @@ describe('machines: disconnect', () => {
     });
     const r = await machines.disconnect('legacy');
     expect(r.ok).toBe(false);
-    expect(exitCalls).toEqual([]);
     expect(fake.calls).toEqual([]);
+  });
+});
+
+describe('machines: concurrent redials', () => {
+  it('two concurrent connects to one known, down machine share one redial', async () => {
+    const { store, fake, machines } = setup();
+    fake.setDialWorks(false);
+    pin(store, fake, { id: 'm-00000001', name: 'vm-a', target: 'a.example', n: 1, state: 'down' });
+    const [x, y] = await Promise.all([
+      machines.connect('vm-a', LIVE),
+      machines.connect('vm-a', LIVE),
+    ]);
+    expect(fake.calls.filter((c) => c.startsWith('enable'))).toEqual(['enable m-00000001']);
+    expect(x).toEqual(y);
   });
 });
 
@@ -585,7 +571,6 @@ async function connectWhileDialFails(failure: SshFailure) {
     store,
     bootstrap: async () => ({ ok: false, error: { code: 'ssh_failed', detail: 'unused' } }),
     directory: { entries: () => [] },
-    sshExit: async () => null,
   });
   const started = clock.now();
   const pending = machines.connect('vm-a', LIVE);
