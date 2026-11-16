@@ -1376,6 +1376,7 @@ export function createDomain(deps: DomainDeps): Domain {
     timers.onSessionDisposed(id);
     monitor.onSessionClosed(id);
     codexWatch.untrack(id);
+    feedGap.forget(id);
     scrollback.forget(id);
     changed();
     return { ok: true };
