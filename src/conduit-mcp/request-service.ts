@@ -648,6 +648,10 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     if (r.permission !== null && !r.remote) {
       return refuse('invalid_args', `answer it on ${deps.machineId}`);
     }
+    // Only the controller whose routed call asked may answer it; another link must not decide it.
+    if (r.remote && r.remote.machineId !== machineId) {
+      return refuse('invalid_args', 'answered on the machine that asked');
+    }
     // Message questions and scheduler/observed requests carry side effects only the local path runs.
     if (r.permission === null && r.source !== 'agent') {
       return refuse('invalid_args', `${r.source} requests are answered on ${deps.machineId}`);
