@@ -10,9 +10,12 @@ import { openConnection } from '../../server/network/link-connection';
 import { createLinkManager, type LinkManager } from '../../server/network/link-manager';
 import { type LinkStore, openLinkStore } from '../../server/network/link-store';
 import { dial, type LinkListener, listenLinks } from '../../server/network/listener';
+import { createMachines } from '../../server/network/machines';
 import { createMessaging, type Messaging } from '../../server/network/messaging';
+import { snapshotFor } from '../../server/network/monitor-publisher';
 import type { McpNetworkPort, RemoteEntry } from '../../src/conduit-mcp/remote-routing';
 import type { MessageRecord } from '../../src/conduit-mcp/types';
+import type { MonitorSession } from '../../src/contracts/link-protocol';
 import {
   type HelloFrame,
   LINK_FEATURES,
@@ -26,6 +29,7 @@ import type { SshDial, SshEndpoint } from '../../src/contracts/ssh-link';
 import { encodeFrame, FrameDecoder } from '../../src/network/frame-codec';
 import type { LinkRecord } from '../../src/network/link-file';
 import { linkIdFor } from '../../src/network/pairing-transcript';
+import { createRemoteDirectory } from '../../src/network/remote-directory';
 import { selfSignedCert } from '../../src/network/self-signed-cert';
 
 const quiet = { debug: () => undefined, warn: () => undefined, error: () => undefined };
@@ -660,6 +664,70 @@ describe('ssh links', { timeout: 60_000 }, () => {
     await until(() => a.manager.view(b.id.machineId)?.state !== 'up');
     await until(() => a.manager.view(b.id.machineId)?.state === 'up');
     expect(a.store.get(b.id.machineId)?.name).toBe(ENDPOINT.target);
+  });
+
+  it("a linked peer's session with a handle is counted by its machine and listed as its row", async () => {
+    const { a, b } = await sshPair();
+    expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
+    await until(() => b.manager.view(a.id.machineId)?.state === 'up');
+    await until(() => a.manager.view(b.id.machineId)?.state === 'up');
+    // Both sides of an ssh link carry messaging and monitor, and not drive (spec 4.5).
+    expect(a.store.get(b.id.machineId)?.capabilities).toEqual(OWN_DEFAULT_CAPABILITIES);
+    expect(b.store.get(a.id.machineId)?.capabilities).toEqual(OWN_DEFAULT_CAPABILITIES);
+    const session: MonitorSession = {
+      sessionId: 'sid-claude-1',
+      handle: 'claude-1',
+      label: 'claude-1',
+      agent: 'claude',
+      presence: 'idle',
+      messaging: 'connected',
+      messageable: true,
+      notices: 'typed',
+      home: '/home/x',
+      roots: [],
+      attention: { attentionReason: null, completions: 0 },
+      completions: 0,
+      limit: null,
+      status: 'running',
+    };
+    // What B's monitor publisher sends: its snapshot, shaped by its own capabilities for A.
+    const caps = b.manager.view(a.id.machineId)?.capabilities;
+    if (caps === undefined) throw new Error('B has no view of A');
+    const snapshot = snapshotFor(
+      caps,
+      {
+        sessions: () => [session],
+        requests: () => [],
+        youUnread: () => 0,
+        ownerPresence: () => 'here',
+        agents: () => [],
+      },
+      1,
+    );
+    if (snapshot === null) throw new Error('B sends nothing to A');
+    const directory = createRemoteDirectory();
+    const linkInfo = () =>
+      a.manager.views().map((v) => ({
+        machineId: v.machineId,
+        name: v.name,
+        state: v.state,
+        peerCapabilities: v.peerCapabilities,
+      }));
+    directory.setLinks(linkInfo(), 'linux-box');
+    a.setFrameSink((machineId, f) => {
+      if (f.t === 'snapshot') directory.apply(machineId, f.snapshot);
+    });
+    expect(b.manager.send(a.id.machineId, { t: 'snapshot', snapshot })).toBe(true);
+    const machines = createMachines({
+      manager: a.manager,
+      store: a.store,
+      bootstrap: () => Promise.reject(new Error('not used: the machine is pinned')),
+      directory,
+    });
+    await until(() =>
+      machines.list().some((m) => m.machine_id === b.id.machineId && m.sessions === 1),
+    );
+    expect(directory.entries()).toMatchObject([{ handle: 'claude-1', machineId: b.id.machineId }]);
   });
 
   it('acceptStream answers a tombstoned peer with revoked and does not re-link it', async () => {
