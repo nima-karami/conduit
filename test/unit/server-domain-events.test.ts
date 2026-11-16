@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -553,19 +553,12 @@ describe('server domain: observed lane wiring', () => {
     mkdirSync(p, { recursive: true });
     return p;
   };
-  const claudeEnv = (dir: string): Record<string, string> => ({
-    CLAUDE_CONFIG_DIR: join(dir, '.claude'),
+  const gapOpts = (dir: string) => ({
+    env: { CLAUDE_CONFIG_DIR: join(dir, '.claude') },
+    transcriptSize: async (p: string) => statSync(p).size,
   });
 
   describe('Claude feed gap through the domain', () => {
-    /**
-     * The Stop's size is a real stat that resolves on the threadpool, so an append made in the same
-     * tick would land before it and be counted in the earlier span. Yield until it has run.
-     */
-    const flushIo = (): Promise<void> => new Promise<void>((r) => realSetTimeout(r, 20));
-
-    // Captured before withSettle fakes the timers, so the wait below runs on the real clock.
-    const realSetTimeout = globalThis.setTimeout;
     const gapRows = (h: ReturnType<typeof harness>) =>
       h.observed.filter((o) => typeof o.entry === 'object' && o.entry !== null && 'gap' in o.entry);
 
@@ -583,13 +576,12 @@ describe('server domain: observed lane wiring', () => {
       const dir = mkdtempSync(join(tmpdir(), 'obs-gap-'));
       const transcript = join(projectDir(dir), 'session.jsonl');
       try {
-        const h = harness({ env: claudeEnv(dir) });
+        const h = harness(gapOpts(dir));
         const id = await live(h, { agentId: 'claude' });
         writeFileSync(transcript, `${use('u0', 'toolu_0')}\n`);
         await withSettle(async () => {
           h.domain.hookPost(id, post('Stop', { transcript_path: transcript }));
           vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
-          await flushIo();
           appendFileSync(transcript, `${use('u1', 'toolu_1')}\n`);
           h.domain.hookPost(id, post('Stop', { transcript_path: transcript }));
           vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
@@ -606,13 +598,12 @@ describe('server domain: observed lane wiring', () => {
       const dir = mkdtempSync(join(tmpdir(), 'obs-gap-'));
       const transcript = join(projectDir(dir), 'session.jsonl');
       try {
-        const h = harness({ env: claudeEnv(dir) });
+        const h = harness(gapOpts(dir));
         const id = await live(h, { agentId: 'claude' });
         writeFileSync(transcript, `${use('u0', 'toolu_0')}\n`);
         await withSettle(async () => {
           h.domain.hookPost(id, post('Stop', { transcript_path: transcript }));
           vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
-          await flushIo();
           appendFileSync(transcript, `${use('u1', 'toolu_1')}\n`);
           h.domain.hookPost(
             id,
@@ -638,13 +629,12 @@ describe('server domain: observed lane wiring', () => {
       const dir = mkdtempSync(join(tmpdir(), 'obs-gap-'));
       const transcript = join(projectDir(dir), 'session.jsonl');
       try {
-        const h = harness({ env: claudeEnv(dir) });
+        const h = harness(gapOpts(dir));
         const id = await live(h, { agentId: 'claude' });
         writeFileSync(transcript, `${use('u0', 'toolu_0')}\n`);
         await withSettle(async () => {
           h.domain.hookPost(id, post('Stop', { transcript_path: transcript }));
           vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
-          await flushIo();
           appendFileSync(transcript, `${use('u1', 'toolu_1')}\n`);
           h.domain.hookPost(
             id,
@@ -656,7 +646,6 @@ describe('server domain: observed lane wiring', () => {
           );
           h.domain.hookPost(id, post('Stop', { transcript_path: transcript }));
           vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
-          await flushIo();
           appendFileSync(transcript, `${use('u2', 'toolu_2')}\n`);
           h.domain.hookPost(id, post('Stop', { transcript_path: transcript }));
           vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
@@ -674,7 +663,7 @@ describe('server domain: observed lane wiring', () => {
       const a = join(projectDir(dir), 'a.jsonl');
       const b = join(projectDir(dir), 'b.jsonl');
       try {
-        const h = harness({ env: claudeEnv(dir) });
+        const h = harness(gapOpts(dir));
         const idA = await live(h, { agentId: 'claude' });
         const idB = await live(h, { agentId: 'claude' });
         writeFileSync(a, `${use('u0', 'toolu_0')}\n`);
@@ -683,9 +672,7 @@ describe('server domain: observed lane wiring', () => {
           h.domain.hookPost(idA, post('Stop', { transcript_path: a }));
           h.domain.hookPost(idB, post('Stop', { transcript_path: b }));
           vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
-          await flushIo();
           appendFileSync(a, `${use('u1', 'toolu_1')}\n`);
-          await flushIo();
           appendFileSync(b, `${use('u1', 'toolu_1')}\n`);
           h.domain.hookPost(idA, post('Stop', { transcript_path: a }));
           await h.call('sessions.remove', { sessionId: idA });
@@ -705,7 +692,7 @@ describe('server domain: observed lane wiring', () => {
       const outside = join(dir, 'outside.jsonl');
       const inside = join(projectDir(dir), 'inside.jsonl');
       try {
-        const h = harness({ env: claudeEnv(dir) });
+        const h = harness(gapOpts(dir));
         const idOut = await live(h, { agentId: 'claude' });
         const idIn = await live(h, { agentId: 'claude' });
         writeFileSync(outside, `${use('u0', 'toolu_0')}\n`);
@@ -714,9 +701,7 @@ describe('server domain: observed lane wiring', () => {
           h.domain.hookPost(idOut, post('Stop', { transcript_path: outside }));
           h.domain.hookPost(idIn, post('Stop', { transcript_path: inside }));
           vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
-          await flushIo();
           appendFileSync(outside, `${use('u1', 'toolu_1')}\n`);
-          await flushIo();
           appendFileSync(inside, `${use('u1', 'toolu_1')}\n`);
           h.domain.hookPost(idOut, post('Stop', { transcript_path: outside }));
           h.domain.hookPost(idIn, post('Stop', { transcript_path: inside }));
@@ -735,7 +720,7 @@ describe('server domain: observed lane wiring', () => {
       const gone = join(projectDir(dir), 'gone.jsonl');
       const other = join(projectDir(dir), 'other.jsonl');
       try {
-        const h = harness({ env: claudeEnv(dir) });
+        const h = harness(gapOpts(dir));
         const idGone = await live(h, { agentId: 'claude' });
         const idOther = await live(h, { agentId: 'claude' });
         writeFileSync(gone, `${use('u0', 'toolu_0')}\n`);
@@ -746,7 +731,6 @@ describe('server domain: observed lane wiring', () => {
           // session's checks have run, so its row is the signal that they have drained.
           h.domain.hookPost(idGone, post('Stop', { transcript_path: gone }));
           vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
-          await flushIo();
           appendFileSync(gone, `${use('u1', 'toolu_1')}\n`);
           h.domain.hookPost(idGone, post('Stop', { transcript_path: gone }));
           h.domain.hookPost(
@@ -760,7 +744,6 @@ describe('server domain: observed lane wiring', () => {
           vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
           h.domain.hookPost(idOther, post('Stop', { transcript_path: other }));
           vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
-          await flushIo();
           appendFileSync(other, `${use('u1', 'toolu_1')}\n`);
           h.domain.hookPost(idOther, post('Stop', { transcript_path: other }));
           vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);

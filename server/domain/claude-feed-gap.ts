@@ -22,10 +22,14 @@ export interface ClaudeFeedGap {
   dispose(): void;
 }
 
+// A stat outcome that never rejects, so a stat that fails before check() attaches is not an
+// unhandled rejection.
+type Sized = { ok: true; size: number } | { ok: false; error: string };
+
 interface Pending<T> {
   path: string;
   // see docs/plans/2026-11-14-policy-permissions-machinery.plan.md, "Lane B second re-review rulings"
-  size: Promise<number>;
+  size: Promise<Sized>;
   timer: T;
 }
 
@@ -75,20 +79,19 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
     sessionId: string,
     s: SessionGap<T>,
     path: string,
-    sizeOf: Promise<number>,
+    sized: Promise<Sized>,
     guard: { abandoned: boolean },
   ): Promise<void> => {
     try {
-      let size: number;
-      try {
-        size = await sizeOf;
-      } catch (err) {
+      const outcome = await sized;
+      if (!outcome.ok) {
         deps.warn('transcript not statable; feed gap not checked', {
           sessionId,
-          error: String(err),
+          error: outcome.error,
         });
         return;
       }
+      const size = outcome.size;
       // A new file, or one that shrank, has no span to continue: its content so far is history.
       let baseline =
         s.transcriptPath !== path || size < s.offset || size - s.offset > MAX_SPAN_BYTES;
@@ -137,7 +140,7 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
     sessionId: string,
     s: SessionGap<T>,
     path: string,
-    size: Promise<number>,
+    size: Promise<Sized>,
   ): Promise<void> => {
     const guard = { abandoned: false };
     const timeout: { handle: T | null } = { handle: null };
@@ -185,12 +188,12 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
     stop(sessionId, transcriptPath) {
       const s = stateOf(sessionId);
       if (s.pending !== null) deps.clearTimer(s.pending.timer);
-      const size = deps.sizeOf(transcriptPath);
-      // A stat that fails before the settle timer fires must not be an unhandled rejection;
-      // check() still awaits the original and reports it.
-      size.catch(() => {});
+      const sized = deps.sizeOf(transcriptPath).then(
+        (size): Sized => ({ ok: true, size }),
+        (err: unknown): Sized => ({ ok: false, error: String(err) }),
+      );
       const timer = deps.setTimer(() => fire(sessionId, s), FEED_GAP_SETTLE_MS);
-      s.pending = { path: transcriptPath, size, timer };
+      s.pending = { path: transcriptPath, size: sized, timer };
     },
     forget(sessionId) {
       const s = sessions.get(sessionId);

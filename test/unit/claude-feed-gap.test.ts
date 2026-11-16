@@ -529,6 +529,8 @@ describe('claude feed gap', () => {
     r.append(use('u0', 't0'));
     r.failSizeNext(new Error('ENOENT'));
     r.gap.stop('s1', '/t/a.jsonl');
+    // Yields to the event loop so an unhandled rejection from the stat is reported before check().
+    await new Promise((resolve) => setImmediate(resolve));
     await r.settle();
     expect(r.warnings).toEqual(['transcript not statable; feed gap not checked']);
     expect(r.ranges).toEqual([]);

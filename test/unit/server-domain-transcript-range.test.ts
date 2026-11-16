@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, win32 } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { confineTranscriptPath, readTranscriptRange } from '../../server/domain/transcript-range';
 
@@ -70,11 +70,48 @@ describe('confineTranscriptPath', () => {
     ['a sibling that shares the prefix', join(claudeHome, 'projects-evil', 'x.jsonl')],
     ['the projects dir itself', projects],
     ['a path outside claude home', join('/home', 'u', 'other', 'x.jsonl')],
-    ['a UNC path', '\\\\server\\share\\x'],
-    ['a forward-slash UNC path', '//server/share/x'],
-    ['a long-path device prefix', '\\\\?\\C:\\x'],
-    ['a device pipe', '\\\\.\\pipe\\x'],
-  ])('rejects %s', (_label, p) => {
+    ['a forward-slash UNC path under a UNC home', '//server/share/.claude/projects/p/s.jsonl'],
+  ])('rejects %s on posix', (_label, p) => {
+    expect(confineTranscriptPath(p, '//server/share/.claude')).toBeNull();
     expect(confineTranscriptPath(p, claudeHome)).toBeNull();
+  });
+
+  // Each row is contained by its own claude home, so only the raw-prefix check can refuse it.
+  const winHome = 'C:\\Users\\u\\.claude';
+  it('accepts a nested win32 transcript, normalised with path.win32', () => {
+    const nested = win32.join(winHome, 'projects', 'p', 's.jsonl');
+    expect(confineTranscriptPath(nested, winHome, win32)).toBe(win32.resolve(nested));
+  });
+
+  it.each([
+    [
+      'a UNC path under a UNC home',
+      '\\\\server\\share\\.claude\\projects\\p\\s.jsonl',
+      '\\\\server\\share\\.claude',
+    ],
+    [
+      'a forward-slash UNC path under a UNC home',
+      '//server/share/.claude/projects/p/s.jsonl',
+      '//server/share/.claude',
+    ],
+    [
+      'a long-path device prefix under its own home',
+      '\\\\?\\C:\\Users\\u\\.claude\\projects\\p\\s.jsonl',
+      '\\\\?\\C:\\Users\\u\\.claude',
+    ],
+    ['a device pipe under its own home', '\\\\.\\pipe\\projects\\x', '\\\\.\\pipe'],
+    [
+      'a device-prefixed transcript under its own home',
+      '\\\\.\\C:\\Users\\u\\.claude\\projects\\p\\s.jsonl',
+      '\\\\.\\C:\\Users\\u\\.claude',
+    ],
+    [
+      'a win32 sibling that shares the prefix',
+      win32.join(winHome, 'projects-evil', 'x.jsonl'),
+      winHome,
+    ],
+    ['a win32 path on another drive', 'D:\\x\\s.jsonl', winHome],
+  ])('rejects %s on win32', (_label, p, home) => {
+    expect(confineTranscriptPath(p, home, win32)).toBeNull();
   });
 });

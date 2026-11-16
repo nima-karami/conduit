@@ -152,6 +152,8 @@ export interface HarnessOptions {
   stopping?: boolean;
   e2e?: boolean;
   env?: Record<string, string>;
+  /** Replaces the feed gap's Stop-time size lookup. */
+  transcriptSize?: (path: string) => Promise<number>;
   platform?: NodeJS.Platform;
   resolveCommand?: (command: string) => string | undefined;
   /** Default true: the first reconcile (`adopted([])`) has run, so starts can spawn. */
@@ -216,6 +218,7 @@ export function harness(opts: HarnessOptions = {}) {
     instance: 'inst',
     e2e: opts.e2e ?? false,
     env: opts.env ?? {},
+    transcriptSize: opts.transcriptSize,
     runtime,
     launch: {
       whenLaunchReady: async () => {

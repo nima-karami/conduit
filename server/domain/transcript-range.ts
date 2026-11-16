@@ -1,6 +1,5 @@
 import { constants as fsConstants, promises as fsp } from 'node:fs';
 import * as path from 'node:path';
-import { isInsideRoot } from '../../src/path-guard';
 
 // O_NONBLOCK: opening a FIFO with no writer would otherwise block the feed-gap queue for good.
 // Windows has no such flag; a named pipe there is refused by the isFile check below.
@@ -9,17 +8,28 @@ const TRANSCRIPT_OPEN_FLAGS =
 
 /**
  * The transcript_path in a hook payload is agent-controlled, so it is confined before any
- * filesystem call. Pure: the caller decides what to do with a refusal.
+ * filesystem call. Pure: the caller decides what to do with a refusal. `paths` is injected so a
+ * win32 path can be tested on a posix CI runner; containment is by `relative`, which that module
+ * already makes case-insensitive on win32, rather than by the host-platform isInsideRoot.
  */
-export function confineTranscriptPath(p: string, claudeHome: string): string | null {
-  // Checked on the raw string: a UNC or device path is not absolute on Linux, and CI runs there.
+// posix and win32 share one type, so a win32 module is accepted wherever the default is
+type PlatformPath = typeof path.posix;
+
+export function confineTranscriptPath(
+  p: string,
+  claudeHome: string,
+  paths: PlatformPath = path,
+): string | null {
+  // Checked on the raw string: the UNC and device forms are only spelled that way on win32.
   if (p.startsWith('\\\\') || p.startsWith('//')) return null;
-  if (!path.isAbsolute(p)) return null;
-  const normalised = path.resolve(p);
-  const projects = path.resolve(claudeHome, 'projects');
-  // isInsideRoot also accepts the root itself; a transcript is a file inside it.
-  if (normalised === projects) return null;
-  return isInsideRoot(normalised, projects) ? normalised : null;
+  if (!paths.isAbsolute(p)) return null;
+  const normalised = paths.resolve(p);
+  const rel = paths.relative(paths.resolve(claudeHome, 'projects'), normalised);
+  // rel is '' for the projects dir itself, and starts with '..' for an escape or a sibling.
+  if (rel === '' || rel === '..' || rel.startsWith(`..${paths.sep}`) || paths.isAbsolute(rel)) {
+    return null;
+  }
+  return normalised;
 }
 
 export async function readTranscriptSize(p: string): Promise<number> {

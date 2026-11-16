@@ -1,11 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import {
-  copyFileSync,
-  existsSync,
-  constants as fsConstants,
-  promises as fsp,
-  readFileSync,
-} from 'node:fs';
+import { copyFileSync, existsSync, promises as fsp, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { join, resolve } from 'node:path';
 import { watchDir, watchDirWhilePresent } from '../../electron/watch-dir';
@@ -142,6 +136,8 @@ export interface DomainDeps {
   e2e: boolean;
   /** The server's own env (process.env): every session's base env (withServerEnv). */
   env: Readonly<Record<string, string | undefined>>;
+  /** Test seam: the Stop-time size lookup of the feed gap. Production uses readTranscriptSize. */
+  transcriptSize?: (path: string) => Promise<number>;
   runtime: TerminalRuntime;
   launch: LaunchPort;
   drafts: DraftPort;
@@ -701,7 +697,7 @@ export function createDomain(deps: DomainDeps): Domain {
   const claudeHome = deps.env.CLAUDE_CONFIG_DIR || join(deps.homeDir, '.claude');
   const feedGap = createClaudeFeedGap<ReturnType<typeof setTimeout>>({
     readRange: readTranscriptRange,
-    sizeOf: readTranscriptSize,
+    sizeOf: deps.transcriptSize ?? readTranscriptSize,
     setTimer: (fn, ms) => setTimeout(fn, ms),
     clearTimer: (handle) => clearTimeout(handle),
     record: (sessionId, gap) => deps.observed.record(sessionId, 'claude', { gap }),
@@ -716,12 +712,13 @@ export function createDomain(deps: DomainDeps): Domain {
       if (typeof payload.transcript_path === 'string') {
         const transcript = confineTranscriptPath(payload.transcript_path, claudeHome);
         if (transcript === null) {
+          // the path is agent-supplied: log a bounded prefix, not the whole string
           log.warn(
             'observed',
             'transcript path outside the Claude projects dir; feed gap not checked',
             {
               sessionId,
-              path: payload.transcript_path,
+              path: payload.transcript_path.slice(0, 200),
             },
           );
         } else {
