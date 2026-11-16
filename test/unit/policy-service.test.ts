@@ -83,6 +83,7 @@ const grant = (over: Partial<Grant> = {}): Grant => ({
 interface Opts {
   policy?: string | null;
   lastGood?: string | null;
+  lastGoodReadThrows?: boolean;
   launchedCli?: Record<string, CliKind | null | undefined>;
   grants?: string | null;
   activityFails?: boolean;
@@ -109,7 +110,10 @@ function harness(o: Opts = {}) {
   };
   const lastGoodWrites: string[] = [];
   const lastGoodIo: RequestsIo = {
-    read: () => o.lastGood ?? null,
+    read: () => {
+      if (o.lastGoodReadThrows) throw new Error('EIO');
+      return o.lastGood ?? null;
+    },
     write: async (t) => {
       if (writeDown) throw new Error('disk full');
       lastGoodWrites.push(t);
@@ -1777,12 +1781,25 @@ describe('fail-closed and missing profile', () => {
   });
 
   it.each([
-    ['unreadable', '{not json'],
-    ['newer', '{"version":99,"profiles":[],"assignments":[],"overrides":[]}'],
+    [
+      'is unreadable',
+      { lastGood: '{not json' },
+      'Permissions file missing and its saved copy is unreadable; every session is Observer',
+    ],
+    [
+      'is from a newer version',
+      { lastGood: '{"version":99,"profiles":[],"assignments":[],"overrides":[]}' },
+      'Permissions file missing and its saved copy is from a newer version; every session is Observer',
+    ],
+    [
+      'cannot be read',
+      { lastGoodReadThrows: true },
+      'Permissions file missing and its saved copy could not be read; every session is Observer',
+    ],
   ])(
-    'a missing policy.json with a %s last-good copy fails closed and never migrates',
-    async (_kind, lastGood) => {
-      const h = harness({ policy: null, lastGood });
+    'a missing policy.json with a last-good copy that %s fails closed and never migrates',
+    async (_kind, saved, summary) => {
+      const h = harness({ policy: null, ...saved });
       h.service.start();
 
       expect(migrateLegacyPolicy).not.toHaveBeenCalled();
@@ -1806,6 +1823,9 @@ describe('fail-closed and missing profile', () => {
       await h.service.stop();
       expect(h.policyWrites).toEqual([]);
       expect(h.lastGoodWrites).toEqual([]);
+      expect(h.activityRows().filter((r) => r.action === 'policy-unreadable')).toMatchObject([
+        { summary },
+      ]);
     },
   );
 

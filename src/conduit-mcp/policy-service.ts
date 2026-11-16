@@ -256,10 +256,16 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
 
   // Only `absent` may migrate from legacy: a copy that exists but can't be used is a fault to
   // fail closed on, never a reason to rebuild the policy from the old settings.
+  type LastGoodFault = 'unreadable' | 'newer' | 'read-failed';
   type LastGood =
     | { kind: 'absent' }
     | { kind: 'ok'; policy: PolicyFile }
-    | { kind: 'bad'; reason: 'unreadable' | 'newer' | 'read-failed' };
+    | { kind: 'bad'; reason: LastGoodFault };
+  const LAST_GOOD_FAULT_TEXT: Record<LastGoodFault, string> = {
+    unreadable: 'is unreadable',
+    newer: 'is from a newer version',
+    'read-failed': 'could not be read',
+  };
 
   function readLastGood(): LastGood {
     let text: string | null;
@@ -284,7 +290,8 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
 
   // Fail closed: an unreadable file never means an empty or a widened policy. The last copy
   // this server read or wrote stays in force, read-only; with none, every session is Observer.
-  function unreadablePolicy(why: string, e?: unknown): void {
+  // `lost` is set when policy.json is missing and the saved copy is the reason we failed closed.
+  function unreadablePolicy(why: string, e?: unknown, lost?: LastGoodFault): void {
     policyWritable = false;
     deps.warn(`${why}; policy is read-only and not saved`, e);
     const good = readLastGood();
@@ -306,9 +313,11 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       action: 'policy-unreadable',
       target: null,
       summary:
-        usable === null
-          ? 'Permissions file unreadable and no saved copy; every session is Observer'
-          : 'Permissions file unreadable; using the last saved copy',
+        usable !== null
+          ? 'Permissions file unreadable; using the last saved copy'
+          : lost !== undefined
+            ? `Permissions file missing and its saved copy ${LAST_GOOD_FAULT_TEXT[lost]}; every session is Observer`
+            : 'Permissions file unreadable and no saved copy; every session is Observer',
       decision: null,
       decidedBy: 'conduit',
       outcome: null,
@@ -335,7 +344,11 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
         return;
       }
       if (good.kind === 'bad') {
-        unreadablePolicy('policy.json is missing and the saved copy is unusable');
+        unreadablePolicy(
+          'policy.json is missing and the saved copy is unusable',
+          undefined,
+          good.reason,
+        );
         return;
       }
       const migrated = migrateLegacyPolicy(deps.legacy());
