@@ -85,7 +85,7 @@ import {
 import { scrollbackReplayPadding, spawnPrelude } from '../../src/scrollback-persistence';
 import {
   COMMAND_AGENT_ID,
-  coerceOpenedBy,
+  coerceLocalOpenedBy,
   coerceSessionCommand,
   effectiveDef,
 } from '../../src/session-command';
@@ -1319,7 +1319,7 @@ export function createDomain(deps: DomainDeps): Domain {
       brief,
       ...optional('command', coerceSessionCommand(p.command)),
       // The app's opener is always local: only the server's routed-call path names a remote one.
-      ...optional('openedBy', localOpener(coerceOpenedBy(p.openedBy))),
+      ...optional('openedBy', coerceLocalOpenedBy(p.openedBy)),
       ...(typeof p.cardId === 'string' ? { cardId: p.cardId } : {}),
       opener: {
         ...(typeof placement?.nearSessionId === 'string'
@@ -1842,6 +1842,3 @@ export function createDomain(deps: DomainDeps): Domain {
 
 const optional = <K extends string, V>(key: K, value: V | undefined): Partial<Record<K, V>> =>
   value === undefined ? {} : ({ [key]: value } as Record<K, V>);
-
-const localOpener = (o: SessionOpener | undefined): SessionOpener | undefined =>
-  o === undefined ? undefined : { handle: o.handle, sessionId: o.sessionId };

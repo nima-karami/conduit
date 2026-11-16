@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { AgentRegistry } from '../../src/agent-registry';
 import {
   COMMAND_AGENT_ID,
+  coerceLocalOpenedBy,
   coerceModel,
   coerceOpenedBy,
   coerceSessionCommand,
@@ -124,13 +125,20 @@ describe('session-command', () => {
     expect(coerceOpenedBy({ handle: 'claude-1' })).toBeUndefined();
     expect(coerceOpenedBy({ handle: 1, sessionId: 's1' })).toBeUndefined();
     expect(coerceOpenedBy(null)).toBeUndefined();
+    // A remote opener has no local session: the machine is what it is named by.
     expect(
       coerceOpenedBy({ handle: 'claude-3', sessionId: 's1', machineId: 'm-0000000a' }),
     ).toEqual({
       handle: 'claude-3',
-      sessionId: 's1',
       machineId: 'm-0000000a',
     });
+    expect(coerceOpenedBy({ handle: 'claude-3', machineId: 'm-0000000a' })).toEqual({
+      handle: 'claude-3',
+      machineId: 'm-0000000a',
+    });
+    expect(
+      coerceLocalOpenedBy({ handle: 'claude-3', sessionId: 's1', machineId: 'm-0000000a' }),
+    ).toEqual({ handle: 'claude-3', sessionId: 's1' });
     // A machineId that is present but not a machine id must drop the opener, never make it local.
     expect(
       coerceOpenedBy({ handle: 'claude-3', sessionId: 's1', machineId: 'm-zz' }),
