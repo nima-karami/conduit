@@ -672,9 +672,13 @@ describe('ssh links', { timeout: 60_000 }, () => {
     expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
     await until(() => b.manager.view(a.id.machineId)?.state === 'up');
     await until(() => a.manager.view(b.id.machineId)?.state === 'up');
-    // Both sides of an ssh link carry messaging and monitor, and not drive (spec 4.5).
+    // Both sides of an ssh link carry messaging and monitor. The dialer's record for B has no drive;
+    // B's record for its controller does (plan CON-41 decision 3).
     expect(a.store.get(b.id.machineId)?.capabilities).toEqual(OWN_DEFAULT_CAPABILITIES);
-    expect(b.store.get(a.id.machineId)?.capabilities).toEqual(OWN_DEFAULT_CAPABILITIES);
+    expect(b.store.get(a.id.machineId)?.capabilities).toEqual({
+      ...OWN_DEFAULT_CAPABILITIES,
+      drive: true,
+    });
     const session: MonitorSession = {
       sessionId: 'sid-claude-1',
       handle: 'claude-1',
@@ -1653,5 +1657,118 @@ describe("an ssh peer's hello writes its machine block (protocol 1.1)", () => {
     expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({ ok: true, machineId: c.id.machineId });
     expect(a.store.get(c.id.machineId)?.machine).toBeNull();
     expect(a.warns.some((w) => w.includes('platform'))).toBe(true);
+  });
+});
+
+describe('forget and the drive grant', { timeout: 60_000 }, () => {
+  it('an ssh controller is granted drive on accept, and the hello it gets says so', async () => {
+    const { a, b } = await sshPair();
+    expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
+    await until(() => b.manager.view(a.id.machineId)?.state === 'up');
+    // B's record for its controller is the one drive.ts reads; A's record for B stays read-only.
+    expect(b.store.get(a.id.machineId)?.capabilities.drive).toBe(true);
+    expect(a.manager.view(b.id.machineId)?.peerCapabilities?.drive).toBe(true);
+    expect(a.store.get(b.id.machineId)?.capabilities.drive).toBe(false);
+  });
+
+  it('forget closes without a revoked frame and leaves no tombstone', async () => {
+    const { a, b } = await sshPair();
+    await a.manager.addSshPeer(ENDPOINT);
+    await until(() => b.manager.view(a.id.machineId)?.state === 'up');
+    const changes = a.changes;
+    expect(a.manager.forget(b.id.machineId)).toBe(true);
+    expect(a.changes).toBeGreaterThan(changes);
+    expect(a.store.get(b.id.machineId)).toBeNull();
+    expect(a.store.byServerKey(b.id.serverKeyRaw.toString('base64'))).toBeNull();
+    expect(a.manager.view(b.id.machineId)).toBeNull();
+    expect(a.audit.some((e) => e.kind === 'link.revoked')).toBe(false);
+    // The far side sees a plain close, never a revoke: its record and its state are its own.
+    await until(() => b.manager.view(a.id.machineId)?.state === 'down');
+    expect(b.manager.view(a.id.machineId)?.revokedBy).toBeNull();
+    expect(b.store.get(a.id.machineId)).not.toBeNull();
+  });
+
+  it('forget stops a pending redial: no dial happens after it', async () => {
+    // Each dial's stream is closed before any hello, so the peer fails and schedules a retry about 1 s on.
+    let dials = 0;
+    const a = await node(identity(), 'linux-box', 0, () => {
+      dials += 1;
+      const [near, far] = streamPair();
+      near.destroy();
+      far.destroy();
+      return { stream: near, failure: async () => null };
+    });
+    const x = await node(identity(), 'x-box');
+    a.store.addSsh({
+      machineId: x.id.machineId,
+      serverKey: x.id.serverKeyRaw.toString('base64'),
+      ownerKey: null,
+      name: 'x-box',
+      ssh: ENDPOINT,
+    });
+    a.store.setMachine(x.id.machineId, { ...META, enabled: true });
+    a.manager.start();
+    await until(() => dials >= 1);
+    expect(a.manager.forget(x.id.machineId)).toBe(true);
+    const atForget = dials;
+    await new Promise((r) => setTimeout(r, 2_500));
+    expect(dials).toBe(atForget);
+  });
+
+  it('a wait on a machine that is forgotten returns at once, with no failure', async () => {
+    const a = await node(identity(), 'linux-box', 0, () => {
+      const [near] = streamPair();
+      return { stream: near, failure: async () => null };
+    });
+    const x = await node(identity(), 'x-box');
+    a.store.addSsh({
+      machineId: x.id.machineId,
+      serverKey: x.id.serverKeyRaw.toString('base64'),
+      ownerKey: null,
+      name: 'x-box',
+      ssh: ENDPOINT,
+    });
+    a.store.setMachine(x.id.machineId, { ...META, enabled: true });
+    a.manager.start();
+    const waiting = a.manager.waitUp(x.id.machineId, 60_000, new AbortController().signal);
+    expect(a.manager.forget(x.id.machineId)).toBe(true);
+    const outcome = await Promise.race([
+      waiting,
+      new Promise<string>((r) => setTimeout(() => r('still waiting'), 2_000)),
+    ]);
+    expect(outcome).toEqual({ up: false, failure: null });
+  });
+
+  it('an inbound ssh hello never grants drive to a record we dial', async () => {
+    // A dialed record (ssh set) is ours to dial, so B may not drive A through it (spec S5).
+    const x = await node(identity(), 'x-box');
+    let dialed = 0;
+    const a = await node(identity(), 'linux-box', 0, () => {
+      dialed += 1;
+      const [near] = streamPair();
+      return { stream: near, failure: async () => null };
+    });
+    a.store.addSsh({
+      machineId: x.id.machineId,
+      serverKey: x.id.serverKeyRaw.toString('base64'),
+      ownerKey: null,
+      name: 'x-box',
+      ssh: ENDPOINT,
+    });
+    a.store.setMachine(x.id.machineId, { ...META, enabled: true });
+    a.manager.start();
+    await until(() => dialed >= 1);
+    const [near, far] = streamPair();
+    a.manager.acceptStream(far);
+    void openConnection(near, { hello: helloOf(x), now: Date.now, log: quiet });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(a.store.get(x.id.machineId)?.capabilities.drive).toBe(false);
+  });
+
+  it('forget of an unknown machine is false and changes nothing', async () => {
+    const { a } = await sshPair();
+    const changes = a.changes;
+    expect(a.manager.forget('m-99999999')).toBe(false);
+    expect(a.changes).toBe(changes);
   });
 });

@@ -1,3 +1,4 @@
+import { CONNECT_BUDGET_MS } from '../../src/conduit-mcp/machine-tools';
 import type { Capability } from '../../src/contracts/link-protocol';
 import type { NetworkState } from '../../src/contracts/network-state';
 import type { BootstrapResult } from '../../src/contracts/ssh-link';
@@ -6,6 +7,7 @@ import { RpcFault } from '../transport/pipe';
 import { DRIVE_INPUT_MAX_BYTES, type Drive } from './drive';
 import type { LinkManager } from './link-manager';
 import { parseHostPort } from './listener';
+import type { Machines } from './machines';
 import type { PairingService } from './pairing-service';
 import type { createViewRelay } from './view-relay';
 
@@ -29,6 +31,9 @@ export interface NetworkCallDeps {
   bootstrap(target: string): Promise<BootstrapResult>;
   /** Opens the needs-person pane for one target; resolves with its session id. */
   openNeedsPerson(target: string): Promise<string>;
+  machines: Machines;
+  /** The Host aliases in the user's ssh config, for the Add dialog's list. */
+  sshHosts(): string[];
   peer?: object;
 }
 
@@ -139,6 +144,9 @@ export function handleNetworkCall(
       const capability = CAPABILITIES.find((c) => c === p.capability);
       if (capability === undefined || typeof p.on !== 'boolean')
         throw new RpcFault('invalid', 'Expected capability and on');
+      // The grant is re-applied on every connect (acceptSsh, plan CON-41 decision 3), so a toggle lasts one connection.
+      if (capability === 'drive' && d.manager.isSshController(machineId))
+        throw new RpcFault('invalid', 'drive on an ssh controller is granted by its connection');
       known(d.manager.setCapability(machineId, capability, p.on), machineId);
       return Promise.resolve({});
     }
@@ -161,6 +169,36 @@ export function handleNetworkCall(
       );
       return Promise.resolve({});
     }
+    default:
+      return handleMachineCall(method, raw, d);
+  }
+}
+
+/** The owner's machine actions (plan Task 1). They run the same code the MCP tools use. */
+export function handleMachineCall(
+  method: string,
+  raw: unknown,
+  d: Pick<NetworkCallDeps, 'machines' | 'sshHosts'>,
+): Promise<unknown> | null {
+  const p = paramsOf(raw);
+  switch (method) {
+    case 'machines.connect': {
+      const machine = str(p, 'machine', 256);
+      // Same budget as the MCP connect_machine call. The work keeps going past it (Machines.connect).
+      const budget = new AbortController();
+      const timer = setTimeout(() => budget.abort(), CONNECT_BUDGET_MS);
+      return d.machines.connect(machine, budget.signal).finally(() => clearTimeout(timer));
+    }
+    case 'machines.disconnect':
+      return d.machines.disconnect(str(p, 'machine', 256));
+    case 'machines.rename':
+      d.machines.rename(str(p, 'machineId'), str(p, 'name', 256));
+      return Promise.resolve({});
+    case 'machines.remove':
+      d.machines.remove(str(p, 'machineId'));
+      return Promise.resolve({});
+    case 'machines.sshHosts':
+      return Promise.resolve({ hosts: d.sshHosts() });
     default:
       return null;
   }
