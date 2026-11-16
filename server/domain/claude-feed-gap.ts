@@ -37,6 +37,8 @@ interface SessionGap<T> {
 }
 
 const NEWLINE = 0x0a;
+// a Claude line can be megabytes of tool output; this tail is enough to tell two files apart
+const FINGERPRINT_BYTES = 256;
 // Posts for calls that never reach the main transcript would otherwise pile up for the
 // session's whole life.
 const RECEIVED_CAP = 1_000;
@@ -96,7 +98,8 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
     s.offset = start + complete;
     if (complete > 0) {
       const previousEnd = complete >= 2 ? bytes.lastIndexOf(NEWLINE, complete - 2) : -1;
-      s.fingerprint = Buffer.from(bytes.subarray(previousEnd + 1, complete));
+      const fingerprintStart = Math.max(previousEnd + 1, complete - FINGERPRINT_BYTES);
+      s.fingerprint = Buffer.from(bytes.subarray(fingerprintStart, complete));
     } else if (baseline) {
       s.fingerprint = null;
     }

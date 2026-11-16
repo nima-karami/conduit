@@ -676,7 +676,7 @@ describe('server domain: observed lane wiring', () => {
       }
     });
 
-    it('a Stop and a PostToolUse that arrive after the session is deleted write no row and start no gap state', async () => {
+    it('a Stop and a PostToolUse that arrive after the session is deleted write no row', async () => {
       const dir = mkdtempSync(join(tmpdir(), 'obs-gap-'));
       const gone = join(dir, 'gone.jsonl');
       const other = join(dir, 'other.jsonl');
