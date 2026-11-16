@@ -183,7 +183,9 @@ export function applyLegacyPatch(
 ): Assignment | null {
   const lowerA = assignmentOrWorker(state, lower);
   const existing = state.assignments.get(pointKey(point));
-  const base = copyAssignment(existing ?? lowerA);
+  // A new point starts with no pins: the lower point's explicit choices are not this point's.
+  const base =
+    existing === undefined ? withPinned(copyAssignment(lowerA), []) : copyAssignment(existing);
   const applies = (field: PolicyField): boolean =>
     patch[field] !== undefined && TOOL_SPECS[tool].fields.includes(field);
   if (!(['access', 'when', 'reach', 'move'] as const).some(applies)) return base;
@@ -196,7 +198,8 @@ export function applyLegacyPatch(
   if (patch.when !== undefined) next = applyField(state, lowerA, next, tool, 'when', patch.when);
   if (patch.reach !== undefined) next = applyField(state, lowerA, next, tool, 'reach', patch.reach);
   if (patch.move !== undefined) next = applyField(state, lowerA, next, tool, 'move', patch.move);
-  if (point.kind !== 'session') return next;
+  // Pins live on non-default points only; see plan "Third pass rulings".
+  if (point.kind === 'default') return withPinned(next, []);
   // A concrete value is an explicit choice; 'inherit' hands the field back to the lower point.
   const pins = new Set(next.pinned ?? []);
   for (const field of ['access', 'when', 'reach', 'move'] as const) {

@@ -210,14 +210,14 @@ function completeRules(rules: Partial<Record<ToolName, ToolRule>>): Record<ToolN
 
 const completeProfile = (p: RawProfile): Profile => ({ ...p, rules: completeRules(p.rules) });
 
-// Pins are session-only, sorted and unique (see plan second-pass rulings); a hand-edited file is brought to that shape.
+// Pins sit on non-default points only, sorted and unique (see plan third-pass rulings); a hand-edited file is brought to that shape.
 const normaliseEntry = (
   e: PolicyFile['assignments'][number],
 ): PolicyFile['assignments'][number] => ({
   point: e.point,
   assignment: withPinned(
     e.assignment,
-    e.point.kind === 'session' ? (e.assignment.pinned ?? []) : [],
+    e.point.kind === 'default' ? [] : (e.assignment.pinned ?? []),
   ),
 });
 

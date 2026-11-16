@@ -48,7 +48,7 @@ export interface Assignment {
   profileId: ProfileId;
   exceptions: Exception[];
   onScreenOnly: boolean;
-  /** Session points only: `${tool}.${field}` keys chosen explicitly. See docs/plans/2026-11-14-policy-permissions-machinery.plan.md, "Second pass rulings". */
+  /** Non-default points only: `${tool}.${field}` keys chosen explicitly. See docs/plans/2026-11-14-policy-permissions-machinery.plan.md, "Third pass rulings". */
   pinned?: readonly string[];
 }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decide } from '../../src/conduit-mcp/policy-engine';
+import { parsePolicyFile, serializePolicyFile } from '../../src/conduit-mcp/policy-file';
 import {
   effectiveRule,
   pointKey,
@@ -544,7 +545,7 @@ describe('explicit session choices are pinned', () => {
     kind: 'session' as const,
     sessionId: 's1',
     handle: 'a',
-    launchedCli: null,
+    launchedCli: null as CliKind | null,
     homeFolder: '/w',
     projectId: null,
   };
@@ -556,22 +557,41 @@ describe('explicit session choices are pinned', () => {
     overrides: [],
     failClosed: false,
   });
-  const dec = (s: PolicyState, tool: ToolName) =>
-    decide(s, { principal: P, tool, targets: [], masterOn: true, toYou: false, now: 0 }).decision;
+  const CODEX = { ...P, sessionId: 's9', launchedCli: 'codex' as CliKind };
+  const dec = (s: PolicyState, tool: ToolName, principal = P) =>
+    decide(s, { principal, tool, targets: [], masterOn: true, toYou: false, now: 0 }).decision;
   const S1: AssignmentPoint = { kind: 'session', sessionId: 's1' };
   const D: AssignmentPoint = { kind: 'default' };
+  const CX: AssignmentPoint = { kind: 'cli', cli: 'codex' };
   const noCli = () => null;
+  const codexOf = (sid: string) => (sid === 's9' ? 'codex' : null);
   function edit(
     m: M,
     point: AssignmentPoint,
     lower: AssignmentPoint | null,
     tool: ToolName,
     patch: ToolPolicyPatch,
+    cliOf: (sid: string) => CliKind | null = noCli,
   ): void {
-    const writes = propagateLegacyPatch(st(m), point, lower, tool, patch, noCli);
+    const writes = propagateLegacyPatch(st(m), point, lower, tool, patch, cliOf);
     if (!writes) throw new Error('refused');
     for (const w of writes) m.set(pointKey(w.point), [w.point, w.assignment]);
   }
+  // Write and re-read the file, as a restart would.
+  const roundTrip = (m: M): M => {
+    const f = parsePolicyFile(
+      serializePolicyFile({
+        version: 1,
+        profiles: [],
+        assignments: [...m.values()].map(([point, assignment]) => ({ point, assignment })),
+        overrides: [],
+        migratedFrom: null,
+        notes: { onScreenOnlyOffered: [] },
+      }),
+    );
+    if (!f.ok) throw new Error('parse');
+    return new Map(f.file.assignments.map((a) => [pointKey(a.point), [a.point, a.assignment]]));
+  };
 
   it('drift repro: a later default off reaches a session tweaked in the dialog', () => {
     const m: M = new Map();
@@ -626,11 +646,67 @@ describe('explicit session choices are pinned', () => {
     expect(dec(st(m), 'send_input')).toBe('allow');
   });
 
-  it('pins are set only on session points, never on default or cli points', () => {
+  it('pins sit on cli points too, and a default point never carries them', () => {
     const m: M = new Map();
     edit(m, D, null, 'send_input', { access: 'off' });
     edit(m, CLAUDE_POINT, D, 'send_input', { access: 'on' });
     expect(m.get(pointKey(D))?.[1].pinned).toBeUndefined();
-    expect(m.get(pointKey(CLAUDE_POINT))?.[1].pinned).toBeUndefined();
+    expect(m.get(pointKey(CLAUDE_POINT))?.[1].pinned).toEqual(['send_input.access']);
+  });
+
+  it('CLI level without migration: a CLI off survives a later default on', () => {
+    const m: M = new Map();
+    edit(m, D, null, 'send_input', { access: 'off' });
+    edit(m, CX, D, 'send_input', { access: 'off' });
+    edit(m, D, null, 'send_input', { access: 'on' });
+    expect(dec(st(m), 'send_input', CODEX)).toBe('deny');
+  });
+
+  it('a default edit stops at a pinned CLI point and leaves its unpinned sessions; a CLI edit reaches them', () => {
+    const m: M = new Map();
+    edit(m, D, null, 'send_input', { access: 'off' });
+    edit(m, CX, D, 'send_input', { access: 'off' });
+    const S9: AssignmentPoint = { kind: 'session', sessionId: 's9' };
+    edit(m, S9, CX, 'open_file', { access: 'off' }, codexOf);
+    expect(m.get(pointKey(S9))?.[1].pinned).toEqual(['open_file.access']);
+    edit(m, D, null, 'send_input', { access: 'on' }, codexOf);
+    expect(dec(st(m), 'send_input', CODEX)).toBe('deny');
+    edit(m, CX, D, 'send_input', { access: 'on' }, codexOf);
+    expect(dec(st(m), 'send_input', CODEX)).toBe('allow');
+  });
+
+  it('CLI level without migration survives a file round-trip', () => {
+    const m: M = new Map();
+    edit(m, D, null, 'send_input', { access: 'off' });
+    edit(m, CX, D, 'send_input', { access: 'off' });
+    const back = roundTrip(m);
+    edit(back, D, null, 'send_input', { access: 'on' }, codexOf);
+    expect(dec(st(back), 'send_input', CODEX)).toBe('deny');
+  });
+
+  it('an explicit CLI on survives tightening the default', () => {
+    const m: M = new Map();
+    edit(m, D, null, 'read_screen', { access: 'on' });
+    edit(m, CX, D, 'read_screen', { access: 'on' });
+    edit(m, D, null, 'read_screen', { access: 'off' });
+    expect(dec(st(m), 'read_screen', CODEX)).toBe('allow');
+  });
+
+  it("'inherit' on a CLI point unpins it: after it, a default edit reaches the CLI again", () => {
+    const m: M = new Map();
+    edit(m, D, null, 'send_input', { access: 'off' });
+    edit(m, CX, D, 'send_input', { access: 'off' });
+    edit(m, CX, D, 'send_input', { access: 'inherit' });
+    expect(m.get(pointKey(CX))?.[1].pinned).toBeUndefined();
+    edit(m, D, null, 'send_input', { access: 'on' });
+    expect(dec(st(m), 'send_input', CODEX)).toBe('allow');
+  });
+
+  it('a new point does not copy its lower point pins', () => {
+    const m: M = new Map();
+    edit(m, D, null, 'read_screen', { access: 'on' });
+    edit(m, CX, D, 'read_screen', { access: 'on' });
+    edit(m, S1, CX, 'open_file', { access: 'off' });
+    expect(m.get(pointKey(S1))?.[1].pinned).toEqual(['open_file.access']);
   });
 });

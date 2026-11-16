@@ -45,7 +45,7 @@ const hasFields = (layer: PolicyLayer): boolean =>
 const isPlainWorker = (a: Assignment): boolean =>
   a.profileId === 'worker' && a.exceptions.length === 0 && !a.onScreenOnly;
 
-// Every field the v0.64 session layer set is an explicit choice, even one equal to the global value.
+// Every field a v0.64 session or CLI layer set is an explicit choice, even one equal to the global value.
 const pinsOf = (layer: PolicyLayer): string[] =>
   TOOL_NAMES.flatMap((tool) =>
     TOOL_SPECS[tool].fields
@@ -90,7 +90,10 @@ export function migrateLegacyPolicy(
     if (layer === undefined || !hasFields(layer)) continue;
     assignments.push({
       point: { kind: 'cli', cli },
-      assignment: assignmentFor((tool) => resolvePolicy(tool, { cli: layer, global }).policy),
+      assignment: assignmentFor(
+        (tool) => resolvePolicy(tool, { cli: layer, global }).policy,
+        pinsOf(layer),
+      ),
     });
   }
 

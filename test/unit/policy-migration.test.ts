@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decide } from '../../src/conduit-mcp/policy-engine';
+import { parsePolicyFile, serializePolicyFile } from '../../src/conduit-mcp/policy-file';
 import { type LegacyPolicy, migrateLegacyPolicy } from '../../src/conduit-mcp/policy-migration';
 import {
   DECISION_OF_ACCESS,
@@ -167,9 +168,86 @@ describe('migrateLegacyPolicy', () => {
           exceptions: [
             { tool: 'open_file', scope: { kind: 'anywhere' }, rule: { decision: 'deny' } },
           ],
+          pinned: ['open_file.access'],
         },
       },
     ]);
+  });
+
+  const entriesOf = (
+    list: Array<{ point: AssignmentPoint; assignment: Assignment }>,
+  ): Map<string, [AssignmentPoint, Assignment]> =>
+    new Map(
+      list.map((a): [string, [AssignmentPoint, Assignment]] => [
+        pointKey(a.point),
+        [a.point, a.assignment],
+      ]),
+    );
+  describe('a v0.64 CLI layer pins its fields, as a session layer does', () => {
+    const codex = {
+      kind: 'session' as const,
+      sessionId: 's9',
+      handle: 'a',
+      launchedCli: 'codex' as const,
+      homeFolder: '/w',
+      projectId: null,
+    };
+    const dec = (s: PolicyState) =>
+      decide(s, {
+        principal: codex,
+        tool: 'send_input',
+        targets: [],
+        masterOn: true,
+        toYou: false,
+        now: 0,
+      }).decision;
+    const migratedCliOff = () => {
+      const global: GlobalPolicy = { ...DEFAULT_TOOL_POLICY, send_input: { access: 'off' } };
+      const out = migrateLegacyPolicy({
+        global,
+        byCli: { codex: { send_input: { access: 'off' } } },
+        sessions: [],
+      });
+      const cliPoint: AssignmentPoint = { kind: 'cli', cli: 'codex' };
+      expect(assignmentAt(out, cliPoint).pinned).toEqual(['send_input.access']);
+      return entriesOf(out.assignments);
+    };
+    const globalOn = (m: Map<string, [AssignmentPoint, Assignment]>) => {
+      const writes = propagateLegacyPatch(
+        stateOf([...m.values()]),
+        { kind: 'default' },
+        null,
+        'send_input',
+        { access: 'on' },
+        () => 'codex',
+      );
+      if (!writes) throw new Error('refused');
+      for (const w of writes) m.set(pointKey(w.point), [w.point, w.assignment]);
+    };
+
+    it('a codex session stays deny after global on', () => {
+      const m = migratedCliOff();
+      globalOn(m);
+      expect(dec(stateOf([...m.values()]))).toBe('deny');
+    });
+
+    it('a codex session stays deny after global on, across a file round-trip', () => {
+      const m = migratedCliOff();
+      const f = parsePolicyFile(
+        serializePolicyFile({
+          version: 1,
+          profiles: [],
+          assignments: [...m.values()].map(([point, assignment]) => ({ point, assignment })),
+          overrides: [],
+          migratedFrom: 'v0.64',
+          notes: { onScreenOnlyOffered: [] },
+        }),
+      );
+      if (!f.ok) throw new Error('parse');
+      const back = entriesOf(f.file.assignments);
+      globalOn(back);
+      expect(dec(stateOf([...back.values()]))).toBe('deny');
+    });
   });
 
   it('an empty layer writes no assignment', () => {
