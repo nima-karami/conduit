@@ -114,6 +114,13 @@ export const MACHINES_STR = {
   rename: 'Rename',
   remove: 'Remove',
   copyFix: 'Copy fix',
+  /** The one line Copy fix puts on the clipboard for a machine that can't link (§9.1). */
+  fixLine: (m: { machine: string; state: MachineState; conduit_version: string | null }) =>
+    m.state === 'incompatible'
+      ? `Update Conduit here and on ${m.machine} to the same version${m.conduit_version ? ` (${m.machine} has ${m.conduit_version})` : ''}`
+      : m.state === 'identity-changed'
+        ? `Conduit on ${m.machine} has a new identity. If you reinstalled it, remove ${m.machine} here and add it again.`
+        : `ssh ${m.machine}`,
   reconfirm: 'Re-confirm',
   removeTitle: (name: string) => `Remove ${name}?`,
   removeBody:
