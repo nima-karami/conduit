@@ -178,4 +178,10 @@ export const MACHINES_STR = {
   closeSession: 'Close session',
   attaching: (machine: string) => `Opening the terminal on ${machine}…`,
   paneError: (code: string) => PANE_ERROR[code] ?? 'Something went wrong talking to that machine.',
+  // Remote Files tree (plan CON-43 T4).
+  filesLoading: 'Loading…',
+  filesRetry: 'Retry',
+  filesEmpty: 'This folder is empty.',
+  filesOffline: (machine: string) => `${machine} is offline`,
+  filesTree: (machine: string) => `Files on ${machine}`,
 };

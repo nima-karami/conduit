@@ -10,6 +10,7 @@ import { CHROME_STR } from '../chrome-strings';
 import type { OpenMode } from '../docs';
 import type { FsOp } from '../fs-undo';
 import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
+import type { RemoteSessionRow } from '../remote-sessions';
 import { reviewModeStatusLabel } from '../review-commit';
 import { getReviewNav, subscribeReviewNav } from '../review-nav-store';
 import type { ReviewScope } from '../review-scope';
@@ -21,6 +22,7 @@ import { EmptyState } from './empty-state';
 import { FilesView, type FilesViewHandle, type FolderUiCache } from './files-view';
 import { MessagesPane } from './messages-pane';
 import { NeedsYouPanel } from './needs-you-panel';
+import { RemoteFilesView } from './remote-files-view';
 import { ReviewNavigator } from './review-navigator';
 import type { SearchPaneHandle, SearchScopeModel } from './search-pane';
 
@@ -76,6 +78,8 @@ export function RightPane({
   messagesFilterHandle,
   onMessagesFilterHandleChange,
   onOpenSettings,
+  remote,
+  onOpenRemoteFile,
   ...changesProps
 }: Omit<ChangesViewProps, 'model' | 'collapsedRepos'> & {
   sessionId: string | undefined;
@@ -127,6 +131,9 @@ export function RightPane({
   messagesFilterHandle: Handle | null;
   onMessagesFilterHandleChange: (handle: Handle | null) => void;
   onOpenSettings: () => void;
+  /** The selected remote session: its Files tab browses B's folders instead of the local ones. */
+  remote?: RemoteSessionRow | null;
+  onOpenRemoteFile?: (row: RemoteSessionRow, path: string, mode: OpenMode) => void;
 }) {
   // Fully controlled: App's chrome state is the one view authority (sidebar-agent-tree plan T1.3).
   const { rightTab: tab } = useWorkbenchChromeState();
@@ -237,6 +244,14 @@ export function RightPane({
             {...changesProps}
           />
         )
+      ) : remote ? (
+        <RemoteFilesView
+          key={remote.id}
+          row={remote}
+          onOpenFile={
+            onOpenRemoteFile ? (path, mode) => onOpenRemoteFile(remote, path, mode) : undefined
+          }
+        />
       ) : sessionId === undefined ? (
         <EmptyState
           variant="panel"

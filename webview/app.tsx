@@ -188,7 +188,7 @@ import {
   tabPreview,
 } from './doc-groups';
 import { reorderDock } from './dock-reorder';
-import type { DocKind, DocsState, OpenDoc, OpenMode } from './docs';
+import type { DocsState, LocalDocKind, OpenDoc, OpenMode } from './docs';
 import {
   backgroundOpenOutcome,
   commitDiffPath,
@@ -1325,13 +1325,18 @@ export function App() {
   // 2026-09-22-middle-click-new-tab §3). The session is named only when it isn't the active one.
   const reportBackgroundOpen = useCallback(
     (
-      kind: DocKind,
+      kind: LocalDocKind,
       path: string,
       targetSessionId: string,
       group: GroupIndex,
       diffScope?: DiffTabScope,
     ) => {
-      const r = backgroundOpenOutcome(docStateRef.current, kind, path, targetSessionId, diffScope);
+      const r = backgroundOpenOutcome(
+        docStateRef.current,
+        { kind, diffScope },
+        path,
+        targetSessionId,
+      );
       const sessionName =
         r.ownerSessionId === activeIdRef.current
           ? null
@@ -3154,7 +3159,7 @@ export function App() {
         ) &&
         !(
           nav.keepActive &&
-          shownKeepsDoc(docStateRef.current, 'file', path, effectiveSessionId, shown)
+          shownKeepsDoc(docStateRef.current, { kind: 'file' }, path, effectiveSessionId, shown)
         )
       ) {
         setReveal(path, nav.reveal, g);

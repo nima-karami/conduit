@@ -34,6 +34,9 @@ import type { ReviewScope } from './review-scope';
 // 'request' is one agent request open as an editor tab; its path is `@request/<id>`.
 export type DocKind =
   | 'file'
+  // A file on another machine (plan CON-43 T4). Its own kind, not a flag on 'file', so every
+  // path keyed on 'file' (local reads, watches, saves, moves, reopen) skips it by construction.
+  | 'remote-file'
   | 'diff'
   | 'review'
   | 'web'
@@ -77,7 +80,19 @@ export interface OpenDoc {
   // git-history: the repo the view shows; commit-diff: the repo its commit was read from.
   // Never persisted — a restored doc falls back per docs/specs/archive/2026-09-23-mf-changes.md §2.5.
   repoRoot?: string;
+  // Required on kind 'remote-file' and absent otherwise. The type cannot express that without a
+  // discriminated OpenDoc (every construction site would need narrowing), so idOf and the open
+  // reducer throw when a remote-file arrives without it. `sessionId` is then the remote session's
+  // remoteKeyId, an opaque owner id here.
+  machine?: { machineId: string; sessionId: string };
 }
+
+export type Machine = NonNullable<OpenDoc['machine']>;
+export type LocalDocKind = Exclude<DocKind, 'remote-file'>;
+/** What a doc is: a remote file names its machine and nothing else, a local doc never names one. */
+export type DocTarget =
+  | { kind: 'remote-file'; machine: Machine; diffScope?: never }
+  | { kind: LocalDocKind; machine?: never; diffScope?: DiffTabScope };
 
 // Whether a file-open opens a reusable preview tab (single-click / nav) or a permanent
 // tab (double-click / OS open). See the entry-point classification in the spec §9.
@@ -142,20 +157,18 @@ export interface DocsState {
 export type DocsAction =
   // `mode` (file/diff only) chooses a reusable preview tab vs a permanent one; defaults to
   // permanent so callers/kinds that don't opt in keep today's behavior.
-  | {
+  | ({
       type: 'open';
-      kind: DocKind;
       path: string;
       sessionId: string;
       mode?: OpenMode;
       sideBySide?: boolean;
-      diffScope?: DiffTabScope;
       repoRoot?: string;
       group?: GroupIndex;
       /** The session the window shows. A foreground open into another session lands active in
        *  that session's layout and leaves `activeId` on the shown one; absent ⇒ `sessionId`. */
       shown?: string;
-    }
+    } & DocTarget)
   // Update a doc's tab label. Used by the web view to adopt the live page <title>.
   | { type: 'setTitle'; id: string; title: string }
   // Consume the one-time `sideBySide` override once the diff tab's own toggle has fired
@@ -217,23 +230,26 @@ export type DocsAction =
 
 export const initialDocs: DocsState = { docs: [], layouts: {}, activeId: null };
 
-const idOf = (kind: DocKind, path: string, diffScope?: DiffTabScope) =>
-  kind === 'diff' && diffScope ? `diff@${diffScope}:${path}` : `${kind}:${path}`;
+// A remote file shares its path with a local one, so the machine is part of its identity.
+const idOf = (t: DocTarget, path: string): string => {
+  if (t.kind === 'remote-file') return `remote-file@${t.machine.machineId}:${path}`;
+  return t.kind === 'diff' && t.diffScope ? `diff@${t.diffScope}:${path}` : `${t.kind}:${path}`;
+};
 
 /** A foreground file or web open for `sessionId` while `shown` is on screen leaves the tab with
  *  `shown` (the shown session already holds it): the open lands nowhere in the caller. Review and
  *  History are singletons that move to the opener (spec B §2.1). */
 export function shownKeepsDoc(
   state: DocsState,
-  kind: DocKind,
+  target: DocTarget,
   path: string,
   sessionId: string,
   shown: string | undefined,
-  diffScope?: DiffTabScope,
 ): boolean {
   if (shown === undefined || shown === sessionId) return false;
-  if (kind !== 'file' && kind !== 'web') return false;
-  const id = idOf(kind, path, diffScope);
+  if (target.kind !== 'file' && target.kind !== 'remote-file' && target.kind !== 'web')
+    return false;
+  const id = idOf(target, path);
   return state.docs.some((d) => d.id === id && d.sessionId === shown);
 }
 const scopeField = (kind: DocKind, diffScope: DiffTabScope | undefined) =>
@@ -262,7 +278,8 @@ function initialTitle(kind: DocKind, path: string, diffScope?: DiffTabScope): st
 
 const EMPTY_GROUP: EditorGroup = { tabs: [], active: null };
 const otherGroup = (g: GroupIndex): GroupIndex => (g === 1 ? 2 : 1);
-const isPreviewable = (kind: DocKind | undefined) => kind === 'file' || kind === 'diff';
+const isPreviewable = (kind: DocKind | undefined) =>
+  kind === 'file' || kind === 'remote-file' || kind === 'diff';
 const holds = (group: EditorGroup | undefined, id: string) =>
   group?.tabs.some((t) => t.id === id) ?? false;
 const groupAt = (layout: SessionLayout, g: GroupIndex) => layout.groups[g - 1] ?? EMPTY_GROUP;
@@ -495,7 +512,7 @@ function rekeySlot(
 /** The id a split or move lands `doc` under (P4): a `commit-diff` slot's pinned id. */
 export function pinnedIdForMove(doc: Pick<OpenDoc, 'id' | 'kind' | 'path'>): string {
   return doc.kind === 'commit-diff' && doc.id === previewId('commit-diff')
-    ? idOf(doc.kind, doc.path)
+    ? idOf({ kind: 'commit-diff' }, doc.path)
     : doc.id;
 }
 
@@ -515,7 +532,7 @@ function openCommitDiff(
   const path = commitDiffPath(action.sha, action.file);
   const title = `${titleOf(action.file)} @ ${shortSha(action.sha)}`;
   const { sessionId, repoRoot } = action;
-  const pinnedId = idOf(kind, path);
+  const pinnedId = idOf({ kind }, path);
   const slotId = previewId(kind);
   const slot = state.docs.find((d) => d.id === slotId);
   const pinnedExists = state.docs.some((d) => d.id === pinnedId);
@@ -560,12 +577,12 @@ function openCommitDiff(
 /** What a background open of this target will do, read from the state BEFORE the dispatch. */
 export function backgroundOpenOutcome(
   state: DocsState,
-  kind: DocKind,
+  target: DocTarget,
   path: string,
   targetSessionId: string,
-  diffScope?: DiffTabScope,
 ): BackgroundOpenResult {
-  const id = idOf(kind, path, diffScope);
+  const kind = target.kind;
+  const id = idOf(target, path);
   const existing = state.docs.find((d) => d.id === id);
   if (existing) {
     const owner = existing.sessionId;
@@ -591,7 +608,7 @@ export function backgroundOpenOutcome(
     outcome: 'opened',
     ownerSessionId: targetSessionId,
     id,
-    title: initialTitle(kind, path, diffScope),
+    title: initialTitle(kind, path, target.diffScope),
   };
 }
 
@@ -600,9 +617,10 @@ export function backgroundOpenOutcome(
 export function docsReducer(state: DocsState, action: DocsAction): DocsState {
   switch (action.type) {
     case 'open': {
-      const id = idOf(action.kind, action.path, action.diffScope);
+      const id = idOf(action, action.path);
       const sideBySide = action.sideBySide !== undefined ? { sideBySide: action.sideBySide } : {};
       const repo = historyRepoField(action);
+      const machine = action.machine ? { machine: action.machine } : {};
       const spec: OpenSpec = {
         sessionId: action.sessionId,
         group: action.group,
@@ -617,25 +635,17 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
           ...sideBySide,
           ...scopeField(action.kind, action.diffScope),
           ...repo,
+          ...machine,
         }),
       };
-      const patch = (d: OpenDoc): OpenDoc => ({ ...d, ...sideBySide, ...repo });
+      const patch = (d: OpenDoc): OpenDoc => ({ ...d, ...sideBySide, ...repo, ...machine });
       if (action.mode === 'background') {
         const changesDoc = action.sideBySide !== undefined || 'repoRoot' in repo;
         return openInBackground(state, { ...spec, patch: changesDoc ? patch : undefined });
       }
       // An open for a session nobody is looking at never takes the shown session's tab off its
       // screen: it keeps its owner and is only un-previewed (spec B §2.1, A4).
-      if (
-        shownKeepsDoc(
-          state,
-          action.kind,
-          action.path,
-          action.sessionId,
-          action.shown,
-          action.diffScope,
-        )
-      ) {
+      if (shownKeepsDoc(state, action, action.path, action.sessionId, action.shown)) {
         return openInBackground(state, spec);
       }
       const preview = isPreviewable(action.kind) && action.mode === 'preview';
@@ -684,7 +694,7 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
       const docs = state.docs.map((d) => {
         const path = d.kind === 'file' ? target.get(d.path) : undefined;
         if (path === undefined || path === d.path) return d;
-        const id = idOf('file', path);
+        const id = idOf({ kind: 'file' }, path);
         if (taken.has(id)) return d;
         taken.add(id);
         ids.set(d.id, id);
@@ -769,7 +779,11 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         const next = setGroup(layout, g, unpreview(groupAt(layout, g), action.id));
         return finalize(withLayout(state, owner, next), [owner], null);
       }
-      return finalize(rekeySlot(state, action.id, idOf(doc.kind, doc.path), {}), [owner], null);
+      return finalize(
+        rekeySlot(state, action.id, idOf({ kind: 'commit-diff' }, doc.path), {}),
+        [owner],
+        null,
+      );
     }
     case 'reorder': {
       const doc = state.docs.find((d) => d.id === action.dragId);
@@ -862,7 +876,7 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
       for (const pd of action.docs) {
         // Drop orphans whose owning session didn't restore (spec §3.2).
         if (!known.has(pd.sessionId)) continue;
-        const id = idOf(pd.kind, pd.path, pd.diffScope);
+        const id = idOf({ kind: pd.kind, diffScope: pd.diffScope }, pd.path);
         const g: GroupIndex = pd.group ?? 1;
         // The singleton kinds (review/git-history) share a sentinel id; a stray duplicate in
         // docs.json must not spawn a second tab — first occurrence wins ownership.
@@ -912,7 +926,8 @@ export function toPersistedDocs(state: DocsState): PersistedDoc[] {
       group.tabs.flatMap((tab): PersistedDoc[] => {
         const d = byId.get(tab.id);
         // A request is server state: a restored tab would point at a request that may be gone.
-        if (!d || d.kind === 'request') return [];
+        // A remote doc's content lives on its machine: restoring it would read a local path.
+        if (!d || d.kind === 'request' || d.kind === 'remote-file') return [];
         if (d.kind === 'commit-diff' && parseCommitDiffPath(d.path).file === '') return [];
         return [
           {
