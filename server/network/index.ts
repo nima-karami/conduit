@@ -239,7 +239,6 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       if (live(before)) messaging.linkDown(machineId);
       relay.linkChanged(machineId);
       drive.linkChanged(machineId);
-      fsClient.forget(machineId);
     }
     calls.settleAbsent(views.map((v) => v.machineId));
     fsClient.linksChanged(views);
@@ -351,6 +350,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     reconnected: (machineId) => {
       messaging.reconnected(machineId);
       publisher.pushTo(machineId);
+      fsClient.reconnected(machineId);
     },
   });
 

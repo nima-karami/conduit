@@ -19,6 +19,11 @@ import { isDialedSsh } from './calls';
 
 /** A file request waits at most this long for its fs.res (plan decision 7). */
 export const FS_REQ_MS = 30_000;
+/**
+ * B caps the watches it holds per link at 64 (plan decision 6). A stops asking first, so the
+ * 65th watch is refused here and never reaches B.
+ */
+export const FS_WATCHES_PER_MACHINE = 64;
 /** At most one `fs.refused` audit entry per link in this window, as calls and drive do. */
 export const FS_REFUSAL_AUDIT_MS = 60_000;
 
@@ -79,6 +84,8 @@ export interface FsClient {
   forget(machineId: string): void;
   /** An app peer disconnected: its watches are dropped and B is told to unwatch them. */
   peerGone(peer: object): void;
+  /** A machine's connection was replaced: its requests end; its watches are sent again on the new one. */
+  reconnected(machineId: string): void;
   /** Shutdown: every pending request ends as peer_unreachable. */
   stop(): void;
 }
@@ -218,6 +225,17 @@ export function createFsClient(deps: FsClientDeps): FsClient {
       if (record === null) throw new RpcFault('not_found', `No link to ${machineId}`);
       if (!isDialedSsh(record))
         throw new RpcFault('refused', `${record.name} was not added over ssh`);
+      // A peer that is known to predate file access would never serve this watch: refuse it now.
+      const minor = deps.peerMinor(machineId);
+      if (minor !== null && minor < FS_MIN_MINOR)
+        throw new RpcFault(
+          'peer_incompatible',
+          `${record.name} runs a Conduit without file access`,
+        );
+      let owned = 0;
+      for (const w of watches.values()) if (w.peer === peer && w.machineId === machineId) owned++;
+      if (owned >= FS_WATCHES_PER_MACHINE)
+        throw new RpcFault('refused', `at most ${FS_WATCHES_PER_MACHINE} watches per machine`);
       const w: Watch = { watchId: deps.newId(), peer, machineId, sessionId, path, sent: false };
       watches.set(w.watchId, w);
       sendWatch(w);
@@ -276,6 +294,12 @@ export function createFsClient(deps: FsClientDeps): FsClient {
     },
 
     forget,
+
+    reconnected(machineId) {
+      settleMachine(machineId, 'the connection to the machine was replaced');
+      for (const w of watches.values()) if (w.machineId === machineId) w.sent = false;
+      for (const w of watches.values()) if (w.machineId === machineId) sendWatch(w);
+    },
 
     peerGone(peer) {
       for (const [id, w] of [...watches]) {

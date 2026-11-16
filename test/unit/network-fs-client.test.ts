@@ -170,6 +170,28 @@ describe('fs request: A asks a dialed machine (CON-43 T2)', () => {
     await expect(pending).rejects.toMatchObject({ kind: 'unavailable' });
   });
 
+  it('an fs.res from a TLS record is dropped and audited', async () => {
+    const s = setup({});
+    const pending = s.fs.request(machine, 'list', 'sess', '/a');
+    s.setLink(sshInbound({ transport: 'tls' }));
+    s.fs.onFrame(machine, { t: 'fs.res', id: 'r-1', ok: true, result: listing });
+    expect(s.audit).toEqual([
+      { kind: 'fs.refused', peer: machine, detail: { reason: 'not_dialed', frame: 'fs.res' } },
+    ]);
+    s.fire();
+    await expect(pending).rejects.toMatchObject({ kind: 'peer_unreachable' });
+  });
+
+  it('a pending request across a live link change sends exactly one fs.req', async () => {
+    const s = setup({});
+    const pending = s.fs.request(machine, 'list', 'sess', '/a');
+    s.fs.linksChanged([{ machineId: machine, state: 'degraded' }]);
+    s.fs.linksChanged([{ machineId: machine, state: 'up' }]);
+    expect(s.sent.filter((x) => x.frame.t === 'fs.req')).toHaveLength(1);
+    s.fs.onFrame(machine, { t: 'fs.res', id: 'r-1', ok: true, result: listing });
+    expect(await pending).toEqual(listing);
+  });
+
   it('fs.res from a machine A did not dial is dropped and audited', async () => {
     const s = setup({});
     let settled = false;
@@ -223,6 +245,42 @@ describe('fs watches: desired state, re-sent on up (CON-43 T2)', () => {
       machineId: machine,
       frame: { t: 'fs.watch', watchId, sessionId: 'sess', path: '/a' },
     });
+  });
+
+  it('a second up with no down sends no extra fs.watch', () => {
+    const s = setup({});
+    s.fs.watch(peerA, machine, 'sess', '/a');
+    s.fs.linksChanged([{ machineId: machine, state: 'up' }]);
+    s.fs.linksChanged([{ machineId: machine, state: 'up' }]);
+    expect(s.sent.filter((x) => x.frame.t === 'fs.watch')).toHaveLength(1);
+  });
+
+  it('a replaced connection settles its requests and sends its watches again', async () => {
+    const s = setup({});
+    const watchId = s.fs.watch(peerA, machine, 'sess', '/a');
+    const pending = s.fs.request(machine, 'list', 'sess', '/a');
+    s.fs.reconnected(machine);
+    await expect(pending).rejects.toMatchObject({ kind: 'peer_unreachable' });
+    const watchSends = s.sent.filter((x) => x.frame.t === 'fs.watch');
+    expect(watchSends).toHaveLength(2);
+    expect(watchSends[1]?.frame).toEqual({ t: 'fs.watch', watchId, sessionId: 'sess', path: '/a' });
+  });
+
+  it('watch refuses a peer known to predate file access as peer_incompatible', () => {
+    const s = setup({ minor: 3 });
+    expect(() => s.fs.watch(peerA, machine, 'sess', '/a')).toThrow(
+      expect.objectContaining({ kind: 'peer_incompatible' }),
+    );
+    expect(s.sent).toEqual([]);
+  });
+
+  it('the 65th watch a peer holds on a machine is refused', () => {
+    const s = setup({});
+    for (let i = 0; i < 64; i++) s.fs.watch(peerA, machine, 'sess', `/a/${i}`);
+    expect(() => s.fs.watch(peerA, machine, 'sess', '/a/65')).toThrow(
+      expect.objectContaining({ kind: 'refused' }),
+    );
+    expect(() => s.fs.watch(peerB, machine, 'sess', '/a/65')).not.toThrow();
   });
 
   it('fs.changed goes only to the watching peer', () => {
