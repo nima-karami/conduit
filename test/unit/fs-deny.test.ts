@@ -16,6 +16,9 @@ describe('isDenied', () => {
       '/home/u/.config/opencode/x',
       '/home/u/proj/.env',
       '/home/u/proj/.env.local',
+      '/home/u/proj/.git/config',
+      '/home/u/proj/.git',
+      '/home/u/proj/sub/.git/objects/info/alternates',
       'C:\\Users\\u\\AppData\\Roaming\\Microsoft\\Credentials\\x',
     ];
     for (const p of denied) expect(isDenied(p), p).toBe(true);

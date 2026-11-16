@@ -16,9 +16,19 @@ const refused: ConfineResult = { ok: false, code: 'refused' };
  * does not exist is `not_found` only when it would lie inside the roots; a dangling symlink is
  * refused, because its target is outside what the lexical check looked at.
  */
+export interface ConfineOptions {
+  /**
+   * A file deleted since the diff was taken names a path that is gone. Its parent must still be a
+   * real folder inside the roots; only then is the missing leaf allowed through (a deleted file's
+   * diff needs its HEAD blob, plan 2026-11-16-remote-ssh-git).
+   */
+  allowMissing?: boolean;
+}
+
 export async function confineFsPath(
   target: string,
   roots: readonly string[],
+  opts: ConfineOptions = {},
 ): Promise<ConfineResult> {
   if (!path.isAbsolute(target)) return refused;
   // A `..` segment defeats the string-prefix containment below, so it is refused before resolving.
@@ -33,7 +43,9 @@ export async function confineFsPath(
 
   const existence = await existsOrDangling(abs);
   if (existence === 'dangling') return refused;
-  if (existence === 'missing') return { ok: false, code: 'not_found' };
+  // A missing leaf has no content to read, and the checks above already ran on where it would sit
+  // (realPathLeaf resolves the nearest existing parent), so it is confined like any other path.
+  if (existence === 'missing' && !opts.allowMissing) return { ok: false, code: 'not_found' };
   return { ok: true, real };
 }
 

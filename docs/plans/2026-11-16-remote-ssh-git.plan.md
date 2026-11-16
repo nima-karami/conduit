@@ -35,6 +35,33 @@ fs.changed (CON-43 watch) under a repo → store re-requests status / open remot
 5. **Renderer:** `remoteGit:*` request messages (never overloading `readDiff`/`git:history`); `webview/remote-git-store.ts`; `RemoteChangesView` (read-only list per repo: status letter, path, +/− lines; click opens `'remote-diff'`); `'remote-diff'` renders through `DiffViewer` with a remote model scheme (same rule as CON-43 R); `'remote-history'` reuses `git-history-view.tsx`'s rendering with a data-source prop (no local `git:history` calls when remote).
 6. **Refresh (revised after the G4 review):** B's folder watches are not recursive, so a nested edit never fires. The remote Changes store polls `status` every 5 s while the Changes tab is visible, and also watches `<repo>/.git` for an immediate refresh after a stage/commit/checkout, debounced 300 ms. A folder in no repo is answered `{ op:'status', root, snapshot: null }` — shown as "No git repository", never as an error. The remote diff and history viewers are built in Slice 2 (orchestrator wiring), not G4.
 
+## Security hardening after the G1 re-review
+The re-review found that git, run on a repo the session can write, can be pointed elsewhere or made to run programs. What B does now, on every served read:
+- **Fresh top.** The repo top is asked fresh, never through gitShow's 30 s memo, so a new `core.worktree` can't move it unseen.
+- **Pinned dirs.** Every spawn has `GIT_DIR`, `GIT_COMMON_DIR` and `GIT_WORK_TREE` set to the checked real paths. A later `.git` file, `commondir` or `core.worktree` can't redirect it.
+- **Program keys neutralised.** `server/network/git-neutral.ts`:
+  - fixed overrides: `core.fsmonitor=false`, `core.hooksPath=/dev/null`, `log.showSignature=false`;
+  - for each `filter.<name>.*` the effective config lists: `clean`, `smudge` and `process` set to empty, and `required=false`;
+  - for each `diff.<name>.textconv|command`: both set to empty;
+  - `GIT_NO_LAZY_FETCH=1`;
+  - an `extensions.*` outside the known format-only set is refused.
+  LFS repos keep working.
+- **Show hides denied content by blob id.** It drops a file whose blob id is a deny-listed path's blob in the index, as well as one whose name is denied.
+- **No submodules.** Served status and numstat pass `--ignore-submodules=all`. A submodule's child git reads its own config and attributes, which are never neutralised, and only the command-line flag beats `submodule.<name>.ignore`. Remote Changes therefore lists no submodule entries.
+- **LFS storage.** `lfs.storage` is overridden to empty, so an image diff reads LFS objects only from `<common dir>/lfs`, which the symlink walk has checked.
+- **Line counts.** An untracked symlink counts as git stores it (one line); a FIFO or device is never opened.
+- **`.git` is deny-listed.** fs reads, listings and (CON-44) writes never touch `.git/**`.
+
+Where this differs from the lead's list (2026-11-16 18:38Z), and why:
+- **`GIT_CONFIG_NOSYSTEM` is not set.** The system file is not writable from a session, and its filters are neutralised like any other's. Dropping it would lose Git for Windows' system `core.autocrlf`, and status would then show every file of a CRLF checkout as changed.
+- **`include*` is not refused.** `git config --list` expands includes, so what an include brings in is neutralised the same way. An include only adds risk through the race below. Refusing it would break users whose global config uses `includeIf` for an identity.
+- **`gpg.program` is not overridden.** `log.showSignature=false` is what starts it, and `/bin/false` doesn't exist on a Windows B.
+- **`diff.external` and `--no-ext-diff` / `--no-textconv`.** None of the served reads produce a patch: they use numstat, name-status, raw and blob show. An empty `diff.external` makes `git diff` fail. Per-driver textconv is neutralised by config.
+
+**Accepted residual: a denied file's blob that is only in history.** The blob-id filter covers the index. A crafted commit can still show a denied blob that only an older commit holds, under a harmless name. Crafting the commit needs a writer that can write `.git`; A can't, since `.git` is deny-listed to fs writes. Such a writer can usually read the file directly anyway.
+
+**Accepted residual: the race between the check and the spawn.** A writer to the session folders can plant alternates, symlinks or config inside the pinned git dir after the check passes. User-space checks can't close that. It is accepted because the ssh controller already has a shell on B, and B-side agents already run as B's user. Future fix: run git in an OS sandbox (read-only to the session roots, no exec), or read repos with a pure-JS git reader. Owner decision, via the lead.
+
 ## Spec staleness
 - §5.3 "the owner's git actions in Review run as routed calls": no routed git tool exists (`ROUTED_TOOLS` has six session tools). Out of this slice; Decisions Needed.
 

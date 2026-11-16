@@ -1,5 +1,6 @@
 // One bounded, cancellable git runner. Every git spawn in the app routes through here so timeouts,
 // output caps, and cancellation are uniform. See docs/specs/archive/2026-07-07-git-host-robustness.md.
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 
@@ -66,6 +67,19 @@ export function withStdinError(r: GitResult, err: NodeJS.ErrnoException | undefi
   };
 }
 
+// B's served git reads run the shared git code on a repo a peer may have written; the scope pins
+// every spawn inside it to the checked dirs and switches off config that runs programs
+// (server/network/git-neutral.ts). A scope, not a parameter, so that code stays unchanged.
+const scopedEnv = new AsyncLocalStorage<Readonly<Record<string, string>>>();
+
+/** Runs `fn` with `env` added to every git spawn it makes, however deep. */
+export function withGitEnv<T>(
+  env: Readonly<Record<string, string>>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  return scopedEnv.run(env, fn);
+}
+
 /** Run an arbitrary binary (git by default) with resource limits. Never rejects — the outcome is
  *  entirely in the returned {@link GitResult} flags so callers branch instead of try/catch. */
 export function runGitBin(gitBin: string, args: string[], opts: GitOpts): Promise<GitResult> {
@@ -83,7 +97,7 @@ export function runGitBin(gitBin: string, args: string[], opts: GitOpts): Promis
         // Without this, `git status` refreshes the index's stat cache and rewrites `.git/index`;
         // the project watcher sees that, re-runs `git status`, and an idle repo loops on its own
         // `fsChanged` (~3/s). Mutating commands take their required locks regardless.
-        env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+        env: { ...process.env, ...scopedEnv.getStore(), GIT_OPTIONAL_LOCKS: '0' },
         windowsHide: true,
         maxBuffer: opts.maxBuffer ?? DEFAULT_MAX_BUFFER,
         timeout: opts.timeoutMs ?? 0, // 0 → execFile imposes no timeout
