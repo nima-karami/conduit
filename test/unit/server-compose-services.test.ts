@@ -59,6 +59,10 @@ async function harness(options: Partial<ServicesOptions> = {}, userDataOf?: stri
     userData,
     names,
     secret: () => SECRET,
+    selfRuntime: {
+      local: { version: '9.9.9', linkMajor: 1, platform: 'linux', arch: 'x64' },
+      runtime: { nodeExe: null, serverDir: userData, hcExe: userData, shimFile: userData },
+    },
     platform: process.platform,
     e2e: true,
     appVersion: '9.9.9',

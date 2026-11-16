@@ -14,6 +14,7 @@ import { argValue, requireUserData } from './lifecycle/cli-args';
 import { parseEnsureArgs } from './lifecycle/ensure-args';
 import { runEnsureServerMain } from './lifecycle/ensure-server';
 import { runLinkStdioBridge } from './lifecycle/link-stdio-bridge';
+import { selfRuntimeOf } from './lifecycle/self-runtime';
 import { writeServerSecret } from './lifecycle/server-secret';
 import type { ShellCore } from './lifecycle/shell';
 import { stopAll } from './lifecycle/stop-all';
@@ -246,6 +247,16 @@ function createServerServices(o: {
     hc: hcClient(o.names, o.hcEnv, (m) => log.warn('hc', m)),
     startCore: () => startCore(o.hcBin, o.names, o.hcEnv),
     packaged: o.shimDir !== undefined,
+    selfRuntime: selfRuntimeOf({
+      version: o.appVersion,
+      serverDir: __dirname,
+      shimDir: o.shimDir,
+      devShim: path.join(__dirname, '..', '..', 'resources', 'conduit-mcp', SHIM_LEAF),
+      hcBin: o.hcBin,
+      platform: process.platform,
+      arch: process.arch,
+      env: process.env,
+    }),
     previousShims: o.previousShims,
     shim: o.shimDir
       ? {

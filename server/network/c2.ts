@@ -1,5 +1,7 @@
 import type { Capability } from '../../src/contracts/link-protocol';
 import type { NetworkState } from '../../src/contracts/network-state';
+import type { BootstrapResult } from '../../src/contracts/ssh-link';
+import { isSshTarget } from '../../src/network/ssh-argv';
 import { RpcFault } from '../transport/pipe';
 import { DRIVE_INPUT_MAX_BYTES, type Drive } from './drive';
 import type { LinkManager } from './link-manager';
@@ -23,6 +25,8 @@ export interface NetworkCallDeps {
   state(): NetworkState;
   relay: ReturnType<typeof createViewRelay>;
   drive: Drive;
+  /** The controller's bootstrap for one target: install or attach, then link. */
+  bootstrap(target: string): Promise<BootstrapResult>;
   peer?: object;
 }
 
@@ -110,6 +114,11 @@ export function handleNetworkCall(
         mainJs: str(ssh, 'mainJs', MAX_PATH),
         userData: str(ssh, 'userData', MAX_PATH),
       });
+    }
+    case 'link.sshBootstrap': {
+      const target = str(p, 'target', 256);
+      if (!isSshTarget(target)) throw new RpcFault('invalid', 'Expected an ssh target');
+      return d.bootstrap(target);
     }
     case 'link.revoke': {
       const machineId = str(p, 'machineId');

@@ -50,6 +50,11 @@ function server(name: string, endpointIn?: (root: string) => string) {
     log: quiet,
     observe: async () => null,
     emitTo: () => {},
+    bootstrap: {
+      local: { version: TEST_APP_VERSION, linkMajor: 1, platform: 'linux', arch: 'x64' },
+      runtime: { nodeExe: null, serverDir: root, hcExe: root, shimFile: root },
+      noDownload: false,
+    },
     drive: {
       applyHumanInput: () => false,
       resize: () => {},
@@ -142,6 +147,19 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
     expect(linkTo(a.net, bId)?.revokedBy).toBe('peer');
     expect(auditKinds(b.dir)).toEqual(expect.arrayContaining(['pairing.linked', 'link.revoked']));
     expect(a.states.length).toBeGreaterThan(0);
+  });
+
+  it('refuses a link.sshBootstrap target that ssh would read as an option or a shell', async () => {
+    // Checked at C2 with the same allowlist sshArgv uses, before any bootstrap or ssh runs.
+    const a = server('net-a');
+    for (const target of ['-oProxyCommand=x', 'a;rm -rf x', 'a b']) {
+      await expect(call(a.net, 'link.sshBootstrap', { target })).rejects.toThrow(
+        'Expected an ssh target',
+      );
+    }
+    await expect(call(a.net, 'link.sshBootstrap', { target: '' })).rejects.toThrow(
+      'Expected target',
+    );
   });
 
   it('rejects bad parameters at the boundary', async () => {

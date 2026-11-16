@@ -19,6 +19,11 @@ function rawOf(text: string): string | null {
 // metacharacters reaches a local shell (CVE-2023-51385). Only host-name characters are allowed.
 const TARGET_ALLOWED = /^[A-Za-z0-9._@:%+[\]-]+$/;
 
+/** The one target rule: C2 checks it before a call reaches ssh, and sshArgv checks it again. */
+export function isSshTarget(target: string): boolean {
+  return TARGET_ALLOWED.test(target) && !target.startsWith('-');
+}
+
 /**
  * `rawRemote` is for remote-scripts.ts strings only. Its scripts are multi-line sh text the remote
  * shell must parse as written, and posixQuote would refuse their newlines and re-quote them into one
@@ -31,7 +36,7 @@ export type SshArgvInput = { target: string; controlPath: string } & (
 
 export function sshArgv(o: SshArgvInput): string[] | { error: 'bad_target' | 'bad_arg' } {
   // A leading '-' would be read as an option even after `--` is refused here, not trusted to ssh.
-  if (!TARGET_ALLOWED.test(o.target) || o.target.startsWith('-')) {
+  if (!isSshTarget(o.target)) {
     return { error: 'bad_target' };
   }
   const remote = 'rawRemote' in o ? rawOf(o.rawRemote) : posixQuote(o.remote);
