@@ -11,6 +11,7 @@ All notable user-facing changes to Conduit. Format follows
 
 ### Added
 - Groundwork for controlling your other machines over SSH: Conduit can now link to the Background service on another machine through your normal `ssh` login, with no extra port or pairing. The screens and agent tools for this arrive in later releases.
+- Conduit can now set itself up on another Linux machine over SSH: it checks what the machine has, installs the same version as yours (verified against pinned checksums), starts the Background service there and links to it. The screens and agent tools for this arrive in later releases.
 
 ## [0.66.1] — 2026-11-16
 
