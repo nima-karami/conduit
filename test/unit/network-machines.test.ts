@@ -640,7 +640,6 @@ describe('machines: a target that claims a machine already added under another n
         error: { code: 'identity-conflict', machine: 'office-pc' },
       }),
       directory: { entries: () => [] },
-      sshExit: async () => null,
     });
     expect(await machines.connect('new.example', LIVE)).toEqual({
       ok: false,
