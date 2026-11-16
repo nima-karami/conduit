@@ -123,12 +123,9 @@ describe.skipIf(!enabled)('--ensure-server (real process)', () => {
     ];
     const first = await run(args);
     expect(first.code, first.stderr).toBe(0);
-    expect(resultOf(first.stdout)).toEqual({
-      ok: true,
-      state: 'up',
-      version,
-      survivesLogout: true,
-    });
+    // The survival is the host's linger, measured after the start: the test does not fix it.
+    expect(resultOf(first.stdout)).toMatchObject({ ok: true, state: 'up', version });
+    expect(typeof resultOf(first.stdout).survivesLogout).toBe('boolean');
 
     const secret = readServerSecret(dir);
     expect(secret).not.toBeNull();

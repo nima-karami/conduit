@@ -78,6 +78,8 @@ A: C2 link.sshBootstrap{target} → bootstrapMachine(target)            server/n
    - Else (`kup` true or unknown) → `plain` with `survivesLogout = false`. The result carries it, and slice 6's UI warns.
 
    **Unproven assumption:** that hc's self-daemonizing `server start` survives like `setsid` under KUP=no. The VM smoke (Slice 5) measures it. If it fails, the task stops and reports (deviation rule).
+
+   **Measured (bootstrap-smoke.md):** hc 0.1.16 runs its core in `user@<uid>.service` units, and `hc server start` turns linger on for the user by itself. So on Linux the server survives logout exactly when linger is on after the start. KillUserProcesses does not matter once linger is on; with linger off, the user manager stops at the last logout and takes hc's units with it. `survivesLogout` is therefore measured after the start (`loginctl show-user -p Linger`, read after the hello), not taken from the probe. The `scope` method stays for start parity, but survival no longer depends on it.
 5. **Windows start** (built, unverified): `windows-task`.
    - If a server already answers in the logon session (C2 hello), attach.
    - Else register a per-user scheduled task, "Run only when user is logged on", whose action is `<node> supervise …`, and run it.
