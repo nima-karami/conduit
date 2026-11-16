@@ -365,7 +365,9 @@ describe('git-serve', () => {
     const h = harness();
     await h.serve.onFrame(CONTROLLER, req('g1', 'log', {}));
     await h.serve.onFrame(CONTROLLER, req('g2', 'diff', { path: path.join(proj, 's.txt') }));
-    for (const id of ['g1', 'g2']) {
+    const secretSha = await git(secret, 'rev-parse', 'HEAD');
+    await h.serve.onFrame(CONTROLLER, req('g3', 'show', { sha: secretSha }));
+    for (const id of ['g1', 'g2', 'g3']) {
       const res = replyTo(h.sent, id);
       expect(res.ok).toBe(false);
       if (res.ok) throw new Error('expected a refusal');
@@ -374,6 +376,7 @@ describe('git-serve', () => {
     expect(JSON.stringify(h.sent)).not.toContain('TOPSECRET');
     expect(h.calls).not.toContain('log');
     expect(h.calls).not.toContain('diff');
+    expect(h.calls).not.toContain('show');
   });
 
   it('a real git worktree whose common dir is outside is still served', async () => {
@@ -390,6 +393,75 @@ describe('git-serve', () => {
     expect(res.ok).toBe(true);
     if (!res.ok || res.result.op !== 'log') throw new Error('expected a log result');
     expect(res.result.commits).toHaveLength(1);
+  });
+
+  describe('a git dir inside the session that reaches outside through its contents', () => {
+    let secret: string;
+    let secretSha: string;
+    beforeEach(async () => {
+      secret = path.join(root, 'secret');
+      fs.mkdirSync(secret);
+      fs.writeFileSync(path.join(secret, 's.txt'), 'TOPSECRET\n');
+      await initRepo(secret, 'secret commit');
+      secretSha = await git(secret, 'rev-parse', 'HEAD');
+      await initRepo(proj);
+    });
+
+    /** Asks for the outside commit and its history and expects both refused before git reads. */
+    async function expectRefused(): Promise<void> {
+      const h = harness();
+      await h.serve.onFrame(CONTROLLER, req('x1', 'show', { sha: secretSha }));
+      await h.serve.onFrame(CONTROLLER, req('x2', 'log', {}));
+      for (const id of ['x1', 'x2']) {
+        const res = replyTo(h.sent, id);
+        if (res.ok) throw new Error(`expected ${id} refused`);
+        expect(res.error.code).toBe('refused');
+      }
+      expect(JSON.stringify(h.sent)).not.toContain('TOPSECRET');
+      expect(h.calls).not.toContain('show');
+      expect(h.calls).not.toContain('log');
+      expect(h.audits.map((a) => a.detail)).toContainEqual({ reason: 'git_dir_outside' });
+    }
+
+    it('objects symlinked to an outside repo is refused', async () => {
+      const objects = path.join(proj, '.git', 'objects');
+      fs.rmSync(objects, { recursive: true, force: true });
+      fs.symlinkSync(path.join(secret, '.git', 'objects'), objects);
+      await expectRefused();
+    });
+
+    it('a loose object symlinked to an outside one is refused', async () => {
+      const from = path.join(secret, '.git', 'objects');
+      for (const dir of fs.readdirSync(from).filter((d) => /^[0-9a-f]{2}$/.test(d))) {
+        fs.mkdirSync(path.join(proj, '.git', 'objects', dir), { recursive: true });
+        for (const file of fs.readdirSync(path.join(from, dir))) {
+          const link = path.join(proj, '.git', 'objects', dir, file);
+          if (!fs.existsSync(link)) fs.symlinkSync(path.join(from, dir, file), link);
+        }
+      }
+      await expectRefused();
+    });
+
+    it('an alternates file naming an outside object store is refused', async () => {
+      fs.writeFileSync(
+        path.join(proj, '.git', 'objects', 'info', 'alternates'),
+        `${path.join(secret, '.git', 'objects')}\n`,
+      );
+      await expectRefused();
+    });
+
+    it('a dangling symlink in the git dir is refused', async () => {
+      fs.symlinkSync(path.join(root, 'not-yet'), path.join(proj, '.git', 'later'));
+      await expectRefused();
+    });
+
+    it('a symlink that stays inside the session is still served', async () => {
+      fs.symlinkSync(path.join(proj, 'a.txt'), path.join(proj, '.git', 'inside-link'));
+      const h = harness();
+      await h.serve.onFrame(CONTROLLER, req('i1', 'log', {}));
+      const res = replyTo(h.sent, 'i1');
+      expect(res.ok).toBe(true);
+    });
   });
 
   it('a result over 8 MiB is too_large', async () => {

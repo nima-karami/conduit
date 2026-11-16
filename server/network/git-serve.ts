@@ -156,6 +156,46 @@ async function ownsGitDir(
   return realPathLeaf(path.resolve(gitDir, back)) === realPathLeaf(path.join(top, '.git'));
 }
 
+/**
+ * Whether a git dir the session can write reads outside it through its own contents. git follows a
+ * symlink anywhere under the dir (objects, a pack, a loose object, refs) and an alternates file names
+ * extra object stores, so either could serve an outside repo's commits and blobs by sha.
+ */
+async function gitDirReachesOut(dir: string, roots: readonly string[]): Promise<boolean> {
+  for (const alt of ['objects/info/alternates', 'objects/info/http-alternates']) {
+    try {
+      await fs.promises.lstat(path.join(dir, alt));
+      return true;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw err;
+    }
+  }
+  // A recursive listing reports symlinks without following them, so a linked dir is never walked.
+  const entries = await fs.promises.readdir(dir, { recursive: true, withFileTypes: true });
+  for (const e of entries) {
+    if (!e.isSymbolicLink()) continue;
+    // A dangling link counts as outward: its target could be created outside after this check.
+    const target = await fs.promises.realpath(path.join(e.parentPath, e.name)).catch(() => null);
+    if (target === null || !isInsideAnyRealRoot(target, roots)) return true;
+  }
+  return false;
+}
+
+/**
+ * The git dirs to check for outward links: the ones inside the session folders. A linked worktree's
+ * common dir outside them was vouched for by its back-link and is not the session's to write.
+ */
+async function anyGitDirReachesOut(
+  dirs: readonly string[],
+  roots: readonly string[],
+): Promise<boolean> {
+  for (const dir of new Set(dirs.map((d) => realPathLeaf(d)))) {
+    if (isInsideAnyRealRoot(dir, roots) && (await gitDirReachesOut(dir, roots))) return true;
+  }
+  return false;
+}
+
 export function createGitServe(deps: GitServeDeps): GitServe {
   /** The last `fs.refused` audit per link, so a flood of refusals audits once per window. */
   const lastRefusal = new Map<string, number>();
@@ -190,7 +230,10 @@ export function createGitServe(deps: GitServeDeps): GitServe {
     const gitDir = await deps.git.absoluteGitDir(folder);
     const commonDir = await deps.git.gitCommonDir(folder);
     if (gitDir === '' || commonDir === '') return { kind: 'failed' };
-    if (!(await ownsGitDir(top, gitDir, commonDir, roots))) {
+    if (
+      !(await ownsGitDir(top, gitDir, commonDir, roots)) ||
+      (await anyGitDirReachesOut([gitDir, commonDir], roots))
+    ) {
       refuse(machineId, 'git_dir_outside');
       return { kind: 'refused' };
     }
