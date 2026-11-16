@@ -2113,6 +2113,27 @@ describe('remote policy doc', () => {
     expect(seen).toEqual([1, 2]);
   });
 
+  it('onRemoteDocChange also fires when a grant is made or revoked, without moving rev', () => {
+    const h = harness({ policy: seeded() });
+    h.service.start();
+    let fired = 0;
+    h.service.onRemoteDocChange(() => {
+      fired += 1;
+    });
+    const made = h.service.createGrant(
+      { who: 'session', on: 'target', for: '1h' },
+      session(),
+      'open_file',
+      target(),
+      null,
+    );
+    expect(made).not.toBeNull();
+    expect(fired).toBe(1);
+    expect(h.service.remoteDoc().rev).toBe(0);
+    expect(h.service.revokeGrant(made?.id ?? '')).toBe(true);
+    expect(fired).toBe(2);
+  });
+
   it('grantsView shows live grants only, with a display string for who', () => {
     const h = harness({
       grants: serializeGrantsFile({
