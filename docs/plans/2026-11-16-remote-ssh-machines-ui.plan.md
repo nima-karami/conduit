@@ -47,7 +47,7 @@ Add dialog ─machines:sshHosts / machines:connect{machine}─▶ C2 machines.ss
 9. **Machines section:** a separate `role="tree"` below the Agents tree, hidden unless setting `machinesUi` is true **or** at least one machine exists. Machine row = level 1 treeitem (`aria-expanded`), its sessions = level 2 `remote-session` rows.
 10. **Needs-person tracking:** the renderer keeps the last `MachineError` per machine name/target from its own connect calls (`webview/machines-store.ts`), shown on the row until the next successful connect or a state change to `up`.
 11. **RemotePane sizing:** opens at the remote size (no fit). On the first keystroke after attach or after a `remote:state` size change, it fits to the pane and sends `remote:resize` before the input. While `drive` is false: no input, a "Read only" note.
-12. **Reconnect:** `remote:state` `frozen` → dim the terminal and show "Reconnecting to <name>…" (polite live region); `resyncing` or a new `up` after `down` → detach, clear, re-attach; `exited` → write `\r\n[process exited]\r\n` dimmed, disable input.
+12. **Reconnect:** `remote:state` `frozen` → dim the terminal and show "Reconnecting to <name>…" (polite live region); `resyncing` → reset the terminal and keep the viewId (the relay re-opens the same view and sends a fresh first paint as `remote:data` plus `live` with the size: server/network/view-relay.ts:227-256; revised after the L3 review); `exited` → write `\r\n[process exited]\r\n` dimmed, disable input.
 13. **Flag:** new setting `machinesUi: boolean`, default `false` (no network UI flag exists, see staleness). Settings › General gets a "Show Machines in the sidebar" toggle.
 
 ## Spec staleness
