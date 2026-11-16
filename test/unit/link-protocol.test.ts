@@ -413,8 +413,8 @@ describe('call and call.result frames (protocol 1.2)', () => {
     expect(parseLinkFrame(frame)).toEqual(frame);
   });
 
-  it('exposes the minor version and the six routed tools', () => {
-    expect(LINK_PROTOCOL).toEqual({ major: 1, minor: 7 });
+  it('exposes the minor version and the seven routed tools', () => {
+    expect(LINK_PROTOCOL).toEqual({ major: 1, minor: 8 });
     expect([...ROUTED_TOOLS]).toEqual([
       'list_agents',
       'open_session',
@@ -422,20 +422,14 @@ describe('call and call.result frames (protocol 1.2)', () => {
       'send_input',
       'read_screen',
       'close_session',
+      'attach_folder',
     ]);
   });
 
   it('accepts each routed tool and rejects any other tool name', () => {
     for (const tool of ROUTED_TOOLS)
       expect(parseLinkFrame({ ...ROUTED_CALL, tool })).not.toBeNull();
-    for (const tool of [
-      'focus_session',
-      'attach_folder',
-      'drive_session',
-      'OPEN_SESSION',
-      '',
-      'open_session ',
-    ])
+    for (const tool of ['focus_session', 'drive_session', 'OPEN_SESSION', '', 'open_session '])
       expect(parseLinkFrame({ ...ROUTED_CALL, tool }), tool).toBeNull();
   });
 
@@ -773,8 +767,8 @@ describe('fs.write and the conflict error (protocol 1.7)', () => {
     data: 'x',
     expect: HASH,
   };
-  it('writes files from the current minor', () => {
-    expect(FS_WRITE_MIN_MINOR).toBe(LINK_PROTOCOL.minor);
+  it('is the minor that added fs.write, not the current one', () => {
+    expect(FS_WRITE_MIN_MINOR).toBe(7);
   });
   it('takes a 64-hex expect or null, and nothing else', () => {
     expect(parseLinkFrame(structuredClone(WRITE))).toEqual(WRITE);

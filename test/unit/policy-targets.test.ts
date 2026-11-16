@@ -70,6 +70,12 @@ describe('resolveTargets', () => {
     ]);
   });
 
+  it("attach_folder to a session on another machine names no folder here (its folder is that machine's to check)", () => {
+    expect(
+      resolveTargets('attach_folder', { path: '/link', session: 'h@box' }, caller, deps),
+    ).toEqual([]);
+  });
+
   it('attach_folder also targets the session named by its session arg', () => {
     const targets = resolveTargets(
       'attach_folder',
