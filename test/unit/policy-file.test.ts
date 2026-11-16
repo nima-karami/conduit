@@ -80,6 +80,55 @@ describe('policy file', () => {
     expect(parsePolicyFile(text)).toEqual({ ok: true, file });
   });
 
+  it('round-trips pinned on a session assignment, and rejects a non-string pin', () => {
+    const file = validFile();
+    file.assignments.push({
+      point: { kind: 'session', sessionId: 's1' },
+      assignment: {
+        profileId: 'worker',
+        exceptions: [],
+        onScreenOnly: false,
+        pinned: ['send_input.access'],
+      },
+    });
+    const text = serializePolicyFile(file);
+    expect(parsePolicyFile(text)).toEqual({ ok: true, file });
+    const raw: { assignments: Array<{ assignment: { pinned?: unknown } }> } = JSON.parse(text);
+    raw.assignments[raw.assignments.length - 1].assignment.pinned = [1];
+    expect(parsePolicyFile(JSON.stringify(raw))).toEqual({ ok: false, reason: 'corrupt' });
+  });
+
+  it('normalises pins on read: session points only, sorted and unique', () => {
+    const file = validFile();
+    file.assignments = [
+      {
+        point: { kind: 'cli', cli: 'claude' },
+        assignment: {
+          profileId: 'worker',
+          exceptions: [],
+          onScreenOnly: false,
+          pinned: ['send_input.access'],
+        },
+      },
+      {
+        point: { kind: 'session', sessionId: 's1' },
+        assignment: {
+          profileId: 'worker',
+          exceptions: [],
+          onScreenOnly: false,
+          pinned: ['send_input.access', 'open_file.access', 'send_input.access'],
+        },
+      },
+    ];
+    const parsed = parsePolicyFile(serializePolicyFile(file));
+    if (!parsed.ok) throw new Error('unreadable');
+    expect(parsed.file.assignments[0]?.assignment).not.toHaveProperty('pinned');
+    expect(parsed.file.assignments[1]?.assignment.pinned).toEqual([
+      'open_file.access',
+      'send_input.access',
+    ]);
+  });
+
   it('corrupt → corrupt, version 2 → newer', () => {
     expect(parsePolicyFile('{not json')).toEqual({ ok: false, reason: 'corrupt' });
     expect(parsePolicyFile('[]')).toEqual({ ok: false, reason: 'corrupt' });

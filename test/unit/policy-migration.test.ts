@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { decide } from '../../src/conduit-mcp/policy-engine';
 import { type LegacyPolicy, migrateLegacyPolicy } from '../../src/conduit-mcp/policy-migration';
 import {
   DECISION_OF_ACCESS,
@@ -7,6 +8,7 @@ import {
   profileById,
   WORKER_PROFILE,
 } from '../../src/conduit-mcp/policy-profiles';
+import { propagateLegacyPatch } from '../../src/conduit-mcp/policy-projection';
 import type {
   Assignment,
   AssignmentPoint,
@@ -78,6 +80,7 @@ describe('migrateLegacyPolicy', () => {
       profileId: 'lead',
       exceptions: [],
       onScreenOnly: true,
+      pinned: sessionAndEditor.map((t) => `${t}.access`).sort(),
     });
 
     const state = stateOf([[point, assignmentAt(out, point)]]);
@@ -111,6 +114,7 @@ describe('migrateLegacyPolicy', () => {
             { tool: 'read_screen', scope: { kind: 'anywhere' }, rule: { when: 'always' } },
             { tool: 'open_file', scope: { kind: 'anywhere' }, rule: { decision: 'deny' } },
           ],
+          pinned: ['open_file.access', 'read_screen.when'],
         },
       },
     ]);
@@ -175,6 +179,63 @@ describe('migrateLegacyPolicy', () => {
       sessions: [{ sessionId: 's1', layer: {}, cli: 'claude' }],
     });
     expect(out.assignments).toEqual([]);
+  });
+
+  it('a v0.64 session entry equal to global is pinned, and a later loosening of the default leaves it deny', () => {
+    const global: GlobalPolicy = { ...DEFAULT_TOOL_POLICY, send_input: { access: 'off' } };
+    const out = migrateLegacyPolicy({
+      global,
+      byCli: {},
+      sessions: [{ sessionId: 's1', layer: { send_input: { access: 'off' } }, cli: null }],
+    });
+    const sessionPoint: AssignmentPoint = { kind: 'session', sessionId: 's1' };
+    const defaultPoint: AssignmentPoint = { kind: 'default' };
+    expect(assignmentAt(out, sessionPoint).pinned).toEqual(['send_input.access']);
+    const state = stateOf([
+      [defaultPoint, assignmentAt(out, defaultPoint)],
+      [sessionPoint, assignmentAt(out, sessionPoint)],
+    ]);
+    const writes = propagateLegacyPatch(
+      state,
+      defaultPoint,
+      null,
+      'send_input',
+      { access: 'on' },
+      () => null,
+    );
+    if (!writes) throw new Error('refused');
+    const assignments = new Map(state.assignments);
+    for (const w of writes) assignments.set(pointKey(w.point), w.assignment);
+    const decision = decide(
+      { ...state, assignments },
+      {
+        principal: {
+          kind: 'session',
+          sessionId: 's1',
+          handle: 'a',
+          launchedCli: null,
+          homeFolder: '/w',
+          projectId: null,
+        },
+        tool: 'send_input',
+        targets: [],
+        masterOn: true,
+        toYou: false,
+        now: 0,
+      },
+    ).decision;
+    expect(decision).toBe('deny');
+  });
+
+  it('pins only the fields the session layer set', () => {
+    const out = migrateLegacyPolicy({
+      global: DEFAULT_TOOL_POLICY,
+      byCli: {},
+      sessions: [{ sessionId: 's1', layer: { open_file: { access: 'off' } }, cli: null }],
+    });
+    expect(assignmentAt(out, { kind: 'session', sessionId: 's1' }).pinned).toEqual([
+      'open_file.access',
+    ]);
   });
 
   it('onScreenOnlyOffered lists the migrated leads', () => {

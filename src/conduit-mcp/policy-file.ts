@@ -3,6 +3,7 @@
 import { judgePersistedVersion, type ServerFile } from '../contracts/session-identity';
 import { GRANT_FORS } from './grant-store';
 import { OBSERVER } from './policy-profiles';
+import { withPinned } from './policy-projection';
 import type {
   Assignment,
   AssignmentPoint,
@@ -107,11 +108,13 @@ const isPartialRule = (v: unknown): v is Partial<ToolRule> =>
 const isException = (v: unknown): v is Exception =>
   isObj(v) && isToolName(v.tool) && isScope(v.scope) && isPartialRule(v.rule);
 
+// pinned is additive: an older build drops it, which only lets those sessions follow the default again.
 const isAssignment = (v: unknown): v is Assignment =>
   isObj(v) &&
   isProfileId(v.profileId) &&
   arrayOf(isException)(v.exceptions) &&
-  isBool(v.onScreenOnly);
+  isBool(v.onScreenOnly) &&
+  (v.pinned === undefined || arrayOf(isStr)(v.pinned));
 
 const isPoint = (v: unknown): v is AssignmentPoint =>
   isObj(v) &&
@@ -207,11 +210,29 @@ function completeRules(rules: Partial<Record<ToolName, ToolRule>>): Record<ToolN
 
 const completeProfile = (p: RawProfile): Profile => ({ ...p, rules: completeRules(p.rules) });
 
+// Pins are session-only, sorted and unique (see plan second-pass rulings); a hand-edited file is brought to that shape.
+const normaliseEntry = (
+  e: PolicyFile['assignments'][number],
+): PolicyFile['assignments'][number] => ({
+  point: e.point,
+  assignment: withPinned(
+    e.assignment,
+    e.point.kind === 'session' ? (e.assignment.pinned ?? []) : [],
+  ),
+});
+
 export function parsePolicyFile(text: string): Parsed<PolicyFile> {
   const parsed = parseVersioned(text, 'conduit-mcp/policy.json', isFile);
   if (!parsed.ok) return parsed;
-  const { profiles, ...rest } = parsed.file;
-  return { ok: true, file: { ...rest, profiles: profiles.map(completeProfile) } };
+  const { profiles, assignments, ...rest } = parsed.file;
+  return {
+    ok: true,
+    file: {
+      ...rest,
+      assignments: assignments.map(normaliseEntry),
+      profiles: profiles.map(completeProfile),
+    },
+  };
 }
 
 export function serializePolicyFile(f: PolicyFile): string {

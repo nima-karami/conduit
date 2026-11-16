@@ -25,6 +25,7 @@ import {
   TOOL_NAMES,
   TOOL_SPECS,
   type ToolName,
+  type ToolPolicyPatch,
 } from '../../src/conduit-mcp/tool-policy';
 
 const SESSION: AssignmentPoint = { kind: 'session', sessionId: 's1' };
@@ -112,6 +113,7 @@ describe('applyLegacyPatch', () => {
         { tool: 'open_terminal', scope: { kind: 'anywhere' }, rule: { decision: 'allow' } },
         { tool: 'open_session', scope: { kind: 'anywhere' }, rule: { decision: 'deny' } },
       ],
+      pinned: ['open_session.access'],
     });
     expect(next.exceptions[0]).not.toBe(lower.exceptions[0]);
     expect(state).toEqual(before);
@@ -136,6 +138,7 @@ describe('applyLegacyPatch', () => {
         ...lower.exceptions,
         { tool: 'open_file', scope: { kind: 'anywhere' }, rule: { decision: 'deny' } },
       ],
+      pinned: ['open_file.access'],
     });
     expect(next.exceptions[0]).not.toBe(lower.exceptions[0]);
   });
@@ -474,6 +477,33 @@ describe('propagateLegacyPatch', () => {
     expect(decision).toBe('deny');
   });
 
+  it('an unresolved CLI lowers onto the default: a default edit reaches it, a cli edit does not', () => {
+    const unknown = () => undefined;
+    const offDefault = patched(stateOf([]), DEFAULT, null, 'send_input', { access: 'off' });
+    const state = stateOf([
+      [DEFAULT, offDefault],
+      [SESSION, offDefault],
+    ]);
+    const fromDefault = propagateLegacyPatch(
+      state,
+      DEFAULT,
+      null,
+      'send_input',
+      { access: 'on' },
+      unknown,
+    );
+    expect(fromDefault?.map((w) => pointKey(w.point)).sort()).toEqual(['default', 'session:s1']);
+    const fromCli = propagateLegacyPatch(
+      state,
+      { kind: 'cli', cli: 'claude' },
+      DEFAULT,
+      'send_input',
+      { access: 'on' },
+      unknown,
+    );
+    expect(fromCli?.map((w) => pointKey(w.point))).toEqual(['cli:claude']);
+  });
+
   it('refuses when an inheritor carries a scoped exception', () => {
     const scopedSession: Assignment = {
       profileId: 'worker',
@@ -504,5 +534,103 @@ describe('missing profile projection', () => {
     expect(projectLegacyLayer(state, SESSION, DEFAULT)).toMatchObject({
       open_session: { access: 'off' },
     });
+  });
+});
+
+const CLAUDE_POINT: AssignmentPoint = { kind: 'cli', cli: 'claude' };
+
+describe('explicit session choices are pinned', () => {
+  const P = {
+    kind: 'session' as const,
+    sessionId: 's1',
+    handle: 'a',
+    launchedCli: null,
+    homeFolder: '/w',
+    projectId: null,
+  };
+  type M = Map<string, [AssignmentPoint, Assignment]>;
+  const st = (m: M): PolicyState => ({
+    profiles: [],
+    assignments: new Map([...m.values()].map(([p, a]) => [pointKey(p), a])),
+    grants: [],
+    overrides: [],
+    failClosed: false,
+  });
+  const dec = (s: PolicyState, tool: ToolName) =>
+    decide(s, { principal: P, tool, targets: [], masterOn: true, toYou: false, now: 0 }).decision;
+  const S1: AssignmentPoint = { kind: 'session', sessionId: 's1' };
+  const D: AssignmentPoint = { kind: 'default' };
+  const noCli = () => null;
+  function edit(
+    m: M,
+    point: AssignmentPoint,
+    lower: AssignmentPoint | null,
+    tool: ToolName,
+    patch: ToolPolicyPatch,
+  ): void {
+    const writes = propagateLegacyPatch(st(m), point, lower, tool, patch, noCli);
+    if (!writes) throw new Error('refused');
+    for (const w of writes) m.set(pointKey(w.point), [w.point, w.assignment]);
+  }
+
+  it('drift repro: a later default off reaches a session tweaked in the dialog', () => {
+    const m: M = new Map();
+    edit(m, S1, D, 'open_file', { access: 'off' });
+    edit(m, D, null, 'send_input', { access: 'off' });
+    expect(dec(st(m), 'send_input')).toBe('deny');
+    expect(dec(st(m), 'open_file')).toBe('deny');
+  });
+
+  it('an explicit session off survives loosening the default', () => {
+    const m: M = new Map();
+    edit(m, D, null, 'send_input', { access: 'off' });
+    edit(m, S1, D, 'send_input', { access: 'off' });
+    expect(m.get(pointKey(S1))?.[1].pinned).toEqual(['send_input.access']);
+    edit(m, D, null, 'send_input', { access: 'on' });
+    expect(dec(st(m), 'send_input')).toBe('deny');
+  });
+
+  it('an explicit session off survives loosening the default to ask', () => {
+    const m: M = new Map();
+    edit(m, D, null, 'send_input', { access: 'off' });
+    edit(m, S1, D, 'send_input', { access: 'off' });
+    edit(m, D, null, 'send_input', { access: 'ask' });
+    expect(dec(st(m), 'send_input')).toBe('deny');
+  });
+
+  it('a second explicit session choice keeps the first pin, so a default edit still leaves it', () => {
+    const m: M = new Map();
+    edit(m, D, null, 'open_file', { access: 'off' });
+    edit(m, S1, D, 'open_file', { access: 'off' });
+    edit(m, S1, D, 'send_input', { access: 'off' });
+    expect(m.get(pointKey(S1))?.[1].pinned).toEqual(['open_file.access', 'send_input.access']);
+    edit(m, D, null, 'open_file', { access: 'on' });
+    expect(dec(st(m), 'open_file')).toBe('deny');
+  });
+
+  it('an explicit session on survives tightening the default', () => {
+    const m: M = new Map();
+    edit(m, D, null, 'read_screen', { access: 'on' });
+    edit(m, S1, D, 'read_screen', { access: 'on' });
+    edit(m, D, null, 'read_screen', { access: 'off' });
+    expect(dec(st(m), 'read_screen')).toBe('allow');
+  });
+
+  it("'inherit' unpins: after it, a default edit reaches the session again", () => {
+    const m: M = new Map();
+    edit(m, D, null, 'send_input', { access: 'off' });
+    edit(m, S1, D, 'send_input', { access: 'off' });
+    edit(m, S1, D, 'send_input', { access: 'inherit' });
+    expect(m.get(pointKey(S1))?.[1].pinned).toBeUndefined();
+    edit(m, D, null, 'send_input', { access: 'on' });
+    expect(dec(st(m), 'send_input')).toBe('allow');
+  });
+
+  it('pins are set only on session points, never on default or cli points', () => {
+    const m: M = new Map();
+    edit(m, D, null, 'send_input', { access: 'off' });
+    edit(m, CLAUDE_POINT, D, 'send_input', { access: 'on' });
+    expect(m.get(pointKey(D))?.[1].pinned).toBeUndefined();
+    expect(m.get(pointKey(CLAUDE_POINT))?.[1].pinned).toBeUndefined();
   });
 });

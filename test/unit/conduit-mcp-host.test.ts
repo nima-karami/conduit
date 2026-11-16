@@ -2672,7 +2672,7 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     });
   });
 
-  it('a sleeping claude session takes a default edit from its persisted agent; an unknown agent is skipped', async () => {
+  it('a sleeping claude session takes a default edit from its persisted agent; an unknown agent lowers onto the default', async () => {
     const h = harness();
     h.sessions.set('s1', session('s1', { agentId: 'claude' }));
     h.sessions.set('gone', session('gone', { agentId: 'removed-profile' }));
@@ -2697,10 +2697,9 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     expect(h.host.uiState().policy.legacy.sessions.s1).toEqual({
       open_file: { access: 'off' },
     });
-    // The unknown agent keeps its own send_input, which no longer matches the default it skipped.
+    // An unresolved agent lowers onto the default, so it takes the default edit too.
     expect(h.host.uiState().policy.legacy.sessions.gone).toEqual({
       open_file: { access: 'off' },
-      send_input: { access: 'ask' },
     });
   });
 
