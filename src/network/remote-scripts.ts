@@ -551,11 +551,12 @@ function WinArg([string]$a) {
   [void]$sb.Append('"')
   $bs = 0
   foreach ($ch in $a.ToCharArray()) {
-    if ($ch -eq '') { $bs++ }
-    elseif ($ch -eq '"') { [void]$sb.Append('', $bs * 2 + 1); [void]$sb.Append('"'); $bs = 0 }
-    else { [void]$sb.Append('', $bs); [void]$sb.Append($ch); $bs = 0 }
+    # [char]92 is a backslash, spelled as a code point so no quoting layer between TS and PowerShell can eat it.
+    if ($ch -eq [char]92) { $bs++ }
+    elseif ($ch -eq '"') { [void]$sb.Append([char]92, $bs * 2 + 1); [void]$sb.Append('"'); $bs = 0 }
+    else { [void]$sb.Append([char]92, $bs); [void]$sb.Append($ch); $bs = 0 }
   }
-  [void]$sb.Append('', $bs * 2)
+  [void]$sb.Append([char]92, $bs * 2)
   [void]$sb.Append('"')
   return $sb.ToString()
 }`;

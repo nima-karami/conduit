@@ -1033,7 +1033,10 @@ describe('PowerShell scripts: automatic variables and argument quoting', () => {
     const script = every()[5] ?? '';
     const start = script.indexOf('function WinArg');
     const fn = script.slice(start, script.indexOf('\n}', start) + 2);
-    const run = `${fn}\n@(String.raw\`a b\`, String.raw\`C:\\dir\\\`, 'x"y', String.raw\`a\\"b\`) | ForEach-Object { Write-Output (WinArg $_) }`;
+    // PowerShell single-quoted literals keep backslashes as-is; a quote inside one is doubled.
+    const inputs = ['a b', 'C:\\dir\\', 'x"y', 'a\\"b'];
+    const literals = inputs.map((v) => `'${v.replaceAll("'", "''")}'`).join(', ');
+    const run = `${fn}\n@(${literals}) | ForEach-Object { Write-Output (WinArg $_) }`;
     const enc = Buffer.from(run, 'utf16le').toString('base64');
     const r = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-EncodedCommand', enc], {
       encoding: 'utf8',
