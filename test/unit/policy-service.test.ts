@@ -1776,6 +1776,39 @@ describe('fail-closed and missing profile', () => {
     });
   });
 
+  it.each([
+    ['unreadable', '{not json'],
+    ['newer', '{"version":99,"profiles":[],"assignments":[],"overrides":[]}'],
+  ])(
+    'a missing policy.json with a %s last-good copy fails closed and never migrates',
+    async (_kind, lastGood) => {
+      const h = harness({ policy: null, lastGood });
+      h.service.start();
+
+      expect(migrateLegacyPolicy).not.toHaveBeenCalled();
+      expect(h.legacyCalls()).toBe(0);
+      expect(h.service.ui([sessionRow('s1')]).readOnly).toBe(true);
+      expect(h.service.ui([sessionRow('s1')]).sessions.s1?.profileId).toBe('observer');
+      expect(
+        h.service.decide({
+          principal: session(),
+          tool: 'open_session',
+          targets: [],
+          masterOn: true,
+          toYou: false,
+        }).decision,
+      ).toBe('deny');
+      expect(h.service.setAssignment({ kind: 'default' }, 'lead')).toEqual({
+        ok: false,
+        error: 'read-only',
+      });
+      h.fire(WRITE_MS);
+      await h.service.stop();
+      expect(h.policyWrites).toEqual([]);
+      expect(h.lastGoodWrites).toEqual([]);
+    },
+  );
+
   it('a session whose stored profile is missing shows Observer in the UI', () => {
     const h = harness({
       policy: policyText({

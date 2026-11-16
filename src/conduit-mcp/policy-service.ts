@@ -254,21 +254,32 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     return Promise.all(writes).then(() => undefined);
   }
 
-  function readLastGood(): PolicyFile | null {
+  // Only `absent` may migrate from legacy: a copy that exists but can't be used is a fault to
+  // fail closed on, never a reason to rebuild the policy from the old settings.
+  type LastGood =
+    | { kind: 'absent' }
+    | { kind: 'ok'; policy: PolicyFile }
+    | { kind: 'bad'; reason: 'unreadable' | 'newer' | 'read-failed' };
+
+  function readLastGood(): LastGood {
     let text: string | null;
     try {
       text = deps.lastGoodIo.read();
     } catch (e) {
       deps.warn('policy.last-good.json could not be read', e);
-      return null;
+      return { kind: 'bad', reason: 'read-failed' };
     }
-    if (text === null) return null;
+    if (text === null) return { kind: 'absent' };
     const parsed = parsePolicyFile(text);
     if (!parsed.ok) {
-      deps.warn('policy.last-good.json is unreadable');
-      return null;
+      deps.warn(
+        parsed.reason === 'newer'
+          ? 'policy.last-good.json is from a newer version'
+          : 'policy.last-good.json is unreadable',
+      );
+      return { kind: 'bad', reason: parsed.reason === 'newer' ? 'newer' : 'unreadable' };
     }
-    return parsed.file;
+    return { kind: 'ok', policy: parsed.file };
   }
 
   // Fail closed: an unreadable file never means an empty or a widened policy. The last copy
@@ -277,8 +288,9 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     policyWritable = false;
     deps.warn(`${why}; policy is read-only and not saved`, e);
     const good = readLastGood();
-    failClosed = good === null;
-    file = good ?? {
+    const usable = good.kind === 'ok' ? good.policy : null;
+    failClosed = usable === null;
+    file = usable ?? {
       ...emptyFile(),
       assignments: [
         {
@@ -294,7 +306,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       action: 'policy-unreadable',
       target: null,
       summary:
-        good === null
+        usable === null
           ? 'Permissions file unreadable and no saved copy; every session is Observer'
           : 'Permissions file unreadable; using the last saved copy',
       decision: null,
@@ -317,9 +329,13 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     if (text === null) {
       // A lost policy.json is rebuilt from the last saved copy; legacy settings only seed a first run.
       const good = readLastGood();
-      if (good !== null) {
-        file = good;
+      if (good.kind === 'ok') {
+        file = good.policy;
         markPolicy();
+        return;
+      }
+      if (good.kind === 'bad') {
+        unreadablePolicy('policy.json is missing and the saved copy is unusable');
         return;
       }
       const migrated = migrateLegacyPolicy(deps.legacy());
