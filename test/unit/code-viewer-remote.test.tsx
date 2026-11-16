@@ -78,6 +78,8 @@ const m = vi.hoisted(() => {
   }
   class FakeEditor {
     disposed = false;
+    actions: { id: string; run: () => unknown }[] = [];
+    private blurListeners = new Set<() => void>();
     private disposeListeners = new Set<() => void>();
     constructor(
       private model: FakeModel,
@@ -110,6 +112,18 @@ const m = vi.hoisted(() => {
     onDidDispose(cb: () => void) {
       this.disposeListeners.add(cb);
       return { dispose: () => this.disposeListeners.delete(cb) };
+    }
+    onDidBlurEditorWidget(cb: () => void) {
+      this.blurListeners.add(cb);
+      return { dispose: () => this.blurListeners.delete(cb) };
+    }
+    /** Lets a test play the user leaving the editor. */
+    fireBlur() {
+      for (const cb of [...this.blurListeners]) cb();
+    }
+    addAction(action: { id: string; run: () => unknown }) {
+      this.actions.push(action);
+      return { dispose: () => {} };
     }
     dispose() {
       if (this.disposed) return;
@@ -206,11 +220,18 @@ vi.mock('../../webview/settings', () => ({
 }));
 vi.mock('../../webview/monaco-theme', () => ({ ensureTheme: () => 'conduit' }));
 vi.mock('../../webview/monaco-languages', () => ({ ensureTokenizer: () => {} }));
+// Spied, not replaced: the real registration runs, and a test asks whether it was made at all.
+vi.mock('../../webview/nav-editors', async (orig) => {
+  const actual = await orig<typeof import('../../webview/nav-editors')>();
+  return { ...actual, registerNavEditor: vi.fn(actual.registerNavEditor) };
+});
 vi.mock('../../webview/monaco-warmup', () => ({
   gotoInflight: { active: () => false, subscribe: () => () => {} },
 }));
 
 import { CodeViewer } from '../../webview/components/code-viewer';
+import { seedLspState } from '../../webview/lsp-status';
+import { registerNavEditor } from '../../webview/nav-editors';
 import { fileUri } from '../../webview/project-index';
 
 const PATH = '/home/me/proj/src/a.ts';
@@ -265,6 +286,7 @@ beforeEach(() => {
   m.bus.posted.length = 0;
   // Every spy: a previous test's unmount still runs its local cleanup, which fires `trigger`.
   for (const spy of Object.values(m.fileSaves)) spy.mockClear();
+  vi.mocked(registerNavEditor).mockClear();
 });
 
 afterEach(async () => {
@@ -334,5 +356,62 @@ describe('CodeViewer with a remote source', () => {
     expect(remoteModel?.isDisposed()).toBe(true);
     // A local model is the tab's buffer and may be reused by the next tab on the same path.
     expect(localModel?.isDisposed()).toBe(false);
+  });
+
+  it('a remote editor never saves or triggers a save of the local file of its path', async () => {
+    const remoteRoot = await mount(
+      createElement(CodeViewer, {
+        doc: remoteDoc('remote text'),
+        viewStateId: 'remote-file@M1:/home/me/proj/src/a.ts',
+        source: REMOTE,
+      }),
+    );
+    const remoteEditor = m.editors.at(-1);
+    expect(remoteEditor).toBeDefined();
+    // The Save action runs whatever the editor holds; the remote editor has nothing to save.
+    remoteEditor?.actions.find((a) => a.id === 'agentdeck.saveFile')?.run();
+    remoteEditor?.fireBlur();
+    expect(m.fileSaves.save).not.toHaveBeenCalled();
+    expect(m.fileSaves.trigger).not.toHaveBeenCalled();
+
+    await unmount(remoteRoot);
+    expect(m.fileSaves.trigger).not.toHaveBeenCalled();
+    expect(registerNavEditor).not.toHaveBeenCalled();
+
+    // The same actions on a local editor do reach the local store, so the checks above can fail.
+    await mount(createElement(CodeViewer, { doc: fileDoc('local text') }));
+    const localEditor = m.editors.at(-1);
+    localEditor?.actions.find((a) => a.id === 'agentdeck.saveFile')?.run();
+    localEditor?.fireBlur();
+    expect(m.fileSaves.save).toHaveBeenCalledWith(PATH, 'manual');
+    expect(m.fileSaves.trigger).toHaveBeenCalledWith(PATH, 'editorBlur');
+    expect(registerNavEditor).toHaveBeenCalledWith(PATH, expect.anything(), expect.anything());
+  });
+
+  it('a remote python file keeps its language, a remote TypeScript file is plain text', async () => {
+    // Python is served by a language server here, so it is a language this project analyses: the
+    // test holds that it still keeps its own language, which only TypeScript gives up.
+    seedLspState({
+      servers: [],
+      languages: [
+        {
+          languageId: 'python',
+          languageIds: ['python'],
+          displayName: 'Python',
+          binary: 'pyright',
+          installHint: '',
+          moduleMarker: '',
+        },
+      ],
+    });
+    await mount(
+      createElement(CodeViewer, {
+        doc: { ...remoteDoc('print(1)'), language: 'python' },
+        viewStateId: 'remote-file@M1:/home/me/proj/src/a.py',
+        source: REMOTE,
+      }),
+    );
+    const remoteModels = [...m.models.values()].filter((x) => x.uri.scheme === 'conduit-remote');
+    expect(remoteModels.map((x) => x.getLanguageId())).toEqual(['python']);
   });
 });

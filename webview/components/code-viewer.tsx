@@ -53,7 +53,7 @@ import { registerSelection } from '../selection-registry';
 import { useSettings } from '../settings';
 import { effectiveCombo, isMac, SHORTCUT_ACTIONS } from '../shortcuts';
 import { pushToast } from '../toast-store';
-import { hasCodeNavigation, runNavCommand } from '../ts-nav';
+import { hasCodeNavigation, isTsLanguage, runNavCommand } from '../ts-nav';
 import { type ChangeMarkersApi, DEGRADED_HINT, useChangeMarkers } from '../use-change-markers';
 import { makeDebouncedFlush } from '../use-debounced-flush';
 import { useNoteMarkers } from '../use-note-markers';
@@ -229,10 +229,10 @@ export function CodeViewer({
     const theme = ensureTheme();
     // Register the grammar BEFORE the model and the editor exist: Monaco's own registration
     // is lazy behind a dynamic import, which makes the first paint plain unstyled text.
-    // A remote file in a language this project analyses is shown as plain text: Monaco's TS
-    // worker and the language servers would otherwise index its content against the local project.
+    // A remote TS/JS file is shown as plain text: Monaco's TS worker syncs every model of those
+    // languages into the local project. Language servers attach only to the local file's URI.
     const modelLanguage =
-      remoteMachineId !== null && hasCodeNavigation(doc.language) ? 'plaintext' : doc.language;
+      remoteMachineId !== null && isTsLanguage(doc.language) ? 'plaintext' : doc.language;
     ensureTokenizer(modelLanguage);
     // file:// model URI so the TS/JS language service recognises the file
     // (enables go-to-definition, hover, peek). Reuse an existing model if present. A remote file
