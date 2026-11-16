@@ -10,11 +10,15 @@ import {
   VANISHED_RESTART_BUDGET,
 } from '../../electron/server-lifecycle';
 import type { HcTerminal } from '../../src/contracts/hc';
-import { SERVER_RESTART_EXIT_WAIT_MS } from '../../src/contracts/server-protocol';
+import {
+  SERVER_ERROR_RPC_CODE,
+  SERVER_RESTART_EXIT_WAIT_MS,
+} from '../../src/contracts/server-protocol';
 import type { InstanceNames } from '../../src/contracts/session-identity';
 import type { AppLaunch } from '../../src/contracts/tray-protocol';
 import { HcRpcError, NodeHcClient } from '../../src/hc-client';
 import { FakeHc } from '../../src/hc-client/testing/fake-hc';
+import { AUTH_REQUIRED_MESSAGE } from '../../src/server-secret';
 import { FakeC2Server } from './fake-c2-server';
 
 const APP_VERSION = '0.52.0';
@@ -610,6 +614,52 @@ describe('createServerLifecycle F9 and explicit actions', () => {
     await new Promise((resolve) => setImmediate(resolve));
     expect(h.lifecycle.current()).toMatchObject({ state: 'unavailable', reason: 'hello-timeout' });
   });
+  it('auth refusals back off between redials and end unavailable', async () => {
+    const h = await harness({ supervisorLive: true });
+    let subscribes = 0;
+    // A server that is up but refuses every subscribe: the secret is missing or wrong.
+    h.c2.on('events.subscribe', () => {
+      subscribes++;
+      throw {
+        code: SERVER_ERROR_RPC_CODE,
+        message: AUTH_REQUIRED_MESSAGE,
+        data: { kind: 'refused' },
+      };
+    });
+    h.lifecycle.onConnected((c) => {
+      c.subscribe({ snapshot() {}, event() {} }).catch(() => {});
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const timers = vi.spyOn(globalThis, 'setTimeout');
+    try {
+      await h.lifecycle.start();
+      await until(() => subscribes === 1, 'first refusal');
+      // Each redial waits twice as long as the last: 500, 1000, 2000, 4000 ms.
+      for (const [n, wait] of [
+        [2, 500],
+        [3, 1000],
+        [4, 2000],
+        [5, 4000],
+      ] as const) {
+        timers.mockClear();
+        await until(() => timers.mock.calls.some(([, ms]) => ms === wait), `backoff ${wait}`);
+        await vi.advanceTimersByTimeAsync(wait - 1);
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(subscribes).toBe(n - 1);
+        await vi.advanceTimersByTimeAsync(1);
+        await until(() => subscribes === n, `refusal ${n}`);
+      }
+      await until(() => h.state() === 'unavailable', 'unavailable');
+      expect(h.lifecycle.current()).toMatchObject({
+        state: 'unavailable',
+        reason: 'auth-refused',
+      });
+    } finally {
+      timers.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it('stopAll reports unavailable after the server connection drops', async () => {
     const h = await harness({ supervisorLive: true });
     await h.lifecycle.start();

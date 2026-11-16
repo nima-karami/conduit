@@ -447,7 +447,8 @@ export type ServerUiState = (
         | 'hello-timeout'
         | 'restart-wait-timeout'
         | 'start-failed'
-        | 'hc-unresponsive';
+        | 'hc-unresponsive'
+        | 'auth-refused';
       logPath: string;
       detail?: string;
     }

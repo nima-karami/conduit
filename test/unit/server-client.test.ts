@@ -120,7 +120,23 @@ describe('ServerClient', () => {
     await expect(client.subscribe({ snapshot() {}, event() {} })).rejects.toBeInstanceOf(
       ServerCallError,
     );
-    await vi.waitFor(() => expect(closed).toHaveBeenCalledWith('eof'));
+    await vi.waitFor(() => expect(closed).toHaveBeenCalledWith('auth'));
+  });
+
+  it('the secret is read when the socket connects, not when open starts', async () => {
+    server = new FakeC2Server();
+    await server.listen();
+    let secret = 'read-at-open';
+    client = new ServerClient({
+      endpoint: server.endpoint,
+      appVersion: '0.52.0',
+      readSecret: () => secret,
+      log: () => {},
+    });
+    const opening = client.open();
+    secret = 'rewritten-before-connect';
+    await opening;
+    expect(server.calls('hello')[0]?.params).toMatchObject({ auth: 'rewritten-before-connect' });
   });
 
   it('hello carries auth from readSecret', async () => {

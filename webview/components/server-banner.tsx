@@ -24,7 +24,9 @@ function viewOf(
         message:
           state.reason === 'hc-unresponsive'
             ? 'The terminal supervisor did not respond.'
-            : `${SERVICE} isn't running.`,
+            : state.reason === 'auth-refused'
+              ? `${SERVICE} refused this app's credentials.`
+              : `${SERVICE} isn't running.`,
         logPath: state.logPath,
         action: { label: 'Retry', run: onRetry },
       };

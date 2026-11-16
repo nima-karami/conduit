@@ -33,6 +33,9 @@ export class ServerCallError extends Error {
   }
 }
 
+/** Why a connection ended: `auth` means the server refused our secret, so a redial is the only way back. */
+export type CloseReason = 'eof' | 'error' | 'auth';
+
 export interface ServerClientOptions {
   endpoint: string;
   appVersion: string;
@@ -95,7 +98,9 @@ export class ServerClient {
   private state: 'idle' | 'opening' | 'open' | 'closed' = 'idle';
   private nextId = 0;
   private readonly pending = new Map<number, Pending>();
-  private readonly closeListeners = new Set<(why: 'eof' | 'error') => void>();
+  private readonly closeListeners = new Set<(why: CloseReason) => void>();
+  private everSubscribed = false;
+  private authDropped = false;
   private subscriber: Subscriber | undefined;
   /** null while (re)subscribing: no snapshot yet to order events against. */
   private snapshotSeq: number | null = null;
@@ -148,7 +153,7 @@ export class ServerClient {
           reject(new ServerCallError('disconnected', 'connection closed before hello'));
           return;
         }
-        for (const cb of [...this.closeListeners]) cb(failed);
+        for (const cb of [...this.closeListeners]) cb(this.authDropped ? 'auth' : failed);
       });
       const sendHello = () => {
         let auth: string | null;
@@ -210,7 +215,12 @@ export class ServerClient {
     await this.resubscribe();
   }
 
-  onClose(cb: (why: 'eof' | 'error') => void): () => void {
+  /** True once events.subscribe has succeeded on this connection: it got past the auth gate. */
+  get subscribedOnce(): boolean {
+    return this.everSubscribed;
+  }
+
+  onClose(cb: (why: CloseReason) => void): () => void {
     this.closeListeners.add(cb);
     return () => this.closeListeners.delete(cb);
   }
@@ -235,10 +245,13 @@ export class ServerClient {
         error instanceof ServerCallError &&
         error.kind === 'refused' &&
         error.message === AUTH_REQUIRED_MESSAGE
-      )
+      ) {
+        this.authDropped = true;
         this.socket?.destroy();
+      }
       throw error;
     }
+    this.everSubscribed = true;
     if (this.subscriber !== h || this.state !== 'open') return;
     this.snapshotSeq = snapshot.seq;
     this.guard('snapshot', () => h.snapshot(snapshot));
