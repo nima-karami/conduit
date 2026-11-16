@@ -25,6 +25,7 @@ import { useFileSaveStatuses } from '../file-saves';
 import { registerFocusTarget, terminalFocusKey, terminalTabFocusKey } from '../focus-targets';
 import type { GitActionIntent } from '../git-intent';
 import { IconClock } from '../icons';
+import { type RemoteKey, type RemoteSessionRow, remoteKeyId } from '../remote-sessions';
 import { reviewRequestRoot } from '../review-repos';
 import type { ReviewScope } from '../review-scope';
 import { SPLIT_COPY } from '../split-editor-copy';
@@ -43,6 +44,7 @@ import { GitHistoryView } from './git-history-view';
 import { McpSetupBanner } from './mcp-setup-banner';
 import { MissingHomeState, StartRefusedState } from './missing-home-state';
 import type { DockHandlers } from './panel-frame';
+import { RemotePane } from './remote-pane';
 import { RequestPopup } from './request-popup';
 import { RequestTab } from './request-tab';
 import { ReviewView } from './review-view';
@@ -136,6 +138,9 @@ export function CenterPane({
   serverState,
   onRetryLaunch,
   onDiscardLaunch,
+  activeRemote = null,
+  remoteRows = [],
+  onRemoteClosed,
 }: {
   sessions: Session[];
   agents: AgentDefinition[];
@@ -239,6 +244,10 @@ export function CenterPane({
   serverState: ServerUiState;
   onRetryLaunch: (sessionId: string) => void;
   onDiscardLaunch: (sessionId: string) => void;
+  /** The remote session shown in place of the local terminal, when one is selected. */
+  activeRemote?: RemoteKey | null;
+  remoteRows?: readonly RemoteSessionRow[];
+  onRemoteClosed?: () => void;
 }) {
   const [compareOpen, setCompareOpen] = useState(false);
   const saveStatuses = useFileSaveStatuses();
@@ -279,6 +288,9 @@ export function CenterPane({
       sessions.map((s) => [s.id, { n: runOf(s), exited: s.status === 'exited' }]),
     );
   });
+  const remoteRow = activeRemote
+    ? remoteRows.find((r) => r.id === remoteKeyId(activeRemote))
+    : undefined;
   const exitedCard = (s: Session) => s.status === 'exited' && !s.homeMissing && !s.startRefusal;
   const groupOne = layout.groups[0];
   // A layout effect: the terminal stack is shown in this same commit, and xterm cannot take focus
@@ -394,7 +406,10 @@ export function CenterPane({
   const terminalStack = (
     // Terminals stay mounted (hidden while a doc tab is active) so the PTY survives. Split mode
     // shows the active + split sessions side by side.
-    <div className="termstack" style={{ display: groupOne.activeDocId !== null ? 'none' : 'flex' }}>
+    <div
+      className="termstack"
+      style={{ display: groupOne.activeDocId !== null || remoteRow ? 'none' : 'flex' }}
+    >
       {paneMounts.map(({ session: s, mode }) => {
         const isSplit = s.id === splitId && s.id !== activeId;
         const visible = s.id === activeId || isSplit;
@@ -594,6 +609,16 @@ export function CenterPane({
         }
       >
         <div className="termwrap">
+          {g === 1 && remoteRow && activeRemote && (
+            <RemotePane
+              key={remoteKeyId(activeRemote)}
+              remote={activeRemote}
+              machineName={remoteRow.machineName}
+              label={remoteRow.session.label}
+              visible={groupOne.activeDocId === null}
+              onClosed={() => onRemoteClosed?.()}
+            />
+          )}
           {g === 1 && terminalStack}
           {renderShownDoc(view)}
         </div>

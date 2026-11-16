@@ -126,6 +126,8 @@ export const MACHINES_STR = {
   reconnecting: (machine: string) => `Reconnecting to ${machine}…`,
   readOnly: (machine: string) => `Read only: ${machine} doesn’t let this computer type here`,
   exited: 'Session ended',
+  /** Written into the terminal when the remote process ends (dimmed, as TerminalPane writes its own). */
+  processExited: '[process exited]',
   closeSession: 'Close session',
   attaching: (machine: string) => `Opening the terminal on ${machine}…`,
   paneError: (code: string) => PANE_ERROR[code] ?? 'Something went wrong talking to that machine.',
