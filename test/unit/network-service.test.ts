@@ -163,6 +163,8 @@ async function linkedOverSsh(
     requestsSummary: () => [],
     callAsRemote: () => Promise.reject(new Error('not used by this test')),
     remoteRequests: () => ({ apply: () => false, setLinkState: () => {} }),
+    mirrorOf: () => [],
+    applyRemoteAnswer: () => ({ ok: false, reason: 'not_found', message: 'not used by this test' }),
   });
   a.net.setMcp(mcp([]));
   b.net.setMcp(mcp(bDelivered));

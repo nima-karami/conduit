@@ -7642,7 +7642,7 @@ describe('createConduitMcpHost — a remote lead (routed calls, CON-40 S2, plan 
     expect(r).toMatchObject({ ok: false, error: { code: 'tool_disabled' } });
   });
 
-  it('an ask for the lead is refused before any card: the owner answers on this machine', async () => {
+  it('an ask for the lead waits for the owner here: a permission in the queue, and no card', async () => {
     const policy = serializePolicyFile({
       version: 1,
       profiles: [...BUILT_IN_PROFILES],
@@ -7663,19 +7663,17 @@ describe('createConduitMcpHost — a remote lead (routed calls, CON-40 S2, plan 
       notes: { onScreenOnlyOffered: [] },
     });
     const h = await withLocal({ policyIo: { read: () => policy, write: async () => undefined } });
-    const r = await h.host.networkPort().callAsRemote(LEAD, 'open_session', {
-      path: '/w/wt',
-      agent: 'e2e-fake-mcp',
+    const port = h.host.networkPort();
+    const call = port.callAsRemote(LEAD, 'open_session', { path: '/w/wt', agent: 'e2e-fake-mcp' });
+    const [asked] = await waitForAsks(h);
+    expect(asked).toMatchObject({
+      requester: 'claude-3@m-0123abcd',
+      permission: { tool: 'open_session', grantable: true },
     });
-    expect(r).toMatchObject({
-      ok: false,
-      error: {
-        code: 'refused',
-        reason: 'remote_ask',
-        hint: 'this needs the owner on this machine; answer it there',
-      },
-    });
+    expect(h.toOwner.filter((m) => m.msg.type === 'mcp:ask')).toEqual([]);
     expect(h.opens).toEqual([]);
+    port.applyRemoteAnswer(asked.id, { outcome: 'denied' }, 'ask-deny', LEAD.machineId);
+    expect(await call).toMatchObject({ ok: false, error: { code: 'denied' } });
   });
 
   it('the opener shows in list_sessions as the lead address, on this machine', async () => {
@@ -7711,15 +7709,16 @@ describe('createConduitMcpHost — a remote lead: the refusals the host adds (CO
     return h;
   }
 
-  it('a bare command is an ask for a remote lead: refused, and nothing opens', async () => {
+  it('a bare command is an ask for a remote lead: the owner decides, and a denial opens nothing', async () => {
     // /usr/bin/yes is a real coreutils file on the ubuntu CI runner; a bare command is resolved
     // on PATH and must exist, so the open reaches the always-ask check.
     const h = await withLocal({ kinds: { '/w/wt': 'dir', '/usr/bin/yes': 'file' } });
-    const r = await h.host.networkPort().callAsRemote(LEAD, 'open_session', {
-      path: '/w/wt',
-      agent: 'yes',
-    });
-    expect(r).toMatchObject({ ok: false, error: { code: 'refused', reason: 'remote_ask' } });
+    const port = h.host.networkPort();
+    const call = port.callAsRemote(LEAD, 'open_session', { path: '/w/wt', agent: 'yes' });
+    const [asked] = await waitForAsks(h);
+    port.applyRemoteAnswer(asked.id, { outcome: 'denied' }, 'bare-1', LEAD.machineId);
+    const r = await call;
+    expect(r).toMatchObject({ ok: false, error: { code: 'denied' } });
     expect(h.opens).toEqual([]);
   });
 
@@ -7749,6 +7748,240 @@ describe('createConduitMcpHost — a remote lead: the refusals the host adds (CO
     const r = await h.host.networkPort().callAsRemote(LEAD, 'close_session', { children: true });
     expect(r).toMatchObject({ ok: false, error: { code: 'invalid_args' } });
     expect(h.closes).toEqual([]);
+  });
+});
+
+/** The open permissions this machine's queue holds for remote asks, once one is raised (CON-42 L5a). */
+async function waitForAsks(h: Harness): Promise<RequestMirror[]> {
+  for (let i = 0; i < 50; i++) {
+    const open = h.host
+      .networkPort()
+      .mirrorOf()
+      .filter((r) => r.state === 'open' && r.permission !== null);
+    if (open.length > 0) return open;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  throw new Error('no remote ask was raised');
+}
+
+describe('createConduitMcpHost — a routed ask waits for the owner on this machine (CON-42 L5a)', () => {
+  const LEAD: RemoteCaller = {
+    kind: 'remote',
+    handle: 'claude-3',
+    machineId: 'm-0123abcd',
+    trust: 'own',
+    controller: true,
+    capabilities: { messaging: true, monitor: true, drive: false },
+  };
+  const ASK_POLICY = serializePolicyFile({
+    version: 1,
+    profiles: [...BUILT_IN_PROFILES],
+    assignments: [
+      {
+        point: { kind: 'peer', machineId: 'm-0123abcd' },
+        assignment: {
+          profileId: 'lead',
+          exceptions: [
+            { tool: 'open_session', scope: { kind: 'anywhere' }, rule: { decision: 'ask' } },
+          ],
+          onScreenOnly: false,
+        },
+      },
+    ],
+    overrides: [],
+    migratedFrom: null,
+    notes: { onScreenOnlyOffered: [] },
+  });
+
+  async function withAsk() {
+    const h = harness({
+      kinds: { '/w/wt': 'dir', '/w/src': 'dir' },
+      manualTimers: true,
+      policyIo: { read: () => ASK_POLICY, write: async () => undefined },
+    });
+    await h.host.start();
+    await launch(h, 's1');
+    return h;
+  }
+
+  const openArgs = (p: string) => ({ path: p, agent: 'e2e-fake-mcp' });
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+  it('an allow runs the call the lead made, once the owner answers', async () => {
+    const h = await withAsk();
+    const port = h.host.networkPort();
+    const call = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'));
+    const [asked] = await waitForAsks(h);
+    expect(asked).toMatchObject({
+      requester: 'claude-3@m-0123abcd',
+      permission: { tool: 'open_session', grantable: true },
+    });
+    await settle();
+    expect(h.opens).toEqual([]);
+    expect(port.applyRemoteAnswer(asked.id, { outcome: 'allowed' }, 'a1', LEAD.machineId)).toEqual({
+      ok: true,
+    });
+    expect(await call).toMatchObject({ ok: true, value: { agent: 'e2e-fake-mcp' } });
+    expect(h.opens).toHaveLength(1);
+  });
+
+  it('a denial gives denied and opens nothing', async () => {
+    const h = await withAsk();
+    const port = h.host.networkPort();
+    const call = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'));
+    const [asked] = await waitForAsks(h);
+    port.applyRemoteAnswer(
+      asked.id,
+      { outcome: 'denied', reason: 'not now' },
+      'a2',
+      LEAD.machineId,
+    );
+    expect(await call).toMatchObject({ ok: false, error: { code: 'denied' } });
+    expect(h.opens).toEqual([]);
+  });
+
+  it('an ask nobody answers in 45 s gives approval_timeout, and opens nothing', async () => {
+    const h = await withAsk();
+    const call = h.host.networkPort().callAsRemote(LEAD, 'open_session', openArgs('/w/wt'));
+    await waitForAsks(h);
+    h.advance(45_000);
+    expect(await call).toMatchObject({ ok: false, error: { code: 'approval_timeout' } });
+    expect(h.opens).toEqual([]);
+  });
+
+  it('an allow with a grant makes a peer grant, and the same call after it runs without asking', async () => {
+    const h = await withAsk();
+    const port = h.host.networkPort();
+    const first = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'));
+    const [asked] = await waitForAsks(h);
+    port.applyRemoteAnswer(asked.id, { outcome: 'allowed', grant: true }, 'g1', LEAD.machineId);
+    expect(await first).toMatchObject({ ok: true });
+    const second = await port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'));
+    expect(second).toMatchObject({ ok: true });
+    expect(h.opens).toHaveLength(2);
+    // The second call raised no request: the queue still holds only the first, now answered.
+    expect(port.mirrorOf()).toHaveLength(1);
+  });
+
+  it('a grant covers the folder it was made for: another folder asks again', async () => {
+    const h = await withAsk();
+    const port = h.host.networkPort();
+    const first = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'));
+    const [asked] = await waitForAsks(h);
+    port.applyRemoteAnswer(asked.id, { outcome: 'allowed', grant: true }, 'g2', LEAD.machineId);
+    await first;
+    const other = port.callAsRemote(LEAD, 'open_session', openArgs('/w/src'));
+    const [again] = await waitForAsks(h);
+    expect(again.id).not.toBe(asked.id);
+    h.advance(45_000);
+    expect(await other).toMatchObject({ ok: false, error: { code: 'approval_timeout' } });
+    expect(h.opens).toHaveLength(1);
+  });
+
+  it('an allow without a grant makes no grant: the same call asks again', async () => {
+    const h = await withAsk();
+    const port = h.host.networkPort();
+    const first = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'));
+    const [asked] = await waitForAsks(h);
+    port.applyRemoteAnswer(asked.id, { outcome: 'allowed' }, 'n1', LEAD.machineId);
+    await first;
+    const second = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'));
+    const [again] = await waitForAsks(h);
+    expect(again.id).not.toBe(asked.id);
+    h.advance(45_000);
+    expect(await second).toMatchObject({ ok: false, error: { code: 'approval_timeout' } });
+  });
+
+  it('a stop ends the ask as server_stopping, and the call does not run', async () => {
+    const h = await withAsk();
+    const call = h.host.networkPort().callAsRemote(LEAD, 'open_session', openArgs('/w/wt'));
+    await waitForAsks(h);
+    await h.host.stop();
+    expect(await call).toMatchObject({ ok: false, error: { code: 'server_stopping' } });
+    expect(h.opens).toEqual([]);
+  });
+});
+
+describe('createConduitMcpHost — a remote answer that does not reach its machine (CON-42 L5a)', () => {
+  const M = 'm-0123abcd';
+  const WIN = 'win-box';
+  const mirror = (over: Partial<RequestMirror> & { id: string }): RequestMirror => ({
+    kind: 'choose',
+    title: 'Pick one',
+    body: '',
+    options: [{ label: 'A' }, { label: 'B' }],
+    multi: false,
+    draft: null,
+    priority: 'normal',
+    createdAt: '2026-11-16T10:00:00.000Z',
+    expiresAt: null,
+    requester: 'builder@win-box',
+    state: 'open',
+    answer: null,
+    permission: null,
+    ...over,
+  });
+
+  function remoteNet(answer: NetworkPort['answerRemoteRequest']) {
+    const unused = (): never => {
+      throw new Error('not used by the remote requests');
+    };
+    const network: NetworkPort = {
+      remoteEntries: () => [],
+      resolve: unused,
+      enqueue: unused,
+      call: unused,
+      waitReading: unused,
+      peerCapabilitiesOf: unused,
+      onChange: () => () => undefined,
+      listMachines: () => [],
+      connectMachine: unused,
+      disconnectMachine: unused,
+      selfName: () => 'this-machine',
+      answerRemoteRequest: vi.fn(answer),
+    };
+    return network;
+  }
+
+  async function answerOf(network: NetworkPort, setup: (h: Harness) => void) {
+    const h = harness({ network });
+    await h.host.start();
+    h.host
+      .networkPort()
+      .remoteRequests()
+      .apply(M, 1, [mirror({ id: 'r1' })], WIN);
+    setup(h);
+    const replies: HostToWebview[] = [];
+    await h.host.handleRenderer(
+      { type: 'mcp:requestAnswer', requestId: `r1@${M}`, answer: { outcome: 'answered' } },
+      (m) => replies.push(m),
+      1,
+    );
+    return replies[0];
+  }
+
+  it('a link that is down is peer_unreachable, and nothing is sent', async () => {
+    const network = remoteNet(async () => ({ ok: true, value: null }));
+    const reply = await answerOf(network, (h) =>
+      h.host.networkPort().remoteRequests().setLinkState(M, 'down'),
+    );
+    expect(reply).toMatchObject({ result: { ok: false, reason: 'peer_unreachable' } });
+    expect(network.answerRemoteRequest).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['peer_unreachable', 'peer_unreachable'],
+    ['peer_incompatible', 'peer_incompatible'],
+    ['peer_revoked', 'peer_revoked'],
+    ['peer_unsupported', 'not_answerable'],
+  ] as const)('a %s from the link reaches the renderer as %s', async (code, reason) => {
+    const network = remoteNet(async () => ({
+      ok: false,
+      error: toolError(code, 'the link refused it'),
+    }));
+    const reply = await answerOf(network, () => {});
+    expect(reply).toMatchObject({ result: { ok: false, reason } });
+    expect(network.answerRemoteRequest).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -8224,7 +8457,7 @@ describe('createConduitMcpHost — remote requests (CON-42 A side)', () => {
       {
         type: 'mcp:requestResult',
         requestId: `r1@${M}`,
-        result: expect.objectContaining({ ok: false, reason: 'not_answerable' }),
+        result: expect.objectContaining({ ok: false, reason: 'peer_unreachable' }),
       },
     ]);
   });
@@ -8238,7 +8471,7 @@ describe('createConduitMcpHost — remote requests (CON-42 A side)', () => {
       {
         type: 'mcp:requestResult',
         requestId: `r1@${M}`,
-        result: expect.objectContaining({ ok: false, reason: 'not_answerable' }),
+        result: expect.objectContaining({ ok: false, reason: 'peer_unreachable' }),
       },
     ]);
   });
