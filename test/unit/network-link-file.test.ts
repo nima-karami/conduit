@@ -134,6 +134,19 @@ describe('links file', () => {
     expect(parseLinksFile(serializeLinksFile(f), NOW)).toEqual({ kind: 'ok', file: f });
   });
 
+  it('machine metadata with survivesLogout null (never bootstrapped by us) round-trips', () => {
+    const unknown = { ...sshLink, machine: { ...meta, survivesLogout: null } };
+    const f: LinksFile = { version: 3, links: [unknown], tombstones: [] };
+    expect(parseLinksFile(serializeLinksFile(f), NOW)).toEqual({ kind: 'ok', file: f });
+  });
+
+  it('machine metadata whose survivesLogout is neither a boolean nor null is corrupt', () => {
+    const bad = { ...sshLink, machine: { ...meta, survivesLogout: 'yes' } };
+    expect(
+      parseLinksFile(JSON.stringify({ version: 3, links: [bad], tombstones: [] }), NOW),
+    ).toEqual({ kind: 'corrupt' });
+  });
+
   it('a tls record carrying machine metadata is corrupt', () => {
     const bad = { ...link, machine: meta };
     expect(parseLinksFile(JSON.stringify({ ...sample, links: [bad] }), NOW)).toEqual({

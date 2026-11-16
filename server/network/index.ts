@@ -240,6 +240,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
 
   const manager: LinkManager = createLinkManager({
     identity: () => identity,
+    appVersion: deps.appVersion,
     sshDial: createSshDial({
       sshPath: process.env.CONDUIT_SSH_PATH || 'ssh',
       controlDir: sshControlDir,

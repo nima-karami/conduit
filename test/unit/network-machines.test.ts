@@ -274,6 +274,26 @@ describe('machines: connect', () => {
     expect(store.get('m-00000001')?.machine?.enabled).toBe(true);
   });
 
+  // An added machine gets its block from its hello, while its link is up: it is reused, no bootstrap.
+  it('a record whose hello wrote its block while the link is up is reused, not bootstrapped', async () => {
+    const { store, fake, machines, bootstrapCalls } = setup([], {
+      id: 'm-00000002',
+      name: 'added',
+    });
+    pin(store, fake, {
+      id: 'm-00000002',
+      name: 'added',
+      target: 'b.example',
+      n: 2,
+      state: 'up',
+      meta: false,
+    });
+    store.setMachine('m-00000002', { ...META, agents: [] });
+    const r = await machines.connect('added', LIVE);
+    expect(bootstrapCalls).toEqual([]);
+    expect(r).toMatchObject({ ok: true, value: { machine_id: 'm-00000002', reused: true } });
+  });
+
   // The bootstrap pinned the machine, but its link never stayed up: connect must say so, not ok.
   it('a bootstrap that pins a machine whose link then fails is that failure, not ok', async () => {
     const { fake, machines } = setup();
@@ -552,6 +572,7 @@ function realManager(dial: SshDial) {
   const manager: LinkManager = createLinkManager({
     identity: nodeIdentity,
     selfName: () => 'controller',
+    appVersion: '9.9.9',
     tls: () => ({ cert: '', key: '' }),
     store,
     audit: { record: () => undefined },

@@ -8,7 +8,8 @@ export interface MachineMeta {
   mode: MachineMode;
   agents: string[];
   enabled: boolean;
-  survivesLogout: boolean;
+  /** null: the machine was never bootstrapped by us, so the install's answer is not known. */
+  survivesLogout: boolean | null;
 }
 export type MachineState = LinkState | 'disabled';
 export interface MachineView {

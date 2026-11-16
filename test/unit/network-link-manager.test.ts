@@ -111,6 +111,7 @@ async function node(
   const manager = createLinkManager({
     identity: () => id,
     selfName: () => name,
+    appVersion: '9.9.9',
     tls: () => ({ cert, key }),
     store,
     audit: { record: (e) => audit.push(e) },
@@ -1105,6 +1106,7 @@ function clockedManager(dial: SshDial, pingMs?: number) {
   const manager = createLinkManager({
     identity: () => id,
     selfName: () => 'controller',
+    appVersion: '9.9.9',
     tls: () => ({ cert: '', key: '' }),
     store,
     audit: { record: () => undefined },
@@ -1411,6 +1413,7 @@ describe('enable and waitUp, from the outside', () => {
       const manager = createLinkManager({
         identity,
         selfName: () => 'controller',
+        appVersion: '9.9.9',
         tls: () => ({ cert: '', key: '' }),
         store,
         audit: { record: () => undefined },
@@ -1443,5 +1446,58 @@ describe('enable and waitUp, from the outside', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("an ssh peer's hello writes its machine block (protocol 1.1)", () => {
+  it.runIf(process.platform === 'linux' && process.arch === 'x64')(
+    'a dialed peer gets os, arch and version from its hello; the rest of the block is the default',
+    async () => {
+      const { a, b } = await sshPair();
+      expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({
+        ok: true,
+        machineId: b.id.machineId,
+      });
+      expect(a.store.get(b.id.machineId)?.machine).toEqual({
+        os: 'linux',
+        arch: 'x64',
+        version: '9.9.9',
+        mode: 'full',
+        agents: [],
+        enabled: true,
+        survivesLogout: null,
+      });
+    },
+  );
+
+  it('a peer whose hello has no platform (an older one) links, and its block stays absent', async () => {
+    const owner = identity();
+    const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
+    const c = await node(identity(ownerKey), 'c-box');
+    const a = await node(identity(ownerKey), 'linux-box', 0, () => ({
+      stream: forgingStream(helloOf(c)),
+      failure: async () => null,
+    }));
+    a.manager.start();
+    expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({ ok: true, machineId: c.id.machineId });
+    expect(a.store.get(c.id.machineId)?.machine).toBeNull();
+  });
+
+  it('a peer on a platform we do not record leaves its block untouched, and says so', async () => {
+    const owner = identity();
+    const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
+    const c = await node(identity(ownerKey), 'c-box');
+    const a = await node(identity(ownerKey), 'linux-box', 0, () => ({
+      stream: forgingStream({
+        ...helloOf(c),
+        platform: { os: 'linux', arch: 'arm64' },
+        version: '9.9.9',
+      }),
+      failure: async () => null,
+    }));
+    a.manager.start();
+    expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({ ok: true, machineId: c.id.machineId });
+    expect(a.store.get(c.id.machineId)?.machine).toBeNull();
+    expect(a.warns.some((w) => w.includes('platform'))).toBe(true);
   });
 });
