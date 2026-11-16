@@ -79,9 +79,13 @@ function emit(m: HostToWebview): void {
 }
 
 type AskMsg = Extract<HostToWebview, { type: 'mcp:ask' }>;
-function ask(askId: string, p: { handle?: string; source?: PolicySource } = {}): AskMsg {
+function ask(
+  askId: string,
+  p: { handle?: string; source?: PolicySource; grantable?: boolean } = {},
+): AskMsg {
   return {
     type: 'mcp:ask',
+    grantable: p.grantable ?? true,
     askId,
     callerSessionId: `s-${askId}`,
     callerHandle: p.handle ?? 'fake-1',
@@ -149,6 +153,14 @@ describe('ApprovalCard', () => {
       [...(r?.querySelectorAll('button[data-answer]') ?? [])].map((b) => b.textContent),
     ).toEqual(['Deny', 'Approve', 'Always for this session']);
     expect(r?.textContent).not.toContain('1 of');
+  });
+
+  it('a forced ask offers Deny and Approve only: no Always', () => {
+    mount();
+    emit({ ...ask('a1'), grantable: false });
+    expect(
+      [...(region()?.querySelectorAll('button[data-answer]') ?? [])].map((b) => b.textContent),
+    ).toEqual(['Deny', 'Approve']);
   });
 
   it('names the model and the first message length in the open_session summary', () => {

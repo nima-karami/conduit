@@ -78,7 +78,7 @@ export interface ControlCall<T> {
   tool: ToolName;
   decision: PolicyDecision;
   commit(): AskCommit | null;
-  permission: { why: string; targets: readonly PolicyTarget[] };
+  permission: { why: string; targets: readonly PolicyTarget[]; grantable: boolean };
   denyReason(held: readonly OneUseOverride[]): string | null;
   reDecide(held: readonly OneUseOverride[]): AnswerDecision;
   grant(choice: GrantChoice, requestId: string): GrantOutcome;
@@ -367,6 +367,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       summary: p.summary,
       args: c.args,
       source: c.source,
+      grantable: c.permission.grantable,
     });
     const ended = waits.open(
       {
@@ -406,7 +407,11 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       case 'answered':
         break;
     }
-    const answer = end.answer;
+    // A forced ask (RS-D6) is approve-once: an always answer that reaches it makes no grant.
+    const answer: PermissionAnswer =
+      !c.permission.grantable && end.answer.outcome === 'allowed'
+        ? { outcome: 'allowed' }
+        : end.answer;
     if (answer.outcome === 'denied') {
       settle('answered', answerInputOf(answer), null);
       return { ok: false, error: toolError('denied', declinedMessage(answer.reason)) };

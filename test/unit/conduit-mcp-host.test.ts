@@ -7288,7 +7288,7 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
 
   const asksOf = (h: Harness) =>
     h.toOwner.flatMap((s) => (s.msg.type === 'mcp:ask' ? [{ to: s.to, ...s.msg }] : []));
-  const answerAsk = (h: Harness, n: number, a: 'approve' | 'deny') => {
+  const answerAsk = (h: Harness, n: number, a: 'approve' | 'deny' | 'always') => {
     const askId = asksOf(h)[n - 1]?.askId ?? '';
     return h.host.handleRenderer({ type: 'mcp:askAnswer', askId, answer: a }, () => undefined, 1);
   };
@@ -7363,6 +7363,20 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
     await answerAsk(h, 1, 'deny');
     expect(c.errorOf(await c.reply(1))).toBe('denied');
     expect(connects).toEqual([]);
+  });
+
+  it('an always answer to a forced ask makes no grant: the next unknown target asks again', async () => {
+    const { network, connects } = machineNet({ listMachines: () => [] });
+    const { h, c } = await machineSession({ network });
+    await setProfile(h, 'lead');
+    c.call(1, 'connect_machine', { machine: 'new.example' });
+    await until(() => asksOf(h).length === 1);
+    await answerAsk(h, 1, 'always');
+    expect(c.errorOf(await c.reply(1))).toBe('ok');
+    expect(h.host.uiState().policy.grants).toEqual([]);
+    c.call(2, 'connect_machine', { machine: 'other.example' });
+    await until(() => asksOf(h).length === 2);
+    expect(connects).toEqual(['new.example']);
   });
 
   it('a lead connecting a machine that is added by its name is not asked', async () => {

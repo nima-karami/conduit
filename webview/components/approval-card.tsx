@@ -245,7 +245,7 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
         </div>
       </div>
       <div className="askcard__actions" key={ask.askId}>
-        {ANSWERS.map((answer) => (
+        {(ask.grantable ? ANSWERS : ANSWERS.filter((a) => a !== 'always')).map((answer) => (
           <button
             key={answer}
             type="button"

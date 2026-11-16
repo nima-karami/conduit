@@ -642,6 +642,8 @@ export type HostToWebview =
       summary: AskSummary;
       args: unknown;
       source: PolicySource;
+      /** False for a forced ask (RS-D6): the card offers no Always, and no grant is made. */
+      grantable: boolean;
     }
   | {
       type: 'mcp:asksSnapshot';
@@ -653,6 +655,7 @@ export type HostToWebview =
         summary: AskSummary;
         args: unknown;
         source: PolicySource;
+        grantable: boolean;
       }>;
     }
   | { type: 'mcp:askClosed'; askId: string; outcome: AskClosedOutcome }

@@ -1192,13 +1192,24 @@ describe('a machine never added asks under every profile (spec 4.6, RS-D6)', () 
     ).toBe('deny');
   });
 
-  it('a grant still passes a forced ask, as it passes any ask', () => {
+  it('a grant does not pass a forced ask: it is still an ask, marked forced', () => {
     const d = decide(
       state({ default: assignment('lead') }, { grants: [grant({ tool: 'connect_machine' })] }),
       connect({ forceAsk: true }),
     );
+    expect(d.decision).toBe('ask');
+    expect(d.reason).toEqual({ by: 'profile', point: { kind: 'default' }, profileId: 'lead' });
+    expect(d.forcedAsk).toBe(true);
+    expect(d.grantId).toBeNull();
+  });
+
+  it('an ordinary ask is not marked forced, and a grant still passes it', () => {
+    const d = decide(
+      state({ default: assignment('worker') }, { grants: [grant({ tool: 'connect_machine' })] }),
+      connect(),
+    );
     expect(d.decision).toBe('allow');
-    expect(d.reason).toEqual({ by: 'grant', grantId: 'g1' });
+    expect(d.forcedAsk).toBe(false);
   });
 
   it('list_machines is allowed under observer, worker and lead, like list_sessions', () => {

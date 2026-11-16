@@ -154,6 +154,8 @@ export interface PolicyDecision {
   overrideId: string | null;
   overrideIds: readonly string[];
   deniedTarget: PolicyTarget | null;
+  /** The ask is a forced one (RS-D6): no grant can pass it, so the card offers no Always. */
+  forcedAsk: boolean;
 }
 
 export type PermissionAnswer =

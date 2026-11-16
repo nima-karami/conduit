@@ -1945,7 +1945,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           tool: name,
           decision: resolved,
           commit: commitResolved,
-          permission: { why: reasonOf(resolved), targets },
+          permission: { why: reasonOf(resolved), targets, grantable: !resolved.forcedAsk },
           denyReason: (held) => {
             const d = policyService.decide({ ...policyInput, heldOverrides: held });
             return d.decision === 'deny' ? reasonOf(d) : null;

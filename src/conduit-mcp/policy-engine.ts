@@ -143,6 +143,7 @@ function done(
     overrideId: reason.by === 'override' ? (overrideIds[0] ?? null) : null,
     overrideIds,
     deniedTarget,
+    forcedAsk: false,
   };
 }
 
@@ -177,12 +178,14 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
   const profile = profileById(state, assignment.profileId) ?? OBSERVER;
   const targets = resolveTargets(input.targets, principal);
   const primary = targets[0];
-  // A forced ask (spec 4.6, RS-D6) only turns an allow into an ask: a profile's deny is still a deny,
-  // and a grant can still pass the ask, as it passes any ask.
-  const ruleFor = (t: PolicyTarget): ToolRule => {
-    const rule = forPrincipal(principal, effectiveRule(profile, assignment, tool, t));
-    return input.forceAsk && rule.decision === 'allow' ? { ...rule, decision: 'ask' } : rule;
-  };
+  // A forced ask (spec 4.6, RS-D6) only turns an allow into an ask: a profile's deny stays a deny.
+  // No grant passes it, because RS-D6 says it is always an ask.
+  const baseRuleFor = (t: PolicyTarget): ToolRule =>
+    forPrincipal(principal, effectiveRule(profile, assignment, tool, t));
+  const forcedFor = (t: PolicyTarget): boolean =>
+    input.forceAsk === true && baseRuleFor(t).decision === 'allow';
+  const ruleFor = (t: PolicyTarget): ToolRule =>
+    forcedFor(t) ? { ...baseRuleFor(t), decision: 'ask' } : baseRuleFor(t);
 
   if (!masterOn && tool !== 'list_agents')
     return done('deny', { by: 'floor', floor: 'master-off' }, ruleFor(primary));
@@ -219,6 +222,7 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
       fromException,
       override: explicitDeny ? overrideFor(t) : undefined,
       explicitDeny,
+      forced: forcedFor(t),
     };
   });
 
@@ -230,15 +234,16 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
   const overrideIds = [...new Set(passing.flatMap((e) => (e.override ? [e.override.id] : [])))];
 
   const decided = evaluated.map((e) => {
-    const grant = e.explicitDeny
-      ? undefined
-      : state.grants.find(
-          (g) =>
-            isLiveGrant(g, now) &&
-            g.tool === tool &&
-            whoMatches(g.who, principal) &&
-            matchesScope(g.on, e.target),
-        );
+    const grant =
+      e.explicitDeny || e.forced
+        ? undefined
+        : state.grants.find(
+            (g) =>
+              isLiveGrant(g, now) &&
+              g.tool === tool &&
+              whoMatches(g.who, principal) &&
+              matchesScope(g.on, e.target),
+          );
     const effective: Decision = e.override || grant ? ALLOW : e.rule.decision;
     return { ...e, grant, effective };
   });
@@ -266,13 +271,16 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
   const reason: Reason = strictest.fromException
     ? { by: 'exception', point, profileId: profile.id }
     : { by: 'profile', point, profileId: profile.id };
-  return done(
-    strictest.effective,
-    reason,
-    strictest.rule,
-    strictest.effective === 'allow' ? grantIds : [],
-    strictest.effective === 'deny' ? [] : overrideIds,
-  );
+  return {
+    ...done(
+      strictest.effective,
+      reason,
+      strictest.rule,
+      strictest.effective === 'allow' ? grantIds : [],
+      strictest.effective === 'deny' ? [] : overrideIds,
+    ),
+    forcedAsk: strictest.forced && strictest.effective === 'ask',
+  };
 }
 
 export function visibleTools(state: PolicyState, principal: Principal, now: number): ToolName[] {
