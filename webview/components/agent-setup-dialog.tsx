@@ -220,11 +220,11 @@ export function AgentSetupDialog({
           >
             {status}
           </p>
-        </div>
-        <div className="modal__actions">
-          <button type="button" className="btn" onClick={onClose}>
-            {MACHINES_STR.close}
-          </button>
+          <div className="modal__actions">
+            <button type="button" className="btn" onClick={onClose}>
+              {MACHINES_STR.close}
+            </button>
+          </div>
         </div>
       </div>
     </ModalLayer>
