@@ -5,7 +5,15 @@ import type { Decision } from './policy-types';
 import type { CliKind, ToolName } from './tool-policy';
 
 export type ActivityLane = 'conduit' | 'observed' | 'note';
-export type ActivityOutcome = 'ok' | 'error' | 'denied' | 'expired' | 'withdrawn' | 'asked' | null;
+export type ActivityOutcome =
+  | 'ok'
+  | 'error'
+  | 'denied'
+  | 'refused'
+  | 'expired'
+  | 'withdrawn'
+  | 'asked'
+  | null;
 
 export interface ActivityEntry {
   v: 1;

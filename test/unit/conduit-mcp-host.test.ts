@@ -7686,3 +7686,61 @@ describe('createConduitMcpHost — a remote lead (routed calls, CON-40 S2, plan 
     expect(rows.find((x) => x.session_id === 'n1')?.opened_by).toBe('claude-3@m-0123abcd');
   });
 });
+
+describe('createConduitMcpHost — a remote lead: the refusals the host adds (CON-40 S2 review)', () => {
+  const LEAD: RemoteCaller = {
+    kind: 'remote',
+    handle: 'claude-3',
+    machineId: 'm-0123abcd',
+    trust: 'own',
+    controller: true,
+    capabilities: { messaging: true, monitor: true, drive: false },
+  };
+
+  async function withLocal(over: Parameters<typeof harness>[0] = {}) {
+    const h = harness({ kinds: { '/w/wt': 'dir' }, ...over });
+    await h.host.start();
+    await launch(h, 's1');
+    return h;
+  }
+
+  it('a bare command is an ask for a remote lead: refused, and nothing opens', async () => {
+    // /usr/bin/yes is a real coreutils file on the ubuntu CI runner; a bare command is resolved
+    // on PATH and must exist, so the open reaches the always-ask check.
+    const h = await withLocal({ kinds: { '/w/wt': 'dir', '/usr/bin/yes': 'file' } });
+    const r = await h.host.networkPort().callAsRemote(LEAD, 'open_session', {
+      path: '/w/wt',
+      agent: 'yes',
+    });
+    expect(r).toMatchObject({ ok: false, error: { code: 'refused', reason: 'remote_ask' } });
+    expect(h.opens).toEqual([]);
+  });
+
+  it('with messaging off, a remote open is messaging_off, not a tool_disabled', async () => {
+    const h = await withLocal({ messagingOn: () => false });
+    const r = await h.host.networkPort().callAsRemote(LEAD, 'open_session', {
+      path: '/w/wt',
+      agent: 'e2e-fake-mcp',
+    });
+    expect(r).toMatchObject({ ok: false, error: { code: 'messaging_off' } });
+    expect(h.opens).toEqual([]);
+  });
+
+  it('a remote open_session with a message is peer_unsupported, and opens nothing', async () => {
+    const h = await withLocal();
+    const r = await h.host.networkPort().callAsRemote(LEAD, 'open_session', {
+      path: '/w/wt',
+      agent: 'e2e-fake-mcp',
+      message: 'start',
+    });
+    expect(r).toMatchObject({ ok: false, error: { code: 'peer_unsupported' } });
+    expect(h.opens).toEqual([]);
+  });
+
+  it('a remote close of children is invalid_args: a remote lead has no children here', async () => {
+    const h = await withLocal();
+    const r = await h.host.networkPort().callAsRemote(LEAD, 'close_session', { children: true });
+    expect(r).toMatchObject({ ok: false, error: { code: 'invalid_args' } });
+    expect(h.closes).toEqual([]);
+  });
+});

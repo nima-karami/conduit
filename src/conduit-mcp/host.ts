@@ -1811,7 +1811,6 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return r?.defAdapter !== undefined && r.defAdapter.wiring !== 'cursor-global' && !r.unavailable;
   };
 
-  /** The target facts a policy decision and a tool's targets read: the listed sessions and folders. */
   const remoteAsk = (name: ToolName): ToolError =>
     toolError(
       'refused',
@@ -1831,6 +1830,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       ? { handle: o.handle, machineId: o.machineId }
       : null;
 
+  /** The target facts a policy decision and a tool's targets read: the listed sessions and folders. */
   const targetDepsOf = (): TargetDeps => ({
     sessionByHandle: (ref) => {
       const s = deps.sessions.get(ref) ?? deps.sessions.get(sessionOfHandle(ref) ?? '');
@@ -2274,7 +2274,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       summary: null,
       decision: decision.decision,
       decidedBy: reasonOf(decision),
-      outcome: result.ok ? 'ok' : decision.decision === 'deny' ? 'denied' : 'error',
+      outcome: result.ok
+        ? 'ok'
+        : result.error.reason === 'remote_ask'
+          ? 'refused'
+          : decision.decision === 'deny'
+            ? 'denied'
+            : 'error',
       durationMs: now() - startedAt,
       requestId: null,
       count: null,

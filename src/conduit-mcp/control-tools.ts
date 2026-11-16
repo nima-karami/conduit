@@ -110,7 +110,7 @@ export interface ControlDeps {
   info(message: string, data: Record<string, unknown>): void;
   foldersOf(sessionId: string): { home: string; roots: string[] } | undefined;
   /** This machine's name, for the hint that sends a remote caller's ask to its owner. */
-  selfName?(): string;
+  selfName(): string;
   addRoot(sessionId: string, path: string): Promise<SessionOpResult>;
   /** raise: the target's window isn't the caller's (show + focus it, as moveSessionToWindow does). */
   activateSession(sessionId: string, raise: boolean): void;
@@ -478,13 +478,12 @@ function resolveFor(
 ): Result<string> {
   if (who.home !== null) return { ok: true, value: deps.resolvePath(who.home, p) };
   if (path.isAbsolute(p)) return { ok: true, value: path.resolve(p) };
-  const on = deps.selfName ? ` on ${deps.selfName()}` : '';
-  return fail('invalid_args', `path must be absolute for a remote caller`, {
-    hint: `give an absolute path${on}`,
+  return fail('invalid_args', 'path must be absolute for a remote caller', {
+    hint: `give an absolute path on ${deps.selfName()}`,
   });
 }
 
-/** One reservation: refunded at most once, and never after it was kept. */
+/** What a tool's check answers: a refusal, a result known without acting, or the call to run. */
 export type CheckResult<T> =
   | Fail
   | { done: Result<T> }

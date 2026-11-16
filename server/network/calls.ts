@@ -73,6 +73,9 @@ function resultFrame(id: string, result: Result<StructuredOutput>): CallResultFr
 }
 
 export function createCalls(deps: CallsDeps): Calls {
+  // Per-caller budgets are keyed by the handle@machine address, so a controller that switches
+  // handles gets fresh budgets, and calls are not limited in number per link. Both are accepted
+  // for a trusted controller: the link is authenticated by ssh, and only it can reach these calls.
   /** The last `call.refused` audit per link, so a flood of refusals audits once a minute. */
   const lastRefusal = new Map<string, number>();
 

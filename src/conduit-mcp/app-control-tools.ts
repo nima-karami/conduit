@@ -5,6 +5,7 @@ import { folderKey } from '../folder-key';
 import type { RefEndpoint } from '../git-range';
 import { decodePatchBytes, MAX_PATCH_BYTES, parsePatch, patchOverSizeCap } from '../patch-parse';
 import type { CommitNode } from '../protocol';
+import type { SessionOpener } from '../types';
 import { normalizeUrl } from '../web-url';
 import {
   type Actor,
@@ -49,7 +50,7 @@ interface CloseEntry {
   target: TargetSession | Fail;
 }
 /** The session that closed another: a live caller, never a null-sessionId human. */
-type CloseOpener = { handle: Caller['handle']; sessionId: string };
+type CloseOpener = SessionOpener;
 interface FocusSessionOutput {
   focused: string;
 }
@@ -206,9 +207,11 @@ export function createAppControlHandlers(
     check: (who: LocalWho) => Promise<CheckResult<T>>,
   ) => prepared<T>(tool, caller, localOnly(check));
 
-  /** The close opener a local session records; a remote lead has no session to record. */
-  const closerOf = (caller: Caller, who: CallWho): CloseOpener | undefined =>
-    isLocalWho(who) ? { handle: caller.handle, sessionId: who.sessionId } : undefined;
+  /** Who closed a session, as the domain records it: a local session, or a remote lead's address. */
+  const closerOf = (caller: Caller, who: CallWho): CloseOpener =>
+    isLocalWho(who)
+      ? { handle: caller.handle, sessionId: who.sessionId }
+      : { handle: who.remote.handle, machineId: who.remote.machineId };
 
   /**
    * A remote lead has no window, so a session whose window is ready is closed there, where the
@@ -337,7 +340,8 @@ export function createAppControlHandlers(
     }
     if (v.kind !== 'closeSession')
       return wrongAnswer(v, () =>
-        closedBy === undefined
+        // A remote lead's close never reaches a window (closeRouted's caller refuses it first).
+        closedBy?.sessionId === undefined
           ? notInWindow()
           : staleSession(
               'that session is not in its window any more',
