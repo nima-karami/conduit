@@ -190,6 +190,10 @@ export const MACHINES_STR = {
   filesLoading: 'Loading…',
   /** A remote file tab's read-only banner: its text is the machine's, never this computer's. */
   remoteFileReadOnly: (machine: string) => `Read-only: this file is on ${machine}`,
+  /** A remote save refused because B's file changed since this editor loaded it. */
+  remoteFileChanged: (machine: string) => `The file changed on ${machine}.`,
+  /** Discard could not re-read a remote file; the tab keeps what it shows. */
+  remoteFileReloadFailed: (machine: string) => `Couldn’t reload this file from ${machine}.`,
   anotherMachine: 'another machine',
   fileError: (code: string) => FILE_ERROR[code] ?? 'This file couldn’t be read on that machine.',
   filesRetry: 'Retry',

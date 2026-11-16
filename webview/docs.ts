@@ -245,13 +245,22 @@ export function localPathOf(doc: Pick<OpenDoc, 'kind' | 'path'>): string | null 
   return isRemoteKind(doc.kind) ? null : doc.path;
 }
 
-/** Whether a doc has unsaved local changes. Only a local doc's path can be dirty. */
+/**
+ * The key a doc's save store and dirty flag live under: the local path for a local doc, the doc id
+ * for a remote file (its path is another machine's, so it shares a local path with nothing), null
+ * for a remote doc that is not saved here.
+ */
+export function saveKeyOf(doc: Pick<OpenDoc, 'kind' | 'path' | 'id'>): string | null {
+  return doc.kind === 'remote-file' ? doc.id : localPathOf(doc);
+}
+
+/** Whether a doc has unsaved changes. */
 export function isDocDirty(
-  doc: Pick<OpenDoc, 'kind' | 'path'>,
+  doc: Pick<OpenDoc, 'kind' | 'path' | 'id'>,
   dirty: ReadonlySet<string>,
 ): boolean {
-  const path = localPathOf(doc);
-  return path !== null && dirty.has(path);
+  const key = saveKeyOf(doc);
+  return key !== null && dirty.has(key);
 }
 
 // A remote doc shares its path with a local one, so the machine is part of its identity.
