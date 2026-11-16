@@ -7,6 +7,8 @@ import {
   type MonitorSnapshot,
   OWN_DEFAULT_CAPABILITIES,
   parseLinkFrame,
+  REQUEST_MIRROR_MIN_MINOR,
+  type RequestMirror,
   ROUTED_TOOLS,
   type WireMessage,
 } from '../../src/contracts/link-protocol';
@@ -56,6 +58,36 @@ const SNAPSHOT: MonitorSnapshot = {
   youUnread: 1,
   ownerPresence: 'here',
   agents: [{ id: 'cli:claude', label: 'Claude' }],
+};
+
+const MIRROR: RequestMirror = {
+  id: 'r-1',
+  kind: 'choose',
+  title: 'Pick a branch',
+  body: 'Which one?\nSay why.',
+  options: [{ label: 'main', description: 'the default' }, { label: 'dev' }],
+  multi: false,
+  draft: null,
+  priority: 'normal',
+  createdAt: '2026-11-16T10:00:00.000Z',
+  expiresAt: null,
+  requester: 'claude-3',
+  state: 'open',
+  answer: null,
+  permission: null,
+};
+const PERMISSION_MIRROR: RequestMirror = {
+  ...MIRROR,
+  id: 'r-2',
+  kind: 'permission',
+  title: 'Allow shell',
+  body: '',
+  draft: 'running tests',
+  expiresAt: '2026-11-16T10:45:00.000Z',
+  requester: 'claude-3@m-0a1b2c3d',
+  state: 'answered',
+  answer: { outcome: 'allowed', reason: 'ok', at: '2026-11-16T10:05:00.000Z' },
+  permission: { tool: 'shell', why: 'run the tests', grantable: true },
 };
 
 /** One valid sample per frame `t`; the mapped type fails to compile if a frame is missing. */
@@ -110,6 +142,14 @@ const SAMPLES: { [K in LinkFrame['t']]: Extract<LinkFrame, { t: K }> } = {
     principal: { handle: 'claude-3' },
   },
   'call.result': { t: 'call.result', id: 'c-1', ok: true, result: { session_id: 's-1' } },
+  'request.mirror': { t: 'request.mirror', seq: 4, requests: [MIRROR, PERMISSION_MIRROR] },
+  'request.answer': {
+    t: 'request.answer',
+    answerId: 'a-1',
+    requestId: 'r-1',
+    answer: { outcome: 'chosen', values: ['main'] },
+  },
+  'request.answered': { t: 'request.answered', answerId: 'a-1', ok: true },
 };
 
 const FRAME_TYPES = Object.keys(SAMPLES) as LinkFrame['t'][];
@@ -312,7 +352,7 @@ describe('call and call.result frames (protocol 1.2)', () => {
   });
 
   it('exposes the minor version and the six routed tools', () => {
-    expect(LINK_PROTOCOL).toEqual({ major: 1, minor: 2 });
+    expect(LINK_PROTOCOL).toEqual({ major: 1, minor: 3 });
     expect([...ROUTED_TOOLS]).toEqual([
       'list_agents',
       'open_session',
@@ -461,5 +501,146 @@ describe('hello platform and version (protocol 1.1)', () => {
     expect(helloPlatform('linux', 'arm64')).toEqual({ os: 'linux', arch: 'arm64' });
     expect(helloPlatform('darwin', 'x64')).toEqual({ os: 'other', arch: 'x64' });
     expect(helloPlatform('linux', 'ia32')).toEqual({ os: 'linux', arch: 'other' });
+  });
+});
+
+describe('request.mirror, request.answer and request.answered frames (protocol 1.3)', () => {
+  const ANSWER = SAMPLES['request.answer'];
+  const MIRROR_FRAME = SAMPLES['request.mirror'];
+  const ANSWERED_ERROR = {
+    t: 'request.answered',
+    answerId: 'a-1',
+    ok: false,
+    error: { code: 'peer_unreachable', message: 'link dropped', retryable: true },
+  } as const;
+
+  it('exposes minor 3 and the lowest minor that serves the mirror', () => {
+    expect(REQUEST_MIRROR_MIN_MINOR).toBe(LINK_PROTOCOL.minor);
+  });
+
+  it('round-trips the mirror with an answered permission, a draft and an expiry', () => {
+    expect(parseLinkFrame(structuredClone(MIRROR_FRAME))).toEqual(MIRROR_FRAME);
+  });
+
+  it('round-trips an answered request.answered with an error and a hint', () => {
+    const frame = {
+      ...ANSWERED_ERROR,
+      error: { ...ANSWERED_ERROR.error, hint: 'the owner retries' },
+    };
+    expect(parseLinkFrame(structuredClone(ANSWERED_ERROR))).toEqual(ANSWERED_ERROR);
+    expect(parseLinkFrame(frame)).toEqual(frame);
+  });
+
+  it('rejects an ok=true answered frame that carries an error, and an ok=false one without', () => {
+    expect(
+      parseLinkFrame({ ...SAMPLES['request.answered'], error: ANSWERED_ERROR.error }),
+    ).toBeNull();
+    expect(parseLinkFrame({ t: 'request.answered', answerId: 'a-1', ok: false })).toBeNull();
+  });
+
+  it('rejects a request.answer with an extra key at either level', () => {
+    expect(parseLinkFrame({ ...ANSWER, extra: true })).toBeNull();
+    expect(parseLinkFrame({ ...ANSWER, answer: { ...ANSWER.answer, extra: 1 } })).toBeNull();
+  });
+
+  it('accepts a grant flag on an answer and rejects a non-boolean one', () => {
+    const granted = { ...ANSWER, answer: { outcome: 'allowed', grant: true } };
+    expect(parseLinkFrame(granted)).toEqual(granted);
+    expect(parseLinkFrame({ ...ANSWER, answer: { outcome: 'allowed', grant: 'yes' } })).toBeNull();
+  });
+
+  it('caps an answer at 8 values, a 200-char reason and a 16 KB text', () => {
+    const values = (n: number) => ({
+      ...ANSWER,
+      answer: { outcome: 'chosen', values: Array(n).fill('v') },
+    });
+    expect(parseLinkFrame(values(8))).not.toBeNull();
+    expect(parseLinkFrame(values(9))).toBeNull();
+    const reason = (n: number) => ({
+      ...ANSWER,
+      answer: { outcome: 'declined', reason: 'r'.repeat(n) },
+    });
+    expect(parseLinkFrame(reason(200))).not.toBeNull();
+    expect(parseLinkFrame(reason(201))).toBeNull();
+    const text = (n: number) => ({
+      ...ANSWER,
+      answer: { outcome: 'answered', text: 'x'.repeat(n) },
+    });
+    expect(parseLinkFrame(text(16 * 1024))).not.toBeNull();
+    expect(parseLinkFrame(text(16 * 1024 + 1))).toBeNull();
+  });
+
+  it('rejects a body over 16 KB, counting bytes not characters', () => {
+    const mirror = (body: string) => ({
+      ...MIRROR_FRAME,
+      requests: [{ ...MIRROR_FRAME.requests[0], body }],
+    });
+    expect(parseLinkFrame(mirror('x'.repeat(16 * 1024)))).not.toBeNull();
+    expect(parseLinkFrame(mirror('x'.repeat(16 * 1024 + 1)))).toBeNull();
+    // 8 Ki two-byte characters is 16 KB + 2 bytes: over the cap though it is under 16 Ki chars.
+    expect(parseLinkFrame(mirror('é'.repeat(8 * 1024 + 1)))).toBeNull();
+  });
+
+  it('keeps newlines in a body but refuses other control characters', () => {
+    const mirror = (body: string) => ({
+      ...MIRROR_FRAME,
+      requests: [{ ...MIRROR_FRAME.requests[0], body }],
+    });
+    expect(parseLinkFrame(mirror('line one\n\tline two\r\n'))).not.toBeNull();
+    expect(parseLinkFrame(mirror('bad\u0007bell'))).toBeNull();
+  });
+
+  it('rejects a mirror with more than 200 requests and accepts exactly 200', () => {
+    const many = (n: number) => ({
+      ...MIRROR_FRAME,
+      requests: Array.from({ length: n }, () => MIRROR),
+    });
+    expect(parseLinkFrame(many(200))).not.toBeNull();
+    expect(parseLinkFrame(many(201))).toBeNull();
+  });
+
+  it('rejects a seq that is not a non-negative integer', () => {
+    for (const seq of [-1, 1.5, '3', null, Number.NaN]) {
+      expect(parseLinkFrame({ ...MIRROR_FRAME, seq }), String(seq)).toBeNull();
+    }
+    expect(parseLinkFrame({ ...MIRROR_FRAME, seq: 0 })).not.toBeNull();
+  });
+
+  it('rejects a non-printable or over-long requester, and accepts one of 64 chars', () => {
+    const mirror = (requester: string) => ({
+      ...MIRROR_FRAME,
+      requests: [{ ...MIRROR_FRAME.requests[0], requester }],
+    });
+    for (const requester of ['claude\u0007', 'a\nb', '', 'h'.repeat(65)]) {
+      expect(parseLinkFrame(mirror(requester)), JSON.stringify(requester)).toBeNull();
+    }
+    expect(parseLinkFrame(mirror('h'.repeat(64)))).not.toBeNull();
+  });
+
+  it('rejects a permission of the wrong shape and accepts null', () => {
+    const withPermission = (permission: unknown) => ({
+      ...MIRROR_FRAME,
+      requests: [{ ...MIRROR_FRAME.requests[0], permission }],
+    });
+    expect(parseLinkFrame(withPermission(null))).not.toBeNull();
+    expect(parseLinkFrame(withPermission({ tool: 'shell', why: 'x' }))).toBeNull();
+    expect(
+      parseLinkFrame(withPermission({ tool: 'shell', why: 'x', grantable: true, extra: 1 })),
+    ).toBeNull();
+    expect(
+      parseLinkFrame(withPermission({ tool: 'shell', why: 'x', grantable: 'yes' })),
+    ).toBeNull();
+    expect(parseLinkFrame(withPermission('shell'))).toBeNull();
+  });
+
+  it('rejects a mirror request with an extra key, an unknown kind, or an unknown state', () => {
+    const first = MIRROR_FRAME.requests[0];
+    const mirror = (patch: Record<string, unknown>) => ({
+      ...MIRROR_FRAME,
+      requests: [{ ...first, ...patch }],
+    });
+    expect(parseLinkFrame(mirror({ session: null }))).toBeNull();
+    expect(parseLinkFrame(mirror({ kind: 'attend-me' }))).toBeNull();
+    expect(parseLinkFrame(mirror({ state: 'lost' }))).toBeNull();
   });
 });
