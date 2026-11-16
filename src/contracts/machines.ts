@@ -63,3 +63,9 @@ export type ConnectMachineResult =
 export type DisconnectMachineResult =
   | { ok: true; value: { machine: string; state: 'down' } }
   | { ok: false; error: MachineError };
+/** An owner action from the Machines UI; `value` is set only by connect. */
+export type MachineActionResult =
+  | { ok: true; value: ConnectMachineOk | null }
+  | { ok: false; error: MachineError };
+/** An owner's agent-CLI setup step on a machine, each run in a visible terminal (spec F2, RS-D12). */
+export type AgentSetupStep = 'install' | 'login';

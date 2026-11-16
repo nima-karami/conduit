@@ -1,6 +1,7 @@
 import type { AgentScopeReason } from './add-dir-delivery';
 import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
+import type { AgentCli } from './conduit-mcp/install-types';
 import type { AssignmentPoint, PermissionAnswer, ProfileId } from './conduit-mcp/policy-types';
 import type { AnswerInput, RequestAnswerResult } from './conduit-mcp/request-types';
 import type { CliKind, PolicySource, ToolName, ToolPolicyPatch } from './conduit-mcp/tool-policy';
@@ -17,6 +18,7 @@ import type {
 } from './conduit-mcp/ui-types';
 import type { SearchFileResult, SearchQuery, TruncatedBy } from './content-search';
 import type { DisplayFacts } from './contracts/frames';
+import type { AgentSetupStep, MachineActionResult, MachineMode } from './contracts/machines';
 import type { NetworkState } from './contracts/network-state';
 import type { Job, LimitEpisode } from './contracts/scheduler';
 import type { RuntimeHealth, ServerSettings } from './contracts/server-protocol';
@@ -457,6 +459,18 @@ export type ServerUiState = (
   | { state: 'stopped'; reason: string; logPath: string }
 ) & { runtime?: RuntimeHealth };
 
+/** A remote pane's attach answer; `error` is the C2 fault code, or 'failed'. */
+export type RemoteAttachResult =
+  | {
+      ok: true;
+      viewId: string;
+      firstPaint: string;
+      size: TermGeometry;
+      windowsPty: WindowsPtyInfo | null;
+      drive: boolean;
+    }
+  | { ok: false; error: string };
+
 export type HostToWebview =
   | { type: 'releaseNotes'; version: string; notes: string | null; showToast: boolean }
   | { type: 'server:state'; state: ServerUiState }
@@ -621,6 +635,32 @@ export type HostToWebview =
   // broadcast, plus replies to the sender's mcp:* requests.
   // Linked machines (CON-27 machinery; the Machines UI is CON-28).
   | { type: 'network:state'; state: NetworkState }
+  // Remote panes and the Machines UI (docs/plans/2026-11-16-remote-ssh-machines-ui.plan.md).
+  | { type: 'remote:attached'; requestId: number; result: RemoteAttachResult }
+  | { type: 'remote:data'; viewId: string; data: string }
+  | {
+      type: 'remote:state';
+      viewId: string;
+      state: 'live' | 'frozen' | 'exited' | 'resyncing';
+      since: string | null;
+      size: TermGeometry | null;
+    }
+  | { type: 'remote:closed'; requestId: number; error: string | null }
+  | { type: 'machines:result'; requestId: number; result: MachineActionResult }
+  | {
+      type: 'machines:needsPersonOpened';
+      requestId: number;
+      sessionId: string | null;
+      error: string | null;
+    }
+  | { type: 'machines:sshHosts'; requestId: number; hosts: string[] }
+  | {
+      type: 'machines:paneOpened';
+      requestId: number;
+      sessionId: string | null;
+      error: string | null;
+    }
+  | { type: 'machines:agents'; requestId: number; agents: string[] | null; error: string | null }
   | { type: 'mcp:state'; state: McpUiState }
   | { type: 'mcp:requestResult'; requestId: string; result: RequestAnswerResult }
   | {
@@ -1327,6 +1367,27 @@ export type WebviewToHost =
   | { type: 'term:facts'; sessionId: string; facts: DisplayFacts }
   | { type: 'term:resize'; sessionId: string; cols: number; rows: number }
   | { type: 'term:dispose'; sessionId: string }
+  | { type: 'network:get' }
+  | { type: 'remote:attach'; requestId: number; machineId: string; sessionId: string }
+  | { type: 'remote:detach'; viewId: string }
+  | { type: 'remote:input'; machineId: string; sessionId: string; data: string }
+  | { type: 'remote:resize'; machineId: string; sessionId: string; cols: number; rows: number }
+  | { type: 'remote:close'; requestId: number; machineId: string; sessionId: string }
+  | { type: 'machines:connect'; requestId: number; machine: string }
+  | { type: 'machines:disconnect'; requestId: number; machine: string }
+  | { type: 'machines:rename'; requestId: number; machineId: string; name: string }
+  | { type: 'machines:remove'; requestId: number; machineId: string }
+  | { type: 'machines:openNeedsPerson'; requestId: number; target: string }
+  | { type: 'machines:sshHosts'; requestId: number }
+  | { type: 'machines:setMode'; requestId: number; machineId: string; mode: MachineMode }
+  | {
+      type: 'machines:openSetupPane';
+      requestId: number;
+      machineId: string;
+      cli: AgentCli;
+      step: AgentSetupStep;
+    }
+  | { type: 'machines:probeAgents'; requestId: number; machineId: string }
   | { type: 'updateCheck' }
   | { type: 'updateRelaunch' }
   // Replies to `confirmQuit`, each disarming one guard timeout (dirty-quit-guard spec §2).

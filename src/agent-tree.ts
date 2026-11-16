@@ -31,6 +31,8 @@ export interface AgentTreeRow {
   childIds: string[];
   descendantCount: number;
   childState: AgentState | null;
+  /** Remote sessions this lead opened: rows the sidebar draws under it, not tree rows here. */
+  remoteChildCount: number;
   folded: boolean;
 }
 export interface AgentTreeGroup {
@@ -127,8 +129,15 @@ export function buildAgentTree(input: {
   kindOf?: (s: Session) => AgentKind;
   /** The Spaces in panel order: the By space groups follow it. */
   spaces?: readonly { id: string }[];
+  /**
+   * Lead session id to the count of remote sessions it opened (docs/plans/2026-11-16-remote-ssh-
+   * machines-ui.plan.md decision 8). They count toward the fold and the descendant count, and make
+   * a lead foldable; they create no rows here, the sidebar draws them.
+   */
+  remoteChildren?: ReadonlyMap<string, number>;
 }): AgentTreeModel {
   const { runtime, ui } = input;
+  const remoteOf = (id: string) => input.remoteChildren?.get(id) ?? 0;
   const view = input.view ?? DEFAULT_AGENTS_VIEW;
   const kindOf = input.kindOf ?? (() => 'other' as const);
   const included = input.sessions.filter(
@@ -172,7 +181,7 @@ export function buildAgentTree(input: {
   for (let i = order.length - 1; i >= 0; i--) {
     const id = order[i];
     let best: AgentState | null = null;
-    let count = 0;
+    let count = remoteOf(id);
     for (const c of children.get(id) ?? []) {
       const m = subtreeMax.get(c) ?? 'stopped';
       best = best === null ? m : maxState(best, m);
@@ -193,6 +202,7 @@ export function buildAgentTree(input: {
     const state = d === 0 ? mine : discount(mine);
     const below = descMax.get(id) ?? null;
     const kids = children.get(id) ?? [];
+    const remote = remoteOf(id);
     rows[id] = {
       sessionId: id,
       parentId: parent.get(id) ?? null,
@@ -203,7 +213,8 @@ export function buildAgentTree(input: {
       childIds: kids,
       descendantCount: descCount.get(id) ?? 0,
       childState: below,
-      folded: kids.length > 0 && ui.foldedSessions.includes(id),
+      remoteChildCount: remote,
+      folded: (kids.length > 0 || remote > 0) && ui.foldedSessions.includes(id),
     };
   }
 

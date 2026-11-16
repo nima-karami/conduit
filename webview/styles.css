@@ -2504,10 +2504,14 @@ body.resizing .panel__resize::after {
    parent's box never contains its children, a click on a row is always that row, and a row
    changing group keeps its node. Depth
    indents the select button; connectors are drawn per row from the same three lengths. */
-.agents {
+/* The tree lengths are shared by the Agents and Machines trees, so a sub-row indents the same. */
+.agents,
+.machines {
   --agent-pad: 8px;
   --agent-step: 22px;
   --agent-stem: 7px;
+}
+.agents {
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -2753,6 +2757,257 @@ body.resizing .panel__resize::after {
   align-items: center;
   gap: 2px;
 }
+/* ---------- remote sessions and the Machines band (CON-41, spec §9) ----------
+   A remote session row has the local row's geometry, so the two read as one list. Its machine
+   is a neutral text badge: the accent stays on selection. */
+.remote-session {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: var(--density-agent-child-h);
+  box-sizing: border-box;
+  padding: 0 8px 0 0;
+  --notch-line: transparent;
+  border: 1px solid var(--notch-line);
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+.remote-session:hover {
+  background: var(--state-hover-bg);
+}
+.remote-session .session__select {
+  gap: 8px;
+  font-size: calc(12px * var(--font-scale));
+}
+.remote-session--active {
+  --notch-line: var(--accent);
+  background: var(--state-sel-bg);
+}
+.remote-session__presence {
+  margin-inline-start: 6px;
+  color: var(--text-dim);
+  font-size: calc(10.5px * var(--font-scale));
+}
+.machine-badge {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-badge);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--font-scale));
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+/* A region of its own under the Agents scroller: it shrinks and scrolls before it takes more than
+   half the sidebar from the agent list, the heart of the window (UX.md §1). */
+.sidebar__machines {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 50%;
+  display: flex;
+  flex-direction: column;
+}
+.machines {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--density-sidebar-scroll-pad);
+}
+.machine-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "main acts"
+    "detail detail";
+  align-items: center;
+  column-gap: 6px;
+  row-gap: 2px;
+  box-sizing: border-box;
+  min-height: var(--density-agent-row-h);
+  padding: 4px 8px 4px var(--agent-pad);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  color: var(--text);
+}
+.machine-row:hover {
+  background: var(--state-hover-bg);
+}
+.machine-row__main {
+  grid-area: main;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: calc(12.5px * var(--font-scale));
+  font-weight: 500;
+  text-align: start;
+  cursor: pointer;
+}
+.machine-row__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.machine-row__acts {
+  grid-area: acts;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.machine-row__detail {
+  grid-area: detail;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-dim);
+}
+.machine-row__meta {
+  white-space: nowrap;
+}
+.machine-row__note {
+  color: var(--text-dim);
+}
+.machine-row-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+  white-space: nowrap;
+}
+/* Words carry the state; the mark carries it again in shape, so colour is never the only cue.
+   Needs-person is the attention ink, failure is the danger ink, offline and pending are dim. */
+.machine-row-status::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  box-sizing: border-box;
+  border-radius: var(--r-badge);
+}
+.machine-row-status[data-tone="up"]::before {
+  background: var(--green);
+}
+.machine-row-status[data-tone="needs"] {
+  color: color-mix(in srgb, var(--amber) 70%, var(--text));
+}
+.machine-row-status[data-tone="needs"]::before {
+  background: var(--amber);
+  box-shadow: var(--glow-attention);
+}
+.machine-row-status[data-tone="failed"] {
+  color: color-mix(in srgb, var(--red) 70%, var(--text));
+}
+.machine-row-status[data-tone="failed"]::before {
+  background: var(--red);
+  border-radius: 0;
+}
+.machine-row-status[data-tone="offline"] {
+  color: var(--text-dim);
+}
+.machine-row-status[data-tone="offline"]::before {
+  border: 1.5px dashed var(--text-dim);
+  background: transparent;
+}
+.machine-row-status[data-tone="pending"]::before {
+  border: 1.5px solid var(--text-dim);
+  background: transparent;
+}
+
+/* The Add machine dialog reuses .modal; these only lay out its own parts. */
+.machine-dialog__label {
+  display: block;
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-dim);
+}
+.machine-dialog__hosts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.machine-dialog__none,
+.machine-dialog__hint {
+  margin: 0;
+  font-size: calc(12px * var(--font-scale));
+  color: var(--text-dim);
+}
+.machine-dialog__form,
+.machine-dialog__fault {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.machine-dialog__progress {
+  margin: 0;
+  min-height: 1.2em;
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-dim);
+}
+
+/* ---------- the remote pane (spec §9.1, §9.3) ----------
+   A remote terminal is a terminal: the code surface stays dark in every theme. The dimmed body
+   is the last screen, kept readable but clearly not live. */
+.remote-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+.remote-pane-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--density-agent-row-h);
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: calc(12px * var(--font-scale));
+}
+.remote-pane-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Close sits at the far end, away from the name the owner reads. */
+.remote-pane-head .btn {
+  margin-inline-start: auto;
+}
+.remote-pane-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  transition: opacity 0.12s ease;
+}
+/* The same readability gutter a local terminal keeps inside its viewport (see .termpane .xterm). */
+.remote-pane-body .xterm {
+  height: 100%;
+  padding: 4px;
+}
+.remote-pane--frozen .remote-pane-body {
+  opacity: 0.45;
+}
+.remote-pane-note {
+  margin: 0;
+  padding: 4px 10px;
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-dim);
+}
+
 /* ---------- status marks ----------
    Shape tells every state apart, so none is colour or motion alone: a ring for Idle, a dashed
    ring for Stopped, filled dots for Needs you and Done, a spinner for Working. --r-badge makes a

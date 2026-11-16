@@ -14,6 +14,7 @@ function setup() {
     capabilities: { ...caps },
     peerCapabilities: { ...caps },
   };
+  let linked = true;
   const close = vi.fn();
   let events:
     | {
@@ -28,7 +29,7 @@ function setup() {
   });
   let room = true;
   const relay = createViewRelay({
-    links: () => [link],
+    links: () => (linked ? [link] : []),
     sessions: () => [{ sessionId: 's1' }],
     observe,
     windowsPty: () => null,
@@ -57,6 +58,9 @@ function setup() {
     },
     full: () => {
       room = false;
+    },
+    unlink: () => {
+      linked = false;
     },
   };
 }
@@ -221,4 +225,27 @@ it('requests a fresh observer after a resync end', async () => {
     data: { state: 'resyncing' },
   });
   expect(h.frames.at(-1)).toEqual({ t: 'view.open', viewId: 'v1', sessionId: 's1' });
+});
+
+describe('a forgotten machine', () => {
+  it('ends its open view as exited when it leaves the link list', async () => {
+    const h = setup();
+    const peer = {};
+    const attached = h.relay.attach(peer, machine, 's1');
+    h.relay.onFrame(machine, {
+      t: 'view.opened',
+      viewId: 'v1',
+      firstPaint: Buffer.from('paint').toString('base64'),
+      size: geometry,
+      windowsPty: null,
+    });
+    await attached;
+    h.unlink();
+    h.relay.linkChanged(machine);
+    expect(h.notifications).toContainEqual({
+      peer,
+      type: 'remote.state',
+      data: expect.objectContaining({ state: 'exited' }),
+    });
+  });
 });

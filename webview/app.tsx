@@ -31,6 +31,7 @@ import {
   type McpNotConnected,
   type McpSessionBadge,
 } from '../src/conduit-mcp/ui-types';
+import type { MachineActionResult, MachineView } from '../src/contracts/machines';
 import {
   type DeleteOutcome,
   permanentConfirmMessage,
@@ -127,6 +128,7 @@ import {
   reopenGroup,
   toClosedTab,
 } from './closed-tabs';
+import { AddMachineDialog } from './components/add-machine-dialog';
 import { AnimatedBg } from './components/animated-bg';
 import { ApprovalCard } from './components/approval-card';
 import { ArchitectureView } from './components/architecture-view';
@@ -286,6 +288,16 @@ import {
   syncLanguageFor,
   syncSkipCause,
 } from './lsp-sync';
+import {
+  connectMachine,
+  disconnectMachine,
+  openNeedsPerson,
+  removeMachine,
+  renameMachine,
+  sshHosts,
+  useMachineErrors,
+} from './machines-store';
+import { MACHINES_STR } from './machines-strings';
 import { requestAskFocus, useAsks } from './mcp-ask-store';
 import { planCloseFiles, runCloseFiles, useMcpUi } from './mcp-ui';
 import { formatMention } from './mention';
@@ -293,6 +305,7 @@ import { setMentionSink } from './mention-bus';
 import { useMonacoNavKeybindings } from './monaco-nav-keybindings';
 import { registerConduitEditorOpener } from './monaco-opener';
 import { lastCursor, liveCursor, revealInNavEditor, setCursorJumpSink } from './nav-editors';
+import { useNetworkState } from './network-store';
 import { createPaneQueue } from './pane-queue';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
 import { probePathExists } from './path-probe';
@@ -301,6 +314,7 @@ import { clearReveal, fileUri, peekReveal, setDefinitionOpener, setReveal } from
 import { createQuitResponder } from './quit-responder';
 import { quitStopFailureDialog } from './quit-stop-dialog';
 import { pushRecentDoc, type RecentDoc, recentPaletteId, recentSubtitle } from './recent-docs';
+import { type RemoteKey, remoteKeyId, remoteSessionRows } from './remote-sessions';
 import { openRequest, setRequestOpeners } from './request-open';
 import { sortRequests } from './request-view-model';
 import { resolveModuleOnDemand } from './resolve-module';
@@ -412,6 +426,11 @@ const OS_WORDS = platformWords(rendererPlatform);
 /** Stable empty badges, so the rail doesn't re-render on every state before messaging loads. */
 const NO_MCP_BADGES: Readonly<Record<string, McpSessionBadge>> = {};
 const NO_NOT_CONNECTED: Readonly<Record<string, McpNotConnected>> = {};
+const NO_MACHINES: readonly MachineView[] = [];
+/** An owner's machine action that failed outside a row's own status: one toast with the reason. */
+function toastMachineFailure(r: MachineActionResult): void {
+  if (!r.ok) pushToast({ message: MACHINES_STR.errorText(r.error), variant: 'error' });
+}
 
 const isCodeFile = (p: string) => /\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/i.test(p);
 
@@ -544,6 +563,10 @@ export function App() {
   const [state, setState] = useState<StateMsg | null>(null);
   const [serverState, setServerState] = useState<ServerUiState>({ state: 'connecting' });
   const [activeId, setActiveId] = useState<string | undefined>();
+  // A remote session is never a local Session id: it is shown through its own state, so no local
+  // file or git code ever sees it (plan CON-41 decision 7).
+  const [activeRemote, setActiveRemote] = useState<RemoteKey | null>(null);
+  const [addMachineHosts, setAddMachineHosts] = useState<readonly string[] | null>(null);
   const [messagesFilterHandle, setMessagesFilterHandle] = useState<Handle | null>(null);
   const [snapshots, setSnapshots] = useState<SessionSnapshots>({});
   // Read by the once-registered subscribe below; assigned where `visible` is posted.
@@ -2162,8 +2185,68 @@ export function App() {
     [sessions, activeId, needYou, openRequests],
   );
   const selectAgent = useCallback((sessionId: string) => {
+    setActiveRemote(null);
     setActiveId(sessionId);
     setCenterView('editor');
+  }, []);
+  // Any route to a local session (palette, notifications, goToTerminal) leaves the remote pane.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: activeId is only the trigger
+  useEffect(() => setActiveRemote(null), [activeId]);
+  const network = useNetworkState();
+  const machineErrors = useMachineErrors();
+  const machines = network?.machines ?? NO_MACHINES;
+  const remoteRows = useMemo(
+    () => (network ? remoteSessionRows(network, sessions) : []),
+    [network, sessions],
+  );
+  // A remote pane whose session or machine went away has nothing left to show.
+  useEffect(() => {
+    if (activeRemote && !remoteRows.some((r) => r.id === remoteKeyId(activeRemote)))
+      setActiveRemote(null);
+  }, [activeRemote, remoteRows]);
+  const selectRemote = useCallback((key: RemoteKey) => {
+    setActiveRemote(key);
+    setCenterView('editor');
+  }, []);
+  const openAddMachine = useCallback(() => {
+    setAddMachineHosts([]);
+    void sshHosts().then((hosts) => setAddMachineHosts((cur) => (cur === null ? cur : hosts)));
+  }, []);
+  const openNeedsPersonPane = useCallback(
+    async (target: string) => {
+      const opened = await openNeedsPerson(target);
+      if (opened.sessionId) selectAgent(opened.sessionId);
+      else
+        pushToast({ message: MACHINES_STR.paneError(opened.error ?? 'failed'), variant: 'error' });
+    },
+    [selectAgent],
+  );
+  const onMachineAction = useCallback(
+    (action: 'connect' | 'retry' | 'disconnect' | 'remove' | 'copyFix', m: MachineView) => {
+      if (action === 'copyFix') {
+        void navigator.clipboard?.writeText(MACHINES_STR.fixLine(m));
+        return;
+      }
+      if (action === 'disconnect') {
+        void disconnectMachine(m.machine).then(toastMachineFailure);
+        return;
+      }
+      if (action === 'remove') {
+        void removeMachine(m.machine_id).then(toastMachineFailure);
+        return;
+      }
+      // A row that last answered "ssh needs a person" opens the visible ssh pane (spec F1).
+      if (machineErrors.get(m.machine)?.code === 'ssh_needs_person') {
+        void openNeedsPersonPane(m.target);
+        return;
+      }
+      // Connect and Retry: a failure is kept on the row by the machines store, not toasted.
+      void connectMachine(m.machine);
+    },
+    [machineErrors, openNeedsPersonPane],
+  );
+  const onRenameMachine = useCallback((m: MachineView, name: string) => {
+    void renameMachine(m.machine_id, name).then(toastMachineFailure);
   }, []);
   const goToTerminal = useCallback((sessionId: string) => {
     activateSessionTerminal(sessionId, {
@@ -4542,6 +4625,36 @@ export function App() {
   const activeHasTerminal = useSyncExternalStore(subscribeTerminalBus, () =>
     activeId ? hasRegisteredTerminal(activeId) : false,
   );
+  // The palette reaches every machine action the rows offer (spec 9.2).
+  const machineCommands: PaletteEntry[] = useMemo(
+    () => [
+      {
+        id: 'cmd:addMachine',
+        title: MACHINES_STR.paletteAdd,
+        keywords: ['ssh', 'remote', 'computer'],
+        group: 'Commands',
+        icon: <IconPlus size={14} />,
+        run: openAddMachine,
+      },
+      ...machines.map(
+        (m): PaletteEntry =>
+          m.state === 'up' || m.state === 'degraded' || m.state === 'connecting'
+            ? {
+                id: `cmd:disconnectMachine:${m.machine_id}`,
+                title: MACHINES_STR.paletteDisconnect(m.machine),
+                group: 'Commands',
+                run: () => onMachineAction('disconnect', m),
+              }
+            : {
+                id: `cmd:connectMachine:${m.machine_id}`,
+                title: MACHINES_STR.paletteConnect(m.machine),
+                group: 'Commands',
+                run: () => onMachineAction('connect', m),
+              },
+      ),
+    ],
+    [machines, openAddMachine, onMachineAction],
+  );
   const commandItems: PaletteEntry[] = useMemo(() => {
     // Show each command's bound key combo for discoverability, resolved through the same
     // (rebindable) registry the global handler uses. Absent for commands with no binding.
@@ -4557,6 +4670,7 @@ export function App() {
         combo: comboFor('newSession'),
         run: () => newAgentRef.current(),
       },
+      ...machineCommands,
       {
         id: 'cmd:newWindow',
         title: 'New window',
@@ -5095,6 +5209,7 @@ export function App() {
     }
     return [...cmds, ...groupCmds, ...settingsCmds, ...themeCmds, ...sessionSwitch, ...splitCmds];
   }, [
+    machineCommands,
     layout,
     splitRight,
     moveTabToGroup,
@@ -5189,6 +5304,13 @@ export function App() {
               agents={agents}
               repos={state?.repos ?? []}
               activeId={activeId}
+              activeRemote={activeRemote}
+              remoteRows={remoteRows}
+              onRemoteClosed={(key) =>
+                setActiveRemote((cur) =>
+                  cur && remoteKeyId(cur) === remoteKeyId(key) ? null : cur,
+                )
+              }
               layout={layout}
               files={files}
               diffs={diffs}
@@ -5311,6 +5433,15 @@ export function App() {
             mcpEnabled={mcp.state?.enabled ?? false}
             renamingId={renamingId}
             onSetRenaming={(id) => setRenamingId(id ?? undefined)}
+            remoteRows={remoteRows}
+            machines={machines}
+            machineErrors={machineErrors}
+            showMachines={settings.machinesUi}
+            activeRemoteId={activeRemote ? remoteKeyId(activeRemote) : null}
+            onSelectRemote={selectRemote}
+            onAddMachine={openAddMachine}
+            onMachineAction={onMachineAction}
+            onRenameMachine={onRenameMachine}
             onSessionDragEnd={(sessionId, screenX, screenY) => {
               const drop = () => post({ type: 'session:dragEnd', sessionId, screenX, screenY });
               const own = {
@@ -5605,6 +5736,17 @@ export function App() {
                 />
               ) : null;
             })()}
+          {addMachineHosts !== null && (
+            <AddMachineDialog
+              hosts={addMachineHosts}
+              onSubmit={connectMachine}
+              onOpenNeedsPerson={(target) => {
+                setAddMachineHosts(null);
+                void openNeedsPersonPane(target);
+              }}
+              onClose={() => setAddMachineHosts(null)}
+            />
+          )}
           {timedMessageFor &&
             (() => {
               const target = sessions.find((s) => s.id === timedMessageFor);

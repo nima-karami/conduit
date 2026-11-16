@@ -248,6 +248,13 @@ import { Logger } from './logger';
 import { LspManager } from './lsp-manager';
 import { startLanguageServer } from './lsp-server';
 import { watchServerRoot } from './lsp-watcher';
+import {
+  disconnectOutcome,
+  MACHINE_OK,
+  machineActionReply,
+  openSetupPaneReply,
+  probeAgentsReply,
+} from './machine-replies';
 import { NotesWatcher } from './notes-watcher';
 import { OpenFileWatcher } from './open-file-watcher';
 import { createOsFileClipboard, spawnPowerShell } from './os-file-clipboard';
@@ -265,10 +272,12 @@ import { defaultTreeKillDeps } from './process-tree';
 import { ProjectWatcher } from './project-watcher';
 import { ProposalWatcher } from './proposal-watcher';
 import { stopAgentsBeforeQuit } from './quit-stop';
+import { createRemotePanes } from './remote-panes';
 import { createRepoTrackerHost } from './repo-tracker-host';
 import { runtimeLayout } from './runtime-layout';
 import {
   createServerCalls,
+  faultCode,
   installDownResult,
   installDownStatus,
   serverDownReply,
@@ -514,6 +523,11 @@ const isLiveWindow = (windowId: number) => {
 function sendToWindow(windowId: number, msg: HostToWebview) {
   if (isLiveWindow(windowId)) windows.get(windowId)?.webContents.send('to-webview', msg);
 }
+
+/** The server gives a connect 120 s (spec §7); a client that gives up first loses its real answer. */
+const MACHINES_CONNECT_TIMEOUT_MS = 130_000;
+/** The probe is a full ssh round trip, so it needs more budget than a local C2 call. */
+const MACHINES_PROBE_TIMEOUT_MS = 60_000;
 
 type E2eHoldPoint = 'index' | 'closure' | 'scan' | 'topup';
 /** Smoke-only (installed under CONDUIT_E2E): parks an index build between reading the repo set
@@ -2264,6 +2278,11 @@ app.whenReady().then(() => {
   const serverClient = () => lifecycle?.client() ?? null;
   const serverCalls = createServerCalls(() => lifecycle);
   const callServer = serverCalls.call;
+  const remotePanes = createRemotePanes({
+    call: callServer,
+    sendTo: sendToWindow,
+    log: (level, message, data) => log[level]('remote', message, data),
+  });
   let resolveFirstSnapshot = () => {};
   /** OS opens wait for it: they need the server's agents. */
   const firstSnapshot = new Promise<void>((resolve) => {
@@ -2454,6 +2473,7 @@ app.whenReady().then(() => {
   const router = createServerEventRouter({
     store,
     terminals,
+    remotePanes,
     broadcastState: () => postState(),
     broadcast: (m) => {
       if (m.type === 'timer:state') lastTimers = m;
@@ -2657,6 +2677,9 @@ app.whenReady().then(() => {
 
   powerMonitor.on('resume', () => serverClient()?.notify('system.resumed', {}));
   powerMonitor.on('unlock-screen', () => serverClient()?.notify('system.resumed', {}));
+
+  const warnMachines = (message: string, data: Record<string, unknown>) =>
+    log.warn('machines', message, data);
 
   async function handle(m: WebviewToHost, e: IpcMainEvent) {
     const senderWin = BrowserWindow.fromWebContents(e.sender);
@@ -4106,6 +4129,144 @@ app.whenReady().then(() => {
           if (r.reply) replyHere(r.reply);
           break;
         }
+        case 'network:get':
+          replyHere({ type: 'network:state', state: await callServer('link.list', {}) });
+          break;
+        case 'remote:attach':
+          await remotePanes.attach(senderId, m);
+          break;
+        case 'remote:detach':
+          await remotePanes.detach(senderId, m.viewId);
+          break;
+        case 'remote:input':
+          remotePanes.input(m);
+          break;
+        case 'remote:resize':
+          remotePanes.resize(m);
+          break;
+        case 'remote:close':
+          await remotePanes.close(senderId, m);
+          break;
+        case 'machines:connect':
+          replyHere(
+            await machineActionReply(
+              m.requestId,
+              'connect',
+              () =>
+                callServer(
+                  'machines.connect',
+                  { machine: m.machine },
+                  { timeoutMs: MACHINES_CONNECT_TIMEOUT_MS },
+                ),
+              warnMachines,
+            ),
+          );
+          break;
+        case 'machines:disconnect':
+          replyHere(
+            await machineActionReply(
+              m.requestId,
+              'disconnect',
+              async () =>
+                disconnectOutcome(await callServer('machines.disconnect', { machine: m.machine })),
+              warnMachines,
+            ),
+          );
+          break;
+        case 'machines:rename':
+          replyHere(
+            await machineActionReply(
+              m.requestId,
+              'rename',
+              () =>
+                callServer('machines.rename', { machineId: m.machineId, name: m.name }).then(
+                  () => MACHINE_OK,
+                ),
+              warnMachines,
+            ),
+          );
+          break;
+        case 'machines:remove':
+          replyHere(
+            await machineActionReply(
+              m.requestId,
+              'remove',
+              () =>
+                callServer('machines.remove', { machineId: m.machineId }).then(() => MACHINE_OK),
+              warnMachines,
+            ),
+          );
+          break;
+        case 'machines:openNeedsPerson':
+          try {
+            const r = await callServer('machines.openNeedsPerson', { target: m.target });
+            replyHere({
+              type: 'machines:needsPersonOpened',
+              requestId: m.requestId,
+              sessionId: r.sessionId,
+              error: null,
+            });
+          } catch (err: unknown) {
+            log.warn('machines', 'openNeedsPerson failed', { target: m.target, err: String(err) });
+            replyHere({
+              type: 'machines:needsPersonOpened',
+              requestId: m.requestId,
+              sessionId: null,
+              error: faultCode(err),
+            });
+          }
+          break;
+        case 'machines:setMode':
+          replyHere(
+            await machineActionReply(
+              m.requestId,
+              'setMode',
+              () =>
+                callServer('machines.setMode', { machineId: m.machineId, mode: m.mode }).then(
+                  () => MACHINE_OK,
+                ),
+              warnMachines,
+            ),
+          );
+          break;
+        case 'machines:openSetupPane':
+          replyHere(
+            await openSetupPaneReply(
+              m.requestId,
+              () =>
+                callServer('machines.openSetupPane', {
+                  machineId: m.machineId,
+                  cli: m.cli,
+                  step: m.step,
+                }),
+              warnMachines,
+            ),
+          );
+          break;
+        case 'machines:probeAgents':
+          replyHere(
+            await probeAgentsReply(
+              m.requestId,
+              () =>
+                callServer(
+                  'machines.probeAgents',
+                  { machineId: m.machineId },
+                  { timeoutMs: MACHINES_PROBE_TIMEOUT_MS },
+                ),
+              warnMachines,
+            ),
+          );
+          break;
+        case 'machines:sshHosts': {
+          let hosts: string[] = [];
+          try {
+            hosts = (await callServer('machines.sshHosts', {})).hosts;
+          } catch (err: unknown) {
+            log.warn('machines', 'sshHosts failed', { err: String(err) });
+          }
+          replyHere({ type: 'machines:sshHosts', requestId: m.requestId, hosts });
+          break;
+        }
         case 'term:input':
           terminals.input(m.sessionId, m.data);
           break;
@@ -4752,6 +4913,7 @@ app.whenReady().then(() => {
           if (!state.streams.size) projectIndexState.delete(root);
         }
         folders.windowClosed(windowId);
+        remotePanes.windowClosed(windowId);
         log.info('window', 'closed', { windowId });
         // A closed window drops out of the move picker (Slice B).
         broadcastWinList?.();

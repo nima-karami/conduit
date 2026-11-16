@@ -56,6 +56,11 @@ export interface LinkStore {
   ): LinkRecord | null;
   /** Removes the live record and keeps a tombstone for TOMBSTONE_TTL_MS. */
   revoke(machineId: string, at: number): Tombstone | null;
+  /**
+   * Deletes the live record and keeps no tombstone, so the peer is not refused by a later add (a
+   * forget, not a revoke). False for an unknown machine.
+   */
+  remove(machineId: string): boolean;
   /** Certificates of every link and unexpired tombstone: the link listener's trusted CAs. */
   trustedCerts(): string[];
   readonly writable: boolean;
@@ -225,6 +230,12 @@ export function openLinkStore(
         .map((t) => t.cert)
         .filter((c) => c !== ''),
     ],
+    remove(machineId) {
+      if (!state.links.some((l) => l.machineId === machineId)) return false;
+      state = { ...state, links: state.links.filter((l) => l.machineId !== machineId) };
+      persist();
+      return true;
+    },
     revoke(machineId, at) {
       const found = state.links.find((l) => l.machineId === machineId);
       if (!found) return null;

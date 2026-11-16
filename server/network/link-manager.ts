@@ -99,6 +99,14 @@ export interface LinkManager {
    */
   waitUp(machineId: string, ms: number, signal: AbortSignal): Promise<WaitUpResult>;
   revoke(machineId: string): boolean;
+  /**
+   * Drops a machine we no longer keep: its connection closes with no revoked frame (the far side
+   * keeps its own record), it never redials, pending calls end, and its record is deleted with no
+   * tombstone. False for a machine this manager does not know.
+   */
+  forget(machineId: string): boolean;
+  /** True for an ssh record the peer dialed to us: a controller, with no endpoint of ours to dial. */
+  isSshController(machineId: string): boolean;
   setCapability(machineId: string, capability: Capability, on: boolean): boolean;
   setAddresses(machineId: string, addresses: string[]): boolean;
   /** Null when the link isn't up; otherwise whether the socket still has room. */
@@ -504,7 +512,8 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       stream.destroy();
       return;
     }
-    const sent = { ...OWN_DEFAULT_CAPABILITIES };
+    // An ssh controller already has shell access as this user, so drive adds no power (plan CON-41 decision 3).
+    const sent = { ...OWN_DEFAULT_CAPABILITIES, drive: true };
     const opened = await openConnection(stream, {
       hello: ownHello(sent),
       now: deps.now,
@@ -535,7 +544,14 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       opened.close(pinned.error);
       return;
     }
-    attach(ensurePeer(pinned.record), opened, sent, hello.machineId);
+    // Only a record the peer dialed to us is a controller's: one we dial is ours, and drive stays off.
+    const granted =
+      pinned.record.ssh === null && !pinned.record.capabilities.drive
+        ? (deps.store.update(pinned.record.machineId, {
+            capabilities: { ...pinned.record.capabilities, drive: true },
+          }) ?? pinned.record)
+        : pinned.record;
+    attach(ensurePeer(granted), opened, sent, hello.machineId);
   };
 
   /** One ssh dial at a time per target: concurrent callers share its result. */
@@ -858,7 +874,9 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     waitUp(machineId, ms, signal) {
       const outcome = (): WaitUpResult | null => {
         const p = peerOf(machineId);
-        if (p === null) return null;
+        // Forgotten: nothing is dialing and nothing will be, so the wait ends with no failure to report.
+        if (p === null)
+          return deps.store.get(machineId) === null ? { up: false, failure: null } : null;
         if (p.sm.state === 'up') return { up: true };
         if (terminal(p) || p.lastDialFailure !== null) {
           return { up: false, failure: p.lastDialFailure };
@@ -885,6 +903,30 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
         signal.addEventListener('abort', onAbort, { once: true });
         cancelTimer = deps.after(() => settleWith({ up: false, failure: null }), ms);
       });
+    },
+    isSshController(machineId) {
+      const record = deps.store.get(machineId);
+      return record !== null && record.transport === 'ssh' && record.ssh === null;
+    },
+    forget(machineId) {
+      const p = peerOf(machineId);
+      if (p) {
+        p.cancelRetry?.();
+        p.cancelRetry = null;
+        // Terminal before it leaves the map, so a dial already in flight cannot attach to a peer nobody holds.
+        p.sm = { state: 'revoked', since: deps.now() };
+        const conn = p.conn;
+        p.conn = null;
+        p.dialer = null;
+        conn?.close('forgotten');
+        peers.delete(machineId);
+      }
+      const removed = deps.store.remove(machineId);
+      if (p === null && !removed) return false;
+      // The change path is what ends this machine's pending calls: it is no longer in views().
+      deps.changed();
+      for (const wake of [...waiters]) wake();
+      return true;
     },
     revoke(machineId) {
       const p = peerOf(machineId);

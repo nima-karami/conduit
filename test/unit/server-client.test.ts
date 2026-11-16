@@ -190,6 +190,53 @@ describe('ServerClient', () => {
     expect(server.calls('sessions.remove')).toEqual([]);
   });
 
+  it('a call with timeoutMs rejects timeout when no reply arrives', async () => {
+    const { server, client } = await setup();
+    await client.open();
+    server.on('sessions.remove', () => new Promise(() => {}));
+    const error = await rejection(
+      client.call('sessions.remove', { sessionId: 's1' }, { timeoutMs: 20 }),
+    );
+    expect(error.kind).toBe('timeout');
+  });
+
+  it('a late reply after a timeout is ignored (no double settle)', async () => {
+    const { server, client } = await setup();
+    await client.open();
+    server.on('sessions.remove', async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      return {};
+    });
+    const error = await rejection(
+      client.call('sessions.remove', { sessionId: 's1' }, { timeoutMs: 10 }),
+    );
+    expect(error.kind).toBe('timeout');
+
+    // The late reply for the timed-out id lands while this call is in flight; it must not
+    // answer it, which only holds if the two ids stay separate.
+    server.on('server.stopAll', async () => {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      return { killed: 3 };
+    });
+    await expect(client.call('server.stopAll', {})).resolves.toEqual({ killed: 3 });
+  });
+
+  it('a disconnect while a timed call is pending clears its timer', async () => {
+    const { server, client } = await setup();
+    await client.open();
+    server.on('sessions.remove', () => new Promise(() => {}));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const pending = rejection(
+      client.call('sessions.remove', { sessionId: 's1' }, { timeoutMs: 60_000 }),
+    );
+    expect(vi.getTimerCount()).toBe(1);
+
+    client.close();
+
+    expect((await pending).kind).toBe('disconnected');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('notify while closed returns false and writes nothing', async () => {
     const { server, client } = await setup();
     expect(client.notify('system.resumed', {})).toBe(false);

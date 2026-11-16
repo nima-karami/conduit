@@ -18,6 +18,7 @@ import {
   type SpaceRowModel,
 } from '../../src/agent-tree';
 import type { McpNotConnected, McpSessionBadge } from '../../src/conduit-mcp/ui-types';
+import type { MachineError, MachineView } from '../../src/contracts/machines';
 import { type Rect, triggerMenu } from '../../src/menu-position';
 import { normalizeProjectName, renamedProjectName } from '../../src/project-name';
 import {
@@ -39,9 +40,11 @@ import { agentRowTooltip } from '../card-fields';
 import { MCP_STR } from '../conduit-mcp-strings';
 import { requestHost } from '../host-request';
 import { IconBoard, IconPencil, IconPlus, IconSearch, IconSettings, IconTrash } from '../icons';
+import { MACHINES_STR } from '../machines-strings';
 import { cardMcpStatus } from '../mcp-card-status';
 import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
 import { projectAnnouncer } from '../project-announcer';
+import type { RemoteKey, RemoteSessionRow as RemoteRow } from '../remote-sessions';
 import {
   applyRowClick,
   descendantIds,
@@ -58,12 +61,14 @@ import { buildAgentsPaneMenu } from '../sort-filter-menu';
 import type { ConfirmState } from './confirm-dialog';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
+import { type MachineAction, MachinesSection } from './machines-section';
 import {
   AgentGroupHeader,
   type MenuAt,
   type SpaceDropHandlers,
   SpaceRow,
 } from './project-group-header';
+import { RemoteSessionRow } from './remote-session-row';
 import { AgentRow, RenameInput, type RowGuides } from './session-card';
 import { ViewMenu } from './view-menu';
 
@@ -71,9 +76,17 @@ const GROUP_NAV = 'group:';
 const groupNavId = (g: AgentGroupKey) => `${GROUP_NAV}${g}`;
 const isGroupNavId = (id: string) => id.startsWith(GROUP_NAV);
 
-/** One rendered row of the flattened, unfolded forest: the pointer and keyboard order. */
+/** One rendered local row of the flattened, unfolded forest: the pointer and keyboard order. */
 interface FlatRow {
   id: string;
+  guides: RowGuides;
+  lastChild: boolean;
+}
+
+/** One remote session drawn under its lead (plan decision 8). */
+interface FlatRemote {
+  remote: RemoteRow;
+  depth: number;
   guides: RowGuides;
   lastChild: boolean;
 }
@@ -81,27 +94,69 @@ interface FlatRow {
 /** The tree's direct children, in pointer and keyboard order. */
 type TreeItem =
   | { kind: 'group'; key: AgentGroupKey; navId: string; group: AgentTreeGroup }
-  | { kind: 'row'; key: string; navId: string; row: FlatRow; group: AgentGroupKey };
+  | { kind: 'row'; key: string; navId: string; row: FlatRow; group: AgentGroupKey }
+  | { kind: 'remote'; key: string; navId: string; flat: FlatRemote; group: AgentGroupKey };
+
+const REMOTE_NAV = 'remote:';
+const isRemoteNavId = (id: string) => id.startsWith(REMOTE_NAV);
 
 /**
  * Depth-first over each unfolded group, iteratively (ancestry comes from persisted, possibly
  * malformed records). Guides say, per ancestor level, whether that ancestor has a later sibling,
- * so its vertical connector carries on past this row.
+ * so its vertical connector carries on past this row. A lead's remote sessions are its last
+ * children, so they follow its local subtree.
  */
-function flattenGroup(model: AgentTreeModel, rootIds: readonly string[]): FlatRow[] {
-  const out: FlatRow[] = [];
-  const stack: { id: string; guides: boolean[]; last: boolean }[] = rootIds
-    .map((id) => ({ id, guides: [] as boolean[], last: true }))
+function flattenGroup(
+  model: AgentTreeModel,
+  rootIds: readonly string[],
+  remoteByLead: ReadonlyMap<string, readonly RemoteRow[]>,
+): (FlatRow | FlatRemote)[] {
+  type Entry = {
+    id: string;
+    remote: RemoteRow | null;
+    guides: boolean[];
+    last: boolean;
+    depth: number;
+  };
+  const out: (FlatRow | FlatRemote)[] = [];
+  const stack: Entry[] = rootIds
+    .map((id) => ({
+      id,
+      remote: null,
+      guides: [] as boolean[],
+      last: true,
+      depth: model.rows[id]?.depth ?? 0,
+    }))
     .reverse();
   while (stack.length > 0) {
-    const cur = stack.pop() as (typeof stack)[number];
+    const cur = stack.pop() as Entry;
+    if (cur.remote) {
+      out.push({ remote: cur.remote, depth: cur.depth, guides: cur.guides, lastChild: cur.last });
+      continue;
+    }
     const row = model.rows[cur.id];
     if (!row) continue;
     out.push({ id: cur.id, guides: cur.guides, lastChild: cur.last });
     if (row.folded) continue;
     const kidGuides = row.depth === 0 ? [] : [...cur.guides, !cur.last];
-    for (let i = row.childIds.length - 1; i >= 0; i--)
-      stack.push({ id: row.childIds[i], guides: kidGuides, last: i === row.childIds.length - 1 });
+    const kids: Entry[] = [
+      ...row.childIds.map((id) => ({
+        id,
+        remote: null,
+        guides: kidGuides,
+        last: false,
+        depth: row.depth + 1,
+      })),
+      ...(remoteByLead.get(cur.id) ?? []).map((r) => ({
+        id: r.id,
+        remote: r,
+        guides: kidGuides,
+        last: false,
+        depth: row.depth + 1,
+      })),
+    ];
+    for (let i = kids.length - 1; i >= 0; i--)
+      stack.push({ ...kids[i], last: i === kids.length - 1 });
   }
   return out;
 }
@@ -182,6 +237,15 @@ export function Sidebar({
   onOpenBoard,
   onConfirm,
   sessionsLoaded = true,
+  remoteRows,
+  machines,
+  machineErrors,
+  showMachines,
+  activeRemoteId,
+  onSelectRemote,
+  onAddMachine,
+  onMachineAction,
+  onRenameMachine,
 }: {
   /** This window's sessions; the tree orders them, so the incoming order is not used. */
   sessions: Session[];
@@ -221,6 +285,18 @@ export function Sidebar({
   onSessionDragEnd?: (sessionId: string, screenX: number, screenY: number) => void;
   // The panel is rendered barless, so the Spaces header doubles as the panel-move drag surface.
   moveGrip?: MoveGrip;
+  /** Remote sessions over ssh links, each with its lead's local id (plan decision 6). */
+  remoteRows: readonly RemoteRow[];
+  machines: readonly MachineView[];
+  machineErrors: ReadonlyMap<string, MachineError>;
+  /** The Machines band shows with no machine too (its empty state), when the setting is on. */
+  showMachines: boolean;
+  activeRemoteId: string | null;
+  onSelectRemote: (key: RemoteKey) => void;
+  onAddMachine: () => void;
+  onMachineAction: (action: MachineAction, machine: MachineView) => void;
+  /** The Rename field's result: the owner's new name for a machine (the menu's Rename). */
+  onRenameMachine: (machine: MachineView, name: string) => void;
 }) {
   const tree = useSidebarTreeState();
   const { ui, runtime, askSessionIds, bindings, updateUi, reportVisibleIds } = tree;
@@ -467,6 +543,28 @@ export function Sidebar({
     () => visibleSpaceRows.flatMap((r) => (r.projectId === null ? [] : [{ id: r.projectId }])),
     [visibleSpaceRows],
   );
+  // A remote session is drawn under its local lead only; with no lead it lives under its machine.
+  const remoteByLead = useMemo(() => {
+    const byLead = new Map<string, RemoteRow[]>();
+    for (const r of remoteRows) {
+      if (r.parentSessionId === null) continue;
+      const list = byLead.get(r.parentSessionId) ?? [];
+      list.push(r);
+      byLead.set(r.parentSessionId, list);
+    }
+    return byLead;
+  }, [remoteRows]);
+  const remoteChildren = useMemo(
+    () => new Map([...remoteByLead].map(([id, list]) => [id, list.length] as const)),
+    [remoteByLead],
+  );
+  const remoteById = useMemo(() => new Map(remoteRows.map((r) => [r.id, r])), [remoteRows]);
+  // Each remote row's lead as last seen, so a row that vanishes still hands focus to its lead.
+  const leadOfRemote = useRef(new Map<string, string>());
+  useEffect(() => {
+    for (const r of remoteRows)
+      if (r.parentSessionId !== null) leadOfRemote.current.set(r.id, r.parentSessionId);
+  }, [remoteRows]);
   const model = useMemo(
     () =>
       buildAgentTree({
@@ -478,8 +576,19 @@ export function Sidebar({
         view: agentsView,
         kindOf,
         spaces: groupSpaces,
+        remoteChildren,
       }),
-    [sessions, runtime, ui, matchingIds, askSessionIds, agentsView, kindOf, groupSpaces],
+    [
+      sessions,
+      runtime,
+      ui,
+      matchingIds,
+      askSessionIds,
+      agentsView,
+      kindOf,
+      groupSpaces,
+      remoteChildren,
+    ],
   );
   // Reveal once per change of the active agent, as soon as its session exists and the saved fold
   // state has landed; a fold the user makes afterwards stays folded.
@@ -502,14 +611,18 @@ export function Sidebar({
       if (g.key !== 'flat')
         out.push({ kind: 'group', key: g.key, navId: groupNavId(g.key), group: g });
       if (g.folded) continue;
-      for (const f of flattenGroup(model, g.rootIds))
-        out.push({ kind: 'row', key: f.id, navId: f.id, row: f, group: g.key });
+      for (const f of flattenGroup(model, g.rootIds, remoteByLead)) {
+        if ('remote' in f)
+          out.push({ kind: 'remote', key: f.remote.id, navId: f.remote.id, flat: f, group: g.key });
+        else out.push({ kind: 'row', key: f.id, navId: f.id, row: f, group: g.key });
+      }
     }
     return out;
-  }, [model]);
+  }, [model, remoteByLead]);
   const navIds = useMemo(() => items.map((it) => it.navId), [items]);
   const groupOfRow = useMemo(
-    () => new Map(items.flatMap((it) => (it.kind === 'row' ? [[it.key, it.group] as const] : []))),
+    () =>
+      new Map(items.flatMap((it) => (it.kind === 'group' ? [] : [[it.key, it.group] as const]))),
     [items],
   );
   const visibleIds = model.visibleIds;
@@ -574,7 +687,9 @@ export function Sidebar({
     setFocusId(navId);
     const sel = isGroupNavId(navId)
       ? `[role="treeitem"][data-agent-group="${cssId(navId.slice(GROUP_NAV.length))}"]`
-      : `[role="treeitem"][data-sessionid="${cssId(navId)}"]`;
+      : isRemoteNavId(navId)
+        ? `[role="treeitem"][data-remote-id="${cssId(navId)}"]`
+        : `[role="treeitem"][data-sessionid="${cssId(navId)}"]`;
     treeRef.current?.querySelector<HTMLElement>(sel)?.focus();
   }, []);
 
@@ -593,7 +708,9 @@ export function Sidebar({
     const active = document.activeElement;
     if (active && active !== document.body && !treeRef.current?.contains(active)) return;
     let next: string | undefined;
-    let p = model.rows[focusId]?.parentId ?? null;
+    let p = isRemoteNavId(focusId)
+      ? (remoteById.get(focusId)?.parentSessionId ?? leadOfRemote.current.get(focusId) ?? null)
+      : (model.rows[focusId]?.parentId ?? null);
     while (p !== null && next === undefined) {
       if (navIds.includes(p)) next = p;
       else p = model.rows[p]?.parentId ?? null;
@@ -616,7 +733,7 @@ export function Sidebar({
       treeHadFocusRef.current = false;
       newAgentRef.current?.focus();
     }
-  }, [navIds, groupOfRow, focusId, model, focusItem]);
+  }, [navIds, groupOfRow, focusId, model, remoteById, focusItem]);
 
   const toggleFold = (id: string) => {
     const folded = ui.foldedSessions.includes(id);
@@ -651,7 +768,8 @@ export function Sidebar({
     const el = e.target as HTMLElement;
     if (el.getAttribute('role') !== 'treeitem') return;
     const groupKey = el.dataset.agentGroup as AgentGroupKey | undefined;
-    const navId = groupKey !== undefined ? groupNavId(groupKey) : el.dataset.sessionid;
+    const navId =
+      groupKey !== undefined ? groupNavId(groupKey) : (el.dataset.sessionid ?? el.dataset.remoteId);
     if (navId === undefined) return;
     const at = navIds.indexOf(navId);
     const go = (target: string | undefined) => {
@@ -682,19 +800,39 @@ export function Sidebar({
       // Enter and Space are the header button's own click.
       return;
     }
+    if (isRemoteNavId(navId)) {
+      const r = remoteById.get(navId);
+      if (!r) return;
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        if (r.parentSessionId !== null && navIds.includes(r.parentSessionId))
+          focusItem(r.parentSessionId);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        setFocusId(navId);
+        onSelectRemote(r.key);
+      }
+      return;
+    }
     const id = navId;
     const row = model.rows[id];
     if (!row) return;
+    const hasKids = row.childIds.length > 0 || row.remoteChildCount > 0;
     switch (e.key) {
-      case 'ArrowRight':
-        if (row.childIds.length === 0) return;
+      case 'ArrowRight': {
+        if (!hasKids) return;
         e.preventDefault();
-        if (row.folded) toggleFold(id);
-        else focusItem(row.childIds[0]);
+        if (row.folded) {
+          toggleFold(id);
+          return;
+        }
+        const first = row.childIds[0] ?? remoteByLead.get(id)?.[0]?.id;
+        if (first !== undefined) focusItem(first);
         return;
+      }
       case 'ArrowLeft': {
         e.preventDefault();
-        if (row.childIds.length > 0 && !row.folded) return toggleFold(id);
+        if (hasKids && !row.folded) return toggleFold(id);
         if (row.parentId !== null && navIds.includes(row.parentId)) return focusItem(row.parentId);
         const g = groupOfRow.get(id);
         if (row.depth === 0 && g !== undefined && navIds.includes(groupNavId(g)))
@@ -843,7 +981,7 @@ export function Sidebar({
         })}
         space={row.depth === 0 ? space : undefined}
         now={now}
-        selected={s.id === activeId}
+        selected={s.id === activeId && activeRemoteId === null}
         multiSelected={selection.ids.includes(s.id)}
         tabbable={s.id === tabId}
         pinned={ui.pinnedIds.includes(s.id)}
@@ -886,6 +1024,27 @@ export function Sidebar({
       />
     );
   };
+
+  const renderRemote = (f: FlatRemote) => (
+    <RemoteSessionRow
+      key={f.remote.id}
+      row={f.remote}
+      depth={f.depth}
+      level={f.depth + 2}
+      guides={f.guides}
+      lastChild={f.lastChild}
+      selected={activeRemoteId === f.remote.id}
+      tabbable={f.remote.id === tabId}
+      onSelect={() => {
+        setFocusId(f.remote.id);
+        onSelectRemote(f.remote.key);
+      }}
+      onFocus={() => {
+        setFocusId(f.remote.id);
+        treeHadFocusRef.current = true;
+      }}
+    />
+  );
 
   const liveCount = sessions.filter((s) => s.status === 'running').length;
   const agentsMenu = buildAgentsViewMenu(
@@ -1114,13 +1273,33 @@ export function Sidebar({
                     treeHadFocusRef.current = true;
                   }}
                 />
-              ) : (
+              ) : it.kind === 'row' ? (
                 renderRow(it.row)
+              ) : (
+                renderRemote(it.flat)
               ),
             )}
           </div>
         )}
       </div>
+
+      {/* Its own region, beside the Agents scroller rather than inside it, so its band header lines
+          up with Spaces and Agents and a long agent list never pushes it out of reach. */}
+      {(showMachines || machines.length > 0) && (
+        <section className="sidebar__machines" aria-label={MACHINES_STR.machines}>
+          <MachinesSection
+            machines={machines}
+            remoteRows={remoteRows}
+            machineErrors={machineErrors}
+            activeRemoteId={activeRemoteId}
+            onSelectRemote={onSelectRemote}
+            onAddMachine={onAddMachine}
+            onMachineAction={onMachineAction}
+            onRenameMachine={onRenameMachine}
+            onConfirm={onConfirm}
+          />
+        </section>
+      )}
 
       <div className="sidebar__foot">
         <button

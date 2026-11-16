@@ -417,3 +417,38 @@ describe('revealActive', () => {
     expect(run(sessions, u, 'zzz')).toBe(u);
   });
 });
+
+describe('buildAgentTree — remote children', () => {
+  const withRemote = (sessions: Session[], remote: Map<string, number>, folded: string[] = []) =>
+    buildAgentTree({
+      sessions,
+      runtime: runtimeOf(sessions),
+      ui: { ...defaultSidebarUi(), foldedGroups: [], foldedSessions: folded },
+      matchingIds: new Set(sessions.map((s) => s.id)),
+      askSessionIds: new Set(),
+      remoteChildren: remote,
+    });
+
+  it('a lead with only remote children is foldable and counts them', () => {
+    const sessions = [S('p')];
+    const open = withRemote(sessions, new Map([['p', 2]]));
+    expect(open.rows.p).toMatchObject({
+      childIds: [],
+      descendantCount: 2,
+      remoteChildCount: 2,
+      folded: false,
+    });
+    expect(open.visibleIds).toEqual(['p']);
+    const shut = withRemote(sessions, new Map([['p', 2]]), ['p']);
+    expect(shut.rows.p.folded).toBe(true);
+  });
+
+  it('remote children count toward every local ancestor and create no rows', () => {
+    const sessions = [S('p'), child('c', 'p')];
+    const t = withRemote(sessions, new Map([['c', 1]]));
+    expect(t.rows.c).toMatchObject({ descendantCount: 1, remoteChildCount: 1 });
+    expect(t.rows.p.descendantCount).toBe(2);
+    expect(Object.keys(t.rows).sort()).toEqual(['c', 'p']);
+    expect(t.visibleIds).toEqual(['p', 'c']);
+  });
+});

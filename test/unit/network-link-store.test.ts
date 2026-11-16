@@ -319,3 +319,21 @@ describe('link store: machine metadata', () => {
     expect(store.get('m-aaaaaaaa')?.machine?.agents).toEqual(['claude']);
   });
 });
+
+describe('link store: remove', () => {
+  it('remove deletes the record with no tombstone: byServerKey is null afterwards', () => {
+    const { io } = memoryIo();
+    const store = openLinkStore(FILE, { now: () => T0, log: { error: () => undefined }, io });
+    store.put(rec('m1', { serverKey: 'key-m1' }));
+    expect(store.remove('m1')).toBe(true);
+    expect(store.get('m1')).toBeNull();
+    expect(store.byServerKey('key-m1')).toBeNull();
+  });
+
+  it('remove of an unknown machine returns false and writes nothing', () => {
+    const { io, writes } = memoryIo();
+    const store = openLinkStore(FILE, { now: () => T0, log: { error: () => undefined }, io });
+    expect(store.remove('nobody')).toBe(false);
+    expect(writes).toEqual([]);
+  });
+});
