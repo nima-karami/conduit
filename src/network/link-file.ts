@@ -58,31 +58,75 @@ const isSshEndpoint = (v: unknown): v is SshEndpoint =>
 const isCapabilities = (v: unknown): v is Capabilities =>
   isObj(v) && isBool(v.messaging) && isBool(v.monitor) && isBool(v.drive);
 
-const isLink = (v: unknown): v is Obj =>
-  isObj(v) &&
-  isStr(v.linkId) &&
-  isMachineId(v.machineId) &&
-  isStr(v.serverKey) &&
-  (v.transport === 'ssh' ? v.ownerKey === null || isStr(v.ownerKey) : isStr(v.ownerKey)) &&
-  isStr(v.name) &&
-  v.trust === 'own' &&
-  Array.isArray(v.addresses) &&
-  v.addresses.every(isStr) &&
-  isCapabilities(v.capabilities) &&
-  isStr(v.fingerprint) &&
-  isStr(v.createdAt) &&
-  isStr(v.cert) &&
-  (v.ownerTransfer === 'send' || v.ownerTransfer === 'receive' || v.ownerTransfer === null) &&
-  (v.transport === undefined || v.transport === 'tls' || v.transport === 'ssh') &&
-  // Only an ssh record may carry an endpoint; a tls record with one is not a record we wrote.
-  (v.transport === 'ssh' || v.ssh === undefined || v.ssh === null) &&
-  (v.ssh === undefined || v.ssh === null || isSshEndpoint(v.ssh));
+const stringList = (v: unknown): string[] | null => {
+  if (!Array.isArray(v)) return null;
+  const out: string[] = [];
+  for (const item of v) {
+    if (!isStr(item)) return null;
+    out.push(item);
+  }
+  return out;
+};
 
-const withTransportDefaults = (v: Obj): LinkRecord => ({
-  ...(v as unknown as LinkRecord),
-  transport: v.transport === 'ssh' ? 'ssh' : 'tls',
-  ssh: isSshEndpoint(v.ssh) ? v.ssh : null,
-});
+/**
+ * One stored link, read field by field: each value is checked where it is taken, so the record is
+ * built from proven types and needs no cast. A missing transport is a tls link (version 1 files).
+ */
+const parseLink = (v: Obj): LinkRecord | null => {
+  const transport =
+    v.transport === 'ssh'
+      ? 'ssh'
+      : v.transport === undefined || v.transport === 'tls'
+        ? 'tls'
+        : null;
+  if (transport === null) return null;
+  const ssh =
+    v.ssh === undefined || v.ssh === null ? null : isSshEndpoint(v.ssh) ? v.ssh : undefined;
+  // Only an ssh record may carry an endpoint; a tls record with one is not a record we wrote.
+  if (ssh === undefined || (transport === 'tls' && ssh !== null)) return null;
+  // An ssh peer's server may have no owner key; a tls link always has one.
+  const ownerKey = isStr(v.ownerKey)
+    ? v.ownerKey
+    : transport === 'ssh' && v.ownerKey === null
+      ? null
+      : undefined;
+  const addresses = stringList(v.addresses);
+  const ownerTransfer =
+    v.ownerTransfer === 'send' || v.ownerTransfer === 'receive' || v.ownerTransfer === null
+      ? v.ownerTransfer
+      : undefined;
+  if (
+    ownerKey === undefined ||
+    addresses === null ||
+    ownerTransfer === undefined ||
+    !isStr(v.linkId) ||
+    !isMachineId(v.machineId) ||
+    !isStr(v.serverKey) ||
+    !isStr(v.name) ||
+    v.trust !== 'own' ||
+    !isCapabilities(v.capabilities) ||
+    !isStr(v.fingerprint) ||
+    !isStr(v.createdAt) ||
+    !isStr(v.cert)
+  )
+    return null;
+  return {
+    linkId: v.linkId,
+    machineId: v.machineId,
+    serverKey: v.serverKey,
+    ownerKey,
+    name: v.name,
+    trust: 'own',
+    addresses,
+    capabilities: v.capabilities,
+    fingerprint: v.fingerprint,
+    createdAt: v.createdAt,
+    cert: v.cert,
+    ownerTransfer,
+    transport,
+    ssh,
+  };
+};
 
 const isTombstone = (v: unknown): v is Tombstone =>
   isObj(v) &&
@@ -114,9 +158,10 @@ export function parseLinksFile(
   const cutoff = now - TOMBSTONE_TTL_MS;
   const tombstones = raw.tombstones.filter((t) => Date.parse(t.revokedAt) >= cutoff);
   const links: LinkRecord[] = [];
-  for (const l of raw.links) {
-    if (!isLink(l)) return { kind: 'corrupt' };
-    links.push(withTransportDefaults(l));
+  for (const item of raw.links) {
+    const link = isObj(item) ? parseLink(item) : null;
+    if (link === null) return { kind: 'corrupt' };
+    links.push(link);
   }
   return { kind: 'ok', file: { version: 2, links, tombstones } };
 }

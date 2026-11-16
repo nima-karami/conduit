@@ -882,6 +882,36 @@ describe('ssh hello identity and per-host pinning', { timeout: 60_000 }, () => {
     await until(() => got.some((f) => f.t === 'view.close' && f.viewId === 'after'));
   });
 
+  // A reinstalled remote (or an impostor on the same target) has a new key, so a new machine id.
+  // Spec 6: the known target is refused until the owner acts, and the old pin is left as it was.
+  it('a known ssh target answering with a new identity is identity-changed, and nothing is stored', async () => {
+    const owner = identity();
+    const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
+    const b = await node(identity(ownerKey), 'win-box');
+    const toB = fakeSsh(() => b);
+    const reinstalled = await node(identity(), 'win-box');
+    let reinstalledAnswers = false;
+    const a = await node(identity(ownerKey), 'linux-box', 0, (ssh) =>
+      reinstalledAnswers
+        ? { stream: forgingStream(helloOf(reinstalled)), failure: async () => null }
+        : toB.dial(ssh),
+    );
+    b.manager.start();
+    a.manager.start();
+    expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
+    await until(() => a.manager.view(b.id.machineId)?.state === 'up');
+    const before = a.store.get(b.id.machineId);
+
+    reinstalledAnswers = true;
+    expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({
+      ok: false,
+      error: { code: 'identity-changed' },
+    });
+    expect(a.store.get(b.id.machineId)).toEqual(before);
+    expect(a.store.links()).toHaveLength(1);
+    expect(a.manager.view(b.id.machineId)?.state).toBe('identity-changed');
+  });
+
   it('a dial to the same target updates the endpoint the record was pinned with', async () => {
     const { a, b } = await sshPair();
     expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);

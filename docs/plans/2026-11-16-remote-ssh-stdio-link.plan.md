@@ -386,3 +386,4 @@ that keeps the locked decision.
   client useless past `hello`, which leaks only versions/instance/pid. Default taken: the secret is the gate.
   Measure on the Windows box (G-gate list). Add a DACL only if the owner wants versions hidden too.
 - [normal] The ssh path is the env `CONDUIT_SSH_PATH` until the Machines settings exist (slice 4/6). Default taken.
+- [normal] A known ssh target that answers with a new machine id (a reinstall or an impostor) is `identity-changed`, and the old pin stays (spec §6). Re-pinning needs the owner's explicit action, which lands in slice 4. Default taken: refuse.

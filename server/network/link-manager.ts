@@ -462,6 +462,19 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       opened.close('bad-hello');
       return { ok: false, error: { code: 'bad-hello' } };
     }
+    // A known target that answers with another machine id is a reinstall or an impostor. The old
+    // pin stays until the owner acts (spec 6); a second record for the same target is never made.
+    const pinnedElsewhere = deps.store
+      .links()
+      .find(
+        (l) =>
+          l.transport === 'ssh' && l.ssh?.target === ssh.target && l.machineId !== hello.machineId,
+      );
+    if (pinnedElsewhere !== undefined) {
+      markIdentityChanged(pinnedElsewhere.machineId);
+      opened.close('identity-changed');
+      return { ok: false, error: { code: 'identity-changed' } };
+    }
     const pinned = pinSshPeer(hello, ssh);
     if ('error' in pinned) {
       if (pinned.error === 'identity-changed') markIdentityChanged(hello.machineId);
