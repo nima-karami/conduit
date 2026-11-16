@@ -371,9 +371,13 @@ describe('grant store', () => {
     const peer = { kind: 'peer', machineId: 'm-1' } as const;
     const a = store.create(peer, 'send_message', ANYWHERE, 'until-revoked', null, null);
     const b = store.create(peer, 'read_inbox', ANYWHERE, '24h', null, null);
+    const suspended = store.create(peer, 'read_inbox', ANYWHERE, '24h', null, null);
+    store.load(
+      store.all().map((g) => (g.id === suspended.id ? { ...g, state: 'suspended' as const } : g)),
+    );
     t += MIN;
     const changed = store.peerRevoked('m-1');
-    expect(changed.map((g) => g.id).sort()).toEqual([a.id, b.id].sort());
+    expect(changed.map((g) => g.id).sort()).toEqual([a.id, b.id, suspended.id].sort());
     expect(changed.every((g) => g.state === 'revoked' && g.endedAt === iso(T0 + MIN))).toBe(true);
     expect(store.all().every((g) => g.state === 'revoked')).toBe(true);
   });
