@@ -150,6 +150,7 @@ describe('resolveTarget', () => {
     handle: 'r',
     machineId: 'm1',
     trust: 'own',
+    controller: false,
     capabilities: { messaging: true, monitor: true, drive: true },
   };
 

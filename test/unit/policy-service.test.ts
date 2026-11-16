@@ -1705,6 +1705,7 @@ describe('fail-closed and missing profile', () => {
     handle: 'claude-3',
     machineId: 'm-0000000a',
     trust: 'own',
+    controller: false,
     capabilities: { messaging: true, monitor: true, drive: true },
   };
 

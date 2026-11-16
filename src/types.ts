@@ -100,6 +100,8 @@ export interface SessionCommand {
 export interface SessionOpener {
   handle: string;
   sessionId: string;
+  /** A remote lead's machine; see docs/plans/2026-11-16-remote-ssh-routed-tools.plan.md, decision 3 */
+  machineId?: string;
 }
 
 export interface Session {
