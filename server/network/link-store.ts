@@ -1,7 +1,9 @@
+import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { atomicWriteFileSync } from '../../src/atomic-write';
-import { TOMBSTONE_TTL_MS } from '../../src/contracts/link-protocol';
+import { OWN_DEFAULT_CAPABILITIES, TOMBSTONE_TTL_MS } from '../../src/contracts/link-protocol';
+import type { SshEndpoint } from '../../src/contracts/ssh-link';
 import {
   type LinkRecord,
   type LinksFile,
@@ -23,6 +25,17 @@ export interface LinkStore {
   byServerKey(serverKey: string): LinkRecord | { tombstone: Tombstone } | null;
   /** Inserts or replaces by machineId, and clears any tombstone for that machineId. */
   put(r: LinkRecord): void;
+  /**
+   * Pins an ssh peer. Its identity comes from the hello that crossed the ssh stream, so it has no
+   * certificate, no fingerprint and no addresses; the link is always 'own' with default capabilities.
+   */
+  addSsh(r: {
+    machineId: string;
+    serverKey: string;
+    ownerKey: string;
+    name: string;
+    ssh: SshEndpoint | null;
+  }): LinkRecord;
   /**
    * A live link or tombstone already holds this machine id under a different server key. Machine
    * ids are 32 bits, so a second key could be ground to collide; it must not take over the record.
@@ -115,6 +128,15 @@ export function openLinkStore(
     io.write(file, serializeLinksFile(dropped));
   };
 
+  const putLink = (r: LinkRecord): void => {
+    state = {
+      ...state,
+      links: [...state.links.filter((l) => l.machineId !== r.machineId), copyLink(r)],
+      tombstones: state.tombstones.filter((t) => t.machineId !== r.machineId),
+    };
+    persist();
+  };
+
   return {
     get writable() {
       return writable;
@@ -138,13 +160,26 @@ export function openLinkStore(
         )
       );
     },
-    put(r) {
-      state = {
-        ...state,
-        links: [...state.links.filter((l) => l.machineId !== r.machineId), copyLink(r)],
-        tombstones: state.tombstones.filter((t) => t.machineId !== r.machineId),
+    put: putLink,
+    addSsh(r) {
+      const record: LinkRecord = {
+        linkId: `l_${randomBytes(8).toString('hex')}`,
+        machineId: r.machineId,
+        serverKey: r.serverKey,
+        ownerKey: r.ownerKey,
+        name: r.name,
+        trust: 'own',
+        addresses: [],
+        capabilities: { ...OWN_DEFAULT_CAPABILITIES },
+        fingerprint: '',
+        createdAt: new Date(opts.now()).toISOString(),
+        cert: '',
+        ownerTransfer: null,
+        transport: 'ssh',
+        ssh: r.ssh,
       };
-      persist();
+      putLink(record);
+      return copyLink(record);
     },
     update(machineId, patch) {
       const found = state.links.find((l) => l.machineId === machineId);
@@ -157,9 +192,13 @@ export function openLinkStore(
       persist();
       return copyLink(next);
     },
+    // An ssh peer has no certificate to trust; an empty PEM would be a CA the listener can't use.
     trustedCerts: () => [
-      ...state.links.map((l) => l.cert),
-      ...state.tombstones.filter(isLive).map((t) => t.cert),
+      ...state.links.filter((l) => l.transport === 'tls').map((l) => l.cert),
+      ...state.tombstones
+        .filter(isLive)
+        .map((t) => t.cert)
+        .filter((c) => c !== ''),
     ],
     revoke(machineId, at) {
       const found = state.links.find((l) => l.machineId === machineId);

@@ -41,6 +41,8 @@ function rec(machineId: string, over: Partial<LinkRecord> = {}): LinkRecord {
     createdAt: '2026-11-14T10:00:00.000Z',
     cert: `PEM-${machineId}`,
     ownerTransfer: null,
+    transport: 'tls',
+    ssh: null,
     ...over,
   };
 }
@@ -50,6 +52,22 @@ function logSpy() {
 }
 
 describe('link store', () => {
+  // An ssh peer has no certificate; it must never widen the listener's trusted CAs.
+  it('trustedCerts skips ssh records', () => {
+    const { io } = memoryIo();
+    const store = openLinkStore(FILE, { now: () => T0, log: logSpy(), io });
+    store.put(rec('m-aaaaaaaa'));
+    store.addSsh({
+      machineId: 'm-bbbbbbbb',
+      serverKey: 'key-bbbbbbbb',
+      ownerKey: 'owner-key',
+      name: 'remote',
+      ssh: null,
+    });
+    expect(store.get('m-bbbbbbbb')?.transport).toBe('ssh');
+    expect(store.trustedCerts()).toEqual(['PEM-m-aaaaaaaa']);
+  });
+
   it('a missing file opens as an empty writable store without writing', () => {
     const { io, writes } = memoryIo();
     const store = openLinkStore(FILE, { now: () => T0, log: logSpy(), io });

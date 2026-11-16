@@ -1,5 +1,6 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { Duplex, PassThrough } from 'node:stream';
 import type tls from 'node:tls';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -183,6 +184,31 @@ describe('link connection', () => {
     expect(closes).toEqual(['silence']);
   });
 
+  // An ssh link's stream is a plain Duplex, not a TLS socket: the same hello must run over it.
+  it('openConnection runs a full hello over a PassThrough duplex pair', async () => {
+    const ab = new PassThrough();
+    const ba = new PassThrough();
+    const sideA = bridge(ba, ab);
+    const sideB = bridge(ab, ba);
+    const fa: LinkFrame[] = [];
+    const fb: LinkFrame[] = [];
+    const [ca, cb] = await Promise.all([
+      openConnection(sideA, { hello: hello('m-aaaaaaaa'), now: () => Date.now(), log: quiet }),
+      openConnection(sideB, { hello: hello('m-bbbbbbbb'), now: () => Date.now(), log: quiet }),
+    ]);
+    if ('error' in ca || 'error' in cb) throw new Error('connection failed');
+    conns.push(ca, cb);
+    expect(ca.peerHello.machineId).toBe('m-bbbbbbbb');
+    expect(cb.peerHello.machineId).toBe('m-aaaaaaaa');
+    ca.start({ onFrame: (f) => fa.push(f), onClose: () => undefined });
+    cb.start({ onFrame: (f) => fb.push(f), onClose: () => undefined });
+    expect(ca.send({ t: 'view.close', viewId: 'v3' })).toBe(true);
+    cb.send({ t: 'revoked' });
+    await until(() => fa.length === 1 && fb.length === 1);
+    expect(fb).toEqual([{ t: 'view.close', viewId: 'v3' }]);
+    expect(fa).toEqual([{ t: 'revoked' }]);
+  });
+
   it('a socket closed by the peer reports closed once', async () => {
     const { a, b } = await socketPair();
     const closes: string[] = [];
@@ -196,6 +222,31 @@ describe('link connection', () => {
     expect(closes).toEqual(['closed']);
   });
 });
+
+/** A Duplex that reads `readable` and writes `writable`: one end of a two-way in-memory pipe. */
+function bridge(readable: PassThrough, writable: PassThrough): Duplex {
+  const d = new Duplex({
+    read() {
+      readable.resume();
+    },
+    write(chunk: Buffer, _enc, cb) {
+      writable.write(chunk, cb);
+    },
+    final(cb) {
+      writable.end(cb);
+    },
+    destroy(err, cb) {
+      readable.destroy();
+      writable.destroy();
+      cb(err);
+    },
+  });
+  readable.on('data', (chunk: Buffer) => {
+    if (!d.push(chunk)) readable.pause();
+  });
+  readable.on('end', () => d.push(null));
+  return d;
+}
 
 /** The socket surface the connection uses; writableLength is the test's to set. */
 class FakeSocket extends EventEmitter {

@@ -1,3 +1,4 @@
+import type { Duplex } from 'node:stream';
 import type tls from 'node:tls';
 import {
   type Capabilities,
@@ -8,8 +9,15 @@ import {
   LINK_PROTOCOL,
   type LinkFrame,
   type LinkState,
+  OWN_DEFAULT_CAPABILITIES,
 } from '../../src/contracts/link-protocol';
 import type { NetworkLinkView } from '../../src/contracts/network-state';
+import type {
+  AddSshPeerResult,
+  SshDial,
+  SshDialed,
+  SshEndpoint,
+} from '../../src/contracts/ssh-link';
 import { printableName } from '../../src/network/addresses';
 import type { LinkRecord } from '../../src/network/link-file';
 import {
@@ -26,9 +34,10 @@ import { type ConnectionError, type LinkConnection, openConnection } from './lin
 import type { LinkStore } from './link-store';
 import { dial, type NetLog } from './listener';
 
-// Owns every linked peer's connection and state (plan decisions 6 and 11). The socket a link gets
-// is already pinned to the stored server key by the listener or by dial; the hello check below adds
-// the owner key and machine id, so a peer whose identity changed never gets a frame through.
+// Owns every linked peer's connection and state (plan decisions 6 and 11). A TLS socket is already
+// pinned to the stored server key by the listener or by dial; an ssh stream is pinned by its hello
+// alone (plan decision 6), because the ssh session is the proof of access. The hello check below
+// adds the owner key and machine id, so a peer whose identity changed never gets a frame through.
 
 export type LinkView = Omit<NetworkLinkView, 'trust' | 'snapshot'>;
 
@@ -51,6 +60,8 @@ export interface LinkManagerDeps {
   onOwnerKey(pair: { publicKey: string; privateKey: string }): boolean;
   /** A live connection was swapped for a new one: frames on the old one may never have landed. */
   reconnected(machineId: string): void;
+  /** Opens the ssh child for an ssh peer; the bridge's preamble has already proved access. */
+  sshDial: SshDial;
   dialTimeoutMs?: number;
   pingMs?: number;
 }
@@ -61,6 +72,10 @@ export interface LinkManager {
   /** The listener's question for a pinned key: a live link or a recent tombstone, else unknown. */
   knows(peerKeyRaw: Buffer): boolean;
   accept(sock: tls.TLSSocket, peerKeyRaw: Buffer): void;
+  /** A controller came in over an ssh stream: its hello pins it, then the link runs as usual. */
+  acceptStream(stream: Duplex): void;
+  /** Dials an ssh target, pins the peer from its hello, and links it. */
+  addSshPeer(ssh: SshEndpoint): Promise<AddSshPeerResult>;
   add(record: LinkRecord): void;
   revoke(machineId: string): boolean;
   setCapability(machineId: string, capability: Capability, on: boolean): boolean;
@@ -93,6 +108,8 @@ const TERMINAL: readonly LinkState[] = ['revoked', 'incompatible', 'identity-cha
 const ownerMatches = (record: LinkRecord, helloOwner: string | null): boolean =>
   helloOwner === record.ownerKey || (record.ownerTransfer === 'send' && helloOwner === null);
 const b64 = (b: Buffer): string => b.toString('base64');
+/** A record with no ssh endpoint is one the peer dials, never us: we only accept its stream. */
+const dialable = (r: LinkRecord): boolean => r.transport === 'tls' || r.ssh !== null;
 const sameCapabilities = (x: Capabilities, y: Capabilities): boolean =>
   x.messaging === y.messaging && x.monitor === y.monitor && x.drive === y.drive;
 
@@ -160,7 +177,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
   const terminal = (p: Peer) => TERMINAL.includes(p.sm.state);
 
   const scheduleDial = (p: Peer, immediately: boolean): void => {
-    if (stopped || terminal(p) || p.conn || p.dialing) return;
+    if (stopped || terminal(p) || p.conn || p.dialing || !dialable(p.record)) return;
     p.cancelRetry?.();
     const delay = immediately ? 0 : backoffMs(p.attempt, deps.rand);
     p.cancelRetry = deps.after(() => {
@@ -170,9 +187,16 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
   };
 
   const dialPeer = async (p: Peer): Promise<void> => {
-    if (stopped || terminal(p) || p.conn || p.dialing) return;
+    if (stopped || terminal(p) || p.conn || p.dialing || !dialable(p.record)) return;
     p.dialing = true;
     event(p, { kind: 'dial', at: deps.now() });
+    const ssh = p.record.ssh;
+    if (p.record.transport === 'ssh' && ssh !== null) {
+      const dialed = deps.sshDial(ssh);
+      p.dialing = false;
+      await adopt(p, dialed.stream, deps.identity().machineId, dialed);
+      return;
+    }
     const expect = Buffer.from(p.record.serverKey, 'base64');
     let sock: tls.TLSSocket | null = null;
     for (const address of p.record.addresses) {
@@ -208,8 +232,13 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     await adopt(p, sock, deps.identity().machineId);
   };
 
-  /** Hello exchange, identity check and duplicate resolution for a fresh pinned socket. */
-  const adopt = async (p: Peer, sock: tls.TLSSocket, dialer: string): Promise<void> => {
+  /** Hello exchange for a known peer's fresh stream, then the same attach a TLS socket gets. */
+  const adopt = async (
+    p: Peer,
+    sock: Duplex,
+    dialer: string,
+    dialed?: SshDialed,
+  ): Promise<void> => {
     if (stopped || terminal(p)) {
       sock.destroy();
       return;
@@ -222,9 +251,62 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       pingMs: deps.pingMs,
     });
     if ('error' in opened) {
+      // The ssh child's exit says why it never got to a hello (host key, auth, bridge refusal).
+      if (dialed !== undefined)
+        deps.log.debug('link: ssh stream ended before hello', {
+          peer: p.record.machineId,
+          failure: await dialed.failure(),
+        });
       failed(p, opened.error);
       return;
     }
+    attach(p, opened, sentCapabilities, dialer);
+  };
+
+  /**
+   * The peer's record for an ssh hello, or why the hello can't pin one. One transport per peer
+   * while TLS is parked; a changed server key under a known machine id is never accepted.
+   */
+  const pinSshPeer = (
+    hello: HelloFrame,
+    ownerKey: string,
+    ssh: SshEndpoint | null,
+  ): { record: LinkRecord } | { error: 'identity-changed' | 'identity-conflict' } => {
+    const live = deps.store.get(hello.machineId);
+    if (live !== null) {
+      if (live.transport !== 'ssh') return { error: 'identity-conflict' };
+      if (live.serverKey !== hello.serverKey) return { error: 'identity-changed' };
+      return { record: live };
+    }
+    if (deps.store.conflicts(hello.machineId, hello.serverKey))
+      return { error: 'identity-changed' };
+    const name = printableName(hello.selfName, MAX_NAME_CHARS) ? hello.selfName : hello.machineId;
+    return {
+      record: deps.store.addSsh({
+        machineId: hello.machineId,
+        serverKey: hello.serverKey,
+        ownerKey,
+        name,
+        ssh,
+      }),
+    };
+  };
+
+  const markIdentityChanged = (machineId: string): void => {
+    const live = deps.store.get(machineId);
+    if (live !== null) event(ensurePeer(live), { kind: 'identity-changed', at: deps.now() });
+  };
+
+  /**
+   * Identity check, duplicate resolution and up, for a connection whose hello has arrived. TLS
+   * peers also check their owner key; ssh peers carry no owner semantics (plan decision 5).
+   */
+  const attach = (
+    p: Peer,
+    opened: LinkConnection,
+    sentCapabilities: Capabilities,
+    dialer: string,
+  ): void => {
     // The handshake takes time: a revoke or stop that landed meanwhile must win over this socket,
     // or a revoked link would keep a live connection the peer still believes in.
     if (stopped || terminal(p)) {
@@ -236,7 +318,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     if (
       hello.machineId !== p.record.machineId ||
       hello.serverKey !== p.record.serverKey ||
-      !ownerMatches(p.record, hello.ownerKey)
+      (p.record.transport === 'tls' && !ownerMatches(p.record, hello.ownerKey))
     ) {
       opened.close('identity-changed');
       event(p, { kind: 'identity-changed', at: deps.now() });
@@ -275,6 +357,82 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     if (p.record.ownerTransfer === 'send') sendOwnerKey(p, opened);
     if (replaced) deps.reconnected(p.record.machineId);
     deps.changed();
+  };
+
+  /** The controller's hello pins it: the bridge's preamble already proved this stream is ssh. */
+  const acceptSsh = async (stream: Duplex): Promise<void> => {
+    if (stopped) {
+      stream.destroy();
+      return;
+    }
+    const sent = { ...OWN_DEFAULT_CAPABILITIES };
+    const opened = await openConnection(stream, {
+      hello: ownHello(sent),
+      now: deps.now,
+      log: deps.log,
+      pingMs: deps.pingMs,
+    });
+    if ('error' in opened) return;
+    const hello = opened.peerHello;
+    if (hello.ownerKey === null) {
+      // A pinned ssh record stores the peer's owner key (plan decision 5); without one there is nothing to pin.
+      deps.log.warn('link: ssh peer without an owner key refused', { peer: hello.machineId });
+      opened.close('bad-hello');
+      return;
+    }
+    // A revoked peer that dials us only hears that it was revoked, as over TLS (tombstones by key).
+    const tomb = deps.store.byServerKey(hello.serverKey);
+    if (tomb !== null && 'tombstone' in tomb) {
+      opened.send({ t: 'revoked' });
+      opened.close('revoked');
+      return;
+    }
+    const pinned = pinSshPeer(hello, hello.ownerKey, null);
+    if ('error' in pinned) {
+      if (pinned.error === 'identity-changed') markIdentityChanged(hello.machineId);
+      opened.close(pinned.error);
+      return;
+    }
+    attach(ensurePeer(pinned.record), opened, sent, hello.machineId);
+  };
+
+  /** One ssh dial at a time per target: concurrent callers share its result. */
+  const adding = new Map<string, Promise<AddSshPeerResult>>();
+
+  const dialSshPeer = async (ssh: SshEndpoint): Promise<AddSshPeerResult> => {
+    const dialed = deps.sshDial(ssh);
+    const sent = { ...OWN_DEFAULT_CAPABILITIES };
+    const opened = await openConnection(dialed.stream, {
+      hello: ownHello(sent),
+      now: deps.now,
+      log: deps.log,
+      pingMs: deps.pingMs,
+    });
+    if ('error' in opened) {
+      if (opened.error === 'closed')
+        return {
+          ok: false,
+          error: (await dialed.failure()) ?? { code: 'ssh_failed', detail: 'closed' },
+        };
+      return { ok: false, error: { code: opened.error } };
+    }
+    const hello = opened.peerHello;
+    if (hello.ownerKey === null) {
+      opened.close('bad-hello');
+      return { ok: false, error: { code: 'bad-hello' } };
+    }
+    const pinned = pinSshPeer(hello, hello.ownerKey, ssh);
+    if ('error' in pinned) {
+      if (pinned.error === 'identity-changed') markIdentityChanged(hello.machineId);
+      opened.close(pinned.error);
+      return { ok: false, error: { code: pinned.error } };
+    }
+    const p = ensurePeer(pinned.record);
+    attach(p, opened, sent, deps.identity().machineId);
+    // attach keeps a live connection over a duplicate and refuses a terminal peer; only a link
+    // that is up for this target counts as added.
+    if (p.conn === null) return { ok: false, error: { code: 'ssh_failed', detail: 'not adopted' } };
+    return { ok: true, machineId: hello.machineId };
   };
 
   const sendOwnerKey = (p: Peer, conn: LinkConnection): void => {
@@ -322,6 +480,11 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     if (p.conn !== conn || terminal(p)) return;
     p.lastActivity = deps.now();
     if (p.sm.state === 'degraded') event(p, { kind: 'frame', at: deps.now() });
+    if ((f.t === 'owner' || f.t === 'owner.ack') && p.record.transport === 'ssh') {
+      // Owner keys never cross an ssh link: the ssh peer has no owner semantics (plan §4.2.7).
+      deps.log.warn('link: owner frame refused on ssh link', { peer: p.record.machineId });
+      return;
+    }
     switch (f.t) {
       case 'caps':
         if (p.peerHello) p.peerHello = { ...p.peerHello, capabilities: f.capabilities };
@@ -433,6 +596,17 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     },
     knows(peerKeyRaw) {
       return deps.store.byServerKey(b64(peerKeyRaw)) !== null;
+    },
+    acceptStream(stream) {
+      void acceptSsh(stream);
+    },
+    addSshPeer(ssh) {
+      const key = JSON.stringify([ssh.target, ssh.node, ssh.mainJs, ssh.userData]);
+      const running = adding.get(key);
+      if (running) return running;
+      const run = dialSshPeer(ssh).finally(() => adding.delete(key));
+      adding.set(key, run);
+      return run;
     },
     accept(sock, peerKeyRaw) {
       const found = deps.store.byServerKey(b64(peerKeyRaw));

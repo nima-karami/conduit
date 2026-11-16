@@ -23,6 +23,8 @@ const link: LinkRecord = {
   createdAt: ago(1),
   cert: 'PEM-B',
   ownerTransfer: null,
+  transport: 'tls',
+  ssh: null,
 };
 
 const tombstone = (revokedDaysAgo: number) => ({
@@ -43,6 +45,41 @@ describe('links file', () => {
   it('round-trips an empty file', () => {
     const empty: LinksFile = { version: 1, links: [], tombstones: [] };
     expect(parseLinksFile(serializeLinksFile(empty), NOW)).toEqual({ kind: 'ok', file: empty });
+  });
+
+  // Files written before ssh links existed have no transport; they are TLS links.
+  it('links.json without transport parses as tls', () => {
+    const { transport: _transport, ssh: _ssh, ...legacy } = link;
+    const parsed = parseLinksFile(JSON.stringify({ ...sample, links: [legacy] }), NOW);
+    expect(parsed.kind).toBe('ok');
+    if (parsed.kind !== 'ok') return;
+    expect(parsed.file.links[0]?.transport).toBe('tls');
+    expect(parsed.file.links[0]?.ssh).toBeNull();
+  });
+
+  it('ssh record round-trips with ssh null', () => {
+    const sshLink: LinkRecord = {
+      ...link,
+      machineId: 'm-0badcafe',
+      cert: '',
+      fingerprint: '',
+      addresses: [],
+      transport: 'ssh',
+      ssh: null,
+    };
+    const f: LinksFile = { version: 1, links: [sshLink], tombstones: [] };
+    expect(parseLinksFile(serializeLinksFile(f), NOW)).toEqual({ kind: 'ok', file: f });
+  });
+
+  it('an ssh endpoint with an empty field is corrupt', () => {
+    const bad = {
+      ...link,
+      transport: 'ssh',
+      ssh: { target: 'vm', node: '/usr/bin/node', mainJs: '', userData: '/home/u/.conduit' },
+    };
+    expect(parseLinksFile(JSON.stringify({ ...sample, links: [bad] }), NOW)).toEqual({
+      kind: 'corrupt',
+    });
   });
 
   it('serializes as one JSON line', () => {
