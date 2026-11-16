@@ -189,17 +189,60 @@ describe('listenStdioLink', () => {
     ]);
   });
 
-  it('caps pending connections: extras are destroyed, and too_many is audited once a second', async () => {
+  it('a full pending set evicts its oldest silent socket, and a good bridge still gets in', async () => {
+    const { endpoint, accepted } = await listen();
+    const silent: Socket[] = [];
+    const silentClosed: boolean[] = [];
+    for (let i = 0; i < 16; i++) {
+      const client = await connect(endpoint);
+      silent.push(client);
+      silentClosed.push(false);
+      client.once('close', () => {
+        silentClosed[i] = true;
+      });
+    }
+    // Let the server accept all sixteen before the bridge arrives; the accept order is the age order.
+    await new Promise((r) => setTimeout(r, 100));
+    const bridge = await connect(endpoint);
+    bridge.write(preamble(SECRET));
+
+    await until(() => accepted.length === 1);
+    await until(() => silentClosed[0] === true);
+    expect(silentClosed.slice(1).some((c) => c)).toBe(false);
+  });
+
+  it('accepted links leave pending, so a later bridge is never evicted with them', async () => {
+    const { endpoint, accepted } = await listen();
+    const clients: Socket[] = [];
+    for (let i = 0; i < 16; i++) {
+      const client = await connect(endpoint);
+      clients.push(client);
+      client.write(preamble(SECRET));
+      await until(() => accepted.length === i + 1);
+    }
+    let firstClosed = false;
+    accepted[0]?.once('close', () => {
+      firstClosed = true;
+    });
+    const late = await connect(endpoint);
+    late.write(preamble(SECRET));
+    await until(() => accepted.length === 17);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(firstClosed).toBe(false);
+  });
+
+  it('a flood past the cap evicts the oldest, and audits too_many once a second', async () => {
     const { endpoint, audit: a } = await listen();
-    let closed = 0;
+    const closedIndexes: number[] = [];
     for (let i = 0; i < 20; i++) {
       const client = await connect(endpoint);
       client.once('close', () => {
-        closed += 1;
+        closedIndexes.push(i);
       });
     }
-    // Sixteen stay pending until their 5 s timeout; the other four are destroyed at once.
-    await until(() => closed === 4);
+    // Four newcomers past sixteen each evict the oldest silent socket still waiting.
+    await until(() => closedIndexes.length === 4);
+    expect([...closedIndexes].sort((x, y) => x - y)).toEqual([0, 1, 2, 3]);
     const tooMany = a.events.filter((e) => e.detail?.reason === 'too_many');
     expect(tooMany).toHaveLength(1);
   });

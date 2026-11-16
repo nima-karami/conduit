@@ -13,8 +13,10 @@ import type { NetLog } from './listener';
 // see docs/plans/2026-11-16-remote-ssh-stdio-link.plan.md decision 1 and Task 3.1
 
 const PREAMBLE_TIMEOUT_MS = 5_000;
-// Pending means no valid preamble yet. On Windows any local user can open the pipe, so the count
-// caps what a flood can hold, and the audit line is rate-limited so audit.jsonl cannot grow with it.
+// Pending means no valid preamble yet. On Windows any local user can open the pipe, so a full set
+// evicts its oldest entry rather than refusing the newcomer: the real bridge writes its preamble at
+// once, so it is pending for milliseconds, and a flood of silent sockets cannot hold it out.
+// The audit line is rate-limited so audit.jsonl cannot grow with a flood.
 const MAX_PENDING = 16;
 const TOO_MANY_AUDIT_MS = 1_000;
 
@@ -46,8 +48,12 @@ export async function listenStdioLink(o: StdioLinkEndpointOptions): Promise<Stdi
         lastTooManyAt = now;
         o.audit.record({ kind: 'bridge.refused', peer: null, detail: { reason: 'too_many' } });
       }
-      sock.destroy();
-      return;
+      // Removed from pending before destroy, so the newcomer is admitted in this same call.
+      const oldest = pending.values().next().value;
+      if (oldest !== undefined) {
+        pending.delete(oldest);
+        oldest.destroy();
+      }
     }
     sockets.add(sock);
     pending.add(sock);
