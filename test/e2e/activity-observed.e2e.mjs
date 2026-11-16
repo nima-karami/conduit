@@ -5,7 +5,7 @@
  *      Their output and file contents are FIXTURE-SECRET-* text. Two observed rows must appear: one
  *      carrying the command's first line, one carrying the changed path.
  *   2. a fake Claude's PostToolUse reaches the host through the real hook command Conduit wrote into
- *      the session's --settings file, with the endpoint and token from the session's --mcp-config.
+ *      the session's --settings file, with the endpoint and token from the launched process's env.
  *      Its tool_response carries FIXTURE-SECRET-* text. One observed row must name Claude Code.
  * In both, no file under the activity directory may hold any FIXTURE-SECRET-* text.
  */
@@ -17,6 +17,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -162,6 +163,49 @@ function codexItems(work, filePath) {
   ];
 }
 
+/**
+ * The endpoint and token Conduit put in the launched fake's env. The fake does not log its env and
+ * the settings file and MCP config do not carry them, so the running process is read from /proc:
+ * its argv names this profile's records directory and FAKE_HOOKS, and its cwd is the launch's cwd.
+ */
+function launchedEnvOf(start) {
+  if (!existsSync('/proc/self/environ')) throw new Error('reading the launched env needs /proc');
+  const pids = [];
+  for (const pid of readdirSync('/proc')) {
+    if (!/^\d+$/.test(pid)) continue;
+    let argv;
+    let cwd;
+    try {
+      argv = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0');
+      cwd = readlinkSync(`/proc/${pid}/cwd`);
+    } catch {
+      // The process exited between listing and reading; it is not the launched fake.
+      continue;
+    }
+    const dirAt = argv.indexOf('--dir');
+    if (
+      argv.includes(FAKE_HOOKS) &&
+      dirAt >= 0 &&
+      argv[dirAt + 1] === recordsDir &&
+      cwd === start.cwd
+    )
+      pids.push(pid);
+  }
+  assert(
+    pids.length === 1,
+    `expected one launched fake claude in ${start.cwd}, found ${pids.length}: ${pids.join(', ')}`,
+  );
+  const env = {};
+  for (const pair of readFileSync(`/proc/${pids[0]}/environ`, 'utf8').split('\0')) {
+    const eq = pair.indexOf('=');
+    if (eq > 0) env[pair.slice(0, eq)] = pair.slice(eq + 1);
+  }
+  return {
+    CONDUIT_MCP_ENDPOINT: env.CONDUIT_MCP_ENDPOINT,
+    CONDUIT_SESSION_TOKEN: env.CONDUIT_SESSION_TOKEN,
+  };
+}
+
 /** Run the hook command Conduit wrote, with the payload on stdin, as Claude does. */
 function runHookCommand(command, payload, env) {
   return new Promise((resolve, reject) => {
@@ -275,12 +319,13 @@ await runScenario(
       typeof hookCommand === 'string' && hookCommand.includes('hook PostToolUse'),
       `no PostToolUse hook command in the launch settings: ${JSON.stringify(settings.hooks)}`,
     );
-    const mcp = JSON.parse(readFileSync(argvOf('--mcp-config'), 'utf8'));
-    const hookEnv = mcp.mcpServers?.conduit?.env ?? {};
+    // The hook client reads its endpoint and token from its own env, which Claude inherits from
+    // the launch (host.ts spawn env). Neither the settings file nor the MCP config carries them.
+    const hookEnv = launchedEnvOf(start);
     assert(
       typeof hookEnv.CONDUIT_MCP_ENDPOINT === 'string' &&
         typeof hookEnv.CONDUIT_SESSION_TOKEN === 'string',
-      `the MCP config has no endpoint or token for the hook client: ${JSON.stringify(Object.keys(hookEnv))}`,
+      `the launched claude has no endpoint or token in its env: ${JSON.stringify(Object.keys(hookEnv))}`,
     );
 
     const fixture = JSON.parse(
