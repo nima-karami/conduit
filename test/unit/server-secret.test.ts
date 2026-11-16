@@ -3,8 +3,17 @@ import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { writeServerSecret } from '../../server/lifecycle/server-secret';
-import { readServerSecret, SERVER_SECRET_FILE } from '../../src/server-secret';
+import {
+  removeServerVersion,
+  writeServerSecret,
+  writeServerVersion,
+} from '../../server/lifecycle/server-secret';
+import {
+  readServerSecret,
+  readServerVersion,
+  SERVER_SECRET_FILE,
+  SERVER_VERSION_FILE,
+} from '../../src/server-secret';
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -48,5 +57,45 @@ describe('server secret file', () => {
 
   it('readServerSecret is null when no file exists', async () => {
     expect(readServerSecret(await userData())).toBeNull();
+  });
+});
+
+describe('server version record', () => {
+  it.skipIf(process.platform === 'win32')('holds the version and link major, 0600', async () => {
+    const dir = await userData();
+    writeServerVersion(dir, { version: '1.2.3', linkMajor: 1 });
+    const file = path.join(dir, SERVER_VERSION_FILE);
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    expect(readServerVersion(dir)).toEqual({ version: '1.2.3', linkMajor: 1 });
+  });
+
+  it('readServerVersion is null when no file exists', async () => {
+    expect(readServerVersion(await userData())).toBeNull();
+  });
+
+  it('readServerVersion is null for a record that is not the version shape', async () => {
+    const dir = await userData();
+    const bad = [
+      '',
+      '1.2.3',
+      '{',
+      '[]',
+      '{"version":"1.2.3"}',
+      '{"version":1,"linkMajor":1}',
+      '{"version":"1.2.3","linkMajor":"1"}',
+      '{"version":"1.2.3","linkMajor":1.5}',
+    ];
+    for (const contents of bad) {
+      writeFileSync(path.join(dir, SERVER_VERSION_FILE), contents);
+      expect(readServerVersion(dir), contents).toBeNull();
+    }
+  });
+
+  it('removeServerVersion removes the record and is quiet when none exists', async () => {
+    const dir = await userData();
+    removeServerVersion(dir);
+    writeServerVersion(dir, { version: '1.2.3', linkMajor: 1 });
+    removeServerVersion(dir);
+    expect(readServerVersion(dir)).toBeNull();
   });
 });

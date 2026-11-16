@@ -1,11 +1,6 @@
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  type HcCliDeps,
-  killSupervisor,
-  startSupervisor,
-  supervisorEnv,
-} from '../../electron/hc-cli';
+import { killSupervisor } from '../../electron/hc-cli';
 import {
   directStopAll,
   directStopSessions,
@@ -15,6 +10,11 @@ import {
   serverChildEnv,
   serverProcessEnv,
 } from '../../server/hc-cli';
+import {
+  type HcCliDeps,
+  startSupervisor,
+  supervisorEnv,
+} from '../../server/lifecycle/hc-supervisor';
 import type { HcClient } from '../../src/contracts/hc';
 import {
   CORE_START_RUN_FLAGS,

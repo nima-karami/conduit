@@ -1,7 +1,8 @@
 import { posix, win32 } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { killSupervisor, supervisorEnv } from '../../electron/hc-cli';
+import { killSupervisor } from '../../electron/hc-cli';
 import { serverChildEnv, serverProcessEnv } from '../../server/hc-cli';
+import { supervisorEnv } from '../../server/lifecycle/hc-supervisor';
 import { coreStartEnv } from '../../src/contracts/session-identity';
 import { resolveHcEndpoint } from '../../src/hc-client/endpoint';
 import { instanceNames } from '../../src/instance-names';

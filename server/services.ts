@@ -274,6 +274,7 @@ export function createServices(o: ServicesOptions) {
           sshArgsPrefix: sshArgs.kind === 'prefix' ? sshArgs.argv : undefined,
           dir: networkDir,
           userData: o.userData,
+          appVersion: o.appVersion,
           instance: o.names.instance,
           linkEndpoint: o.names.linkEndpoint,
           secret: o.secret,

@@ -3,8 +3,8 @@ import path from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { transformSync } from 'esbuild';
 import { describe, expect, it, vi } from 'vitest';
-import { supervisorArgs, supervisorEnv } from '../../electron/hc-cli';
 import type { ServerLifecycleDeps } from '../../electron/server-lifecycle';
+import { supervisorArgs, supervisorEnv } from '../../server/lifecycle/hc-supervisor';
 import { SHIM_LEAF } from '../../src/conduit-mcp/install-entries';
 
 // Run the production startup boundary without loading Electron's native UI and global app setup.
