@@ -1519,6 +1519,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   };
   const policyService = createPolicyService({
     policyIo: deps.policyIo ?? createRequestsIo(path.join(deps.dir, 'policy.json')),
+    lastGoodIo: createRequestsIo(path.join(deps.dir, 'policy.last-good.json')),
     grantsIo: deps.grantsIo ?? createRequestsIo(path.join(deps.dir, 'grants.json')),
     activityIo: deps.activityIo ?? createActivityIo(deps.dir),
     now,

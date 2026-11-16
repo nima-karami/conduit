@@ -48,6 +48,7 @@ import {
 
 export interface PolicyServiceDeps {
   policyIo: RequestsIo;
+  lastGoodIo: RequestsIo;
   grantsIo: RequestsIo;
   activityIo: ActivityIo;
   now(): number;
@@ -126,6 +127,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
   let policyWritable = true;
   let grantsWritable = true;
   let policyDirty = false;
+  let lastGoodDirty = false;
   let grantsDirty = false;
   let writeTimer: unknown = null;
   let tickTimer: unknown = null;
@@ -190,13 +192,34 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     }
   }
 
+  // A load writes the copy at once: a timer here would hold the server's first write window open.
+  function writeLastGood(): void {
+    if (!policyWritable) return;
+    const w = save(deps.lastGoodIo, 'policy.last-good.json', serializePolicyFile(file), () => {
+      lastGoodDirty = true;
+      scheduleWrite();
+    });
+    pending.add(w);
+    void w.then(() => pending.delete(w));
+  }
+
   function flush(): Promise<void> {
     const writes: Promise<void>[] = [];
     if (policyDirty && policyWritable) {
       policyDirty = false;
+      lastGoodDirty = true;
       writes.push(
         save(deps.policyIo, 'policy.json', serializePolicyFile(file), () => {
           policyDirty = true;
+          scheduleWrite();
+        }),
+      );
+    }
+    if (lastGoodDirty && policyWritable) {
+      lastGoodDirty = false;
+      writes.push(
+        save(deps.lastGoodIo, 'policy.last-good.json', serializePolicyFile(file), () => {
+          lastGoodDirty = true;
           scheduleWrite();
         }),
       );
@@ -222,19 +245,48 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     return Promise.all(writes).then(() => undefined);
   }
 
-  // Fail closed: an unreadable file never means an empty policy. The pre-upgrade settings
-  // stay in force, read-only, so nothing a user set before the upgrade stops applying.
+  function readLastGood(): PolicyFile | null {
+    let text: string | null;
+    try {
+      text = deps.lastGoodIo.read();
+    } catch (e) {
+      deps.warn('policy.last-good.json could not be read', e);
+      return null;
+    }
+    if (text === null) return null;
+    const parsed = parsePolicyFile(text);
+    if (!parsed.ok) {
+      deps.warn('policy.last-good.json is unreadable');
+      return null;
+    }
+    return parsed.file;
+  }
+
+  // Fail closed: an unreadable file never means an empty or a widened policy. The last copy
+  // this server read or wrote stays in force, read-only; with none, every session is Observer.
   function unreadablePolicy(why: string, e?: unknown): void {
     policyWritable = false;
     deps.warn(`${why}; policy is read-only and not saved`, e);
-    file = { ...emptyFile(), ...migrateLegacyPolicy(deps.legacy()) };
+    const good = readLastGood();
+    file = good ?? {
+      ...emptyFile(),
+      assignments: [
+        {
+          point: { kind: 'default' },
+          assignment: { profileId: 'observer', exceptions: [], onScreenOnly: false },
+        },
+      ],
+    };
     activity.record({
       lane: 'note',
       principal: { handle: null, sessionId: null, machineId: null },
       cli: null,
       action: 'policy-unreadable',
       target: null,
-      summary: 'Permissions file unreadable; using pre-upgrade settings',
+      summary:
+        good === null
+          ? 'Permissions file unreadable and no saved copy; every session is Observer'
+          : 'Permissions file unreadable; using the last saved copy',
       decision: null,
       decidedBy: 'conduit',
       outcome: null,
@@ -285,6 +337,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       return;
     }
     file = parsed.file;
+    writeLastGood();
   }
 
   function loadGrants(): void {

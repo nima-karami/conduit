@@ -82,6 +82,7 @@ const grant = (over: Partial<Grant> = {}): Grant => ({
 
 interface Opts {
   policy?: string | null;
+  lastGood?: string | null;
   grants?: string | null;
   activityFails?: boolean;
   writeFails?: boolean;
@@ -103,6 +104,14 @@ function harness(o: Opts = {}) {
     write: async (t) => {
       if (writeDown) throw new Error('disk full');
       policyWrites.push(t);
+    },
+  };
+  const lastGoodWrites: string[] = [];
+  const lastGoodIo: RequestsIo = {
+    read: () => o.lastGood ?? null,
+    write: async (t) => {
+      if (writeDown) throw new Error('disk full');
+      lastGoodWrites.push(t);
     },
   };
   const grantsIo: RequestsIo = {
@@ -127,6 +136,7 @@ function harness(o: Opts = {}) {
 
   const deps: PolicyServiceDeps = {
     policyIo,
+    lastGoodIo,
     grantsIo,
     activityIo,
     now: () => now,
@@ -168,6 +178,7 @@ function harness(o: Opts = {}) {
     deps,
     fire,
     policyWrites,
+    lastGoodWrites,
     grantWrites,
     activityRows,
     warnings,
@@ -1026,20 +1037,41 @@ describe('policy service', () => {
     expect(h.warnings.some((m) => m.includes('grants.json'))).toBe(true);
   });
 
-  it('an unreadable policy.json evaluates the pre-upgrade settings, read-only', async () => {
-    vi.mocked(migrateLegacyPolicy).mockReturnValueOnce({
+  it.each([
+    ['unreadable', '{not json'],
+    ['newer', '{"version":99,"profiles":[],"assignments":[],"overrides":[]}'],
+  ])('a %s policy.json loads the last-good copy, read-only', async (_kind, policy) => {
+    const good = policyText({
       assignments: [
         {
           point: { kind: 'session', sessionId: 's1' },
           assignment: { profileId: 'observer', exceptions: [], onScreenOnly: false },
         },
       ],
-      migratedFrom: 'v0.64',
-      notes: { onScreenOnlyOffered: [] },
     });
-    const h = harness({ policy: '{not json' });
+    const h = harness({ policy, lastGood: good });
     h.service.start();
 
+    expect(h.service.ui([sessionRow('s1')]).sessions.s1?.profileId).toBe('observer');
+    expect(h.service.ui([sessionRow('s1')]).readOnly).toBe(true);
+    expect(migrateLegacyPolicy).not.toHaveBeenCalled();
+    const notes = h.activityRows().filter((r) => r.action === 'policy-unreadable');
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatchObject({
+      lane: 'note',
+      summary: 'Permissions file unreadable; using the last saved copy',
+    });
+    h.fire(WRITE_MS);
+    await h.service.stop();
+    expect(h.policyWrites).toEqual([]);
+    expect(h.lastGoodWrites).toEqual([]);
+  });
+
+  it('an unreadable policy.json with no good copy makes every session Observer, read-only', async () => {
+    const h = harness({ policy: '{not json', lastGood: null });
+    h.service.start();
+
+    expect(migrateLegacyPolicy).not.toHaveBeenCalled();
     expect(h.service.ui([sessionRow('s1')]).sessions.s1?.profileId).toBe('observer');
     expect(h.service.ui([sessionRow('s1')]).readOnly).toBe(true);
     expect(
@@ -1051,15 +1083,28 @@ describe('policy service', () => {
         toYou: false,
       }).decision,
     ).toBe('deny');
-    const notes = h.activityRows().filter((r) => r.action === 'policy-unreadable');
-    expect(notes).toHaveLength(1);
-    expect(notes[0]).toMatchObject({
-      lane: 'note',
-      summary: 'Permissions file unreadable; using pre-upgrade settings',
-    });
     h.fire(WRITE_MS);
     await h.service.stop();
     expect(h.policyWrites).toEqual([]);
+    expect(h.lastGoodWrites).toEqual([]);
+  });
+
+  it('a successful load and a save each write the last-good copy', async () => {
+    const h = harness({ policy: policyText() });
+    h.service.start();
+    h.fire(WRITE_MS);
+    expect(h.lastGoodWrites).toHaveLength(1);
+    expect(parsePolicyFile(h.lastGoodWrites[0] ?? '').ok).toBe(true);
+
+    expect(h.service.setAssignment({ kind: 'default' }, 'lead')).toEqual({ ok: true });
+    h.fire(WRITE_MS);
+    await h.settle();
+    const last = h.lastGoodWrites.at(-1) ?? '';
+    expect(parsePolicyFile(last)).toMatchObject({
+      ok: true,
+      file: { assignments: [{ point: { kind: 'default' }, assignment: { profileId: 'lead' } }] },
+    });
+    await h.service.stop();
   });
 
   it('allowOnce does not duplicate an existing override', async () => {

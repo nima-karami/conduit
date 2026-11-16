@@ -194,6 +194,7 @@ export const SERVER_FILE_VERSION = {
   'conduit-mcp/messages.log': 1,
   'conduit-mcp/requests.json': 1,
   'conduit-mcp/policy.json': 1,
+  'conduit-mcp/policy.last-good.json': 1,
   'conduit-mcp/grants.json': 1,
   'conduit-mcp/activity/<day>.jsonl': 1,
   'conduit-mcp/activity/ask-args.json': 1,
