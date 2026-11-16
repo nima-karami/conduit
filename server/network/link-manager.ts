@@ -78,6 +78,15 @@ export interface LinkManager {
   /** Dials an ssh target, pins the peer from its hello, and links it. */
   addSshPeer(ssh: SshEndpoint): Promise<AddSshPeerResult>;
   add(record: LinkRecord): void;
+  /**
+   * Clears `enabled` on a pinned ssh machine and closes its link, so nothing redials it. False for an
+   * unknown peer, or one whose record has no machine block to hold the flag (plan decision 1).
+   */
+  disconnect(machineId: string): boolean;
+  /** Sets `enabled` and redials now. False under the same conditions as disconnect. */
+  enable(machineId: string): boolean;
+  /** Resolves true once the link is up; false at ms, on abort, or once the peer is terminal. */
+  waitUp(machineId: string, ms: number, signal: AbortSignal): Promise<boolean>;
   revoke(machineId: string): boolean;
   setCapability(machineId: string, capability: Capability, on: boolean): boolean;
   setAddresses(machineId: string, addresses: string[]): boolean;
@@ -109,6 +118,8 @@ const TERMINAL: readonly LinkState[] = ['revoked', 'incompatible', 'identity-cha
 const ownerMatches = (record: LinkRecord, helloOwner: string | null): boolean =>
   helloOwner === record.ownerKey || (record.ownerTransfer === 'send' && helloOwner === null);
 const b64 = (b: Buffer): string => b.toString('base64');
+// A tick this many intervals apart means the process slept: timers fire late, so redial now.
+const WAKE_GAP_FACTOR = 3;
 /** A record with no ssh endpoint is one the peer dials, never us: we only accept its stream. */
 const dialable = (r: LinkRecord): boolean => r.transport === 'tls' || r.ssh !== null;
 const sameCapabilities = (x: Capabilities, y: Capabilities): boolean =>
@@ -133,6 +144,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
         });
       }
       deps.changed();
+      for (const wake of [...waiters]) wake();
     }
   };
 
@@ -176,9 +188,14 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
   };
 
   const terminal = (p: Peer) => TERMINAL.includes(p.sm.state);
+  /** Read from the store, not the peer: the machine block is written after the peer is pinned. */
+  const enabledInStore = (machineId: string): boolean =>
+    deps.store.get(machineId)?.machine?.enabled !== false;
+  const waiters = new Set<() => void>();
 
   const scheduleDial = (p: Peer, immediately: boolean): void => {
     if (stopped || terminal(p) || p.conn || p.dialing || !dialable(p.record)) return;
+    if (!enabledInStore(p.record.machineId)) return;
     p.cancelRetry?.();
     const delay = immediately ? 0 : backoffMs(p.attempt, deps.rand);
     p.cancelRetry = deps.after(() => {
@@ -189,6 +206,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
 
   const dialPeer = async (p: Peer): Promise<void> => {
     if (stopped || terminal(p) || p.conn || p.dialing || !dialable(p.record)) return;
+    if (!enabledInStore(p.record.machineId)) return;
     p.dialing = true;
     event(p, { kind: 'dial', at: deps.now() });
     const ssh = p.record.ssh;
@@ -345,6 +363,11 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     if (stopped || terminal(p)) {
       if (p.sm.state === 'revoked') opened.send({ t: 'revoked' });
       opened.close(stopped ? 'shutdown' : p.sm.state);
+      return;
+    }
+    // A disconnect that landed during this peer's hello must win over its stream, as a revoke does.
+    if (!enabledInStore(p.record.machineId)) {
+      opened.close('disconnect');
       return;
     }
     const hello = opened.peerHello;
@@ -604,6 +627,13 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     }
   };
 
+  // Every down ssh peer, enabled ones only, dials now: its backoff was counting time the machine slept.
+  const wake = (): void => {
+    for (const p of peers.values()) {
+      if (p.record.transport === 'ssh' && p.sm.state === 'down') scheduleDial(p, true);
+    }
+  };
+
   const viewOf = (p: Peer): LinkView => {
     const peerFeatures = p.peerHello?.features ?? null;
     return {
@@ -629,7 +659,11 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       stopped = false;
       for (const record of deps.store.links()) scheduleDial(ensurePeer(record), true);
       const every = deps.pingMs ?? LINK_PING_MS;
+      let lastTickAt = deps.now();
       const loop = (): void => {
+        const at = deps.now();
+        if (at - lastTickAt > WAKE_GAP_FACTOR * every) wake();
+        lastTickAt = at;
         tick();
         cancelTicker = deps.after(loop, every);
       };
@@ -694,6 +728,60 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       if (terminal(p)) p.sm = initialLinkState(deps.now());
       deps.changed();
       scheduleDial(p, true);
+    },
+    disconnect(machineId) {
+      const meta = deps.store.get(machineId)?.machine ?? null;
+      if (meta === null) return false;
+      const next = deps.store.setMachine(machineId, { ...meta, enabled: false });
+      if (next === null) return false;
+      const p = ensurePeer(next);
+      p.cancelRetry?.();
+      p.cancelRetry = null;
+      const conn = p.conn;
+      // Detached before close, so its onClose sees no live connection and leaves the state to this.
+      p.conn = null;
+      p.dialer = null;
+      conn?.close('disconnect');
+      event(p, { kind: 'closed', at: deps.now() });
+      deps.changed();
+      return true;
+    },
+    enable(machineId) {
+      const meta = deps.store.get(machineId)?.machine ?? null;
+      if (meta === null) return false;
+      const next = deps.store.setMachine(machineId, { ...meta, enabled: true });
+      if (next === null) return false;
+      const p = ensurePeer(next);
+      p.attempt = 0;
+      scheduleDial(p, true);
+      deps.changed();
+      return true;
+    },
+    waitUp(machineId, ms, signal) {
+      const isUp = () => peerOf(machineId)?.sm.state === 'up';
+      const isTerminal = () => {
+        const p = peerOf(machineId);
+        return p !== null && terminal(p);
+      };
+      if (isUp()) return Promise.resolve(true);
+      if (signal.aborted || isTerminal()) return Promise.resolve(false);
+      return new Promise<boolean>((resolve) => {
+        let cancelTimer: (() => void) | null = null;
+        const settleWith = (ok: boolean) => {
+          waiters.delete(check);
+          signal.removeEventListener('abort', onAbort);
+          cancelTimer?.();
+          resolve(ok);
+        };
+        const onAbort = () => settleWith(false);
+        const check = () => {
+          if (isUp()) settleWith(true);
+          else if (isTerminal()) settleWith(false);
+        };
+        waiters.add(check);
+        signal.addEventListener('abort', onAbort, { once: true });
+        cancelTimer = deps.after(() => settleWith(false), ms);
+      });
     },
     revoke(machineId) {
       const p = peerOf(machineId);
