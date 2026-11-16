@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { connect as netConnect } from 'node:net';
+import { c2AuthIfRunning } from './c2-auth.mjs';
 import { resolveHcBinary } from './hc-binary.mjs';
 import { findByCmdline, readProcTable } from './proc-table.mjs';
 
@@ -74,13 +75,14 @@ export function stopHc({ exec, bin, names, inheritedEnv, log }) {
 
 /**
  * C2 `server.stopAll`. Resolves with an outcome; never rejects.
- * @param {{ endpoint: string, appVersion: string, connect?: typeof netConnect,
+ * @param {{ endpoint: string, appVersion: string, auth?: string, connect?: typeof netConnect,
  *   connectTimeoutMs?: number, answerTimeoutMs?: number }} o
  * @returns {Promise<{ outcome: 'no-server' | 'stopped' | 'closed' | 'timeout' | 'error', detail?: string }>}
  */
 export function stopAllViaServer({
   endpoint,
   appVersion,
+  auth,
   connect = netConnect,
   connectTimeoutMs = STOP_ALL_CONNECT_TIMEOUT_MS,
   answerTimeoutMs = STOP_ALL_ANSWER_TIMEOUT_MS,
@@ -109,7 +111,11 @@ export function stopAllViaServer({
     });
     sock.on('close', () => done({ outcome: 'closed' }));
     sock.on('connect', () =>
-      send(1, 'hello', { appVersion, generation: SERVER_PROTOCOL_GENERATION }),
+      send(1, 'hello', {
+        appVersion,
+        generation: SERVER_PROTOCOL_GENERATION,
+        ...(auth !== undefined ? { auth } : {}),
+      }),
     );
     sock.on('data', (chunk) => {
       buf += chunk;
@@ -323,7 +329,11 @@ export async function teardownScenarioServer({
     const version =
       appVersion ??
       JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
-    const r = await stopAll({ endpoint: names.serverEndpoint, appVersion: version });
+    const r = await stopAll({
+      endpoint: names.serverEndpoint,
+      appVersion: version,
+      auth: c2AuthIfRunning(userDataDir),
+    });
     log(`teardown: server.stopAll ${r.outcome}${r.detail ? ` (${r.detail})` : ''}`);
     stopHc({ exec, bin, names, inheritedEnv: env, log });
     // An injected exec is a simulated world: the real process table says nothing about it.

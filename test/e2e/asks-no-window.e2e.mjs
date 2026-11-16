@@ -9,6 +9,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { APP_VERSION } from './auto-resume-helpers.mjs';
+import { c2Auth } from './c2-auth.mjs';
 import { C2 } from './c2-peer.mjs';
 import {
   fakeAgentProfile,
@@ -33,7 +34,11 @@ async function serverClient(userDataDir) {
     async () => {
       try {
         c2 = await C2.open(serverEndpoint);
-        await c2.call('hello', { appVersion: APP_VERSION, generation: SERVER_PROTOCOL_GENERATION });
+        await c2.call('hello', {
+          appVersion: APP_VERSION,
+          generation: SERVER_PROTOCOL_GENERATION,
+          auth: c2Auth(userDataDir),
+        });
         return true;
       } catch {
         c2?.close();

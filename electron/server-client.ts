@@ -36,6 +36,8 @@ export interface ServerClientOptions {
   endpoint: string;
   appVersion: string;
   connect?: () => Duplex;
+  /** Read at every open, so a server restarted under a new secret is joined without a relaunch. */
+  readSecret: () => string | null;
   log: AppLog;
 }
 
@@ -106,6 +108,14 @@ export class ServerClient {
     this.state = 'opening';
     return new Promise<Hello>((resolve, reject) => {
       let socket: Duplex;
+      let auth: string | null;
+      try {
+        auth = this.o.readSecret();
+      } catch (error) {
+        this.state = 'closed';
+        reject(new ServerCallError('disconnected', String(error)));
+        return;
+      }
       try {
         socket = this.o.connect ? this.o.connect() : openSocket(this.o.endpoint);
       } catch (error) {
@@ -150,6 +160,7 @@ export class ServerClient {
       this.request('hello', {
         appVersion: this.o.appVersion,
         generation: SERVER_PROTOCOL_GENERATION,
+        ...(auth !== null ? { auth } : {}),
       }).then(
         (hello) => {
           clearTimeout(timer);

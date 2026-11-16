@@ -186,7 +186,12 @@ describe('server connection waits', () => {
       const calls = createServerCalls(() => null);
       const first = calls.whenConnected(50);
       const second = calls.whenConnected(50);
-      const client = new ServerClient({ endpoint: '/unused', appVersion: '1', log: () => {} });
+      const client = new ServerClient({
+        endpoint: '/unused',
+        appVersion: '1',
+        readSecret: () => null,
+        log: () => {},
+      });
       calls.connected(client);
       await expect(first).resolves.toBe(client);
       await expect(second).resolves.toBe(client);

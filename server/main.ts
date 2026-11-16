@@ -7,6 +7,7 @@ import type { InstanceNames } from '../src/contracts/session-identity';
 import { instanceNames } from '../src/instance-names';
 import { formatRecord } from '../src/logging';
 import { runtimeBinaryName } from '../src/runtime-binary';
+import { readServerSecret } from '../src/server-secret';
 import { compose } from './compose';
 import { directStopAll, hcBinaryOf, hcClient, serverChildEnv, startCore, stopCore } from './hc-cli';
 import { argValue, requireUserData } from './lifecycle/cli-args';
@@ -49,6 +50,8 @@ export async function runServer(
     const result = await stopAll({
       endpoint: names.serverEndpoint,
       version,
+      // The running server wrote this file at its start; without it stop-all is refused and falls back.
+      auth: readServerSecret(userData) ?? undefined,
       directFallback:
         dependencies.directFallback ??
         (() =>

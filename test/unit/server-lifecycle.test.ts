@@ -161,7 +161,12 @@ async function harness(
     app: o.app,
     client: () => {
       clients++;
-      const c = new ServerClient({ endpoint: c2.endpoint, appVersion: APP_VERSION, log: () => {} });
+      const c = new ServerClient({
+        endpoint: c2.endpoint,
+        appVersion: APP_VERSION,
+        readSecret: () => null,
+        log: () => {},
+      });
       const openIt = c.open.bind(c);
       c.open = () => {
         const opening = openIt();

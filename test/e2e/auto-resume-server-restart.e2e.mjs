@@ -23,6 +23,7 @@ import {
   waitForSubmits,
   workFolder,
 } from './auto-resume-helpers.mjs';
+import { c2Auth } from './c2-auth.mjs';
 import { C2 } from './c2-peer.mjs';
 import {
   assert,
@@ -43,10 +44,14 @@ const profile = autoResumeProfile('auto-resume-restart');
 const { fake } = profile;
 
 /** `server.restart` from a test client; resolves once the connection has closed. */
-async function restartServer(endpoint) {
+async function restartServer(endpoint, userData) {
   const c2 = await C2.open(endpoint);
   const closed = new Promise((resolve) => c2.socket.once('close', resolve));
-  await c2.call('hello', { appVersion: APP_VERSION, generation: SERVER_PROTOCOL_GENERATION });
+  await c2.call('hello', {
+    appVersion: APP_VERSION,
+    generation: SERVER_PROTOCOL_GENERATION,
+    auth: c2Auth(userData),
+  });
   // The server may drop the connection before it answers, which C2 reports as a rejection.
   const outcome = c2.call('server.restart', { reason: 'user' }).then(
     (result) => ({ result }),
@@ -95,6 +100,7 @@ await runScenario(
       await closeApp(app, page);
       const reply = await restartServer(
         teardownNames(userDataDir, process.platform, tmpdir()).serverEndpoint,
+        userDataDir,
       );
       log(`server.restart reply: ${JSON.stringify(reply)}`);
       assert(

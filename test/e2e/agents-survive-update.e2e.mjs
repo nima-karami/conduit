@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { c2Auth } from './c2-auth.mjs';
 import { C2 } from './c2-peer.mjs';
 import { FAKE_AGENT, NOTICE, until } from './conduit-mcp-helpers.mjs';
 import { assert, finishScenario, makeLog, REPO, resolveHcBinary } from './harness.mjs';
@@ -118,7 +119,11 @@ async function run() {
         ),
         'server did not accept C2',
       );
-      const hello = await c2.call('hello', { appVersion: version, generation: 1 });
+      const hello = await c2.call('hello', {
+        appVersion: version,
+        generation: 1,
+        auth: c2Auth(userData),
+      });
       await c2.call('events.subscribe');
       return hello;
     };

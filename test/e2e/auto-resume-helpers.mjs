@@ -18,6 +18,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { c2Auth } from './c2-auth.mjs';
 import { C2 } from './c2-peer.mjs';
 import { isolatedHome } from './conduit-mcp-helpers.mjs';
 import { assert, pollUntil, profileDir, REPO } from './harness.mjs';
@@ -152,7 +153,11 @@ export async function connectServer(userDataDir, ms = 60_000) {
     async () => {
       try {
         c2 = await C2.open(serverEndpoint);
-        await c2.call('hello', { appVersion: APP_VERSION, generation: SERVER_PROTOCOL_GENERATION });
+        await c2.call('hello', {
+          appVersion: APP_VERSION,
+          generation: SERVER_PROTOCOL_GENERATION,
+          auth: c2Auth(userDataDir),
+        });
         return true;
       } catch {
         c2?.close();

@@ -11,11 +11,17 @@ import { FakeC2Server } from './fake-c2-server';
 
 let server: FakeC2Server | undefined;
 let client: ServerClient | undefined;
+const CLIENT_SECRET = 'client-test-secret'.padEnd(43, 'x');
 
 async function setup(): Promise<{ server: FakeC2Server; client: ServerClient }> {
   server = new FakeC2Server();
   await server.listen();
-  client = new ServerClient({ endpoint: server.endpoint, appVersion: '0.52.0', log: () => {} });
+  client = new ServerClient({
+    endpoint: server.endpoint,
+    appVersion: '0.52.0',
+    readSecret: () => CLIENT_SECRET,
+    log: () => {},
+  });
   return { server, client };
 }
 
@@ -72,6 +78,7 @@ describe('ServerClient', () => {
         endpoint: 'memory',
         appVersion: '0.52.0',
         connect: () => socket,
+        readSecret: () => CLIENT_SECRET,
         log: () => {},
       });
       const seen: string[] = [];
@@ -89,6 +96,20 @@ describe('ServerClient', () => {
     },
   );
 
+  it('hello carries auth from readSecret', async () => {
+    server = new FakeC2Server();
+    await server.listen();
+    const secret = 'read-from-disk'.padEnd(43, 'y');
+    client = new ServerClient({
+      endpoint: server.endpoint,
+      appVersion: '0.52.0',
+      readSecret: () => secret,
+      log: () => {},
+    });
+    await client.open();
+    expect(server.calls('hello')[0]?.params).toMatchObject({ auth: secret });
+  });
+
   it('open resolves hello and sends generation', async () => {
     const { server, client } = await setup();
     const hello = await client.open();
@@ -97,6 +118,7 @@ describe('ServerClient', () => {
     expect(request.params).toEqual({
       appVersion: '0.52.0',
       generation: SERVER_PROTOCOL_GENERATION,
+      auth: CLIENT_SECRET,
     });
   });
 
@@ -132,6 +154,7 @@ describe('ServerClient', () => {
     const early = new ServerClient({
       endpoint: server.endpoint,
       appVersion: '0.52.0',
+      readSecret: () => CLIENT_SECRET,
       log: () => {},
     });
     const opening = early.open().catch(() => {});

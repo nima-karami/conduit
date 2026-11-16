@@ -5,6 +5,7 @@ import { connect, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { c2Auth } from './c2-auth.mjs';
 import { C2 } from './c2-peer.mjs';
 import { FAKE_AGENT, until } from './conduit-mcp-helpers.mjs';
 import { assert, makeLog, REPO, resolveHcBinary } from './harness.mjs';
@@ -58,7 +59,7 @@ function writeAgents(userData, recordsDir) {
 }
 
 /** The app's connect: hello, logging, subscribe, a ready window (no panes). */
-async function attachApp(endpoint) {
+async function attachApp(endpoint, userData) {
   let c2;
   assert(
     await until(
@@ -75,7 +76,11 @@ async function attachApp(endpoint) {
     ),
     'the server pipe never accepted a connection',
   );
-  const hello = await c2.call('hello', { appVersion: APP_VERSION, generation: 1 });
+  const hello = await c2.call('hello', {
+    appVersion: APP_VERSION,
+    generation: 1,
+    auth: c2Auth(userData),
+  });
   await c2.call('server.setLogging', { logging: true, logLevel: 'debug' });
   const snapshot = await c2.call('events.subscribe');
   await c2.call('ui.presence', {
@@ -166,7 +171,7 @@ export async function startServer(label) {
 
   try {
     await startSupervisor();
-    const app = await attachApp(names.serverEndpoint);
+    const app = await attachApp(names.serverEndpoint, userData);
     c2 = app.c2;
     assert(
       app.hello.supervisor?.name === names.supervisorName,
@@ -200,7 +205,7 @@ export async function startServer(label) {
           'supervisor did not stop',
         );
         await startSupervisor();
-        const next = await attachApp(names.serverEndpoint);
+        const next = await attachApp(names.serverEndpoint, userData);
         c2 = next.c2;
         server.c2 = c2;
         assert(
