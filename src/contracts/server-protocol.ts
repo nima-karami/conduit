@@ -10,6 +10,7 @@
 // docs/runs/2026-11-01-three-process-design/main-ts-ownership.md.
 
 import type {
+  AgentCli,
   McpInstallRequest,
   McpInstallResult,
   McpInstallStatus,
@@ -37,7 +38,12 @@ import type {
 } from '../types';
 import type { DisplayFacts } from './frames';
 import type { Capability } from './link-protocol';
-import type { ConnectMachineResult, DisconnectMachineResult } from './machines';
+import type {
+  AgentSetupStep,
+  ConnectMachineResult,
+  DisconnectMachineResult,
+  MachineMode,
+} from './machines';
 import type { NetworkState } from './network-state';
 import type { Job, LimitEpisode, SessionAutoResume } from './scheduler';
 import type { SessionRuntime } from './session-identity';
@@ -523,6 +529,16 @@ export interface ServerMethods {
   /** Local only: forgets the record without a tombstone, so B's sessions and pin survive (spec 4.2). */
   'machines.remove': { params: { machineId: string }; result: Record<string, never> };
   'machines.sshHosts': { params: Record<string, never>; result: { hosts: string[] } };
+  // Owner-only agent setup (plan CON-47): no MCP tool reaches these, so agents can't install (RS-D12).
+  'machines.setMode': {
+    params: { machineId: string; mode: MachineMode };
+    result: Record<string, never>;
+  };
+  'machines.openSetupPane': {
+    params: { machineId: string; cli: AgentCli; step: AgentSetupStep };
+    result: { sessionId: string };
+  };
+  'machines.probeAgents': { params: { machineId: string }; result: { agents: string[] } };
   'link.setCapability': {
     params: { machineId: string; capability: Capability; on: boolean };
     result: Record<string, never>;

@@ -1,6 +1,7 @@
 import type { AgentScopeReason } from './add-dir-delivery';
 import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
+import type { AgentCli } from './conduit-mcp/install-types';
 import type { AssignmentPoint, PermissionAnswer, ProfileId } from './conduit-mcp/policy-types';
 import type { AnswerInput, RequestAnswerResult } from './conduit-mcp/request-types';
 import type { CliKind, PolicySource, ToolName, ToolPolicyPatch } from './conduit-mcp/tool-policy';
@@ -17,7 +18,7 @@ import type {
 } from './conduit-mcp/ui-types';
 import type { SearchFileResult, SearchQuery, TruncatedBy } from './content-search';
 import type { DisplayFacts } from './contracts/frames';
-import type { MachineActionResult } from './contracts/machines';
+import type { AgentSetupStep, MachineActionResult, MachineMode } from './contracts/machines';
 import type { NetworkState } from './contracts/network-state';
 import type { Job, LimitEpisode } from './contracts/scheduler';
 import type { RuntimeHealth, ServerSettings } from './contracts/server-protocol';
@@ -653,6 +654,13 @@ export type HostToWebview =
       error: string | null;
     }
   | { type: 'machines:sshHosts'; requestId: number; hosts: string[] }
+  | {
+      type: 'machines:paneOpened';
+      requestId: number;
+      sessionId: string | null;
+      error: string | null;
+    }
+  | { type: 'machines:agents'; requestId: number; agents: string[] | null; error: string | null }
   | { type: 'mcp:state'; state: McpUiState }
   | { type: 'mcp:requestResult'; requestId: string; result: RequestAnswerResult }
   | {
@@ -1371,6 +1379,15 @@ export type WebviewToHost =
   | { type: 'machines:remove'; requestId: number; machineId: string }
   | { type: 'machines:openNeedsPerson'; requestId: number; target: string }
   | { type: 'machines:sshHosts'; requestId: number }
+  | { type: 'machines:setMode'; requestId: number; machineId: string; mode: MachineMode }
+  | {
+      type: 'machines:openSetupPane';
+      requestId: number;
+      machineId: string;
+      cli: AgentCli;
+      step: AgentSetupStep;
+    }
+  | { type: 'machines:probeAgents'; requestId: number; machineId: string }
   | { type: 'updateCheck' }
   | { type: 'updateRelaunch' }
   // Replies to `confirmQuit`, each disarming one guard timeout (dirty-quit-guard spec §2).
