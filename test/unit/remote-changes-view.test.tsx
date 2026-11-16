@@ -196,7 +196,15 @@ describe('remote Changes view', () => {
     expect(onOpenHistory).toHaveBeenCalledWith(HOME);
   });
 
-  it('a .git change re-requests once after 300 ms and not before', async () => {
+  it('watches the repo folder, never its .git, which B refuses (security review M4)', async () => {
+    await render(rowWith('up'));
+    await answerBoth();
+    const watched = h.posted.flatMap((m) => (m.type === 'remoteFs:watch' ? [m.path] : []));
+    expect(watched).toContain(HOME);
+    expect(watched.filter((p) => /[\\/]\.git([\\/]|$)/.test(p))).toEqual([]);
+  });
+
+  it('a change in the repo folder re-requests once after 300 ms and not before', async () => {
     await render(rowWith('up'));
     await answerBoth();
     const before = statusReqs(HOME).length;
@@ -204,7 +212,7 @@ describe('remote Changes view', () => {
     // Three events in a burst ask for one status, and none before the 300 ms quiet period.
     act(() => {
       for (let i = 0; i < 3; i += 1) {
-        emit({ type: 'remoteFs:changed', key: `remote:M1:S1|git|${HOME}/.git`, paths: [] });
+        emit({ type: 'remoteFs:changed', key: `remote:M1:S1|git|${HOME}`, paths: [] });
       }
     });
     await act(async () => {
