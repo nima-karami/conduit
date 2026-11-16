@@ -5881,6 +5881,12 @@ describe('createConduitMcpHost — wait_sessions', () => {
         changed = listener;
         return () => {};
       },
+      listMachines: () => [],
+      connectMachine: async () => ({ ok: false, error: { code: 'machine_unknown', detail: {} } }),
+      disconnectMachine: async () => ({
+        ok: false,
+        error: { code: 'machine_unknown', detail: {} },
+      }),
     };
     return {
       network,

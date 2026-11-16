@@ -3,6 +3,7 @@ import { remoteForTest } from '../../src/network/remote-scripts';
 import {
   classifySshFailure,
   controlDir,
+  controlExitArgv,
   posixQuote,
   readE2eSshArgsPrefix,
   sshArgv,
@@ -394,5 +395,25 @@ describe('readE2eSshArgsPrefix', () => {
     for (const raw of ['not json', '"a string"', '{"a":1}', '["ok", 3]', '[null]']) {
       expect(readE2eSshArgsPrefix(raw, true)).toEqual({ kind: 'invalid' });
     }
+  });
+});
+
+describe('controlExitArgv', () => {
+  // The same ControlPath the dialer uses, so -O exit reaches the master that dial made.
+  it('names only the ControlPath and the target: no remote command, no connection', () => {
+    expect(controlExitArgv({ target: 'vm', controlPath: '/d/ssh/%C' })).toEqual([
+      '-O',
+      'exit',
+      '-o',
+      'ControlPath=/d/ssh/%C',
+      '--',
+      'vm',
+    ]);
+  });
+
+  it('refuses a target that sshArgv would refuse', () => {
+    expect(controlExitArgv({ target: '-oProxyCommand=x', controlPath: '/d/%C' })).toEqual({
+      error: 'bad_target',
+    });
   });
 });

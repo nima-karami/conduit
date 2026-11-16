@@ -4,7 +4,7 @@
 // POSIX-quoted remote command locally with stdio inherited, and so needs no shell or sshd.
 
 const { spawn } = require('node:child_process');
-const { appendFileSync } = require('node:fs');
+const { appendFileSync, existsSync, unlinkSync } = require('node:fs');
 
 const failText = process.env.FAKE_SSH_FAIL;
 if (failText !== undefined) {
@@ -59,6 +59,22 @@ function posixArgvOf(text) {
 }
 
 const argv = process.argv.slice(2);
+
+// `ssh -O exit` closes a ControlMaster and runs no remote command. Its socket is the ControlPath with
+// %C read as 'fakehash': a file there is a live master, and its absence is ssh's own message.
+if (argv[0] === '-O' && argv[1] === 'exit') {
+  const controlPath = argv
+    .find((a) => a.startsWith('ControlPath='))
+    .slice('ControlPath='.length)
+    .replace('%C', 'fakehash');
+  if (existsSync(controlPath)) {
+    unlinkSync(controlPath);
+    process.exit(0);
+  }
+  process.stderr.write(`Control socket connect(${controlPath}): No such file or directory\n`);
+  process.exit(255);
+}
+
 const dashdash = argv.indexOf('--');
 if (dashdash < 0 || argv.length !== dashdash + 3) {
   process.stderr.write('fake-ssh: expected options, --, target, remote command\n');

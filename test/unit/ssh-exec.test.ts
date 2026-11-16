@@ -1,8 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { sshExec } from '../../server/network/ssh-exec';
+import { sshControlExit, sshExec } from '../../server/network/ssh-exec';
 import { remoteForTest } from '../../src/network/remote-scripts';
 
 // Driven through fake-ssh.cjs, which runs the remote string on this host with stdio inherited,
@@ -118,5 +118,50 @@ describe.skipIf(process.platform === 'win32')('sshExec (posix, through fake-ssh)
   it('refuses a bad target before spawning', async () => {
     const r = await run({ raw: 'echo never', target: '-oProxyCommand=x' });
     expect(r.failure).toEqual({ code: 'ssh_failed', detail: 'bad_target' });
+  });
+});
+
+// fake-ssh stands for `ssh -O exit` the way the real one answers: a live master is its socket
+// (<ControlPath> with %C read as 'fakehash'), and no socket is ssh's own "No such file" message.
+describe.skipIf(process.platform === 'win32')('sshControlExit (posix, through fake-ssh)', () => {
+  const exit = (controlDir: string | null, target = 'fake') =>
+    sshControlExit({
+      sshPath: process.execPath,
+      sshArgsPrefix: [FAKE_SSH],
+      controlDir,
+      target,
+    });
+
+  it('a running master is asked to exit, and that is success', async () => {
+    const dir = scratch();
+    const socket = path.join(dir, 'fakehash');
+    writeFileSync(socket, '');
+    expect(await exit(dir)).toBeNull();
+    expect(existsSync(socket)).toBe(false);
+  });
+
+  // Not a failure: the link is already gone, which is what disconnect wants.
+  it('no master running is success too: ssh says the control socket is missing', async () => {
+    expect(await exit(scratch())).toBeNull();
+  });
+
+  it('an ssh failure other than a missing master is reported', async () => {
+    process.env.FAKE_SSH_FAIL = 'Permission denied (publickey).';
+    try {
+      expect(await exit(scratch())).toEqual({ code: 'ssh_auth_failed' });
+    } finally {
+      delete process.env.FAKE_SSH_FAIL;
+    }
+  });
+
+  it('a control dir that does not fit is a typed failure, spawning nothing', async () => {
+    expect(await exit(null)).toEqual({ code: 'ssh_failed', detail: 'control_dir_too_long' });
+  });
+
+  it('a bad target is refused before spawning', async () => {
+    expect(await exit(scratch(), '-oProxyCommand=x')).toEqual({
+      code: 'ssh_failed',
+      detail: 'bad_target',
+    });
   });
 });

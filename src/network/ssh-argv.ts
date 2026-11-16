@@ -108,6 +108,18 @@ export function controlDir(o: {
   return candidates.find((dir): dir is string => dir !== null && fitsControlPath(dir)) ?? null;
 }
 
+/**
+ * `ssh -O exit`: asks the ControlMaster at this ControlPath to close. It runs no remote command and
+ * opens no connection, so it has no remote argv; the target is still checked as sshArgv checks it.
+ */
+export function controlExitArgv(o: {
+  target: string;
+  controlPath: string;
+}): string[] | { error: 'bad_target' } {
+  if (!isSshTarget(o.target)) return { error: 'bad_target' };
+  return ['-O', 'exit', '-o', `ControlPath=${o.controlPath}`, '--', o.target];
+}
+
 export type E2eSshArgsPrefix =
   | { kind: 'none' }
   | { kind: 'invalid' }
