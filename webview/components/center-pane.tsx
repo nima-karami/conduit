@@ -151,6 +151,7 @@ export function CenterPane({
   activeRemote = null,
   remoteRows = [],
   onRemoteClosed,
+  confirmRemoteClose,
 }: {
   sessions: Session[];
   agents: AgentDefinition[];
@@ -259,6 +260,8 @@ export function CenterPane({
   remoteRows?: readonly RemoteSessionRow[];
   /** The remote pane's session was closed on its machine; the app clears that selection only. */
   onRemoteClosed?: (remote: RemoteKey) => void;
+  /** Asks about the remote session's unsaved file tabs before it closes; false keeps it open. */
+  confirmRemoteClose?: (remote: RemoteKey) => Promise<boolean>;
 }) {
   const [compareOpen, setCompareOpen] = useState(false);
   const saveStatuses = useFileSaveStatuses();
@@ -648,6 +651,7 @@ export function CenterPane({
               machineName={remoteRow.machineName}
               label={remoteRow.session.label}
               visible={groupOne.activeDocId === null}
+              confirmClose={confirmRemoteClose}
               onClosed={(key) => onRemoteClosed?.(key)}
             />
           )}

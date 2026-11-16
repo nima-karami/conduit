@@ -50,6 +50,15 @@ function row(path: string, tag: DirtyFile['tag']): DirtyFile {
 }
 
 describe('unsavedFiles', () => {
+  it('names a remote tab by its file and machine, not its doc id', () => {
+    const key = 'remote-file@M1:/w/src/a.ts';
+    const p = probe({ [key]: status() });
+    const [file] = unsavedFiles([key], p, noRoot, undefined, (k) =>
+      k === key ? { name: 'a.ts', dir: '/w/src on build-box' } : undefined,
+    );
+    expect(file).toMatchObject({ path: key, name: 'a.ts', dir: '/w/src on build-box', tag: null });
+  });
+
   it('tag precedence', () => {
     const p = probe(
       {
@@ -205,5 +214,20 @@ describe('sessionDirtyPaths', () => {
     const dirty = new Set(['/r/a.ts', '/r/b.ts', '/r/c.ts', '/r/d.ts']);
     expect(sessionDirtyPaths(docs, ['s1', 's2'], dirty)).toEqual(['/r/a.ts', '/r/b.ts']);
     expect(sessionDirtyPaths(docs, [], dirty)).toEqual([]);
+  });
+
+  it('a remote session counts its dirty file tabs by doc id, never a local file of their path', () => {
+    const remote: OpenDoc = {
+      id: 'remote-file@M1:/r/a.ts',
+      kind: 'remote-file',
+      path: '/r/a.ts',
+      title: 'a.ts',
+      sessionId: 'remote-row',
+      machine: { machineId: 'M1', sessionId: 'b-s1' },
+    };
+    const docs = [remote, doc('/r/a.ts', 's1')];
+    expect(sessionDirtyPaths(docs, ['remote-row'], new Set([remote.id]))).toEqual([remote.id]);
+    // The local file of the same path being dirty says nothing about the remote session.
+    expect(sessionDirtyPaths(docs, ['remote-row'], new Set(['/r/a.ts']))).toEqual([]);
   });
 });
