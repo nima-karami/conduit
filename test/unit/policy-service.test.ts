@@ -1724,6 +1724,41 @@ describe('fail-closed and missing profile', () => {
     expect(closed.service.decide(input).decision).toBe('deny');
   });
 
+  it('a profile change keeps the session pins in the persisted file', async () => {
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: {
+              profileId: 'worker',
+              exceptions: [],
+              onScreenOnly: false,
+              pinned: ['open_file.access'],
+            },
+          },
+        ],
+      }),
+    });
+    h.service.start();
+    expect(h.service.setAssignment({ kind: 'session', sessionId: 's1' }, 'observer')).toEqual({
+      ok: true,
+    });
+    h.fire(WRITE_MS);
+    await h.service.stop();
+    const saved = h.policyWrites.at(-1);
+    if (saved === undefined) throw new Error('no policy write');
+    const parsed = parsePolicyFile(saved);
+    if (!parsed.ok) throw new Error('unreadable policy write');
+    const s1 = parsed.file.assignments.find((a) => a.point.kind === 'session');
+    expect(s1?.assignment).toEqual({
+      profileId: 'observer',
+      exceptions: [],
+      onScreenOnly: false,
+      pinned: ['open_file.access'],
+    });
+  });
+
   it('a session whose launched CLI is unknown lowers onto the default and takes a default edit', () => {
     const h = harness({ launchedCli: { s1: undefined } });
     h.service.start();

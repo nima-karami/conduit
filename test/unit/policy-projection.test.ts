@@ -575,10 +575,10 @@ describe('explicit session choices are pinned', () => {
 
   it('drift repro: a later default off reaches a session tweaked in the dialog', () => {
     const m: M = new Map();
+    edit(m, S1, D, 'open_file', { access: 'off' });
     edit(m, D, null, 'send_input', { access: 'off' });
-    edit(m, S1, D, 'send_input', { access: 'off' });
-    edit(m, D, null, 'send_input', { access: 'on' });
     expect(dec(st(m), 'send_input')).toBe('deny');
+    expect(dec(st(m), 'open_file')).toBe('deny');
   });
 
   it('an explicit session off survives loosening the default', () => {
@@ -586,8 +586,26 @@ describe('explicit session choices are pinned', () => {
     edit(m, D, null, 'send_input', { access: 'off' });
     edit(m, S1, D, 'send_input', { access: 'off' });
     expect(m.get(pointKey(S1))?.[1].pinned).toEqual(['send_input.access']);
+    edit(m, D, null, 'send_input', { access: 'on' });
+    expect(dec(st(m), 'send_input')).toBe('deny');
+  });
+
+  it('an explicit session off survives loosening the default to ask', () => {
+    const m: M = new Map();
+    edit(m, D, null, 'send_input', { access: 'off' });
+    edit(m, S1, D, 'send_input', { access: 'off' });
     edit(m, D, null, 'send_input', { access: 'ask' });
     expect(dec(st(m), 'send_input')).toBe('deny');
+  });
+
+  it('a second explicit session choice keeps the first pin, so a default edit still leaves it', () => {
+    const m: M = new Map();
+    edit(m, D, null, 'open_file', { access: 'off' });
+    edit(m, S1, D, 'open_file', { access: 'off' });
+    edit(m, S1, D, 'send_input', { access: 'off' });
+    expect(m.get(pointKey(S1))?.[1].pinned).toEqual(['open_file.access', 'send_input.access']);
+    edit(m, D, null, 'open_file', { access: 'on' });
+    expect(dec(st(m), 'open_file')).toBe('deny');
   });
 
   it('an explicit session on survives tightening the default', () => {
