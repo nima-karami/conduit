@@ -1181,9 +1181,21 @@ describe('a machine never added asks under every profile (spec 4.6, RS-D6)', () 
     expect(decide(state({ default: assignment('lead') }), connect()).decision).toBe('allow');
   });
 
-  it('worker asks to connect, with or without the force', () => {
-    expect(decide(state(worker), connect()).decision).toBe('ask');
-    expect(decide(state(worker), connect({ forceAsk: true })).decision).toBe('ask');
+  it('worker asks to connect, and a forced ask under worker is marked forced too', () => {
+    expect(decide(state(worker), connect()).forcedAsk).toBe(false);
+    const forced = decide(state(worker), connect({ forceAsk: true }));
+    expect(forced.decision).toBe('ask');
+    expect(forced.forcedAsk).toBe(true);
+  });
+
+  it('a connect_machine grant does not turn a forced ask under worker into an allow', () => {
+    const d = decide(
+      state(worker, { grants: [grant({ tool: 'connect_machine' })] }),
+      connect({ forceAsk: true }),
+    );
+    expect(d.decision).toBe('ask');
+    expect(d.forcedAsk).toBe(true);
+    expect(d.grantId).toBeNull();
   });
 
   it('an observer denial stays a denial for a target that is not added', () => {
@@ -1217,5 +1229,53 @@ describe('a machine never added asks under every profile (spec 4.6, RS-D6)', () 
       const d = decide(state({ default: assignment(id) }), input({ tool: 'list_machines' }));
       expect(d.decision, id).toBe('allow');
     }
+  });
+});
+
+describe('a remote peer reaches the machine tools only through its capability (NET R21)', () => {
+  const peer = (capabilities: Capabilities) => remote(capabilities);
+
+  it('connect_machine is orchestrate: a peer with messaging and monitor is denied', () => {
+    const d = decide(
+      state({ default: assignment('lead') }),
+      input({
+        principal: peer({ messaging: true, monitor: true, drive: true }),
+        tool: 'connect_machine',
+        forceAsk: false,
+      }),
+    );
+    expect(d.decision).toBe('deny');
+    expect(d.reason).toEqual({ by: 'floor', floor: 'remote-capability' });
+  });
+
+  it('disconnect_machine is orchestrate as well: a peer with every other capability is denied', () => {
+    const d = decide(
+      state({ default: assignment('lead') }),
+      input({
+        principal: peer({ messaging: true, monitor: true, drive: true }),
+        tool: 'disconnect_machine',
+      }),
+    );
+    expect(d.decision).toBe('deny');
+  });
+
+  it('list_machines is monitor: a peer with monitor reads the list, and one without is denied', () => {
+    const withMonitor = decide(
+      state({ default: assignment('worker') }),
+      input({
+        principal: peer({ messaging: false, monitor: true, drive: false }),
+        tool: 'list_machines',
+      }),
+    );
+    expect(withMonitor.decision).toBe('allow');
+    const withoutMonitor = decide(
+      state({ default: assignment('worker') }),
+      input({
+        principal: peer({ messaging: true, monitor: false, drive: false }),
+        tool: 'list_machines',
+      }),
+    );
+    expect(withoutMonitor.decision).toBe('deny');
+    expect(withoutMonitor.reason).toEqual({ by: 'floor', floor: 'remote-capability' });
   });
 });

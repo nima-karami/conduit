@@ -84,6 +84,8 @@ export interface RequestRecord {
     why: string;
     targets: PolicyTarget[];
     lateGrant: Grant['id'] | null;
+    // Absent on records from before forced asks: every such permission was grantable.
+    grantable?: boolean;
   } | null;
 }
 

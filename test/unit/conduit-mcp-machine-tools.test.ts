@@ -66,7 +66,14 @@ const prepared: ControlHandlers['prepared'] = async (_tool, _caller, check) => {
       summary: c.summary,
       routesUi: false,
       alwaysAsk: c.alwaysAsk === true,
-      run: () => c.exec(token),
+      budget: c.budget,
+      run: async () => {
+        try {
+          return await c.exec(token);
+        } finally {
+          c.budget?.dispose();
+        }
+      },
       release: () => undefined,
     },
   };
@@ -100,6 +107,7 @@ function rig(network: NetworkPort | undefined) {
   const timers: Timer[] = [];
   const deps: MachineToolDeps = {
     network: () => network,
+    now: () => 0,
     setTimer: (fn, ms) => {
       const t: Timer = { fn, ms, cleared: false };
       timers.push(t);

@@ -1548,7 +1548,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   const control = createControlHandlers(controlDeps);
   const app = createAppControlHandlers(controlDeps, control.prepared);
   const machines = createMachineTools(
-    { network: () => deps.network, setTimer, clearTimer },
+    { network: () => deps.network, now, setTimer, clearTimer },
     control.prepared,
   );
   const screen = createScreenToolHandlers(
@@ -1700,7 +1700,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           requester: r.caller.handle,
           title: r.tool,
           body: r.why,
-          permission: { tool: r.tool, why: r.why, targets: [...r.targets], lateGrant: null },
+          permission: {
+            tool: r.tool,
+            why: r.why,
+            targets: [...r.targets],
+            lateGrant: null,
+            grantable: r.grantable,
+          },
         },
         new Date(r.expiresAt).toISOString(),
       );
@@ -1951,10 +1957,20 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             return d.decision === 'deny' ? reasonOf(d) : null;
           },
           reDecide: (held) => {
-            const again = policyService.decide({ ...policyInput, heldOverrides: held });
-            evaluated.current = { input: policyInput, decision: again };
+            // The target's facts are re-read: a machine removed while its card waited is now an
+            // unknown target, and the owner approved a card that said "Connect" (RS-D6).
+            const forceAsk = forcesAsk(name, rawArgs, (ref) =>
+              isKnownMachine(deps.network?.listMachines() ?? [], ref),
+            );
+            const again = policyService.decide({ ...policyInput, forceAsk, heldOverrides: held });
+            evaluated.current = { input: { ...policyInput, forceAsk }, decision: again };
             reDecided = again;
             if (again.decision === 'deny') return { kind: 'withdraw', reason: reasonOf(again) };
+            if (again.forcedAsk && !resolved.forcedAsk)
+              return {
+                kind: 'withdraw',
+                reason: `${rawArgs.machine} is no longer added; call connect_machine again to add it`,
+              };
             return { kind: 'ready' };
           },
           grant: (choice, requestId) => {

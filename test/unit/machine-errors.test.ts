@@ -124,3 +124,54 @@ describe('machineToolError', () => {
     expect(retryable.sort()).toEqual(['install_failed', 'ssh_unreachable']);
   });
 });
+
+describe('machineToolError structured fields (spec 5.2)', () => {
+  it('ssh_needs_person carries its reason as a field agents can branch on', () => {
+    const out = machineToolError(
+      { code: 'ssh_needs_person', detail: { reason: 'host_key_changed' } },
+      MACHINE,
+    );
+    expect(out.reason).toBe('host_key_changed');
+  });
+
+  it('remote_unsupported carries os and arch as fields', () => {
+    const out = machineToolError(
+      { code: 'remote_unsupported', detail: { os: 'darwin', arch: 'arm64' } },
+      MACHINE,
+    );
+    expect(out).toMatchObject({ os: 'darwin', arch: 'arm64' });
+  });
+
+  it('install_failed carries its step as a field', () => {
+    const out = machineToolError(
+      { code: 'install_failed', detail: { step: 'download', detail: 'timeout' } },
+      MACHINE,
+    );
+    expect(out.step).toBe('download');
+  });
+
+  it('a revoked machine says it was removed from the links, not that no machine exists', () => {
+    const out = machineToolError(
+      { code: 'machine_unknown', detail: { reason: 'revoked' } },
+      MACHINE,
+    );
+    expect(out.message).toBe(`${MACHINE} was removed from this machine's links`);
+    expect(out.code).toBe('machine_unknown');
+  });
+
+  it('the structured fields reach the agent in the JSON error payload', async () => {
+    const { toToolCallResult } = await import('../../src/conduit-mcp/tools');
+    const out = machineToolError(
+      { code: 'ssh_needs_person', detail: { reason: 'passphrase' } },
+      MACHINE,
+    );
+    const result = toToolCallResult({ ok: false, error: out });
+    expect(result.structuredContent).toMatchObject({ error: { reason: 'passphrase' } });
+    const first = result.content[0];
+    expect(first.type).toBe('text');
+    if (first.type !== 'text') throw new Error('expected a text item');
+    expect(JSON.parse(first.text)).toMatchObject({
+      error: { code: 'ssh_needs_person', reason: 'passphrase' },
+    });
+  });
+});

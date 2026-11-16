@@ -7295,10 +7295,10 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
   const resultOf = (l: Record<string, unknown> | undefined) =>
     (l?.result as { structuredContent?: unknown } | undefined)?.structuredContent;
 
-  async function machineSession(over: Parameters<typeof harness>[0] = {}) {
+  async function machineSession(over: Parameters<typeof harness>[0] = {}, def = FAKE) {
     const h = harness(over);
     await h.host.start();
-    const a = await launch(h, 's1');
+    const a = await launch(h, 's1', def);
     const c = await rawClient(h.ep, a.token);
     return { h, c };
   }
@@ -7318,6 +7318,7 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
     );
     await setProfile(h, 'observer');
     const after = await names();
+    expect(after).toContain('list_machines');
     expect(after).not.toContain('connect_machine');
     expect(after).not.toContain('disconnect_machine');
   });
@@ -7377,6 +7378,88 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
     c.call(2, 'connect_machine', { machine: 'other.example' });
     await until(() => asksOf(h).length === 2);
     expect(connects).toEqual(['new.example']);
+  });
+
+  it('a worker grant for a known machine does not pass an unknown target; its card is not grantable', async () => {
+    const { network, connects } = machineNet({});
+    const { h, c } = await machineSession({ network });
+    c.call(1, 'connect_machine', { machine: 'win-box' });
+    await until(() => asksOf(h).length === 1);
+    await answerAsk(h, 1, 'always');
+    expect(c.errorOf(await c.reply(1))).toBe('ok');
+    expect(h.host.uiState().policy.grants).toHaveLength(1);
+    c.call(2, 'connect_machine', { machine: 'new.example' });
+    await until(() => asksOf(h).length === 2);
+    expect(asksOf(h)[1]).toMatchObject({ grantable: false });
+    await answerAsk(h, 2, 'approve');
+    expect(c.errorOf(await c.reply(2))).toBe('ok');
+    expect(connects).toEqual(['win-box', 'new.example']);
+  });
+
+  it('the budget counts the ask: an ask answered at 100 s leaves the dial 20 s', async () => {
+    const signals: AbortSignal[] = [];
+    const { network } = machineNet({
+      connectMachine: (_machine, signal) => {
+        signals.push(signal);
+        return new Promise<ConnectMachineResult>(() => undefined);
+      },
+    });
+    const { h, c } = await machineSession({ network, manualTimers: true }, CLAUDE);
+    c.call(1, 'connect_machine', { machine: 'win-box' });
+    await until(() => asksOf(h).length === 1);
+    h.advance(100_000);
+    await answerAsk(h, 1, 'approve');
+    await until(() => signals.length === 1);
+    h.advance(19_999);
+    expect(signals[0]?.aborted).toBe(false);
+    h.advance(1);
+    expect(c.errorOf(await c.reply(1))).toBe('ssh_unreachable');
+  });
+
+  it('an ask still waiting at 120 s ends as ssh_unreachable timeout, and its card closes as expired', async () => {
+    const { network, connects } = machineNet({});
+    const { h, c } = await machineSession({ network, manualTimers: true }, CLAUDE);
+    c.call(1, 'connect_machine', { machine: 'new.example' });
+    await until(() => asksOf(h).length === 1);
+    h.advance(120_000);
+    expect(c.errorOf(await c.reply(1))).toBe('ssh_unreachable');
+    expect(connects).toEqual([]);
+    const closed = h.toOwner.flatMap((s) => (s.msg.type === 'mcp:askClosed' ? [s.msg] : []));
+    expect(closed).toEqual([expect.objectContaining({ outcome: 'expired' })]);
+  });
+
+  it('closing the connection aborts a connect in flight', async () => {
+    let aborted = false;
+    let started = false;
+    const { network } = machineNet({
+      connectMachine: (_machine, signal) => {
+        started = true;
+        return new Promise<ConnectMachineResult>(() => {
+          signal.addEventListener('abort', () => {
+            aborted = true;
+          });
+        });
+      },
+    });
+    const { h, c } = await machineSession({ network });
+    await setProfile(h, 'lead');
+    c.call(1, 'connect_machine', { machine: 'win-box' });
+    await until(() => started);
+    c.sock.destroy();
+    await until(() => aborted);
+    expect(aborted).toBe(true);
+  });
+
+  it('a machine removed while its card waits is an unknown target at approval: the approval does not install it', async () => {
+    let known = [VIEW];
+    const { network, connects } = machineNet({ listMachines: () => known });
+    const { h, c } = await machineSession({ network });
+    c.call(1, 'connect_machine', { machine: 'win-box' });
+    await until(() => asksOf(h).length === 1);
+    known = [];
+    await answerAsk(h, 1, 'approve');
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    expect(connects).toEqual([]);
   });
 
   it('a lead connecting a machine that is added by its name is not asked', async () => {

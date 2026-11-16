@@ -102,7 +102,8 @@ const isPermission = (v: unknown): v is NonNullable<RequestRecord['permission']>
   isTool(v.tool) &&
   isStr(v.why) &&
   arrayOf(isPolicyTarget)(v.targets) &&
-  nullStr(v.lateGrant);
+  nullStr(v.lateGrant) &&
+  (v.grantable === undefined || typeof v.grantable === 'boolean');
 
 const isRecord = (v: unknown): v is RequestRecord =>
   isObj(v) &&

@@ -1,7 +1,13 @@
-// The three machine tools (spec 5.1) on the shared prepared() pipeline. Node-free: the network and
-// the timer are deps, so the connect budget is testable with fake timers.
-import type { ConnectMachineOk, ConnectMachineResult, MachineView } from '../contracts/machines';
+// The three machine tools (spec 5.1) on the shared prepared() pipeline. Node-free: the network,
+// the clock and the timer are deps, so the connect budget is testable with fake timers.
+import type {
+  ConnectMachineOk,
+  ConnectMachineResult,
+  MachineError,
+  MachineView,
+} from '../contracts/machines';
 import {
+  type CallBudget,
   type ControlCallContext,
   type ControlHandlers,
   type Fail,
@@ -16,11 +22,15 @@ import { MACHINE_ARG } from './tool-schemas';
 import type { Caller } from './tools';
 import type { Result } from './types';
 
-/** spec 7: a connect_machine call's wall clock. A dial alone waits 30 s; first install may need the owner. */
+/**
+ * spec 7: a connect_machine call's wall clock, from the moment the call arrives: the owner's ask
+ * counts too, so a wired Codex call stays under its 180 s MCP timeout.
+ */
 export const CONNECT_BUDGET_MS = 120_000;
 
 export interface MachineToolDeps {
   network(): NetworkPort | undefined;
+  now(): number;
   setTimer(fn: () => void, ms: number): unknown;
   clearTimer(handle: unknown): void;
 }
@@ -39,10 +49,8 @@ export interface MachineHandlers {
 }
 
 /** The budget ran out: the same answer the network gives for a dial that never reached up. */
-const TIMED_OUT: ConnectMachineResult = {
-  ok: false,
-  error: { code: 'ssh_unreachable', detail: { detail: 'timeout' } },
-};
+const TIMED_OUT_ERROR: MachineError = { code: 'ssh_unreachable', detail: { detail: 'timeout' } };
+const TIMED_OUT: ConnectMachineResult = { ok: false, error: TIMED_OUT_ERROR };
 
 const noNetwork = (): Fail =>
   fail('host_unavailable', "machines aren't available: Conduit's network isn't running", {
@@ -61,27 +69,33 @@ export function createMachineTools(
   deps: MachineToolDeps,
   prepared: ControlHandlers['prepared'],
 ): MachineHandlers {
-  /** The dial under its own budget and the call's cancel; a budget expiry answers ssh_unreachable. */
+  /** The call's deadline, started at arrival; the ask and the dial both run under it. */
+  function startBudget(machine: string): CallBudget {
+    const controller = new AbortController();
+    const timer = deps.setTimer(() => controller.abort(), CONNECT_BUDGET_MS);
+    return {
+      signal: controller.signal,
+      deadlineMs: deps.now() + CONNECT_BUDGET_MS,
+      expired: machineToolError(TIMED_OUT_ERROR, machine),
+      dispose: () => deps.clearTimer(timer),
+    };
+  }
+
+  /** The dial under the call's signal: when the budget or the cancel fires, it answers at once. */
   async function connect(
     network: NetworkPort,
     machine: string,
-    cancel: AbortSignal,
+    signal: AbortSignal,
   ): Promise<Result<ConnectMachineOk>> {
-    const budget = new AbortController();
-    const timer = deps.setTimer(() => budget.abort(), CONNECT_BUDGET_MS);
-    const signal = AbortSignal.any([cancel, budget.signal]);
+    if (signal.aborted) return { ok: false, error: machineToolError(TIMED_OUT_ERROR, machine) };
     // The port honours its signal, but the budget is the tool's promise, so it holds even if not.
     const expired = new Promise<ConnectMachineResult>((resolve) => {
       signal.addEventListener('abort', () => resolve(TIMED_OUT), { once: true });
     });
-    try {
-      const r = await Promise.race([network.connectMachine(machine, signal), expired]);
-      return r.ok
-        ? { ok: true, value: r.value }
-        : { ok: false, error: machineToolError(r.error, machine) };
-    } finally {
-      deps.clearTimer(timer);
-    }
+    const r = await Promise.race([network.connectMachine(machine, signal), expired]);
+    return r.ok
+      ? { ok: true, value: r.value }
+      : { ok: false, error: machineToolError(r.error, machine) };
   }
 
   return {
@@ -106,15 +120,17 @@ export function createMachineTools(
         if (isFail(machine)) return machine;
         const network = deps.network();
         if (network === undefined) return noNetwork();
+        const budget = startBudget(machine);
         return {
           summary: {
             tool: 'connect_machine',
             machine,
             newMachine: !isKnownMachine(network.listMachines(), machine),
           },
+          budget,
           exec: async (token) => {
             token.keep();
-            return connect(network, machine, ctx.signal);
+            return connect(network, machine, AbortSignal.any([ctx.signal, budget.signal]));
           },
         };
       }),

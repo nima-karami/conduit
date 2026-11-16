@@ -95,6 +95,8 @@ export interface PermissionRaise {
   args: unknown;
   why: string;
   targets: readonly PolicyTarget[];
+  /** False for a forced ask (RS-D6): the card and any late answer offer no grant. */
+  grantable: boolean;
   expiresAt: number;
 }
 export interface PermissionEnd {
@@ -318,14 +320,20 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     }
     // Ask + UI wait must both fit inside the CLI's own call timeout, which started at begin(), not
     // after prepare's git calls (plan B11).
-    const askMs =
+    const cliAskMs =
       startOf(c.inflight) +
       askBudgetMs(c.kind, c.wiredAtLaunch) -
       askMarginMs(p.routesUi) -
       deps.now();
+    // A tool's whole-call budget (spec 7) counts the ask too: when it ends first, the ask ends there,
+    // and the answer is the budget's, not the CLI's.
+    const budgetMs =
+      p.budget === undefined ? Number.POSITIVE_INFINITY : p.budget.deadlineMs - deps.now();
+    const budgetEndsAsk = budgetMs <= cliAskMs;
+    const askMs = budgetEndsAsk ? budgetMs : cliAskMs;
     if (askMs <= 0) {
       p.release();
-      return { ok: false, error: approvalTimeout() };
+      return { ok: false, error: budgetEndsAsk && p.budget ? p.budget.expired : approvalTimeout() };
     }
     const committed = c.commit();
     if (committed === null) {
@@ -341,6 +349,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       args: c.args,
       why: c.permission.why,
       targets: c.permission.targets,
+      grantable: c.permission.grantable,
       expiresAt: deps.now() + askMs,
     });
     const held = committed.held;
@@ -391,7 +400,10 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     // Unanswered ends keep the rate token: it caps card spam (spec §3.3 "Rate").
     switch (end.kind) {
       case 'expired':
-        return { ok: false, error: approvalTimeout() };
+        return {
+          ok: false,
+          error: budgetEndsAsk && p.budget ? p.budget.expired : approvalTimeout(),
+        };
       case 'cancelled': {
         const deny = denied.get(requestId);
         denied.delete(requestId);
@@ -557,23 +569,30 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       }
       if (c.inflight.cancelled) {
         p.release();
+        p.budget?.dispose();
         return null;
       }
       // A bare command is not a registered agent, so an allow still asks
       // (flexible-agent-contracts §3.1).
       const access = p.alwaysAsk && c.decision.decision === 'allow' ? 'ask' : c.decision.decision;
-      switch (access) {
-        case 'allow':
-          if (c.commit() === null) {
+      // The budget's timer is cleared only after the call has finished, dial included, so the
+      // await below is what keeps the deadline live while the run waits.
+      try {
+        switch (access) {
+          case 'allow':
+            if (c.commit() === null) {
+              p.release();
+              return { ok: false, error: toolDisabled(c.tool) };
+            }
+            return await runNow(c, p);
+          case 'ask':
+            return await ask(c, p);
+          case 'deny':
             p.release();
             return { ok: false, error: toolDisabled(c.tool) };
-          }
-          return runNow(c, p);
-        case 'ask':
-          return ask(c, p);
-        case 'deny':
-          p.release();
-          return { ok: false, error: toolDisabled(c.tool) };
+        }
+      } finally {
+        p.budget?.dispose();
       }
     },
 

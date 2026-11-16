@@ -183,7 +183,7 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
   const baseRuleFor = (t: PolicyTarget): ToolRule =>
     forPrincipal(principal, effectiveRule(profile, assignment, tool, t));
   const forcedFor = (t: PolicyTarget): boolean =>
-    input.forceAsk === true && baseRuleFor(t).decision === 'allow';
+    input.forceAsk === true && baseRuleFor(t).decision !== 'deny';
   const ruleFor = (t: PolicyTarget): ToolRule =>
     forcedFor(t) ? { ...baseRuleFor(t), decision: 'ask' } : baseRuleFor(t);
 

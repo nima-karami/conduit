@@ -136,10 +136,24 @@ export interface TargetSession {
 }
 /** A prepare answer: a call to ask about and run, or a result known without acting (no token spent). */
 export type Prepared<T> = PreparedCall<T> | { done: Result<T> };
+/**
+ * A tool's whole-call deadline, started when the call arrives (spec 7): the ask waits under it and
+ * the run gets only what is left. When it fires, the wait ends expired and the call answers `expired`.
+ */
+export interface CallBudget {
+  signal: AbortSignal;
+  /** Absolute, on the host's clock: an ask may not wait past it. */
+  deadlineMs: number;
+  /** The answer when the deadline ends the call. */
+  expired: ToolError;
+  /** Clears the deadline's timer; the call calls it once it has finished, however it ended. */
+  dispose(): void;
+}
 export interface PreparedCall<T> {
   summary: AskSummary;
   /** Its run waits on a renderer (mcp:ui): the ask budget shrinks by UI_TIMEOUT_MS. */
   routesUi: boolean;
+  budget?: CallBudget;
   /**
    * A bare command on PATH: an 'on' policy still asks, since the human never registered the program
    * (flexible-agent-contracts §3.1).
@@ -400,6 +414,7 @@ export type CheckResult<T> =
       summary: AskSummary;
       routesUi?: true;
       alwaysAsk?: boolean;
+      budget?: CallBudget;
       exec: (token: Token) => Promise<Result<T>>;
     };
 
@@ -522,6 +537,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
           summary: c.summary,
           routesUi: c.routesUi === true,
           alwaysAsk: c.alwaysAsk === true,
+          ...(c.budget === undefined ? {} : { budget: c.budget }),
           async run() {
             try {
               return await exec(token);
