@@ -6,6 +6,12 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Security
+- The Background service now only takes commands from this app and from Conduit's own tools: each start writes a fresh secret that only your user account can read. Other accounts on the same computer, and on Windows other computers on the network, can no longer drive it. If the app ever can't prove itself, it stops retrying after a few tries and says so, instead of looking connected.
+
+### Added
+- Groundwork for controlling your other machines over SSH: Conduit can now link to the Background service on another machine through your normal `ssh` login, with no extra port or pairing. The screens and agent tools for this arrive in later releases.
+
 ## [0.66.1] — 2026-11-16
 
 ### Fixed
