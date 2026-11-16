@@ -3,6 +3,7 @@ import { remoteForTest } from '../../src/network/remote-scripts';
 import {
   classifySshFailure,
   controlDir,
+  personSshArgv,
   posixQuote,
   readE2eSshArgsPrefix,
   sshArgv,
@@ -393,6 +394,49 @@ describe('readE2eSshArgsPrefix', () => {
   it('refuses anything that is not a JSON array of strings', () => {
     for (const raw of ['not json', '"a string"', '{"a":1}', '["ok", 3]', '[null]']) {
       expect(readE2eSshArgsPrefix(raw, true)).toEqual({ kind: 'invalid' });
+    }
+  });
+});
+
+describe('personSshArgv', () => {
+  it('opens a master on the given ControlPath, with no batch mode, no -T and no forwarding', () => {
+    expect(personSshArgv({ target: 'vm', controlPath: '/d/%C' })).toEqual([
+      '-o',
+      'ControlMaster=yes',
+      '-o',
+      'ControlPath=/d/%C',
+      '-o',
+      'ControlPersist=8h',
+      '-o',
+      'ClearAllForwardings=yes',
+      '-o',
+      'ForwardAgent=no',
+      '-o',
+      'ForwardX11=no',
+      '--',
+      'vm',
+    ]);
+  });
+
+  it('puts the target after -- and nothing after it, so no remote command is ever sent', () => {
+    const argv = personSshArgv({ target: 'user@host:22', controlPath: '/d/%C' });
+    expect(Array.isArray(argv)).toBe(true);
+    const list = argv as string[];
+    expect(list.at(-1)).toBe('user@host:22');
+    expect(list.at(-2)).toBe('--');
+    expect(list).not.toContain('-T');
+    expect(list).not.toContain('BatchMode=yes');
+  });
+
+  it('refuses a target a leading dash would read as an option', () => {
+    expect(personSshArgv({ target: '-oProxyCommand=x', controlPath: '/d/%C' })).toEqual({
+      error: 'bad_target',
+    });
+  });
+
+  it('refuses a target with shell metacharacters or a space', () => {
+    for (const target of ['a;rm -rf x', 'a b', '']) {
+      expect(personSshArgv({ target, controlPath: '/d/%C' })).toEqual({ error: 'bad_target' });
     }
   });
 });

@@ -74,7 +74,7 @@ const parseMachine = (v: unknown): MachineMeta | undefined => {
     (v.mode !== 'full' && v.mode !== 'light') ||
     agents === null ||
     !isBool(v.enabled) ||
-    !isBool(v.survivesLogout)
+    (v.survivesLogout !== null && !isBool(v.survivesLogout))
   )
     return undefined;
   return {

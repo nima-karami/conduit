@@ -70,6 +70,34 @@ export function sshArgv(o: SshArgvInput): string[] | { error: 'bad_target' | 'ba
   ];
 }
 
+/**
+ * The argv of the needs-person pane (a visible terminal the owner answers). It shares the dialer's
+ * ControlPath so the master it opens is the one the batch dial reuses, and it keeps prompts: no
+ * BatchMode and no -T. The forwarding options stay off, as on every Conduit ssh.
+ */
+export function personSshArgv(o: {
+  target: string;
+  controlPath: string;
+}): string[] | { error: 'bad_target' } {
+  if (!isSshTarget(o.target)) return { error: 'bad_target' };
+  return [
+    '-o',
+    'ControlMaster=yes',
+    '-o',
+    `ControlPath=${o.controlPath}`,
+    '-o',
+    'ControlPersist=8h',
+    '-o',
+    'ClearAllForwardings=yes',
+    '-o',
+    'ForwardAgent=no',
+    '-o',
+    'ForwardX11=no',
+    '--',
+    o.target,
+  ];
+}
+
 // OpenSSH's mux listener binds `<ControlPath>.<16 random chars>` and renames it into place, so the
 // bound path is 17 bytes longer than the expanded ControlPath. Measured on the Linux VM: a 49-byte
 // dir binds, a 50-byte one fails with "unix_listener: path … too long" (plan decision 8).

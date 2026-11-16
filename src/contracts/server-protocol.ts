@@ -513,6 +513,8 @@ export interface ServerMethods {
   'link.sshAdd': { params: { ssh: SshEndpoint }; result: AddSshPeerResult };
   'link.sshBootstrap': { params: { target: string }; result: BootstrapResult };
   'link.revoke': { params: { machineId: string }; result: Record<string, never> };
+  /** The owner's needs-person pane: a visible ssh terminal on the dialer's control dir (spec 4.2). */
+  'machines.openNeedsPerson': { params: { target: string }; result: { sessionId: string } };
   'link.setCapability': {
     params: { machineId: string; capability: Capability; on: boolean };
     result: Record<string, never>;

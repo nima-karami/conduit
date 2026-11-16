@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  helloPlatform,
   type LinkFrame,
   type MonitorSession,
   type MonitorSnapshot,
@@ -251,5 +252,48 @@ describe('parseLinkFrame', () => {
 describe('OWN_DEFAULT_CAPABILITIES', () => {
   it('enables messaging and monitor, leaves drive off', () => {
     expect(OWN_DEFAULT_CAPABILITIES).toEqual({ messaging: true, monitor: true, drive: false });
+  });
+});
+
+describe('hello platform and version (protocol 1.1)', () => {
+  const withPlatform = {
+    ...SAMPLES.hello,
+    platform: { os: 'linux', arch: 'x64' },
+    version: '0.64.1',
+  };
+
+  it('round-trips the platform and version a hello carries', () => {
+    expect(parseLinkFrame(withPlatform)).toEqual(withPlatform);
+  });
+
+  it('ignores a malformed platform or version and keeps the hello', () => {
+    const parsed = parseLinkFrame({
+      ...SAMPLES.hello,
+      platform: { os: 'plan9', arch: 'x64' },
+      version: 'x'.repeat(65),
+    });
+    expect(parsed).not.toBeNull();
+    expect(parsed).not.toHaveProperty('platform');
+    expect(parsed).not.toHaveProperty('version');
+  });
+
+  it('a version with a control character is ignored', () => {
+    const parsed = parseLinkFrame({ ...SAMPLES.hello, version: '1.0\n' });
+    expect(parsed).not.toBeNull();
+    expect(parsed).not.toHaveProperty('version');
+  });
+
+  it('an older hello without them still parses, with neither field', () => {
+    const parsed = parseLinkFrame(SAMPLES.hello);
+    expect(parsed).toEqual(SAMPLES.hello);
+    expect(parsed).not.toHaveProperty('platform');
+  });
+
+  it('maps node platform and arch to the hello vocabulary; anything else is other', () => {
+    expect(helloPlatform('linux', 'x64')).toEqual({ os: 'linux', arch: 'x64' });
+    expect(helloPlatform('win32', 'x64')).toEqual({ os: 'windows', arch: 'x64' });
+    expect(helloPlatform('linux', 'arm64')).toEqual({ os: 'linux', arch: 'arm64' });
+    expect(helloPlatform('darwin', 'x64')).toEqual({ os: 'other', arch: 'x64' });
+    expect(helloPlatform('linux', 'ia32')).toEqual({ os: 'linux', arch: 'other' });
   });
 });

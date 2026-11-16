@@ -7,8 +7,8 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { writeServerSecret } from '../../server/lifecycle/server-secret';
 import type { AuditEvent } from '../../server/network/audit-log';
@@ -18,11 +18,13 @@ import type { McpNetworkPort, RemoteEntry } from '../../src/conduit-mcp/remote-r
 import type { MessageRecord } from '../../src/conduit-mcp/types';
 import { LINK_PROTOCOL } from '../../src/contracts/link-protocol';
 import type { NetworkState } from '../../src/contracts/network-state';
+import { personSshArgv } from '../../src/network/ssh-argv';
 import {
   LINK_ENDPOINT_FILE,
   readServerVersion,
   SERVER_VERSION_FILE,
 } from '../../src/server-secret';
+import type { SessionCommand } from '../../src/types';
 
 const quiet = { debug: () => undefined, warn: () => undefined, error: () => undefined };
 const TEST_APP_VERSION = '9.8.7';
@@ -38,6 +40,7 @@ function server(name: string, endpointIn?: (root: string) => string) {
   if (loaded.kind === 'newer') throw new Error('unexpected');
   const secret = writeServerSecret(root);
   const states: NetworkState[] = [];
+  const opened: Array<{ command: SessionCommand; folder: string }> = [];
   const net = createNetwork({
     dir,
     userData: root,
@@ -51,6 +54,10 @@ function server(name: string, endpointIn?: (root: string) => string) {
     log: quiet,
     observe: async () => null,
     emitTo: () => {},
+    openCommandSession: async (command, folder) => {
+      opened.push({ command, folder });
+      return 'sess-needs-person';
+    },
     bootstrap: {
       local: { version: TEST_APP_VERSION, linkMajor: 1, platform: 'linux', arch: 'x64' },
       runtime: { nodeExe: null, serverDir: root, hcExe: root, shimFile: root },
@@ -77,7 +84,7 @@ function server(name: string, endpointIn?: (root: string) => string) {
   });
   cleanup.push(() => rmSync(root, { recursive: true, force: true }));
   cleanup.push(() => net.stop());
-  return { net, dir, states };
+  return { net, dir, states, opened };
 }
 
 async function call<T>(net: NetworkService, method: string, params: unknown = {}): Promise<T> {
@@ -164,6 +171,27 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
     await expect(call(a.net, 'link.sshBootstrap', { target: '' })).rejects.toThrow(
       'Expected target',
     );
+  });
+
+  it('machines.openNeedsPerson refuses a non-target, then opens the pane on the dialer control dir', async () => {
+    const a = server('net-a');
+    await expect(
+      call(a.net, 'machines.openNeedsPerson', { target: '-oProxyCommand=x' }),
+    ).rejects.toThrow('Expected an ssh target');
+    expect(a.opened).toEqual([]);
+
+    const answer = await call<{ sessionId: string }>(a.net, 'machines.openNeedsPerson', {
+      target: 'fake',
+    });
+    expect(answer).toEqual({ sessionId: 'sess-needs-person' });
+    expect(a.opened).toHaveLength(1);
+    const [{ command, folder }] = a.opened;
+    // The dialer's controlDir is <userData>/ssh; the pane must share it or its master is not reused.
+    const controlPath = join(dirname(a.dir), 'ssh', '%C');
+    const argv = personSshArgv({ target: 'fake', controlPath });
+    if (!Array.isArray(argv)) throw new Error('expected an argv');
+    expect(command).toEqual({ command: process.env.CONDUIT_SSH_PATH || 'ssh', args: argv });
+    expect(folder).toBe(homedir());
   });
 
   it('rejects bad parameters at the boundary', async () => {

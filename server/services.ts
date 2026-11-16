@@ -15,6 +15,7 @@ import { folderKey } from '../src/folder-key';
 import { HcDisconnectedError } from '../src/hc-client';
 import type { HostPlatform } from '../src/lsp-binary';
 import { readE2eSshArgsPrefix } from '../src/network/ssh-argv';
+import { COMMAND_AGENT_ID } from '../src/session-command';
 import {
   detectAgentClis,
   detectShells,
@@ -22,7 +23,7 @@ import {
   hostCliScanEnv,
   resolveCommand,
 } from '../src/shells';
-import type { AgentDefinition } from '../src/types';
+import type { AgentDefinition, SessionCommand } from '../src/types';
 import { createDomain, type DomainLog } from './domain';
 import { createCodexRolloutWatch } from './domain/codex-rollout-watch';
 import type { ShellCore } from './lifecycle/shell';
@@ -237,12 +238,8 @@ export function createServices(o: ServicesOptions) {
   };
 
   /** C2 `sessions.create` then `sessions.start`, the same domain handlers the app's open runs. */
-  const openSession = async (agentId: string, folder: string): Promise<string> => {
-    const created = await domain.handle({
-      id: 0,
-      method: 'sessions.create',
-      params: { agentId, home: folder },
-    });
+  const createAndStart = async (params: Record<string, unknown>): Promise<string> => {
+    const created = await domain.handle({ id: 0, method: 'sessions.create', params });
     if (!created || !('result' in created))
       throw new RpcFault('refused', 'could not create the session');
     const { sessionId } = created.result as { sessionId: string };
@@ -251,6 +248,11 @@ export function createServices(o: ServicesOptions) {
     if (!started || 'error' in started) log.warn('drive', 'session created but did not start');
     return sessionId;
   };
+  const openSession = (agentId: string, folder: string): Promise<string> =>
+    createAndStart({ agentId, home: folder });
+  /** A command session the app opens the same way (sessions.create with a command). */
+  const openCommandSession = (command: SessionCommand, folder: string): Promise<string> =>
+    createAndStart({ agentId: COMMAND_AGENT_ID, home: folder, command });
 
   /** C2 `sessions.remove`, the server-local close that kills or retires the terminal. */
   const closeSession = async (sessionId: string): Promise<void> => {
@@ -323,6 +325,7 @@ export function createServices(o: ServicesOptions) {
             openSession,
             closeSession,
           },
+          openCommandSession,
           monitor: {
             sessions: () => monitorSessions(),
             requests: () => mcp?.networkPort().requestsSummary() ?? [],
@@ -503,7 +506,8 @@ export function createServices(o: ServicesOptions) {
     if (
       request.method.startsWith('pairing.') ||
       request.method.startsWith('link.') ||
-      request.method.startsWith('remote.')
+      request.method.startsWith('remote.') ||
+      request.method.startsWith('machines.')
     ) {
       if (!network)
         throw new RpcFault(

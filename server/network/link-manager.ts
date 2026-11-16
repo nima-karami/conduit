@@ -4,6 +4,7 @@ import {
   type Capabilities,
   type Capability,
   type HelloFrame,
+  helloPlatform,
   LINK_FEATURES,
   LINK_PING_MS,
   LINK_PROTOCOL,
@@ -46,6 +47,8 @@ export type LinkView = Omit<NetworkLinkView, 'trust' | 'snapshot'>;
 export interface LinkManagerDeps {
   identity(): Identity;
   selfName(): string;
+  /** This server's version, sent in the hello so an ssh controller can record it. */
+  appVersion: string;
   tls(): { cert: string; key: string };
   store: LinkStore;
   audit: AuditSink;
@@ -170,7 +173,46 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       selfName: deps.selfName(),
       features: [...LINK_FEATURES],
       capabilities: { ...capabilities },
+      platform: helloPlatform(process.platform, process.arch),
+      version: deps.appVersion,
     };
+  };
+
+  /**
+   * An ssh peer's hello is the only place its os and version come from for a machine we did not
+   * install: without this an added machine has no block, so it cannot be connected or disconnected.
+   */
+  const recordPlatform = (record: LinkRecord, hello: HelloFrame): void => {
+    if (record.transport !== 'ssh' || record.ssh === null) return;
+    if (hello.platform === undefined || hello.version === undefined) return;
+    const { os, arch } = hello.platform;
+    // Only linux and windows x64 are machines we can bootstrap, so only those are recorded.
+    if (os === 'other' || arch !== 'x64') {
+      deps.log.warn('link: ssh peer platform not recorded', {
+        peer: record.machineId,
+        os,
+        arch,
+      });
+      return;
+    }
+    const live = deps.store.get(record.machineId)?.machine ?? null;
+    // Every attach runs this, so an unchanged hello must not rewrite links.json each time.
+    if (live !== null && live.os === os && live.arch === arch && live.version === hello.version)
+      return;
+    deps.store.setMachine(
+      record.machineId,
+      live === null
+        ? {
+            os,
+            arch,
+            version: hello.version,
+            mode: 'full',
+            agents: [],
+            enabled: true,
+            survivesLogout: null,
+          }
+        : { ...live, os, arch, version: hello.version },
+    );
   };
 
   const peerOf = (machineId: string) => peers.get(machineId) ?? null;
@@ -400,6 +442,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       event(p, { kind: 'identity-changed', at: deps.now() });
       return;
     }
+    recordPlatform(p.record, hello);
     let replaced = false;
     if (p.conn) {
       // Same dialer: that machine only opens a new stream once its side of the old one is gone, so the

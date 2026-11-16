@@ -18,6 +18,7 @@ import type { PairingOutcome } from '../../src/network/pairing-protocol';
 import { createRemoteDirectory } from '../../src/network/remote-directory';
 import { selfSignedCert } from '../../src/network/self-signed-cert';
 import { controlDir } from '../../src/network/ssh-argv';
+import type { SessionCommand } from '../../src/types';
 import { currentWindowsPty } from '../../src/windows-pty-info';
 import {
   removeLinkEndpoint,
@@ -36,10 +37,11 @@ import { type LinkListener, listenLinks, listenPairing, type NetLog } from './li
 import { createMachines, type Machines } from './machines';
 import { createMessaging } from './messaging';
 import { createMonitorPublisher, type MonitorSource } from './monitor-publisher';
+import { createNeedsPerson } from './needs-person';
 import { createPairingPort } from './pairing-port';
 import { createPairingService, type PairingService } from './pairing-service';
 import { createSnapshotCoalescer } from './snapshot-coalescer';
-import { createSshDial } from './ssh-dialer';
+import { createSshDial, prepareControlDir } from './ssh-dialer';
 import { sshExec } from './ssh-exec';
 import { listenStdioLink, type StdioLinkEndpoint } from './stdio-link-endpoint';
 import { createViewRelay } from './view-relay';
@@ -86,6 +88,8 @@ export interface NetworkDeps {
     | 'closeSession'
   >;
   emitTo(peer: object, ...event: Parameters<ServerEventSink>): void;
+  /** Opens a visible command session (the needs-person pane); resolves with its id. */
+  openCommandSession(command: SessionCommand, folder: string): Promise<string>;
   /** This server's own runtime and platform, for pushing it to a remote (bootstrap.ts). */
   bootstrap: NetworkBootstrapDeps;
 }
@@ -236,6 +240,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
 
   const manager: LinkManager = createLinkManager({
     identity: () => identity,
+    appVersion: deps.appVersion,
     sshDial: createSshDial({
       sshPath: process.env.CONDUIT_SSH_PATH || 'ssh',
       controlDir: sshControlDir,
@@ -295,6 +300,15 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     }
     return { ok: true, machineId: linked.machineId, ssh: outcome.ssh, summary: outcome.summary };
   };
+
+  const openNeedsPerson = createNeedsPerson({
+    sshPath: process.env.CONDUIT_SSH_PATH || 'ssh',
+    sshArgsPrefix: deps.sshArgsPrefix,
+    controlDir: sshControlDir,
+    prepareControlDir: (dir) => prepareControlDir(dir, deps.log),
+    openCommand: deps.openCommandSession,
+    home: os.homedir(),
+  });
 
   const machines: Machines = createMachines({
     manager,
@@ -616,6 +630,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
         relay,
         drive,
         bootstrap: bootstrapAndLink,
+        openNeedsPerson,
         peer,
       }),
     disconnected: (peer) => relay.disconnected(peer),

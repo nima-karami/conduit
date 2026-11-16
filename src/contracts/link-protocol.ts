@@ -5,7 +5,8 @@ import type { Capabilities, Capability } from './remote-principal';
 export type { Capabilities, Capability } from './remote-principal';
 
 // see docs/specs/2026-11-14-conduit-network.md — wire version; a major mismatch is `incompatible`
-export const LINK_PROTOCOL = { major: 1, minor: 0 } as const;
+// minor 1 added the hello's platform and version (spec 5.3): a peer at minor 0 omits them.
+export const LINK_PROTOCOL = { major: 1, minor: 1 } as const;
 export const LINK_FEATURES = ['messaging', 'monitor', 'drive', 'view'] as const;
 export type LinkFeature = (typeof LINK_FEATURES)[number];
 export const LINK_FRAME_MAX_BYTES = 16 * 1024 * 1024;
@@ -33,6 +34,13 @@ export type LinkState =
   | 'identity-changed'
   | 'revoked';
 
+export type HelloOs = 'linux' | 'windows' | 'other';
+export type HelloArch = 'x64' | 'arm64' | 'other';
+export interface HelloPlatform {
+  os: HelloOs;
+  arch: HelloArch;
+}
+
 export interface HelloFrame {
   t: 'hello';
   protocol: { major: number; minor: number };
@@ -44,6 +52,16 @@ export interface HelloFrame {
   features: LinkFeature[];
   /** what the sender enables on this link */
   capabilities: Capabilities;
+  /** Absent from a minor-0 peer. An ssh controller reads its os and version from these. */
+  platform?: HelloPlatform;
+  version?: string;
+}
+
+/** Node's platform and arch names as the hello spells them; anything else is `other`. */
+export function helloPlatform(platform: string, arch: string): HelloPlatform {
+  const os: HelloOs = platform === 'linux' ? 'linux' : platform === 'win32' ? 'windows' : 'other';
+  const cpu: HelloArch = arch === 'x64' || arch === 'arm64' ? arch : 'other';
+  return { os, arch: cpu };
 }
 
 export type LinkFrame =
@@ -379,6 +397,9 @@ function parseHello(r: Rec): HelloFrame | null {
     !bool(caps.drive)
   )
     return null;
+  // A malformed platform or version is dropped, not fatal: the hello still shows the version.
+  const platform = parseHelloPlatform(r.platform);
+  const version = typeof r.version === 'string' && VERSION_SHAPE.test(r.version) ? r.version : null;
   return {
     t: 'hello',
     protocol: { major: p.major, minor: p.minor },
@@ -388,7 +409,20 @@ function parseHello(r: Rec): HelloFrame | null {
     selfName: r.selfName,
     features: LINK_FEATURES.filter((f) => features.includes(f)),
     capabilities: { messaging: caps.messaging, monitor: caps.monitor, drive: caps.drive },
+    ...(platform === null ? {} : { platform }),
+    ...(version === null ? {} : { version }),
   };
+}
+
+const VERSION_SHAPE = /^[A-Za-z0-9._+-]{1,64}$/;
+const HELLO_OSES = ['linux', 'windows', 'other'] as const;
+const HELLO_ARCHES = ['x64', 'arm64', 'other'] as const;
+const isHelloOs = (v: unknown): v is HelloOs => HELLO_OSES.some((o) => o === v);
+const isHelloArch = (v: unknown): v is HelloArch => HELLO_ARCHES.some((a) => a === v);
+
+function parseHelloPlatform(v: unknown): HelloPlatform | null {
+  if (!isRec(v) || !isHelloOs(v.os) || !isHelloArch(v.arch)) return null;
+  return { os: v.os, arch: v.arch };
 }
 
 function isCapabilities(v: unknown): boolean {

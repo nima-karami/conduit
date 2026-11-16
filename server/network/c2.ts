@@ -27,6 +27,8 @@ export interface NetworkCallDeps {
   drive: Drive;
   /** The controller's bootstrap for one target: install or attach, then link. */
   bootstrap(target: string): Promise<BootstrapResult>;
+  /** Opens the needs-person pane for one target; resolves with its session id. */
+  openNeedsPerson(target: string): Promise<string>;
   peer?: object;
 }
 
@@ -119,6 +121,11 @@ export function handleNetworkCall(
       const target = str(p, 'target', 256);
       if (!isSshTarget(target)) throw new RpcFault('invalid', 'Expected an ssh target');
       return d.bootstrap(target);
+    }
+    case 'machines.openNeedsPerson': {
+      const target = str(p, 'target', 256);
+      if (!isSshTarget(target)) throw new RpcFault('invalid', 'Expected an ssh target');
+      return d.openNeedsPerson(target).then((sessionId) => ({ sessionId }));
     }
     case 'link.revoke': {
       const machineId = str(p, 'machineId');
