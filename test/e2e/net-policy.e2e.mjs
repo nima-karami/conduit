@@ -158,10 +158,10 @@ async function run() {
       row = await machineRow(a, bId);
       return row?.status === 'applied' && row.rev === r0 + 1;
     });
-    assert(
-      policyFileOf(b).rev === r0 + 1 && defaultProfileOf(b) === 'observer',
-      `B after the push: rev ${policyFileOf(b).rev}, default ${defaultProfileOf(b)}`,
-    );
+    // B's policy.json write is coalesced, so the disk copy can trail the snapshot A already has.
+    await eventually('B stores the push at r0+1', async () => {
+      return policyFileOf(b).rev === r0 + 1 && defaultProfileOf(b) === 'observer';
+    });
 
     phase('2. the link is down: A edits to worker and waits; the link returns; A pushes');
     const down1 = await callTool(a, aa, 'disconnect_machine', { machine: bId });
@@ -198,10 +198,9 @@ async function run() {
       return row?.status === 'waiting';
     });
     await setDefault(b, 'observer');
-    assert(
-      policyFileOf(b).rev === r0 + 3 && defaultProfileOf(b) === 'observer',
-      `B's own edit: rev ${policyFileOf(b).rev}, default ${defaultProfileOf(b)}`,
-    );
+    await eventually("B's own edit lands at r0+3", async () => {
+      return policyFileOf(b).rev === r0 + 3 && defaultProfileOf(b) === 'observer';
+    });
     const up3 = await callTool(a, aa, 'connect_machine', { machine: 'fake' });
     assert(up3.state === 'up', `connect_machine: ${JSON.stringify(up3)}`);
     await eventually('A shows conflict with B rev r0+3', async () => {
