@@ -1,7 +1,7 @@
+import { CONNECT_BUDGET_MS } from '../../src/conduit-mcp/machine-tools';
 import type { Capability } from '../../src/contracts/link-protocol';
 import type { NetworkState } from '../../src/contracts/network-state';
 import type { BootstrapResult } from '../../src/contracts/ssh-link';
-import { CONNECT_BUDGET_MS } from '../../src/conduit-mcp/machine-tools';
 import { isSshTarget } from '../../src/network/ssh-argv';
 import { RpcFault } from '../transport/pipe';
 import { DRIVE_INPUT_MAX_BYTES, type Drive } from './drive';
@@ -144,6 +144,9 @@ export function handleNetworkCall(
       const capability = CAPABILITIES.find((c) => c === p.capability);
       if (capability === undefined || typeof p.on !== 'boolean')
         throw new RpcFault('invalid', 'Expected capability and on');
+      // The grant is re-applied on every connect (acceptSsh, plan CON-41 decision 3), so a toggle lasts one connection.
+      if (capability === 'drive' && d.manager.isSshController(machineId))
+        throw new RpcFault('invalid', 'drive on an ssh controller is granted by its connection');
       known(d.manager.setCapability(machineId, capability, p.on), machineId);
       return Promise.resolve({});
     }

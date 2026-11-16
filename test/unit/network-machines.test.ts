@@ -1,10 +1,10 @@
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import { RpcFault } from '../../server/transport/pipe';
 import { type Identity, loadIdentity } from '../../server/network/identity';
 import { createLinkManager, type LinkManager } from '../../server/network/link-manager';
 import { type LinkStoreIo, openLinkStore } from '../../server/network/link-store';
 import { createMachines, type MachinesManager } from '../../server/network/machines';
+import { RpcFault } from '../../server/transport/pipe';
 import type { LinkState } from '../../src/contracts/link-protocol';
 import type { MachineMeta } from '../../src/contracts/machines';
 import type { BootstrapResult, SshDial, SshFailure } from '../../src/contracts/ssh-link';

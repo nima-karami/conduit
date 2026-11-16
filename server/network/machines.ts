@@ -338,7 +338,10 @@ export function createMachines(deps: MachinesDeps): Machines {
       const record = sshRecordOf(deps.store, machineId);
       const trimmed = name.trim();
       if (trimmed.length === 0 || trimmed.length > MAX_MACHINE_NAME || /\p{Cc}/u.test(trimmed)) {
-        throw new RpcFault('invalid', `A machine name is 1 to ${MAX_MACHINE_NAME} printable characters`);
+        throw new RpcFault(
+          'invalid',
+          `A machine name is 1 to ${MAX_MACHINE_NAME} printable characters`,
+        );
       }
       deps.store.update(record.machineId, { name: trimmed });
     },

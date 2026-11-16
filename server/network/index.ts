@@ -15,11 +15,11 @@ import type { ServerSettings } from '../../src/contracts/server-protocol';
 import type { AddSshPeerResult, BootstrapResult, SshEndpoint } from '../../src/contracts/ssh-link';
 import type { TerminalRuntime } from '../../src/contracts/terminal-runtime';
 import { bindableAddresses } from '../../src/network/bind-addresses';
-import { parseSshConfigHosts } from '../../src/network/ssh-config-hosts';
 import type { PairingOutcome } from '../../src/network/pairing-protocol';
 import { createRemoteDirectory } from '../../src/network/remote-directory';
 import { selfSignedCert } from '../../src/network/self-signed-cert';
 import { controlDir } from '../../src/network/ssh-argv';
+import { parseSshConfigHosts } from '../../src/network/ssh-config-hosts';
 import type { SessionCommand } from '../../src/types';
 import { currentWindowsPty } from '../../src/windows-pty-info';
 import {
@@ -208,6 +208,16 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       relay.linkChanged(v.machineId);
       drive.linkChanged(v.machineId);
       calls.linkChanged(v.machineId);
+    }
+    // A forgotten link has no view left, so the hooks run for the id it had and its maps are cleared.
+    const linkedNow = new Set(views.map((v) => v.machineId));
+    for (const [machineId, before] of [...seen]) {
+      if (linkedNow.has(machineId)) continue;
+      seen.delete(machineId);
+      capsSeen.delete(machineId);
+      if (live(before)) messaging.linkDown(machineId);
+      relay.linkChanged(machineId);
+      drive.linkChanged(machineId);
     }
     calls.settleAbsent(views.map((v) => v.machineId));
     for (const l of portListeners) l();

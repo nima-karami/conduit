@@ -15,13 +15,13 @@ import type { AuditEvent } from '../../server/network/audit-log';
 import { handleMachineCall } from '../../server/network/c2';
 import { loadIdentity } from '../../server/network/identity';
 import { createNetwork, type NetworkService } from '../../server/network/index';
+import type { Machines } from '../../server/network/machines';
+import { RpcFault } from '../../server/transport/pipe';
+import { CONNECT_BUDGET_MS } from '../../src/conduit-mcp/machine-tools';
 import type { McpNetworkPort, RemoteEntry } from '../../src/conduit-mcp/remote-routing';
 import type { MessageRecord } from '../../src/conduit-mcp/types';
 import { LINK_PROTOCOL } from '../../src/contracts/link-protocol';
-import type { Machines } from '../../server/network/machines';
-import { CONNECT_BUDGET_MS } from '../../src/conduit-mcp/machine-tools';
 import type { NetworkState } from '../../src/contracts/network-state';
-import { RpcFault } from '../../server/transport/pipe';
 import { personSshArgv } from '../../src/network/ssh-argv';
 import {
   LINK_ENDPOINT_FILE,
@@ -100,6 +100,79 @@ async function call<T>(net: NetworkService, method: string, params: unknown = {}
   const answer = net.handle(method, params);
   if (answer === null) throw new Error(`not a network method: ${method}`);
   return (await answer) as T;
+}
+
+/**
+ * Two services, A added over fake-ssh (A dials B; B's record for A is the inbound controller), with
+ * the link up. The bridge is a stand-in: it writes the real preamble and pipes the same bytes.
+ */
+async function linkedOverSsh(
+  bDelivered: string[],
+  cleanup: Array<() => Promise<void> | void>,
+): Promise<{ a: ReturnType<typeof server>; b: ReturnType<typeof server>; bId: string }> {
+  const work = mkdtempSync(join(tmpdir(), 'ssh-add-'));
+  cleanup.push(() => rmSync(work, { recursive: true, force: true }));
+  const fakeSsh = join(process.cwd(), 'test', 'e2e', 'fixtures', 'fake-ssh.cjs');
+  const wrapper = join(work, 'ssh');
+  writeFileSync(wrapper, `#!/bin/sh\nexec '${process.execPath}' '${fakeSsh}' "$@"\n`);
+  chmodSync(wrapper, 0o755);
+  const bridge = join(work, 'bridge.cjs');
+  writeFileSync(
+    bridge,
+    [
+      "const fs = require('node:fs'); const net = require('node:net'); const path = require('node:path');",
+      "const userData = process.argv[process.argv.indexOf('--user-data') + 1];",
+      "const secret = fs.readFileSync(path.join(userData, 'server-secret'), 'utf8').trim();",
+      "const body = Buffer.from(JSON.stringify({ t: 'bridge', v: 1, secret }));",
+      'const pre = Buffer.alloc(4 + body.length); pre.writeUInt32BE(body.length, 0); body.copy(pre, 4);',
+      "const sock = net.createConnection(path.join(userData, 'conduit-link.sock'), () => {",
+      '  sock.write(pre); process.stdin.pipe(sock); sock.pipe(process.stdout);',
+      '});',
+      "sock.on('close', () => process.exit(0));",
+      '',
+    ].join('\n'),
+  );
+  vi.stubEnv('CONDUIT_SSH_PATH', wrapper);
+  cleanup.push(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const a = server('net-a');
+  const b = server('net-b');
+  const mcp = (sink: string[]): McpNetworkPort => ({
+    localDirectory: () => [],
+    hasMessage: () => false,
+    readBlob: async () => undefined,
+    threadExportedTo: () => false,
+    wireThreadFor: (threadId: string) => threadId,
+    deliverInbound: async (msg) => {
+      sink.push(msg.body);
+      return msg.to.map((handle) => ({ handle, status: 'delivered' as const, reason: null }));
+    },
+    setRemoteStatus: async () => {},
+    onLocalStatus: () => () => {},
+    youUnread: () => 0,
+    ownerPresence: () => 'here',
+    requestsSummary: () => [],
+    callAsRemote: () => Promise.reject(new Error('not used by this test')),
+  });
+  a.net.setMcp(mcp([]));
+  b.net.setMcp(mcp(bDelivered));
+  await a.net.start();
+  await b.net.start();
+
+  const added = await call<{ ok: boolean; machineId?: string }>(a.net, 'link.sshAdd', {
+    ssh: {
+      target: 'fake-target',
+      node: process.execPath,
+      mainJs: bridge,
+      userData: join(b.dir, '..'),
+    },
+  });
+  const bId = b.net.state().machineId;
+  expect(added).toEqual({ ok: true, machineId: bId });
+  await until(() => a.net.state().links.some((l) => l.machineId === bId && l.state === 'up'));
+  return { a, b, bId };
 }
 
 async function until(check: () => boolean, ms = 20_000): Promise<void> {
@@ -340,70 +413,8 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
   it.skipIf(process.platform === 'win32')(
     'link.sshAdd links two services over fake-ssh and delivers a message',
     async () => {
-      const work = mkdtempSync(join(tmpdir(), 'ssh-add-'));
-      cleanup.push(() => rmSync(work, { recursive: true, force: true }));
-      const fakeSsh = join(process.cwd(), 'test', 'e2e', 'fixtures', 'fake-ssh.cjs');
-      const wrapper = join(work, 'ssh');
-      writeFileSync(wrapper, `#!/bin/sh\nexec '${process.execPath}' '${fakeSsh}' "$@"\n`);
-      chmodSync(wrapper, 0o755);
-      const bridge = join(work, 'bridge.cjs');
-      writeFileSync(
-        bridge,
-        [
-          "const fs = require('node:fs'); const net = require('node:net'); const path = require('node:path');",
-          "const userData = process.argv[process.argv.indexOf('--user-data') + 1];",
-          "const secret = fs.readFileSync(path.join(userData, 'server-secret'), 'utf8').trim();",
-          "const body = Buffer.from(JSON.stringify({ t: 'bridge', v: 1, secret }));",
-          'const pre = Buffer.alloc(4 + body.length); pre.writeUInt32BE(body.length, 0); body.copy(pre, 4);',
-          "const sock = net.createConnection(path.join(userData, 'conduit-link.sock'), () => {",
-          '  sock.write(pre); process.stdin.pipe(sock); sock.pipe(process.stdout);',
-          '});',
-          "sock.on('close', () => process.exit(0));",
-          '',
-        ].join('\n'),
-      );
-      vi.stubEnv('CONDUIT_SSH_PATH', wrapper);
-      cleanup.push(() => {
-        vi.unstubAllEnvs();
-      });
-
-      const a = server('net-a');
-      const b = server('net-b');
       const delivered: string[] = [];
-      const mcp = (sink: string[]): McpNetworkPort => ({
-        localDirectory: () => [],
-        hasMessage: () => false,
-        readBlob: async () => undefined,
-        threadExportedTo: () => false,
-        wireThreadFor: (threadId: string) => threadId,
-        deliverInbound: async (msg) => {
-          sink.push(msg.body);
-          return msg.to.map((handle) => ({ handle, status: 'delivered' as const, reason: null }));
-        },
-        setRemoteStatus: async () => {},
-        onLocalStatus: () => () => {},
-        youUnread: () => 0,
-        ownerPresence: () => 'here',
-        requestsSummary: () => [],
-        callAsRemote: () => Promise.reject(new Error('not used by this test')),
-      });
-      a.net.setMcp(mcp([]));
-      b.net.setMcp(mcp(delivered));
-      await a.net.start();
-      await b.net.start();
-
-      const added = await call<{ ok: boolean; machineId?: string }>(a.net, 'link.sshAdd', {
-        ssh: {
-          target: 'fake-target',
-          node: process.execPath,
-          mainJs: bridge,
-          userData: join(b.dir, '..'),
-        },
-      });
-      expect(added).toEqual({ ok: true, machineId: b.net.state().machineId });
-
-      const bId = b.net.state().machineId;
-      await until(() => a.net.state().links.some((l) => l.machineId === bId && l.state === 'up'));
+      const { a, bId } = await linkedOverSsh(delivered, cleanup);
       const linkA = (await call<NetworkState>(a.net, 'link.list')).links.find(
         (l) => l.machineId === bId,
       );
@@ -484,7 +495,11 @@ describe('machines C2 methods', () => {
         signals.push(signal);
         return new Promise(() => undefined);
       });
-      void handleMachineCall('machines.connect', { machine: 'build' }, { machines, sshHosts: () => [] });
+      void handleMachineCall(
+        'machines.connect',
+        { machine: 'build' },
+        { machines, sshHosts: () => [] },
+      );
       expect(signals).toHaveLength(1);
       const [signal] = signals;
       vi.advanceTimersByTime(CONNECT_BUDGET_MS - 1);
@@ -503,4 +518,41 @@ describe('machines C2 methods', () => {
     await handleMachineCall('machines.remove', { machineId: 'm-1' }, d);
     expect(seen).toEqual(['rename m-1 box', 'remove m-1']);
   });
+});
+
+describe('a linked machine seen from the owner side', () => {
+  it.skipIf(process.platform === 'win32')(
+    'link.list carries the same machines as the state, and the linked machine is listed',
+    async () => {
+      const { a, bId } = await linkedOverSsh([], cleanup);
+      const listed = await call<NetworkState>(a.net, 'link.list');
+      expect(listed.machines).toEqual(a.net.state().machines);
+      expect(listed.machines.map((m) => m.machine_id)).toEqual([bId]);
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'machines.remove ends a routed call still waiting on that machine as peer_revoked',
+    async () => {
+      const { a, bId } = await linkedOverSsh([], cleanup);
+      // The call registers as pending before any reply can come back, so the removal lands on it.
+      const pending = a.net
+        .port()
+        .call(bId, 'list_agents', { x: 1 }, 'claude-3', new AbortController().signal);
+      await call(a.net, 'machines.remove', { machineId: bId });
+      expect(await pending).toMatchObject({ ok: false, error: { code: 'peer_revoked' } });
+      expect(a.net.state().machines).toEqual([]);
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'a drive toggle on an inbound ssh controller is refused as invalid',
+    async () => {
+      const { a, b } = await linkedOverSsh([], cleanup);
+      const aId = a.net.state().machineId;
+      await expect(
+        call(b.net, 'link.setCapability', { machineId: aId, capability: 'drive', on: false }),
+      ).rejects.toBeInstanceOf(RpcFault);
+    },
+  );
 });

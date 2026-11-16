@@ -1688,14 +1688,81 @@ describe('forget and the drive grant', { timeout: 60_000 }, () => {
     expect(b.store.get(a.id.machineId)).not.toBeNull();
   });
 
-  it('forget stops redialing the machine', async () => {
-    const { a, b, ssh } = await sshPair();
-    await a.manager.addSshPeer(ENDPOINT);
-    await until(() => b.manager.view(a.id.machineId)?.state === 'up');
-    expect(a.manager.forget(b.id.machineId)).toBe(true);
-    const dials = ssh.args.length;
+  it('forget stops a pending redial: no dial happens after it', async () => {
+    // Each dial's stream is closed before any hello, so the peer fails and schedules a retry about 1 s on.
+    let dials = 0;
+    const a = await node(identity(), 'linux-box', 0, () => {
+      dials += 1;
+      const [near, far] = streamPair();
+      near.destroy();
+      far.destroy();
+      return { stream: near, failure: async () => null };
+    });
+    const x = await node(identity(), 'x-box');
+    a.store.addSsh({
+      machineId: x.id.machineId,
+      serverKey: x.id.serverKeyRaw.toString('base64'),
+      ownerKey: null,
+      name: 'x-box',
+      ssh: ENDPOINT,
+    });
+    a.store.setMachine(x.id.machineId, { ...META, enabled: true });
+    a.manager.start();
+    await until(() => dials >= 1);
+    expect(a.manager.forget(x.id.machineId)).toBe(true);
+    const atForget = dials;
+    await new Promise((r) => setTimeout(r, 2_500));
+    expect(dials).toBe(atForget);
+  });
+
+  it('a wait on a machine that is forgotten returns at once, with no failure', async () => {
+    const a = await node(identity(), 'linux-box', 0, () => {
+      const [near] = streamPair();
+      return { stream: near, failure: async () => null };
+    });
+    const x = await node(identity(), 'x-box');
+    a.store.addSsh({
+      machineId: x.id.machineId,
+      serverKey: x.id.serverKeyRaw.toString('base64'),
+      ownerKey: null,
+      name: 'x-box',
+      ssh: ENDPOINT,
+    });
+    a.store.setMachine(x.id.machineId, { ...META, enabled: true });
+    a.manager.start();
+    const waiting = a.manager.waitUp(x.id.machineId, 60_000, new AbortController().signal);
+    expect(a.manager.forget(x.id.machineId)).toBe(true);
+    const outcome = await Promise.race([
+      waiting,
+      new Promise<string>((r) => setTimeout(() => r('still waiting'), 2_000)),
+    ]);
+    expect(outcome).toEqual({ up: false, failure: null });
+  });
+
+  it('an inbound ssh hello never grants drive to a record we dial', async () => {
+    // A dialed record (ssh set) is ours to dial, so B may not drive A through it (spec S5).
+    const x = await node(identity(), 'x-box');
+    let dialed = 0;
+    const a = await node(identity(), 'linux-box', 0, () => {
+      dialed += 1;
+      const [near] = streamPair();
+      return { stream: near, failure: async () => null };
+    });
+    a.store.addSsh({
+      machineId: x.id.machineId,
+      serverKey: x.id.serverKeyRaw.toString('base64'),
+      ownerKey: null,
+      name: 'x-box',
+      ssh: ENDPOINT,
+    });
+    a.store.setMachine(x.id.machineId, { ...META, enabled: true });
+    a.manager.start();
+    await until(() => dialed >= 1);
+    const [near, far] = streamPair();
+    a.manager.acceptStream(far);
+    void openConnection(near, { hello: helloOf(x), now: Date.now, log: quiet });
     await new Promise((r) => setTimeout(r, 300));
-    expect(ssh.args.length).toBe(dials);
+    expect(a.store.get(x.id.machineId)?.capabilities.drive).toBe(false);
   });
 
   it('forget of an unknown machine is false and changes nothing', async () => {

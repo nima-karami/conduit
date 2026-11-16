@@ -8,16 +8,38 @@ const HOST_LINE = /^host(?:\s*=\s*|\s+)(.+)$/i;
 const isConcreteAlias = (token: string): boolean =>
   !token.startsWith('!') && !token.includes('*') && !token.includes('?');
 
+/**
+ * One Host line's aliases. A `#` token starts a comment that runs to the end of the line; a quoted
+ * name is skipped whole, since ssh reads it as one pattern with spaces in it.
+ */
+function aliasesOf(value: string): string[] {
+  const out: string[] = [];
+  let inQuote = false;
+  for (const token of value.split(/\s+/)) {
+    if (token.startsWith('#')) break;
+    if (inQuote) {
+      inQuote = !token.endsWith('"');
+      continue;
+    }
+    if (token.startsWith('"')) {
+      inQuote = token.length === 1 || !token.endsWith('"');
+      continue;
+    }
+    if (token !== '' && isConcreteAlias(token)) out.push(token);
+  }
+  return out;
+}
+
 export function parseSshConfigHosts(text: string): string[] {
   const seen = new Set<string>();
   const hosts: string[] = [];
   for (const raw of text.split(/\r?\n/)) {
     const match = HOST_LINE.exec(raw.trim());
     if (match === null) continue;
-    for (const token of (match[1] ?? '').split(/\s+/)) {
-      if (token === '' || !isConcreteAlias(token) || seen.has(token)) continue;
-      seen.add(token);
-      hosts.push(token);
+    for (const alias of aliasesOf(match[1] ?? '')) {
+      if (seen.has(alias)) continue;
+      seen.add(alias);
+      hosts.push(alias);
     }
   }
   return hosts;
