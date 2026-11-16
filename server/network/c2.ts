@@ -6,6 +6,7 @@ import {
   GIT_OPS,
   type GitOp,
   type GitReqArgs,
+  SHA256_HEX,
 } from '../../src/contracts/link-protocol';
 import type { AgentSetupStep, MachineMode } from '../../src/contracts/machines';
 import type { NetworkState } from '../../src/contracts/network-state';
@@ -29,8 +30,6 @@ const MAX_ADDRESSES = 16;
 const MAX_PATH = 4096;
 // The fs frames carry at most 64 chars of session id (link-protocol FS_SESSION_ID_MAX).
 const FS_SESSION_MAX = 64;
-// The content hash a save's `expect` takes: lowercase SHA-256 hex (link-protocol isSha256).
-const SHA256 = /^[0-9a-f]{64}$/;
 const utf8 = new TextEncoder();
 // The git frames take the same commit and page bounds the frame parser enforces on B.
 const GIT_SHA = /^[0-9a-f]{7,40}$/;
@@ -241,7 +240,7 @@ export function handleFsCall(
       const path = str(p, 'path', MAX_PATH);
       const data = writeData(p.data);
       const expect = p.expect;
-      if (expect !== null && (typeof expect !== 'string' || !SHA256.test(expect)))
+      if (expect !== null && (typeof expect !== 'string' || !SHA256_HEX.test(expect)))
         throw new RpcFault('invalid', 'Expected expect: null or a sha256 hex');
       return d.fs.write(machineId, sessionId, path, data, expect);
     }

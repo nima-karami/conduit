@@ -79,6 +79,17 @@ const FILE_ERROR: Record<string, string> = {
   timeout: 'That machine didn’t answer in time.',
 };
 
+/** Why a remote save failed, by the code the host reports; the save never says what it can't know. */
+const SAVE_ERROR: Record<string, (machine: string) => string> = {
+  peer_incompatible: (m) => `Update Conduit on ${m} to save files there.`,
+  refused: (m) => `${m} won’t let this file be saved.`,
+  too_large: () => 'This file is too large to save on another machine.',
+  not_found: (m) => `The folder for this file isn’t there on ${m} anymore.`,
+  // B may have written it before the answer was lost; the next save will conflict if it did.
+  timeout: (m) => `${m} didn’t answer. The save may or may not have landed.`,
+  peer_unreachable: (m) => `${m} isn’t reachable. The save may or may not have landed.`,
+};
+
 const PANE_ERROR: Record<string, string> = {
   peer_unreachable: 'That machine isn’t reachable right now.',
   peer_revoked: 'That machine was removed.',
@@ -194,6 +205,8 @@ export const MACHINES_STR = {
   remoteFileChanged: (machine: string) => `The file changed on ${machine}.`,
   /** Discard could not re-read a remote file; the tab keeps what it shows. */
   remoteFileReloadFailed: (machine: string) => `Couldn’t reload this file from ${machine}.`,
+  remoteSaveError: (code: string, machine: string) =>
+    SAVE_ERROR[code]?.(machine) ?? `Couldn’t save this file on ${machine}.`,
   anotherMachine: 'another machine',
   fileError: (code: string) => FILE_ERROR[code] ?? 'This file couldn’t be read on that machine.',
   filesRetry: 'Retry',

@@ -73,7 +73,7 @@ export interface RemoteFileSaves extends FileSaves {
   readCurrent(key: string): Promise<string | null>;
 }
 
-interface Buffer {
+interface RemoteBuffer {
   ref: RemoteBufferRef;
   model: SaveModel;
   /** The hash B reported for the content the buffer's baseline holds. null when B reported none
@@ -95,7 +95,7 @@ function readOnlyOf(file: FileContentDTO, machineName: string): ReadOnlyAttach |
 }
 
 export function createRemoteFileSaves(deps: RemoteFileSavesDeps): RemoteFileSaves {
-  const buffers = new Map<string, Buffer>();
+  const buffers = new Map<string, RemoteBuffer>();
 
   const write = async (key: string, content: string): Promise<WriteResult> => {
     const b = buffers.get(key);
@@ -120,7 +120,7 @@ export function createRemoteFileSaves(deps: RemoteFileSavesDeps): RemoteFileSave
           conflict: outcome.currentHash === null ? 'deleted' : 'changed',
         };
       case 'error':
-        return { ok: false, error: outcome.error };
+        return { ok: false, error: MACHINES_STR.remoteSaveError(outcome.error, b.ref.machineName) };
     }
   };
 

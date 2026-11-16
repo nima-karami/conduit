@@ -1046,8 +1046,9 @@ function parseFsRes(r: Rec): LinkFrame | null {
   return frame(r, 'fs.res', ['id', 'ok', 'error'], (x) => isFsResError(x.error)) ? r : null;
 }
 
-const SHA256 = /^[0-9a-f]{64}$/;
-const isSha256 = (v: unknown): boolean => str(v) && SHA256.test(v);
+/** A content hash on the wire: lowercase SHA-256 hex, as B computes it (plan CON-44 decision 3). */
+export const SHA256_HEX = /^[0-9a-f]{64}$/;
+const isSha256 = (v: unknown): boolean => str(v) && SHA256_HEX.test(v);
 const utf8 = new TextEncoder();
 /** Bounded in UTF-8 bytes, as B will write them; the cheap length test skips encoding most saves. */
 const isWriteData = (v: unknown): v is string =>
