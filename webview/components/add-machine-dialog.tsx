@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { MachineActionResult, MachineErrorCode } from '../../src/contracts/machines';
+import { logToHost } from '../bridge';
 import { MACHINES_STR } from '../machines-strings';
 import { ModalLayer } from './modal-layer';
 
@@ -60,7 +61,12 @@ export function AddMachineDialog({
           ? { kind: 'needs', target: machine, reason: error.detail.reason ?? '' }
           : { kind: 'error', code: error.code },
       );
-    } catch {
+    } catch (error) {
+      logToHost('add machine: the connect request failed', {
+        level: 'warn',
+        scope: 'machines',
+        data: { error: String(error) },
+      });
       // The request itself failed (the link or the server went away): the owner sees the same
       // line as an unreachable machine, and can retry.
       setFault({ kind: 'error', code: 'ssh_unreachable' });
