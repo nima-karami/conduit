@@ -7,63 +7,68 @@ export type MessageKind = 'inform' | 'request' | 'question' | 'done';
 /** Agent messages per thread before it pauses for the human (spec §2 loop guard). */
 export const THREAD_AGENT_LIMIT = 20;
 export type RecipientStatus = 'queued' | 'noticed' | 'read' | 'undelivered' | 'expired';
-export type ToolErrorCode =
-  | 'not_in_session'
-  | 'unknown_session'
-  | 'not_messageable'
-  | 'self_target'
-  | 'too_large'
-  | 'too_many'
-  | 'path_outside_roots'
-  | 'path_unreadable'
-  | 'not_found'
-  | 'unsupported_media'
-  | 'rate_limited'
-  | 'thread_limit'
-  | 'store_unavailable'
-  | 'messaging_off'
-  | 'host_unavailable'
-  | 'tool_disabled'
-  | 'unknown_agent'
-  | 'path_missing'
-  | 'not_a_directory'
-  | 'not_a_file'
-  | 'invalid_args'
-  | 'command_not_found'
-  | 'brief_unavailable'
-  | 'spawn_unconfirmed'
-  | 'server_stopping'
-  | 'open_failed'
-  | 'window_not_ready'
-  | 'caller_not_visible'
-  | 'denied'
-  | 'approval_timeout'
-  | 'cancelled'
-  | 'session_exited'
-  | 'session_restarting'
-  | 'out_of_reach'
-  | 'move_not_allowed'
-  | 'bad_ref'
-  | 'bad_url'
-  | 'not_a_repo'
-  | 'attach_refused'
-  | 'unsaved_changes'
-  | 'ui_timeout'
-  | 'capability_off'
-  | 'peer_unreachable'
-  | 'peer_incompatible'
-  | 'peer_unsupported'
-  | 'peer_revoked'
-  | 'outbox_full'
-  | 'refused'
-  | 'machine_unknown'
-  | 'ssh_needs_person'
-  | 'ssh_unreachable'
-  | 'ssh_auth_failed'
-  | 'remote_unsupported'
-  | 'install_failed'
-  | 'identity_changed'
-  | 'identity_conflict';
+export const TOOL_ERROR_CODES = [
+  'not_in_session',
+  'unknown_session',
+  'not_messageable',
+  'self_target',
+  'too_large',
+  'too_many',
+  'path_outside_roots',
+  'path_unreadable',
+  'not_found',
+  'unsupported_media',
+  'rate_limited',
+  'thread_limit',
+  'store_unavailable',
+  'messaging_off',
+  'host_unavailable',
+  'tool_disabled',
+  'unknown_agent',
+  'path_missing',
+  'not_a_directory',
+  'not_a_file',
+  'invalid_args',
+  'command_not_found',
+  'brief_unavailable',
+  'spawn_unconfirmed',
+  'server_stopping',
+  'open_failed',
+  'window_not_ready',
+  'caller_not_visible',
+  'denied',
+  'approval_timeout',
+  'cancelled',
+  'session_exited',
+  'session_restarting',
+  'out_of_reach',
+  'move_not_allowed',
+  'bad_ref',
+  'bad_url',
+  'not_a_repo',
+  'attach_refused',
+  'unsaved_changes',
+  'ui_timeout',
+  'capability_off',
+  'peer_unreachable',
+  'peer_incompatible',
+  'peer_unsupported',
+  'peer_revoked',
+  'outbox_full',
+  'refused',
+  'machine_unknown',
+  'ssh_needs_person',
+  'ssh_unreachable',
+  'ssh_auth_failed',
+  'remote_unsupported',
+  'install_failed',
+  'identity_changed',
+  'identity_conflict',
+] as const;
+export type ToolErrorCode = (typeof TOOL_ERROR_CODES)[number];
+const TOOL_ERROR_CODE_SET: ReadonlySet<string> = new Set(TOOL_ERROR_CODES);
+/** A code a peer sent over a link: known here, or not (a newer peer may know more). */
+export const isToolErrorCode = (v: string): v is ToolErrorCode => TOOL_ERROR_CODE_SET.has(v);
 export interface ToolError {
   code: ToolErrorCode;
   message: string;

@@ -29,7 +29,7 @@ import {
 import { type AuditSink, openAuditLog, teeAudit } from './audit-log';
 import { type BootstrapperOptions, createBootstrapper, machineMetaOf } from './bootstrap';
 import { handleNetworkCall } from './c2';
-import { createCalls } from './calls';
+import { createCalls, isDialedSsh } from './calls';
 import { createDrive, type Drive, type DriveDeps } from './drive';
 import { adoptOwnerKey, type Identity, setOwnerKey } from './identity';
 import { createLinkManager, type LinkManager } from './link-manager';
@@ -190,6 +190,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
         publisher.pushTo(v.machineId);
       relay.linkChanged(v.machineId);
       drive.linkChanged(v.machineId);
+      calls.linkChanged(v.machineId);
     }
     for (const l of portListeners) l();
   };
@@ -273,8 +274,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
         void calls
           .serveCall(machineId, f)
           .catch((err: unknown) => deps.log.error('call failed', { message: String(err) }));
-      // A call.result answers a call this side sent; nothing here sends calls until the router
-      // lands (slice 3), so there is no pending call for it to resolve.
+      else if (f.t === 'call.result') calls.onResult(machineId, f);
       else if (
         f.t === 'view.open' ||
         f.t === 'view.opened' ||
@@ -345,6 +345,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
   const drive: Drive = createDrive({
     ...deps.drive,
     links: linkInfo,
+    dialedSsh: (machineId) => isDialedSsh(store.get(machineId)),
     send: (machineId, frame) => manager.send(machineId, frame),
     audit,
     now,
@@ -354,10 +355,14 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
   });
   const calls = createCalls({
     linkOf: (machineId) => store.get(machineId),
+    linkState: (machineId) => manager.view(machineId)?.state ?? null,
+    peerMinor: (machineId) => manager.peerMinor(machineId),
     mcp: () => mcp,
     send: (machineId, frame) => manager.send(machineId, frame),
     audit,
     now,
+    newId: () => `c_${randomBytes(12).toString('hex')}`,
+    after,
   });
   const messaging = createMessaging({
     file: path.join(deps.dir, 'outbox.json'),
@@ -400,6 +405,8 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       return () => portListeners.delete(listener);
     },
     listMachines: () => machines.list(),
+    call: (machineId, tool, args, principalHandle, signal) =>
+      calls.call(machineId, tool, args, principalHandle, signal),
     connectMachine: (machine, signal) => machines.connect(machine, signal),
     disconnectMachine: (machine) => machines.disconnect(machine),
     selfName,
@@ -633,6 +640,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       closePairingPort();
       relay.stop();
       drive.stop();
+      calls.stop();
       publisher.stop();
       messaging.stop();
       await manager.stop();

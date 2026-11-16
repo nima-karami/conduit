@@ -16,7 +16,7 @@ import { type LinkFrame, OWN_DEFAULT_CAPABILITIES } from '../../src/contracts/li
 
 const machine = 'm-12345678';
 
-function setup(opts: { drive?: boolean; peerDrive?: boolean } = {}) {
+function setup(opts: { drive?: boolean; peerDrive?: boolean; dialed?: boolean } = {}) {
   let clock = 1_000_000;
   const timers: Array<{ at: number; fn: () => void; live: boolean }> = [];
   const link: DriveLink = {
@@ -34,6 +34,7 @@ function setup(opts: { drive?: boolean; peerDrive?: boolean } = {}) {
   let releaseDir: ((v: boolean) => void) | null = null;
   const deps = {
     links: () => [link],
+    dialedSsh: () => opts.dialed ?? false,
     liveSession: (id: string) => id === 's1' || id === 's2',
     agentExists: (id: string) => id === 'echo',
     isDirectory: vi.fn(
@@ -320,6 +321,53 @@ describe('drive serving side', () => {
     t.drive.linkChanged(machine);
     await t.drive.onFrame(machine, input('s1', 'hunter2-secret'));
     expect(JSON.stringify(t.audit)).not.toContain('hunter2');
+  });
+});
+
+describe('drive from a peer I dialed over ssh (CON-40 S3, plan decision 6)', () => {
+  it('refuses its drive input, audited, whatever my capability says', async () => {
+    const t = setup({ drive: true, dialed: true });
+    await t.drive.onFrame(machine, input('s1', 'rm -rf ~\r'));
+    expect(t.typed).toEqual([]);
+    expect(t.audit).toEqual([
+      { kind: 'drive.refused', peer: machine, detail: { reason: 'dialed_ssh' } },
+    ]);
+  });
+
+  it('answers its drive.open refused, and opens nothing', async () => {
+    const t = setup({ drive: true, dialed: true });
+    await t.drive.onFrame(machine, {
+      t: 'drive.open',
+      requestId: 'q1',
+      agentId: 'echo',
+      folder: '/work',
+    });
+    expect(t.deps.openSession).not.toHaveBeenCalled();
+    expect(t.results()).toEqual([
+      { t: 'drive.result', requestId: 'q1', ok: false, sessionId: null, error: 'refused' },
+    ]);
+  });
+
+  it('answers its drive.close refused, and closes nothing', async () => {
+    const t = setup({ drive: true, dialed: true });
+    await t.drive.onFrame(machine, { t: 'drive.close', requestId: 'q2', sessionId: 's1' });
+    expect(t.closed).toEqual([]);
+    expect(t.results()).toEqual([
+      { t: 'drive.result', requestId: 'q2', ok: false, sessionId: null, error: 'refused' },
+    ]);
+  });
+
+  it('still takes a drive.result for a request I sent it', async () => {
+    const t = setup({ drive: true, dialed: true });
+    const opened = t.drive.open(machine, 'echo', '/work');
+    await t.drive.onFrame(machine, {
+      t: 'drive.result',
+      requestId: 'r1',
+      ok: true,
+      sessionId: 's-9',
+      error: null,
+    });
+    expect(await opened).toEqual({ sessionId: 's-9' });
   });
 });
 

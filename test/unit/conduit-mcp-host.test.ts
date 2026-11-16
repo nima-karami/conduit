@@ -5873,6 +5873,7 @@ describe('createConduitMcpHost — wait_sessions', () => {
           ? { kind: 'remote', entry }
           : { kind: 'unknown', hint: 'not found' },
       enqueue: () => [],
+      call: () => Promise.reject(new Error('not used by this test')),
       waitReading: () =>
         state === 'unreachable'
           ? 'unreachable'
@@ -7257,6 +7258,7 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
       remoteEntries: () => [],
       resolve: unused,
       enqueue: unused,
+      call: unused,
       waitReading: unused,
       peerCapabilitiesOf: unused,
       onChange: () => () => undefined,

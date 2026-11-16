@@ -55,6 +55,17 @@ export interface RemoteRecipientOutcome {
 
 export interface NetworkPort {
   remoteEntries(): RemoteEntry[];
+  /**
+   * Runs a session tool on a machine I dialed over ssh, as `principalHandle` there (CON-40 S3). The
+   * answer is that machine's result, or a tool error (peer_unreachable when the link ends first).
+   */
+  call(
+    machineId: string,
+    tool: RoutedTool,
+    args: Record<string, unknown>,
+    principalHandle: string,
+    signal: AbortSignal,
+  ): Promise<Result<StructuredOutput>>;
   resolve(target: string): RemoteResolution;
   enqueue(msg: MessageRecord, recipients: RemoteEntry[]): RemoteRecipientOutcome[];
   waitReading(address: string, callerHandle: Handle): WaitReading | 'unreachable' | null;

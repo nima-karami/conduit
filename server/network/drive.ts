@@ -31,6 +31,8 @@ export const DRIVE_RESULT_TIMEOUT_MS = 15_000;
 
 export interface DriveDeps {
   links(): DriveLink[];
+  /** True for a machine I dialed over ssh: it may never drive me, whatever my capability says (plan decision 6). */
+  dialedSsh(machineId: string): boolean;
   /** True only for a live local session (running, with a terminal). */
   liveSession(sessionId: string): boolean;
   /** True only for an id in the domain's registered agents store. */
@@ -136,6 +138,12 @@ export function createDrive(deps: DriveDeps): Drive {
     error: string | null,
   ): void => {
     deps.send(machineId, { t: 'drive.result', requestId, ok, sessionId, error });
+  };
+
+  /** A dialed ssh peer's drive requests are refused and audited; a request still gets its answer. */
+  const refuseDialed = (machineId: string, requestId: string | null): void => {
+    refuse(machineId, 'dialed_ssh');
+    if (requestId !== null) answer(machineId, requestId, false, null, 'refused');
   };
 
   const serveInput = (machineId: string, frame: { sessionId: string; data: string }): void => {
@@ -279,12 +287,16 @@ export function createDrive(deps: DriveDeps): Drive {
     async onFrame(machineId, frame) {
       switch (frame.t) {
         case 'drive.input':
+          if (deps.dialedSsh(machineId)) return refuseDialed(machineId, null);
           return serveInput(machineId, frame);
         case 'drive.resize':
+          if (deps.dialedSsh(machineId)) return refuseDialed(machineId, null);
           return serveResize(machineId, frame);
         case 'drive.open':
+          if (deps.dialedSsh(machineId)) return refuseDialed(machineId, frame.requestId);
           return serveOpen(machineId, frame);
         case 'drive.close':
+          if (deps.dialedSsh(machineId)) return refuseDialed(machineId, frame.requestId);
           return serveClose(machineId, frame);
         case 'drive.result': {
           const p = pending.get(frame.requestId);
