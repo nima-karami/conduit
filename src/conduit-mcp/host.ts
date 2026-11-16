@@ -3659,6 +3659,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       callAsRemote,
       remoteRequests: () => remoteRequests,
       mirrorOf: () => requestService.mirrorOf(),
+      requestsHasEnded: () => requestService.hasEnded(),
+      onRequestsMirrorChange: (fn) => requestService.onMirrorChange(fn),
       applyRemoteAnswer: (requestId, answer, answerId, machineId) =>
         requestService.applyRemoteAnswer(requestId, answer, answerId, machineId),
       hasMessage: (id) => store.has(id),

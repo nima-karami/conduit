@@ -613,6 +613,8 @@ function fakeMcp(inbox: string[]): McpNetworkPort {
     remoteRequests: () => ({ apply: () => false, setLinkState: () => {} }),
     mirrorOf: () => [],
     applyRemoteAnswer: () => ({ ok: false, reason: 'not_found', message: 'not used by this test' }),
+    requestsHasEnded: () => false,
+    onRequestsMirrorChange: () => () => {},
   };
 }
 

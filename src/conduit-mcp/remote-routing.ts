@@ -172,6 +172,10 @@ export interface McpNetworkPort {
     answerId: string,
     machineId: string,
   ): RemoteAnswerResult;
+  /** True while the mirror holds an ended entry, so the snapshot is re-sent until it ages out (CON-42 L5b). */
+  requestsHasEnded(): boolean;
+  /** Fires when a mirrored request changes; returns its unsubscribe (CON-42 L5b). */
+  onRequestsMirrorChange(listener: () => void): () => void;
 }
 
 /**

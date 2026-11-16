@@ -18,6 +18,8 @@ import { CALL_REFUSAL_AUDIT_MS, isDialedSsh } from './calls';
 export interface RequestMirrorSource {
   /** B's open requests plus those that ended in the last 10 min. Bounded by REQUEST_MIRROR_MAX. */
   mirrorOf(): RequestMirror[];
+  /** True while mirrorOf holds an ended entry: the snapshot is then re-sent until it ages out. */
+  hasEnded(): boolean;
   /** Fires when a mirrored request changes. Returns its unsubscribe. */
   onMirrorChange(fn: () => void): () => void;
   /** Applies an owner's answer to a request of mine. `machineId` is the link's, never the frame's. */
@@ -51,6 +53,11 @@ export interface RequestMirrorSink {
 export const REMOTE_ANSWER_MS = 30_000;
 /** Mirror changes in a burst go out as one snapshot, this long after the first. */
 const MIRROR_COALESCE_MS = 250;
+/**
+ * An ended entry leaves the window on its own clock, and A drops it only when a snapshot without it
+ * arrives. Re-sending the snapshot this often is what makes it disappear on A.
+ */
+const MIRROR_RESEND_MS = 60_000;
 const ERROR_CODE_MAX = 64;
 const ERROR_MESSAGE_MAX = 1024;
 const ERROR_HINT_MAX = 512;
@@ -123,6 +130,7 @@ export function createRequests(deps: RequestsDeps): Requests {
   let eligible = new Set<string>();
   let lastSeq = 0;
   let cancelMirrorTimer: (() => void) | null = null;
+  let cancelResendTimer: (() => void) | null = null;
 
   const refuse = (reason: string, machineId: string): void => {
     const key = `${reason}:${machineId}`;
@@ -142,6 +150,22 @@ export function createRequests(deps: RequestsDeps): Requests {
 
   const sendSnapshot = (machineId: string): void => {
     deps.send(machineId, { t: 'request.mirror', seq: nextSeq(), requests: deps.b.mirrorOf() });
+  };
+
+  /** Every snapshot restarts the clock, so the re-send is always 60 s after the last one sent. */
+  const armResend = (): void => {
+    cancelResendTimer?.();
+    cancelResendTimer = null;
+    if (eligible.size === 0 || !deps.b.hasEnded()) return;
+    cancelResendTimer = deps.after(() => {
+      cancelResendTimer = null;
+      publish();
+    }, MIRROR_RESEND_MS);
+  };
+
+  const publish = (): void => {
+    for (const machineId of eligible) sendSnapshot(machineId);
+    armResend();
   };
 
   const mirrorable = (machineId: string, state: LinkState): boolean => {
@@ -173,7 +197,7 @@ export function createRequests(deps: RequestsDeps): Requests {
     if (cancelMirrorTimer !== null) return;
     cancelMirrorTimer = deps.after(() => {
       cancelMirrorTimer = null;
-      for (const machineId of eligible) sendSnapshot(machineId);
+      publish();
     }, MIRROR_COALESCE_MS);
   };
   const unsubscribeMirror = deps.b.onMirrorChange(scheduleMirror);
@@ -278,6 +302,7 @@ export function createRequests(deps: RequestsDeps): Requests {
     for (const v of views) if (mirrorable(v.machineId, v.state)) nowEligible.add(v.machineId);
     for (const machineId of nowEligible) if (!eligible.has(machineId)) sendSnapshot(machineId);
     eligible = nowEligible;
+    armResend();
 
     // A: the state of each machine I dialed. One that I no longer hold is gone.
     const dialedNow = new Map<string, MirrorLinkState>();
@@ -391,6 +416,8 @@ export function createRequests(deps: RequestsDeps): Requests {
       unsubscribeMirror();
       cancelMirrorTimer?.();
       cancelMirrorTimer = null;
+      cancelResendTimer?.();
+      cancelResendTimer = null;
       for (const answerId of [...pending.keys()])
         settle(answerId, unreachable('Conduit is stopping the network'));
     },

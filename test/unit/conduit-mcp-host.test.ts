@@ -7753,15 +7753,15 @@ describe('createConduitMcpHost — a remote lead: the refusals the host adds (CO
 
 /** The open permissions this machine's queue holds for remote asks, once one is raised (CON-42 L5a). */
 async function waitForAsks(h: Harness): Promise<RequestMirror[]> {
-  for (let i = 0; i < 50; i++) {
+  // The ask follows real async work (a PATH lookup), so a fixed number of ticks is a race under load.
+  return vi.waitFor(() => {
     const open = h.host
       .networkPort()
       .mirrorOf()
       .filter((r) => r.state === 'open' && r.permission !== null);
-    if (open.length > 0) return open;
-    await new Promise((resolve) => setImmediate(resolve));
-  }
-  throw new Error('no remote ask was raised');
+    if (open.length === 0) throw new Error('no remote ask was raised');
+    return open;
+  });
 }
 
 describe('createConduitMcpHost — a routed ask waits for the owner on this machine (CON-42 L5a)', () => {
