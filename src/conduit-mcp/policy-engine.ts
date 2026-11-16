@@ -30,13 +30,13 @@ import type {
 } from './policy-types';
 import { type CliKind, TOOL_NAMES, type ToolName } from './tool-policy';
 
-// see NET §4.1 (R21)
-// The machine tools are not in NET's table: a read of this side's links is monitor, and adding or
-// dropping a link is orchestrate (off for every remote in v1), so a peer cannot reshape our fleet.
-const CAPABILITY_OF: Record<ToolName, Capability | 'orchestrate'> = {
-  list_machines: 'monitor',
-  connect_machine: 'orchestrate',
-  disconnect_machine: 'orchestrate',
+// see NET §4.1 (R21) and spec 2026-11-16-remote-ssh §4.4
+// The machine tools are local to each side, so no remote holds 'fleet': a controller can drive our
+// sessions, but never reshape or read our fleet of links.
+const CAPABILITY_OF: Record<ToolName, Capability | 'orchestrate' | 'fleet'> = {
+  list_machines: 'fleet',
+  connect_machine: 'fleet',
+  disconnect_machine: 'fleet',
   list_sessions: 'messaging',
   send_message: 'messaging',
   read_inbox: 'messaging',
@@ -106,6 +106,7 @@ export const samePath = (a: string | null, b: string | null): boolean =>
 // see NET §4.1 (R21): orchestrate is never a capability a TLS peer holds, only the ssh controller
 function remoteAllows(principal: Extract<Principal, { kind: 'remote' }>, tool: ToolName): boolean {
   const cap = CAPABILITY_OF[tool];
+  if (cap === 'fleet') return false;
   return cap === 'orchestrate' ? principal.controller : principal.capabilities[cap];
 }
 

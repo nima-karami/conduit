@@ -508,6 +508,20 @@ describe('server domain: sessions.start', () => {
 });
 
 describe('server domain: sessions.create and MCP opens', () => {
+  // Only the server's own routed-call path may name a remote opener; the app's copy is dropped.
+  it("a person's sessions.create cannot set a remote opener's machineId", async () => {
+    const h = harness();
+    const r = (await h.call('sessions.create', {
+      agentId: 'sh',
+      home: h.home,
+      openedBy: { handle: 'claude-3', sessionId: 'x', machineId: 'm-0000000a' },
+    })) as { sessionId: string };
+    expect(h.domain.sessions.get(r.sessionId)?.openedBy).toEqual({
+      handle: 'claude-3',
+      sessionId: 'x',
+    });
+  });
+
   it('refuses sessions.create as an RPC error', async () => {
     const h = harness();
     await expect(h.call('sessions.create', { agentId: 'nope', home: h.home })).rejects.toSatisfy(

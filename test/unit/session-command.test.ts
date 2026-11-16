@@ -124,6 +124,25 @@ describe('session-command', () => {
     expect(coerceOpenedBy({ handle: 'claude-1' })).toBeUndefined();
     expect(coerceOpenedBy({ handle: 1, sessionId: 's1' })).toBeUndefined();
     expect(coerceOpenedBy(null)).toBeUndefined();
+    expect(
+      coerceOpenedBy({ handle: 'claude-3', sessionId: 's1', machineId: 'm-0000000a' }),
+    ).toEqual({
+      handle: 'claude-3',
+      sessionId: 's1',
+      machineId: 'm-0000000a',
+    });
+    // A machineId that is present but not a machine id must drop the opener, never make it local.
+    expect(
+      coerceOpenedBy({ handle: 'claude-3', sessionId: 's1', machineId: 'm-zz' }),
+    ).toBeUndefined();
+    expect(coerceOpenedBy({ handle: 'claude-3', sessionId: 's1', machineId: 7 })).toBeUndefined();
+    expect(
+      coerceOpenedBy({ handle: 'claude-3', sessionId: 's1', machineId: null }),
+    ).toBeUndefined();
+    expect(coerceOpenedBy({ handle: 'claude-3', sessionId: 's1' })).toEqual({
+      handle: 'claude-3',
+      sessionId: 's1',
+    });
     expect(coerceOpenedBy([])).toBeUndefined();
   });
 });

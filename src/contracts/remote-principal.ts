@@ -7,7 +7,7 @@ export interface RemotePrincipal {
   handle: string /* 'claude-3' | 'you' */;
   machineId: string /* /^m-[0-9a-f]{8}$/ */;
   trust: 'own';
-  /** The ssh controller of an inbound link: the only peer that may run orchestrate tools. see docs/plans/2026-11-16-remote-ssh-routed-tools.plan.md §2 */
+  /** The ssh controller of an inbound link: the only peer that may run orchestrate tools. see docs/plans/2026-11-16-remote-ssh-routed-tools.plan.md, decision 2 */
   controller: boolean;
 }
 export const principalAddress = (p: RemotePrincipal): string => `${p.handle}@${p.machineId}`;

@@ -1261,24 +1261,17 @@ describe('a remote peer reaches the machine tools only through its capability (N
     expect(d.decision).toBe('deny');
   });
 
-  it('list_machines is monitor: a peer with monitor reads the list, and one without is denied', () => {
-    const withMonitor = decide(
+  // The fleet is local to each side (spec §4.4), so a remote's monitor capability does not reach it.
+  it('list_machines is fleet: a peer with monitor is still denied the local fleet view', () => {
+    const d = decide(
       state({ default: assignment('worker') }),
       input({
         principal: peer({ messaging: false, monitor: true, drive: false }),
         tool: 'list_machines',
       }),
     );
-    expect(withMonitor.decision).toBe('allow');
-    const withoutMonitor = decide(
-      state({ default: assignment('worker') }),
-      input({
-        principal: peer({ messaging: true, monitor: false, drive: false }),
-        tool: 'list_machines',
-      }),
-    );
-    expect(withoutMonitor.decision).toBe('deny');
-    expect(withoutMonitor.reason).toEqual({ by: 'floor', floor: 'remote-capability' });
+    expect(d.decision).toBe('deny');
+    expect(d.reason).toEqual({ by: 'floor', floor: 'remote-capability' });
   });
 });
 
@@ -1314,6 +1307,22 @@ describe('an ssh controller is a Lead remote principal (CON-40 G2)', () => {
       expect(d.decision, tool).toBe('deny');
       expect(d.reason, tool).toEqual({ by: 'floor', floor: 'remote-capability' });
     }
+  });
+
+  it('a controller is denied the machine tools: the fleet is local to each side', () => {
+    const s = state({});
+    for (const tool of ['connect_machine', 'disconnect_machine', 'list_machines'] as const) {
+      const d = decide(s, input({ principal: controller(), tool }));
+      expect(d.decision, tool).toBe('deny');
+      expect(d.reason, tool).toEqual({ by: 'floor', floor: 'remote-capability' });
+    }
+  });
+
+  it('a TLS peer with a stored lead assignment is still denied open_session', () => {
+    const s = state({ 'peer:m-0000000a': assignment('lead') });
+    const d = decide(s, input({ principal: remote(), tool: 'open_session' }));
+    expect(d.decision).toBe('deny');
+    expect(d.reason).toEqual({ by: 'floor', floor: 'remote-capability' });
   });
 
   it('a controller with a stored stricter assignment (Observer) is denied', () => {
