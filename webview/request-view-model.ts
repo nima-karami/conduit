@@ -105,7 +105,8 @@ export function bodyLines(r: RequestView): number {
 
 export function openAsOf(r: RequestView): OpenAs {
   if (r.kind === 'review') return 'tab';
-  if (r.kind === 'attend') return 'terminal';
+  // A permission asked on another machine is answered here, in the pop-up; its terminal is there.
+  if (r.kind === 'attend') return r.remote?.permission ? 'popup' : 'terminal';
   const fitsPopup =
     r.body.length <= POPUP_MAX_CHARS &&
     bodyLines(r) <= POPUP_MAX_LINES &&

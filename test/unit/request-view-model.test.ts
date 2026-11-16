@@ -106,6 +106,17 @@ describe('openAsOf size rule', () => {
   });
   it('opens attend in the terminal', () => {
     expect(openAsOf(req({ kind: 'attend', blocked: 'question' }))).toBe('terminal');
+    // A permission asked on another machine is answered here, so it opens as a pop-up.
+    const remotePerm = { tool: 'open_session', why: 'opens a session', grantable: true };
+    expect(
+      openAsOf(
+        req({
+          kind: 'attend',
+          blocked: 'permission',
+          remote: { machineName: 'Studio PC', stale: false, permission: remotePerm },
+        }),
+      ),
+    ).toBe('popup');
   });
   it('opens a small confirm as a popup', () => {
     expect(openAsOf(req({ kind: 'confirm', body: 'Run it?' }))).toBe('popup');
