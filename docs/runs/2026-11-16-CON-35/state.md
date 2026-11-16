@@ -39,4 +39,5 @@ Haiku builders in /tmp/claude-1000/-home-namemenima-projects--wt-conduit-CON-35/
 - Merged: L1 frames 9be308a1; L2 B policy service 92a34247 (verify 0; 11 mutants red). Also merged from claude-25: CON-41 0599abdb, CON-47 718b90ba (both verify 0).
 - L3 network MERGED 3982be1a (verify 0 under flock). B: snapshots to controllers, serves push/revoke, recheck after apply; A: dialed-only accept, pending pushes; remotePolicySink optional (snapshots dropped+audited until L4).
 - CON-46 DONE: L4 5e7d5b55, L5 b5042039, grant snapshot fix ae6d133a; e2e 43943768717 net-policy PASS. Follow-ups F1 hello proof 4c5ec6ff (minor 9), F2 call cancel 0a753ec0, F3 remote open message 3f3f362a. CON-44/45 (claude-25) merged 3889ae2f. Tip verify 0; e2e 8 PASS 1 SKIP (net-ssh-bootstrap skipped on runner).
+- Security review minors: M1 8f903047 (pre-sign identity check), M2 6d783c78 (asking controller only), M3 cc3547d2 (bridge endpoint owner + private dir). CON-42-ui+M4 (claude-25) 8774df51. Tip 8f903047 verify 0; e2e 43951561980 6 PASS 1 SKIP.
 - Follow-up: fallow clone cluster server/network/policy.ts vs requests.ts (shared refuse/settle helpers).
