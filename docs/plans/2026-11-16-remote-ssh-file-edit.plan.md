@@ -35,6 +35,8 @@ lead → attach_folder{machine, folder} on A → routed call → B: remote princ
 6. **Conflict UI:** the CodeViewer conflict banner (code-viewer.tsx ~828-856) gains a "Show diff" action for remote docs that opens a `DiffViewer` (head = B's current text fetched with `remoteFs:read`, work = the buffer) and Re-apply / Discard buttons. Local conflict UI unchanged.
 7. **attach_folder routed:** add `'attach_folder'` to `ROUTED_TOOLS` behind `ROUTED_ATTACH_MIN_MINOR` (same next-minor rule), to `MACHINE_ARG_TOOLS`, a `routedAskSummary` case, `policy-targets.ts` remote-folder branch; on B, `prepareAttachFolder` accepts a remote caller only with an absolute folder (relative → `invalid_args` "use an absolute path on <machine>"), not deny-listed, an existing directory.
 
+8. **CodeViewer shape (from the CON-43 R review):** replace R's single `local = source == null` boolean with (a) an injected `saves` instance plus a `bufferKey` (default: the app's `fileSaves` and `doc.path`; remote: the remote save store keyed by doc id) that drives attach, save triggers, `useFileSaveStatus` and the conflict banner (which today hard-codes `fileSaves.save/reload` and `closeDocForPath`); (b) a `projectBound` flag for nav, blame, change markers, review notes, reveal, selection and cursor publishing; (c) the remote MODEL owned by the remote save store, not the editor's unmount (mirroring idle-models), so a tab switch never loses unsaved edits. The R-era `local` save gates then disappear.
+
 ## Spec staleness
 - §5.3 `expect` = "the content hash the editor loaded": no hash exists today; local conflicts compare whole strings (`src/file-service.ts:223-236` `compareOnDisk`). This plan adds SHA-256 for remote only.
 
