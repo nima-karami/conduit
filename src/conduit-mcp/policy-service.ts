@@ -121,6 +121,7 @@ export interface PolicyService {
   profileName(id: ProfileId): string | null;
   /** The portable projection: human-made profiles and non-session assignments, at the current rev. */
   remoteDoc(): { rev: number; doc: RemotePolicyDoc };
+  /** Fires when anything a controller snapshot carries changes: the rules (rev moves) or the grants. */
   onRemoteDocChange(fn: () => void): () => void;
   applyRemoteDoc(baseRev: number, doc: unknown): RemoteApplyResult;
   grantsView(): RemoteGrantView[];
@@ -205,6 +206,12 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     if (!grantsWritable) return;
     grantsDirty = true;
     scheduleWrite();
+  };
+  // Grants ride in every controller snapshot, so one made or ended re-sends it even though rev
+  // stays put (rev versions the editable rules only). A use only moves lastUsedAt: not worth a send.
+  const grantsChanged = (): void => {
+    markGrants();
+    for (const fn of remoteListeners) fn();
   };
 
   // One warning per outage per file: a disk that stays down is retried without spamming the log.
@@ -435,7 +442,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     if (stopped) return;
     const expired = grants.tick();
     if (expired.length > 0) {
-      markGrants();
+      grantsChanged();
       deps.onChanged();
     }
     activity.flushCounts(false);
@@ -482,7 +489,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
 
   const revokeGrantById = (id: string): boolean => {
     if (grants.revoke(id) === null) return false;
-    markGrants();
+    grantsChanged();
     deps.onChanged();
     return true;
   };
@@ -624,14 +631,14 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       if (who === null || on === null) return null;
       const anchor = choice.for === 'session-end' && p.kind === 'session' ? p.sessionId : null;
       const created = grants.create(who, tool, on, choice.for, anchor, requestId);
-      markGrants();
+      grantsChanged();
       deps.onChanged();
       return created;
     },
 
     peerRevoked(machineId) {
       if (grants.peerRevoked(machineId).length === 0) return;
-      markGrants();
+      grantsChanged();
       deps.onChanged();
     },
 
@@ -752,7 +759,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
         file.assignments.length !== assignments || file.overrides.length !== overrides;
       if (policyChanged) markPolicy();
       const endedGrants = grants.sessionEnded(sessionId);
-      if (endedGrants.length > 0) markGrants();
+      if (endedGrants.length > 0) grantsChanged();
       if (policyChanged || endedGrants.length > 0) deps.onChanged();
     },
 

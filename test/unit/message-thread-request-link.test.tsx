@@ -124,6 +124,7 @@ function fakeApi(open: RequestView[], ended: RequestView[] = []): ConduitMcpApi 
     retry: vi.fn(),
     setToolPolicy: vi.fn(async () => true),
     setPointPolicy: vi.fn(async () => true),
+    remotePolicy: vi.fn(),
     answerPermission: vi.fn(async () => ({ ok: true as const })),
     answerRequest: vi.fn(async () => ({
       ok: false as const,
