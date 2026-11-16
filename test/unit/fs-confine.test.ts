@@ -97,4 +97,31 @@ describe('confineFsPath', () => {
       expect(r).toEqual({ ok: false, code: 'refused' });
     },
   );
+
+  it.skipIf(process.platform === 'win32')(
+    'allowMissing accepts a missing leaf under a confined parent but refuses one under a parent symlinked outside',
+    async () => {
+      const allow = { allowMissing: true };
+      expect(await confineFsPath(path.join(proj, 'gone.txt'), [proj], allow)).toEqual({
+        ok: true,
+        real: path.join(fs.realpathSync.native(proj), 'gone.txt'),
+      });
+      // The default still reports a missing leaf as not_found, so only the diff path opts in.
+      expect(await confineFsPath(path.join(proj, 'gone.txt'), [proj])).toEqual({
+        ok: false,
+        code: 'not_found',
+      });
+      // A missing leaf under a parent that really lies outside the roots is refused, not allowed.
+      fs.symlinkSync(root, path.join(proj, 'out'));
+      expect(await confineFsPath(path.join(proj, 'out', 'gone.txt'), [proj], allow)).toEqual({
+        ok: false,
+        code: 'refused',
+      });
+      // The deny-list still applies to a missing leaf.
+      expect(await confineFsPath(path.join(proj, '.env-gone'), [proj], allow)).toEqual({
+        ok: false,
+        code: 'refused',
+      });
+    },
+  );
 });

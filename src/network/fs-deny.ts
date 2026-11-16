@@ -3,7 +3,9 @@
 // `myenv/` are not caught by accident; the lone exception is `.env*`, which is a prefix on the
 // basename on purpose (`.env`, `.env.local`, `.env.production`).
 
-const SEGMENT_DENY = new Set(['.ssh', '.gnupg', '.codex', '.cursor']);
+// `.git` too: a peer that could read or write it could point the served git reads anywhere, or
+// craft objects that show denied content under a harmless name (CON-45 G1 re-review).
+const SEGMENT_DENY = new Set(['.ssh', '.gnupg', '.codex', '.cursor', '.git']);
 const SEGMENT_PREFIX_DENY = ['.claude'];
 const BASENAME_PREFIX_DENY = ['.env'];
 /** Consecutive segment runs that deny a path wherever they sit. */
