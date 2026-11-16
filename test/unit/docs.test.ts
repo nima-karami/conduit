@@ -14,9 +14,12 @@ import {
   docsReducer,
   filePathsClosedWithSession,
   initialDocs,
+  isDocDirty,
   type Machine,
+  type OpenDoc,
   type OpenMode,
   REVIEW_DOC_ID,
+  saveKeyOf,
   shownKeepsDoc,
   toPersistedDocs,
 } from '../../webview/docs';
@@ -1459,5 +1462,34 @@ describe('remote-diff and remote-history docs (CON-45 G4)', () => {
     expectTypeOf<{ kind: 'remote-diff'; machine: Machine }>().toMatchTypeOf<DocTarget>();
     expectTypeOf<{ kind: 'remote-history'; machine: Machine }>().toMatchTypeOf<DocTarget>();
     expectTypeOf<{ kind: 'git-history'; machine: Machine }>().not.toMatchTypeOf<DocTarget>();
+  });
+});
+
+describe('save key of a doc', () => {
+  const PATH = '/w/a.ts';
+  const base = { path: PATH, title: 'a.ts', sessionId: 'S1' };
+  const local: OpenDoc = { ...base, id: `file:${PATH}`, kind: 'file' };
+  const remote: OpenDoc = {
+    ...base,
+    id: `remote-file@M1:${PATH}`,
+    kind: 'remote-file',
+    machine: { machineId: 'M1', sessionId: 'S1' },
+  };
+  const remoteDiff: OpenDoc = {
+    ...base,
+    id: `remote-diff@M1:${PATH}`,
+    kind: 'remote-diff',
+    machine: { machineId: 'M1', sessionId: 'S1' },
+  };
+
+  it('is the local path for a local file, the doc id for a remote file, null for a remote diff', () => {
+    expect(saveKeyOf(local)).toBe(PATH);
+    expect(saveKeyOf(remote)).toBe(remote.id);
+    expect(saveKeyOf(remoteDiff)).toBeNull();
+  });
+
+  it('shows a dirty remote file as dirty under its doc id, and never by its path', () => {
+    expect(isDocDirty(remote, new Set([remote.id]))).toBe(true);
+    expect(isDocDirty(remote, new Set([PATH]))).toBe(false);
   });
 });
