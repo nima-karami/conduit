@@ -301,17 +301,18 @@ async function run(page, userDataDir, log) {
       phase('8. B moves on under a dirty tab: the save is refused, the diff shows, mine wins');
       await typeAtEnd(' +A2');
       writeFileSync(join(bWork, 'a.txt'), 'B moved on');
-      // The watch's re-read must not replace a dirty buffer: what the tab holds stays the edit.
-      await page.waitForTimeout(1500);
-      const held = await remoteTab(page);
-      assert(
-        held?.text === 'changed on B +A1 +A2',
-        `a re-read replaced the dirty buffer: ${JSON.stringify(held)}`,
-      );
+      // Saved at once: B's file already differs from what the tab loaded, so B refuses it whether
+      // or not the watch's re-read has landed (a dirty buffer is never refreshed: unit-tested in
+      // remote-file-saves.test.ts).
       await page.keyboard.press('Control+s');
       const banner = page.locator('.viewer__banner--warn', { hasText: `changed on ${bName}` });
       await banner.waitFor({ state: 'visible', timeout: WAIT_MS });
       assert(bText() === 'B moved on', `B's file changed despite the conflict: ${bText()}`);
+      const held = await remoteTab(page);
+      assert(
+        held?.text === 'changed on B +A1 +A2',
+        `the conflicted tab lost the edit: ${JSON.stringify(held)}`,
+      );
       await banner.getByRole('button', { name: 'Show diff' }).click();
       await page.locator('.remote-conflict__diff').waitFor({ state: 'visible', timeout: WAIT_MS });
       await shot('3', 'remote-conflict', page.locator('.viewer').first());
@@ -326,7 +327,6 @@ async function run(page, userDataDir, log) {
       phase("9. B moves on again: taking B's version replaces the edit");
       await typeAtEnd(' +A3');
       writeFileSync(join(bWork, 'a.txt'), 'B wins');
-      await page.waitForTimeout(1500);
       await page.keyboard.press('Control+s');
       await banner.waitFor({ state: 'visible', timeout: WAIT_MS });
       await banner.getByRole('button', { name: `Use ${bName}’s version` }).click();
