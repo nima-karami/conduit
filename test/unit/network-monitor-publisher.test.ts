@@ -129,6 +129,40 @@ describe('monitor publisher', () => {
     expect(seqs[1]).toBeGreaterThan(seqs[0] ?? 0);
   });
 
+  it('shows an opener only to a peer at protocol minor 2 or above', () => {
+    const opened: MonitorSource = {
+      ...source,
+      sessions: () => [{ ...session, openedBy: { handle: 'claude-0', machineId: null } }],
+    };
+    const sent: Array<{ machineId: string; frame: LinkFrame }> = [];
+    const pub = createMonitorPublisher({
+      source: opened,
+      links: () => [
+        { machineId: 'm-1', state: 'up', capabilities: caps(true, true, false), peerMinor: 1 },
+        { machineId: 'm-2', state: 'up', capabilities: caps(true, true, false), peerMinor: 2 },
+        { machineId: 'm-3', state: 'up', capabilities: caps(true, true, false) },
+      ],
+      send: (machineId, frame) => {
+        sent.push({ machineId, frame });
+        return true;
+      },
+      after: (fn) => {
+        fn();
+        return () => {};
+      },
+    });
+    pub.changed();
+    const row = (machineId: string) => {
+      const frame = sent.find((x) => x.machineId === machineId)?.frame;
+      if (frame?.t !== 'snapshot') throw new Error('no snapshot');
+      const [first] = frame.snapshot.sessions;
+      return first;
+    };
+    expect(row('m-1')).not.toHaveProperty('openedBy');
+    expect(row('m-3')).not.toHaveProperty('openedBy');
+    expect(row('m-2')?.openedBy).toEqual({ handle: 'claude-0', machineId: null });
+  });
+
   it('stop cancels a pending push', () => {
     const { pub, sent, fire } = setup([
       { machineId: 'm-1', state: 'up', capabilities: caps(true, false, false) },

@@ -105,6 +105,8 @@ export interface LinkManager {
   send(machineId: string, frame: LinkFrame): boolean | null;
   views(): LinkView[];
   view(machineId: string): LinkView | null;
+  /** The protocol minor the peer's hello reported; null until its hello has landed. */
+  peerMinor(machineId: string): number | null;
   onRevoked(listener: (machineId: string) => void): () => void;
 }
 
@@ -920,6 +922,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       return p.conn.send(frame);
     },
     views: () => [...peers.values()].map(viewOf),
+    peerMinor: (machineId) => peerOf(machineId)?.peerHello?.protocol.minor ?? null,
     view: (machineId) => {
       const p = peerOf(machineId);
       return p ? viewOf(p) : null;

@@ -358,7 +358,8 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
   });
   const publisher = createMonitorPublisher({
     source: deps.monitor,
-    links: linkInfo,
+    links: () =>
+      linkInfo().map((l) => ({ ...l, peerMinor: manager.peerMinor(l.machineId) ?? undefined })),
     send: (machineId, frame) => manager.send(machineId, frame),
     after,
   });
