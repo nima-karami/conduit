@@ -9,6 +9,7 @@ All notable user-facing changes to Conduit. Format follows
 ### Changed
 - Groundwork for permission profiles: what each session may do now comes from a profile (Observer, Worker or Lead) with optional exceptions, instead of per-tool overrides. Your existing settings carry over exactly; a session where you'd turned every tool on becomes "Lead +1" and behaves as before. The MCP tool settings and the session's MCP tools dialog work as they did. The screens for profiles arrive in a later release.
 - "Always" on an approval card now allows that tool for the session until the session ends, and the permission lapses after 7 days unused.
+- If the permissions file can't be read, Conduit uses the last copy that could. If there's none, every session gets the Observer profile until the file is fixed. A session whose custom profile is missing also gets Observer.
 
 ### Added
 - Conduit keeps an activity log of agents' tool calls for 30 days: who asked, what was decided and why, and how it ended, without message bodies, command output or file contents. Commands and file edits that Claude Code and Codex run on their own are logged too, marked as decided by that CLI. Conduit adds a hook to Claude Code's settings for this. The screen for the log arrives in a later release.
