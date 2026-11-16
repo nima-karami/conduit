@@ -77,6 +77,10 @@ export interface OpenDoc {
   // git-history: the repo the view shows; commit-diff: the repo its commit was read from.
   // Never persisted — a restored doc falls back per docs/specs/archive/2026-09-23-mf-changes.md §2.5.
   repoRoot?: string;
+  // A file on another machine (plan CON-43 T4 decision 10). Its content comes from that machine
+  // through remote-files-store, never from readFile, so no path-keyed local code treats it as a
+  // local file; `sessionId` is then the remote session's remoteKeyId, an opaque owner id here.
+  machine?: { machineId: string; sessionId: string };
 }
 
 // Whether a file-open opens a reusable preview tab (single-click / nav) or a permanent
@@ -148,6 +152,7 @@ export type DocsAction =
       path: string;
       sessionId: string;
       mode?: OpenMode;
+      machine?: OpenDoc['machine'];
       sideBySide?: boolean;
       diffScope?: DiffTabScope;
       repoRoot?: string;
@@ -217,8 +222,18 @@ export type DocsAction =
 
 export const initialDocs: DocsState = { docs: [], layouts: {}, activeId: null };
 
-const idOf = (kind: DocKind, path: string, diffScope?: DiffTabScope) =>
-  kind === 'diff' && diffScope ? `diff@${diffScope}:${path}` : `${kind}:${path}`;
+// A remote file shares its path with a local one, so the machine is part of its identity.
+const idOf = (
+  kind: DocKind,
+  path: string,
+  diffScope?: DiffTabScope,
+  machine?: OpenDoc['machine'],
+) =>
+  machine
+    ? `file@${machine.machineId}:${path}`
+    : kind === 'diff' && diffScope
+      ? `diff@${diffScope}:${path}`
+      : `${kind}:${path}`;
 
 /** A foreground file or web open for `sessionId` while `shown` is on screen leaves the tab with
  *  `shown` (the shown session already holds it): the open lands nowhere in the caller. Review and
@@ -230,10 +245,11 @@ export function shownKeepsDoc(
   sessionId: string,
   shown: string | undefined,
   diffScope?: DiffTabScope,
+  machine?: OpenDoc['machine'],
 ): boolean {
   if (shown === undefined || shown === sessionId) return false;
   if (kind !== 'file' && kind !== 'web') return false;
-  const id = idOf(kind, path, diffScope);
+  const id = idOf(kind, path, diffScope, machine);
   return state.docs.some((d) => d.id === id && d.sessionId === shown);
 }
 const scopeField = (kind: DocKind, diffScope: DiffTabScope | undefined) =>
@@ -600,9 +616,10 @@ export function backgroundOpenOutcome(
 export function docsReducer(state: DocsState, action: DocsAction): DocsState {
   switch (action.type) {
     case 'open': {
-      const id = idOf(action.kind, action.path, action.diffScope);
+      const id = idOf(action.kind, action.path, action.diffScope, action.machine);
       const sideBySide = action.sideBySide !== undefined ? { sideBySide: action.sideBySide } : {};
       const repo = historyRepoField(action);
+      const machine = action.machine ? { machine: action.machine } : {};
       const spec: OpenSpec = {
         sessionId: action.sessionId,
         group: action.group,
@@ -617,9 +634,10 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
           ...sideBySide,
           ...scopeField(action.kind, action.diffScope),
           ...repo,
+          ...machine,
         }),
       };
-      const patch = (d: OpenDoc): OpenDoc => ({ ...d, ...sideBySide, ...repo });
+      const patch = (d: OpenDoc): OpenDoc => ({ ...d, ...sideBySide, ...repo, ...machine });
       if (action.mode === 'background') {
         const changesDoc = action.sideBySide !== undefined || 'repoRoot' in repo;
         return openInBackground(state, { ...spec, patch: changesDoc ? patch : undefined });
@@ -634,6 +652,7 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
           action.sessionId,
           action.shown,
           action.diffScope,
+          action.machine,
         )
       ) {
         return openInBackground(state, spec);
@@ -912,7 +931,8 @@ export function toPersistedDocs(state: DocsState): PersistedDoc[] {
       group.tabs.flatMap((tab): PersistedDoc[] => {
         const d = byId.get(tab.id);
         // A request is server state: a restored tab would point at a request that may be gone.
-        if (!d || d.kind === 'request') return [];
+        // A remote doc's content lives on its machine: restoring it would read a local path.
+        if (!d || d.kind === 'request' || d.machine) return [];
         if (d.kind === 'commit-diff' && parseCommitDiffPath(d.path).file === '') return [];
         return [
           {
@@ -937,5 +957,7 @@ export function toPersistedDocs(state: DocsState): PersistedDoc[] {
  *  `file:${path}`). Each must be released exactly as a closed tab is (dirty flag, save entry), or
  *  an orphaned buffer can still be written by Save All. */
 export function filePathsClosedWithSession(docs: readonly OpenDoc[], sessionId: string): string[] {
-  return docs.filter((d) => d.kind === 'file' && d.sessionId === sessionId).map((d) => d.path);
+  return docs
+    .filter((d) => d.kind === 'file' && !d.machine && d.sessionId === sessionId)
+    .map((d) => d.path);
 }
