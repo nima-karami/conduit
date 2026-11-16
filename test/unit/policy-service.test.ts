@@ -20,7 +20,7 @@ import type {
   Principal,
 } from '../../src/conduit-mcp/policy-types';
 import type { RequestsIo } from '../../src/conduit-mcp/request-file-fs';
-import { DEFAULT_TOOL_POLICY } from '../../src/conduit-mcp/tool-policy';
+import { type CliKind, DEFAULT_TOOL_POLICY } from '../../src/conduit-mcp/tool-policy';
 
 vi.mock('../../src/conduit-mcp/policy-migration', () => ({
   migrateLegacyPolicy: vi.fn(() => ({
@@ -83,6 +83,7 @@ const grant = (over: Partial<Grant> = {}): Grant => ({
 interface Opts {
   policy?: string | null;
   lastGood?: string | null;
+  launchedCli?: Record<string, CliKind | null | undefined>;
   grants?: string | null;
   activityFails?: boolean;
   writeFails?: boolean;
@@ -157,7 +158,7 @@ function harness(o: Opts = {}) {
       legacyCalls += 1;
       return { global: DEFAULT_TOOL_POLICY, byCli: {}, sessions: [] };
     },
-    launchedCli: () => null,
+    launchedCli: (id) => (o.launchedCli && id in o.launchedCli ? o.launchedCli[id] : null),
     onChanged: () => {
       changed += 1;
     },
@@ -1717,6 +1718,62 @@ describe('fail-closed and missing profile', () => {
     };
     expect(open.service.decide(input).decision).not.toBe('deny');
     expect(closed.service.decide(input).decision).toBe('deny');
+  });
+
+  it('a session whose launched CLI is unknown is skipped by propagation, never guessed as default', () => {
+    const h = harness({ launchedCli: { s1: undefined } });
+    h.service.start();
+    h.service.applyLegacyPatch(
+      { kind: 'session', sessionId: 's1' },
+      { kind: 'default' },
+      'open_file',
+      {
+        access: 'off',
+      },
+    );
+    h.service.applyLegacyPatch({ kind: 'default' }, null, 'send_input', { access: 'on' });
+    expect(h.service.ui([sessionRow('s1')]).legacy.sessions.s1).toEqual({
+      open_file: { access: 'off' },
+      send_input: { access: 'ask' },
+    });
+  });
+
+  it('a sleeping session whose CLI is known from its persisted record inherits the default', () => {
+    const h = harness({ launchedCli: { s1: 'claude' } });
+    h.service.start();
+    h.service.applyLegacyPatch(
+      { kind: 'session', sessionId: 's1' },
+      { kind: 'default' },
+      'open_file',
+      {
+        access: 'off',
+      },
+    );
+    h.service.applyLegacyPatch({ kind: 'default' }, null, 'send_input', { access: 'on' });
+    expect(h.service.ui([{ sessionId: 's1', launchedCli: 'claude' }]).legacy.sessions.s1).toEqual({
+      open_file: { access: 'off' },
+    });
+  });
+
+  it('a missing policy.json is rebuilt from the last-good copy, and migration is skipped', async () => {
+    const good = policyText({
+      assignments: [
+        {
+          point: { kind: 'default' },
+          assignment: { profileId: 'lead', exceptions: [], onScreenOnly: false },
+        },
+      ],
+    });
+    const h = harness({ policy: null, lastGood: good });
+    h.service.start();
+    expect(migrateLegacyPolicy).not.toHaveBeenCalled();
+    expect(h.service.ui([]).readOnly).toBe(false);
+    h.fire(WRITE_MS);
+    await h.service.stop();
+    expect(parsePolicyFile(h.policyWrites.at(-1) ?? '')).toMatchObject({
+      ok: true,
+      file: { assignments: [{ point: { kind: 'default' }, assignment: { profileId: 'lead' } }] },
+    });
   });
 
   it('a session whose stored profile is missing shows Observer in the UI', () => {

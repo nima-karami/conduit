@@ -43,7 +43,7 @@ export interface GrantsFile {
   grants: Grant[];
 }
 
-// A profile may omit tools a newer build added; completeRules fills them from Worker.
+// A profile may omit tools a newer build added; completeRules fills them from Observer.
 type RawProfile = Omit<Profile, 'rules'> & { rules: Partial<Record<ToolName, ToolRule>> };
 type RawPolicyFile = Omit<PolicyFile, 'profiles'> & { profiles: RawProfile[] };
 

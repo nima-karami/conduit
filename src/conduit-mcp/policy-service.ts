@@ -59,7 +59,7 @@ export interface PolicyServiceDeps {
   clearTimer(t: unknown): void;
   warn(m: string, e?: unknown): void;
   legacy(): LegacyPolicy;
-  launchedCli(sessionId: string): CliKind | null;
+  launchedCli(sessionId: string): CliKind | null | undefined;
   onChanged(): void;
 }
 
@@ -315,6 +315,13 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       return;
     }
     if (text === null) {
+      // A lost policy.json is rebuilt from the last saved copy; legacy settings only seed a first run.
+      const good = readLastGood();
+      if (good !== null) {
+        file = good;
+        markPolicy();
+        return;
+      }
       const migrated = migrateLegacyPolicy(deps.legacy());
       file = { ...emptyFile(), ...migrated };
       for (const a of migrated.assignments) {

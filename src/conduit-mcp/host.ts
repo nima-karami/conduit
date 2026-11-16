@@ -1505,6 +1505,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const id = runtime.get(sessionId)?.defAdapter?.id;
     return CLI_KINDS.find((kind) => kind === id) ?? null;
   };
+  // A sleeping session has no runtime adapter, but its persisted agent definition names the CLI.
+  const persistedLaunchedCli = (sessionId: string): CliKind | null | undefined => {
+    const def = deps.domain.defOf(sessionId);
+    if (def === undefined) return undefined;
+    const adapter = adapterFor(def, { e2e: deps.e2e });
+    return CLI_KINDS.find((kind) => kind === adapter?.id) ?? null;
+  };
   const principalOf = (sessionId: string): Extract<Principal, { kind: 'session' }> | null => {
     const session = deps.sessions.get(sessionId);
     if (!session?.mcpHandle) return null;
@@ -1534,7 +1541,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         cli: s.mcpHandle ? cliKindOfHandle(s.mcpHandle) : null,
       })),
     }),
-    launchedCli: (sessionId) => launchedCli(sessionId),
+    launchedCli: (sessionId) => persistedLaunchedCli(sessionId),
     onChanged: () => {
       syncToolLists();
       scheduleBroadcast();
