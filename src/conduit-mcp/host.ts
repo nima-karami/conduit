@@ -105,10 +105,17 @@ import type {
   Principal,
 } from './policy-types';
 import {
+  addressTarget,
   isKnownMachine,
   type McpNetworkPort,
+  machineTarget,
+  nameOnMachine,
   type RemoteRecipientOutcome,
   type RemoteResolution,
+  type RoutedIntent,
+  routedAskSummary,
+  routedIntentOf,
+  routedName,
 } from './remote-routing';
 import { createRequestsIo, type RequestsIo } from './request-file-fs';
 import { createRequestNotices } from './request-notices';
@@ -2294,12 +2301,89 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return result;
   };
 
+  /**
+   * A session call that names another machine (CON-40 S3): the lead's gate has run, and the call
+   * runs there. The machine answers under its own name for the session, so the handle is rewritten
+   * to handle@<machine>. A remote lead can't route on: B never reaches another machine.
+   */
+  const prepareRouted = (
+    caller: Caller,
+    intent: RoutedIntent,
+    ctx: ControlCallContext,
+  ): Result<Prepared<StructuredOutput>> => {
+    const network = deps.network;
+    if (caller.remote !== undefined)
+      return {
+        ok: false,
+        error: toolError(
+          'peer_unsupported',
+          `${intent.tool} on another machine can't be routed from a remote lead`,
+          undefined,
+          { hint: 'send it from the machine the session is on' },
+        ),
+      };
+    if (network === undefined)
+      return intent.kind === 'machine'
+        ? {
+            ok: false,
+            error: toolError('machine_unknown', `no machine is called ${intent.machine}`),
+          }
+        : {
+            ok: false,
+            error: toolError(
+              'unknown_session',
+              `no session "${intent.address}" in list_sessions`,
+              undefined,
+              { hint: 'no linked machines' },
+            ),
+          };
+    const target =
+      intent.kind === 'machine'
+        ? machineTarget(network, intent.machine)
+        : addressTarget(network, intent.address);
+    if (!target.ok) return target;
+    const shown =
+      intent.kind === 'address' ? routedName(intent.handle, target.value.machine) : null;
+    const summary = routedAskSummary(intent, target.value, shown);
+    if (summary === null)
+      return {
+        ok: false,
+        error: toolError(
+          'invalid_args',
+          `${intent.tool} on ${target.value.machine} needs its arguments as text`,
+        ),
+      };
+    const { machineId, machine } = target.value;
+    return {
+      ok: true,
+      value: {
+        summary,
+        routesUi: false,
+        release: () => undefined,
+        run: async () => {
+          const out = await network.call(
+            machineId,
+            intent.tool,
+            intent.args,
+            caller.handle,
+            ctx.signal,
+          );
+          if (!out.ok) return out;
+          return { ok: true, value: nameOnMachine(intent.tool, out.value, machine) };
+        },
+      },
+    };
+  };
+
   const prepareControl = (
     caller: Caller,
     name: ToolName,
     args: unknown,
     ctx: ControlCallContext,
   ): Promise<Result<Prepared<StructuredOutput>>> => {
+    const routed = routedIntentOf(name, args);
+    if (!routed.ok) return Promise.resolve(routed);
+    if (routed.value !== null) return Promise.resolve(prepareRouted(caller, routed.value, ctx));
     switch (name) {
       case 'list_agents':
         return control.prepareListAgents(caller, args);

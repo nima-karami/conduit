@@ -5661,7 +5661,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
       error: { code: 'out_of_reach', hint: expect.stringContaining('Settings') },
     });
     c.call(5, 'read_screen', { session: 'claude-9@m-0123abcd' });
-    expect(c.errorOf(await c.reply(5))).toBe('peer_unsupported');
+    expect(c.errorOf(await c.reply(5))).toBe('unknown_session');
     await allow(h, 's1', { send_input: { access: 'on', reach: 'any' } });
     c.call(3, 'send_input', { session: 's2' });
     expect(c.errorOf(await c.reply(3))).toBe('invalid_args');
@@ -7745,5 +7745,263 @@ describe('createConduitMcpHost — a remote lead: the refusals the host adds (CO
     const r = await h.host.networkPort().callAsRemote(LEAD, 'close_session', { children: true });
     expect(r).toMatchObject({ ok: false, error: { code: 'invalid_args' } });
     expect(h.closes).toEqual([]);
+  });
+});
+
+describe('routed session tools on this machine (CON-40 S3, plan decision 5)', () => {
+  const WIN: MachineView = {
+    machine: 'win-box',
+    machine_id: 'm-0000000a',
+    target: 'win-box',
+    state: 'up',
+    mode: 'full',
+    os: 'windows',
+    arch: 'x64',
+    conduit_version: '1.4.0',
+    agents: ['claude'],
+    sessions: 1,
+    last_seen: null,
+    survives_logout: true,
+  };
+  const REMOTE_CLAUDE: RemoteEntry = {
+    handle: 'claude-1',
+    sessionId: 'r1',
+    openedBy: null,
+    label: 'Win Claude',
+    agent: 'claude',
+    project: null,
+    home: 'C:\\work',
+    roots: [],
+    presence: 'idle',
+    messaging: 'connected',
+    connectable: true,
+    notices: 'typed',
+    address: 'claude-1@m-0000000a',
+    display: 'claude-1@win-box',
+    machineId: 'm-0000000a',
+    machine: 'win-box',
+    trust: 'own',
+    link: 'up',
+    opener: null,
+  };
+
+  type Sent = { machineId: string; tool: string; args: Record<string, unknown>; handle: string };
+
+  /** A network whose routed calls are recorded; `answer` is what B says for each. */
+  function routeNet(over: {
+    machines?: MachineView[];
+    answer?: (tool: string, args: Record<string, unknown>) => unknown;
+  }) {
+    const sent: Sent[] = [];
+    const unused = (): never => {
+      throw new Error('not used by the routed tools');
+    };
+    const network: NetworkPort = {
+      remoteEntries: () => [REMOTE_CLAUDE],
+      resolve: (target) =>
+        target === REMOTE_CLAUDE.address
+          ? { kind: 'remote', entry: REMOTE_CLAUDE }
+          : { kind: 'unknown', hint: `no session ${target}` },
+      enqueue: unused,
+      call: async (machineId, tool, args, principalHandle) => {
+        sent.push({ machineId, tool, args, handle: principalHandle });
+        const value = (over.answer ?? (() => ({})))(tool, args);
+        return { ok: true, value: value as object };
+      },
+      waitReading: unused,
+      peerCapabilitiesOf: unused,
+      onChange: () => () => undefined,
+      listMachines: () => over.machines ?? [WIN],
+      connectMachine: unused,
+      disconnectMachine: unused,
+      selfName: () => 'this-machine',
+    };
+    return { network, sent };
+  }
+
+  async function leadSession(network: NetworkPort) {
+    const h = harness({ network });
+    await h.host.start();
+    const a = await launch(h, 's1', CLAUDE);
+    const ca = await client(h.ep, a.token);
+    await setAssignmentFor(h, 's1', 'lead');
+    const me = (await ca.call('list_sessions')).body.sessions.find(
+      (r: { self: boolean }) => r.self,
+    ) as { handle: string } | undefined;
+    return { h, ca, me: me?.handle };
+  }
+
+  async function setAssignmentFor(
+    h: Harness,
+    sessionId: string,
+    profileId: 'observer' | 'worker' | 'lead',
+  ) {
+    let reply: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:setAssignment',
+        requestId: 1,
+        point: { kind: 'session', sessionId },
+        profileId,
+      },
+      (m) => {
+        reply = m;
+      },
+      1,
+    );
+    expect(reply).toEqual({ type: 'mcp:policyResult', requestId: 1, ok: true });
+  }
+
+  it('list_agents with a machine forwards its other args under my handle and returns B rows as they are', async () => {
+    const rows = { agents: [{ id: 'echo', label: 'Echo' }] };
+    const net = routeNet({ answer: () => rows });
+    const { ca, me } = await leadSession(net.network);
+    const r = await ca.call('list_agents', { machine: 'win-box' });
+    expect(r.body).toEqual(rows);
+    expect(net.sent).toEqual([
+      { machineId: 'm-0000000a', tool: 'list_agents', args: {}, handle: me },
+    ]);
+  });
+
+  it('open_session with a machine sends the absolute path as typed, and names the new session on that machine', async () => {
+    const net = routeNet({
+      answer: () => ({ session_id: 'b-7', handle: 'claude-9', label: 'Win', agent: 'claude' }),
+    });
+    const { ca } = await leadSession(net.network);
+    const r = await ca.call('open_session', {
+      machine: 'm-0000000a',
+      path: 'C:\\work',
+      agent: 'claude',
+      focus: false,
+    });
+    expect(r.body).toMatchObject({ session_id: 'b-7', handle: 'claude-9@win-box' });
+    expect(net.sent[0]).toMatchObject({
+      tool: 'open_session',
+      args: { path: 'C:\\work', agent: 'claude', focus: false },
+    });
+  });
+
+  it('open_terminal with a machine routes the same way, and keeps a null handle null', async () => {
+    const net = routeNet({
+      answer: () => ({ session_id: 'b-8', handle: null, label: 'x', agent: 'pwsh' }),
+    });
+    const { ca } = await leadSession(net.network);
+    const r = await ca.call('open_terminal', {
+      machine: 'win-box',
+      path: 'C:\\work',
+      command: 'pwsh',
+    });
+    expect(r.body).toMatchObject({ session_id: 'b-8', handle: null });
+    expect(net.sent[0]).toMatchObject({
+      tool: 'open_terminal',
+      args: { path: 'C:\\work', command: 'pwsh' },
+    });
+  });
+
+  it('a machine named by its id or its ssh target is the same machine; an ambiguous name is refused', async () => {
+    const net = routeNet({});
+    const { ca } = await leadSession(net.network);
+    expect((await ca.call('list_agents', { machine: 'm-0000000a' })).body.error).toBeUndefined();
+    expect((await ca.call('list_agents', { machine: 'win-box' })).body.error).toBeUndefined();
+    expect(net.sent.map((s) => s.machineId)).toEqual(['m-0000000a', 'm-0000000a']);
+    const twin = routeNet({
+      machines: [WIN, { ...WIN, machine_id: 'm-0000000b' }],
+    });
+    const twinSession = await leadSession(twin.network);
+    const r = await twinSession.ca.call('list_agents', { machine: 'win-box' });
+    expect(r.body.error).toMatchObject({ code: 'machine_unknown' });
+    expect(twin.sent).toEqual([]);
+  });
+
+  it('a machine that is not added is machine_unknown, and nothing is sent', async () => {
+    const net = routeNet({ machines: [] });
+    const { ca } = await leadSession(net.network);
+    const r = await ca.call('list_agents', { machine: 'nowhere' });
+    expect(r.body.error).toMatchObject({ code: 'machine_unknown' });
+    expect(net.sent).toEqual([]);
+  });
+
+  it('open_session with a machine and no path is invalid_args, before anything is sent', async () => {
+    const net = routeNet({});
+    const { ca } = await leadSession(net.network);
+    const r = await ca.call('open_session', { machine: 'win-box', agent: 'claude' });
+    expect(r.body.error).toMatchObject({ code: 'invalid_args' });
+    expect(net.sent).toEqual([]);
+  });
+
+  it('read_screen and send_input by address send the bare handle, and the answer names the session as handle@machine', async () => {
+    const net = routeNet({
+      answer: (tool) =>
+        tool === 'read_screen'
+          ? { session: 'claude-1', rows: ['ready'], cursor_row: 0, cols: 80, presence: 'idle' }
+          : { session: 'claude-1', sent_chars: 2, keys_sent: 0 },
+    });
+    const { ca } = await leadSession(net.network);
+    const read = await ca.call('read_screen', { session: 'claude-1@m-0000000a' });
+    expect(read.body).toMatchObject({ session: 'claude-1@win-box', rows: ['ready'] });
+    expect(net.sent[0]).toMatchObject({ tool: 'read_screen', args: { session: 'claude-1' } });
+    const typed = await ca.call('send_input', { session: 'claude-1@m-0000000a', text: 'hi' });
+    expect(typed.body).toMatchObject({ session: 'claude-1@win-box', sent_chars: 2 });
+    expect(net.sent[1]).toMatchObject({
+      tool: 'send_input',
+      args: { session: 'claude-1', text: 'hi' },
+    });
+  });
+
+  it('close_session by address routes; a list form with an address is refused', async () => {
+    const net = routeNet({ answer: () => ({ closed: 'claude-1' }) });
+    const { ca } = await leadSession(net.network);
+    const r = await ca.call('close_session', { session: 'claude-1@m-0000000a' });
+    expect(r.body).toEqual({ closed: 'claude-1@win-box' });
+    expect(net.sent[0]).toMatchObject({ tool: 'close_session', args: { session: 'claude-1' } });
+    const list = await ca.call('close_session', { session: 'claude-1@m-0000000a', children: true });
+    expect(list.body.error).toMatchObject({ code: 'invalid_args' });
+    expect(net.sent).toHaveLength(1);
+  });
+
+  it('an address to a session that is not on a linked machine stays unknown, and is not sent', async () => {
+    const net = routeNet({});
+    const { ca } = await leadSession(net.network);
+    const r = await ca.call('read_screen', { session: 'claude-7@m-0000000a' });
+    expect(r.body.error).toMatchObject({ code: 'unknown_session' });
+    expect(net.sent).toEqual([]);
+  });
+
+  it('focus_session by address still refuses: only the three session tools route', async () => {
+    const net = routeNet({});
+    const { ca } = await leadSession(net.network);
+    const r = await ca.call('focus_session', { session: 'claude-1@m-0000000a' });
+    expect(r.body.error).toMatchObject({ code: 'peer_unsupported' });
+    expect(net.sent).toEqual([]);
+  });
+
+  it("the lead's own policy decides first: an observer is denied, and the call is never sent", async () => {
+    const net = routeNet({});
+    const { h, ca } = await leadSession(net.network);
+    await setAssignmentFor(h, 's1', 'observer');
+    const r = await ca.call('open_session', {
+      machine: 'win-box',
+      path: 'C:\\work',
+      agent: 'claude',
+    });
+    expect(r.body.error).toMatchObject({ code: 'tool_disabled' });
+    expect(net.sent).toEqual([]);
+  });
+
+  it('a remote lead cannot route a call on to another machine', async () => {
+    const net = routeNet({});
+    const h = harness({ network: net.network });
+    await h.host.start();
+    const lead: RemoteCaller = {
+      kind: 'remote',
+      handle: 'claude-3',
+      machineId: 'm-0123abcd',
+      trust: 'own',
+      controller: true,
+      capabilities: { messaging: true, monitor: true, drive: false },
+    };
+    const r = await h.host.networkPort().callAsRemote(lead, 'list_agents', { machine: 'win-box' });
+    expect(r).toMatchObject({ ok: false, error: { code: 'peer_unsupported' } });
+    expect(net.sent).toEqual([]);
   });
 });

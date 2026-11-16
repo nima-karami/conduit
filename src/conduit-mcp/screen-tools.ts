@@ -11,7 +11,6 @@ import {
   reachAdmits,
   type TargetSession,
 } from './control-tools';
-import { remoteTargetRefusal } from './remote-routing';
 import type { ScreenSnapshot } from './screen-verdict';
 import { isValidField, type Reach } from './tool-policy';
 import type { Caller } from './tools';
@@ -62,8 +61,6 @@ export function createScreenToolHandlers(
     const all = deps.control.targets();
     const t = all.find((x) => x.handle === value) ?? all.find((x) => x.sessionId === value);
     if (!t) {
-      const remote = remoteTargetRefusal(value);
-      if (remote) return { ok: false, error: remote };
       return fail('unknown_session', `no session "${value}" in list_sessions`, {
         hint: 'use a handle from valid; list_sessions shows the current ones',
         valid: all.filter((x) => inReach(tool, reach, actor, x) === null).map((x) => x.handle),

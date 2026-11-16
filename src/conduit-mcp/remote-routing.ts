@@ -1,12 +1,13 @@
 // Node-free. The MCP host reads remote sessions through NetworkPort; the directory implementation
 // lives in src/network/remote-directory.ts. Plan: 2026-11-14-conduit-network-machinery.plan.md, Slice 5.
 
-import type {
-  Capabilities,
-  MonitorOpener,
-  MonitorSnapshot,
-  RoutedTool,
-  WireRecipientOutcome,
+import {
+  type Capabilities,
+  type MonitorOpener,
+  type MonitorSnapshot,
+  ROUTED_TOOLS,
+  type RoutedTool,
+  type WireRecipientOutcome,
 } from '../contracts/link-protocol';
 import type {
   ConnectMachineResult,
@@ -25,6 +26,7 @@ import {
   type ToolError,
   toolError,
 } from './types';
+import type { AskSummary } from './ui-types';
 
 export interface RemoteEntry extends DirectoryEntry {
   /** Canonical 'handle@m-xxxxxxxx'. */
@@ -133,6 +135,241 @@ export interface McpNetworkPort {
   youUnread(): number;
   ownerPresence(): 'here' | 'away';
   requestsSummary(): MonitorSnapshot['requests'];
+}
+
+/** The tools that take `machine`: they run on that machine, or on this one when it is absent. */
+const MACHINE_ARG_TOOLS: ReadonlySet<RoutedTool> = new Set<RoutedTool>([
+  'list_agents',
+  'open_session',
+  'open_terminal',
+]);
+/** The tools that take a `handle@machine` session address (CON-40 S3). */
+const ADDRESS_ARG_TOOLS: ReadonlySet<RoutedTool> = new Set<RoutedTool>([
+  'read_screen',
+  'send_input',
+  'close_session',
+]);
+const MAX_MACHINE_CHARS = 128;
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+export const isRoutedTool = (name: string): name is RoutedTool =>
+  ROUTED_TOOLS.some((tool) => tool === name);
+
+/**
+ * Where a session tool call goes. `machine` names the machine a call runs on (list_agents, open_*);
+ * `address` is a session on a machine I dialed (read_screen, send_input, close_session). `args` are
+ * what that machine reads: the machine is never forwarded, and the address's handle replaces it.
+ */
+export type RoutedIntent =
+  | { tool: RoutedTool; kind: 'machine'; machine: string; args: Record<string, unknown> }
+  | {
+      tool: RoutedTool;
+      kind: 'address';
+      handle: string;
+      address: string;
+      args: Record<string, unknown>;
+    };
+
+/**
+ * The routed intent of a session tool call, or null when the call stays on this machine. A malformed
+ * address or machine is invalid_args here, before anything is sent.
+ */
+export function routedIntentOf(tool: string, rawArgs: unknown): Result<RoutedIntent | null> {
+  if (!isRoutedTool(tool)) return { ok: true, value: null };
+  const args = isRecord(rawArgs) ? rawArgs : {};
+  if (MACHINE_ARG_TOOLS.has(tool) && args.machine !== undefined) {
+    const { machine, ...rest } = args;
+    if (typeof machine !== 'string' || machine.length === 0 || machine.length > MAX_MACHINE_CHARS)
+      return {
+        ok: false,
+        error: toolError('invalid_args', 'machine must be a machine name, id or ssh target'),
+      };
+    return { ok: true, value: { tool, kind: 'machine', machine, args: rest } };
+  }
+  if (
+    ADDRESS_ARG_TOOLS.has(tool) &&
+    typeof args.session === 'string' &&
+    args.session.includes('@')
+  ) {
+    const parsed = parseAddress(args.session);
+    if (parsed === null || parsed.machine === null)
+      return {
+        ok: false,
+        error: toolError('invalid_args', `${args.session} is not a handle@machine address`),
+      };
+    if (tool === 'close_session' && (args.sessions !== undefined || args.children !== undefined))
+      return {
+        ok: false,
+        error: toolError(
+          'invalid_args',
+          'close one session on another machine at a time',
+          undefined,
+          { hint: 'pass session alone for a session on another machine' },
+        ),
+      };
+    return {
+      ok: true,
+      value: {
+        tool,
+        kind: 'address',
+        handle: parsed.handle,
+        address: args.session,
+        args: { ...args, session: parsed.handle },
+      },
+    };
+  }
+  return { ok: true, value: null };
+}
+
+/** A machine or session on another machine, as the routed call needs it. */
+export interface RoutedTarget {
+  machineId: string;
+  /** The name the machine is shown by. */
+  machine: string;
+  label: string;
+  home: string;
+}
+
+/** The added machine a name, id or ssh target names. Only machines I have added answer. */
+export function machineTarget(
+  network: Pick<NetworkPort, 'listMachines'>,
+  ref: string,
+): Result<RoutedTarget> {
+  const matches = network
+    .listMachines()
+    .filter((m) => m.machine === ref || m.machine_id === ref || m.target === ref);
+  const ids = [...new Set(matches.map((m) => m.machine_id))];
+  const [only] = matches;
+  if (only === undefined)
+    return {
+      ok: false,
+      error: toolError('machine_unknown', `no machine is called ${ref}`, undefined, {
+        hint: 'name a machine from list_machines, or an ssh Host from your ssh config',
+      }),
+    };
+  if (ids.length > 1)
+    return {
+      ok: false,
+      error: toolError('machine_unknown', `more than one machine is called ${ref}`, undefined, {
+        hint: `retry with one of these ids: ${ids.join(', ')}`,
+        valid: ids,
+      }),
+    };
+  return {
+    ok: true,
+    value: { machineId: only.machine_id, machine: only.machine, label: '', home: '' },
+  };
+}
+
+/** The machine a session address names, from the directory: its session's label and home there. */
+export function addressTarget(
+  network: Pick<NetworkPort, 'resolve'>,
+  address: string,
+): Result<RoutedTarget> {
+  const found = network.resolve(address);
+  if (found.kind !== 'remote')
+    return {
+      ok: false,
+      error: toolError('unknown_session', `no session "${address}" in list_sessions`, undefined, {
+        hint: found.kind === 'unknown' ? found.hint : 'use a handle from list_sessions',
+      }),
+    };
+  const { entry } = found;
+  return {
+    ok: true,
+    value: {
+      machineId: entry.machineId,
+      machine: entry.machine,
+      label: entry.label,
+      home: entry.home,
+    },
+  };
+}
+
+/** The name a session on another machine goes by in a result: handle@<machine name>, as list_sessions shows it. */
+export function routedName(handle: string, machine: string): string {
+  return `${handle}@${machine}`;
+}
+
+/** A routed result with its session named on the machine it came from. list_agents rows come back as they are. */
+export function nameOnMachine(
+  tool: RoutedTool,
+  out: StructuredOutput,
+  machine: string,
+): StructuredOutput {
+  if (tool === 'list_agents') return out;
+  // Each result names its session under its own key; a result with none is passed on unchanged.
+  const named: Record<string, unknown> = { ...out };
+  for (const key of ['handle', 'session', 'closed'] as const) {
+    const value = named[key];
+    if (typeof value === 'string') named[key] = routedName(value, machine);
+  }
+  return named;
+}
+
+/**
+ * What an ask card shows for a routed call (the owner of this machine answers it here). A call whose
+ * arguments can't be shown is null, so the caller refuses before it asks anyone.
+ */
+export function routedAskSummary(
+  intent: RoutedIntent,
+  target: RoutedTarget,
+  shown: string | null,
+): AskSummary | null {
+  const { args } = intent;
+  const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+  switch (intent.tool) {
+    case 'open_session': {
+      const path = str(args.path);
+      const agent = str(args.agent);
+      if (path === null || agent === null) return null;
+      const model = str(args.model);
+      const message = str(args.message);
+      return {
+        tool: 'open_session',
+        path,
+        agent,
+        focus: args.focus !== false,
+        machine: target.machine,
+        ...(model === null ? {} : { model }),
+        ...(message === null ? {} : { message: message.length }),
+      };
+    }
+    case 'open_terminal': {
+      const path = str(args.path);
+      const command = str(args.command);
+      if (path === null || command === null) return null;
+      return {
+        tool: 'open_terminal',
+        path,
+        command,
+        focus: args.focus !== false,
+        machine: target.machine,
+      };
+    }
+    case 'list_agents':
+      return { tool: 'list_agents' };
+    case 'read_screen':
+      return { tool: 'read_screen', target: shown ?? target.machine };
+    case 'close_session':
+      return { tool: 'close_session', target: shown ?? target.machine };
+    case 'send_input': {
+      const text = str(args.text) ?? '';
+      const keys = Array.isArray(args.keys)
+        ? args.keys.filter((k): k is string => typeof k === 'string')
+        : [];
+      return {
+        tool: 'send_input',
+        target: shown ?? target.machine,
+        label: target.label,
+        home: target.home,
+        text,
+        keys,
+      };
+    }
+  }
 }
 
 /** A control tool target naming another machine: orchestrate is v1 (NET §4.1), so say so plainly. */

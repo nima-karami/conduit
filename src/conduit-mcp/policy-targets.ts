@@ -157,7 +157,8 @@ export function resolveTargets(
       ];
     case 'open_session':
     case 'open_terminal':
-      return folderTargets(oneString(args.path), caller, deps);
+      // A path on another machine is no folder of mine, so it names no folder target (CON-40 S3).
+      return args.machine === undefined ? folderTargets(oneString(args.path), caller, deps) : [];
     case 'open_review':
     case 'open_git_history':
       return folderTargets(oneString(args.repo), caller, deps);
