@@ -319,9 +319,10 @@ export function nameOnMachine(
   machine: string,
 ): StructuredOutput {
   if (tool === 'list_agents') return out;
-  // Each result names its session under its own key; a result with none is passed on unchanged.
+  // Handles are renamed onto the machine; session ids (session_id, close_session's `closed`) pass
+  // through as B's own ids (plan decision 5).
   const named: Record<string, unknown> = { ...out };
-  for (const key of ['handle', 'session', 'closed'] as const) {
+  for (const key of ['handle', 'session'] as const) {
     const value = named[key];
     if (typeof value === 'string') named[key] = routedName(value, machine);
   }

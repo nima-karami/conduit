@@ -159,7 +159,8 @@ async function run() {
 
     phase('7. close_session by that address closes it on B');
     const closed = await callTool(a, aa, 'close_session', { session: address });
-    assert(closed?.closed === address, `close_session ${address}: ${JSON.stringify(closed)}`);
+    // close_session reports B's session id, which routing passes through (plan decision 5).
+    assert(closed?.closed === remoteId, `close_session ${address}: ${JSON.stringify(closed)}`);
     await eventually('the session is gone from B', async () => {
       const listedOnB = await callTool(b, ba, 'list_sessions', {});
       return !listedOnB.sessions?.some((s) => s.session_id === remoteId);

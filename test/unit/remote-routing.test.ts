@@ -165,6 +165,8 @@ describe('routed session tools: where a call goes (CON-40 S3)', () => {
       session_id: 'b-1',
       handle: null,
     });
+    const closed = { closed: 'b-1' };
+    expect(nameOnMachine('close_session', closed, 'win-box')).toEqual({ closed: 'b-1' });
     const rows = { agents: [{ id: 'echo' }] };
     expect(nameOnMachine('list_agents', rows, 'win-box')).toBe(rows);
   });
