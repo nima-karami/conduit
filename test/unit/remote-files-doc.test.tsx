@@ -3,7 +3,6 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HostToWebview, WebviewToHost } from '../../src/protocol';
-import type { OpenDoc } from '../../webview/docs';
 
 const h = vi.hoisted(() => ({
   posted: [] as WebviewToHost[],
@@ -18,7 +17,12 @@ vi.mock('../../webview/bridge', () => ({
   },
 }));
 
-import { getRemoteFile, loadRemoteDoc, useRemoteFile } from '../../webview/remote-files-store';
+import {
+  getRemoteFile,
+  loadRemoteDoc,
+  type RemoteFileDoc,
+  useRemoteFile,
+} from '../../webview/remote-files-store';
 
 const emit = (m: HostToWebview) => {
   for (const l of [...h.listeners]) l(m);
@@ -29,7 +33,7 @@ const flush = () =>
     await new Promise((r) => setTimeout(r, 0));
   });
 
-const docFor = (path: string): OpenDoc => ({
+const docFor = (path: string): RemoteFileDoc => ({
   id: `remote-file@M1:${path}`,
   kind: 'remote-file',
   path,

@@ -1,12 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import type { PersistedDoc } from '../../src/protocol';
 import { groupActive, groupDocs, previewIdsOf, tabPreview } from '../../webview/doc-groups';
 import {
   backgroundOpenOutcome,
   type DocsState,
+  type DocTarget,
   docsReducer,
   filePathsClosedWithSession,
   initialDocs,
+  type Machine,
   type OpenMode,
   REVIEW_DOC_ID,
   shownKeepsDoc,
@@ -1005,28 +1007,30 @@ describe('docsReducer — background open (middle-click)', () => {
   it('backgroundOpenOutcome reports opened / pinned / already-open with owner and title', () => {
     let s = open(initialDocs, 'file', '/a.ts', 'A');
     s = openMode(s, 'file', '/p.ts', 'preview', 'A');
-    expect(backgroundOpenOutcome(s, 'file', '/n.ts', 'B')).toEqual({
+    expect(backgroundOpenOutcome(s, { kind: 'file' }, '/n.ts', 'B')).toEqual({
       outcome: 'opened',
       ownerSessionId: 'B',
       id: 'file:/n.ts',
       title: 'n.ts',
     });
-    expect(backgroundOpenOutcome(s, 'file', '/p.ts', 'B')).toEqual({
+    expect(backgroundOpenOutcome(s, { kind: 'file' }, '/p.ts', 'B')).toEqual({
       outcome: 'pinned',
       ownerSessionId: 'A',
       id: 'file:/p.ts',
       title: 'p.ts',
     });
-    expect(backgroundOpenOutcome(s, 'file', '/a.ts', 'B')).toMatchObject({
+    expect(backgroundOpenOutcome(s, { kind: 'file' }, '/a.ts', 'B')).toMatchObject({
       outcome: 'already-open',
       ownerSessionId: 'A',
     });
-    expect(backgroundOpenOutcome(s, 'diff', '/a.ts', 'A', 'staged')).toMatchObject({
+    expect(
+      backgroundOpenOutcome(s, { kind: 'diff', diffScope: 'staged' }, '/a.ts', 'A'),
+    ).toMatchObject({
       outcome: 'opened',
       id: 'diff@staged:/a.ts',
     });
     const c = commit(initialDocs, 'src/a.ts', 'preview');
-    expect(backgroundOpenOutcome(c, 'commit-diff', `${SHA} src/a.ts`, 'S1')).toEqual({
+    expect(backgroundOpenOutcome(c, { kind: 'commit-diff' }, `${SHA} src/a.ts`, 'S1')).toEqual({
       outcome: 'pinned',
       ownerSessionId: 'S1',
       id: `commit-diff:${SHA} src/a.ts`,
@@ -1270,7 +1274,10 @@ describe('docsReducer — open into a session that is not shown', () => {
     ] as const;
     for (const [path, sessionId, shown, keeps] of cases) {
       const c = [path, sessionId, shown];
-      expect([...c, shownKeepsDoc(s, 'file', path, sessionId, shown)]).toEqual([...c, keeps]);
+      expect([...c, shownKeepsDoc(s, { kind: 'file' }, path, sessionId, shown)]).toEqual([
+        ...c,
+        keeps,
+      ]);
       const after = docsReducer(s, { type: 'open', kind: 'file', path, sessionId, shown });
       const owner = after.docs.find((d) => d.id === `file:${path}`)?.sessionId;
       expect([...c, owner === shown && owner !== sessionId]).toEqual([...c, keeps]);
@@ -1289,7 +1296,7 @@ describe('docsReducer — open into a session that is not shown', () => {
     s0 = open(s0, 'file', '/b.ts', 'B');
     s0 = docsReducer(s0, { type: 'activate', id: 'file:/a.ts' });
     const id = 'git-history:@git-history';
-    expect(shownKeepsDoc(s0, 'git-history', '@git-history', 'B', 'A')).toBe(false);
+    expect(shownKeepsDoc(s0, { kind: 'git-history' }, '@git-history', 'B', 'A')).toBe(false);
     const s = docsReducer(s0, {
       type: 'open',
       kind: 'git-history',
@@ -1329,19 +1336,18 @@ describe('remote file docs (CON-43 T4)', () => {
     // A local file with the same path is its own doc, not the remote one.
     s = open(s, 'file', path, 'S1');
     expect(s.docs.map((d) => d.id)).toEqual([`remote-file@M1:${path}`, `file:${path}`]);
-    expect(shownKeepsDoc(s, 'file', path, 'S2', 'S1')).toBe(true);
-    expect(shownKeepsDoc(s, 'file', path, 'S2', REMOTE_SESSION)).toBe(false);
+    expect(shownKeepsDoc(s, { kind: 'file' }, path, 'S2', 'S1')).toBe(true);
+    expect(shownKeepsDoc(s, { kind: 'file' }, path, 'S2', REMOTE_SESSION)).toBe(false);
   });
 
-  it('a remote file doc without its machine is refused', () => {
-    expect(() =>
-      docsReducer(initialDocs, {
-        type: 'open',
-        kind: 'remote-file',
-        path: '/home/me/p/a.txt',
-        sessionId: REMOTE_SESSION,
-      }),
-    ).toThrow(/without its machine/);
+  it('a remote file doc without its machine does not type-check', () => {
+    // Type-level: a remote file names its machine, and a local doc never does.
+    expectTypeOf<{ kind: 'remote-file' }>().not.toMatchTypeOf<DocTarget>();
+    expectTypeOf<{ kind: 'file'; machine: Machine }>().not.toMatchTypeOf<DocTarget>();
+    expectTypeOf<{ kind: 'remote-file'; machine: Machine }>().toMatchTypeOf<DocTarget>();
+    expectTypeOf<{ kind: 'file'; diffScope: 'staged' }>().toMatchTypeOf<DocTarget>();
+    expectTypeOf<{ kind: 'remote-file'; diffScope: 'staged' }>().not.toMatchTypeOf<DocTarget>();
+    expect(MACHINE.machineId).toBe('M1');
   });
 
   it('remote docs are not persisted', () => {
@@ -1370,11 +1376,9 @@ describe('remote file docs (CON-43 T4)', () => {
     const path = '/home/me/p/a.txt';
     const outcome = backgroundOpenOutcome(
       initialDocs,
-      'remote-file',
+      { kind: 'remote-file', machine: MACHINE },
       path,
       'S1',
-      undefined,
-      MACHINE,
     );
     expect(outcome.id).toBe(`remote-file@M1:${path}`);
     expect(outcome.outcome).toBe('opened');
@@ -1389,7 +1393,7 @@ describe('remote file docs (CON-43 T4)', () => {
     });
     expect(opened.docs.map((d) => d.id)).toEqual([outcome.id]);
     expect(
-      backgroundOpenOutcome(opened, 'remote-file', path, 'S1', undefined, MACHINE).outcome,
+      backgroundOpenOutcome(opened, { kind: 'remote-file', machine: MACHINE }, path, 'S1').outcome,
     ).toBe('already-open');
   });
 });

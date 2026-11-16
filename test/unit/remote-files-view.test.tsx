@@ -354,4 +354,66 @@ describe('RemoteFilesView', () => {
     await flush();
     expect(listsPosted().map((m) => m.path)).toEqual([HOME]);
   });
+
+  it('a folder-qualified toggle leaves the same path in another folder alone', async () => {
+    const nested = { ...rowWith('up'), session: { ...SESSION, home: '/h', roots: ['/h/p'] } };
+    await render(nested);
+    answerList('/h', [{ name: 'p', kind: 'dir' }]);
+    answerList('/h/p', [{ name: 'src', kind: 'dir' }]);
+    await flush();
+    const at = (name: string, level: number) =>
+      [...(host?.querySelectorAll('[role="treeitem"]') ?? [])].find(
+        (el) => el.textContent === name && el.getAttribute('aria-level') === String(level),
+      ) as HTMLElement | undefined;
+
+    // Home's copy of `p` expands; the root's own `p` (its header) and its `src` are separate.
+    await act(async () => {
+      at('p', 2)?.click();
+    });
+    await flush();
+    answerList('/h/p', [{ name: 'src', kind: 'dir' }]);
+    await flush();
+    expect(at('src', 3)).toBeDefined();
+    expect(at('src', 2)).toBeDefined();
+
+    // Expanding the root's `src` must not touch home's `src` at the deeper level.
+    await act(async () => {
+      at('src', 2)?.click();
+    });
+    await flush();
+    expect(listsPosted().map((m) => m.path)).toContain('/h/p/src');
+    expect(at('src', 2)?.getAttribute('aria-expanded')).toBe('true');
+    expect(at('src', 3)?.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('exactly one tab stop shows while a loading or error line is up', async () => {
+    await render(rowWith('up'));
+    expect(host?.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+
+    answerError(HOME, 'failed');
+    answerList('/srv/shared', []);
+    await flush();
+    expect(host?.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+  });
+
+  it('Enter on an error row retries it', async () => {
+    await render(rowWith('up'));
+    answerError(HOME, 'failed');
+    answerList('/srv/shared', []);
+    await flush();
+    const tree = host?.querySelector('[role="tree"]') as HTMLElement;
+    await act(async () => {
+      tree.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    });
+    await flush();
+    const stop = host?.querySelector('[tabindex="0"]');
+    expect(stop?.textContent).toContain('Something went wrong talking to that machine.');
+
+    const before = listsPosted().filter((m) => m.path === HOME).length;
+    await act(async () => {
+      tree.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    await flush();
+    expect(listsPosted().filter((m) => m.path === HOME).length).toBe(before + 1);
+  });
 });

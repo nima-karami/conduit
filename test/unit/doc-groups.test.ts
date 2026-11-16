@@ -779,13 +779,13 @@ describe('group background outcome', () => {
     let s = split(open(initialDocs, '/a.ts'));
     s = open(s, '/c.ts', { group: 2 });
     s = docsReducer(s, { type: 'focusGroup', sessionId: 'S1', group: 1 });
-    expect(backgroundOpenOutcome(s, 'file', '/c.ts', 'S1')).toEqual({
+    expect(backgroundOpenOutcome(s, { kind: 'file' }, '/c.ts', 'S1')).toEqual({
       outcome: 'opened',
       ownerSessionId: 'S1',
       id: 'file:/c.ts',
       title: 'c.ts',
     });
-    expect(backgroundOpenOutcome(s, 'file', '/a.ts', 'S1').outcome).toBe('already-open');
+    expect(backgroundOpenOutcome(s, { kind: 'file' }, '/a.ts', 'S1').outcome).toBe('already-open');
     const next = open(s, '/c.ts', { mode: 'background' });
     expect(ids(next, 1)).toEqual(['file:/a.ts', 'file:/c.ts']);
   });

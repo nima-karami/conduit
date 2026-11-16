@@ -5,7 +5,11 @@
 import { useSyncExternalStore } from 'react';
 import type { DirEntryDTO, FileContentDTO, HostToWebview } from '../src/protocol';
 import { post, subscribe } from './bridge';
-import type { OpenDoc } from './docs';
+import type { Machine, OpenDoc } from './docs';
+
+/** A remote file doc: the only doc kind whose content this store reads. */
+export type RemoteFileDoc = OpenDoc & { kind: 'remote-file'; machine: Machine };
+
 import { requestHost } from './host-request';
 
 const LIST_TIMEOUT_MS = 20_000;
@@ -122,7 +126,7 @@ export function useRemoteFile(docId: string): FileContentDTO | undefined {
   );
 }
 
-function startReader(doc: OpenDoc & { machine: NonNullable<OpenDoc['machine']> }): Reader {
+function startReader(doc: RemoteFileDoc): Reader {
   const { machineId, sessionId } = doc.machine;
   let live = true;
   const read = async (): Promise<void> => {
@@ -165,13 +169,10 @@ function startReader(doc: OpenDoc & { machine: NonNullable<OpenDoc['machine']> }
  * one owner: the read and its watch run until every owner has called its returned release, so a doc
  * mounted in two groups keeps loading after one of them lets go.
  */
-export function loadRemoteDoc(doc: OpenDoc): () => void {
-  if (doc.kind !== 'remote-file' || !doc.machine) {
-    throw new Error(`loadRemoteDoc: ${doc.id} is not a remote file doc`);
-  }
+export function loadRemoteDoc(doc: RemoteFileDoc): () => void {
   let reader = readers.get(doc.id);
   if (!reader) {
-    reader = startReader({ ...doc, machine: doc.machine });
+    reader = startReader(doc);
     readers.set(doc.id, reader);
   }
   const owned = reader;

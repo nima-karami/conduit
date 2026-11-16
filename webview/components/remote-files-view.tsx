@@ -204,12 +204,8 @@ export function RemoteFilesView({
     };
   }, []);
 
-  const folderOf = (dir: string): string | undefined =>
-    folders.find((f) => findNode(trees[f] ?? [], dir) !== undefined);
-
-  const toggle = (node: TreeNode) => {
-    const folder = folderOf(node.path);
-    if (folder === undefined) return;
+  // The folder is named by the row that was acted on: the same path can sit in two folders' trees.
+  const toggle = (folder: string, node: TreeNode) => {
     if (node.expanded) {
       setTrees((cur) => ({ ...cur, [folder]: collapseForget(cur[folder] ?? [], node.path) }));
       return;
@@ -279,7 +275,8 @@ export function RemoteFilesView({
         return [header, ...top, ...body(tree, 0)];
       });
 
-  const order = items.flatMap((i) => (i.kind === 'status' ? [] : [i.key]));
+  // Loading and empty lines are not stops; an error line is, so Enter on it retries.
+  const order = items.flatMap((i) => (i.kind === 'status' && i.status !== 'error' ? [] : [i.key]));
   const roving = focusKey !== null && order.includes(focusKey) ? focusKey : (order[0] ?? null);
   const byKey = new Map(items.map((i) => [i.key, i] as const));
 
@@ -291,7 +288,7 @@ export function RemoteFilesView({
   const onTreeKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (roving === null) return;
     const item = byKey.get(roving);
-    if (!item || item.kind === 'status') return;
+    if (!item) return;
     const move = (dir: 'up' | 'down' | 'first' | 'last') => {
       const next = nextVisiblePath(order, roving, dir);
       if (next) focusItem(next);
@@ -308,10 +305,15 @@ export function RemoteFilesView({
     } else if (e.key === 'End') {
       e.preventDefault();
       move('last');
+    } else if (item.kind === 'status') {
+      if (e.key === 'Enter' && item.status === 'error') {
+        e.preventDefault();
+        retry(item.folder, item.dir);
+      }
     } else if (e.key === 'ArrowRight') {
       if (item.kind === 'node' && item.node.kind === 'dir' && !item.node.expanded) {
         e.preventDefault();
-        toggle(item.node);
+        toggle(item.folder, item.node);
       } else if (item.kind === 'header' || (item.kind === 'node' && item.node.kind === 'dir')) {
         e.preventDefault();
         move('down');
@@ -319,7 +321,7 @@ export function RemoteFilesView({
     } else if (e.key === 'ArrowLeft') {
       e.preventDefault();
       if (item.kind === 'node' && item.node.kind === 'dir' && item.node.expanded) {
-        toggle(item.node);
+        toggle(item.folder, item.node);
       } else if (item.kind === 'node') {
         // A top-level row's parent is its folder's header; a deeper row's is its directory.
         const up =
@@ -331,7 +333,7 @@ export function RemoteFilesView({
     } else if (e.key === 'Enter' || e.key === ' ') {
       if (item.kind !== 'node') return;
       e.preventDefault();
-      if (item.node.kind === 'dir') toggle(item.node);
+      if (item.node.kind === 'dir') toggle(item.folder, item.node);
       else onOpenFile?.(item.node.path, 'permanent');
     }
   };
@@ -375,11 +377,12 @@ export function RemoteFilesView({
               return (
                 <div
                   key={item.key}
+                  ref={(el) => setRowEl(item.key, el)}
                   className={`remote-files__status${item.status === 'error' ? ' remote-files__status--error' : ''}`}
                   role="treeitem"
                   aria-level={item.depth + 2}
                   aria-selected={false}
-                  tabIndex={-1}
+                  tabIndex={item.key === roving ? 0 : -1}
                   style={{ paddingInlineStart: `calc(${item.depth} * var(--remote-files-step))` }}
                 >
                   <span>
@@ -392,6 +395,7 @@ export function RemoteFilesView({
                   {item.status === 'error' ? (
                     <button
                       type="button"
+                      tabIndex={-1}
                       className="btn btn--sm"
                       onClick={() => retry(item.folder, item.dir)}
                     >
@@ -415,7 +419,7 @@ export function RemoteFilesView({
                 style={{ paddingInlineStart: `calc(${item.depth} * var(--remote-files-step))` }}
                 onClick={() => {
                   setFocusKey(item.key);
-                  if (isDir) toggle(node);
+                  if (isDir) toggle(item.folder, node);
                   else onOpenFile?.(node.path, 'preview');
                 }}
                 onDoubleClick={() => {
