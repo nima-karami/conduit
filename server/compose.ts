@@ -9,7 +9,7 @@ import {
   versionOrder,
 } from '../src/contracts/server-protocol';
 import { formatRecord, type LogLevel, levelEnabled } from '../src/logging';
-import { secretMatches } from '../src/server-secret';
+import { AUTH_REQUIRED_MESSAGE, secretMatches } from '../src/server-secret';
 import { DEFAULT_SETTINGS } from '../src/settings';
 import { ServerLifecycle, type ShellCore } from './lifecycle/shell';
 import {
@@ -135,6 +135,8 @@ export function compose(options: ComposeOptions) {
       );
       // The answer stays auth-free so an app of another version still learns the order (decision 2).
       peer.authed = secretMatches(options.secret, p.auth);
+      // A peer that fails auth now must stop receiving events it subscribed to earlier.
+      if (!peer.authed) peer.subscribed = false;
       const result: ServerMethods['hello']['result'] = {
         serverVersion: options.version,
         generation: SERVER_PROTOCOL_GENERATION,
@@ -146,7 +148,7 @@ export function compose(options: ComposeOptions) {
       return { result };
     }
     if (!peer.order) throw new RpcFault('invalid', 'hello required');
-    if (!peer.authed) throw new RpcFault('refused', 'auth required');
+    if (!peer.authed) throw new RpcFault('refused', AUTH_REQUIRED_MESSAGE);
     if (request.method === 'events.subscribe') {
       const result: ServerSnapshot = {
         ...options.core.snapshot(),

@@ -3,10 +3,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ServerCallError, ServerClient } from '../../electron/server-client';
 import {
   APP_HELLO_TIMEOUT_MS,
+  SERVER_ERROR_RPC_CODE,
   SERVER_PROTOCOL_GENERATION,
   type ServerEventEnvelope,
   type ServerSnapshot,
 } from '../../src/contracts/server-protocol';
+import { AUTH_REQUIRED_MESSAGE } from '../../src/server-secret';
 import { FakeC2Server } from './fake-c2-server';
 
 let server: FakeC2Server | undefined;
@@ -95,6 +97,31 @@ describe('ServerClient', () => {
       );
     },
   );
+
+  it('a subscribe refused for auth drops the connection so the lifecycle redials', async () => {
+    server = new FakeC2Server();
+    await server.listen();
+    server.on('events.subscribe', () => {
+      throw {
+        code: SERVER_ERROR_RPC_CODE,
+        message: AUTH_REQUIRED_MESSAGE,
+        data: { kind: 'refused' },
+      };
+    });
+    client = new ServerClient({
+      endpoint: server.endpoint,
+      appVersion: '0.52.0',
+      readSecret: () => CLIENT_SECRET,
+      log: () => {},
+    });
+    await client.open();
+    const closed = vi.fn();
+    client.onClose(closed);
+    await expect(client.subscribe({ snapshot() {}, event() {} })).rejects.toBeInstanceOf(
+      ServerCallError,
+    );
+    await vi.waitFor(() => expect(closed).toHaveBeenCalledWith('eof'));
+  });
 
   it('hello carries auth from readSecret', async () => {
     server = new FakeC2Server();

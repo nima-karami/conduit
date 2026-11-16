@@ -15,6 +15,9 @@ export function readServerSecret(userData: string): string | null {
   }
 }
 
+/** The refusal every gated method gives an un-authed peer; the client matches it to redial. */
+export const AUTH_REQUIRED_MESSAGE = 'auth required';
+
 /** Constant-time. A length mismatch is a mismatch: timingSafeEqual throws on unequal lengths. */
 export function secretMatches(expected: string, given: unknown): boolean {
   if (typeof given !== 'string') return false;

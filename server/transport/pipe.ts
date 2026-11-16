@@ -221,7 +221,8 @@ export class PipeTransport {
       answer = { error };
     }
     if ('reply' in answer) return;
-    if ('result' in answer && request.method === 'hello') helloDone();
+    // An unauthed hello must not end the window: that peer would hold a slot without ever authenticating.
+    if ('result' in answer && request.method === 'hello' && peer.authed) helloDone();
     if (!('id' in request)) {
       // A notification has nobody to answer, so only an expected refusal may go unreported.
       if ('error' in answer && !expectedRefusal(answer.error)) this.onError(answer.error);

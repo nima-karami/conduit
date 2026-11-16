@@ -1,3 +1,4 @@
+import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -34,6 +35,15 @@ describe('server secret file', () => {
   it('the secret is 32 random bytes as base64url', async () => {
     const secret = writeServerSecret(await userData());
     expect(secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  });
+
+  it('a failed rename leaves no temp file behind', async () => {
+    const dir = await userData();
+    // A non-empty directory cannot be renamed over, so the write fails after the temp file exists.
+    mkdirSync(path.join(dir, SERVER_SECRET_FILE));
+    writeFileSync(path.join(dir, SERVER_SECRET_FILE, 'occupied'), 'x');
+    expect(() => writeServerSecret(dir)).toThrow();
+    expect(readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
   });
 
   it('readServerSecret is null when no file exists', async () => {

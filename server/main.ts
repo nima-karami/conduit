@@ -50,7 +50,8 @@ export async function runServer(
     const result = await stopAll({
       endpoint: names.serverEndpoint,
       version,
-      // The running server wrote this file at its start; without it stop-all is refused and falls back.
+      // The running server wrote this file at its start. Without it the stop is refused with
+      // 'auth required' and reports failure; it never falls back to hc.
       auth: readServerSecret(userData) ?? undefined,
       directFallback:
         dependencies.directFallback ??
@@ -64,14 +65,15 @@ export async function runServer(
     if (!result.ok) process.stderr.write(`${result.reason}\n`);
     return { code: result.ok ? 0 : 1 };
   }
-  // Before listen: a client that connects the moment the endpoint binds must find the new secret.
-  const secret = writeServerSecret(userData);
   let logError = (error: unknown) => console.error(error);
   const transport = new PipeTransport(names.serverEndpoint, platform, (error) => logError(error));
   let handle: RpcHandler = async () => {
     throw new Error('Server composition pending');
   };
   if (!(await transport.listen((request, peer) => handle(request, peer)))) return { code: 0 };
+  // Only the winner writes: a second start that loses the bind must not replace the live secret.
+  // Before compose, so no hello is answered until the secret is on disk.
+  const secret = writeServerSecret(userData);
   const logPath = path.join(userData, 'server.log');
   const supervisorTerminal = argValue(args, '--supervisor-terminal');
   const trayProc =

@@ -15,6 +15,7 @@ import {
   type ServerSnapshot,
 } from '../src/contracts/server-protocol';
 import { LineReader } from '../src/line-reader';
+import { AUTH_REQUIRED_MESSAGE } from '../src/server-secret';
 
 export type AppLog = (
   level: 'info' | 'warn' | 'error',
@@ -108,14 +109,6 @@ export class ServerClient {
     this.state = 'opening';
     return new Promise<Hello>((resolve, reject) => {
       let socket: Duplex;
-      let auth: string | null;
-      try {
-        auth = this.o.readSecret();
-      } catch (error) {
-        this.state = 'closed';
-        reject(new ServerCallError('disconnected', String(error)));
-        return;
-      }
       try {
         socket = this.o.connect ? this.o.connect() : openSocket(this.o.endpoint);
       } catch (error) {
@@ -157,27 +150,42 @@ export class ServerClient {
         }
         for (const cb of [...this.closeListeners]) cb(failed);
       });
-      this.request('hello', {
-        appVersion: this.o.appVersion,
-        generation: SERVER_PROTOCOL_GENERATION,
-        ...(auth !== null ? { auth } : {}),
-      }).then(
-        (hello) => {
-          clearTimeout(timer);
-          if (!isHello(hello)) {
-            this.teardown();
-            reject(new ServerCallError('protocol', 'malformed hello reply'));
-            return;
-          }
-          this.state = 'open';
-          resolve(hello);
-        },
-        (error: ServerCallError) => {
+      const sendHello = () => {
+        let auth: string | null;
+        try {
+          auth = this.o.readSecret();
+        } catch (error) {
           clearTimeout(timer);
           this.teardown();
-          reject(error);
-        },
-      );
+          reject(new ServerCallError('disconnected', String(error)));
+          return;
+        }
+        this.request('hello', {
+          appVersion: this.o.appVersion,
+          generation: SERVER_PROTOCOL_GENERATION,
+          ...(auth !== null ? { auth } : {}),
+        }).then(
+          (hello) => {
+            clearTimeout(timer);
+            if (!isHello(hello)) {
+              this.teardown();
+              reject(new ServerCallError('protocol', 'malformed hello reply'));
+              return;
+            }
+            this.state = 'open';
+            resolve(hello);
+          },
+          (error: ServerCallError) => {
+            clearTimeout(timer);
+            this.teardown();
+            reject(error);
+          },
+        );
+      };
+      // The secret is read once the socket is up, so a server that restarted meanwhile is the one
+      // we pair with. An injected duplex has no connect event and is written at once.
+      if (this.o.connect) sendHello();
+      else socket.once('connect', sendHello);
     });
   }
 
@@ -216,7 +224,21 @@ export class ServerClient {
     const h = this.subscriber;
     if (!h) return;
     this.snapshotSeq = null;
-    const snapshot = await this.call('events.subscribe', {});
+    let snapshot: ServerSnapshot;
+    try {
+      // A bare await, not a .catch hop: the reply's events must see snapshotSeq set in the same turn.
+      snapshot = await this.call('events.subscribe', {});
+    } catch (error) {
+      // The secret moved on under this connection. Dropping the socket makes the lifecycle redial,
+      // and the redial re-reads the secret.
+      if (
+        error instanceof ServerCallError &&
+        error.kind === 'refused' &&
+        error.message === AUTH_REQUIRED_MESSAGE
+      )
+        this.socket?.destroy();
+      throw error;
+    }
     if (this.subscriber !== h || this.state !== 'open') return;
     this.snapshotSeq = snapshot.seq;
     this.guard('snapshot', () => h.snapshot(snapshot));

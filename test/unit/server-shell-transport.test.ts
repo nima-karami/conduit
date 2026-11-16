@@ -200,6 +200,21 @@ describe('server shell on the real C2 pipe', () => {
     expect(x.writeLog).toHaveBeenCalledTimes(1);
   });
 
+  it('an unauthed hello does not end the hello window', async () => {
+    const x = await setup();
+    vi.useFakeTimers();
+    try {
+      const c = await client(x.names.serverEndpoint);
+      await vi.waitFor(() => expect(x.transport.peers.size).toBe(1));
+      c.send('hello', { appVersion: '0.52.0', generation: 1 });
+      expect(await c.next()).toMatchObject({ result: { serverVersion: '0.52.0' } });
+      await vi.advanceTimersByTimeAsync(APP_HELLO_TIMEOUT_MS);
+      await vi.waitFor(() => expect(c.socket.destroyed).toBe(true));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('closes connections which never send hello within APP_HELLO_TIMEOUT_MS', async () => {
     const x = await setup();
     vi.useFakeTimers();
