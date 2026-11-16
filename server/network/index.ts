@@ -10,11 +10,13 @@ import {
 import type { NetworkState } from '../../src/contracts/network-state';
 import type { ServerEventSink } from '../../src/contracts/server-ports';
 import type { ServerSettings } from '../../src/contracts/server-protocol';
+import type { AddSshPeerResult, SshEndpoint } from '../../src/contracts/ssh-link';
 import type { TerminalRuntime } from '../../src/contracts/terminal-runtime';
 import { bindableAddresses } from '../../src/network/bind-addresses';
 import type { PairingOutcome } from '../../src/network/pairing-protocol';
 import { createRemoteDirectory } from '../../src/network/remote-directory';
 import { selfSignedCert } from '../../src/network/self-signed-cert';
+import { controlDir } from '../../src/network/ssh-argv';
 import { currentWindowsPty } from '../../src/windows-pty-info';
 import { openAuditLog } from './audit-log';
 import { handleNetworkCall } from './c2';
@@ -28,6 +30,7 @@ import { createMonitorPublisher, type MonitorSource } from './monitor-publisher'
 import { createPairingPort } from './pairing-port';
 import { createPairingService, type PairingService } from './pairing-service';
 import { createSnapshotCoalescer } from './snapshot-coalescer';
+import { createSshDial } from './ssh-dialer';
 import { createViewRelay } from './view-relay';
 
 // The one composer for linked machines (plan "Technical decisions" 1): services.ts only builds,
@@ -38,6 +41,10 @@ type NetworkSettings = Pick<ServerSettings, 'networkBindHost' | 'networkPort' | 
 export interface NetworkDeps {
   /** <userData>/network */
   dir: string;
+  /** The server's userData: the ssh control dir lives beside it. */
+  userData: string;
+  /** The instance digest: names the ssh control dir's fallback when userData is too long. */
+  instance: string;
   identity: Identity;
   settings(): NetworkSettings;
   emit(state: NetworkState): void;
@@ -72,6 +79,8 @@ export interface NetworkService {
   settingsChanged(): Promise<void>;
   state(): NetworkState;
   onRevoked(listener: (machineId: string) => void): () => void;
+  /** Dials an ssh target and links it; the C2 link.sshAdd call lands here. */
+  addSshPeer(ssh: SshEndpoint): Promise<AddSshPeerResult>;
   /** What the MCP host reads: remote sessions, address resolution, the outbox. */
   port(): NetworkPort;
   /** The MCP host's side, set once it exists (the host is built after the network). */
@@ -173,8 +182,23 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
   let bound: { host: string; port: number } | null = null;
   let listening: Promise<string[]> | null = null;
 
+  const sshControlDir = controlDir({
+    userData: deps.userData,
+    tmpdir: os.tmpdir(),
+    xdgRuntimeDir: process.env.XDG_RUNTIME_DIR,
+    // win32 has no getuid; there the uid only names the tmpdir fallback, and the dialer skips the owner check.
+    uid: process.getuid?.() ?? 0,
+    instance: deps.instance,
+    join: path.join,
+  });
+
   const manager: LinkManager = createLinkManager({
     identity: () => identity,
+    sshDial: createSshDial({
+      sshPath: process.env.CONDUIT_SSH_PATH || 'ssh',
+      controlDir: sshControlDir,
+      log: deps.log,
+    }),
     selfName,
     tls: () => tlsPair,
     store,
@@ -385,6 +409,8 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       createdAt: new Date(now()).toISOString(),
       cert: outcome.peer.cert,
       ownerTransfer: outcome.ownerTransfer,
+      transport: 'tls',
+      ssh: null,
     });
     listener?.refreshTrust();
     void ensureListening().catch((err: Error) =>
@@ -470,6 +496,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     },
     state,
     onRevoked: (l) => manager.onRevoked(l),
+    addSshPeer: (ssh) => manager.addSshPeer(ssh),
     port: () => networkPort,
     setMcp(port) {
       mcp = port;

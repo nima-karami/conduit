@@ -264,6 +264,8 @@ export function createServices(o: ServicesOptions) {
       ? null
       : createNetwork({
           dir: networkDir,
+          userData: o.userData,
+          instance: o.names.instance,
           identity: loaded.identity,
           settings: () => domain.settings(),
           emit: (state) => o.emit('network.changed', state),

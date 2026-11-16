@@ -1,16 +1,28 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Duplex, PassThrough } from 'node:stream';
 import type tls from 'node:tls';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AuditEvent } from '../../server/network/audit-log';
 import { type Identity, loadIdentity } from '../../server/network/identity';
+import { openConnection } from '../../server/network/link-connection';
 import { createLinkManager, type LinkManager } from '../../server/network/link-manager';
-import { openLinkStore } from '../../server/network/link-store';
+import { type LinkStore, openLinkStore } from '../../server/network/link-store';
 import { dial, type LinkListener, listenLinks } from '../../server/network/listener';
+import { createMessaging, type Messaging } from '../../server/network/messaging';
+import type { McpNetworkPort, RemoteEntry } from '../../src/conduit-mcp/remote-routing';
+import type { MessageRecord } from '../../src/conduit-mcp/types';
 import {
+  type HelloFrame,
   LINK_FEATURES,
   LINK_FRAME_MAX_BYTES,
   LINK_PROTOCOL,
+  type LinkFrame,
   OWN_DEFAULT_CAPABILITIES,
+  type WireMessage,
 } from '../../src/contracts/link-protocol';
+import type { SshDial, SshEndpoint } from '../../src/contracts/ssh-link';
 import { encodeFrame, FrameDecoder } from '../../src/network/frame-codec';
 import type { LinkRecord } from '../../src/network/link-file';
 import { linkIdFor } from '../../src/network/pairing-transcript';
@@ -50,6 +62,11 @@ interface Node {
   id: Identity;
   cert: string;
   manager: LinkManager;
+  store: LinkStore;
+  /** Warnings the manager logged, by message. */
+  warns: string[];
+  /** Where frames that aren't link control go; messaging wires itself in here. */
+  setFrameSink(fn: (machineId: string, frame: LinkFrame) => void): void;
   /** add() the way the composer does it: store the record, then trust its certificate. */
   link(r: LinkRecord): void;
   ownerKeys: Array<{ publicKey: string; privateKey: string }>;
@@ -60,7 +77,16 @@ interface Node {
   reconnects: string[];
 }
 
-async function node(id: Identity, name: string, port = 0): Promise<Node> {
+const refuseSsh: SshDial = () => {
+  throw new Error('this node has no ssh dial');
+};
+
+async function node(
+  id: Identity,
+  name: string,
+  port = 0,
+  sshDial: SshDial = refuseSsh,
+): Promise<Node> {
   const store = openLinkStore('/net/links.json', { now: Date.now, log: quiet, io: memIo() });
   const cert = selfSignedCert(
     { publicKey: id.serverPublicKey, privateKey: id.serverPrivateKey },
@@ -69,21 +95,39 @@ async function node(id: Identity, name: string, port = 0): Promise<Node> {
   const key = id.serverPrivateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
   const audit: AuditEvent[] = [];
   const ownerKeys: Array<{ publicKey: string; privateKey: string }> = [];
-  const n = { audit, changes: 0, ownerKeys, reconnects: [] as string[] };
+  const warns: string[] = [];
+  let frameSink: (machineId: string, frame: LinkFrame) => void = () => undefined;
+  const n = {
+    audit,
+    changes: 0,
+    ownerKeys,
+    reconnects: [] as string[],
+    store,
+    warns,
+    setFrameSink: (fn: (machineId: string, frame: LinkFrame) => void) => {
+      frameSink = fn;
+    },
+  };
   const manager = createLinkManager({
     identity: () => id,
     selfName: () => name,
     tls: () => ({ cert, key }),
     store,
     audit: { record: (e) => audit.push(e) },
-    log: quiet,
+    sshDial,
+    log: {
+      debug: () => undefined,
+      warn: (msg) => {
+        warns.push(msg);
+      },
+    },
     now: Date.now,
     rand: () => 0.5,
     after: (fn, ms) => {
       const h = setTimeout(fn, ms);
       return () => clearTimeout(h);
     },
-    onFrame: () => undefined,
+    onFrame: (machineId, frame) => frameSink(machineId, frame),
     changed: () => {
       n.changes += 1;
     },
@@ -138,6 +182,8 @@ function record(of: Node, name: string, overrides: Partial<LinkRecord> = {}): Li
     createdAt: new Date().toISOString(),
     cert: of.cert,
     ownerTransfer: null,
+    transport: 'tls',
+    ssh: null,
     ...overrides,
   };
 }
@@ -431,5 +477,560 @@ describe('a connection swapped while up', { timeout: 60_000 }, () => {
     openGate();
     await until(isOldClosed);
     expect(gated.reconnects).toEqual([peer.id.machineId]);
+  });
+});
+
+const ENDPOINT: SshEndpoint = {
+  target: 'remote-box',
+  node: '/usr/bin/node',
+  mainJs: '/opt/conduit/main.js',
+  userData: '/home/user/.conduit',
+};
+const OWNER_REFUSED = 'link: owner frame refused on ssh link';
+
+/** A Duplex that reads `readable` and writes `writable`: one end of a two-way in-memory pipe. */
+function bridge(readable: PassThrough, writable: PassThrough): Duplex {
+  const d = new Duplex({
+    read() {
+      readable.resume();
+    },
+    write(chunk: Buffer, _enc, cb) {
+      writable.write(chunk, cb);
+    },
+    final(cb) {
+      writable.end(cb);
+    },
+    destroy(err, cb) {
+      readable.destroy();
+      writable.destroy();
+      cb(err);
+    },
+  });
+  readable.on('data', (chunk: Buffer) => {
+    if (!d.push(chunk)) readable.pause();
+  });
+  readable.on('end', () => d.push(null));
+  return d;
+}
+
+/** Two in-memory byte pipes: `near` is the dialer's stdio, `far` is what the bridge reads. */
+function streamPair(): [Duplex, Duplex] {
+  const ab = new PassThrough();
+  const ba = new PassThrough();
+  return [bridge(ba, ab), bridge(ab, ba)];
+}
+
+interface FakeSsh {
+  dial: SshDial;
+  args: SshEndpoint[];
+  streams: Array<[Duplex, Duplex]>;
+  /** Kills the newest ssh session from both ends, as a dropped ssh child does. */
+  dropLast(): void;
+}
+
+/** Each dial hands `far` to the target's acceptStream, the way the bridge's preamble would. */
+function fakeSsh(into: () => Node): FakeSsh {
+  const args: SshEndpoint[] = [];
+  const streams: Array<[Duplex, Duplex]> = [];
+  const dial: SshDial = (ssh) => {
+    args.push(ssh);
+    const pair = streamPair();
+    streams.push(pair);
+    into().manager.acceptStream(pair[1]);
+    return { stream: pair[0], failure: async () => null };
+  };
+  return {
+    dial,
+    args,
+    streams,
+    dropLast: () => {
+      const last = streams[streams.length - 1];
+      if (!last) throw new Error('no ssh session to drop');
+      last[0].destroy();
+      last[1].destroy();
+    },
+  };
+}
+
+/** `a` dials `b` over a fake ssh; `b` only accepts, as an ssh target does. */
+async function sshPair(bHasOwnerKey = true) {
+  const owner = identity();
+  const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
+  // Each side can dial the other, so either may be the controller in a test.
+  const toB = fakeSsh(() => b);
+  const toA = fakeSsh(() => a);
+  const b = await node(bHasOwnerKey ? identity(ownerKey) : identity(), 'win-box', 0, toA.dial);
+  const a = await node(identity(ownerKey), 'linux-box', 0, toB.dial);
+  a.manager.start();
+  b.manager.start();
+  return { a, b, ssh: toB };
+}
+
+/** A stream whose far end speaks as `hello` would: what a remote says on its ssh stream. */
+function forgingStream(hello: HelloFrame): Duplex {
+  const [near, far] = streamPair();
+  void openConnection(far, { hello, now: Date.now, log: quiet });
+  return near;
+}
+
+const wire: WireMessage = {
+  messageId: 'm_abcdefghijklmnop',
+  threadId: 't_abcdefghijklmnop',
+  from: 'agent-1',
+  to: ['agent-2'],
+  subject: 'hi',
+  kind: 'inform',
+  priority: 'normal',
+  sentAt: '2026-01-01T00:00:00Z',
+  body: 'hello',
+  attachments: [],
+};
+
+function fakeMcp(inbox: string[]): McpNetworkPort {
+  return {
+    localDirectory: () => [],
+    // The receiver drops a message it already holds, so a redelivery after a lost ack is harmless.
+    hasMessage: (messageId: string) => inbox.includes(messageId),
+    readBlob: async () => undefined,
+    threadExportedTo: () => false,
+    wireThreadFor: (threadId: string) => threadId,
+    deliverInbound: async (msg: MessageRecord) => {
+      inbox.push(msg.messageId);
+      return msg.to.map((handle) => ({ handle, status: 'delivered' as const, reason: null }));
+    },
+    setRemoteStatus: async () => undefined,
+    onLocalStatus: () => () => undefined,
+    youUnread: () => 0,
+    ownerPresence: () => 'here',
+    requestsSummary: () => [],
+  };
+}
+
+/** Messaging wired to a node the way the network service does: links from the manager, frames back in. */
+function messagingOver(n: Node, mcp: McpNetworkPort): Messaging {
+  const dir = mkdtempSync(join(tmpdir(), 'ssh-messaging-'));
+  const svc = createMessaging({
+    file: join(dir, 'outbox.json'),
+    machineId: () => n.id.machineId,
+    links: () =>
+      n.manager.views().map((v) => ({
+        machineId: v.machineId,
+        state: v.state,
+        capabilities: v.capabilities,
+        peerCapabilities: v.peerCapabilities,
+      })),
+    send: (machineId, frame) => n.manager.send(machineId, frame),
+    mcp: () => mcp,
+    audit: { record: () => undefined },
+    log: { warn: () => undefined, error: () => undefined },
+    now: Date.now,
+    after: (fn, ms) => {
+      const h = setTimeout(fn, ms);
+      return () => clearTimeout(h);
+    },
+  });
+  n.setFrameSink((machineId, f) => {
+    if (f.t === 'msg' || f.t === 'ack' || f.t === 'receipt') svc.onFrame(machineId, f);
+  });
+  svc.start();
+  cleanup.push(async () => {
+    svc.stop();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  return svc;
+}
+
+describe('ssh links', { timeout: 60_000 }, () => {
+  it('an ssh link to a server with no owner key works', async () => {
+    const { a, b } = await sshPair(false);
+    expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({ ok: true, machineId: b.id.machineId });
+    await until(() => b.manager.view(a.id.machineId)?.state === 'up');
+    expect(a.manager.view(b.id.machineId)?.state).toBe('up');
+    expect(a.store.get(b.id.machineId)?.ownerKey).toBeNull();
+  });
+
+  it('acceptStream answers a tombstoned peer with revoked and does not re-link it', async () => {
+    const { a, b } = await sshPair();
+    const bKey = b.id.serverKeyRaw.toString('base64');
+    a.store.addSsh({
+      machineId: b.id.machineId,
+      serverKey: bKey,
+      ownerKey: null,
+      name: 'win-box',
+      ssh: null,
+    });
+    a.store.revoke(b.id.machineId, Date.now());
+    const [x, y] = streamPair();
+    cleanup.push(async () => {
+      x.destroy();
+      y.destroy();
+    });
+    a.manager.acceptStream(y);
+    const frames: LinkFrame[] = [];
+    const conn = await openConnection(x, { hello: helloOf(b), now: Date.now, log: quiet });
+    if ('error' in conn) throw new Error('connection failed');
+    conn.start({ onFrame: (f) => frames.push(f), onClose: () => undefined });
+    await until(() => frames.some((f) => f.t === 'revoked'));
+    expect(a.store.get(b.id.machineId)).toBeNull();
+  });
+
+  it('addSshPeer re-adds a revoked peer and clears its tombstone', async () => {
+    const { a, b } = await sshPair();
+    const bKey = b.id.serverKeyRaw.toString('base64');
+    await a.manager.addSshPeer(ENDPOINT);
+    await until(() => b.manager.view(a.id.machineId)?.state === 'up');
+    // B is away while A revokes it, so B never learns of the revoke and keeps no tombstone.
+    await b.manager.stop();
+    expect(a.manager.revoke(b.id.machineId)).toBe(true);
+    b.manager.start();
+    expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
+    expect(a.manager.view(b.id.machineId)?.state).toBe('up');
+    expect(a.store.get(b.id.machineId)).toMatchObject({ transport: 'ssh', ssh: ENDPOINT });
+    expect('tombstone' in (a.store.byServerKey(bKey) ?? {})).toBe(false);
+  });
+
+  it('addSshPeer refuses a controller record: a dial never fills its endpoint', async () => {
+    // B dialed A first, so A's record for B came from acceptStream and has no endpoint.
+    const { a, b } = await sshPair();
+    await b.manager.addSshPeer({ ...ENDPOINT, target: 'linux-box' });
+    await until(() => a.manager.view(b.id.machineId)?.state === 'up');
+    expect(a.store.get(b.id.machineId)?.ssh).toBeNull();
+    expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({
+      ok: false,
+      error: { code: 'identity-conflict' },
+    });
+    expect(a.store.get(b.id.machineId)?.ssh).toBeNull();
+  });
+
+  it('acceptStream pins a new controller, and a second key under its machine id is refused', async () => {
+    const { a, b } = await sshPair();
+    expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({ ok: true, machineId: b.id.machineId });
+    await until(() => b.manager.view(a.id.machineId)?.state === 'up');
+    expect(b.store.get(a.id.machineId)).toMatchObject({ transport: 'ssh', ssh: null });
+    expect(a.store.get(b.id.machineId)).toMatchObject({ transport: 'ssh', ssh: ENDPOINT });
+
+    // Another key claiming A's machine id is not a sound hello (the id is the key's hash), so it is
+    // refused before any identity rule runs, and the pinned record and link are untouched.
+    const impostor = identity();
+    await acceptForged(b, {
+      ...helloOf(a),
+      serverKey: impostor.serverKeyRaw.toString('base64'),
+    });
+    expect(b.warns).toContain(HELLO_REFUSED);
+    expect(b.store.get(a.id.machineId)?.serverKey).toBe(a.id.serverKeyRaw.toString('base64'));
+    expect(b.manager.view(a.id.machineId)?.state).toBe('up');
+  });
+
+  it('addSshPeer pins B, and a stream close redials with backoff using the injected sshDial', async () => {
+    const { a, b, ssh } = await sshPair();
+    expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
+    await until(() => b.manager.view(a.id.machineId)?.state === 'up');
+    ssh.dropLast();
+    await until(
+      () =>
+        ssh.streams.length === 2 &&
+        a.manager.view(b.id.machineId)?.state === 'up' &&
+        b.manager.view(a.id.machineId)?.state === 'up',
+    );
+    expect(ssh.args).toEqual([ENDPOINT, ENDPOINT]);
+  });
+
+  it('an owner frame on an ssh link is dropped', async () => {
+    const { a, b } = await sshPair();
+    await a.manager.addSshPeer(ENDPOINT);
+    await until(() => b.manager.view(a.id.machineId)?.state === 'up');
+    expect(
+      b.manager.send(a.id.machineId, { t: 'owner', publicKey: 'AAAA', privateKey: 'BBBB' }),
+    ).toBe(true);
+    await until(() => a.warns.includes(OWNER_REFUSED));
+    expect(a.ownerKeys).toEqual([]);
+    expect(a.manager.view(b.id.machineId)?.state).toBe('up');
+  });
+
+  it('messages queued while an ssh link is down are delivered once after redial', async () => {
+    const { a, b, ssh } = await sshPair();
+    const bInbox: string[] = [];
+    const svcA = messagingOver(a, fakeMcp([]));
+    const svcB = messagingOver(b, fakeMcp(bInbox));
+    const recipient = {
+      handle: 'agent-2',
+      address: `agent-2@${b.id.machineId}`,
+      machineId: b.id.machineId,
+    } as RemoteEntry;
+    await a.manager.addSshPeer(ENDPOINT);
+    const bothUp = () =>
+      a.manager.view(b.id.machineId)?.state === 'up' &&
+      b.manager.view(a.id.machineId)?.state === 'up';
+    await until(bothUp);
+    svcA.linkUp(b.id.machineId);
+    svcB.linkUp(a.id.machineId);
+
+    ssh.dropLast();
+    await until(() => !bothUp());
+    svcA.linkDown(b.id.machineId);
+    svcB.linkDown(a.id.machineId);
+    svcA.enqueue({ ...wire, attachments: [] }, [recipient]);
+
+    await until(() => ssh.streams.length === 2 && bothUp());
+    svcA.linkUp(b.id.machineId);
+    svcB.linkUp(a.id.machineId);
+    await until(() => bInbox.length === 1);
+    // Exactly once: a second copy would land after the first ack, so give one a window to appear.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(bInbox).toHaveLength(1);
+  });
+});
+
+const SELF_LINK = 'link: ssh self-link refused';
+const HELLO_REFUSED = 'link: ssh hello refused';
+
+/** Accepts a stream whose far end sends `hello`, and resolves once the acceptor closes it. */
+async function acceptForged(target: Node, hello: HelloFrame): Promise<void> {
+  const [x, y] = streamPair();
+  cleanup.push(async () => {
+    x.destroy();
+    y.destroy();
+  });
+  target.manager.acceptStream(y);
+  const conn = await openConnection(x, { hello, now: Date.now, log: quiet });
+  if ('error' in conn) throw new Error('hello was not exchanged');
+  await new Promise<void>((resolve) =>
+    conn.start({ onFrame: () => undefined, onClose: () => resolve() }),
+  );
+}
+
+describe('ssh hello identity and per-host pinning', { timeout: 60_000 }, () => {
+  it('a hello whose machine id is not the hash of its key is refused on accept', async () => {
+    const { a, b } = await sshPair();
+    await acceptForged(b, { ...helloOf(a), machineId: 'm-00000000' });
+    expect(b.store.links()).toEqual([]);
+    expect(b.warns).toContain(HELLO_REFUSED);
+  });
+
+  it('a hello whose key is not a raw 32-byte key is refused on accept', async () => {
+    const { a, b } = await sshPair();
+    await acceptForged(b, { ...helloOf(a), serverKey: 'not-a-key' });
+    expect(b.store.links()).toEqual([]);
+    expect(b.warns).toContain(HELLO_REFUSED);
+  });
+
+  it('a hello naming this machine is refused as a self-link on accept', async () => {
+    const { b } = await sshPair();
+    await acceptForged(b, helloOf(b));
+    expect(b.store.links()).toEqual([]);
+    expect(b.warns).toContain(SELF_LINK);
+  });
+
+  it('a dialed hello whose machine id is forged is bad-hello, and nothing is stored', async () => {
+    const owner = identity();
+    const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
+    const c = await node(identity(ownerKey), 'c-box');
+    const a = await node(identity(ownerKey), 'linux-box', 0, () => ({
+      stream: forgingStream({ ...helloOf(c), machineId: 'm-00000000' }),
+      failure: async () => null,
+    }));
+    a.manager.start();
+    expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({
+      ok: false,
+      error: { code: 'bad-hello' },
+    });
+    expect(a.store.links()).toEqual([]);
+  });
+
+  it('a dial that reaches this machine is refused as a self-link', async () => {
+    const owner = identity();
+    const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
+    const self: Node = await node(identity(ownerKey), 'self-box', 0, () => {
+      const [near, far] = streamPair();
+      self.manager.acceptStream(far);
+      return { stream: near, failure: async () => null };
+    });
+    self.manager.start();
+    expect(await self.manager.addSshPeer(ENDPOINT)).toEqual({
+      ok: false,
+      error: { code: 'bad-hello' },
+    });
+    expect(self.warns).toContain(SELF_LINK);
+    expect(self.store.links()).toEqual([]);
+  });
+
+  it('a peer claiming a known machine id and key under another target is identity-conflict', async () => {
+    const owner = identity();
+    const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
+    const c = await node(identity(ownerKey), 'c-box');
+    const toC = fakeSsh(() => c);
+    const a = await node(identity(ownerKey), 'linux-box', 0, (ssh) =>
+      ssh.target === 'c-target'
+        ? toC.dial(ssh)
+        : { stream: forgingStream(helloOf(c)), failure: async () => null },
+    );
+    c.manager.start();
+    a.manager.start();
+    expect((await a.manager.addSshPeer({ ...ENDPOINT, target: 'c-target' })).ok).toBe(true);
+    await until(() => a.manager.view(c.id.machineId)?.state === 'up');
+    const before = a.store.get(c.id.machineId);
+
+    expect(await a.manager.addSshPeer({ ...ENDPOINT, target: 'b-target' })).toEqual({
+      ok: false,
+      error: { code: 'identity-conflict' },
+    });
+    expect(a.store.get(c.id.machineId)).toEqual(before);
+    // The link that was pinned for C still carries its frames to C.
+    const got: LinkFrame[] = [];
+    c.setFrameSink((_machineId, f) => got.push(f));
+    expect(a.manager.send(c.id.machineId, { t: 'view.close', viewId: 'after' })).toBe(true);
+    await until(() => got.some((f) => f.t === 'view.close' && f.viewId === 'after'));
+  });
+
+  // A reinstalled remote (or an impostor on the same target) has a new key, so a new machine id.
+  // Spec 6: the known target is refused until the owner acts, and the old pin is left as it was.
+  it('a known ssh target answering with a new identity is identity-changed, and nothing is stored', async () => {
+    const owner = identity();
+    const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
+    const b = await node(identity(ownerKey), 'win-box');
+    const toB = fakeSsh(() => b);
+    const reinstalled = await node(identity(), 'win-box');
+    let reinstalledAnswers = false;
+    const a = await node(identity(ownerKey), 'linux-box', 0, (ssh) =>
+      reinstalledAnswers
+        ? { stream: forgingStream(helloOf(reinstalled)), failure: async () => null }
+        : toB.dial(ssh),
+    );
+    b.manager.start();
+    a.manager.start();
+    expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
+    await until(() => a.manager.view(b.id.machineId)?.state === 'up');
+    const before = a.store.get(b.id.machineId);
+
+    reinstalledAnswers = true;
+    expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({
+      ok: false,
+      error: { code: 'identity-changed' },
+    });
+    expect(a.store.get(b.id.machineId)).toEqual(before);
+    expect(a.store.links()).toHaveLength(1);
+    expect(a.manager.view(b.id.machineId)?.state).toBe('identity-changed');
+  });
+
+  it('a dial to the same target updates the endpoint the record was pinned with', async () => {
+    const { a, b } = await sshPair();
+    expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
+    await until(() => b.manager.view(a.id.machineId)?.state === 'up');
+    const moved = { ...ENDPOINT, mainJs: '/opt/conduit-new/main.js' };
+    expect((await a.manager.addSshPeer(moved)).ok).toBe(true);
+    expect(a.store.get(b.id.machineId)?.ssh).toEqual(moved);
+  });
+
+  it('a dial to another target for a known machine is identity-conflict, and the endpoint stays', async () => {
+    const { a, b } = await sshPair();
+    expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
+    await until(() => b.manager.view(a.id.machineId)?.state === 'up');
+    expect(await a.manager.addSshPeer({ ...ENDPOINT, target: 'other-box' })).toEqual({
+      ok: false,
+      error: { code: 'identity-conflict' },
+    });
+    expect(a.store.get(b.id.machineId)?.ssh).toEqual(ENDPOINT);
+  });
+
+  it('a tls record of the same machine is identity-conflict even when its key is stale', async () => {
+    const { a, b } = await sshPair();
+    a.store.put(record(b, 'win-box', { serverKey: Buffer.alloc(32, 7).toString('base64') }));
+    expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({
+      ok: false,
+      error: { code: 'identity-conflict' },
+    });
+  });
+
+  it('an ssh record with no endpoint never dials', async () => {
+    const owner = identity();
+    const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
+    const a = await node(identity(ownerKey), 'linux-box', 0, refuseSsh);
+    a.store.addSsh({
+      machineId: 'm-0badcafe',
+      serverKey: Buffer.alloc(32, 9).toString('base64'),
+      ownerKey: null,
+      name: 'controller',
+      ssh: null,
+    });
+    a.manager.start();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(a.audit.filter((e) => e.kind === 'link.state')).toEqual([]);
+  });
+
+  it('concurrent addSshPeer calls for one target share a single dial', async () => {
+    const { a, b, ssh } = await sshPair();
+    const [first, second] = await Promise.all([
+      a.manager.addSshPeer(ENDPOINT),
+      a.manager.addSshPeer(ENDPOINT),
+    ]);
+    expect(first).toEqual({ ok: true, machineId: b.id.machineId });
+    expect(second).toEqual(first);
+    expect(ssh.args).toHaveLength(1);
+  });
+
+  it('addSshPeer on a stopped manager dials, pins nothing, and says not_adopted', async () => {
+    const owner = identity();
+    const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
+    const b = await node(identity(ownerKey), 'win-box');
+    b.manager.start();
+    const toB = fakeSsh(() => b);
+    const a = await node(identity(ownerKey), 'linux-box', 0, toB.dial);
+    expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({
+      ok: false,
+      error: { code: 'ssh_failed', detail: 'not_adopted' },
+    });
+    expect(a.store.links()).toEqual([]);
+  });
+
+  it('a message in flight when the ssh stream drops is delivered exactly once', async () => {
+    const { a, b, ssh } = await sshPair();
+    const bInbox: string[] = [];
+    const svcA = messagingOver(a, fakeMcp([]));
+    const svcB = messagingOver(b, fakeMcp(bInbox));
+    const recipient = {
+      handle: 'agent-2',
+      address: `agent-2@${b.id.machineId}`,
+      machineId: b.id.machineId,
+    } as RemoteEntry;
+    await a.manager.addSshPeer(ENDPOINT);
+    const bothUp = () =>
+      a.manager.view(b.id.machineId)?.state === 'up' &&
+      b.manager.view(a.id.machineId)?.state === 'up';
+    await until(bothUp);
+    svcA.linkUp(b.id.machineId);
+    svcB.linkUp(a.id.machineId);
+
+    svcA.enqueue({ ...wire, attachments: [] }, [recipient]);
+    // The frame may or may not have reached B before the stream dies; either way it must land once.
+    ssh.dropLast();
+    await until(() => !bothUp());
+    svcA.linkDown(b.id.machineId);
+    svcB.linkDown(a.id.machineId);
+    await until(() => ssh.streams.length === 2 && bothUp());
+    svcA.linkUp(b.id.machineId);
+    svcB.linkUp(a.id.machineId);
+    await until(() => bInbox.length >= 1);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(bInbox).toHaveLength(1);
+  });
+
+  // Redials of a stored ssh record pin no key at dial time, so attach's comparison is the only guard.
+  it('a redial of a stored ssh record that meets another key is identity-changed', async () => {
+    const real = await node(identity(), 'real');
+    const impostor = await node(identity(), 'impostor');
+    const dial: SshDial = () => ({
+      stream: forgingStream(helloOf(impostor)),
+      failure: async () => null,
+    });
+    const a = await node(identity(), 'ctl', 0, dial);
+    a.store.addSsh({
+      machineId: real.id.machineId,
+      serverKey: real.id.serverKeyRaw.toString('base64'),
+      ownerKey: null,
+      name: 'real',
+      ssh: ENDPOINT,
+    });
+    a.manager.start();
+    await until(() => a.manager.view(real.id.machineId)?.state === 'identity-changed');
   });
 });

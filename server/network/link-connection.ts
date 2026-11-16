@@ -1,4 +1,4 @@
-import type tls from 'node:tls';
+import type { Duplex } from 'node:stream';
 import {
   type HelloFrame,
   LINK_DOWN_MS,
@@ -10,8 +10,9 @@ import {
 import { encodeFrame, FrameDecoder } from '../../src/network/frame-codec';
 import type { NetLog } from './listener';
 
-// One authenticated link connection: the socket arrives already pinned (listener.ts), so this only
-// frames, says hello, keeps the link alive and hands frames up. Plan decision 7.
+// One authenticated link connection: the stream arrives already pinned (listener.ts for TLS, the
+// ssh child's stdio for ssh), so this only frames, says hello, keeps the link alive and hands frames
+// up. Plan decision 7. It takes a plain Duplex so the transport underneath is not its concern.
 
 const SEND_BUFFER_MAX = 4 * 1024 * 1024;
 /** Past this the peer is not reading at all; we close rather than buffer without bound (CON-27 R2b). */
@@ -57,7 +58,7 @@ const realEvery = (fn: () => void, ms: number): (() => void) => {
 export type ConnectionError = 'incompatible' | 'bad-hello' | 'timeout' | 'closed';
 
 export function openConnection(
-  sock: tls.TLSSocket,
+  sock: Duplex,
   opts: ConnectionOptions,
 ): Promise<LinkConnection | { error: ConnectionError; peerHello?: HelloFrame }> {
   const decoder = new FrameDecoder(LINK_FRAME_MAX_BYTES);

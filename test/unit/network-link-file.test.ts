@@ -23,6 +23,8 @@ const link: LinkRecord = {
   createdAt: ago(1),
   cert: 'PEM-B',
   ownerTransfer: null,
+  transport: 'tls',
+  ssh: null,
 };
 
 const tombstone = (revokedDaysAgo: number) => ({
@@ -33,7 +35,7 @@ const tombstone = (revokedDaysAgo: number) => ({
   cert: 'PEM-OLD',
 });
 
-const sample: LinksFile = { version: 1, links: [link], tombstones: [tombstone(1)] };
+const sample: LinksFile = { version: 2, links: [link], tombstones: [tombstone(1)] };
 
 describe('links file', () => {
   it('round-trips links and tombstones', () => {
@@ -41,8 +43,78 @@ describe('links file', () => {
   });
 
   it('round-trips an empty file', () => {
-    const empty: LinksFile = { version: 1, links: [], tombstones: [] };
+    const empty: LinksFile = { version: 2, links: [], tombstones: [] };
     expect(parseLinksFile(serializeLinksFile(empty), NOW)).toEqual({ kind: 'ok', file: empty });
+  });
+
+  // Files written before ssh links existed have no transport; they are TLS links.
+  it('links.json without transport parses as tls', () => {
+    const { transport: _transport, ssh: _ssh, ...legacy } = link;
+    const parsed = parseLinksFile(JSON.stringify({ ...sample, links: [legacy] }), NOW);
+    expect(parsed.kind).toBe('ok');
+    if (parsed.kind !== 'ok') return;
+    expect(parsed.file.links[0]?.transport).toBe('tls');
+    expect(parsed.file.links[0]?.ssh).toBeNull();
+  });
+
+  it('ssh record round-trips with ssh null', () => {
+    const sshLink: LinkRecord = {
+      ...link,
+      machineId: 'm-0badcafe',
+      cert: '',
+      fingerprint: '',
+      addresses: [],
+      transport: 'ssh',
+      ssh: null,
+    };
+    const f: LinksFile = { version: 2, links: [sshLink], tombstones: [] };
+    expect(parseLinksFile(serializeLinksFile(f), NOW)).toEqual({ kind: 'ok', file: f });
+  });
+
+  // A server without an owner key has nothing to put here, and only ssh links may say so.
+  it('an ssh record with no owner key round-trips', () => {
+    const f: LinksFile = {
+      version: 2,
+      links: [{ ...link, ownerKey: null, transport: 'ssh', ssh: null, cert: '' }],
+      tombstones: [],
+    };
+    expect(parseLinksFile(serializeLinksFile(f), NOW)).toEqual({ kind: 'ok', file: f });
+  });
+
+  it('a tls record with a null ownerKey is corrupt', () => {
+    const bad = { ...link, ownerKey: null, transport: 'tls', ssh: null };
+    expect(parseLinksFile(JSON.stringify({ ...sample, links: [bad] }), NOW)).toEqual({
+      kind: 'corrupt',
+    });
+  });
+
+  // Version 2 is what this build writes; a version 1 file (no ssh records) still loads as tls.
+  it('a version 1 file loads, and its records are tls', () => {
+    const { transport: _t, ssh: _s, ...legacy } = link;
+    const parsed = parseLinksFile(JSON.stringify({ ...sample, version: 1, links: [legacy] }), NOW);
+    expect(parsed).toEqual({ kind: 'ok', file: { ...sample, version: 2 } });
+  });
+
+  it('a tls record carrying an ssh endpoint is corrupt', () => {
+    const bad = {
+      ...link,
+      transport: 'tls',
+      ssh: { target: 'vm', node: '/usr/bin/node', mainJs: '/m.js', userData: '/u' },
+    };
+    expect(parseLinksFile(JSON.stringify({ ...sample, links: [bad] }), NOW)).toEqual({
+      kind: 'corrupt',
+    });
+  });
+
+  it('an ssh endpoint with an empty field is corrupt', () => {
+    const bad = {
+      ...link,
+      transport: 'ssh',
+      ssh: { target: 'vm', node: '/usr/bin/node', mainJs: '', userData: '/home/u/.conduit' },
+    };
+    expect(parseLinksFile(JSON.stringify({ ...sample, links: [bad] }), NOW)).toEqual({
+      kind: 'corrupt',
+    });
   });
 
   it('serializes as one JSON line', () => {
@@ -50,7 +122,7 @@ describe('links file', () => {
   });
 
   it('a newer version is newer', () => {
-    expect(parseLinksFile(JSON.stringify({ ...sample, version: 2 }), NOW)).toEqual({
+    expect(parseLinksFile(JSON.stringify({ ...sample, version: 3 }), NOW)).toEqual({
       kind: 'newer',
     });
   });
@@ -83,7 +155,7 @@ describe('links file', () => {
 
   it('drops a tombstone revoked 31 days ago and keeps one revoked 29 days ago', () => {
     const f: LinksFile = {
-      version: 1,
+      version: 2,
       links: [],
       tombstones: [tombstone(31), { ...tombstone(29), linkId: 'l-recent' }],
     };

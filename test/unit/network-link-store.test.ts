@@ -41,6 +41,8 @@ function rec(machineId: string, over: Partial<LinkRecord> = {}): LinkRecord {
     createdAt: '2026-11-14T10:00:00.000Z',
     cert: `PEM-${machineId}`,
     ownerTransfer: null,
+    transport: 'tls',
+    ssh: null,
     ...over,
   };
 }
@@ -50,6 +52,44 @@ function logSpy() {
 }
 
 describe('link store', () => {
+  // The endpoint is set once an ssh peer's record needs one; a tls record never gets one.
+  it('update sets ssh on an ssh record and is refused on a tls record', () => {
+    const { io } = memoryIo();
+    const store = openLinkStore(FILE, { now: () => T0, log: logSpy(), io });
+    store.put(rec('m-aaaaaaaa'));
+    store.addSsh({
+      machineId: 'm-bbbbbbbb',
+      serverKey: 'key-bbbbbbbb',
+      ownerKey: null,
+      name: 'r',
+      ssh: null,
+    });
+    const ssh = { target: 'vm', node: '/usr/bin/node', mainJs: '/m.js', userData: '/u' };
+    expect(store.update('m-bbbbbbbb', { ssh })?.ssh).toEqual(ssh);
+    expect(store.get('m-bbbbbbbb')?.ssh).toEqual(ssh);
+    expect(store.update('m-aaaaaaaa', { ssh })).toBeNull();
+    expect(store.get('m-aaaaaaaa')?.ssh).toBeNull();
+  });
+
+  // An ssh peer has no certificate; it must never widen the listener's trusted CAs.
+  it('trustedCerts skips ssh records', () => {
+    const { io } = memoryIo();
+    const store = openLinkStore(FILE, { now: () => T0, log: logSpy(), io });
+    store.put(rec('m-aaaaaaaa'));
+    store.addSsh({
+      machineId: 'm-bbbbbbbb',
+      serverKey: 'key-bbbbbbbb',
+      ownerKey: 'owner-key',
+      name: 'remote',
+      ssh: null,
+    });
+    expect(store.get('m-bbbbbbbb')?.transport).toBe('ssh');
+    expect(store.trustedCerts()).toEqual(['PEM-m-aaaaaaaa']);
+    // A revoked ssh peer leaves a tombstone with no certificate: an empty PEM is not a CA.
+    store.revoke('m-bbbbbbbb', T0);
+    expect(store.trustedCerts()).toEqual(['PEM-m-aaaaaaaa']);
+  });
+
   it('a missing file opens as an empty writable store without writing', () => {
     const { io, writes } = memoryIo();
     const store = openLinkStore(FILE, { now: () => T0, log: logSpy(), io });
@@ -155,7 +195,7 @@ describe('link store', () => {
   });
 
   it('a newer file is read-only: put works in memory and nothing is written', () => {
-    const newer = JSON.stringify({ version: 2, links: [], tombstones: [] });
+    const newer = JSON.stringify({ version: 3, links: [], tombstones: [] });
     const { io, files, writes } = memoryIo({ [FILE]: newer });
     const log = logSpy();
     const store = openLinkStore(FILE, { now: () => T0, log, io });
