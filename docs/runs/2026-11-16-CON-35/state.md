@@ -3,7 +3,7 @@
 Updated 2026-11-16 ~14:40Z. Read this first after a compaction or handover. Ledger: `.autoloop/` (tasks.yaml, blockers.md, learnings.md, evidence/).
 
 ## Branch
-`CON-35-remote-ssh` (worktree /home/namemenima/projects/.wt/conduit/CON-35). Tip a24d5c4f. Never pushed to main (claude-3 owns main/releases).
+`CON-35-remote-ssh` (worktree /home/namemenima/projects/.wt/conduit/CON-35). Tip fe18079d. Never pushed to main (claude-3 owns main/releases).
 CON-24@fc6f68bd (independently approved) is merged in at efd97325 so CON-39 could use the profiles.
 
 ## Done (each: Opus-reviewed lanes, verify EXIT=0 after every merge, e2e:remote green, reported to claude-3)
@@ -26,7 +26,7 @@ CON-24@fc6f68bd (independently approved) is merged in at efd97325 so CON-39 coul
 - Run up to 4 Haiku lanes in parallel on file-disjoint work; mutation checks only on security-relevant code.
 
 ## Next
-CON-42 slice 7 (remote requests): plan docs/plans/2026-11-16-remote-ssh-requests.plan.md. Merged: L1 frames, L4 transport (7b8d173f), L2 B service (45a34509), all verify 0. L3 (A mirror+UI routing) finishing. NEXT: L5 = wire requestPorts.b to requestService (mirrorOf/onMirrorChange/applyRemoteAnswer), make requestPorts required, 60s mirror resend while hasEnded(), replace callAsRemote remoteAsk with createRemotePermission+wait (45s) + grant creation, host routing for B's local policy asks from A, peer refusal reasons in AnswerRefusal, net-requests e2e. Gates under flock /tmp/claude-1000/conduit-gate.lock. Then CON-46.
+CON-42 slice 7 (remote requests): ALL CODE MERGED at fe18079d (verify 0). e2e running (evidence/con42-e2e.log). Deferred: answering B's local policy asks from A (needs call-flow peer-answer). NEXT: report CON-42, then CON-46 slice 11 (remote rules RS-D16).
 
 ## VM
 ~/.cache/conduit-vm/con27, QEMU PID 199137 running idle, defaults restored (KUP false, linger yes, no drop-in). Stop only by its PID when CON-35 is finished.
