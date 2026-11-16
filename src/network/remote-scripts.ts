@@ -232,6 +232,9 @@ const SH_HEADER = sh(`
   size_of() { wc -c < "$1" | tr -d ' '; }
   safe_rel() { case "$1" in ''|/*|*..*|*'\\'*) return 1 ;; esac; return 0; }
   safe_abs() { case "$1" in /*) ;; *) return 1 ;; esac; case "$1" in /|*..*|*'\\'*) return 1 ;; esac; return 0; }
+  # rm -rf only ever touches a path under a <v>.tmp folder, so a wrong argument cannot delete a real install.
+  guard_tmp() { case "$1" in *.tmp|*.tmp/*) return 0 ;; esac; return 1; }
+  have_sha() { command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1; }
 `);
 
 // The probe reports facts only. It never writes. Its output is JSON built with printf, so the
@@ -242,8 +245,12 @@ const SH_PROBE = `${SH_HEADER}
   if [ -n "$XDG_CONFIG_HOME" ]; then UD=$XDG_CONFIG_HOME/conduit; fi
   case "$UD" in *'"'*|*'\\'*) printf '%s\\n' 'CONDUIT_RESULT {"ok":false,"error":"probe","detail":"userData is not JSON-safe"}'; exit 1 ;; esac
   case "$(uname -s)" in Linux) OS=linux ;; *) OS=other ;; esac
+  # musl is not a supported remote (spec §6): its node and hc builds are glibc-linked.
+  if [ "$OS" = linux ] && ldd --version 2>&1 | grep -qi musl; then OS=other; fi
   case "$(uname -m)" in x86_64|amd64) ARCH=x64 ;; aarch64|arm64) ARCH=arm64 ;; *) ARCH=other ;; esac
-  FREE=$(df -Pk "$HOME" 2>/dev/null | awk 'NR==2 {print $4 * 1024}')
+  FREEPATH=$UD
+  while [ ! -e "$FREEPATH" ] && [ "$FREEPATH" != / ]; do FREEPATH=$(dirname "$FREEPATH"); done
+  FREE=$(df -Pk "$FREEPATH" 2>/dev/null | awk 'NR==2 {print $4 * 1024}')
   case "$FREE" in ''|*[!0-9]*) FREE=null ;; esac
   KUP=null
   K=$(busctl get-property org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager KillUserProcesses 2>/dev/null)
@@ -257,7 +264,7 @@ const SH_PROBE = `${SH_HEADER}
   for DIR in "$UD"/runtime/*/; do
     [ -d "$DIR" ] || continue
     N=$(basename "$DIR")
-    case "$N" in *.tmp|conduit-hc) continue ;; esac
+    case "$N" in *.tmp|*.gc|conduit-hc) continue ;; esac
     if printf '%s' "$N" | grep -Eq '^[0-9][0-9A-Za-z.+-]*$'; then INST="$INST,\\"$N\\""; fi
   done
   INST_JSON="[$(printf '%s' "$INST" | sed 's/^,//')]"
@@ -291,15 +298,23 @@ const SH_DOWNLOAD = `${SH_HEADER}
   STAGING=$(d "$1")
   shift 2
   safe_abs "$STAGING" || fail download "the staging dir is not an absolute, safe path"
+  guard_tmp "$STAGING" || fail download "the staging dir is not under a .tmp folder"
   cleanup_fail() { rm -rf "$STAGING"; fail "$1" "$2"; }
+  have_sha || cleanup_fail checksum no_sha256_tool
+  # Pins are https. A local path is accepted only under the test-only allowLocal=1, and never one
+  # that starts with '-' (curl would read it as an option) or carries a scheme.
+  pin_url_ok() {
+    case "$1" in https://*) return 0 ;; -*) return 1 ;; *://*) return 1 ;; esac
+    [ "$ALLOW" = "allowLocal=1" ]
+  }
   fetch() {
     case "$1" in
-      *://*)
-        if command -v curl >/dev/null 2>&1; then curl -fsSL -o "$2" "$1"
-        elif command -v wget >/dev/null 2>&1; then wget -q -O "$2" "$1"
+      https://*)
+        if command -v curl >/dev/null 2>&1; then curl -fsSL -o "$2" -- "$1"
+        elif command -v wget >/dev/null 2>&1; then wget -q -O "$2" -- "$1"
         else return 1
         fi ;;
-      *) [ "$ALLOW" = "allowLocal=1" ] && cp "$1" "$2" ;;
+      *) cp -- "$1" "$2" ;;
     esac
   }
   rm -rf "$STAGING"
@@ -316,6 +331,7 @@ const SH_DOWNLOAD = `${SH_HEADER}
     STRIP=$(printf '%s\\n' "$REC" | sed -n 5p)
     RENS=$(printf '%s\\n' "$REC" | sed -n '6,$p')
     [ -n "$URL" ] || cleanup_fail download "a pin has no url"
+    pin_url_ok "$URL" || cleanup_fail download "a pin URL must be https"
     printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{64}$' || cleanup_fail download "a pin has a malformed sha256"
     safe_rel "$DEST" || cleanup_fail download "a pin has an unsafe dest"
     case "$ARC" in ''|tar.gz|zip) ;; *) cleanup_fail download "a pin names an unknown archive" ;; esac
@@ -360,6 +376,8 @@ const SH_RECEIVE_FILE = `${SH_HEADER}
   SHA=$(d "$2")
   SIZE=$(d "$3")
   safe_abs "$P" || fail unpack "the path is not an absolute, safe path"
+  guard_tmp "$P" || fail unpack "the path is not under a .tmp folder"
+  have_sha || fail checksum no_sha256_tool
   printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{64}$' || fail checksum "a malformed sha256"
   printf '%s' "$SIZE" | grep -Eq '^[0-9]+$' || fail checksum "a malformed size"
   mkdir -p "$(dirname "$P")" || fail disk "cannot create the folder"
@@ -378,6 +396,8 @@ const SH_RECEIVE_TREE = `${SH_HEADER}
   D=$(d "$1")
   MAN=$(d "$2")
   safe_abs "$D" || fail unpack "the dir is not an absolute, safe path"
+  guard_tmp "$D" || fail unpack "the dir is not under a .tmp folder"
+  have_sha || fail checksum no_sha256_tool
   MANPATHS=$(printf '%s\\n' "$MAN" | cut -f3)
   while IFS= read -r L; do
     [ -n "$L" ] || continue
@@ -451,21 +471,40 @@ function Arg([int]$i) { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64Str
 function Emit($obj) { Write-Output ('CONDUIT_RESULT ' + (ConvertTo-Json -InputObject $obj -Compress -Depth 4)) }
 function Fail([string]$step, [string]$detail) { Emit @{ ok = $false; step = $step; detail = $detail }; exit 1 }
 function SafeRel([string]$p) { return ($p -ne '') -and -not $p.StartsWith('/') -and -not $p.Contains('\\') -and -not $p.Contains('..') -and ($p -notmatch '^[A-Za-z]:') }
-function SafeAbs([string]$p) { return [IO.Path]::IsPathRooted($p) -and -not $p.Contains('..') }`;
+function SafeAbs([string]$p) { return [IO.Path]::IsPathRooted($p) -and -not $p.Contains('..') }
+function TmpOk([string]$p) { return ($p -match '\\.tmp($|[\\\\/])') }
+# Windows argv quoting (CommandLineToArgvW): wrap in quotes, double the backslashes that precede a
+# quote or the closing quote, and escape each quote. Used for the scheduled task's argument string.
+function WinArg([string]$a) {
+  $sb = New-Object System.Text.StringBuilder
+  [void]$sb.Append('"')
+  $bs = 0
+  foreach ($ch in $a.ToCharArray()) {
+    if ($ch -eq '') { $bs++ }
+    elseif ($ch -eq '"') { [void]$sb.Append('', $bs * 2 + 1); [void]$sb.Append('"'); $bs = 0 }
+    else { [void]$sb.Append('', $bs); [void]$sb.Append($ch); $bs = 0 }
+  }
+  [void]$sb.Append('', $bs * 2)
+  [void]$sb.Append('"')
+  return $sb.ToString()
+}`;
 
 // Probe: facts only. It mirrors the sh probe's fields; kup and linger are Linux-only, so null.
 const PS_PROBE = `
 try {
-  $home = $env:USERPROFILE
+  $userHome = $env:USERPROFILE
   $ud = Join-Path $env:APPDATA 'conduit'
   $arch = switch ($env:PROCESSOR_ARCHITECTURE) { 'AMD64' { 'x64' } 'ARM64' { 'arm64' } default { 'other' } }
   $free = $null
-  # Free space is reported as null when the drive cannot be read: null is the probe's "unknown".
-  try { $free = [IO.DriveInfo]::new($home).AvailableFreeSpace } catch { $free = $null }
+  # Free space is measured where userData lives (or its nearest existing parent). It is null when
+  # the drive cannot be read: null is the probe's "unknown".
+  $freePath = $ud
+  while ($freePath -and -not (Test-Path -LiteralPath $freePath)) { $freePath = Split-Path -Parent $freePath }
+  try { $free = [IO.DriveInfo]::new($freePath).AvailableFreeSpace } catch { $free = $null }
   $installed = @()
   $rt = Join-Path $ud 'runtime'
   if (Test-Path -LiteralPath $rt) {
-    $installed = @(Get-ChildItem -LiteralPath $rt -Directory | Where-Object { $_.Name -match '^[0-9][0-9A-Za-z.+-]*$' -and $_.Name -notlike '*.tmp' -and $_.Name -ne 'conduit-hc' } | ForEach-Object { $_.Name })
+    $installed = @(Get-ChildItem -LiteralPath $rt -Directory | Where-Object { $_.Name -match '^[0-9][0-9A-Za-z.+-]*$' -and $_.Name -notlike '*.tmp' -and $_.Name -notlike '*.gc' -and $_.Name -ne 'conduit-hc' } | ForEach-Object { $_.Name })
   }
   $recorded = $null
   $rf = Join-Path $ud 'server-version'
@@ -487,7 +526,7 @@ try {
     }
   }
   $obj = [ordered]@{
-    ok = $true; os = 'windows'; arch = $arch; home = $home; userData = $ud; freeBytes = $free
+    ok = $true; os = 'windows'; arch = $arch; home = $userHome; userData = $ud; freeBytes = $free
     kup = $null; linger = $null; systemdRun = $false
     installed = $installed; recorded = $recorded; agents = $agents
   }
@@ -504,6 +543,7 @@ $allow = (Arg 1) -eq 'allowLocal=1'
 try {
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
   if (-not (SafeAbs $staging)) { throw 'the staging dir is not an absolute, safe path' }
+  if (-not (TmpOk $staging)) { throw 'the staging dir is not under a .tmp folder' }
   if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
   New-Item -ItemType Directory -Path $staging -Force | Out-Null
   $tar = Join-Path $env:SystemRoot 'System32\\tar.exe'
@@ -515,13 +555,16 @@ try {
     if ($sha -notmatch '^[0-9a-f]{64}$') { throw 'a pin has a malformed sha256' }
     if (-not (SafeRel $dest)) { throw 'a pin has an unsafe dest' }
     if (-not $strip) { $strip = '0' }
+    if ($strip -notmatch '^[0-9]+$') { throw 'a pin has a malformed strip count' }
     $work = Join-Path $staging ('.pin-' + $i)
     New-Item -ItemType Directory -Path $work -Force | Out-Null
     $src = Join-Path $work 'src'
     $phase = 'download'
-    if ($url.Contains('://')) { Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $src }
-    elseif ($allow) { Copy-Item -LiteralPath $url -Destination $src }
-    else { throw 'a pin URL has no scheme' }
+    # Pins are https. A local path is accepted only under the test-only allowLocal=1, never one
+    # that starts with '-' or carries a scheme.
+    if ($url.StartsWith('https://')) { Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $src }
+    elseif ($allow -and -not $url.StartsWith('-') -and -not $url.Contains('://')) { Copy-Item -LiteralPath $url -Destination $src }
+    else { throw 'a pin URL must be https' }
     $phase = 'checksum'
     if ((Get-FileHash -Algorithm SHA256 -LiteralPath $src).Hash.ToLowerInvariant() -ne $sha) { throw "sha256 mismatch for $url" }
     $phase = 'unpack'
@@ -553,7 +596,7 @@ try {
   }
   Emit @{ ok = $true }
 } catch {
-  if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+  if ((TmpOk $staging) -and (Test-Path -LiteralPath $staging)) { Remove-Item -LiteralPath $staging -Recurse -Force }
   Fail $phase $_.Exception.Message
 }`;
 
@@ -564,6 +607,7 @@ $sha = Arg 1
 $size = Arg 2
 try {
   if (-not (SafeAbs $path)) { throw 'the path is not an absolute, safe path' }
+  if (-not (TmpOk $path)) { $phase = 'unpack'; throw 'the path is not under a .tmp folder' }
   if ($sha -notmatch '^[0-9a-f]{64}$') { throw 'a malformed sha256' }
   if ($size -notmatch '^[0-9]+$') { throw 'a malformed size' }
   New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null
@@ -582,7 +626,7 @@ try {
   Move-Item -LiteralPath $part -Destination $path -Force
   Emit @{ ok = $true }
 } catch {
-  if (Test-Path -LiteralPath "$path.part") { Remove-Item -LiteralPath "$path.part" -Force }
+  if ((TmpOk $path) -and (Test-Path -LiteralPath "$path.part")) { Remove-Item -LiteralPath "$path.part" -Force }
   Fail $phase $_.Exception.Message
 }`;
 
@@ -594,6 +638,7 @@ $created = $false
 $tarFile = $null
 try {
   if (-not (SafeAbs $dir)) { throw 'the dir is not an absolute, safe path' }
+  if (-not (TmpOk $dir)) { throw 'the dir is not under a .tmp folder' }
   $entries = @()
   foreach ($line in @($manText.Split([char]10) | Where-Object { $_ -ne '' })) {
     $f = $line.Split([char]9)
@@ -668,7 +713,8 @@ try {
 // The registration is a prelude of the ensure script, present only for that method.
 const PS_TASK_START = `
 $name = 'ConduitServer'
-$action = New-ScheduledTaskAction -Execute $node -Argument ('"' + $sup + '" --user-data "' + $ud + '" --hc "' + $hc + '"')
+$argText = (WinArg $sup) + ' --user-data ' + (WinArg $ud) + ' --hc ' + (WinArg $hc)
+$action = New-ScheduledTaskAction -Execute $node -Argument $argText
 $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)

@@ -1,12 +1,13 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
-  statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -33,7 +34,6 @@ import {
 
 const posix = process.platform !== 'win32';
 const hasSh = (): boolean => spawnSync('sh', ['-c', 'true']).status === 0;
-const hasCurl = spawnSync('sh', ['-c', 'command -v curl']).status === 0;
 const hasPwsh = spawnSync('sh', ['-c', 'command -v pwsh'], { encoding: 'utf8' }).status === 0;
 
 const sha = (data: Buffer | string): string => createHash('sha256').update(data).digest('hex');
@@ -225,6 +225,64 @@ describe.skipIf(!posix || !hasSh())('sh probe on this host', () => {
   });
 });
 
+/** A directory holding one fake executable per name, to run first on PATH. */
+function fakeBin(name: string, body: string): string {
+  const bin = mkdtempSync(join(dir, 'fake-'));
+  const file = join(bin, name);
+  writeFileSync(file, `#!/bin/sh\n${body}\n`);
+  chmodSync(file, 0o755);
+  return bin;
+}
+
+describe.skipIf(!posix || !hasSh())(
+  'sh probe: musl, kup/linger, free space, .gc (fakes on PATH)',
+  () => {
+    function probeWith(home: string, fakes: string[]): ReturnType<typeof parseProbe> {
+      mkdirSync(home, { recursive: true });
+      const path = [...fakes, process.env.PATH ?? ''].join(':');
+      return parseProbe(runSh(probeCommand('sh'), { env: { PATH: path, HOME: home } }).stdout);
+    }
+
+    it('reports os other for a musl libc, so planInstall refuses it (spec §6)', () => {
+      const ldd = fakeBin('ldd', 'echo "musl libc (x86_64)" >&2');
+      const p = probeWith(join(dir, 'h1'), [ldd]);
+      expect(p).toMatchObject({ os: 'other' });
+    });
+
+    it('reports os linux for a glibc ldd', () => {
+      const ldd = fakeBin('ldd', 'echo "ldd (GNU libc) 2.39"');
+      const p = probeWith(join(dir, 'h2'), [ldd]);
+      expect(p).toMatchObject({ os: 'linux' });
+    });
+
+    it.each([
+      ['b true', true],
+      ['b false', false],
+      ['garbage', null],
+    ])('parses busctl KillUserProcesses %s as kup %s', (out, kup) => {
+      const busctl = fakeBin('busctl', `echo "${out}"`);
+      expect(probeWith(join(dir, 'k'), [busctl])).toMatchObject({ kup });
+    });
+
+    it.each([
+      ['yes', true],
+      ['no', false],
+      ['', null],
+    ])('parses loginctl Linger %j as linger %s', (out, linger) => {
+      const loginctl = fakeBin('loginctl', `echo "${out}"`);
+      expect(probeWith(join(dir, 'l'), [loginctl])).toMatchObject({ linger });
+    });
+
+    it('excludes .gc and .tmp runtime leftovers from installed', () => {
+      const home = join(dir, 'g');
+      const runtime = join(home, '.config', 'conduit', 'runtime');
+      for (const name of ['1.2.3', '1.2.2.gc', '1.2.4.tmp', 'shim'])
+        mkdirSync(join(runtime, name), { recursive: true });
+      expect(probeWith(home, [])).toMatchObject({ installed: ['1.2.3'] });
+    });
+  },
+);
+
 describe('startMethodOf (decision 4, G7 rows)', () => {
   // linger, systemd-run present, KillUserProcesses -> method, survivesLogout
   const rows: [boolean | null, boolean, boolean | null, string, boolean][] = [
@@ -286,7 +344,7 @@ describe('startMethodOf (decision 4, G7 rows)', () => {
 });
 
 describe.skipIf(!posix || !hasSh())('download (sh)', () => {
-  const stagingOf = (): string => join(dir, 'stage');
+  const stagingOf = (): string => join(dir, 'stage.tmp');
 
   function fileOf(content: string, name = 'src.bin'): { path: string; digest: string } {
     const path = join(dir, name);
@@ -294,17 +352,37 @@ describe.skipIf(!posix || !hasSh())('download (sh)', () => {
     return { path, digest: sha(content) };
   }
 
-  it.skipIf(!hasCurl)(
-    'fetches a file:// pin with curl, verifies sha256 and writes the dest',
-    () => {
-      const src = fileOf('node-bytes');
-      const pin: PinFile = { url: `file://${src.path}`, sha256: src.digest, dest: 'node' };
+  it('refuses a pin that is not https, even with a local file present and no allowLocal', () => {
+    const src = fileOf('node-bytes');
+    for (const url of [`file://${src.path}`, 'http://example.invalid/node']) {
+      const pin: PinFile = { url, sha256: src.digest, dest: 'node' };
       const r = runSh(downloadCommand('sh', { stagingDir: stagingOf(), pins: [pin] }));
-      expect(parseResultLine(r.stdout)).toEqual({ ok: true });
-      expect(readFileSync(join(stagingOf(), 'node'), 'utf8')).toBe('node-bytes');
-      expect(statSync(join(stagingOf(), 'node')).mode & 0o111).not.toBe(0);
-    },
-  );
+      expect(parseResultLine(r.stdout)).toMatchObject({ ok: false, step: 'download' });
+      expect(existsSync(stagingOf())).toBe(false);
+    }
+  });
+
+  it('refuses a pin URL that starts with -, which curl would read as an option, even under allowLocal', () => {
+    const cfg = join(dir, 'cfg');
+    writeFileSync(cfg, 'x');
+    const src = fileOf('bytes');
+    const pin: PinFile = { url: `-K${cfg}`, sha256: src.digest, dest: 'node' };
+    const r = runSh(
+      downloadCommand('sh', { stagingDir: stagingOf(), pins: [pin], allowLocal: true }),
+    );
+    expect(parseResultLine(r.stdout)).toMatchObject({ ok: false, step: 'download' });
+  });
+
+  it('refuses a staging dir that is not under a .tmp folder, and leaves its files alone', () => {
+    const notTmp = join(dir, 'stage');
+    mkdirSync(notTmp);
+    writeFileSync(join(notTmp, 'keep'), 'k');
+    const src = fileOf('bytes');
+    const pin: PinFile = { url: src.path, sha256: src.digest, dest: 'node' };
+    const r = runSh(downloadCommand('sh', { stagingDir: notTmp, pins: [pin], allowLocal: true }));
+    expect(parseResultLine(r.stdout)).toMatchObject({ ok: false, step: 'download' });
+    expect(readFileSync(join(notTmp, 'keep'), 'utf8')).toBe('k');
+  });
 
   it('copies a local-path pin when allowLocal is set (test-only)', () => {
     const src = fileOf('local-bytes');
@@ -368,7 +446,7 @@ describe.skipIf(!posix || !hasSh())('download (sh)', () => {
 
 describe.skipIf(!posix || !hasSh())('receiveFile (sh)', () => {
   it('writes stdin to the path when size and sha256 match', () => {
-    const path = join(dir, 'out', 'node');
+    const path = join(dir, 'out.tmp', 'node');
     const data = Buffer.from('pushed-node');
     const r = runSh(receiveFileCommand('sh', { path, sha256: sha(data), size: data.length }), {
       input: data,
@@ -378,7 +456,7 @@ describe.skipIf(!posix || !hasSh())('receiveFile (sh)', () => {
   });
 
   it('a wrong sha256 returns checksum and leaves no file behind', () => {
-    const path = join(dir, 'node');
+    const path = join(dir, 'n.tmp', 'node');
     const data = Buffer.from('pushed-node');
     const r = runSh(receiveFileCommand('sh', { path, sha256: sha('other'), size: data.length }), {
       input: data,
@@ -409,7 +487,7 @@ describe.skipIf(!posix || !hasSh())('receiveTree (sh)', () => {
 
   it('unpacks the stream and verifies every file against the manifest', () => {
     const { manifest, tar } = sourceTree({ 'main.js': 'console.log(1)', 'lib/a.js': 'a' });
-    const dest = join(dir, 'server');
+    const dest = join(dir, 'v.tmp', 'server');
     const r = runSh(receiveTreeCommand('sh', { dir: dest, manifest }), { input: tar });
     expect(parseResultLine(r.stdout)).toEqual({ ok: true });
     expect(readFileSync(join(dest, 'lib', 'a.js'), 'utf8')).toBe('a');
@@ -421,7 +499,7 @@ describe.skipIf(!posix || !hasSh())('receiveTree (sh)', () => {
     ['a backslash', 'lib\\evil.js'],
   ])('refuses a manifest path with %s before unpacking', (_label, bad) => {
     const { tar } = sourceTree({ 'main.js': 'x' });
-    const dest = join(dir, 'server');
+    const dest = join(dir, 'v.tmp', 'server');
     const r = runSh(
       receiveTreeCommand('sh', {
         dir: dest,
@@ -435,7 +513,7 @@ describe.skipIf(!posix || !hasSh())('receiveTree (sh)', () => {
 
   it('rejects a file that the manifest does not list', () => {
     const { manifest, tar } = sourceTree({ 'main.js': 'x', 'extra.js': 'y' });
-    const dest = join(dir, 'server');
+    const dest = join(dir, 'v.tmp', 'server');
     const r = runSh(
       receiveTreeCommand('sh', {
         dir: dest,
@@ -449,7 +527,7 @@ describe.skipIf(!posix || !hasSh())('receiveTree (sh)', () => {
 
   it('rejects a file whose sha256 does not match the manifest', () => {
     const { manifest, tar } = sourceTree({ 'main.js': 'x' });
-    const dest = join(dir, 'server');
+    const dest = join(dir, 'v.tmp', 'server');
     const r = runSh(
       receiveTreeCommand('sh', {
         dir: dest,
@@ -459,6 +537,114 @@ describe.skipIf(!posix || !hasSh())('receiveTree (sh)', () => {
     );
     expect(parseResultLine(r.stdout)).toMatchObject({ ok: false, step: 'checksum' });
     expect(existsSync(dest)).toBe(false);
+  });
+});
+
+/** One raw ustar entry, hand-built so the test controls the typeflag (tar-pack writes only files). */
+function rawEntry(name: string, typeflag: string, linkname = '', body = Buffer.alloc(0)): Buffer {
+  const h = Buffer.alloc(512);
+  h.write(name, 0, 100, 'utf8');
+  h.write('0000644\0', 100, 'ascii');
+  h.write('0000000\0', 108, 'ascii');
+  h.write('0000000\0', 116, 'ascii');
+  h.write(`${body.length.toString(8).padStart(11, '0')}\0`, 124, 'ascii');
+  h.write('00000000000\0', 136, 'ascii');
+  h.write('        ', 148, 'ascii');
+  h.write(typeflag, 156, 'ascii');
+  h.write(linkname, 157, 100, 'utf8');
+  h.write('ustar\0', 257, 'ascii');
+  h.write('00', 263, 'ascii');
+  let sum = 0;
+  for (const byte of h) sum += byte;
+  h.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148, 'ascii');
+  return Buffer.concat([h, Buffer.concat([body, Buffer.alloc((512 - (body.length % 512)) % 512)])]);
+}
+
+describe.skipIf(!posix || !hasSh())('receiveTree refuses links and special files', () => {
+  const good = Buffer.from('good');
+  const manifest = [{ path: 'main.js', sha256: sha(good), size: good.length }];
+  const end = Buffer.alloc(1024);
+
+  it('refuses a symlink the manifest does not list, and removes the dir', () => {
+    // find -type f skips a symlink, so only the "not ! -type d ! -type f" check catches it.
+    const tar = Buffer.concat([
+      rawEntry('main.js', '0', '', good),
+      rawEntry('link', '2', '/etc/passwd'),
+      end,
+    ]);
+    const dest = join(dir, 'v.tmp', 'server');
+    const r = runSh(receiveTreeCommand('sh', { dir: dest, manifest }), { input: tar });
+    expect(parseResultLine(r.stdout)).toMatchObject({ ok: false, step: 'unpack' });
+    expect(existsSync(dest)).toBe(false);
+  });
+
+  it('refuses a hardlink, and removes the dir', () => {
+    const tar = Buffer.concat([
+      rawEntry('main.js', '0', '', good),
+      rawEntry('hl', '1', 'main.js'),
+      end,
+    ]);
+    const dest = join(dir, 'v.tmp', 'server');
+    const r = runSh(receiveTreeCommand('sh', { dir: dest, manifest }), { input: tar });
+    expect(parseResultLine(r.stdout)).toMatchObject({ ok: false, step: 'unpack' });
+    expect(existsSync(dest)).toBe(false);
+  });
+
+  it('refuses a listed path that arrives as a symlink', () => {
+    const tar = Buffer.concat([rawEntry('main.js', '2', '/etc/passwd'), end]);
+    const dest = join(dir, 'v.tmp', 'server');
+    const r = runSh(receiveTreeCommand('sh', { dir: dest, manifest }), { input: tar });
+    expect(parseResultLine(r.stdout)).toMatchObject({ ok: false, step: 'unpack' });
+    expect(existsSync(dest)).toBe(false);
+  });
+});
+
+describe.skipIf(!posix || !hasSh())('no sha256 tool on PATH', () => {
+  it('fails closed with its own detail, before writing anything', () => {
+    // A PATH of the tools the scripts need, minus sha256sum and shasum.
+    const bin = mkdtempSync(join(dir, 'nosha-'));
+    for (const tool of [
+      'sh',
+      'base64',
+      'cut',
+      'tr',
+      'sed',
+      'grep',
+      'mkdir',
+      'rm',
+      'mv',
+      'cat',
+      'wc',
+      'chmod',
+      'cp',
+      'dirname',
+      'find',
+      'head',
+      'awk',
+      'df',
+      'uname',
+      'id',
+      'basename',
+    ]) {
+      for (const from of ['/usr/bin', '/bin']) {
+        if (existsSync(join(from, tool))) {
+          symlinkSync(join(from, tool), join(bin, tool));
+          break;
+        }
+      }
+    }
+    const data = Buffer.from('bytes');
+    const path = join(dir, 'n.tmp', 'node');
+    const r = runSh(receiveFileCommand('sh', { path, sha256: sha(data), size: data.length }), {
+      input: data,
+      env: { PATH: bin },
+    });
+    expect(parseResultLine(r.stdout)).toEqual({
+      ok: false,
+      step: 'checksum',
+      detail: 'no_sha256_tool',
+    });
+    expect(existsSync(path)).toBe(false);
   });
 });
 
@@ -581,7 +767,7 @@ describe.skipIf(!posix || !hasSh())('ensure and value passing (sh)', () => {
     expect(JSON.parse(r.stdout.trim())[2]).toBe(hostile);
     expect(existsSync(marker)).toBe(false);
 
-    const path = join(dir, `file ${hostile}`);
+    const path = join(dir, 'x.tmp', `file ${hostile}`);
     const data = Buffer.from('bytes');
     const w = runSh(receiveFileCommand('sh', { path, sha256: sha(data), size: 5 }), {
       input: data,
@@ -706,4 +892,71 @@ describe('PowerShell builders (output only; pwsh is not required)', () => {
       expect(p).toMatchObject({ os: 'windows' });
     },
   );
+});
+
+describe('PowerShell scripts: automatic variables and argument quoting', () => {
+  const pin: PinFile = { url: 'https://example.invalid/n', sha256: 'a'.repeat(64), dest: 'node' };
+  const every = (): string[] =>
+    [
+      probeCommand('powershell'),
+      downloadCommand('powershell', { stagingDir: 'C:\\x\\v.tmp', pins: [pin] }),
+      receiveFileCommand('powershell', {
+        path: 'C:\\x\\v.tmp\\node',
+        sha256: 'a'.repeat(64),
+        size: 1,
+      }),
+      receiveTreeCommand('powershell', { dir: 'C:\\x\\v.tmp\\server', manifest: [] }),
+      finalizeCommand('powershell', { runtimeRoot: 'C:\\x', version: '1.0.0' }),
+      ensureCommand('powershell', {
+        node: 'C:\\n.exe',
+        mainJs: 'C:\\x\\server\\main.js',
+        userData: 'C:\\u',
+        method: 'windows-task',
+        hcExe: 'C:\\h.exe',
+      }),
+      ensureCommand('powershell', {
+        node: 'C:\\n.exe',
+        mainJs: 'C:\\x\\server\\main.js',
+        userData: 'C:\\u',
+        method: 'plain',
+      }),
+    ].map(decodePs);
+
+  it('no PowerShell script assigns to an automatic variable', () => {
+    // PowerShell names ignore case, so $Home = ... throws on every Windows remote (read-only $HOME).
+    const automatic =
+      /\$(home|args|input|error|host|pid|pwd|profile|true|false|null|_|matches|psitem|this|sender|event|eventargs|foreach|switch|pshome|ofs|lastexitcode|stacktrace|myinvocation|executioncontext|shellid|psboundparameters|psscriptroot|pscommandpath|consolefilename)\s*=(?!=)/i;
+    for (const script of every()) expect(automatic.test(script)).toBe(false);
+    // The pattern itself catches the assignment it was written for.
+    expect(automatic.test('$home = $env:USERPROFILE')).toBe(true);
+  });
+
+  it('the scheduled-task argument is built by WinArg, never spliced', () => {
+    const script = every()[5] ?? '';
+    expect(script).toContain('function WinArg');
+    expect(script).toContain('$argText = (WinArg $sup)');
+    expect(script).not.toMatch(/'"' \+ \$sup/);
+  });
+
+  it('the PowerShell download refuses a strip count that is not digits', () => {
+    expect(every()[1]).toContain("'^[0-9]+$'");
+  });
+
+  it.skipIf(!hasPwsh)('WinArg quotes each argument per the Windows argv rules', () => {
+    const script = every()[5] ?? '';
+    const start = script.indexOf('function WinArg');
+    const fn = script.slice(start, script.indexOf('\n}', start) + 2);
+    const run = `${fn}\n@(String.raw\`a b\`, String.raw\`C:\\dir\\\`, 'x"y', String.raw\`a\\"b\`) | ForEach-Object { Write-Output (WinArg $_) }`;
+    const enc = Buffer.from(run, 'utf16le').toString('base64');
+    const r = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-EncodedCommand', enc], {
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+    expect(r.stdout.trim().split(/\r?\n/)).toEqual([
+      String.raw`"a b"`,
+      String.raw`"C:\dir\\"`,
+      String.raw`"x\"y"`,
+      String.raw`"a\\\"b"`,
+    ]);
+  });
 });
