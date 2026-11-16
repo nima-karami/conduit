@@ -41,6 +41,9 @@ const FIXED_OVERRIDES: readonly (readonly [string, string])[] = [
   ['core.fsmonitor', 'false'],
   ['core.hooksPath', '/dev/null'],
   ['log.showSignature', 'false'],
+  // An image diff reads LFS objects in Node from `lfs.storage`, which may name any folder; empty
+  // makes it the repo's own `<common dir>/lfs`, which the symlink walk has checked (re-review N2).
+  ['lfs.storage', ''],
 ];
 
 /** The env that pins a spawn to the checked dirs, before any config is known. */

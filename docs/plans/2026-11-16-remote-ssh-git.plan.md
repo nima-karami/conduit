@@ -47,6 +47,8 @@ The re-review found that git, run on a repo the session can write, can be pointe
   - an `extensions.*` outside the known format-only set is refused.
   LFS repos keep working.
 - **Show hides denied content by blob id.** It drops a file whose blob id is a deny-listed path's blob in the index, as well as one whose name is denied.
+- **No submodules.** Served status and numstat pass `--ignore-submodules=all`. A submodule's child git reads its own config and attributes, which are never neutralised, and only the command-line flag beats `submodule.<name>.ignore`. Remote Changes therefore lists no submodule entries.
+- **LFS storage.** `lfs.storage` is overridden to empty, so an image diff reads LFS objects only from `<common dir>/lfs`, which the symlink walk has checked.
 - **Line counts.** An untracked symlink counts as git stores it (one line); a FIFO or device is never opened.
 - **`.git` is deny-listed.** fs reads, listings and (CON-44) writes never touch `.git/**`.
 
@@ -55,6 +57,8 @@ Where this differs from the lead's list (2026-11-16 18:38Z), and why:
 - **`include*` is not refused.** `git config --list` expands includes, so what an include brings in is neutralised the same way. An include only adds risk through the race below. Refusing it would break users whose global config uses `includeIf` for an identity.
 - **`gpg.program` is not overridden.** `log.showSignature=false` is what starts it, and `/bin/false` doesn't exist on a Windows B.
 - **`diff.external` and `--no-ext-diff` / `--no-textconv`.** None of the served reads produce a patch: they use numstat, name-status, raw and blob show. An empty `diff.external` makes `git diff` fail. Per-driver textconv is neutralised by config.
+
+**Accepted residual: a denied file's blob that is only in history.** The blob-id filter covers the index. A crafted commit can still show a denied blob that only an older commit holds, under a harmless name. Crafting the commit needs a writer that can write `.git`; A can't, since `.git` is deny-listed to fs writes. Such a writer can usually read the file directly anyway.
 
 **Accepted residual: the race between the check and the spawn.** A writer to the session folders can plant alternates, symlinks or config inside the pinned git dir after the check passes. User-space checks can't close that. It is accepted because the ssh controller already has a shell on B, and B-side agents already run as B's user. Future fix: run git in an OS sandbox (read-only to the session roots, no exec), or read repos with a pure-JS git reader. Owner decision, via the lead.
 

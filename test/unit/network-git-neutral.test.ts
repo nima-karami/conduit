@@ -42,6 +42,7 @@ describe('git-neutral', () => {
       'core.fsmonitor=false',
       'core.hooksPath=/dev/null',
       'log.showSignature=false',
+      'lfs.storage=',
       'filter.lfs.clean=',
       'filter.lfs.smudge=',
       'filter.lfs.process=',

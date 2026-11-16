@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
@@ -519,6 +520,47 @@ describe('git-serve', () => {
       for (const id of ['c2', 'c3', 'c4']) expect(replyTo(h.sent, id).ok).toBe(true);
       expect(fs.readFileSync(marker, 'utf8')).toBe('');
     });
+  });
+
+  it("a submodule's own filter never runs during a served status", async () => {
+    const marker = path.join(root, 'sub-ran.txt');
+    const sub = path.join(proj, 'sub');
+    fs.mkdirSync(sub);
+    fs.writeFileSync(path.join(sub, 'f'), 'one\n');
+    await initRepo(sub);
+    await initRepo(proj);
+    const subHead = await git(sub, 'rev-parse', 'HEAD');
+    await git(proj, 'update-index', '--add', '--cacheinfo', `160000,${subHead},sub`);
+    // The submodule's config and attributes are its own; the superproject's listing never sees them.
+    fs.writeFileSync(path.join(sub, '.git', 'info', 'attributes'), '* filter=q\n');
+    await git(sub, 'config', 'filter.q.clean', `sh -c 'echo ran >> "${marker}"; cat'`);
+    fs.writeFileSync(marker, '');
+    fs.writeFileSync(path.join(sub, 'f'), 'two\n');
+    const h = harness();
+    await h.serve.onFrame(CONTROLLER, req('s1', 'status', {}));
+    expect(replyTo(h.sent, 's1').ok).toBe(true);
+    expect(fs.readFileSync(marker, 'utf8')).toBe('');
+  });
+
+  it('show never reads an LFS object from an lfs.storage outside the repo', async () => {
+    const bytes = Buffer.from('OUTSIDE-LFS-IMAGE-BYTES');
+    const oid = createHash('sha256').update(bytes).digest('hex');
+    const store = path.join(root, 'lfsstore', 'objects', oid.slice(0, 2), oid.slice(2, 4));
+    fs.mkdirSync(store, { recursive: true });
+    fs.writeFileSync(path.join(store, oid), bytes);
+    await initRepo(proj);
+    fs.writeFileSync(
+      path.join(proj, 'pic.png'),
+      `version https://git-lfs.github.com/spec/v1\noid sha256:${oid}\nsize ${bytes.length}\n`,
+    );
+    await git(proj, 'add', 'pic.png');
+    await git(proj, 'commit', '-qm', 'pic');
+    await git(proj, 'config', 'lfs.storage', path.join(root, 'lfsstore'));
+    const sha = await git(proj, 'rev-parse', 'HEAD');
+    const h = harness();
+    await h.serve.onFrame(CONTROLLER, req('p1', 'show', { sha }));
+    expect(replyTo(h.sent, 'p1').ok).toBe(true);
+    expect(JSON.stringify(h.sent)).not.toContain(bytes.toString('base64'));
   });
 
   it('a repo extension that could fetch or run something is refused before any read', async () => {

@@ -72,7 +72,7 @@ export function createGitOps(): GitServeOps {
     },
     absoluteGitDir: (dir) => revParse(dir, '--absolute-git-dir'),
     gitCommonDir: (dir) => revParse(dir, '--git-common-dir'),
-    status: (top) => readRepoChanges(top, { lines: true }),
+    status: (top) => readRepoChanges(top, { lines: true, submodules: false }),
     diff: (top, absPath) =>
       readDiffReply(
         absPath,

@@ -177,10 +177,26 @@ export type RepoRead =
 
 /** One `status --porcelain -z --untracked-files=all`; with `lines:false` it is the only git
  *  process and added/removed stay 0. See docs/specs/2026-10-16-multi-repo-tracking.md §3. */
-export async function readRepoChanges(cwd: string, opts: { lines: boolean }): Promise<RepoRead> {
+export async function readRepoChanges(
+  cwd: string,
+  opts: {
+    lines: boolean;
+    /**
+     * False skips submodules entirely. Reading one runs a child git with the submodule's own
+     * config and attributes, which a served read on B can't neutralise (CON-45 G1 re-review N1);
+     * only the command-line flag beats a `submodule.<name>.ignore` in `.gitmodules`.
+     */
+    submodules?: boolean;
+  },
+): Promise<RepoRead> {
+  const noSubmodules = opts.submodules === false ? ['--ignore-submodules=all'] : [];
   // --untracked-files=all expands a new untracked directory into its individual files;
   // the default collapses them to a single `dir/` entry (only the folder shows up).
-  const statusRun = await run('git', ['status', '--porcelain', '-z', '--untracked-files=all'], cwd);
+  const statusRun = await run(
+    'git',
+    ['status', '--porcelain', '-z', '--untracked-files=all', ...noSubmodules],
+    cwd,
+  );
   const failure = gitFailureOf(statusRun);
   if (failure) return { ok: false, reason: failure };
   const rawEntries = parseStatusZ(statusRun.stdout);
@@ -193,8 +209,8 @@ export async function readRepoChanges(cwd: string, opts: { lines: boolean }): Pr
   // files do not appear in numstat (they are absent from one of the two compared
   // trees). We handle those separately by counting lines directly.
   const [stagedOut, unstagedOut] = await Promise.all([
-    run('git', ['diff', '--numstat', '-z', '--cached'], cwd),
-    run('git', ['diff', '--numstat', '-z'], cwd),
+    run('git', ['diff', '--numstat', '-z', '--cached', ...noSubmodules], cwd),
+    run('git', ['diff', '--numstat', '-z', ...noSubmodules], cwd),
   ]);
   const stagedStats = parseNumstatZ(stagedOut.stdout);
   const unstagedStats = parseNumstatZ(unstagedOut.stdout);
@@ -236,6 +252,7 @@ export async function readRepoChanges(cwd: string, opts: { lines: boolean }): Pr
               '--no-ext-diff',
               '--no-textconv',
               '--diff-filter=D',
+              ...noSubmodules,
               'HEAD',
             ],
             cwd,
