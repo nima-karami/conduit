@@ -807,3 +807,23 @@ So a Codex orchestrator can take over if Claude stops. The lead (claude-3) recei
 - A one-line WHY on `receivedCount`.
 - Plus the three seams-review test nits already listed above.
 
+**Security review rulings (whole branch, 2026-11-16; lead: fix all, red test first):**
+- **M1, inheritance drift.**
+  - When applyLegacyPatch changes a field at the default or a CLI point, every assignment above that point (CLI assignments over default; sessions whose lower point is the edited one) whose effective value for that field equalled the edited point's old value is patched to the new value through the same per-field rule.
+  - This keeps "assignment replaces wholesale" (engine unchanged) and "inherit equals lower at every scope" (C6). The projection shows exactly those fields as Inherit, so it never shows an override the user didn't set.
+  - Rejected: per-field layering in assignmentFor, which contradicts the locked wholesale rule.
+  - Red test: the reviewer's repro, con24-drift-repro.
+- **m1, unreadable policy.json.**
+  - Every successful load or save also writes `conduit-mcp/policy.last-good.json`. An unreadable or newer policy.json loads the last-good copy read-only.
+  - With no good copy: everything resolves Observer (read-only), never Worker or legacy.
+  - A missing custom profile resolves Observer.
+- **m2, revoked grant or new deny during prepare.** commit returns null when any of decision.grantIds is no longer live, or when a fresh decide (held overrides counted) no longer allows. commitResolved's re-decide then refuses (or stands in, per the T3.2a rule).
+- **m3, observed rows.**
+  - Every string field (action, target, summary) is capped at 200 code points.
+  - Per-session budget: 120 observed rows per minute. The excess is dropped, with one note per minute: action `feed-throttled`, summary "Feed throttled: N actions not logged".
+- **m4, feed-gap robustness.**
+  - A baseline reads only the tail (at most 64 KiB) to find the last complete line and its fingerprint.
+  - A span over 32 MiB is treated as a baseline (no gap reported).
+  - check() is wrapped in try/catch (warn, no throw), and the queue chain ends with .catch, so a bad transcript never stalls or crashes the server.
+- **m5, peer text in Activity.** activity-audit-sink sanitises peer strings with CON-27's printable-name rule (strip C0, C1 and bidi controls), reusing the existing function.
+
