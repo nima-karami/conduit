@@ -6,7 +6,9 @@
 // instead of copying it (D27). No port calls back into its caller: TypingPort is a plain writer, so W6
 // never reaches W5's draft tracker (F8).
 
+import type { ClaudeAction } from '../claude-tool-actions';
 import type { StuckScreen } from '../cli-stuck-screens';
+import type { CodexAction } from '../codex-rollout';
 import type { ControlDeps, McpOpenRequest } from '../conduit-mcp/control-tools';
 import type { AgentCli, UserInstallState } from '../conduit-mcp/install-types';
 import type { NetworkPort } from '../conduit-mcp/remote-routing';
@@ -346,4 +348,13 @@ export interface McpHostDeps {
   machineId: string;
   /** Absent when networking is off: the directory then lists local sessions only. */
   network?: NetworkPort;
+}
+
+export type ObservedEntry =
+  | { action: ClaudeAction | CodexAction; failed?: boolean }
+  | { feed: 'unavailable' }
+  | { gap: number };
+
+export interface ObservedPort {
+  record(sessionId: string, cli: AgentCli, entry: ObservedEntry): void;
 }

@@ -13,8 +13,6 @@ import { claudeSignalsFromHook } from '../../src/claude-signals';
 import { claudeActionsFromPostToolUse } from '../../src/claude-tool-actions';
 import { adapterFor } from '../../src/conduit-mcp/adapters';
 import type { McpOpenRequest } from '../../src/conduit-mcp/control-tools';
-import type { ObservedEntry } from '../../src/conduit-mcp/host';
-import type { AgentCli } from '../../src/conduit-mcp/install-types';
 import { CLI_KINDS, type CliKind } from '../../src/conduit-mcp/tool-policy';
 import { type AgentsConfig, loadAgentsConfig, readBlob, readFileState } from '../../src/config';
 import type { HookPost } from '../../src/contracts/hook-protocol';
@@ -25,6 +23,7 @@ import type {
   DomainPort,
   DraftPort,
   LaunchPort,
+  ObservedPort,
   ScrollbackPort,
   ServerEventSink,
   SessionStorePort,
@@ -120,10 +119,6 @@ import { ServerFolderHealth } from './folder-health';
 import { createLimitMonitor } from './limit-monitor';
 import { createLimitRulesSource } from './limit-rules-file';
 import { ServerSettingsStore } from './server-settings';
-
-interface ObservedPort {
-  record(sessionId: string, cli: AgentCli, entry: ObservedEntry): void;
-}
 
 export type DomainLogLevel = 'debug' | 'info' | 'warn' | 'error';
 export type DomainLog = Record<

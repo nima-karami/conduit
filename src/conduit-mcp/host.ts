@@ -12,7 +12,7 @@ import { readUserStatusLine } from '../claude-user-status-line';
 import { detectStuckScreen, type StuckScreen } from '../cli-stuck-screens';
 import type { CodexAction } from '../codex-rollout';
 import type { WireRecipientOutcome } from '../contracts/link-protocol';
-import type { DraftPort, LaunchPort, McpHostDeps } from '../contracts/server-ports';
+import type { DraftPort, LaunchPort, McpHostDeps, ObservedEntry } from '../contracts/server-ports';
 import type { CliBindingRecord } from '../contracts/session-identity';
 import type { LaunchIds } from '../contracts/terminal-runtime';
 import { inputBoxTop } from '../input-box-rows';
@@ -245,11 +245,6 @@ export interface ActivityNote {
   handle: string | null;
 }
 
-export type ObservedEntry =
-  | { action: ClaudeAction | CodexAction; failed?: boolean }
-  | { feed: 'unavailable' }
-  | { gap: number };
-
 export interface ConduitMcpHost extends LaunchPort, DraftPort {
   start(): Promise<void>;
   /**
@@ -299,23 +294,44 @@ export interface ConduitMcpHost extends LaunchPort, DraftPort {
   stop(): Promise<void>;
 }
 
-// see plan C4 (activity privacy: no output, no arguments)
+// see plan C4 (activity privacy: no output, no arguments; a command keeps its first line only)
+const OBSERVED_SUMMARY_MAX = 200;
 function observedRow(action: ClaudeAction | CodexAction): {
   action: string;
   target: string | null;
   summary: string | null;
+  durationMs: number | null;
+  exitedNonZero: boolean;
 } {
+  const durationMs = 'durationMs' in action ? action.durationMs : null;
+  const exitedNonZero = 'exitCode' in action && action.exitCode !== null && action.exitCode !== 0;
   switch (action.kind) {
-    case 'command':
-      return { action: 'command', target: action.cwd, summary: action.command };
+    case 'command': {
+      const firstLine = action.command.split('\n')[0] ?? '';
+      return {
+        action: 'command',
+        target: action.cwd,
+        summary: firstLine.slice(0, OBSERVED_SUMMARY_MAX),
+        durationMs,
+        exitedNonZero,
+      };
+    }
     case 'file-change':
       return {
         action: 'file-change',
         target: action.paths[0] ?? null,
         summary: action.paths.length > 0 ? action.paths.join(', ') : null,
+        durationMs,
+        exitedNonZero,
       };
     case 'mcp':
-      return { action: 'mcp', target: action.server, summary: action.tool };
+      return {
+        action: 'mcp',
+        target: action.server,
+        summary: action.tool,
+        durationMs,
+        exitedNonZero,
+      };
   }
 }
 
@@ -3121,8 +3137,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       policyService.peerRevoked(machineId);
     },
     recordObserved(sessionId, cli, entry) {
-      const decidedBy = `observed: decided by ${CLI_DISPLAY_NAME[cli]}, not Conduit`;
-      const principal = { handle: null, sessionId, machineId: null };
+      const principal = { handle: handleOf(sessionId) ?? null, sessionId, machineId: null };
       if ('action' in entry) {
         const row = observedRow(entry.action);
         policyService.activity.record({
@@ -3133,24 +3148,27 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           target: row.target,
           summary: row.summary,
           decision: null,
-          decidedBy,
-          outcome: entry.failed ? 'error' : 'ok',
-          durationMs: null,
+          decidedBy: `observed: decided by ${CLI_DISPLAY_NAME[cli]}, not Conduit`,
+          outcome: entry.failed || row.exitedNonZero ? 'error' : 'ok',
+          durationMs: row.durationMs,
           requestId: null,
           count: null,
         });
         return;
       }
+      const note =
+        'feed' in entry
+          ? 'Feed unavailable'
+          : `Feed gap: ${entry.gap} ${entry.gap === 1 ? 'action' : 'actions'} not reported`;
       policyService.activity.record({
         lane: 'note',
         principal,
         cli,
-        action:
-          'feed' in entry ? 'Feed unavailable' : `Feed gap: ${entry.gap} actions not reported`,
+        action: note,
         target: null,
         summary: null,
         decision: null,
-        decidedBy,
+        decidedBy: 'conduit',
         outcome: null,
         durationMs: null,
         requestId: null,

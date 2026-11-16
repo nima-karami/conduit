@@ -6,7 +6,6 @@ import {
   type ConduitMcpHostDeps,
   createConduitMcpHost,
   type McpRendererMessage,
-  type ObservedEntry,
 } from '../../src/conduit-mcp/host';
 import type { GateRow, McpInstallDeps } from '../../src/conduit-mcp/install';
 import type {
@@ -21,6 +20,7 @@ import type {
   DraftPort,
   LaunchPort,
   McpHostDeps,
+  ObservedEntry,
   ServerEventSink,
   TokenStorePort,
 } from '../../src/contracts/server-ports';

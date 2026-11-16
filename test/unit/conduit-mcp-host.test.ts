@@ -6665,7 +6665,7 @@ describe('recordObserved', () => {
         action: 'Feed unavailable',
         cli: 'codex',
         principal: { handle: null, sessionId: 's2', machineId: null },
-        decidedBy: 'observed: decided by Codex, not Conduit',
+        decidedBy: 'conduit',
         outcome: null,
       }),
     ]);
@@ -6681,7 +6681,89 @@ describe('recordObserved', () => {
         lane: 'note',
         action: 'Feed gap: 2 actions not reported',
         cli: 'claude',
-        decidedBy: 'observed: decided by Claude Code, not Conduit',
+        decidedBy: 'conduit',
+      }),
+    ]);
+  });
+  it('a gap of one action says action, not actions', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s1', 'claude', { gap: 1 });
+    expect(rows).toEqual([expect.objectContaining({ action: 'Feed gap: 1 action not reported' })]);
+  });
+
+  it('a Codex command with a non-zero exit is an error row and keeps its duration', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s2', 'codex', {
+      action: { kind: 'command', command: 'npm test', cwd: '/w', exitCode: 1, durationMs: 420 },
+    });
+    expect(rows).toEqual([expect.objectContaining({ outcome: 'error', durationMs: 420 })]);
+  });
+
+  it('a Codex command with exit zero is ok, and a missing exit code is not an error', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s2', 'codex', {
+      action: { kind: 'command', command: 'ls', cwd: '/w', exitCode: 0, durationMs: 5 },
+    });
+    h.host.recordObserved('s2', 'codex', {
+      action: { kind: 'command', command: 'ls', cwd: '/w', exitCode: null, durationMs: null },
+    });
+    expect(rows.map((r) => r.outcome)).toEqual(['ok', 'ok']);
+  });
+
+  it('a Codex MCP call keeps its duration', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s2', 'codex', {
+      action: { kind: 'mcp', server: 'github', tool: 'list_issues', durationMs: 77 },
+    });
+    expect(rows).toEqual([expect.objectContaining({ action: 'mcp', durationMs: 77 })]);
+  });
+
+  it('a heredoc command stores only its first line in the summary', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s1', 'claude', {
+      action: {
+        kind: 'command',
+        command: "cat <<'EOF' > notes.txt\nTOKEN=secret\nEOF",
+        cwd: '/w',
+      },
+    });
+    expect(rows).toEqual([expect.objectContaining({ summary: "cat <<'EOF' > notes.txt" })]);
+    expect(JSON.stringify(rows)).not.toContain('secret');
+  });
+
+  it('a long first line is capped at 200 characters', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    await h.host.start();
+    h.host.recordObserved('s1', 'claude', {
+      action: { kind: 'command', command: `echo ${'x'.repeat(300)}`, cwd: null },
+    });
+    const summary = `echo ${'x'.repeat(195)}`;
+    expect(summary.length).toBe(200);
+    expect(rows).toEqual([expect.objectContaining({ summary })]);
+  });
+
+  it('the row carries the session handle from its record', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo });
+    h.sessions.set('s1', session('s1', { mcpHandle: 'alpha@m-1' }));
+    await h.host.start();
+    h.host.recordObserved('s1', 'claude', {
+      action: { kind: 'command', command: 'npm test', cwd: '/w' },
+    });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        principal: { handle: 'alpha@m-1', sessionId: 's1', machineId: null },
       }),
     ]);
   });
