@@ -12,7 +12,6 @@ import {
 import type { LimitSignal } from '../../src/contracts/auto-resume';
 
 const READ_DEBOUNCE_MS = 250;
-const BIND_WINDOW_MS = 30_000;
 
 export interface CodexWatchDeps {
   sessionsRoot: string;
@@ -54,7 +53,6 @@ interface Tracked {
   replayed: boolean;
   feedReported: boolean;
   debounce: ReturnType<typeof setTimeout> | null;
-  bindWindow: ReturnType<typeof setTimeout> | null;
 }
 
 interface Day {
@@ -231,8 +229,6 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
     s.offset = 0;
     s.splitter = new LineSplitter();
     s.replayed = false;
-    if (s.bindWindow) clearTimeout(s.bindWindow);
-    s.bindWindow = null;
     deps.onBound(sessionId);
     deps.log.debug('codex rollout bound', { sessionId, file });
     reconcile();
@@ -318,8 +314,7 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
       if (disposed) return;
       const prev = sessions.get(sessionId);
       if (prev?.debounce) clearTimeout(prev.debounce);
-      if (prev?.bindWindow) clearTimeout(prev.bindWindow);
-      const entry: Tracked = {
+      sessions.set(sessionId, {
         cwd: s.cwd,
         launchAt: s.launchAt,
         boundFile: null,
@@ -330,13 +325,7 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
         replayed: false,
         feedReported: false,
         debounce: null,
-        bindWindow: null,
-      };
-      sessions.set(sessionId, entry);
-      entry.bindWindow = setTimeout(() => {
-        entry.bindWindow = null;
-        if (entry.boundFile === null) reportUnavailable(sessionId);
-      }, BIND_WINDOW_MS);
+      });
       reconcile();
       for (const dir of folders.keys()) void examineFolder(dir);
     },
@@ -344,7 +333,6 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
       const s = sessions.get(sessionId);
       if (!s) return;
       if (s.debounce) clearTimeout(s.debounce);
-      if (s.bindWindow) clearTimeout(s.bindWindow);
       sessions.delete(sessionId);
       reconcile();
     },
@@ -360,7 +348,6 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
       openWarned.clear();
       for (const s of sessions.values()) {
         if (s.debounce) clearTimeout(s.debounce);
-        if (s.bindWindow) clearTimeout(s.bindWindow);
       }
       sessions.clear();
     },

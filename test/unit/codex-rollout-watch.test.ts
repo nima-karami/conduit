@@ -437,41 +437,4 @@ describe('codex rollout watch', () => {
     await flush();
     expect(h.feeds).toHaveLength(2);
   });
-  it('no bind reports unavailable after the window', async () => {
-    const h = harness();
-    const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
-    await flush();
-    vi.advanceTimersByTime(29_999);
-    await flush();
-    expect(h.feeds).toEqual([]);
-    vi.advanceTimersByTime(1);
-    await flush();
-    expect(h.feeds).toEqual([{ sessionId: 's1', state: 'unavailable' }]);
-  });
-
-  it('a bind inside the window reports nothing', async () => {
-    const h = harness();
-    const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
-    await flush();
-    h.files.set(FILE_A, `${PRIMARY}\n`);
-    h.emit(DAY12, 'rollout-a.jsonl');
-    await flush();
-    expect(watch.boundFile('s1')).toBe(FILE_A);
-    vi.advanceTimersByTime(60_000);
-    await flush();
-    expect(h.feeds).toEqual([]);
-  });
-
-  it('untrack before the window reports nothing', async () => {
-    const h = harness();
-    const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
-    await flush();
-    watch.untrack('s1');
-    vi.advanceTimersByTime(60_000);
-    await flush();
-    expect(h.feeds).toEqual([]);
-  });
 });
