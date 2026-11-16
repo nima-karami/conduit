@@ -13,6 +13,7 @@ import {
   familyProbeCommand,
   finalizeCommand,
   type PinFile,
+  type ProbeResult,
   parseFamily,
   parseProbe,
   parseResultLine,
@@ -322,8 +323,15 @@ async function install(
   return finalize(c, c.runtimeRoot, version);
 }
 
-async function bootstrapOnce(o: BootstrapperOptions, target: string): Promise<BootstrapOutcome> {
-  const run = (command: RemoteCommand, timeoutMs: number, stdin?: Buffer) =>
+/** One remote script over the batch ssh path; its stdin is the value a push sends. */
+type RemoteRun = (
+  command: RemoteCommand,
+  timeoutMs: number,
+  stdin?: Buffer,
+) => Promise<SshExecResult>;
+
+function runOn(o: Pick<BootstrapperOptions, 'ssh' | 'exec'>, target: string): RemoteRun {
+  return (command, timeoutMs, stdin) =>
     o.exec({
       ...o.ssh,
       target,
@@ -331,25 +339,69 @@ async function bootstrapOnce(o: BootstrapperOptions, target: string): Promise<Bo
       timeoutMs,
       ...(stdin ? { stdin } : {}),
     });
+}
 
+type ProbeOutcome =
+  | { ok: true; family: ShellFamily; probed: ProbeResult }
+  | { ok: false; error: BootstrapError };
+
+/**
+ * The family, then the probe of one target. An install starts with it, and so does the agent
+ * re-probe, so both read the machine the same way.
+ */
+async function probeRemote(run: RemoteRun): Promise<ProbeOutcome> {
   // 1. The family: which shell the probe must be written for (decision 1).
   const fam = await run(familyProbeCommand(), PROBE_TIMEOUT_MS);
   const family = parseFamily(fam.stdout);
   if (family === null) {
-    return fail(
-      fam.failure ?? {
+    return {
+      ok: false,
+      error: fam.failure ?? {
         code: 'ssh_failed',
         detail: 'the remote shell is not sh, PowerShell or cmd.exe',
       },
-    );
+    };
   }
-
-  // 2. The probe, then the plan. Unsupported and incompatible stop before anything is copied.
+  // 2. The probe.
   const pr = await run(probeCommand(family), PROBE_TIMEOUT_MS);
   const probed = parseProbe(pr.stdout);
   if ('error' in probed) {
-    return fail(pr.failure ?? { code: 'ssh_failed', detail: probed.detail });
+    return { ok: false, error: pr.failure ?? { code: 'ssh_failed', detail: probed.detail } };
   }
+  return { ok: true, family, probed };
+}
+
+/** What an agent re-probe found: the CLIs on the machine's PATH, or why the probe failed. */
+export type AgentProbe = { ok: true; agents: string[] } | { ok: false; detail: string };
+
+/**
+ * The owner's agent re-probe (plan decision 4): the bootstrap's own probe over the batch ssh path,
+ * kept to the CLIs it lists. It writes nothing; the caller stores what it reads.
+ */
+export function createAgentProbe(
+  o: Pick<BootstrapperOptions, 'ssh' | 'exec'>,
+): (target: string) => Promise<AgentProbe> {
+  return async (target) => {
+    const probing = await probeRemote(runOn(o, target));
+    if (!probing.ok) {
+      const { error } = probing;
+      return {
+        ok: false,
+        detail: 'detail' in error && typeof error.detail === 'string' ? error.detail : error.code,
+      };
+    }
+    return { ok: true, agents: probing.probed.agents };
+  };
+}
+
+async function bootstrapOnce(o: BootstrapperOptions, target: string): Promise<BootstrapOutcome> {
+  const run = runOn(o, target);
+
+  // 1 and 2. The family and the probe, then the plan. Unsupported and incompatible stop before
+  // anything is copied.
+  const probing = await probeRemote(run);
+  if (!probing.ok) return fail(probing.error);
+  const { family, probed } = probing;
   const plan = planInstall({ version: o.local.version, linkMajor: o.local.linkMajor }, probed);
   if (plan.kind === 'unsupported') {
     return fail({ code: 'remote_unsupported', os: plan.os, arch: plan.arch });

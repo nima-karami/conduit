@@ -30,7 +30,12 @@ import {
   writeServerVersion,
 } from '../lifecycle/server-secret';
 import { type AuditSink, openAuditLog, teeAudit } from './audit-log';
-import { type BootstrapperOptions, createBootstrapper, machineMetaOf } from './bootstrap';
+import {
+  type BootstrapperOptions,
+  createAgentProbe,
+  createBootstrapper,
+  machineMetaOf,
+} from './bootstrap';
 import { handleNetworkCall } from './c2';
 import { createCalls, isDialedSsh } from './calls';
 import { createDrive, type Drive, type DriveDeps } from './drive';
@@ -41,7 +46,7 @@ import { type LinkListener, listenLinks, listenPairing, type NetLog } from './li
 import { createMachines, type Machines } from './machines';
 import { createMessaging } from './messaging';
 import { createMonitorPublisher, type MonitorSource } from './monitor-publisher';
-import { createNeedsPerson } from './needs-person';
+import { createNeedsPerson, createSetupPane } from './needs-person';
 import { createPairingPort } from './pairing-port';
 import { createPairingService, type PairingService } from './pairing-service';
 import {
@@ -363,13 +368,34 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     return { ok: true, machineId: linked.machineId, ssh: outcome.ssh, summary: outcome.summary };
   };
 
-  const openNeedsPerson = createNeedsPerson({
+  const paneOptions = {
     sshPath: process.env.CONDUIT_SSH_PATH || 'ssh',
     sshArgsPrefix: deps.sshArgsPrefix,
     controlDir: sshControlDir,
-    prepareControlDir: (dir) => prepareControlDir(dir, deps.log),
+    prepareControlDir: (dir: string) => prepareControlDir(dir, deps.log),
     openCommand: deps.openCommandSession,
     home: os.homedir(),
+  };
+  const openNeedsPerson = createNeedsPerson(paneOptions);
+  const openSetupPane = createSetupPane({
+    ...paneOptions,
+    machineOf: (machineId) => {
+      const record = store.get(machineId);
+      if (record === null || record.transport !== 'ssh' || record.ssh === null) return null;
+      return {
+        target: record.ssh.target,
+        os: record.machine?.os ?? null,
+        mode: record.machine?.mode ?? null,
+      };
+    },
+  });
+  const probeAgents = createAgentProbe({
+    ssh: {
+      sshPath: process.env.CONDUIT_SSH_PATH || 'ssh',
+      sshArgsPrefix: deps.sshArgsPrefix,
+      controlDir: sshControlDir,
+    },
+    exec: sshExec,
   });
 
   const machines: Machines = createMachines({
@@ -377,6 +403,8 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     store,
     bootstrap: bootstrapAndLink,
     directory,
+    probe: probeAgents,
+    changed,
   });
 
   const sshHosts = (): string[] => {
@@ -755,6 +783,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
         drive,
         bootstrap: bootstrapAndLink,
         openNeedsPerson,
+        openSetupPane,
         machines,
         sshHosts,
         peer,

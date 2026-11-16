@@ -1,5 +1,7 @@
+import { AGENT_CLIS, type AgentCli } from '../../src/conduit-mcp/install-types';
 import { CONNECT_BUDGET_MS } from '../../src/conduit-mcp/machine-tools';
 import type { Capability } from '../../src/contracts/link-protocol';
+import type { AgentSetupStep, MachineMode } from '../../src/contracts/machines';
 import type { NetworkState } from '../../src/contracts/network-state';
 import type { BootstrapResult } from '../../src/contracts/ssh-link';
 import { isSshTarget } from '../../src/network/ssh-argv';
@@ -18,6 +20,7 @@ const CAPABILITIES: readonly Capability[] = ['messaging', 'monitor', 'drive'];
 const MAX_ADDRESSES = 16;
 const MAX_PATH = 4096;
 const MAX_DIMENSION = 10_000;
+const isMachineMode = (v: unknown): v is MachineMode => v === 'full' || v === 'light';
 const isDimension = (v: unknown): v is number =>
   typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= MAX_DIMENSION;
 
@@ -31,6 +34,8 @@ export interface NetworkCallDeps {
   bootstrap(target: string): Promise<BootstrapResult>;
   /** Opens the needs-person pane for one target; resolves with its session id. */
   openNeedsPerson(target: string): Promise<string>;
+  /** Opens an agent-setup pane on a machine; resolves with its session id. */
+  openSetupPane(machineId: string, cli: AgentCli, step: AgentSetupStep): Promise<string>;
   machines: Machines;
   /** The Host aliases in the user's ssh config, for the Add dialog's list. */
   sshHosts(): string[];
@@ -178,7 +183,7 @@ export function handleNetworkCall(
 export function handleMachineCall(
   method: string,
   raw: unknown,
-  d: Pick<NetworkCallDeps, 'machines' | 'sshHosts'>,
+  d: Pick<NetworkCallDeps, 'machines' | 'sshHosts' | 'openSetupPane'>,
 ): Promise<unknown> | null {
   const p = paramsOf(raw);
   switch (method) {
@@ -199,6 +204,24 @@ export function handleMachineCall(
       return Promise.resolve({});
     case 'machines.sshHosts':
       return Promise.resolve({ hosts: d.sshHosts() });
+    case 'machines.setMode': {
+      const machineId = str(p, 'machineId');
+      const mode = p.mode;
+      if (!isMachineMode(mode)) throw new RpcFault('invalid', 'Expected mode full or light');
+      d.machines.setMode(machineId, mode);
+      return Promise.resolve({});
+    }
+    case 'machines.openSetupPane': {
+      const machineId = str(p, 'machineId');
+      const cli = AGENT_CLIS.find((c) => c === p.cli);
+      if (cli === undefined) throw new RpcFault('invalid', 'Expected cli');
+      if (p.step !== 'install' && p.step !== 'login') {
+        throw new RpcFault('invalid', 'Expected step install or login');
+      }
+      return d.openSetupPane(machineId, cli, p.step).then((sessionId) => ({ sessionId }));
+    }
+    case 'machines.probeAgents':
+      return d.machines.probeAgents(str(p, 'machineId'));
     default:
       return null;
   }

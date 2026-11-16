@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import pins from '../../build/runtime-pins.json';
-import { createBootstrapper, machineMetaOf } from '../../server/network/bootstrap';
+import {
+  createAgentProbe,
+  createBootstrapper,
+  machineMetaOf,
+} from '../../server/network/bootstrap';
 import type { SshExecOptions, SshExecResult } from '../../server/network/ssh-exec';
 import { HC_PINNED_VERSION } from '../../src/contracts/hc';
 import { LINK_PROTOCOL } from '../../src/contracts/link-protocol';
@@ -285,6 +289,37 @@ const happy: Script = {
     return result({ ok: true });
   },
 };
+
+describe('bootstrap: the agent re-probe', () => {
+  const SSH = { sshPath: 'ssh', controlDir: '/home/u/.config/conduit/ssh' };
+
+  it('reads the CLIs the probe lists, and runs only the family and probe steps', async () => {
+    const r = remote({
+      answer: () => {
+        throw new Error('the re-probe must not run an install step');
+      },
+      probe: { agents: ['claude', 'opencode'] },
+    });
+    const probe = createAgentProbe({ ssh: SSH, exec: r.exec });
+    expect(await probe(TARGET)).toEqual({ ok: true, agents: ['claude', 'opencode'] });
+    expect(r.calls.map((c) => c.kind)).toEqual(['family', 'probe']);
+    expect(r.calls.every((c) => c.target === TARGET)).toBe(true);
+  });
+
+  it('reports the ssh failure that stopped the family step, as its detail', async () => {
+    const probe = createAgentProbe({
+      ssh: SSH,
+      exec: () =>
+        Promise.resolve({
+          code: 255,
+          stdout: '',
+          stderr: '',
+          failure: { code: 'ssh_unreachable', detail: 'Connection timed out' },
+        }),
+    });
+    expect(await probe(TARGET)).toEqual({ ok: false, detail: 'Connection timed out' });
+  });
+});
 
 describe('bootstrap: install on a fresh remote', () => {
   it('runs the fixed steps in order and returns the endpoint and summary', async () => {
