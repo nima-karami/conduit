@@ -3201,6 +3201,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       policyService.peerRevoked(machineId);
     },
     recordObserved(sessionId, cli, entry) {
+      // A late row for a deleted session must not create a budget that nothing will ever clear.
+      if (deps.sessions.get(sessionId) === undefined) return;
       if ('action' in entry) {
         const t = now();
         const minute = Math.floor(t / MINUTE_MS);
@@ -3321,6 +3323,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     async stop() {
       stopped = true;
+      for (const sessionId of [...observedBudget.keys()]) forgetBudget(sessionId);
       stopRuntime();
       settleEndpoint();
       if (tickTimer) clearInterval(tickTimer);
