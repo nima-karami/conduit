@@ -92,42 +92,54 @@ const dialed = (machineId: string): LinkRecord => ({
 const tlsLink = (machineId: string): LinkRecord => ({ ...inbound(machineId), transport: 'tls' });
 
 /** The production git reads, each wrapped so a test can see whether git ran at all. */
-function countingOps() {
+function countingOps(over: Partial<GitServeOps> = {}) {
   const real = createGitOps();
   const calls: string[] = [];
   const ops: GitServeOps = {
     repoTopLevel: (dir) => {
       calls.push('repoTopLevel');
-      return real.repoTopLevel(dir);
+      return (over.repoTopLevel ?? real.repoTopLevel)(dir);
+    },
+    absoluteGitDir: (dir) => {
+      calls.push('absoluteGitDir');
+      return (over.absoluteGitDir ?? real.absoluteGitDir)(dir);
+    },
+    gitCommonDir: (dir) => {
+      calls.push('gitCommonDir');
+      return (over.gitCommonDir ?? real.gitCommonDir)(dir);
     },
     status: (top) => {
       calls.push('status');
-      return real.status(top);
+      return (over.status ?? real.status)(top);
     },
-    diff: (abs) => {
+    diff: (top, abs) => {
       calls.push('diff');
-      return real.diff(abs);
+      return (over.diff ?? real.diff)(top, abs);
     },
     log: (top, opts) => {
       calls.push('log');
-      return real.log(top, opts);
+      return (over.log ?? real.log)(top, opts);
     },
     show: (top, sha) => {
       calls.push('show');
-      return real.show(top, sha);
+      return (over.show ?? real.show)(top, sha);
     },
   };
   return { ops, calls };
 }
 
 function harness(
-  over: { links?: Record<string, LinkRecord>; states?: Record<string, LinkState> } = {},
+  over: {
+    links?: Record<string, LinkRecord>;
+    states?: Record<string, LinkState>;
+    git?: Partial<GitServeOps>;
+  } = {},
 ) {
   const links: Record<string, LinkRecord> = over.links ?? { [CONTROLLER]: inbound(CONTROLLER) };
   const states: Record<string, LinkState> = over.states ?? {};
   const sent: LinkFrame[] = [];
   const audits: AuditEvent[] = [];
-  const { ops, calls } = countingOps();
+  const { ops, calls } = countingOps(over.git);
   let at = 1_000_000;
   const serve = createGitServe({
     linkOf: (machineId) => links[machineId] ?? null,
@@ -175,10 +187,12 @@ describe('git-serve', () => {
     const res = replyTo(h.sent, 'r1');
     expect(res.ok).toBe(true);
     if (!res.ok || res.result.op !== 'status') throw new Error('expected a status result');
-    const paths = res.result.snapshot.changes.map((c) => c.path);
+    const snapshot = res.result.snapshot;
+    if (snapshot === null) throw new Error('expected a status snapshot');
+    const paths = snapshot.changes.map((c) => c.path);
     expect(paths).toContain('a.txt');
     expect(paths).not.toContain('.env');
-    expect(res.result.snapshot.lines).toBe(true);
+    expect(snapshot.lines).toBe(true);
   });
 
   it('a root outside the session folders is refused and git never runs', async () => {
@@ -292,5 +306,144 @@ describe('git-serve', () => {
     expect(res.result.file.head).toBe('hello\n');
     expect(res.result.file.work).toBe('');
     expect(res.result.file.error).toBeUndefined();
+  });
+
+  it('a folder in no repo answers status with snapshot null', async () => {
+    const h = harness();
+    await h.serve.onFrame(CONTROLLER, req('n1', 'status', {}));
+    expect(replyTo(h.sent, 'n1')).toEqual({
+      t: 'git.res',
+      id: 'n1',
+      ok: true,
+      result: { op: 'status', root: proj, snapshot: null },
+    });
+    await h.serve.onFrame(CONTROLLER, req('n2', 'log', {}));
+    const log = replyTo(h.sent, 'n2');
+    expect(log.ok).toBe(false);
+  });
+
+  it('show drops a file renamed out of a denied name', async () => {
+    await initRepo(proj, 'first');
+    await git(proj, 'mv', '.env', 'config.txt');
+    await git(proj, 'mv', 'a.txt', 'b.txt');
+    await git(proj, 'commit', '-qm', 'rename both');
+    const sha = await git(proj, 'rev-parse', 'HEAD');
+    const h = harness();
+    await h.serve.onFrame(CONTROLLER, req('rn1', 'show', { sha }));
+    const res = replyTo(h.sent, 'rn1');
+    expect(res.ok).toBe(true);
+    if (!res.ok || res.result.op !== 'show') throw new Error('expected a show result');
+    const paths = res.result.files.map((f) => f.path);
+    expect(paths).toContain('b.txt');
+    expect(paths).not.toContain('config.txt');
+    expect(JSON.stringify(res.result)).not.toContain('TOKEN=1');
+  });
+
+  it('status drops a rename out of a denied name', async () => {
+    await initRepo(proj, 'first');
+    await git(proj, 'mv', '.env', 'config.txt');
+    const h = harness();
+    await h.serve.onFrame(CONTROLLER, req('rn2', 'status', {}));
+    const res = replyTo(h.sent, 'rn2');
+    expect(res.ok).toBe(true);
+    if (!res.ok || res.result.op !== 'status') throw new Error('expected a status result');
+    const snapshot = res.result.snapshot;
+    if (snapshot === null) throw new Error('expected a status snapshot');
+    const paths = snapshot.changes.map((c) => c.path);
+    expect(paths).not.toContain('config.txt');
+    expect(paths).not.toContain('.env');
+  });
+
+  it('a .git file pointing outside the roots is refused for log and diff', async () => {
+    const secret = path.join(root, 'secret');
+    fs.mkdirSync(secret);
+    fs.writeFileSync(path.join(secret, 's.txt'), 'TOPSECRET\n');
+    await initRepo(secret, 'secret commit');
+    // The session folder holds the file too, so the diff is of a real file in a session folder.
+    fs.writeFileSync(path.join(proj, 's.txt'), 'TOPSECRET\n');
+    fs.writeFileSync(path.join(proj, '.git'), `gitdir: ${path.join(secret, '.git')}\n`);
+    const h = harness();
+    await h.serve.onFrame(CONTROLLER, req('g1', 'log', {}));
+    await h.serve.onFrame(CONTROLLER, req('g2', 'diff', { path: path.join(proj, 's.txt') }));
+    for (const id of ['g1', 'g2']) {
+      const res = replyTo(h.sent, id);
+      expect(res.ok).toBe(false);
+      if (res.ok) throw new Error('expected a refusal');
+      expect(res.error.code).toBe('refused');
+    }
+    expect(JSON.stringify(h.sent)).not.toContain('TOPSECRET');
+    expect(h.calls).not.toContain('log');
+    expect(h.calls).not.toContain('diff');
+  });
+
+  it('a real git worktree whose common dir is outside is still served', async () => {
+    const main = path.join(root, 'main');
+    fs.mkdirSync(main);
+    fs.writeFileSync(path.join(main, 'm.txt'), 'main\n');
+    await initRepo(main, 'main commit');
+    // The session folder becomes a linked worktree of a repo that lives outside the session.
+    fs.rmSync(proj, { recursive: true, force: true });
+    await git(main, 'worktree', 'add', '-q', proj, '-b', 'wt');
+    const h = harness();
+    await h.serve.onFrame(CONTROLLER, req('w1', 'log', {}));
+    const res = replyTo(h.sent, 'w1');
+    expect(res.ok).toBe(true);
+    if (!res.ok || res.result.op !== 'log') throw new Error('expected a log result');
+    expect(res.result.commits).toHaveLength(1);
+  });
+
+  it('a result over 8 MiB is too_large', async () => {
+    await initRepo(proj);
+    const huge = 'x'.repeat(9 * 1024 * 1024);
+    const h = harness({
+      git: {
+        status: async () => ({
+          ok: true,
+          changes: [{ path: huge, added: 0, removed: 0, kind: 'M', staged: false }],
+          trackedDirty: true,
+        }),
+      },
+    });
+    await h.serve.onFrame(CONTROLLER, req('big', 'status', {}));
+    const res = replyTo(h.sent, 'big');
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error('expected an error');
+    expect(res.error.code).toBe('too_large');
+  });
+
+  it('a diff read error never reaches the peer', async () => {
+    await initRepo(proj);
+    const h = harness({
+      git: {
+        diff: async (_top, abs) => ({
+          path: abs,
+          head: '',
+          work: '',
+          binary: false,
+          error: 'LEAK-4242 /secret/content',
+        }),
+      },
+    });
+    await h.serve.onFrame(CONTROLLER, req('de', 'diff', { path: path.join(proj, 'a.txt') }));
+    const res = replyTo(h.sent, 'de');
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error('expected an error');
+    expect(res.error.code).toBe('failed');
+    expect(JSON.stringify(res)).not.toContain('LEAK-4242');
+  });
+
+  it('diff path outside the checked top is refused', async () => {
+    // The repo is a sub-folder; a file of the session folder that is outside that repo is named.
+    const sub = path.join(proj, 'sub');
+    fs.mkdirSync(sub);
+    fs.writeFileSync(path.join(sub, 's.txt'), 'sub\n');
+    await initRepo(sub);
+    const h = harness();
+    await h.serve.onFrame(CONTROLLER, req('op', 'diff', { path: path.join(proj, 'a.txt') }, sub));
+    const res = replyTo(h.sent, 'op');
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error('expected a refusal');
+    expect(res.error.code).toBe('refused');
+    expect(h.calls).not.toContain('diff');
   });
 });

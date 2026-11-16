@@ -52,6 +52,8 @@ interface MultiFileDiff {
   /** A read failure, as distinct from a legitimately empty result — see
    *  docs/specs/archive/2026-08-20-commit-review-memory-bounds.md §4. */
   error?: string;
+  /** For each renamed or copied file of the commit: its new path → the old one. */
+  renamedFrom?: Record<string, string>;
 }
 
 /** A blob for display; an image's LFS pointer is swapped for its local object. */
@@ -541,7 +543,14 @@ export async function getCommitDiff(
     const c = counts.get(file.rel);
     return c ? { ...dto, counts: c } : dto;
   });
-  return total > capped.length ? { files, truncated: { shown: capped.length, total } } : { files };
+  // The head side of a rename is read from its old path, so that path is part of what the commit
+  // shows; a caller that filters by name needs it, and FileDiffDTO has no field for it.
+  const renamedFrom = Object.fromEntries(
+    changed.flatMap((f) => (f.oldPath === undefined ? [] : [[f.rel, f.oldPath] as const])),
+  );
+  return total > capped.length
+    ? { files, truncated: { shown: capped.length, total }, renamedFrom }
+    : { files, renamedFrom };
 }
 
 interface BlameOptions {

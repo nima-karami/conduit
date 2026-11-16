@@ -43,34 +43,10 @@ export async function confineFsPath(
 
   const existence = await existsOrDangling(abs);
   if (existence === 'dangling') return refused;
-  if (existence === 'missing') {
-    if (!opts.allowMissing) return { ok: false, code: 'not_found' };
-    return confineMissingLeaf(abs, roots);
-  }
+  // A missing leaf has no content to read, and the checks above already ran on where it would sit
+  // (realPathLeaf resolves the nearest existing parent), so it is confined like any other path.
+  if (existence === 'missing' && !opts.allowMissing) return { ok: false, code: 'not_found' };
   return { ok: true, real };
-}
-
-/**
- * A missing leaf is judged by its parent alone: there is nothing to read, so the only thing that
- * can leak is where the parent really is. Re-resolving the parent (not trusting the walk-up that
- * realPathLeaf did) keeps this safe if that walk-up ever changes.
- */
-async function confineMissingLeaf(abs: string, roots: readonly string[]): Promise<ConfineResult> {
-  let realParent: string;
-  try {
-    realParent = await fs.promises.realpath(path.dirname(abs));
-    if (!(await fs.promises.stat(realParent)).isDirectory()) {
-      return { ok: false, code: 'not_found' };
-    }
-  } catch (err) {
-    // A parent that is absent is simply not there; any other failure to resolve it is not trusted.
-    const code = (err as NodeJS.ErrnoException).code;
-    return code === 'ENOENT' || code === 'ENOTDIR' ? { ok: false, code: 'not_found' } : refused;
-  }
-  if (!roots.some((root) => isInsideRoot(realParent, realPathLeaf(root)))) return refused;
-  const leaf = path.join(realParent, path.basename(abs));
-  if (isDenied(leaf)) return refused;
-  return { ok: true, real: leaf };
 }
 
 /** `exists` when the path resolves, `missing` when nothing is there, `dangling` for a link to nothing. */
