@@ -651,6 +651,17 @@ describe('ssh links', { timeout: 60_000 }, () => {
     expect(a.store.get(b.id.machineId)?.ownerKey).toBeNull();
   });
 
+  it('a dialed ssh record is named after its target, and a redial does not rename it', async () => {
+    const { a, b, ssh } = await sshPair();
+    expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({ ok: true, machineId: b.id.machineId });
+    expect(a.store.get(b.id.machineId)?.name).toBe(ENDPOINT.target);
+    // A dropped ssh session redials, and B's hello on the new stream names B 'win-box'.
+    ssh.dropLast();
+    await until(() => a.manager.view(b.id.machineId)?.state !== 'up');
+    await until(() => a.manager.view(b.id.machineId)?.state === 'up');
+    expect(a.store.get(b.id.machineId)?.name).toBe(ENDPOINT.target);
+  });
+
   it('acceptStream answers a tombstoned peer with revoked and does not re-link it', async () => {
     const { a, b } = await sshPair();
     const bKey = b.id.serverKeyRaw.toString('base64');
@@ -874,7 +885,7 @@ describe('ssh hello identity and per-host pinning', { timeout: 60_000 }, () => {
 
     expect(await a.manager.addSshPeer({ ...ENDPOINT, target: 'b-target' })).toEqual({
       ok: false,
-      error: { code: 'identity-conflict', machine: 'c-box' },
+      error: { code: 'identity-conflict', machine: 'c-target' },
     });
     expect(a.store.get(c.id.machineId)).toEqual(before);
     // The link that was pinned for C still carries its frames to C.
@@ -929,7 +940,7 @@ describe('ssh hello identity and per-host pinning', { timeout: 60_000 }, () => {
     await until(() => b.manager.view(a.id.machineId)?.state === 'up');
     expect(await a.manager.addSshPeer({ ...ENDPOINT, target: 'other-box' })).toEqual({
       ok: false,
-      error: { code: 'identity-conflict', machine: 'win-box' },
+      error: { code: 'identity-conflict', machine: 'remote-box' },
     });
     expect(a.store.get(b.id.machineId)?.ssh).toEqual(ENDPOINT);
   });

@@ -74,17 +74,14 @@ async function run() {
       : undefined;
     assert(row?.state === 'up', `list_machines: ${JSON.stringify(listed)}`);
 
-    const reused = await callTool(a, aa, 'connect_machine', { machine: 'net-b' });
+    const reused = await callTool(a, aa, 'connect_machine', { machine: 'fake' });
     assert(
       reused.reused === true && reused.machine_id === bId && reused.state === 'up',
       `connect_machine (up): ${JSON.stringify(reused)}`,
     );
 
     const down = await callTool(a, aa, 'disconnect_machine', { machine: bId });
-    assert(
-      down.state === 'down' && down.machine === 'net-b',
-      `disconnect: ${JSON.stringify(down)}`,
-    );
+    assert(down.state === 'down' && down.machine === 'fake', `disconnect: ${JSON.stringify(down)}`);
     await eventually('A link to B is no longer up', async () => {
       const view = await linkView(a.c2, bId);
       return view !== null && view.state !== 'up';
@@ -97,7 +94,7 @@ async function run() {
       `B's session after disconnect: ${JSON.stringify(stillRunning)}`,
     );
 
-    const again = await callTool(a, aa, 'connect_machine', { machine: 'net-b' });
+    const again = await callTool(a, aa, 'connect_machine', { machine: 'fake' });
     assert(
       again.state === 'up' && again.machine_id === bId && again.reused === false,
       `reconnect: ${JSON.stringify(again)}`,
