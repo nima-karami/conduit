@@ -826,4 +826,10 @@ So a Codex orchestrator can take over if Claude stops. The lead (claude-3) recei
   - A span over 32 MiB is treated as a baseline (no gap reported).
   - check() is wrapped in try/catch (warn, no throw), and the queue chain ends with .catch, so a bad transcript never stalls or crashes the server.
 - **m5, peer text in Activity.** activity-audit-sink sanitises peer strings with CON-27's printable-name rule (strip C0, C1 and bidi controls), reusing the existing function.
+- *Security re-review rulings (lane B):*
+  - The feed-gap read refuses non-regular files: POSIX O_NONBLOCK open plus `isFile()`, and no read for an empty range. Each check has a 10 s timeout, so a FIFO or named pipe can't stall the queue.
+  - host.stop() forgets the throttle budgets.
+  - Hook posts are rate-limited at the endpoint, before parsing, to 600 per minute per session token.
+  - m5 adds `stripUnprintable` beside `printableName` (which only validates), sharing its regex source.
+  - Accepted residuals: today's Activity file isn't size-capped (the 120-rows-per-minute session budget bounds growth; card candidate: a daily cap); a single turn whose span exceeds 32 MiB is baselined, so its gaps go unreported (card candidate: chunked reads).
 
