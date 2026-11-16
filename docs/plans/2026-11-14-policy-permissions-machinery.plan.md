@@ -820,7 +820,7 @@ So a Codex orchestrator can take over if Claude stops. The lead (claude-3) recei
 - **m2, revoked grant or new deny during prepare.** commit returns null when any of decision.grantIds is no longer live, or when a fresh decide (held overrides counted) no longer allows. commitResolved's re-decide then refuses (or stands in, per the T3.2a rule).
 - **m3, observed rows.**
   - Every string field (action, target, summary) is capped at 200 code points.
-  - Per-session budget: 120 observed rows per minute. The excess is dropped, with one note per minute: action `feed-throttled`, summary "Feed throttled: N actions not logged".
+  - Per-session budget: 120 observed rows per minute. The excess is dropped, with one note per minute: action `feed-throttled`, summary "Feed throttled: 1 action not logged" or "Feed throttled: N actions not logged", with the note timed at the minute's end so a quiet session still gets it; throttle state is dropped on session delete.
 - **m4, feed-gap robustness.**
   - A baseline reads only the tail (at most 64 KiB) to find the last complete line and its fingerprint.
   - A span over 32 MiB is treated as a baseline (no gap reported).
