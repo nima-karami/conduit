@@ -271,9 +271,9 @@ export function RemotePane({ remote, machineName, label, visible, onClosed }: Re
       data-remote-key={remoteId}
     >
       <header className="remote-pane-head">
-        <span>{label}</span>
+        <span className="remote-pane-title">{label}</span>
         <span className="machine-badge">{MACHINES_STR.badge(machineName)}</span>
-        <button type="button" disabled={closing} onClick={close}>
+        <button type="button" className="btn btn--sm" disabled={closing} onClick={close}>
           {MACHINES_STR.closeSession}
         </button>
       </header>

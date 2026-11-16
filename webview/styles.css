@@ -2968,8 +2968,6 @@ body.resizing .panel__resize::after {
   min-width: 0;
   min-height: 0;
   height: 100%;
-  background: var(--code-base);
-  color: var(--text);
 }
 .remote-pane-head {
   display: flex;
@@ -2980,11 +2978,25 @@ body.resizing .panel__resize::after {
   border-bottom: 1px solid var(--border);
   font-size: calc(12px * var(--font-scale));
 }
+.remote-pane-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Close sits at the far end, away from the name the owner reads. */
+.remote-pane-head .btn {
+  margin-inline-start: auto;
+}
 .remote-pane-body {
   position: relative;
   flex: 1 1 auto;
   min-height: 0;
   transition: opacity 0.12s ease;
+}
+/* The same readability gutter a local terminal keeps inside its viewport (see .termpane .xterm). */
+.remote-pane-body .xterm {
+  height: 100%;
+  padding: 4px;
 }
 .remote-pane--frozen .remote-pane-body {
   opacity: 0.45;
