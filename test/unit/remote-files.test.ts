@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   createRemoteFiles,
   type RemoteFilesDeps,
-  type RemoteFsMethod,
+  type RemoteFilesMethod,
 } from '../../electron/remote-files';
-import { ServerCallError } from '../../electron/server-client';
+import { ServerCallError, type ServerCallOptions } from '../../electron/server-client';
 import type { ServerEvents, ServerMethods } from '../../src/contracts/server-protocol';
 import type { FileContentDTO, HostToWebview, WebviewToHost } from '../../src/protocol';
 
@@ -16,14 +16,16 @@ const file: FileContentDTO = {
   binary: false,
 };
 
+const gitValue: ServerMethods['remote.git']['result'] = { op: 'show', files: [], truncated: false };
+
 function rig() {
-  const calls: Array<{ method: RemoteFsMethod; params: unknown }> = [];
+  const calls: Array<{ method: RemoteFilesMethod; params: unknown; opts?: ServerCallOptions }> = [];
   const sent: Array<{ windowId: number; message: HostToWebview }> = [];
   const logs: string[] = [];
   let nextWatch = 0;
-  let failWith: { method: RemoteFsMethod; error: Error } | null = null;
+  let failWith: { method: RemoteFilesMethod; error: Error } | null = null;
   // Each watch mints a fresh watch id, so a test can tell the watches apart.
-  const replies: { [M in RemoteFsMethod]: () => ServerMethods[M]['result'] } = {
+  const replies: { [M in RemoteFilesMethod]: () => ServerMethods[M]['result'] } = {
     'remote.fs.list': () => ({ path: '/w', entries: [{ name: 'a.txt', kind: 'file' }] }),
     'remote.fs.read': () => file,
     'remote.fs.stat': () => ({ kind: 'file', size: 5, mtimeMs: 0 }),
@@ -32,10 +34,15 @@ function rig() {
       return { watchId: `w-${nextWatch}` };
     },
     'remote.fs.unwatch': () => ({}),
+    'remote.git': () => gitValue,
   };
   const deps: RemoteFilesDeps = {
-    call: async <M extends RemoteFsMethod>(method: M, params: ServerMethods[M]['params']) => {
-      calls.push({ method, params });
+    call: async <M extends RemoteFilesMethod>(
+      method: M,
+      params: ServerMethods[M]['params'],
+      opts?: ServerCallOptions,
+    ) => {
+      calls.push({ method, params, opts });
       if (failWith?.method === method) throw failWith.error;
       return replies[method]();
     },
@@ -47,7 +54,7 @@ function rig() {
     calls,
     sent,
     logs,
-    failNext: (method: RemoteFsMethod, error: Error) => {
+    failNext: (method: RemoteFilesMethod, error: Error) => {
       failWith = { method, error };
     },
   };
@@ -192,6 +199,64 @@ describe('remote files routing', () => {
     files.changed(changeEvent('w-2'));
     expect(sent).toEqual([
       { windowId: 1, message: { type: 'remoteFs:changed', key: 'a', paths: ['/w/a.txt'] } },
+    ]);
+  });
+
+  it('a git request replies to the asking window with the result', async () => {
+    const { files, calls, sent } = rig();
+
+    await files.git(1, {
+      type: 'remoteGit:request',
+      requestId: 7,
+      machineId: 'm',
+      sessionId: 's',
+      root: '/w',
+      op: 'show',
+      args: { sha: 'abc123' },
+    });
+
+    expect(calls).toEqual([
+      {
+        method: 'remote.git',
+        params: { machineId: 'm', sessionId: 's', root: '/w', op: 'show', args: { sha: 'abc123' } },
+        opts: { timeoutMs: 35_000 },
+      },
+    ]);
+    expect(sent).toEqual([
+      {
+        windowId: 1,
+        message: {
+          type: 'remoteGit:result',
+          requestId: 7,
+          result: { ok: true, value: gitValue },
+        },
+      },
+    ]);
+  });
+
+  it('a failed git request replies ok:false with the fault code', async () => {
+    const { files, failNext, sent } = rig();
+    failNext('remote.git', new ServerCallError('timeout', 'remote.git: no reply within 35000 ms'));
+
+    await files.git(2, {
+      type: 'remoteGit:request',
+      requestId: 8,
+      machineId: 'm',
+      sessionId: 's',
+      root: '/w',
+      op: 'status',
+      args: {},
+    });
+
+    expect(sent).toEqual([
+      {
+        windowId: 2,
+        message: {
+          type: 'remoteGit:result',
+          requestId: 8,
+          result: { ok: false, error: 'timeout' },
+        },
+      },
     ]);
   });
 });

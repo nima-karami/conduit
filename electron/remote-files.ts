@@ -1,6 +1,7 @@
 import type { ServerEvents, ServerMethods } from '../src/contracts/server-protocol';
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
 import { faultCode } from './server-calls';
+import type { ServerCallOptions } from './server-client';
 
 export type RemoteFsMethod =
   | 'remote.fs.list'
@@ -8,12 +9,17 @@ export type RemoteFsMethod =
   | 'remote.fs.stat'
   | 'remote.fs.watch'
   | 'remote.fs.unwatch';
+export type RemoteFilesMethod = RemoteFsMethod | 'remote.git';
 type Message<T extends WebviewToHost['type']> = Extract<WebviewToHost, { type: T }>;
 
+/** B bounds its own git read at 30 s; C2 waits longer so B's answer, not our timeout, is what the window gets. */
+const GIT_TIMEOUT_MS = 35_000;
+
 export interface RemoteFilesDeps {
-  call<M extends RemoteFsMethod>(
+  call<M extends RemoteFilesMethod>(
     method: M,
     params: ServerMethods[M]['params'],
+    opts?: ServerCallOptions,
   ): Promise<ServerMethods[M]['result']>;
   sendTo(windowId: number, message: HostToWebview): void;
   log(level: 'info' | 'warn', message: string, data?: Record<string, unknown>): void;
@@ -110,6 +116,35 @@ export function createRemoteFiles(d: RemoteFilesDeps) {
     });
   };
 
+  const git = async (windowId: number, m: Message<'remoteGit:request'>): Promise<void> => {
+    let value: ServerMethods['remote.git']['result'];
+    try {
+      value = await d.call(
+        'remote.git',
+        { machineId: m.machineId, sessionId: m.sessionId, root: m.root, op: m.op, args: m.args },
+        { timeoutMs: GIT_TIMEOUT_MS },
+      );
+    } catch (error) {
+      d.log('warn', 'remote git failed', {
+        machineId: m.machineId,
+        sessionId: m.sessionId,
+        op: m.op,
+        err: String(error),
+      });
+      d.sendTo(windowId, {
+        type: 'remoteGit:result',
+        requestId: m.requestId,
+        result: { ok: false, error: faultCode(error) },
+      });
+      return;
+    }
+    d.sendTo(windowId, {
+      type: 'remoteGit:result',
+      requestId: m.requestId,
+      result: { ok: true, value },
+    });
+  };
+
   // No reply message exists for a watch, so a failure is only logged; the renderer simply gets no
   // change events for that key.
   const watch = async (windowId: number, m: Message<'remoteFs:watch'>): Promise<void> => {
@@ -161,6 +196,7 @@ export function createRemoteFiles(d: RemoteFilesDeps) {
   return {
     list,
     read,
+    git,
     watch,
     unwatch,
     changed,
