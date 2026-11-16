@@ -527,8 +527,7 @@ describe.sequential('compose: NET audit and link revoke reach the MCP side', () 
       .filter((l) => l !== '')
       .map((l) => JSON.parse(l) as Record<string, unknown>);
   };
-  const auditLines = (userData: string) =>
-    jsonlFile(path.join(userData, 'network', 'audit.jsonl'));
+  const auditLines = (userData: string) => jsonlFile(path.join(userData, 'network', 'audit.jsonl'));
   const activityLines = (userData: string) => {
     const dir = path.join(userData, 'conduit-mcp', 'activity');
     if (!fs.existsSync(dir)) return [];
@@ -564,13 +563,9 @@ describe.sequential('compose: NET audit and link revoke reach the MCP side', () 
       sock.once('error', reject);
     });
     sock.destroy();
+    await eventually(() => auditLines(h.userData).some((r) => r.kind === 'pairing.failed'));
     await eventually(() =>
-      auditLines(h.userData).some((r) => r.kind === 'pairing.failed'),
-    );
-    await eventually(() =>
-      activityLines(h.userData).some(
-        (r) => r.lane === 'note' && r.action === 'pairing.failed',
-      ),
+      activityLines(h.userData).some((r) => r.lane === 'note' && r.action === 'pairing.failed'),
     );
   });
 
