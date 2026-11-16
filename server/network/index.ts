@@ -25,8 +25,8 @@ import {
   writeLinkEndpoint,
   writeServerVersion,
 } from '../lifecycle/server-secret';
-import { type BootstrapperOptions, createBootstrapper } from './bootstrap';
 import { type AuditSink, openAuditLog, teeAudit } from './audit-log';
+import { type BootstrapperOptions, createBootstrapper } from './bootstrap';
 import { handleNetworkCall } from './c2';
 import { createDrive, type Drive, type DriveDeps } from './drive';
 import { adoptOwnerKey, type Identity, setOwnerKey } from './identity';
