@@ -27,6 +27,7 @@ All notable user-facing changes to Conduit. Format follows
 - Select a session on another machine and the Files tab shows that machine's folders for it. Click a file to open it in a tab, and the tab follows changes made on that machine. Credential and agent-config files (`.ssh`, `.env`, `.claude`, `.git` and similar) are never listed or sent, and nothing outside the session's folders can be read.
 - You can edit files on another machine in their tabs and save with Ctrl+S (Cmd+S). If the file changed on that machine since you opened it, the save stops and the tab shows their version next to yours; you choose "Save mine anyway" or take their version. A lead agent can add a folder on that machine to a session there with `attach_folder` and an address like `codex-2@win-box`.
 - A lead agent can now ask to attach a folder to a session it opened, not only to its own session; you still approve each one. If you narrowed `attach_folder` in Settings → MCP, your choice stays.
+- Permission asks from agents on a connected machine can now be answered here: Allow, Deny, or Always for this target when that machine allows it. Requests from another machine show that machine's name, and say when it's offline (you can answer once it's back).
 
 ## [0.66.1] — 2026-11-16
 

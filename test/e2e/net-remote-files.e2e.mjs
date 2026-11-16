@@ -444,6 +444,49 @@ async function run(page, userDataDir, log) {
         `remote Changes never picked up fresh.txt: ${JSON.stringify(await changePaths())}`,
       );
       log('remote Changes refreshed with fresh.txt ✓');
+
+      phase(
+        "15. B narrows A's agents to Worker; a routed open_session asks; Allow in A's pop-up lets it run",
+      );
+      const aId = (await networkState({ c2: appC2 })).machineId;
+      const peer = await b.c2.call('mcp.fromRenderer', {
+        windowId: 1,
+        message: {
+          type: 'mcp:setAssignment',
+          requestId: 1,
+          point: { kind: 'peer', machineId: aId },
+          profileId: 'worker',
+        },
+      });
+      assert(peer.reply?.ok === true, `B's peer assignment: ${JSON.stringify(peer)}`);
+      // The tool call waits for B's answer, which waits for the owner here: started, not awaited.
+      const routed = callAppTool(page, lead.sessionId, 'open_session', {
+        machine: bId,
+        agent: ECHO_AGENT,
+        path: bWork,
+        focus: false,
+      });
+      // The ask lands in Needs you under B's name; picking it opens the pop-up, as a person does.
+      await showRightView(page, 'needs');
+      const askRow = page.locator('.needs-list [role="option"]', { hasText: bName });
+      await askRow.first().waitFor({ state: 'visible', timeout: WAIT_MS });
+      await askRow.first().click();
+      const popup = page.locator('.reqtpl-popup');
+      await popup.waitFor({ state: 'visible', timeout: WAIT_MS });
+      await shot('6', 'remote-permission', popup);
+      const allow = popup.getByRole('button', { name: 'Allow', exact: true });
+      // The template ignores presses briefly after a request appears (its swap guard).
+      assert(
+        await pollUntil(async () => await allow.isEnabled(), 5_000, 100),
+        'Allow stayed disabled',
+      );
+      await allow.click();
+      const allowedCall = await routed;
+      assert(
+        typeof allowedCall?.session_id === 'string',
+        `open_session after Allow: ${JSON.stringify(allowedCall)}`,
+      );
+      log("B's permission ask answered from A's pop-up ✓");
     } finally {
       appC2.close();
     }
