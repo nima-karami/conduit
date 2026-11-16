@@ -12,6 +12,8 @@ import {
 } from '../../src/sidebar-view';
 import type { Project, Session } from '../../src/types';
 import { Sidebar } from '../../webview/components/sidebar';
+import type { RemoteKey, RemoteSessionRow } from '../../webview/remote-sessions';
+import { remoteKeyId } from '../../webview/remote-sessions';
 import type { RowMenuScope } from '../../webview/sidebar-selection';
 import {
   type SidebarTreeContextValue,
@@ -92,6 +94,9 @@ interface Setup {
   sessionsLoaded?: boolean;
   renamingId?: string;
   onRowMenu?: (s: Session, at: { anchor: unknown; keyboard: true }) => void;
+  remote?: RemoteSessionRow[];
+  activeRemoteId?: string | null;
+  onSelectRemote?: (key: RemoteKey) => void;
 }
 
 const spies = {
@@ -100,6 +105,7 @@ const spies = {
 };
 let bumpFilter: () => void = () => {};
 let setSessions: (next: Session[]) => void = () => {};
+let setRemote: (next: RemoteSessionRow[]) => void = () => {};
 
 async function render(s: Setup) {
   spies.updateUi.mockClear();
@@ -112,6 +118,8 @@ async function render(s: Setup) {
     const [spacesView, setSpacesView] = useState<SpacesView>(DEFAULT_SPACES_VIEW);
     const [sessions, setList] = useState(s.sessions);
     setSessions = setList;
+    const [remoteRows, setRemoteRows] = useState(s.remote ?? []);
+    setRemote = setRemoteRows;
     const value: SidebarTreeContextValue = {
       ui,
       hydrated: true,
@@ -160,6 +168,15 @@ async function render(s: Setup) {
         renamingId: s.renamingId,
         onRowMenu: s.onRowMenu,
         sessionsLoaded: s.sessionsLoaded,
+        remoteRows,
+        machines: [],
+        machineErrors: new Map(),
+        showMachines: false,
+        activeRemoteId: s.activeRemoteId ?? null,
+        onSelectRemote: s.onSelectRemote ?? (() => {}),
+        onAddMachine: () => {},
+        onMachineAction: () => {},
+        onRenameMachine: () => {},
       }),
     );
   }
@@ -814,5 +831,111 @@ describe('panel ⋯ view menus', () => {
     await pick('Hide empty spaces');
     await pick('Recent');
     expect(spaces()).toEqual(['all', 'p-b', 'p-a']);
+  });
+});
+
+/** A remote session on machine `m1`, opened by the local session `parent` (or none). */
+function remoteRow(sessionId: string, parent: string | null, o: { label?: string } = {}) {
+  const key = { machineId: 'm1', sessionId };
+  return {
+    key,
+    id: remoteKeyId(key),
+    machineName: 'win-box',
+    machineState: 'up' as const,
+    parentSessionId: parent,
+    session: {
+      sessionId,
+      handle: null,
+      label: o.label ?? sessionId,
+      agent: 'claude',
+      presence: 'busy' as const,
+      messaging: 'connected' as const,
+      messageable: false,
+      notices: 'pull' as const,
+      home: '/remote',
+      roots: [],
+      attention: { attentionReason: null, completions: 0 },
+      completions: 0,
+      limit: null,
+      status: 'running' as const,
+    },
+  };
+}
+
+/** Every tree item in DOM order, by its navigation id (sessions, remote rows, group headers). */
+const treeOrder = () =>
+  qa('[data-agent-tree] [role="treeitem"]').map(
+    (el) => el.dataset.sessionid ?? el.dataset.remoteId ?? `group:${el.dataset.agentGroup}`,
+  );
+
+describe('remote rows in the Agents tree', () => {
+  it("remote rows render after the lead's local subtree at depth+1 and hide when folded", async () => {
+    await render({ sessions: family(), remote: [remoteRow('r1', 'p')] });
+    const r = q(`[data-remote-id="remote:m1:r1"]`);
+    expect(treeOrder()).toEqual(['group:idle', 'p', 'c', 'g', 'remote:m1:r1', 'l']);
+    expect(r.getAttribute('aria-level')).toBe('3');
+    expect(rowEl('p').getAttribute('aria-expanded')).toBe('true');
+    await click(rowEl('p').querySelector('[data-agent-action="fold"]'));
+    expect(q('[data-remote-id="remote:m1:r1"]')).toBeNull();
+    expect(rowEl('g')).toBeNull();
+    expect(rowEl('p').querySelector('.session__kids')?.textContent).toBe('3');
+  });
+
+  it('a lead with only remote children folds and counts them', async () => {
+    await render({
+      sessions: [session('p', { createdAt: 1 })],
+      remote: [remoteRow('r1', 'p'), remoteRow('r2', 'p')],
+    });
+    expect(treeOrder()).toEqual(['group:idle', 'p', 'remote:m1:r1', 'remote:m1:r2']);
+    expect(rowEl('p').getAttribute('aria-expanded')).toBe('true');
+    await click(rowEl('p').querySelector('[data-agent-action="fold"]'));
+    expect(q('[data-remote-id="remote:m1:r1"]')).toBeNull();
+    expect(rowEl('p').querySelector('.session__kids')?.textContent).toBe('2');
+  });
+
+  it('remote rows are not .session', async () => {
+    await render({ sessions: family(), remote: [remoteRow('r1', 'p')] });
+    const r = q('[data-remote-id="remote:m1:r1"]');
+    expect(r.getAttribute('role')).toBe('treeitem');
+    expect(r.classList.contains('remote-session')).toBe(true);
+    expect(r.classList.contains('session')).toBe(false);
+    expect(rowIds()).toEqual(['p', 'c', 'g', 'l']);
+  });
+
+  it('a remote row with no local lead is not in the Agents tree', async () => {
+    await render({ sessions: family(), remote: [remoteRow('r9', null)] });
+    expect(q('[data-remote-id="remote:m1:r9"]')).toBeNull();
+  });
+
+  it('Enter on a remote row selects it by its machine key; ArrowLeft goes to the lead', async () => {
+    const onSelectRemote = vi.fn();
+    await render({
+      sessions: family(),
+      remote: [remoteRow('r1', 'p')],
+      onSelectRemote,
+      activeRemoteId: 'remote:m1:r1',
+    });
+    expect(q('[data-remote-id="remote:m1:r1"]').getAttribute('aria-selected')).toBe('true');
+    await act(async () => q('[data-remote-id="remote:m1:r1"]').focus());
+    await key(q('[data-remote-id="remote:m1:r1"]'), 'ArrowLeft');
+    expect(document.activeElement).toBe(rowEl('p'));
+    await act(async () => q('[data-remote-id="remote:m1:r1"]').focus());
+    await key(q('[data-remote-id="remote:m1:r1"]'), 'Enter');
+    expect(onSelectRemote).toHaveBeenCalledWith({ machineId: 'm1', sessionId: 'r1' });
+  });
+
+  it('ArrowRight on a lead with only remote children moves into its first remote row', async () => {
+    await render({ sessions: [session('p', { createdAt: 1 })], remote: [remoteRow('r1', 'p')] });
+    await act(async () => rowEl('p').focus());
+    await key(rowEl('p'), 'ArrowRight');
+    expect(document.activeElement).toBe(q('[data-remote-id="remote:m1:r1"]'));
+  });
+
+  it('when a focused remote row vanishes, focus goes to its lead', async () => {
+    await render({ sessions: [session('p', { createdAt: 1 })], remote: [remoteRow('r1', 'p')] });
+    await act(async () => q('[data-remote-id="remote:m1:r1"]').focus());
+    await act(async () => setRemote([]));
+    expect(q('[data-remote-id="remote:m1:r1"]')).toBeNull();
+    expect(document.activeElement).toBe(rowEl('p'));
   });
 });

@@ -5311,6 +5311,16 @@ export function App() {
             mcpEnabled={mcp.state?.enabled ?? false}
             renamingId={renamingId}
             onSetRenaming={(id) => setRenamingId(id ?? undefined)}
+            // Machines are not wired yet (plan CON-41 slice 2): the tree type-checks with none.
+            remoteRows={[]}
+            machines={[]}
+            machineErrors={new Map()}
+            showMachines={false}
+            activeRemoteId={null}
+            onSelectRemote={() => {}}
+            onAddMachine={() => {}}
+            onMachineAction={() => {}}
+            onRenameMachine={() => {}}
             onSessionDragEnd={(sessionId, screenX, screenY) => {
               const drop = () => post({ type: 'session:dragEnd', sessionId, screenX, screenY });
               const own = {
