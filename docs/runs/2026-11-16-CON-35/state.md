@@ -37,6 +37,6 @@ Haiku builders in /tmp/claude-1000/-home-namemenima-projects--wt-conduit-CON-35/
 ## CON-46 slice 11 (remote rules) — in progress (usage pause point, 16:35Z)
 - Plan: docs/plans/2026-11-16-remote-ssh-rules.plan.md (25355ed0). Frames at minor 5 (CON-43 fs took 4).
 - Merged: L1 frames 9be308a1; L2 B policy service 92a34247 (verify 0; 11 mutants red). Also merged from claude-25: CON-41 0599abdb, CON-47 718b90ba (both verify 0).
-- L3 network (branch con46-l3, worktree scratchpad/lanes/c46-l3, first commit e7617010): rebasing onto 92a34247, adding flow.recheck after apply/revoke in host networkPort, policy codes into ToolErrorCode. Merge when its report says verify:quick EXIT=0, then full verify under flock.
+- L3 network MERGED 3982be1a (verify 0 under flock). B: snapshots to controllers, serves push/revoke, recheck after apply; A: dialed-only accept, pending pushes; remotePolicySink optional (snapshots dropped+audited until L4).
 - NEXT (not started, held for usage): L4 A store src/conduit-mcp/remote-policy.ts + host `machine` on edits + mcp:remotePolicy + policy.machines + drafts file; make remotePolicySink required. Then L5 picker in settings McpToolPolicyRows + e2e net-policy. Then e2e:remote, changelog, report.
 - Follow-up: fallow clone cluster server/network/policy.ts vs requests.ts (shared refuse/settle helpers).
