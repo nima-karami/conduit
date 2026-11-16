@@ -722,7 +722,10 @@ export type ServerErrorKind =
   | 'peer_unreachable'
   | 'peer_revoked'
   | 'capability_off'
-  | 'pairing_failed';
+  | 'pairing_failed'
+  // A remote file request (plan CON-43): the peer is too old to serve it, or the answer exceeds a frame.
+  | 'peer_incompatible'
+  | 'too_large';
 
 /**
  * Every server event travels as one JSON-RPC notification method, so a reader dispatches on
