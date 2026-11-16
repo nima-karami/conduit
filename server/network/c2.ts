@@ -102,6 +102,15 @@ export function handleNetworkCall(
       return d.drive.close(str(p, 'machineId'), str(p, 'sessionId')).then(() => ({}));
     case 'link.list':
       return Promise.resolve(d.state());
+    case 'link.sshAdd': {
+      const ssh = paramsOf(p.ssh);
+      return d.manager.addSshPeer({
+        target: str(ssh, 'target', 256),
+        node: str(ssh, 'node', MAX_PATH),
+        mainJs: str(ssh, 'mainJs', MAX_PATH),
+        userData: str(ssh, 'userData', MAX_PATH),
+      });
+    }
     case 'link.revoke': {
       const machineId = str(p, 'machineId');
       if (!d.manager.view(machineId)) throw new RpcFault('not_found', `No link to ${machineId}`);

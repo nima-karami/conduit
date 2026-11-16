@@ -34,6 +34,8 @@ export interface NetworkLinkView {
   machineId: string;
   name: string;
   trust: 'own';
+  /** How the link reaches the peer: TLS over the link port, or an ssh child's stdio. */
+  transport: 'tls' | 'ssh';
   state: LinkState;
   since: string;
   /** Set once a revoke happened this run: 'me' here, 'peer' when the other side revoked. */

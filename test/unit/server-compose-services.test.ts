@@ -58,6 +58,7 @@ async function harness(options: Partial<ServicesOptions> = {}, userDataOf?: stri
   const services = createServices({
     userData,
     names,
+    secret: () => SECRET,
     platform: process.platform,
     e2e: true,
     appVersion: '9.9.9',

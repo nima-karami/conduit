@@ -115,6 +115,7 @@ export async function runServer(
       hcBin,
       transport,
       shell: () => composed,
+      secret: () => secret,
     });
   }
   const core = dependencies.core ?? services?.core;
@@ -200,6 +201,7 @@ function createServerServices(o: {
   transport: PipeTransport;
   /** Undefined while the services are being built, before compose exists. */
   shell: () => ReturnType<typeof compose> | undefined;
+  secret: () => string;
 }): Services {
   const at =
     (level: 'debug' | 'info' | 'warn' | 'error') =>
@@ -217,6 +219,7 @@ function createServerServices(o: {
   return createServices({
     userData: o.userData,
     names: o.names,
+    secret: o.secret,
     platform: o.platform,
     e2e: o.e2e,
     appVersion: o.appVersion,

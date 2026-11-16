@@ -39,6 +39,8 @@ const STATUS_RESEND_MS = 150;
 export interface ServicesOptions {
   userData: string;
   names: InstanceNames;
+  /** The per-start secret the ssh bridge proves with; main.ts writes it before the services exist. */
+  secret: () => string;
   platform: NodeJS.Platform;
   e2e: boolean;
   appVersion: string;
@@ -266,6 +268,8 @@ export function createServices(o: ServicesOptions) {
           dir: networkDir,
           userData: o.userData,
           instance: o.names.instance,
+          linkEndpoint: o.names.linkEndpoint,
+          secret: o.secret,
           identity: loaded.identity,
           settings: () => domain.settings(),
           emit: (state) => o.emit('network.changed', state),

@@ -2,8 +2,11 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { writeServerSecret } from '../../server/lifecycle/server-secret';
 import { loadIdentity } from '../../server/network/identity';
 import { createNetwork, type NetworkService } from '../../server/network/index';
+import type { McpNetworkPort, RemoteEntry } from '../../src/conduit-mcp/remote-routing';
+import type { MessageRecord } from '../../src/conduit-mcp/types';
 import type { NetworkState } from '../../src/contracts/network-state';
 
 const quiet = { debug: () => undefined, warn: () => undefined, error: () => undefined };
@@ -17,11 +20,14 @@ function server(name: string) {
   const dir = join(root, 'network');
   const loaded = loadIdentity(dir);
   if (loaded.kind === 'newer') throw new Error('unexpected');
+  const secret = writeServerSecret(root);
   const states: NetworkState[] = [];
   const net = createNetwork({
     dir,
     userData: root,
     instance: 'service-test',
+    linkEndpoint: join(root, 'conduit-link.sock'),
+    secret: () => secret,
     identity: loaded.identity,
     settings: () => ({ networkBindHost: '127.0.0.1', networkPort: 0, networkSelfName: name }),
     emit: (s) => states.push(s),
@@ -140,6 +146,13 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
         on: true,
       }),
     ).rejects.toThrow('Expected capability');
+    // Every ssh field must be a non-empty string: a missing one never reaches the dialer.
+    await expect(
+      call(a.net, 'link.sshAdd', { ssh: { target: 'fake', node: '', mainJs: 'm', userData: 'u' } }),
+    ).rejects.toThrow('Expected node');
+    await expect(call(a.net, 'link.sshAdd', { ssh: { target: 'fake' } })).rejects.toThrow(
+      'Expected node',
+    );
     expect(a.net.handle('sessions.list', {})).toBeNull();
   });
 
@@ -208,4 +221,96 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
     // The control dir is the one controlDir() chose under userData, created by the dial.
     expect(existsSync(join(userData, 'ssh'))).toBe(true);
   });
+
+  // The bridge is a stand-in here: the real --link-stdio path is the e2e's, and this test can't run TS.
+  // It writes the same preamble and pipes the same bytes, so the composed ssh path is what's proven.
+  it.skipIf(process.platform === 'win32')(
+    'link.sshAdd links two services over fake-ssh and delivers a message',
+    async () => {
+      const work = mkdtempSync(join(tmpdir(), 'ssh-add-'));
+      cleanup.push(() => rmSync(work, { recursive: true, force: true }));
+      const fakeSsh = join(process.cwd(), 'test', 'e2e', 'fixtures', 'fake-ssh.cjs');
+      const wrapper = join(work, 'ssh');
+      writeFileSync(wrapper, `#!/bin/sh\nexec '${process.execPath}' '${fakeSsh}' "$@"\n`);
+      chmodSync(wrapper, 0o755);
+      const bridge = join(work, 'bridge.cjs');
+      writeFileSync(
+        bridge,
+        [
+          "const fs = require('node:fs'); const net = require('node:net'); const path = require('node:path');",
+          "const userData = process.argv[process.argv.indexOf('--user-data') + 1];",
+          "const secret = fs.readFileSync(path.join(userData, 'server-secret'), 'utf8').trim();",
+          "const body = Buffer.from(JSON.stringify({ t: 'bridge', v: 1, secret }));",
+          'const pre = Buffer.alloc(4 + body.length); pre.writeUInt32BE(body.length, 0); body.copy(pre, 4);',
+          "const sock = net.createConnection(path.join(userData, 'conduit-link.sock'), () => {",
+          '  sock.write(pre); process.stdin.pipe(sock); sock.pipe(process.stdout);',
+          '});',
+          "sock.on('close', () => process.exit(0));",
+          '',
+        ].join('\n'),
+      );
+      vi.stubEnv('CONDUIT_SSH_PATH', wrapper);
+      cleanup.push(() => {
+        vi.unstubAllEnvs();
+      });
+
+      const a = server('net-a');
+      const b = server('net-b');
+      const delivered: string[] = [];
+      const mcp = (sink: string[]): McpNetworkPort => ({
+        localDirectory: () => [],
+        hasMessage: () => false,
+        readBlob: async () => undefined,
+        threadExportedTo: () => false,
+        wireThreadFor: (threadId: string) => threadId,
+        deliverInbound: async (msg) => {
+          sink.push(msg.body);
+          return msg.to.map((handle) => ({ handle, status: 'delivered' as const, reason: null }));
+        },
+        setRemoteStatus: async () => {},
+        onLocalStatus: () => () => {},
+        youUnread: () => 0,
+        ownerPresence: () => 'here',
+        requestsSummary: () => [],
+      });
+      a.net.setMcp(mcp([]));
+      b.net.setMcp(mcp(delivered));
+      await a.net.start();
+      await b.net.start();
+
+      const added = await call<{ ok: boolean; machineId?: string }>(a.net, 'link.sshAdd', {
+        ssh: {
+          target: 'fake-target',
+          node: process.execPath,
+          mainJs: bridge,
+          userData: join(b.dir, '..'),
+        },
+      });
+      expect(added).toEqual({ ok: true, machineId: b.net.state().machineId });
+
+      const bId = b.net.state().machineId;
+      await until(() => a.net.state().links.some((l) => l.machineId === bId && l.state === 'up'));
+      const linkA = (await call<NetworkState>(a.net, 'link.list')).links.find(
+        (l) => l.machineId === bId,
+      );
+      expect(linkA?.transport).toBe('ssh');
+
+      const message: MessageRecord = {
+        messageId: 'm_abcdefghijklmnop',
+        threadId: 't_abcdefghijklmnop',
+        from: 'agent-1',
+        to: ['agent-2'],
+        subject: 'hi',
+        kind: 'inform',
+        priority: 'normal',
+        sentAt: '2026-01-01T00:00:00Z',
+        body: 'over ssh',
+        attachments: [],
+      };
+      const recipient = { handle: 'agent-2', address: `agent-2@${bId}`, machineId: bId };
+      a.net.port().enqueue(message, [recipient as RemoteEntry]);
+      await until(() => delivered.includes('over ssh'));
+      expect(delivered).toEqual(['over ssh']);
+    },
+  );
 });

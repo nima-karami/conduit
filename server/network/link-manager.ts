@@ -609,6 +609,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     return {
       machineId: p.record.machineId,
       name: p.record.name,
+      transport: p.record.transport,
       state: p.sm.state,
       since: iso(p.sm.since),
       revokedBy: p.revokedBy,

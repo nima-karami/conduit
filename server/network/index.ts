@@ -31,6 +31,7 @@ import { createPairingPort } from './pairing-port';
 import { createPairingService, type PairingService } from './pairing-service';
 import { createSnapshotCoalescer } from './snapshot-coalescer';
 import { createSshDial } from './ssh-dialer';
+import { listenStdioLink, type StdioLinkEndpoint } from './stdio-link-endpoint';
 import { createViewRelay } from './view-relay';
 
 // The one composer for linked machines (plan "Technical decisions" 1): services.ts only builds,
@@ -45,6 +46,10 @@ export interface NetworkDeps {
   userData: string;
   /** The instance digest: names the ssh control dir's fallback when userData is too long. */
   instance: string;
+  /** The stdio link endpoint the ssh bridge connects to; the server's names.linkEndpoint. */
+  linkEndpoint: string;
+  /** The per-start secret a bridge's preamble must carry; read at each preamble, never per connection. */
+  secret: () => string;
   identity: Identity;
   settings(): NetworkSettings;
   emit(state: NetworkState): void;
@@ -179,6 +184,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
   });
 
   let listener: LinkListener | null = null;
+  let stdioLink: StdioLinkEndpoint | null = null;
   let bound: { host: string; port: number } | null = null;
   let listening: Promise<string[]> | null = null;
 
@@ -464,6 +470,18 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     async start() {
       messaging.start();
       manager.start();
+      // Not fatal: C2 and TLS links still work without the ssh bridge's endpoint.
+      stdioLink = await listenStdioLink({
+        endpoint: deps.linkEndpoint,
+        platform: process.platform,
+        secret: deps.secret,
+        accept: (stream) => manager.acceptStream(stream),
+        audit,
+        log: deps.log,
+      }).catch((err: Error) => {
+        deps.log.error('stdio link endpoint did not start', { message: err.message });
+        return null;
+      });
       if (store.links().length > 0) {
         await ensureListening().catch((err: Error) =>
           deps.log.warn('link listener did not start', { message: err.message }),
@@ -471,6 +489,10 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       }
     },
     async stop() {
+      // Closed first, so no ssh stream is admitted while the manager winds its links down.
+      const endpoint = stdioLink;
+      stdioLink = null;
+      await endpoint?.close();
       emitTimer?.();
       snapshots.stop();
       closePairingPort();
