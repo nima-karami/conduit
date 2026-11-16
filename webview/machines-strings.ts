@@ -184,4 +184,14 @@ export const MACHINES_STR = {
   filesEmpty: 'This folder is empty.',
   filesOffline: (machine: string) => `${machine} is offline`,
   filesTree: (machine: string) => `Files on ${machine}`,
+  // Remote Changes view (plan CON-45 G4).
+  changesLoading: 'Loading changes…',
+  changesRetry: 'Retry',
+  changesNoRepo: 'No git repository in this session’s folders.',
+  changesNoChanges: 'No changes.',
+  changesStale: 'Could not read the latest status. Showing the last one that worked.',
+  changesStaged: 'staged',
+  changesHistory: 'History',
+  changesOffline: (machine: string) => `${machine} is offline`,
+  changesList: (machine: string) => `Changes on ${machine}`,
 };
