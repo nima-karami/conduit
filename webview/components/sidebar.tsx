@@ -246,6 +246,7 @@ export function Sidebar({
   onAddMachine,
   onMachineAction,
   onRenameMachine,
+  onSetUpAgents,
 }: {
   /** This window's sessions; the tree orders them, so the incoming order is not used. */
   sessions: Session[];
@@ -297,6 +298,7 @@ export function Sidebar({
   onMachineAction: (action: MachineAction, machine: MachineView) => void;
   /** The Rename field's result: the owner's new name for a machine (the menu's Rename). */
   onRenameMachine: (machine: MachineView, name: string) => void;
+  onSetUpAgents: (machine: MachineView) => void;
 }) {
   const tree = useSidebarTreeState();
   const { ui, runtime, askSessionIds, bindings, updateUi, reportVisibleIds } = tree;
@@ -1296,6 +1298,7 @@ export function Sidebar({
             onAddMachine={onAddMachine}
             onMachineAction={onMachineAction}
             onRenameMachine={onRenameMachine}
+            onSetUpAgents={onSetUpAgents}
             onConfirm={onConfirm}
           />
         </section>
