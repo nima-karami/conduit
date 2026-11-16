@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import type { GrantChoice } from '../../src/conduit-mcp/grant-store';
 import { DRAFT_MAX_BYTES } from '../../src/conduit-mcp/request-args';
 import type {
   AnswerInput,
@@ -42,6 +43,26 @@ interface Choice {
 }
 
 const byteLength = (s: string): number => new TextEncoder().encode(s).length;
+
+type RefusedAnswer = Extract<RequestAnswerResult, { ok: false }>;
+
+// A remote refusal names its machine; a local one keeps the result's own message.
+function refusalText(result: RefusedAnswer, machine: string | undefined): string {
+  const copy = REQ_STR.reqTpl.refusal;
+  if (machine === undefined) return result.message;
+  switch (result.reason) {
+    case 'already_ended':
+      return copy.alreadyEnded;
+    case 'peer_unreachable':
+      return copy.peerUnreachable(machine);
+    case 'peer_incompatible':
+      return copy.peerIncompatible(machine);
+    case 'peer_revoked':
+      return copy.peerRevoked(machine);
+    default:
+      return result.message;
+  }
+}
 
 function choicesOf(r: RequestView): Choice[] {
   switch (r.kind) {
@@ -201,6 +222,12 @@ export function RequestTemplate(p: RequestTemplateProps): JSX.Element {
   const conduit = isConduit(r);
   const quoted = !conduit;
   const ended = r.state !== 'open';
+  const remotePerm = r.remote?.permission ?? null;
+  const stale = r.remote?.stale ?? false;
+  // A stale link takes no answer at all, so every control that answers is locked with it.
+  const locked = ended || stale;
+  const offlineTitle =
+    stale && r.remote ? REQ_STR.reqTpl.offlineHint(r.remote.machineName) : undefined;
   const editKey = `${r.id}#draft`;
 
   const draft = useDraft(r.id);
@@ -220,6 +247,7 @@ export function RequestTemplate(p: RequestTemplateProps): JSX.Element {
   const [sent, setSent] = useState(false);
   const [receipt, setReceipt] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
   const guardUntil = useRef(0);
   const guardTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const nextTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -255,23 +283,25 @@ export function RequestTemplate(p: RequestTemplateProps): JSX.Element {
   const writeText = (next: string) => setDraft(r.id, { pick: picks, text: next });
 
   const pick = (key: string) => {
-    if (ended) return;
+    if (locked) return;
     if (multi) writePicks(picks.includes(key) ? picks.filter((k) => k !== key) : [...picks, key]);
     else writePicks([key]);
   };
 
   const send = async (a: AnswerInput) => {
-    if (guardedNow() || inFlight.current || sent || ended) return;
+    if (guardedNow() || inFlight.current || sent || locked) return;
     inFlight.current = true;
     setFailure(null);
+    setPending(true);
     let result: RequestAnswerResult;
     try {
       result = await onSend(a);
     } finally {
       inFlight.current = false;
+      setPending(false);
     }
     if (!result.ok) {
-      setFailure(result.message);
+      setFailure(refusalText(result, r.remote?.machineName));
       return;
     }
     setSent(true);
@@ -317,6 +347,7 @@ export function RequestTemplate(p: RequestTemplateProps): JSX.Element {
   };
 
   const showOpenAsTab = mode === 'popup' && r.kind !== 'attend';
+  const permissionDisabled = locked || sent || pending;
   const endedText = endedLine(r, handle);
   const waitingSecs =
     r.waitingUntil === null
@@ -368,7 +399,7 @@ export function RequestTemplate(p: RequestTemplateProps): JSX.Element {
               value={edited}
               rows={lineCount(edited)}
               wrap="off"
-              disabled={ended}
+              disabled={locked}
               onChange={(e) => setDraft(editKey, { pick: [], text: e.target.value })}
             />
           </div>
@@ -400,6 +431,9 @@ export function RequestTemplate(p: RequestTemplateProps): JSX.Element {
               </span>
             )}
             {r.priority === 'urgent' && <span className="reqtpl-urgent">{REQ_STR.urgent}</span>}
+            {stale && r.remote && (
+              <span className="reqtpl-chip">{REQ_STR.offline(r.remote.machineName)}</span>
+            )}
           </div>
           <div className="reqtpl-head__meta">{sessionName}</div>
         </div>
@@ -436,7 +470,54 @@ export function RequestTemplate(p: RequestTemplateProps): JSX.Element {
       <section className="reqtpl-answer">
         {endedText !== null && <div className="reqtpl-ended">{endedText}</div>}
 
-        {r.kind === 'attend' ? (
+        {remotePerm !== null ? (
+          <div className="reqtpl-attend">
+            <p>
+              {remotePerm.why} · <code>{remotePerm.tool}</code>
+            </p>
+            <div className="reqtpl-permission" role="group" aria-label={r.title}>
+              <button
+                type="button"
+                className="btn btn--sm"
+                disabled={permissionDisabled}
+                title={offlineTitle}
+                onClick={() => void send({ outcome: 'denied' })}
+              >
+                {REQ_STR.reqTpl.permissionDeny}
+              </button>
+              <button
+                type="button"
+                className="btn btn--sm btn--primary"
+                disabled={permissionDisabled}
+                title={offlineTitle}
+                onClick={() => void send({ outcome: 'allowed' })}
+              >
+                {REQ_STR.reqTpl.permissionAllow}
+              </button>
+              {remotePerm.grantable && (
+                <button
+                  type="button"
+                  className="btn btn--sm"
+                  disabled={permissionDisabled}
+                  title={offlineTitle}
+                  onClick={() =>
+                    void send({
+                      outcome: 'allowed',
+                      grant: {
+                        who: 'peer',
+                        on: 'target',
+                        for: 'until-revoked',
+                      } satisfies GrantChoice,
+                    })
+                  }
+                >
+                  {REQ_STR.reqTpl.permissionAlways}
+                </button>
+              )}
+            </div>
+            {pending && <p className="reqtpl-sending">{REQ_STR.reqTpl.sending}</p>}
+          </div>
+        ) : r.kind === 'attend' ? (
           <div className="reqtpl-attend">
             <p>{REQ_STR.reqTpl.attendLine}</p>
             <button type="button" className="btn btn--primary" onClick={p.onOpenTerminal}>
@@ -464,7 +545,7 @@ export function RequestTemplate(p: RequestTemplateProps): JSX.Element {
                         value={c.key}
                         data-key={c.key}
                         checked={checked}
-                        disabled={ended}
+                        disabled={locked}
                         onChange={() => pick(c.key)}
                       />
                       <span className="reqtpl-option__num" aria-hidden="true">
@@ -491,7 +572,7 @@ export function RequestTemplate(p: RequestTemplateProps): JSX.Element {
                   id={ownId}
                   className="reqtpl-field__input"
                   value={text}
-                  disabled={ended}
+                  disabled={locked}
                   onChange={(e) => writeText(e.target.value)}
                 />
               </div>
@@ -506,7 +587,7 @@ export function RequestTemplate(p: RequestTemplateProps): JSX.Element {
                   id={ownId}
                   className="reqtpl-field__input"
                   value={text}
-                  disabled={ended}
+                  disabled={locked}
                   onChange={(e) => writeText(e.target.value)}
                 />
               </div>
@@ -521,7 +602,7 @@ export function RequestTemplate(p: RequestTemplateProps): JSX.Element {
                   id={noteId}
                   className="reqtpl-field__input"
                   value={text}
-                  disabled={ended}
+                  disabled={locked}
                   onChange={(e) => writeText(e.target.value)}
                 />
               </div>
@@ -541,7 +622,8 @@ export function RequestTemplate(p: RequestTemplateProps): JSX.Element {
                 className="btn btn--primary reqtpl-send__btn"
                 aria-disabled={guarded}
                 aria-keyshortcuts="Control+Enter"
-                disabled={answer === null || ended || sent}
+                disabled={answer === null || locked || sent || pending}
+                title={offlineTitle}
                 onClick={() => {
                   if (answer) void send(answer);
                 }}
@@ -581,7 +663,8 @@ export function RequestTemplate(p: RequestTemplateProps): JSX.Element {
               type="button"
               className="btn btn--sm"
               aria-disabled={guarded}
-              disabled={ended || sent}
+              disabled={locked || sent || pending}
+              title={offlineTitle}
               onClick={() => {
                 if (!guardedNow()) void send({ outcome: 'dismissed' });
               }}

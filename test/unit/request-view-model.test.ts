@@ -106,6 +106,17 @@ describe('openAsOf size rule', () => {
   });
   it('opens attend in the terminal', () => {
     expect(openAsOf(req({ kind: 'attend', blocked: 'question' }))).toBe('terminal');
+    // A permission asked on another machine is answered here, so it opens as a pop-up.
+    const remotePerm = { tool: 'open_session', why: 'opens a session', grantable: true };
+    expect(
+      openAsOf(
+        req({
+          kind: 'attend',
+          blocked: 'permission',
+          remote: { machineName: 'Studio PC', stale: false, permission: remotePerm },
+        }),
+      ),
+    ).toBe('popup');
   });
   it('opens a small confirm as a popup', () => {
     expect(openAsOf(req({ kind: 'confirm', body: 'Run it?' }))).toBe('popup');
@@ -316,6 +327,41 @@ describe('cardsOf', () => {
     expect(cardsOf([req({ space: null })], ctx)[0]?.details.space).toBeNull();
   });
 
+  it('names a mirrored machine on its card, and marks the row remote', () => {
+    const card = cardsOf(
+      [
+        req({
+          machine: 'm-aaaa1111',
+          remote: { machineName: 'Studio PC', stale: false, permission: null },
+        }),
+      ],
+      ctx,
+    )[0];
+    expect(card?.details.machine).toBe('Studio PC');
+    expect(card).toMatchObject({ remote: true, stale: false, remotePermission: null });
+  });
+
+  it('carries a mirrored permission and the stale link onto the card', () => {
+    const perm = { tool: 'open_session', why: 'a routed open', grantable: true };
+    const card = cardsOf(
+      [
+        req({
+          kind: 'attend',
+          blocked: 'permission',
+          remote: { machineName: 'Studio PC', stale: true, permission: perm },
+        }),
+      ],
+      ctx,
+    )[0];
+    expect(card).toMatchObject({ remote: true, stale: true, remotePermission: perm });
+  });
+
+  it('leaves a local row unremote, with its machine id as before', () => {
+    const card = cardsOf([req({ machine: 'laptop' })], ctx)[0];
+    expect(card).toMatchObject({ remote: false, stale: false, remotePermission: null });
+    expect(card?.details.machine).toBe('laptop');
+  });
+
   it('builds the accessible name', () => {
     const r = req({ id: 'aria', kind: 'confirm', title: 'Run tests?', session: 's1' });
     const card = cardsOf([req({ ...r, waiting: true, waitingUntil: iso(NOW + 58_000) })], ctx)[0];
@@ -382,7 +428,24 @@ describe('filterOptions', () => {
       { id: 'sp2', label: 'Website' },
     ]);
     expect(opts.types).toEqual(['approve', 'review']);
-    expect(opts.machines).toEqual(['desk', 'laptop']);
+    expect(opts.machines).toEqual([
+      { id: 'desk', label: 'desk' },
+      { id: 'laptop', label: 'laptop' },
+    ]);
+  });
+
+  it('labels a mirrored machine by its name and filters on its id', () => {
+    const rs = [
+      req({
+        id: 'x',
+        machine: 'm-aaaa1111',
+        remote: { machineName: 'Studio PC', stale: false, permission: null },
+      }),
+    ];
+    const opts = filterOptions(rs, { sessions: SESSIONS, spaces: SPACES });
+    expect(opts.machines).toEqual([{ id: 'm-aaaa1111', label: 'Studio PC' }]);
+    const { shown } = applyFilters(rs, { ...NO_FILTERS, machines: ['m-aaaa1111'] });
+    expect(shown).toHaveLength(1);
   });
 });
 

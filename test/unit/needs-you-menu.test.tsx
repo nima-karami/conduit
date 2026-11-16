@@ -17,7 +17,7 @@ const OPTIONS: ReturnType<typeof filterOptions> = {
   leads: [{ id: 's1', label: 'Three-process lead' }],
   spaces: [{ id: 'sp1', label: 'Conduit' }],
   types: ['approve', 'answer'],
-  machines: ['studio-pc'],
+  machines: [{ id: 'studio-pc', label: 'Studio PC' }],
 };
 
 const props = (over: Partial<NeedsYouMenuProps> = {}): NeedsYouMenuProps => ({

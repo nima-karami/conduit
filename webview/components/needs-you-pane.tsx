@@ -16,6 +16,7 @@ import {
   applyFilters,
   type CardView,
   cardsOf,
+  machineNamesOf,
   type RequestFilters,
   type RequestType,
   type SessionInfo,
@@ -94,6 +95,7 @@ function filterNames(
   f: RequestFilters,
   sessions: ReadonlyMap<string, SessionInfo>,
   spaces: ReadonlyMap<string, string>,
+  machines: ReadonlyMap<string, string>,
 ): string {
   const session = (id: string) => sessions.get(id)?.name ?? id;
   return [
@@ -101,7 +103,7 @@ function filterNames(
     ...f.leads.map(session),
     ...f.spaces.map((id) => spaces.get(id) ?? id),
     ...f.types.map((t) => REQ_STR.typeWord[t]),
-    ...f.machines,
+    ...f.machines.map((id) => machines.get(id) ?? id),
   ].join(', ');
 }
 
@@ -254,7 +256,7 @@ export function NeedsYouPane(p: NeedsYouPaneProps): JSX.Element {
     <div className="needs-filterbar">
       <span className="needs-filterbar__text">
         {REQ_STR.needsPane.filtered(
-          filterNames(filters, sessionMap, spaceNames),
+          filterNames(filters, sessionMap, spaceNames, machineNamesOf(requests?.open ?? [])),
           shown.length,
           openTotal,
         )}
@@ -384,6 +386,9 @@ export function NeedsYouPane(p: NeedsYouPaneProps): JSX.Element {
                     <span className="needs-row__why">
                       <WhyChip why={c.whyNow} now={now} />
                     </span>
+                    {c.stale && (
+                      <span className="needs-chip">{REQ_STR.offline(c.details.machine)}</span>
+                    )}
                   </div>
                   <div className="needs-row__line">
                     {c.conduit && <span className="needs-conduit">{REQ_STR.conduit}</span>}
@@ -455,7 +460,7 @@ function detailsOf(c: CardView, show: ShowOnCards): ReactNode {
   const parts = [
     show.space ? c.details.space : null,
     show.age && c.whyNow.kind !== 'age' ? c.details.age : null,
-    show.machine ? c.details.machine : null,
+    show.machine || c.remote ? c.details.machine : null,
   ].filter((x): x is string => x !== null && x !== '');
   if (parts.length === 0) return null;
   return <div className="needs-row__details">{parts.join(' · ')}</div>;
