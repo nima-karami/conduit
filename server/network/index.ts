@@ -39,6 +39,7 @@ import {
 import { handleNetworkCall } from './c2';
 import { createCalls, isDialedSsh } from './calls';
 import { createDrive, type Drive, type DriveDeps } from './drive';
+import { createFsClient } from './fs-client';
 import { adoptOwnerKey, type Identity, setOwnerKey } from './identity';
 import { createLinkManager, type LinkManager } from './link-manager';
 import { openLinkStore } from './link-store';
@@ -245,6 +246,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       drive.linkChanged(machineId);
     }
     calls.settleAbsent(views.map((v) => v.machineId));
+    fsClient.linksChanged(views);
     requests.linksChanged();
     for (const l of portListeners) l();
   };
@@ -329,6 +331,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
           .serveCall(machineId, f)
           .catch((err: unknown) => deps.log.error('call failed', { message: String(err) }));
       else if (f.t === 'call.result') calls.onResult(machineId, f);
+      else if (f.t === 'fs.res' || f.t === 'fs.changed') fsClient.onFrame(machineId, f);
       else if (f.t === 'request.mirror' || f.t === 'request.answer' || f.t === 'request.answered')
         void requests
           .onFrame(machineId, f)
@@ -352,6 +355,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     reconnected: (machineId) => {
       messaging.reconnected(machineId);
       publisher.pushTo(machineId);
+      fsClient.reconnected(machineId);
     },
   });
 
@@ -452,6 +456,17 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     newId: () => `c_${randomBytes(12).toString('hex')}`,
     after,
     log: (message, data) => deps.log.info(message, data),
+  });
+  const fsClient = createFsClient({
+    linkOf: (machineId) => store.get(machineId),
+    linkState: (machineId) => manager.view(machineId)?.state ?? null,
+    peerMinor: (machineId) => manager.peerMinor(machineId),
+    send: (machineId, frame) => manager.send(machineId, frame),
+    emitTo: deps.emitTo,
+    audit,
+    now,
+    newId: () => `f_${randomBytes(12).toString('hex')}`,
+    after,
   });
   const requestPorts = deps.requestPorts ?? {
     b: {
@@ -768,6 +783,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       relay.stop();
       drive.stop();
       calls.stop();
+      fsClient.stop();
       requests.stop();
       publisher.stop();
       messaging.stop();
@@ -786,9 +802,13 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
         openSetupPane,
         machines,
         sshHosts,
+        fs: fsClient,
         peer,
       }),
-    disconnected: (peer) => relay.disconnected(peer),
+    disconnected: (peer) => {
+      relay.disconnected(peer);
+      fsClient.peerGone(peer);
+    },
     async settingsChanged() {
       const s = deps.settings();
       if (bound && (bound.host !== s.networkBindHost || bound.port !== s.networkPort)) {
