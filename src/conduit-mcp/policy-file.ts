@@ -1,8 +1,19 @@
 // Node-free: pure text in, text out.
 // Unknown fields are kept and written back (SERVER_FILE_VERSION reader rule); a narrowing field needs a version bump.
+import {
+  REMOTE_POLICY_ASSIGNMENTS_MAX,
+  REMOTE_POLICY_DOC_MAX_BYTES,
+  REMOTE_POLICY_EXCEPTIONS_MAX,
+  REMOTE_POLICY_NAME_MAX,
+  REMOTE_POLICY_PATH_MAX,
+  REMOTE_POLICY_PROFILES_MAX,
+  type RemotePolicyDoc,
+  type RemotePolicyPoint,
+} from '../contracts/remote-policy';
 import { judgePersistedVersion, type ServerFile } from '../contracts/session-identity';
+import { printableName } from '../network/addresses';
 import { GRANT_FORS } from './grant-store';
-import { OBSERVER } from './policy-profiles';
+import { BUILT_IN_PROFILES, OBSERVER, pointKey } from './policy-profiles';
 import { withPinned } from './policy-projection';
 import type {
   Assignment,
@@ -32,6 +43,8 @@ import {
 
 export interface PolicyFile {
   version: 1;
+  /** Bumped on every change to the portable projection (see policy-service). A missing rev reads as 0. */
+  rev?: number;
   profiles: Profile[];
   assignments: Array<{ point: AssignmentPoint; assignment: Assignment }>;
   overrides: OneUseOverride[];
@@ -51,6 +64,7 @@ type RawPolicyFile = Omit<PolicyFile, 'profiles'> & { profiles: RawProfile[] };
 type Obj = Record<string, unknown>;
 
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
+const isRev = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
 const isStr = (v: unknown): v is string => typeof v === 'string';
 const isBool = (v: unknown): v is boolean => typeof v === 'boolean';
 const isIso = (v: unknown): v is string => isStr(v) && !Number.isNaN(Date.parse(v));
@@ -144,6 +158,7 @@ const isOverride = (v: unknown): v is OneUseOverride =>
 const isFile = (v: unknown): v is RawPolicyFile =>
   isObj(v) &&
   v.version === 1 &&
+  (v.rev === undefined || isRev(v.rev)) &&
   arrayOf(isProfile)(v.profiles) &&
   arrayOf(isAssignmentEntry)(v.assignments) &&
   arrayOf(isOverride)(v.overrides) &&
@@ -241,6 +256,69 @@ export function serializePolicyFile(f: PolicyFile): string {
 
 export function parseGrantsFile(text: string): Parsed<GrantsFile> {
   return parseVersioned(text, 'conduit-mcp/grants.json', isGrantsFile);
+}
+
+export type RemoteDocCheck = { ok: true; doc: RemotePolicyDoc } | { ok: false; message: string };
+
+const refuse = (message: string): RemoteDocCheck => ({ ok: false, message });
+const isRemotePoint = (p: AssignmentPoint): p is RemotePolicyPoint => p.kind !== 'session';
+
+// The machine that owns the rules enforces the caps; a controller's push is never trusted to have.
+// Each refusal names the first failing path, so a rejected push says where it went wrong.
+export function validateRemotePolicyDoc(v: unknown): RemoteDocCheck {
+  if (!isObj(v)) return refuse('doc is not an object');
+  if (new TextEncoder().encode(JSON.stringify(v)).length > REMOTE_POLICY_DOC_MAX_BYTES)
+    return refuse(`doc too large (over ${REMOTE_POLICY_DOC_MAX_BYTES} bytes)`);
+  if (!Array.isArray(v.profiles)) return refuse('profiles is not a list');
+  if (v.profiles.length > REMOTE_POLICY_PROFILES_MAX)
+    return refuse(`profiles has more than ${REMOTE_POLICY_PROFILES_MAX} entries`);
+
+  const profiles: Profile[] = [];
+  for (const [i, raw] of v.profiles.entries()) {
+    const at = `profiles[${i}]`;
+    if (!isProfile(raw)) return refuse(`${at} is malformed`);
+    if (raw.name.length > REMOTE_POLICY_NAME_MAX) return refuse(`${at}.name too long`);
+    if (!printableName(raw.name, REMOTE_POLICY_NAME_MAX))
+      return refuse(raw.name.trim() === '' ? `${at}.name empty` : `${at}.name not printable`);
+    profiles.push(completeProfile(raw));
+  }
+
+  if (!Array.isArray(v.assignments)) return refuse('assignments is not a list');
+  if (v.assignments.length > REMOTE_POLICY_ASSIGNMENTS_MAX)
+    return refuse(`assignments has more than ${REMOTE_POLICY_ASSIGNMENTS_MAX} entries`);
+
+  const known = new Set<string>([
+    ...BUILT_IN_PROFILES.map((p) => p.id),
+    ...profiles.map((p) => p.id),
+  ]);
+  const seenPoints = new Map<string, number>();
+  const assignments: RemotePolicyDoc['assignments'] = [];
+  for (const [i, raw] of v.assignments.entries()) {
+    const at = `assignments[${i}]`;
+    if (!isAssignmentEntry(raw)) return refuse(`${at} is malformed`);
+    const point = raw.point;
+    if (!isRemotePoint(point)) return refuse(`${at}.point is a session point`);
+    const { assignment } = normaliseEntry(raw);
+    if (assignment.exceptions.length > REMOTE_POLICY_EXCEPTIONS_MAX)
+      return refuse(
+        `${at}.assignment.exceptions has more than ${REMOTE_POLICY_EXCEPTIONS_MAX} entries`,
+      );
+    for (const [j, ex] of assignment.exceptions.entries()) {
+      const scope = ex.scope;
+      if (
+        (scope.kind === 'folder' || scope.kind === 'path') &&
+        scope.path.length > REMOTE_POLICY_PATH_MAX
+      )
+        return refuse(`${at}.assignment.exceptions[${j}].scope.path too long`);
+    }
+    if (!known.has(assignment.profileId)) return refuse(`${at}.assignment.profileId unknown`);
+    const key = pointKey(point);
+    const first = seenPoints.get(key);
+    if (first !== undefined) return refuse(`${at}.point duplicates assignments[${first}].point`);
+    seenPoints.set(key, i);
+    assignments.push({ point, assignment });
+  }
+  return { ok: true, doc: { profiles, assignments } };
 }
 
 export function serializeGrantsFile(f: GrantsFile): string {
