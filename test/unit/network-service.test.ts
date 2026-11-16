@@ -8,6 +8,7 @@ import { createNetwork, type NetworkService } from '../../server/network/index';
 import type { McpNetworkPort, RemoteEntry } from '../../src/conduit-mcp/remote-routing';
 import type { MessageRecord } from '../../src/conduit-mcp/types';
 import type { NetworkState } from '../../src/contracts/network-state';
+import { LINK_ENDPOINT_FILE } from '../../src/server-secret';
 
 const quiet = { debug: () => undefined, warn: () => undefined, error: () => undefined };
 const cleanup: Array<() => Promise<void> | void> = [];
@@ -220,6 +221,18 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
     expect(result).toEqual({ ok: false, error: { code: 'bridge_no_server' } });
     // The control dir is the one controlDir() chose under userData, created by the dial.
     expect(existsSync(join(userData, 'ssh'))).toBe(true);
+  });
+
+  it('records the link endpoint on start and removes the record on stop', async () => {
+    const a = server('net-a');
+    const userData = join(a.dir, '..');
+    await a.net.start();
+    // The bridge reads this record; a name it derived itself could differ under sshd's environment.
+    expect(readFileSync(join(userData, LINK_ENDPOINT_FILE), 'utf8')).toBe(
+      join(userData, 'conduit-link.sock'),
+    );
+    await a.net.stop();
+    expect(existsSync(join(userData, LINK_ENDPOINT_FILE))).toBe(false);
   });
 
   // The bridge is a stand-in here: the real --link-stdio path is the e2e's, and this test can't run TS.

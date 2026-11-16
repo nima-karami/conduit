@@ -43,7 +43,6 @@ export async function runServer(
   if (args.includes('--link-stdio')) {
     const code = await runLinkStdioBridge({
       userData,
-      platform: process.platform,
       stdin: process.stdin,
       stdout: process.stdout,
       stderr: process.stderr,

@@ -1,17 +1,17 @@
 import { createConnection } from 'node:net';
-import { tmpdir } from 'node:os';
 import type { Duplex, Readable, Writable } from 'node:stream';
 import {
   BRIDGE_EXIT_CODE,
   type BridgeFailureCode,
   type BridgePreamble,
 } from '../../src/contracts/ssh-link';
-import { linkEndpointOf } from '../../src/instance-names';
 import { encodeFrame } from '../../src/network/frame-codec';
-import { readServerSecret } from '../../src/server-secret';
+import { readLinkEndpoint, readServerSecret } from '../../src/server-secret';
 
 // `main.js --link-stdio`: sshd's stdio becomes one link to this server's link endpoint. Stdout
 // carries link bytes only, so every diagnostic goes to stderr; the dialer reads that one line.
+// The endpoint comes from the record the server wrote at its start, never from this process's
+// environment: sshd's TMPDIR can differ from the app's. See the plan's decision 3 and Task 3.2.
 // see docs/plans/2026-11-16-remote-ssh-stdio-link.plan.md decision 9
 
 /** An endpoint that closes this soon after the preamble, with no byte back, refused the secret. */
@@ -19,7 +19,6 @@ const FIRST_BYTE_WINDOW_MS = 5_000;
 
 export interface LinkStdioBridgeOptions {
   userData: string;
-  platform: NodeJS.Platform;
   stdin: Readable;
   stdout: Writable;
   stderr: Writable;
@@ -31,7 +30,8 @@ export function runLinkStdioBridge(o: LinkStdioBridgeOptions): Promise<number> {
   const secret = readServerSecret(o.userData);
   if (secret === null) return failed(o, 'no_secret');
 
-  const endpoint = linkEndpointOf(o.userData, o.platform, tmpdir());
+  const endpoint = readLinkEndpoint(o.userData);
+  if (endpoint === null) return failed(o, 'no_server');
   const sock = (o.connect ?? createConnection)(endpoint);
   const preamble: BridgePreamble = { t: 'bridge', v: 1, secret };
   const startedAt = Date.now();

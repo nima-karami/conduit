@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -48,39 +48,26 @@ function frame(value) {
   return out;
 }
 
-/**
- * The stand-in for sshd's remote command: a launcher that runs fake-ssh and sends its stderr to a
- * file, so the scenario can read each child's pid ("fake-ssh: pid <n>") and kill it by that pid.
- * A POSIX shell script: Windows cannot exec a .cjs, so this scenario does not run there yet.
- */
-function sshLauncher(dir) {
-  const stderrFile = join(dir, 'ssh-stderr.log');
-  const launcher = join(dir, 'ssh');
-  writeFileSync(
-    launcher,
-    `#!/bin/sh\nexec '${process.execPath}' '${FAKE_SSH}' "$@" 2>>'${stderrFile}'\n`,
-  );
-  chmodSync(launcher, 0o755);
-  return { launcher, stderrFile };
+/** The pids of every fake-ssh child this run started; the stand-in appends one line per child. */
+function pidsOf(pidLog) {
+  if (!existsSync(pidLog)) return [];
+  return [...readFileSync(pidLog, 'utf8').matchAll(PID_LINE)].map((m) => Number(m[1]));
 }
 
-function pidsOf(stderrFile) {
-  if (!existsSync(stderrFile)) return [];
-  return [...readFileSync(stderrFile, 'utf8').matchAll(PID_LINE)].map((m) => Number(m[1]));
-}
+// Every platform runs the stand-in the same way: node executes fake-ssh.cjs under the prefix.
+// The server reads the prefix only in e2e mode (readE2eSshArgsPrefix), so production never does.
+const ENV_KEYS = ['CONDUIT_SSH_PATH', 'CONDUIT_E2E_SSH_ARGS_PREFIX', 'FAKE_SSH_STDERR_LOG'];
 
 async function run() {
-  assert(
-    process.platform !== 'win32',
-    'net-ssh-link needs a Windows ssh launcher (a .cjs cannot be exec-ed there); see the fork in the plan report',
-  );
   const sshDir = mkdtempSync(join(tmpdir(), 'ssh-link-'));
+  const pidLog = join(sshDir, 'fake-ssh-pids.log');
+  const saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
   let pair;
-  const previousSsh = process.env.CONDUIT_SSH_PATH;
   try {
-    const { launcher, stderrFile } = sshLauncher(sshDir);
-    // Both servers inherit the launcher; only A dials, so B's value is never used.
-    process.env.CONDUIT_SSH_PATH = launcher;
+    // Both servers inherit this; only A dials, so B never reads the stand-in settings.
+    process.env.CONDUIT_SSH_PATH = process.execPath;
+    process.env.CONDUIT_E2E_SSH_ARGS_PREFIX = JSON.stringify([FAKE_SSH]);
+    process.env.FAKE_SSH_STDERR_LOG = pidLog;
     pair = await startServerPair();
     const { a, b } = pair;
 
@@ -126,7 +113,7 @@ async function run() {
     );
 
     phase('3. kill the bridge; a message sent while down arrives exactly once after redial');
-    const [bridgePid] = pidsOf(stderrFile).slice(-1);
+    const [bridgePid] = pidsOf(pidLog).slice(-1);
     assert(bridgePid !== undefined, 'no fake-ssh pid recorded for the first bridge');
     // The pid is the bridge's own, read from the stand-in's stderr this scenario started.
     process.kill(bridgePid, 'SIGKILL');
@@ -137,7 +124,7 @@ async function run() {
     const queued = await callTool(a, aa, 'send_message', { to: [address], body: 'while down' });
     assert(queued.recipients?.[0]?.status === 'queued', `queued send: ${JSON.stringify(queued)}`);
     await eventually('A link redialed with a new bridge', async () => {
-      const pids = pidsOf(stderrFile);
+      const pids = pidsOf(pidLog);
       const view = await linkView(a.c2, bId);
       return view?.state === 'up' && pids.length >= 2 && pids.at(-1) !== bridgePid;
     });
@@ -185,8 +172,10 @@ async function run() {
     if (pair) for (const server of [pair.a, pair.b]) dumpServerLog(server);
     throw error;
   } finally {
-    if (previousSsh === undefined) delete process.env.CONDUIT_SSH_PATH;
-    else process.env.CONDUIT_SSH_PATH = previousSsh;
+    for (const key of ENV_KEYS) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
     await pair?.stopAll();
     rmSync(sshDir, { recursive: true, force: true });
   }

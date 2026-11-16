@@ -18,6 +18,7 @@ import { createRemoteDirectory } from '../../src/network/remote-directory';
 import { selfSignedCert } from '../../src/network/self-signed-cert';
 import { controlDir } from '../../src/network/ssh-argv';
 import { currentWindowsPty } from '../../src/windows-pty-info';
+import { removeLinkEndpoint, writeLinkEndpoint } from '../lifecycle/server-secret';
 import { openAuditLog } from './audit-log';
 import { handleNetworkCall } from './c2';
 import { createDrive, type Drive, type DriveDeps } from './drive';
@@ -50,6 +51,8 @@ export interface NetworkDeps {
   linkEndpoint: string;
   /** The per-start secret a bridge's preamble must carry; read at each preamble, never per connection. */
   secret: () => string;
+  /** e2e only: the leading argv of the ssh stand-in (readE2eSshArgsPrefix). Absent in production. */
+  sshArgsPrefix?: string[];
   identity: Identity;
   settings(): NetworkSettings;
   emit(state: NetworkState): void;
@@ -204,6 +207,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       sshPath: process.env.CONDUIT_SSH_PATH || 'ssh',
       controlDir: sshControlDir,
       log: deps.log,
+      sshArgsPrefix: deps.sshArgsPrefix,
     }),
     selfName,
     tls: () => tlsPair,
@@ -482,6 +486,15 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
         deps.log.error('stdio link endpoint did not start', { message: err.message });
         return null;
       });
+      if (stdioLink) {
+        try {
+          writeLinkEndpoint(deps.userData, deps.linkEndpoint);
+        } catch (err) {
+          deps.log.error('link endpoint record not written', {
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
       if (store.links().length > 0) {
         await ensureListening().catch((err: Error) =>
           deps.log.warn('link listener did not start', { message: err.message }),
@@ -493,6 +506,15 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       const endpoint = stdioLink;
       stdioLink = null;
       await endpoint?.close();
+      if (endpoint) {
+        try {
+          removeLinkEndpoint(deps.userData);
+        } catch (err) {
+          deps.log.error('link endpoint record not removed', {
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
       emitTimer?.();
       snapshots.stop();
       closePairingPort();

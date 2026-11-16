@@ -63,7 +63,7 @@ export function instanceNames(
  * The stdio link endpoint: the bridge from sshd's stdio connects here. Pure, so the bridge (which
  * runs before any server state exists) derives the same name the server listens on.
  */
-export function linkEndpointOf(
+function linkEndpointOf(
   userData: string,
   platform: NodeJS.Platform | 'posix',
   tmpdir: string,

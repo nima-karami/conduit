@@ -91,6 +91,30 @@ export function controlDir(o: {
   return candidates.find((dir): dir is string => dir !== null && fitsControlPath(dir)) ?? null;
 }
 
+export type E2eSshArgsPrefix =
+  | { kind: 'none' }
+  | { kind: 'invalid' }
+  | { kind: 'prefix'; argv: string[] };
+
+/**
+ * The leading argv the e2e stand-in runs under, so `node fake-ssh.cjs` replaces a real ssh where a
+ * .cjs cannot be exec-ed. Read only in e2e mode: production's ssh argv is fixed (plan 4.2.1), and
+ * an environment-chosen prefix would let the environment pick what runs before the ssh arguments.
+ */
+export function readE2eSshArgsPrefix(raw: string | undefined, e2e: boolean): E2eSshArgsPrefix {
+  if (!e2e || raw === undefined) return { kind: 'none' };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { kind: 'invalid' };
+  }
+  if (Array.isArray(parsed) && parsed.every((v): v is string => typeof v === 'string')) {
+    return { kind: 'prefix', argv: parsed };
+  }
+  return { kind: 'invalid' };
+}
+
 const STDERR_DETAIL_MAX = 200;
 
 const BRIDGE_RULES: [RegExp, SshFailure][] = [

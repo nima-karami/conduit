@@ -4,9 +4,8 @@ import { join } from 'node:path';
 import { Duplex, PassThrough, Writable } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
 import { runLinkStdioBridge } from '../../server/lifecycle/link-stdio-bridge';
-import { writeServerSecret } from '../../server/lifecycle/server-secret';
+import { writeLinkEndpoint, writeServerSecret } from '../../server/lifecycle/server-secret';
 import { listenStdioLink, type StdioLinkEndpoint } from '../../server/network/stdio-link-endpoint';
-import { linkEndpointOf } from '../../src/instance-names';
 
 const quiet = { debug: () => undefined, warn: () => undefined, error: () => undefined };
 const cleanup: Array<() => Promise<void> | void> = [];
@@ -50,33 +49,27 @@ describe('runLinkStdioBridge', () => {
   it('pipes bytes both ways after the preamble', async () => {
     const dir = userData();
     const secret = writeServerSecret(dir);
-    const platform = process.platform;
-    const endpoint = linkEndpointOf(dir, platform, tmpdir());
+    // The server records the endpoint it listens on; the bridge reads that instead of deriving one.
+    const endpoint = join(dir, 'conduit-link.sock');
+    writeLinkEndpoint(dir, endpoint);
     const heard: Buffer[] = [];
-    const audit = { record: () => undefined };
     const listened: StdioLinkEndpoint = await listenStdioLink({
       endpoint,
-      platform,
+      platform: process.platform,
       secret: () => secret,
-      accept: (stream) => {
+      accept: (stream: Duplex) => {
         stream.on('data', (chunk: Buffer) => heard.push(chunk));
         stream.resume();
         stream.write('from-server');
       },
-      audit,
+      audit: { record: () => undefined },
       log: quiet,
     });
     cleanup.push(() => listened.close());
 
     const stdin = new PassThrough();
     const io = sinks();
-    const done = runLinkStdioBridge({
-      userData: dir,
-      platform,
-      stdin,
-      stdout: io.stdout,
-      stderr: io.stderr,
-    });
+    const done = runLinkStdioBridge({ userData: dir, stdin, stdout: io.stdout, stderr: io.stderr });
     stdin.write('from-controller');
 
     await until(() => Buffer.concat(heard).toString('utf8') === 'from-controller');
@@ -92,7 +85,6 @@ describe('runLinkStdioBridge', () => {
     const io = sinks();
     const code = await runLinkStdioBridge({
       userData: dir,
-      platform: process.platform,
       stdin: new PassThrough(),
       stdout: io.stdout,
       stderr: io.stderr,
@@ -102,13 +94,12 @@ describe('runLinkStdioBridge', () => {
     expect(io.out()).toBe('');
   });
 
-  it('no server → exit 3 + line', async () => {
+  it('no endpoint file → exit 3 + no_server, without guessing a path', async () => {
     const dir = userData();
     writeServerSecret(dir);
     const io = sinks();
     const code = await runLinkStdioBridge({
       userData: dir,
-      platform: process.platform,
       stdin: new PassThrough(),
       stdout: io.stdout,
       stderr: io.stderr,
@@ -118,13 +109,28 @@ describe('runLinkStdioBridge', () => {
     expect(io.out()).toBe('');
   });
 
-  it('an endpoint that closes before any byte comes back is refused', async () => {
+  it('a recorded endpoint with nothing listening → exit 3 + no_server', async () => {
     const dir = userData();
     writeServerSecret(dir);
+    writeLinkEndpoint(dir, join(dir, 'gone.sock'));
     const io = sinks();
     const code = await runLinkStdioBridge({
       userData: dir,
-      platform: process.platform,
+      stdin: new PassThrough(),
+      stdout: io.stdout,
+      stderr: io.stderr,
+    });
+    expect(code).toBe(3);
+    expect(io.err()).toBe('conduit-bridge: no_server\n');
+  });
+
+  it('an endpoint that closes before any byte comes back is refused', async () => {
+    const dir = userData();
+    writeServerSecret(dir);
+    writeLinkEndpoint(dir, join(dir, 'conduit-link.sock'));
+    const io = sinks();
+    const code = await runLinkStdioBridge({
+      userData: dir,
       stdin: new PassThrough(),
       stdout: io.stdout,
       stderr: io.stderr,

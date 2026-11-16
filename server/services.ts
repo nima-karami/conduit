@@ -14,6 +14,7 @@ import type { AdoptedTerminal } from '../src/contracts/terminal-runtime';
 import { folderKey } from '../src/folder-key';
 import { HcDisconnectedError } from '../src/hc-client';
 import type { HostPlatform } from '../src/lsp-binary';
+import { readE2eSshArgsPrefix } from '../src/network/ssh-argv';
 import {
   detectAgentClis,
   detectShells,
@@ -261,10 +262,16 @@ export function createServices(o: ServicesOptions) {
     }
     machineId = loaded.identity.machineId;
   }
+  // Only e2e reads the stand-in's argv; see readE2eSshArgsPrefix.
+  const sshArgs = readE2eSshArgsPrefix(o.env.CONDUIT_E2E_SSH_ARGS_PREFIX, o.e2e);
+  if (sshArgs.kind === 'invalid') {
+    log.warn('network', 'CONDUIT_E2E_SSH_ARGS_PREFIX is not a JSON string array; ignored', {});
+  }
   network =
     loaded.kind === 'newer'
       ? null
       : createNetwork({
+          sshArgsPrefix: sshArgs.kind === 'prefix' ? sshArgs.argv : undefined,
           dir: networkDir,
           userData: o.userData,
           instance: o.names.instance,
