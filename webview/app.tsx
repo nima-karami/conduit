@@ -1899,11 +1899,14 @@ export function App() {
   // Editor tabs are scoped to their session: only the active session's docs are shown,
   // so you never see another session's editors. Switching sessions restores that
   // session's remembered view (its last active doc, or the Terminal).
+  // A remote session owns its own tabs (remote-file docs carry its row id), so while one is shown
+  // the centre shows its docs, never the local session's behind it (plan CON-43 decision 10).
+  const docOwnerId = activeRemote ? remoteKeyId(activeRemote) : activeId;
   const visibleDocs = useMemo(
-    () => docState.docs.filter((d) => d.sessionId === activeId),
-    [docState.docs, activeId],
+    () => docState.docs.filter((d) => d.sessionId === docOwnerId),
+    [docState.docs, docOwnerId],
   );
-  const layout = useMemo(() => centerLayout(docState, activeId), [docState, activeId]);
+  const layout = useMemo(() => centerLayout(docState, docOwnerId), [docState, docOwnerId]);
   // Spec §10: a collapse that stranded focus in the closed group hands it to group 1; focus the
   // user put anywhere else stays. Keyed by session, so switching to a session with one group is
   // not a collapse. A layout effect for the same reason as the one below: flushed late, it would
@@ -5494,6 +5497,21 @@ export function App() {
         barless
       >
         <RightPane
+          remote={
+            activeRemote
+              ? (remoteRows.find((r) => r.id === remoteKeyId(activeRemote)) ?? null)
+              : null
+          }
+          onOpenRemoteFile={(row, path, mode) =>
+            dispatchDocs({
+              type: 'open',
+              kind: 'remote-file',
+              machine: { machineId: row.key.machineId, sessionId: row.key.sessionId },
+              path,
+              sessionId: row.id,
+              mode,
+            })
+          }
           onMoveMenu={(anchor) =>
             setMenu({
               x: anchor.left,
