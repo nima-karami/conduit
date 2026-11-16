@@ -35,10 +35,10 @@ import type { ReviewScope } from './review-scope';
 // Docs of another machine (plan CON-43 T4, CON-45 G4). Their own kinds, not flags on 'file' or
 // 'diff', so every path keyed on a local kind skips them by construction. Each names its machine,
 // is never persisted, and its id carries the machine.
-export const REMOTE_DOC_KINDS = ['remote-file', 'remote-diff', 'remote-history'] as const;
+const REMOTE_DOC_KINDS = ['remote-file', 'remote-diff', 'remote-history'] as const;
 export type RemoteDocKind = (typeof REMOTE_DOC_KINDS)[number];
 const REMOTE_DOC_KIND_SET: ReadonlySet<DocKind> = new Set<DocKind>(REMOTE_DOC_KINDS);
-export const isRemoteKind = (kind: DocKind): kind is RemoteDocKind => REMOTE_DOC_KIND_SET.has(kind);
+const isRemoteKind = (kind: DocKind): kind is RemoteDocKind => REMOTE_DOC_KIND_SET.has(kind);
 
 export type DocKind =
   | 'file'

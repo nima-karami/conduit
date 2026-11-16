@@ -28,7 +28,7 @@ export function fileUri(path: string): monaco.Uri {
  * A remote file's model. Its own scheme keeps it out of every path-keyed map here: the same path
  * on this computer is a different file.
  */
-export const REMOTE_MODEL_SCHEME = 'conduit-remote';
+const REMOTE_MODEL_SCHEME = 'conduit-remote';
 
 export function remoteModelUri(machineId: string, path: string): monaco.Uri {
   const posix = path.replace(/\\/g, '/');
