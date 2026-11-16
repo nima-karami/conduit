@@ -6,6 +6,9 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- On Linux, an update that arrives as a `.deb` can now fail to install when your desktop has no password prompt. Conduit now says so in Settings → About and shows the `sudo apt install` command to run yourself, instead of failing silently.
+
 ## [0.66.1] — 2026-11-16
 
 ### Fixed

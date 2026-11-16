@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { app } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import type { HostToWebview } from '../src/protocol';
+import { debInstallFailure } from './deb-install-failure';
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 export const UPDATES_UNAVAILABLE_MSG = "Updates aren't available in this build.";
@@ -13,6 +14,9 @@ let intervalId: ReturnType<typeof setInterval> | null = null;
 // it here and echo it on every `downloading` message; otherwise the renderer card would
 // read an undefined version mid-download and render "Updating to v?…".
 let pendingVersion: string | undefined;
+// The downloaded update file of the most recent `update-downloaded`. An install failure
+// arrives as a bare `error` with no file, so the .deb path has to be remembered here.
+let pendingDownloadedFile: string | null = null;
 
 // An unpacked build (electron-builder --dir) is isPackaged but ships no
 // resources/app-update.yml; electron-updater then ENOENTs on every check.
@@ -71,6 +75,7 @@ export function initUpdater(
   });
 
   autoUpdater.on('update-downloaded', (info) => {
+    pendingDownloadedFile = info.downloadedFile;
     onEvent('downloaded', { version: info.version });
     send({
       type: 'updateStatus',
@@ -86,8 +91,12 @@ export function initUpdater(
   });
 
   autoUpdater.on('error', (err) => {
-    onEvent('error', { message: err?.message ?? String(err) });
-    send({ type: 'updateStatus', status: 'error', message: err?.message ?? String(err) });
+    handleUpdaterError(err, {
+      platform: process.platform,
+      downloadedFile: pendingDownloadedFile,
+      send,
+      onEvent,
+    });
   });
 
   void autoUpdater.checkForUpdates().catch(() => {});
@@ -103,6 +112,36 @@ export function initUpdater(
     }
     lastSend = null;
   };
+}
+
+interface UpdaterErrorContext {
+  platform: string;
+  downloadedFile: string | null;
+  send: (msg: HostToWebview) => void;
+  onEvent: (event: string, data?: Record<string, unknown>) => void;
+}
+
+// electron-updater emits `error` for install failures too (DebUpdater catches them and
+// dispatches), so an unrecognised failure must keep its plain message.
+export function handleUpdaterError(err: unknown, ctx: UpdaterErrorContext): void {
+  const failure = debInstallFailure({
+    platform: ctx.platform,
+    downloadedFile: ctx.downloadedFile,
+    error: err,
+  });
+  if (failure) {
+    ctx.onEvent('deb-install-failed', { command: failure.command });
+    ctx.send({
+      type: 'updateStatus',
+      status: 'error',
+      message: failure.message,
+      command: failure.command,
+    });
+    return;
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  ctx.onEvent('error', { message });
+  ctx.send({ type: 'updateStatus', status: 'error', message });
 }
 
 export function checkForUpdate(): void {
