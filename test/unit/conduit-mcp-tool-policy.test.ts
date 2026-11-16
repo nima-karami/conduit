@@ -246,6 +246,78 @@ describe('gateToolCall (spec §3.3 steps 1–5)', () => {
       })?.code,
     ).toBe('tool_disabled');
   });
+  // A routed call (CON-40 S3, spec 4.6) is a server action: it runs without a window, and when:viewing
+  // never applies to it, because the lead's screen is not what it reaches.
+  it('a routed read_screen runs with no ready window and the lead off screen', () => {
+    const base = {
+      sessionId: 's1',
+      messagingOn: true,
+      tool: 'read_screen' as const,
+      decision: {
+        decision: 'allow' as const,
+        rule: { when: 'viewing' as const, reach: null, move: null },
+      },
+      ownerReady: () => false,
+      onScreen: () => false,
+      appConnected: true,
+      routed: true,
+    };
+    expect(gateToolCall(base)).toBeNull();
+  });
+
+  it('a routed call still asks through a ready window, and is not held back by when:viewing', () => {
+    const decision = {
+      decision: 'ask' as const,
+      rule: { when: 'viewing' as const, reach: null, move: null },
+    };
+    expect(
+      gateToolCall({
+        sessionId: 's1',
+        messagingOn: true,
+        tool: 'send_input',
+        decision,
+        ownerReady: () => true,
+        onScreen: () => false,
+        appConnected: true,
+        routed: true,
+      }),
+    ).toBeNull();
+  });
+
+  it('a routed ask with no ready window is window_not_ready, as any server action ask is', () => {
+    expect(
+      gateToolCall({
+        sessionId: 's1',
+        messagingOn: true,
+        tool: 'read_screen',
+        decision: { decision: 'ask', rule: { when: 'always', reach: null, move: null } },
+        ownerReady: () => false,
+        onScreen: () => false,
+        appConnected: true,
+        routed: true,
+      })?.code,
+    ).toBe('window_not_ready');
+  });
+
+  it('a local read_screen with no ready window is still window_not_ready, and when:viewing still applies', () => {
+    const base = {
+      sessionId: 's1',
+      messagingOn: true,
+      tool: 'read_screen' as const,
+      decision: {
+        decision: 'allow' as const,
+        rule: { when: 'viewing' as const, reach: null, move: null },
+      },
+      ownerReady: () => false,
+      onScreen: () => true,
+      appConnected: true,
+    };
+    expect(gateToolCall(base)?.code).toBe('window_not_ready');
+    expect(gateToolCall({ ...base, ownerReady: () => true, onScreen: () => false })?.code).toBe(
+      'caller_not_visible',
+    );
+  });
+
   it.each(['open_session', 'open_terminal', 'close_session', 'attach_folder'] as const)(
     '%s with on/viewing runs windowless without consulting visibility',
     (tool) => {

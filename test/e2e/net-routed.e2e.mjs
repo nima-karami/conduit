@@ -148,7 +148,7 @@ async function run() {
     });
 
     phase(
-      '8. the bridge is killed during a routed open: peer_unreachable, and B ran it at most once',
+      '8. the bridge is killed during a routed open: peer_unreachable or a completed open, once on B',
     );
     const countBefore = (await callTool(b, ba, 'list_sessions', {})).sessions?.length ?? -1;
     const [bridgePid] = pidsOf(pidLog).slice(-1);
@@ -165,21 +165,29 @@ async function run() {
       'the routed open is answered',
       () => agentRecords(a, aa.sessionId, 'RESULT').length > answersBefore,
     );
+    // The race is not observable from here: the kill may land before B gets the call, or after B has
+    // run it and before the answer returns. Both are allowed, and each has one exact outcome: an error
+    // is peer_unreachable with B having run it at most once; a result is a completed open, B having run
+    // it exactly once.
     const answer = agentRecords(a, aa.sessionId, 'RESULT').at(-1)?.result;
-    assert(
-      answer?.error?.code === 'peer_unreachable',
-      `open_session across a dead bridge: ${JSON.stringify(answer)}`,
-    );
     await eventually('A redials B with a new bridge', async () => {
       const pids = pidsOf(pidLog);
       const view = await linkView(a.c2, bId);
       return view?.state === 'up' && pids.length >= 2 && pids.at(-1) !== bridgePid;
     });
     const countAfter = (await callTool(b, ba, 'list_sessions', {})).sessions?.length ?? -1;
-    assert(
-      countAfter - countBefore <= 1,
-      `B ran the open more than once: ${countBefore} -> ${countAfter}`,
-    );
+    const delta = countAfter - countBefore;
+    if (answer?.error !== undefined) {
+      assert(
+        answer.error.code === 'peer_unreachable' && delta <= 1,
+        `open_session across a dead bridge: ${JSON.stringify(answer)}, B ${countBefore} -> ${countAfter}`,
+      );
+    } else {
+      assert(
+        typeof answer?.session_id === 'string' && delta === 1,
+        `open_session completed: ${JSON.stringify(answer)}, B ${countBefore} -> ${countAfter}`,
+      );
+    }
   } catch (error) {
     if (pair) for (const server of [pair.a, pair.b]) dumpServerLog(server);
     throw error;

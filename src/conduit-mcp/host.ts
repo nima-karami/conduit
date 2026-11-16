@@ -107,6 +107,7 @@ import type {
 import {
   addressTarget,
   isKnownMachine,
+  isRoutedCall,
   type McpNetworkPort,
   machineTarget,
   nameOnMachine,
@@ -1931,6 +1932,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           ownerReady: () => windowId !== null && deps.windowReady(windowId),
           onScreen: () => windowId !== null && deps.onScreen(windowId, sessionId),
           appConnected: deps.appConnected(),
+          routed: isRoutedCall(name, rawArgs),
         });
         if (refused) return { ok: false, error: refused };
         // A concurrent call may have spent the override this decision relies on. decide and commit

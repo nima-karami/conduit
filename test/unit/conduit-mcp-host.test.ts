@@ -7988,6 +7988,25 @@ describe('routed session tools on this machine (CON-40 S3, plan decision 5)', ()
     expect(net.sent).toEqual([]);
   });
 
+  it('a routed read_screen runs with no ready window on A, as a server action (spec 4.6)', async () => {
+    const net = routeNet({ answer: () => ({ session: 'claude-1', rows: ['ready'] }) });
+    const { h, ca } = await leadSession(net.network);
+    h.presence.ready.delete(1);
+    const r = await ca.call('read_screen', { session: 'claude-1@m-0000000a' });
+    expect(r.body).toMatchObject({ session: 'claude-1@win-box', rows: ['ready'] });
+    expect(net.sent).toHaveLength(1);
+  });
+
+  it('a routed read_screen runs when the lead is off screen under when:viewing', async () => {
+    const net = routeNet({ answer: () => ({ session: 'claude-1', rows: ['ready'] }) });
+    const { h, ca } = await leadSession(net.network);
+    await setHostPolicy(h, 's1', { read_screen: { access: 'on', when: 'viewing' } });
+    h.presence.shown.set(1, new Set());
+    const r = await ca.call('read_screen', { session: 'claude-1@m-0000000a' });
+    expect(r.body).toMatchObject({ session: 'claude-1@win-box' });
+    expect(net.sent).toHaveLength(1);
+  });
+
   it('a remote lead cannot route a call on to another machine', async () => {
     const net = routeNet({});
     const h = harness({ network: net.network });

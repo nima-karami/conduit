@@ -173,6 +173,15 @@ export type RoutedIntent =
     };
 
 /**
+ * Whether a session tool call names another machine by its args. A malformed one counts too, so it is
+ * refused as bad arguments, not as a window it never needed.
+ */
+export function isRoutedCall(tool: string, args: unknown): boolean {
+  const routed = routedIntentOf(tool, args);
+  return !routed.ok || routed.value !== null;
+}
+
+/**
  * The routed intent of a session tool call, or null when the call stays on this machine. A malformed
  * address or machine is invalid_args here, before anything is sent.
  */
