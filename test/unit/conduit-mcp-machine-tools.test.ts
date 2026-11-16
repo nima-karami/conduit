@@ -136,11 +136,11 @@ async function runOf<T>(r: Result<Prepared<T>>): Promise<Result<T>> {
 }
 
 describe('list_machines', () => {
-  it('returns the pinned machines as the tool result, one view each', async () => {
+  it('returns the pinned machines as an object, one view each (MCP structuredContent is an object)', async () => {
     const { tools } = rig(portWith({ listMachines: () => [VIEW] }));
     expect(await runOf(await tools.prepareListMachines(CALLER, {}))).toEqual({
       ok: true,
-      value: [VIEW],
+      value: { machines: [VIEW] },
     });
   });
 

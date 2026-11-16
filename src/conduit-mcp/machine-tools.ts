@@ -3,8 +3,8 @@
 import type {
   ConnectMachineOk,
   ConnectMachineResult,
+  ListMachinesOutput,
   MachineError,
-  MachineView,
 } from '../contracts/machines';
 import {
   type CallBudget,
@@ -36,7 +36,7 @@ export interface MachineToolDeps {
 }
 
 export interface MachineHandlers {
-  prepareListMachines(caller: Caller, raw: unknown): Promise<Result<Prepared<MachineView[]>>>;
+  prepareListMachines(caller: Caller, raw: unknown): Promise<Result<Prepared<ListMachinesOutput>>>;
   prepareConnectMachine(
     caller: Caller,
     raw: unknown,
@@ -109,7 +109,7 @@ export function createMachineTools(
           summary: { tool: 'list_machines' },
           exec: async (token) => {
             token.keep();
-            return { ok: true, value: network.listMachines() };
+            return { ok: true, value: { machines: network.listMachines() } };
           },
         };
       }),

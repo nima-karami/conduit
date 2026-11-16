@@ -392,7 +392,13 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     }
     if (deps.store.conflicts(hello.machineId, hello.serverKey))
       return { error: 'identity-changed' };
-    const name = printableName(hello.selfName, MAX_NAME_CHARS) ? hello.selfName : hello.machineId;
+    // An ssh record we dial is named by the target the owner gave, not by the peer's own text (spec 4.1).
+    const name =
+      ssh !== null
+        ? ssh.target
+        : printableName(hello.selfName, MAX_NAME_CHARS)
+          ? hello.selfName
+          : hello.machineId;
     return {
       record: deps.store.addSsh({
         machineId: hello.machineId,
@@ -470,8 +476,14 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     p.lastDialFailure = null;
     p.peerHello = hello;
     p.lastActivity = deps.now();
-    // Pairing's name limit applies to a hello name too; one number, owned by pairing.
-    if (printableName(hello.selfName, MAX_NAME_CHARS) && hello.selfName !== p.record.name) {
+    // Pairing's name limit applies to a hello name too; one number, owned by pairing. A dialed ssh
+    // record keeps its target as its name (spec 4.1): only the peer's own name would rename it.
+    const dialedSsh = p.record.transport === 'ssh' && p.record.ssh !== null;
+    if (
+      !dialedSsh &&
+      printableName(hello.selfName, MAX_NAME_CHARS) &&
+      hello.selfName !== p.record.name
+    ) {
       p.record = deps.store.update(p.record.machineId, { name: hello.selfName }) ?? p.record;
     }
     event(p, { kind: 'up', at: deps.now() });
