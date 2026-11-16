@@ -49,6 +49,12 @@ describe('activityAuditSink', () => {
     expect(fake.notes).toEqual([{ action: 'link.state', machineId: null, handle: null }]);
   });
 
+  it('writes a whitespace-only peer string as null', () => {
+    const fake = fakeNotes();
+    activityAuditSink(fake.write).record({ kind: 'link.state', peer: '   ', principal: ' \t ' });
+    expect(fake.notes).toEqual([{ action: 'link.state', machineId: null, handle: null }]);
+  });
+
   it('never copies detail, so message bodies, file contents and keystrokes stay out', () => {
     const fake = fakeNotes();
     const event: AuditEvent = {

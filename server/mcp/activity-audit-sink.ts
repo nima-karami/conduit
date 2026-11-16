@@ -8,7 +8,7 @@ import type { AuditSink } from '../network/audit-log';
 const keptText = (s: string | null | undefined): string | null => {
   if (s === null || s === undefined) return null;
   const kept = stripUnprintable(s);
-  return kept === '' ? null : kept;
+  return kept.trim() === '' ? null : kept;
 };
 
 export function activityAuditSink(write: (note: ActivityNote) => void): AuditSink {
