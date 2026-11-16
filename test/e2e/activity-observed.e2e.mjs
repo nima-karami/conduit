@@ -2,13 +2,15 @@
  * activity-observed — CON-24 Slice 4 (plan docs/plans/2026-11-14-policy-permissions-machinery.plan.md,
  * "e2e" under Slice 4). Observed rows come from what another CLI did, not from a Conduit tool call:
  *   1. a Conduit-launched fake Codex appends a CommandExecution and a FileChange item to its rollout.
- *      Their output and file contents are FIXTURE-SECRET-* text. Two observed rows must appear: one
- *      carrying the command's first line, one carrying the changed path.
+ *      The command is two lines, its second line and the output and file contents are FIXTURE-SECRET
+ *      text. The command row's summary must be the first line only, and the file-change row must
+ *      name the path.
  *   2. a fake Claude fires PostToolUse through the hook command Conduit wrote into the launch's
  *      --settings file (the fake's `post-tool-use` cue, the same path as its other hook events).
- *      The hook client takes its endpoint and token from the launch env, as in a real Claude. Its
- *      tool_response carries FIXTURE-SECRET-* text. One observed row must name Claude Code.
- * In both, no file under the activity directory may hold any FIXTURE-SECRET-* text.
+ *      The Bash command is two lines with FIXTURE-SECRET text on line 2, and tool_response carries
+ *      more. One observed row must name Claude Code.
+ * In both, no file under the activity directory may hold any FIXTURE-SECRET-* text. The hook client's
+ * allow-list strip is covered by its unit tests; this scenario checks only the host's rows and files.
  */
 import {
   appendFileSync,
@@ -31,6 +33,8 @@ const CLAUDE_DISPLAY = 'Claude Code';
 const CODEX_DISPLAY = 'Codex';
 const THREAD_ID = '01a1d190-2af4-7db3-ae44-cb9dacc349ee';
 const COMMAND = 'echo ok';
+// The first line is the summary; the second carries secret text the host must not record.
+const COMMAND_TEXT = `${COMMAND}\n# FIXTURE-SECRET-cmd-tail`;
 
 const two = (n) => String(n).padStart(2, '0');
 const jsonl = (o) => `${JSON.stringify(o)}\n`;
@@ -127,9 +131,9 @@ function codexItems(work, filePath) {
           type: 'CommandExecution',
           id: 'exec-obs-1',
           process_id: '1000',
-          command: ['/bin/bash', '-lc', COMMAND],
+          command: ['/bin/bash', '-lc', COMMAND_TEXT],
           cwd: work,
-          parsed_cmd: [{ type: 'unknown', cmd: COMMAND }],
+          parsed_cmd: [{ type: 'unknown', cmd: COMMAND_TEXT }],
           source: 'unified_exec_startup',
           status: 'completed',
           aggregated_output: 'FIXTURE-SECRET-codex-output\n',
@@ -203,30 +207,31 @@ await runScenario(
     // says when the bind has happened, so the items are appended until the rows arrive. An
     // attempt that lands in the replay is dropped by the watch, so the next one counts.
     const codexRows = () => observedFor(codexSid);
-    const hasCodexRows = () =>
-      codexRows().some((r) => r.action === 'command') &&
-      codexRows().some((r) => r.action === 'file-change' && r.target === filePath);
+    const isCommandRow = (r) => r.action === 'command' && r.summary === COMMAND;
+    const isFileRow = (r) => r.action === 'file-change' && r.target === filePath;
     let landed = false;
     for (let attempt = 1; attempt <= 3 && !landed; attempt += 1) {
       appendFileSync(rollout, codexItems(work, filePath).map(jsonl).join(''));
-      landed = await until(hasCodexRows, 10_000);
+      landed = await until(
+        () => codexRows().some(isCommandRow) && codexRows().some(isFileRow),
+        10_000,
+      );
     }
     assert(
       landed,
       `no command and file-change observed rows for ${codexSid} after 3 appends: ${JSON.stringify(codexRows())}`,
     );
 
-    const codexCommand = codexRows().find((r) => r.action === 'command');
-    assert(
-      codexCommand.lane === 'observed' &&
-        codexCommand.cli === 'codex' &&
-        codexCommand.decidedBy === `observed: decided by ${CODEX_DISPLAY}, not Conduit`,
-      `codex command row: ${JSON.stringify(codexCommand)}`,
-    );
-    assert(
-      codexCommand.summary?.includes(COMMAND),
-      `codex command row summary is not the command's first line: ${JSON.stringify(codexCommand)}`,
-    );
+    // Duplicates from an extra append are fine; every row must be one of the two expected kinds.
+    for (const r of codexRows()) {
+      assert(
+        r.lane === 'observed' &&
+          r.cli === 'codex' &&
+          r.decidedBy === `observed: decided by ${CODEX_DISPLAY}, not Conduit` &&
+          (isCommandRow(r) || isFileRow(r)),
+        `unexpected codex observed row: ${JSON.stringify(r)}`,
+      );
+    }
     assertNoSecret('after the codex rows');
     log('codex command and file-change rows written, no FIXTURE-SECRET text in activity ✓');
 
@@ -258,7 +263,7 @@ await runScenario(
       ...fixture,
       cwd: claudeWork,
       tool_use_id: 'toolu_activity_observed',
-      tool_input: { command: COMMAND, description: 'Run echo ok' },
+      tool_input: { command: COMMAND_TEXT, description: 'Run echo ok' },
       tool_response: {
         ...fixture.tool_response,
         stdout: 'FIXTURE-SECRET-claude-stdout',
@@ -286,19 +291,21 @@ await runScenario(
       await until(() => claudeRows().length >= 1, 10_000),
       `no observed row for the Claude PostToolUse in ${claudeSid}: ${JSON.stringify(activityRows())}`,
     );
-    const claudeRow = claudeRows()[0];
     assert(
       claudeRows().length === 1,
       `expected one observed row for one PostToolUse, got ${claudeRows().length}: ${JSON.stringify(claudeRows())}`,
     );
+    const claudeRow = claudeRows()[0];
     assert(
       claudeRow.cli === 'claude' &&
         claudeRow.decidedBy === `observed: decided by ${CLAUDE_DISPLAY}, not Conduit`,
       `claude observed row: ${JSON.stringify(claudeRow)}`,
     );
     assert(
-      claudeRow.summary?.includes(COMMAND),
-      `claude row summary is not the command: ${JSON.stringify(claudeRow)}`,
+      claudeRow.action === 'command' &&
+        claudeRow.summary === COMMAND &&
+        claudeRow.target === claudeWork,
+      `claude row is not the command's first line in the launch cwd: ${JSON.stringify(claudeRow)}`,
     );
     assertNoSecret('after the claude PostToolUse');
     log('claude PostToolUse row names Claude Code, no FIXTURE-SECRET text in activity ✓');
