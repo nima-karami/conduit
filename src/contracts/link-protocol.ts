@@ -186,6 +186,16 @@ export interface MonitorSession {
   completions: number;
   limit: { state: string; resumeAt: string | null } | null;
   status: 'running' | 'exited' | 'stale';
+  /**
+   * Who opened it, for the peer's "opened by" view: a local opener's handle (machineId null) or a
+   * remote lead's. Absent from a peer below minor 2, which never sent it.
+   */
+  openedBy?: MonitorOpener | null;
+}
+
+export interface MonitorOpener {
+  handle: string;
+  machineId: string | null;
 }
 
 export interface MonitorSnapshot {
@@ -545,24 +555,39 @@ function isAttentionFacts(v: unknown): boolean {
 export const BARE_HANDLE = /^[a-z0-9-]+$/;
 const isBareHandle = (v: unknown): boolean => typeof v === 'string' && BARE_HANDLE.test(v);
 
+const isMachineIdShape = (v: unknown): boolean =>
+  typeof v === 'string' && /^m-[0-9a-f]{8}$/.test(v);
+
+function isMonitorOpener(v: unknown): boolean {
+  return (
+    hasKeys(v, ['handle', 'machineId']) &&
+    isBareHandle(v.handle) &&
+    nullable(v.machineId, isMachineIdShape)
+  );
+}
+
 function isMonitorSession(v: unknown): boolean {
   return (
-    hasKeys(v, [
-      'sessionId',
-      'handle',
-      'label',
-      'agent',
-      'presence',
-      'messaging',
-      'messageable',
-      'notices',
-      'home',
-      'roots',
-      'attention',
-      'completions',
-      'limit',
-      'status',
-    ]) &&
+    hasKeys(
+      v,
+      [
+        'sessionId',
+        'handle',
+        'label',
+        'agent',
+        'presence',
+        'messaging',
+        'messageable',
+        'notices',
+        'home',
+        'roots',
+        'attention',
+        'completions',
+        'limit',
+        'status',
+      ],
+      ['openedBy'],
+    ) &&
     str(v.sessionId) &&
     nullable(v.handle, isBareHandle) &&
     str(v.label) &&
@@ -579,7 +604,8 @@ function isMonitorSession(v: unknown): boolean {
       v.limit,
       (x) => hasKeys(x, ['state', 'resumeAt']) && str(x.state) && nullable(x.resumeAt, str),
     ) &&
-    oneOf(v.status, ['running', 'exited', 'stale'] as const)
+    oneOf(v.status, ['running', 'exited', 'stale'] as const) &&
+    (v.openedBy === undefined || nullable(v.openedBy, isMonitorOpener))
   );
 }
 

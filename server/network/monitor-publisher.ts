@@ -20,6 +20,16 @@ export interface MonitorSource {
   agents(): MonitorSnapshot['agents'];
 }
 
+/** A local opener is named by its handle; a session whose opener has no listed handle names none. */
+function openerOf(
+  entry: DirectoryEntry | undefined,
+  bySession: ReadonlyMap<string, DirectoryEntry>,
+): MonitorSession['openedBy'] {
+  if (!entry?.openedBy) return null;
+  const opener = bySession.get(entry.openedBy);
+  return opener ? { handle: opener.handle, machineId: null } : null;
+}
+
 export function monitorRows(
   sessions: SessionView[],
   directory: DirectoryEntry[],
@@ -48,6 +58,7 @@ export function monitorRows(
       completions: session.completions ?? 0,
       limit: null,
       status: session.status,
+      openedBy: openerOf(entry, bySession),
     };
   });
 }
@@ -98,6 +109,8 @@ export function snapshotFor(
           attention: { attentionReason: null, completions: 0 },
           completions: 0,
           limit: null,
+          // Lineage is part of the rest of my work, which this peer is not shown.
+          openedBy: null,
         })),
       requests: [],
       youUnread: 0,
