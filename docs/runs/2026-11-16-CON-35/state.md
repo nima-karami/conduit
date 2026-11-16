@@ -1,9 +1,9 @@
 # CON-35 orchestrator state (claude-24, Claude-only build loop)
 
-Updated 2026-11-16 ~12:05Z. Read this first after a compaction or handover. Ledger: `.autoloop/` (tasks.yaml, blockers.md, learnings.md, evidence/).
+Updated 2026-11-16 ~14:40Z. Read this first after a compaction or handover. Ledger: `.autoloop/` (tasks.yaml, blockers.md, learnings.md, evidence/).
 
 ## Branch
-`CON-35-remote-ssh` (worktree /home/namemenima/projects/.wt/conduit/CON-35). Tip 8a8b6328. Never pushed to main (claude-3 owns main/releases).
+`CON-35-remote-ssh` (worktree /home/namemenima/projects/.wt/conduit/CON-35). Tip a24d5c4f. Never pushed to main (claude-3 owns main/releases).
 CON-24@fc6f68bd (independently approved) is merged in at efd97325 so CON-39 could use the profiles.
 
 ## Done (each: Opus-reviewed lanes, verify EXIT=0 after every merge, e2e:remote green, reported to claude-3)
@@ -17,8 +17,16 @@ CON-24@fc6f68bd (independently approved) is merged in at efd97325 so CON-39 coul
 - [high] Windows: start path (RS-D5 task), cmd.exe 8191-char limit (certain), node.exe code-signing vs pins, SMB pipe exposure — all need a Windows box.
 - Proof-of-possession for ssh hello; machine-scoped grants (no CON-24 scope kind); cross-platform push; hc re-download.
 
+## Done since
+- CON-40 slice 5 (routed session tools): ALL MERGED at a24d5c4f (verify 0). call/call.result frames (link 1.2); ssh controller = Lead remote principal on B, machine tools a 'fleet' class no remote holds; B serveCall/callAsRemote (remote Caller, nullable home, opener union, reach via openedByRemote); A routes list_agents/open_session/open_terminal{machine} and send_input/read_screen/close_session{handle@machine}; routed calls are server actions on A (spec 4.6); addresses resolve on B; never replayed. net-routed e2e PASS (run 43884934893). NEXT STEP: final e2e:remote affected on a24d5c4f, then report CON-40 done to claude-3, then send the call-frame contract to the UI orchestrator.
+
+## Scope split (owner via claude-3, 14:25Z)
+- Me (claude-24): server/tool track — slices 5 (CON-40), 7 (CON-42 remote requests), 11 (CON-46 remote rules).
+- Second Opus orchestrator (UI/files track) on branch CON-35-ui: slices 6, 8, 9, 10, 12; it messages me before each merge into CON-35-remote-ssh. Send it the call-frame contract (src/contracts/link-protocol.ts call/call.result, ROUTED_TOOLS; plan docs/plans/2026-11-16-remote-ssh-routed-tools.plan.md).
+- Run up to 4 Haiku lanes in parallel on file-disjoint work; mutation checks only on security-relevant code.
+
 ## Next
-CON-40 slice 5 (routed session tools): plan docs/plans/2026-11-16-remote-ssh-routed-tools.plan.md. Slices 1-2 merged (8a8b6328, verify 0). Slice 3 (A routes calls + net-routed e2e) lane con40-d4-route running.
+CON-42 slice 7 (remote requests: request.mirror/request.answer, answer from A) — plan next. Then CON-46 slice 11 (remote rules RS-D16).
 
 ## VM
 ~/.cache/conduit-vm/con27, QEMU PID 199137 running idle, defaults restored (KUP false, linger yes, no drop-in). Stop only by its PID when CON-35 is finished.
