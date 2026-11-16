@@ -2669,6 +2669,38 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     });
   });
 
+  it('a sleeping claude session takes a default edit from its persisted agent; an unknown agent is skipped', async () => {
+    const h = harness();
+    h.sessions.set('s1', session('s1', { agentId: 'claude' }));
+    h.sessions.set('gone', session('gone', { agentId: 'removed-profile' }));
+    await h.host.start();
+    await setHostPolicy(h, 's1', { open_file: { access: 'off' } });
+    await setHostPolicy(h, 'gone', { open_file: { access: 'off' } });
+    let answer: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:setPointPolicy',
+        requestId: 2,
+        point: { kind: 'default' },
+        tool: 'send_input',
+        patch: { access: 'on' },
+      },
+      (m) => {
+        answer = m;
+      },
+      1,
+    );
+    expect(answer).toEqual({ type: 'mcp:policyResult', requestId: 2, ok: true });
+    expect(h.host.uiState().policy.legacy.sessions.s1).toEqual({
+      open_file: { access: 'off' },
+    });
+    // The unknown agent keeps its own send_input, which no longer matches the default it skipped.
+    expect(h.host.uiState().policy.legacy.sessions.gone).toEqual({
+      open_file: { access: 'off' },
+      send_input: { access: 'ask' },
+    });
+  });
+
   it('uiState.switchable lists sessions whose defOf matches an adapter, before any launch', () => {
     const h = harness();
     h.sessions.set('fake', session('fake'));
