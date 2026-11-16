@@ -1,5 +1,5 @@
 // Node-free: the renderer imports these rules. The Needs you panel, the pop-up and the tab only render them.
-import type { RequestView } from '../src/conduit-mcp/request-types';
+import type { RemoteRequestFacts, RequestView } from '../src/conduit-mcp/request-types';
 import { REQ_STR } from './request-strings';
 
 export type RequestType = 'approve' | 'answer' | 'review';
@@ -47,6 +47,11 @@ export interface CardView {
     | { kind: 'terminal' }
     | { kind: 'age'; label: string };
   details: { space: string | null; age: string; machine: string };
+  /** A request mirrored from another machine: its machine name always shows on the card. */
+  remote: boolean;
+  /** The owner's permission ask on another machine; null for a question or a local row. */
+  remotePermission: RemoteRequestFacts['permission'];
+  stale: boolean;
   ariaName: string;
 }
 
@@ -244,7 +249,14 @@ export function cardsOf(
       handle,
       ask: r.title,
       whyNow,
-      details: { space, age: ageLabel(r.createdAt, ctx.now), machine: r.machine },
+      details: {
+        space,
+        age: ageLabel(r.createdAt, ctx.now),
+        machine: r.remote ? r.remote.machineName : r.machine,
+      },
+      remote: r.remote !== undefined,
+      remotePermission: r.remote?.permission ?? null,
+      stale: r.remote?.stale ?? false,
       ariaName: `${REQ_STR.typeWord[type]}, ${sessionName}, ${handle}: ${r.title}, ${whyText(whyNow, ctx.now)}`,
     };
   });
@@ -275,6 +287,13 @@ const distinctPresent = (values: ReadonlyArray<string | null>): string[] => [
 const byLabel = (a: { label: string }, b: { label: string }): number =>
   a.label.localeCompare(b.label);
 
+/** A machine id's display name: the name its mirrored rows carry, else the id itself. */
+export function machineNamesOf(rs: readonly RequestView[]): Map<string, string> {
+  const names = new Map<string, string>();
+  for (const r of rs) if (r.remote) names.set(r.machine, r.remote.machineName);
+  return names;
+}
+
 export function filterOptions(
   rs: readonly RequestView[],
   ctx: { sessions: ReadonlyMap<string, SessionInfo>; spaces: ReadonlyMap<string, string> },
@@ -283,7 +302,7 @@ export function filterOptions(
   leads: Array<{ id: string; label: string }>;
   spaces: Array<{ id: string; label: string }>;
   types: RequestType[];
-  machines: string[];
+  machines: Array<{ id: string; label: string }>;
 } {
   const labelled = (ids: string[], names: ReadonlyMap<string, string>) =>
     ids.map((id) => ({ id, label: names.get(id) ?? id })).sort(byLabel);
@@ -293,7 +312,7 @@ export function filterOptions(
     leads: labelled(distinctPresent(rs.map((r) => r.lead)), sessionName),
     spaces: labelled(distinctPresent(rs.map((r) => r.space)), ctx.spaces),
     types: TYPE_ORDER.filter((t) => rs.some((r) => typeOf(r) === t)),
-    machines: [...new Set(rs.map((r) => r.machine))].sort((a, b) => a.localeCompare(b)),
+    machines: labelled(distinctPresent(rs.map((r) => r.machine)), machineNamesOf(rs)),
   };
 }
 

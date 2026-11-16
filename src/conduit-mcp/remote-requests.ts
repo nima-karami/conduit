@@ -3,14 +3,16 @@
 
 import type { RequestAnswerBody, RequestMirror } from '../contracts/link-protocol';
 import type { RemoteRequestSink } from './remote-routing';
-import type { ListRequestsOutput, RequestsUiState, RequestView } from './request-types';
+import type {
+  ListRequestsOutput,
+  RemoteRequestFacts,
+  RequestsUiState,
+  RequestView,
+} from './request-types';
 import { type Result, toolError } from './types';
 
-/** A mirrored request as the Needs-you queue shows it. `stale` while its link is down. */
-export interface RemoteRequestView extends RequestView {
-  stale: boolean;
-  machineName: string;
-}
+/** A mirrored request as the Needs-you queue shows it; `remote.stale` while its link is down. */
+export type RemoteRequestView = RequestView & { remote: RemoteRequestFacts };
 
 export interface RemoteRequestRef {
   machineId: string;
@@ -80,8 +82,11 @@ function viewOf(machineId: string, set: MachineSet, m: RequestMirror): RemoteReq
     permission: null,
     waiting: false,
     waitingUntil: null,
-    stale: set.stale,
-    machineName: set.name,
+    remote: {
+      machineName: set.name,
+      stale: set.stale,
+      permission: m.permission,
+    },
   };
 }
 
@@ -171,7 +176,7 @@ export function mergeListRequests(
       expires_at: r.expiresAt,
       waiting: false,
       answer: null,
-      machine: r.machineName,
+      machine: r.remote.machineName,
     }));
   return { ok: true, value: { requests: [...local.value.requests, ...rows].slice(0, limit) } };
 }

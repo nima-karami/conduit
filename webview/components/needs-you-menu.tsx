@@ -91,7 +91,7 @@ export function NeedsYouMenu(p: NeedsYouMenuProps): React.JSX.Element {
     rowsFor(
       'machine',
       REQ_STR.filterSection.machine,
-      options.machines.map((m) => ({ value: m, label: m })),
+      options.machines.map((m) => ({ value: m.id, label: m.label })),
       filters.machines,
       (next) => ({ ...filters, machines: next }),
     ),

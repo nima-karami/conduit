@@ -112,11 +112,25 @@ export type VisibleRequestRecord = Omit<RequestRecord, 'kind' | 'permission'> & 
 export const isVisibleRequest = (r: RequestRecord): r is VisibleRequestRecord =>
   r.kind !== 'permission';
 
-export interface RequestView extends VisibleRequestRecord {
+/**
+ * What A knows about a request mirrored from another machine (CON-42). Set only on those rows; the
+ * permission carries the tool and grantability for the owner's answer, never a local permission.
+ */
+export interface RemoteRequestFacts {
+  machineName: string;
+  stale: boolean;
+  permission: { tool: string; why: string; grantable: boolean } | null;
+}
+
+// `remote` on a record names the peer that asked for a permission (never a visible row), so a visible
+// row's `remote` is the mirror facts below.
+export interface RequestView extends Omit<VisibleRequestRecord, 'remote'> {
   /** Live, never persisted: a call is blocked on it right now. */
   waiting: boolean;
   /** Live: when the latest waiting call gives up (ISO UTC), so views count down; null when none waits. */
   waitingUntil: string | null;
+  /** Set only on a request mirrored from another machine. */
+  remote?: RemoteRequestFacts;
 }
 
 export interface HumanPresence {
