@@ -24,7 +24,7 @@ import { toCompilerOptions } from '../src/tsconfig-map';
 import { log } from './log';
 import { disposeWhenDetached } from './model-lifetime';
 import { warmLanguageWorker } from './monaco-warmup';
-import { fileUri, pathForUri } from './project-index';
+import { fileUri, isRemoteModel, pathForUri } from './project-index';
 import { createIndexTracker, flushImmediately, type IndexProgress } from './ts-index-state';
 import { CompilerOptionsRoot } from './ts-options-root';
 
@@ -424,6 +424,8 @@ function takeIndexed(
   // The worker reads a live model before an extraLib, so a model left on the path (a peeked or
   // closed file) would keep it resolving. An open tab's model is its buffer and stays.
   for (const m of monacoEditor.getModels()) {
+    // A remote file's model is not a local file, whatever path its URI carries.
+    if (isRemoteModel(m)) continue;
     const p = pathForUri(m.uri);
     if (pathBelow(p, path) !== null && !keepOpen(p)) disposeWhenDetached(m);
   }

@@ -23,7 +23,7 @@ const { ts, js, warn, mon } = vi.hoisted(() => {
 });
 
 interface JsModel {
-  uri: { toString: () => string; path: string };
+  uri: { toString: () => string; path: string; scheme: string };
   getValue: () => string;
   setValue: (text: string) => void;
   getLanguageId: () => string;
@@ -34,13 +34,13 @@ interface JsModel {
 }
 
 /** A model as monaco's editor creates one: listed, then announced to onDidCreateModel. */
-function openModel(path: string, text: string, language = 'javascript'): JsModel {
+function openModel(path: string, text: string, language = 'javascript', scheme = 'file'): JsModel {
   let value = text;
   let disposed = false;
   const edits = new Set<() => void>();
   const closes = new Set<() => void>();
   const m: JsModel = {
-    uri: { toString: () => `file://${path}`, path },
+    uri: { toString: () => `${scheme}://${path}`, path, scheme },
     getValue: () => value,
     setValue: (t) => {
       value = t;
@@ -125,6 +125,7 @@ import {
   addIndexedFiles,
   applyProjectFiles,
   expectIndexRoot,
+  forgetIndexedPath,
   indexStatus,
   MAX_INDEXED_SOURCE_BYTES,
   onIndexRootEvicted,
@@ -174,6 +175,15 @@ afterEach(() => {
 });
 
 describe('root eviction', () => {
+  it("the index sweep leaves a remote file's model alone, whatever path it carries", () => {
+    const local = openModel('/w/dir/l.ts', 'l', 'plaintext');
+    const remote = openModel('/w/dir/r.ts', 'r', 'plaintext', 'conduit-remote');
+    forgetIndexedPath('/w/dir', () => false);
+    // The local model under the removed folder is released; the remote one belongs to its tab.
+    expect(local.isDisposed()).toBe(true);
+    expect(remote.isDisposed()).toBe(false);
+  });
+
   it('a root no session in the window uses leaves the index; a used one stays', () => {
     chunk('/a', { '/a/x.ts': 'a' });
     chunk('/b', { '/b/y.ts': 'b' });

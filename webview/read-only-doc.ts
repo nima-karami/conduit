@@ -1,6 +1,7 @@
 import type { FileContentDTO } from '../src/protocol';
 import { AUTO_SAVE_COPY } from './auto-save-copy';
 import type { ReadOnlyAttach } from './file-save-controller';
+import { MACHINES_STR } from './machines-strings';
 
 export interface ReadOnlyState extends ReadOnlyAttach {
   /** The editor banner and its one-shot announcement. */
@@ -36,4 +37,14 @@ export function readOnlyState(
       partial: false,
     };
   return null;
+}
+
+/**
+ * The lock on a remote file's editor. It names the machine, which `readOnlyState` cannot: the
+ * file's own DTO only says `readOnlyReason: 'remote'`. A remote buffer is never saved here, so the
+ * refusal text is only ever shown, never a save result.
+ */
+export function remoteReadOnlyState(machineName: string): ReadOnlyState {
+  const banner = MACHINES_STR.remoteFileReadOnly(machineName);
+  return { banner, refusal: banner, partial: false };
 }

@@ -230,6 +230,23 @@ export type DocsAction =
 
 export const initialDocs: DocsState = { docs: [], layouts: {}, activeId: null };
 
+/**
+ * The local file a doc edits, or null. A remote file's path names a file on another machine, so
+ * nothing keyed by a local path (saves, dirty, nav, reveal) may stand for it.
+ */
+export function localPathOf(doc: Pick<OpenDoc, 'kind' | 'path'>): string | null {
+  return doc.kind === 'remote-file' ? null : doc.path;
+}
+
+/** Whether a doc has unsaved local changes. Only a local doc's path can be dirty. */
+export function isDocDirty(
+  doc: Pick<OpenDoc, 'kind' | 'path'>,
+  dirty: ReadonlySet<string>,
+): boolean {
+  const path = localPathOf(doc);
+  return path !== null && dirty.has(path);
+}
+
 // A remote file shares its path with a local one, so the machine is part of its identity.
 const idOf = (t: DocTarget, path: string): string => {
   if (t.kind === 'remote-file') return `remote-file@${t.machine.machineId}:${path}`;
