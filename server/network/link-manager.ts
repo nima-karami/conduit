@@ -196,6 +196,9 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       return;
     }
     const live = deps.store.get(record.machineId)?.machine ?? null;
+    // Every attach runs this, so an unchanged hello must not rewrite links.json each time.
+    if (live !== null && live.os === os && live.arch === arch && live.version === hello.version)
+      return;
     deps.store.setMachine(
       record.machineId,
       live === null

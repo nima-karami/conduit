@@ -67,9 +67,11 @@ describe('createNeedsPerson', () => {
   });
 
   it('refuses a target ssh would read as an option, and opens nothing', async () => {
-    const { make, openCommand } = opener();
+    const { make, openCommand, prepareControlDir } = opener();
     const err = await make('-oProxyCommand=x').catch((e: unknown) => e);
     expect(err).toMatchObject({ kind: 'invalid' });
+    // The target is checked before the control dir is created, so a refusal leaves nothing behind.
+    expect(prepareControlDir).not.toHaveBeenCalled();
     expect(openCommand).not.toHaveBeenCalled();
   });
 });

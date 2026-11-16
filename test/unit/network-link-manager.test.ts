@@ -1467,8 +1467,82 @@ describe("an ssh peer's hello writes its machine block (protocol 1.1)", () => {
         enabled: true,
         survivesLogout: null,
       });
+      // B pinned A from the accepted stream, where A's record has no endpoint: no block there.
+      expect(b.store.get(a.id.machineId)?.machine).toBeNull();
     },
   );
+
+  // B1: an existing block keeps what only the operator or bootstrap set; only the hello's three fields move.
+  it.runIf(process.platform === 'linux' && process.arch === 'x64')(
+    'a 1.1 hello refreshes only os, arch and version of an existing block',
+    async () => {
+      const { a, b } = await sshPair();
+      a.store.addSsh({
+        machineId: b.id.machineId,
+        serverKey: b.id.serverKeyRaw.toString('base64'),
+        ownerKey: null,
+        name: 'win-box',
+        ssh: ENDPOINT,
+      });
+      a.store.setMachine(b.id.machineId, {
+        os: 'windows',
+        arch: 'x64',
+        version: '0.1.0',
+        mode: 'light',
+        agents: ['claude'],
+        enabled: true,
+        survivesLogout: true,
+      });
+      expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({
+        ok: true,
+        machineId: b.id.machineId,
+      });
+      expect(a.store.get(b.id.machineId)?.machine).toEqual({
+        os: 'linux',
+        arch: 'x64',
+        version: '9.9.9',
+        mode: 'light',
+        agents: ['claude'],
+        enabled: true,
+        survivesLogout: true,
+      });
+    },
+  );
+
+  // A hello that changes nothing must not rewrite links.json on every attach.
+  it.runIf(process.platform === 'linux' && process.arch === 'x64')(
+    'a hello that changes nothing writes nothing to the store',
+    async () => {
+      const { a } = await sshPair();
+      expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
+      let writes = 0;
+      const setMachine = a.store.setMachine;
+      a.store.setMachine = (...args) => {
+        writes += 1;
+        return setMachine(...args);
+      };
+      expect((await a.manager.addSshPeer(ENDPOINT)).ok).toBe(true);
+      expect(writes).toBe(0);
+    },
+  );
+
+  it("a peer on os 'other' with x64 leaves its block untouched, and says so", async () => {
+    const owner = identity();
+    const ownerKey = { publicKey: owner.serverPublicKey, privateKey: owner.serverPrivateKey };
+    const c = await node(identity(ownerKey), 'c-box');
+    const a = await node(identity(ownerKey), 'linux-box', 0, () => ({
+      stream: forgingStream({
+        ...helloOf(c),
+        platform: { os: 'other', arch: 'x64' },
+        version: '9.9.9',
+      }),
+      failure: async () => null,
+    }));
+    a.manager.start();
+    expect(await a.manager.addSshPeer(ENDPOINT)).toEqual({ ok: true, machineId: c.id.machineId });
+    expect(a.store.get(c.id.machineId)?.machine).toBeNull();
+    expect(a.warns.some((w) => w.includes('platform'))).toBe(true);
+  });
 
   it('a peer whose hello has no platform (an older one) links, and its block stays absent', async () => {
     const owner = identity();

@@ -13,6 +13,8 @@ const log = makeLog('net-machines');
 const WAIT_MS = 30_000;
 const FAKE_SSH = join(REPO, 'test', 'e2e', 'fixtures', 'fake-ssh.cjs');
 const ENV_KEYS = ['CONDUIT_SSH_PATH', 'CONDUIT_E2E_SSH_ARGS_PREFIX'];
+// The reserved agent id a command session carries (src/session-command.ts COMMAND_AGENT_ID).
+const PANE_AGENT_ID = 'conduit:command';
 
 async function eventually(what, check) {
   assert(await until(check, WAIT_MS), `timed out waiting for: ${what}`);
@@ -89,12 +91,15 @@ async function run() {
     // B's agent after the disconnect is the proof it is still running.
     const stillRunning = await callTool(b, ba, 'list_sessions', {});
     assert(
-      stillRunning?.error === undefined,
+      stillRunning.sessions?.some((s) => s.session_id === ba.sessionId && s.self === true),
       `B's session after disconnect: ${JSON.stringify(stillRunning)}`,
     );
 
     const again = await callTool(a, aa, 'connect_machine', { machine: 'net-b' });
-    assert(again.state === 'up' && again.machine_id === bId, `reconnect: ${JSON.stringify(again)}`);
+    assert(
+      again.state === 'up' && again.machine_id === bId && again.reused === false,
+      `reconnect: ${JSON.stringify(again)}`,
+    );
 
     // A value that is not an ssh target, so no bootstrap or forced ask: only the name lookup
     // answers, and it finds nothing.
@@ -110,8 +115,17 @@ async function run() {
       typeof pane?.sessionId === 'string' && pane.sessionId.length > 0,
       `openNeedsPerson: ${JSON.stringify(pane)}`,
     );
-    // The stand-in gets no remote command, so the pane ends at once; closing it only drops the
-    // session the pane left behind.
+    // The pane is a command session: its agent id is the reserved one (src/session-command.ts) and
+    // its program is the ssh path, with the master's options. The stand-in gets no remote command,
+    // so the pane ends at once; closing it only drops the session the pane left behind.
+    const snapshot = await a.c2.call('events.subscribe');
+    const paneRow = snapshot.sessions.find((x) => x.id === pane.sessionId);
+    assert(paneRow?.agentId === PANE_AGENT_ID, `pane agent: ${JSON.stringify(paneRow)}`);
+    assert(
+      paneRow.command?.command === process.env.CONDUIT_SSH_PATH &&
+        paneRow.command.args.includes('ControlMaster=yes'),
+      `pane command: ${JSON.stringify(paneRow.command)}`,
+    );
     await a.c2.call('sessions.remove', { sessionId: pane.sessionId });
   } catch (error) {
     if (pair) for (const server of [pair.a, pair.b]) dumpServerLog(server);
