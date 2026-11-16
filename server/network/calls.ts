@@ -154,6 +154,8 @@ export function createCalls(deps: CallsDeps): Calls {
   const lastRefusal = new Map<string, number>();
   /** Calls I sent and have not answered, by call id. Each is answered once, then forgotten. */
   const pending = new Map<string, Pending>();
+  /** Calls I am serving for a machine's lead, by machine: each one's signal is the link's, so a drop cancels it. */
+  const served = new Map<string, Set<AbortController>>();
 
   const refuse = (machineId: string, id: string, reason: string, message: string): void => {
     deps.send(machineId, errorFrame(id, toolError('refused', message)));
@@ -194,8 +196,47 @@ export function createCalls(deps: CallsDeps): Calls {
       controller: true,
       capabilities: { ...link.capabilities },
     };
-    const result = await mcp.callAsRemote(principal, frame.tool, frame.args);
+    const inFlight = servedSetOf(machineId);
+    const controller = new AbortController();
+    inFlight.add(controller);
+    let result: Result<StructuredOutput>;
+    try {
+      result = await mcp.callAsRemote(principal, frame.tool, frame.args, controller.signal);
+    } finally {
+      unserve(machineId, inFlight, controller);
+    }
+    // A link that dropped or was revoked mid-call has no one left to read the answer.
+    if (controller.signal.aborted) return;
     deps.send(machineId, resultFrame(frame.id, result));
+  };
+
+  const servedSetOf = (machineId: string): Set<AbortController> => {
+    const existing = served.get(machineId);
+    if (existing !== undefined) return existing;
+    const created = new Set<AbortController>();
+    served.set(machineId, created);
+    return created;
+  };
+
+  // A later call for the same machine may own a fresh set by now, so only an emptied set I still own goes.
+  const unserve = (machineId: string, set: Set<AbortController>, c: AbortController): void => {
+    set.delete(c);
+    if (set.size === 0 && served.get(machineId) === set) served.delete(machineId);
+  };
+
+  /** Aborts the served calls of the machines that match, and logs the batch in one line. */
+  const abortServed = (matches: (machineId: string) => boolean, reason: string): void => {
+    let count = 0;
+    for (const [machineId, set] of [...served]) {
+      if (!matches(machineId)) continue;
+      for (const c of [...set]) {
+        // Already aborted by an earlier batch, and not yet unserved: it is not a new cancel.
+        if (c.signal.aborted) continue;
+        count += 1;
+        c.abort();
+      }
+    }
+    if (count > 0) deps.log('routed calls cancelled', { count, reason });
   };
 
   const finish = (id: string, result: Result<StructuredOutput>): void => {
@@ -344,6 +385,10 @@ export function createCalls(deps: CallsDeps): Calls {
       // No record at all is a machine that was removed, which is as final as a revoke.
       const state = deps.linkState(machineId);
       const gone = state === 'revoked' || state === null;
+      abortServed(
+        (m) => m === machineId,
+        gone ? 'the machine was revoked or removed' : 'the link dropped',
+      );
       for (const [id, p] of [...pending]) {
         if (p.machineId !== machineId) continue;
         finish(
@@ -353,12 +398,14 @@ export function createCalls(deps: CallsDeps): Calls {
       }
     },
     settleAbsent(linkedMachineIds) {
+      abortServed((m) => !linkedMachineIds.includes(m), 'the machine is no longer linked');
       for (const [id, p] of [...pending]) {
         if (!linkedMachineIds.includes(p.machineId)) finish(id, revokedError());
       }
     },
     pendingCount: () => pending.size,
     stop() {
+      abortServed(() => true, 'Conduit is stopping the network');
       for (const id of [...pending.keys()])
         finish(id, unreachable('Conduit is stopping the network'));
     },
