@@ -6859,9 +6859,59 @@ describe('recordObserved', () => {
       expect.objectContaining({
         lane: 'note',
         action: 'feed-throttled',
-        summary: 'Feed throttled: 1 actions not logged',
+        summary: 'Feed throttled: 1 action not logged',
       }),
       expect.objectContaining({ lane: 'observed', action: 'command' }),
     ]);
+  });
+
+  it('pluralises the throttle count when more than one action was dropped', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo, manualTimers: true });
+    await h.host.start();
+    const command = { kind: 'command' as const, command: 'npm test', cwd: '/w' };
+    for (let i = 0; i < 123; i += 1) h.host.recordObserved('s1', 'claude', { action: command });
+    h.advance(60_000);
+    expect(rows.filter((r) => r.action === 'feed-throttled')).toEqual([
+      expect.objectContaining({ summary: 'Feed throttled: 3 actions not logged' }),
+    ]);
+  });
+
+  it('notes a dropped batch at the end of its minute even when no later row arrives', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo, manualTimers: true });
+    await h.host.start();
+    const command = { kind: 'command' as const, command: 'npm test', cwd: '/w' };
+    for (let i = 0; i < 121; i += 1) h.host.recordObserved('s1', 'claude', { action: command });
+    h.advance(60_000);
+    h.advance(120_000);
+    expect(rows.filter((r) => r.action === 'feed-throttled')).toEqual([
+      expect.objectContaining({ summary: 'Feed throttled: 1 action not logged' }),
+    ]);
+  });
+
+  it('a rollover that writes the note first cancels the minute-end timer, so the note is not doubled', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo, manualTimers: true });
+    await h.host.start();
+    const command = { kind: 'command' as const, command: 'npm test', cwd: '/w' };
+    for (let i = 0; i < 121; i += 1) h.host.recordObserved('s1', 'claude', { action: command });
+    h.clock.t += 60_000;
+    h.host.recordObserved('s1', 'claude', { action: command });
+    h.advance(120_000);
+    expect(rows.filter((r) => r.action === 'feed-throttled')).toHaveLength(1);
+  });
+
+  it('deleting a session drops its pending throttle note and forgets its budget', async () => {
+    const { rows, activityIo } = observedHarness();
+    const h = harness({ activityIo, manualTimers: true });
+    await h.host.start();
+    const command = { kind: 'command' as const, command: 'npm test', cwd: '/w' };
+    for (let i = 0; i < 121; i += 1) h.host.recordObserved('s1', 'claude', { action: command });
+    await h.host.onSessionDeleted('s1');
+    h.host.recordObserved('s1', 'claude', { action: command });
+    expect(rows.filter((r) => r.lane === 'observed')).toHaveLength(121);
+    h.advance(60_000);
+    expect(rows.filter((r) => r.action === 'feed-throttled')).toEqual([]);
   });
 });

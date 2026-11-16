@@ -301,6 +301,13 @@ const capSummary = (text: string): string =>
 const capOrNull = (text: string | null): string | null => (text === null ? null : capSummary(text));
 // see plan m3: a busy agent must not flood the Activity log; the excess is counted, not stored
 const OBSERVED_ROWS_PER_MINUTE = 120;
+interface ObservedBudget {
+  minute: number;
+  cli: AgentCli;
+  rows: number;
+  dropped: number;
+  timer: { handle: unknown } | null;
+}
 const MINUTE_MS = 60_000;
 function observedRow(action: ClaudeAction | CodexAction): {
   action: string;
@@ -441,7 +448,56 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   const sleep =
     deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const detectGraceMs = deps.detectGraceMs ?? DETECT_GRACE_MS;
-  const observedBudget = new Map<string, { minute: number; rows: number; dropped: number }>();
+  const setTimer = deps.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
+  const clearTimer =
+    deps.clearTimer ??
+    ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout> | undefined));
+  const observedBudget = new Map<string, ObservedBudget>();
+  const noteRow = (sessionId: string, cli: AgentCli, action: string, summary: string): void => {
+    policyService.activity.record({
+      lane: 'note',
+      principal: { handle: handleOf(sessionId) ?? null, sessionId, machineId: null },
+      cli,
+      action: capSummary(action),
+      target: null,
+      summary: capSummary(summary),
+      decision: null,
+      decidedBy: 'conduit',
+      outcome: null,
+      durationMs: null,
+      requestId: null,
+      count: null,
+    });
+  };
+  const flushThrottle = (sessionId: string, budget: ObservedBudget): void => {
+    if (budget.timer !== null) {
+      clearTimer(budget.timer.handle);
+      budget.timer = null;
+    }
+    if (budget.dropped === 0) return;
+    const n = budget.dropped;
+    budget.dropped = 0;
+    noteRow(
+      sessionId,
+      budget.cli,
+      'feed-throttled',
+      `Feed throttled: ${n} ${n === 1 ? 'action' : 'actions'} not logged`,
+    );
+  };
+  const budgetFor = (sessionId: string, cli: AgentCli, minute: number): ObservedBudget => {
+    const current = observedBudget.get(sessionId);
+    if (current && current.minute === minute) return current;
+    if (current) flushThrottle(sessionId, current);
+    const fresh: ObservedBudget = { minute, cli, rows: 0, dropped: 0, timer: null };
+    observedBudget.set(sessionId, fresh);
+    return fresh;
+  };
+  const forgetBudget = (sessionId: string): void => {
+    const budget = observedBudget.get(sessionId);
+    if (!budget) return;
+    if (budget.timer !== null) clearTimer(budget.timer.handle);
+    observedBudget.delete(sessionId);
+  };
   const store = createMessageStore(deps.storeIo ?? createFsStoreIo(deps.dir));
   const screens = deps.screens;
   const registry = createSessionRegistry();
@@ -2836,6 +2892,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
 
     async onSessionDeleted(sessionId) {
+      forgetBudget(sessionId);
       const closing = closingWhenDone.get(sessionId);
       if (closing) closing.deleted = true;
       // Before the drain: the session's waiting asks end now, so their cancelled replies are owed.
@@ -3144,41 +3201,28 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       policyService.peerRevoked(machineId);
     },
     recordObserved(sessionId, cli, entry) {
-      const principal = { handle: handleOf(sessionId) ?? null, sessionId, machineId: null };
-      const writeNote = (action: string, summary: string) =>
-        policyService.activity.record({
-          lane: 'note',
-          principal,
-          cli,
-          action: capSummary(action),
-          target: null,
-          summary: capSummary(summary),
-          decision: null,
-          decidedBy: 'conduit',
-          outcome: null,
-          durationMs: null,
-          requestId: null,
-          count: null,
-        });
       if ('action' in entry) {
-        const minute = Math.floor(now() / MINUTE_MS);
-        let budget = observedBudget.get(sessionId);
-        if (!budget || budget.minute !== minute) {
-          if (budget && budget.dropped > 0) {
-            writeNote('feed-throttled', `Feed throttled: ${budget.dropped} actions not logged`);
-          }
-          budget = { minute, rows: 0, dropped: 0 };
-          observedBudget.set(sessionId, budget);
-        }
+        const t = now();
+        const minute = Math.floor(t / MINUTE_MS);
+        const budget = budgetFor(sessionId, cli, minute);
         if (budget.rows >= OBSERVED_ROWS_PER_MINUTE) {
           budget.dropped += 1;
+          if (budget.timer === null) {
+            // see plan m3: a dropped batch is noted at its minute's end, even if no later row comes
+            budget.timer = {
+              handle: setTimer(
+                () => flushThrottle(sessionId, budget),
+                (minute + 1) * MINUTE_MS - t,
+              ),
+            };
+          }
           return;
         }
         budget.rows += 1;
         const row = observedRow(entry.action);
         policyService.activity.record({
           lane: 'observed',
-          principal,
+          principal: { handle: handleOf(sessionId) ?? null, sessionId, machineId: null },
           cli,
           action: capSummary(row.action),
           target: capOrNull(row.target),
@@ -3199,7 +3243,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               action: 'feed-gap',
               summary: `Feed gap: ${entry.gap} ${entry.gap === 1 ? 'action' : 'actions'} not reported`,
             };
-      writeNote(note.action, note.summary);
+      noteRow(sessionId, cli, note.action, note.summary);
     },
     recordNote(note) {
       policyService.activity.record({
