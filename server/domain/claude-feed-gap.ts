@@ -42,6 +42,10 @@ const FINGERPRINT_BYTES = 256;
 // Posts for calls that never reach the main transcript would otherwise pile up for the
 // session's whole life.
 const RECEIVED_CAP = 1_000;
+// see plan m4: a transcript can be hundreds of MB, and a baseline must not read all of it
+const BASELINE_TAIL_BYTES = 64 * 1024;
+// a span this long is not one turn's feed, so it is taken as a baseline rather than counted
+const MAX_SPAN_BYTES = 32 * 1024 * 1024;
 
 export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
   const sessions = new Map<string, SessionGap<T>>();
@@ -69,39 +73,47 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
     path: string,
     size: number,
   ): Promise<void> => {
-    // A new file, or one that shrank, has no span to continue: its content so far is history.
-    let baseline = s.transcriptPath !== path || size < s.offset;
-    let start = baseline ? 0 : s.offset;
-    let bytes: Buffer;
     try {
-      // A file replaced at the same path by a longer one passes the size test; the bytes that
-      // ended the last span tell it apart from a file that only grew.
-      if (!baseline && s.fingerprint !== null) {
-        const seen = await deps.readRange(path, s.offset - s.fingerprint.length, s.offset);
-        baseline = !seen.equals(s.fingerprint);
-        start = baseline ? 0 : s.offset;
+      // A new file, or one that shrank, has no span to continue: its content so far is history.
+      let baseline =
+        s.transcriptPath !== path || size < s.offset || size - s.offset > MAX_SPAN_BYTES;
+      let start: number;
+      let bytes: Buffer;
+      try {
+        // A file replaced at the same path by a longer one passes the size test; the bytes that
+        // ended the last span tell it apart from a file that only grew.
+        if (!baseline && s.fingerprint !== null) {
+          const seen = await deps.readRange(path, s.offset - s.fingerprint.length, s.offset);
+          baseline = !seen.equals(s.fingerprint);
+        }
+        start = baseline ? Math.max(0, size - BASELINE_TAIL_BYTES) : s.offset;
+        bytes = await deps.readRange(path, start, size);
+      } catch (err) {
+        deps.warn('transcript unreadable; feed gap not checked', {
+          sessionId,
+          error: String(err),
+        });
+        return;
       }
-      bytes = await deps.readRange(path, start, size);
+      // A forgotten session's check must not write into its successor's span.
+      if (sessions.get(sessionId) !== s) return;
+      // A line cut at the Stop stays unread until its newline lands, so it is counted exactly once.
+      const complete = bytes.lastIndexOf(NEWLINE) + 1;
+      const ids = matchedToolUseIds(bytes.subarray(0, complete).toString('utf8'));
+      const missing = ids.filter((id) => !s.received.has(id)).length;
+      for (const id of ids) s.received.delete(id);
+      if (!baseline && missing > 0) deps.record(sessionId, missing);
+      s.transcriptPath = path;
+      s.offset = start + complete;
+      if (complete > 0) {
+        const previousEnd = complete >= 2 ? bytes.lastIndexOf(NEWLINE, complete - 2) : -1;
+        const fingerprintStart = Math.max(previousEnd + 1, complete - FINGERPRINT_BYTES);
+        s.fingerprint = Buffer.from(bytes.subarray(fingerprintStart, complete));
+      } else if (baseline) {
+        s.fingerprint = null;
+      }
     } catch (err) {
-      deps.warn('transcript unreadable; feed gap not checked', { sessionId, error: String(err) });
-      return;
-    }
-    // A forgotten session's check must not write into its successor's span.
-    if (sessions.get(sessionId) !== s) return;
-    // A line cut at the Stop stays unread until its newline lands, so it is counted exactly once.
-    const complete = bytes.lastIndexOf(NEWLINE) + 1;
-    const ids = matchedToolUseIds(bytes.subarray(0, complete).toString('utf8'));
-    const missing = ids.filter((id) => !s.received.has(id)).length;
-    for (const id of ids) s.received.delete(id);
-    if (!baseline && missing > 0) deps.record(sessionId, missing);
-    s.transcriptPath = path;
-    s.offset = start + complete;
-    if (complete > 0) {
-      const previousEnd = complete >= 2 ? bytes.lastIndexOf(NEWLINE, complete - 2) : -1;
-      const fingerprintStart = Math.max(previousEnd + 1, complete - FINGERPRINT_BYTES);
-      s.fingerprint = Buffer.from(bytes.subarray(fingerprintStart, complete));
-    } else if (baseline) {
-      s.fingerprint = null;
+      deps.warn('feed gap check failed; feed gap not checked', { sessionId, error: String(err) });
     }
   };
 
@@ -109,7 +121,14 @@ export function createClaudeFeedGap<T>(deps: FeedGapDeps<T>): ClaudeFeedGap {
     const pending = s.pending;
     if (pending === null) return;
     s.pending = null;
-    queue = queue.then(() => check(sessionId, s, pending.path, pending.size));
+    queue = queue
+      .then(() => check(sessionId, s, pending.path, pending.size))
+      .catch((err: unknown) => {
+        deps.warn('feed gap check rejected; later checks continue', {
+          sessionId,
+          error: String(err),
+        });
+      });
   };
 
   return {
