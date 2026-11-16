@@ -701,6 +701,8 @@ export function createDomain(deps: DomainDeps): Domain {
     episodeOpen: (id) => monitor.episodes().some((e) => e.sessionId === id && e.state === 'open'),
     onSignal: (signal) => monitor.signal(signal),
     onBound: (id) => monitor.onAdapterLive(id),
+    onAction: () => {},
+    onFeed: () => {},
     log: schedulerLog,
   });
   const settingsAtLoad = settings();
