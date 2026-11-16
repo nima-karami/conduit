@@ -211,7 +211,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     changed,
     onOwnerKey: (pair) => onOwnerKey(pair),
     reconnected: (machineId) => {
-      messaging.linkUp(machineId);
+      messaging.reconnected(machineId);
       publisher.pushTo(machineId);
     },
   });

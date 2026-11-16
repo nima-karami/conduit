@@ -390,6 +390,11 @@ async function gatedDuplicate(gatedId: Identity, peerId: Identity) {
   cleanup.push(async () => {
     sock.destroy();
   });
+  let oldClosed = false;
+  sock.resume();
+  sock.once('close', () => {
+    oldClosed = true;
+  });
   sock.write(encodeFrame(helloOf(peer)));
   await until(() => gated.manager.view(peer.id.machineId)?.state === 'up');
 
@@ -397,6 +402,7 @@ async function gatedDuplicate(gatedId: Identity, peerId: Identity) {
     gated,
     peer,
     isGateClosed: () => gateClosed,
+    isOldClosed: () => oldClosed,
     openGate: () => {
       gateSock.write(encodeFrame(helloOf(peer)));
     },
@@ -421,9 +427,9 @@ describe('a connection swapped while up', { timeout: 60_000 }, () => {
 
   it('a duplicate that replaces a live connection re-sends to the peer once', async () => {
     const [lo, hi] = await orderedPair();
-    const { gated, peer, openGate } = await gatedDuplicate(lo, hi);
+    const { gated, peer, openGate, isOldClosed } = await gatedDuplicate(lo, hi);
     openGate();
-    await until(() => gated.reconnects.length > 0);
+    await until(isOldClosed);
     expect(gated.reconnects).toEqual([peer.id.machineId]);
   });
 });

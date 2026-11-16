@@ -371,6 +371,62 @@ it('preserves FIFO when a link drops while the first blob is loading', async () 
   ]);
 });
 
+const SECOND_ID = 'm_234567abcdefghij';
+const msgIds = (frames: LinkFrame[]) =>
+  frames.flatMap((f) => (f.t === 'msg' ? [f.message.messageId] : []));
+
+it('a reconnect resends what the old connection already took, in order', async () => {
+  const h = setup();
+  h.link.state = 'up';
+  h.svc.enqueue(h.msg, [h.recipient]);
+  await vi.waitFor(() => expect(h.frames).toHaveLength(1));
+  h.svc.enqueue({ ...h.msg, messageId: SECOND_ID }, [h.recipient]);
+  await vi.waitFor(() => expect(h.frames).toHaveLength(2));
+  const auditBefore = h.audit.length;
+  h.svc.reconnected(machine);
+  await vi.waitFor(() => expect(h.frames).toHaveLength(4));
+  expect(msgIds(h.frames)).toEqual([
+    'm_abcdefghijklmnop',
+    SECOND_ID,
+    'm_abcdefghijklmnop',
+    SECOND_ID,
+  ]);
+  expect(h.audit).toHaveLength(auditBefore);
+  expect(h.mcp.setRemoteStatus).not.toHaveBeenCalled();
+});
+
+it('a reconnect during a flush still loading a blob resends the sent entry ahead of the newer one', async () => {
+  const h = setup();
+  let finish: (bytes: Uint8Array) => void = () => {};
+  vi.mocked(h.mcp.readBlob)
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    )
+    .mockResolvedValue(Buffer.from('blob'));
+  h.link.state = 'up';
+  h.svc.enqueue(h.msg, [h.recipient]);
+  await vi.waitFor(() => expect(h.frames).toHaveLength(1));
+  h.svc.enqueue(
+    {
+      ...h.msg,
+      messageId: SECOND_ID,
+      attachments: [
+        { attachmentId: 'a1', name: 'x', mime: 'text/plain', bytes: 4, sha256: 'c'.repeat(64) },
+      ],
+    },
+    [h.recipient],
+  );
+  await vi.waitFor(() => expect(h.mcp.readBlob).toHaveBeenCalledTimes(1));
+  h.svc.reconnected(machine);
+  finish(Buffer.from('blob'));
+  await vi.waitFor(() => expect(h.frames).toHaveLength(3));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(msgIds(h.frames)).toEqual(['m_abcdefghijklmnop', 'm_abcdefghijklmnop', SECOND_ID]);
+});
+
 // A distinct valid id for each i: 'm_' / 't_' plus 16 base32 chars.
 const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
 const ident = (prefix: 'm' | 't', i: number): string => {

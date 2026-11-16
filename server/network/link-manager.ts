@@ -50,7 +50,7 @@ export interface LinkManagerDeps {
   /** The owner private key arrived over this link: verify and store it; false refuses it. */
   onOwnerKey(pair: { publicKey: string; privateKey: string }): boolean;
   /** A live connection was swapped for a new one: frames on the old one may never have landed. */
-  reconnected?(machineId: string): void;
+  reconnected(machineId: string): void;
   dialTimeoutMs?: number;
   pingMs?: number;
 }
@@ -273,7 +273,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     if (!sameCapabilities(sentCapabilities, p.record.capabilities))
       opened.send({ t: 'caps', capabilities: { ...p.record.capabilities } });
     if (p.record.ownerTransfer === 'send') sendOwnerKey(p, opened);
-    if (replaced) deps.reconnected?.(p.record.machineId);
+    if (replaced) deps.reconnected(p.record.machineId);
     deps.changed();
   };
 
