@@ -474,6 +474,15 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     async start() {
       messaging.start();
       manager.start();
+      // A record a crashed run left names an endpoint this run may not own. Drop it before the
+      // listen, so a failed listen can never leave a record that sends the bridge to someone else.
+      try {
+        removeLinkEndpoint(deps.userData);
+      } catch (err) {
+        deps.log.error('stale link endpoint record not removed', {
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
       // Not fatal: C2 and TLS links still work without the ssh bridge's endpoint.
       stdioLink = await listenStdioLink({
         endpoint: deps.linkEndpoint,

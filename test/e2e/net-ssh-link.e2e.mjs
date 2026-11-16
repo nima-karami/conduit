@@ -128,8 +128,14 @@ async function run() {
       const view = await linkView(a.c2, bId);
       return view?.state === 'up' && pids.length >= 2 && pids.at(-1) !== bridgePid;
     });
-    await eventually('B receives the queued message once', () =>
+    await eventually('B receives the queued message', () =>
       records(b).some((r) => r.t === 'msg' && r.msg.originMessageId === queued.message_id),
+    );
+    // A late duplicate of the queued message would land behind a later one, so a marker sent after
+    // the redial is the point the count is taken: once it has arrived, the outbox has drained.
+    const marker = await callTool(a, aa, 'send_message', { to: [address], body: 'marker' });
+    await eventually('B receives the marker', () =>
+      records(b).some((r) => r.t === 'msg' && r.msg.originMessageId === marker.message_id),
     );
     const copies = records(b).filter(
       (r) => r.t === 'msg' && r.msg.originMessageId === queued.message_id,
@@ -138,7 +144,9 @@ async function run() {
 
     phase('4. a bridge with the wrong secret is refused and audited');
     const bridgeSocket = await new Promise((resolve, reject) => {
-      const sock = net.createConnection(b.names.linkEndpoint, () => resolve(sock));
+      // The record the bridge reads, not a name derived here: the scenario proves what sshd's bridge uses.
+      const recorded = readFileSync(join(b.userData, 'link-endpoint'), 'utf8').trim();
+      const sock = net.createConnection(recorded, () => resolve(sock));
       sock.once('error', reject);
     });
     const closed = new Promise((resolve) => bridgeSocket.once('close', resolve));

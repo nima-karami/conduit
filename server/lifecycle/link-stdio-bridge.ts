@@ -27,12 +27,14 @@ export interface LinkStdioBridgeOptions {
 }
 
 export function runLinkStdioBridge(o: LinkStdioBridgeOptions): Promise<number> {
+  // An empty record is as good as none: a zero-length value cannot name an endpoint or a secret.
   const secret = readServerSecret(o.userData);
-  if (secret === null) return failed(o, 'no_secret');
+  if (!secret) return failed(o, 'no_secret');
 
   const endpoint = readLinkEndpoint(o.userData);
-  if (endpoint === null) return failed(o, 'no_server');
-  const sock = (o.connect ?? createConnection)(endpoint);
+  if (!endpoint) return failed(o, 'no_server');
+  // By path, never by host and port: a record that reads as a number must not dial TCP.
+  const sock = (o.connect ?? ((path: string) => createConnection({ path })))(endpoint);
   const preamble: BridgePreamble = { t: 'bridge', v: 1, secret };
   const startedAt = Date.now();
   let sawByte = false;
@@ -54,6 +56,8 @@ export function runLinkStdioBridge(o: LinkStdioBridgeOptions): Promise<number> {
     sock.write(encodeFrame(preamble));
     o.stdin.pipe(sock);
     o.stdin.on('error', (error) => diag(o, `stdin: ${error.message}`));
+    // sshd can close the channel first: EPIPE on stdout then means the link is over, not a crash.
+    o.stdout.on('error', () => finish(0));
 
     sock.on('data', (chunk: Buffer) => {
       sawByte = true;

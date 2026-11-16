@@ -16,7 +16,7 @@ afterEach(async () => {
   for (const c of cleanup.splice(0).reverse()) await c();
 });
 
-function server(name: string) {
+function server(name: string, endpointIn?: (root: string) => string) {
   const root = mkdtempSync(join(tmpdir(), 'conduit-net-'));
   const dir = join(root, 'network');
   const loaded = loadIdentity(dir);
@@ -27,7 +27,7 @@ function server(name: string) {
     dir,
     userData: root,
     instance: 'service-test',
-    linkEndpoint: join(root, 'conduit-link.sock'),
+    linkEndpoint: endpointIn ? endpointIn(root) : join(root, 'conduit-link.sock'),
     secret: () => secret,
     identity: loaded.identity,
     settings: () => ({ networkBindHost: '127.0.0.1', networkPort: 0, networkSelfName: name }),
@@ -221,6 +221,15 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
     expect(result).toEqual({ ok: false, error: { code: 'bridge_no_server' } });
     // The control dir is the one controlDir() chose under userData, created by the dial.
     expect(existsSync(join(userData, 'ssh'))).toBe(true);
+  });
+
+  it('a stale record from a crashed run is dropped before the endpoint listens', async () => {
+    // The endpoint sits in a missing directory, so its listen fails and the record must not survive.
+    const a = server('net-a', (root) => join(root, 'missing-dir', 'conduit-link.sock'));
+    const userData = join(a.dir, '..');
+    writeFileSync(join(userData, LINK_ENDPOINT_FILE), join(userData, 'squatter.sock'));
+    await a.net.start();
+    expect(existsSync(join(userData, LINK_ENDPOINT_FILE))).toBe(false);
   });
 
   it('records the link endpoint on start and removes the record on stop', async () => {

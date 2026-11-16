@@ -13,13 +13,17 @@ import type { NetLog } from './listener';
 // see docs/plans/2026-11-16-remote-ssh-stdio-link.plan.md decision 1 and Task 3.1
 
 const PREAMBLE_TIMEOUT_MS = 5_000;
+// Pending means no valid preamble yet. On Windows any local user can open the pipe, so the count
+// caps what a flood can hold, and the audit line is rate-limited so audit.jsonl cannot grow with it.
+const MAX_PENDING = 16;
+const TOO_MANY_AUDIT_MS = 1_000;
 
-export type BridgeRefusal = 'bad_secret' | 'bad_preamble' | 'timeout';
+type BridgeRefusal = 'bad_secret' | 'bad_preamble' | 'timeout';
 
 export interface StdioLinkEndpointOptions {
   endpoint: string;
   platform: NodeJS.Platform;
-  /** Read at each preamble, so a restarted secret file is the one that counts. */
+  /** The per-start secret main.ts holds in memory; the getter reads no file. */
   secret: () => string;
   /** Takes over a stream that presented the secret. It comes paused: the consumer resumes it. */
   accept: (stream: Duplex) => void;
@@ -33,10 +37,25 @@ export interface StdioLinkEndpoint {
 
 export async function listenStdioLink(o: StdioLinkEndpointOptions): Promise<StdioLinkEndpoint> {
   const sockets = new Set<Socket>();
+  const pending = new Set<Socket>();
+  let lastTooManyAt = Number.NEGATIVE_INFINITY;
   const onConnection = (sock: Socket) => {
+    if (pending.size >= MAX_PENDING) {
+      const now = Date.now();
+      if (now - lastTooManyAt >= TOO_MANY_AUDIT_MS) {
+        lastTooManyAt = now;
+        o.audit.record({ kind: 'bridge.refused', peer: null, detail: { reason: 'too_many' } });
+      }
+      sock.destroy();
+      return;
+    }
     sockets.add(sock);
-    sock.once('close', () => sockets.delete(sock));
-    admit(o, sock);
+    pending.add(sock);
+    sock.once('close', () => {
+      sockets.delete(sock);
+      pending.delete(sock);
+    });
+    admit(o, sock, () => pending.delete(sock));
   };
   let server: Server;
   try {
@@ -71,7 +90,8 @@ function listenOnce(o: StdioLinkEndpointOptions, onConnection: (sock: Socket) =>
     server.listen(o.endpoint, () => {
       server.off('error', failed);
       try {
-        // Windows pipes have no posix mode; their user-only default is the gate there.
+        // Windows pipes have no posix mode, and other local users can reach the pipe name. The
+        // secret, not the name, is the gate there (plan decision 1).
         if (o.platform !== 'win32') chmodSync(o.endpoint, 0o600);
       } catch (error) {
         server.close();
@@ -86,9 +106,12 @@ function listenOnce(o: StdioLinkEndpointOptions, onConnection: (sock: Socket) =>
   });
 }
 
-function admit(o: StdioLinkEndpointOptions, sock: Socket): void {
+function admit(o: StdioLinkEndpointOptions, sock: Socket, settle: () => void): void {
   let buffered = Buffer.alloc(0);
-  const timer = setTimeout(() => refuse(o, sock, 'timeout'), PREAMBLE_TIMEOUT_MS);
+  const timer = setTimeout(() => {
+    settle();
+    refuse(o, sock, 'timeout');
+  }, PREAMBLE_TIMEOUT_MS);
   sock.on('error', (err) => o.log.debug('stdio link peer error', { message: err.message }));
   sock.once('close', () => clearTimeout(timer));
   const onData = (chunk: Buffer) => {
@@ -98,6 +121,7 @@ function admit(o: StdioLinkEndpointOptions, sock: Socket): void {
     clearTimeout(timer);
     sock.off('data', onData);
     sock.pause();
+    settle();
     if (first.kind === 'error' || !isPreamble(first.frame)) {
       refuse(o, sock, 'bad_preamble');
     } else if (!secretMatches(o.secret(), first.frame.secret)) {

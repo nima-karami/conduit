@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { createConnection, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,6 +23,14 @@ function endpointName(): string {
   const dir = mkdtempSync(join(tmpdir(), 'sle-'));
   cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
   return join(dir, 'l.sock');
+}
+
+function rawFrame(text: string): Buffer {
+  const body = Buffer.from(text, 'utf8');
+  const out = Buffer.alloc(4 + body.length);
+  out.writeUInt32BE(body.length, 0);
+  body.copy(out, 4);
+  return out;
 }
 
 function preamble(secret: string): Buffer {
@@ -132,5 +140,67 @@ describe('listenStdioLink', () => {
     expect(a.events).toEqual([
       { kind: 'bridge.refused', peer: null, detail: { reason: 'timeout' } },
     ]);
+  });
+  it.skipIf(process.platform === 'win32')(
+    'the posix endpoint is user-only after listen',
+    async () => {
+      const { endpoint } = await listen();
+      expect(statSync(endpoint).mode & 0o777).toBe(0o600);
+    },
+  );
+
+  it('a live endpoint is not stolen: a second listen fails and the first still answers', async () => {
+    const { endpoint, accepted } = await listen();
+    await expect(
+      listenStdioLink({
+        endpoint,
+        platform: process.platform,
+        secret: () => SECRET,
+        accept: (s) => accepted.push(s),
+        audit: audit().sink,
+        log: quiet,
+      }),
+    ).rejects.toThrow();
+    const client = await connect(endpoint);
+    expect(client.connecting || client.destroyed).toBe(false);
+  });
+
+  it('a frame without t and v is bad_preamble', async () => {
+    const { endpoint, audit: a, accepted } = await listen();
+    const client = await connect(endpoint);
+    const closed = new Promise<void>((resolve) => client.once('close', () => resolve()));
+    client.write(rawFrame(JSON.stringify({ secret: SECRET })));
+    await closed;
+    expect(accepted).toHaveLength(0);
+    expect(a.events).toEqual([
+      { kind: 'bridge.refused', peer: null, detail: { reason: 'bad_preamble' } },
+    ]);
+  });
+
+  it('a JSON null frame is bad_preamble and does not throw', async () => {
+    const { endpoint, audit: a, accepted } = await listen();
+    const client = await connect(endpoint);
+    const closed = new Promise<void>((resolve) => client.once('close', () => resolve()));
+    client.write(rawFrame('null'));
+    await closed;
+    expect(accepted).toHaveLength(0);
+    expect(a.events).toEqual([
+      { kind: 'bridge.refused', peer: null, detail: { reason: 'bad_preamble' } },
+    ]);
+  });
+
+  it('caps pending connections: extras are destroyed, and too_many is audited once a second', async () => {
+    const { endpoint, audit: a } = await listen();
+    let closed = 0;
+    for (let i = 0; i < 20; i++) {
+      const client = await connect(endpoint);
+      client.once('close', () => {
+        closed += 1;
+      });
+    }
+    // Sixteen stay pending until their 5 s timeout; the other four are destroyed at once.
+    await until(() => closed === 4);
+    const tooMany = a.events.filter((e) => e.detail?.reason === 'too_many');
+    expect(tooMany).toHaveLength(1);
   });
 });

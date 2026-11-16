@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { type AddressInfo, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Duplex, PassThrough, Writable } from 'node:stream';
@@ -147,5 +148,90 @@ describe('runLinkStdioBridge', () => {
     });
     expect(code).toBe(3);
     expect(io.err()).toBe('conduit-bridge: refused\n');
+  });
+  it('an empty endpoint record → exit 3 + no_server', async () => {
+    const dir = userData();
+    writeServerSecret(dir);
+    writeLinkEndpoint(dir, '');
+    const io = sinks();
+    const code = await runLinkStdioBridge({
+      userData: dir,
+      stdin: new PassThrough(),
+      stdout: io.stdout,
+      stderr: io.stderr,
+    });
+    expect(code).toBe(3);
+    expect(io.err()).toBe('conduit-bridge: no_server\n');
+  });
+
+  it('an empty secret → exit 3 + no_secret', async () => {
+    const dir = userData();
+    writeFileSync(join(dir, 'server-secret'), '');
+    writeLinkEndpoint(dir, join(dir, 'conduit-link.sock'));
+    const io = sinks();
+    const code = await runLinkStdioBridge({
+      userData: dir,
+      stdin: new PassThrough(),
+      stdout: io.stdout,
+      stderr: io.stderr,
+    });
+    expect(code).toBe(3);
+    expect(io.err()).toBe('conduit-bridge: no_secret\n');
+  });
+
+  it('a numeric endpoint record never dials TCP', async () => {
+    const dir = userData();
+    writeServerSecret(dir);
+    let tcpPeers = 0;
+    const tcp = createServer(() => {
+      tcpPeers += 1;
+    });
+    await new Promise<void>((resolve) => tcp.listen(0, '127.0.0.1', () => resolve()));
+    cleanup.push(() => new Promise<void>((resolve) => tcp.close(() => resolve())));
+    const port = (tcp.address() as AddressInfo).port;
+    writeLinkEndpoint(dir, String(port));
+    const io = sinks();
+    const code = await runLinkStdioBridge({
+      userData: dir,
+      stdin: new PassThrough(),
+      stdout: io.stdout,
+      stderr: io.stderr,
+    });
+    expect(code).toBe(3);
+    expect(io.err()).toBe('conduit-bridge: no_server\n');
+    expect(tcpPeers).toBe(0);
+  });
+
+  it('an EPIPE on stdout ends the bridge with 0 instead of crashing', async () => {
+    const dir = userData();
+    writeServerSecret(dir);
+    writeLinkEndpoint(dir, join(dir, 'conduit-link.sock'));
+    let pushed = false;
+    // The endpoint sends bytes and never ends, so only the broken stdout can end the bridge.
+    const io = sinks();
+    const brokenStdout = new Writable({
+      write(_chunk, _encoding, callback) {
+        callback(Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+      },
+    });
+    const code = await runLinkStdioBridge({
+      userData: dir,
+      stdin: new PassThrough(),
+      stdout: brokenStdout,
+      stderr: io.stderr,
+      connect: () =>
+        new Duplex({
+          read() {
+            if (!pushed) {
+              pushed = true;
+              this.push(Buffer.from('link bytes'));
+            }
+          },
+          write(_chunk, _encoding, callback) {
+            callback();
+          },
+        }),
+    });
+    expect(code).toBe(0);
   });
 });
