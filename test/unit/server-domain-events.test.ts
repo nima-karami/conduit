@@ -1,15 +1,9 @@
-import {
-  appendFileSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { FEED_GAP_SETTLE_MS } from '../../server/domain/claude-feed-gap';
 import {
   disposeHarnesses,
   harness,
@@ -457,7 +451,13 @@ describe('server domain: observed lane wiring', () => {
     event,
     payload,
   });
-  const pad = (n: number): string => String(n).padStart(2, '0');
+  const use = (uuid: string, toolUseId: string): string =>
+    JSON.stringify({
+      type: 'assistant',
+      uuid,
+      isSidechain: false,
+      message: { content: [{ type: 'tool_use', id: toolUseId, name: 'Bash' }] },
+    });
 
   it('a Claude PostToolUse reaches the observed lane as its command', async () => {
     const h = harness();
@@ -494,66 +494,154 @@ describe('server domain: observed lane wiring', () => {
     ]);
   });
 
-  it('a Codex rollout action written after the bind reaches the observed lane as cli codex', async () => {
-    const codexHome = mkdtempSync(join(tmpdir(), 'obs-codex-'));
-    try {
-      const h = harness({
-        env: { CODEX_HOME: codexHome },
-        files: {
-          'agents.json': JSON.stringify([
-            {
-              id: 'codex',
-              label: 'Codex',
-              command: 'codex',
-              args: [],
-              icon: 'terminal',
-              color: 'green',
-              cwdStrategy: 'workspaceFolder',
-            },
-          ]),
-        },
-      });
-      const id = await live(h, { agentId: 'codex' });
-      const now = new Date();
-      const day = join(
-        codexHome,
-        'sessions',
-        String(now.getFullYear()),
-        pad(now.getMonth() + 1),
-        pad(now.getDate()),
-      );
-      mkdirSync(day, { recursive: true });
-      const file = join(day, 'rollout-obs.jsonl');
-      const cwd = h.home;
-      writeFileSync(
-        file,
-        `${JSON.stringify({
-          type: 'session_meta',
-          timestamp: now.toISOString(),
-          payload: { id: 'obs-1', cwd, timestamp: now.toISOString() },
-        })}\n`,
-      );
-      const item = readFileSync(
-        join(__dirname, '..', 'fixtures', 'codex-rollout', 'actions.jsonl'),
-        'utf8',
-      ).split('\n')[1];
-      // The first read after a bind is history; lines appended after it are news. The watch reads
-      // after 250 ms of quiet, so append slower than that or no read ever runs.
-      await vi.waitFor(
-        () => {
-          appendFileSync(file, `${item}\n`);
-          expect(h.observed).toContainEqual({
-            sessionId: id,
-            cli: 'codex',
-            entry: expect.objectContaining({
-              action: expect.objectContaining({ kind: 'command' }),
+  it('a Codex action reaches the observed lane as cli codex', () => {
+    const h = harness();
+    const action = {
+      kind: 'command' as const,
+      command: 'npm test',
+      cwd: '/w',
+      exitCode: 0,
+      durationMs: 12,
+    };
+    h.codexWatch.deps().onAction('s-codex', action);
+    expect(h.observed).toEqual([{ sessionId: 's-codex', cli: 'codex', entry: { action } }]);
+  });
+
+  it('a Codex feed that went dark reaches the observed lane as a feed entry', () => {
+    const h = harness();
+    h.codexWatch.deps().onFeed('s-codex', 'unavailable');
+    expect(h.observed).toEqual([
+      { sessionId: 's-codex', cli: 'codex', entry: { feed: 'unavailable' } },
+    ]);
+  });
+
+  describe('Claude feed gap through the domain', () => {
+    const gapRows = (h: ReturnType<typeof harness>) =>
+      h.observed.filter((o) => typeof (o.entry as { gap?: unknown }).gap === 'number');
+
+    /** Runs `body` with the gap check's settle timer on fake timers; the file I/O is real. */
+    const withSettle = async (body: () => Promise<void>): Promise<void> => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await body();
+      } finally {
+        vi.useRealTimers();
+      }
+    };
+
+    it('a tool call whose post never arrives is recorded as a gap after the Stop settles', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'obs-gap-'));
+      const transcript = join(dir, 'session.jsonl');
+      try {
+        const h = harness();
+        const id = await live(h, { agentId: 'claude' });
+        writeFileSync(transcript, `${use('u0', 'toolu_0')}\n`);
+        await withSettle(async () => {
+          h.domain.hookPost(id, post('Stop', { transcript_path: transcript }));
+          vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
+          appendFileSync(transcript, `${use('u1', 'toolu_1')}\n`);
+          h.domain.hookPost(id, post('Stop', { transcript_path: transcript }));
+          vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
+          await vi.waitFor(() =>
+            expect(gapRows(h)).toEqual([{ sessionId: id, cli: 'claude', entry: { gap: 1 } }]),
+          );
+        });
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('a PostToolUse with agent_id does not count toward the main session gap', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'obs-gap-'));
+      const transcript = join(dir, 'session.jsonl');
+      try {
+        const h = harness();
+        const id = await live(h, { agentId: 'claude' });
+        writeFileSync(transcript, `${use('u0', 'toolu_0')}\n`);
+        await withSettle(async () => {
+          h.domain.hookPost(id, post('Stop', { transcript_path: transcript }));
+          vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
+          appendFileSync(transcript, `${use('u1', 'toolu_1')}\n`);
+          h.domain.hookPost(
+            id,
+            post('PostToolUse', {
+              tool_name: 'Bash',
+              tool_input: { command: 'ls' },
+              tool_use_id: 'toolu_1',
+              agent_id: 'sub-1',
             }),
-          });
-        },
-        { timeout: 5000, interval: 400 },
-      );
-    } finally {
-      rmSync(codexHome, { recursive: true, force: true });
-    }
+          );
+          h.domain.hookPost(id, post('Stop', { transcript_path: transcript }));
+          vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
+          await vi.waitFor(() =>
+            expect(gapRows(h)).toEqual([{ sessionId: id, cli: 'claude', entry: { gap: 1 } }]),
+          );
+        });
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('a matching main-session post clears the call, so the next Stop reports only its own loss', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'obs-gap-'));
+      const transcript = join(dir, 'session.jsonl');
+      try {
+        const h = harness();
+        const id = await live(h, { agentId: 'claude' });
+        writeFileSync(transcript, `${use('u0', 'toolu_0')}\n`);
+        await withSettle(async () => {
+          h.domain.hookPost(id, post('Stop', { transcript_path: transcript }));
+          vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
+          appendFileSync(transcript, `${use('u1', 'toolu_1')}\n`);
+          h.domain.hookPost(
+            id,
+            post('PostToolUse', {
+              tool_name: 'Bash',
+              tool_input: { command: 'ls' },
+              tool_use_id: 'toolu_1',
+            }),
+          );
+          h.domain.hookPost(id, post('Stop', { transcript_path: transcript }));
+          vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
+          appendFileSync(transcript, `${use('u2', 'toolu_2')}\n`);
+          h.domain.hookPost(id, post('Stop', { transcript_path: transcript }));
+          vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
+          await vi.waitFor(() =>
+            expect(gapRows(h)).toEqual([{ sessionId: id, cli: 'claude', entry: { gap: 1 } }]),
+          );
+        });
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('deleting a session drops its pending check; another session still reports its gap', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'obs-gap-'));
+      const a = join(dir, 'a.jsonl');
+      const b = join(dir, 'b.jsonl');
+      try {
+        const h = harness();
+        const idA = await live(h, { agentId: 'claude' });
+        const idB = await live(h, { agentId: 'claude' });
+        writeFileSync(a, `${use('u0', 'toolu_0')}\n`);
+        writeFileSync(b, `${use('u0', 'toolu_0')}\n`);
+        await withSettle(async () => {
+          h.domain.hookPost(idA, post('Stop', { transcript_path: a }));
+          h.domain.hookPost(idB, post('Stop', { transcript_path: b }));
+          vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
+          appendFileSync(a, `${use('u1', 'toolu_1')}\n`);
+          appendFileSync(b, `${use('u1', 'toolu_1')}\n`);
+          h.domain.hookPost(idA, post('Stop', { transcript_path: a }));
+          await h.call('sessions.remove', { sessionId: idA });
+          h.domain.hookPost(idB, post('Stop', { transcript_path: b }));
+          vi.advanceTimersByTime(FEED_GAP_SETTLE_MS);
+          await vi.waitFor(() =>
+            expect(gapRows(h)).toEqual([{ sessionId: idB, cli: 'claude', entry: { gap: 1 } }]),
+          );
+        });
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 });

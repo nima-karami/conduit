@@ -114,7 +114,7 @@ import { HC_XDG_ISOLATED_ENV } from '../hc-cli';
 import { type RpcAnswer, RpcFault, type RpcRequest } from '../transport/pipe';
 import { createClaudeFeedGap } from './claude-feed-gap';
 import { createRolloutFs } from './codex-rollout-fs';
-import { createCodexRolloutWatch } from './codex-rollout-watch';
+import type { CodexWatch, CodexWatchDeps } from './codex-rollout-watch';
 import { ServerFolderHealth } from './folder-health';
 import { createLimitMonitor } from './limit-monitor';
 import { createLimitRulesSource } from './limit-rules-file';
@@ -139,6 +139,7 @@ export interface DomainDeps {
   launch: LaunchPort;
   drafts: DraftPort;
   observed: ObservedPort;
+  createCodexWatch(deps: CodexWatchDeps): CodexWatch;
   scrollback: ScrollbackPort;
   attention: AttentionStatusRead;
   typing: TypingPort;
@@ -288,10 +289,10 @@ const str = (p: Record<string, unknown>, key: string): string => {
   return v;
 };
 
-/** The W4 row of the program: everything the server owns about sessions and its stores. */
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
+/** The W4 row of the program: everything the server owns about sessions and its stores. */
 export function createDomain(deps: DomainDeps): Domain {
   const { userData, runtime, scrollback, log } = deps;
   const file = (name: string) => join(userData, name);
@@ -712,7 +713,7 @@ export function createDomain(deps: DomainDeps): Domain {
     for (const action of claudeActionsFromPostToolUse(payload))
       deps.observed.record(sessionId, 'claude', { action, failed });
   };
-  const codexWatch = createCodexRolloutWatch({
+  const codexWatch = deps.createCodexWatch({
     sessionsRoot: join(codexHome, 'sessions'),
     now: () => Date.now(),
     localDate: (ms) => {
