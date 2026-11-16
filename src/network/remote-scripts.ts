@@ -67,6 +67,7 @@ export interface ManifestEntry {
   size: number;
 }
 
+/** How the remote starts the server. The one definition: ensure-args.ts imports it from here. */
 export type StartMethod = 'scope' | 'plain' | 'windows-task';
 
 const RESULT_PREFIX = 'CONDUIT_RESULT ';
@@ -457,12 +458,16 @@ const SH_FINALIZE = `${SH_HEADER}
 `;
 
 // The ensure step is the installed node running the new headless mode; it prints its own result.
+// --survives-logout and --shim-dir are the flags ensure-args.ts parses; --shim-dir is optional.
 const SH_ENSURE = `${SH_HEADER}
   NODE=$(d "$1")
   MAIN=$(d "$2")
   UD=$(d "$3")
   M=$(d "$4")
-  exec "$NODE" "$MAIN" --ensure-server --user-data "$UD" --start "$M"
+  SV=$(d "$5")
+  SD=$(d "$6")
+  if [ -n "$SD" ]; then exec "$NODE" "$MAIN" --ensure-server --user-data "$UD" --start "$M" --survives-logout "$SV" --shim-dir "$SD"; fi
+  exec "$NODE" "$MAIN" --ensure-server --user-data "$UD" --start "$M" --survives-logout "$SV"
 `;
 
 const PS_HEADER = `$ErrorActionPreference = 'Stop'
@@ -726,11 +731,15 @@ $node = Arg 0
 $main = Arg 1
 $ud = Arg 2
 $method = Arg 3
-$sup = Arg 4
-$hc = Arg 5`;
+$sv = Arg 4
+$sd = Arg 5
+$sup = Arg 6
+$hc = Arg 7`;
 
 const PS_ENSURE_RUN = `
-& $node $main --ensure-server --user-data $ud --start $method
+$ensureArgs = @('--ensure-server', '--user-data', $ud, '--start', $method, '--survives-logout', $sv)
+if ($sd) { $ensureArgs += @('--shim-dir', $sd) }
+& $node $main @ensureArgs
 exit $LASTEXITCODE`;
 
 // ── public builders ───────────────────────────────────────────────────────────
@@ -807,9 +816,25 @@ export function finalizeCommand(
 
 export function ensureCommand(
   f: ShellFamily,
-  o: { node: string; mainJs: string; userData: string; method: StartMethod; hcExe?: string },
+  o: {
+    node: string;
+    mainJs: string;
+    userData: string;
+    method: StartMethod;
+    /** Decided by the probe (startMethodOf); the ensure result reports it back. */
+    survivesLogout: boolean;
+    shimDir?: string;
+    hcExe?: string;
+  },
 ): RemoteCommand {
-  const values = [o.node, o.mainJs, o.userData, o.method];
+  const values = [
+    o.node,
+    o.mainJs,
+    o.userData,
+    o.method,
+    o.survivesLogout ? 'yes' : 'no',
+    o.shimDir ?? '',
+  ];
   if (f === 'sh') return shCommand(SH_ENSURE, values);
   // The supervisor is a separate esbuild entry beside main.js, as the app runs it (supervisorArgs).
   if (!o.mainJs.endsWith('main.js')) throw new Error(`mainJs must be the server's main.js`);

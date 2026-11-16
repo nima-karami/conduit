@@ -60,3 +60,30 @@ export type AddSshPeerResult =
         | { code: 'incompatible' }
         | { code: 'timeout' };
     };
+
+/** What a bootstrap did on the remote, for the UI and the e2e. */
+export interface BootstrapSummary {
+  os: 'linux' | 'windows';
+  arch: 'x64';
+  installed: boolean;
+  upgraded: boolean;
+  reused: boolean;
+  survivesLogout: boolean;
+  version: string;
+}
+
+export type BootstrapResult =
+  | { ok: true; machineId: string; ssh: SshEndpoint; summary: BootstrapSummary }
+  | {
+      ok: false;
+      error:
+        | SshFailure
+        | { code: 'remote_unsupported'; os: string; arch: string }
+        | {
+            code: 'install_failed';
+            step: 'download' | 'checksum' | 'disk' | 'start' | 'unpack';
+            detail: string;
+          }
+        | { code: 'peer_incompatible'; remote: string }
+        | Extract<AddSshPeerResult, { ok: false }>['error'];
+    };

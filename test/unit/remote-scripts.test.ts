@@ -739,6 +739,7 @@ describe.skipIf(!posix || !hasSh())('ensure and value passing (sh)', () => {
         mainJs: main,
         userData: '/home/u/.config/conduit',
         method: 'scope',
+        survivesLogout: true,
       }),
     );
     const args = JSON.parse(r.stdout.trim());
@@ -748,6 +749,8 @@ describe.skipIf(!posix || !hasSh())('ensure and value passing (sh)', () => {
       '/home/u/.config/conduit',
       '--start',
       'scope',
+      '--survives-logout',
+      'yes',
     ]);
   });
 
@@ -762,6 +765,7 @@ describe.skipIf(!posix || !hasSh())('ensure and value passing (sh)', () => {
         mainJs: main,
         userData: hostile,
         method: 'plain',
+        survivesLogout: false,
       }),
     );
     expect(JSON.parse(r.stdout.trim())[2]).toBe(hostile);
@@ -803,6 +807,7 @@ describe('PowerShell builders (output only; pwsh is not required)', () => {
         node: 'C:\\n.exe',
         mainJs: 'C:\\m\\main.js',
         userData: 'C:\\u',
+        survivesLogout: false,
         method: 'plain',
       }).command.startsWith(prefix),
     ).toBe(true);
@@ -829,6 +834,7 @@ describe('PowerShell builders (output only; pwsh is not required)', () => {
         node: 'C:\\n.exe',
         mainJs: 'C:\\rt\\1.0.0\\server\\main.js',
         userData: 'C:\\u',
+        survivesLogout: false,
         method: 'windows-task',
         hcExe: 'C:\\rt\\conduit-hc\\0.1.16\\conduit-hc.exe',
       }),
@@ -837,8 +843,8 @@ describe('PowerShell builders (output only; pwsh is not required)', () => {
     expect(script).toContain('Interactive');
     expect(script).toContain('--ensure-server');
     // The action is the supervisor the app runs (esbuild's supervise entry), with the hc binary.
-    expect(script).toContain('$sup = Arg 4');
-    expect(script).toContain('$hc = Arg 5');
+    expect(script).toContain('$sup = Arg 6');
+    expect(script).toContain('$hc = Arg 7');
     expect(script).toContain('--hc');
     const values = [...script.matchAll(/'([A-Za-z0-9+/=]+)'/g)].map((m) =>
       Buffer.from(m[1], 'base64').toString('utf8'),
@@ -853,6 +859,7 @@ describe('PowerShell builders (output only; pwsh is not required)', () => {
         node: 'C:\\n.exe',
         mainJs: 'C:\\rt\\server\\main.js',
         userData: 'C:\\u',
+        survivesLogout: false,
         method: 'windows-task',
       }),
     ).toThrow(/hc executable/);
@@ -861,6 +868,7 @@ describe('PowerShell builders (output only; pwsh is not required)', () => {
         node: 'C:\\n.exe',
         mainJs: 'C:\\rt\\server\\other.js',
         userData: 'C:\\u',
+        survivesLogout: false,
         method: 'plain',
       }),
     ).toThrow(/main\.js/);
@@ -872,6 +880,7 @@ describe('PowerShell builders (output only; pwsh is not required)', () => {
         node: 'C:\\n.exe',
         mainJs: 'C:\\m\\main.js',
         userData: 'C:\\u',
+        survivesLogout: false,
         method: 'plain',
       }),
     );
@@ -911,6 +920,7 @@ describe('PowerShell scripts: automatic variables and argument quoting', () => {
         node: 'C:\\n.exe',
         mainJs: 'C:\\x\\server\\main.js',
         userData: 'C:\\u',
+        survivesLogout: false,
         method: 'windows-task',
         hcExe: 'C:\\h.exe',
       }),
@@ -918,6 +928,7 @@ describe('PowerShell scripts: automatic variables and argument quoting', () => {
         node: 'C:\\n.exe',
         mainJs: 'C:\\x\\server\\main.js',
         userData: 'C:\\u',
+        survivesLogout: false,
         method: 'plain',
       }),
     ].map(decodePs);

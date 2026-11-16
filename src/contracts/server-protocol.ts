@@ -40,7 +40,7 @@ import type { Capability } from './link-protocol';
 import type { NetworkState } from './network-state';
 import type { Job, LimitEpisode, SessionAutoResume } from './scheduler';
 import type { SessionRuntime } from './session-identity';
-import type { AddSshPeerResult, SshEndpoint } from './ssh-link';
+import type { AddSshPeerResult, BootstrapResult, SshEndpoint } from './ssh-link';
 import type { AttachTarget, FirstPaint } from './terminal-link';
 import {
   LAUNCH_SETTLE_ON_STOP_MS,
@@ -511,6 +511,7 @@ export interface ServerMethods {
   'link.list': { params: Record<string, never>; result: NetworkState };
   /** Dials an ssh target and links it; the interim producer until the machine registry (slice 4). */
   'link.sshAdd': { params: { ssh: SshEndpoint }; result: AddSshPeerResult };
+  'link.sshBootstrap': { params: { target: string }; result: BootstrapResult };
   'link.revoke': { params: { machineId: string }; result: Record<string, never> };
   'link.setCapability': {
     params: { machineId: string; capability: Capability; on: boolean };

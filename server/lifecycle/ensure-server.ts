@@ -12,10 +12,11 @@ import {
 import type { InstanceNames } from '../../src/contracts/session-identity';
 import { HcDisconnectedError, HcRpcError } from '../../src/hc-client';
 import { coreStartCwd, instanceNames } from '../../src/instance-names';
+import type { StartMethod } from '../../src/network/remote-scripts';
 import { readServerSecret } from '../../src/server-secret';
 import { hcBinaryOf, hcClient, serverChildEnv, startCore } from '../hc-cli';
 import { collectRuntimeGarbage } from '../runtime-dir/gc';
-import type { EnsureArgs, StartMethod } from './ensure-args';
+import type { EnsureArgs } from './ensure-args';
 import { type HcCliDeps, startSupervisor } from './hc-supervisor';
 
 /** The wrapper `--start scope` puts in front of `hc server start` (argv, never a shell). */

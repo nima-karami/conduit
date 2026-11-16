@@ -43,7 +43,7 @@ export interface PreparedRuntime {
   trayExe: string | null;
 }
 
-function shimDirName(generation: number): string {
+export function shimDirName(generation: number): string {
   return generation === 1 ? SHIM_RUNTIME_DIR : `${SHIM_RUNTIME_DIR}-${generation}`;
 }
 
