@@ -27,9 +27,65 @@ describe('posixQuote', () => {
   });
 });
 
+describe('sshArgv with a raw remote command', () => {
+  const script = "sh -c 'a\nb' conduit 'eA=='";
+
+  it('passes the raw string verbatim as the last argv element', () => {
+    const argv = sshArgv({
+      target: 'vm',
+      controlPath: '/d/%C',
+      rawRemote: script,
+    });
+    expect(argv).toBeInstanceOf(Array);
+    expect((argv as string[]).at(-1)).toBe(script);
+    expect((argv as string[]).at(-2)).toBe('vm');
+  });
+
+  it('keeps the same fixed options as the quoted form', () => {
+    const quoted = sshArgv({
+      target: 'vm',
+      controlPath: '/d/%C',
+      remote: ['node'],
+    }) as string[];
+    const raw = sshArgv({
+      target: 'vm',
+      controlPath: '/d/%C',
+      rawRemote: 'node',
+    }) as string[];
+    expect(raw.slice(0, -1)).toEqual(quoted.slice(0, -1));
+  });
+
+  it('still checks the target allowlist', () => {
+    expect(
+      sshArgv({
+        target: '-oProxyCommand=x',
+        controlPath: '/d/%C',
+        rawRemote: 'x',
+      }),
+    ).toEqual({
+      error: 'bad_target',
+    });
+    expect(sshArgv({ target: 'a;rm', controlPath: '/d/%C', rawRemote: 'x' })).toEqual({
+      error: 'bad_target',
+    });
+  });
+
+  it('refuses a NUL, which cannot cross the exec boundary', () => {
+    expect(sshArgv({ target: 'vm', controlPath: '/d/%C', rawRemote: 'a\0b' })).toEqual({
+      error: 'bad_arg',
+    });
+  });
+});
+
 describe('sshArgv', () => {
   it('returns the fixed argv with the target after --', () => {
-    expect(sshArgv({ target: 'vm', controlPath: '/d/%C', remote: ['node', 'main.js'] })).toEqual([
+    expect(
+      sshArgv({
+        target: 'vm',
+        controlPath: '/d/%C',
+        remote: ['node', 'main.js'],
+      }),
+    ).toEqual([
       '-T',
       '-o',
       'BatchMode=yes',
@@ -56,17 +112,25 @@ describe('sshArgv', () => {
   });
 
   it('never carries StrictHostKeyChecking', () => {
-    const argv = sshArgv({ target: 'vm', controlPath: '/d/%C', remote: ['node'] });
+    const argv = sshArgv({
+      target: 'vm',
+      controlPath: '/d/%C',
+      remote: ['node'],
+    });
     expect(argv).toBeInstanceOf(Array);
     expect((argv as string[]).join(' ')).not.toMatch(/StrictHostKeyChecking|accept-new/);
   });
 
   it('refuses a target that starts with -', () => {
-    expect(sshArgv({ target: '-oProxyCommand=x', controlPath: '/d/%C', remote: ['node'] })).toEqual(
-      {
-        error: 'bad_target',
-      },
-    );
+    expect(
+      sshArgv({
+        target: '-oProxyCommand=x',
+        controlPath: '/d/%C',
+        remote: ['node'],
+      }),
+    ).toEqual({
+      error: 'bad_target',
+    });
   });
 
   it('refuses an empty target, or one with whitespace or NUL', () => {
@@ -101,7 +165,12 @@ describe('sshArgv', () => {
 describe('controlDir', () => {
   // The expanded ControlPath (dir + '/' + 40-hex hash) must be at most 90 bytes, so the dir at most
   // 49. Measured on the Linux VM: 49 binds, 50 fails with "unix_listener: path … too long".
-  const base = { tmpdir: '/tmp', xdgRuntimeDir: undefined, uid: 1000, instance: 'abc' };
+  const base = {
+    tmpdir: '/tmp',
+    xdgRuntimeDir: undefined,
+    uid: 1000,
+    instance: 'abc',
+  };
   const at = (length: number) => 'u'.repeat(length - '/ssh'.length);
 
   it('uses <userData>/ssh at exactly 49 bytes', () => {
@@ -115,15 +184,25 @@ describe('controlDir', () => {
   });
 
   it('prefers XDG_RUNTIME_DIR over tmpdir when userData is too long', () => {
-    expect(controlDir({ ...base, userData: at(60), xdgRuntimeDir: '/run/user/1000', join })).toBe(
-      '/run/user/1000/conduit-ssh-abc',
-    );
+    expect(
+      controlDir({
+        ...base,
+        userData: at(60),
+        xdgRuntimeDir: '/run/user/1000',
+        join,
+      }),
+    ).toBe('/run/user/1000/conduit-ssh-abc');
   });
 
   it('ignores a relative XDG_RUNTIME_DIR', () => {
-    expect(controlDir({ ...base, userData: at(60), xdgRuntimeDir: 'run/user', join })).toBe(
-      '/tmp/conduit-ssh-1000-abc',
-    );
+    expect(
+      controlDir({
+        ...base,
+        userData: at(60),
+        xdgRuntimeDir: 'run/user',
+        join,
+      }),
+    ).toBe('/tmp/conduit-ssh-1000-abc');
   });
 
   it('names the tmpdir fallback with the uid, so another user cannot pre-create it', () => {
@@ -245,7 +324,10 @@ describe('classifySshFailure', () => {
       'server not responding',
       255,
       'ssh: Timeout, server 10.0.0.9 not responding.',
-      { code: 'ssh_unreachable', detail: 'ssh: Timeout, server 10.0.0.9 not responding.' },
+      {
+        code: 'ssh_unreachable',
+        detail: 'ssh: Timeout, server 10.0.0.9 not responding.',
+      },
     ],
   ];
 

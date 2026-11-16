@@ -45,6 +45,19 @@ function parseRemote(text) {
   return out;
 }
 
+// A remote string that is not a POSIX-quoted argv (the bootstrap's sh scripts, or a plain command
+// line) runs through the platform shell, as sshd does. Requoting the parse proves it is exact.
+function posixArgvOf(text) {
+  let parsed;
+  try {
+    parsed = parseRemote(text);
+  } catch {
+    return null;
+  }
+  const requoted = parsed.map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(' ');
+  return requoted === text && parsed.length > 0 ? parsed : null;
+}
+
 const argv = process.argv.slice(2);
 const dashdash = argv.indexOf('--');
 if (dashdash < 0 || argv.length !== dashdash + 3) {
@@ -52,16 +65,23 @@ if (dashdash < 0 || argv.length !== dashdash + 3) {
   process.exit(2);
 }
 
-let remote;
-try {
-  remote = parseRemote(argv[dashdash + 2]);
-} catch (error) {
-  process.stderr.write(`fake-ssh: ${error.message}\n`);
-  process.exit(2);
-}
-
-const [command, ...args] = remote;
-const child = spawn(command, args, { stdio: 'inherit', windowsHide: true });
+const remoteText = argv[dashdash + 2];
+const posixArgv = posixArgvOf(remoteText);
+const child = posixArgv
+  ? spawn(posixArgv[0], posixArgv.slice(1), {
+      stdio: 'inherit',
+      windowsHide: true,
+    })
+  : process.platform === 'win32'
+    ? spawn('cmd.exe', ['/d', '/s', '/c', `"${remoteText}"`], {
+        stdio: 'inherit',
+        windowsHide: true,
+        windowsVerbatimArguments: true,
+      })
+    : spawn('/bin/sh', ['-c', remoteText], {
+        stdio: 'inherit',
+        windowsHide: true,
+      });
 const pidLine = `fake-ssh: pid ${child.pid}\n`;
 process.stderr.write(pidLine);
 // A scenario reads child pids from this file, so it needs no shell to redirect stderr.
