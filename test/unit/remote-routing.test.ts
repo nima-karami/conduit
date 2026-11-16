@@ -101,6 +101,17 @@ describe('routed session tools: where a call goes (CON-40 S3)', () => {
     });
   });
 
+  it('attach_folder routes by its session address, and a plain session stays local (CON-44 W5)', () => {
+    expect(routedIntentOf('attach_folder', { path: '/x', session: 'h@box' })).toMatchObject({
+      ok: true,
+      value: { kind: 'address', machine: 'box', handle: 'h', args: { path: '/x', session: 'h' } },
+    });
+    expect(routedIntentOf('attach_folder', { path: '/x', session: 'h' })).toEqual({
+      ok: true,
+      value: null,
+    });
+  });
+
   it('a machine routes with the machine taken out of the args', () => {
     expect(
       routedIntentOf('open_terminal', { machine: 'win-box', path: 'C:\\w', command: 'pwsh' }),

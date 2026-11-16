@@ -12,6 +12,7 @@ import {
   LINK_FRAME_MAX_BYTES,
   type LinkFrame,
   type LinkState,
+  ROUTED_ATTACH_MIN_MINOR,
   ROUTED_CALLS_MIN_MINOR,
   type RoutedTool,
 } from '../../src/contracts/link-protocol';
@@ -257,6 +258,16 @@ export function createCalls(deps: CallsDeps): Calls {
     const minor = deps.peerMinor(machineId);
     if (minor === null)
       return Promise.resolve(unreachable(`${record.name} has not said hello yet`));
+    if (tool === 'attach_folder' && minor < ROUTED_ATTACH_MIN_MINOR)
+      return Promise.resolve({
+        ok: false,
+        error: toolError(
+          'peer_incompatible',
+          `${record.name} runs a Conduit that can't attach folders from another machine`,
+          undefined,
+          { hint: `update Conduit on ${record.name}` },
+        ),
+      });
     if (minor < ROUTED_CALLS_MIN_MINOR)
       return Promise.resolve({
         ok: false,

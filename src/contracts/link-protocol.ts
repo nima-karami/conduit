@@ -23,9 +23,12 @@ export type { Capabilities, Capability } from './remote-principal';
 // 2026-11-16-remote-ssh-rules, Technical decisions 3).
 // minor 6 added `git.req` / `git.res` (spec 5.3, CON-45).
 // minor 7 added `fs.write`, the `write` fs result, the `conflict` fs error and a read's `hash` (CON-44).
-export const LINK_PROTOCOL = { major: 1, minor: 7 } as const;
+// minor 8 added the routed attach_folder tool (CON-44).
+export const LINK_PROTOCOL = { major: 1, minor: 8 } as const;
 /** The lowest peer minor that serves `call` frames: a routed call to an older peer is refused, not sent. */
 export const ROUTED_CALLS_MIN_MINOR = 2;
+/** The lowest peer minor that serves a routed attach_folder: an older peer is refused, not sent it. */
+export const ROUTED_ATTACH_MIN_MINOR = 8;
 /** The lowest peer minor that serves request frames: an older peer gets no mirror and no answers. */
 export const REQUEST_MIRROR_MIN_MINOR = 3;
 /** The lowest peer minor that serves fs frames: a file request to an older peer is refused, not sent. */
@@ -94,6 +97,7 @@ export const ROUTED_TOOLS = [
   'send_input',
   'read_screen',
   'close_session',
+  'attach_folder',
 ] as const;
 export type RoutedTool = (typeof ROUTED_TOOLS)[number];
 // The argument blob is re-serialized into a tool call on the far side; the cap keeps one frame
