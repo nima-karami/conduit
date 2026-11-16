@@ -18,6 +18,7 @@ describe('instanceNames', () => {
     expect(names).toEqual({
       instance: 'ba7816bf8f01cfea',
       serverEndpoint: '\\\\.\\pipe\\conduit-server-ba7816bf8f01cfea',
+      linkEndpoint: '\\\\.\\pipe\\conduit-link-ba7816bf8f01cfea',
       mcpEndpoint: '\\\\.\\pipe\\conduit-mcp-ba7816bf8f01cfea',
       supervisorName: 'conduit-server-ba7816bf8f01cfea',
       hcSession: 'conduit-ba7816bf8f01cfea',
@@ -34,6 +35,7 @@ describe('instanceNames', () => {
     expect(names).toEqual({
       instance: 'ba7816bf8f01cfea',
       serverEndpoint: 'abc/conduit-server.sock',
+      linkEndpoint: 'abc/conduit-link.sock',
       mcpEndpoint: 'abc/conduit-mcp/mcp.sock',
       supervisorName: 'conduit-server-ba7816bf8f01cfea',
       hcSession: 'conduit-ba7816bf8f01cfea',
@@ -48,6 +50,13 @@ describe('instanceNames', () => {
     const names = instanceNames(userData, 'posix', '/tmp', posixOptions);
 
     expect(names.serverEndpoint).toBe(`/tmp/conduit-server-${names.instance}.sock`);
+  });
+
+  it('moves an overlong UTF-8 POSIX link endpoint into tmpdir, beside the server socket', () => {
+    const userData = '\u00e9'.repeat(45);
+    const names = instanceNames(userData, 'posix', '/tmp', posixOptions);
+
+    expect(names.linkEndpoint).toBe(`/tmp/conduit-link-${names.instance}.sock`);
   });
 });
 

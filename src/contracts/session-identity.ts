@@ -115,6 +115,8 @@ export interface InstanceNames {
    * connect is refused unlinks the file and binds again.
    */
   serverEndpoint: string;
+  /** The ssh bridge's socket beside C2; see docs/plans/2026-11-16-remote-ssh-stdio-link.plan.md decision 3. */
+  linkEndpoint: string;
   mcpEndpoint: string;
   /**
    * `conduit-server-<h>` (31 chars, within hc's 32): the supervisor's unique hc terminal name. The

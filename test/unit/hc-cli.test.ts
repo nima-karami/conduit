@@ -26,6 +26,7 @@ import { HcDisconnectedError, HcRpcError } from '../../src/hc-client';
 const names: InstanceNames = {
   instance: 'abc',
   serverEndpoint: '/u/conduit-server.sock',
+  linkEndpoint: '/u/conduit-link.sock',
   mcpEndpoint: '/u/conduit-mcp.sock',
   supervisorName: 'conduit-server-abc',
   hcSession: 'conduit-abc',

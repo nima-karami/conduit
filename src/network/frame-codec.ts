@@ -1,4 +1,5 @@
 import { LINK_FRAME_MAX_BYTES, type LinkFrame } from '../contracts/link-protocol';
+import type { BridgePreamble } from '../contracts/ssh-link';
 import type { PairingMsg } from './pairing-protocol';
 
 // Length-prefixed JSON frames. The cap is checked on the prefix alone, so a peer cannot make us
@@ -7,7 +8,7 @@ const PREFIX_BYTES = 4;
 
 type FrameError = 'too_large' | 'bad_json';
 
-export function encodeFrame(frame: LinkFrame | PairingMsg): Buffer {
+export function encodeFrame(frame: LinkFrame | PairingMsg | BridgePreamble): Buffer {
   const json = Buffer.from(JSON.stringify(frame), 'utf8');
   if (json.length > LINK_FRAME_MAX_BYTES) {
     throw new Error(`frame is ${json.length} bytes, over the ${LINK_FRAME_MAX_BYTES} byte cap`);
@@ -16,6 +17,31 @@ export function encodeFrame(frame: LinkFrame | PairingMsg): Buffer {
   out.writeUInt32BE(json.length, 0);
   json.copy(out, PREFIX_BYTES);
   return out;
+}
+
+export type FirstFrame =
+  | { kind: 'incomplete' }
+  | { kind: 'frame'; frame: unknown; rest: Buffer }
+  | { kind: 'error'; error: FrameError };
+
+/**
+ * The first frame of `buffered`, for a stream that must prove itself with one small frame before
+ * anything else is parsed. FrameDecoder would decode every complete frame in the chunk and drop
+ * the bytes behind them; `rest` returns those bytes to the caller, which owns the stream from here.
+ */
+export function readFirstFrame(buffered: Buffer, maxBytes: number): FirstFrame {
+  if (buffered.length < PREFIX_BYTES) return { kind: 'incomplete' };
+  const length = buffered.readUInt32BE(0);
+  if (length > maxBytes) return { kind: 'error', error: 'too_large' };
+  const end = PREFIX_BYTES + length;
+  if (buffered.length < end) return { kind: 'incomplete' };
+  let frame: unknown;
+  try {
+    frame = JSON.parse(buffered.subarray(PREFIX_BYTES, end).toString('utf8'));
+  } catch {
+    return { kind: 'error', error: 'bad_json' };
+  }
+  return { kind: 'frame', frame, rest: buffered.subarray(end) };
 }
 
 export class FrameDecoder {
