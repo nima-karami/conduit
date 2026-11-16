@@ -691,7 +691,16 @@ export function createDomain(deps: DomainDeps): Domain {
   const codexHome = deps.env.CODEX_HOME || join(deps.homeDir, '.codex');
   const metaCapWarned = new Set<string>();
   const feedGap = createClaudeFeedGap<ReturnType<typeof setTimeout>>({
-    readFile: (p) => fsp.readFile(p),
+    readRange: async (p, start, end) => {
+      const handle = await fsp.open(p, 'r');
+      try {
+        const buf = Buffer.alloc(end - start);
+        const { bytesRead } = await handle.read(buf, 0, end - start, start);
+        return buf.subarray(0, bytesRead);
+      } finally {
+        await handle.close();
+      }
+    },
     sizeOf: (p) => statSync(p).size,
     setTimer: (fn, ms) => setTimeout(fn, ms),
     clearTimer: (handle) => clearTimeout(handle),

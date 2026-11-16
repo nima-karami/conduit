@@ -18,13 +18,15 @@ const use = (uuid: string, toolUseId: string, name = 'Bash'): string =>
 function rig() {
   let transcript = '';
   let readError: Error | null = null;
+  const ranges: Array<[number, number]> = [];
   const timers: Timer[] = [];
   const records: Array<{ sessionId: string; gap: number }> = [];
   const warnings: string[] = [];
   const gap = createClaudeFeedGap<Timer>({
-    readFile: async () => {
+    readRange: async (_path, start, end) => {
+      ranges.push([start, end]);
       if (readError) throw readError;
-      return Buffer.from(transcript, 'utf8');
+      return Buffer.from(transcript, 'utf8').subarray(start, end);
     },
     sizeOf: () => Buffer.byteLength(transcript, 'utf8'),
     setTimer: (fn, ms) => {
@@ -51,6 +53,7 @@ function rig() {
   };
   return {
     gap,
+    ranges,
     timers,
     records,
     warnings,
@@ -161,12 +164,12 @@ describe('claude feed gap', () => {
     expect(r.records).toEqual([{ sessionId: 's1', gap: 1 }]);
   });
 
-  it('a lastUuid that is no longer in the transcript takes a baseline, not a count from the start', async () => {
+  it('a file that shrank takes a baseline, not a count from the start', async () => {
     const r = rig();
     r.append(use('u0', 't0'));
     r.gap.stop('s1', '/t/a.jsonl');
     await r.settle();
-    r.replaceTranscript(`${use('x1', 't9')}\n`);
+    r.replaceTranscript('{}\n');
     r.gap.stop('s1', '/t/a.jsonl');
     await r.settle();
     expect(r.records).toEqual([]);
@@ -218,6 +221,41 @@ describe('claude feed gap', () => {
     r.gap.stop('s1', '/t/a.jsonl');
     await r.settle();
     r.append(use('u2', 't2'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.records).toEqual([{ sessionId: 's1', gap: 1 }]);
+  });
+
+  it('a second check reads only the bytes appended since the first', async () => {
+    const r = rig();
+    r.append(use('u0', 't0'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    const firstEnd = r.ranges.at(-1)?.[1] ?? -1;
+    r.append(use('u1', 't1'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.ranges).toEqual([
+      [0, firstEnd],
+      [firstEnd, firstEnd + use('u1', 't1').length + 1],
+    ]);
+  });
+
+  it('a line cut at the Stop is counted exactly once, on the check after its newline lands', async () => {
+    const r = rig();
+    r.append(use('u0', 't0'));
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    const whole = use('u1', 't1');
+    const cut = whole.slice(0, 30);
+    r.replaceTranscript(`${use('u0', 't0')}\n${cut}`);
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.records).toEqual([]);
+    r.replaceTranscript(`${use('u0', 't0')}\n${whole}\n`);
+    r.gap.stop('s1', '/t/a.jsonl');
+    await r.settle();
+    expect(r.records).toEqual([{ sessionId: 's1', gap: 1 }]);
     r.gap.stop('s1', '/t/a.jsonl');
     await r.settle();
     expect(r.records).toEqual([{ sessionId: 's1', gap: 1 }]);
