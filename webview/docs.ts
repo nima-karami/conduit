@@ -32,11 +32,17 @@ import type { ReviewScope } from './review-scope';
 // `commit-diff:@preview` while its `path` carries the live target (`<sha> <file>`);
 // pinning re-keys it to `commit-diff:${path}`.
 // 'request' is one agent request open as an editor tab; its path is `@request/<id>`.
+// Docs of another machine (plan CON-43 T4, CON-45 G4). Their own kinds, not flags on 'file' or
+// 'diff', so every path keyed on a local kind skips them by construction. Each names its machine,
+// is never persisted, and its id carries the machine.
+export const REMOTE_DOC_KINDS = ['remote-file', 'remote-diff', 'remote-history'] as const;
+export type RemoteDocKind = (typeof REMOTE_DOC_KINDS)[number];
+const REMOTE_DOC_KIND_SET: ReadonlySet<DocKind> = new Set<DocKind>(REMOTE_DOC_KINDS);
+export const isRemoteKind = (kind: DocKind): kind is RemoteDocKind => REMOTE_DOC_KIND_SET.has(kind);
+
 export type DocKind =
   | 'file'
-  // A file on another machine (plan CON-43 T4). Its own kind, not a flag on 'file', so every
-  // path keyed on 'file' (local reads, watches, saves, moves, reopen) skips it by construction.
-  | 'remote-file'
+  | RemoteDocKind
   | 'diff'
   | 'review'
   | 'web'
@@ -77,10 +83,11 @@ export interface OpenDoc {
   // diff docs only: which side the tab shows (absent = HEAD→worktree). Part of the doc's
   // identity; see spec 2026-09-22-scoped-diff-tabs §3.
   diffScope?: DiffTabScope;
-  // git-history: the repo the view shows; commit-diff: the repo its commit was read from.
+  // git-history: the repo the view shows; commit-diff: the repo its commit was read from;
+  // remote-diff: the remote repo the file is in.
   // Never persisted — a restored doc falls back per docs/specs/archive/2026-09-23-mf-changes.md §2.5.
   repoRoot?: string;
-  // Required on kind 'remote-file' and absent otherwise. The type cannot express that without a
+  // Required on the remote kinds and absent otherwise. The type cannot express that without a
   // discriminated OpenDoc (every construction site would need narrowing), so idOf and the open
   // reducer throw when a remote-file arrives without it. `sessionId` is then the remote session's
   // remoteKeyId, an opaque owner id here.
@@ -88,10 +95,10 @@ export interface OpenDoc {
 }
 
 export type Machine = NonNullable<OpenDoc['machine']>;
-export type LocalDocKind = Exclude<DocKind, 'remote-file'>;
-/** What a doc is: a remote file names its machine and nothing else, a local doc never names one. */
+export type LocalDocKind = Exclude<DocKind, RemoteDocKind>;
+/** What a doc is: a remote doc names its machine and nothing else, a local doc never names one. */
 export type DocTarget =
-  | { kind: 'remote-file'; machine: Machine; diffScope?: never }
+  | { kind: RemoteDocKind; machine: Machine; diffScope?: never }
   | { kind: LocalDocKind; machine?: never; diffScope?: DiffTabScope };
 
 // Whether a file-open opens a reusable preview tab (single-click / nav) or a permanent
@@ -231,11 +238,11 @@ export type DocsAction =
 export const initialDocs: DocsState = { docs: [], layouts: {}, activeId: null };
 
 /**
- * The local file a doc edits, or null. A remote file's path names a file on another machine, so
+ * The local file a doc edits, or null. A remote doc's path names a file on another machine, so
  * nothing keyed by a local path (saves, dirty, nav, reveal) may stand for it.
  */
 export function localPathOf(doc: Pick<OpenDoc, 'kind' | 'path'>): string | null {
-  return doc.kind === 'remote-file' ? null : doc.path;
+  return isRemoteKind(doc.kind) ? null : doc.path;
 }
 
 /** Whether a doc has unsaved local changes. Only a local doc's path can be dirty. */
@@ -247,9 +254,9 @@ export function isDocDirty(
   return path !== null && dirty.has(path);
 }
 
-// A remote file shares its path with a local one, so the machine is part of its identity.
+// A remote doc shares its path with a local one, so the machine is part of its identity.
 const idOf = (t: DocTarget, path: string): string => {
-  if (t.kind === 'remote-file') return `remote-file@${t.machine.machineId}:${path}`;
+  if (t.machine) return `${t.kind}@${t.machine.machineId}:${path}`;
   return t.kind === 'diff' && t.diffScope ? `diff@${t.diffScope}:${path}` : `${t.kind}:${path}`;
 };
 
@@ -264,17 +271,23 @@ export function shownKeepsDoc(
   shown: string | undefined,
 ): boolean {
   if (shown === undefined || shown === sessionId) return false;
-  if (target.kind !== 'file' && target.kind !== 'remote-file' && target.kind !== 'web')
+  if (
+    target.kind !== 'file' &&
+    target.kind !== 'remote-file' &&
+    target.kind !== 'remote-diff' &&
+    target.kind !== 'web'
+  )
     return false;
   const id = idOf(target, path);
   return state.docs.some((d) => d.id === id && d.sessionId === shown);
 }
 const scopeField = (kind: DocKind, diffScope: DiffTabScope | undefined) =>
   kind === 'diff' && diffScope ? { diffScope } : {};
-// A re-open that omits the key keeps the singleton's repo; one that names it (even as
-// undefined) replaces it.
-const historyRepoField = (action: Extract<DocsAction, { type: 'open' }>) =>
-  action.kind === 'git-history' && 'repoRoot' in action ? { repoRoot: action.repoRoot } : {};
+// A re-open that omits the key keeps the repo; one that names it (even as undefined) replaces it.
+const repoField = (action: Extract<DocsAction, { type: 'open' }>) =>
+  (action.kind === 'git-history' || action.kind === 'remote-diff') && 'repoRoot' in action
+    ? { repoRoot: action.repoRoot }
+    : {};
 const titleOf = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() || path;
 
 // A web doc's title starts as the URL's host/path (until the page <title> loads); a
@@ -296,7 +309,7 @@ function initialTitle(kind: DocKind, path: string, diffScope?: DiffTabScope): st
 const EMPTY_GROUP: EditorGroup = { tabs: [], active: null };
 const otherGroup = (g: GroupIndex): GroupIndex => (g === 1 ? 2 : 1);
 const isPreviewable = (kind: DocKind | undefined) =>
-  kind === 'file' || kind === 'remote-file' || kind === 'diff';
+  kind === 'file' || kind === 'remote-file' || kind === 'remote-diff' || kind === 'diff';
 const holds = (group: EditorGroup | undefined, id: string) =>
   group?.tabs.some((t) => t.id === id) ?? false;
 const groupAt = (layout: SessionLayout, g: GroupIndex) => layout.groups[g - 1] ?? EMPTY_GROUP;
@@ -636,7 +649,7 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
     case 'open': {
       const id = idOf(action, action.path);
       const sideBySide = action.sideBySide !== undefined ? { sideBySide: action.sideBySide } : {};
-      const repo = historyRepoField(action);
+      const repo = repoField(action);
       const machine = action.machine ? { machine: action.machine } : {};
       const spec: OpenSpec = {
         sessionId: action.sessionId,
@@ -944,7 +957,7 @@ export function toPersistedDocs(state: DocsState): PersistedDoc[] {
         const d = byId.get(tab.id);
         // A request is server state: a restored tab would point at a request that may be gone.
         // A remote doc's content lives on its machine: restoring it would read a local path.
-        if (!d || d.kind === 'request' || d.kind === 'remote-file') return [];
+        if (!d || d.kind === 'request' || isRemoteKind(d.kind)) return [];
         if (d.kind === 'commit-diff' && parseCommitDiffPath(d.path).file === '') return [];
         return [
           {
