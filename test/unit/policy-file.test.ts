@@ -6,10 +6,19 @@ import {
   parsePolicyFile,
   serializeGrantsFile,
   serializePolicyFile,
+  validateRemotePolicyDoc,
 } from '../../src/conduit-mcp/policy-file';
 import { OBSERVER } from '../../src/conduit-mcp/policy-profiles';
 import type { Decision, ToolRule } from '../../src/conduit-mcp/policy-types';
 import { TOOL_NAMES, type ToolName } from '../../src/conduit-mcp/tool-policy';
+import {
+  REMOTE_POLICY_ASSIGNMENTS_MAX,
+  REMOTE_POLICY_DOC_MAX_BYTES,
+  REMOTE_POLICY_EXCEPTIONS_MAX,
+  REMOTE_POLICY_NAME_MAX,
+  REMOTE_POLICY_PATH_MAX,
+  REMOTE_POLICY_PROFILES_MAX,
+} from '../../src/contracts/remote-policy';
 
 const rule = (decision: Decision = 'allow'): ToolRule => ({
   decision,
@@ -299,5 +308,265 @@ describe('policy file', () => {
     const before = { ...OBSERVER.rules.open_file };
     if (parsed.ok) parsed.file.profiles[0].rules.open_file.decision = 'allow';
     expect(OBSERVER.rules.open_file).toEqual(before);
+  });
+});
+
+describe('policy file rev', () => {
+  it('a file without rev parses with no rev, which the service reads as 0', () => {
+    const parsed = parsePolicyFile(serializePolicyFile(validFile()));
+    expect(parsed.ok && parsed.file.rev).toBeUndefined();
+  });
+
+  it('keeps rev through parse and serialize', () => {
+    const parsed = parsePolicyFile(serializePolicyFile({ ...validFile(), rev: 7 }));
+    if (!parsed.ok) throw new Error('expected a readable file');
+    expect(parsed.file.rev).toBe(7);
+    expect(JSON.parse(serializePolicyFile(parsed.file)).rev).toBe(7);
+  });
+
+  it.each([-1, 1.5, '3', null])('a rev of %j is corrupt, not read as 0', (rev) => {
+    const raw = JSON.parse(serializePolicyFile(validFile()));
+    raw.rev = rev;
+    expect(parsePolicyFile(JSON.stringify(raw))).toEqual({ ok: false, reason: 'corrupt' });
+  });
+});
+
+const remoteRule = (decision: Decision = 'ask') => rulesFor(decision);
+const remoteProfile = (i: number, over: Record<string, unknown> = {}) => ({
+  id: `p-${i}`,
+  name: 'Mine',
+  builtIn: false,
+  rules: remoteRule(),
+  ...over,
+});
+const remoteEntry = (over: Record<string, unknown> = {}) => ({
+  point: { kind: 'default' },
+  assignment: { profileId: 'worker', exceptions: [], onScreenOnly: false },
+  ...over,
+});
+const remoteDoc = (over: Record<string, unknown> = {}) => ({
+  profiles: [],
+  assignments: [],
+  ...over,
+});
+
+function refusal(doc: unknown): string {
+  const r = validateRemotePolicyDoc(doc);
+  if (r.ok) throw new Error('expected the doc to be refused');
+  return r.message;
+}
+
+describe('validateRemotePolicyDoc', () => {
+  it('accepts a doc at every cap boundary and returns it', () => {
+    const profiles = Array.from({ length: REMOTE_POLICY_PROFILES_MAX }, (_, i) =>
+      remoteProfile(i, { name: 'n'.repeat(REMOTE_POLICY_NAME_MAX) }),
+    );
+    const exceptions = Array.from({ length: REMOTE_POLICY_EXCEPTIONS_MAX }, () => ({
+      tool: 'open_file',
+      scope: { kind: 'path', path: '/'.padEnd(REMOTE_POLICY_PATH_MAX, 'a') },
+      rule: { decision: 'deny' },
+    }));
+    const assignments = [
+      remoteEntry({ assignment: { profileId: 'p-0', exceptions, onScreenOnly: false } }),
+      ...Array.from({ length: REMOTE_POLICY_ASSIGNMENTS_MAX - 1 }, (_, i) =>
+        remoteEntry({ point: { kind: 'peer', machineId: `m-${i}` } }),
+      ),
+    ];
+    const r = validateRemotePolicyDoc(remoteDoc({ profiles, assignments }));
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.doc.profiles).toHaveLength(REMOTE_POLICY_PROFILES_MAX);
+  });
+
+  it('refuses a session point and names its path', () => {
+    expect(
+      refusal(
+        remoteDoc({
+          assignments: [remoteEntry({ point: { kind: 'session', sessionId: 's1' } })],
+        }),
+      ),
+    ).toMatch(/^assignments\[0\]\.point/);
+  });
+
+  it('refuses a non-object doc', () => {
+    expect(refusal(['nope'])).toMatch(/^doc/);
+    expect(refusal(null)).toMatch(/^doc/);
+  });
+
+  it('refuses a doc over the serialized byte cap', () => {
+    const big = remoteDoc({
+      assignments: [
+        remoteEntry({
+          point: { kind: 'cli', cli: 'claude' },
+          assignment: {
+            profileId: 'worker',
+            exceptions: [],
+            onScreenOnly: false,
+            pinned: ['x'.repeat(REMOTE_POLICY_DOC_MAX_BYTES)],
+          },
+        }),
+      ],
+    });
+    expect(refusal(big)).toMatch(/^doc too large/);
+  });
+
+  it('refuses too many profiles and names profiles', () => {
+    const profiles = Array.from({ length: REMOTE_POLICY_PROFILES_MAX + 1 }, (_, i) =>
+      remoteProfile(i),
+    );
+    expect(refusal(remoteDoc({ profiles }))).toMatch(/^profiles /);
+  });
+
+  it('refuses too many assignments and names assignments', () => {
+    const assignments = Array.from({ length: REMOTE_POLICY_ASSIGNMENTS_MAX + 1 }, (_, i) =>
+      remoteEntry({ point: { kind: 'peer', machineId: `m-${i}` } }),
+    );
+    expect(refusal(remoteDoc({ assignments }))).toMatch(/^assignments /);
+  });
+
+  it('refuses too many exceptions on one assignment and names that path', () => {
+    const exceptions = Array.from({ length: REMOTE_POLICY_EXCEPTIONS_MAX + 1 }, () => ({
+      tool: 'open_file',
+      scope: { kind: 'anywhere' },
+      rule: { decision: 'deny' },
+    }));
+    expect(
+      refusal(
+        remoteDoc({
+          assignments: [
+            remoteEntry({ assignment: { profileId: 'worker', exceptions, onScreenOnly: false } }),
+          ],
+        }),
+      ),
+    ).toMatch(/^assignments\[0\]\.assignment\.exceptions /);
+  });
+
+  it('refuses an over-long profile name and names the index', () => {
+    const profiles = [
+      remoteProfile(0),
+      remoteProfile(1),
+      remoteProfile(2),
+      remoteProfile(3, { name: 'n'.repeat(REMOTE_POLICY_NAME_MAX + 1) }),
+    ];
+    expect(refusal(remoteDoc({ profiles }))).toBe('profiles[3].name too long');
+  });
+
+  it('accepts a name at the length cap and refuses a control character', () => {
+    expect(
+      validateRemotePolicyDoc(
+        remoteDoc({ profiles: [remoteProfile(0, { name: 'n'.repeat(REMOTE_POLICY_NAME_MAX) })] }),
+      ).ok,
+    ).toBe(true);
+    expect(refusal(remoteDoc({ profiles: [remoteProfile(0, { name: 'a\u0007b' })] }))).toBe(
+      'profiles[0].name not printable',
+    );
+    expect(refusal(remoteDoc({ profiles: [remoteProfile(0, { name: '' })] }))).toBe(
+      'profiles[0].name empty',
+    );
+  });
+
+  it('refuses a scope path over the cap and names the exception path', () => {
+    const scoped = (path: string) =>
+      remoteDoc({
+        assignments: [
+          remoteEntry({
+            assignment: {
+              profileId: 'worker',
+              onScreenOnly: false,
+              exceptions: [
+                { tool: 'open_file', scope: { kind: 'folder', path }, rule: { decision: 'deny' } },
+              ],
+            },
+          }),
+        ],
+      });
+    expect(validateRemotePolicyDoc(scoped('/'.padEnd(REMOTE_POLICY_PATH_MAX, 'a'))).ok).toBe(true);
+    expect(refusal(scoped('/'.padEnd(REMOTE_POLICY_PATH_MAX + 1, 'a')))).toBe(
+      'assignments[0].assignment.exceptions[0].scope.path too long',
+    );
+  });
+
+  it('refuses a profile that is malformed, naming its path', () => {
+    expect(refusal(remoteDoc({ profiles: [remoteProfile(0, { rules: 'x' })] }))).toBe(
+      'profiles[0] is malformed',
+    );
+  });
+
+  it.each(['observer', 'worker', 'lead'])(
+    'refuses the built-in profile id %s: a pushed profile is a custom p-* copy',
+    (id) => {
+      expect(refusal(remoteDoc({ profiles: [remoteProfile(0, { id })] }))).toBe(
+        'profiles[0].id is not a custom profile id',
+      );
+    },
+  );
+
+  it('refuses an exception scoped to a session, since session ids never travel', () => {
+    expect(
+      refusal(
+        remoteDoc({
+          assignments: [
+            remoteEntry({
+              assignment: {
+                profileId: 'worker',
+                onScreenOnly: false,
+                exceptions: [
+                  {
+                    tool: 'open_file',
+                    scope: { kind: 'session', sessionId: 's1' },
+                    rule: { decision: 'deny' },
+                  },
+                ],
+              },
+            }),
+          ],
+        }),
+      ),
+    ).toBe('assignments[0].assignment.exceptions[0].scope is session-kind');
+  });
+
+  it('refuses an assignment that names an unknown profile', () => {
+    expect(
+      refusal(
+        remoteDoc({
+          assignments: [
+            remoteEntry({ assignment: { profileId: 'p-9', exceptions: [], onScreenOnly: false } }),
+          ],
+        }),
+      ),
+    ).toBe('assignments[0].assignment.profileId unknown');
+  });
+
+  it('refuses two assignments on the same point', () => {
+    expect(
+      refusal(
+        remoteDoc({
+          assignments: [
+            remoteEntry({ point: { kind: 'peer', machineId: 'm-1' } }),
+            remoteEntry({ point: { kind: 'peer', machineId: 'm-1' } }),
+          ],
+        }),
+      ),
+    ).toBe('assignments[1].point duplicates assignments[0].point');
+  });
+
+  it('returns the profiles with complete rules, and drops pins on the default point', () => {
+    const r = validateRemotePolicyDoc(
+      remoteDoc({
+        profiles: [remoteProfile(0)],
+        assignments: [
+          remoteEntry({
+            assignment: {
+              profileId: 'p-0',
+              exceptions: [],
+              onScreenOnly: false,
+              pinned: ['send_message.when'],
+            },
+          }),
+        ],
+      }),
+    );
+    if (!r.ok) throw new Error(r.message);
+    expect(Object.keys(r.doc.profiles[0]?.rules ?? {}).sort()).toEqual([...TOOL_NAMES].sort());
+    expect(r.doc.assignments[0]?.assignment.pinned).toBeUndefined();
   });
 });

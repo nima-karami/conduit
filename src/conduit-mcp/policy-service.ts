@@ -1,4 +1,6 @@
 // see POL §4-§5
+
+import type { RemoteGrantView, RemotePolicyDoc } from '../contracts/remote-policy';
 import { type ActivityIo, type ActivityLog, createActivityLog } from './activity-log';
 import {
   createGrantStore,
@@ -20,6 +22,7 @@ import {
   parsePolicyFile,
   serializeGrantsFile,
   serializePolicyFile,
+  validateRemotePolicyDoc,
 } from './policy-file';
 import { type LegacyPolicy, migrateLegacyPolicy } from './policy-migration';
 import { BUILT_IN_PROFILES, OBSERVER, pointKey, profileById } from './policy-profiles';
@@ -29,6 +32,7 @@ import type {
   AssignmentPoint,
   Decision,
   Grant,
+  GrantWho,
   OneUseOverride,
   PolicyDecision,
   PolicyInput,
@@ -62,6 +66,15 @@ export interface PolicyServiceDeps {
   launchedCli(sessionId: string): CliKind | null | undefined;
   onChanged(): void;
 }
+
+export type RemoteApplyResult =
+  | { ok: true; rev: number }
+  | {
+      ok: false;
+      code: 'policy_conflict' | 'invalid_args' | 'policy_unavailable';
+      message: string;
+      current?: { rev: number; doc: RemotePolicyDoc };
+    };
 
 export interface PolicyService {
   start(): void;
@@ -106,6 +119,14 @@ export interface PolicyService {
   ): PolicyUiState;
   legacyLowerPoint(launchedCli: CliKind | null): AssignmentPoint;
   profileName(id: ProfileId): string | null;
+  /** The portable projection: human-made profiles and non-session assignments, at the current rev. */
+  remoteDoc(): { rev: number; doc: RemotePolicyDoc };
+  onRemoteDocChange(fn: () => void): () => void;
+  applyRemoteDoc(baseRev: number, doc: unknown): RemoteApplyResult;
+  grantsView(): RemoteGrantView[];
+  revokeGrantByRemote(
+    grantId: string,
+  ): { ok: true } | { ok: false; code: 'not_found'; message: string };
 }
 
 const DECISION_RANK: Record<Decision, number> = { deny: 0, ask: 1, allow: 2 };
@@ -141,6 +162,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
   let tickTimer: unknown = null;
   let purgeTimer: unknown = null;
   const pending = new Set<Promise<void>>();
+  const remoteListeners = new Set<() => void>();
   const remembered = new Map<string, Remembered>();
   const spent = new Set<string>();
 
@@ -426,12 +448,52 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     purgeTimer = deps.setTimer(purge, PURGE_MS);
   };
 
-  const setPointAssignment = (point: AssignmentPoint, assignment: Assignment | null): void => {
+  // Returns true only when a portable (non-session) point changed: that is what bumps rev.
+  const setPointAssignment = (point: AssignmentPoint, assignment: Assignment | null): boolean => {
     const key = pointKey(point);
+    const before = file.assignments.find((a) => pointKey(a.point) === key)?.assignment ?? null;
+    if (JSON.stringify(before) === JSON.stringify(assignment)) return false;
     file.assignments = file.assignments.filter((a) => pointKey(a.point) !== key);
     if (assignment !== null) file.assignments.push({ point, assignment });
     markPolicy();
+    return point.kind !== 'session';
   };
+
+  const currentRev = (): number => file.rev ?? 0;
+
+  // rev is the owner's copy version: a controller's push names the rev it edited, and B refuses
+  // a push built on any other one. Listeners run after the rev has moved, so they read the new doc.
+  const bumpRev = (): void => {
+    file.rev = currentRev() + 1;
+    for (const fn of remoteListeners) fn();
+  };
+
+  const remoteSnapshot = (): { rev: number; doc: RemotePolicyDoc } => ({
+    rev: currentRev(),
+    doc: {
+      profiles: structuredClone(file.profiles),
+      assignments: structuredClone(
+        file.assignments.flatMap((a) =>
+          a.point.kind === 'session' ? [] : [{ point: a.point, assignment: a.assignment }],
+        ),
+      ),
+    },
+  });
+
+  const revokeGrantById = (id: string): boolean => {
+    if (grants.revoke(id) === null) return false;
+    markGrants();
+    deps.onChanged();
+    return true;
+  };
+
+  // A peer's who is text for the controller's screen; the grant keeps the typed value.
+  const whoText = (who: GrantWho): string =>
+    who.kind === 'session'
+      ? `session ${who.sessionId}`
+      : who.kind === 'cli'
+        ? `${who.cli} CLI`
+        : who.machineId;
 
   return {
     activity,
@@ -524,17 +586,19 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
         return { ok: false, error: 'unknown-profile' };
       }
       if (!policyWritable) return { ok: false, error: 'read-only' };
+      let portable: boolean;
       if (profileId === null) {
-        setPointAssignment(point, null);
+        portable = setPointAssignment(point, null);
       } else {
         const existing = stateNow().assignments.get(pointKey(point));
-        setPointAssignment(point, {
+        portable = setPointAssignment(point, {
           profileId,
           exceptions: existing?.exceptions ?? [],
           onScreenOnly: existing?.onScreenOnly ?? false,
           ...(existing?.pinned === undefined ? {} : { pinned: existing.pinned }),
         });
       }
+      if (portable) bumpRev();
       deps.onChanged();
       return { ok: true };
     },
@@ -545,7 +609,11 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
         deps.launchedCli(sessionId),
       );
       if (writes === null) return { ok: false, error: 'scoped' };
-      for (const w of writes) setPointAssignment(w.point, w.assignment);
+      let portable = false;
+      for (const w of writes) {
+        if (setPointAssignment(w.point, w.assignment)) portable = true;
+      }
+      if (portable) bumpRev();
       deps.onChanged();
       return { ok: true };
     },
@@ -568,10 +636,68 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     },
 
     revokeGrant(id) {
-      if (grants.revoke(id) === null) return false;
-      markGrants();
+      return revokeGrantById(id);
+    },
+
+    remoteDoc() {
+      return remoteSnapshot();
+    },
+
+    onRemoteDocChange(fn) {
+      remoteListeners.add(fn);
+      return () => {
+        remoteListeners.delete(fn);
+      };
+    },
+
+    applyRemoteDoc(baseRev, doc) {
+      if (!policyWritable)
+        return {
+          ok: false,
+          code: 'policy_unavailable',
+          message: 'rules are read-only on this machine',
+        };
+      if (!Number.isInteger(baseRev) || baseRev < 0)
+        return { ok: false, code: 'invalid_args', message: 'baseRev is not a whole number' };
+      const checked = validateRemotePolicyDoc(doc);
+      if (!checked.ok) return { ok: false, code: 'invalid_args', message: checked.message };
+      if (baseRev !== currentRev())
+        return {
+          ok: false,
+          code: 'policy_conflict',
+          message: `rules are at rev ${currentRev()}, not ${baseRev}`,
+          current: remoteSnapshot(),
+        };
+      // Session assignments name this machine's own sessions, so they never travel and never change.
+      const local = file.assignments.filter((a) => a.point.kind === 'session');
+      file.profiles = checked.doc.profiles;
+      file.assignments = [...local, ...checked.doc.assignments];
+      bumpRev();
+      markPolicy();
       deps.onChanged();
-      return true;
+      return { ok: true, rev: currentRev() };
+    },
+
+    grantsView() {
+      const now = deps.now();
+      return grants
+        .all()
+        .filter((g) => isLiveGrant(g, now))
+        .map((g) => ({
+          id: g.id,
+          tool: g.tool,
+          who: whoText(g.who),
+          on: { ...g.on },
+          for: g.for,
+          createdAt: g.createdAt,
+          expiresAt: g.expiresAt,
+          lastUsedAt: g.lastUsedAt,
+        }));
+    },
+
+    revokeGrantByRemote(grantId) {
+      if (revokeGrantById(grantId)) return { ok: true };
+      return { ok: false, code: 'not_found', message: 'no live grant with that id' };
     },
 
     allowOnce(activityId) {

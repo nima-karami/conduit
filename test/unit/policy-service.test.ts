@@ -7,20 +7,26 @@ import {
   serializePolicyFile,
 } from '../../src/conduit-mcp/policy-file';
 import { migrateLegacyPolicy } from '../../src/conduit-mcp/policy-migration';
+import { OBSERVER } from '../../src/conduit-mcp/policy-profiles';
 import {
   createPolicyService,
   type PolicyService,
   type PolicyServiceDeps,
 } from '../../src/conduit-mcp/policy-service';
 import type {
+  AssignmentPoint,
   Exception,
   Grant,
   OneUseOverride,
   PolicyTarget,
   Principal,
+  Profile,
+  ProfileId,
 } from '../../src/conduit-mcp/policy-types';
 import type { RequestsIo } from '../../src/conduit-mcp/request-file-fs';
 import { type CliKind, DEFAULT_TOOL_POLICY } from '../../src/conduit-mcp/tool-policy';
+
+const DEFAULT_RULES = OBSERVER.rules;
 
 vi.mock('../../src/conduit-mcp/policy-migration', () => ({
   migrateLegacyPolicy: vi.fn(() => ({
@@ -1880,5 +1886,279 @@ describe('fail-closed and missing profile', () => {
       profileId: 'p-gone',
       profileName: 'Observer',
     });
+  });
+});
+
+describe('remote policy doc', () => {
+  const profile = (id: ProfileId, name = 'Mine'): Profile => ({
+    id,
+    name,
+    builtIn: false,
+    rules: DEFAULT_RULES,
+  });
+  const entry = (
+    point: AssignmentPoint,
+    profileId: ProfileId,
+  ): PolicyFile['assignments'][number] => ({
+    point,
+    assignment: { profileId, exceptions: [], onScreenOnly: false },
+  });
+  const sessionAssignment = entry({ kind: 'session', sessionId: 's1' }, 'lead');
+  const override: OneUseOverride = {
+    id: 'o1',
+    sessionId: 's1',
+    tool: 'open_file',
+    target: { sessionId: null, path: '/w/a.ts', folder: null, projectId: null },
+    createdAt: iso(T0),
+  };
+  const seeded = () =>
+    policyText({
+      profiles: [profile('p-1', 'Old')],
+      assignments: [
+        sessionAssignment,
+        entry({ kind: 'cli', cli: 'claude' }, 'observer'),
+        entry({ kind: 'default' }, 'worker'),
+      ],
+      overrides: [override],
+    });
+  const pushed = (over: Record<string, unknown> = {}) => ({
+    profiles: [profile('p-2', 'Pushed')],
+    assignments: [
+      entry({ kind: 'default' }, 'p-2'),
+      entry({ kind: 'peer', machineId: 'm-1' }, 'worker'),
+    ],
+    ...over,
+  });
+
+  it('a fresh policy starts at rev 0 and a default edit bumps it once', () => {
+    const h = harness();
+    h.service.start();
+    expect(h.service.remoteDoc().rev).toBe(0);
+    expect(h.service.setAssignment({ kind: 'default' }, 'worker')).toEqual({ ok: true });
+    expect(h.service.remoteDoc().rev).toBe(1);
+    expect(h.service.setAssignment({ kind: 'default' }, 'worker')).toEqual({ ok: true });
+    expect(h.service.remoteDoc().rev).toBe(1);
+  });
+
+  it('rev bumps on portable changes only: not for session points, grants, overrides or sessions ending', () => {
+    const h = harness({
+      policy: seeded(),
+      grants: serializeGrantsFile({ version: 1, grants: [grant()] }),
+    });
+    h.service.start();
+    expect(h.service.remoteDoc().rev).toBe(0);
+    h.service.setAssignment({ kind: 'session', sessionId: 's1' }, 'worker');
+    expect(h.service.remoteDoc().rev).toBe(0);
+    h.service.revokeGrant('g1');
+    h.service.sessionEnded('s1');
+    expect(h.service.remoteDoc().rev).toBe(0);
+    expect(
+      h.service.applyLegacyPatch({ kind: 'default' }, null, 'open_file', { access: 'off' }),
+    ).toEqual({ ok: true });
+    expect(h.service.remoteDoc().rev).toBe(1);
+  });
+
+  it('a legacy patch that touches only a session point does not bump', () => {
+    const h = harness({ policy: seeded() });
+    h.service.start();
+    h.service.applyLegacyPatch(
+      { kind: 'session', sessionId: 's1' },
+      { kind: 'default' },
+      'open_file',
+      { access: 'off' },
+    );
+    expect(h.service.remoteDoc().rev).toBe(0);
+  });
+
+  it('rev survives a restart', async () => {
+    const h = harness({ policy: seeded() });
+    h.service.start();
+    h.service.setAssignment({ kind: 'default' }, 'lead');
+    h.service.setAssignment({ kind: 'default' }, 'worker');
+    h.service.setAssignment({ kind: 'default' }, 'lead');
+    h.fire(WRITE_MS);
+    await h.service.stop();
+    const saved = h.policyWrites.at(-1);
+    if (saved === undefined) throw new Error('no write');
+    const again = harness({ policy: saved });
+    again.service.start();
+    expect(again.service.remoteDoc().rev).toBe(3);
+  });
+
+  it('a file without rev reads as rev 0 and remoteDoc projects its non-session assignments', () => {
+    const h = harness({ policy: seeded() });
+    h.service.start();
+    const { rev, doc } = h.service.remoteDoc();
+    expect(rev).toBe(0);
+    expect(doc.profiles.map((p) => p.id)).toEqual(['p-1']);
+    expect(doc.assignments.map((a) => a.point)).toEqual([
+      { kind: 'cli', cli: 'claude' },
+      { kind: 'default' },
+    ]);
+  });
+
+  it('applyRemoteDoc on a matching rev replaces profiles and non-session assignments, keeps session assignments and overrides, and bumps rev', async () => {
+    const h = harness({ policy: seeded() });
+    h.service.start();
+    const before = h.changed();
+    const result = h.service.applyRemoteDoc(0, pushed());
+    expect(result).toEqual({ ok: true, rev: 1 });
+    expect(h.changed()).toBe(before + 1);
+    expect(h.service.remoteDoc().rev).toBe(1);
+    h.fire(WRITE_MS);
+    await h.service.stop();
+    const saved = parsePolicyFile(h.policyWrites.at(-1) ?? '');
+    if (!saved.ok) throw new Error('saved file unreadable');
+    expect(saved.file.rev).toBe(1);
+    expect(saved.file.profiles.map((p) => p.id)).toEqual(['p-2']);
+    expect(saved.file.assignments.map((a) => a.point)).toEqual([
+      { kind: 'session', sessionId: 's1' },
+      { kind: 'default' },
+      { kind: 'peer', machineId: 'm-1' },
+    ]);
+    expect(saved.file.assignments[0]?.assignment.profileId).toBe('lead');
+    expect(saved.file.overrides).toEqual([override]);
+  });
+
+  it('applyRemoteDoc refuses a stale baseRev with policy_conflict and the current copy, and changes nothing', async () => {
+    const h = harness({ policy: seeded() });
+    h.service.start();
+    expect(h.service.applyRemoteDoc(0, pushed())).toEqual({ ok: true, rev: 1 });
+    const current = h.service.remoteDoc();
+    const changed = h.changed();
+    h.fire(WRITE_MS);
+    const writes = h.policyWrites.length;
+    expect(h.service.applyRemoteDoc(0, pushed({ profiles: [profile('p-2', 'Stale')] }))).toEqual({
+      ok: false,
+      code: 'policy_conflict',
+      message: expect.any(String),
+      current,
+    });
+    expect(h.service.remoteDoc()).toEqual(current);
+    expect(h.changed()).toBe(changed);
+    h.fire(WRITE_MS);
+    await h.service.stop();
+    expect(h.policyWrites.length).toBe(writes);
+  });
+
+  it('applyRemoteDoc refuses an invalid doc as invalid_args and keeps rev', () => {
+    const h = harness({ policy: seeded() });
+    h.service.start();
+    const result = h.service.applyRemoteDoc(
+      0,
+      pushed({ assignments: [entry({ kind: 'session', sessionId: 's9' }, 'worker')] }),
+    );
+    expect(result).toMatchObject({ ok: false, code: 'invalid_args' });
+    expect(result.ok ? '' : result.message).toMatch(/^assignments\[0\]\.point/);
+    expect(h.service.remoteDoc().rev).toBe(0);
+  });
+
+  it.each([
+    [
+      'profiles',
+      pushed({ profiles: Array.from({ length: 65 }, (_, i) => profile(`p-${i}`)) }),
+      /^profiles /,
+    ],
+    [
+      'a name',
+      pushed({ profiles: [profile('p-2', 'x'.repeat(81))] }),
+      /^profiles\[0\]\.name too long/,
+    ],
+  ])('applyRemoteDoc refuses a doc over the %s cap', (_label, doc, path) => {
+    const h = harness({ policy: seeded() });
+    h.service.start();
+    const result = h.service.applyRemoteDoc(0, doc);
+    expect(result).toMatchObject({ ok: false, code: 'invalid_args' });
+    expect(result.ok ? '' : result.message).toMatch(path);
+    expect(h.service.remoteDoc().rev).toBe(0);
+  });
+
+  it('a pushed doc with no default assignment applies, and the engine falls back to the built-in default', () => {
+    const h = harness({ policy: seeded() });
+    h.service.start();
+    const result = h.service.applyRemoteDoc(0, {
+      profiles: [],
+      assignments: [entry({ kind: 'peer', machineId: 'm-1' }, 'observer')],
+    });
+    expect(result).toEqual({ ok: true, rev: 1 });
+    expect(h.service.ui([sessionRow('s2')]).sessions.s2?.profileId).toBe('worker');
+  });
+
+  it('applyRemoteDoc on a readOnly policy is policy_unavailable', () => {
+    const h = harness({ policy: '{"version":99}' });
+    h.service.start();
+    expect(h.service.ui([]).readOnly).toBe(true);
+    expect(h.service.applyRemoteDoc(0, pushed())).toMatchObject({
+      ok: false,
+      code: 'policy_unavailable',
+    });
+  });
+
+  it('onRemoteDocChange fires once per portable change and stops after unsubscribe', () => {
+    const h = harness({
+      policy: seeded(),
+      grants: serializeGrantsFile({ version: 1, grants: [grant()] }),
+    });
+    h.service.start();
+    const seen: number[] = [];
+    const off = h.service.onRemoteDocChange(() => seen.push(h.service.remoteDoc().rev));
+    h.service.setAssignment({ kind: 'session', sessionId: 's1' }, 'worker');
+    expect(seen).toEqual([]);
+    h.service.setAssignment({ kind: 'default' }, 'lead');
+    expect(seen).toEqual([1]);
+    h.service.applyRemoteDoc(1, pushed());
+    expect(seen).toEqual([1, 2]);
+    off();
+    h.service.setAssignment({ kind: 'default' }, 'worker');
+    expect(seen).toEqual([1, 2]);
+  });
+
+  it('grantsView shows live grants only, with a display string for who', () => {
+    const h = harness({
+      grants: serializeGrantsFile({
+        version: 1,
+        grants: [
+          grant({ id: 'g-live' }),
+          grant({ id: 'g-peer', who: { kind: 'peer', machineId: 'm-7' } }),
+          grant({ id: 'g-revoked', state: 'revoked', endedAt: iso(T0) }),
+          grant({ id: 'g-expired', expiresAt: iso(T0 - MIN) }),
+          grant({ id: 'g-cli', who: { kind: 'cli', cli: 'codex' } }),
+        ],
+      }),
+    });
+    h.service.start();
+    const view = h.service.grantsView();
+    expect(view.map((g) => g.id)).toEqual(['g-live', 'g-peer', 'g-cli']);
+    expect(view[1]).toEqual({
+      id: 'g-peer',
+      tool: 'open_session',
+      who: 'm-7',
+      on: { kind: 'anywhere' },
+      for: 'until-revoked',
+      createdAt: iso(T0),
+      expiresAt: null,
+      lastUsedAt: null,
+    });
+    expect(view[0]).not.toHaveProperty('expiring');
+    expect(view[0]).not.toHaveProperty('state');
+  });
+
+  it('revokeGrantByRemote ends a live grant once, and an unknown id is not_found', async () => {
+    const h = harness({
+      grants: serializeGrantsFile({ version: 1, grants: [grant({ id: 'g-keep' })] }),
+    });
+    h.service.start();
+    expect(h.service.revokeGrantByRemote('g-keep')).toEqual({ ok: true });
+    expect(h.service.grantsView()).toEqual([]);
+    expect(h.service.revokeGrantByRemote('g-keep')).toMatchObject({
+      ok: false,
+      code: 'not_found',
+    });
+    expect(h.service.revokeGrantByRemote('g-nope')).toMatchObject({
+      ok: false,
+      code: 'not_found',
+    });
+    await h.service.stop();
+    expect(h.grantWrites).toHaveLength(1);
   });
 });

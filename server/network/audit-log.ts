@@ -16,6 +16,8 @@ export type AuditKind =
   | 'call.refused'
   | 'request.refused'
   | 'fs.refused'
+  | 'policy.pushed'
+  | 'policy.refused'
   | 'bridge.refused';
 
 export interface AuditEvent {
