@@ -162,6 +162,7 @@ async function linkedOverSsh(
     ownerPresence: () => 'here',
     requestsSummary: () => [],
     callAsRemote: () => Promise.reject(new Error('not used by this test')),
+    remoteRequests: () => ({ apply: () => false, setLinkState: () => {} }),
   });
   a.net.setMcp(mcp([]));
   b.net.setMcp(mcp(bDelivered));

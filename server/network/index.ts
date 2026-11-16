@@ -8,6 +8,7 @@ import {
   LINK_PROTOCOL,
   type LinkState,
   OWN_DEFAULT_CAPABILITIES,
+  type RequestAnswerBody,
 } from '../../src/contracts/link-protocol';
 import type { NetworkState } from '../../src/contracts/network-state';
 import type { ServerEventSink } from '../../src/contracts/server-ports';
@@ -43,6 +44,14 @@ import { createMonitorPublisher, type MonitorSource } from './monitor-publisher'
 import { createNeedsPerson } from './needs-person';
 import { createPairingPort } from './pairing-port';
 import { createPairingService, type PairingService } from './pairing-service';
+import {
+  type ApplyRemoteAnswerResult,
+  createRequests,
+  type RemoteAnswerResult,
+  type RequestMirrorSink,
+  type RequestMirrorSource,
+  type Requests,
+} from './requests';
 import { createSnapshotCoalescer } from './snapshot-coalescer';
 import { createSshDial, prepareControlDir } from './ssh-dialer';
 import { sshExec } from './ssh-exec';
@@ -100,6 +109,11 @@ export interface NetworkDeps {
   bootstrap: NetworkBootstrapDeps;
   /** The user's ssh config text, or null when there is none. Production reads ~/.ssh/config. */
   readSshConfig?: () => string | null;
+  /**
+   * The request service's two ports (CON-42): B's requests and answer path, A's mirror store. Absent
+   * until the request service is wired, which fails closed: nothing is mirrored and no answer lands.
+   */
+  requestPorts?: { b: RequestMirrorSource; a: RequestMirrorSink };
 }
 
 /** ~/.ssh/config as text; a missing file is null, any other read error is the caller's to see. */
@@ -136,6 +150,12 @@ export interface NetworkService {
   setMcp(port: McpNetworkPort): void;
   /** Something local a peer may see changed: sessions, asks, unread, presence. */
   localChanged(): void;
+  /** Answers a request of a machine I dialed over ssh (CON-42); never re-sent. */
+  answerRemoteRequest(
+    machineId: string,
+    requestId: string,
+    answer: RequestAnswerBody,
+  ): Promise<RemoteAnswerResult>;
 }
 
 const EMIT_COALESCE_MS = 50;
@@ -220,6 +240,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       drive.linkChanged(machineId);
     }
     calls.settleAbsent(views.map((v) => v.machineId));
+    requests.linksChanged();
     for (const l of portListeners) l();
   };
 
@@ -303,6 +324,12 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
           .serveCall(machineId, f)
           .catch((err: unknown) => deps.log.error('call failed', { message: String(err) }));
       else if (f.t === 'call.result') calls.onResult(machineId, f);
+      else if (f.t === 'request.mirror' || f.t === 'request.answer' || f.t === 'request.answered')
+        void requests
+          .onFrame(machineId, f)
+          .catch((err: unknown) =>
+            deps.log.error('request frame failed', { message: String(err) }),
+          );
       else if (
         f.t === 'view.open' ||
         f.t === 'view.opened' ||
@@ -398,6 +425,39 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     after,
     log: (message, data) => deps.log.info(message, data),
   });
+  const requestPorts = deps.requestPorts ?? {
+    b: {
+      mirrorOf: () => [],
+      onMirrorChange: () => () => {},
+      applyRemoteAnswer: async (): Promise<ApplyRemoteAnswerResult> => ({
+        ok: false,
+        error: {
+          code: 'refused',
+          message: 'remote requests are not wired on this machine',
+          retryable: false,
+        },
+      }),
+    },
+    // The host's store is built after the network, so the mirror reaches it through the MCP port.
+    a: {
+      apply: (machineId, seq, mirror, machineName) => {
+        mcp?.remoteRequests().apply(machineId, seq, mirror, machineName);
+      },
+      setLinkState: (machineId, state) => mcp?.remoteRequests().setLinkState(machineId, state),
+    },
+  };
+  const requests: Requests = createRequests({
+    b: requestPorts.b,
+    a: requestPorts.a,
+    links: () => manager.views().map((v) => ({ machineId: v.machineId, state: v.state })),
+    linkOf: (machineId) => store.get(machineId),
+    peerMinor: (machineId) => manager.peerMinor(machineId),
+    send: (machineId, frame) => manager.send(machineId, frame),
+    audit,
+    now,
+    after,
+    newId: () => `q_${randomBytes(12).toString('hex')}`,
+  });
   const messaging = createMessaging({
     file: path.join(deps.dir, 'outbox.json'),
     machineId: () => identity.machineId,
@@ -443,6 +503,10 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       calls.call(machineId, tool, args, principalHandle, signal),
     connectMachine: (machine, signal) => machines.connect(machine, signal),
     disconnectMachine: (machine) => machines.disconnect(machine),
+    answerRemoteRequest: async (machineId, requestId, answer) => {
+      const sent = await requests.answerRemote(machineId, requestId, answer);
+      return sent.ok ? { ok: true, value: null } : sent;
+    },
     selfName,
   };
 
@@ -676,6 +740,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       relay.stop();
       drive.stop();
       calls.stop();
+      requests.stop();
       publisher.stop();
       messaging.stop();
       await manager.stop();
@@ -717,5 +782,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       mcp = port;
     },
     localChanged: () => publisher.changed(),
+    answerRemoteRequest: (machineId, requestId, answer) =>
+      requests.answerRemote(machineId, requestId, answer),
   };
 }

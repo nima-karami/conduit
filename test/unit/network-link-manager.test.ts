@@ -610,6 +610,7 @@ function fakeMcp(inbox: string[]): McpNetworkPort {
     ownerPresence: () => 'here',
     requestsSummary: () => [],
     callAsRemote: () => Promise.reject(new Error('not used by this test')),
+    remoteRequests: () => ({ apply: () => false, setLinkState: () => {} }),
   };
 }
 

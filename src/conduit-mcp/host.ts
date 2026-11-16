@@ -105,6 +105,14 @@ import type {
   Principal,
 } from './policy-types';
 import {
+  checkRemoteAnswer,
+  createRemoteRequests,
+  mergeListRequests,
+  mergeRemoteRequests,
+  type RemoteRequestRef,
+  unreachableRemote,
+} from './remote-requests';
+import {
   isKnownMachine,
   isRoutedCall,
   type McpNetworkPort,
@@ -122,6 +130,7 @@ import { createRequestsIo, type RequestsIo } from './request-file-fs';
 import { createRequestNotices } from './request-notices';
 import { createRequestService, type RequestService } from './request-service';
 import type { QuestionMessage, SessionNeedsYou } from './request-sources';
+import type { AnswerInput, AnswerRefusal, RequestAnswerResult } from './request-types';
 import { createScreenToolHandlers } from './screen-tools';
 import { type ScreenSnapshot, screenVerdict } from './screen-verdict';
 import { assignHandle, createSessionRegistry } from './session-registry';
@@ -957,6 +966,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     away: () => requestService.presence().state === 'away',
     emit: (e) => deps.emit('attention.edge', e),
   });
+
+  // A's mirror of remote requests: B writes it over the link, nothing is stored (CON-42 decision 2).
+  const remoteRequests = createRemoteRequests({ onChanged: () => scheduleBroadcast() });
 
   const requestService: RequestService = createRequestService({
     io: createRequestsIo(path.join(deps.dir, 'requests.json')),
@@ -2212,7 +2224,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       case 'withdraw_request':
         return requestService.tools.withdrawRequest(caller, args);
       case 'list_requests':
-        return requestService.tools.listRequests(caller, args);
+        return mergeListRequests(
+          requestService.tools.listRequests(caller, args),
+          remoteRequests.views(),
+          args,
+        );
     }
     throw new Error(`runRequest: ${name} is not a request tool`);
   };
@@ -2599,6 +2615,27 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     };
   };
 
+  // A remote answer goes to the machine that owns the request. A stale or missing link is refused
+  // before anything is sent; the owner answers again once it is back (no replay, decision 3).
+  async function answerRemote(
+    ref: RemoteRequestRef,
+    answer: AnswerInput,
+  ): Promise<RequestAnswerResult> {
+    const refuse = (reason: AnswerRefusal, message: string): RequestAnswerResult => ({
+      ok: false,
+      reason,
+      message,
+      request: ref.view,
+    });
+    if (ref.view.stale || deps.network === undefined)
+      return refuse('not_answerable', unreachableRemote(ref.view.machineName).message);
+    const checked = checkRemoteAnswer(ref, answer);
+    if (!checked.ok) return refuse(checked.reason, checked.message);
+    const sent = await deps.network.answerRemoteRequest(ref.machineId, ref.requestId, checked.body);
+    if (!sent.ok) return refuse('not_answerable', sent.error.message);
+    return { ok: true, request: ref.view };
+  }
+
   function uiState(): McpUiState {
     const sessions: Record<string, McpSessionBadge> = {};
     const listed = new Set<string>();
@@ -2662,7 +2699,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         : {},
       awaitingApproval: flow.awaitingApproval(),
       waitingAsks: flow.waitingAskCount(),
-      requests: requestService.ui(),
+      requests: mergeRemoteRequests(requestService.ui(), remoteRequests.views()),
       policy: policyService.ui(
         deps.sessions.list().map((s) => ({ sessionId: s.id, launchedCli: knownLaunchedCli(s.id) })),
       ),
@@ -3422,7 +3459,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             });
           return;
         case 'mcp:requestAnswer': {
-          const result = await requestService.answerFromRenderer(m.requestId, m.answer, senderId);
+          const remote = remoteRequests.resolve(m.requestId);
+          const result =
+            remote === null
+              ? await requestService.answerFromRenderer(m.requestId, m.answer, senderId)
+              : await answerRemote(remote, m.answer);
           reply({ type: 'mcp:requestResult', requestId: m.requestId, result });
           return;
         }
@@ -3462,6 +3503,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     peerRevoked(machineId) {
       policyService.peerRevoked(machineId);
+      remoteRequests.setLinkState(machineId, 'gone');
     },
     recordObserved(sessionId, cli, entry) {
       // A late row for a deleted session must not create a budget that nothing will ever clear.
@@ -3530,6 +3572,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     networkPort: (): McpNetworkPort => ({
       localDirectory: () => directory(),
       callAsRemote,
+      remoteRequests: () => remoteRequests,
       hasMessage: (id) => store.has(id),
       readBlob: (sha256) => store.readBlob(sha256),
       // A thread is exported to a machine once a message in it went there (to its recipient) or

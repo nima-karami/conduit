@@ -11,6 +11,7 @@ import type { StuckScreen } from '../../src/cli-stuck-screens';
 import type { ActivityIo } from '../../src/conduit-mcp/activity-log';
 import { MCP_ADAPTERS } from '../../src/conduit-mcp/adapters';
 import type { McpFileRequest, McpOpenRequest, PathKind } from '../../src/conduit-mcp/control-tools';
+import type { GrantChoice } from '../../src/conduit-mcp/grant-store';
 import {
   type ConduitMcpHost,
   type ConduitMcpHostDeps,
@@ -49,6 +50,7 @@ import {
 } from '../../src/conduit-mcp/tool-policy';
 import { RATE_LIMIT_PER_MIN } from '../../src/conduit-mcp/tools';
 import { type MessageRecord, THREAD_AGENT_LIMIT, toolError } from '../../src/conduit-mcp/types';
+import type { RequestMirror } from '../../src/contracts/link-protocol';
 import type {
   ConnectMachineOk,
   ConnectMachineResult,
@@ -5898,6 +5900,7 @@ describe('createConduitMcpHost — wait_sessions', () => {
         error: { code: 'machine_unknown', detail: {} },
       }),
       selfName: () => 'this-machine',
+      answerRemoteRequest: () => Promise.reject(new Error('not used by this test')),
     };
     return {
       network,
@@ -7272,6 +7275,7 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
         over.disconnectMachine ??
         (async () => ({ ok: true, value: { machine: 'win-box', state: 'down' } })),
       selfName: () => 'this-machine',
+      answerRemoteRequest: () => Promise.reject(new Error('not used by this test')),
     };
     return { network, connects };
   }
@@ -7816,6 +7820,7 @@ describe('routed session tools on this machine (CON-40 S3, plan decision 5)', ()
       connectMachine: unused,
       disconnectMachine: unused,
       selfName: () => 'this-machine',
+      answerRemoteRequest: () => Promise.reject(new Error('not used by this test')),
     };
     return { network, sent };
   }
@@ -8097,5 +8102,241 @@ describe('routed session tools on this machine (CON-40 S3, plan decision 5)', ()
     const r = await h.host.networkPort().callAsRemote(lead, 'list_agents', { machine: 'win-box' });
     expect(r).toMatchObject({ ok: false, error: { code: 'peer_unsupported' } });
     expect(net.sent).toEqual([]);
+  });
+});
+
+describe('createConduitMcpHost — remote requests (CON-42 A side)', () => {
+  const M = 'm-aaaa1111';
+  const WIN = 'win-box';
+
+  const mirrorOf = (over: Partial<RequestMirror> & { id: string }): RequestMirror => ({
+    kind: 'choose',
+    title: 'Pick one',
+    body: '',
+    options: [{ label: 'A' }, { label: 'B' }],
+    multi: false,
+    draft: null,
+    priority: 'normal',
+    createdAt: '2026-11-16T10:00:00.000Z',
+    expiresAt: null,
+    requester: 'builder@win-box',
+    state: 'open',
+    answer: null,
+    permission: null,
+    ...over,
+  });
+
+  function remoteNet(over: { answer?: NetworkPort['answerRemoteRequest'] } = {}) {
+    const answerRemoteRequest = vi.fn<NetworkPort['answerRemoteRequest']>(
+      over.answer ?? (async () => ({ ok: true, value: null })),
+    );
+    const unused = (): never => {
+      throw new Error('not used by the remote requests');
+    };
+    const network: NetworkPort = {
+      remoteEntries: () => [],
+      resolve: unused,
+      enqueue: unused,
+      call: unused,
+      waitReading: unused,
+      peerCapabilitiesOf: unused,
+      onChange: () => () => undefined,
+      listMachines: () => [],
+      connectMachine: unused,
+      disconnectMachine: unused,
+      selfName: () => 'this-machine',
+      answerRemoteRequest,
+    };
+    return { network, answerRemoteRequest };
+  }
+
+  async function paired(h: Harness) {
+    await h.host.start();
+    const a = await launch(h, 's1');
+    return client(h.ep, a.token);
+  }
+
+  const feed = (h: Harness, seq: number, requests: RequestMirror[]) =>
+    h.host.networkPort().remoteRequests().apply(M, seq, requests, WIN);
+
+  async function answerFrom(h: Harness, requestId: string, answer: AnswerInput) {
+    const replies: HostToWebview[] = [];
+    await h.host.handleRenderer(
+      { type: 'mcp:requestAnswer', requestId, answer },
+      (m) => replies.push(m),
+      1,
+    );
+    return replies;
+  }
+
+  const grant: GrantChoice = { who: 'session', on: 'target', for: '1h' };
+
+  it('the ui state merges remote open rows with their machine and stale flag', async () => {
+    const { network } = remoteNet();
+    const h = harness({ network });
+    await h.host.start();
+    feed(h, 1, [mirrorOf({ id: 'r1' })]);
+    const row = h.host.uiState().requests.open.find((r) => r.id === `r1@${M}`);
+    expect(row).toMatchObject({ machine: M, origin: M, state: 'open', stale: false });
+    h.host.networkPort().remoteRequests().setLinkState(M, 'down');
+    expect(h.host.uiState().requests.open.find((r) => r.id === `r1@${M}`)).toMatchObject({
+      stale: true,
+    });
+  });
+
+  it('a revoked machine drops its remote rows from the ui', async () => {
+    const { network } = remoteNet();
+    const h = harness({ network });
+    await h.host.start();
+    feed(h, 1, [mirrorOf({ id: 'r1' })]);
+    h.host.peerRevoked(M);
+    expect(h.host.uiState().requests.open.some((r) => r.machine === M)).toBe(false);
+  });
+
+  it('a remote id is answered through the network and the result posted back', async () => {
+    const { network, answerRemoteRequest } = remoteNet();
+    const h = harness({ network });
+    await h.host.start();
+    feed(h, 1, [mirrorOf({ id: 'r1' })]);
+    const replies = await answerFrom(h, `r1@${M}`, { outcome: 'chosen', values: ['A'] });
+    expect(answerRemoteRequest).toHaveBeenCalledWith(M, 'r1', {
+      outcome: 'chosen',
+      values: ['A'],
+    });
+    expect(replies).toEqual([
+      {
+        type: 'mcp:requestResult',
+        requestId: `r1@${M}`,
+        result: expect.objectContaining({ ok: true }),
+      },
+    ]);
+  });
+
+  it('a stale machine refuses the answer without sending it', async () => {
+    const { network, answerRemoteRequest } = remoteNet();
+    const h = harness({ network });
+    await h.host.start();
+    feed(h, 1, [mirrorOf({ id: 'r1' })]);
+    h.host.networkPort().remoteRequests().setLinkState(M, 'down');
+    const replies = await answerFrom(h, `r1@${M}`, { outcome: 'chosen', values: ['A'] });
+    expect(answerRemoteRequest).not.toHaveBeenCalled();
+    expect(replies).toEqual([
+      {
+        type: 'mcp:requestResult',
+        requestId: `r1@${M}`,
+        result: expect.objectContaining({ ok: false, reason: 'not_answerable' }),
+      },
+    ]);
+  });
+
+  it('a remote id without a network is refused as unreachable, never sent', async () => {
+    const h = harness();
+    await h.host.start();
+    feed(h, 1, [mirrorOf({ id: 'r1' })]);
+    const replies = await answerFrom(h, `r1@${M}`, { outcome: 'chosen', values: ['A'] });
+    expect(replies).toEqual([
+      {
+        type: 'mcp:requestResult',
+        requestId: `r1@${M}`,
+        result: expect.objectContaining({ ok: false, reason: 'not_answerable' }),
+      },
+    ]);
+  });
+
+  it('a failed network answer is refused with its message', async () => {
+    const { network } = remoteNet({
+      answer: async () => ({
+        ok: false,
+        error: { code: 'peer_unreachable', message: 'the link dropped', retryable: true },
+      }),
+    });
+    const h = harness({ network });
+    await h.host.start();
+    feed(h, 1, [mirrorOf({ id: 'r1' })]);
+    const [reply] = await answerFrom(h, `r1@${M}`, { outcome: 'chosen', values: ['A'] });
+    expect(reply).toMatchObject({ result: { ok: false, message: 'the link dropped' } });
+  });
+
+  it('a remote permission allow with a grant is sent when the mirror says grantable', async () => {
+    const { network, answerRemoteRequest } = remoteNet();
+    const h = harness({ network });
+    await h.host.start();
+    feed(h, 1, [
+      mirrorOf({
+        id: 'p1',
+        kind: 'permission',
+        title: 'Open a session',
+        permission: { tool: 'open_session', why: 'routed', grantable: true },
+      }),
+    ]);
+    const replies = await answerFrom(h, `p1@${M}`, { outcome: 'allowed', grant });
+    expect(answerRemoteRequest).toHaveBeenCalledWith(M, 'p1', { outcome: 'allowed', grant: true });
+    expect(replies[0]).toMatchObject({ result: { ok: true } });
+  });
+
+  it('a grant on a permission that is not grantable is refused and never sent', async () => {
+    const { network, answerRemoteRequest } = remoteNet();
+    const h = harness({ network });
+    await h.host.start();
+    feed(h, 1, [
+      mirrorOf({
+        id: 'p2',
+        kind: 'permission',
+        permission: { tool: 'open_session', why: 'forced', grantable: false },
+      }),
+    ]);
+    const replies = await answerFrom(h, `p2@${M}`, { outcome: 'allowed', grant });
+    expect(answerRemoteRequest).not.toHaveBeenCalled();
+    expect(replies[0]).toMatchObject({ result: { ok: false, reason: 'invalid_answer' } });
+  });
+
+  it('an answer to an ended remote request is refused as already_ended', async () => {
+    const { network, answerRemoteRequest } = remoteNet();
+    const h = harness({ network });
+    await h.host.start();
+    feed(h, 1, [mirrorOf({ id: 'r3', state: 'answered' })]);
+    const replies = await answerFrom(h, `r3@${M}`, { outcome: 'chosen', values: ['A'] });
+    expect(answerRemoteRequest).not.toHaveBeenCalled();
+    expect(replies[0]).toMatchObject({ result: { ok: false, reason: 'already_ended' } });
+  });
+
+  it('a local id is still answered locally and never sent to the network', async () => {
+    const { network, answerRemoteRequest } = remoteNet();
+    const h = harness({ network });
+    const ca = await paired(h);
+    const p = ca.call('request_input', {
+      kind: 'choose',
+      title: 'Local',
+      options: [{ label: 'A' }, { label: 'B' }],
+      wait_s: 30,
+    });
+    await expect.poll(() => h.host.uiState().requests.open.length).toBe(1);
+    await expect.poll(() => h.host.uiState().requests.open.length).toBe(1);
+    const [local] = h.host.uiState().requests.open;
+    await answerFrom(h, local?.id ?? '', { outcome: 'chosen', values: ['A'] });
+    expect((await p).isError).toBe(false);
+    expect(answerRemoteRequest).not.toHaveBeenCalled();
+  });
+
+  it('list_requests adds remote rows in the @machine form with their machine name', async () => {
+    const { network } = remoteNet();
+    const h = harness({ network });
+    const ca = await paired(h);
+    feed(h, 1, [mirrorOf({ id: 'r1' }), mirrorOf({ id: 'r2', state: 'answered' })]);
+    const open = await ca.call('list_requests', {});
+    expect(open.body.requests).toEqual([
+      expect.objectContaining({
+        request_id: `r1@${M}`,
+        kind: 'choose',
+        state: 'open',
+        machine: WIN,
+        waiting: false,
+      }),
+    ]);
+    const all = await ca.call('list_requests', { state: 'all' });
+    expect(all.body.requests.map((r: { request_id: string }) => r.request_id)).toEqual([
+      `r1@${M}`,
+      `r2@${M}`,
+    ]);
   });
 });

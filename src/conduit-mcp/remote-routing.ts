@@ -5,6 +5,8 @@ import {
   type Capabilities,
   type MonitorOpener,
   type MonitorSnapshot,
+  type RequestAnswerBody,
+  type RequestMirror,
   ROUTED_TOOLS,
   type RoutedTool,
   type WireRecipientOutcome,
@@ -88,6 +90,24 @@ export interface NetworkPort {
   disconnectMachine(machine: string): Promise<DisconnectMachineResult>;
   /** This machine's name, shown to a remote lead that must be answered here (remote_ask). */
   selfName(): string;
+  /**
+   * Sends the owner's answer to a request on a controlled machine (request.answer, CON-42). Resolves
+   * when that machine acknowledges it; a drop is peer_unreachable and the answer is not replayed.
+   */
+  answerRemoteRequest(
+    machineId: string,
+    requestId: string,
+    answer: RequestAnswerBody,
+  ): Promise<Result<null>>;
+}
+
+/**
+ * What the link feeds A's mirror of remote requests. `apply` takes a machine's full snapshot (seq
+ * decides whether it is newer); `setLinkState` marks it stale on down and drops it on gone.
+ */
+export interface RemoteRequestSink {
+  apply(machineId: string, seq: number, requests: RequestMirror[], machineName: string): boolean;
+  setLinkState(machineId: string, state: 'up' | 'down' | 'gone'): void;
 }
 
 /** Implemented by the mcp host; read by server/network. Slice 6 adds its members here. */
@@ -135,6 +155,8 @@ export interface McpNetworkPort {
   youUnread(): number;
   ownerPresence(): 'here' | 'away';
   requestsSummary(): MonitorSnapshot['requests'];
+  /** The A-side mirror of remote requests; the link writes into it (CON-42 L3). */
+  remoteRequests(): RemoteRequestSink;
 }
 
 /** The tools that take `machine`: they run on that machine, or on this one when it is absent. */

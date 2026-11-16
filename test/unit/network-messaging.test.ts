@@ -71,6 +71,7 @@ function setup(seed: OutboxEntry[] = []) {
     ownerPresence: () => 'here',
     requestsSummary: () => [],
     callAsRemote: () => Promise.reject(new Error('not used by this test')),
+    remoteRequests: () => ({ apply: () => false, setLinkState: () => {} }),
   };
   const svc = createMessaging({
     file: join(dir, 'outbox.json'),
