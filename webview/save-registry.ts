@@ -1,4 +1,5 @@
 import type { SaveKind } from './auto-save-policy';
+import { type OpenDoc, saveKeyOf } from './docs';
 
 /**
  * Save registry (K2 — save reliability). A tiny external store keyed by doc PATH so the
@@ -58,18 +59,17 @@ export function getSaveEntry(path: string): SaveEntry | undefined {
 }
 
 /** Minimal shape of an open doc — avoids importing the full docs type into tests. */
-interface DocLike {
-  id: string;
-  path: string;
-}
+type DocLike = Pick<OpenDoc, 'id' | 'path' | 'kind'>;
 
 /**
- * Pure routing: the file path of the active tab, or null when the Terminal tab (null
- * id) is active or the active id matches no open doc. Unit-testable without React.
+ * Pure routing: the key the active tab is registered under (its file path, or a remote file's doc
+ * id, so a remote tab never reaches the local file of the same path), or null when the Terminal
+ * tab (null id) is active, the active id matches no open doc, or the doc registers nothing.
  */
 export function activeDocPath(docs: readonly DocLike[], activeId: string | null): string | null {
   if (activeId === null) return null;
-  return docs.find((d) => d.id === activeId)?.path ?? null;
+  const doc = docs.find((d) => d.id === activeId);
+  return doc ? saveKeyOf(doc) : null;
 }
 
 /**

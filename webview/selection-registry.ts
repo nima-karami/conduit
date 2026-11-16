@@ -5,6 +5,7 @@
  */
 
 import type { GroupIndex } from './doc-groups';
+import type { OpenDoc } from './docs';
 import { createPathRegistry } from './path-registry';
 import { activeDocPath } from './save-registry';
 
@@ -26,7 +27,7 @@ export function registerSelection(
 /** The active doc's selected text, or '' when the Terminal tab is active, no doc matches,
  *  or the active doc registered no reader. */
 export function selectionInActiveDoc(
-  docs: readonly { id: string; path: string }[],
+  docs: readonly Pick<OpenDoc, 'id' | 'path' | 'kind'>[],
   activeId: string | null,
   group: GroupIndex = 1,
 ): string {

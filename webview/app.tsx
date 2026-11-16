@@ -202,6 +202,7 @@ import {
   REVIEW_DOC_PATH,
   type ReviewSource,
   requestDocPath,
+  saveKeyOf,
   shownKeepsDoc,
   toPersistedDocs,
 } from './docs';
@@ -320,6 +321,7 @@ import { clearReveal, fileUri, peekReveal, setDefinitionOpener, setReveal } from
 import { createQuitResponder } from './quit-responder';
 import { quitStopFailureDialog } from './quit-stop-dialog';
 import { pushRecentDoc, type RecentDoc, recentPaletteId, recentSubtitle } from './recent-docs';
+import { closeRemoteBuffer } from './remote-file-saves';
 import { type RemoteKey, remoteKeyId, remoteSessionRows } from './remote-sessions';
 import { openRequest, setRequestOpeners } from './request-open';
 import { sortRequests } from './request-view-model';
@@ -2899,6 +2901,8 @@ export function App() {
     if (doc) {
       // A diff tab shares its path with the file tab; only the file owns the dirty flag.
       if (doc.kind === 'file') releaseFileTab(doc.path);
+      // A remote file's buffer, save entry and dirty flag live in the remote store until here.
+      if (doc.kind === 'remote-file') closeRemoteBuffer(doc.id);
       const closed = toClosedTab(doc, tabGroupsOf(live, id)[0]);
       if (closed) closedTabsRef.current = pushClosedTab(closedTabsRef.current, closed);
       dropTabState(doc, 1);
@@ -2916,7 +2920,15 @@ export function App() {
     (id: string): Promise<Exclude<CloseStep, { type: 'save' }>> => {
       const doc = docState.docs.find((d) => d.id === id);
       if (!doc) return Promise.resolve({ type: 'close' });
-      // A remote file has no local buffer: its close never reads the local file's save or dirty state.
+      // A remote file saves by hand only, so a dirty one always asks; it never reads the local
+      // file's save or dirty state.
+      if (doc.kind === 'remote-file') {
+        if (!getDirtySnapshot().has(doc.id)) {
+          forceCloseDoc(id);
+          return Promise.resolve({ type: 'close' });
+        }
+        return Promise.resolve({ type: 'prompt', reason: null });
+      }
       const path = localPathOf(doc);
       if (path === null) {
         forceCloseDoc(id);
@@ -2947,7 +2959,7 @@ export function App() {
     (id: string): Promise<boolean> => {
       const doc = docState.docs.find((d) => d.id === id);
       if (!doc) return Promise.resolve(true);
-      const path = localPathOf(doc);
+      const path = saveKeyOf(doc);
       if (path === null || !dirtySet.has(path)) {
         forceCloseDoc(id);
         return Promise.resolve(true);
@@ -2957,7 +2969,7 @@ export function App() {
           forceCloseDoc(id);
           resolve(true);
         };
-        const fileName = baseName(path);
+        const fileName = baseName(doc.path);
         const prompt = (reason: string | null) => {
           const message = `"${fileName}" has unsaved changes. Save before closing, or discard them?`;
           showConfirm({
@@ -5017,7 +5029,10 @@ export function App() {
           keywords: ['discard changes', 'undo file'],
           group: 'Commands',
           icon: <IconDoc size={14} />,
-          run: () => revertDocByPath(activeDoc.path),
+          run: () => {
+            const key = saveKeyOf(activeDoc);
+            if (key !== null) revertDocByPath(key);
+          },
         });
       }
     }
