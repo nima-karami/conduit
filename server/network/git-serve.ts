@@ -116,7 +116,8 @@ export function createGitServe(deps: GitServeDeps): GitServe {
   ): Promise<Reply> => {
     const wanted = frame.args.path;
     if (wanted === undefined) return failedReply(DIFF_FAILED);
-    const file = await confineFsPath(wanted, roots);
+    // A deleted file is still diffed against HEAD, so its missing leaf must be allowed through.
+    const file = await confineFsPath(wanted, roots, { allowMissing: true });
     if (!file.ok) {
       if (file.code === 'refused') {
         refuse(machineId, 'path');

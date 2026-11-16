@@ -280,4 +280,17 @@ describe('git-serve', () => {
     expect(res.error.code).toBe('not_found');
     expect(h.calls).toEqual([]);
   });
+
+  it('diff of a deleted file returns its diff', async () => {
+    await initRepo(proj);
+    fs.rmSync(path.join(proj, 'a.txt'));
+    const h = harness();
+    await h.serve.onFrame(CONTROLLER, req('r9', 'diff', { path: path.join(proj, 'a.txt') }));
+    const res = replyTo(h.sent, 'r9');
+    expect(res.ok).toBe(true);
+    if (!res.ok || res.result.op !== 'diff') throw new Error('expected a diff result');
+    expect(res.result.file.head).toBe('hello\n');
+    expect(res.result.file.work).toBe('');
+    expect(res.result.file.error).toBeUndefined();
+  });
 });
