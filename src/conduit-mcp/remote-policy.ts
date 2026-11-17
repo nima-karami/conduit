@@ -5,6 +5,7 @@ import type { RemotePolicyDoc, RemotePolicySnapshot } from '../contracts/remote-
 import { judgePersistedVersion, SERVER_FILE_VERSION } from '../contracts/session-identity';
 import type { ActivityIo } from './activity-log';
 import { serializePolicyFile, validateRemotePolicyDoc } from './policy-file';
+import type { PolicyIo } from './policy-file-fs';
 import { createPolicyService, type PolicyService } from './policy-service';
 import type { PolicyUiState } from './policy-types';
 import type { NetworkPort, RemotePolicyPushResult, RemotePolicySink } from './remote-routing';
@@ -68,7 +69,7 @@ const noActivity: ActivityIo = {
   writeArgs: () => undefined,
 };
 
-const noWrite: RequestsIo = { read: () => null, write: async () => undefined };
+const noWrite: PolicyIo = { read: () => null, writeSync: () => true };
 
 type DraftsParse =
   | { ok: true; drafts: Map<string, RemotePolicyDraft> }
@@ -149,7 +150,7 @@ export function createRemotePolicy(deps: RemotePolicyDeps): RemotePolicy {
       notes: { onScreenOnlyOffered: [] },
     });
     const svc = createPolicyService({
-      policyIo: { read: () => text, write: async () => undefined },
+      policyIo: { read: () => text, writeSync: () => true },
       lastGoodIo: noWrite,
       grantsIo: noWrite,
       activityIo: noActivity,

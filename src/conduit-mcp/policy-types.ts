@@ -162,8 +162,24 @@ export type PermissionAnswer =
   | { outcome: 'allowed'; grant?: GrantChoice }
   | { outcome: 'denied'; reason?: string };
 
+export type PolicyEditError =
+  | 'conflict'
+  | 'invalid-value'
+  | 'unknown-profile'
+  | 'read-only'
+  | 'save-failed'
+  | 'too-large'
+  | 'not-found';
+export type PolicyEditResult = { ok: true } | { ok: false; error: PolicyEditError };
+export type GrantBatchResult =
+  | { ok: true; grants: Grant[] }
+  | { ok: false; error: PolicyEditError };
+
 // see plan C8
 export interface PolicyUiState {
+  editToken: string;
+  saveError: string | null;
+  backupWarning: string | null;
   profiles: Profile[];
   assignments: Array<{ point: AssignmentPoint; assignment: Assignment }>;
   sessions: Record<

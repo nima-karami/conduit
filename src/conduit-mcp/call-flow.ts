@@ -9,9 +9,10 @@ import type {
   OneUseOverride,
   PermissionAnswer,
   PolicyDecision,
+  PolicyEditError,
   PolicyTarget,
 } from './policy-types';
-import type { AnsweredBy, AnswerInput } from './request-types';
+import type { AnsweredBy, AnswerInput, PermissionAnswerResult } from './request-types';
 import {
   type CliKind,
   type PolicySource,
@@ -28,7 +29,7 @@ import {
   type McpUiAction,
   type McpUiResult,
 } from './ui-types';
-import { type CallKey, createWindowWaits } from './window-waits';
+import { type CallKey, createWindowWaits, type Wait } from './window-waits';
 
 /** Below each CLI's documented MCP call timeout (spec §5, research 2026-10-30). */
 export const ASK_TIMEOUT_MS: Readonly<Record<CliKind, number>> = {
@@ -67,7 +68,15 @@ export interface AskCommit {
   held: readonly OneUseOverride[];
 }
 export type AnswerDecision = { kind: 'ready' } | { kind: 'withdraw'; reason: string };
-export type GrantOutcome = 'made' | 'session-gone' | 'scope';
+export type GrantOutcome =
+  | { ok: true }
+  | { ok: false; error: PolicyEditError | 'session-gone' | 'scope' };
+export const grantFailureMessage = (error: PolicyEditError | 'session-gone' | 'scope'): string =>
+  error === 'session-gone'
+    ? 'the session closed before the request ran'
+    : error === 'invalid-value' || error === 'scope'
+      ? SCOPE_UNAVAILABLE
+      : `Permissions could not be saved (${error})`;
 export const SCOPE_UNAVAILABLE = "that scope isn't available for every target";
 export interface ControlCall<T> {
   inflight: InFlight;
@@ -159,7 +168,11 @@ export interface CallFlow {
   recheck(): void;
   /** false unless the ask exists, is waiting, and `fromWindowId` is its window. */
   answer(askId: string, fromWindowId: number, answer: AskAnswer): boolean;
-  answerPermission(askId: string, answer: PermissionAnswer, fromWindowId: number): boolean;
+  answerPermission(
+    askId: string,
+    answer: PermissionAnswer,
+    fromWindowId: number,
+  ): Promise<PermissionAnswerResult>;
   /**
    * Sends mcp:ui to `windowId` and waits ≤ UI_TIMEOUT_MS for that window's answer. Keyed by the
    * in-flight's call key, so every cancel path ends it. An unready window or a throwing send ⇒
@@ -274,6 +287,27 @@ function parseUiResult(kind: McpUiAction['kind'], v: unknown): McpUiResult | nul
 export function createCallFlow(deps: CallFlowDeps): CallFlow {
   /** By connId, then requestId: a Map keeps 1 and '1' apart, as JSON-RPC does. */
   const inflight = new Map<number, Map<JsonRpcId, Entry>>();
+  const receipts = new Map<
+    string,
+    { wait: Wait<AskMeta>; cancelled: boolean; resolve(result: PermissionAnswerResult): void }
+  >();
+  const refusedAnswer = (message: string): PermissionAnswerResult => ({
+    ok: false,
+    reason: 'not_answerable',
+    message,
+  });
+  const finishReceipt = (id: string, result: PermissionAnswerResult): void => {
+    const receipt = receipts.get(id);
+    receipts.delete(id);
+    receipt?.resolve(result);
+  };
+  const cancelReceipts = (match: (wait: Wait<AskMeta>) => boolean, message: string): void => {
+    for (const receipt of receipts.values()) {
+      if (!match(receipt.wait)) continue;
+      receipt.cancelled = true;
+      receipt.resolve(refusedAnswer(message));
+    }
+  };
   const waits = createWindowWaits<PermissionAnswer, AskMeta>({
     now: deps.now,
     setTimer: deps.setTimer,
@@ -357,7 +391,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       end: PermissionEnd['end'],
       answer: AnswerInput | null,
       reason: string | null,
-    ): void =>
+    ): void => {
       deps.settlePermission({
         requestId,
         caller: c.caller,
@@ -367,6 +401,11 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
         reason,
         by: { kind: 'you', windowId },
       });
+      finishReceipt(
+        requestId,
+        end === 'answered' ? { ok: true } : refusedAnswer(reason ?? 'the request did not run'),
+      );
+    };
     deps.sendToOwner(caller, {
       type: 'mcp:ask',
       askId: requestId,
@@ -400,6 +439,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     // Unanswered ends keep the rate token: it caps card spam (spec §3.3 "Rate").
     switch (end.kind) {
       case 'expired':
+        finishReceipt(requestId, refusedAnswer('the request expired'));
         return {
           ok: false,
           error: budgetEndsAsk && p.budget ? p.budget.expired : approvalTimeout(),
@@ -424,14 +464,13 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       !c.permission.grantable && end.answer.outcome === 'allowed'
         ? { outcome: 'allowed' }
         : end.answer;
+    if (c.inflight.cancelled || receipts.get(requestId)?.cancelled) {
+      settle('withdrawn', null, 'the call was cancelled');
+      return null;
+    }
     if (answer.outcome === 'denied') {
       settle('answered', answerInputOf(answer), null);
       return { ok: false, error: toolError('denied', declinedMessage(answer.reason)) };
-    }
-    // Approved, then cancelled before it ran: still a cancelled ask, so the token stays spent.
-    if (c.inflight.cancelled) {
-      settle('withdrawn', null, 'the call was cancelled');
-      return null;
     }
     const decided = c.reDecide(held);
     if (decided.kind === 'withdraw') {
@@ -440,9 +479,8 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     }
     if (answer.grant !== undefined) {
       const made = c.grant(answer.grant, requestId);
-      if (made !== 'made') {
-        const why =
-          made === 'session-gone' ? 'the session closed before the request ran' : SCOPE_UNAVAILABLE;
+      if (!made.ok) {
+        const why = grantFailureMessage(made.error);
         settle('withdrawn', null, why);
         return { ok: false, error: toolError('cancelled', why) };
       }
@@ -468,6 +506,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
   const cancelWaits = (match: (w: { callerSessionId: string; windowId: number }) => boolean) =>
     waits.cancel(match, true);
   const cancelSessionWaits = (sessionId: string) => {
+    cancelReceipts((w) => w.callerSessionId === sessionId, 'the session closed or moved');
     cancelWaits((w) => w.callerSessionId === sessionId);
     waitsUi.cancel(
       (w) => w.callerSessionId === sessionId || w.meta.routedSessionId === sessionId,
@@ -602,6 +641,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       entry.cancelled = true;
       entry.aborter.abort();
       const match = sameCall({ connId, requestId });
+      cancelReceipts(match, 'the call was cancelled');
       waits.cancel(match, false);
       waitsUi.cancel(match, false);
     },
@@ -612,6 +652,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
         entry.aborter.abort();
       }
       inflight.delete(connId);
+      cancelReceipts((w) => w.key.connId === connId, 'the connection closed');
       waits.cancel((w) => w.key.connId === connId, false);
       waitsUi.cancel((w) => w.key.connId === connId, false);
     },
@@ -619,15 +660,21 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     sessionGone: cancelSessionWaits,
     sessionMoved: cancelSessionWaits,
     windowReset: (windowId) => {
+      cancelReceipts((w) => w.windowId === windowId, 'the window closed');
       cancelWaits((w) => w.windowId === windowId);
       waitsUi.cancel((w) => w.windowId === windowId, true);
     },
 
     recheck() {
       if (!deps.messagingOn()) {
+        cancelReceipts(() => true, 'messaging was disabled');
         cancelWaits(() => true);
         return;
       }
+      cancelReceipts(
+        (w) => !deps.stillVisible(w.callerSessionId, w.meta.tool),
+        'the policy changed while the request waited',
+      );
       waits.cancel((w) => {
         if (deps.stillVisible(w.callerSessionId, w.meta.tool)) return false;
         const reason = w.meta.denyReason();
@@ -639,11 +686,17 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     answer: (askId, fromWindowId, answer) => waits.answer(askId, fromWindowId, cardAnswer(answer)),
 
     answerPermission(askId, answer, fromWindowId) {
-      if (fromWindowId === NO_OWNER_WINDOW) return false;
       const w = waits.pending().find((x) => x.id === askId);
-      if (w === undefined || !waits.answer(askId, fromWindowId, answer)) return false;
-      deps.sendToOwner(w.callerSessionId, { type: 'mcp:askClosed', askId, outcome: 'answered' });
-      return true;
+      if (fromWindowId === NO_OWNER_WINDOW || w === undefined || w.windowId !== fromWindowId)
+        return Promise.resolve(refusedAnswer('nothing is waiting on this request'));
+      return new Promise((resolve) => {
+        receipts.set(askId, { wait: w, cancelled: false, resolve });
+        if (!waits.answer(askId, fromWindowId, answer)) {
+          finishReceipt(askId, refusedAnswer('nothing is waiting on this request'));
+          return;
+        }
+        deps.sendToOwner(w.callerSessionId, { type: 'mcp:askClosed', askId, outcome: 'answered' });
+      });
     },
 
     requestUi,
@@ -660,6 +713,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     waitingAskCount: () => waits.pending().length,
 
     dispose() {
+      cancelReceipts(() => true, 'the service stopped');
       waits.dispose();
       waitsUi.dispose();
       inflight.clear();

@@ -4013,6 +4013,10 @@ app.whenReady().then(() => {
         case 'mcp:compose':
         case 'mcp:thread:get':
         case 'mcp:activity:get':
+        case 'mcp:saveAssignment':
+        case 'mcp:saveProfile':
+        case 'mcp:deleteProfile':
+        case 'mcp:policyRetry':
         case 'mcp:markRead':
         case 'mcp:allowMore':
         case 'mcp:pause':

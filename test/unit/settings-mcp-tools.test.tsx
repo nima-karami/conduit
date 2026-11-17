@@ -390,6 +390,9 @@ const remoteOf = (
   status: 'applied',
   refusal: null,
   policy: {
+    editToken: 'fixture',
+    saveError: null,
+    backupWarning: null,
     profiles: [],
     assignments: [],
     sessions: {},

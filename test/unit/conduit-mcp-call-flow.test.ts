@@ -93,7 +93,7 @@ function setup() {
     messagingOn: true,
     appUp: true,
     redecide: { kind: 'ready' } as AnswerDecision,
-    grantOutcome: 'made' as GrantOutcome,
+    grantOutcome: { ok: true } as GrantOutcome,
     commitOk: true,
     awaitingChanged: 0,
     sendThrows: false,
@@ -507,7 +507,7 @@ describe('createCallFlow', () => {
 
   it('a grant the re-decide refuses (session gone) → cancelled, run not called', async () => {
     const t = setup();
-    const c = t.call({ grantOutcome: 'session-gone' });
+    const c = t.call({ grantOutcome: { ok: false, error: 'session-gone' } });
     await t.flush();
     answerLast(t, t.flow, 'always');
     const r = await c.promise;
@@ -562,7 +562,7 @@ describe('createCallFlow', () => {
 
   it('a grant scope that does not resolve ends the ask withdrawn with that reason, creating nothing more', async () => {
     const t = setup();
-    const c = t.call({ grantOutcome: 'scope' });
+    const c = t.call({ grantOutcome: { ok: false, error: 'scope' } });
     await t.flush();
     answerLast(t, t.flow, 'always');
     const r = await c.promise;
@@ -689,14 +689,92 @@ describe('createCallFlow', () => {
     expect(t.reDecides[0]).toEqual(['ov-held']);
   });
 
+  it('acknowledges a durable answer before waiting for the tool to finish', async () => {
+    const t = setup();
+    const runGate = gate();
+    const c = t.call({ runGate });
+    await t.flush();
+    const result = await t.flow.answerPermission(
+      'perm-1',
+      { outcome: 'allowed', grant: ALWAYS_GRANT },
+      1,
+    );
+    expect(result).toEqual({ ok: true });
+    expect(runGate.held).toBe(true);
+    expect(c.out.done).toBe(false);
+    runGate.go();
+    expect(await c.promise).toEqual({ ok: true, value: 'opened' });
+  });
+
+  it('returns the grant persistence failure instead of acknowledging an accepted queue item', async () => {
+    const t = setup();
+    const c = t.call({ grantOutcome: { ok: false, error: 'save-failed' } });
+    await t.flush();
+    expect(
+      await t.flow.answerPermission('perm-1', { outcome: 'allowed', grant: ALWAYS_GRANT }, 1),
+    ).toEqual({
+      ok: false,
+      reason: 'not_answerable',
+      message: 'Permissions could not be saved (save-failed)',
+    });
+    expect(errCode(await c.promise)).toBe('cancelled');
+    expect(c.spies.run).toBe(0);
+    expect(t.settled).toMatchObject([{ end: 'withdrawn', answer: null }]);
+  });
+
+  it.each(['cancel', 'dispose', 'gone', 'window'] as const)(
+    'settles answer receipt on %s before continuation without executing',
+    async (how) => {
+      const t = setup();
+      const c = t.call({ connId: 1, requestId: 'call' });
+      await t.flush();
+      const receipt = t.flow.answerPermission(
+        'perm-1',
+        { outcome: 'allowed', grant: ALWAYS_GRANT },
+        1,
+      );
+      if (how === 'cancel') t.flow.cancelled(1, 'call');
+      else if (how === 'dispose') t.flow.dispose();
+      else if (how === 'gone') t.flow.sessionGone(CALLER);
+      else t.flow.windowReset(1);
+      expect(await receipt).toMatchObject({ ok: false, reason: 'not_answerable' });
+      expect(await c.promise).toBeNull();
+      expect(c.spies.run).toBe(0);
+      expect(t.grants).toHaveLength(0);
+    },
+  );
+
+  it('returns the policy redecision or consume failure to the answer owner', async () => {
+    for (const mode of ['redecision', 'consume'] as const) {
+      const t = setup();
+      const c = t.call(
+        mode === 'redecision'
+          ? { redecide: { kind: 'withdraw', reason: 'new deny' } }
+          : { commitOk: false },
+      );
+      await t.flush();
+      expect(await t.flow.answerPermission('perm-1', { outcome: 'allowed' }, 1)).toEqual({
+        ok: false,
+        reason: 'not_answerable',
+        message: mode === 'redecision' ? 'new deny' : 'the policy changed while the request waited',
+      });
+      expect(c.spies.run).toBe(0);
+      await c.promise;
+    }
+  });
+
   it("answerPermission from a window that is not the ask's owner is refused and the ask keeps waiting", async () => {
     const t = setup();
     const c = t.call();
     await t.flush();
-    expect(t.flow.answerPermission('perm-1', { outcome: 'denied' }, 2)).toBe(false);
+    expect(await t.flow.answerPermission('perm-1', { outcome: 'denied' }, 2)).toEqual({
+      ok: false,
+      reason: 'not_answerable',
+      message: 'nothing is waiting on this request',
+    });
     expect(t.asks()).toHaveLength(1);
     expect(c.out.done).toBe(false);
-    expect(t.flow.answerPermission('perm-1', { outcome: 'denied' }, 1)).toBe(true);
+    expect(await t.flow.answerPermission('perm-1', { outcome: 'denied' }, 1)).toEqual({ ok: true });
     expect(errCode(await c.promise)).toBe('denied');
     expect(t.closed()).toContainEqual({
       type: 'mcp:askClosed',
@@ -711,7 +789,9 @@ describe('createCallFlow', () => {
     t.state.appUp = false;
     const c = t.call();
     await t.flush();
-    expect(t.flow.answerPermission('perm-1', { outcome: 'denied' }, NO_OWNER_WINDOW)).toBe(false);
+    expect(await t.flow.answerPermission('perm-1', { outcome: 'denied' }, NO_OWNER_WINDOW)).toEqual(
+      { ok: false, reason: 'not_answerable', message: 'nothing is waiting on this request' },
+    );
     expect(c.out.done).toBe(false);
     t.advance(ASK_TIMEOUT_MS.claude);
     expect(errCode(await c.promise)).toBe('approval_timeout');
@@ -721,8 +801,12 @@ describe('createCallFlow', () => {
     const t = setup();
     const c = t.call();
     await t.flush();
-    expect(t.flow.answerPermission('perm-missing', { outcome: 'denied' }, 1)).toBe(false);
-    expect(t.flow.answerPermission('perm-1', { outcome: 'denied' }, 1)).toBe(true);
+    expect(await t.flow.answerPermission('perm-missing', { outcome: 'denied' }, 1)).toEqual({
+      ok: false,
+      reason: 'not_answerable',
+      message: 'nothing is waiting on this request',
+    });
+    expect(await t.flow.answerPermission('perm-1', { outcome: 'denied' }, 1)).toEqual({ ok: true });
     expect(errCode(await c.promise)).toBe('denied');
   });
 

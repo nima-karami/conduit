@@ -6,6 +6,8 @@ import {
   parsePolicyFile,
   serializeGrantsFile,
   serializePolicyFile,
+  validatePolicyAssignment,
+  validatePolicyProfile,
   validateRemotePolicyDoc,
 } from '../../src/conduit-mcp/policy-file';
 import { OBSERVER } from '../../src/conduit-mcp/policy-profiles';
@@ -568,5 +570,66 @@ describe('validateRemotePolicyDoc', () => {
     if (!r.ok) throw new Error(r.message);
     expect(Object.keys(r.doc.profiles[0]?.rules ?? {}).sort()).toEqual([...TOOL_NAMES].sort());
     expect(r.doc.assignments[0]?.assignment.pinned).toBeUndefined();
+  });
+});
+
+describe('local owner edit validators', () => {
+  it('rejects builtin edits, incomplete rules, invalid values and unprintable names', () => {
+    const profile = { ...structuredClone(OBSERVER), id: 'p-copy', name: 'Copy', builtIn: false };
+    expect(validatePolicyProfile(profile)).toEqual(profile);
+    const circular: Record<string, unknown> = { ...profile };
+    circular.extra = circular;
+    expect(validatePolicyProfile(circular)).toBeNull();
+    expect(validatePolicyProfile(OBSERVER)).toBeNull();
+    expect(validatePolicyProfile({ ...profile, builtIn: true })).toBeNull();
+    expect(validatePolicyProfile({ ...profile, name: '' })).toBeNull();
+    expect(validatePolicyProfile({ ...profile, name: 'x'.repeat(81) })).toBeNull();
+    expect(validatePolicyProfile({ ...profile, rules: {} })).toBeNull();
+    expect(
+      validatePolicyProfile({
+        ...profile,
+        rules: { ...profile.rules, open_file: { ...profile.rules.open_file, when: 'sometimes' } },
+      }),
+    ).toBeNull();
+  });
+
+  it('validates local scopes and limits and normalizes pins defensively', () => {
+    const assignment = {
+      profileId: 'worker',
+      exceptions: [
+        {
+          tool: 'open_file',
+          scope: { kind: 'session', sessionId: 's1' },
+          rule: { decision: 'deny' },
+        },
+      ],
+      onScreenOnly: false,
+      pinned: ['open_file.access', 'open_file.access'],
+    };
+    const entry = validatePolicyAssignment({ kind: 'session', sessionId: 's1' }, assignment);
+    expect(entry?.assignment.pinned).toEqual(['open_file.access']);
+    expect(entry?.assignment).not.toBe(assignment);
+    expect(validatePolicyAssignment({ kind: 'cli', cli: 'fake' }, assignment)).toBeNull();
+    expect(
+      validatePolicyAssignment(
+        { kind: 'default' },
+        {
+          ...assignment,
+          exceptions: [
+            {
+              tool: 'open_file',
+              scope: { kind: 'path', path: 'x'.repeat(1025) },
+              rule: { decision: 'deny' },
+            },
+          ],
+        },
+      ),
+    ).toBeNull();
+    expect(
+      validatePolicyAssignment({ kind: 'default' }, { ...assignment, onScreenOnly: 'yes' }),
+    ).toBeNull();
+    expect(
+      validatePolicyAssignment({ kind: 'default' }, assignment)?.assignment.pinned,
+    ).toBeUndefined();
   });
 });

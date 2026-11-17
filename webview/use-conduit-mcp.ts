@@ -1,6 +1,13 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import type { ActivityPage, ActivityQuery } from '../src/conduit-mcp/activity-query';
-import type { AssignmentPoint, PermissionAnswer, ProfileId } from '../src/conduit-mcp/policy-types';
+import type {
+  Assignment,
+  AssignmentPoint,
+  PermissionAnswer,
+  PolicyEditResult,
+  Profile,
+  ProfileId,
+} from '../src/conduit-mcp/policy-types';
 import type {
   AnswerInput,
   AnswerRefusal,
@@ -38,6 +45,18 @@ type PolicyPoint = Extract<WebviewToHost, { type: 'mcp:setPointPolicy' }>['point
 
 export interface ConduitMcpApi {
   state: McpUiState | null;
+  saveAssignment(
+    point: AssignmentPoint,
+    assignment: Assignment | null,
+    expectedToken: string,
+  ): Promise<PolicyEditResult | null>;
+  saveProfile(profile: Profile, expectedToken: string): Promise<PolicyEditResult | null>;
+  deleteProfile(
+    profileId: ProfileId,
+    replacement: ProfileId,
+    expectedToken: string,
+  ): Promise<PolicyEditResult | null>;
+  retryPolicy(): Promise<PolicyEditResult | null>;
   getActivity(query: ActivityQuery): Promise<ActivityPage | null>;
   setAssignment(
     point: AssignmentPoint,
@@ -100,6 +119,44 @@ export function getRequestsSnapshot(): RequestsUiState | null {
 }
 
 const api: Omit<ConduitMcpApi, 'state'> = {
+  async saveAssignment(point, assignment, expectedToken) {
+    const r = await requestHost(
+      (requestId) => ({ type: 'mcp:saveAssignment', requestId, point, assignment, expectedToken }),
+      ['mcp:policyEditResult'],
+      REQUEST_TIMEOUT_MS,
+    );
+    return r?.result ?? null;
+  },
+  async saveProfile(profile, expectedToken) {
+    const r = await requestHost(
+      (requestId) => ({ type: 'mcp:saveProfile', requestId, profile, expectedToken }),
+      ['mcp:policyEditResult'],
+      REQUEST_TIMEOUT_MS,
+    );
+    return r?.result ?? null;
+  },
+  async deleteProfile(profileId, replacement, expectedToken) {
+    const r = await requestHost(
+      (requestId) => ({
+        type: 'mcp:deleteProfile',
+        requestId,
+        profileId,
+        replacement,
+        expectedToken,
+      }),
+      ['mcp:policyEditResult'],
+      REQUEST_TIMEOUT_MS,
+    );
+    return r?.result ?? null;
+  },
+  async retryPolicy() {
+    const r = await requestHost(
+      (requestId) => ({ type: 'mcp:policyRetry', requestId }),
+      ['mcp:policyEditResult'],
+      REQUEST_TIMEOUT_MS,
+    );
+    return r?.result ?? null;
+  },
   async getActivity(query) {
     const r = await requestHost(
       (requestId) => ({ type: 'mcp:activity:get', requestId, query }),

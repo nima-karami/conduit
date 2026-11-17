@@ -329,3 +329,43 @@ export function validateRemotePolicyDoc(v: unknown): RemoteDocCheck {
 export function serializeGrantsFile(f: GrantsFile): string {
   return toText(f);
 }
+
+export function validatePolicyAssignment(
+  point: unknown,
+  assignment: unknown,
+): PolicyFile['assignments'][number] | null {
+  if (!isPoint(point) || !isAssignment(assignment)) return null;
+  if (assignment.exceptions.length > REMOTE_POLICY_EXCEPTIONS_MAX) return null;
+  for (const exception of assignment.exceptions) {
+    const scope = exception.scope;
+    if (
+      (scope.kind === 'path' || scope.kind === 'folder') &&
+      scope.path.length > REMOTE_POLICY_PATH_MAX
+    )
+      return null;
+  }
+  try {
+    JSON.stringify({ point, assignment });
+    return structuredClone(normaliseEntry({ point, assignment }));
+  } catch {
+    return null;
+  }
+}
+
+export function validatePolicyProfile(raw: unknown): Profile | null {
+  if (
+    !isProfile(raw) ||
+    !raw.id.startsWith('p-') ||
+    raw.id.length < 3 ||
+    raw.builtIn ||
+    !printableName(raw.name, REMOTE_POLICY_NAME_MAX) ||
+    !TOOL_NAMES.every((tool) => isToolRule(raw.rules[tool]))
+  )
+    return null;
+  try {
+    JSON.stringify(raw);
+    return structuredClone(completeProfile(raw));
+  } catch {
+    return null;
+  }
+}

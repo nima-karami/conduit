@@ -46,6 +46,7 @@ import {
   type AskCommit,
   askBudgetMs,
   createCallFlow,
+  grantFailureMessage,
   type InFlight,
   NO_OWNER_WINDOW,
   SCOPE_UNAVAILABLE,
@@ -95,11 +96,12 @@ import {
 import { composeUnreadBanner } from './notice-text';
 import { type AttentionRaise, bannerCandidates, createNotifier, type Notifier } from './notifier';
 import { reasonText } from './policy-engine';
+import { createPolicyIo, type PolicyIo } from './policy-file-fs';
 import { createPolicyService } from './policy-service';
 import { forcesAsk, resolveTargets, type TargetDeps } from './policy-targets';
 import type {
   AssignmentPoint,
-  Grant,
+  GrantBatchResult,
   PolicyDecision,
   PolicyInput,
   PolicyTarget,
@@ -129,7 +131,7 @@ import {
   routedName,
   routedRefOf,
 } from './remote-routing';
-import { createRequestsIo, type RequestsIo } from './request-file-fs';
+import { createRequestsIo } from './request-file-fs';
 import { createRequestNotices } from './request-notices';
 import { createRequestService, type RequestService } from './request-service';
 import type { QuestionMessage, SessionNeedsYou } from './request-sources';
@@ -251,8 +253,8 @@ export interface ConduitMcpHostDeps extends Omit<McpHostDeps, 'attention'> {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   storeIo?: StoreIo;
-  policyIo?: RequestsIo;
-  grantsIo?: RequestsIo;
+  policyIo?: PolicyIo;
+  grantsIo?: PolicyIo;
   activityIo?: ActivityIo;
   listen?: boolean;
   tickMs?: number;
@@ -1116,11 +1118,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         return { ok: false, reason: 'invalid_answer', message: SCOPE_UNAVAILABLE };
       }
       if (r.state === 'open') {
-        const answered =
-          by.kind === 'you' && by.windowId !== null && flow.answerPermission(r.id, a, by.windowId);
-        return answered
-          ? { ok: true }
-          : { ok: false, reason: 'not_answerable', message: 'nothing is waiting on this request' };
+        if (by.kind !== 'you' || by.windowId === null)
+          return {
+            ok: false,
+            reason: 'not_answerable',
+            message: 'nothing is waiting on this request',
+          };
+        return flow.answerPermission(r.id, a, by.windowId);
       }
       if (by.kind !== 'you' || by.windowId === null || by.windowId === NO_OWNER_WINDOW) {
         return {
@@ -1139,11 +1143,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           message: 'the session closed before the grant could be made',
         };
       }
-      const grants = grantsFor(a.grant, p, perm.tool, perm.targets, r.id);
-      const [first] = grants ?? [];
-      if (first === undefined) {
+      const result = grantsFor(a.grant, p, perm.tool, perm.targets, r.id);
+      if (!result.ok)
+        return { ok: false, reason: 'not_answerable', message: grantFailureMessage(result.error) };
+      const first = result.grants[0];
+      if (first === undefined)
         return { ok: false, reason: 'not_answerable', message: 'the grant could not be made' };
-      }
       return requestService.answerLate(r.id, first.id);
     },
     scheduler: deps.domain.limit,
@@ -1687,9 +1692,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   const machineName = (machineId: string): string =>
     deps.network?.listMachines().find((m) => m.machine_id === machineId)?.machine ?? machineId;
   const policyService = createPolicyService({
-    policyIo: deps.policyIo ?? createRequestsIo(path.join(deps.dir, 'policy.json')),
-    lastGoodIo: createRequestsIo(path.join(deps.dir, 'policy.last-good.json')),
-    grantsIo: deps.grantsIo ?? createRequestsIo(path.join(deps.dir, 'grants.json')),
+    policyIo: deps.policyIo ?? createPolicyIo(path.join(deps.dir, 'policy.json')),
+    lastGoodIo: createPolicyIo(path.join(deps.dir, 'policy.last-good.json')),
+    grantsIo: deps.grantsIo ?? createPolicyIo(path.join(deps.dir, 'grants.json')),
     activityIo: deps.activityIo ?? createActivityIo(deps.dir),
     now,
     newId: () => randomBytes(12).toString('hex'),
@@ -1740,14 +1745,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     tool: ToolName,
     targets: readonly PolicyTarget[],
     requestId: string,
-  ): Grant[] | null => {
+  ): GrantBatchResult => {
     const scopes = grantTargetsFor(choice, p, targets);
-    if (scopes === null) return null;
-    const made = scopes.flatMap((t) => {
-      const g = policyService.createGrant(choice, p, tool, t, requestId);
-      return g === null ? [] : [g];
-    });
-    return made.length === scopes.length ? made : null;
+    if (scopes === null) return { ok: false, error: 'invalid-value' };
+    return policyService.createGrants(choice, p, tool, scopes, requestId);
   };
   const reasonOf = (decision: PolicyDecision): string =>
     reasonText(decision.reason, decision.decision, {
@@ -2075,10 +2076,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           },
           grant: (choice, requestId) => {
             const p = principalOf(sessionId);
-            if (p === null) return 'session-gone';
-            return grantsFor(choice, p, name, policyInput.targets, requestId) === null
-              ? 'scope'
-              : 'made';
+            if (p === null) return { ok: false, error: 'session-gone' };
+            return grantsFor(choice, p, name, policyInput.targets, requestId);
           },
           commitAnswered: (held) => {
             if (reDecided === null) return false;
@@ -2402,12 +2401,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           }
           // The grant is the owner's to make only when the ask allowed it (remoteGrantOf).
           const choice = remoteGrantOf(owner.outcome.value, !decision.forcedAsk);
-          if (
-            choice !== null &&
-            grantsFor(choice, remote, name, targets, owner.requestId) === null
-          ) {
-            p.release();
-            return { ok: false, error: toolError('refused', SCOPE_UNAVAILABLE) };
+          if (choice !== null) {
+            const grant = grantsFor(choice, remote, name, targets, owner.requestId);
+            if (!grant.ok) {
+              p.release();
+              return { ok: false, error: toolError('refused', grantFailureMessage(grant.error)) };
+            }
           }
         }
         if (policyService.commit(policyInput, decision) === null) {
@@ -3517,8 +3516,45 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             patch,
           );
           reply({ type: 'mcp:toolPolicyResult', requestId: m.requestId, ...result });
-          syncToolLists();
-          flow.recheck();
+          if (result.ok) {
+            syncToolLists();
+            flow.recheck();
+          }
+          scheduleBroadcast();
+          return;
+        }
+        case 'mcp:saveAssignment':
+        case 'mcp:saveProfile':
+        case 'mcp:deleteProfile':
+        case 'mcp:policyRetry': {
+          if (!Number.isSafeInteger(m.requestId) || m.requestId < 0) return;
+          const validToken =
+            m.type === 'mcp:policyRetry' ||
+            (typeof m.expectedToken === 'string' &&
+              m.expectedToken.length > 0 &&
+              m.expectedToken.length <= 512);
+          const invalid =
+            'machine' in m ||
+            !validToken ||
+            (m.type === 'mcp:saveAssignment' &&
+              (!validPoint(m.point) ||
+                (m.point.kind === 'session' && !deps.sessions.get(m.point.sessionId)))) ||
+            (m.type === 'mcp:deleteProfile' &&
+              (typeof m.profileId !== 'string' || typeof m.replacement !== 'string'));
+          const result = invalid
+            ? { ok: false as const, error: 'invalid-value' as const }
+            : m.type === 'mcp:saveAssignment'
+              ? policyService.saveAssignment(m.point, m.assignment, m.expectedToken)
+              : m.type === 'mcp:saveProfile'
+                ? policyService.saveProfile(m.profile, m.expectedToken)
+                : m.type === 'mcp:deleteProfile'
+                  ? policyService.deleteProfile(m.profileId, m.replacement, m.expectedToken)
+                  : policyService.retrySave();
+          reply({ type: 'mcp:policyEditResult', requestId: m.requestId, result });
+          if (result.ok) {
+            syncToolLists();
+            flow.recheck();
+          }
           scheduleBroadcast();
           return;
         }
@@ -3566,7 +3602,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           }
           const result = policyService.setAssignment(m.point, m.profileId);
           reply({ type: 'mcp:policyResult', requestId: m.requestId, ...result });
-          flow.recheck();
+          if (result.ok) {
+            syncToolLists();
+            flow.recheck();
+          }
           return;
         }
         case 'mcp:setPointPolicy': {
@@ -3606,7 +3645,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           }
           const result = policyService.applyLegacyPatch(point, lower, tool, patch);
           reply({ type: 'mcp:policyResult', requestId: m.requestId, ...result });
-          flow.recheck();
+          if (result.ok) {
+            syncToolLists();
+            flow.recheck();
+          }
           return;
         }
         case 'mcp:revokeGrant': {
@@ -3626,13 +3668,15 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               });
             return;
           }
-          const ok = typeof m.grantId === 'string' && policyService.revokeGrant(m.grantId);
-          reply(
-            ok
-              ? { type: 'mcp:policyResult', requestId: m.requestId, ok: true }
-              : { type: 'mcp:policyResult', requestId: m.requestId, ok: false, error: 'not-found' },
-          );
-          flow.recheck();
+          const result =
+            typeof m.grantId === 'string'
+              ? policyService.revokeGrant(m.grantId)
+              : { ok: false as const, error: 'not-found' as const };
+          reply({ type: 'mcp:policyResult', requestId: m.requestId, ...result });
+          if (result.ok) {
+            syncToolLists();
+            flow.recheck();
+          }
           return;
         }
         case 'mcp:remotePolicy': {

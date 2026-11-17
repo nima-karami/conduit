@@ -96,7 +96,7 @@ export type RemotePolicyApplyResult =
 
 export type RemoteGrantRevokeResult =
   | { ok: true }
-  | { ok: false; code: 'not_found'; message: string };
+  | { ok: false; code: 'not_found' | 'policy_unavailable'; message: string };
 
 export interface NetworkPort {
   remoteEntries(): RemoteEntry[];

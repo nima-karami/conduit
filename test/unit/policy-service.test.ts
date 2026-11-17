@@ -6,6 +6,7 @@ import {
   serializeGrantsFile,
   serializePolicyFile,
 } from '../../src/conduit-mcp/policy-file';
+import type { PolicyIo } from '../../src/conduit-mcp/policy-file-fs';
 import { migrateLegacyPolicy } from '../../src/conduit-mcp/policy-migration';
 import { OBSERVER } from '../../src/conduit-mcp/policy-profiles';
 import {
@@ -23,7 +24,6 @@ import type {
   Profile,
   ProfileId,
 } from '../../src/conduit-mcp/policy-types';
-import type { RequestsIo } from '../../src/conduit-mcp/request-file-fs';
 import { type CliKind, DEFAULT_TOOL_POLICY } from '../../src/conduit-mcp/tool-policy';
 
 const DEFAULT_RULES = OBSERVER.rules;
@@ -94,6 +94,8 @@ interface Opts {
   grants?: string | null;
   activityFails?: boolean;
   writeFails?: boolean;
+  backupFails?: boolean;
+  idPrefix?: string;
 }
 
 function harness(o: Opts = {}) {
@@ -107,29 +109,32 @@ function harness(o: Opts = {}) {
   let changed = 0;
   let legacyCalls = 0;
 
-  const policyIo: RequestsIo = {
+  const policyIo: PolicyIo = {
     read: () => o.policy ?? null,
-    write: async (t) => {
+    writeSync: (t) => {
       if (writeDown) throw new Error('disk full');
       policyWrites.push(t);
+      return true;
     },
   };
   const lastGoodWrites: string[] = [];
-  const lastGoodIo: RequestsIo = {
+  const lastGoodIo: PolicyIo = {
     read: () => {
       if (o.lastGoodReadThrows) throw new Error('EIO');
       return o.lastGood ?? null;
     },
-    write: async (t) => {
-      if (writeDown) throw new Error('disk full');
+    writeSync: (t) => {
+      if (writeDown || o.backupFails) throw new Error('disk full');
       lastGoodWrites.push(t);
+      return true;
     },
   };
-  const grantsIo: RequestsIo = {
+  const grantsIo: PolicyIo = {
     read: () => o.grants ?? null,
-    write: async (t) => {
+    writeSync: (t) => {
       if (writeDown) throw new Error('disk full');
       grantWrites.push(t);
+      return true;
     },
   };
   let activityDown = o.activityFails ?? false;
@@ -152,7 +157,7 @@ function harness(o: Opts = {}) {
     grantsIo,
     activityIo,
     now: () => now,
-    newId: () => `id${++ids}`,
+    newId: () => `${o.idPrefix ?? 'id'}${++ids}`,
     setTimer: (fn, ms) => {
       const t = { fn, ms };
       timers.push(t);
@@ -218,6 +223,273 @@ beforeEach(() => {
 });
 
 describe('policy service', () => {
+  it('persists human assignments before publication and never retries failed widening automatically', () => {
+    const h = harness({ policy: policyText() });
+    h.service.start();
+    const before = h.service.ui([]);
+    h.setWriteDown(true);
+    expect(h.service.setAssignment({ kind: 'default' }, 'lead')).toEqual({
+      ok: false,
+      error: 'save-failed',
+    });
+    expect(h.service.ui([]).assignments).toEqual(before.assignments);
+    expect(h.service.ui([]).editToken).toBe(before.editToken);
+    expect(h.service.ui([]).saveError).toContain('could not be saved');
+    h.setWriteDown(false);
+    h.fire(WRITE_MS);
+    h.advance(60_000);
+    h.fire(60_000);
+    expect(h.policyWrites).toHaveLength(0);
+    expect(h.service.retrySave()).toEqual({ ok: true });
+    expect(h.service.ui([]).assignments).toEqual(before.assignments);
+    expect(h.policyWrites).toHaveLength(1);
+  });
+
+  it('keeps a committed primary and reports backup failure separately', () => {
+    const h = harness({ policy: policyText(), backupFails: true });
+    h.service.start();
+    expect(h.service.setAssignment({ kind: 'default' }, 'lead')).toEqual({ ok: true });
+    expect(h.service.ui([]).assignments[0]?.assignment.profileId).toBe('lead');
+    expect(h.service.ui([]).saveError).toBeNull();
+    expect(h.service.ui([]).backupWarning).toContain('backup');
+    expect(parsePolicyFile(h.policyWrites[0] ?? '')).toMatchObject({
+      ok: true,
+      file: { assignments: [{ assignment: { profileId: 'lead' } }] },
+    });
+  });
+
+  it('refuses stale drafts across edits and service lifetimes', () => {
+    const h = harness({ policy: policyText(), idPrefix: 'first-' });
+    h.service.start();
+    const token = h.service.ui([]).editToken;
+    const assignment = { profileId: 'lead' as const, exceptions: [], onScreenOnly: false };
+    h.setWriteDown(true);
+    expect(h.service.saveAssignment({ kind: 'default' }, assignment, token)).toEqual({
+      ok: false,
+      error: 'save-failed',
+    });
+    h.setWriteDown(false);
+    expect(
+      h.service.saveAssignment(
+        { kind: 'default' },
+        { ...assignment, profileId: 'observer' },
+        token,
+      ),
+    ).toEqual({ ok: true });
+    expect(h.service.saveAssignment({ kind: 'default' }, assignment, token)).toEqual({
+      ok: false,
+      error: 'conflict',
+    });
+    const other = harness({ policy: h.policyWrites[0], idPrefix: 'second-' });
+    other.service.start();
+    expect(
+      other.service.saveAssignment({ kind: 'default' }, assignment, h.service.ui([]).editToken),
+    ).toEqual({ ok: false, error: 'conflict' });
+  });
+
+  it('never deletes a builtin id even if an old file contains a shadow entry', () => {
+    const h = harness({
+      policy: policyText({
+        profiles: [{ ...structuredClone(OBSERVER), id: 'worker', name: 'Shadow', builtIn: false }],
+      }),
+    });
+    h.service.start();
+    expect(h.service.deleteProfile('worker', 'lead', h.service.ui([]).editToken)).toEqual({
+      ok: false,
+      error: 'unknown-profile',
+    });
+    expect(h.policyWrites).toHaveLength(0);
+  });
+
+  it('atomically saves custom profiles and replaces every usage on deletion', () => {
+    const h = harness({ policy: policyText() });
+    h.service.start();
+    const profile = {
+      ...structuredClone(OBSERVER),
+      id: 'p-copy' as const,
+      name: 'Copy',
+      builtIn: false,
+    };
+    expect(h.service.saveProfile(profile, h.service.ui([]).editToken)).toEqual({ ok: true });
+    expect(h.service.setAssignment({ kind: 'default' }, profile.id)).toEqual({ ok: true });
+    h.setWriteDown(true);
+    expect(h.service.deleteProfile(profile.id, 'worker', h.service.ui([]).editToken)).toEqual({
+      ok: false,
+      error: 'save-failed',
+    });
+    expect(h.service.ui([]).assignments[0]?.assignment.profileId).toBe('p-copy');
+    h.setWriteDown(false);
+    expect(h.service.deleteProfile(profile.id, 'worker', h.service.ui([]).editToken)).toEqual({
+      ok: true,
+    });
+    expect(h.service.ui([]).assignments[0]?.assignment.profileId).toBe('worker');
+    expect(h.service.ui([]).profiles.some((p) => p.id === profile.id)).toBe(false);
+  });
+
+  it('saves multi-target grants all-or-none with one primary write', () => {
+    const h = harness({ policy: policyText() });
+    h.service.start();
+    const targets = [target({ sessionId: 'a' }), target({ sessionId: 'b' })];
+    const choice = { who: 'session' as const, on: 'target' as const, for: 'session-end' as const };
+    h.setWriteDown(true);
+    expect(h.service.createGrants(choice, session(), 'close_session', targets, 'r1')).toEqual({
+      ok: false,
+      error: 'save-failed',
+    });
+    expect(h.service.ui([]).grants).toHaveLength(0);
+    h.setWriteDown(false);
+    const made = h.service.createGrants(choice, session(), 'close_session', targets, 'r1');
+    expect(made.ok).toBe(true);
+    expect(made.ok ? made.grants : []).toHaveLength(2);
+    expect(h.grantWrites).toHaveLength(1);
+    expect(h.service.ui([]).grants).toHaveLength(2);
+  });
+
+  it('refuses execution when an override consumption cannot be saved and stays restrictive', () => {
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'default' },
+            assignment: {
+              profileId: 'worker',
+              onScreenOnly: false,
+              exceptions: [
+                { tool: 'close_session', scope: { kind: 'anywhere' }, rule: { decision: 'deny' } },
+              ],
+            },
+          },
+        ],
+        overrides: [
+          {
+            id: 'one',
+            sessionId: 's1',
+            tool: 'close_session',
+            target: target({ sessionId: 'a' }),
+            createdAt: iso(T0),
+          },
+        ],
+      }),
+    });
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'close_session' as const,
+      targets: [target({ sessionId: 'a' })],
+      masterOn: true,
+      toYou: false,
+    };
+    const allowed = h.service.decide(input);
+    expect(allowed.overrideIds).toEqual(['one']);
+    h.setWriteDown(true);
+    expect(h.service.commit(input, allowed)).toBeNull();
+    expect(h.service.decide(input).decision).toBe('deny');
+    expect(h.service.ui([]).saveError).toContain('could not be saved');
+  });
+
+  it('enforces candidate byte cap and allows an oversized readable policy to be reduced', () => {
+    const huge = {
+      ...structuredClone(OBSERVER),
+      id: 'p-huge' as const,
+      name: 'Huge',
+      builtIn: false,
+      extra: 'x'.repeat(1024 * 1024),
+    };
+    const h = harness({ policy: policyText({ profiles: [huge] }) });
+    h.service.start();
+    expect(h.service.setAssignment({ kind: 'default' }, 'lead')).toEqual({
+      ok: false,
+      error: 'too-large',
+    });
+    expect(h.policyWrites).toHaveLength(0);
+    expect(h.service.ui([]).profiles.some((p) => p.id === 'p-huge')).toBe(true);
+    expect(h.service.deleteProfile('p-huge', 'worker', h.service.ui([]).editToken)).toEqual({
+      ok: true,
+    });
+    expect(h.service.ui([]).profiles.some((p) => p.id === 'p-huge')).toBe(false);
+  });
+
+  it('rejects one-use widening on failed save and permits an explicit retry only', () => {
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'default' },
+            assignment: {
+              profileId: 'worker',
+              onScreenOnly: false,
+              exceptions: [
+                { tool: 'close_session', scope: { kind: 'anywhere' }, rule: { decision: 'deny' } },
+              ],
+            },
+          },
+        ],
+      }),
+    });
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'close_session' as const,
+      targets: [target({ sessionId: 'a' })],
+      masterOn: true,
+      toYou: false,
+    };
+    const denied = h.service.decide(input);
+    h.service.noteDecision('denied', input, denied);
+    h.setWriteDown(true);
+    expect(h.service.allowOnce('denied')).toEqual({ ok: false, error: 'save-failed' });
+    expect(h.service.decide(input).decision).toBe('deny');
+    h.setWriteDown(false);
+    h.fire(WRITE_MS);
+    expect(h.policyWrites).toHaveLength(0);
+    expect(h.service.allowOnce('denied')).toEqual({ ok: true });
+    expect(h.service.decide(input).decision).toBe('allow');
+  });
+
+  it('keeps failed revocation restrictive and reports remote durability honestly', () => {
+    const h = harness({
+      policy: policyText(),
+      grants: serializeGrantsFile({ version: 1, grants: [grant()] }),
+    });
+    h.service.start();
+    h.setWriteDown(true);
+    expect(h.service.revokeGrantByRemote('g1')).toEqual({
+      ok: false,
+      code: 'policy_unavailable',
+      message: 'save-failed',
+    });
+    expect(h.service.ui([]).grants[0]?.state).toBe('revoked');
+    expect(h.service.ui([]).saveError).toContain('could not be saved');
+    expect(h.service.revokeGrantByRemote('missing')).toEqual({
+      ok: false,
+      code: 'not_found',
+      message: 'not-found',
+    });
+    h.setWriteDown(false);
+    h.fire(WRITE_MS);
+    expect(h.grantWrites).toHaveLength(0);
+    expect(h.service.retrySave()).toEqual({ ok: true });
+    expect(JSON.parse(h.grantWrites[0] ?? '{}')).toMatchObject({ grants: [{ state: 'revoked' }] });
+  });
+
+  it('refuses an incoming remote policy before acknowledgement when the local primary fails', () => {
+    const h = harness({ policy: policyText() });
+    h.service.start();
+    h.setWriteDown(true);
+    expect(
+      h.service.applyRemoteDoc(0, {
+        profiles: [],
+        assignments: [
+          {
+            point: { kind: 'default' },
+            assignment: { profileId: 'lead', exceptions: [], onScreenOnly: false },
+          },
+        ],
+      }),
+    ).toEqual({ ok: false, code: 'policy_unavailable', message: 'save-failed' });
+    expect(h.service.remoteDoc()).toEqual({ rev: 0, doc: { profiles: [], assignments: [] } });
+  });
+
   it('projects full profiles and assignments without sharing mutable engine state', () => {
     const points: AssignmentPoint[] = [
       { kind: 'default' },
@@ -823,7 +1095,7 @@ describe('policy service', () => {
     expect(h.changed()).toBe(1);
   });
 
-  it('a failed write warns and keeps the decision state', async () => {
+  it('a failed widening warns and keeps the previous decision state', async () => {
     const h = harness({ writeFails: true });
     h.service.start();
     h.service.setAssignment({ kind: 'default' }, 'lead');
@@ -831,7 +1103,7 @@ describe('policy service', () => {
     await h.service.stop();
 
     expect(h.warnings.some((m) => m.includes('policy.json'))).toBe(true);
-    expect(h.service.ui([sessionRow('s1')]).sessions.s1?.profileId).toBe('lead');
+    expect(h.service.ui([sessionRow('s1')]).sessions.s1?.profileId).toBe('worker');
   });
 
   it('revokeGrant ends a grant once and persists it', async () => {
@@ -839,8 +1111,8 @@ describe('policy service', () => {
       grants: serializeGrantsFile({ version: 1, grants: [grant({ id: 'g-keep' })] }),
     });
     h.service.start();
-    expect(h.service.revokeGrant('g-keep')).toBe(true);
-    expect(h.service.revokeGrant('g-keep')).toBe(false);
+    expect(h.service.revokeGrant('g-keep')).toEqual({ ok: true });
+    expect(h.service.revokeGrant('g-keep')).toEqual({ ok: false, error: 'not-found' });
     expect(h.service.ui([]).grants[0]?.state).toBe('revoked');
     await h.service.stop();
     expect(h.grantWrites).toHaveLength(1);
@@ -1085,8 +1357,9 @@ describe('policy service', () => {
       target(),
       null,
     );
-    expect(created).not.toBeNull();
-    expect(h.service.revokeGrant(created?.id ?? '')).toBe(true);
+    expect(created).toBeNull();
+    expect(h.service.ui([]).grants).toEqual([]);
+    expect(h.service.revokeGrant('missing')).toEqual({ ok: false, error: 'not-found' });
     h.service.decide({
       principal: session(),
       tool: 'open_session',
@@ -1187,7 +1460,7 @@ describe('policy service', () => {
     };
     const decision = h.service.decide(input);
     expect(decision).toMatchObject({ decision: 'allow', grantIds: ['g-s2'] });
-    expect(h.service.revokeGrant('g-s2')).toBe(true);
+    expect(h.service.revokeGrant('g-s2')).toEqual({ ok: true });
     expect(h.service.commit(input, decision)).toBeNull();
   });
 
@@ -1212,7 +1485,7 @@ describe('policy service', () => {
     const decision = h.service.decide(input);
     expect(decision.decision).toBe('allow');
     expect(decision.grantIds).toEqual(['g-a']);
-    expect(h.service.revokeGrant('g-a')).toBe(true);
+    expect(h.service.revokeGrant('g-a')).toEqual({ ok: true });
     expect(h.service.decide(input).decision).toBe('allow');
     expect(h.service.commit(input, decision)).toBeNull();
   });
@@ -1715,43 +1988,60 @@ describe('policy service', () => {
     expect(h.service.decide(input).decision).toBe('deny');
   });
 
-  it('a failing disk warns once per outage', async () => {
+  it('reports a failed human save once without a timer retry', async () => {
     const h = harness({ writeFails: true });
     h.service.start();
-    h.service.setAssignment({ kind: 'default' }, 'lead');
+    expect(h.service.setAssignment({ kind: 'default' }, 'lead')).toEqual({
+      ok: false,
+      error: 'save-failed',
+    });
     const saveFailures = () => h.warnings.filter((m) => m.includes('policy.json'));
     for (let i = 0; i < 3; i++) {
       h.fire(WRITE_MS);
       await h.settle();
     }
     expect(saveFailures()).toHaveLength(1);
-
     h.setWriteDown(false);
     h.fire(WRITE_MS);
     await h.settle();
+    expect(h.policyWrites).toHaveLength(0);
+    expect(h.service.ui([]).assignments).toEqual([]);
+    expect(h.service.setAssignment({ kind: 'default' }, 'lead')).toEqual({ ok: true });
     expect(h.policyWrites).toHaveLength(1);
-
+    expect(h.service.ui([]).saveError).toBeNull();
     h.setWriteDown(true);
-    h.service.setAssignment({ kind: 'default' }, 'worker');
-    h.fire(WRITE_MS);
-    await h.settle();
+    expect(h.service.setAssignment({ kind: 'default' }, 'worker')).toEqual({
+      ok: false,
+      error: 'save-failed',
+    });
     expect(saveFailures()).toHaveLength(2);
+    expect(h.service.ui([sessionRow('s1')]).sessions.s1?.profileId).toBe('lead');
     await h.service.stop();
+    expect(saveFailures()).toHaveLength(2);
   });
 
-  it('a failed save is retried until it succeeds', async () => {
+  it('explicit retry saves current conservative state without reviving the rejected human draft', async () => {
     const h = harness({ writeFails: true });
     h.service.start();
-    h.service.setAssignment({ kind: 'default' }, 'lead');
+    expect(h.service.setAssignment({ kind: 'default' }, 'lead')).toEqual({
+      ok: false,
+      error: 'save-failed',
+    });
     h.fire(WRITE_MS);
     await h.settle();
     expect(h.warnings.filter((m) => m.includes('policy.json'))).toHaveLength(1);
-
     h.setWriteDown(false);
     h.fire(WRITE_MS);
     await h.settle();
+    expect(h.policyWrites).toHaveLength(0);
+    expect(h.service.retrySave()).toEqual({ ok: true });
     expect(h.policyWrites).toHaveLength(1);
+    expect(parsePolicyFile(h.policyWrites[0] ?? '')).toMatchObject({
+      ok: true,
+      file: { assignments: [] },
+    });
     await h.service.stop();
+    expect(h.policyWrites).toHaveLength(1);
   });
 });
 
@@ -2180,7 +2470,7 @@ describe('remote policy doc', () => {
     expect(made).not.toBeNull();
     expect(fired).toBe(1);
     expect(h.service.remoteDoc().rev).toBe(0);
-    expect(h.service.revokeGrant(made?.id ?? '')).toBe(true);
+    expect(h.service.revokeGrant(made?.id ?? '')).toEqual({ ok: true });
     expect(fired).toBe(2);
   });
 

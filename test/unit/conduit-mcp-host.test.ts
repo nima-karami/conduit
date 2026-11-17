@@ -33,10 +33,10 @@ import {
   serializeGrantsFile,
   serializePolicyFile,
 } from '../../src/conduit-mcp/policy-file';
+import type { PolicyIo } from '../../src/conduit-mcp/policy-file-fs';
 import { BUILT_IN_PROFILES } from '../../src/conduit-mcp/policy-profiles';
 import type { OneUseOverride } from '../../src/conduit-mcp/policy-types';
 import type { NetworkPort, RemoteEntry } from '../../src/conduit-mcp/remote-routing';
-import type { RequestsIo } from '../../src/conduit-mcp/request-file-fs';
 import type { AnswerInput } from '../../src/conduit-mcp/request-types';
 import { screenVerdict } from '../../src/conduit-mcp/screen-verdict';
 import type { StoreIo } from '../../src/conduit-mcp/store';
@@ -238,8 +238,8 @@ function harness(
     registry?: AgentRegistry;
     messagingOn?: () => boolean;
     storeIo?: StoreIo;
-    policyIo?: RequestsIo;
-    grantsIo?: RequestsIo;
+    policyIo?: PolicyIo;
+    grantsIo?: PolicyIo;
     activityIo?: ActivityIo;
     listen?: boolean;
     platform?: ConduitMcpHostDeps['platform'];
@@ -2362,7 +2362,7 @@ describe('policy.json is loaded before the endpoint takes connections', () => {
           order.push('policy-read');
           return null;
         },
-        write: async () => undefined,
+        writeSync: () => true,
       },
       createEndpoint: () => ({
         listen: async () => {
@@ -2535,6 +2535,88 @@ async function setHostPolicy(h: Harness, id: string, layer: PolicyLayer | undefi
     expect(answer).toEqual({ type: 'mcp:toolPolicyResult', requestId: 1, ok: true });
   }
 }
+
+describe('owner durable permission edits', () => {
+  it('returns exact save failures and conflicts and refuses remote or malformed full edits', async () => {
+    let down = false;
+    const policy = serializePolicyFile({
+      version: 1,
+      profiles: [],
+      assignments: [],
+      overrides: [],
+      migratedFrom: null,
+      notes: { onScreenOnlyOffered: [] },
+    });
+    const write = vi.fn((_text: string): true => {
+      if (down) throw new Error('disk full');
+      return true;
+    });
+    const h = harness({ policyIo: { read: () => policy, writeSync: write } });
+    h.sessions.set('s1', session('s1'));
+    await h.host.start();
+    const token = h.host.uiState().policy.editToken;
+    const send = async (message: unknown) => {
+      let result: HostToWebview | undefined;
+      await h.host.handleRenderer(
+        message as McpRendererMessage,
+        (m) => {
+          result = m;
+        },
+        1,
+      );
+      return result;
+    };
+    const assignment = { profileId: 'lead', exceptions: [], onScreenOnly: false };
+    const command = {
+      type: 'mcp:saveAssignment',
+      requestId: 800,
+      point: { kind: 'session', sessionId: 's1' },
+      assignment,
+      expectedToken: token,
+    };
+    down = true;
+    expect(await send(command)).toEqual({
+      type: 'mcp:policyEditResult',
+      requestId: 800,
+      result: { ok: false, error: 'save-failed' },
+    });
+    expect(h.host.uiState().policy.sessions.s1?.profileId).toBe('worker');
+    down = false;
+    expect(await send(command)).toEqual({
+      type: 'mcp:policyEditResult',
+      requestId: 800,
+      result: { ok: true },
+    });
+    expect(h.host.uiState().policy.sessions.s1?.profileId).toBe('lead');
+    expect(await send(command)).toMatchObject({ result: { ok: false, error: 'conflict' } });
+    const fresh = h.host.uiState().policy.editToken;
+    const attempts = write.mock.calls.length;
+    for (const message of [
+      { ...command, expectedToken: fresh, machine: 'other' },
+      { ...command, expectedToken: fresh, point: { kind: 'session', sessionId: 'missing' } },
+      {
+        ...command,
+        expectedToken: fresh,
+        assignment: {
+          ...assignment,
+          exceptions: [
+            { tool: 'open_file', scope: { kind: 'anywhere' }, rule: { decision: 'banana' } },
+          ],
+        },
+      },
+      { ...command, expectedToken: '' },
+      {
+        type: 'mcp:saveProfile',
+        requestId: 800,
+        expectedToken: fresh,
+        profile: BUILT_IN_PROFILES[0],
+      },
+      { type: 'mcp:policyRetry', requestId: 800, machine: 'other' },
+    ])
+      expect(await send(message)).toMatchObject({ result: { ok: false, error: 'invalid-value' } });
+    expect(write.mock.calls).toHaveLength(attempts);
+  });
+});
 
 describe('owner Activity queries', () => {
   it('returns Activity only through the renderer query and rejects malformed filters', async () => {
@@ -3993,8 +4075,8 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
         },
       ],
     });
-    const policyIo: RequestsIo = { read: () => policy, write: async () => undefined };
-    const grantsIo: RequestsIo = { read: () => null, write: async () => undefined };
+    const policyIo: PolicyIo = { read: () => policy, writeSync: () => true };
+    const grantsIo: PolicyIo = { read: () => null, writeSync: () => true };
     const h = harness({
       kinds: { '/w/a.ts': 'file', '/w/b.ts': 'file' },
       policyIo,
@@ -4170,16 +4252,17 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       writeArgs: () => undefined,
     };
     const writes: string[] = [];
-    const policyIo: RequestsIo = {
+    const policyIo: PolicyIo = {
       read: () => null,
-      write: async (t) => {
+      writeSync: (t) => {
         writes.push(t);
+        return true;
       },
     };
     const { h, c } = await asking({
       storeIo: failingIo(),
       policyIo,
-      grantsIo: { read: () => null, write: async () => undefined },
+      grantsIo: { read: () => null, writeSync: () => true },
       activityIo,
       manualTimers: true,
     });
@@ -4249,8 +4332,8 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     };
     const { h, c } = await asking({
       kinds: { '/w': 'dir', '/w/a.ts': 'file' },
-      policyIo: { read: () => policy, write: async () => undefined },
-      grantsIo: { read: () => null, write: async () => undefined },
+      policyIo: { read: () => policy, writeSync: () => true },
+      grantsIo: { read: () => null, writeSync: () => true },
       activityIo,
     });
     c.call(1, 'open_file', { path: '/w/a.ts' });
@@ -4320,8 +4403,8 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     };
     const { c } = await asking({
       kinds: { '/w': 'dir', '/w/a.ts': 'file' },
-      policyIo: { read: () => policy, write: async () => undefined },
-      grantsIo: { read: () => null, write: async () => undefined },
+      policyIo: { read: () => policy, writeSync: () => true },
+      grantsIo: { read: () => null, writeSync: () => true },
       activityIo,
     });
     const before = rows.length;
@@ -4376,8 +4459,8 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     };
     const { h, c } = await asking({
       kinds: { '/w': 'dir', '/w/a.ts': 'file' },
-      policyIo: { read: () => policy, write: async () => undefined },
-      grantsIo: { read: () => null, write: async () => undefined },
+      policyIo: { read: () => policy, writeSync: () => true },
+      grantsIo: { read: () => null, writeSync: () => true },
       activityIo,
     });
     c.call(1, 'open_file', { path: '/w/a.ts' });
@@ -4454,8 +4537,8 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
         },
       ],
     });
-    const policyIo: RequestsIo = { read: () => policy, write: async () => undefined };
-    const grantsIo: RequestsIo = { read: () => null, write: async () => undefined };
+    const policyIo: PolicyIo = { read: () => policy, writeSync: () => true };
+    const grantsIo: PolicyIo = { read: () => null, writeSync: () => true };
     const { h, c } = await asking({
       kinds: { '/w': 'dir', '/w/a.ts': 'file', '/w/b.ts': 'file' },
       policyIo,
@@ -4958,10 +5041,11 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
 
   it('mcp:setAssignment on an unknown session point is refused and saves nothing', async () => {
     const writes: string[] = [];
-    const policyIo: RequestsIo = {
+    const policyIo: PolicyIo = {
       read: () => null,
-      write: async (t) => {
+      writeSync: (t) => {
         writes.push(t);
+        return true;
       },
     };
     const { h } = await asking({ policyIo, manualTimers: true });
@@ -5016,6 +5100,39 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       1,
     );
   const grantPaths = (h: Harness) => h.host.uiState().policy.grants.map((g) => g.on);
+
+  it('a failed two-target grant save leaves no partial consent or executed files', async () => {
+    const writeSync = vi.fn((_text: string): true => {
+      throw new Error('grants disk full');
+    });
+    const { h, c } = await asking({
+      grantsIo: { read: () => null, writeSync },
+      kinds: { '/w/a.ts': 'file', '/w/b.ts': 'file' },
+    });
+    await setPolicy(h, { open_file: { access: 'ask' } });
+    c.call(1, 'open_file', { paths: ['/w/a.ts', '/w/b.ts'] });
+    await until(() => asksOf(h).length === 1);
+    let response: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:permissionAnswer',
+        requestId: askIdOf(h),
+        answer: { outcome: 'allowed', grant: { who: 'session', on: 'target', for: '1h' } },
+      },
+      (m) => {
+        response = m;
+      },
+      1,
+    );
+    expect(response).toMatchObject({ type: 'mcp:permissionResult', ok: false });
+    expect(writeSync).toHaveBeenCalledTimes(1);
+    expect(h.host.uiState().policy.grants).toHaveLength(0);
+    expect(h.files).toHaveLength(0);
+    const cancelled = await c.reply(1);
+    expect(c.errorOf(cancelled)).toBe('cancelled');
+    expect(JSON.stringify(cancelled)).toContain('Permissions could not be saved (save-failed)');
+    expect(h.host.uiState().awaitingApproval).toEqual([]);
+  });
 
   it('a target grant on a two-target open_file makes one grant per target, live and late', async () => {
     const kinds = {
@@ -5207,7 +5324,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       releaseKind = resolve;
     });
     let kindAsked = 0;
-    const grantsIo: RequestsIo = {
+    const grantsIo: PolicyIo = {
       read: () =>
         serializeGrantsFile({
           version: 1,
@@ -5228,7 +5345,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
             },
           ],
         }),
-      write: async () => undefined,
+      writeSync: () => true,
     };
     const h = harness({
       kinds: { '/w/a.ts': 'file' },
@@ -6186,7 +6303,7 @@ describe('createConduitMcpHost — wait_sessions', () => {
     });
     const h = harness({
       manualTimers: true,
-      policyIo: { read: () => migrated, write: async () => undefined },
+      policyIo: { read: () => migrated, writeSync: () => true },
     });
     const { ca } = await pairForWait(h);
     const base = h.pendingTimers;
@@ -6859,14 +6976,15 @@ describe('NET wiring at the host: a peer link revoke and its audit notes', () =>
 
   it('peerRevoked ends that peer grant and saves it', async () => {
     const written: string[] = [];
-    const grantsIo: RequestsIo = {
+    const grantsIo: PolicyIo = {
       read: () =>
         serializeGrantsFile({
           version: 1,
           grants: [peerGrant('g-m1', 'm-1'), peerGrant('g-m2', 'm-2')],
         }),
-      write: async (text) => {
+      writeSync: (text) => {
         written.push(text);
+        return true;
       },
     };
     const h = harness({ grantsIo });
@@ -7772,7 +7890,7 @@ describe('createConduitMcpHost — a remote lead (routed calls, CON-40 S2, plan 
       migratedFrom: null,
       notes: { onScreenOnlyOffered: [] },
     });
-    const h = await withLocal({ policyIo: { read: () => policy, write: async () => undefined } });
+    const h = await withLocal({ policyIo: { read: () => policy, writeSync: () => true } });
     const port = h.host.networkPort();
     const call = port.callAsRemote(
       LEAD,
@@ -7987,7 +8105,7 @@ describe('createConduitMcpHost — a routed ask waits for the owner on this mach
     const h = harness({
       kinds: { '/w/wt': 'dir', '/w/src': 'dir' },
       manualTimers: true,
-      policyIo: { read: () => ASK_POLICY, write: async () => undefined },
+      policyIo: { read: () => ASK_POLICY, writeSync: () => true },
     });
     await h.host.start();
     await launch(h, 's1');
