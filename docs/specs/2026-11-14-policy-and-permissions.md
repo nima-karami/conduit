@@ -314,7 +314,7 @@ Every decision carries one **reason**. An unconditional deny hides the tool from
 | Surface | Contents |
 |---|---|
 | Settings → Permissions | master switch; default and per-kind profiles + exceptions; Profiles; Grants (age, last used, revoke); Activity |
-| Session → Permissions… | effective profile + source; exceptions; grants; "Agent's own permissions" (posture at launch, live for Codex, "unknown" if not launched by Conduit); Activity |
+| Session → Permissions… (a dialog, owner 2026-11-17) | effective profile + source; exceptions; grants; "Agent's own permissions" (posture at launch, live for Codex, "unknown" if not launched by Conduit); Activity |
 | Permission request body (in REQ's card) | why line · summary · raw args · Allow once · Deny (+ reason) · Allow… (who × on × for) |
 | Activity | timeline · filters · Why drawer |
 | Machine page → Permissions | own (MVP): the peer's profile + exceptions + Activity. v1: capabilities, guest grants, Share |

@@ -205,6 +205,7 @@ Badge counts are not capped today `[evidence: webview/conduit-mcp-view-model.ts:
 
 | Date | Decision | By | Why |
 |---|---|---|---|
+| 2026-11-17 | Permissions (CON-18 wireframes, 5 iterations) approved as drawn, except: a session's permissions open in a **dialog**, not a side panel | owner | Setting one session's permissions is a focused, occasional task; a side panel was the wrong weight for it |
 | 2026-11-14 | Requests: a one-line card list in Needs you; answer in a pop-up, or a tab beside the agent; three types; one four-section layout; free text always on | owner | The sidebar answer cards felt crammed; too many types (CON-10 iter-6 → iter-7) |
 | 2026-11-14 | Filter requests by session, lead group, space, type and machine | owner | Scale: many agents across spaces and machines |
 | 2026-11-14 | Main interfaces are voice (dictation) and pointer; keyboard is secondary | owner | How the owner works |
