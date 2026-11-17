@@ -883,7 +883,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
         },
       }));
     },
-    async prepareOpenFile(caller, raw) {
+    async prepareOpenFile(caller, raw, ctx) {
       const a = parseFileArgs(raw);
       if (isFail(a)) return a;
       if (a.kind === 'many') {
@@ -905,6 +905,14 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
                   continue;
                 }
                 try {
+                  if (!ctx.stillCurrent()) {
+                    results.push({
+                      path,
+                      opened: false,
+                      error: fail('tool_disabled', 'Permissions changed while running').error,
+                    });
+                    continue;
+                  }
                   await deps.openFile({
                     callerSessionId: who.sessionId,
                     path,

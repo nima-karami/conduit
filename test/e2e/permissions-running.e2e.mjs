@@ -1,6 +1,6 @@
 import { until } from './conduit-mcp-helpers.mjs';
 import { assert, finishScenario, makeLog, phase } from './harness.mjs';
-import { agentRecords, startAgent, startServer } from './net-helpers.mjs';
+import { agentRecords, callTool, startAgent, startServer } from './net-helpers.mjs';
 
 const log = makeLog('permissions-running');
 
@@ -156,6 +156,173 @@ async function run() {
       'the UI stand-in unexpectedly performed a physical close',
     );
     log('one real UI dispatch; first result uncertain, second refused; no new grants', result);
+
+    phase('3. a real timed-message quiet gap holds queued agent input');
+    const saveScreenReach = async (sessionId, reach) => {
+      const snapshot = await server.c2.call('events.subscribe');
+      const edited = await server.c2.call('mcp.fromRenderer', {
+        windowId: 1,
+        message: {
+          type: 'mcp:saveAssignment',
+          requestId: 2,
+          point: { kind: 'session', sessionId },
+          expectedToken: snapshot.mcp.policy.editToken,
+          assignment: {
+            profileId: 'lead',
+            onScreenOnly: false,
+            exceptions: ['send_input', 'read_screen'].map((tool) => ({
+              tool,
+              scope: { kind: 'anywhere' },
+              rule: { decision: 'allow', when: 'always', reach },
+            })),
+          },
+        },
+      });
+      assert(edited.reply?.result?.ok === true, `screen assignment: ${JSON.stringify(edited)}`);
+      const current = await server.c2.call('events.subscribe');
+      assert(
+        current.mcp.policy.editToken !== snapshot.mcp.policy.editToken &&
+          current.mcp.policy.assignments.some(
+            (entry) =>
+              entry.point.kind === 'session' &&
+              entry.point.sessionId === sessionId &&
+              entry.assignment.exceptions.some(
+                (exception) => exception.tool === 'send_input' && exception.rule.reach === reach,
+              ),
+          ),
+        'screen assignment was not published',
+      );
+    };
+    await saveScreenReach(caller.sessionId, 'any');
+    await saveScreenReach(targetB.sessionId, 'any');
+    const screenOfTarget = async () => {
+      const screen = await callTool(server, targetB, 'read_screen', {
+        session: targetA.sessionId,
+        lines: 60,
+      });
+      assert(
+        !screen?.error && Array.isArray(screen.rows),
+        `observer screen: ${JSON.stringify(screen)}`,
+      );
+      return screen.rows.join('\n');
+    };
+    server.c2.notify('term.input', {
+      sessionId: targetA.sessionId,
+      generation: targetA.generation,
+      data: 'busyq 10000\r',
+    });
+    assert(
+      await until(
+        () =>
+          agentRecords(server, targetA.sessionId, 'INPUT').some(
+            (entry) => entry.line === 'busyq 10000',
+          ),
+        5_000,
+      ),
+      'target did not enter busy queue mode',
+    );
+    const occupier = 'permissions-running-quiet-occupier';
+    const forbidden = 'permissions-running-forbidden-input';
+    let timerSettled = false;
+    const timed = server.c2
+      .call('timers.sendOnce', {
+        type: 'timer:sendOnce',
+        sessionId: targetA.sessionId,
+        message: occupier,
+      })
+      .then(
+        (value) => {
+          timerSettled = true;
+          return { ok: true, value };
+        },
+        (error) => {
+          timerSettled = true;
+          return { ok: false, message: String(error) };
+        },
+      );
+    let heldScreen = '';
+    assert(
+      await until(async () => {
+        heldScreen = await screenOfTarget();
+        return heldScreen.includes(occupier) && /working \d+/.test(heldScreen);
+      }, 3_000),
+      'real timed writer text was not observed in the busy target',
+    );
+    assert(!timerSettled, 'timed writer settled before queued input could be exercised');
+    const queuedBefore = agentRecords(server, caller.sessionId, 'RESULT').length;
+    const callsBefore = agentRecords(server, caller.sessionId, 'CALL').length;
+    server.c2.notify('term.input', {
+      sessionId: caller.sessionId,
+      generation: caller.generation,
+      data: `call send_input ${JSON.stringify({ session: targetA.sessionId, text: forbidden, submit: true })}\r`,
+    });
+    assert(
+      await until(() => agentRecords(server, caller.sessionId, 'CALL').length > callsBefore, 2_000),
+      'caller did not send queued input',
+    );
+    let progressingScreen = '';
+    assert(
+      await until(async () => {
+        progressingScreen = await screenOfTarget();
+        return (
+          progressingScreen !== heldScreen &&
+          progressingScreen.includes(occupier) &&
+          /working \d+/.test(progressingScreen)
+        );
+      }, 2_000),
+      'busy output did not progress while the writer was held',
+    );
+    assert(
+      !timerSettled && agentRecords(server, caller.sessionId, 'RESULT').length === queuedBefore,
+      'queued input fixture drained before narrowing',
+    );
+    await saveScreenReach(caller.sessionId, 'opened');
+    assert(!timerSettled, 'timed writer settled before narrowed authority was published');
+    const delivered = await timed;
+    assert(delivered.ok === true, `real timed occupier failed: ${JSON.stringify(delivered)}`);
+    assert(
+      await until(
+        () =>
+          agentRecords(server, targetA.sessionId, 'INPUT').some(
+            (entry) => entry.line === occupier && entry.queued === true,
+          ),
+        5_000,
+      ),
+      'occupier did not actually drain through target input',
+    );
+    assert(
+      await until(
+        () => agentRecords(server, caller.sessionId, 'RESULT').length > queuedBefore,
+        10_000,
+      ),
+      'queued send_input did not settle',
+    );
+    const observed = await screenOfTarget();
+    // Text can be typed without Enter; the screen assertion must catch that unsafe partial effect.
+    assert(!observed.includes(forbidden), `queued input typed forbidden marker: ${observed}`);
+    assert(
+      !agentRecords(server, targetA.sessionId, 'INPUT').some((entry) =>
+        entry.line.includes(forbidden),
+      ),
+      'queued input submitted forbidden marker',
+    );
+    const queuedResults = agentRecords(server, caller.sessionId, 'RESULT');
+    const queuedResult = queuedResults[queuedBefore].result;
+    assert(
+      queuedResults.length === queuedBefore + 1 &&
+        queuedResult?.error?.code === 'tool_disabled' &&
+        queuedResult.error.message === 'Permissions changed while running',
+      `queued input refusal: ${JSON.stringify(queuedResult)}`,
+    );
+    const final = await server.c2.call('events.subscribe');
+    assert(
+      JSON.stringify(final.mcp.policy.grants.map((grant) => grant.id)) === JSON.stringify(grantIds),
+      'queued input refusal created a grant',
+    );
+    log(
+      'real quiet-writer backlog drained; forbidden text and Enter absent after narrowing',
+      queuedResult,
+    );
   } finally {
     await server?.stop();
   }

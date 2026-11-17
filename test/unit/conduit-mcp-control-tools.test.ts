@@ -1255,3 +1255,65 @@ describe('list_agents (flexible-agent-contracts §4.2)', () => {
     expect(code(await c.prepareListAgents(caller(), { path: '/repo' }))).toBe('invalid_args');
   });
 });
+
+it.each(['false', 'throw'] as const)(
+  'multi-path file dispatch retains earlier result when current predicate becomes %s',
+  async (change) => {
+    let current = true;
+    let release!: () => void;
+    let entered = false;
+    const gate = new Promise<void>((done) => {
+      release = done;
+    });
+    const h = harness();
+    for (const path of ['/a.ts', '/b.ts', '/c.ts']) h.kinds[path] = 'file';
+    h.deps.openFile = async (request) => {
+      h.files.push(request);
+      if (request.path === '/a.ts') {
+        entered = true;
+        await gate;
+      }
+      return { sessionId: 'opened' };
+    };
+    const ctx = {
+      ...ctxOf(),
+      stillCurrent: () => {
+        if (!current && change === 'throw') throw new Error('authority producer failed');
+        return current;
+      },
+    };
+    const control = createControlHandlers(h.deps);
+    const preparedResult = await control.prepareOpenFile(
+      caller(),
+      { paths: ['/a.ts', '/b.ts', '/c.ts'], focus: true },
+      ctx,
+    );
+    if (!preparedResult.ok || 'done' in preparedResult.value)
+      throw new Error('expected prepared file batch');
+    const prepared = preparedResult.value;
+    const result = prepared.run();
+    await Promise.resolve();
+    expect(entered).toBe(true);
+    current = false;
+    release();
+    expect(await result).toMatchObject({
+      ok: true,
+      value: {
+        results: [
+          { path: '/a.ts', opened: true },
+          {
+            path: '/b.ts',
+            opened: false,
+            error: { code: change === 'throw' ? 'open_failed' : 'tool_disabled' },
+          },
+          {
+            path: '/c.ts',
+            opened: false,
+            error: { code: change === 'throw' ? 'open_failed' : 'tool_disabled' },
+          },
+        ],
+      },
+    });
+    expect(h.files.map((request) => request.path)).toEqual(['/a.ts']);
+  },
+);

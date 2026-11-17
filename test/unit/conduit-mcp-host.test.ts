@@ -160,6 +160,7 @@ interface Harness {
   gens: Map<string, number>;
   terminals: Map<string, RuntimeTerminal>;
   writer: ReturnType<typeof createPtyWriter>;
+  typingSequences: string[];
   /** Gap releases, when the harness holds submit gaps. */
   gaps: Array<() => void>;
   /** Calls to the writer's echo-quiet wait; notices must never make one (spec R5 amended). */
@@ -268,6 +269,7 @@ function harness(
     toolPolicy?: () => { global: GlobalPolicy; byCli: CliPolicyLayers };
     kindOf?: (abs: string) => Promise<PathKind>;
     beforeClose?: (id: string) => Promise<void>;
+    beforeSnapshot?: (id: string) => Promise<void>;
     bracketedPaste?: () => boolean;
     /** Timers fire only through advance(); otherwise asks and UI waits never expire. */
     manualTimers?: boolean;
@@ -388,6 +390,7 @@ function harness(
   };
   let submitEnterCalls = 0;
   let quietCalls = 0;
+  const typingSequences: string[] = [];
   const writer = createPtyWriter({
     generation: (id) => gens.get(id),
     input: (id, data) => {
@@ -587,7 +590,10 @@ function harness(
     attention,
     typing: {
       submit: writer.submit,
-      sequence: writer.sequence,
+      sequence: (id, write, options) => {
+        typingSequences.push(id);
+        return writer.sequence(id, write, options);
+      },
       submitEnter: (sessionId, opts) => {
         submitEnterCalls += 1;
         return writer.submitEnter(sessionId, opts);
@@ -604,6 +610,7 @@ function harness(
       get: (id) => terminals.get(id),
       screen: async (id) => {
         screenReads.push(id);
+        await opts.beforeSnapshot?.(id);
         return (await screens.snapshot(id)) ?? null;
       },
       on: (listener) => {
@@ -691,6 +698,7 @@ function harness(
     gens,
     terminals,
     writer,
+    typingSequences,
     gaps,
     quietCalls: () => quietCalls,
     lateEchoSleeps,
@@ -4362,6 +4370,138 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(runningOutput(await c.reply(1))).toMatchObject({
       results: [{ closed: true }, { closed: true }],
     });
+  });
+
+  it.each(['reach', 'master', 'deny', 'viewing', 'unchanged'] as const)(
+    'queued send_input checks current %s authority inside actual writer slot',
+    async (change) => {
+      let release!: () => void;
+      let entered = false;
+      let master = true;
+      const gate = new Promise<void>((done) => {
+        release = done;
+      });
+      const { h, c } = await asking({ messagingOn: () => master });
+      await launch(h, 's2');
+      await setPolicy(h, {
+        send_input: {
+          access: 'on',
+          when: change === 'viewing' ? 'viewing' : 'always',
+          reach: 'any',
+        },
+      });
+      const held = h.writer.submitEnter('s2', {
+        beforeEnter: async () => {
+          entered = true;
+          await gate;
+          return false;
+        },
+      });
+      await until(() => entered);
+      c.call(1, 'send_input', {
+        session: 's2',
+        text: 'queued-sensitive-text',
+        keys: ['tab'],
+        submit: true,
+      });
+      await until(() => h.typingSequences.includes('s2'));
+      if (change === 'master') master = false;
+      else if (change === 'viewing') h.presence.shown.set(1, new Set());
+      else
+        await setPolicy(h, {
+          send_input: {
+            access: change === 'deny' ? 'off' : 'on',
+            when: 'always',
+            reach: change === 'reach' ? 'opened' : 'any',
+          },
+        });
+      release();
+      await held;
+      const reply = await c.reply(1);
+      if (change === 'unchanged') {
+        expect(c.errorOf(reply)).toBe('ok');
+        expect(h.inputs.filter(([id]) => id === 's2')).toEqual([
+          ['s2', 'queued-sensitive-text'],
+          ['s2', '\t'],
+          ['s2', '\r'],
+        ]);
+      } else {
+        expect(c.errorOf(reply)).toBe('tool_disabled');
+        expect(h.inputs.filter(([id]) => id === 's2')).toEqual([]);
+        expect(runningOutput(reply)).toMatchObject({
+          error: { code: 'tool_disabled', retryable: false },
+        });
+      }
+    },
+  );
+
+  it.each(['policy', 'throw', 'undefined'] as const)(
+    'delayed send_input Enter preserves truthful %s refusal after text',
+    async (change) => {
+      let broken = false;
+      const { h, c } = await asking({
+        holdGaps: true,
+        messagingOn: () => {
+          if (broken) {
+            broken = false;
+            throw change === 'undefined' ? undefined : new Error('authority producer failed');
+          }
+          return true;
+        },
+      });
+      await launch(h, 's2');
+      await setPolicy(h, { send_input: { access: 'on', when: 'always', reach: 'any' } });
+      c.call(1, 'send_input', { session: 's2', text: 'already-typed', submit: true });
+      await until(() => h.gaps.length > 0);
+      expect(h.inputs.filter(([id]) => id === 's2')).toEqual([['s2', 'already-typed']]);
+      if (change !== 'policy') broken = true;
+      else await setPolicy(h, { send_input: { access: 'off', when: 'always', reach: 'any' } });
+      h.gaps.shift()?.();
+      const reply = await c.reply(1);
+      broken = false;
+      expect(c.errorOf(reply)).toBe(change !== 'policy' ? 'open_failed' : 'tool_disabled');
+      expect(JSON.stringify(reply)).toContain(
+        change === 'undefined'
+          ? 'undefined'
+          : change === 'throw'
+            ? 'authority producer failed'
+            : 'text may already have been typed',
+      );
+      expect(h.inputs.filter(([id]) => id === 's2')).toEqual([['s2', 'already-typed']]);
+    },
+  );
+
+  it('read_screen refuses asynchronously captured rows after owner policy changes', async () => {
+    let release!: () => void;
+    let entered = false;
+    let hold = false;
+    const gate = new Promise<void>((done) => {
+      release = done;
+    });
+    const { h, c } = await asking({
+      beforeSnapshot: async (id) => {
+        if (hold && id === 's2') {
+          entered = true;
+          await gate;
+        }
+      },
+    });
+    await launch(h, 's2');
+    h.output('s2', 'SENSITIVE_SCREEN_ROWS');
+    await setPolicy(h, { read_screen: { access: 'on', when: 'always', reach: 'any' } });
+    hold = true;
+    c.call(1, 'read_screen', { session: 's2' });
+    await until(() => entered);
+    await setPolicy(h, { read_screen: { access: 'off', when: 'always', reach: 'any' } });
+    release();
+    const reply = await c.reply(1);
+    expect(c.errorOf(reply)).toBe('tool_disabled');
+    expect(JSON.stringify(reply)).not.toContain('SENSITIVE_SCREEN_ROWS');
+    expect(runningOutput(reply)).toMatchObject({
+      error: { code: 'tool_disabled', retryable: false },
+    });
+    expect(runningOutput(reply)).not.toHaveProperty('rows');
+    expect(runningOutput(reply)).not.toHaveProperty('cursor_row');
   });
 
   it('local close Ask prepared for unrelated target refuses same Ask reach narrowing', async () => {
@@ -8803,6 +8943,42 @@ describe('createConduitMcpHost — a routed ask waits for the owner on this mach
       expect(h.closes).toEqual(change === 'deadline' ? ['s2', 's3'] : ['s2']);
     },
   );
+
+  it('queued routed send_input uses actual receiving owner freshness before writing', async () => {
+    let release!: () => void;
+    let entered = false;
+    const gate = new Promise<void>((done) => {
+      release = done;
+    });
+    const h = await withAsk();
+    await launch(h, 's2');
+    await peerRule(h, 'send_input', { decision: 'allow', when: 'always', reach: 'any' });
+    const held = h.writer.submitEnter('s2', {
+      beforeEnter: async () => {
+        entered = true;
+        await gate;
+        return false;
+      },
+    });
+    await until(() => entered);
+    const call = h.host
+      .networkPort()
+      .callAsRemote(
+        LEAD,
+        'send_input',
+        { session: 's2', text: 'remote-sensitive-text', submit: true },
+        LIVE,
+      );
+    await until(() => h.typingSequences.includes('s2'));
+    await peerRule(h, 'send_input', { decision: 'deny', when: 'always', reach: 'any' });
+    release();
+    await held;
+    expect(await call).toMatchObject({
+      ok: false,
+      error: { code: 'tool_disabled', retryable: false },
+    });
+    expect(h.inputs.filter(([id]) => id === 's2')).toEqual([]);
+  });
 
   it('remote durable consent refuses failed primary then explicit fresh retry creates one grant and action', async () => {
     let failed = true;
