@@ -177,6 +177,7 @@ export interface PreparedCall<T> {
 }
 /** Built per call by the host from the caller's resolved policy. */
 export interface ControlCallContext {
+  stillCurrent(): boolean;
   move: Move | undefined;
   reach: Reach | undefined;
   /** Bound by the host to flow.requestUi with this call's in-flight entry and caller. */

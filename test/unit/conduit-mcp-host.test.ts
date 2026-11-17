@@ -267,6 +267,7 @@ function harness(
     installState?: McpHostDeps['domain']['installState'];
     toolPolicy?: () => { global: GlobalPolicy; byCli: CliPolicyLayers };
     kindOf?: (abs: string) => Promise<PathKind>;
+    beforeClose?: (id: string) => Promise<void>;
     bracketedPaste?: () => boolean;
     /** Timers fire only through advance(); otherwise asks and UI waits never expire. */
     manualTimers?: boolean;
@@ -461,6 +462,7 @@ function harness(
       return { ok: true as const, sessionId: id, label: `S ${id}` };
     },
     closeSession: async (id: string) => {
+      await opts.beforeClose?.(id);
       closes.push(id);
       sessions.delete(id);
       return { ok: true as const };
@@ -4140,6 +4142,228 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     return { h, c };
   }
 
+  const runningUi = (h: Harness) =>
+    h.toWindow.flatMap(({ windowId, msg }) =>
+      msg.type === 'mcp:ui' ? [{ windowId, ...msg }] : [],
+    );
+  const replyRunningUi = (h: Harness, ui: ReturnType<typeof runningUi>[number]) =>
+    h.host.handleRenderer(
+      { type: 'mcp:uiResult', requestId: ui.requestId, result: { kind: 'closeSession', ok: true } },
+      () => undefined,
+      ui.windowId,
+    );
+  const runningOutput = (reply: Record<string, unknown> | undefined): unknown => {
+    const value = reply?.result as
+      | { structuredContent?: unknown; content: Array<{ text: string }> }
+      | undefined;
+    return value?.structuredContent ?? JSON.parse(value?.content[0]?.text ?? '{}');
+  };
+  async function runningTargets(h: Harness) {
+    await launch(h, 's2');
+    await launch(h, 's3');
+    h.owners.set('s2', 2);
+    h.owners.set('s3', 2);
+  }
+
+  it.each(['reach', 'master', 'ask'] as const)(
+    'running local batch stops after first UI yield changes %s authority',
+    async (change) => {
+      let master = true;
+      const { h, c } = await asking({ messagingOn: () => master });
+      await runningTargets(h);
+      await setPolicy(h, { close_session: { access: 'on', when: 'always', reach: 'any' } });
+      c.call(1, 'close_session', { sessions: ['s2', 's3'] });
+      const first = await until(() => runningUi(h)[0]);
+      if (change === 'master') master = false;
+      else
+        await setPolicy(h, {
+          close_session: {
+            access: change === 'ask' ? 'ask' : 'on',
+            when: 'always',
+            reach: change === 'reach' ? 'opened' : 'any',
+          },
+        });
+      await replyRunningUi(h, first);
+      await vi.waitFor(() =>
+        expect(c.lines.some((line) => line.id === 1) || runningUi(h).length > 1).toBe(true),
+      );
+      expect(runningUi(h)).toHaveLength(1);
+      expect(runningOutput(await c.reply(1))).toMatchObject({
+        results: [
+          {
+            closed: false,
+            error: {
+              code: 'tool_disabled',
+              message: expect.stringContaining('may already have completed'),
+            },
+          },
+          { closed: false, error: { code: 'tool_disabled' } },
+        ],
+      });
+      expect(h.host.uiState().policy.grants).toEqual([]);
+    },
+  );
+
+  it('running local batch refuses newly minted unconsumed override authority', async () => {
+    const rows: Array<Record<string, unknown>> = [];
+    let saved = '';
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line));
+      },
+      read: () => '',
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const { h, c } = await asking({
+      activityIo,
+      policyIo: {
+        read: () => null,
+        writeSync: (value) => {
+          saved = value;
+          return true;
+        },
+      },
+    });
+    await runningTargets(h);
+    await setPolicy(h, { close_session: { access: 'off', when: 'always', reach: 'any' } });
+    c.call(90, 'close_session', { session: 's3' });
+    expect(c.errorOf(await c.reply(90))).toBe('tool_disabled');
+    const denied = rows.find((row) => row.action === 'close_session' && row.decision === 'deny');
+    if (!denied) throw new Error('missing denied activity');
+    await setPolicy(h, { close_session: { access: 'on', when: 'always', reach: 'any' } });
+    c.call(1, 'close_session', { sessions: ['s2', 's3'] });
+    const first = await until(() => runningUi(h)[0]);
+    let edited: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:saveAssignment',
+        requestId: 91,
+        point: { kind: 'session', sessionId: 's1' },
+        assignment: {
+          profileId: 'lead',
+          onScreenOnly: false,
+          exceptions: [
+            {
+              tool: 'close_session',
+              scope: { kind: 'session', sessionId: 's3' },
+              rule: { decision: 'deny', when: 'always', reach: 'any' },
+            },
+          ],
+        },
+        expectedToken: h.host.uiState().policy.editToken,
+      },
+      (value) => {
+        edited = value;
+      },
+      1,
+    );
+    expect(edited).toMatchObject({ result: { ok: true } });
+    await h.host.handleRenderer(
+      { type: 'mcp:allowOnce', requestId: 92, activityId: String(denied.id) },
+      (value) => {
+        edited = value;
+      },
+      1,
+    );
+    expect(edited).toMatchObject({ ok: true });
+    expect(JSON.parse(saved).overrides).toHaveLength(1);
+    await replyRunningUi(h, first);
+    await vi.waitFor(() =>
+      expect(c.lines.some((line) => line.id === 1) || runningUi(h).length > 1).toBe(true),
+    );
+    expect(runningUi(h)).toHaveLength(1);
+    expect(runningOutput(await c.reply(1))).toMatchObject({
+      results: [{ closed: false }, { closed: false }],
+    });
+    expect(JSON.parse(saved).overrides).toEqual([
+      expect.objectContaining({
+        tool: 'close_session',
+        target: expect.objectContaining({ sessionId: 's3' }),
+      }),
+    ]);
+  });
+
+  it('running local batch retains actually consumed one-use authority across UI waits', async () => {
+    let saved = serializePolicyFile({
+      version: 1,
+      profiles: [],
+      assignments: [
+        {
+          point: { kind: 'session', sessionId: 's1' },
+          assignment: {
+            profileId: 'lead',
+            onScreenOnly: false,
+            exceptions: [
+              {
+                tool: 'close_session',
+                scope: { kind: 'anywhere' },
+                rule: { decision: 'deny', when: 'always', reach: 'any' },
+              },
+            ],
+          },
+        },
+      ],
+      overrides: ['s2', 's3'].map((sessionId, i) => ({
+        id: `once-${i}`,
+        sessionId: 's1',
+        tool: 'close_session',
+        target: { sessionId, path: null, folder: '/w', projectId: null },
+        createdAt: new Date(0).toISOString(),
+      })),
+      migratedFrom: null,
+      notes: { onScreenOnlyOffered: [] },
+    });
+    const { h, c } = await asking({
+      policyIo: {
+        read: () => saved,
+        writeSync: (value) => {
+          saved = value;
+          return true;
+        },
+      },
+    });
+    await runningTargets(h);
+    c.call(1, 'close_session', { sessions: ['s2', 's3'] });
+    await vi.waitFor(() =>
+      expect(runningUi(h).length > 0 || c.lines.some((line) => line.id === 1)).toBe(true),
+    );
+    const first = runningUi(h)[0];
+    expect(first).toBeDefined();
+    if (!first) throw new Error('missing first UI');
+    expect(JSON.parse(saved).overrides).toEqual([]);
+    await replyRunningUi(h, first);
+    const second = await until(() => runningUi(h)[1]);
+    await replyRunningUi(h, second);
+    expect(runningOutput(await c.reply(1))).toMatchObject({
+      results: [{ closed: true }, { closed: true }],
+    });
+    expect(JSON.parse(saved).overrides).toEqual([]);
+  });
+
+  it('running local batch continues unchanged Ask only with actual prior owner Allow', async () => {
+    const { h, c } = await asking();
+    await runningTargets(h);
+    await setPolicy(h, { close_session: { access: 'ask', when: 'always', reach: 'any' } });
+    c.call(1, 'close_session', { sessions: ['s2', 's3'] });
+    await until(() => asksOf(h).length === 1);
+    await answer(h, askIdOf(h), 'approve');
+    await vi.waitFor(() =>
+      expect(runningUi(h).length > 0 || c.lines.some((line) => line.id === 1)).toBe(true),
+    );
+    const first = runningUi(h)[0];
+    expect(first).toBeDefined();
+    if (!first) throw new Error('missing first UI');
+    await replyRunningUi(h, first);
+    const second = await until(() => runningUi(h)[1]);
+    await replyRunningUi(h, second);
+    expect(runningOutput(await c.reply(1))).toMatchObject({
+      results: [{ closed: true }, { closed: true }],
+    });
+  });
+
   it('local close Ask prepared for unrelated target refuses same Ask reach narrowing', async () => {
     const { h, c } = await asking();
     await launch(h, 's2');
@@ -5372,11 +5596,13 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     ]);
     expect(h.opens).toEqual([]);
     let notice = '';
-    for (let id = 2; id < 30 && !notice.includes('You can retry open_session now'); id++) {
-      c.call(id, 'read_inbox');
-      await c.barrier(id);
-      notice = JSON.stringify(c.lines.filter((l) => l.id === id).at(-1) ?? null);
-      await new Promise((r) => setImmediate(r));
+    const noticeDeadline = Date.now() + 3_000;
+    let noticeId = 2;
+    while (Date.now() < noticeDeadline && !notice.includes('You can retry open_session now')) {
+      c.call(noticeId, 'read_inbox');
+      notice = JSON.stringify(await c.reply(noticeId++));
+      if (!notice.includes('You can retry open_session now'))
+        await new Promise((resolve) => setTimeout(resolve, 5));
     }
     expect(notice).toContain('You can retry open_session now');
     expect(h.opens).toEqual([]);
@@ -8527,6 +8753,56 @@ describe('createConduitMcpHost — a routed ask waits for the owner on this mach
       [asked.id, 'revoked'],
     ]);
   });
+
+  it.each(['deadline', 'abort'] as const)(
+    'running remote consent respects %s after timely owner answer',
+    async (change) => {
+      let release!: () => void;
+      let entered = false;
+      let finished = false;
+      const gate = new Promise<void>((done) => {
+        release = done;
+      });
+      const h = await withAsk({
+        beforeClose: async (id) => {
+          if (id === 's2') {
+            entered = true;
+            await gate;
+          }
+        },
+      });
+      await launch(h, 's2');
+      await launch(h, 's3');
+      h.owners.set('s2', null);
+      h.owners.set('s3', null);
+      await peerRule(h, 'close_session', { decision: 'ask', when: 'always', reach: 'any' });
+      const port = h.host.networkPort();
+      const controller = new AbortController();
+      const call = port.callAsRemote(
+        LEAD,
+        'close_session',
+        { sessions: ['s2', 's3'] },
+        controller.signal,
+      );
+      void call.then(() => {
+        finished = true;
+      });
+      const [asked] = await waitForAsks(h);
+      expect(
+        port.applyRemoteAnswer(asked.id, { outcome: 'allowed' }, 'timely', LEAD.machineId),
+      ).toEqual({ ok: true });
+      await vi.waitFor(() => expect(entered || finished).toBe(true));
+      expect(entered).toBe(true);
+      h.clock.t += 46_000;
+      if (change === 'abort') controller.abort();
+      release();
+      expect(await call).toMatchObject({
+        ok: true,
+        value: { results: [{ closed: true }, { closed: change === 'deadline' }] },
+      });
+      expect(h.closes).toEqual(change === 'deadline' ? ['s2', 's3'] : ['s2']);
+    },
+  );
 
   it('remote durable consent refuses failed primary then explicit fresh retry creates one grant and action', async () => {
     let failed = true;

@@ -126,6 +126,7 @@ function rig(network: NetworkPort | undefined) {
   };
   const tools = createMachineTools(deps, prepared);
   const ctx = (signal: AbortSignal): ControlCallContext => ({
+    stillCurrent: () => true,
     move: undefined,
     reach: undefined,
     signal,

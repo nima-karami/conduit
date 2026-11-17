@@ -25,6 +25,7 @@ const noUi: ControlCallContext['ui'] = async () => {
   throw new Error('the open tools never ask the renderer');
 };
 const ctxOf = (move?: Move): ControlCallContext => ({
+  stillCurrent: () => true,
   move,
   reach: undefined,
   ui: noUi,

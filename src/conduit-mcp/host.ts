@@ -2186,7 +2186,18 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             };
           return { ok: true, value: { input, decision } };
         };
+        let committedOverrides: OneUseOverride[] = [];
+        let ownerAllowed = false;
         const controlCtx: ControlCallContext = {
+          stillCurrent: () => {
+            const fresh = currentLocalDecision(committedOverrides);
+            if (!fresh.ok) return false;
+            const heldIds = new Set(committedOverrides.map((override) => override.id));
+            return (
+              (fresh.value.decision.decision === 'allow' || ownerAllowed) &&
+              fresh.value.decision.overrideIds.every((id) => heldIds.has(id))
+            );
+          },
           move: resolved.rule.move ?? undefined,
           reach: resolved.rule.reach ?? undefined,
           ui: (windowId, routedSessionId, action) =>
@@ -2213,7 +2224,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               (resolved.decision === 'allow' && fresh.value.decision.decision === 'ask')
             )
               return { ok: false, error: 'policy-changed' };
-            return commitResolved(fresh.value.input, fresh.value.decision);
+            const committed = commitResolved(fresh.value.input, fresh.value.decision);
+            if (committed.ok)
+              committedOverrides = committed.held.map((override) => structuredClone(override));
+            return committed;
           },
           permission: { why: reasonOf(resolved), targets, grantable: !resolved.forcedAsk },
           denyReason: (held) => {
@@ -2234,6 +2248,17 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             if (!fresh.ok) return { ok: false, error: 'policy-changed' };
             const committed = policyService.commit(fresh.value.input, fresh.value.decision, held);
             if (!committed.ok) evaluated.spent = true;
+            else {
+              committedOverrides = [
+                ...new Map(
+                  [...held, ...committed.overrides].map((override) => [
+                    override.id,
+                    structuredClone(override),
+                  ]),
+                ).values(),
+              ];
+              ownerAllowed = true;
+            }
             return committed;
           },
           revokeCreatedGrants: (ids) => policyService.revokeGrants(ids),
@@ -2436,8 +2461,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   const freshRemotePolicy = (
     pending: PendingRemotePermission,
     ownerAllow: boolean,
+    phase: 'pending' | 'running' = 'pending',
   ): Result<{ input: Omit<PolicyInput, 'now'>; decision: PolicyDecision }> => {
-    if (pending.signal.aborted || now() >= pending.deadline)
+    if (pending.signal.aborted || (phase === 'pending' && now() >= pending.deadline))
       return {
         ok: false,
         error: toolError('peer_unreachable', 'the remote call was cancelled or expired'),
@@ -2580,7 +2606,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       if (!policyInput.masterOn && name !== 'list_agents')
         return { ok: false, error: toolError('messaging_off', 'Conduit messaging is turned off') };
       if (decision.decision === 'deny') return { ok: false, error: toolDisabled(name) };
+      let ownerAllowed = false;
+      let phase: 'pending' | 'running' = 'pending';
       const ctx: ControlCallContext = {
+        stillCurrent: () => freshRemotePolicy(pending, ownerAllowed, phase).ok,
         move: decision.rule.move ?? undefined,
         reach: decision.rule.reach ?? undefined,
         // Nothing asks through a window for a remote lead, and close refuses before it would.
@@ -2619,6 +2648,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           p.release();
           return { ok: false, error: commitFailure(committed.error) };
         }
+        ownerAllowed = asked;
+        phase = 'running';
         return await p.run();
       } finally {
         p.budget?.dispose();
@@ -3511,6 +3542,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       const closing = { deleted: false };
       closingWhenDone.set(sessionId, closing);
       const ctx: ControlCallContext = {
+        stillCurrent: () => !stopped && !closing.deleted,
         move: undefined,
         reach: undefined,
         ui: (windowId, routedSessionId, action) =>
