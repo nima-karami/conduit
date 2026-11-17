@@ -84,6 +84,7 @@ function portWith(over: Partial<NetworkPort>): NetworkPort {
     throw new Error('not used by the machine tools');
   };
   return {
+    hasPeer: () => null,
     remoteEntries: unused,
     resolve: unused,
     enqueue: unused,

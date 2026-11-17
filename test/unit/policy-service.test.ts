@@ -96,6 +96,8 @@ interface Opts {
   writeFails?: boolean;
   backupFails?: boolean;
   idPrefix?: string;
+  hasSession?: (id: string) => boolean;
+  peerKnown?: (id: string) => boolean | null;
 }
 
 function harness(o: Opts = {}) {
@@ -152,6 +154,8 @@ function harness(o: Opts = {}) {
   };
 
   const deps: PolicyServiceDeps = {
+    hasSession: o.hasSession ?? (() => true),
+    peerKnown: o.peerKnown ?? (() => null),
     policyIo,
     lastGoodIo,
     grantsIo,
@@ -223,6 +227,169 @@ beforeEach(() => {
 });
 
 describe('policy service', () => {
+  it('flushes a failed tightening on stop after disk recovery and remains revoked after restart', async () => {
+    const h = harness({
+      policy: policyText(),
+      grants: serializeGrantsFile({ version: 1, grants: [grant()] }),
+    });
+    h.service.start();
+    h.setWriteDown(true);
+    expect(h.service.revokeGrant('g1')).toMatchObject({ ok: false, error: 'save-failed' });
+    expect(h.service.ui([]).grants[0]?.state).toBe('revoked');
+    h.setWriteDown(false);
+    await h.service.stop();
+    expect(h.grantWrites).toHaveLength(1);
+    const restarted = harness({ policy: policyText(), grants: h.grantWrites[0] });
+    restarted.service.start();
+    expect(restarted.service.ui([]).grants[0]?.state).toBe('revoked');
+  });
+
+  it('reconciles missing anchors, session targets and confirmed unpaired peers at load', () => {
+    const list = [
+      grant({
+        id: 'anchor',
+        who: { kind: 'cli', cli: 'codex' },
+        for: 'session-end',
+        anchorSessionId: 'gone',
+      }),
+      grant({ id: 'target', on: { kind: 'session', sessionId: 'gone' } }),
+      grant({ id: 'peer', who: { kind: 'peer', machineId: 'removed' } }),
+      grant({ id: 'unknown', who: { kind: 'peer', machineId: 'unknown' } }),
+      grant({ id: 'offline', who: { kind: 'peer', machineId: 'offline' } }),
+    ];
+    const h = harness({
+      policy: policyText(),
+      grants: serializeGrantsFile({ version: 1, grants: list }),
+      hasSession: (id) => id !== 'gone',
+      peerKnown: (id) => (id === 'removed' ? false : id === 'offline' ? true : null),
+    });
+    h.service.start();
+    expect(Object.fromEntries(h.service.ui([]).grants.map((g) => [g.id, g.state]))).toEqual({
+      anchor: 'expired',
+      target: 'expired',
+      peer: 'revoked',
+      unknown: 'active',
+      offline: 'active',
+    });
+  });
+
+  it('uses a total three tightening retry budget despite more failures in the same outage', () => {
+    const h = harness({
+      policy: policyText(),
+      grants: serializeGrantsFile({ version: 1, grants: [grant(), grant({ id: 'g2' })] }),
+    });
+    h.service.start();
+    h.setWriteDown(true);
+    h.service.revokeGrant('g1');
+    expect(h.timers.some((t) => t.ms === 250)).toBe(true);
+    h.fire(250);
+    h.fire(1000);
+    h.fire(5000);
+    h.service.revokeGrant('g2');
+    expect(h.timers.filter((t) => t.ms !== 60_000 && t.ms !== 3_600_000)).toHaveLength(0);
+    expect(h.service.ui([]).saveError).toContain('active here');
+    h.setWriteDown(false);
+    expect(h.service.retrySave()).toEqual({ ok: true });
+    expect(h.service.ui([]).saveError).toBeNull();
+  });
+
+  it('flushes pending session assignment cleanup on stop after recovery', async () => {
+    const h = harness({
+      policy: policyText({
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: { profileId: 'lead', exceptions: [], onScreenOnly: false },
+          },
+        ],
+      }),
+    });
+    h.service.start();
+    h.setWriteDown(true);
+    h.service.sessionEnded('s1');
+    expect(h.service.ui([]).assignments).toEqual([]);
+    h.setWriteDown(false);
+    await h.service.stop();
+    expect(parsePolicyFile(h.policyWrites.at(-1) ?? '')).toMatchObject({
+      ok: true,
+      file: { assignments: [] },
+    });
+  });
+
+  it('keeps readonly session cleanup active without overwriting an unreadable policy', () => {
+    const lastGood = policyText({
+      assignments: [
+        {
+          point: { kind: 'session', sessionId: 's1' },
+          assignment: { profileId: 'lead', exceptions: [], onScreenOnly: false },
+        },
+      ],
+    });
+    const h = harness({ policy: '{bad', lastGood });
+    h.service.start();
+    h.service.sessionEnded('s1');
+    expect(h.service.ui([]).assignments).toEqual([]);
+    expect(h.policyWrites).toEqual([]);
+    expect(h.service.ui([]).saveError).toContain('active here');
+  });
+
+  it('rolls back only the exact newly-created batch and persists a failed rollback on stop', async () => {
+    const h = harness({
+      policy: policyText(),
+      grants: serializeGrantsFile({ version: 1, grants: [grant({ id: 'prior' })] }),
+    });
+    h.service.start();
+    const made = h.service.createGrants(
+      { who: 'session', on: 'target', for: 'until-revoked' },
+      session(),
+      'close_session',
+      [target({ sessionId: 'a' }), target({ sessionId: 'b' })],
+      'fresh',
+    );
+    expect(made.ok).toBe(true);
+    if (!made.ok) throw new Error('Expected fresh batch');
+    h.setWriteDown(true);
+    expect(h.service.revokeGrants(made.grants.map((g) => g.id))).toEqual({
+      ok: false,
+      error: 'save-failed',
+      applied: 'tightening',
+    });
+    expect(h.service.ui([]).grants.map((g) => [g.id, g.state])).toEqual([
+      ['prior', 'active'],
+      ...made.grants.map((g) => [g.id, 'revoked']),
+    ]);
+    h.setWriteDown(false);
+    await h.service.stop();
+    expect(
+      JSON.parse(h.grantWrites.at(-1) ?? '{}').grants.map((g: Grant) => [g.id, g.state]),
+    ).toEqual([['prior', 'active'], ...made.grants.map((g) => [g.id, 'revoked'])]);
+  });
+
+  it('reconciles newly authoritative peer facts and load-time idle expiry', () => {
+    let known: boolean | null = null;
+    const h = harness({
+      policy: policyText(),
+      peerKnown: () => known,
+      grants: serializeGrantsFile({
+        version: 1,
+        grants: [
+          grant({ id: 'peer', who: { kind: 'peer', machineId: 'offline' } }),
+          grant({
+            id: 'idle',
+            for: 'session-end',
+            anchorSessionId: 's1',
+            createdAt: iso(T0 - 8 * 24 * 60 * MIN),
+          }),
+        ],
+      }),
+    });
+    h.service.start();
+    expect(h.service.ui([]).grants.map((g) => g.state)).toEqual(['active', 'expired']);
+    known = false;
+    h.service.reconcilePrincipals();
+    expect(h.service.ui([]).grants.map((g) => g.state)).toEqual(['revoked', 'expired']);
+  });
+
   it('persists human assignments before publication and never retries failed widening automatically', () => {
     const h = harness({ policy: policyText() });
     h.service.start();
@@ -382,7 +549,7 @@ describe('policy service', () => {
     const allowed = h.service.decide(input);
     expect(allowed.overrideIds).toEqual(['one']);
     h.setWriteDown(true);
-    expect(h.service.commit(input, allowed)).toBeNull();
+    expect(h.service.commit(input, allowed)).toEqual({ ok: false, error: 'save-failed' });
     expect(h.service.decide(input).decision).toBe('deny');
     expect(h.service.ui([]).saveError).toContain('could not be saved');
   });
@@ -467,7 +634,7 @@ describe('policy service', () => {
     });
     h.setWriteDown(false);
     h.fire(WRITE_MS);
-    expect(h.grantWrites).toHaveLength(0);
+    expect(h.grantWrites).toHaveLength(1);
     expect(h.service.retrySave()).toEqual({ ok: true });
     expect(JSON.parse(h.grantWrites[0] ?? '{}')).toMatchObject({ grants: [{ state: 'revoked' }] });
   });
@@ -1461,7 +1628,7 @@ describe('policy service', () => {
     const decision = h.service.decide(input);
     expect(decision).toMatchObject({ decision: 'allow', grantIds: ['g-s2'] });
     expect(h.service.revokeGrant('g-s2')).toEqual({ ok: true });
-    expect(h.service.commit(input, decision)).toBeNull();
+    expect(h.service.commit(input, decision)).toEqual({ ok: false, error: 'policy-changed' });
   });
 
   it('a revoked grant refuses the commit even when another grant still allows the call', () => {
@@ -1487,7 +1654,7 @@ describe('policy service', () => {
     expect(decision.grantIds).toEqual(['g-a']);
     expect(h.service.revokeGrant('g-a')).toEqual({ ok: true });
     expect(h.service.decide(input).decision).toBe('allow');
-    expect(h.service.commit(input, decision)).toBeNull();
+    expect(h.service.commit(input, decision)).toEqual({ ok: false, error: 'policy-changed' });
   });
 
   it('a deny exception added between decide and commit refuses the commit', () => {
@@ -1513,7 +1680,7 @@ describe('policy service', () => {
         { access: 'off' },
       ),
     ).toEqual({ ok: true });
-    expect(h.service.commit(input, decision)).toBeNull();
+    expect(h.service.commit(input, decision)).toEqual({ ok: false, error: 'policy-changed' });
   });
 
   it('a commit whose fresh decide still allows goes through, and an ask still commits', () => {
@@ -1528,7 +1695,7 @@ describe('policy service', () => {
     };
     const asked = h.service.decide(input);
     expect(asked.decision).toBe('ask');
-    expect(h.service.commit(input, asked)).toEqual([]);
+    expect(h.service.commit(input, asked)).toEqual({ ok: true, overrides: [] });
   });
 
   it('allowOnce does not duplicate an existing override', async () => {
@@ -1686,10 +1853,10 @@ describe('policy service', () => {
     expect(first).toMatchObject({ decision: 'allow', overrideIds: ['o1'], grantIds: ['g-s2'] });
     expect(second).toMatchObject({ decision: 'allow', overrideIds: ['o1'], grantIds: ['g-s2'] });
 
-    expect(h.service.commit(input, first)).not.toBeNull();
+    expect(h.service.commit(input, first)).toMatchObject({ ok: true });
     const afterFirst = h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt]);
     h.advance(MIN);
-    expect(h.service.commit(input, second)).toBeNull();
+    expect(h.service.commit(input, second)).toEqual({ ok: false, error: 'policy-changed' });
     expect(h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt])).toEqual(afterFirst);
     expect(h.service.decide(input).decision).toBe('deny');
   });
@@ -1782,8 +1949,8 @@ describe('policy service', () => {
       toYou: false,
     };
     const first = h.service.decide(input);
-    expect(h.service.commit(input, first)).toEqual([override]);
-    expect(h.service.commit(input, first)).toBeNull();
+    expect(h.service.commit(input, first)).toEqual({ ok: true, overrides: [override] });
+    expect(h.service.commit(input, first)).toEqual({ ok: false, error: 'policy-changed' });
   });
 
   it('a held override passes the still-saved check after its commit removed it, and only grants are touched', () => {
@@ -1829,13 +1996,14 @@ describe('policy service', () => {
       toYou: false,
     };
     const removed = h.service.commit(input, h.service.decide(input));
-    expect(removed).toEqual([expect.objectContaining({ id: 'o1' })]);
+    expect(removed).toEqual({ ok: true, overrides: [expect.objectContaining({ id: 'o1' })] });
+    if (!removed.ok) throw new Error('Expected override commit');
 
     h.advance(MIN);
-    const answer = h.service.decide({ ...input, heldOverrides: removed ?? [] });
+    const answer = h.service.decide({ ...input, heldOverrides: removed.overrides });
     expect(answer).toMatchObject({ decision: 'allow', overrideIds: ['o1'], grantIds: ['g-s2'] });
     const before = h.changed();
-    expect(h.service.commit(input, answer, removed ?? [])).toEqual([]);
+    expect(h.service.commit(input, answer, removed.overrides)).toEqual({ ok: true, overrides: [] });
     expect(h.changed()).toBe(before);
     expect(h.service.ui([]).grants.map((g) => [g.id, g.lastUsedAt])).toEqual([
       ['g-s2', iso(h.now())],
@@ -1882,7 +2050,7 @@ describe('policy service', () => {
     };
     const answer = h.service.decide({ ...input, heldOverrides: [held] });
     expect(answer).toMatchObject({ decision: 'allow', overrideIds: ['o1'] });
-    expect(h.service.commit(input, answer, [held])).toEqual([]);
+    expect(h.service.commit(input, answer, [held])).toEqual({ ok: true, overrides: [] });
     expect(h.service.decide(input)).toMatchObject({ decision: 'allow', overrideIds: ['o2'] });
   });
 

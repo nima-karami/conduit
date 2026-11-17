@@ -99,6 +99,7 @@ export type RemoteGrantRevokeResult =
   | { ok: false; code: 'not_found' | 'policy_unavailable'; message: string };
 
 export interface NetworkPort {
+  hasPeer(machineId: string): boolean | null;
   remoteEntries(): RemoteEntry[];
   /**
    * Runs a session tool on a machine I dialed over ssh, as `principalHandle` there (CON-40 S3). The

@@ -17,7 +17,12 @@ import {
 import type { Prepared, PreparedCall } from '../../src/conduit-mcp/control-tools';
 import type { GrantChoice } from '../../src/conduit-mcp/grant-store';
 import type { JsonRpcId } from '../../src/conduit-mcp/json-rpc';
-import type { OneUseOverride, PolicyDecision } from '../../src/conduit-mcp/policy-types';
+import type {
+  Grant,
+  OneUseOverride,
+  PolicyCommitError,
+  PolicyDecision,
+} from '../../src/conduit-mcp/policy-types';
 import type { CliKind } from '../../src/conduit-mcp/tool-policy';
 import type { Result } from '../../src/conduit-mcp/types';
 import {
@@ -46,6 +51,20 @@ const HELD: OneUseOverride = {
   tool: 'open_session',
   target: { sessionId: null, path: null, folder: null, projectId: null },
   createdAt: '2026-11-15T00:00:00.000Z',
+};
+const CREATED: Grant = {
+  id: 'new-grant',
+  who: { kind: 'session', sessionId: CALLER },
+  tool: 'open_session',
+  on: { kind: 'anywhere' },
+  for: 'session-end',
+  anchorSessionId: CALLER,
+  createdAt: '2026-11-15T00:00:00.000Z',
+  expiresAt: null,
+  lastUsedAt: null,
+  state: 'active',
+  endedAt: null,
+  requestId: 'perm-1',
 };
 const ALWAYS_GRANT: GrantChoice = { who: 'session', on: 'anywhere', for: 'session-end' };
 
@@ -80,6 +99,7 @@ function setup() {
   const reDecides: string[][] = [];
   const grants: Array<{ choice: GrantChoice; requestId: string }> = [];
   const answerCommits: string[][] = [];
+  const cleanupIds: string[][] = [];
   let perm = 0;
   const owners = new Map<string, number | null>([
     [CALLER, 1],
@@ -93,8 +113,11 @@ function setup() {
     messagingOn: true,
     appUp: true,
     redecide: { kind: 'ready' } as AnswerDecision,
-    grantOutcome: { ok: true } as GrantOutcome,
+    grantOutcome: { ok: true, grants: [CREATED] } as GrantOutcome,
     commitOk: true,
+    commitError: null as PolicyCommitError | null,
+    throwAt: '',
+    cleanupThrows: false,
     awaitingChanged: 0,
     sendThrows: false,
   };
@@ -121,6 +144,7 @@ function setup() {
       return `perm-${++perm}`;
     },
     settlePermission: (e) => {
+      if (state.throwAt === 'settle') throw new Error('broken settle');
       settled.push(e);
     },
     onAwaitingChanged: () => state.awaitingChanged++,
@@ -201,22 +225,33 @@ function setup() {
       commit: () => {
         commits.n++;
         events.push('commit');
-        if (o.commitResult === false) return null;
-        return { decision: o.commitTo ?? decision, held: o.held ?? [] };
+        if (o.commitResult === false) return { ok: false, error: 'policy-changed' };
+        return { ok: true, decision: o.commitTo ?? decision, held: o.held ?? [] };
       },
       permission: { why: 'the policy asks', targets: [], grantable: true },
       denyReason: () => o.denyReason ?? null,
       reDecide: (held) => {
+        if (state.throwAt === 'reDecide') throw new Error('broken reDecide');
         reDecides.push(held.map((h) => h.id));
         return o.redecide ?? state.redecide;
       },
       grant: (choice, requestId) => {
+        if (state.throwAt === 'grant') throw new Error('broken grant');
         grants.push({ choice, requestId });
         return o.grantOutcome ?? state.grantOutcome;
       },
       commitAnswered: (held) => {
+        if (state.throwAt === 'commit') throw new Error('broken commit');
         answerCommits.push(held.map((h) => h.id));
-        return o.commitOk ?? state.commitOk;
+        if (state.commitError !== null) return { ok: false, error: state.commitError };
+        return (o.commitOk ?? state.commitOk)
+          ? { ok: true, overrides: [] }
+          : { ok: false, error: 'policy-changed' };
+      },
+      revokeCreatedGrants: (ids) => {
+        cleanupIds.push([...ids]);
+        if (state.cleanupThrows) throw new Error('broken cleanup');
+        return { ok: true };
       },
       source: 'global',
       args: { path: '/repo', agent: 'claude' },
@@ -255,6 +290,7 @@ function setup() {
     reDecides,
     grants,
     answerCommits,
+    cleanupIds,
     owners,
     policies,
     state,
@@ -704,6 +740,83 @@ describe('createCallFlow', () => {
     expect(c.out.done).toBe(false);
     runGate.go();
     expect(await c.promise).toEqual({ ok: true, value: 'opened' });
+  });
+
+  it('returns a commit IO failure without creating or running new authority', async () => {
+    const t = setup();
+    t.state.commitError = 'save-failed';
+    const c = t.call();
+    await t.flush();
+    expect(
+      await t.flow.answerPermission('perm-1', { outcome: 'allowed', grant: ALWAYS_GRANT }, 1),
+    ).toEqual({
+      ok: false,
+      reason: 'not_answerable',
+      message: 'Permissions could not be saved (save-failed)',
+    });
+    expect(t.grants).toEqual([]);
+    expect(c.spies.run).toBe(0);
+    expect(errCode(await c.promise)).toBe('policy_unavailable');
+  });
+
+  it.each(['reDecide', 'commit', 'grant', 'settle'])(
+    'refuses the receipt and propagates a throwing %s producer',
+    async (stage) => {
+      const t = setup();
+      const c = t.call();
+      const failed = c.promise.catch((error: unknown) => error);
+      await t.flush();
+      t.state.throwAt = stage;
+      const receipt = t.flow.answerPermission(
+        'perm-1',
+        { outcome: 'allowed', grant: ALWAYS_GRANT },
+        1,
+      );
+      expect(await receipt).toEqual({
+        ok: false,
+        reason: 'not_answerable',
+        message: 'Permission answer failed before the action ran',
+      });
+      expect(await failed).toEqual(new Error(`broken ${stage}`));
+      expect(c.spies.run).toBe(0);
+      expect(t.cleanupIds).toEqual(stage === 'settle' ? [['new-grant']] : []);
+    },
+  );
+
+  it('preserves settlement and cleanup exceptions while refusing the receipt', async () => {
+    const t = setup();
+    const c = t.call();
+    const failed = c.promise.catch((error: unknown) => error);
+    await t.flush();
+    t.state.throwAt = 'settle';
+    t.state.cleanupThrows = true;
+    const receipt = t.flow.answerPermission(
+      'perm-1',
+      { outcome: 'allowed', grant: ALWAYS_GRANT },
+      1,
+    );
+    expect((await receipt).ok).toBe(false);
+    const error = await failed;
+    expect(error).toBeInstanceOf(AggregateError);
+    if (!(error instanceof AggregateError)) throw new Error('missing aggregate');
+    expect(error.errors).toEqual([new Error('broken settle'), new Error('broken cleanup')]);
+    expect(c.spies.run).toBe(0);
+    expect(t.cleanupIds).toEqual([['new-grant']]);
+  });
+
+  it('does not create a grant when the answered commit refuses', async () => {
+    const t = setup();
+    const c = t.call({ commitOk: false });
+    await t.flush();
+    const receipt = await t.flow.answerPermission(
+      'perm-1',
+      { outcome: 'allowed', grant: ALWAYS_GRANT },
+      1,
+    );
+    expect(receipt.ok).toBe(false);
+    expect(t.grants).toEqual([]);
+    expect(c.spies.run).toBe(0);
+    await c.promise;
   });
 
   it('returns the grant persistence failure instead of acknowledging an accepted queue item', async () => {

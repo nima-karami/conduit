@@ -21,6 +21,7 @@ export interface LinkStoreIo {
 
 export interface LinkStore {
   links(): LinkRecord[];
+  peerKnown(machineId: string): boolean | null;
   get(machineId: string): LinkRecord | null;
   /** A live link first, else an unexpired tombstone, else null. */
   byServerKey(serverKey: string): LinkRecord | { tombstone: Tombstone } | null;
@@ -115,6 +116,7 @@ export function openLinkStore(
 
   let state: LinksFile = { version: LINKS_VERSION, links: [], tombstones: [] };
   let writable = true;
+  let baselineKnown = true;
 
   const text = io.read(file);
   if (text !== null) {
@@ -124,10 +126,12 @@ export function openLinkStore(
     } else if (parsed.kind === 'newer') {
       // A newer build owns this file: its contents must survive, so nothing is written from here.
       writable = false;
+      baselineKnown = false;
       opts.log.error('links.json is from a newer version; running read-only', { file });
     } else {
       // A corrupt file is kept as the first backup. A second corrupt file is left where it is,
       // so the first backup is never overwritten.
+      baselineKnown = false;
       const backup = path.join(path.dirname(file), CORRUPT_FILE);
       if (io.read(backup) === null) io.rename(file, backup);
       opts.log.error('links.json is corrupt; started with no links', { file, backup });
@@ -143,6 +147,7 @@ export function openLinkStore(
     };
     state = dropped;
     io.write(file, serializeLinksFile(dropped));
+    baselineKnown = true;
   };
 
   const putLink = (r: LinkRecord): void => {
@@ -159,6 +164,11 @@ export function openLinkStore(
       return writable;
     },
     links: () => state.links.map(copyLink),
+    peerKnown(machineId) {
+      if (state.links.some((link) => link.machineId === machineId)) return true;
+      if (state.tombstones.some((tombstone) => tombstone.machineId === machineId)) return false;
+      return baselineKnown ? false : null;
+    },
     get: (machineId) => {
       const found = state.links.find((l) => l.machineId === machineId);
       return found ? copyLink(found) : null;

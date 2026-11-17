@@ -45,6 +45,7 @@ import { type AttentionEvent, reduceAttention, youAttention } from './attention-
 import {
   type AskCommit,
   askBudgetMs,
+  commitFailure,
   createCallFlow,
   grantFailureMessage,
   type InFlight,
@@ -1696,6 +1697,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     lastGoodIo: createPolicyIo(path.join(deps.dir, 'policy.last-good.json')),
     grantsIo: deps.grantsIo ?? createPolicyIo(path.join(deps.dir, 'grants.json')),
     activityIo: deps.activityIo ?? createActivityIo(deps.dir),
+    hasSession: (id) => deps.sessions.get(id) !== undefined,
+    peerKnown: (id) => deps.network?.hasPeer(id) ?? null,
     now,
     newId: () => randomBytes(12).toString('hex'),
     ...requestTimers,
@@ -2002,23 +2005,25 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         // A concurrent call may have spent the override this decision relies on. decide and commit
         // run back to back, so the re-decide sees the state the commit did: a second override for
         // the target can stand in for the spent one.
-        const commitResolved = (): AskCommit | null => {
-          const held = policyService.commit(policyInput, resolved);
-          if (held !== null) return { decision: resolved, held };
+        const commitResolved = (): AskCommit => {
+          const committed = policyService.commit(policyInput, resolved);
+          if (committed.ok) return { ok: true, decision: resolved, held: committed.overrides };
+          if (committed.error !== 'policy-changed') return committed;
           const again = policyService.decide(policyInput);
-          const heldAgain =
-            again.decision === 'allow' ? policyService.commit(policyInput, again) : null;
-          if (heldAgain !== null) {
+          const retried =
+            again.decision === 'allow' ? policyService.commit(policyInput, again) : committed;
+          if (retried.ok) {
             evaluated.current = { input: policyInput, decision: again };
-            return { decision: again, held: heldAgain };
+            return { ok: true, decision: again, held: retried.overrides };
           }
           evaluated.spent = true;
           evaluated.current = { input: policyInput, decision: again };
-          return null;
+          return retried;
         };
         const caller = { handle, sessionId };
         if (isRequestTool(name)) {
-          if (commitResolved() === null) return { ok: false, error: toolDisabled(name) };
+          const committed = commitResolved();
+          if (!committed.ok) return { ok: false, error: commitFailure(committed.error) };
           return runRequest(caller, name, args, ctx);
         }
         if (isMessagingTool(name)) {
@@ -2028,7 +2033,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               error: toolError('store_unavailable', storeError ?? 'message store unavailable'),
             };
           }
-          if (commitResolved() === null) return { ok: false, error: toolDisabled(name) };
+          const committed = commitResolved();
+          if (!committed.ok) return { ok: false, error: commitFailure(committed.error) };
           return runMessaging(caller, name, args, ctx);
         }
         const controlCtx: ControlCallContext = {
@@ -2080,13 +2086,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             return grantsFor(choice, p, name, policyInput.targets, requestId);
           },
           commitAnswered: (held) => {
-            if (reDecided === null) return false;
-            if (policyService.commit(policyInput, reDecided, held) === null) {
-              evaluated.spent = true;
-              return false;
-            }
-            return true;
+            if (reDecided === null) return { ok: false, error: 'policy-changed' };
+            const committed = policyService.commit(policyInput, reDecided, held);
+            if (!committed.ok) evaluated.spent = true;
+            return committed;
           },
+          revokeCreatedGrants: (ids) => policyService.revokeGrants(ids),
           source: sourceOf(resolved),
           args,
           prepare: () => prepareControl(caller, name, args, controlCtx),
@@ -2385,8 +2390,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       if (!prepared.ok) return prepared;
       const p = prepared.value;
       if ('done' in p) {
-        if (policyService.commit(policyInput, decision) === null)
-          return { ok: false, error: toolDisabled(name) };
+        const committed = policyService.commit(policyInput, decision);
+        if (!committed.ok) return { ok: false, error: commitFailure(committed.error) };
         return p.done;
       }
       // A bare command is never a registered agent, so an allow still asks (flexible-agent-contracts §3.1).
@@ -2409,9 +2414,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             }
           }
         }
-        if (policyService.commit(policyInput, decision) === null) {
+        const committed = policyService.commit(policyInput, decision);
+        if (!committed.ok) {
           p.release();
-          return { ok: false, error: toolDisabled(name) };
+          return { ok: false, error: commitFailure(committed.error) };
         }
         return await p.run();
       } finally {
@@ -3105,6 +3111,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         requestService.onAttention(factsWithHandles());
       });
       stopNetworkWatch = deps.network?.onChange(() => {
+        policyService.reconcilePrincipals();
+        syncToolLists();
+        flow.recheck();
         scheduleBroadcast();
         sessionWaits.notify();
       });
@@ -3673,7 +3682,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               ? policyService.revokeGrant(m.grantId)
               : { ok: false as const, error: 'not-found' as const };
           reply({ type: 'mcp:policyResult', requestId: m.requestId, ...result });
-          if (result.ok) {
+          if (result.ok || result.applied === 'tightening') {
             syncToolLists();
             flow.recheck();
           }
@@ -3843,7 +3852,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       },
       revokeRemoteGrant: (grantId) => {
         const res = policyService.revokeGrantByRemote(grantId);
-        if (res.ok) flow.recheck();
+        flow.recheck();
         return res;
       },
       applyRemoteAnswer: (requestId, answer, answerId, machineId) =>

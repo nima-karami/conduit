@@ -27,7 +27,7 @@ export function createPolicyIo(file: string): PolicyIo {
       if (Buffer.byteLength(text) > POLICY_MAX_BYTES)
         throw new Error('Permissions store is too large');
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      atomicWriteFileSync(file, text);
+      atomicWriteFileSync(file, text, fs, { mode: 0o600, syncData: true, retryLockedRename: true });
       return true;
     },
   };

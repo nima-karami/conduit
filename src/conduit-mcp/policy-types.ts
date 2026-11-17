@@ -170,7 +170,13 @@ export type PolicyEditError =
   | 'save-failed'
   | 'too-large'
   | 'not-found';
-export type PolicyEditResult = { ok: true } | { ok: false; error: PolicyEditError };
+export type PolicyEditResult =
+  | { ok: true }
+  | { ok: false; error: PolicyEditError; applied?: 'tightening' };
+export type PolicyCommitError = 'policy-changed' | 'save-failed' | 'too-large' | 'read-only';
+export type PolicyCommitResult =
+  | { ok: true; overrides: OneUseOverride[] }
+  | { ok: false; error: PolicyCommitError };
 export type GrantBatchResult =
   | { ok: true; grants: Grant[] }
   | { ok: false; error: PolicyEditError };

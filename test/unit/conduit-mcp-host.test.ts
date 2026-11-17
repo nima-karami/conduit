@@ -5358,6 +5358,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
         return 'file';
       },
     });
+    h.sessions.set('s1', session('s1'));
     await h.host.start();
     const launched = await launch(h, 's1');
     await h.host.handleRenderer(
@@ -6079,6 +6080,7 @@ describe('createConduitMcpHost — wait_sessions', () => {
     let monitor = true;
     let changed = () => {};
     const network: NetworkPort = {
+      hasPeer: () => null,
       remoteEntries: () => [entry],
       resolve: (target) =>
         target === address || target === 'fake-9@peer'
@@ -7474,6 +7476,7 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
       throw new Error('not used by the machine tools');
     };
     const network: NetworkPort = {
+      hasPeer: () => null,
       remoteEntries: () => [],
       resolve: unused,
       enqueue: unused,
@@ -8235,6 +8238,7 @@ describe('createConduitMcpHost — a remote answer that does not reach its machi
       throw new Error('not used by the remote requests');
     };
     const network: NetworkPort = {
+      hasPeer: () => null,
       remoteEntries: () => [],
       resolve: unused,
       enqueue: unused,
@@ -8345,6 +8349,7 @@ describe('routed session tools on this machine (CON-40 S3, plan decision 5)', ()
       throw new Error('not used by the routed tools');
     };
     const network: NetworkPort = {
+      hasPeer: () => null,
       remoteEntries: () => over.entries ?? [REMOTE_CLAUDE],
       resolve: (target) =>
         target === REMOTE_CLAUDE.address
@@ -8706,6 +8711,7 @@ describe('createConduitMcpHost — remote requests (CON-42 A side)', () => {
       throw new Error('not used by the remote requests');
     };
     const network: NetworkPort = {
+      hasPeer: () => null,
       remoteEntries: () => [],
       resolve: unused,
       enqueue: unused,
@@ -8962,6 +8968,7 @@ describe('remote policy edits from this machine (CON-46 L4)', () => {
       throw new Error('not used by the remote policy tests');
     };
     const network: NetworkPort = {
+      hasPeer: () => null,
       remoteEntries: () => [],
       resolve: unused,
       enqueue: unused,

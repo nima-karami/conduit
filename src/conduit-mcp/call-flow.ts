@@ -6,10 +6,14 @@ import type { Prepared, PreparedCall } from './control-tools';
 import type { GrantChoice } from './grant-store';
 import type { JsonRpcId } from './json-rpc';
 import type {
+  GrantBatchResult,
   OneUseOverride,
   PermissionAnswer,
+  PolicyCommitError,
+  PolicyCommitResult,
   PolicyDecision,
   PolicyEditError,
+  PolicyEditResult,
   PolicyTarget,
 } from './policy-types';
 import type { AnsweredBy, AnswerInput, PermissionAnswerResult } from './request-types';
@@ -63,13 +67,12 @@ export interface InFlight {
   /** Drops the in-flight entry; called in the host's finally. Idempotent. */
   end(): void;
 }
-export interface AskCommit {
-  decision: PolicyDecision;
-  held: readonly OneUseOverride[];
-}
+export type AskCommit =
+  | { ok: true; decision: PolicyDecision; held: readonly OneUseOverride[] }
+  | { ok: false; error: PolicyCommitError };
 export type AnswerDecision = { kind: 'ready' } | { kind: 'withdraw'; reason: string };
 export type GrantOutcome =
-  | { ok: true }
+  | Extract<GrantBatchResult, { ok: true }>
   | { ok: false; error: PolicyEditError | 'session-gone' | 'scope' };
 export const grantFailureMessage = (error: PolicyEditError | 'session-gone' | 'scope'): string =>
   error === 'session-gone'
@@ -77,6 +80,13 @@ export const grantFailureMessage = (error: PolicyEditError | 'session-gone' | 's
     : error === 'invalid-value' || error === 'scope'
       ? SCOPE_UNAVAILABLE
       : `Permissions could not be saved (${error})`;
+export const commitFailure = (error: PolicyCommitError) =>
+  toolError(
+    error === 'policy-changed' ? 'tool_disabled' : 'policy_unavailable',
+    error === 'policy-changed'
+      ? 'the policy changed while the request waited'
+      : `Permissions could not be saved (${error})`,
+  );
 export const SCOPE_UNAVAILABLE = "that scope isn't available for every target";
 export interface ControlCall<T> {
   inflight: InFlight;
@@ -86,12 +96,13 @@ export interface ControlCall<T> {
   wiredAtLaunch: boolean;
   tool: ToolName;
   decision: PolicyDecision;
-  commit(): AskCommit | null;
+  commit(): AskCommit;
   permission: { why: string; targets: readonly PolicyTarget[]; grantable: boolean };
   denyReason(held: readonly OneUseOverride[]): string | null;
   reDecide(held: readonly OneUseOverride[]): AnswerDecision;
   grant(choice: GrantChoice, requestId: string): GrantOutcome;
-  commitAnswered(held: readonly OneUseOverride[]): boolean;
+  commitAnswered(held: readonly OneUseOverride[]): PolicyCommitResult;
+  revokeCreatedGrants(ids: readonly string[]): PolicyEditResult;
   /** Only for the card's reason line: the gate reads decision, never source. */
   source: PolicySource;
   args: unknown;
@@ -370,9 +381,9 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       return { ok: false, error: budgetEndsAsk && p.budget ? p.budget.expired : approvalTimeout() };
     }
     const committed = c.commit();
-    if (committed === null) {
+    if (!committed.ok) {
       p.release();
-      return { ok: false, error: toolDisabled(c.tool) };
+      return { ok: false, error: commitFailure(committed.error) };
     }
     // The card guards a decision that is still an ask; a recovered allow has nothing to guard.
     if (committed.decision.decision === 'allow' && !p.alwaysAsk) return runNow(c, p);
@@ -435,62 +446,83 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     deps.onAwaitingChanged();
 
     const end = await ended;
-    deps.onAwaitingChanged();
-    // Unanswered ends keep the rate token: it caps card spam (spec §3.3 "Rate").
-    switch (end.kind) {
-      case 'expired':
-        finishReceipt(requestId, refusedAnswer('the request expired'));
-        return {
-          ok: false,
-          error: budgetEndsAsk && p.budget ? p.budget.expired : approvalTimeout(),
-        };
-      case 'cancelled': {
-        const deny = denied.get(requestId);
-        denied.delete(requestId);
-        if (deny !== undefined) {
-          settle('withdrawn', null, deny);
-          return { ok: false, error: toolError('tool_disabled', deny) };
+    let createdGrants: readonly string[] = [];
+    try {
+      deps.onAwaitingChanged();
+      // Unanswered ends keep the rate token: it caps card spam (spec §3.3 "Rate").
+      switch (end.kind) {
+        case 'expired':
+          finishReceipt(requestId, refusedAnswer('the request expired'));
+          return {
+            ok: false,
+            error: budgetEndsAsk && p.budget ? p.budget.expired : approvalTimeout(),
+          };
+        case 'cancelled': {
+          const deny = denied.get(requestId);
+          denied.delete(requestId);
+          if (deny !== undefined) {
+            settle('withdrawn', null, deny);
+            return { ok: false, error: toolError('tool_disabled', deny) };
+          }
+          settle('withdrawn', null, 'the call was cancelled');
+          return end.reply
+            ? { ok: false, error: toolError('cancelled', 'the request was cancelled') }
+            : null;
         }
+        case 'answered':
+          break;
+      }
+      // A forced ask (RS-D6) is approve-once: an always answer that reaches it makes no grant.
+      const answer: PermissionAnswer =
+        !c.permission.grantable && end.answer.outcome === 'allowed'
+          ? { outcome: 'allowed' }
+          : end.answer;
+      if (c.inflight.cancelled || receipts.get(requestId)?.cancelled) {
         settle('withdrawn', null, 'the call was cancelled');
-        return end.reply
-          ? { ok: false, error: toolError('cancelled', 'the request was cancelled') }
-          : null;
+        return null;
       }
-      case 'answered':
-        break;
-    }
-    // A forced ask (RS-D6) is approve-once: an always answer that reaches it makes no grant.
-    const answer: PermissionAnswer =
-      !c.permission.grantable && end.answer.outcome === 'allowed'
-        ? { outcome: 'allowed' }
-        : end.answer;
-    if (c.inflight.cancelled || receipts.get(requestId)?.cancelled) {
-      settle('withdrawn', null, 'the call was cancelled');
-      return null;
-    }
-    if (answer.outcome === 'denied') {
+      if (answer.outcome === 'denied') {
+        settle('answered', answerInputOf(answer), null);
+        return { ok: false, error: toolError('denied', declinedMessage(answer.reason)) };
+      }
+      const decided = c.reDecide(held);
+      if (decided.kind === 'withdraw') {
+        settle('withdrawn', null, decided.reason);
+        return { ok: false, error: toolError('tool_disabled', decided.reason) };
+      }
+      const committedAnswer = c.commitAnswered(held);
+      if (!committedAnswer.ok) {
+        const failure = commitFailure(committedAnswer.error);
+        settle('withdrawn', null, failure.message);
+        return { ok: false, error: failure };
+      }
+      if (answer.grant !== undefined) {
+        const made = c.grant(answer.grant, requestId);
+        if (!made.ok) {
+          const why = grantFailureMessage(made.error);
+          settle('withdrawn', null, why);
+          return { ok: false, error: toolError('cancelled', why) };
+        }
+        createdGrants = made.grants.map((grant) => grant.id);
+      }
       settle('answered', answerInputOf(answer), null);
-      return { ok: false, error: toolError('denied', declinedMessage(answer.reason)) };
-    }
-    const decided = c.reDecide(held);
-    if (decided.kind === 'withdraw') {
-      settle('withdrawn', null, decided.reason);
-      return { ok: false, error: toolError('tool_disabled', decided.reason) };
-    }
-    if (answer.grant !== undefined) {
-      const made = c.grant(answer.grant, requestId);
-      if (!made.ok) {
-        const why = grantFailureMessage(made.error);
-        settle('withdrawn', null, why);
-        return { ok: false, error: toolError('cancelled', why) };
+      return runNow(c, p);
+    } catch (error) {
+      let failure = error;
+      try {
+        if (createdGrants.length > 0) c.revokeCreatedGrants(createdGrants);
+      } catch (cleanupError) {
+        failure = new AggregateError(
+          [error, cleanupError],
+          'Permission settlement and rollback both failed',
+        );
+      } finally {
+        finishReceipt(requestId, refusedAnswer('Permission answer failed before the action ran'));
       }
+      throw failure;
+    } finally {
+      finishReceipt(requestId, refusedAnswer('Permission answer did not complete'));
     }
-    if (!c.commitAnswered(held)) {
-      settle('withdrawn', null, 'the policy changed while the request waited');
-      return { ok: false, error: toolDisabled(c.tool) };
-    }
-    settle('answered', answerInputOf(answer), null);
-    return runNow(c, p);
   }
 
   /** The wait's key and start; begin() registered them, so the in-flight object knows its own. */
@@ -603,7 +635,8 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       if ('done' in p) {
         if (c.decision.decision === 'deny') return { ok: false, error: toolDisabled(c.tool) };
         if (c.inflight.cancelled) return null;
-        if (c.commit() === null) return { ok: false, error: toolDisabled(c.tool) };
+        const committed = c.commit();
+        if (!committed.ok) return { ok: false, error: commitFailure(committed.error) };
         return p.done;
       }
       if (c.inflight.cancelled) {
@@ -618,12 +651,14 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
       // await below is what keeps the deadline live while the run waits.
       try {
         switch (access) {
-          case 'allow':
-            if (c.commit() === null) {
+          case 'allow': {
+            const committed = c.commit();
+            if (!committed.ok) {
               p.release();
-              return { ok: false, error: toolDisabled(c.tool) };
+              return { ok: false, error: commitFailure(committed.error) };
             }
             return await runNow(c, p);
+          }
           case 'ask':
             return await ask(c, p);
           case 'deny':

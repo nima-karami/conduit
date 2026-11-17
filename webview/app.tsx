@@ -146,6 +146,7 @@ import { IconPickerModal } from './components/icon-picker-modal';
 import { McpToolsDialog } from './components/mcp-tools-dialog';
 import { NewSessionModal } from './components/new-session-modal';
 import { type DockHandlers, PanelFrame } from './components/panel-frame';
+import { PermissionStoreNotice } from './components/permission-store-notice';
 import { ProjectPicker } from './components/project-picker';
 import { QuitScrim } from './components/quit-scrim';
 import { RightPane, type RightPaneHandle } from './components/right-pane';
@@ -5748,6 +5749,12 @@ export function App() {
                 onConfirm: () => post({ type: 'server:restartAgentsToUpdate' }),
               })
             }
+          />
+          <PermissionStoreNotice
+            saveError={mcp.state?.policy.saveError ?? null}
+            backupWarning={mcp.state?.policy.backupWarning ?? null}
+            readOnly={mcp.state?.policy.readOnly ?? false}
+            onRetry={mcp.retryPolicy}
           />
           <div className="workbench">{visibleOrder.map(renderRegion)}</div>
           {newSession && (

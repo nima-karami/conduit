@@ -38,6 +38,7 @@ import type {
   GrantBatchResult,
   GrantWho,
   OneUseOverride,
+  PolicyCommitResult,
   PolicyDecision,
   PolicyEditResult,
   PolicyInput,
@@ -62,6 +63,8 @@ export interface PolicyServiceDeps {
   lastGoodIo: PolicyIo;
   grantsIo: PolicyIo;
   activityIo: ActivityIo;
+  hasSession(id: string): boolean;
+  peerKnown(id: string): boolean | null;
   now(): number;
   newId(): string;
   setTimer(fn: () => void, ms: number): unknown;
@@ -89,7 +92,7 @@ export interface PolicyService {
     input: Omit<PolicyInput, 'now'>,
     decision: PolicyDecision,
     held?: readonly OneUseOverride[],
-  ): OneUseOverride[] | null;
+  ): PolicyCommitResult;
   noteDecision(activityId: string, input: Omit<PolicyInput, 'now'>, decision: PolicyDecision): void;
   visibleTools(p: Principal): ToolName[];
   setAssignment(point: AssignmentPoint, profileId: ProfileId | null): PolicyEditResult;
@@ -114,6 +117,8 @@ export interface PolicyService {
     requestId: string | null,
   ): GrantBatchResult;
   revokeGrant(id: string): PolicyEditResult;
+  revokeGrants(ids: readonly string[]): PolicyEditResult;
+  reconcilePrincipals(): void;
   saveAssignment(
     point: AssignmentPoint,
     assignment: Assignment | null,
@@ -180,6 +185,10 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
   let writeTimer: unknown = null;
   let tickTimer: unknown = null;
   let purgeTimer: unknown = null;
+  let pendingConservativePolicy = false;
+  let pendingConservativeGrants = false;
+  let conservativeRetryTimer: unknown = null;
+  let conservativeRetryAttempts = 0;
   let editToken = '';
   let backupWarning: string | null = null;
   const saveErrors = new Map<'policy' | 'grants', string>();
@@ -266,53 +275,123 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     }
   }
 
+  const scheduleConservativeRetry = (): void => {
+    if (!pendingConservativePolicy && !pendingConservativeGrants) {
+      if (conservativeRetryTimer !== null) deps.clearTimer(conservativeRetryTimer);
+      conservativeRetryTimer = null;
+      conservativeRetryAttempts = 0;
+      return;
+    }
+    if (
+      stopped ||
+      conservativeRetryTimer !== null ||
+      conservativeRetryAttempts >= 3 ||
+      !(
+        (pendingConservativePolicy && policyWritable) ||
+        (pendingConservativeGrants && grantsWritable)
+      )
+    )
+      return;
+    const delay = [250, 1000, 5000][conservativeRetryAttempts++];
+    conservativeRetryTimer = deps.setTimer(() => {
+      conservativeRetryTimer = null;
+      flush(true);
+    }, delay);
+  };
+
   function savePolicy(
     candidate: PolicyFile,
     portable: boolean,
     conservative = false,
   ): PolicyEditResult {
-    if (!policyWritable) return { ok: false, error: 'read-only' };
+    if (!policyWritable && !conservative) return { ok: false, error: 'read-only' };
     const assignmentsChanged =
       JSON.stringify([file.profiles, file.assignments]) !==
       JSON.stringify([candidate.profiles, candidate.assignments]);
     candidate = structuredClone(candidate);
     if (portable) candidate.rev = (file.rev ?? 0) + 1;
     policyDirty = false;
-    const result = writePrimary(deps.policyIo, 'policy', serializePolicyFile(candidate));
+    const result: PolicyEditResult = policyWritable
+      ? writePrimary(deps.policyIo, 'policy', serializePolicyFile(candidate))
+      : { ok: false, error: 'read-only' };
     if (!result.ok && !conservative) return result;
     if (!result.ok) candidate.rev = file.rev;
     file = candidate;
     if (assignmentsChanged) editToken = deps.newId();
-    if (result.ok) writeLastGood();
+    if (result.ok) {
+      pendingConservativePolicy = false;
+      writeLastGood();
+    } else {
+      pendingConservativePolicy = true;
+      saveErrors.set('policy', 'Restrictions are active here; policy could not be saved');
+    }
+    scheduleConservativeRetry();
     if (portable) notifyRemote();
     deps.onChanged();
-    return result;
+    return result.ok ? result : { ...result, applied: 'tightening' };
   }
 
   function saveGrants(candidate: Grant[], conservative = false): PolicyEditResult {
-    if (!grantsWritable) return { ok: false, error: 'read-only' };
+    if (!grantsWritable && !conservative) return { ok: false, error: 'read-only' };
     grantsDirty = false;
-    const result = writePrimary(
-      deps.grantsIo,
-      'grants',
-      serializeGrantsFile({ version: 1, grants: candidate }),
-    );
+    const result: PolicyEditResult = grantsWritable
+      ? writePrimary(
+          deps.grantsIo,
+          'grants',
+          serializeGrantsFile({ version: 1, grants: candidate }),
+        )
+      : { ok: false, error: 'read-only' };
     if (!result.ok && !conservative) return result;
     grants.load(candidate);
+    if (result.ok) pendingConservativeGrants = false;
+    else {
+      pendingConservativeGrants = true;
+      saveErrors.set('grants', 'Restrictions are active here; grants could not be saved');
+    }
+    scheduleConservativeRetry();
     notifyRemote();
     deps.onChanged();
-    return result;
+    return result.ok ? result : { ...result, applied: 'tightening' };
   }
 
-  function flush(): void {
-    if (policyDirty && !saveErrors.has('policy')) savePolicy(file, false, true);
-    if (grantsDirty && !saveErrors.has('grants')) saveGrants(grants.all(), true);
+  function flush(force = false): void {
+    if (
+      policyWritable &&
+      ((force && pendingConservativePolicy) || (policyDirty && !saveErrors.has('policy')))
+    )
+      savePolicy(file, false, true);
+    if (
+      grantsWritable &&
+      ((force && pendingConservativeGrants) || (grantsDirty && !saveErrors.has('grants')))
+    )
+      saveGrants(grants.all(), true);
   }
 
   const grantCandidate = () => {
     const next = createGrantStore({ now: deps.now, newId: deps.newId });
     next.load(grants.all());
     return next;
+  };
+
+  const reconcilePrincipals = (): void => {
+    const next = grantCandidate();
+    next.tick();
+    const candidate = next.all();
+    for (const grant of candidate) {
+      if (grant.state !== 'active' && grant.state !== 'suspended') continue;
+      const peerGone = grant.who.kind === 'peer' && deps.peerKnown(grant.who.machineId) === false;
+      const sessionGone =
+        (grant.who.kind === 'session' && !deps.hasSession(grant.who.sessionId)) ||
+        (grant.on.kind === 'session' && !deps.hasSession(grant.on.sessionId)) ||
+        (grant.for === 'session-end' &&
+          grant.anchorSessionId !== null &&
+          !deps.hasSession(grant.anchorSessionId));
+      if (peerGone || sessionGone) {
+        grant.state = peerGone ? 'revoked' : 'expired';
+        grant.endedAt = new Date(deps.now()).toISOString();
+      }
+    }
+    if (JSON.stringify(candidate) !== JSON.stringify(grants.all())) saveGrants(candidate, true);
   };
 
   const grantsChanged = (): void => {
@@ -594,6 +673,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       editToken = deps.newId();
       loadPolicy();
       loadGrants();
+      reconcilePrincipals();
       tickTimer = deps.setTimer(tick, TICK_MS);
       purgeTimer = deps.setTimer(purge, PURGE_MS);
     },
@@ -603,11 +683,13 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       if (tickTimer !== null) deps.clearTimer(tickTimer);
       if (purgeTimer !== null) deps.clearTimer(purgeTimer);
       if (writeTimer !== null) deps.clearTimer(writeTimer);
+      if (conservativeRetryTimer !== null) deps.clearTimer(conservativeRetryTimer);
+      conservativeRetryTimer = null;
       tickTimer = null;
       purgeTimer = null;
       writeTimer = null;
       activity.flushCounts(true);
-      flush();
+      flush(true);
     },
 
     decide(input) {
@@ -620,7 +702,8 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       // list again.
       const heldIds = new Set(held.map((o) => o.id));
       const saved = new Set(file.overrides.map((o) => o.id));
-      if (decision.overrideIds.some((id) => !saved.has(id) && !heldIds.has(id))) return null;
+      if (decision.overrideIds.some((id) => !saved.has(id) && !heldIds.has(id)))
+        return { ok: false, error: 'policy-changed' };
       // A grant revoked or expired, or an exception added, while the call waited refuses it.
       const now = deps.now();
       const live = new Set(
@@ -629,9 +712,11 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
           .filter((g) => isLiveGrant(g, now))
           .map((g) => g.id),
       );
-      if (decision.grantIds.some((id) => !live.has(id))) return null;
+      if (decision.grantIds.some((id) => !live.has(id)))
+        return { ok: false, error: 'policy-changed' };
       const fresh = decideEngine(stateNow(), { ...input, heldOverrides: held, now });
-      if (DECISION_RANK[fresh.decision] < DECISION_RANK[decision.decision]) return null;
+      if (DECISION_RANK[fresh.decision] < DECISION_RANK[decision.decision])
+        return { ok: false, error: 'policy-changed' };
       if (decision.grantIds.length > 0) {
         for (const id of decision.grantIds) grants.touch(id);
         markGrants();
@@ -641,9 +726,18 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       if (removed.length > 0) {
         const candidate = structuredClone(file);
         candidate.overrides = candidate.overrides.filter((o) => !used.has(o.id));
-        if (!savePolicy(candidate, false, true).ok) return null;
+        const saved = savePolicy(candidate, false, true);
+        if (!saved.ok) {
+          if (
+            saved.error === 'save-failed' ||
+            saved.error === 'too-large' ||
+            saved.error === 'read-only'
+          )
+            return { ok: false, error: saved.error };
+          throw new Error(`Unexpected conservative save failure: ${saved.error}`);
+        }
       }
-      return removed;
+      return { ok: true, overrides: removed };
     },
 
     noteDecision(activityId, input, decision) {
@@ -753,6 +847,14 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     revokeGrant(id) {
       return revokeGrantById(id);
     },
+
+    revokeGrants(ids) {
+      const candidate = grantCandidate();
+      for (const id of new Set(ids)) candidate.revoke(id);
+      return saveGrants(candidate.all(), true);
+    },
+
+    reconcilePrincipals,
 
     remoteDoc() {
       return remoteSnapshot();

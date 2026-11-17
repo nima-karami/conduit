@@ -21,6 +21,8 @@ describe('policy file IO', () => {
     expect(io.read()).toBeNull();
     expect(io.writeSync('{"one":1}')).toBe(true);
     expect(io.read()).toBe('{"one":1}');
+    if (process.platform !== 'win32') expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    expect(fs.readdirSync(path.dirname(file))).toEqual(['policy.json']);
     expect(io.writeSync('{"two":2}')).toBe(true);
     expect(fs.readFileSync(file, 'utf8')).toBe('{"two":2}');
   });

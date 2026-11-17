@@ -269,6 +269,8 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
     const bId = b.net.state().machineId;
     await until(() => linkTo(a.net, bId)?.state === 'up' && linkTo(b.net, aId)?.state === 'up');
     expect(linkTo(a.net, bId)?.name).toBe('net-b');
+    expect(a.net.port().hasPeer(bId)).toBe(true);
+    expect(a.net.port().hasPeer('m-deadbeef')).toBe(false);
     expect(linkTo(b.net, aId)?.capabilities).toEqual({
       messaging: true,
       monitor: true,
@@ -288,6 +290,7 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
     await call(b.net, 'link.revoke', { machineId: aId });
     await until(() => linkTo(a.net, bId)?.state === 'revoked');
     expect(linkTo(a.net, bId)?.revokedBy).toBe('peer');
+    expect(a.net.port().hasPeer(bId)).toBe(false);
     expect(auditKinds(b.dir)).toEqual(expect.arrayContaining(['pairing.linked', 'link.revoked']));
     expect(tapped.map((e) => e.kind)).toEqual(auditKinds(b.dir));
     expect(a.states.length).toBeGreaterThan(0);

@@ -612,6 +612,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
   manager.onRevoked((machineId) => messaging.revoked(machineId));
 
   const networkPort: NetworkPort = {
+    hasPeer: (machineId) => store.peerKnown(machineId),
     remoteEntries: () => directory.entries(),
     resolve: (target) => directory.resolve(target),
     enqueue: (msg, recipients) => messaging.enqueue(msg, recipients),

@@ -10779,6 +10779,17 @@ button.toggle--on .toggle__knob {
   flex: 0 0 auto;
   white-space: nowrap;
 }
+.permission-store-notice {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+}
+.permission-store-notice p {
+  margin: 0 0 6px;
+}
+
 .termhost__bar {
   display: flex;
   align-items: center;

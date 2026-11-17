@@ -242,3 +242,102 @@ describe('atomicWriteFileSync', () => {
     },
   );
 });
+
+it('sync data flush precedes promotion and failed flush removes its temporary file', () => {
+  const file = join(tmp(), 'state.json');
+  fs.writeFileSync(file, 'old');
+  const events: string[] = [];
+  atomicWriteFileSync(
+    file,
+    'new',
+    {
+      ...fs,
+      fsyncSync(fd) {
+        events.push('flush');
+        fs.fsyncSync(fd);
+      },
+      renameSync(from, to) {
+        events.push('rename');
+        fs.renameSync(from, to);
+      },
+    },
+    { syncData: true, mode: 0o600 },
+  );
+  expect(events).toEqual(['flush', 'rename']);
+  expect(() =>
+    atomicWriteFileSync(
+      file,
+      'bad',
+      {
+        ...fs,
+        fsyncSync() {
+          throw new Error('flush failed');
+        },
+      },
+      { syncData: true },
+    ),
+  ).toThrow('flush failed');
+  expect(fs.readFileSync(file, 'utf8')).toBe('new');
+  expect(fs.readdirSync(join(file, '..'))).toEqual(['state.json']);
+});
+
+it('sync locked promotion retries at most three times and preserves original cleanup failures', () => {
+  const file = join(tmp(), 'state.json');
+  fs.writeFileSync(file, 'old');
+  let attempts = 0;
+  expect(() =>
+    atomicWriteFileSync(
+      file,
+      'new',
+      {
+        ...fs,
+        renameSync() {
+          attempts++;
+          throw Object.assign(new Error('locked'), { code: 'EBUSY' });
+        },
+        unlinkSync() {
+          throw new Error('cleanup failed');
+        },
+      },
+      { retryLockedRename: true },
+    ),
+  ).toThrow(AggregateError);
+  expect(attempts).toBe(4);
+  expect(fs.readFileSync(file, 'utf8')).toBe('old');
+});
+
+it('sync partial writes clean temporary bytes and transient locks eventually promote', () => {
+  const file = join(tmp(), 'state.json');
+  fs.writeFileSync(file, 'old');
+  expect(() =>
+    atomicWriteFileSync(
+      file,
+      'bad',
+      {
+        ...fs,
+        writeFileSync(destination) {
+          fs.writeFileSync(destination, 'partial');
+          throw new Error('write failed');
+        },
+      },
+      { syncData: true },
+    ),
+  ).toThrow('write failed');
+  expect(fs.readFileSync(file, 'utf8')).toBe('old');
+  expect(fs.readdirSync(join(file, '..'))).toEqual(['state.json']);
+  let attempts = 0;
+  atomicWriteFileSync(
+    file,
+    'new',
+    {
+      ...fs,
+      renameSync(from, to) {
+        if (++attempts < 3) throw Object.assign(new Error('locked'), { code: 'EACCES' });
+        fs.renameSync(from, to);
+      },
+    },
+    { syncData: true, retryLockedRename: true },
+  );
+  expect(attempts).toBe(3);
+  expect(fs.readFileSync(file, 'utf8')).toBe('new');
+});
