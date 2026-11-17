@@ -56,6 +56,11 @@ LinkStore.peerKnown→NetworkPort.hasPeer→host PolicyServiceDeps.peerKnown→l
 PolicyService.saveError/backupWarning→PermissionStoreNotice in App→retryPolicy→current conservative snapshot. Real notice caller introduced same slice; no dead component.
 Grant batch IDs→CallFlow post-grant failure cleanup→owner revokeGrants→M1 pending tightening→persist/restart. Previous grants untouched.
 
+## Review correction at 4f63abde
+The grant owner must roll back exact newly-created IDs if saveGrants publication callbacks throw before IDs return to CallFlow. Factor shared revokeGrants, preserve original/aggregate throwing cleanup errors, apply conservative memory/pending state before failure notification. Tests cover remote listener/onChanged throws, rollback IO outage/recovery/restart, prior grants preserved. PolicyIo consumer test injects only actual node:fs rename failure, requires prior bytes/temp cleanup and fails under plain-write mutation. Authorized correction file map: policy-service.ts, policy-service.test.ts, policy-file-fs.test.ts, CHANGELOG.md and this plan. Real missing E2E remains root integration-owned.
+
+Runtime correction exact coverage: real close_session multi-target Ask with newly persisted override added after initial ask commit; primary policy obstruction during allowed answer with grant refuses receipt/save-failed, no new grant or target closure. Real session-end anchor removal while grants primary obstructed expires memory, recovery writes expired state, cold restart no active authority/anchor. Existing Electron paths only, no debug endpoint.
+
 ## Self-review
 #1 Coverage: ok — M1/M2 plus selected minor consumers/proofs, deferred items explicit
 #2 Placeholder scan: ok

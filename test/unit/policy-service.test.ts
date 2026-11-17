@@ -333,6 +333,140 @@ describe('policy service', () => {
     expect(h.service.ui([]).saveError).toContain('active here');
   });
 
+  it('preserves the original publication cause when rollback has a typed storage failure', async () => {
+    const h = harness({
+      policy: policyText(),
+      grants: serializeGrantsFile({ version: 1, grants: [grant({ id: 'prior' })] }),
+    });
+    h.service.start();
+    const original = new Error('publication failed');
+    let calls = 0;
+    const unsubscribe = h.service.onRemoteDocChange(() => {
+      if (++calls === 1) {
+        h.setWriteDown(true);
+        throw original;
+      }
+    });
+    expect(() =>
+      h.service.createGrants(
+        { who: 'session', on: 'target', for: 'until-revoked' },
+        session(),
+        'close_session',
+        [target({ sessionId: 'a' })],
+        'fresh',
+      ),
+    ).toThrow(original);
+    expect(h.service.ui([]).grants.map((g) => [g.requestId, g.state])).toEqual([
+      [null, 'active'],
+      ['fresh', 'revoked'],
+    ]);
+    expect(h.service.ui([]).saveError).toContain('active here');
+    unsubscribe();
+    h.setWriteDown(false);
+    await h.service.stop();
+    expect(JSON.parse(h.grantWrites.at(-1) ?? '{}').grants.map((g: Grant) => g.state)).toEqual([
+      'active',
+      'revoked',
+    ]);
+  });
+
+  it.each(['remote', 'changed'] as const)(
+    'revokes the real published batch when %s publication throws',
+    (where) => {
+      const h = harness({
+        policy: policyText(),
+        grants: serializeGrantsFile({ version: 1, grants: [grant({ id: 'prior' })] }),
+      });
+      h.service.start();
+      const original = new Error('publication failed');
+      const cleanup = new Error('rollback publication failed');
+      let calls = 0;
+      const fail = () => {
+        throw ++calls === 1 ? original : cleanup;
+      };
+      if (where === 'remote') h.service.onRemoteDocChange(fail);
+      else h.deps.onChanged = fail;
+      let caught: unknown;
+      try {
+        h.service.createGrants(
+          { who: 'session', on: 'target', for: 'until-revoked' },
+          session(),
+          'close_session',
+          [target({ sessionId: 'a' }), target({ sessionId: 'b' })],
+          'fresh',
+        );
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(AggregateError);
+      if (!(caught instanceof AggregateError))
+        throw new Error('Expected original and cleanup failure');
+      expect(caught.errors).toEqual([original, cleanup]);
+      expect(h.service.ui([]).grants.map((g) => [g.requestId, g.state])).toEqual([
+        [null, 'active'],
+        ['fresh', 'revoked'],
+        ['fresh', 'revoked'],
+      ]);
+      expect(
+        JSON.parse(h.grantWrites.at(-1) ?? '{}').grants.map((g: Grant) => [
+          g.id === 'prior',
+          g.state,
+        ]),
+      ).toEqual([
+        [true, 'active'],
+        [false, 'revoked'],
+        [false, 'revoked'],
+      ]);
+    },
+  );
+
+  it.each(['remote', 'changed'] as const)(
+    'keeps failed %s publication rollback restrictive through IO outage and restart recovery',
+    async (where) => {
+      const h = harness({
+        policy: policyText(),
+        grants: serializeGrantsFile({ version: 1, grants: [grant({ id: 'prior' })] }),
+      });
+      h.service.start();
+      const original = new Error('publication failed');
+      const changed = h.deps.onChanged;
+      const fail = () => {
+        h.setWriteDown(true);
+        throw original;
+      };
+      const unsubscribe =
+        where === 'remote'
+          ? h.service.onRemoteDocChange(fail)
+          : () => {
+              h.deps.onChanged = changed;
+            };
+      if (where === 'changed') h.deps.onChanged = fail;
+      expect(() =>
+        h.service.createGrants(
+          { who: 'session', on: 'target', for: 'until-revoked' },
+          session(),
+          'close_session',
+          [target({ sessionId: 'a' })],
+          'fresh',
+        ),
+      ).toThrow();
+      expect(h.service.ui([]).grants.map((g) => [g.requestId, g.state])).toEqual([
+        [null, 'active'],
+        ['fresh', 'revoked'],
+      ]);
+      expect(h.service.ui([]).saveError).toContain('active here');
+      unsubscribe();
+      h.setWriteDown(false);
+      await h.service.stop();
+      const restarted = harness({ policy: policyText(), grants: h.grantWrites.at(-1) });
+      restarted.service.start();
+      expect(restarted.service.ui([]).grants.map((g) => [g.requestId, g.state])).toEqual([
+        [null, 'active'],
+        ['fresh', 'revoked'],
+      ]);
+    },
+  );
+
   it('rolls back only the exact newly-created batch and persists a failed rollback on stop', async () => {
     const h = harness({
       policy: policyText(),

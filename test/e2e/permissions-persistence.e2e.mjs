@@ -264,8 +264,10 @@ await runScenario(
 
       await page.evaluate(() => {
         window.__persistenceAsks = [];
+        window.__persistenceClosed = [];
         window.agentDeck.subscribe((message) => {
           if (message.type === 'mcp:ask') window.__persistenceAsks.push(message);
+          if (message.type === 'mcp:askClosed') window.__persistenceClosed.push(message.askId);
         });
       });
       const grantCaller = await openFake(page, work);
@@ -512,6 +514,325 @@ await runScenario(
       );
       policy = (await mcpState(page)).policy;
 
+      await page.evaluate(() => {
+        window.__persistenceAsks = [];
+        window.__persistenceClosed = [];
+        window.agentDeck.subscribe((message) => {
+          if (message.type === 'mcp:ask') window.__persistenceAsks.push(message);
+          if (message.type === 'mcp:askClosed') window.__persistenceClosed.push(message.askId);
+        });
+      });
+      const targetA = await openFake(page, work);
+      const targetB = await openFake(page, work);
+      const consumeCaller = await openFake(page, work);
+      const consumePoint = { kind: 'session', sessionId: consumeCaller.sessionId };
+      const baseAsk = {
+        profileId: 'worker',
+        onScreenOnly: false,
+        exceptions: [
+          {
+            tool: 'close_session',
+            scope: { kind: 'anywhere' },
+            rule: { decision: 'ask', when: 'always', reach: 'any' },
+          },
+        ],
+      };
+      const denyA = {
+        ...baseAsk,
+        exceptions: [
+          ...baseAsk.exceptions,
+          {
+            tool: 'close_session',
+            scope: { kind: 'session', sessionId: targetA.sessionId },
+            rule: { decision: 'deny' },
+          },
+        ],
+      };
+      const setConsumeAssignment = async (assignment) => {
+        const before = await policyWhen(
+          page,
+          (value) => value.editToken.length > 0,
+          'consume setup token',
+        );
+        const result = await ownerEdit(page, {
+          type: 'mcp:saveAssignment',
+          point: consumePoint,
+          assignment,
+          expectedToken: before.editToken,
+        });
+        assert(result.ok === true, `consume setup assignment refused: ${JSON.stringify(result)}`);
+        return policyWhen(
+          page,
+          (value) => value.editToken !== before.editToken,
+          'consume assignment broadcast',
+        );
+      };
+      await setConsumeAssignment(denyA);
+      const priorDenied = await callTool(page, consumeCaller.sessionId, 'close_session', {
+        session: targetA.handle,
+      });
+      assert(
+        priorDenied?.error?.code === 'tool_disabled',
+        `missing prior explicit deny: ${JSON.stringify(priorDenied)}`,
+      );
+      const queried = await ownerEdit(
+        page,
+        {
+          type: 'mcp:activity:get',
+          query: { sessionId: consumeCaller.sessionId, action: 'close_session', decision: 'deny' },
+        },
+        'mcp:activity',
+      );
+      assert(
+        queried.page.error === null,
+        `denial Activity query failed: ${JSON.stringify(queried.page)}`,
+      );
+      const deniedRow = queried.page.rows.find((row) => row.outcome === 'denied');
+      assert(deniedRow, 'prior explicit-deny Activity row missing');
+      await setConsumeAssignment(baseAsk);
+      const closeBefore = await startCall(page, consumeCaller.sessionId, 'close_session', {
+        sessions: [targetA.handle, targetB.handle],
+      });
+      let consumeAsk;
+      assert(
+        await until(async () => {
+          consumeAsk = await page.evaluate(
+            (id) => window.__persistenceAsks.find((entry) => entry.callerSessionId === id),
+            consumeCaller.sessionId,
+          );
+          return consumeAsk !== undefined;
+        }, 10_000),
+        'multi-target close did not ask',
+      );
+      const beforeOverrideIds = savedPolicy().overrides.map((entry) => entry.id);
+      const once = await ownerEdit(
+        page,
+        { type: 'mcp:allowOnce', activityId: deniedRow.id },
+        'mcp:policyResult',
+      );
+      assert(once.ok === true, `prior deny override refused: ${JSON.stringify(once)}`);
+      const override = savedPolicy().overrides.find(
+        (entry) => !beforeOverrideIds.includes(entry.id),
+      );
+      assert(
+        override?.target.sessionId === targetA.sessionId,
+        'one-use override missing or wrong target',
+      );
+      await setConsumeAssignment(denyA);
+      assert(
+        await until(
+          () =>
+            page.evaluate(
+              ({ callerId, askId }) =>
+                window.__mcp.awaitingApproval.includes(callerId) &&
+                !window.__persistenceClosed.includes(askId) &&
+                window.__persistenceAsks.filter((entry) => entry.callerSessionId === callerId)
+                  .length === 1 &&
+                window.__persistenceAsks.some((entry) => entry.askId === askId),
+              { callerId: consumeCaller.sessionId, askId: consumeAsk.askId },
+            ),
+          5_000,
+        ),
+        'scoped deny withdrew the pending overridden ask',
+      );
+      const beforeConsumeGrants = (await mcpState(page)).policy.grants.map((entry) => entry.id);
+      const beforeConsumeGrantsBytes = readFileSync(grantsPath, 'utf8');
+      const consumePolicyBytes = readFileSync(policyPath, 'utf8');
+      renameSync(policyPath, backupPath);
+      let consumeObstructed = false;
+      let consumeReceipt;
+      let consumeResult;
+      try {
+        mkdirSync(policyPath);
+        consumeObstructed = true;
+        consumeReceipt = await ownerEdit(
+          page,
+          {
+            type: 'mcp:permissionAnswer',
+            requestId: consumeAsk.askId,
+            answer: { outcome: 'allowed', grant: { who: 'session', on: 'anywhere', for: '1h' } },
+          },
+          'mcp:permissionResult',
+        );
+        assert(
+          consumeReceipt.ok === false && consumeReceipt.message?.includes('save-failed'),
+          `answered consume did not refuse with persistence error: ${JSON.stringify(consumeReceipt)}`,
+        );
+        consumeResult = await resultAfter(consumeCaller.sessionId, closeBefore, 10_000);
+        assert(
+          consumeResult?.error?.code === 'policy_unavailable' &&
+            consumeResult.error.message.includes('save-failed'),
+          `caller consume failure: ${JSON.stringify(consumeResult)}`,
+        );
+        const after = await policyWhen(
+          page,
+          (value) => value.saveError !== null,
+          'consume failure snapshot',
+        );
+        assert(
+          JSON.stringify(after.grants.map((entry) => entry.id)) ===
+            JSON.stringify(beforeConsumeGrants),
+          'refused answer left a new or partial grant',
+        );
+        assert(
+          readFileSync(grantsPath, 'utf8') === beforeConsumeGrantsBytes,
+          'refused answer wrote new grant authority',
+        );
+        const targetsPresent = await page.evaluate(
+          (ids) => ids.every((id) => window.__sessions.some((session) => session.id === id)),
+          [targetA.sessionId, targetB.sessionId],
+        );
+        assert(targetsPresent, 'failed consume closed a target or partially executed multi-close');
+      } finally {
+        if (consumeObstructed) rmdirSync(policyPath);
+        renameSync(backupPath, policyPath);
+      }
+      assert(
+        readFileSync(policyPath, 'utf8') === consumePolicyBytes,
+        'consume obstruction was not restored exactly',
+      );
+      const consumeRecovery =
+        (await mcpState(page)).policy.saveError === null ? 'bounded-auto-retry' : 'manual-retry';
+      if (consumeRecovery === 'manual-retry') {
+        const retried = await ownerEdit(page, { type: 'mcp:policyRetry' });
+        assert(retried.ok === true, `consume retry failed: ${JSON.stringify(retried)}`);
+      }
+      await policyWhen(page, (value) => value.saveError === null, 'consumed override recovery');
+      assert(
+        !savedPolicy().overrides.some((entry) => entry.id === override.id),
+        'failed answered consume was not conservatively persisted',
+      );
+      assert(
+        JSON.stringify((await mcpState(page)).policy.grants.map((entry) => entry.id)) ===
+          JSON.stringify(beforeConsumeGrants),
+        'consume recovery resurrected failed-answer authority',
+      );
+      log(
+        'real answered one-use consume write failure refused receipt and caller; zero grants and both targets intact',
+      );
+
+      const anchor = await openFake(page, work);
+      const anchorBefore = await startCall(page, anchor.sessionId, 'open_session', {
+        agent: 'e2e-fake-mcp',
+        path: work,
+        focus: false,
+      });
+      let anchorAsk;
+      assert(
+        await until(async () => {
+          anchorAsk = await page.evaluate(
+            (id) => window.__persistenceAsks.find((entry) => entry.callerSessionId === id),
+            anchor.sessionId,
+          );
+          return anchorAsk !== undefined;
+        }, 10_000),
+        'anchor session grant did not ask',
+      );
+      const anchorAnswer = await ownerEdit(
+        page,
+        {
+          type: 'mcp:permissionAnswer',
+          requestId: anchorAsk.askId,
+          answer: {
+            outcome: 'allowed',
+            grant: { who: 'session', on: 'anywhere', for: 'session-end' },
+          },
+        },
+        'mcp:permissionResult',
+      );
+      assert(
+        anchorAnswer.ok === true,
+        `anchor grant answer failed: ${JSON.stringify(anchorAnswer)}`,
+      );
+      assert(
+        (await resultAfter(anchor.sessionId, anchorBefore, 15_000))?.session_id,
+        'anchor granted action did not execute',
+      );
+      const anchoredPolicy = await policyWhen(
+        page,
+        (value) =>
+          value.grants.some(
+            (entry) => entry.requestId === anchorAsk.askId && entry.state === 'active',
+          ),
+        'anchored grant creation',
+      );
+      const anchoredGrant = anchoredPolicy.grants.find(
+        (entry) => entry.requestId === anchorAsk.askId,
+      );
+      assert(
+        anchoredGrant.anchorSessionId === anchor.sessionId && anchoredGrant.for === 'session-end',
+        'grant lacks actual session-end anchor',
+      );
+      const anchorGrantBytes = readFileSync(grantsPath, 'utf8');
+      renameSync(grantsPath, grantsBackup);
+      let anchorObstructed = false;
+      try {
+        mkdirSync(grantsPath);
+        anchorObstructed = true;
+        await page.evaluate((id) => window.agentDeck.post({ type: 'kill', id }), anchor.sessionId);
+        assert(
+          await until(
+            async () =>
+              !(await page.evaluate(
+                (id) => window.__sessions.some((session) => session.id === id),
+                anchor.sessionId,
+              )),
+            15_000,
+          ),
+          'owner removal did not delete anchor',
+        );
+        await policyWhen(
+          page,
+          (value) =>
+            value.saveError !== null &&
+            value.grants.some(
+              (entry) => entry.id === anchoredGrant.id && entry.state === 'expired',
+            ),
+          'failed anchor cleanup remains expired in memory',
+        );
+      } finally {
+        if (anchorObstructed) rmdirSync(grantsPath);
+        renameSync(grantsBackup, grantsPath);
+      }
+      assert(
+        readFileSync(grantsPath, 'utf8') === anchorGrantBytes,
+        'anchor cleanup obstruction not restored exactly',
+      );
+      const anchorRecovery =
+        (await mcpState(page)).policy.saveError === null ? 'bounded-auto-retry' : 'manual-retry';
+      if (anchorRecovery === 'manual-retry') {
+        const retried = await ownerEdit(page, { type: 'mcp:policyRetry' });
+        assert(retried.ok === true, `anchor cleanup retry failed: ${JSON.stringify(retried)}`);
+      }
+      await policyWhen(
+        page,
+        (value) => value.saveError === null,
+        'anchor cleanup durable recovery',
+      );
+      assert(
+        JSON.parse(readFileSync(grantsPath, 'utf8')).grants.find(
+          (entry) => entry.id === anchoredGrant.id,
+        )?.state === 'expired',
+        'anchor cleanup recovered an active grant',
+      );
+      writeFileSync(
+        join('.autoloop', 'evidence', 'hardening-review-runtime-cases.json'),
+        JSON.stringify({
+          profile: userDataDir,
+          consumeRecovery,
+          anchorRecovery,
+          consumeReceipt,
+          consumeResult,
+          overrideId: override.id,
+          anchorId: anchor.sessionId,
+          anchoredGrantId: anchoredGrant.id,
+        }),
+      );
+      log(
+        'real anchor removal during grant-store failure expired memory and recovery durably kept expiry',
+      );
+      policy = (await mcpState(page)).policy;
+
       const oldToken = policy.editToken;
       // Closing the window alone keeps the policy owner alive; stop its server before testing reload.
       await closeApp(app, page);
@@ -525,6 +846,23 @@ await runScenario(
           'restarted owner snapshot',
         );
         assert(restarted.editToken !== oldToken, 'relaunch adopted the old policy owner token');
+        assert(
+          !restarted.grants.some(
+            (entry) => entry.id === anchoredGrant.id && entry.state === 'active',
+          ),
+          'cold restart resurrected failed anchor-cleanup grant',
+        );
+        assert(
+          !(await second.page.evaluate(
+            (id) => window.__sessions.some((session) => session.id === id),
+            anchor.sessionId,
+          )),
+          'cold restart restored deleted anchor',
+        );
+        assert(
+          !savedPolicy().overrides.some((entry) => entry.id === override.id),
+          'cold restart restored failed-answer override',
+        );
         assert(
           !restarted.grants.some((entry) => entry.id === grant.id && entry.state === 'active'),
           'cold restart resurrected revoked grant',

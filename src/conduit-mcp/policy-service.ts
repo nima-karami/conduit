@@ -244,7 +244,6 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
   function writePrimary(io: PolicyIo, kind: 'policy' | 'grants', text: string): PolicyEditResult {
     if (Buffer.byteLength(text) > POLICY_MAX_BYTES) {
       saveErrors.set(kind, `${kind} store is too large to save`);
-      deps.onChanged();
       return { ok: false, error: 'too-large' };
     }
     try {
@@ -255,7 +254,6 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     } catch (error) {
       saveErrors.set(kind, `${kind} could not be saved`);
       deps.warn(`${kind}.json could not be saved; retry explicitly`, error);
-      deps.onChanged();
       return { ok: false, error: 'save-failed' };
     }
   }
@@ -314,7 +312,10 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     const result: PolicyEditResult = policyWritable
       ? writePrimary(deps.policyIo, 'policy', serializePolicyFile(candidate))
       : { ok: false, error: 'read-only' };
-    if (!result.ok && !conservative) return result;
+    if (!result.ok && !conservative) {
+      deps.onChanged();
+      return result;
+    }
     if (!result.ok) candidate.rev = file.rev;
     file = candidate;
     if (assignmentsChanged) editToken = deps.newId();
@@ -341,7 +342,10 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
           serializeGrantsFile({ version: 1, grants: candidate }),
         )
       : { ok: false, error: 'read-only' };
-    if (!result.ok && !conservative) return result;
+    if (!result.ok && !conservative) {
+      deps.onChanged();
+      return result;
+    }
     grants.load(candidate);
     if (result.ok) pendingConservativeGrants = false;
     else {
@@ -618,6 +622,12 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     return valid.ok ? savePolicy(candidate, portable) : valid;
   };
 
+  const revokeGrants = (ids: readonly string[]): PolicyEditResult => {
+    const candidate = grantCandidate();
+    for (const id of new Set(ids)) candidate.revoke(id);
+    return saveGrants(candidate.all(), true);
+  };
+
   const createGrants = (
     choice: GrantChoice,
     p: Principal,
@@ -636,8 +646,20 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       if (scope === null) return { ok: false, error: 'invalid-value' };
       made.push(candidate.create(who, tool, scope, choice.for, anchor, requestId));
     }
-    const result = saveGrants(candidate.all());
-    return result.ok ? { ok: true, grants: made } : result;
+    try {
+      const result = saveGrants(candidate.all());
+      return result.ok ? { ok: true, grants: made } : result;
+    } catch (error) {
+      try {
+        revokeGrants(made.map((grant) => grant.id));
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          'Grant publication and rollback both failed',
+        );
+      }
+      throw error;
+    }
   };
 
   const remoteSnapshot = (): { rev: number; doc: RemotePolicyDoc } => ({
@@ -848,11 +870,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       return revokeGrantById(id);
     },
 
-    revokeGrants(ids) {
-      const candidate = grantCandidate();
-      for (const id of new Set(ids)) candidate.revoke(id);
-      return saveGrants(candidate.all(), true);
-    },
+    revokeGrants,
 
     reconcilePrincipals,
 
