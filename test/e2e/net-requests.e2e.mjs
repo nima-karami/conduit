@@ -1,4 +1,13 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { until } from './conduit-mcp-helpers.mjs';
@@ -221,6 +230,125 @@ async function run() {
       refusedCall?.error?.code === 'denied',
       `a denied ask must give denied: ${JSON.stringify(refusedCall)}`,
     );
+
+    phase('3b. remote grant save failure stays open; a new owner answer retries once');
+    const beforeConsent = await b.c2.call('events.subscribe');
+    const baselineGrants = beforeConsent.mcp.policy.grants;
+    const baselineSessions = beforeConsent.sessions.map((session) => session.id).sort();
+    const consentBefore = resultsOf(a, aa).length;
+    typeCall(a, aa, 'open_session', {
+      machine: bId,
+      agent: ECHO_AGENT,
+      path: b.work,
+      focus: false,
+    });
+    let consent = null;
+    await eventually("A shows B's grantable ask", async () => {
+      consent = await permissionRow(a, bId);
+      return consent !== null && consent.id !== second.id;
+    });
+    const grantsPath = join(b.userData, 'conduit-mcp', 'grants.json');
+    const grantsBackup = `${grantsPath}.net-requests-backup`;
+    const hadGrantsFile = existsSync(grantsPath);
+    const priorBytes = hadGrantsFile ? readFileSync(grantsPath) : null;
+    if (hadGrantsFile) renameSync(grantsPath, grantsBackup);
+    let failedConsent;
+    try {
+      mkdirSync(grantsPath);
+      failedConsent = await answer(a, consent.id, {
+        outcome: 'allowed',
+        grant: { who: 'peer', on: 'anywhere', for: 'until-revoked' },
+      });
+      assert(
+        failedConsent.ok === false &&
+          failedConsent.reason === 'not_answerable' &&
+          failedConsent.message.includes('save-failed'),
+        `remote save failure lost its typed receipt: ${JSON.stringify(failedConsent)}`,
+      );
+      assert((await permissionRow(a, bId))?.id === consent.id, 'failed consent closed its mirror');
+      const blocked = await b.c2.call('events.subscribe');
+      assert(
+        JSON.stringify(blocked.mcp.policy.grants) === JSON.stringify(baselineGrants),
+        'failed consent created a grant',
+      );
+      assert(
+        JSON.stringify(blocked.sessions.map((session) => session.id).sort()) ===
+          JSON.stringify(baselineSessions),
+        'failed consent opened a session',
+      );
+      assert(resultsOf(a, aa).length === consentBefore, 'failed consent ran the waiting call');
+    } finally {
+      if (existsSync(grantsPath)) rmdirSync(grantsPath);
+      if (hadGrantsFile) renameSync(grantsBackup, grantsPath);
+    }
+    assert(
+      !hadGrantsFile || readFileSync(grantsPath).equals(priorBytes),
+      'obstruction restoration changed the original grants file',
+    );
+    assert((await permissionRow(a, bId))?.id === consent.id, 'recovery replaced the pending ask');
+    assert(resultsOf(a, aa).length === consentBefore, 'recovery automatically ran the call');
+    const recovered = await b.c2.call('events.subscribe');
+    assert(
+      JSON.stringify(recovered.mcp.policy.grants) === JSON.stringify(baselineGrants),
+      'recovery automatically created a grant',
+    );
+    const retriedConsent = await answer(a, consent.id, {
+      outcome: 'allowed',
+      grant: { who: 'peer', on: 'anywhere', for: 'until-revoked' },
+    });
+    assert(
+      retriedConsent.ok === true,
+      `new answer retry failed: ${JSON.stringify(retriedConsent)}`,
+    );
+    await eventually('the retried call completes', () => resultsOf(a, aa).length > consentBefore);
+    const retriedCall = resultsOf(a, aa).at(-1).result;
+    assert(typeof retriedCall?.session_id === 'string', `retry: ${JSON.stringify(retriedCall)}`);
+    const committed = await b.c2.call('events.subscribe');
+    const newGrants = committed.mcp.policy.grants.filter(
+      (grant) => !baselineGrants.some((prior) => prior.id === grant.id),
+    );
+    const newSessions = committed.sessions.filter(
+      (session) => !baselineSessions.includes(session.id),
+    );
+    assert(
+      newGrants.length === 1 && newGrants[0].state === 'active',
+      `retry must create exactly one active grant: ${JSON.stringify(newGrants)}`,
+    );
+    assert(
+      newSessions.length === 1 &&
+        newSessions[0].id === retriedCall.session_id &&
+        resultsOf(a, aa).length === consentBefore + 1,
+      `retry must run exactly once: ${JSON.stringify(newSessions)}`,
+    );
+    assert(
+      JSON.parse(readFileSync(grantsPath, 'utf8')).grants.some(
+        (grant) => grant.id === newGrants[0].id,
+      ),
+      'successful retry grant was not persisted',
+    );
+    mkdirSync(join(REPO, '.autoloop', 'evidence'), { recursive: true });
+    writeFileSync(
+      join(REPO, '.autoloop', 'evidence', 'remote-receipt-runtime-cases.json'),
+      `${JSON.stringify(
+        {
+          failedConsent,
+          retriedConsent,
+          newGrants: newGrants.length,
+          newSessions: newSessions.length,
+          resultCount: resultsOf(a, aa).length - consentBefore,
+          recovery: 'explicit-new-answer',
+          sameAnswerIdReplay: 'not exposed by owner C2 path',
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    // The offline-answer case must retain its own permission ask rather than reuse this consent.
+    const revoked = await b.c2.call('mcp.fromRenderer', {
+      windowId: 1,
+      message: { type: 'mcp:revokeGrant', requestId: 1, grantId: newGrants[0].id },
+    });
+    assert(revoked.reply?.ok === true, `grant cleanup: ${JSON.stringify(revoked)}`);
 
     phase('4. an answer while the link is down is refused on A as peer_unreachable');
     typeCall(a, aa, 'open_session', {

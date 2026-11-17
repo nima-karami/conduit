@@ -656,3 +656,26 @@ describe('A: link state reaches the mirror store', () => {
     expect(w.a.setLinkState).not.toHaveBeenCalled();
   });
 });
+
+it('preserves policy storage failure across answered wire frames without replay', async () => {
+  const w = setup();
+  w.put(controller(CTRL), 'up', 3);
+  const error = {
+    code: 'policy_unavailable',
+    message: 'Permissions could not be saved (save-failed)',
+    retryable: false,
+  };
+  w.b.applyRemoteAnswer.mockResolvedValueOnce({ ok: false, error });
+  await w.req.onFrame(CTRL, answerFrame());
+  expect(w.frames('request.answered')).toEqual([
+    { t: 'request.answered', answerId: 'a-wire-1', ok: false, error },
+  ]);
+  const a = setup();
+  a.put(dialed(DIALED), 'up', 3);
+  const pending = a.req.answerRemote(DIALED, 'r-1', { outcome: 'allow', grant: true });
+  await a.req.onFrame(DIALED, { t: 'request.answered', answerId: 'a-1', ok: false, error });
+  await expect(pending).resolves.toEqual({ ok: false, error });
+  a.fire();
+  a.changed();
+  expect(a.frames('request.answer')).toHaveLength(1);
+});

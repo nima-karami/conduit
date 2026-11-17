@@ -6081,6 +6081,7 @@ describe('createConduitMcpHost — wait_sessions', () => {
     let changed = () => {};
     const network: NetworkPort = {
       hasPeer: () => null,
+      inboundPrincipal: () => null,
       remoteEntries: () => [entry],
       resolve: (target) =>
         target === address || target === 'fake-9@peer'
@@ -7477,6 +7478,7 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
     };
     const network: NetworkPort = {
       hasPeer: () => null,
+      inboundPrincipal: () => null,
       remoteEntries: () => [],
       resolve: unused,
       enqueue: unused,
@@ -7752,6 +7754,30 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
   });
 });
 
+function inboundNetwork(principal: () => RemoteCaller | null): NetworkPort {
+  const unused = (): never => {
+    throw new Error('unused inbound network operation');
+  };
+  return {
+    hasPeer: () => true,
+    inboundPrincipal: principal,
+    remoteEntries: () => [],
+    resolve: unused,
+    enqueue: unused,
+    call: unused,
+    waitReading: unused,
+    peerCapabilitiesOf: unused,
+    onChange: () => () => undefined,
+    listMachines: () => [],
+    connectMachine: unused,
+    disconnectMachine: unused,
+    answerRemoteRequest: unused,
+    pushPolicy: unused,
+    selfName: () => 'this machine',
+    revokeRemoteGrant: unused,
+  };
+}
+
 describe('createConduitMcpHost — a remote lead (routed calls, CON-40 S2, plan decision 4)', () => {
   const LEAD: RemoteCaller = {
     kind: 'remote',
@@ -7763,7 +7789,11 @@ describe('createConduitMcpHost — a remote lead (routed calls, CON-40 S2, plan 
   };
 
   async function withLocal(over: Parameters<typeof harness>[0] = {}) {
-    const h = harness({ kinds: { '/w/wt': 'dir', '/w/src': 'dir' }, ...over });
+    const h = harness({
+      kinds: { '/w/wt': 'dir', '/w/src': 'dir' },
+      network: inboundNetwork(() => structuredClone(LEAD)),
+      ...over,
+    });
     await h.host.start();
     await launch(h, 's1');
     return h;
@@ -7944,7 +7974,11 @@ describe('createConduitMcpHost — a remote lead: the refusals the host adds (CO
   };
 
   async function withLocal(over: Parameters<typeof harness>[0] = {}) {
-    const h = harness({ kinds: { '/w/wt': 'dir' }, ...over });
+    const h = harness({
+      kinds: { '/w/wt': 'dir' },
+      network: inboundNetwork(() => structuredClone(LEAD)),
+      ...over,
+    });
     await h.host.start();
     await launch(h, 's1');
     return h;
@@ -8104,11 +8138,13 @@ describe('createConduitMcpHost — a routed ask waits for the owner on this mach
     notes: { onScreenOnlyOffered: [] },
   });
 
-  async function withAsk() {
+  async function withAsk(over: Parameters<typeof harness>[0] = {}) {
     const h = harness({
       kinds: { '/w/wt': 'dir', '/w/src': 'dir' },
       manualTimers: true,
       policyIo: { read: () => ASK_POLICY, writeSync: () => true },
+      network: inboundNetwork(() => structuredClone(LEAD)),
+      ...over,
     });
     await h.host.start();
     await launch(h, 's1');
@@ -8117,6 +8153,375 @@ describe('createConduitMcpHost — a routed ask waits for the owner on this mach
 
   const openArgs = (p: string) => ({ path: p, agent: 'e2e-fake-mcp' });
   const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+  async function peerRule(h: Harness, tool: ToolName, rule: Record<string, unknown>) {
+    let result: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:saveAssignment',
+        requestId: 999,
+        point: { kind: 'peer', machineId: LEAD.machineId },
+        assignment: {
+          profileId: 'lead',
+          onScreenOnly: false,
+          exceptions: [{ tool, scope: { kind: 'anywhere' }, rule }],
+        },
+        expectedToken: h.host.uiState().policy.editToken,
+      },
+      (m) => {
+        result = m;
+      },
+      1,
+    );
+    expect(result).toMatchObject({ result: { ok: true } });
+  }
+
+  it.each(['read_screen', 'send_input', 'close_session'] as const)(
+    'refuses unchanged Ask after prepared %s reach narrows',
+    async (tool) => {
+      const h = await withAsk();
+      await peerRule(h, tool, { decision: 'ask', when: 'always', reach: 'any' });
+      const port = h.host.networkPort();
+      if (tool === 'close_session') h.owners.set('s1', null);
+      const args =
+        tool === 'send_input' ? { session: 's1', text: 'must not run' } : { session: 's1' };
+      const call = port.callAsRemote(LEAD, tool, args, LIVE);
+      const [asked] = await waitForAsks(h);
+      await peerRule(h, tool, { decision: 'ask', when: 'always', reach: 'self' });
+      const result = port.applyRemoteAnswer(
+        asked.id,
+        { outcome: 'allowed', grant: true },
+        'narrowed',
+        LEAD.machineId,
+      );
+      port.applyRemoteAnswer(asked.id, { outcome: 'denied' }, 'cleanup', LEAD.machineId);
+      await call;
+      expect(result).toMatchObject({ ok: false, reason: 'policy_unavailable' });
+      expect(h.host.uiState().policy.grants).toEqual([]);
+      expect(h.inputs).toEqual([]);
+      expect(h.closes).toEqual([]);
+    },
+  );
+
+  it('refuses unchanged Ask when prepared move changes and an acknowledged aborted signal cannot revive', async () => {
+    const h = await withAsk();
+    const port = h.host.networkPort();
+    await peerRule(h, 'open_session', { decision: 'ask', when: 'always', move: 'yes' });
+    const call = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), LIVE);
+    const [asked] = await waitForAsks(h);
+    await peerRule(h, 'open_session', { decision: 'ask', when: 'always', move: 'no' });
+    expect(
+      port.applyRemoteAnswer(asked.id, { outcome: 'allowed', grant: true }, 'move', LEAD.machineId),
+    ).toMatchObject({ ok: false, reason: 'policy_unavailable' });
+    port.applyRemoteAnswer(asked.id, { outcome: 'denied' }, 'cleanup', LEAD.machineId);
+    await call;
+    const ctl = new AbortController();
+    const second = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), ctl.signal);
+    const [next] = await waitForAsks(h);
+    expect(
+      port.applyRemoteAnswer(next.id, { outcome: 'allowed' }, 'allow', LEAD.machineId),
+    ).toEqual({ ok: true });
+    ctl.abort();
+    expect(await second).toMatchObject({ ok: false });
+    expect(h.opens).toEqual([]);
+  });
+
+  it('applicable drive capability narrowing refuses attach_folder consent', async () => {
+    let principal = {
+      ...structuredClone(LEAD),
+      capabilities: { ...LEAD.capabilities, drive: true },
+    };
+    const h = await withAsk({ network: inboundNetwork(() => principal) });
+    const current = h.sessions.get('s1');
+    if (!current) throw new Error('missing session');
+    h.sessions.set('s1', {
+      ...current,
+      openedBy: { handle: LEAD.handle, machineId: LEAD.machineId },
+    });
+    await peerRule(h, 'attach_folder', { decision: 'ask', when: 'always', reach: 'opened' });
+    const port = h.host.networkPort();
+    const ctl = new AbortController();
+    const call = port.callAsRemote(
+      principal,
+      'attach_folder',
+      { path: '/w/src', session: 's1' },
+      ctl.signal,
+    );
+    const [asked] = await waitForAsks(h);
+    principal = { ...principal, capabilities: { ...principal.capabilities, drive: false } };
+    const result = port.applyRemoteAnswer(
+      asked.id,
+      { outcome: 'allowed', grant: true },
+      'caps',
+      LEAD.machineId,
+    );
+    ctl.abort();
+    await call;
+    expect(result).toMatchObject({ ok: false, reason: 'policy_unavailable' });
+    expect(h.host.uiState().policy.grants).toEqual([]);
+    expect(h.sessions.get('s1')?.roots).toEqual([]);
+  });
+
+  it('refuses an unasked Allow becoming Ask during asynchronous preparation', async () => {
+    let release!: () => void;
+    let entered = false;
+    const gate = new Promise<void>((done) => {
+      release = done;
+    });
+    const h = await withAsk({
+      kindOf: async (path) => {
+        if (path === '/w/wt') {
+          entered = true;
+          await gate;
+        }
+        return 'dir';
+      },
+    });
+    await peerRule(h, 'open_session', { decision: 'allow', when: 'always', move: 'no' });
+    const call = h.host.networkPort().callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), LIVE);
+    await until(() => entered);
+    await peerRule(h, 'open_session', { decision: 'ask', when: 'always', move: 'no' });
+    release();
+    expect(await call).toMatchObject({ ok: false, error: { code: 'policy_unavailable' } });
+    expect(h.opens).toEqual([]);
+    expect(h.host.networkPort().mirrorOf()).toEqual([]);
+  });
+
+  it('refuses an original signal aborted during prepare even with a newly live principal', async () => {
+    let release!: () => void;
+    let entered = false;
+    const gate = new Promise<void>((done) => {
+      release = done;
+    });
+    let principal: RemoteCaller | null = structuredClone(LEAD);
+    const h = await withAsk({
+      network: inboundNetwork(() => principal),
+      kindOf: async (path) => {
+        if (path === '/w/wt') {
+          entered = true;
+          await gate;
+        }
+        return 'dir';
+      },
+    });
+    await peerRule(h, 'open_session', { decision: 'allow', when: 'always', move: 'no' });
+    const ctl = new AbortController();
+    const call = h.host
+      .networkPort()
+      .callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), ctl.signal);
+    await until(() => entered);
+    principal = null;
+    ctl.abort();
+    principal = structuredClone(LEAD);
+    release();
+    expect(await call).toMatchObject({ ok: false, error: { code: 'peer_unreachable' } });
+    expect(h.opens).toEqual([]);
+    expect(h.host.networkPort().mirrorOf()).toEqual([]);
+  });
+
+  it('rechecks prepared move and fresh principal after durable owner acknowledgement before action', async () => {
+    let principal: RemoteCaller | null = structuredClone(LEAD);
+    const h = await withAsk({ network: inboundNetwork(() => principal) });
+    const port = h.host.networkPort();
+    await peerRule(h, 'open_session', { decision: 'ask', when: 'always', move: 'yes' });
+    const call = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), LIVE);
+    const [asked] = await waitForAsks(h);
+    expect(
+      port.applyRemoteAnswer(asked.id, { outcome: 'allowed', grant: true }, 'ack', LEAD.machineId),
+    ).toEqual({ ok: true });
+    const changed = peerRule(h, 'open_session', { decision: 'ask', when: 'always', move: 'no' });
+    await changed;
+    expect(await call).toMatchObject({ ok: false, error: { code: 'policy_unavailable' } });
+    expect(h.opens).toEqual([]);
+    expect(h.host.uiState().policy.grants).toHaveLength(1);
+    const second = port.callAsRemote(LEAD, 'open_session', openArgs('/w/src'), LIVE);
+    const [next] = await waitForAsks(h);
+    expect(
+      port.applyRemoteAnswer(next.id, { outcome: 'allowed' }, 'second', LEAD.machineId),
+    ).toEqual({ ok: true });
+    principal = null;
+    expect(await second).toMatchObject({ ok: false, error: { code: 'peer_unreachable' } });
+    expect(h.opens).toEqual([]);
+  });
+
+  it('absolute ask deadline refuses grant even before a delayed expiry timer fires', async () => {
+    const h = await withAsk();
+    const ctl = new AbortController();
+    const port = h.host.networkPort();
+    const call = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), ctl.signal);
+    const [asked] = await waitForAsks(h);
+    h.clock.t += 45_000;
+    const result = port.applyRemoteAnswer(
+      asked.id,
+      { outcome: 'allowed', grant: true },
+      'late',
+      LEAD.machineId,
+    );
+    ctl.abort();
+    await call;
+    expect(result).toMatchObject({ ok: false, reason: 'peer_unreachable' });
+    expect(h.host.uiState().policy.grants).toEqual([]);
+    expect(h.opens).toEqual([]);
+  });
+
+  it('true queue precommit failure rolls back only new owner grants through storage recovery', async () => {
+    let text = serializeGrantsFile({
+      version: 1,
+      grants: [
+        {
+          id: 'prior',
+          who: { kind: 'peer', machineId: LEAD.machineId },
+          tool: 'open_session',
+          on: { kind: 'path', path: '/prior' },
+          for: 'until-revoked',
+          anchorSessionId: null,
+          createdAt: new Date(1_000_000).toISOString(),
+          expiresAt: null,
+          lastUsedAt: null,
+          state: 'active',
+          endedAt: null,
+          requestId: 'prior',
+        },
+      ],
+    });
+    let down = false;
+    let armed = true;
+    const io: PolicyIo = {
+      read: () => text,
+      writeSync: (value) => {
+        if (down) throw new Error('rollback storage unavailable');
+        text = value;
+        if (armed) {
+          armed = false;
+          down = true;
+          vi.spyOn(Date.prototype, 'toISOString').mockImplementationOnce(() => {
+            throw new Error('queue timestamp failed');
+          });
+        }
+        return true;
+      },
+    };
+    const h = await withAsk({ grantsIo: io });
+    const ctl = new AbortController();
+    const port = h.host.networkPort();
+    const call = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), ctl.signal);
+    const [asked] = await waitForAsks(h);
+    const result = port.applyRemoteAnswer(
+      asked.id,
+      { outcome: 'allowed', grant: true },
+      'commit',
+      LEAD.machineId,
+    );
+    vi.restoreAllMocks();
+    expect(result).toEqual({
+      ok: false,
+      reason: 'policy_unavailable',
+      message: 'the request could not be committed',
+    });
+    expect(h.host.uiState().policy.grants.map((g) => [g.requestId, g.state])).toEqual([
+      ['prior', 'active'],
+      [asked.id, 'revoked'],
+    ]);
+    expect(h.host.uiState().policy.saveError).toContain('active here');
+    expect(h.opens).toEqual([]);
+    ctl.abort();
+    await call;
+    down = false;
+    await h.host.stop();
+    const restarted = await withAsk({ grantsIo: io });
+    expect(restarted.host.uiState().policy.grants.map((g) => [g.requestId, g.state])).toEqual([
+      ['prior', 'active'],
+      [asked.id, 'revoked'],
+    ]);
+  });
+
+  it('remote durable consent refuses failed primary then explicit fresh retry creates one grant and action', async () => {
+    let failed = true;
+    const writes: string[] = [];
+    const h = await withAsk({
+      grantsIo: {
+        read: () => null,
+        writeSync: (text) => {
+          if (failed) throw new Error('disk full');
+          writes.push(text);
+          return true;
+        },
+      },
+    });
+    const port = h.host.networkPort();
+    const call = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), LIVE);
+    const [asked] = await waitForAsks(h);
+    const refusal = port.applyRemoteAnswer(
+      asked.id,
+      { outcome: 'allowed', grant: true },
+      'failed',
+      LEAD.machineId,
+    );
+    expect(refusal).toEqual({
+      ok: false,
+      reason: 'policy_unavailable',
+      message: 'Permissions could not be saved (save-failed)',
+    });
+    expect(h.opens).toEqual([]);
+    expect(h.host.uiState().policy.grants).toEqual([]);
+    expect(port.mirrorOf().find((r) => r.id === asked.id)?.state).toBe('open');
+    failed = false;
+    expect(
+      port.applyRemoteAnswer(
+        asked.id,
+        { outcome: 'allowed', grant: true },
+        'failed',
+        LEAD.machineId,
+      ),
+    ).toEqual(refusal);
+    expect(writes).toHaveLength(0);
+    expect(
+      port.applyRemoteAnswer(
+        asked.id,
+        { outcome: 'allowed', grant: true },
+        'retry',
+        LEAD.machineId,
+      ),
+    ).toEqual({ ok: true });
+    expect(
+      port.applyRemoteAnswer(
+        asked.id,
+        { outcome: 'allowed', grant: true },
+        'retry',
+        LEAD.machineId,
+      ),
+    ).toEqual({ ok: true });
+    expect((await call).ok).toBe(true);
+    expect(h.opens).toHaveLength(1);
+    expect(h.host.uiState().policy.grants).toHaveLength(1);
+    expect(writes).toHaveLength(1);
+  });
+
+  it.each(['master', 'floor', 'controller'] as const)(
+    'fresh %s change refuses a remote answer without grant or action',
+    async (change) => {
+      let principal: RemoteCaller | null = structuredClone(LEAD);
+      let master = true;
+      const h = await withAsk({
+        network: inboundNetwork(() => principal),
+        messagingOn: () => master,
+      });
+      const port = h.host.networkPort();
+      const call = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), LIVE);
+      const [asked] = await waitForAsks(h);
+      if (change === 'master') master = false;
+      else if (change === 'controller') principal = null;
+      else if (principal) principal.controller = false;
+      expect(
+        port.applyRemoteAnswer(asked.id, { outcome: 'allowed', grant: true }, 'a', LEAD.machineId)
+          .ok,
+      ).toBe(false);
+      expect(h.opens).toEqual([]);
+      expect(h.host.uiState().policy.grants).toEqual([]);
+      port.applyRemoteAnswer(asked.id, { outcome: 'denied' }, 'deny', LEAD.machineId);
+      await call;
+    },
+  );
 
   it('an allow runs the call the lead made, once the owner answers', async () => {
     const h = await withAsk();
@@ -8239,6 +8644,7 @@ describe('createConduitMcpHost — a remote answer that does not reach its machi
     };
     const network: NetworkPort = {
       hasPeer: () => null,
+      inboundPrincipal: () => null,
       remoteEntries: () => [],
       resolve: unused,
       enqueue: unused,
@@ -8288,13 +8694,14 @@ describe('createConduitMcpHost — a remote answer that does not reach its machi
     ['peer_incompatible', 'peer_incompatible'],
     ['peer_revoked', 'peer_revoked'],
     ['peer_unsupported', 'not_answerable'],
+    ['policy_unavailable', 'not_answerable'],
   ] as const)('a %s from the link reaches the renderer as %s', async (code, reason) => {
     const network = remoteNet(async () => ({
       ok: false,
       error: toolError(code, 'the link refused it'),
     }));
     const reply = await answerOf(network, () => {});
-    expect(reply).toMatchObject({ result: { ok: false, reason } });
+    expect(reply).toMatchObject({ result: { ok: false, reason, message: 'the link refused it' } });
     expect(network.answerRemoteRequest).toHaveBeenCalledTimes(1);
   });
 });
@@ -8350,6 +8757,7 @@ describe('routed session tools on this machine (CON-40 S3, plan decision 5)', ()
     };
     const network: NetworkPort = {
       hasPeer: () => null,
+      inboundPrincipal: () => null,
       remoteEntries: () => over.entries ?? [REMOTE_CLAUDE],
       resolve: (target) =>
         target === REMOTE_CLAUDE.address
@@ -8712,6 +9120,7 @@ describe('createConduitMcpHost — remote requests (CON-42 A side)', () => {
     };
     const network: NetworkPort = {
       hasPeer: () => null,
+      inboundPrincipal: () => null,
       remoteEntries: () => [],
       resolve: unused,
       enqueue: unused,
@@ -8969,6 +9378,7 @@ describe('remote policy edits from this machine (CON-46 L4)', () => {
     };
     const network: NetworkPort = {
       hasPeer: () => null,
+      inboundPrincipal: () => null,
       remoteEntries: () => [],
       resolve: unused,
       enqueue: unused,

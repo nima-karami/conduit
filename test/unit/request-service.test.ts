@@ -117,6 +117,8 @@ function harness(opts: { initial?: string | null; budgetMs?: number } = {}): Har
     dismissIssue: vi.fn((_sessionId: string) => undefined),
   };
   const service = createRequestService({
+    onRemotePermissionAnswer: () => ({ ok: true, createdGrantIds: [] }),
+    rollbackRemotePermissionGrants: () => ({ ok: true }),
     io: store.io,
     machineId: 'm-00000001',
     now: c.now,

@@ -1030,9 +1030,70 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   });
   remotePolicy.onChange(() => scheduleBroadcast());
 
+  interface PendingRemotePermission {
+    machineId: string;
+    handle: string;
+    tool: RoutedTool;
+    targets: readonly PolicyTarget[];
+    forceAsk: boolean;
+    conditions: Readonly<Pick<PolicyDecision['rule'], 'when' | 'reach' | 'move'>>;
+    deadline: number;
+    signal: AbortSignal;
+    grantable: boolean;
+  }
+  const pendingRemotePermissions = new Map<string, PendingRemotePermission>();
+
   const requestService: RequestService = createRequestService({
     io: createRequestsIo(path.join(deps.dir, 'requests.json')),
     machineId: deps.machineId,
+    onRemotePermissionAnswer: (record, answer) => {
+      const pending = pendingRemotePermissions.get(record.id);
+      if (
+        !pending ||
+        record.remote?.machineId !== pending.machineId ||
+        record.remote.handle !== pending.handle ||
+        record.permission?.tool !== pending.tool
+      )
+        return {
+          ok: false,
+          reason: 'policy_unavailable',
+          message: 'the remote permission is no longer pending',
+        };
+      if (pending.signal.aborted || now() >= pending.deadline)
+        return {
+          ok: false,
+          reason: 'peer_unreachable',
+          message: 'the remote call was cancelled or expired',
+        };
+      if (answer.outcome === 'denied') return { ok: true, createdGrantIds: [] };
+      const fresh = freshRemotePolicy(pending, true);
+      if (!fresh.ok)
+        return {
+          ok: false,
+          reason:
+            fresh.error.code === 'peer_unreachable' ? 'peer_unreachable' : 'policy_unavailable',
+          message: fresh.error.message,
+        };
+      const choice = remoteGrantOf(answer, pending.grantable);
+      if (answer.grant !== undefined && !pending.grantable)
+        return {
+          ok: false,
+          reason: 'policy_unavailable',
+          message: 'this permission cannot create a future grant',
+        };
+      if (choice === null) return { ok: true, createdGrantIds: [] };
+      const made = grantsFor(
+        choice,
+        fresh.value.input.principal,
+        pending.tool,
+        pending.targets,
+        record.id,
+      );
+      return made.ok
+        ? { ok: true, createdGrantIds: made.grants.map((grant) => grant.id) }
+        : { ok: false, reason: 'policy_unavailable', message: grantFailureMessage(made.error) };
+    },
+    rollbackRemotePermissionGrants: (_record, ids) => policyService.revokeGrants(ids),
     now,
     newId: () => `r_${base32(randomBytes(8))}`,
     ...requestTimers,
@@ -2288,27 +2349,60 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     throw new Error(`runRequest: ${name} is not a request tool`);
   };
 
+  const freshRemotePolicy = (
+    pending: PendingRemotePermission,
+    ownerAllow: boolean,
+  ): Result<{ input: Omit<PolicyInput, 'now'>; decision: PolicyDecision }> => {
+    if (pending.signal.aborted || now() >= pending.deadline)
+      return {
+        ok: false,
+        error: toolError('peer_unreachable', 'the remote call was cancelled or expired'),
+      };
+    const principal = deps.network?.inboundPrincipal(pending.machineId, pending.handle);
+    if (!principal)
+      return {
+        ok: false,
+        error: toolError('peer_unreachable', 'the controller link is no longer live'),
+      };
+    const input = {
+      principal,
+      tool: pending.tool,
+      targets: pending.targets,
+      forceAsk: pending.forceAsk,
+      masterOn: deps.domain.messagingOn(),
+      toYou: false,
+    };
+    const decision = policyService.decide(input);
+    if (!input.masterOn && pending.tool !== 'list_agents')
+      return { ok: false, error: toolError('messaging_off', 'Conduit messaging is turned off') };
+    if (
+      decision.decision === 'deny' ||
+      decision.rule.when !== pending.conditions.when ||
+      decision.rule.reach !== pending.conditions.reach ||
+      decision.rule.move !== pending.conditions.move ||
+      (decision.decision === 'ask' && !ownerAllow)
+    )
+      return { ok: false, error: toolError('policy_unavailable', reasonOf(decision)) };
+    return { ok: true, value: { input, decision } };
+  };
+
   /**
    * The owner's answer to a remote lead's ask (CON-42 decision 1): a permission in this machine's
    * queue, mirrored to the controller whose owner answers it there. The call waits on that answer.
    */
   const askOwner = async (
     remote: RemoteCaller,
-    name: RoutedTool,
     decision: PolicyDecision,
-    targets: readonly PolicyTarget[],
-    signal: AbortSignal,
+    pending: PendingRemotePermission,
   ): Promise<{ requestId: string; outcome: Result<AnswerInput> }> => {
+    const { tool: name, targets, signal } = pending;
+    pending.deadline = now() + REMOTE_ASK_MS;
     const created = requestService.createRemotePermission(
       { handle: remote.handle, machineId: remote.machineId },
-      {
-        tool: name,
-        why: reasonOf(decision),
-        targets: [...targets],
-        grantable: !decision.forcedAsk,
-      },
-      new Date(now() + REMOTE_ASK_MS).toISOString(),
+      { tool: name, why: reasonOf(decision), targets: [...targets], grantable: pending.grantable },
+      new Date(pending.deadline).toISOString(),
     );
+    pendingRemotePermissions.set(created.id, pending);
     policyService.activity.record({
       lane: 'conduit',
       principal: { handle: remote.handle, sessionId: null, machineId: remote.machineId },
@@ -2332,7 +2426,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       });
     signal.addEventListener('abort', withdraw, { once: true });
     if (signal.aborted) withdraw();
-    const ended = await created.ended.finally(() => signal.removeEventListener('abort', withdraw));
+    const ended = await created.ended.finally(() => {
+      pendingRemotePermissions.delete(created.id);
+      signal.removeEventListener('abort', withdraw);
+    });
     if (signal.aborted)
       return {
         requestId: created.id,
@@ -2374,6 +2471,22 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       toYou: false,
     };
     const decision = policyService.decide(policyInput);
+    const pending: PendingRemotePermission = {
+      machineId: remote.machineId,
+      handle: remote.handle,
+      tool: name,
+      targets,
+      forceAsk: policyInput.forceAsk,
+      conditions: {
+        when: decision.rule.when,
+        reach: decision.rule.reach,
+        move: decision.rule.move,
+      },
+      signal,
+      deadline: Number.POSITIVE_INFINITY,
+      grantable: !decision.forcedAsk,
+    };
+
     let raised: string | null = null;
     const result = await (async (): Promise<Result<StructuredOutput>> => {
       if (!policyInput.masterOn && name !== 'list_agents')
@@ -2390,7 +2503,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       if (!prepared.ok) return prepared;
       const p = prepared.value;
       if ('done' in p) {
-        const committed = policyService.commit(policyInput, decision);
+        const fresh = freshRemotePolicy(pending, false);
+        if (!fresh.ok) return fresh;
+        const committed = policyService.commit(fresh.value.input, fresh.value.decision);
         if (!committed.ok) return { ok: false, error: commitFailure(committed.error) };
         return p.done;
       }
@@ -2398,23 +2513,20 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       const asked = decision.decision === 'ask' || p.alwaysAsk === true;
       try {
         if (asked) {
-          const owner = await askOwner(remote, name, decision, targets, signal);
+          pending.grantable = !decision.forcedAsk && p.alwaysAsk !== true;
+          const owner = await askOwner(remote, decision, pending);
           raised = owner.requestId;
           if (!owner.outcome.ok) {
             p.release();
             return owner.outcome;
           }
-          // The grant is the owner's to make only when the ask allowed it (remoteGrantOf).
-          const choice = remoteGrantOf(owner.outcome.value, !decision.forcedAsk);
-          if (choice !== null) {
-            const grant = grantsFor(choice, remote, name, targets, owner.requestId);
-            if (!grant.ok) {
-              p.release();
-              return { ok: false, error: toolError('refused', grantFailureMessage(grant.error)) };
-            }
-          }
         }
-        const committed = policyService.commit(policyInput, decision);
+        const fresh = freshRemotePolicy(pending, asked);
+        if (!fresh.ok) {
+          p.release();
+          return fresh;
+        }
+        const committed = policyService.commit(fresh.value.input, fresh.value.decision);
         if (!committed.ok) {
           p.release();
           return { ok: false, error: commitFailure(committed.error) };
@@ -3929,6 +4041,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       for (const c of conns.values()) c.close();
       notices.dispose();
       await requestService.stop();
+      pendingRemotePermissions.clear();
       await policyService.stop();
       const storeStopped = store.stop();
       await endpoint?.close();

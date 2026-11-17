@@ -85,6 +85,7 @@ function portWith(over: Partial<NetworkPort>): NetworkPort {
   };
   return {
     hasPeer: () => null,
+    inboundPrincipal: () => null,
     remoteEntries: unused,
     resolve: unused,
     enqueue: unused,

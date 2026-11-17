@@ -7,6 +7,8 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Fixed
+
+- Remote permission answers now report saving failures before accepting consent.
 - Permission restrictions stay active if saving fails and retry saving after storage recovers. A notice shows saving problems and lets you retry manually.
 
 ## [0.67.0] — 2026-11-16

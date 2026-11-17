@@ -613,6 +613,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
 
   const networkPort: NetworkPort = {
     hasPeer: (machineId) => store.peerKnown(machineId),
+    inboundPrincipal: (machineId, handle) => calls.inboundPrincipal(machineId, handle),
     remoteEntries: () => directory.entries(),
     resolve: (target) => directory.resolve(target),
     enqueue: (msg, recipients) => messaging.enqueue(msg, recipients),

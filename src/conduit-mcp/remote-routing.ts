@@ -100,6 +100,7 @@ export type RemoteGrantRevokeResult =
 
 export interface NetworkPort {
   hasPeer(machineId: string): boolean | null;
+  inboundPrincipal(machineId: string, handle: string): RemoteCaller | null;
   remoteEntries(): RemoteEntry[];
   /**
    * Runs a session tool on a machine I dialed over ssh, as `principalHandle` there (CON-40 S3). The

@@ -6,6 +6,7 @@ import {
   PERSIST_COALESCE_MS,
   type RemotePermissionFields,
   type RequestService,
+  type RequestServiceDeps,
 } from '../../src/conduit-mcp/request-service';
 import type {
   AnsweredBy,
@@ -70,6 +71,7 @@ const bob = { handle: 'bob', machineId: 'm-2' };
 const EXPIRY = iso(T0 + 60 * MIN);
 
 interface Harness {
+  deps: RequestServiceDeps;
   c: ReturnType<typeof clock>;
   service: RequestService;
   store: ReturnType<typeof memoryIo>;
@@ -91,7 +93,9 @@ function harness(initial: string | null = null): Harness {
       _by: AnsweredBy,
     ): Promise<PermissionAnswerResult> => ({ ok: true }),
   );
-  const service = createRequestService({
+  const deps: RequestServiceDeps = {
+    onRemotePermissionAnswer: () => ({ ok: true, createdGrantIds: [] }),
+    rollbackRemotePermissionGrants: () => ({ ok: true }),
     io: store.io,
     machineId: 'm-1',
     now: c.now,
@@ -111,9 +115,10 @@ function harness(initial: string | null = null): Harness {
       dismissIssue: () => undefined,
     },
     onPermissionAnswer,
-  });
+  };
+  const service = createRequestService(deps);
   service.start();
-  return { c, service, store, onPermissionAnswer };
+  return { c, service, store, onPermissionAnswer, deps };
 }
 
 const permFields = (over: Partial<RemotePermissionFields> = {}): RemotePermissionFields => ({
@@ -547,4 +552,147 @@ describe('remote persistence', () => {
     );
     expect(parsed.file.requests[0].remote ?? null).toBeNull();
   });
+});
+
+it('validates before preflight and caches persistence refusal until a fresh explicit answer', () => {
+  const h = harness();
+  const created = h.service.createRemotePermission(bob, permFields(), EXPIRY);
+  const hook = vi.fn<NonNullable<typeof h.deps.onRemotePermissionAnswer>>(() => ({
+    ok: false,
+    reason: 'policy_unavailable',
+    message: 'Permissions could not be saved',
+  }));
+  h.deps.onRemotePermissionAnswer = hook;
+  expect(h.service.applyRemoteAnswer(created.id, { outcome: 'allowed' }, 'wrong', 'other').ok).toBe(
+    false,
+  );
+  expect(
+    h.service.applyRemoteAnswer(created.id, { outcome: 'answered' }, 'bad', bob.machineId).ok,
+  ).toBe(false);
+  expect(hook).not.toHaveBeenCalled();
+  const failed = h.service.applyRemoteAnswer(
+    created.id,
+    { outcome: 'allowed', grant: true },
+    'same',
+    bob.machineId,
+  );
+  expect(failed).toEqual({
+    ok: false,
+    reason: 'policy_unavailable',
+    message: 'Permissions could not be saved',
+  });
+  expect(
+    h.service.applyRemoteAnswer(
+      created.id,
+      { outcome: 'allowed', grant: true },
+      'same',
+      bob.machineId,
+    ),
+  ).toEqual(failed);
+  expect(hook).toHaveBeenCalledTimes(1);
+  expect(h.service.mirrorOf()[0]?.state).toBe('open');
+  hook.mockReturnValue({ ok: true, createdGrantIds: ['fresh'] });
+  expect(
+    h.service.applyRemoteAnswer(
+      created.id,
+      { outcome: 'allowed', grant: true },
+      'retry',
+      bob.machineId,
+    ),
+  ).toEqual({ ok: true });
+  expect(hook).toHaveBeenCalledTimes(2);
+});
+it('reports and caches a thrown preflight without committing an answer', () => {
+  const h = harness();
+  const created = h.service.createRemotePermission(bob, permFields(), EXPIRY);
+  const hook = vi.fn(() => {
+    throw new Error('grant publication failed');
+  });
+  h.deps.onRemotePermissionAnswer = hook;
+  const first = h.service.applyRemoteAnswer(
+    created.id,
+    { outcome: 'allowed', grant: true },
+    'same',
+    bob.machineId,
+  );
+  expect(first).toMatchObject({
+    ok: false,
+    reason: 'policy_unavailable',
+    message: expect.stringContaining('no answer was committed'),
+  });
+  expect(
+    h.service.applyRemoteAnswer(
+      created.id,
+      { outcome: 'allowed', grant: true },
+      'same',
+      bob.machineId,
+    ),
+  ).toEqual(first);
+  expect(hook).toHaveBeenCalledTimes(1);
+  expect(h.service.mirrorOf()[0]?.state).toBe('open');
+});
+it('rolls back exact fresh ids on true precommit refusal even if rollback notification throws', () => {
+  const h = harness();
+  const created = h.service.createRemotePermission(bob, permFields(), EXPIRY);
+  h.deps.onRemotePermissionAnswer = () => {
+    h.deps.now = () => {
+      throw new Error('clock failed');
+    };
+    return { ok: true, createdGrantIds: ['fresh-1', 'fresh-2'] };
+  };
+  const rollback = vi.fn(() => {
+    throw new Error('rollback observer');
+  });
+  h.deps.rollbackRemotePermissionGrants = rollback;
+  expect(
+    h.service.applyRemoteAnswer(
+      created.id,
+      { outcome: 'allowed', grant: true },
+      'a',
+      bob.machineId,
+    ),
+  ).toEqual({
+    ok: false,
+    reason: 'policy_unavailable',
+    message: 'the request could not be committed',
+  });
+  expect(rollback).toHaveBeenCalledWith(expect.objectContaining({ id: created.id }), [
+    'fresh-1',
+    'fresh-2',
+  ]);
+  h.deps.now = h.c.now;
+  expect(h.service.mirrorOf()[0]?.state).toBe('open');
+});
+it('commits and dedupes consent despite throwing service and mirror observers', async () => {
+  const h = harness();
+  const created = h.service.createRemotePermission(bob, permFields(), EXPIRY);
+  const hook = vi.fn(() => ({ ok: true as const, createdGrantIds: ['fresh'] }));
+  h.deps.onRemotePermissionAnswer = hook;
+  const observed = vi.fn();
+  h.deps.onChanged = () => {
+    throw new Error('changed');
+  };
+  h.service.onMirrorChange(() => {
+    throw new Error('mirror');
+  });
+  h.service.onMirrorChange(observed);
+  expect(
+    h.service.applyRemoteAnswer(
+      created.id,
+      { outcome: 'allowed', grant: true },
+      'a',
+      bob.machineId,
+    ),
+  ).toEqual({ ok: true });
+  expect(
+    h.service.applyRemoteAnswer(
+      created.id,
+      { outcome: 'allowed', grant: true },
+      'a',
+      bob.machineId,
+    ),
+  ).toEqual({ ok: true });
+  expect(hook).toHaveBeenCalledTimes(1);
+  expect(observed).toHaveBeenCalledOnce();
+  expect((await created.ended).state).toBe('answered');
 });
