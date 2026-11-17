@@ -350,6 +350,106 @@ async function run() {
     });
     assert(revoked.reply?.ok === true, `grant cleanup: ${JSON.stringify(revoked)}`);
 
+    phase('3c. a fresh Observer denial withdraws the pending ask permanently');
+    const beforeWithdrawal = await b.c2.call('events.subscribe');
+    const withdrawalSessions = beforeWithdrawal.sessions.map((session) => session.id).sort();
+    const withdrawalGrants = beforeWithdrawal.mcp.policy.grants;
+    const withdrawalBefore = resultsOf(a, aa).length;
+    typeCall(a, aa, 'open_session', {
+      machine: bId,
+      agent: ECHO_AGENT,
+      path: b.work,
+      focus: false,
+    });
+    let withdrawalAsk = null;
+    await eventually('the fresh pending ask is mirrored on A', async () => {
+      withdrawalAsk = await permissionRow(a, bId);
+      return withdrawalAsk !== null && withdrawalAsk.id !== consent.id;
+    });
+    let withdrawalReceipt;
+    try {
+      await assignPeer(b, aId, 'observer');
+      withdrawalReceipt = await answer(a, withdrawalAsk.id, {
+        outcome: 'allowed',
+        grant: { who: 'peer', on: 'anywhere', for: 'until-revoked' },
+      });
+      assert(
+        withdrawalReceipt.ok === false &&
+          withdrawalReceipt.reason === 'not_answerable' &&
+          withdrawalReceipt.message.includes('Observer'),
+        `fresh denial receipt: ${JSON.stringify(withdrawalReceipt)}`,
+      );
+      await eventually('A shows the same ask withdrawn', async () => {
+        const requests = (await a.c2.call('events.subscribe')).mcp.requests;
+        return (
+          !requests.open.some((row) => row.id === withdrawalAsk.id) &&
+          requests.ended.some((row) => row.id === withdrawalAsk.id && row.state === 'withdrawn')
+        );
+      });
+      const ownerRequestId = withdrawalAsk.id.slice(0, withdrawalAsk.id.lastIndexOf('@'));
+      const requestsPath = join(b.userData, 'conduit-mcp', 'requests.json');
+      await eventually('B persists Conduit withdrawal with the actual refusal reason', () => {
+        if (!existsSync(requestsPath)) return false;
+        const record = JSON.parse(readFileSync(requestsPath, 'utf8')).requests.find(
+          (row) => row.id === ownerRequestId,
+        );
+        return (
+          record?.state === 'withdrawn' &&
+          record.withdrawnBy === 'conduit' &&
+          record.withdrawReason === withdrawalReceipt.message &&
+          record.answer === null &&
+          typeof record.endedAt === 'string'
+        );
+      });
+      await eventually(
+        'the waiting call settles without an owner cleanup answer',
+        () => resultsOf(a, aa).length > withdrawalBefore,
+      );
+      const withdrawalCall = resultsOf(a, aa).at(-1).result;
+      assert(
+        withdrawalCall?.error?.code === 'policy_unavailable' &&
+          withdrawalCall.error.message === withdrawalReceipt.message &&
+          withdrawalCall.session_id === undefined,
+        `withdrawal lost the fresh policy failure: ${JSON.stringify(withdrawalCall)}`,
+      );
+    } finally {
+      await assignPeer(b, aId, 'worker');
+    }
+    const revived = await answer(a, withdrawalAsk.id, { outcome: 'allowed' });
+    assert(
+      revived.ok === false && revived.reason === 'already_ended',
+      `relaxing policy revived the original ask: ${JSON.stringify(revived)}`,
+    );
+    const afterWithdrawal = await b.c2.call('events.subscribe');
+    assert(
+      JSON.stringify(afterWithdrawal.sessions.map((session) => session.id).sort()) ===
+        JSON.stringify(withdrawalSessions),
+      'withdrawn consent opened a session',
+    );
+    assert(
+      JSON.stringify(afterWithdrawal.mcp.policy.grants) === JSON.stringify(withdrawalGrants),
+      'withdrawn consent created a grant',
+    );
+    assert(
+      resultsOf(a, aa).length === withdrawalBefore + 1,
+      'withdrawn consent ran or settled more than once',
+    );
+    writeFileSync(
+      join(REPO, '.autoloop', 'evidence', 'remote-receipt-withdraw-runtime-cases.json'),
+      `${JSON.stringify(
+        {
+          withdrawalReceipt,
+          revived,
+          resultCount: 1,
+          newGrants: 0,
+          newSessions: 0,
+          controllerActorReason: 'not present in current mirror contract',
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
     phase('4. an answer while the link is down is refused on A as peer_unreachable');
     typeCall(a, aa, 'open_session', {
       machine: bId,

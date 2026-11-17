@@ -199,6 +199,7 @@ import {
   type ScreenVerdict,
   THREAD_AGENT_LIMIT,
   type ThreadSummary,
+  type ToolError,
   toolError,
 } from './types';
 import type {
@@ -397,7 +398,7 @@ const MAX_UI_THREADS = 500;
 const REMOTE_ASK_MS = 45_000;
 
 /** How the owner's end of a remote ask reads to the lead's call: an allow, or the refusal it means. */
-const ownerOutcomeOf = (r: RequestRecord): Result<AnswerInput> => {
+const ownerOutcomeOf = (r: RequestRecord, withdrawalError?: ToolError): Result<AnswerInput> => {
   if (r.state === 'answered' && r.answer !== null) {
     return r.answer.outcome === 'allowed'
       ? { ok: true, value: r.answer }
@@ -405,6 +406,7 @@ const ownerOutcomeOf = (r: RequestRecord): Result<AnswerInput> => {
   }
   if (r.state === 'expired')
     return { ok: false, error: toolError('approval_timeout', 'the owner did not answer in time') };
+  if (r.state === 'withdrawn' && withdrawalError) return { ok: false, error: withdrawalError };
   if (r.state === 'withdrawn')
     return {
       ok: false,
@@ -1040,6 +1042,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     deadline: number;
     signal: AbortSignal;
     grantable: boolean;
+    withdrawalError?: ToolError;
   }
   const pendingRemotePermissions = new Map<string, PendingRemotePermission>();
 
@@ -1067,13 +1070,18 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         };
       if (answer.outcome === 'denied') return { ok: true, createdGrantIds: [] };
       const fresh = freshRemotePolicy(pending, true);
-      if (!fresh.ok)
+      if (!fresh.ok) {
+        pending.withdrawalError = fresh.error;
+        requestService.endPermission(record.id, 'withdrawn', null, fresh.error.message, {
+          kind: 'default',
+        });
         return {
           ok: false,
           reason:
             fresh.error.code === 'peer_unreachable' ? 'peer_unreachable' : 'policy_unavailable',
           message: fresh.error.message,
         };
+      }
       const choice = remoteGrantOf(answer, pending.grantable);
       if (answer.grant !== undefined && !pending.grantable)
         return {
@@ -2375,13 +2383,21 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const decision = policyService.decide(input);
     if (!input.masterOn && pending.tool !== 'list_agents')
       return { ok: false, error: toolError('messaging_off', 'Conduit messaging is turned off') };
+    if (decision.decision === 'deny')
+      return { ok: false, error: toolError('policy_unavailable', reasonOf(decision)) };
     if (
-      decision.decision === 'deny' ||
       decision.rule.when !== pending.conditions.when ||
       decision.rule.reach !== pending.conditions.reach ||
-      decision.rule.move !== pending.conditions.move ||
-      (decision.decision === 'ask' && !ownerAllow)
+      decision.rule.move !== pending.conditions.move
     )
+      return {
+        ok: false,
+        error: toolError(
+          'policy_unavailable',
+          'Permissions changed after this action was prepared',
+        ),
+      };
+    if (decision.decision === 'ask' && !ownerAllow)
       return { ok: false, error: toolError('policy_unavailable', reasonOf(decision)) };
     return { ok: true, value: { input, decision } };
   };
@@ -2435,7 +2451,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         requestId: created.id,
         outcome: { ok: false, error: toolError('cancelled', 'the call was cancelled') },
       };
-    return { requestId: created.id, outcome: ownerOutcomeOf(ended) };
+    return { requestId: created.id, outcome: ownerOutcomeOf(ended, pending.withdrawalError) };
   };
 
   /**

@@ -120,6 +120,10 @@ If a locked contract does not fit actual owner, stop that task, report exact mis
 ## Decisions Needed
 None for this companion. Universal hand-started Worker cap remains separate queued owner ruling and is untouched.
 
+
+## Review correction at 9b0db8f4
+Fresh invalid policy/context at preflight must call endPermission withdrawn with Conduit reason before returning refusal, settling the waiting call and releasing prepared resources. Grant persistence failure remains open/retryable. Internal PendingRemotePermission.withdrawalError?:ToolError carries the already-known causal error into ownerOutcomeOf(record,withdrawalError); no parsing of stop-message strings, wire field or persisted request schema change. Missing cause preserves existing stop outcome; original aborted-signal branch remains cancelled. Tests must not answer Deny merely to clean up a fresh-denied call. Assert canonical withdrawnBy conduit/reason, immediate settled call/no grant/action, same request cannot revive after relaxation. Real net-requests adds Observer while Ask waits; controller mirror proves withdrawn state, B canonical requests.json proves actor/reason (wire mirror omits those fields), typed receipt/caller error is truthful, and restoration cannot revive the original ID. Same authorized host/test/E2E file map; source correction red-first and restored withdrawal/cause mutations required.
+
 #1 Coverage: ok — dedicated durable receipt companion requirements and named proofs; full UI remains parent scope
 #2 Placeholder scan: ok — conditional server/services type touch is explicitly bounded, not invented behavior
 #3 Signature consistency: ok — typed queue/preflight/rollback/principal seams and existing owner results

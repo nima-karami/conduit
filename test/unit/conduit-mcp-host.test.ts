@@ -37,7 +37,7 @@ import type { PolicyIo } from '../../src/conduit-mcp/policy-file-fs';
 import { BUILT_IN_PROFILES } from '../../src/conduit-mcp/policy-profiles';
 import type { OneUseOverride } from '../../src/conduit-mcp/policy-types';
 import type { NetworkPort, RemoteEntry } from '../../src/conduit-mcp/remote-routing';
-import type { AnswerInput } from '../../src/conduit-mcp/request-types';
+import type { AnswerInput, RequestRecord } from '../../src/conduit-mcp/request-types';
 import { screenVerdict } from '../../src/conduit-mcp/screen-verdict';
 import type { StoreIo } from '../../src/conduit-mcp/store';
 import {
@@ -8194,7 +8194,7 @@ describe('createConduitMcpHost — a routed ask waits for the owner on this mach
         'narrowed',
         LEAD.machineId,
       );
-      port.applyRemoteAnswer(asked.id, { outcome: 'denied' }, 'cleanup', LEAD.machineId);
+      expect(port.mirrorOf().find((r) => r.id === asked.id)?.state).toBe('withdrawn');
       await call;
       expect(result).toMatchObject({ ok: false, reason: 'policy_unavailable' });
       expect(h.host.uiState().policy.grants).toEqual([]);
@@ -8213,7 +8213,7 @@ describe('createConduitMcpHost — a routed ask waits for the owner on this mach
     expect(
       port.applyRemoteAnswer(asked.id, { outcome: 'allowed', grant: true }, 'move', LEAD.machineId),
     ).toMatchObject({ ok: false, reason: 'policy_unavailable' });
-    port.applyRemoteAnswer(asked.id, { outcome: 'denied' }, 'cleanup', LEAD.machineId);
+    expect(port.mirrorOf().find((r) => r.id === asked.id)?.state).toBe('withdrawn');
     await call;
     const ctl = new AbortController();
     const second = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), ctl.signal);
@@ -8255,7 +8255,7 @@ describe('createConduitMcpHost — a routed ask waits for the owner on this mach
       'caps',
       LEAD.machineId,
     );
-    ctl.abort();
+    expect(port.mirrorOf().find((r) => r.id === asked.id)?.state).toBe('withdrawn');
     await call;
     expect(result).toMatchObject({ ok: false, reason: 'policy_unavailable' });
     expect(h.host.uiState().policy.grants).toEqual([]);
@@ -8497,7 +8497,7 @@ describe('createConduitMcpHost — a routed ask waits for the owner on this mach
     expect(writes).toHaveLength(1);
   });
 
-  it.each(['master', 'floor', 'controller'] as const)(
+  it.each(['master', 'floor', 'controller', 'deny'] as const)(
     'fresh %s change refuses a remote answer without grant or action',
     async (change) => {
       let principal: RemoteCaller | null = structuredClone(LEAD);
@@ -8511,15 +8511,51 @@ describe('createConduitMcpHost — a routed ask waits for the owner on this mach
       const [asked] = await waitForAsks(h);
       if (change === 'master') master = false;
       else if (change === 'controller') principal = null;
+      else if (change === 'deny')
+        await peerRule(h, 'open_session', { decision: 'deny', when: 'always', move: 'yes' });
       else if (principal) principal.controller = false;
-      expect(
-        port.applyRemoteAnswer(asked.id, { outcome: 'allowed', grant: true }, 'a', LEAD.machineId)
-          .ok,
-      ).toBe(false);
+      const refusal = port.applyRemoteAnswer(
+        asked.id,
+        { outcome: 'allowed', grant: true },
+        'a',
+        LEAD.machineId,
+      );
+      expect(refusal.ok).toBe(false);
+      expect(port.mirrorOf().find((r) => r.id === asked.id)?.state).toBe('withdrawn');
       expect(h.opens).toEqual([]);
       expect(h.host.uiState().policy.grants).toEqual([]);
-      port.applyRemoteAnswer(asked.id, { outcome: 'denied' }, 'deny', LEAD.machineId);
-      await call;
+      if (refusal.ok) throw new Error('Expected refusal');
+      expect(await call).toMatchObject({
+        ok: false,
+        error: {
+          code:
+            change === 'master'
+              ? 'messaging_off'
+              : change === 'controller'
+                ? 'peer_unreachable'
+                : 'policy_unavailable',
+          message: refusal.message,
+        },
+      });
+      master = true;
+      principal = structuredClone(LEAD);
+      await peerRule(h, 'open_session', { decision: 'ask', when: 'always', move: 'yes' });
+      expect(
+        port.applyRemoteAnswer(
+          asked.id,
+          { outcome: 'allowed', grant: true },
+          'relaxed',
+          LEAD.machineId,
+        ),
+      ).toMatchObject({ ok: false, reason: 'already_ended' });
+      expect(h.opens).toEqual([]);
+      await h.host.stop();
+      const saved = JSON.parse(fs.readFileSync(path.join(h.dir, 'requests.json'), 'utf8'));
+      expect(saved.requests.find((r: RequestRecord) => r.id === asked.id)).toMatchObject({
+        state: 'withdrawn',
+        withdrawnBy: 'conduit',
+        withdrawReason: refusal.message,
+      });
     },
   );
 
