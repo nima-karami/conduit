@@ -190,7 +190,7 @@ interface Harness {
   activations: Array<{ id: string; raise: boolean }>;
   closes: string[];
   tokens: TokenStorePort;
-  prepareLaunch(sessionId: string, def: AgentDefinition, spec: SpawnSpec): Promise<SpawnSpec>;
+  prepareLaunch(sessionId: string, def: AgentDefinition, spec: SpawnSpec): SpawnSpec;
   spawn(sessionId: string, cols?: number, rows?: number): void;
   respawn(sessionId: string, cols?: number, rows?: number): void;
   resize(sessionId: string, cols: number, rows: number): void;
@@ -266,6 +266,7 @@ function harness(
     /** Records every line the host sends into `calls`, so ordering against setMcp is visible. */
     recordSends?: boolean;
     installState?: McpHostDeps['domain']['installState'];
+    nativeLaunchOf?: McpHostDeps['sessions']['nativeLaunchOf'];
     toolPolicy?: () => { global: GlobalPolicy; byCli: CliPolicyLayers };
     kindOf?: (abs: string) => Promise<PathKind>;
     beforeClose?: (id: string) => Promise<void>;
@@ -438,7 +439,7 @@ function harness(
       return true;
     },
     onChange: () => ({ dispose: () => [] }),
-    allocateLaunch,
+    nativeLaunchOf: opts.nativeLaunchOf ?? (() => null),
   };
   const registry = opts.registry ?? new AgentRegistry(DEFS);
   const domain: McpHostDeps['domain'] = {
@@ -1021,14 +1022,60 @@ describe('createConduitMcpHost — launch', () => {
     expect(out.args).not.toContain('--settings');
   });
 
-  it('async prepareLaunch reserves the token row with the caller allocated launch ids', async () => {
+  it('broadcasts recorded native preparation only after the matching terminal is live', async () => {
+    const intent = { family: 'claude', optedIn: true, requested: { mode: 'plan' } } as const;
+    const evidence = {
+      version: 1,
+      generation: 1,
+      launchId: '1'.padStart(32, '0'),
+      preparedAt: 100,
+      intent,
+    } as const;
+    const h = harness({
+      manualTimers: true,
+      nativeLaunchOf: (id) => (id === 'c1' ? evidence : null),
+    });
+    h.sessions.set('c1', session('c1', { agentId: CLAUDE.id }));
+    h.sessions.set('sh1', session('sh1', { agentId: SHELL.id, mcpHandle: 'claude-9' }));
+    const original = spec('/usr/bin/claude');
+    expect(h.host.prepareNativeLaunch('c1', CLAUDE, original)).toEqual({
+      ok: false,
+      problem: 'policy-unavailable',
+    });
+    await h.host.start();
+    h.prepareLaunch('c1', CLAUDE, original);
+    await until(() => h.broadcasts.some((m) => m.type === 'mcp:state'));
+    expect(h.host.uiState().native).toMatchObject({
+      c1: {
+        atLaunch: null,
+        next: {
+          status: 'available',
+          intent: { family: 'claude', optedIn: false, requested: null },
+        },
+      },
+      sh1: { atLaunch: null, next: { status: 'not-applicable' } },
+    });
+    h.broadcasts.length = 0;
+    h.spawn('c1');
+    await until(() => h.broadcasts.some((m) => m.type === 'mcp:state'));
+    expect(h.broadcasts.findLast((m) => m.type === 'mcp:state')).toMatchObject({
+      state: { native: { c1: { atLaunch: { intent, preparedAt: 100 } } } },
+    });
+    const terminal = h.terminals.get('c1');
+    if (!terminal) throw new Error('fake runtime did not register terminal');
+    terminal.launchId = '2'.padStart(32, '0');
+    expect(h.host.uiState().native.c1.atLaunch).toBeNull();
+    terminal.launchId = evidence.launchId;
+    h.respawn('c1');
+    expect(h.host.uiState().native.c1.atLaunch).toBeNull();
+  });
+
+  it('synchronous prepareLaunch reserves the token row with the caller allocated launch ids', async () => {
     const h = harness();
     await h.host.start();
     h.sessions.set('s1', session('s1'));
     const ids: LaunchIds = { generation: 7, launchId: 'f'.repeat(32) };
-    const pending = h.host.prepareLaunch('s1', FAKE, spec(), ids);
-    expect(pending).toBeInstanceOf(Promise);
-    const wired = await pending;
+    const wired = h.host.prepareLaunch('s1', FAKE, spec(), ids);
     expect(wired.env?.CONDUIT_SESSION_TOKEN).toBe('tok1');
     expect(h.tokens.rows()).toMatchObject({
       state: 'loaded',
@@ -1234,7 +1281,7 @@ describe('createConduitMcpHost — launch', () => {
     await expect
       .poll(() => {
         h.sessions.set('s1', session('s1'));
-        return h.prepareLaunch('s1', FAKE, spec()).then((out) => out.env?.CONDUIT_SESSION_TOKEN);
+        return h.prepareLaunch('s1', FAKE, spec()).env?.CONDUIT_SESSION_TOKEN;
       })
       .toBeDefined();
     expect(h.host.uiState().loading).toBe(true);
@@ -1287,38 +1334,21 @@ describe('createConduitMcpHost — launch', () => {
     await started;
   });
 
-  it('stop waits for a launch reservation before returning', async () => {
+  it('a launch reservation completes synchronously before stop begins', async () => {
     const h = harness();
     h.sessions.set('s1', session('s1'));
-    let release = () => {};
-    let entered = () => {};
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
+    const reserve = vi.spyOn(h.tokens, 'reserve');
+    const prepared = h.prepareLaunch('s1', FAKE, spec());
+    expect(prepared.command).toBe(spec().command);
+    expect(reserve).toHaveBeenCalledTimes(1);
+    expect(h.tokens.rows()).toMatchObject({
+      state: 'loaded',
+      rows: [{ sessionId: 's1', state: 'reserved' }],
     });
-    const reserving = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const reserve = h.tokens.reserve.bind(h.tokens);
-    vi.spyOn(h.tokens, 'reserve').mockImplementation(async (...args) => {
-      entered();
-      await blocked;
-      return reserve(...args);
-    });
-    const launch = h.prepareLaunch('s1', FAKE, spec());
-    await reserving;
-    let stopped = false;
-    const stopping = h.host.stop().then(() => {
-      stopped = true;
-    });
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    try {
-      expect(stopped).toBe(false);
-    } finally {
-      release();
-    }
-    await stopping;
-    await launch;
-    expect(fs.existsSync(path.join(h.dir, 'handles.json'))).toBe(false);
+    const handles = fs.readFileSync(path.join(h.dir, 'handles.json'), 'utf8');
+    await h.host.stop();
+    expect(reserve).toHaveBeenCalledTimes(1);
+    expect(fs.readFileSync(path.join(h.dir, 'handles.json'), 'utf8')).toBe(handles);
   });
 
   it('a tick that throws is logged, not left unhandled', async () => {
@@ -3853,9 +3883,7 @@ describe('typed-command detection → notConnected (spec 2026-10-27-conduit-mcp-
     await expect
       .poll(() => {
         h.sessions.set('sh1', session('sh1', { agentId: 'pwsh' }));
-        return h
-          .prepareLaunch('sh1', SHELL, spec('/usr/bin/pwsh'))
-          .then((out) => out.env?.CONDUIT_SESSION_TOKEN);
+        return h.prepareLaunch('sh1', SHELL, spec('/usr/bin/pwsh')).env?.CONDUIT_SESSION_TOKEN;
       })
       .toBeDefined();
     await typedAndWaited(h, 'sh1', 'claude\r');
@@ -5190,15 +5218,19 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     await until(() => asksOf(h).length === 1 && asksOf(h));
     expect(h.host.uiState().awaitingApproval).toEqual(['s1']);
     const port = h.host.networkPort();
-    const applied = port.applyRemotePolicy(port.policyDoc().rev, {
-      profiles: [],
-      assignments: [
-        {
-          point: { kind: 'default' },
-          assignment: { profileId: 'observer', exceptions: [], onScreenOnly: false },
-        },
-      ],
-    });
+    const applied = port.applyRemotePolicy(
+      port.policyDoc().rev,
+      {
+        profiles: [],
+        assignments: [
+          {
+            point: { kind: 'default' },
+            assignment: { profileId: 'observer', exceptions: [], onScreenOnly: false },
+          },
+        ],
+      },
+      true,
+    );
     expect(applied.ok).toBe(true);
     expect(h.host.uiState().awaitingApproval).toEqual([]);
     expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
@@ -6572,6 +6604,7 @@ describe('createConduitMcpHost — wait_sessions', () => {
       }),
       selfName: () => 'this-machine',
       answerRemoteRequest: () => Promise.reject(new Error('not used by this test')),
+      nativeSupport: () => false,
       pushPolicy: () => Promise.reject(new Error('not used by this test')),
       revokeRemoteGrant: () => Promise.reject(new Error('not used by this test')),
     };
@@ -7955,6 +7988,7 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
         (async () => ({ ok: true, value: { machine: 'win-box', state: 'down' } })),
       selfName: () => 'this-machine',
       answerRemoteRequest: () => Promise.reject(new Error('not used by this test')),
+      nativeSupport: () => false,
       pushPolicy: () => Promise.reject(new Error('not used by this test')),
       revokeRemoteGrant: () => Promise.reject(new Error('not used by this test')),
     };
@@ -8231,6 +8265,7 @@ function inboundNetwork(principal: () => RemoteCaller | null): NetworkPort {
     connectMachine: unused,
     disconnectMachine: unused,
     answerRemoteRequest: unused,
+    nativeSupport: () => false,
     pushPolicy: unused,
     selfName: () => 'this machine',
     revokeRemoteGrant: unused,
@@ -9238,6 +9273,7 @@ describe('createConduitMcpHost — a remote answer that does not reach its machi
       disconnectMachine: unused,
       selfName: () => 'this-machine',
       answerRemoteRequest: vi.fn(answer),
+      nativeSupport: () => false,
       pushPolicy: () => Promise.reject(new Error('not used by this test')),
       revokeRemoteGrant: () => Promise.reject(new Error('not used by this test')),
     };
@@ -9358,6 +9394,7 @@ describe('routed session tools on this machine (CON-40 S3, plan decision 5)', ()
       disconnectMachine: unused,
       selfName: () => 'this-machine',
       answerRemoteRequest: () => Promise.reject(new Error('not used by this test')),
+      nativeSupport: () => false,
       pushPolicy: () => Promise.reject(new Error('not used by this test')),
       revokeRemoteGrant: () => Promise.reject(new Error('not used by this test')),
     };
@@ -9714,6 +9751,7 @@ describe('createConduitMcpHost — remote requests (CON-42 A side)', () => {
       disconnectMachine: unused,
       selfName: () => 'this-machine',
       answerRemoteRequest,
+      nativeSupport: () => false,
       pushPolicy: () => Promise.reject(new Error('not used by this test')),
       revokeRemoteGrant: () => Promise.reject(new Error('not used by this test')),
     };
@@ -9972,6 +10010,7 @@ describe('remote policy edits from this machine (CON-46 L4)', () => {
       disconnectMachine: unused,
       selfName: () => 'this-machine',
       answerRemoteRequest: unused,
+      nativeSupport: () => false,
       pushPolicy: async (machineId, baseRev, doc) => {
         pushes.push([machineId, baseRev, doc]);
         return { ok: true, value: { rev: baseRev + 1 } };
@@ -10051,7 +10090,7 @@ describe('remote policy edits from this machine (CON-46 L4)', () => {
     await until(() => savedDrafts(h.dir)?.[MACHINE] !== undefined);
     expect(
       JSON.parse(fs.readFileSync(path.join(h.dir, 'remote-policy.json'), 'utf8')),
-    ).toMatchObject({ version: 1, drafts: { [MACHINE]: { baseRev: 3 } } });
+    ).toMatchObject({ version: 2, drafts: { [MACHINE]: { baseRev: 3 } } });
 
     const again = harness({ dir: h.dir, network, manualTimers: true });
     await again.host.start();
@@ -10107,7 +10146,7 @@ describe('remote policy edits from this machine (CON-46 L4)', () => {
     ];
     const original = token();
     const profile = {
-      ...structuredClone(OBSERVER),
+      rules: structuredClone(OBSERVER.rules),
       id: 'p-custom-portable' as const,
       name: 'Custom portable',
       builtIn: false,

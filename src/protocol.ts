@@ -759,6 +759,7 @@ export type HostToWebview =
         | 'too-large'
         | 'conflict'
         | 'unknown-profile'
+        | 'native-review-required'
         | 'not-found'
         | 'no-copy'
         | 'busy';
@@ -1282,14 +1283,22 @@ export type WebviewToHost =
       point: AssignmentPoint;
       assignment: Assignment | null;
       expectedToken: string;
+      nativeConsent?: boolean;
     }
-  | { type: 'mcp:saveProfile'; requestId: number; profile: Profile; expectedToken: string }
+  | {
+      type: 'mcp:saveProfile';
+      requestId: number;
+      profile: Profile;
+      expectedToken: string;
+      nativeConsent?: boolean;
+    }
   | {
       type: 'mcp:deleteProfile';
       requestId: number;
       profileId: ProfileId;
       replacement: ProfileId;
       expectedToken: string;
+      nativeConsent?: boolean;
     }
   | { type: 'mcp:policyRetry'; requestId: number }
   | {
@@ -1317,6 +1326,7 @@ export type WebviewToHost =
       machine: string;
       expectedToken: string;
       edit: RemotePolicyEdit;
+      nativeConsent?: boolean;
     }
   | {
       type: 'mcp:remotePolicy';
@@ -1324,6 +1334,7 @@ export type WebviewToHost =
       machine: string;
       expectedToken: string;
       action: 'discard' | 'reapply' | 'retry-save';
+      nativeConsent?: boolean;
     }
   | { type: 'mcp:allowOnce'; requestId: number; activityId: string }
   | { type: 'mcp:setAway'; away: boolean; until: string | null }

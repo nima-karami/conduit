@@ -606,7 +606,7 @@ describe('policy service', () => {
     const h = harness({ policy: policyText() });
     h.service.start();
     const profile = {
-      ...structuredClone(OBSERVER),
+      rules: structuredClone(OBSERVER.rules),
       id: 'p-copy' as const,
       name: 'Copy',
       builtIn: false,
@@ -690,7 +690,7 @@ describe('policy service', () => {
 
   it('enforces candidate byte cap and allows an oversized readable policy to be reduced', () => {
     const huge = {
-      ...structuredClone(OBSERVER),
+      rules: structuredClone(OBSERVER.rules),
       id: 'p-huge' as const,
       name: 'Huge',
       builtIn: false,
@@ -778,15 +778,19 @@ describe('policy service', () => {
     h.service.start();
     h.setWriteDown(true);
     expect(
-      h.service.applyRemoteDoc(0, {
-        profiles: [],
-        assignments: [
-          {
-            point: { kind: 'default' },
-            assignment: { profileId: 'lead', exceptions: [], onScreenOnly: false },
-          },
-        ],
-      }),
+      h.service.applyRemoteDoc(
+        0,
+        {
+          profiles: [],
+          assignments: [
+            {
+              point: { kind: 'default' },
+              assignment: { profileId: 'lead', exceptions: [], onScreenOnly: false },
+            },
+          ],
+        },
+        true,
+      ),
     ).toEqual({ ok: false, code: 'policy_unavailable', message: 'save-failed' });
     expect(h.service.remoteDoc()).toEqual({ rev: 0, doc: { profiles: [], assignments: [] } });
   });
@@ -2643,7 +2647,7 @@ describe('remote policy doc', () => {
     const h = harness({ policy: seeded() });
     h.service.start();
     const before = h.changed();
-    const result = h.service.applyRemoteDoc(0, pushed());
+    const result = h.service.applyRemoteDoc(0, pushed(), true);
     expect(result).toEqual({ ok: true, rev: 1 });
     expect(h.changed()).toBe(before + 1);
     expect(h.service.remoteDoc().rev).toBe(1);
@@ -2665,12 +2669,14 @@ describe('remote policy doc', () => {
   it('applyRemoteDoc refuses a stale baseRev with policy_conflict and the current copy, and changes nothing', async () => {
     const h = harness({ policy: seeded() });
     h.service.start();
-    expect(h.service.applyRemoteDoc(0, pushed())).toEqual({ ok: true, rev: 1 });
+    expect(h.service.applyRemoteDoc(0, pushed(), true)).toEqual({ ok: true, rev: 1 });
     const current = h.service.remoteDoc();
     const changed = h.changed();
     h.fire(WRITE_MS);
     const writes = h.policyWrites.length;
-    expect(h.service.applyRemoteDoc(0, pushed({ profiles: [profile('p-2', 'Stale')] }))).toEqual({
+    expect(
+      h.service.applyRemoteDoc(0, pushed({ profiles: [profile('p-2', 'Stale')] }), true),
+    ).toEqual({
       ok: false,
       code: 'policy_conflict',
       message: expect.any(String),
@@ -2689,6 +2695,7 @@ describe('remote policy doc', () => {
     const result = h.service.applyRemoteDoc(
       0,
       pushed({ assignments: [entry({ kind: 'session', sessionId: 's9' }, 'worker')] }),
+      true,
     );
     expect(result).toMatchObject({ ok: false, code: 'invalid_args' });
     expect(result.ok ? '' : result.message).toMatch(/^assignments\[0\]\.point/);
@@ -2709,7 +2716,7 @@ describe('remote policy doc', () => {
   ])('applyRemoteDoc refuses a doc over the %s cap', (_label, doc, path) => {
     const h = harness({ policy: seeded() });
     h.service.start();
-    const result = h.service.applyRemoteDoc(0, doc);
+    const result = h.service.applyRemoteDoc(0, doc, true);
     expect(result).toMatchObject({ ok: false, code: 'invalid_args' });
     expect(result.ok ? '' : result.message).toMatch(path);
     expect(h.service.remoteDoc().rev).toBe(0);
@@ -2718,10 +2725,14 @@ describe('remote policy doc', () => {
   it('a pushed doc with no default assignment applies, and the engine falls back to the built-in default', () => {
     const h = harness({ policy: seeded() });
     h.service.start();
-    const result = h.service.applyRemoteDoc(0, {
-      profiles: [],
-      assignments: [entry({ kind: 'peer', machineId: 'm-1' }, 'observer')],
-    });
+    const result = h.service.applyRemoteDoc(
+      0,
+      {
+        profiles: [],
+        assignments: [entry({ kind: 'peer', machineId: 'm-1' }, 'observer')],
+      },
+      true,
+    );
     expect(result).toEqual({ ok: true, rev: 1 });
     expect(h.service.ui([sessionRow('s2')]).sessions.s2?.profileId).toBe('worker');
   });
@@ -2730,7 +2741,7 @@ describe('remote policy doc', () => {
     const h = harness({ policy: '{"version":99}' });
     h.service.start();
     expect(h.service.ui([]).readOnly).toBe(true);
-    expect(h.service.applyRemoteDoc(0, pushed())).toMatchObject({
+    expect(h.service.applyRemoteDoc(0, pushed(), true)).toMatchObject({
       ok: false,
       code: 'policy_unavailable',
     });
@@ -2748,7 +2759,7 @@ describe('remote policy doc', () => {
     expect(seen).toEqual([]);
     h.service.setAssignment({ kind: 'default' }, 'lead');
     expect(seen).toEqual([1]);
-    h.service.applyRemoteDoc(1, pushed());
+    h.service.applyRemoteDoc(1, pushed(), true);
     expect(seen).toEqual([1, 2]);
     off();
     h.service.setAssignment({ kind: 'default' }, 'worker');
@@ -2823,5 +2834,113 @@ describe('remote policy doc', () => {
     });
     await h.service.stop();
     expect(h.grantWrites).toHaveLength(1);
+  });
+});
+
+describe('native profile authority', () => {
+  const point = { kind: 'default' } as const;
+  const optedIn = {
+    profileId: 'observer',
+    exceptions: [],
+    onScreenOnly: false,
+    applyNative: true,
+  } as const;
+  const token = (service: PolicyService) => service.ui([]).editToken;
+
+  it('requires owner consent and refuses legacy materialization over inherited opt-in', () => {
+    const { service, policyWrites } = harness();
+    service.start();
+    const assignment = { ...optedIn, exceptions: [] };
+    expect(service.saveAssignment(point, assignment, token(service))).toEqual({
+      ok: false,
+      error: 'native-review-required',
+    });
+    expect(service.saveAssignment(point, assignment, token(service), true)).toEqual({ ok: true });
+    const saves = policyWrites.length;
+    expect(service.setAssignment({ kind: 'session', sessionId: 's1' }, 'observer')).toEqual({
+      ok: false,
+      error: 'native-review-required',
+    });
+    expect(
+      service.applyLegacyPatch({ kind: 'cli', cli: 'claude' }, point, 'send_input', {
+        access: 'ask',
+      }),
+    ).toEqual({
+      ok: false,
+      error: 'native-review-required',
+    });
+    expect(policyWrites).toHaveLength(saves);
+    expect(service.nativeLaunch('s1', 'claude')).toEqual({
+      status: 'available',
+      intent: { family: 'claude', optedIn: true, requested: { mode: 'plan' } },
+    });
+    expect(
+      service.saveAssignment(
+        { kind: 'session', sessionId: 's1' },
+        { ...assignment, applyNative: false },
+        token(service),
+        true,
+      ),
+    ).toEqual({ ok: true });
+    expect(service.nativeLaunch('s1', 'claude')).toEqual({
+      status: 'available',
+      intent: { family: 'claude', optedIn: false, requested: null },
+    });
+  });
+
+  it('requires a loaded writable policy, independently of grant recovery', () => {
+    const { service } = harness({ grants: '{"version":99}' });
+    expect(service.nativeLaunch('s1', 'codex')).toEqual({ status: 'unavailable' });
+    service.start();
+    expect(service.ui([]).readOnly).toBe(true);
+    expect(service.nativeLaunch('s1', 'codex')).toEqual({
+      status: 'available',
+      intent: { family: 'codex', optedIn: false, requested: null },
+    });
+    const recovery = harness({ policy: '{"version":99}', lastGood: policyText() }).service;
+    recovery.start();
+    expect(recovery.nativeLaunch('s1', 'codex')).toEqual({ status: 'unavailable' });
+  });
+
+  it('protects retained private assignments and refuses a legacy controller native delta', () => {
+    const custom: Profile = {
+      id: 'p-native',
+      name: 'Native',
+      builtIn: false,
+      rules: DEFAULT_RULES,
+    };
+    const { service } = harness({
+      policy: policyText({
+        profiles: [custom],
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: { ...optedIn, profileId: custom.id, exceptions: [] },
+          },
+        ],
+      }),
+    });
+    service.start();
+    expect(service.applyRemoteDoc(0, { profiles: [], assignments: [] }, true)).toMatchObject({
+      ok: false,
+      message: expect.stringContaining('local session'),
+    });
+    const withModes = { ...custom, nativeModes: { claude: 'plan', codex: 'unset' } };
+    expect(
+      service.applyRemoteDoc(0, { profiles: [withModes], assignments: [] }, false),
+    ).toMatchObject({
+      ok: false,
+      code: 'policy_unavailable',
+    });
+    expect(
+      service.applyRemoteDoc(
+        0,
+        { profiles: [{ ...custom, name: 'Renamed' }], assignments: [] },
+        false,
+      ),
+    ).toEqual({
+      ok: true,
+      rev: 1,
+    });
   });
 });

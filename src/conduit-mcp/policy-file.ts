@@ -1,5 +1,6 @@
 // Node-free: pure text in, text out.
 // Unknown fields are kept and written back (SERVER_FILE_VERSION reader rule); a narrowing field needs a version bump.
+import { parseNativeModes } from '../contracts/native-launch';
 import {
   REMOTE_POLICY_ASSIGNMENTS_MAX,
   REMOTE_POLICY_DOC_MAX_BYTES,
@@ -13,6 +14,7 @@ import {
 import { judgePersistedVersion, type ServerFile } from '../contracts/session-identity';
 import { printableName } from '../network/addresses';
 import { GRANT_FORS } from './grant-store';
+import { supportsNativePoint } from './policy-native';
 import { BUILT_IN_PROFILES, OBSERVER, pointKey } from './policy-profiles';
 import { withPinned } from './policy-projection';
 import type {
@@ -42,7 +44,7 @@ import {
 } from './tool-policy';
 
 export interface PolicyFile {
-  version: 1;
+  version: 1 | 2;
   /** Bumped on every change to the portable projection (see policy-service). A missing rev reads as 0. */
   rev?: number;
   profiles: Profile[];
@@ -102,7 +104,12 @@ const isRules = (v: unknown): v is Partial<Record<ToolName, ToolRule>> =>
   isObj(v) && TOOL_NAMES.every((t) => v[t] === undefined || isToolRule(v[t]));
 
 const isProfile = (v: unknown): v is RawProfile =>
-  isObj(v) && isProfileId(v.id) && isStr(v.name) && isBool(v.builtIn) && isRules(v.rules);
+  isObj(v) &&
+  isProfileId(v.id) &&
+  isStr(v.name) &&
+  isBool(v.builtIn) &&
+  isRules(v.rules) &&
+  (v.nativeModes === undefined || parseNativeModes(v.nativeModes) !== null);
 
 const isScope = (v: unknown): v is Scope =>
   isObj(v) &&
@@ -128,7 +135,8 @@ const isAssignment = (v: unknown): v is Assignment =>
   isProfileId(v.profileId) &&
   arrayOf(isException)(v.exceptions) &&
   isBool(v.onScreenOnly) &&
-  (v.pinned === undefined || arrayOf(isStr)(v.pinned));
+  (v.pinned === undefined || arrayOf(isStr)(v.pinned)) &&
+  (v.applyNative === undefined || isBool(v.applyNative));
 
 const isPoint = (v: unknown): v is AssignmentPoint =>
   isObj(v) &&
@@ -138,7 +146,10 @@ const isPoint = (v: unknown): v is AssignmentPoint =>
     v.kind === 'default');
 
 const isAssignmentEntry = (v: unknown): v is PolicyFile['assignments'][number] =>
-  isObj(v) && isPoint(v.point) && isAssignment(v.assignment);
+  isObj(v) &&
+  isPoint(v.point) &&
+  isAssignment(v.assignment) &&
+  (v.assignment.applyNative !== true || supportsNativePoint(v.point));
 
 const isTarget = (v: unknown): v is PolicyTarget =>
   isObj(v) &&
@@ -157,10 +168,13 @@ const isOverride = (v: unknown): v is OneUseOverride =>
 
 const isFile = (v: unknown): v is RawPolicyFile =>
   isObj(v) &&
-  v.version === 1 &&
+  (v.version === 1 || v.version === 2) &&
   (v.rev === undefined || isRev(v.rev)) &&
   arrayOf(isProfile)(v.profiles) &&
   arrayOf(isAssignmentEntry)(v.assignments) &&
+  (v.version !== 1 ||
+    (v.profiles.every((p) => !('nativeModes' in p)) &&
+      v.assignments.every((a) => !('applyNative' in a.assignment)))) &&
   arrayOf(isOverride)(v.overrides) &&
   (v.migratedFrom === null || v.migratedFrom === 'v0.64') &&
   isObj(v.notes) &&
@@ -223,7 +237,13 @@ function completeRules(rules: Partial<Record<ToolName, ToolRule>>): Record<ToolN
   return out;
 }
 
-const completeProfile = (p: RawProfile): Profile => ({ ...p, rules: completeRules(p.rules) });
+const completeProfile = (p: RawProfile): Profile => ({
+  ...p,
+  ...(p.nativeModes && {
+    nativeModes: { claude: p.nativeModes.claude, codex: p.nativeModes.codex },
+  }),
+  rules: completeRules(p.rules),
+});
 
 // Pins sit on non-default points only, sorted and unique (see plan third-pass rulings); a hand-edited file is brought to that shape.
 const normaliseEntry = (
@@ -251,7 +271,7 @@ export function parsePolicyFile(text: string): Parsed<PolicyFile> {
 }
 
 export function serializePolicyFile(f: PolicyFile): string {
-  return toText(f);
+  return toText({ ...f, version: 2 });
 }
 
 export function parseGrantsFile(text: string): Parsed<GrantsFile> {
@@ -334,9 +354,10 @@ export function validatePolicyAssignment(
   point: unknown,
   assignment: unknown,
 ): PolicyFile['assignments'][number] | null {
-  if (!isPoint(point) || !isAssignment(assignment)) return null;
-  if (assignment.exceptions.length > REMOTE_POLICY_EXCEPTIONS_MAX) return null;
-  for (const exception of assignment.exceptions) {
+  const entry = { point, assignment };
+  if (!isAssignmentEntry(entry)) return null;
+  if (entry.assignment.exceptions.length > REMOTE_POLICY_EXCEPTIONS_MAX) return null;
+  for (const exception of entry.assignment.exceptions) {
     const scope = exception.scope;
     if (
       (scope.kind === 'path' || scope.kind === 'folder') &&
@@ -346,7 +367,7 @@ export function validatePolicyAssignment(
   }
   try {
     JSON.stringify({ point, assignment });
-    return structuredClone(normaliseEntry({ point, assignment }));
+    return structuredClone(normaliseEntry(entry));
   } catch {
     return null;
   }

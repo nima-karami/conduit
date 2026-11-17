@@ -48,6 +48,7 @@ function mcpState(legacy: Legacy, machines: RemotePolicyUi[] = []): McpUiState {
   return {
     enabled: true,
     storeError: null,
+    native: {},
     loading: false,
     sessions: {},
     threads: [],
@@ -388,6 +389,8 @@ const remoteOf = (
   link: 'up',
   rev: 4,
   status: 'applied',
+  nativeSupport: false,
+  nativeReviewRequired: false,
   refusal: null,
   policy: {
     editToken: 'fixture',

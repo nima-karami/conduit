@@ -16,6 +16,12 @@ import type { McpOpenRequest } from '../../src/conduit-mcp/control-tools';
 import { CLI_KINDS, type CliKind } from '../../src/conduit-mcp/tool-policy';
 import { type AgentsConfig, loadAgentsConfig, readBlob, readFileState } from '../../src/config';
 import type { HookPost } from '../../src/contracts/hook-protocol';
+import {
+  type NativeLaunchEvidence,
+  type NativeLaunchFailure,
+  type NativeLaunchIntent,
+  parseNativeLaunchEvidence,
+} from '../../src/contracts/native-launch';
 import type { SessionAutoResume } from '../../src/contracts/scheduler';
 import type {
   AttentionStatusRead,
@@ -32,6 +38,7 @@ import type {
 import {
   APP_SESSION_FIELDS,
   type AppSessionField,
+  NATIVE_LAUNCH_REFUSAL_MESSAGES,
   type ServerMethod,
   type ServerMethods,
   type ServerSettings,
@@ -239,7 +246,7 @@ const HC_DEFAULT_ROWS = 120;
 
 const dim = (text: string) => `\r\n\x1b[2m— ${text} —\x1b[0m\r\n`;
 
-type StoredSession = Session & Partial<PersistedLaunchCounter>;
+type StoredSession = Session & Partial<PersistedLaunchCounter> & { nativeLaunch?: unknown };
 
 const lastGenerationOf = (s: StoredSession): number =>
   typeof s.lastGeneration === 'number' ? s.lastGeneration : 0;
@@ -249,6 +256,7 @@ function viewFields(s: Session): Omit<Session, AppSessionField> {
   const record: StoredSession = { ...s };
   for (const k of APP_SESSION_FIELDS) delete record[k];
   delete record.lastGeneration;
+  delete record.nativeLaunch;
   return record;
 }
 
@@ -942,23 +950,31 @@ export function createDomain(deps: DomainDeps): Domain {
   });
 
   /** The single producer; persisted before the run, so a restart never reuses a generation. */
-  function allocateLaunch(id: string): LaunchIds {
+  function allocateLaunch(id: string, intent?: NativeLaunchIntent): LaunchIds {
     const s = mgr.get(id);
     if (!s) throw new RpcFault('not_found', 'Session no longer exists');
     if (!sessionsWriteAllowed()) throw new RpcFault('unavailable', 'sessions-unavailable');
     const persisted = s as StoredSession;
     const previous = persisted.lastGeneration;
+    const previousNative = persisted.nativeLaunch;
     const counter: PersistedLaunchCounter = { lastGeneration: lastGenerationOf(s) + 1 };
+    const ids = { generation: counter.lastGeneration, launchId: randomBytes(16).toString('hex') };
     Object.assign(s, counter);
+    if (intent) {
+      const evidence: NativeLaunchEvidence = { version: 1, ...ids, preparedAt: Date.now(), intent };
+      persisted.nativeLaunch = evidence;
+    }
     try {
       atomicWriteFileSync(file('sessions.json'), serializeSessions(persistedSessions()));
     } catch (e) {
       if (previous === undefined) delete persisted.lastGeneration;
       else persisted.lastGeneration = previous;
+      if (previousNative === undefined) delete persisted.nativeLaunch;
+      else persisted.nativeLaunch = previousNative;
       log.error('persist', `sessions.json write failed: ${String(e)}`);
       throw new RpcFault('unavailable', 'sessions-unavailable');
     }
-    return { generation: counter.lastGeneration, launchId: randomBytes(16).toString('hex') };
+    return ids;
   }
 
   /**
@@ -1093,9 +1109,23 @@ export function createDomain(deps: DomainDeps): Domain {
       if (aug?.args) spec = { ...spec, args: [...spec.args, ...aug.args] };
       if (aug?.env) spec = { ...spec, env: { ...spec.env, ...aug.env } };
     }
-    const ids = allocateLaunch(id);
-    if (def) spec = await deps.launch.prepareLaunch(id, def, spec, ids);
-    if (!mgr.get(id)) throw new RpcFault('not_found', 'Session no longer exists');
+    const refuseNative = (problem: NativeLaunchFailure): SessionStartResult => {
+      if (startRefusals.delete(id)) changed(false);
+      refuseStart(id, `can't start: ${NATIVE_LAUNCH_REFUSAL_MESSAGES[problem]}`);
+      return refused({ reason: 'native_permissions', problem });
+    };
+    const native = def ? deps.launch.prepareNativeLaunch(id, def, spec) : undefined;
+    if (native?.ok === false) return refuseNative(native.problem);
+
+    let ids: LaunchIds;
+    try {
+      ids = allocateLaunch(id, native?.intent);
+    } catch (error) {
+      if (native?.intent && error instanceof RpcFault && error.kind === 'unavailable')
+        return refuseNative('save-failed');
+      throw error;
+    }
+    if (def && native) spec = deps.launch.prepareLaunch(id, def, native.spec, ids);
     // brief --add-dir is not a session root (role-brief spec §3.2)
     const scopeArgs = spec.args;
     const brief = roleBriefs.prepareSpawn(id, def, spec);
@@ -1372,6 +1402,13 @@ export function createDomain(deps: DomainDeps): Domain {
           ok: false,
           code: 'spawn_unconfirmed',
           message: 'The launch could not be confirmed; close this session before opening another',
+          sessionId: r.sessionId,
+        };
+      if (started.refusal.reason === 'native_permissions')
+        return {
+          ok: false,
+          code: 'open_failed',
+          message: NATIVE_LAUNCH_REFUSAL_MESSAGES[started.refusal.problem],
           sessionId: r.sessionId,
         };
       if (started.refusal.reason === 'server_stopping')
@@ -1723,7 +1760,10 @@ export function createDomain(deps: DomainDeps): Domain {
     touch: (id, minIntervalMs) => mgr.touch(id, minIntervalMs),
     setStatus: (id, value) => mgr.setStatus(id, value),
     onChange: (listener) => mgr.onChange(listener),
-    allocateLaunch,
+    nativeLaunchOf(id) {
+      const session = mgr.get(id) as StoredSession | undefined;
+      return parseNativeLaunchEvidence(session?.nativeLaunch);
+    },
   };
 
   const domain: DomainPort = {

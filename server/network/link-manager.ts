@@ -10,6 +10,7 @@ import {
   LINK_FEATURES,
   LINK_PING_MS,
   LINK_PROTOCOL,
+  type LinkFeature,
   type LinkFrame,
   type LinkState,
   OWN_DEFAULT_CAPABILITIES,
@@ -73,6 +74,7 @@ export interface LinkManagerDeps {
   onOwnerKey(pair: { publicKey: string; privateKey: string }): boolean;
   /** A live connection was swapped for a new one: frames on the old one may never have landed. */
   reconnected(machineId: string): void;
+  connectionReplaced(machineId: string): void;
   /** Opens the ssh child for an ssh peer; the bridge's preamble has already proved access. */
   sshDial: SshDial;
   dialTimeoutMs?: number;
@@ -132,6 +134,7 @@ export interface LinkManager {
   view(machineId: string): LinkView | null;
   /** The protocol minor the peer's hello reported; null until its hello has landed. */
   peerMinor(machineId: string): number | null;
+  peerHasFeature(machineId: string, feature: LinkFeature): boolean;
   onRevoked(listener: (machineId: string) => void): () => void;
 }
 
@@ -600,6 +603,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     ) {
       p.record = deps.store.update(p.record.machineId, { name: hello.selfName }) ?? p.record;
     }
+    if (replaced) deps.connectionReplaced(p.record.machineId);
     event(p, { kind: 'up', at: deps.now() });
     opened.start({ onFrame: (f) => onFrame(p, opened, f), onClose: () => onClose(p, opened) });
     // A change made during the handshake missed this hello, and any connection it went out on.
@@ -1055,6 +1059,12 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     },
     views: () => [...peers.values()].map(viewOf),
     peerMinor: (machineId) => peerOf(machineId)?.peerHello?.protocol.minor ?? null,
+    peerHasFeature(machineId, feature) {
+      const p = peerOf(machineId);
+      return (
+        p?.sm.state === 'up' && p.conn !== null && p.peerHello?.features.includes(feature) === true
+      );
+    },
     view: (machineId) => {
       const p = peerOf(machineId);
       return p ? viewOf(p) : null;

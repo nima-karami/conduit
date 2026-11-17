@@ -43,6 +43,7 @@ export function emptySnapshot(): Omit<ServerSnapshot, 'seq' | 'runtime'> {
     mcp: {
       enabled: false,
       storeError: null,
+      native: {},
       loading: false,
       sessions: {},
       threads: [],

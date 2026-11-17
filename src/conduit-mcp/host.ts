@@ -12,6 +12,7 @@ import { readUserStatusLine } from '../claude-user-status-line';
 import { detectStuckScreen, type StuckScreen } from '../cli-stuck-screens';
 import type { CodexAction } from '../codex-rollout';
 import type { RoutedTool, WireRecipientOutcome } from '../contracts/link-protocol';
+import type { NativeSelection, NativeSessionUi } from '../contracts/native-launch';
 import type { RemoteCaller } from '../contracts/remote-principal';
 import type { DraftPort, LaunchPort, McpHostDeps, ObservedEntry } from '../contracts/server-ports';
 import type { CliBindingRecord } from '../contracts/session-identity';
@@ -19,6 +20,7 @@ import type { LaunchIds } from '../contracts/terminal-runtime';
 import { inputBoxTop } from '../input-box-rows';
 import type { HostPlatform } from '../lsp-binary';
 import { mcpLaunchWiring, mcpServerCommand } from '../mcp-launch';
+import { prepareNativeLaunch } from '../native-launch';
 import { parseAddress } from '../network/addresses';
 import type { HostToWebview, WebviewToHost } from '../protocol';
 import type { SubmitOutcome } from '../pty-writer';
@@ -98,6 +100,7 @@ import { composeUnreadBanner } from './notice-text';
 import { type AttentionRaise, bannerCandidates, createNotifier, type Notifier } from './notifier';
 import { reasonText } from './policy-engine';
 import { createPolicyIo, type PolicyIo } from './policy-file-fs';
+import { isNativeFamily } from './policy-native';
 import { createPolicyService } from './policy-service';
 import { forcesAsk, resolveTargets, type TargetDeps } from './policy-targets';
 import type {
@@ -621,7 +624,6 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   let broadcastTimer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
   let startupSweep: Promise<void> | undefined;
-  const reservations = new Set<Promise<unknown>>();
   const lateEchoWatchers = new Map<string, () => void>();
 
   const rt = (sessionId: string): Runtime => {
@@ -3014,7 +3016,27 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return { ok: true, request: ref.view };
   }
 
+  function nativeSessionUi(id: string, next: NativeSelection | undefined): NativeSessionUi {
+    const terminal = deps.runtime.get(id);
+    const evidence = deps.sessions.nativeLaunchOf(id);
+    const atLaunch =
+      terminal?.state === 'live' &&
+      evidence &&
+      evidence.generation === terminal.generation &&
+      evidence.launchId === terminal.launchId
+        ? { intent: evidence.intent, preparedAt: evidence.preparedAt }
+        : null;
+    return { atLaunch, next: next ?? { status: 'not-applicable' } };
+  }
+
   function uiState(): McpUiState {
+    const allSessions = deps.sessions.list();
+    const nextNative = policyService.nativeLaunchSelections(
+      allSessions.flatMap(({ id }) => {
+        const family = persistedLaunchedCli(id) ?? null;
+        return isNativeFamily(family) ? [{ id, family }] : [];
+      }),
+    );
     const sessions: Record<string, McpSessionBadge> = {};
     const listed = new Set<string>();
     for (const { session: s, handle } of listedSessions()) {
@@ -3078,6 +3100,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       awaitingApproval: flow.awaitingApproval(),
       waitingAsks: flow.waitingAskCount(),
       requests: mergeRemoteRequests(requestService.ui(), remoteRequests.views()),
+      native: Object.fromEntries(
+        allSessions.map(({ id }) => [id, nativeSessionUi(id, nextNative.get(id))]),
+      ),
       policy: {
         ...policyService.ui(
           deps.sessions
@@ -3282,11 +3307,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
    * Any session may run a CLI the user installed Conduit into: it gets identity env, but a handle
    * only when a CLI initializes (spec 2026-10-27-conduit-mcp-install §3.1).
    */
-  const wireWithoutAdapter = async (
-    r: Runtime,
-    spec: SpawnSpec,
-    token: string,
-  ): Promise<SpawnSpec> => {
+  const wireWithoutAdapter = (r: Runtime, spec: SpawnSpec, token: string): SpawnSpec => {
     if (!deps.domain.messagingOn() || !endpointReady) {
       return spec;
     }
@@ -3302,7 +3323,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     if (sessionId === undefined) return;
     const r = runtime.get(sessionId);
     // Attention clears its own stuck fact on spawn and exit; the feed's memo must match it.
-    if (event.type === 'spawned' || event.type === 'exit') stuckFeed.delete(sessionId);
+    if (event.type === 'spawned' || event.type === 'exit') {
+      stuckFeed.delete(sessionId);
+      scheduleBroadcast();
+    }
     if (event.type === 'spawned') {
       if (!r) return;
       r.size = event.size;
@@ -3339,6 +3363,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   return {
     async start() {
       if (stopped) return;
+      policyService.start();
       stopAttentionWatch = deps.attention.onChange(() => {
         sessionWaits.notify();
         requestService.onAttention(factsWithHandles());
@@ -3361,8 +3386,6 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       })();
       await startupSweep;
       if (stopped) return;
-      // Policy first: a connection accepted before it is loaded would be judged on empty settings.
-      policyService.start();
       // Listening before the store loads: a launch wired before then would point its shim at
       // nothing, and one wired while the store loads only meets store_unavailable, which it can retry.
       // A listen that throws is a down endpoint like a refused one; either way the launches
@@ -3419,20 +3442,23 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       });
     },
 
-    async prepareLaunch(sessionId, def, spec, ids) {
+    prepareNativeLaunch(sessionId, def, spec) {
+      const family = adapterFor(def, { e2e: deps.e2e })?.id ?? null;
+      if (!isNativeFamily(family)) return { ok: true, spec };
+      return prepareNativeLaunch(
+        policyService.nativeLaunch(sessionId, family),
+        def,
+        spec,
+        deps.platform,
+      );
+    },
+
+    prepareLaunch(sessionId, def, spec, ids) {
       if (stopped) return spec;
       const adapter = adapterFor(def, { e2e: deps.e2e });
       const session = deps.sessions.get(sessionId);
       if (!session) return spec;
-      const reservation = deps.tokens.reserve(sessionId, ids);
-      reservations.add(reservation);
-      let token: string;
-      try {
-        ({ token } = await reservation);
-      } finally {
-        reservations.delete(reservation);
-      }
-      if (stopped) return spec;
+      const { token } = deps.tokens.reserve(sessionId, ids);
       const r = rt(sessionId);
       r.defAdapter = adapter;
       r.unavailable = null;
@@ -3451,7 +3477,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         return spec;
       }
 
-      const unavailable = async (reason: McpUnavailableReason) => {
+      const unavailable = (reason: McpUnavailableReason) => {
         r.unavailable = reason;
         scheduleBroadcast();
         // Claude's limit hooks ride on this wiring: say so, since auto-resume falls back to rules.
@@ -3779,6 +3805,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           const invalid =
             'machine' in m ||
             !validToken ||
+            ('nativeConsent' in m && typeof m.nativeConsent !== 'boolean') ||
             (m.type === 'mcp:saveAssignment' &&
               (!validPoint(m.point) ||
                 (m.point.kind === 'session' && !deps.sessions.get(m.point.sessionId)))) ||
@@ -3787,11 +3814,21 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           const result = invalid
             ? { ok: false as const, error: 'invalid-value' as const }
             : m.type === 'mcp:saveAssignment'
-              ? policyService.saveAssignment(m.point, m.assignment, m.expectedToken)
+              ? policyService.saveAssignment(
+                  m.point,
+                  m.assignment,
+                  m.expectedToken,
+                  m.nativeConsent,
+                )
               : m.type === 'mcp:saveProfile'
-                ? policyService.saveProfile(m.profile, m.expectedToken)
+                ? policyService.saveProfile(m.profile, m.expectedToken, m.nativeConsent)
                 : m.type === 'mcp:deleteProfile'
-                  ? policyService.deleteProfile(m.profileId, m.replacement, m.expectedToken)
+                  ? policyService.deleteProfile(
+                      m.profileId,
+                      m.replacement,
+                      m.expectedToken,
+                      m.nativeConsent,
+                    )
                   : policyService.retrySave();
           reply({ type: 'mcp:policyEditResult', requestId: m.requestId, result });
           if (result.ok) {
@@ -3928,6 +3965,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             !machineArg(m.machine) ||
             m.machine === undefined ||
             typeof m.expectedToken !== 'string' ||
+            ('nativeConsent' in m && typeof m.nativeConsent !== 'boolean') ||
             typeof m.requestId !== 'number'
           ) {
             reply({
@@ -3939,11 +3977,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           }
           const result =
             m.type === 'mcp:remoteEdit'
-              ? remotePolicy.editFull(m.machine, m.expectedToken, m.edit)
+              ? remotePolicy.editFull(m.machine, m.expectedToken, m.edit, m.nativeConsent)
               : m.action === 'discard'
                 ? remotePolicy.discard(m.machine, m.expectedToken)
                 : m.action === 'reapply'
-                  ? remotePolicy.reapply(m.machine, m.expectedToken)
+                  ? remotePolicy.reapply(m.machine, m.expectedToken, m.nativeConsent)
                   : m.action === 'retry-save'
                     ? remotePolicy.retrySave(m.machine, m.expectedToken)
                     : { ok: false as const, error: 'invalid-value' as const };
@@ -4101,8 +4139,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       onPolicyDocChange: (fn) => policyService.onRemoteDocChange(fn),
       // A pushed doc or a revoke can allow or deny an ask that waits on it, so the waiting asks are
       // re-decided at once, as refresh() does after a local change.
-      applyRemotePolicy: (baseRev, doc) => {
-        const res = policyService.applyRemoteDoc(baseRev, doc);
+      applyRemotePolicy: (baseRev, doc, senderSupportsNative) => {
+        const res = policyService.applyRemoteDoc(baseRev, doc, senderSupportsNative);
         if (res.ok) flow.recheck();
         return res;
       },
@@ -4191,7 +4229,6 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       await endpoint?.close();
       await startupSweep;
       await storeStopped;
-      await Promise.allSettled(reservations);
     },
   };
 }

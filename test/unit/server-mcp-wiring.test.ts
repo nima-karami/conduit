@@ -115,7 +115,7 @@ function harness(opts: { manualTimers?: boolean; policy?: GlobalPolicy } = {}) {
       },
       setStatus: () => true,
       onChange: () => ({ dispose: () => [] }),
-      allocateLaunch,
+      nativeLaunchOf: () => null,
     } as McpHostDeps['sessions'],
     domain: {
       bracketedPaste: () => false,

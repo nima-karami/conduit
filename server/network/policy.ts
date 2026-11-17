@@ -11,6 +11,7 @@ import {
   toolError,
 } from '../../src/conduit-mcp/types';
 import {
+  type LinkFeature,
   type LinkFrame,
   type LinkState,
   POLICY_MIN_MINOR,
@@ -31,7 +32,11 @@ export interface PolicyDocSource {
   /** Fires when B's rules or grants change. Returns its unsubscribe. */
   onPolicyDocChange(fn: () => void): () => void;
   /** Applies a controller's doc; B validates it and refuses a stale rev. The audit is this module's. */
-  applyRemotePolicy(baseRev: number, doc: unknown): RemotePolicyApplyResult;
+  applyRemotePolicy(
+    baseRev: number,
+    doc: unknown,
+    senderSupportsNative: boolean,
+  ): RemotePolicyApplyResult;
   revokeRemoteGrant(
     grantId: string,
   ): { ok: true } | { ok: false; code: 'not_found' | 'policy_unavailable'; message: string };
@@ -48,6 +53,7 @@ export interface PolicySyncDeps {
   linkOf(machineId: string): LinkRecord | null;
   /** The protocol minor the peer's hello reported; null until its hello has landed. */
   peerMinor(machineId: string): number | null;
+  peerHasFeature(machineId: string, feature: LinkFeature): boolean;
   send(machineId: string, frame: LinkFrame): boolean | null;
   audit: AuditSink;
   now(): number;
@@ -60,6 +66,7 @@ export interface PolicySync {
   onFrame(machineId: string, frame: LinkFrame): void;
   /** Any change to a link's state; B re-evaluates who is owed a snapshot, A reports states and ends pushes. */
   linksChanged(): void;
+  connectionReplaced(machineId: string): void;
   /** A's side: pushes a whole doc to a dialed machine as an edit from `baseRev`. Resolves once. */
   push(machineId: string, baseRev: number, doc: RemotePolicyDoc): Promise<RemotePolicyPushResult>;
   /** A's side: revokes one of a dialed machine's grants. Resolves once. */
@@ -202,7 +209,11 @@ export function createPolicySync(deps: PolicySyncDeps): PolicySync {
       notController(machineId, frame.id, 'policy.push');
       return;
     }
-    const res = deps.b.applyRemotePolicy(frame.baseRev, frame.doc);
+    const res = deps.b.applyRemotePolicy(
+      frame.baseRev,
+      frame.doc,
+      deps.peerHasFeature(machineId, 'native-profile-v1'),
+    );
     if (res.ok) {
       deps.audit.record({
         kind: 'policy.pushed',
@@ -456,6 +467,24 @@ export function createPolicySync(deps: PolicySyncDeps): PolicySync {
   return {
     onFrame,
     linksChanged,
+    connectionReplaced(machineId) {
+      for (const [id, pendingPush] of pending) {
+        if (pendingPush.machineId === machineId)
+          settle(id, {
+            ok: false,
+            error: unreachable('The connection was replaced before the reply arrived'),
+          });
+      }
+      const record = deps.linkOf(machineId);
+      if (isDialedSsh(record)) deps.a()?.connectionReplaced(machineId);
+      const state = deps.links().find((item) => item.machineId === machineId)?.state;
+      if (state !== undefined && mirrorable(machineId, state)) {
+        eligible.add(machineId);
+        sendSnapshot(machineId);
+      } else {
+        eligible.delete(machineId);
+      }
+    },
     push,
     revoke,
     pendingCount: () => pending.size,

@@ -119,7 +119,7 @@ export function createPersistentTokenStore(opts: PersistentTokenStoreOptions): T
     });
 
   return {
-    async reserve(sessionId, ids) {
+    reserve(sessionId, ids) {
       if (unreadable) throw new Error('token store unreadable');
       const token = randomToken();
       commit((draft) => [

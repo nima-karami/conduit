@@ -192,7 +192,7 @@ export async function startServer(label, { electronProfile = false } = {}) {
       c2,
       recordsDir,
       stop: stopOne,
-      restart: async () => {
+      restart: async (afterStop) => {
         const old = server.c2;
         await old.call('server.restart', { reason: 'user' });
         assert(await until(() => old.closed, 15_000), 'server did not close');
@@ -207,6 +207,7 @@ export async function startServer(label, { electronProfile = false } = {}) {
           }, 15_000),
           'supervisor did not stop',
         );
+        await afterStop?.();
         await startSupervisor();
         const next = await attachApp(names.serverEndpoint, userData);
         c2 = next.c2;

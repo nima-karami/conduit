@@ -7,6 +7,7 @@ import {
   type PolicySync,
   REMOTE_POLICY_PUSH_MS,
 } from '../../server/network/policy';
+import { createRemotePolicy } from '../../src/conduit-mcp/remote-policy';
 import type { RemotePolicySink } from '../../src/conduit-mcp/remote-routing';
 import {
   type LinkFrame,
@@ -61,6 +62,7 @@ interface Peer {
   record: LinkRecord;
   state: LinkState;
   minor: number | null;
+  native?: boolean;
 }
 interface Timer {
   fn: () => void;
@@ -88,6 +90,7 @@ function setup(opts: { sendOk?: boolean | null; sink?: RemotePolicySink | null }
           apply: (machineId, s) => {
             sinkCalls.push({ kind: 'apply', machineId, snap: s });
           },
+          connectionReplaced: () => undefined,
           setLinkState: (machineId, state) => {
             sinkCalls.push({ kind: 'state', machineId, state });
           },
@@ -112,6 +115,7 @@ function setup(opts: { sendOk?: boolean | null; sink?: RemotePolicySink | null }
     links: () => [...peers].map(([machineId, p]) => ({ machineId, state: p.state })),
     linkOf: (machineId) => peers.get(machineId)?.record ?? null,
     peerMinor: (machineId) => peers.get(machineId)?.minor ?? null,
+    peerHasFeature: (machineId) => peers.get(machineId)?.native === true,
     send: (machineId, frame) => {
       sent.push({ machineId, frame });
       return sendOk;
@@ -151,8 +155,8 @@ function setup(opts: { sendOk?: boolean | null; sink?: RemotePolicySink | null }
     fire,
     frames,
     sinkCalls,
-    put(record: LinkRecord, state: LinkState, minor: number | null) {
-      peers.set(record.machineId, { record, state, minor });
+    put(record: LinkRecord, state: LinkState, minor: number | null, native = false) {
+      peers.set(record.machineId, { record, state, minor, native });
     },
     setState(machineId: string, state: LinkState) {
       const p = peers.get(machineId);
@@ -230,7 +234,7 @@ describe('B: pushes and revokes come only from an inbound ssh controller', () =>
     const t = setup();
     t.put(controller(CTRL), 'up', POLICY_MIN_MINOR);
     t.policy.onFrame(CTRL, { t: 'policy.push', id: 'p-a', baseRev: 7, doc: DOC });
-    expect(t.b.applyRemotePolicy).toHaveBeenCalledWith(7, DOC);
+    expect(t.b.applyRemotePolicy).toHaveBeenCalledWith(7, DOC, false);
     expect(t.frames('policy.pushed', CTRL)).toEqual([
       { t: 'policy.pushed', id: 'p-a', ok: true, rev: 8 },
     ]);
@@ -278,6 +282,16 @@ describe('B: pushes and revokes come only from an inbound ssh controller', () =>
         current,
       },
     ]);
+  });
+
+  it('forwards a native hello feature from an inbound controller only', () => {
+    const t = setup();
+    t.put(controller(CTRL), 'up', POLICY_MIN_MINOR, true);
+    t.put(dialed(DIALED), 'up', POLICY_MIN_MINOR, true);
+    t.policy.onFrame(DIALED, { t: 'policy.push', id: 'not-ctrl', baseRev: 7, doc: DOC });
+    expect(t.b.applyRemotePolicy).not.toHaveBeenCalled();
+    t.policy.onFrame(CTRL, { t: 'policy.push', id: 'ctrl', baseRev: 7, doc: DOC });
+    expect(t.b.applyRemotePolicy).toHaveBeenCalledWith(7, DOC, true);
   });
 
   it('refuses a push from a dialed link as not_controller, applies nothing, and audits it', () => {
@@ -658,4 +672,100 @@ describe('policy sync stops cleanly', () => {
     expect(await pending).toMatchObject({ ok: false, error: { code: 'peer_unreachable' } });
     expect(t.policy.pendingCount()).toBe(0);
   });
+});
+
+it('invalidates a pending push before the replacement snapshot and ignores the retired ack', async () => {
+  const oldDoc: RemotePolicyDoc = {
+    profiles: [],
+    assignments: [
+      {
+        point: { kind: 'default' },
+        assignment: {
+          profileId: 'observer',
+          exceptions: [],
+          onScreenOnly: false,
+          applyNative: true,
+        },
+      },
+    ],
+  };
+  const newDoc: RemotePolicyDoc = {
+    profiles: [],
+    assignments: [
+      {
+        point: { kind: 'default' },
+        assignment: { profileId: 'worker', exceptions: [], onScreenOnly: false },
+      },
+    ],
+  };
+  let push!: (
+    machineId: string,
+    rev: number,
+    doc: RemotePolicyDoc,
+  ) => ReturnType<PolicySync['push']>;
+  let id = 0;
+  const store = createRemotePolicy({
+    network: () => ({
+      nativeSupport: () => true,
+      pushPolicy: push,
+      revokeRemoteGrant: async () => ({ ok: true, value: null }),
+    }),
+    draftsIo: { read: () => null, writeSync: () => true },
+    now: () => 1000,
+    newId: () => `owner-${++id}`,
+    setTimer: () => null,
+    clearTimer: () => undefined,
+    warn: () => undefined,
+  });
+  const t = setup({ sink: store });
+  push = t.policy.push;
+  t.put(dialed(DIALED), 'up', POLICY_MIN_MINOR, true);
+  t.changed();
+  t.policy.onFrame(DIALED, { t: 'policy.changed', rev: 7, doc: oldDoc, grants: [] });
+  const ui = () => store.ui((machineId) => machineId)[0];
+  const token = ui().policy.editToken;
+  expect(
+    store.editFull(
+      DIALED,
+      token,
+      {
+        kind: 'assignment',
+        point: { kind: 'default' },
+        assignment: { profileId: 'lead', exceptions: [], onScreenOnly: false, applyNative: true },
+      },
+      true,
+    ),
+  ).toEqual({ ok: true });
+  await Promise.resolve();
+  const [retired] = t.frames('policy.push', DIALED);
+  expect(retired).toBeDefined();
+  expect(t.policy.pendingCount()).toBe(1);
+  const retiredToken = ui().policy.editToken;
+  t.policy.connectionReplaced(DIALED);
+  expect(t.policy.pendingCount()).toBe(0);
+  expect(ui().policy.editToken).not.toBe(retiredToken);
+  t.policy.onFrame(DIALED, { t: 'policy.changed', rev: 7, doc: newDoc, grants: [] });
+  t.policy.onFrame(DIALED, { t: 'policy.pushed', id: retired.id, ok: true, rev: 8 });
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(t.frames('policy.push', DIALED)).toHaveLength(1);
+  expect(ui()).toMatchObject({
+    rev: 7,
+    status: 'refused',
+    nativeReviewRequired: true,
+    conflict: { assignments: newDoc.assignments },
+  });
+});
+
+it('sends the current snapshot to an inbound controller that replaces its stream while up', () => {
+  const t = setup();
+  t.put(controller(CTRL), 'up', POLICY_MIN_MINOR, true);
+  t.changed();
+  const changed = { ...SNAP, rev: 8 };
+  t.setSnap(changed);
+  t.policy.connectionReplaced(CTRL);
+  expect(t.frames('policy.changed', CTRL)).toEqual([
+    { t: 'policy.changed', ...SNAP },
+    { t: 'policy.changed', ...changed },
+  ]);
 });

@@ -36,7 +36,7 @@ function rulesFor(decision: Decision = 'allow'): Record<ToolName, ToolRule> {
 }
 
 const validFile = (): PolicyFile => ({
-  version: 1,
+  version: 2,
   profiles: [{ id: 'p-1', name: 'Mine', builtIn: false, rules: rulesFor('ask') }],
   assignments: [
     {
@@ -84,6 +84,43 @@ const validFile = (): PolicyFile => ({
 });
 
 describe('policy file', () => {
+  it('rejects native authority injected into a v1 file and reads vetted v2 modes', () => {
+    const file = validFile();
+    const native = {
+      ...file,
+      profiles: file.profiles.map((profile) => ({
+        ...profile,
+        nativeModes: { claude: 'plan', codex: 'read-only' },
+      })),
+      assignments: file.assignments.map((entry) =>
+        entry.point.kind === 'default'
+          ? { ...entry, assignment: { ...entry.assignment, applyNative: true } }
+          : entry,
+      ),
+    };
+    expect(parsePolicyFile(JSON.stringify({ ...native, version: 1 }))).toEqual({
+      ok: false,
+      reason: 'corrupt',
+    });
+    expect(parsePolicyFile(JSON.stringify({ ...native, version: 2 }))).toEqual({
+      ok: true,
+      file: { ...native, version: 2 },
+    });
+    for (const point of [
+      { kind: 'peer', machineId: 'm-9' },
+      { kind: 'cli', cli: 'cursor' },
+    ]) {
+      expect(
+        validatePolicyAssignment(point, {
+          profileId: 'observer',
+          exceptions: [],
+          onScreenOnly: false,
+          applyNative: true,
+        }),
+      ).toBeNull();
+    }
+  });
+
   it('round-trips a policy file', () => {
     const file = validFile();
     const text = serializePolicyFile(file);
@@ -148,13 +185,13 @@ describe('policy file', () => {
     expect(parsed.file.assignments[2]?.assignment.pinned).toEqual(pinsExpected);
   });
 
-  it('corrupt → corrupt, version 2 → newer', () => {
+  it('corrupt → corrupt, version 3 → newer', () => {
     expect(parsePolicyFile('{not json')).toEqual({ ok: false, reason: 'corrupt' });
     expect(parsePolicyFile('[]')).toEqual({ ok: false, reason: 'corrupt' });
     expect(parsePolicyFile('{"version":"1"}')).toEqual({ ok: false, reason: 'corrupt' });
     expect(parsePolicyFile('{"version":0}')).toEqual({ ok: false, reason: 'corrupt' });
-    expect(parsePolicyFile('{"version":2}')).toEqual({ ok: false, reason: 'newer' });
-    const newer = serializePolicyFile(validFile()).replace('"version": 1', '"version": 2');
+    expect(parsePolicyFile('{"version":3}')).toEqual({ ok: false, reason: 'newer' });
+    const newer = serializePolicyFile(validFile()).replace('"version": 2', '"version": 3');
     expect(parsePolicyFile(newer)).toEqual({ ok: false, reason: 'newer' });
   });
 
@@ -267,7 +304,7 @@ describe('policy file', () => {
   it('an unknown field is kept', () => {
     const policy = serializePolicyFile(validFile());
     const policyExtras: Array<[string, string, string]> = [
-      ['"version": 1,', '"version": 1,\n  "extra": true,', '"extra": true'],
+      ['"version": 2,', '"version": 2,\n  "extra": true,', '"extra": true'],
       ['"id": "p-1"', '"id": "p-1", "futureField": 1', '"futureField": 1'],
       ['"onScreenOnly": true', '"onScreenOnly": true, "futureField": "x"', '"futureField": "x"'],
     ];

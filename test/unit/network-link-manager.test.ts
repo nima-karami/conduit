@@ -73,6 +73,7 @@ interface Node {
   warns: string[];
   /** Where frames that aren't link control go; messaging wires itself in here. */
   setFrameSink(fn: (machineId: string, frame: LinkFrame) => void): void;
+  setReplacementSink(fn: (machineId: string) => void): void;
   /** add() the way the composer does it: store the record, then trust its certificate. */
   link(r: LinkRecord): void;
   ownerKeys: Array<{ publicKey: string; privateKey: string }>;
@@ -103,6 +104,7 @@ async function node(
   const ownerKeys: Array<{ publicKey: string; privateKey: string }> = [];
   const warns: string[] = [];
   let frameSink: (machineId: string, frame: LinkFrame) => void = () => undefined;
+  let replacementSink: (machineId: string) => void = () => undefined;
   const n = {
     audit,
     changes: 0,
@@ -112,6 +114,9 @@ async function node(
     warns,
     setFrameSink: (fn: (machineId: string, frame: LinkFrame) => void) => {
       frameSink = fn;
+    },
+    setReplacementSink: (fn: (machineId: string) => void) => {
+      replacementSink = fn;
     },
   };
   const manager = createLinkManager({
@@ -143,6 +148,7 @@ async function node(
       n.ownerKeys.push(pair);
       return true;
     },
+    connectionReplaced: (machineId) => replacementSink(machineId),
     reconnected: (machineId) => {
       n.reconnects.push(machineId);
     },
@@ -407,7 +413,11 @@ async function orderedPair(): Promise<[Identity, Identity]> {
  * first and `gated` adopts it; opening the gate then lets `gated`'s own dial finish, so that
  * adoption finds a live connection.
  */
-async function gatedDuplicate(gatedId: Identity, peerId: Identity) {
+async function gatedDuplicate(
+  gatedId: Identity,
+  peerId: Identity,
+  oldFeatures?: HelloFrame['features'],
+) {
   const gated = await node(gatedId, 'gated');
   const peer = await node(peerId, 'peer');
   const gateSocks: tls.TLSSocket[] = [];
@@ -455,7 +465,8 @@ async function gatedDuplicate(gatedId: Identity, peerId: Identity) {
   sock.once('close', () => {
     oldClosed = true;
   });
-  sock.write(encodeFrame(helloOf(peer)));
+  const oldHello = helloOf(peer);
+  sock.write(encodeFrame({ ...oldHello, features: oldFeatures ?? oldHello.features }));
   await until(() => gated.manager.view(peer.id.machineId)?.state === 'up');
 
   return {
@@ -463,8 +474,8 @@ async function gatedDuplicate(gatedId: Identity, peerId: Identity) {
     peer,
     isGateClosed: () => gateClosed,
     isOldClosed: () => oldClosed,
-    openGate: () => {
-      gateSock.write(encodeFrame(helloOf(peer)));
+    openGate: (...queued: LinkFrame[]) => {
+      gateSock.write(Buffer.concat([encodeFrame(helloOf(peer)), ...queued.map(encodeFrame)]));
     },
   };
 }
@@ -483,6 +494,31 @@ describe('a connection swapped while up', { timeout: 60_000 }, () => {
     await until(isGateClosed);
     expect(gated.reconnects).toEqual([]);
     expect(gated.manager.view(peer.id.machineId)?.state).toBe('up');
+  });
+
+  it('publishes an authenticated replacement and its new feature set before queued policy frames', async () => {
+    const [lo, hi] = await orderedPair();
+    const { gated, peer, openGate } = await gatedDuplicate(lo, hi, ['messaging']);
+    const before = gated.manager.view(peer.id.machineId);
+    expect(before?.state).toBe('up');
+    expect(gated.manager.peerHasFeature(peer.id.machineId, 'native-profile-v1')).toBe(false);
+    const seen: string[] = [];
+    gated.setReplacementSink((machineId) => {
+      expect(machineId).toBe(peer.id.machineId);
+      expect(gated.manager.view(machineId)?.state).toBe('up');
+      expect(gated.manager.peerHasFeature(machineId, 'native-profile-v1')).toBe(true);
+      seen.push('replacement');
+    });
+    gated.setFrameSink((machineId, frame) => {
+      expect(machineId).toBe(peer.id.machineId);
+      if (frame.t === 'policy.changed' || frame.t === 'policy.pushed') seen.push(frame.t);
+    });
+    openGate(
+      { t: 'policy.changed', rev: 3, doc: { profiles: [], assignments: [] }, grants: [] },
+      { t: 'policy.pushed', id: 'retired', ok: true, rev: 4 },
+    );
+    await until(() => seen.length === 3);
+    expect(seen).toEqual(['replacement', 'policy.changed', 'policy.pushed']);
   });
 
   it('a duplicate that replaces a live connection re-sends to the peer once', async () => {
@@ -680,7 +716,11 @@ function fakeMcp(inbox: string[]): McpNetworkPort {
       message: 'not used by this test',
     }),
     revokeRemoteGrant: () => ({ ok: false, code: 'not_found', message: 'not used by this test' }),
-    remotePolicySink: () => ({ apply: () => undefined, setLinkState: () => undefined }),
+    remotePolicySink: () => ({
+      apply: () => undefined,
+      setLinkState: () => undefined,
+      connectionReplaced: () => undefined,
+    }),
   };
 }
 
@@ -1308,6 +1348,7 @@ function clockedManager(dial: SshDial, pingMs?: number) {
     changed: () => undefined,
     onOwnerKey: () => false,
     reconnected: () => undefined,
+    connectionReplaced: () => undefined,
     pingMs,
   });
   return { clock, store, manager };
@@ -1618,6 +1659,7 @@ describe('enable and waitUp, from the outside', () => {
         changed: () => undefined,
         onOwnerKey: () => false,
         reconnected: () => undefined,
+        connectionReplaced: () => undefined,
       });
       pinnedMachine(store, 'm-00000001', 'vm-off', false);
       const ac = new AbortController();

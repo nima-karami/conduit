@@ -95,6 +95,7 @@ function fakeApi(open: RequestView[], ended: RequestView[] = []): ConduitMcpApi 
   const state: McpUiState = {
     enabled: true,
     storeError: null,
+    native: {},
     loading: false,
     sessions: {},
     threads: [],

@@ -224,7 +224,8 @@ export function harness(opts: HarnessOptions = {}) {
       whenLaunchReady: async () => {
         calls.push('whenLaunchReady');
       },
-      prepareLaunch: async (id, _def, spec, ids) => {
+      prepareNativeLaunch: (_id, _def, spec) => ({ ok: true, spec }),
+      prepareLaunch: (id, _def, spec, ids) => {
         calls.push(`prepareLaunch:${ids.generation}`);
         return {
           ...spec,

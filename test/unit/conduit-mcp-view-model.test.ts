@@ -32,6 +32,7 @@ function state(o: Partial<McpUiState> = {}): McpUiState {
   return {
     enabled: true,
     storeError: null,
+    native: {},
     loading: false,
     sessions: {},
     threads: [],

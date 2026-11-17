@@ -454,6 +454,29 @@ describe('createControlHandlers', () => {
     });
   });
 
+  it.each(['open_failed', 'spawn_unconfirmed'] as const)(
+    '%s consumes the existing open budget when a pane was created',
+    async (refusal) => {
+      const h = harness();
+      let count = 0;
+      h.outcome = async () => ({
+        ok: false,
+        code: refusal,
+        message: 'launch refused',
+        sessionId: `created-${++count}`,
+      });
+      const c = whenOn(h.deps);
+      for (let i = 0; i < ACT_RATE_PER_CALLER; i++) {
+        expect(await c.openSession(caller(), sessionArgs())).toMatchObject({
+          ok: false,
+          error: { code: refusal, sessionId: `created-${i + 1}` },
+        });
+      }
+      expect(code(await c.openSession(caller(), sessionArgs()))).toBe('rate_limited');
+      expect(count).toBe(ACT_RATE_PER_CALLER);
+    },
+  );
+
   it('server_stopping is retryable', async () => {
     const h = harness();
     h.outcome = async () => ({

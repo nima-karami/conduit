@@ -393,6 +393,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     },
     changed,
     onOwnerKey: (pair) => onOwnerKey(pair),
+    connectionReplaced: (machineId) => policy.connectionReplaced(machineId),
     reconnected: (machineId) => {
       messaging.reconnected(machineId);
       publisher.pushTo(machineId);
@@ -582,6 +583,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
   const policy = createPolicySync({
     b: deps.policyPorts.b,
     a: deps.policyPorts.a,
+    peerHasFeature: (machineId, feature) => manager.peerHasFeature(machineId, feature),
     links: () => manager.views().map((v) => ({ machineId: v.machineId, state: v.state })),
     linkOf: (machineId) => store.get(machineId),
     peerMinor: (machineId) => manager.peerMinor(machineId),
@@ -642,6 +644,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       const sent = await requests.answerRemote(machineId, requestId, answer);
       return sent.ok ? { ok: true, value: null } : sent;
     },
+    nativeSupport: (machineId) => manager.peerHasFeature(machineId, 'native-profile-v1'),
     pushPolicy: (machineId: string, baseRev: number, doc: RemotePolicyDoc) =>
       policy.push(machineId, baseRev, doc),
     revokeRemoteGrant: (machineId: string, grantId: string) => policy.revoke(machineId, grantId),

@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { disposeHarnesses, FakeRuntime, harness, isFault } from '../../server/domain/testing/fakes';
+import { createPersistentTokenStore } from '../../server/mcp/token-file';
 import type { SessionStartResult } from '../../src/contracts/server-protocol';
 import { COMMAND_AGENT_ID } from '../../src/session-command';
 import { PTY_SETTLE_MS } from '../../src/timed-messages';
@@ -948,4 +949,124 @@ it('the domain fake exposes a live observer and returns null for a missing sessi
   const observer = await runtime.observe('s1');
   expect(observer).toMatchObject({ firstPaint: '', size: { cols: 90, rows: 30 } });
   observer?.close();
+});
+
+describe('server domain: native launch commitment', () => {
+  const intent = { family: 'claude', optedIn: true, requested: { mode: 'plan' } } as const;
+
+  it('selects and durably records the same launch before reservation and dispatch', async () => {
+    const h = harness();
+    const id = await h.create({ agentId: 'claude' });
+    h.deps.launch.prepareNativeLaunch = (_id, _def, spec) => {
+      h.calls.push('prepareNativeLaunch');
+      return {
+        ok: true,
+        spec: { ...spec, args: ['--permission-mode', 'plan', ...spec.args] },
+        intent,
+      };
+    };
+    const prepare = h.deps.launch.prepareLaunch;
+    h.deps.launch.prepareLaunch = (...args) => {
+      const { generation, launchId } = args[3];
+      const raw = persisted(h.userData).sessions.find((s) => s.id === id);
+      expect(raw).toMatchObject({
+        lastGeneration: generation,
+        nativeLaunch: { version: 1, generation, launchId, intent },
+      });
+      return prepare(...args);
+    };
+    expect(await start(h, id)).toMatchObject({ ok: true, generation: 1 });
+    expect(h.calls.filter((c) => /^(prepare|spawn)/.test(c))).toEqual([
+      'prepareNativeLaunch',
+      'prepareLaunch:1',
+      'spawn',
+    ]);
+    expect(h.runtime.spawns[0]?.spec.args.slice(0, 2)).toEqual(['--permission-mode', 'plan']);
+    expect(h.domain.snapshot().sessions[0]).not.toHaveProperty('nativeLaunch');
+    expect(h.domain.sessions.nativeLaunchOf(id)).toMatchObject({
+      version: 1,
+      generation: 1,
+      intent,
+    });
+  });
+
+  it('returns a typed failed open with the created pane id before any reservation', async () => {
+    const h = harness();
+    h.deps.launch.prepareNativeLaunch = () => ({ ok: false, problem: 'conflict' });
+    const result = await h.domain.domain.openSession({
+      callerSessionId: null,
+      openedBy: { handle: 'remote', machineId: 'm-1' },
+      home: h.home,
+      label: 'Test',
+      focus: false,
+      launch: { kind: 'agent', agentId: 'claude' },
+      closeWhenDone: false,
+    });
+    expect(result).toMatchObject({ ok: false, code: 'open_failed', sessionId: expect.any(String) });
+    if (!('sessionId' in result)) throw new Error('created pane id missing');
+    expect(h.domain.sessions.get(result.sessionId)?.status).toBe('stale');
+    expect(h.shown).toContainEqual({
+      sessionId: result.sessionId,
+      data: expect.stringContaining('conflict'),
+    });
+    expect(h.domain.sessions.get(result.sessionId)).not.toHaveProperty('lastGeneration');
+    expect(h.calls.some((c) => c.startsWith('prepareLaunch'))).toBe(false);
+    expect(h.runtime.spawns).toHaveLength(0);
+  });
+
+  it('a failed native retry leaves the previous launch eligible for late adoption', async () => {
+    const h = harness();
+    const id = await h.create({ agentId: 'claude' });
+    h.deps.launch.prepareNativeLaunch = (_id, _def, spec) => ({ ok: true, spec, intent });
+    const tokenFile = join(h.userData, 'conduit-mcp', 'tokens.json');
+    const store = createPersistentTokenStore({ file: tokenFile });
+    const prepare = h.deps.launch.prepareLaunch;
+    h.deps.launch.prepareLaunch = (...args) => {
+      store.reserve(args[0], args[3]);
+      return prepare(...args);
+    };
+    h.runtime.nextSpawn = async ({ ids }) => {
+      await store.markUnconfirmed(ids.launchId);
+      return { ok: false, refusal: { reason: 'spawn_unconfirmed', launchId: ids.launchId } };
+    };
+    expect(await start(h, id)).toMatchObject({
+      ok: false,
+      refusal: { reason: 'spawn_unconfirmed' },
+    });
+    const prior = h.runtime.spawns[0]?.ids;
+    if (!prior) throw new Error('initial spawn was not dispatched');
+    const path = join(h.userData, 'sessions.json');
+    const previous = readFileSync(path, 'utf8');
+    const previousToken = readFileSync(tokenFile, 'utf8');
+    rmSync(path);
+    mkdirSync(path);
+
+    const retry = await h.call('sessions.retryLaunch', { sessionId: id });
+    expect(retry).toMatchObject({
+      ok: false,
+      refusal: { reason: 'native_permissions', problem: 'save-failed' },
+    });
+    expect(h.calls.filter((c) => c.startsWith('prepareLaunch'))).toEqual(['prepareLaunch:1']);
+    expect(h.runtime.spawns).toHaveLength(1);
+    expect(h.domain.sessions.get(id)).toMatchObject({ lastGeneration: 1 });
+    expect(h.domain.sessions.nativeLaunchOf(id)).toMatchObject({ ...prior, intent });
+    expect(readFileSync(tokenFile, 'utf8')).toBe(previousToken);
+    expect(store.rows()).toMatchObject({
+      state: 'loaded',
+      rows: [{ ...prior, state: 'unconfirmed', hcAddress: null }],
+    });
+    rmSync(path, { recursive: true });
+    writeFileSync(path, previous);
+
+    const terminal = h.runtime.live(id, prior.generation, prior.launchId, { cols: 80, rows: 24 });
+    await store.resolveAddress(prior.launchId, terminal.target.terminal);
+    expect(store.rows()).toMatchObject({ state: 'loaded', rows: [{ ...prior, state: 'live' }] });
+    h.runtime.fire({
+      type: 'spawned',
+      sessionId: id,
+      generation: prior.generation,
+      size: terminal.size,
+    });
+    expect(await start(h, id)).toMatchObject({ ok: true, spawned: false, generation: 1 });
+  });
 });

@@ -1,4 +1,5 @@
 // see POL §4.2 and C6
+import { supportsNativePoint } from './policy-native';
 import {
   DECISION_OF_ACCESS,
   effectiveRule,
@@ -80,6 +81,7 @@ const copyAssignment = (a: Assignment): Assignment => ({
   onScreenOnly: a.onScreenOnly,
   exceptions: a.exceptions.map(copyException),
   ...(a.pinned === undefined ? {} : { pinned: a.pinned }),
+  ...(a.applyNative === undefined ? {} : { applyNative: a.applyNative }),
 });
 
 export const pinKey = (tool: ToolName, field: PolicyField): string => `${tool}.${field}`;
@@ -186,6 +188,7 @@ export function applyLegacyPatch(
   // A new point starts with no pins: the lower point's explicit choices are not this point's.
   const base =
     existing === undefined ? withPinned(copyAssignment(lowerA), []) : copyAssignment(existing);
+  if (!existing && !supportsNativePoint(point)) delete base.applyNative;
   const applies = (field: PolicyField): boolean =>
     patch[field] !== undefined && TOOL_SPECS[tool].fields.includes(field);
   if (!(['access', 'when', 'reach', 'move'] as const).some(applies)) return base;

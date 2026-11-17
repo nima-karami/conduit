@@ -6,6 +6,9 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- Permission assignments can opt in to a profile’s supported Claude Code and Codex launch flags. The session records the flags Conduit prepared for its current launch.
+
 ### Fixed
 - Remote permission edits and conflict choices confirm saved intent, reject stale rules, and show saving failures without losing pending changes.
 - Queued agent input, screen reads, and file batches recheck current permissions before writing, submitting, opening another file, or returning captured screen data.

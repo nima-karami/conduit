@@ -248,6 +248,13 @@ export interface ServerSnapshot {
  * never as an RPC error; `sessions.create` refuses as an RPC error (ServerErrorKind). MCP opens are
  * not C2 calls: they refuse in MCP's tool-result envelope (C7 DomainOpenOutcome → ToolError).
  */
+export const NATIVE_LAUNCH_REFUSAL_MESSAGES = {
+  conflict: 'Native flags conflict with launcher arguments',
+  unsupported: 'A direct, supported launcher is required',
+  'policy-unavailable': 'Permissions could not be loaded',
+  'save-failed': 'Launch settings could not be saved',
+} as const;
+
 export type SessionStartResult =
   | {
       ok: true;
@@ -297,6 +304,7 @@ export type SessionStartResult =
         | { reason: 'home-missing' }
         /** The saved command failed coercion; today's can't-start line, status `stale`. */
         | { reason: 'command-invalid' }
+        | { reason: 'native_permissions'; problem: keyof typeof NATIVE_LAUNCH_REFUSAL_MESSAGES }
         | SpawnUnconfirmed
         | ServerStopping;
       /** The stored history, written before the can't-start line as today, when there is one. */

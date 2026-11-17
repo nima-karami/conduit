@@ -50,12 +50,18 @@ export interface ConduitMcpApi {
     point: AssignmentPoint,
     assignment: Assignment | null,
     expectedToken: string,
+    nativeConsent?: boolean,
   ): Promise<PolicyEditResult | null>;
-  saveProfile(profile: Profile, expectedToken: string): Promise<PolicyEditResult | null>;
+  saveProfile(
+    profile: Profile,
+    expectedToken: string,
+    nativeConsent?: boolean,
+  ): Promise<PolicyEditResult | null>;
   deleteProfile(
     profileId: ProfileId,
     replacement: ProfileId,
     expectedToken: string,
+    nativeConsent?: boolean,
   ): Promise<PolicyEditResult | null>;
   retryPolicy(): Promise<PolicyEditResult | null>;
   getActivity(query: ActivityQuery): Promise<ActivityPage | null>;
@@ -92,11 +98,13 @@ export interface ConduitMcpApi {
     machine: string,
     expectedToken: string,
     edit: RemotePolicyEdit,
+    nativeConsent?: boolean,
   ): Promise<PolicyEditResult | null>;
   remotePolicy(
     machine: string,
     action: 'discard' | 'reapply' | 'retry-save',
     expectedToken: string,
+    nativeConsent?: boolean,
   ): Promise<PolicyEditResult | null>;
   answerRequest(requestId: string, answer: AnswerInput): Promise<RequestAnswerResult>;
   answerPermission(requestId: string, answer: PermissionAnswer): Promise<PermissionAnswerResult>;
@@ -128,23 +136,36 @@ export function getRequestsSnapshot(): RequestsUiState | null {
 }
 
 const api: Omit<ConduitMcpApi, 'state'> = {
-  async saveAssignment(point, assignment, expectedToken) {
+  async saveAssignment(point, assignment, expectedToken, nativeConsent) {
     const r = await requestHost(
-      (requestId) => ({ type: 'mcp:saveAssignment', requestId, point, assignment, expectedToken }),
+      (requestId) => ({
+        type: 'mcp:saveAssignment',
+        requestId,
+        point,
+        assignment,
+        expectedToken,
+        ...(nativeConsent === undefined ? {} : { nativeConsent }),
+      }),
       ['mcp:policyEditResult'],
       REQUEST_TIMEOUT_MS,
     );
     return r?.result ?? null;
   },
-  async saveProfile(profile, expectedToken) {
+  async saveProfile(profile, expectedToken, nativeConsent) {
     const r = await requestHost(
-      (requestId) => ({ type: 'mcp:saveProfile', requestId, profile, expectedToken }),
+      (requestId) => ({
+        type: 'mcp:saveProfile',
+        requestId,
+        profile,
+        expectedToken,
+        ...(nativeConsent === undefined ? {} : { nativeConsent }),
+      }),
       ['mcp:policyEditResult'],
       REQUEST_TIMEOUT_MS,
     );
     return r?.result ?? null;
   },
-  async deleteProfile(profileId, replacement, expectedToken) {
+  async deleteProfile(profileId, replacement, expectedToken, nativeConsent) {
     const r = await requestHost(
       (requestId) => ({
         type: 'mcp:deleteProfile',
@@ -152,6 +173,7 @@ const api: Omit<ConduitMcpApi, 'state'> = {
         profileId,
         replacement,
         expectedToken,
+        ...(nativeConsent === undefined ? {} : { nativeConsent }),
       }),
       ['mcp:policyEditResult'],
       REQUEST_TIMEOUT_MS,
@@ -251,17 +273,31 @@ const api: Omit<ConduitMcpApi, 'state'> = {
     );
     return r?.ok === true;
   },
-  async remoteEdit(machine, expectedToken, edit) {
+  async remoteEdit(machine, expectedToken, edit, nativeConsent) {
     const result = await requestHost(
-      (requestId) => ({ type: 'mcp:remoteEdit', requestId, machine, expectedToken, edit }),
+      (requestId) => ({
+        type: 'mcp:remoteEdit',
+        requestId,
+        machine,
+        expectedToken,
+        edit,
+        ...(nativeConsent === undefined ? {} : { nativeConsent }),
+      }),
       ['mcp:policyEditResult'],
       REQUEST_TIMEOUT_MS,
     );
     return result?.result ?? null;
   },
-  async remotePolicy(machine, action, expectedToken) {
+  async remotePolicy(machine, action, expectedToken, nativeConsent) {
     const result = await requestHost(
-      (requestId) => ({ type: 'mcp:remotePolicy', requestId, machine, action, expectedToken }),
+      (requestId) => ({
+        type: 'mcp:remotePolicy',
+        requestId,
+        machine,
+        action,
+        expectedToken,
+        ...(nativeConsent === undefined ? {} : { nativeConsent }),
+      }),
       ['mcp:policyEditResult'],
       REQUEST_TIMEOUT_MS,
     );

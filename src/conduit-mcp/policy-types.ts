@@ -1,5 +1,6 @@
 // Node-free: the renderer imports these. See spec 2026-11-14-policy-and-permissions §4.
 
+import type { NativeModes } from '../contracts/native-launch';
 import type { Capabilities, RemotePrincipal } from '../contracts/remote-principal';
 import type { GrantChoice } from './grant-store';
 import type {
@@ -28,6 +29,7 @@ export interface Profile {
   id: ProfileId;
   name: string;
   builtIn: boolean;
+  nativeModes?: NativeModes;
   rules: Record<ToolName, ToolRule>;
 }
 
@@ -48,6 +50,7 @@ export interface Assignment {
   profileId: ProfileId;
   exceptions: Exception[];
   onScreenOnly: boolean;
+  applyNative?: boolean;
   /** Non-default points only: `${tool}.${field}` keys chosen explicitly. See docs/plans/2026-11-14-policy-permissions-machinery.plan.md, "Third pass rulings". */
   pinned?: readonly string[];
 }
@@ -171,7 +174,8 @@ export type PolicyEditError =
   | 'too-large'
   | 'not-found'
   | 'no-copy'
-  | 'busy';
+  | 'busy'
+  | 'native-review-required';
 export type PolicyEditResult =
   | { ok: true }
   | { ok: false; error: PolicyEditError; applied?: 'tightening' };

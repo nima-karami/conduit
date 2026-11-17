@@ -282,7 +282,39 @@ describe('server domain: persisted formats', () => {
       runtime: { spawn: 'live', generation: 1 },
     });
     expect(views.find((s) => s.id === unconfirmed)?.runtime.spawn).toBe('unconfirmed');
-    expect(b.domain.sessions.allocateLaunch(liveId).generation).toBe(2);
+    await b.call('sessions.restart', { sessionId: liveId });
+    expect(await b.call('sessions.start', { sessionId: liveId })).toMatchObject({
+      ok: true,
+      spawned: true,
+      generation: 2,
+    });
+  });
+
+  it('isolates unknown launch evidence and keeps it across unrelated writes', async () => {
+    const a = harness();
+    const id = await a.create();
+    await a.domain.persist();
+    await a.domain.dispose();
+    const path = join(a.userData, 'sessions.json');
+    const raw = JSON.parse(readFileSync(path, 'utf8'));
+    const future = { version: 2, generation: 4, launchId: 'a'.repeat(32), unknown: 'future' };
+    raw.sessions[0].nativeLaunch = future;
+    raw.sessions[0].lastGeneration = 4;
+    writeFileSync(path, JSON.stringify(raw));
+    const b = harness({ userData: a.userData });
+    expect(b.domain.sessions.nativeLaunchOf(id)).toBeNull();
+    expect(b.domain.snapshot().sessions.find((s) => s.id === id)).not.toHaveProperty(
+      'nativeLaunch',
+    );
+    const duplicate = await b.call('sessions.duplicate', { sessionId: id });
+    expect(duplicate).toMatchObject({ sessionId: expect.any(String) });
+    await b.domain.persist();
+    const records = JSON.parse(readFileSync(path, 'utf8')).sessions as {
+      id: string;
+      nativeLaunch?: unknown;
+    }[];
+    expect(records.find((s) => s.id === id)?.nativeLaunch).toEqual(future);
+    expect(records.find((s) => s.id !== id)).not.toHaveProperty('nativeLaunch');
   });
 
   it('sends views without the app fields or the launch counter', async () => {

@@ -53,7 +53,7 @@ function draftsIo(initial: string | null = null) {
 }
 
 let rigSequence = 0;
-function rig(opts: { drafts?: string | null } = {}) {
+function rig(opts: { drafts?: string | null; support?: boolean } = {}) {
   const drafts = draftsIo(opts.drafts ?? null);
   const warnings: string[] = [];
   const pushPolicy = vi.fn<NetworkPort['pushPolicy']>(async () => ({
@@ -64,9 +64,10 @@ function rig(opts: { drafts?: string | null } = {}) {
     ok: true,
     value: null,
   }));
-  const network: Pick<NetworkPort, 'pushPolicy' | 'revokeRemoteGrant'> = {
+  const network: Pick<NetworkPort, 'pushPolicy' | 'revokeRemoteGrant' | 'nativeSupport'> = {
     pushPolicy,
     revokeRemoteGrant,
+    nativeSupport: () => opts.support ?? false,
   };
   let nextId = 0;
   const lifetime = ++rigSequence;
@@ -112,7 +113,7 @@ describe('remote policy store: edits and the push', () => {
     mirrored(store);
     store.setLinkState('m-1', 'down');
     const profile: Profile = {
-      ...structuredClone(OBSERVER),
+      rules: structuredClone(OBSERVER.rules),
       id: 'p-review-copy',
       name: 'Review copy',
       builtIn: false,
@@ -179,7 +180,7 @@ describe('remote policy store: edits and the push', () => {
     expect(first.pushPolicy).not.toHaveBeenCalled();
     expect(first.store.ui(NAMES)[0]?.status).toBe('waiting');
     expect(persisted(first.drafts.state.text)).toMatchObject({
-      version: 1,
+      version: 2,
       drafts: { 'm-1': { baseRev: 3, doc: LEAD_DEFAULT } },
     });
 
@@ -676,7 +677,7 @@ it('full custom profile changes and deletion survive controller restart', () => 
   store.setLinkState('m-1', 'down');
   const token = () => store.ui(NAMES)[0].policy.editToken;
   const profile: Profile = {
-    ...structuredClone(OBSERVER),
+    rules: structuredClone(OBSERVER.rules),
     id: 'p-portable',
     name: 'Portable',
     builtIn: false,
@@ -710,7 +711,7 @@ it('full portable size and exception limits refuse without saving or rotating in
   store.setLinkState('m-1', 'down');
   const before = store.ui(NAMES)[0].policy;
   const profile: Profile = {
-    ...structuredClone(OBSERVER),
+    rules: structuredClone(OBSERVER.rules),
     id: 'p-too-large',
     builtIn: false,
     name: 'x'.repeat(256 * 1024),
@@ -751,4 +752,176 @@ it('full portable size and exception limits refuse without saving or rotating in
   expect(store.ui(NAMES)[0].policy).toEqual(before);
   expect(drafts.state.writes).toEqual([]);
   expect(pushPolicy).not.toHaveBeenCalled();
+});
+
+describe('remote native review', () => {
+  const native: RemotePolicyDoc = {
+    ...OTHER,
+    assignments: OTHER.assignments.map(({ point, assignment }) => ({
+      point,
+      assignment: { ...assignment, applyNative: true },
+    })),
+  };
+  const edit = { kind: 'assignment', ...native.assignments[0] } as const;
+  const token = (store: RemotePolicy) => store.ui(NAMES)[0].policy.editToken;
+  const draftText = (version: number, proof: unknown = undefined) =>
+    JSON.stringify({
+      version,
+      drafts: { 'm-1': { baseRev: 3, doc: native, editedAt: 1_000, nativeReview: proof } },
+    });
+
+  it('a v1 draft cannot mint proof via an upgrade or a Conduit edit, and review persists it', async () => {
+    const reviewed = rig({ support: true });
+    mirrored(reviewed.store);
+    expect(reviewed.store.editFull('m-1', token(reviewed.store), edit, true)).toEqual({ ok: true });
+    const savedReview = JSON.parse(reviewed.drafts.state.text ?? '').drafts['m-1'].nativeReview;
+    expect(savedReview).toBeDefined();
+    const { store, drafts, pushPolicy } = rig({
+      drafts: draftText(1, savedReview),
+      support: true,
+    });
+    mirrored(store);
+    await settle();
+    expect(pushPolicy).not.toHaveBeenCalled();
+    expect(store.ui(NAMES)[0]).toMatchObject({
+      status: 'refused',
+      nativeReviewRequired: true,
+      nativeSupport: true,
+      conflict: { assignments: [] },
+    });
+    expect(
+      store.edit('m-1', (svc) =>
+        svc.applyLegacyPatch({ kind: 'default' }, null, 'send_input', { access: 'ask' }),
+      ),
+    ).toEqual({ ok: true });
+    expect(persisted(drafts.state.text)?.drafts['m-1']).not.toHaveProperty('nativeReview');
+    expect(store.reapply('m-1', token(store))).toEqual({
+      ok: false,
+      error: 'native-review-required',
+    });
+    pushPolicy.mockImplementationOnce(() => new Promise(() => undefined));
+    expect(store.reapply('m-1', token(store), true)).toEqual({ ok: true });
+    const saved = persisted(drafts.state.text);
+    expect(saved).toMatchObject({
+      version: 2,
+      drafts: {
+        'm-1': {
+          nativeReview: {
+            version: 1,
+            baseHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+            desiredHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
+        },
+      },
+    });
+    const restart = rig({ drafts: drafts.state.text, support: true });
+    mirrored(restart.store);
+    await settle();
+    expect(restart.pushPolicy).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects missing consent, old receivers, stale epochs and proof-save failure', async () => {
+    const legacy = rig();
+    mirrored(legacy.store);
+    expect(legacy.store.editFull('m-1', token(legacy.store), edit, true)).toEqual({
+      ok: false,
+      error: 'native-review-required',
+    });
+    const { store, drafts, pushPolicy } = rig({ support: true });
+    mirrored(store);
+    const old = token(store);
+    expect(store.editFull('m-1', old, edit)).toEqual({
+      ok: false,
+      error: 'native-review-required',
+    });
+    store.connectionReplaced('m-1');
+    expect(store.editFull('m-1', old, edit, true)).toEqual({ ok: false, error: 'conflict' });
+    expect(store.editFull('m-1', token(store), edit, true)).toEqual({
+      ok: false,
+      error: 'native-review-required',
+    });
+    mirrored(store);
+    drafts.state.fail = true;
+    expect(store.editFull('m-1', token(store), edit, true)).toEqual({
+      ok: false,
+      error: 'save-failed',
+    });
+    await settle();
+    expect(pushPolicy).not.toHaveBeenCalled();
+    expect(drafts.state.text).toBeNull();
+    expect(store.ui(NAMES)[0]?.policy.assignments).toEqual([]);
+  });
+
+  it('rejects erased, malformed and stale proof after a controller restart', async () => {
+    const original = rig({ support: true });
+    mirrored(original.store);
+    expect(original.store.editFull('m-1', token(original.store), edit, true)).toEqual({ ok: true });
+    const saved = JSON.parse(original.drafts.state.text ?? '');
+    const proof = saved.drafts['m-1'].nativeReview;
+    for (const untrusted of [
+      undefined,
+      { ...proof, version: 2 },
+      { ...proof, baseHash: 'malformed' },
+      { ...proof, desiredHash: 'a'.repeat(64) },
+    ]) {
+      const { store, pushPolicy } = rig({ drafts: draftText(2, untrusted), support: true });
+      mirrored(store);
+      await settle();
+      expect(pushPolicy).not.toHaveBeenCalled();
+      expect(store.ui(NAMES)[0]).toMatchObject({
+        status: 'refused',
+        nativeReviewRequired: true,
+        nativeSupport: true,
+      });
+    }
+  });
+
+  it('an unreadable snapshot arriving before dispatch makes the old display stale', async () => {
+    const { store, pushPolicy } = rig({ support: true });
+    mirrored(store);
+    expect(store.editFull('m-1', token(store), edit, true)).toEqual({ ok: true });
+    const before = token(store);
+    const invalid = { ...EMPTY, assignments: [{}] } as unknown as RemotePolicyDoc;
+    store.apply('m-1', snap(4, invalid));
+    await settle();
+    expect(pushPolicy).not.toHaveBeenCalled();
+    expect(token(store)).not.toBe(before);
+    expect(store.ui(NAMES)[0]).toMatchObject({ rev: 3, status: 'waiting', conflict: null });
+    expect(store.reapply('m-1', token(store), true)).toEqual({ ok: false, error: 'not-found' });
+  });
+
+  it('an invalid push conflict cannot replace the receiver policy used for review', async () => {
+    const { store, pushPolicy } = rig({ support: true });
+    const invalid = { ...EMPTY, assignments: [{}] } as unknown as RemotePolicyDoc;
+    pushPolicy.mockResolvedValueOnce({
+      ok: false,
+      error: toolError('policy_conflict', 'conflict'),
+      current: { rev: 4, doc: invalid },
+    });
+    mirrored(store);
+    expect(store.editFull('m-1', token(store), edit, true)).toEqual({ ok: true });
+    await settle();
+    expect(store.ui(NAMES)[0]).toMatchObject({ rev: 3, status: 'waiting', conflict: null });
+    expect(store.reapply('m-1', token(store), true)).toEqual({ ok: false, error: 'not-found' });
+  });
+
+  it('strips neutral fields for an old receiver and promotes what went over the wire', async () => {
+    const peer = { support: false };
+    const { store, pushPolicy } = rig(peer);
+    mirrored(store);
+    expect(
+      store.editFull('m-1', token(store), {
+        ...edit,
+        assignment: { ...edit.assignment, applyNative: false },
+      }),
+    ).toEqual({ ok: true });
+    await settle();
+    expect(pushPolicy).toHaveBeenCalledWith('m-1', 3, OTHER);
+    expect(store.ui(NAMES)[0]?.policy.assignments).toEqual(OTHER.assignments);
+    peer.support = true;
+    store.connectionReplaced('m-1');
+    mirrored(store, 4, OTHER);
+    expect(store.ui(NAMES)[0]).toMatchObject({ status: 'applied', nativeSupport: true });
+    expect(pushPolicy).toHaveBeenCalledTimes(1);
+  });
 });

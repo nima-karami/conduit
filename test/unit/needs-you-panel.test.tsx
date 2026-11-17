@@ -86,6 +86,7 @@ function mcp(open: RequestView[]): ConduitMcpApi {
   const state = {
     enabled: true,
     storeError: null,
+    native: {},
     loading: false,
     sessions: {},
     threads: [],

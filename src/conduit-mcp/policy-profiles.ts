@@ -71,6 +71,7 @@ function ruleSet(rule: (tool: ToolName, worker: ToolRule) => ToolRule): Record<T
 
 export const WORKER_PROFILE: Profile = {
   id: 'worker',
+  nativeModes: { claude: 'unset', codex: 'unset' },
   name: 'Worker',
   builtIn: true,
   rules: ruleSet((_tool, worker) => worker),
@@ -78,6 +79,7 @@ export const WORKER_PROFILE: Profile = {
 
 export const OBSERVER: Profile = {
   id: 'observer',
+  nativeModes: { claude: 'plan', codex: 'read-only' },
   name: 'Observer',
   builtIn: true,
   rules: ruleSet((tool, worker) => ({
@@ -88,6 +90,7 @@ export const OBSERVER: Profile = {
 
 const LEAD: Profile = {
   id: 'lead',
+  nativeModes: { claude: 'acceptEdits', codex: 'workspace-write' },
   name: 'Lead',
   builtIn: true,
   rules: ruleSet((tool, worker) => ({

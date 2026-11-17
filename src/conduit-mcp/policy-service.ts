@@ -1,5 +1,6 @@
 // see POL §4-§5
 
+import type { NativeFamily, NativeSelection } from '../contracts/native-launch';
 import type { RemoteGrantView, RemotePolicyDoc } from '../contracts/remote-policy';
 import { type ActivityIo, type ActivityLog, createActivityLog } from './activity-log';
 import {
@@ -28,6 +29,7 @@ import {
 } from './policy-file';
 import { POLICY_MAX_BYTES, type PolicyIo } from './policy-file-fs';
 import { type LegacyPolicy, migrateLegacyPolicy } from './policy-migration';
+import { assignmentMap, nativeProjection, selectNative } from './policy-native';
 import { BUILT_IN_PROFILES, OBSERVER, pointKey, profileById } from './policy-profiles';
 import { legacyLowerPoint, projectLegacyLayer, propagateLegacyPatch } from './policy-projection';
 import type {
@@ -95,6 +97,10 @@ export interface PolicyService {
   ): PolicyCommitResult;
   noteDecision(activityId: string, input: Omit<PolicyInput, 'now'>, decision: PolicyDecision): void;
   visibleTools(p: Principal): ToolName[];
+  nativeLaunch(sessionId: string, family: NativeFamily): NativeSelection;
+  nativeLaunchSelections(
+    sessions: readonly { id: string; family: NativeFamily }[],
+  ): Map<string, NativeSelection>;
   setAssignment(point: AssignmentPoint, profileId: ProfileId | null): PolicyEditResult;
   applyLegacyPatch(
     point: AssignmentPoint,
@@ -123,12 +129,14 @@ export interface PolicyService {
     point: AssignmentPoint,
     assignment: Assignment | null,
     expectedToken: string,
+    nativeConsent?: boolean,
   ): PolicyEditResult;
-  saveProfile(profile: Profile, expectedToken: string): PolicyEditResult;
+  saveProfile(profile: Profile, expectedToken: string, nativeConsent?: boolean): PolicyEditResult;
   deleteProfile(
     profileId: ProfileId,
     replacement: ProfileId,
     expectedToken: string,
+    nativeConsent?: boolean,
   ): PolicyEditResult;
   retrySave(): PolicyEditResult;
   peerRevoked(machineId: string): void;
@@ -147,7 +155,7 @@ export interface PolicyService {
   remoteDoc(): { rev: number; doc: RemotePolicyDoc };
   /** Fires when anything a controller snapshot carries changes: the rules (rev moves) or the grants. */
   onRemoteDocChange(fn: () => void): () => void;
-  applyRemoteDoc(baseRev: number, doc: unknown): RemoteApplyResult;
+  applyRemoteDoc(baseRev: number, doc: unknown, senderSupportsNative: boolean): RemoteApplyResult;
   grantsView(): RemoteGrantView[];
   revokeGrantByRemote(
     grantId: string,
@@ -167,7 +175,7 @@ interface Remembered {
 }
 
 const emptyFile = (): PolicyFile => ({
-  version: 1,
+  version: 2,
   profiles: [],
   assignments: [],
   overrides: [],
@@ -178,6 +186,7 @@ const emptyFile = (): PolicyFile => ({
 export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
   let file: PolicyFile = emptyFile();
   let policyWritable = true;
+  let policyLoaded = false;
   let failClosed = false;
   let grantsWritable = true;
   let policyDirty = false;
@@ -204,12 +213,9 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
   });
   const grants = createGrantStore({ now: () => deps.now(), newId: () => deps.newId() });
 
-  const assignmentMap = (): Map<string, Assignment> =>
-    new Map(file.assignments.map((a) => [pointKey(a.point), a.assignment]));
-
   const stateNow = (): PolicyState => ({
     profiles: file.profiles,
-    assignments: assignmentMap(),
+    assignments: assignmentMap(file.assignments),
     grants: grants.all(),
     overrides: file.overrides,
     failClosed,
@@ -600,10 +606,22 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     return { ok: true };
   };
 
+  const saveReviewedPolicy = (
+    candidate: PolicyFile,
+    portable: boolean,
+    nativeConsent?: boolean,
+  ): PolicyEditResult => {
+    if (!policyWritable) return { ok: false, error: 'read-only' };
+    if (nativeConsent !== true && nativeProjection(candidate) !== nativeProjection(file))
+      return { ok: false, error: 'native-review-required' };
+    return savePolicy(candidate, portable);
+  };
+
   const saveAssignment = (
     point: AssignmentPoint,
     assignment: Assignment | null,
     expectedToken: string,
+    nativeConsent?: boolean,
   ): PolicyEditResult => {
     if (expectedToken !== editToken) return { ok: false, error: 'conflict' };
     if (!policyWritable) return { ok: false, error: 'read-only' };
@@ -619,7 +637,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     const candidate = structuredClone(file);
     const portable = setPointAssignment(candidate, point, checked);
     const valid = validateCandidate(candidate);
-    return valid.ok ? savePolicy(candidate, portable) : valid;
+    return valid.ok ? saveReviewedPolicy(candidate, portable, nativeConsent) : valid;
   };
 
   const revokeGrants = (ids: readonly string[]): PolicyEditResult => {
@@ -694,6 +712,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     start() {
       editToken = deps.newId();
       loadPolicy();
+      policyLoaded = true;
       loadGrants();
       reconcilePrincipals();
       tickTimer = deps.setTimer(tick, TICK_MS);
@@ -777,6 +796,22 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       }
     },
 
+    nativeLaunch(sessionId, family) {
+      return policyLoaded && policyWritable
+        ? selectNative(stateNow(), sessionId, family)
+        : { status: 'unavailable' };
+    },
+
+    nativeLaunchSelections(sessions) {
+      const state = policyLoaded && policyWritable ? stateNow() : null;
+      return new Map(
+        sessions.map(({ id, family }) => [
+          id,
+          state ? selectNative(state, id, family) : { status: 'unavailable' },
+        ]),
+      );
+    },
+
     visibleTools(p) {
       return visibleEngine(stateNow(), p, deps.now());
     },
@@ -791,17 +826,17 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
 
     saveAssignment,
 
-    saveProfile(profile, expectedToken) {
+    saveProfile(profile, expectedToken, nativeConsent) {
       if (expectedToken !== editToken) return { ok: false, error: 'conflict' };
       const checked = validatePolicyProfile(profile);
       if (checked === null) return { ok: false, error: 'invalid-value' };
       const candidate = structuredClone(file);
       candidate.profiles = [...candidate.profiles.filter((p) => p.id !== checked.id), checked];
       const valid = validateCandidate(candidate);
-      return valid.ok ? savePolicy(candidate, true) : valid;
+      return valid.ok ? saveReviewedPolicy(candidate, true, nativeConsent) : valid;
     },
 
-    deleteProfile(profileId, replacement, expectedToken) {
+    deleteProfile(profileId, replacement, expectedToken, nativeConsent) {
       if (expectedToken !== editToken) return { ok: false, error: 'conflict' };
       if (
         BUILT_IN_PROFILES.some((p) => p.id === profileId) ||
@@ -815,7 +850,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       for (const entry of candidate.assignments)
         if (entry.assignment.profileId === profileId) entry.assignment.profileId = replacement;
       const valid = validateCandidate(candidate);
-      return valid.ok ? savePolicy(candidate, true) : valid;
+      return valid.ok ? saveReviewedPolicy(candidate, true, nativeConsent) : valid;
     },
 
     retrySave() {
@@ -837,6 +872,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
               exceptions: existing?.exceptions ?? [],
               onScreenOnly: existing?.onScreenOnly ?? false,
               ...(existing?.pinned === undefined ? {} : { pinned: existing.pinned }),
+              ...(existing?.applyNative === undefined ? {} : { applyNative: existing.applyNative }),
             },
         editToken,
       );
@@ -852,7 +888,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       let portable = false;
       for (const w of writes)
         if (setPointAssignment(candidate, w.point, w.assignment)) portable = true;
-      return savePolicy(candidate, portable);
+      return saveReviewedPolicy(candidate, portable);
     },
 
     createGrants,
@@ -885,7 +921,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       };
     },
 
-    applyRemoteDoc(baseRev, doc) {
+    applyRemoteDoc(baseRev, doc, senderSupportsNative) {
       if (!policyWritable)
         return {
           ok: false,
@@ -907,6 +943,25 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       const local = candidate.assignments.filter((a) => a.point.kind === 'session');
       candidate.profiles = checked.doc.profiles;
       candidate.assignments = [...local, ...checked.doc.assignments];
+      const candidateState = { ...stateNow(), profiles: candidate.profiles };
+      if (
+        local.some(
+          ({ assignment }) =>
+            assignment.applyNative === true && !profileById(candidateState, assignment.profileId),
+        )
+      )
+        return {
+          ok: false,
+          code: 'policy_unavailable',
+          message:
+            'A local session uses a removed native profile. Change that assignment on this machine first.',
+        };
+      if (!senderSupportsNative && nativeProjection(candidate) !== nativeProjection(file))
+        return {
+          ok: false,
+          code: 'policy_unavailable',
+          message: 'Update the controller and review the native launch changes before sending.',
+        };
       const result = savePolicy(candidate, true);
       return result.ok
         ? { ok: true, rev: currentRev() }

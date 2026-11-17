@@ -71,6 +71,7 @@ function mcpState(open: RequestView[], ended: RequestView[] = []): McpUiState {
   return {
     enabled: true,
     storeError: null,
+    native: {},
     loading: false,
     sessions: {},
     threads: [],

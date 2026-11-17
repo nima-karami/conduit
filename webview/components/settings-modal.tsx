@@ -960,6 +960,8 @@ const remoteActionError = (result: PolicyEditResult | null): string | null => {
   switch (result.error) {
     case 'conflict':
       return 'These rules changed. Review the latest version before trying again.';
+    case 'native-review-required':
+      return 'Review the native launch changes in Permissions before applying these rules.';
     case 'busy':
       return 'A change is being sent. Wait for it to finish before trying again.';
     case 'save-failed':

@@ -762,16 +762,16 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
           } catch (e) {
             return failed(tool, caller, e, abs);
           }
+          if ('sessionId' in outcome) token.keep();
           if (!outcome.ok)
             return {
               ok: false,
               error: toolError(
                 outcome.code,
                 outcome.message,
-                outcome.code === 'spawn_unconfirmed' ? outcome.sessionId : undefined,
+                'sessionId' in outcome ? outcome.sessionId : undefined,
               ),
             };
-          token.keep();
           deps.info('control open', {
             tool,
             caller: caller.handle,

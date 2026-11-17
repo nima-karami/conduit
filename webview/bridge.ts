@@ -665,6 +665,7 @@ function mockHost(msg: WebviewToHost) {
         state: {
           enabled: true,
           storeError: null,
+          native: {},
           loading: false,
           sessions: {},
           threads: [],
