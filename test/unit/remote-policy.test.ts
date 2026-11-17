@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { OBSERVER } from '../../src/conduit-mcp/policy-profiles';
+import type { Assignment, AssignmentPoint, Profile } from '../../src/conduit-mcp/policy-types';
 import { createRemotePolicy, type RemotePolicy } from '../../src/conduit-mcp/remote-policy';
 import type { NetworkPort } from '../../src/conduit-mcp/remote-routing';
 import type { RequestsIo } from '../../src/conduit-mcp/request-file-fs';
@@ -94,6 +96,56 @@ describe('remote policy store: edits and the push', () => {
     const second = store.ui(NAMES)[0].policy;
     expect(second.assignments).toEqual(LEAD_DEFAULT.assignments);
     expect(second.profiles.find((p) => p.id === 'lead')?.rules.open_session.decision).toBe('allow');
+  });
+
+  it('keeps typed local saves in the synchronous temporary service as a complete offline draft', async () => {
+    const { store, drafts, pushPolicy, warnings } = rig();
+    mirrored(store);
+    store.setLinkState('m-1', 'down');
+    const profile: Profile = {
+      ...structuredClone(OBSERVER),
+      id: 'p-review-copy',
+      name: 'Review copy',
+      builtIn: false,
+    };
+    profile.rules.open_session.decision = 'ask';
+    const point: AssignmentPoint = { kind: 'cli', cli: 'codex' };
+    const assignment: Assignment = {
+      profileId: profile.id,
+      exceptions: [
+        { tool: 'open_file', scope: { kind: 'folder', path: '/work' }, rule: { decision: 'deny' } },
+      ],
+      onScreenOnly: true,
+    };
+    const result = store.edit('m-1', (svc) => {
+      expect(svc.ui([])).toMatchObject({ readOnly: false, saveError: null, backupWarning: null });
+      expect(svc.saveProfile(profile, svc.ui([]).editToken)).toEqual({ ok: true });
+      const saved = svc.saveAssignment(point, assignment, svc.ui([]).editToken);
+      expect(saved).toEqual({ ok: true });
+      expect(svc.ui([])).toMatchObject({ readOnly: false, saveError: null, backupWarning: null });
+      return saved;
+    });
+    expect(result).toEqual({ ok: true });
+    await settle();
+    const ui = store.ui(NAMES)[0];
+    expect(ui).toMatchObject({
+      status: 'waiting',
+      link: 'down',
+      rev: 3,
+      refusal: null,
+      policy: { readOnly: false, saveError: null, backupWarning: null },
+    });
+    expect(ui.policy.profiles.find((p) => p.id === profile.id)).toEqual(profile);
+    expect(ui.policy.assignments).toEqual([{ point, assignment }]);
+    expect(persisted(drafts.state.text)?.drafts).toEqual({
+      'm-1': {
+        baseRev: 3,
+        doc: { profiles: [profile], assignments: [{ point, assignment }] },
+        editedAt: 1_000,
+      },
+    });
+    expect(pushPolicy).not.toHaveBeenCalled();
+    expect(warnings).toEqual([]);
   });
 
   it('an edit while up pushes at the mirrored rev, then clears the draft and shows applied', async () => {
