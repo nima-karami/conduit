@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { PolicyIo } from '../../src/conduit-mcp/policy-file-fs';
 import { OBSERVER } from '../../src/conduit-mcp/policy-profiles';
 import type { Assignment, AssignmentPoint, Profile } from '../../src/conduit-mcp/policy-types';
-import { createRemotePolicy, type RemotePolicy } from '../../src/conduit-mcp/remote-policy';
+import {
+  createRemotePolicy,
+  REMOTE_POLICY_DRAFTS_MAX_BYTES,
+  type RemotePolicy,
+} from '../../src/conduit-mcp/remote-policy';
 import type { NetworkPort } from '../../src/conduit-mcp/remote-routing';
-import type { RequestsIo } from '../../src/conduit-mcp/request-file-fs';
 import { toolError } from '../../src/conduit-mcp/types';
 import type { RemotePolicyDoc, RemotePolicySnapshot } from '../../src/contracts/remote-policy';
 
@@ -35,17 +39,20 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 const NAMES = (id: string) => (id === 'm-1' ? 'win-box' : id);
 
 function draftsIo(initial: string | null = null) {
-  const state = { text: initial as string | null, writes: [] as string[] };
-  const io: RequestsIo = {
+  const state = { text: initial as string | null, writes: [] as string[], fail: false };
+  const io: PolicyIo = {
     read: () => state.text,
-    write: async (t) => {
+    writeSync: (t) => {
+      if (state.fail) throw new Error('controller disk full');
       state.text = t;
       state.writes.push(t);
+      return true;
     },
   };
   return { io, state };
 }
 
+let rigSequence = 0;
 function rig(opts: { drafts?: string | null } = {}) {
   const drafts = draftsIo(opts.drafts ?? null);
   const warnings: string[] = [];
@@ -61,11 +68,13 @@ function rig(opts: { drafts?: string | null } = {}) {
     pushPolicy,
     revokeRemoteGrant,
   };
+  let nextId = 0;
+  const lifetime = ++rigSequence;
   const store = createRemotePolicy({
     network: () => network,
     draftsIo: drafts.io,
     now: () => 1_000,
-    newId: () => 'id',
+    newId: () => `owner-${lifetime}-${++nextId}`,
     setTimer: () => null,
     clearTimer: () => undefined,
     warn: (m) => warnings.push(m),
@@ -238,7 +247,7 @@ describe('remote policy store: edits and the push', () => {
     store.edit('m-1', (svc) => svc.setAssignment({ kind: 'default' }, 'lead'));
     store.setLinkState('m-1', 'up');
     store.apply('m-1', snap(5, OTHER));
-    store.discard('m-1');
+    store.discard('m-1', store.ui(NAMES)[0].policy.editToken);
     expect(pushPolicy).not.toHaveBeenCalled();
     const [ui] = store.ui(NAMES);
     expect(ui).toMatchObject({ status: 'applied', conflict: null, refusal: null });
@@ -252,7 +261,7 @@ describe('remote policy store: edits and the push', () => {
     store.edit('m-1', (svc) => svc.setAssignment({ kind: 'default' }, 'lead'));
     store.setLinkState('m-1', 'up');
     store.apply('m-1', snap(5, OTHER));
-    store.reapply('m-1');
+    store.reapply('m-1', store.ui(NAMES)[0].policy.editToken);
     await settle();
     expect(pushPolicy).toHaveBeenCalledTimes(1);
     expect(pushPolicy).toHaveBeenCalledWith('m-1', 5, LEAD_DEFAULT);
@@ -362,4 +371,384 @@ describe('remote policy store: the drafts file', () => {
     const { store } = rig({ drafts: null });
     expect(store.ui(NAMES)).toEqual([]);
   });
+});
+
+it('refuses failed durable intent before publishing draft token or network push', () => {
+  const { store, drafts, pushPolicy } = rig();
+  mirrored(store);
+  const before = store.ui(NAMES)[0].policy;
+  drafts.state.fail = true;
+  expect(store.edit('m-1', (svc) => svc.setAssignment({ kind: 'default' }, 'lead'))).toEqual({
+    ok: false,
+    error: 'save-failed',
+  });
+  expect(store.ui(NAMES)[0].policy.assignments).toEqual(before.assignments);
+  expect(store.ui(NAMES)[0].policy.editToken).toBe(before.editToken);
+  expect(store.ui(NAMES)[0].policy.saveError).toContain('saved');
+  expect(drafts.state.writes).toEqual([]);
+  expect(pushPolicy).not.toHaveBeenCalled();
+});
+it.each(['{bad', JSON.stringify({ version: 99, drafts: {} })])(
+  'refuses every human edit to a protected draft store',
+  (text) => {
+    const { store, drafts, pushPolicy } = rig({ drafts: text });
+    mirrored(store);
+    expect(store.edit('m-1', (svc) => svc.setAssignment({ kind: 'default' }, 'lead'))).toEqual({
+      ok: false,
+      error: 'read-only',
+    });
+    expect(store.ui(NAMES)[0].policy).toMatchObject({
+      readOnly: true,
+      saveError: expect.any(String),
+    });
+    expect(drafts.state.text).toBe(text);
+    expect(pushPolicy).not.toHaveBeenCalled();
+  },
+);
+it('keeps editable identity stable over projection grant and link status reads', () => {
+  const { store } = rig();
+  mirrored(store);
+  const token = store.ui(NAMES)[0].policy.editToken;
+  expect(store.ui(NAMES)[0].policy.editToken).toBe(token);
+  store.apply('m-1', {
+    ...snap(3),
+    grants: [
+      {
+        id: 'g',
+        who: 'peer',
+        tool: 'open_session',
+        on: { kind: 'anywhere' },
+        for: 'until-revoked',
+        createdAt: new Date(0).toISOString(),
+        expiresAt: null,
+        lastUsedAt: null,
+      },
+    ],
+  });
+  expect(store.ui(NAMES)[0].policy.editToken).toBe(token);
+  store.setLinkState('m-1', 'down');
+  expect(store.ui(NAMES)[0].policy.editToken).toBe(token);
+});
+
+it('full edits use stable owner CAS and reject local-only values before projection', () => {
+  const { store, drafts, pushPolicy } = rig();
+  mirrored(store);
+  store.setLinkState('m-1', 'down');
+  const token = store.ui(NAMES)[0].policy.editToken;
+  expect(
+    store.editFull('m-1', token, {
+      kind: 'assignment',
+      point: { kind: 'default' },
+      assignment: { profileId: 'lead', exceptions: [], onScreenOnly: false },
+    }),
+  ).toEqual({ ok: true });
+  const writes = drafts.state.writes.length;
+  expect(
+    store.editFull('m-1', token, {
+      kind: 'assignment',
+      point: { kind: 'default' },
+      assignment: null,
+    }),
+  ).toEqual({ ok: false, error: 'conflict' });
+  const current = store.ui(NAMES)[0].policy.editToken;
+  const invalid = {
+    kind: 'assignment',
+    point: { kind: 'session', sessionId: 'local' },
+    assignment: { profileId: 'lead', exceptions: [], onScreenOnly: false },
+  } as unknown as import('../../src/conduit-mcp/ui-types').RemotePolicyEdit;
+  expect(store.editFull('m-1', current, invalid)).toEqual({ ok: false, error: 'invalid-value' });
+  expect(
+    store.editFull('m-1', current, {
+      kind: 'assignment',
+      point: { kind: 'default' },
+      assignment: {
+        profileId: 'lead',
+        onScreenOnly: false,
+        exceptions: [
+          {
+            tool: 'close_session',
+            scope: { kind: 'session', sessionId: 'local' },
+            rule: { decision: 'allow' },
+          },
+        ],
+      },
+    }),
+  ).toEqual({ ok: false, error: 'invalid-value' });
+  expect(drafts.state.writes).toHaveLength(writes);
+  expect(pushPolicy).not.toHaveBeenCalled();
+  const restarted = rig({ drafts: drafts.state.text });
+  expect(restarted.store.ui(NAMES)[0].policy.editToken).not.toBe(current);
+  expect(restarted.store.ui(NAMES)[0].policy.assignments).toEqual(LEAD_DEFAULT.assignments);
+});
+it('conflict revision changes rotate intent and stale reapply never writes or pushes', () => {
+  const { store, drafts, pushPolicy } = rig();
+  mirrored(store);
+  store.setLinkState('m-1', 'down');
+  store.edit('m-1', (svc) => svc.setAssignment({ kind: 'default' }, 'lead'));
+  store.apply('m-1', snap(10, OTHER));
+  const old = store.ui(NAMES)[0].policy.editToken;
+  store.apply('m-1', snap(11, OTHER));
+  expect(store.ui(NAMES)[0].policy.editToken).not.toBe(old);
+  const count = drafts.state.writes.length;
+  expect(store.reapply('m-1', old)).toEqual({ ok: false, error: 'conflict' });
+  expect(drafts.state.writes).toHaveLength(count);
+  expect(pushPolicy).not.toHaveBeenCalled();
+});
+it('discard and reapply failures preserve exact durable draft and token', () => {
+  const { store, drafts, pushPolicy } = rig();
+  mirrored(store);
+  store.setLinkState('m-1', 'down');
+  store.edit('m-1', (svc) => svc.setAssignment({ kind: 'default' }, 'lead'));
+  store.apply('m-1', snap(10, OTHER));
+  const token = store.ui(NAMES)[0].policy.editToken;
+  const text = drafts.state.text;
+  drafts.state.fail = true;
+  expect(store.discard('m-1', token)).toEqual({ ok: false, error: 'save-failed' });
+  expect(store.reapply('m-1', token)).toEqual({ ok: false, error: 'save-failed' });
+  expect(drafts.state.text).toBe(text);
+  expect(store.ui(NAMES)[0]).toMatchObject({
+    status: 'conflict',
+    policy: { editToken: token, assignments: LEAD_DEFAULT.assignments },
+  });
+  expect(pushPolicy).not.toHaveBeenCalled();
+});
+it('old connection completion cannot clear the same draft submitted in a new lifetime', async () => {
+  const { store, pushPolicy, drafts } = rig();
+  const replies: Array<(value: Awaited<ReturnType<NetworkPort['pushPolicy']>>) => void> = [];
+  pushPolicy.mockImplementation(() => new Promise((done) => replies.push(done)));
+  mirrored(store);
+  store.edit('m-1', (svc) => svc.setAssignment({ kind: 'default' }, 'lead'));
+  await settle();
+  store.setLinkState('m-1', 'down');
+  store.setLinkState('m-1', 'up');
+  store.apply('m-1', snap(3));
+  await settle();
+  expect(pushPolicy).toHaveBeenCalledTimes(2);
+  replies[0]({ ok: true, value: { rev: 4 } });
+  await settle();
+  expect(store.ui(NAMES)[0].status).toBe('pushing');
+  expect(persisted(drafts.state.text)?.drafts['m-1']).toBeDefined();
+  replies[1]({ ok: true, value: { rev: 4 } });
+  await settle();
+  expect(store.ui(NAMES)[0]).toMatchObject({
+    status: 'applied',
+    policy: { assignments: LEAD_DEFAULT.assignments },
+  });
+});
+it('successful ack promotes submitted rules before cleanup and failed cleanup never resends current intent', async () => {
+  const { store, pushPolicy, drafts } = rig();
+  let reply!: (value: Awaited<ReturnType<NetworkPort['pushPolicy']>>) => void;
+  pushPolicy.mockImplementation(
+    () =>
+      new Promise((done) => {
+        reply = done;
+      }),
+  );
+  mirrored(store);
+  store.edit('m-1', (svc) => svc.setAssignment({ kind: 'default' }, 'lead'));
+  await settle();
+  const token = store.ui(NAMES)[0].policy.editToken;
+  drafts.state.fail = true;
+  reply({ ok: true, value: { rev: 4 } });
+  await settle();
+  expect(store.ui(NAMES)[0]).toMatchObject({
+    rev: 4,
+    status: 'applied',
+    policy: {
+      assignments: LEAD_DEFAULT.assignments,
+      editToken: token,
+      saveError: expect.stringContaining('applied'),
+    },
+  });
+  const restarted = rig({ drafts: drafts.state.text });
+  restarted.store.apply('m-1', snap(4, LEAD_DEFAULT));
+  expect(restarted.store.ui(NAMES)[0].status).toBe('conflict');
+  expect(restarted.pushPolicy).not.toHaveBeenCalled();
+  drafts.state.fail = false;
+  expect(store.retrySave('m-1', token)).toEqual({ ok: true });
+  expect(pushPolicy).toHaveBeenCalledTimes(1);
+  expect(persisted(drafts.state.text)?.drafts).toEqual({});
+  expect(store.ui(NAMES)[0].policy.editToken).toBe(token);
+});
+it('rejected network promises are visible refusals without unhandled rejection', async () => {
+  const { store, pushPolicy } = rig();
+  pushPolicy.mockRejectedValueOnce(new Error('transport exploded'));
+  mirrored(store);
+  store.edit('m-1', (svc) => svc.setAssignment({ kind: 'default' }, 'lead'));
+  await settle();
+  expect(store.ui(NAMES)[0]).toMatchObject({ status: 'refused', refusal: 'transport exploded' });
+});
+it('same-link old snapshots cannot overwrite current rules but reconnect accepts lower recovery', () => {
+  const { store } = rig();
+  mirrored(store, 9, LEAD_DEFAULT);
+  const token = store.ui(NAMES)[0].policy.editToken;
+  store.apply('m-1', snap(8, OTHER));
+  expect(store.ui(NAMES)[0]).toMatchObject({
+    rev: 9,
+    policy: { editToken: token, assignments: LEAD_DEFAULT.assignments },
+  });
+  store.setLinkState('m-1', 'down');
+  store.apply('m-1', snap(8, OTHER));
+  expect(store.ui(NAMES)[0]).toMatchObject({ rev: 8, policy: { assignments: OTHER.assignments } });
+  expect(store.ui(NAMES)[0].policy.editToken).not.toBe(token);
+});
+it('oversized loaded aggregate stays protected and visibly read-only', () => {
+  const text =
+    JSON.stringify({ version: 1, drafts: {} }) + ' '.repeat(REMOTE_POLICY_DRAFTS_MAX_BYTES);
+  const { store, drafts } = rig({ drafts: text });
+  mirrored(store);
+  expect(store.ui(NAMES)[0].policy).toMatchObject({
+    readOnly: true,
+    saveError: expect.stringContaining('large'),
+  });
+  expect(store.retrySave('m-1', store.ui(NAMES)[0].policy.editToken)).toEqual({
+    ok: false,
+    error: 'read-only',
+  });
+  expect(drafts.state.text).toBe(text);
+});
+
+it('rejects an oversized aggregate candidate before write and preserves existing intent', () => {
+  const exceptions: Assignment['exceptions'] = Array.from({ length: 64 }, (_, i) => ({
+    tool: 'open_file',
+    scope: { kind: 'path', path: `/${String(i).padStart(3, '0')}${'x'.repeat(800)}` },
+    rule: { decision: 'allow' },
+  }));
+  const doc: RemotePolicyDoc = {
+    profiles: [],
+    assignments: Array.from({ length: 4 }, (_, i) => ({
+      point: { kind: 'peer', machineId: `peer-${i}` },
+      assignment: { profileId: 'worker', exceptions, onScreenOnly: false },
+    })),
+  };
+  const drafts = Object.fromEntries(
+    Array.from({ length: 61 }, (_, i) => [`m-${i}`, { baseRev: 3, doc, editedAt: 1_000 }]),
+  );
+  const text = JSON.stringify({ version: 1, drafts });
+  expect(Buffer.byteLength(text)).toBeLessThan(REMOTE_POLICY_DRAFTS_MAX_BYTES);
+  expect(Buffer.byteLength(JSON.stringify({ version: 1, drafts }, null, 2))).toBeGreaterThan(
+    REMOTE_POLICY_DRAFTS_MAX_BYTES,
+  );
+  const { store, drafts: io, pushPolicy } = rig({ drafts: text });
+  expect(store.edit('m-0', (svc) => svc.setAssignment({ kind: 'default' }, 'lead'))).toEqual({
+    ok: false,
+    error: 'too-large',
+  });
+  expect(io.state.writes).toEqual([]);
+  expect(io.state.text).toBe(text);
+  expect(pushPolicy).not.toHaveBeenCalled();
+});
+
+it('a read failure is read-only and never overwritten by a human operation', () => {
+  const writeSync = vi.fn(() => true as const);
+  const store = createRemotePolicy({
+    network: () => undefined,
+    draftsIo: {
+      read: () => {
+        throw new Error('read denied');
+      },
+      writeSync,
+    },
+    now: () => 1_000,
+    newId: () => 'read-failure-owner',
+    setTimer: () => null,
+    clearTimer: () => undefined,
+    warn: () => undefined,
+  });
+  mirrored(store);
+  expect(store.ui(NAMES)[0].policy).toMatchObject({
+    readOnly: true,
+    saveError: expect.stringContaining('read'),
+  });
+  expect(
+    store.editFull('m-1', store.ui(NAMES)[0].policy.editToken, {
+      kind: 'assignment',
+      point: { kind: 'default' },
+      assignment: null,
+    }),
+  ).toEqual({ ok: false, error: 'read-only' });
+  expect(writeSync).not.toHaveBeenCalled();
+});
+
+it('full custom profile changes and deletion survive controller restart', () => {
+  const { store, drafts } = rig();
+  mirrored(store);
+  store.setLinkState('m-1', 'down');
+  const token = () => store.ui(NAMES)[0].policy.editToken;
+  const profile: Profile = {
+    ...structuredClone(OBSERVER),
+    id: 'p-portable',
+    name: 'Portable',
+    builtIn: false,
+  };
+  expect(store.editFull('m-1', token(), { kind: 'profile', profile })).toEqual({ ok: true });
+  expect(
+    store.editFull('m-1', token(), {
+      kind: 'assignment',
+      point: { kind: 'default' },
+      assignment: { profileId: profile.id, exceptions: [], onScreenOnly: false },
+    }),
+  ).toEqual({ ok: true });
+  const restart = rig({ drafts: drafts.state.text });
+  expect(restart.store.ui(NAMES)[0].policy.profiles).toContainEqual(profile);
+  expect(restart.store.ui(NAMES)[0].policy.assignments[0].assignment.profileId).toBe(profile.id);
+  expect(
+    store.editFull('m-1', token(), {
+      kind: 'delete-profile',
+      profileId: profile.id,
+      replacement: 'worker',
+    }),
+  ).toEqual({ ok: true });
+  const after = rig({ drafts: drafts.state.text }).store.ui(NAMES)[0].policy;
+  expect(after.profiles.find((p) => p.id === profile.id)).toBeUndefined();
+  expect(after.assignments[0].assignment.profileId).toBe('worker');
+});
+
+it('full portable size and exception limits refuse without saving or rotating intent', () => {
+  const { store, drafts, pushPolicy } = rig();
+  mirrored(store);
+  store.setLinkState('m-1', 'down');
+  const before = store.ui(NAMES)[0].policy;
+  const profile: Profile = {
+    ...structuredClone(OBSERVER),
+    id: 'p-too-large',
+    builtIn: false,
+    name: 'x'.repeat(256 * 1024),
+  };
+  expect(store.editFull('m-1', before.editToken, { kind: 'profile', profile })).toEqual({
+    ok: false,
+    error: 'invalid-value',
+  });
+  const exceptions: Assignment['exceptions'] = Array.from({ length: 65 }, () => ({
+    tool: 'open_file',
+    scope: { kind: 'anywhere' },
+    rule: { decision: 'deny' },
+  }));
+  expect(
+    store.editFull('m-1', before.editToken, {
+      kind: 'assignment',
+      point: { kind: 'default' },
+      assignment: { profileId: 'worker', exceptions, onScreenOnly: false },
+    }),
+  ).toEqual({ ok: false, error: 'invalid-value' });
+  expect(
+    store.editFull('m-1', before.editToken, {
+      kind: 'assignment',
+      point: { kind: 'default' },
+      assignment: {
+        profileId: 'worker',
+        exceptions: [
+          {
+            tool: 'open_file',
+            scope: { kind: 'path', path: `/${'x'.repeat(1024)}` },
+            rule: { decision: 'deny' },
+          },
+        ],
+        onScreenOnly: false,
+      },
+    }),
+  ).toEqual({ ok: false, error: 'invalid-value' });
+  expect(store.ui(NAMES)[0].policy).toEqual(before);
+  expect(drafts.state.writes).toEqual([]);
+  expect(pushPolicy).not.toHaveBeenCalled();
 });

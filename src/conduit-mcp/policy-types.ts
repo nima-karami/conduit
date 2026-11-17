@@ -169,7 +169,9 @@ export type PolicyEditError =
   | 'read-only'
   | 'save-failed'
   | 'too-large'
-  | 'not-found';
+  | 'not-found'
+  | 'no-copy'
+  | 'busy';
 export type PolicyEditResult =
   | { ok: true }
   | { ok: false; error: PolicyEditError; applied?: 'tightening' };

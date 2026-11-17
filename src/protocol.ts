@@ -23,6 +23,7 @@ import type {
   McpThreadView,
   McpUiAction,
   McpUiState,
+  RemotePolicyEdit,
 } from './conduit-mcp/ui-types';
 import type { SearchFileResult, SearchQuery, TruncatedBy } from './content-search';
 import type { DisplayFacts } from './contracts/frames';
@@ -758,7 +759,9 @@ export type HostToWebview =
         | 'too-large'
         | 'conflict'
         | 'unknown-profile'
-        | 'not-found';
+        | 'not-found'
+        | 'no-copy'
+        | 'busy';
     }
   | {
       type: 'mcp:attachment';
@@ -1308,7 +1311,20 @@ export type WebviewToHost =
     }
   | { type: 'mcp:revokeGrant'; requestId: number; grantId: string; machine?: string }
   // Discard a machine's draft, or re-apply it on top of that machine's current rules (CON-46).
-  | { type: 'mcp:remotePolicy'; machine: string; action: 'discard' | 'reapply' }
+  | {
+      type: 'mcp:remoteEdit';
+      requestId: number;
+      machine: string;
+      expectedToken: string;
+      edit: RemotePolicyEdit;
+    }
+  | {
+      type: 'mcp:remotePolicy';
+      requestId: number;
+      machine: string;
+      expectedToken: string;
+      action: 'discard' | 'reapply' | 'retry-save';
+    }
   | { type: 'mcp:allowOnce'; requestId: number; activityId: string }
   | { type: 'mcp:setAway'; away: boolean; until: string | null }
   // Answer from the approval card; counts only from the window the ask was sent to

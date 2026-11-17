@@ -60,3 +60,12 @@ describe('policy file IO', () => {
     expect(() => createPolicyIo(file).writeSync('new')).toThrow();
   });
 });
+
+it('supports an explicit owner cap while preserving old bytes on over-cap intent', () => {
+  const file = location();
+  const io = createPolicyIo(file, { maxBytes: POLICY_MAX_BYTES + 100 });
+  const text = 'x'.repeat(POLICY_MAX_BYTES + 1);
+  expect(io.writeSync(text)).toBe(true);
+  expect(() => io.writeSync(text + 'x'.repeat(100))).toThrow(/large/);
+  expect(io.read()).toBe(text);
+});

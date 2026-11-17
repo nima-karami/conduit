@@ -109,7 +109,7 @@ import type {
   PolicyTarget,
   Principal,
 } from './policy-types';
-import { createRemotePolicy } from './remote-policy';
+import { createRemotePolicy, REMOTE_POLICY_DRAFTS_MAX_BYTES } from './remote-policy';
 import {
   checkRemoteAnswer,
   createRemoteRequests,
@@ -1032,7 +1032,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   // the same clock and timers as the local policy.
   const remotePolicy = createRemotePolicy({
     network: () => deps.network,
-    draftsIo: createRequestsIo(path.join(deps.dir, 'remote-policy.json')),
+    draftsIo: createPolicyIo(path.join(deps.dir, 'remote-policy.json'), {
+      maxBytes: REMOTE_POLICY_DRAFTS_MAX_BYTES,
+    }),
     now,
     newId: () => randomBytes(12).toString('hex'),
     ...requestTimers,
@@ -3920,10 +3922,32 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           }
           return;
         }
+        case 'mcp:remoteEdit':
         case 'mcp:remotePolicy': {
-          if (typeof m.machine !== 'string') return;
-          if (m.action === 'discard') remotePolicy.discard(m.machine);
-          else if (m.action === 'reapply') void remotePolicy.reapply(m.machine);
+          if (
+            !machineArg(m.machine) ||
+            m.machine === undefined ||
+            typeof m.expectedToken !== 'string' ||
+            typeof m.requestId !== 'number'
+          ) {
+            reply({
+              type: 'mcp:policyEditResult',
+              requestId: m.requestId,
+              result: { ok: false, error: 'invalid-value' },
+            });
+            return;
+          }
+          const result =
+            m.type === 'mcp:remoteEdit'
+              ? remotePolicy.editFull(m.machine, m.expectedToken, m.edit)
+              : m.action === 'discard'
+                ? remotePolicy.discard(m.machine, m.expectedToken)
+                : m.action === 'reapply'
+                  ? remotePolicy.reapply(m.machine, m.expectedToken)
+                  : m.action === 'retry-save'
+                    ? remotePolicy.retrySave(m.machine, m.expectedToken)
+                    : { ok: false as const, error: 'invalid-value' as const };
+          reply({ type: 'mcp:policyEditResult', requestId: m.requestId, result });
           return;
         }
         case 'mcp:allowOnce': {

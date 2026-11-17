@@ -267,7 +267,8 @@ function rightPane(
       retryPolicy: async () => ({ ok: true as const }),
       setToolPolicy: async () => true,
       setPointPolicy: async () => true,
-      remotePolicy: () => {},
+      remotePolicy: async () => ({ ok: true as const }),
+      remoteEdit: async () => ({ ok: true as const }),
       answerPermission: async () => ({ ok: true as const }),
       answerRequest: async () => ({
         ok: false as const,

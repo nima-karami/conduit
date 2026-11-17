@@ -2,12 +2,12 @@
 // type-only, from node-free modules (./types, ./install-types, ../git-range, ../protocol), so the
 // renderer never reaches a node-backed one (plan ruling 8). The ../protocol ↔ ui-types cycle is
 // type-only and erased at build.
-import type { RemoteGrantView } from '../contracts/remote-policy';
+import type { RemoteGrantView, RemotePolicyPoint } from '../contracts/remote-policy';
 import type { RefEndpoint } from '../git-range';
 import type { ParsedPatchFile } from '../patch-parse';
 import type { CommitNode } from '../protocol';
 import type { AgentCli, UserInstallState } from './install-types';
-import type { PolicyUiState } from './policy-types';
+import type { Assignment, PolicyUiState, Profile, ProfileId } from './policy-types';
 import type { RequestsUiState } from './request-types';
 import type {
   GateClosedReason,
@@ -140,6 +140,11 @@ export interface McpThreadView {
 }
 
 /** A machine's rules as this machine holds them: its mirror, or its draft over it (CON-46 L4). */
+export type RemotePolicyEdit =
+  | { kind: 'assignment'; point: RemotePolicyPoint; assignment: Assignment | null }
+  | { kind: 'profile'; profile: Profile }
+  | { kind: 'delete-profile'; profileId: ProfileId; replacement: ProfileId };
+
 export type RemotePolicyStatus = 'applied' | 'pushing' | 'waiting' | 'conflict' | 'refused';
 
 export interface RemotePolicyUi {

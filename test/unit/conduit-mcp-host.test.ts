@@ -34,7 +34,7 @@ import {
   serializePolicyFile,
 } from '../../src/conduit-mcp/policy-file';
 import type { PolicyIo } from '../../src/conduit-mcp/policy-file-fs';
-import { BUILT_IN_PROFILES } from '../../src/conduit-mcp/policy-profiles';
+import { BUILT_IN_PROFILES, OBSERVER } from '../../src/conduit-mcp/policy-profiles';
 import type { OneUseOverride } from '../../src/conduit-mcp/policy-types';
 import type { NetworkPort, RemoteEntry } from '../../src/conduit-mcp/remote-routing';
 import type { AnswerInput, RequestRecord } from '../../src/conduit-mcp/request-types';
@@ -10011,7 +10011,7 @@ describe('remote policy edits from this machine (CON-46 L4)', () => {
     await settle();
     expect(pushes).toEqual([[MACHINE, 3, LEAD_DEFAULT]]);
     expect(h.host.uiState().policy.machines).toMatchObject([
-      { machineId: MACHINE, name: 'win-box', status: 'applied', rev: 3 },
+      { machineId: MACHINE, name: 'win-box', status: 'applied', rev: 4 },
     ]);
 
     expect(
@@ -10094,6 +10094,135 @@ describe('remote policy edits from this machine (CON-46 L4)', () => {
     expect(revokes).toHaveLength(1);
   });
 
+  it('full remote edits use owner CAS, preserve custom portable rules, and return durable failures', async () => {
+    const { network, pushes } = remoteNet();
+    const h = harness({ network, manualTimers: true });
+    await h.host.start();
+    const sink = h.host.networkPort().remotePolicySink();
+    sink.apply(MACHINE, RULES_AT_3);
+    sink.setLinkState(MACHINE, 'down');
+    const token = () => h.host.uiState().policy.machines[0].policy.editToken;
+    const reply = (requestId: number, result: unknown) => [
+      { type: 'mcp:policyEditResult', requestId, result },
+    ];
+    const original = token();
+    const profile = {
+      ...structuredClone(OBSERVER),
+      id: 'p-custom-portable' as const,
+      name: 'Custom portable',
+      builtIn: false,
+    };
+    expect(
+      await post(h, {
+        type: 'mcp:remoteEdit',
+        requestId: 80,
+        machine: MACHINE,
+        expectedToken: original,
+        edit: { kind: 'profile', profile },
+      }),
+    ).toEqual(reply(80, { ok: true }));
+    expect(
+      await post(h, {
+        type: 'mcp:remoteEdit',
+        requestId: 81,
+        machine: MACHINE,
+        expectedToken: original,
+        edit: { kind: 'assignment', point: { kind: 'default' }, assignment: null },
+      }),
+    ).toEqual(reply(81, { ok: false, error: 'conflict' }));
+    const assignment = { profileId: profile.id, exceptions: [], onScreenOnly: false };
+    expect(
+      await post(h, {
+        type: 'mcp:remoteEdit',
+        requestId: 82,
+        machine: MACHINE,
+        expectedToken: token(),
+        edit: { kind: 'assignment', point: { kind: 'default' }, assignment },
+      }),
+    ).toEqual(reply(82, { ok: true }));
+    const before = token();
+    const file = path.join(h.dir, 'remote-policy.json');
+    const bytes = fs.readFileSync(file, 'utf8');
+    for (const point of [{ kind: 'session', sessionId: 's1' }, { kind: 'default' }]) {
+      expect(
+        await post(h, {
+          type: 'mcp:remoteEdit',
+          requestId: 83,
+          machine: MACHINE,
+          expectedToken: before,
+          edit: {
+            kind: 'assignment',
+            point,
+            assignment: {
+              ...assignment,
+              exceptions: [
+                {
+                  tool: 'close_session',
+                  scope: { kind: 'session', sessionId: 's1' },
+                  rule: { decision: 'allow' },
+                },
+              ],
+            },
+          },
+        }),
+      ).toEqual(reply(83, { ok: false, error: 'invalid-value' }));
+    }
+    expect(token()).toBe(before);
+    expect(fs.readFileSync(file, 'utf8')).toBe(bytes);
+    fs.renameSync(file, `${file}.test-backup`);
+    fs.mkdirSync(file);
+    try {
+      expect(
+        await post(h, {
+          type: 'mcp:remoteEdit',
+          requestId: 84,
+          machine: MACHINE,
+          expectedToken: before,
+          edit: { kind: 'assignment', point: { kind: 'default' }, assignment: null },
+        }),
+      ).toEqual(reply(84, { ok: false, error: 'save-failed' }));
+      expect(token()).toBe(before);
+      expect(h.host.uiState().policy.machines[0].policy.saveError).toContain('saved');
+    } finally {
+      fs.rmdirSync(file);
+      fs.renameSync(`${file}.test-backup`, file);
+    }
+    expect(
+      await post(h, {
+        type: 'mcp:remotePolicy',
+        requestId: 85,
+        machine: MACHINE,
+        expectedToken: before,
+        action: 'retry-save',
+      }),
+    ).toEqual(reply(85, { ok: true }));
+    expect(token()).toBe(before);
+    expect(h.host.uiState().policy.machines[0].policy.saveError).toBeNull();
+    expect(h.host.uiState().policy.machines[0].policy.profiles).toContainEqual(profile);
+    expect(h.host.uiState().policy.machines[0].policy.assignments).toEqual([
+      { point: { kind: 'default' }, assignment },
+    ]);
+    expect(pushes).toEqual([]);
+    expect(
+      await post(h, { type: 'mcp:remotePolicy', machine: MACHINE, action: 'discard' }),
+    ).toEqual([
+      {
+        type: 'mcp:policyEditResult',
+        requestId: undefined,
+        result: { ok: false, error: 'invalid-value' },
+      },
+    ]);
+    sink.apply(MACHINE, RULES_AT_3);
+    await settle();
+    expect(pushes).toEqual([
+      [
+        MACHINE,
+        3,
+        { profiles: [profile], assignments: [{ point: { kind: 'default' }, assignment }] },
+      ],
+    ]);
+  });
+
   it('mcp:remotePolicy discard clears the draft and returns the machine to applied', async () => {
     const { network, pushes } = remoteNet();
     const h = harness({ network, manualTimers: true });
@@ -10108,7 +10237,13 @@ describe('remote policy edits from this machine (CON-46 L4)', () => {
       profileId: 'lead',
       machine: MACHINE,
     });
-    await post(h, { type: 'mcp:remotePolicy', machine: MACHINE, action: 'discard' });
+    await post(h, {
+      type: 'mcp:remotePolicy',
+      requestId: 93,
+      machine: MACHINE,
+      action: 'discard',
+      expectedToken: h.host.uiState().policy.machines[0].policy.editToken,
+    });
     expect(h.host.uiState().policy.machines).toMatchObject([{ status: 'applied' }]);
     await until(() => Object.keys(savedDrafts(h.dir) ?? { x: 1 }).length === 0);
     expect(savedDrafts(h.dir)).toEqual({});

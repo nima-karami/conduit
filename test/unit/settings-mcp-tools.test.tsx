@@ -496,12 +496,22 @@ describe('Settings → MCP tools: machine picker', () => {
       type: 'mcp:remotePolicy',
       machine: 'b',
       action: 'discard',
+      expectedToken: 'fixture',
+      requestId: expect.any(Number),
     });
+    const first = remotePosts().at(-1);
+    if (!first) throw new Error('missing discard');
+    expect(buttonNamed('Apply mine on top')?.disabled).toBe(true);
+    expect(buttonNamed("Use Bob's rules")?.disabled).toBe(true);
+    emit({ type: 'mcp:policyEditResult', requestId: first.requestId, result: { ok: true } });
+    await flush();
     await click(buttonNamed('Apply mine on top'));
     expect(remotePosts().at(-1)).toEqual({
       type: 'mcp:remotePolicy',
       machine: 'b',
       action: 'reapply',
+      expectedToken: 'fixture',
+      requestId: expect.any(Number),
     });
   });
 
@@ -511,4 +521,68 @@ describe('Settings → MCP tools: machine picker', () => {
     expect(buttonNamed("Use Bob's rules")).toBeNull();
     expect(buttonNamed('Apply mine on top')).toBeNull();
   });
+});
+
+it.each(['save-failed', 'conflict', 'timeout'] as const)(
+  'remote conflict action renders acknowledged %s inline without snapshot',
+  async (failure) => {
+    await mount(layersOf(), [
+      remoteOf({ ...BOB, status: 'conflict', conflict: remoteOf(BOB).policy }),
+    ]);
+    await pickMachine('Bob');
+    await click(buttonNamed("Use Bob's rules"));
+    const request = remotePosts().at(-1);
+    if (!request) throw new Error('missing action');
+    if (failure === 'timeout')
+      await act(async () => {
+        vi.advanceTimersByTime(10_000);
+      });
+    else {
+      emit({
+        type: 'mcp:policyEditResult',
+        requestId: request.requestId,
+        result: { ok: false, error: failure },
+      });
+      await flush();
+    }
+    expect(document.body.textContent).toContain(
+      failure === 'timeout'
+        ? "Conduit did not confirm this change. Reopen this machine's rules before trying again."
+        : failure === 'conflict'
+          ? 'These rules changed. Review the latest version before trying again.'
+          : "Couldn't save this machine's pending rules. Fix the save problem, then try again.",
+    );
+  },
+);
+
+it('does not inherit a completed action from an earlier selected-machine lifetime', async () => {
+  const conflict = (machineId: string, name: string) =>
+    remoteOf({ machineId, name, status: 'conflict', conflict: remoteOf(BOB).policy });
+  await mount(layersOf(), [conflict('b', 'Bob'), conflict('c', 'Cy')]);
+  await pickMachine('Bob');
+  await click(buttonNamed("Use Bob's rules"));
+  const old = remotePosts().at(-1);
+  if (!old) throw new Error('missing action');
+  await pickMachine('Cy');
+  await pickMachine('Bob');
+  expect(buttonNamed("Use Bob's rules")?.disabled).toBe(false);
+  emit({
+    type: 'mcp:policyEditResult',
+    requestId: old.requestId,
+    result: { ok: false, error: 'save-failed' },
+  });
+  await flush();
+  expect(document.body.textContent).not.toContain("Couldn't save this machine's pending rules.");
+  await click(buttonNamed('Apply mine on top'));
+  const current = remotePosts().at(-1);
+  if (!current) throw new Error('missing current action');
+  emit({
+    type: 'mcp:policyEditResult',
+    requestId: current.requestId,
+    result: { ok: false, error: 'conflict' },
+  });
+  await flush();
+  expect(document.body.textContent).toContain('These rules changed.');
+  await pickMachine('Cy');
+  expect(document.body.textContent).not.toContain('These rules changed.');
 });

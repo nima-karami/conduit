@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { c2Auth } from './c2-auth.mjs';
 import { C2 } from './c2-peer.mjs';
 import { FAKE_AGENT, until } from './conduit-mcp-helpers.mjs';
-import { assert, makeLog, REPO, resolveHcBinary } from './harness.mjs';
+import { assert, makeLog, profileDir, REPO, resolveHcBinary } from './harness.mjs';
 import { assertOwnSession, hcEnv, stopHc, teardownNames } from './harness-server-teardown.mjs';
 
 // Shared by every net-*.e2e.mjs: N standalone servers, each in its own private hc session and
@@ -101,16 +101,19 @@ async function attachApp(endpoint, userData) {
  * Starts one standalone server: temp userData/work/records, the echo and fake MCP agents, a
  * private hc session, the supervisor through `hc run`, and a C2 connection.
  * @param {string} label
+ * @param {{ electronProfile?: boolean }} [options]
  */
-export async function startServer(label) {
+export async function startServer(label, { electronProfile = false } = {}) {
   const version = await execFile(HC, ['--version'], { windowsHide: true });
   const versionText = `${version.stdout}${version.stderr}`;
   assert(versionText.includes(HC_VERSION), `expected hc ${HC_VERSION}, got ${versionText.trim()}`);
   const supervise = join(REPO, 'out', 'server', 'supervise.js');
   assert(existsSync(supervise), 'out/server/supervise.js missing: run `npm run build` first');
 
-  const directory = await mkdtemp(join(tmpdir(), `net-${label}-e2e-`));
-  const userData = join(directory, 'user-data');
+  const directory = electronProfile
+    ? profileDir(`net-${label}`)
+    : await mkdtemp(join(tmpdir(), `net-${label}-e2e-`));
+  const userData = electronProfile ? directory : join(directory, 'user-data');
   const work = join(directory, 'work');
   const recordsDir = join(directory, 'records');
   for (const d of [userData, work, recordsDir]) mkdirSync(d, { recursive: true });

@@ -22,6 +22,7 @@ import type {
   McpSendResult,
   McpThreadView,
   McpUiState,
+  RemotePolicyEdit,
 } from '../src/conduit-mcp/ui-types';
 import type { WebviewToHost } from '../src/protocol';
 import { post, subscribe } from './bridge';
@@ -87,8 +88,16 @@ export interface ConduitMcpApi {
     patch: ToolPolicyPatch,
     machine?: string,
   ): Promise<boolean>;
-  /** Discard a remote machine's draft, or re-apply it on top of that machine's rules. No reply. */
-  remotePolicy(machine: string, action: 'discard' | 'reapply'): void;
+  remoteEdit(
+    machine: string,
+    expectedToken: string,
+    edit: RemotePolicyEdit,
+  ): Promise<PolicyEditResult | null>;
+  remotePolicy(
+    machine: string,
+    action: 'discard' | 'reapply' | 'retry-save',
+    expectedToken: string,
+  ): Promise<PolicyEditResult | null>;
   answerRequest(requestId: string, answer: AnswerInput): Promise<RequestAnswerResult>;
   answerPermission(requestId: string, answer: PermissionAnswer): Promise<PermissionAnswerResult>;
   setAway(away: boolean, until: string | null): void;
@@ -242,8 +251,21 @@ const api: Omit<ConduitMcpApi, 'state'> = {
     );
     return r?.ok === true;
   },
-  remotePolicy(machine, action) {
-    post({ type: 'mcp:remotePolicy', machine, action });
+  async remoteEdit(machine, expectedToken, edit) {
+    const result = await requestHost(
+      (requestId) => ({ type: 'mcp:remoteEdit', requestId, machine, expectedToken, edit }),
+      ['mcp:policyEditResult'],
+      REQUEST_TIMEOUT_MS,
+    );
+    return result?.result ?? null;
+  },
+  async remotePolicy(machine, action, expectedToken) {
+    const result = await requestHost(
+      (requestId) => ({ type: 'mcp:remotePolicy', requestId, machine, action, expectedToken }),
+      ['mcp:policyEditResult'],
+      REQUEST_TIMEOUT_MS,
+    );
+    return result?.result ?? null;
   },
   answerRequest(requestId, answer) {
     // Not requestHost: it correlates by the numeric id it mints, and this reply carries the

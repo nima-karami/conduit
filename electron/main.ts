@@ -4017,6 +4017,8 @@ app.whenReady().then(() => {
         case 'mcp:saveProfile':
         case 'mcp:deleteProfile':
         case 'mcp:policyRetry':
+        case 'mcp:remoteEdit':
+        case 'mcp:remotePolicy':
         case 'mcp:markRead':
         case 'mcp:allowMore':
         case 'mcp:pause':

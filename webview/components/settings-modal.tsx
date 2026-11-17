@@ -11,6 +11,7 @@ import {
   useState,
 } from 'react';
 import { AGENT_CLIS, type AgentCli } from '../../src/conduit-mcp/install-types';
+import type { PolicyEditResult } from '../../src/conduit-mcp/policy-types';
 import {
   CLI_KINDS,
   type CliKind,
@@ -952,6 +953,24 @@ function withPending(
 
 const NO_MACHINES: RemotePolicyUi[] = [];
 
+const remoteActionError = (result: PolicyEditResult | null): string | null => {
+  if (result === null)
+    return "Conduit did not confirm this change. Reopen this machine's rules before trying again.";
+  if (result.ok) return null;
+  switch (result.error) {
+    case 'conflict':
+      return 'These rules changed. Review the latest version before trying again.';
+    case 'busy':
+      return 'A change is being sent. Wait for it to finish before trying again.';
+    case 'save-failed':
+      return "Couldn't save this machine's pending rules. Fix the save problem, then try again.";
+    case 'read-only':
+      return "This machine's pending rules are read-only.";
+    default:
+      return "Couldn't update these rules. Reopen this machine's rules and try again.";
+  }
+};
+
 const remoteStatusText = (r: RemotePolicyUi): string => {
   const R = MCP_STR.tools.remote;
   switch (r.status) {
@@ -983,6 +1002,9 @@ function McpToolPolicyRows({
   const mcp = useConduitMcp();
   // '' is this machine; a machine's id is never empty.
   const [machineId, setMachineId] = useState('');
+  const [remoteActionPending, setRemoteActionPending] = useState(false);
+  const [remoteActionFailure, setRemoteActionFailure] = useState<string | null>(null);
+  const remoteActionSeq = useRef(0);
   const machines = mcp.state?.policy.machines ?? NO_MACHINES;
   // A machine that has since left the list falls back to this machine's rows.
   const remote =
@@ -1017,9 +1039,31 @@ function McpToolPolicyRows({
   }
 
   const selectMachine = (id: string) => {
+    remoteActionSeq.current++;
+    setRemoteActionPending(false);
+    setRemoteActionFailure(null);
     setMachineId(id);
     setPending({});
     setFailed({});
+  };
+
+  const actOnRemote = async (action: 'discard' | 'reapply') => {
+    if (!remote || remoteActionPending) return;
+    const selected = remote.machineId;
+    const seq = ++remoteActionSeq.current;
+    setRemoteActionPending(true);
+    setRemoteActionFailure(null);
+    let failure: string | null;
+    try {
+      failure = remoteActionError(
+        await mcp.remotePolicy(selected, action, remote.policy.editToken),
+      );
+    } catch {
+      failure = "Couldn't update these rules. Reopen this machine's rules and try again.";
+    }
+    if (remoteActionSeq.current !== seq || machineRef.current !== selected) return;
+    setRemoteActionPending(false);
+    setRemoteActionFailure(failure);
   };
 
   const select = (t: PolicyTab) => {
@@ -1111,19 +1155,31 @@ function McpToolPolicyRows({
           <p className="settools__hint" role="status">
             {remoteStatusText(remote)}
           </p>
+          {remote.policy.saveError && (
+            <p className="settools__hint" role="status">
+              {remote.policy.saveError}
+            </p>
+          )}
+          {remoteActionFailure && (
+            <p className="settools__hint" role="status">
+              {remoteActionFailure}
+            </p>
+          )}
           {remote.status === 'conflict' && (
             <div className="policycli__bar">
               <button
                 type="button"
                 className="btn btn--sm"
-                onClick={() => mcp.remotePolicy(remote.machineId, 'discard')}
+                disabled={remoteActionPending}
+                onClick={() => void actOnRemote('discard')}
               >
                 {MCP_STR.tools.remote.takeTheirs(remote.name)}
               </button>
               <button
                 type="button"
                 className="btn btn--sm"
-                onClick={() => mcp.remotePolicy(remote.machineId, 'reapply')}
+                disabled={remoteActionPending}
+                onClick={() => void actOnRemote('reapply')}
               >
                 {MCP_STR.tools.remote.applyMine}
               </button>
