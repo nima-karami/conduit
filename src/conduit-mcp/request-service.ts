@@ -963,10 +963,11 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     },
 
     applyRemoteAnswer(requestId, answer, answerId, machineId) {
-      const seen = remoteAnswers.get(answerId);
+      const cacheKey = `${machineId}:${answerId}`;
+      const seen = remoteAnswers.get(cacheKey);
       if (seen !== undefined) return seen;
       const result = applyRemote(requestId, answer, machineId);
-      remoteAnswers.set(answerId, result);
+      remoteAnswers.set(cacheKey, result);
       if (remoteAnswers.size > REMOTE_ANSWER_DEDUPE_MAX) {
         for (const oldest of remoteAnswers.keys()) {
           remoteAnswers.delete(oldest);

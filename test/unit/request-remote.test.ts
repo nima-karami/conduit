@@ -696,3 +696,79 @@ it('commits and dedupes consent despite throwing service and mirror observers', 
   expect(observed).toHaveBeenCalledOnce();
   expect((await created.ended).state).toBe('answered');
 });
+
+it('settles independent controllers using the same answer id and caches each retransmission', async () => {
+  const h = harness();
+  const charlie = { handle: 'charlie', machineId: 'm-3' };
+  const b = h.service.createRemotePermission(bob, permFields(), EXPIRY);
+  const c = h.service.createRemotePermission(charlie, permFields(), EXPIRY);
+  const preflight = vi.fn(() => ({ ok: true as const, createdGrantIds: [] }));
+  h.deps.onRemotePermissionAnswer = preflight;
+  expect(
+    h.service.applyRemoteAnswer(b.id, { outcome: 'allowed' }, 'shared', bob.machineId),
+  ).toEqual({ ok: true });
+  expect(
+    h.service.applyRemoteAnswer(c.id, { outcome: 'allowed' }, 'shared', charlie.machineId),
+  ).toEqual({ ok: true });
+  expect(h.service.mirrorOf().map((r) => [r.id, r.state])).toEqual([
+    [b.id, 'answered'],
+    [c.id, 'answered'],
+  ]);
+  expect(preflight.mock.calls).toHaveLength(2);
+  expect(
+    h.service.applyRemoteAnswer(b.id, { outcome: 'allowed' }, 'shared', bob.machineId),
+  ).toEqual({ ok: true });
+  expect(
+    h.service.applyRemoteAnswer(c.id, { outcome: 'allowed' }, 'shared', charlie.machineId),
+  ).toEqual({ ok: true });
+  expect(preflight.mock.calls).toHaveLength(2);
+  expect((await b.ended).answer?.answeredBy).toEqual({ kind: 'remote', machineId: bob.machineId });
+  expect((await c.ended).answer?.answeredBy).toEqual({
+    kind: 'remote',
+    machineId: charlie.machineId,
+  });
+});
+
+it('does not disclose another controller cached success on a cross-controller replay', () => {
+  const h = harness();
+  const b = h.service.createRemotePermission(bob, permFields(), EXPIRY);
+  expect(
+    h.service.applyRemoteAnswer(b.id, { outcome: 'allowed' }, 'shared', bob.machineId),
+  ).toEqual({ ok: true });
+  expect(h.service.applyRemoteAnswer(b.id, { outcome: 'allowed' }, 'shared', 'm-3')).toMatchObject({
+    ok: false,
+    reason: 'already_ended',
+  });
+});
+
+it('checks controller identity instead of replaying another controller cached storage refusal', () => {
+  const h = harness();
+  const b = h.service.createRemotePermission(bob, permFields(), EXPIRY);
+  const preflight = vi.fn(() => ({
+    ok: false as const,
+    reason: 'policy_unavailable' as const,
+    message: 'controller B storage is unavailable',
+  }));
+  h.deps.onRemotePermissionAnswer = preflight;
+  const failure = h.service.applyRemoteAnswer(
+    b.id,
+    { outcome: 'allowed' },
+    'shared',
+    bob.machineId,
+  );
+  expect(failure).toEqual({
+    ok: false,
+    reason: 'policy_unavailable',
+    message: 'controller B storage is unavailable',
+  });
+  expect(h.service.applyRemoteAnswer(b.id, { outcome: 'allowed' }, 'shared', 'm-3')).toEqual({
+    ok: false,
+    reason: 'invalid_args',
+    message: 'answered on the machine that asked',
+  });
+  expect(
+    h.service.applyRemoteAnswer(b.id, { outcome: 'allowed' }, 'shared', bob.machineId),
+  ).toEqual(failure);
+  expect(preflight).toHaveBeenCalledTimes(1);
+  expect(h.service.mirrorOf()[0]?.state).toBe('open');
+});

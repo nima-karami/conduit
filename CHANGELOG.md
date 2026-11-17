@@ -7,6 +7,7 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Fixed
+- Permission answer receipts stay separate for each connected controller, even when their answer IDs match.
 - Agent actions now recheck current permissions and session context after preparation and before using your approval.
 
 - Remote permission answers now report saving failures before accepting consent. Requests withdraw if new rules deny them.
