@@ -164,7 +164,8 @@ export type PermissionAnswer =
 
 // see plan C8
 export interface PolicyUiState {
-  profiles: Array<{ id: ProfileId; name: string; builtIn: boolean }>;
+  profiles: Profile[];
+  assignments: Array<{ point: AssignmentPoint; assignment: Assignment }>;
   sessions: Record<
     string,
     {

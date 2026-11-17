@@ -1,6 +1,16 @@
 // see spec 2026-11-14-policy-and-permissions §4.6
 
 import { judgePersistedVersion, SERVER_FILE_VERSION } from '../contracts/session-identity';
+import {
+  type ActivityPage,
+  type ActivityQuery,
+  activityCursor,
+  activityMatches,
+  compareActivityRows,
+  isActivityDay,
+  parseActivityEntry,
+  parseActivityQuery,
+} from './activity-query';
 import type { Decision } from './policy-types';
 import type { CliKind, ToolName } from './tool-policy';
 
@@ -49,6 +59,7 @@ const DENY_WINDOW = 200;
 
 export interface ActivityIo {
   append(day: string, line: string): void;
+  read(day: string, maxBytes: number): string;
   list(): Array<{ day: string; bytes: number }>;
   remove(day: string): void;
   readArgs(): string | null;
@@ -61,6 +72,7 @@ export interface ActivityLog {
   flushCounts(all: boolean): void;
   purge(): void;
   writable(): boolean;
+  query(input: ActivityQuery): ActivityPage;
   recentDenies(): ReadonlyMap<string, ActivityEntry>;
 }
 
@@ -185,6 +197,26 @@ export function createActivityLog(deps: {
     }
   }
 
+  const countedRow = (bucket: Bucket): ActivityEntry =>
+    build(
+      {
+        lane: 'conduit',
+        principal: bucket.principal,
+        cli: bucket.cli,
+        action: bucket.action,
+        target: null,
+        summary: null,
+        decision: 'allow',
+        decidedBy: 'counted',
+        outcome: bucket.outcome,
+        durationMs: null,
+        requestId: null,
+        count: bucket.count,
+      },
+      bucket.id,
+      `${bucket.hour}:00:00.000Z`,
+    );
+
   // Load once. Only a missing file starts a writable store; anything unreadable, corrupt or newer
   // is never overwritten (see SERVER_FILE_VERSION and judgePersistedVersion).
   function loadAsks(): void {
@@ -289,27 +321,7 @@ export function createActivityLog(deps: {
       for (const [key, bucket] of buckets) {
         if (!all && bucket.hour >= current) continue;
         buckets.delete(key);
-        emit(
-          build(
-            {
-              lane: 'conduit',
-              principal: bucket.principal,
-              cli: bucket.cli,
-              action: bucket.action,
-              target: null,
-              summary: null,
-              decision: 'allow',
-              decidedBy: 'counted',
-              outcome: bucket.outcome,
-              durationMs: null,
-              requestId: null,
-              count: bucket.count,
-            },
-            bucket.id,
-            `${bucket.hour}:00:00.000Z`,
-          ),
-          nowIso,
-        );
+        emit(countedRow(bucket), nowIso);
       }
     },
 
@@ -347,6 +359,81 @@ export function createActivityLog(deps: {
         if (file.day === today) continue;
         if (removeDay(file.day)) total -= file.bytes;
       }
+    },
+
+    query(input) {
+      const writable = failedAt === null;
+      const fail = (error: string): ActivityPage => ({ rows: [], next: null, writable, error });
+      const query = parseActivityQuery(input);
+      if (query === null) return fail('Invalid Activity query');
+      const limit = query.limit ?? 100;
+      const selected: ActivityEntry[] = [];
+      const nowMs = deps.now();
+      const today = dayOf(isoNow());
+      const firstDay = dayOf(new Date(nowMs - 29 * 86_400_000).toISOString());
+      const take = (row: ActivityEntry): void => {
+        if (
+          dayOf(row.at) < firstDay ||
+          row.at > new Date(nowMs).toISOString() ||
+          !activityMatches(row, query)
+        )
+          return;
+        let low = 0;
+        let high = selected.length;
+        while (low < high) {
+          const mid = (low + high) >>> 1;
+          if (compareActivityRows(selected[mid], row) < 0) low = mid + 1;
+          else high = mid;
+        }
+        selected.splice(low, 0, row);
+        if (selected.length > limit + 1) selected.pop();
+      };
+      let files: Array<{ day: string; bytes: number }>;
+      try {
+        files = io.list();
+      } catch {
+        return fail('Activity day files could not be read');
+      }
+      if (files.some((f) => !isActivityDay(f.day) || !Number.isSafeInteger(f.bytes) || f.bytes < 0))
+        return fail('Activity day listing is corrupt');
+      const days = files
+        .filter((f) => f.day >= firstDay && f.day <= today)
+        .sort((a, b) => b.day.localeCompare(a.day));
+      let remaining = ACTIVITY_MAX_BYTES;
+      for (const file of days) {
+        if (file.bytes > remaining) return fail('Activity exceeds the read budget');
+        let text: string;
+        try {
+          text = io.read(file.day, remaining);
+        } catch {
+          return fail('Activity day could not be read within the byte budget');
+        }
+        remaining -= Buffer.byteLength(text);
+        if (remaining < 0) return fail('Activity exceeds the read budget');
+        const lines = text.split('\n');
+        for (let index = 0; index < lines.length; index++) {
+          const line = lines[index];
+          if (line.length === 0 && index === lines.length - 1) continue;
+          let raw: unknown;
+          try {
+            raw = JSON.parse(line);
+          } catch {
+            return fail('Activity contains a corrupt row');
+          }
+          const row = parseActivityEntry(raw);
+          if (row === null || dayOf(row.at) !== file.day)
+            return fail('Activity contains a corrupt row');
+          take(row);
+        }
+      }
+      for (const bucket of buckets.values()) take(countedRow(bucket));
+      const rows = selected.slice(0, limit);
+      return {
+        rows,
+        next: selected.length > limit ? activityCursor(rows[rows.length - 1]) : null,
+        writable,
+        error: null,
+      };
     },
 
     writable() {

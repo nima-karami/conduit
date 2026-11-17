@@ -802,11 +802,8 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
         byCli[cli] = projectLegacyLayer(st, { kind: 'cli', cli }, { kind: 'default' });
       }
       return {
-        profiles: [...BUILT_IN_PROFILES, ...st.profiles].map((p) => ({
-          id: p.id,
-          name: p.name,
-          builtIn: p.builtIn,
-        })),
+        profiles: structuredClone([...BUILT_IN_PROFILES, ...st.profiles]),
+        assignments: structuredClone(file.assignments),
         sessions: sessionRows,
         grants: st.grants.map((g) => ({ ...g, expiring: isExpiring(g, now) })),
         legacy: {

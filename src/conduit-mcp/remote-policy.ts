@@ -61,6 +61,7 @@ const isObj = (v: unknown): v is Record<string, unknown> =>
 
 const noActivity: ActivityIo = {
   append: () => undefined,
+  read: () => '',
   list: () => [],
   remove: () => undefined,
   readArgs: () => null,

@@ -865,7 +865,7 @@ describe('createConduitMcpHost — launch', () => {
     await h.host.start();
     expect(h.host.uiState()).toMatchObject({
       policy: {
-        profiles: expect.arrayContaining([{ id: 'worker', name: 'Worker', builtIn: true }]),
+        profiles: expect.arrayContaining([BUILT_IN_PROFILES.find((p) => p.id === 'worker')]),
       },
     });
     await h.host.stop();
@@ -2536,6 +2536,64 @@ async function setHostPolicy(h: Harness, id: string, layer: PolicyLayer | undefi
   }
 }
 
+describe('owner Activity queries', () => {
+  it('returns Activity only through the renderer query and rejects malformed filters', async () => {
+    const read = vi.fn(() => '');
+    const h = harness({
+      activityIo: {
+        append: () => undefined,
+        read,
+        list: () => [],
+        remove: () => undefined,
+        readArgs: () => 'SECRET',
+        writeArgs: () => undefined,
+      },
+    });
+    await h.host.start();
+    const send = async (query: unknown) => {
+      let result: HostToWebview | undefined;
+      await h.host.handleRenderer(
+        { type: 'mcp:activity:get', requestId: 910, query } as McpRendererMessage,
+        (m) => {
+          result = m;
+        },
+        1,
+      );
+      return result;
+    };
+    expect(await send({})).toEqual({
+      type: 'mcp:activity',
+      requestId: 910,
+      page: { rows: [], next: null, writable: true, error: null },
+    });
+    for (const query of [
+      null,
+      [],
+      { limit: 201 },
+      { limit: 0 },
+      { limit: 1.5 },
+      { cli: 'unknown' },
+      { decision: 'off' },
+      { lane: 'raw' },
+      { before: '../args' },
+      { since: 'yesterday' },
+      { sessionId: '' },
+      { action: 'x'.repeat(513) },
+      { rawArgs: true },
+    ]) {
+      expect(await send(query)).toMatchObject({
+        type: 'mcp:activity',
+        page: {
+          rows: [],
+          next: null,
+          error: 'Invalid Activity query',
+        },
+      });
+    }
+    expect(read).not.toHaveBeenCalled();
+  });
+});
+
 describe('control tools: gate, effective tool list, list_changed, session layer (spec 2026-10-30-conduit-mcp-tool-policy §3.3)', () => {
   // Every tool but open_terminal defaults to ask or on (tool-policy spec §3.2).
   const DEFAULT_LIST = TOOL_NAMES.filter((t) => t !== 'open_terminal');
@@ -3901,6 +3959,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -4030,6 +4089,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -4067,6 +4127,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -4102,6 +4163,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -4179,6 +4241,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -4249,6 +4312,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -4304,6 +4368,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -4355,6 +4420,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -4830,6 +4896,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -6288,6 +6355,7 @@ describe('createConduitMcpHost — requests', () => {
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -6819,6 +6887,7 @@ describe('NET wiring at the host: a peer link revoke and its audit notes', () =>
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -6851,6 +6920,7 @@ describe('recordObserved', () => {
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,

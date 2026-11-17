@@ -1,6 +1,7 @@
 import type { AgentScopeReason } from './add-dir-delivery';
 import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
+import type { ActivityPage, ActivityQuery } from './conduit-mcp/activity-query';
 import type { AgentCli } from './conduit-mcp/install-types';
 import type { AssignmentPoint, PermissionAnswer, ProfileId } from './conduit-mcp/policy-types';
 import type { AnswerInput, RequestAnswerResult } from './conduit-mcp/request-types';
@@ -731,6 +732,7 @@ export type HostToWebview =
   // An app-control tool's UI step (spec 2026-10-30-conduit-mcp-app-control §2.3). sessionId is
   // always the caller; closeSession names its target in the action.
   | { type: 'mcp:ui'; requestId: string; sessionId: string; action: McpUiAction }
+  | { type: 'mcp:activity'; requestId: number; page: ActivityPage }
   | { type: 'mcp:policyResult'; requestId: number; ok: true }
   | { type: 'mcp:policyResult'; requestId: number; ok: false; error: string }
   | { type: 'mcp:toolPolicyResult'; requestId: number; ok: true }
@@ -1252,6 +1254,7 @@ export type WebviewToHost =
   | { type: 'mcp:retry' }
   | { type: 'mcp:requestAnswer'; requestId: string; answer: AnswerInput }
   | { type: 'mcp:permissionAnswer'; requestId: string; answer: PermissionAnswer }
+  | { type: 'mcp:activity:get'; requestId: number; query: ActivityQuery }
   | {
       type: 'mcp:setAssignment';
       requestId: number;

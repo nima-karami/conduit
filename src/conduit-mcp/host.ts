@@ -28,6 +28,7 @@ import { PTY_SETTLE_MS } from '../timed-messages';
 import type { AgentDefinition, SessionOpener, SpawnSpec } from '../types';
 import type { ActivityIo, ActivityOutcome } from './activity-log';
 import { createActivityIo } from './activity-log-fs';
+import { parseActivityQuery } from './activity-query';
 import {
   adapterFor,
   MCP_ADAPTERS,
@@ -3415,6 +3416,21 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     async handleRenderer(m, reply, senderId) {
       switch (m.type) {
+        case 'mcp:activity:get': {
+          if (!Number.isSafeInteger(m.requestId) || m.requestId < 0) return;
+          const query = parseActivityQuery(m.query);
+          const page =
+            query === null
+              ? {
+                  rows: [],
+                  next: null,
+                  writable: policyService.activity.writable(),
+                  error: 'Invalid Activity query',
+                }
+              : policyService.activity.query(query);
+          reply({ type: 'mcp:activity', requestId: m.requestId, page });
+          return;
+        }
         case 'mcp:compose': {
           const result = await tools.sendMessage(
             { handle: HUMAN_HANDLE, sessionId: null },

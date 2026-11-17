@@ -1,5 +1,6 @@
 import { useMemo, useSyncExternalStore } from 'react';
-import type { PermissionAnswer } from '../src/conduit-mcp/policy-types';
+import type { ActivityPage, ActivityQuery } from '../src/conduit-mcp/activity-query';
+import type { AssignmentPoint, PermissionAnswer, ProfileId } from '../src/conduit-mcp/policy-types';
 import type {
   AnswerInput,
   AnswerRefusal,
@@ -37,6 +38,14 @@ type PolicyPoint = Extract<WebviewToHost, { type: 'mcp:setPointPolicy' }>['point
 
 export interface ConduitMcpApi {
   state: McpUiState | null;
+  getActivity(query: ActivityQuery): Promise<ActivityPage | null>;
+  setAssignment(
+    point: AssignmentPoint,
+    profileId: ProfileId | null,
+    machine?: string,
+  ): Promise<boolean>;
+  revokeGrant(grantId: string, machine?: string): Promise<boolean>;
+  allowOnce(activityId: string): Promise<boolean>;
   getThread(threadId: string): Promise<McpThreadView | null>;
   send(
     req: Omit<Extract<WebviewToHost, { type: 'mcp:compose' }>, 'type' | 'requestId'>,
@@ -91,6 +100,38 @@ export function getRequestsSnapshot(): RequestsUiState | null {
 }
 
 const api: Omit<ConduitMcpApi, 'state'> = {
+  async getActivity(query) {
+    const r = await requestHost(
+      (requestId) => ({ type: 'mcp:activity:get', requestId, query }),
+      ['mcp:activity'],
+      REQUEST_TIMEOUT_MS,
+    );
+    return r?.page ?? null;
+  },
+  async setAssignment(point, profileId, machine) {
+    const r = await requestHost(
+      (requestId) => ({ type: 'mcp:setAssignment', requestId, point, profileId, machine }),
+      ['mcp:policyResult'],
+      REQUEST_TIMEOUT_MS,
+    );
+    return r?.ok === true;
+  },
+  async revokeGrant(grantId, machine) {
+    const r = await requestHost(
+      (requestId) => ({ type: 'mcp:revokeGrant', requestId, grantId, machine }),
+      ['mcp:policyResult'],
+      REQUEST_TIMEOUT_MS,
+    );
+    return r?.ok === true;
+  },
+  async allowOnce(activityId) {
+    const r = await requestHost(
+      (requestId) => ({ type: 'mcp:allowOnce', requestId, activityId }),
+      ['mcp:policyResult'],
+      REQUEST_TIMEOUT_MS,
+    );
+    return r?.ok === true;
+  },
   async getThread(threadId) {
     const r = await requestHost(
       (requestId) => ({ type: 'mcp:thread:get', requestId, threadId }),

@@ -167,6 +167,7 @@ interface McpPolicyUi extends PolicyUiState {
 export function emptyPolicyUi(): McpPolicyUi {
   return {
     profiles: [],
+    assignments: [],
     sessions: {},
     grants: [],
     legacy: { global: {}, byCli: {}, sessions: {} },

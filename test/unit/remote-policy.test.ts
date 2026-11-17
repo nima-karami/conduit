@@ -81,6 +81,21 @@ function mirrored(store: RemotePolicy, rev = 3, doc: RemotePolicyDoc = EMPTY): v
 }
 
 describe('remote policy store: edits and the push', () => {
+  it('projects full isolated profiles and assignments for a mirrored machine', () => {
+    const { store } = rig();
+    mirrored(store, 3, LEAD_DEFAULT);
+    const first = store.ui(NAMES)[0].policy;
+    expect(first.assignments).toEqual(LEAD_DEFAULT.assignments);
+    expect(first.profiles.find((p) => p.id === 'lead')?.rules.open_session.decision).toBe('allow');
+    first.assignments[0].assignment.profileId = 'observer';
+    const lead = first.profiles.find((p) => p.id === 'lead');
+    if (!lead) throw new Error('Missing Lead profile');
+    lead.rules.open_session.decision = 'deny';
+    const second = store.ui(NAMES)[0].policy;
+    expect(second.assignments).toEqual(LEAD_DEFAULT.assignments);
+    expect(second.profiles.find((p) => p.id === 'lead')?.rules.open_session.decision).toBe('allow');
+  });
+
   it('an edit while up pushes at the mirrored rev, then clears the draft and shows applied', async () => {
     const { store, pushPolicy, drafts } = rig();
     mirrored(store);

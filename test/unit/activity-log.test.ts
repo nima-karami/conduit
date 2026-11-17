@@ -27,6 +27,12 @@ function fakeIo(): FakeIo {
       if (io.failAppend) throw new Error('disk full');
       io.written.push({ day, line });
     },
+    read(day) {
+      return io.written
+        .filter((w) => w.day === day)
+        .map((w) => w.line)
+        .join('');
+    },
     list() {
       const sums = new Map<string, number>();
       for (const w of io.written) {

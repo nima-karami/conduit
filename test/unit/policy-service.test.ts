@@ -139,6 +139,7 @@ function harness(o: Opts = {}) {
       if (activityDown) throw new Error('activity disk full');
       rows.push(line);
     },
+    read: () => '',
     list: () => [],
     remove: () => undefined,
     readArgs: () => null,
@@ -217,6 +218,55 @@ beforeEach(() => {
 });
 
 describe('policy service', () => {
+  it('projects full profiles and assignments without sharing mutable engine state', () => {
+    const points: AssignmentPoint[] = [
+      { kind: 'default' },
+      { kind: 'cli', cli: 'codex' },
+      { kind: 'session', sessionId: 's1' },
+      { kind: 'peer', machineId: 'm1' },
+    ];
+    const h = harness({
+      policy: policyText({
+        profiles: [{ ...OBSERVER, id: 'p-copy', name: 'Copy', builtIn: false }],
+        assignments: points.map((point) => ({
+          point,
+          assignment: {
+            profileId: 'p-copy',
+            onScreenOnly: true,
+            pinned: ['open_file.access'],
+            exceptions: [
+              {
+                tool: 'open_file',
+                scope: { kind: 'path', path: '/a' },
+                rule: { decision: 'deny' },
+              },
+            ],
+          },
+        })),
+      }),
+    });
+    h.service.start();
+    const first = h.service.ui([sessionRow('s1')]);
+    expect(first.profiles[0]?.rules).toEqual(OBSERVER.rules);
+    expect(first.assignments).toHaveLength(4);
+    first.profiles[0].rules.open_file.decision = 'allow';
+    first.profiles[3].rules.open_file.decision = 'allow';
+    first.assignments[0].assignment.exceptions[0].scope = { kind: 'anywhere' };
+    first.assignments[0].assignment.exceptions[0].rule.decision = 'allow';
+    first.assignments[1].assignment.pinned = [];
+    first.assignments[0].point = { kind: 'peer', machineId: 'wrong' };
+    const second = h.service.ui([sessionRow('s1')]);
+    expect(second.profiles[0]?.rules.open_file.decision).toBe('deny');
+    expect(second.profiles[3]?.rules.open_file.decision).toBe('deny');
+    expect(second.assignments[1]?.assignment.pinned).toEqual(['open_file.access']);
+    expect(second.assignments[0]).toMatchObject({
+      point: { kind: 'default' },
+      assignment: {
+        exceptions: [{ scope: { kind: 'path', path: '/a' }, rule: { decision: 'deny' } }],
+      },
+    });
+  });
+
   it.each([{ launchedCli: null }, { launchedCli: 'codex' as const }])(
     'projects session overrides against the launched CLI ($launchedCli)',
     (row) => {

@@ -391,6 +391,7 @@ const remoteOf = (
   refusal: null,
   policy: {
     profiles: [],
+    assignments: [],
     sessions: {},
     grants: [],
     legacy: layersOf({ global: { open_file: { access: 'off' } } }),
