@@ -25,7 +25,7 @@
     "check": "biome check .",
     "analyze": "fallow --summary",
     "fallow:check": "fallow --skip health",
-    "audit": "npm audit --audit-level=high",
+    "audit": "node tools/audit-gate.mjs",
     "secret-scan": "node tools/secret-scan.mjs",
     "security": "node tools/security-scan.mjs && node tools/secret-scan.mjs",
     "check:e2e-sleeps": "node tools/check-e2e-sleeps.mjs",
