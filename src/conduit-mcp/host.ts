@@ -103,6 +103,7 @@ import { forcesAsk, resolveTargets, type TargetDeps } from './policy-targets';
 import type {
   AssignmentPoint,
   GrantBatchResult,
+  OneUseOverride,
   PolicyDecision,
   PolicyInput,
   PolicyTarget,
@@ -396,6 +397,13 @@ const BROADCAST_COALESCE_MS = 150;
 const MAX_UI_THREADS = 500;
 // A remote lead's ask waits this long for the owner, inside the lead's 60 s routed cap (CON-42 decision 1).
 const REMOTE_ASK_MS = 45_000;
+
+type PreparedPolicyConditions = Readonly<Pick<PolicyDecision['rule'], 'when' | 'reach' | 'move'>>;
+const samePreparedConditions = (
+  rule: PolicyDecision['rule'],
+  conditions: PreparedPolicyConditions,
+): boolean =>
+  rule.when === conditions.when && rule.reach === conditions.reach && rule.move === conditions.move;
 
 /** How the owner's end of a remote ask reads to the lead's call: an allow, or the refusal it means. */
 const ownerOutcomeOf = (r: RequestRecord, withdrawalError?: ToolError): Result<AnswerInput> => {
@@ -1038,7 +1046,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     tool: RoutedTool;
     targets: readonly PolicyTarget[];
     forceAsk: boolean;
-    conditions: Readonly<Pick<PolicyDecision['rule'], 'when' | 'reach' | 'move'>>;
+    conditions: PreparedPolicyConditions;
     deadline: number;
     signal: AbortSignal;
     grantable: boolean;
@@ -2011,7 +2019,6 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       current: { input: Omit<PolicyInput, 'now'>; decision: PolicyDecision } | null;
       spent: boolean;
     } = { current: null, spent: false };
-    let reDecided: PolicyDecision | null = null;
     try {
       const handle = sessionId ? handleOf(sessionId) : undefined;
       const result = await (async (): Promise<Result<StructuredOutput> | null> => {
@@ -2074,19 +2081,22 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         // A concurrent call may have spent the override this decision relies on. decide and commit
         // run back to back, so the re-decide sees the state the commit did: a second override for
         // the target can stand in for the spent one.
-        const commitResolved = (): AskCommit => {
-          const committed = policyService.commit(policyInput, resolved);
-          if (committed.ok) return { ok: true, decision: resolved, held: committed.overrides };
+        const commitResolved = (
+          input: Omit<PolicyInput, 'now'> = policyInput,
+          decision: PolicyDecision = resolved,
+        ): AskCommit => {
+          const committed = policyService.commit(input, decision);
+          if (committed.ok) return { ok: true, decision, held: committed.overrides };
           if (committed.error !== 'policy-changed') return committed;
-          const again = policyService.decide(policyInput);
+          const again = policyService.decide(input);
           const retried =
-            again.decision === 'allow' ? policyService.commit(policyInput, again) : committed;
+            again.decision === 'allow' ? policyService.commit(input, again) : committed;
           if (retried.ok) {
-            evaluated.current = { input: policyInput, decision: again };
+            evaluated.current = { input, decision: again };
             return { ok: true, decision: again, held: retried.overrides };
           }
           evaluated.spent = true;
-          evaluated.current = { input: policyInput, decision: again };
+          evaluated.current = { input, decision: again };
           return retried;
         };
         const caller = { handle, sessionId };
@@ -2106,6 +2116,76 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           if (!committed.ok) return { ok: false, error: commitFailure(committed.error) };
           return runMessaging(caller, name, args, ctx);
         }
+        const preparedConditions: PreparedPolicyConditions = {
+          when: resolved.rule.when,
+          reach: resolved.rule.reach,
+          move: resolved.rule.move,
+        };
+        const preparedPrincipal = { ...principal };
+        const preparedGeneration = deps.runtime.get(sessionId)?.generation;
+        const currentLocalDecision = (
+          held: readonly OneUseOverride[] = [],
+        ): Result<{ input: Omit<PolicyInput, 'now'>; decision: PolicyDecision }> => {
+          const current = principalOf(sessionId);
+          if (
+            inflight.signal.aborted ||
+            current === null ||
+            current.sessionId !== preparedPrincipal.sessionId ||
+            current.handle !== preparedPrincipal.handle ||
+            current.launchedCli !== preparedPrincipal.launchedCli ||
+            current.homeFolder !== preparedPrincipal.homeFolder ||
+            current.projectId !== preparedPrincipal.projectId ||
+            deps.runtime.get(sessionId)?.generation !== preparedGeneration
+          )
+            return {
+              ok: false,
+              error: toolError(
+                'tool_disabled',
+                'Caller context changed after this action was prepared',
+              ),
+            };
+          const forceAsk = forcesAsk(name, rawArgs, (ref) =>
+            isKnownMachine(deps.network?.listMachines() ?? [], ref),
+          );
+          const input = {
+            ...policyInput,
+            principal: current,
+            masterOn: deps.domain.messagingOn(),
+            forceAsk,
+            heldOverrides: held,
+          };
+          const decision = policyService.decide(input);
+          evaluated.current = { input, decision };
+          const currentWindow = deps.ownerWindowOf(sessionId);
+          const gate = gateToolCall({
+            sessionId,
+            messagingOn: input.masterOn,
+            tool: name,
+            decision,
+            ownerReady: () => currentWindow !== null && deps.windowReady(currentWindow),
+            onScreen: () => currentWindow !== null && deps.onScreen(currentWindow, sessionId),
+            appConnected: deps.appConnected(),
+            routed: isRoutedCall(name, rawArgs),
+          });
+          if (gate) return { ok: false, error: gate };
+          if (!samePreparedConditions(decision.rule, preparedConditions))
+            return {
+              ok: false,
+              error: toolError(
+                'tool_disabled',
+                'Permissions changed after this action was prepared',
+              ),
+            };
+          if (forceAsk && !policyInput.forceAsk)
+            return {
+              ok: false,
+              error: toolError(
+                'tool_disabled',
+                `${rawArgs.machine} is no longer added; call connect_machine again to add it`,
+              ),
+            };
+          return { ok: true, value: { input, decision } };
+        };
         const controlCtx: ControlCallContext = {
           move: resolved.rule.move ?? undefined,
           reach: resolved.rule.reach ?? undefined,
@@ -2126,28 +2206,23 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           wiredAtLaunch: wiredAtLaunch(sessionId),
           tool: name,
           decision: resolved,
-          commit: commitResolved,
+          commit: () => {
+            const fresh = currentLocalDecision();
+            if (
+              !fresh.ok ||
+              (resolved.decision === 'allow' && fresh.value.decision.decision === 'ask')
+            )
+              return { ok: false, error: 'policy-changed' };
+            return commitResolved(fresh.value.input, fresh.value.decision);
+          },
           permission: { why: reasonOf(resolved), targets, grantable: !resolved.forcedAsk },
           denyReason: (held) => {
             const d = policyService.decide({ ...policyInput, heldOverrides: held });
             return d.decision === 'deny' ? reasonOf(d) : null;
           },
           reDecide: (held) => {
-            // The target's facts are re-read: a machine removed while its card waited is now an
-            // unknown target, and the owner approved a card that said "Connect" (RS-D6).
-            const forceAsk = forcesAsk(name, rawArgs, (ref) =>
-              isKnownMachine(deps.network?.listMachines() ?? [], ref),
-            );
-            const again = policyService.decide({ ...policyInput, forceAsk, heldOverrides: held });
-            evaluated.current = { input: { ...policyInput, forceAsk }, decision: again };
-            reDecided = again;
-            if (again.decision === 'deny') return { kind: 'withdraw', reason: reasonOf(again) };
-            if (again.forcedAsk && !resolved.forcedAsk)
-              return {
-                kind: 'withdraw',
-                reason: `${rawArgs.machine} is no longer added; call connect_machine again to add it`,
-              };
-            return { kind: 'ready' };
+            const fresh = currentLocalDecision(held);
+            return fresh.ok ? { kind: 'ready' } : { kind: 'withdraw', reason: fresh.error.message };
           },
           grant: (choice, requestId) => {
             const p = principalOf(sessionId);
@@ -2155,8 +2230,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             return grantsFor(choice, p, name, policyInput.targets, requestId);
           },
           commitAnswered: (held) => {
-            if (reDecided === null) return { ok: false, error: 'policy-changed' };
-            const committed = policyService.commit(policyInput, reDecided, held);
+            const fresh = currentLocalDecision(held);
+            if (!fresh.ok) return { ok: false, error: 'policy-changed' };
+            const committed = policyService.commit(fresh.value.input, fresh.value.decision, held);
             if (!committed.ok) evaluated.spent = true;
             return committed;
           },
@@ -2385,11 +2461,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       return { ok: false, error: toolError('messaging_off', 'Conduit messaging is turned off') };
     if (decision.decision === 'deny')
       return { ok: false, error: toolError('policy_unavailable', reasonOf(decision)) };
-    if (
-      decision.rule.when !== pending.conditions.when ||
-      decision.rule.reach !== pending.conditions.reach ||
-      decision.rule.move !== pending.conditions.move
-    )
+    if (!samePreparedConditions(decision.rule, pending.conditions))
       return {
         ok: false,
         error: toolError(

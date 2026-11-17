@@ -7,6 +7,7 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Fixed
+- Agent actions now recheck current permissions and session context after preparation and before using your approval.
 
 - Remote permission answers now report saving failures before accepting consent. Requests withdraw if new rules deny them.
 - Permission restrictions stay active if saving fails and retry saving after storage recovers. A notice shows saving problems and lets you retry manually.

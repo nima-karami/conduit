@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -7,7 +7,11 @@ import {
   isolatedHome,
   mcpState,
   openFake,
+  records,
+  resultAfter,
+  startCall,
   tapMcp,
+  until,
 } from './conduit-mcp-helpers.mjs';
 import { assert, runScenario } from './harness.mjs';
 
@@ -39,6 +43,28 @@ async function activity(page, query) {
   );
   assert(result !== null, 'Activity query did not answer');
   return result;
+}
+
+async function ownerEdit(page, command, responseType = 'mcp:policyEditResult') {
+  return page.evaluate(
+    ({ command, responseType }) =>
+      new Promise((resolve, reject) => {
+        window.__freshnessSeq = (window.__freshnessSeq ?? 0) + 1;
+        const requestId = command.requestId ?? window.__freshnessSeq;
+        const timer = setTimeout(() => {
+          off();
+          reject(new Error(`No reply for ${command.type}`));
+        }, 10_000);
+        const off = window.agentDeck.subscribe((message) => {
+          if (message.type !== responseType || message.requestId !== requestId) return;
+          clearTimeout(timer);
+          off();
+          resolve(responseType === 'mcp:policyEditResult' ? message.result : message);
+        });
+        window.agentDeck.post({ ...command, requestId });
+      }),
+    { command, responseType },
+  );
 }
 
 await runScenario(
@@ -97,6 +123,143 @@ await runScenario(
       'host accepted invalid Activity limit',
     );
     log('pagination, empty filter and host validation verified');
+
+    const point = { kind: 'session', sessionId: first.sessionId };
+    const original =
+      (await mcpState(page)).policy.assignments.find(
+        (entry) => entry.point.kind === 'session' && entry.point.sessionId === first.sessionId,
+      )?.assignment ?? null;
+    const assignment = (reach) => ({
+      profileId: 'worker',
+      onScreenOnly: false,
+      exceptions: [
+        {
+          tool: 'close_session',
+          scope: { kind: 'anywhere' },
+          rule: { decision: 'ask', when: 'always', reach },
+        },
+      ],
+    });
+    const saveAssignment = async (value) => {
+      const token = (await mcpState(page)).policy.editToken;
+      const result = await ownerEdit(page, {
+        type: 'mcp:saveAssignment',
+        point,
+        assignment: value,
+        expectedToken: token,
+      });
+      assert(result.ok === true, `assignment refused: ${JSON.stringify(result)}`);
+      assert(
+        await until(async () => (await mcpState(page)).policy.editToken !== token, 10_000),
+        'assignment broadcast did not advance',
+      );
+    };
+    await page.evaluate(() => {
+      window.__freshnessAsks = [];
+      window.__freshnessClosed = [];
+      window.agentDeck.subscribe((message) => {
+        if (message.type === 'mcp:ask') window.__freshnessAsks.push(message);
+        if (message.type === 'mcp:askClosed') window.__freshnessClosed.push(message.askId);
+      });
+    });
+    let receipt;
+    let toolResult;
+    try {
+      const target = await page.evaluate(
+        (id) => window.__sessions.find((session) => session.id === id),
+        second.sessionId,
+      );
+      assert(target && !target.openedBy, 'target must be human-opened and unrelated to caller');
+      await saveAssignment(assignment('any'));
+      const beforeGrants = (await mcpState(page)).policy.grants.map((grant) => grant.id);
+      const before = await startCall(page, first.sessionId, 'close_session', {
+        session: second.handle,
+      });
+      let ask;
+      assert(
+        await until(async () => {
+          ask = await page.evaluate(
+            (id) => window.__freshnessAsks.find((entry) => entry.callerSessionId === id),
+            first.sessionId,
+          );
+          return ask !== undefined;
+        }, 10_000),
+        'close-session call did not raise an ask',
+      );
+      await saveAssignment(assignment('opened'));
+      assert(
+        await page.evaluate(
+          ({ caller, askId }) =>
+            window.__mcp.awaitingApproval.includes(caller) &&
+            !window.__freshnessClosed.includes(askId) &&
+            window.__freshnessAsks.filter((entry) => entry.callerSessionId === caller).length === 1,
+          { caller: first.sessionId, askId: ask.askId },
+        ),
+        'narrowing replaced or ended the original ask',
+      );
+      receipt = await ownerEdit(
+        page,
+        { type: 'mcp:permissionAnswer', requestId: ask.askId, answer: { outcome: 'allowed' } },
+        'mcp:permissionResult',
+      );
+      const reason = 'Permissions changed after this action was prepared';
+      assert(
+        receipt.ok === false && receipt.reason === 'not_answerable' && receipt.message === reason,
+        `stale owner answer was not refused: ${JSON.stringify(receipt)}`,
+      );
+      toolResult = await resultAfter(first.sessionId, before, 10_000);
+      assert(
+        toolResult?.error?.code === 'tool_disabled' && toolResult.error.message === reason,
+        `stale prepared call result: ${JSON.stringify(toolResult)}`,
+      );
+      assert(
+        records(first.sessionId, 'RESULT').length === before + 1,
+        'call settled more than once',
+      );
+      assert(
+        await page.evaluate(
+          (id) => window.__sessions.some((session) => session.id === id),
+          second.sessionId,
+        ),
+        'stale consent closed the unrelated target',
+      );
+      assert(
+        JSON.stringify((await mcpState(page)).policy.grants.map((grant) => grant.id)) ===
+          JSON.stringify(beforeGrants),
+        'stale consent created a grant',
+      );
+      const requestsPath = join(userDataDir, 'conduit-mcp', 'requests.json');
+      assert(
+        await until(() => {
+          if (!existsSync(requestsPath)) return false;
+          const row = JSON.parse(readFileSync(requestsPath, 'utf8')).requests.find(
+            (entry) => entry.id === ask.askId,
+          );
+          return (
+            row?.state === 'withdrawn' &&
+            row.withdrawnBy === 'conduit' &&
+            row.answer === null &&
+            row.withdrawReason === reason &&
+            typeof row.endedAt === 'string'
+          );
+        }, 10_000),
+        'canonical request did not persist Conduit withdrawal',
+      );
+      log(
+        'stale reach-any consent refused after reach-opened assignment; target and grants unchanged',
+      );
+    } finally {
+      await saveAssignment(original);
+    }
+    mkdirSync(join(process.cwd(), '.autoloop', 'evidence'), { recursive: true });
+    writeFileSync(
+      join(process.cwd(), '.autoloop', 'evidence', 'local-freshness-runtime-cases.json'),
+      `${JSON.stringify(
+        { receipt, toolResult, targetRemained: true, newGrants: 0, canonicalWithdrawal: 'conduit' },
+        null,
+        2,
+      )}\n`,
+    );
   },
   { userDataDir, env },
 );

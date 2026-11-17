@@ -158,6 +158,7 @@ interface Harness {
   calls: string[];
   alive: Set<string>;
   gens: Map<string, number>;
+  terminals: Map<string, RuntimeTerminal>;
   writer: ReturnType<typeof createPtyWriter>;
   /** Gap releases, when the harness holds submit gaps. */
   gaps: Array<() => void>;
@@ -686,6 +687,7 @@ function harness(
     calls,
     alive,
     gens,
+    terminals,
     writer,
     gaps,
     quietCalls: () => quietCalls,
@@ -4137,6 +4139,97 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     const c = await rawClient(h.ep, a.token);
     return { h, c };
   }
+
+  it('local close Ask prepared for unrelated target refuses same Ask reach narrowing', async () => {
+    const { h, c } = await asking();
+    await launch(h, 's2');
+    h.owners.set('s2', null);
+    await setPolicy(h, { close_session: { access: 'ask', when: 'always', reach: 'any' } });
+    c.call(1, 'close_session', { session: 's2' });
+    await until(() => asksOf(h).length === 1);
+    await setPolicy(h, { close_session: { access: 'ask', when: 'always', reach: 'opened' } });
+    c.send({ id: 2, method: 'tools/list' });
+    const listed = await c.reply(2);
+    expect(listed).toMatchObject({
+      result: {
+        tools: expect.arrayContaining([expect.objectContaining({ name: 'close_session' })]),
+      },
+    });
+    expect(h.host.uiState().awaitingApproval).toEqual(['s1']);
+    let receipt: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:permissionAnswer', requestId: askIdOf(h), answer: { outcome: 'allowed' } },
+      (value) => {
+        receipt = value;
+      },
+      1,
+    );
+    expect(receipt).toMatchObject({ type: 'mcp:permissionResult', ok: false });
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    expect(h.closes).toEqual([]);
+    expect(h.host.uiState().policy.grants).toEqual([]);
+    expect(h.host.uiState().awaitingApproval).toEqual([]);
+  });
+
+  it.each(['move', 'master', 'viewing', 'home', 'project', 'generation', 'ask'] as const)(
+    'local async prepare refuses changed %s authority',
+    async (change) => {
+      let release!: () => void;
+      let entered = false;
+      let master = true;
+      const gate = new Promise<void>((done) => {
+        release = done;
+      });
+      const { h, c } = await asking({
+        messagingOn: () => master,
+        kindOf: async (path) => {
+          if (path === '/w') {
+            entered = true;
+            await gate;
+          }
+          return 'dir';
+        },
+      });
+      await setPolicy(h, {
+        open_session: {
+          access: 'on',
+          when: change === 'viewing' ? 'viewing' : 'always',
+          move: 'yes',
+        },
+      });
+      c.call(1, 'open_session', { ...OPEN, focus: true });
+      await until(() => entered);
+      const original = h.sessions.get('s1');
+      if (!original) throw new Error('missing caller');
+      const initialHome = original.home;
+      const initialProject = original.projectId;
+      if (change === 'move')
+        await setPolicy(h, { open_session: { access: 'on', when: 'always', move: 'no' } });
+      else if (change === 'master') master = false;
+      else if (change === 'viewing') h.presence.shown.set(1, new Set());
+      else if (change === 'home') original.home = '/another';
+      else if (change === 'project') original.projectId = 'another-project';
+      else if (change === 'generation') {
+        const terminal = h.terminals.get('s1');
+        if (!terminal) throw new Error('missing terminal');
+        terminal.generation += 1;
+      } else await setPolicy(h, { open_session: { access: 'ask', when: 'always', move: 'yes' } });
+      release();
+      expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+      expect(h.opens).toEqual([]);
+      expect(asksOf(h)).toEqual([]);
+      master = true;
+      h.presence.shown.delete(1);
+      original.home = initialHome;
+      original.projectId = initialProject;
+      await setPolicy(h, { open_session: { access: 'on', when: 'always', move: 'yes' } });
+      if (change !== 'generation') {
+        c.call(2, 'open_session', OPEN);
+        expect(c.errorOf(await c.reply(2))).toBe('ok');
+        expect(h.opens).toHaveLength(1);
+      }
+    },
+  );
 
   it('gate precedence', async () => {
     const { h, c } = await asking();
