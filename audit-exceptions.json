@@ -1,0 +1,11 @@
+{
+  "exceptions": [
+    {
+      "id": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "lastVulnerable": "4.0.7",
+      "expires": "2026-12-17",
+      "reason": "picomatch ReDoS with no fixed release yet; reached only through dev tooling (lint-staged, vitest/vite, electron-builder). Owner approved 2026-11-17."
+    }
+  ]
+}
