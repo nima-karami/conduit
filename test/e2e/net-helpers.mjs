@@ -111,7 +111,7 @@ export async function startServer(label, { electronProfile = false } = {}) {
   assert(existsSync(supervise), 'out/server/supervise.js missing: run `npm run build` first');
 
   const directory = electronProfile
-    ? profileDir(`net-${label}`)
+    ? profileDir()
     : await mkdtemp(join(tmpdir(), `net-${label}-e2e-`));
   const userData = electronProfile ? directory : join(directory, 'user-data');
   const work = join(directory, 'work');
