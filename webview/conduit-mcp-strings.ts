@@ -28,6 +28,7 @@ import type {
 } from '../src/conduit-mcp/types';
 import type { AskSummary, McpGateState } from '../src/conduit-mcp/ui-types';
 import { countNoun } from '../src/menu-selection';
+import { plural } from '../src/plural';
 
 // Only the tools whose On bypasses every prompt get a line under their row (spec §8).
 const ON_WARNING: Partial<Record<ToolName, string>> = {
@@ -73,6 +74,12 @@ const PROJECT_SCOPE = { project: 'Project', local: 'Local' } satisfies Record<Pr
 const installErrorText = (code: string): string => INSTALL_ERROR_TEXT[code] ?? code;
 const scopeThreadCount = (n: number) => `${n.toLocaleString()} ${n === 1 ? 'thread' : 'threads'}`;
 
+const BUILT_IN_ROLE_DESCRIPTION: Record<string, string> = {
+  observer: 'For observing and communicating, with other actions denied.',
+  worker: 'The standard tool policy for day-to-day work.',
+  lead: 'For coordinating work, with broader access to sessions and machines.',
+};
+
 export const MCP_TAB_ORDER = ['settings', 'roles', 'agents', 'grants', 'activity'] as const;
 export type McpTabId = (typeof MCP_TAB_ORDER)[number];
 
@@ -87,6 +94,27 @@ export const MCP_STR = {
       grants: 'Grants',
       activity: 'Activity',
     } satisfies Record<McpTabId, string>,
+    roles: {
+      title: 'Roles',
+      intro: 'A role is a named set of tool permissions. Duplicate a built-in to make your own.',
+      newRole: 'New role',
+      columns: { role: 'Role', type: 'Type', usedBy: 'Used by' },
+      builtIn: 'Built-in',
+      custom: 'Custom',
+      newAgentsStartHere: 'New agents start here',
+      usedBy: (n: number) => `Used by ${plural(n, 'agent')}`,
+      pill: { allowed: 'Allowed', mixed: 'Mixed', denied: 'Denied' },
+      builtInDescription: BUILT_IN_ROLE_DESCRIPTION,
+      customDescription: 'Custom role.',
+      builtInNote: "Built-in roles can't be edited. Duplicate it to make your own.",
+      duplicateRole: 'Duplicate role',
+      duplicate: 'Duplicate',
+      edit: 'Edit',
+      delete: 'Delete',
+      closeDrawer: 'Close',
+      decision: { allow: 'Allow', ask: 'Ask', deny: 'Deny' },
+      moreOptions: 'More options',
+    },
   },
   firstRun: 'Agents in your sessions can message each other and you. Messages appear here.',
   noUnread: 'No unread messages',
