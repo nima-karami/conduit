@@ -65,6 +65,7 @@ dropdown change alone.
 | Activity scope (`sessionId`, `machineId`, a row) / "Why" row | RefusalChip (`openRefusal`), session dialog and its recent-activity link, Links tab, palette `cmd:activity`, `onOpenPermissionActivity(machineId)` | Activity tab | yes — `onOpenPermissionActivity` no longer closes Settings; it switches to MCP › Activity with the machine scope |
 | `settingsOpen` gates | `app.tsx:609` | `isAnyModalOpen` (4627, swallows nav keys), upgrade-dialog gate (5758) | yes — Settings keeps counting as an open overlay |
 | Agent role + changes | policy store (unchanged) via `PermissionsAssignments` logic | Agents tab list + drawer | store: no (unchanged, read/write API stays identical); UI: yes |
+| Focused agent (`agentKey` = an assignment-point key) | session dialog "Open Settings Permissions", Activity add-exception | `PermissionsAssignments` (opens that agent's drawer on mount) | yes |
 | `permissions-activity` center-pane doc kind | `openActivity` | `center-pane.tsx` | yes — removed together (see §13-4) |
 - **Invariant:** the workspace (terminals, editors) stays mounted while Settings is open.
 
@@ -79,7 +80,7 @@ dropdown change alone.
 | Narrow window (≤1024) | Drawer overlays the list instead of splitting; list columns drop in order Summary pills → Type; "Used by N" stays |
 | Release-notes page open, then Back | Steps back to About first (existing), then closes |
 | Settings open and a request or toast arrives | It still shows above Settings (ASSUMED layering; checked in the screenshot pass); CON-60's toast code is not touched |
-| Keyboard focus while Settings is open | The workspace behind is `inert`: not tabbable, not clickable; terminals keep running |
+| Keyboard focus while Settings is open | The workbench behind is `inert`: not tabbable, not clickable; terminals keep running. The title bar and the command palette stay usable; the banners above the workbench are covered by the page |
 | Double-click Apply | Existing disabled-while-saving behavior |
 
 ## 5. Defaults vs. settings
@@ -113,7 +114,7 @@ dropdown change alone.
 **EARS.**
 - When the user activates Back or presses Esc with nothing nested open, Settings shall close and focus shall
   return to the opener.
-- While a drawer or editor is open, Esc shall close it before Settings.
+- When Esc is pressed, Settings shall step back exactly one level (Roles/Agents delete page, review, editor, drawer; then About release notes; then close).
 - When a caller opens Settings with a target (section, tab, agent, seed), Settings shall show that target
   without an intermediate screen.
 - Where the window is ≤1024 px wide, the drawer shall overlay the list.
