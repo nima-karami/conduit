@@ -1,5 +1,5 @@
 ---
-status: draft (CON-57) — decisions queued in §13
+status: building (CON-57) — decisions queued in §13
 date: 2026-11-18
 ticket: CON-57 (permissions UX redesign)
 ---
