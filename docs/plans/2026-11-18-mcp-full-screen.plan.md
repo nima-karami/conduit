@@ -91,7 +91,7 @@ export interface McpSectionProps {
   exceptionSeed?: AssignmentExceptionSeed | null; onExceptionSeedConsumed?(): void;
   focusedAgentKey?: string;
   activityScope: ActivityScope; activityMachines: readonly { id: string; name: string }[];
-  onAddActivityException(source: ActivityExceptionSource): void;
+  onAddActivityException?(source: ActivityExceptionSource): void; // optional like PermissionsActivity.onAddException; no no-op default
   registerBack(handler: BackHandler | null): void; // SettingsPage stores it in `nestedBack`
 }
 export function McpSection(props: McpSectionProps): JSX.Element;

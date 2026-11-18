@@ -272,7 +272,7 @@ export function SettingsPage({
               focusedAgentKey={agentKey}
               activityScope={activityScope}
               activityMachines={activityMachines}
-              onAddActivityException={onAddActivityException ?? (() => {})}
+              onAddActivityException={onAddActivityException}
               registerBack={registerBack}
             />
           )}

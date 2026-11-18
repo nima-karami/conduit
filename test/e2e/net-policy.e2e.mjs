@@ -529,11 +529,10 @@ async function run() {
       await page.screenshot({ path: join(linkEvidence, '17-link-own.png') });
     }
     await permissions.getByRole('button', { name: `Activity involving ${linked.name}` }).click();
-    const activity = page.getByRole('main', { name: 'Permissions Activity' });
+    const activity = page.getByRole('region', { name: 'Permissions Activity' });
     await activity.waitFor();
     const machineFilter = activity.getByPlaceholder('All machines (ID)');
     assert((await machineFilter.inputValue()) === bId, 'Activity opened outside the link scope');
-    await page.locator('.footbtn[title^="Settings"]').click();
     await page
       .locator('.settings__navitem')
       .filter({ hasText: /^Links$/ })

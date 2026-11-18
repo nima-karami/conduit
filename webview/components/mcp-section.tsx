@@ -21,7 +21,7 @@ export interface McpSectionProps {
   focusedAgentKey?: string;
   activityScope: ActivityScope;
   activityMachines: readonly { id: string; name: string }[];
-  onAddActivityException(source: ActivityExceptionSource): void;
+  onAddActivityException?(source: ActivityExceptionSource): void;
   registerBack(handler: BackHandler | null): void;
 }
 

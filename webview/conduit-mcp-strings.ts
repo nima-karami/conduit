@@ -430,7 +430,6 @@ export const MCP_STR = {
   install: {
     tab: 'MCP',
     clisTitle: 'Agent CLIs',
-    toolsTitle: 'Tools',
     suggestTitle: 'Suggestions',
     clisDesc:
       'Adds Conduit to each CLI’s own MCP config, so agents you start in any Conduit terminal can message each other and you. Outside Conduit the server lists no tools. Uninstall here before removing Conduit.',
