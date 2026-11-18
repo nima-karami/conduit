@@ -24,8 +24,8 @@ import {
   type SessionSnapshots,
 } from '../src/changes-view-model';
 import { sessionExitAction, shouldConfirmClose } from '../src/close-decision';
-import type { ActivityEntry } from '../src/conduit-mcp/activity-log';
 import type { AgentCli } from '../src/conduit-mcp/install-types';
+import { pointKey } from '../src/conduit-mcp/policy-profiles';
 import type { Handle } from '../src/conduit-mcp/types';
 import type { McpNotConnected, McpSessionBadge } from '../src/conduit-mcp/ui-types';
 import type { MachineActionResult, MachineView } from '../src/contracts/machines';
@@ -144,6 +144,7 @@ import { NativeImpactNotice } from './components/native-impact-notice';
 import { NewSessionModal } from './components/new-session-modal';
 import { type DockHandlers, PanelFrame } from './components/panel-frame';
 import { PermissionStoreNotice } from './components/permission-store-notice';
+import type { ActivityScope } from './components/permissions-activity';
 import type { AssignmentExceptionSeed } from './components/permissions-assignments';
 import { PermissionsUpgradeDialog } from './components/permissions-upgrade-dialog';
 import { ProjectPicker } from './components/project-picker';
@@ -161,7 +162,7 @@ import { TopBar } from './components/top-bar';
 import type { UpdateStatus } from './components/update-card';
 import { WebPromptModal } from './components/web-prompt-modal';
 import { type ReleaseNotesView, WhatsNewDialog } from './components/whats-new-dialog';
-import { MCP_STR } from './conduit-mcp-strings';
+import { MCP_STR, type McpTabId } from './conduit-mcp-strings';
 import {
   getPinnedDiffs,
   pruneDiffs,
@@ -192,7 +193,6 @@ import {
 import { reorderDock } from './dock-reorder';
 import type { DocsState, LocalDocKind, OpenDoc, OpenMode } from './docs';
 import {
-  ACTIVITY_DOC_PATH,
   backgroundOpenOutcome,
   commitDiffPath,
   docsReducer,
@@ -646,6 +646,9 @@ export function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
   const [settingsAboutReleaseNotes, setSettingsAboutReleaseNotes] = useState(false);
   const [settingsFocusCli, setSettingsFocusCli] = useState<AgentCli | undefined>(undefined);
+  const [settingsMcpTab, setSettingsMcpTab] = useState<McpTabId>('settings');
+  const [settingsAgentKey, setSettingsAgentKey] = useState<string | undefined>(undefined);
+  const [settingsSeq, setSettingsSeq] = useState(0);
   const [recentsBySession, setRecentsBySession] = useState<Record<string, RecentDoc[]>>({});
   const [corpus, setCorpus] = useState<FolderCorpus>({});
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -1072,23 +1075,48 @@ export function App() {
   // rail and the topbar's aggregate chip can never disagree about who is waiting (D16).
   const { sessions, snooze, snoozed } = useSnooze(hostSessions);
   const mcp = useConduitMcp();
-  const [activityScope, setActivityScope] = useState<{
-    sessionId?: string;
-    machineId?: string;
-    item?: Pick<ActivityEntry, 'id' | 'at'>;
-  }>({});
-  const openActivity = useCallback((scope: typeof activityScope = {}) => {
-    const owner = activeIdRef.current ?? '';
-    setActiveRemote(null);
-    setActivityScope(scope);
-    setCenterView('editor');
-    dispatchDocs({
-      type: 'open',
-      kind: 'permissions-activity',
-      path: ACTIVITY_DOC_PATH,
-      sessionId: owner,
-    });
-  }, []);
+  const settingsOpenerRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const el = settingsOpenerRef.current;
+    if (settingsOpen || !el) return;
+    settingsOpenerRef.current = null;
+    const sessionId = activeIdRef.current;
+    if (el.isConnected) el.focus();
+    else if (sessionId) requestDocFocus(terminalFocusKey(sessionId));
+  }, [settingsOpen]);
+
+  const openSettingsAt = useCallback(
+    (
+      tab: SettingsTab,
+      cli?: AgentCli,
+      opts?: { releaseNotes?: boolean; mcpTab?: McpTabId; agentKey?: string },
+    ) => {
+      setSettingsTab(tab);
+      setSettingsFocusCli(cli);
+      setSettingsAboutReleaseNotes(!!opts?.releaseNotes);
+      setSettingsMcpTab(opts?.mcpTab ?? 'settings');
+      setSettingsAgentKey(opts?.agentKey);
+      setSettingsSeq((n) => n + 1);
+      if (
+        settingsOpenerRef.current === null &&
+        document.activeElement instanceof HTMLElement &&
+        document.activeElement !== document.body
+      ) {
+        settingsOpenerRef.current = document.activeElement;
+      }
+      setSettingsOpen(true);
+    },
+    [],
+  );
+
+  const [activityScope, setActivityScope] = useState<ActivityScope>({});
+  const openActivity = useCallback(
+    (scope: ActivityScope = {}) => {
+      setActivityScope(scope);
+      openSettingsAt('mcp', undefined, { mcpTab: 'activity' });
+    },
+    [openSettingsAt],
+  );
   const { refusalsBySession, openRefusal } = usePermissionRefusals(hostSessions, openActivity);
   const permissionCoverageRef = useRef({
     sessions: hostSessions,
@@ -2300,6 +2328,13 @@ export function App() {
     [network, sessions],
   );
   remoteRowsRef.current = remoteRows;
+  const activityMachines = useMemo(
+    () =>
+      remoteRows
+        .map((r) => ({ id: r.key.machineId, name: r.machineName }))
+        .filter((m, i, all) => all.findIndex((x) => x.id === m.id) === i),
+    [remoteRows],
+  );
   // A remote pane whose session or machine went away has nothing left to show.
   useEffect(() => {
     if (activeRemote && !remoteRows.some((r) => r.id === remoteKeyId(activeRemote)))
@@ -3458,33 +3493,6 @@ export function App() {
   // Close the singleton Review-changes tab (R5.5) — used by ReviewView's own
   // close button + Esc. Defined here because it needs forceCloseDoc (declared above).
   const closeReviewTab = useCallback(() => forceCloseDoc(REVIEW_DOC_ID), [forceCloseDoc]);
-
-  const settingsOpenerRef = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    const el = settingsOpenerRef.current;
-    if (settingsOpen || !el) return;
-    settingsOpenerRef.current = null;
-    const sessionId = activeIdRef.current;
-    if (el.isConnected) el.focus();
-    else if (sessionId) requestDocFocus(terminalFocusKey(sessionId));
-  }, [settingsOpen]);
-
-  const openSettingsAt = useCallback(
-    (tab: SettingsTab, cli?: AgentCli, opts?: { releaseNotes?: boolean }) => {
-      setSettingsTab(tab);
-      setSettingsFocusCli(cli);
-      setSettingsAboutReleaseNotes(!!opts?.releaseNotes);
-      if (
-        settingsOpenerRef.current === null &&
-        document.activeElement instanceof HTMLElement &&
-        document.activeElement !== document.body
-      ) {
-        settingsOpenerRef.current = document.activeElement;
-      }
-      setSettingsOpen(true);
-    },
-    [],
-  );
 
   // Cross-file go-to-definition: CodeViewer resolves the target (worker) and calls
   // this to open it as a doc tab (the reveal position is set alongside).
@@ -5455,23 +5463,6 @@ export function App() {
             <CenterPane
               refusalsBySession={refusalsBySession}
               onRefusalClick={openRefusal}
-              activitySessionId={activityScope.sessionId}
-              activityMachineId={activityScope.machineId}
-              activityItem={activityScope.item}
-              getActivityRow={mcp.getActivityRow}
-              allowActivityOnce={mcp.allowOnce}
-              onAddActivityException={({ row, tool, scope }) => {
-                const id =
-                  row.trace?.facts.principal.kind === 'session'
-                    ? row.trace.facts.principal.sessionId
-                    : null;
-                const coverage = permissionCoverageRef.current;
-                if (!id || !canOpenSessionPermissions(id, coverage.sessions, coverage.policy))
-                  return;
-                setActivityExceptionSeed({ sessionId: id, tool, scope });
-                openSettingsAt('permissions');
-              }}
-              getActivity={mcp.getActivity}
               serverState={serverState}
               onRetryLaunch={(sessionId) => post({ type: 'session:retryLaunch', sessionId })}
               onDiscardLaunch={(sessionId) => post({ type: 'session:discardLaunch', sessionId })}
@@ -5802,7 +5793,7 @@ export function App() {
             )}
             onReview={() => {
               setMigrationDismissed(true);
-              openSettingsAt('permissions');
+              openSettingsAt('mcp', undefined, { mcpTab: 'agents' });
             }}
             onReviewSession={(id) => {
               const coverage = permissionCoverageRef.current;
@@ -5892,7 +5883,7 @@ export function App() {
               notice={mcp.state.nativeImpact}
               sessions={hostSessions}
               dismiss={mcp.dismissNativeImpact}
-              openSettings={() => openSettingsAt('permissions')}
+              openSettings={() => openSettingsAt('mcp', undefined, { mcpTab: 'agents' })}
             />
           )}
           <div className="workbench" inert={settingsOpen}>
@@ -5935,9 +5926,22 @@ export function App() {
               permissionSessions={hostSessions}
               activityExceptionSeed={activityExceptionSeed}
               onActivityExceptionSeedConsumed={() => setActivityExceptionSeed(null)}
-              onOpenPermissionActivity={(machineId) => {
-                setSettingsOpen(false);
-                openActivity({ machineId });
+              onOpenActivity={openActivity}
+              activityScope={activityScope}
+              activityMachines={activityMachines}
+              onAddActivityException={({ row, tool, scope }) => {
+                const id =
+                  row.trace?.facts.principal.kind === 'session'
+                    ? row.trace.facts.principal.sessionId
+                    : null;
+                const coverage = permissionCoverageRef.current;
+                if (!id || !canOpenSessionPermissions(id, coverage.sessions, coverage.policy))
+                  return;
+                setActivityExceptionSeed({ sessionId: id, tool, scope });
+                openSettingsAt('mcp', undefined, {
+                  mcpTab: 'agents',
+                  agentKey: pointKey({ kind: 'session', sessionId: id }),
+                });
               }}
               onAddMachine={() => {
                 setSettingsOpen(false);
@@ -5950,11 +5954,15 @@ export function App() {
               initialTab={settingsTab}
               initialAboutReleaseNotes={settingsAboutReleaseNotes}
               initialCli={settingsFocusCli}
+              initialMcpTab={settingsMcpTab}
+              initialAgentKey={settingsAgentKey}
+              navSeq={settingsSeq}
               about={state?.about}
               projectPath={active?.home || null}
               onClose={() => {
                 setSettingsAboutReleaseNotes(false);
                 setActivityExceptionSeed(null);
+                setActivityScope({});
                 setSettingsOpen(false);
               }}
               onCheckUpdate={() => post({ type: 'updateCheck' })}
@@ -6095,7 +6103,10 @@ export function App() {
                     }}
                     onOpenSettings={() => {
                       setPermissionsFor(null);
-                      openSettingsAt('permissions');
+                      openSettingsAt('mcp', undefined, {
+                        mcpTab: 'agents',
+                        agentKey: pointKey({ kind: 'session', sessionId: target.id }),
+                      });
                     }}
                     onRelaunch={async (id, generation) => {
                       const result = await requestHost(

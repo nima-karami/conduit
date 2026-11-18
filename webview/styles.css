@@ -8168,6 +8168,31 @@ body.gh-resizing {
   display: flex;
   flex-direction: column;
 }
+/* The MCP section bounds its own panels, so the pane never overflows and needs no override. */
+.settings__pane--mcp {
+  display: flex;
+  flex-direction: column;
+}
+.mcp-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.mcp-section__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+}
+.mcp-section__panel {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+}
 
 /* Settings → About → Release notes sub-page. The version rail and notes each scroll on their
    own; the sub-page fills the pane height instead of the old top-level Release notes tab. */

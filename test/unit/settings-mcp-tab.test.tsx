@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import { act, type ComponentProps, useEffect } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentCli, McpInstallStatus } from '../../src/conduit-mcp/install-types';
@@ -27,6 +27,16 @@ const bridge = vi.hoisted(() => ({
   mcpInstallAct: vi.fn(),
 }));
 const seed = vi.hoisted(() => ({ settings: undefined as AppSettings | undefined }));
+const roles = vi.hoisted(() => ({ stepBack: vi.fn<() => boolean>() }));
+vi.mock('../../webview/components/permissions-roles', () => ({
+  PermissionsRoles: ({ registerBack }: { registerBack(handler: (() => boolean) | null): void }) => {
+    useEffect(() => {
+      registerBack(() => roles.stepBack());
+      return () => registerBack(null);
+    }, [registerBack]);
+    return <p>roles panel</p>;
+  },
+}));
 vi.mock('../../webview/bridge', async (importOriginal) => {
   const orig = await importOriginal<typeof import('../../webview/bridge')>();
   return {
@@ -65,11 +75,23 @@ async function mount(
     projectPath?: string | null;
     initialCli?: AgentCli;
     serverConnected?: boolean;
+    page?: Partial<ComponentProps<typeof SettingsPage>>;
   } = {},
 ) {
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
+  await render(o);
+}
+async function render(
+  o: {
+    tab?: 'general' | 'mcp';
+    projectPath?: string | null;
+    initialCli?: AgentCli;
+    serverConnected?: boolean;
+    page?: Partial<ComponentProps<typeof SettingsPage>>;
+  } = {},
+) {
   await act(async () =>
     root?.render(
       <SettingsProvider>
@@ -81,11 +103,15 @@ async function mount(
           serverConnected={o.serverConnected ?? true}
           onClose={() => {}}
           onSetChangesView={() => {}}
+          {...o.page}
         />
       </SettingsProvider>,
     ),
   );
 }
+const mcpTabs = () => [...document.body.querySelectorAll<HTMLElement>('[role="tab"]')];
+const selectedMcpTab = () =>
+  mcpTabs().find((t) => t.getAttribute('aria-selected') === 'true')?.textContent;
 
 const navLabels = () =>
   [...document.body.querySelectorAll('.settings__navitem')].map((b) => b.textContent);
@@ -116,14 +142,72 @@ describe('Settings → MCP tab', () => {
     expect(navLabels().slice(0, 2)).toEqual(['General', S.tab]);
   });
 
-  it('groups in order: Messaging, Agent CLIs, Tools, Suggestions', async () => {
+  it('groups in order: Messaging, Agent CLIs, Suggestions', async () => {
     await mount();
-    expect(groupTitles()).toEqual([
-      MCP_STR.settingsTitle,
-      S.clisTitle,
-      S.toolsTitle,
-      S.suggestTitle,
+    expect(groupTitles()).toEqual([MCP_STR.settingsTitle, S.clisTitle, S.suggestTitle]);
+  });
+
+  it('nav labels are General, MCP, Links, Appearance, Shortcuts, Skills, About', async () => {
+    await mount();
+    expect(navLabels()).toEqual([
+      'General',
+      'MCP',
+      'Links',
+      'Appearance',
+      'Shortcuts',
+      'Skills',
+      'About',
     ]);
+  });
+
+  it('opens on the MCP Settings tab and with initialMcpTab roles selects Roles', async () => {
+    await mount();
+    expect(selectedMcpTab()).toBe('Settings');
+    await act(async () => root?.unmount());
+    root = null;
+    await mount({ page: { initialMcpTab: 'roles' } });
+    expect(selectedMcpTab()).toBe('Roles');
+    expect(document.body.textContent).toContain('roles panel');
+  });
+
+  it('changing navSeq re-applies the target without remounting', async () => {
+    await mount({ page: { navSeq: 1 } });
+    const page = document.body.querySelector('.settings-page');
+    const row = document.body.querySelector('.mcp-install-row');
+    expect(selectedMcpTab()).toBe('Settings');
+    await render({ page: { navSeq: 1, initialMcpTab: 'roles' } });
+    expect(selectedMcpTab()).toBe('Settings');
+    await render({ page: { navSeq: 2, initialMcpTab: 'roles' } });
+    expect(selectedMcpTab()).toBe('Roles');
+    await render({ tab: 'general', page: { navSeq: 3 } });
+    expect(navLabels().indexOf('General')).toBe(0);
+    expect(document.body.querySelector('.settings__navitem--active')?.textContent).toBe('General');
+    expect(document.body.querySelector('.settings-page')).toBe(page);
+    expect(row?.isConnected).toBe(false);
+    await render({ page: { navSeq: 4 } });
+    expect(document.body.querySelector('.settings-page')).toBe(page);
+    expect(selectedMcpTab()).toBe('Settings');
+  });
+
+  it('Esc steps back through a registered handler before closing', async () => {
+    const onClose = vi.fn();
+    await mount({ page: { initialMcpTab: 'roles', onClose } });
+    const esc = () =>
+      act(async () => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      });
+    roles.stepBack.mockReturnValueOnce(true);
+    await esc();
+    expect(roles.stepBack).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+    roles.stepBack.mockReturnValueOnce(false);
+    await esc();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('the Settings tab has no Open Permissions button', async () => {
+    await mount();
+    expect(document.body.textContent).not.toContain('Open Permissions');
   });
 
   it('the Agent CLIs group says Conduit’s policy is the only gate once installed', async () => {

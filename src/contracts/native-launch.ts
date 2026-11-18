@@ -40,8 +40,7 @@ export type NativeLaunchFailure = 'conflict' | 'unsupported' | 'policy-unavailab
 export const NATIVE_LAUNCH_REFUSAL_MESSAGES: Record<NativeLaunchFailure, string> = {
   conflict: 'Native flags conflict with launcher arguments',
   unsupported: 'A direct, supported launcher is required',
-  'policy-unavailable':
-    'Permissions could not be loaded. Open Settings → Permissions for recovery.',
+  'policy-unavailable': 'Permissions could not be loaded. Open Settings → MCP for recovery.',
   'save-failed': 'Launch settings could not be saved',
 };
 

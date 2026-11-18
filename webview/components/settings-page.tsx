@@ -36,7 +36,7 @@ import {
   revealLogs,
 } from '../bridge';
 import { CHROME_STR } from '../chrome-strings';
-import { MCP_STR } from '../conduit-mcp-strings';
+import { MCP_STR, type McpTabId } from '../conduit-mcp-strings';
 import { IconCheck, IconChevron, IconDownload, IconRefreshCw } from '../icons';
 import { MACHINES_STR } from '../machines-strings';
 import { useNetworkState } from '../network-store';
@@ -49,9 +49,11 @@ import { useOverlayEntry } from '../use-overlay-entry';
 import { AutoSaveDelayField } from './auto-save-delay-field';
 import { McpInstallRow } from './mcp-install-row';
 import { McpProjectEntries } from './mcp-project-entries';
+import { type BackHandler, McpSection } from './mcp-section';
 import { OwnMachinePermissions } from './own-machine-permissions';
+import type { ActivityScope } from './permissions-activity';
+import type { ActivityExceptionSource } from './permissions-activity-why';
 import type { AssignmentExceptionSeed } from './permissions-assignments';
-import { PermissionsSettings } from './permissions-settings';
 import { ReleaseNotesPage } from './release-notes-page';
 import { SelectField } from './select-field';
 import { AgentRowPreview } from './session-card';
@@ -61,7 +63,6 @@ import type { UpdateStatus } from './update-card';
 export type SettingsTab =
   | 'general'
   | 'mcp'
-  | 'permissions'
   | 'appearance'
   | 'shortcuts'
   | 'skills'
@@ -85,6 +86,13 @@ export function SettingsPage({
   about,
   projectPath = null,
   initialCli,
+  initialMcpTab = 'settings',
+  initialAgentKey,
+  navSeq = 0,
+  activityScope = {},
+  activityMachines = [],
+  onAddActivityException,
+  onOpenActivity,
   onClose,
   onCheckUpdate,
   onRelaunch,
@@ -94,7 +102,6 @@ export function SettingsPage({
   permissionSessions,
   activityExceptionSeed,
   onActivityExceptionSeedConsumed,
-  onOpenPermissionActivity,
   onAddMachine,
   onOpenRequest,
 }: {
@@ -108,6 +115,15 @@ export function SettingsPage({
   projectPath?: string | null;
   /** Opens the MCP tab at that CLI's row (banner, card menu). */
   initialCli?: AgentCli;
+  initialMcpTab?: McpTabId;
+  /** An assignment point key; the Agents tab opens that agent. */
+  initialAgentKey?: string;
+  /** A change re-applies the initial* target without remounting, so staged edits survive. */
+  navSeq?: number;
+  activityScope?: ActivityScope;
+  activityMachines?: readonly { id: string; name: string }[];
+  onAddActivityException?: (source: ActivityExceptionSource) => void;
+  onOpenActivity?: (scope: ActivityScope) => void;
   onClose: () => void;
   /** The same path as the Changes header toggle, so switching to All unpins (spec D15). */
   onSetChangesView: (view: ChangesViewMode) => void;
@@ -115,7 +131,6 @@ export function SettingsPage({
   permissionSessions?: Session[];
   activityExceptionSeed?: AssignmentExceptionSeed | null;
   onActivityExceptionSeedConsumed?: () => void;
-  onOpenPermissionActivity?: (machineId?: string) => void;
   onCheckUpdate?: () => void;
   onRelaunch?: () => void;
   updateStatus?: UpdateStatus | null;
@@ -139,11 +154,32 @@ export function SettingsPage({
   // Spent once the row has taken focus, so switching back to the MCP tab doesn't pull it again.
   const [focusCli, setFocusCli] = useState(initialCli);
   const spendFocusCli = useCallback(() => setFocusCli(undefined), []);
+  const [mcpTab, setMcpTab] = useState<McpTabId>(initialMcpTab);
+  const [agentKey, setAgentKey] = useState(initialAgentKey);
+  const target = {
+    initialTab,
+    initialMcpTab,
+    initialAgentKey,
+    initialCli,
+    initialAboutReleaseNotes,
+  };
+  const targetRef = useRef(target);
+  targetRef.current = target;
+  const seenNavSeq = useRef(navSeq);
+  useEffect(() => {
+    if (seenNavSeq.current === navSeq) return;
+    seenNavSeq.current = navSeq;
+    const next = targetRef.current;
+    setTab(next.initialAboutReleaseNotes ? 'about' : next.initialTab);
+    setAboutReleaseNotes(next.initialAboutReleaseNotes);
+    setMcpTab(next.initialMcpTab);
+    setAgentKey(next.initialAgentKey);
+    setFocusCli(next.initialCli);
+  }, [navSeq]);
 
   const TAB_LABELS: { id: Tab; label: string }[] = [
     { id: 'general', label: 'General' },
     { id: 'mcp', label: MCP_STR.install.tab },
-    { id: 'permissions', label: 'Permissions' },
     { id: 'links', label: 'Links' },
     { id: 'appearance', label: 'Appearance' },
     { id: 'shortcuts', label: 'Shortcuts' },
@@ -161,7 +197,10 @@ export function SettingsPage({
     setAboutReleaseNotes(true);
   }, []);
 
-  const nestedBack = useRef<(() => boolean) | null>(null);
+  const nestedBack = useRef<BackHandler | null>(null);
+  const registerBack = useCallback((handler: BackHandler | null) => {
+    nestedBack.current = handler;
+  }, []);
   const onEscape = () => {
     if (nestedBack.current?.()) return;
     if (aboutReleaseNotes) leaveReleaseNotes();
@@ -200,7 +239,7 @@ export function SettingsPage({
 
         <div
           ref={paneRef}
-          className={`settings__pane${aboutReleaseNotes ? ' settings__pane--relnotes' : ''}`}
+          className={`settings__pane${aboutReleaseNotes ? ' settings__pane--relnotes' : ''}${tab === 'mcp' ? ' settings__pane--mcp' : ''}`}
         >
           {tab === 'appearance' && <Appearance settings={settings} update={update} />}
           {tab === 'general' && (
@@ -213,30 +252,37 @@ export function SettingsPage({
             />
           )}
           {tab === 'mcp' && (
-            <McpTab
-              settings={settings}
-              update={update}
-              projectPath={projectPath}
-              focusCli={focusCli}
-              onFocusCliSpent={spendFocusCli}
-              onOpenPermissions={() => setTab('permissions')}
+            <McpSection
+              tab={mcpTab}
+              onTabChange={setMcpTab}
+              settings={
+                <McpTab
+                  settings={settings}
+                  update={update}
+                  projectPath={projectPath}
+                  focusCli={focusCli}
+                  onFocusCliSpent={spendFocusCli}
+                  serverConnected={serverConnected}
+                />
+              }
               serverConnected={serverConnected}
-            />
-          )}
-          {tab === 'permissions' && (
-            <PermissionsSettings
-              serverConnected={serverConnected}
-              sessions={permissionSessions}
+              sessions={permissionSessions ?? []}
               exceptionSeed={activityExceptionSeed}
               onExceptionSeedConsumed={onActivityExceptionSeedConsumed}
-              onOpenActivity={onOpenPermissionActivity}
+              focusedAgentKey={agentKey}
+              activityScope={activityScope}
+              activityMachines={activityMachines}
+              onAddActivityException={onAddActivityException ?? (() => {})}
+              registerBack={registerBack}
             />
           )}
           {tab === 'links' && (
             <LinksTab
               onAddMachine={onAddMachine}
               onOpenRequest={onOpenRequest}
-              onOpenActivity={onOpenPermissionActivity}
+              onOpenActivity={
+                onOpenActivity ? (machineId) => onOpenActivity({ machineId }) : undefined
+              }
             />
           )}
           {tab === 'shortcuts' && <ShortcutsTab settings={settings} update={update} />}
@@ -985,7 +1031,6 @@ function McpTab({
   projectPath,
   focusCli,
   onFocusCliSpent,
-  onOpenPermissions,
   serverConnected,
 }: {
   settings: AppSettings;
@@ -993,7 +1038,6 @@ function McpTab({
   projectPath: string | null;
   focusCli?: AgentCli;
   onFocusCliSpent: () => void;
-  onOpenPermissions: () => void;
   serverConnected: boolean;
 }) {
   const S = MCP_STR.install;
@@ -1041,12 +1085,6 @@ function McpTab({
             onAct={install.act}
           />
         )}
-      </SetGroup>
-
-      <SetGroup title={S.toolsTitle}>
-        <button type="button" className="btn" onClick={onOpenPermissions}>
-          Open Permissions
-        </button>
       </SetGroup>
 
       <SetGroup title={S.suggestTitle}>
