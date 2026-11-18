@@ -17367,43 +17367,17 @@ button.toggle--on .toggle__knob {
   box-shadow: var(--focus-ring);
 }
 
-.permissions-profiles,
 .permissions-profile-editor,
 .permissions-settings__review {
   min-width: 0;
   color: var(--text);
 }
 
-.permissions-profiles__heading {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px 12px;
-}
-
-.permissions-profiles__heading h2,
 .permissions-settings__review h2,
 .permissions-profile-editor h2 {
   margin: 0 0 6px;
 }
 
-.permissions-profiles__description,
-.permissions-profiles__conditions,
-.permissions-profiles__note {
-  color: var(--text-dim);
-}
-
-.permissions-profiles__description,
-.permissions-profiles__conditions {
-  display: block;
-}
-
-.permissions-profiles__scroll {
-  overflow-x: auto;
-}
-
-.permissions-profiles__table,
 .permissions-settings__review table,
 .permissions-activity table {
   width: 100%;
@@ -17412,8 +17386,6 @@ button.toggle--on .toggle__knob {
   font-size: calc(13px * var(--font-scale));
 }
 
-.permissions-profiles__table th,
-.permissions-profiles__table td,
 .permissions-settings__review th,
 .permissions-settings__review td,
 .permissions-activity th,
@@ -17424,35 +17396,217 @@ button.toggle--on .toggle__knob {
   text-align: start;
 }
 
-.permissions-profiles__table thead th,
 .permissions-settings__review thead th,
 .permissions-activity thead th {
   color: var(--text-dim);
   border-bottom-color: var(--border-2);
 }
 
-.permissions-profiles__decision {
+.permissions-profile-editor fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Roles tab: list plus drawer. Split from 1100px, overlay below; spec 2026-11-18-mcp-full-screen §4. */
+.permissions-roles {
+  position: relative;
+  min-height: 100%;
+  min-width: 0;
+}
+
+.permissions-role-list {
+  min-width: 0;
+  color: var(--text);
+  overflow-x: auto;
+}
+
+.permissions-role-list__heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.permissions-role-list__heading h3 {
+  margin: 0 0 6px;
+}
+
+.permissions-role-list__heading p,
+.permissions-role-list__counts,
+.permissions-drawer__summary,
+.permissions-drawer__conditions {
+  color: var(--text-dim);
+}
+
+.permissions-role-list__table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: start;
+  font-size: calc(13px * var(--font-scale));
+}
+
+.permissions-role-list__table th,
+.permissions-role-list__table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  text-align: start;
+}
+
+.permissions-role-list__table thead th {
+  color: var(--text-dim);
+  border-bottom-color: var(--border-2);
+}
+
+.permissions-role-list__row {
+  cursor: pointer;
+}
+
+.permissions-role-list__row:hover {
+  background: var(--raise);
+}
+
+.permissions-role-list__row[aria-selected="true"] {
+  background: var(--accent-soft);
+}
+
+.permissions-role-list__row:focus-visible {
+  outline: none;
+  box-shadow: inset var(--focus-ring);
+}
+
+.permissions-role-list__tag {
+  display: block;
+  color: var(--accent);
+  font-weight: 400;
+}
+
+.permissions-role-list__counts {
+  margin-top: 2px;
+  font-size: calc(11px * var(--font-scale));
+}
+
+.permissions-pill {
   display: inline-block;
-  padding: 2px 5px;
+  padding: 1px 6px;
   border: 1px solid var(--border-2);
   border-radius: var(--r-ctl);
   color: var(--text);
   font-weight: 600;
 }
 
-.permissions-profiles__decision[data-decision="ask"] {
-  border-style: dashed;
+.permissions-pill[data-state="allowed"] {
+  border-color: var(--success);
+  background: color-mix(in srgb, var(--success) 16%, transparent);
 }
 
-.permissions-profiles__decision[data-decision="deny"] {
-  background: var(--raise);
+.permissions-pill[data-state="mixed"] {
+  border-color: var(--yellow);
+  background: color-mix(in srgb, var(--yellow) 16%, transparent);
 }
 
-.permissions-profiles__actions,
-.permissions-profile-editor fieldset {
+.permissions-pill[data-state="denied"] {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+}
+
+.permissions-roles__side {
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+@media (max-width: 1099px) {
+  .permissions-role-list__counts {
+    display: none;
+  }
+
+  .permissions-roles__side {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1;
+    width: min(420px, 100%);
+    background: var(--panel);
+    border-inline-start: 1px solid var(--border-2);
+  }
+}
+
+@media (min-width: 1100px) {
+  .permissions-role-list__counts {
+    display: block;
+  }
+
+  .permissions-roles {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .permissions-roles__side {
+    width: 380px;
+    margin-inline-start: 12px;
+  }
+}
+
+.permissions-drawer {
+  min-width: 0;
+  color: var(--text);
+}
+
+.permissions-drawer__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.permissions-drawer__head h4 {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.permissions-drawer__badge {
+  padding: 1px 6px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-ctl);
+  color: var(--text-dim);
+}
+
+.permissions-drawer__note {
+  color: var(--text-dim);
+}
+
+.permissions-drawer__group ul {
+  margin: 4px 0 8px;
+  padding-inline-start: 0;
+  list-style: none;
+}
+
+.permissions-drawer__group li {
   display: flex;
   flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 3px 0;
+}
+
+.permissions-drawer__group li [data-decision] {
+  font-weight: 600;
+}
+
+.permissions-drawer__summary {
+  margin-inline-start: 8px;
+}
+
+.permissions-drawer__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
+  margin-top: 12px;
 }
 
 .permissions-profile-editor details,
@@ -17553,20 +17707,6 @@ button.toggle--on .toggle__knob {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-}
-
-.permissions-settings__tabs,
-.permissions-settings__tabs [role="tablist"] {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.permissions-settings__tabs {
-  align-items: center;
-  padding-bottom: 10px;
-  margin-bottom: 10px;
-  border-bottom: 1px solid var(--border);
 }
 
 .permissions-grants__list {
