@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.68.0] — 2026-11-18
+
 ### Added
 - Permission assignments can opt in to a profile’s supported Claude Code and Codex launch flags. The session records the flags Conduit prepared for its current launch.
 - Review a session’s effective permissions from its menu or permission badge. Settings → Permissions gives you profiles, assignments, grants, and a link to the Activity feed.
@@ -20,7 +22,6 @@ All notable user-facing changes to Conduit. Format follows
 - Running agent actions recheck permissions between targets and after waiting for the app, and report when earlier UI work may already have completed.
 - Permission answer receipts stay separate for each connected controller, even when their answer IDs match.
 - Agent actions now recheck current permissions and session context after preparation and before using your approval.
-
 - Remote permission answers now report saving failures before accepting consent. Requests withdraw if new rules deny them.
 - Permission restrictions stay active if saving fails and retry saving after storage recovers. A notice shows saving problems and lets you retry manually.
 
