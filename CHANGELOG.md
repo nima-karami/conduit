@@ -6,6 +6,9 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- Permission requests from the app wait for the background service to reconnect and authenticate after a restart.
+
 ## [0.68.1] — 2026-11-18
 
 First published build of the 0.68 permissions release. The 0.68.0 tag was never published: its release checks failed on end-to-end tests that hadn't been updated for the new permission routes. No app changes since 0.68.0.

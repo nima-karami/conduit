@@ -663,6 +663,28 @@ describe('createServerLifecycle F9 and explicit actions', () => {
     }
   });
 
+  it('closes failed setup without letting stale failures drop a replacement', async () => {
+    const h = await harness({ supervisorLive: true });
+    await h.lifecycle.start();
+    const first = h.lifecycle.client();
+    if (!first) throw new Error('missing initial client');
+    h.lifecycle.setupFailed(first, 'Window presence did not settle');
+    expect(h.lifecycle.current()).toMatchObject({
+      state: 'unavailable',
+      reason: 'start-failed',
+      detail: 'Window presence did not settle',
+    });
+    expect(h.lifecycle.client()).toBeNull();
+
+    await h.lifecycle.retry();
+    const replacement = h.lifecycle.client();
+    expect(replacement).not.toBeNull();
+    expect(replacement).not.toBe(first);
+    h.lifecycle.setupFailed(first, 'late failure');
+    expect(h.lifecycle.client()).toBe(replacement);
+    expect(h.state()).toBe('connected');
+  });
+
   it('stopAll reports unavailable after the server connection drops', async () => {
     const h = await harness({ supervisorLive: true });
     await h.lifecycle.start();

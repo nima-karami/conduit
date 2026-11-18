@@ -89,6 +89,21 @@ await runScenario(
     const supervisorBefore = ownHc(userDataDir, ['get', names.supervisorName, '--json']).json();
     log(`supervisor before: ${supervisorBefore.address} (${supervisorBefore.state ?? 'live'})`);
 
+    await page.evaluate(() => {
+      const requestId = 915_025;
+      window.__restartActivity = { sent: false, reply: null };
+      const off = window.agentDeck.subscribe((message) => {
+        if (message.type === 'server:state' && message.state.state === 'reconnecting') {
+          if (window.__restartActivity.sent) return;
+          window.__restartActivity.sent = true;
+          window.agentDeck.post({ type: 'mcp:activity:get', requestId, query: { limit: 1 } });
+        } else if (message.type === 'mcp:activity' && message.requestId === requestId) {
+          window.__restartActivity.reply = message;
+          off();
+        }
+      });
+    });
+
     phase('server.restart from a test client');
     let pausedSeen = false;
     let watching = true;
@@ -136,6 +151,18 @@ await runScenario(
     );
     assert(resumed, 'typing never resumed after the server restart');
     log(`typing resumed on attempt ${n} ✓`);
+    assert(
+      await until(() => page.evaluate(() => window.__restartActivity.reply !== null), 15_000),
+      'Activity request sent while reconnecting never received its correlated response',
+    );
+    const activity = await page.evaluate(() => window.__restartActivity);
+    assert(
+      activity.sent &&
+        activity.reply.page.error === null &&
+        Array.isArray(activity.reply.page.rows),
+      `Activity request after reconnect failed: ${JSON.stringify(activity)}`,
+    );
+    log('renderer Activity request sent while reconnecting succeeded ✓');
     assert(
       await until(
         async () => (await paneText(page, sid)).includes(`PROBE-LINE after-restart-${n}`),

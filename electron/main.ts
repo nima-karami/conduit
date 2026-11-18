@@ -46,12 +46,13 @@ import { readBlob } from '../src/config';
 import type { TruncatedBy } from '../src/content-search';
 import { searchContentFs } from '../src/content-search-fs';
 import { HC_PINNED_VERSION } from '../src/contracts/hc';
-import type {
-  WindowPresence as C2WindowPresence,
-  DataStores,
-  ServerEvents,
-  ServerMethods,
-  SessionMutation,
+import {
+  APP_HELLO_TIMEOUT_MS,
+  type WindowPresence as C2WindowPresence,
+  type DataStores,
+  type ServerEvents,
+  type ServerMethods,
+  type SessionMutation,
 } from '../src/contracts/server-protocol';
 import { SERVER_EXHAUSTED_FILE } from '../src/contracts/session-identity';
 import { decideCrashRecovery } from '../src/crash-recovery';
@@ -169,7 +170,7 @@ import {
 } from '../src/review-marks';
 import { applyNotePatch, notesFingerprint, type ReviewNotesData } from '../src/review-notes';
 import { isIndexScope, searchRootAllowed } from '../src/search-scope';
-import { readServerSecret } from '../src/server-secret';
+import { AUTH_REQUIRED_MESSAGE, readServerSecret } from '../src/server-secret';
 import { presentRoots, sessionContains } from '../src/session-folders';
 import { createSessionResourceDemand } from '../src/session-resource-demand';
 import {
@@ -2171,8 +2172,8 @@ app.whenReady().then(() => {
   const hcEvents = createHcEvents(hc, { 'conduit.instance': names.instance }, appLog);
   let lifecycle: ReturnType<typeof createServerLifecycle> | null = null;
   let trayAvailable = false;
-  const serverClient = () => lifecycle?.client() ?? null;
   const serverCalls = createServerCalls(() => lifecycle);
+  const serverClient = serverCalls.client;
   const callServer = serverCalls.call;
   const remotePanes = createRemotePanes({
     call: callServer,
@@ -2223,7 +2224,8 @@ app.whenReady().then(() => {
 
   // ── Presence (C2 ui.presence): visible, ready, focus and owners, coalesced per tick ──
   let presenceQueued = false;
-  const pushPresence = () => {
+  let presenceRevision = 0;
+  const registerPresence = (c: ServerClient, timeoutMs = APP_HELLO_TIMEOUT_MS) => {
     const focusedId = focusedWindowId;
     const windowsNow: C2WindowPresence[] = [...windows.keys()].map((windowId) => ({
       windowId,
@@ -2235,11 +2237,17 @@ app.whenReady().then(() => {
         .map((s) => s.id),
       ownedSessionIds: [...sessionOwner].filter(([, w]) => w === windowId).map(([id]) => id),
     }));
-    serverClient()
-      ?.call('ui.presence', { windows: windowsNow })
-      .catch((err: unknown) => log.warn('server', 'ui.presence failed', { err: String(err) }));
+    return c.call('ui.presence', { windows: windowsNow }, { timeoutMs });
+  };
+  const pushPresence = () => {
+    const c = serverClient();
+    if (c)
+      void registerPresence(c).catch((err: unknown) =>
+        log.warn('server', 'ui.presence failed', { err: String(err) }),
+      );
   };
   const schedulePresence = () => {
+    presenceRevision++;
     if (presenceQueued) return;
     presenceQueued = true;
     setImmediate(() => {
@@ -2558,21 +2566,42 @@ app.whenReady().then(() => {
       broadcast({ type: 'server:state', state: serverUiState });
     });
     lifecycle.onConnected((c) => {
-      serverCalls.connected(c);
-      c.call('server.setLogging', { logging: settings.logging, logLevel: settings.logLevel }).catch(
-        (err: unknown) => log.warn('server', 'setLogging failed', { err: String(err) }),
-      );
-      c.subscribe(router).then(
-        () => {
+      // Hello can succeed before auth does. Owner calls also need this client's window presence.
+      void c
+        .subscribe(router, APP_HELLO_TIMEOUT_MS)
+        .then(async () => {
+          const deadline = Date.now() + APP_HELLO_TIMEOUT_MS;
+          while (lifecycle?.client() === c) {
+            const revision = presenceRevision;
+            const remaining = deadline - Date.now();
+            if (remaining <= 0)
+              throw new ServerCallError('timeout', 'Window presence did not settle');
+            await registerPresence(c, remaining);
+            if (revision === presenceRevision) break;
+          }
+          if (lifecycle?.client() !== c) return;
+          serverCalls.connected(c);
+          terminals.serverConnected();
+          c.call('server.setLogging', {
+            logging: settings.logging,
+            logLevel: settings.logLevel,
+          }).catch((err: unknown) => log.warn('server', 'setLogging failed', { err: String(err) }));
           resolveFirstSnapshot();
           if (sessionsLoaded) return;
           sessionsLoaded = true;
           postState();
-        },
-        (err: unknown) => log.warn('server', 'subscribe failed', { err: String(err) }),
-      );
-      pushPresence();
-      terminals.serverConnected();
+        })
+        .catch((err: unknown) => {
+          // Subscribe closes an auth-refused socket for the lifecycle's bounded redial.
+          if (
+            !c.subscribedOnce &&
+            err instanceof ServerCallError &&
+            err.kind === 'refused' &&
+            err.message === AUTH_REQUIRED_MESSAGE
+          )
+            return;
+          lifecycle?.setupFailed(c, err instanceof Error ? err.message : String(err));
+        });
     });
     await lifecycle.start();
   }

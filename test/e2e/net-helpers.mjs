@@ -5,7 +5,7 @@ import { connect, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { c2Auth } from './c2-auth.mjs';
+import { c2AuthIfRunning } from './c2-auth.mjs';
 import { C2 } from './c2-peer.mjs';
 import { FAKE_AGENT, until } from './conduit-mcp-helpers.mjs';
 import { assert, makeLog, profileDir, REPO, resolveHcBinary } from './harness.mjs';
@@ -59,42 +59,71 @@ function writeAgents(userData, recordsDir) {
 }
 
 /** The app's connect: hello, logging, subscribe, a ready window (no panes). */
-async function attachApp(endpoint, userData) {
-  let c2;
-  assert(
-    await until(
-      async () => {
-        try {
-          c2 = await C2.open(endpoint);
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      30_000,
-      250,
-    ),
-    'the server pipe never accepted a connection',
-  );
-  const hello = await c2.call('hello', {
-    appVersion: APP_VERSION,
-    generation: 1,
-    auth: c2Auth(userData),
-  });
-  await c2.call('server.setLogging', { logging: true, logLevel: 'debug' });
-  const snapshot = await c2.call('events.subscribe');
-  await c2.call('ui.presence', {
-    windows: [
-      {
-        windowId: 1,
-        focused: true,
-        ready: true,
-        visibleSessionIds: [],
-        ownedSessionIds: [],
-      },
-    ],
-  });
-  return { c2, hello, snapshot };
+async function attachApp(endpoint, userData, previousSecret) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let c2;
+    assert(
+      await until(
+        async () => {
+          try {
+            c2 = await C2.open(endpoint);
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        30_000,
+        250,
+      ),
+      'the server pipe never accepted a connection',
+    );
+    let authenticated = false;
+    try {
+      let secret;
+      assert(
+        await until(
+          () => {
+            secret = c2AuthIfRunning(userData);
+            return secret !== undefined && secret !== previousSecret;
+          },
+          30_000,
+          250,
+        ),
+        'the server secret never rotated',
+      );
+      const hello = await c2.call('hello', {
+        appVersion: APP_VERSION,
+        generation: 1,
+        auth: secret,
+      });
+      await c2.call('server.setLogging', { logging: true, logLevel: 'debug' });
+      const snapshot = await c2.call('events.subscribe');
+      authenticated = true;
+      await c2.call('ui.presence', {
+        windows: [
+          {
+            windowId: 1,
+            focused: true,
+            ready: true,
+            visibleSessionIds: [],
+            ownedSessionIds: [],
+          },
+        ],
+      });
+      return { c2, hello, snapshot, secret };
+    } catch (error) {
+      c2.close();
+      // A listening pipe can outlive the server whose secret was just replaced.
+      if (
+        attempt === 0 &&
+        !authenticated &&
+        error instanceof Error &&
+        error.message.startsWith('auth required (')
+      )
+        continue;
+      throw error;
+    }
+  }
 }
 
 /**
@@ -176,6 +205,7 @@ export async function startServer(label, { electronProfile = false } = {}) {
     await startSupervisor();
     const app = await attachApp(names.serverEndpoint, userData);
     c2 = app.c2;
+    let secret = app.secret;
     assert(
       app.hello.supervisor?.name === names.supervisorName,
       `hello.supervisor (${label}): ${JSON.stringify(app.hello)}`,
@@ -209,7 +239,8 @@ export async function startServer(label, { electronProfile = false } = {}) {
         );
         await afterStop?.();
         await startSupervisor();
-        const next = await attachApp(names.serverEndpoint, userData);
+        const next = await attachApp(names.serverEndpoint, userData, secret);
+        secret = next.secret;
         c2 = next.c2;
         server.c2 = c2;
         assert(
