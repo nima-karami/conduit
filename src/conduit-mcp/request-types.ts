@@ -40,6 +40,7 @@ export interface AnswerInput {
   /** `declined` / `denied`. */
   reason?: string;
   grant?: GrantChoice;
+  scope?: 'session';
 }
 export type AnsweredBy =
   | { kind: 'you'; windowId: number | null }
@@ -131,6 +132,35 @@ export interface RequestView extends Omit<VisibleRequestRecord, 'remote'> {
   waitingUntil: string | null;
   /** Set only on a request mirrored from another machine. */
   remote?: RemoteRequestFacts;
+}
+
+export interface OwnerPermissionView {
+  id: string;
+  sessionId: string;
+  requester: string;
+  space: string | null;
+  lead: string | null;
+  machine: string;
+  title: string;
+  tool: ToolName;
+  why: string;
+  state: RequestState;
+  createdAt: string;
+  expiresAt: string | null;
+  endedAt: string | null;
+  withdrawReason: string | null;
+  grantable: boolean;
+  answerable: boolean;
+  nextTimeGrantSaved?: boolean;
+  choices: GrantChoice[];
+}
+export interface OwnerPermissionCursor {
+  at: string;
+  id: string;
+}
+export interface OwnerPermissionPage {
+  permissions: OwnerPermissionView[];
+  nextCursor: OwnerPermissionCursor | null;
 }
 
 export interface HumanPresence {

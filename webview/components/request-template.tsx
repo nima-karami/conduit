@@ -7,7 +7,6 @@ import {
   useRef,
   useState,
 } from 'react';
-import type { GrantChoice } from '../../src/conduit-mcp/grant-store';
 import { DRAFT_MAX_BYTES } from '../../src/conduit-mcp/request-args';
 import type {
   AnswerInput,
@@ -17,6 +16,7 @@ import type {
 import { clearDraft, setDraft, useDraft } from '../request-drafts';
 import { REQ_STR } from '../request-strings';
 import { ageLabel, isConduit, type RequestType, typeOf } from '../request-view-model';
+import { PermissionsRequestBody } from './permissions-request-body';
 import { RequestTypeIcon } from './request-type-icon';
 
 export interface RequestTemplateProps {
@@ -347,7 +347,6 @@ export function RequestTemplate(p: RequestTemplateProps): JSX.Element {
   };
 
   const showOpenAsTab = mode === 'popup' && r.kind !== 'attend';
-  const permissionDisabled = locked || sent || pending;
   const endedText = endedLine(r, handle);
   const waitingSecs =
     r.waitingUntil === null
@@ -471,52 +470,40 @@ export function RequestTemplate(p: RequestTemplateProps): JSX.Element {
         {endedText !== null && <div className="reqtpl-ended">{endedText}</div>}
 
         {remotePerm !== null ? (
-          <div className="reqtpl-attend">
-            <p>
-              {remotePerm.why} · <code>{remotePerm.tool}</code>
-            </p>
-            <div className="reqtpl-permission" role="group" aria-label={r.title}>
-              <button
-                type="button"
-                className="btn btn--sm"
-                disabled={permissionDisabled}
-                title={offlineTitle}
-                onClick={() => void send({ outcome: 'denied' })}
-              >
-                {REQ_STR.reqTpl.permissionDeny}
-              </button>
-              <button
-                type="button"
-                className="btn btn--sm btn--primary"
-                disabled={permissionDisabled}
-                title={offlineTitle}
-                onClick={() => void send({ outcome: 'allowed' })}
-              >
-                {REQ_STR.reqTpl.permissionAllow}
-              </button>
-              {remotePerm.grantable && (
-                <button
-                  type="button"
-                  className="btn btn--sm"
-                  disabled={permissionDisabled}
-                  title={offlineTitle}
-                  onClick={() =>
-                    void send({
-                      outcome: 'allowed',
-                      grant: {
-                        who: 'peer',
-                        on: 'target',
-                        for: 'until-revoked',
-                      } satisfies GrantChoice,
-                    })
-                  }
-                >
-                  {REQ_STR.reqTpl.permissionAlways}
-                </button>
-              )}
-            </div>
-            {pending && <p className="reqtpl-sending">{REQ_STR.reqTpl.sending}</p>}
-          </div>
+          <PermissionsRequestBody
+            key={r.id}
+            kind="remote"
+            requestId={r.id}
+            permission={remotePerm}
+            machineName={r.remote?.machineName ?? ''}
+            stale={stale}
+            answerable={!ended && !guarded}
+            answer={async (_id, answer) => {
+              if (guardedNow() || inFlight.current || sent || locked) {
+                return {
+                  ok: false,
+                  reason: 'not_answerable',
+                  message: 'This request is no longer available.',
+                  request: null,
+                };
+              }
+              inFlight.current = true;
+              let result: RequestAnswerResult;
+              try {
+                result = await onSend(answer);
+              } finally {
+                inFlight.current = false;
+              }
+              if (!result.ok)
+                return { ...result, message: refusalText(result, r.remote?.machineName) };
+              if (result.ok) {
+                setSent(true);
+                clearTimeout(nextTimer.current);
+                nextTimer.current = setTimeout(onNext, SWAP_GUARD_MS);
+              }
+              return result;
+            }}
+          />
         ) : r.kind === 'attend' ? (
           <div className="reqtpl-attend">
             <p>{REQ_STR.reqTpl.attendLine}</p>

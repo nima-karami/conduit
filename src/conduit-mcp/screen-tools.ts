@@ -47,7 +47,7 @@ export function createScreenToolHandlers(
     const r = reach !== undefined && isValidField(tool, 'reach', reach) ? reach : 'self';
     if (reachAdmits(r, actor, t, deps.control.ownerWindowOf)) return null;
     return fail('out_of_reach', 'this session is outside the tool reach', {
-      hint: `widen ${tool}'s reach in Settings → MCP to act on this session`,
+      hint: `widen ${tool}'s reach in Settings → Permissions to act on this session`,
     });
   };
   const target = (
@@ -113,6 +113,8 @@ export function createScreenToolHandlers(
             const again = recheck(t, 'read_screen', who, ctx.reach);
             if (again) return again;
             const snapshot = await deps.snapshot(t.sessionId);
+            if (!ctx.stillCurrent())
+              return fail('tool_disabled', 'Permissions changed while running');
             const lines = snapshot?.lines.map((line) => line.replace(/ +$/, '')) ?? [];
             while (lines.length && lines[lines.length - 1] === '') lines.pop();
             const start = Math.max(0, lines.length - count);
@@ -178,9 +180,14 @@ export function createScreenToolHandlers(
             const generation = deps.generation(t.sessionId);
             const restarting = () => fail('session_restarting', 'the target session is restarting');
             let refusal: ReturnType<typeof fail> | null = null;
+            let predicateError: { error: unknown } | undefined;
             const outcome = await deps.typing.sequence(
               t.sessionId,
               () => {
+                if (!ctx.stillCurrent()) {
+                  refusal = fail('tool_disabled', 'Permissions changed while running');
+                  return false;
+                }
                 refusal = recheck(t, 'send_input', who, ctx.reach);
                 if (refusal) return false;
                 if (deps.presence(t.sessionId) === 'exited') {
@@ -205,9 +212,24 @@ export function createScreenToolHandlers(
               },
               {
                 submit: o.submit === true,
-                beforeEnter: () => deps.generation(t.sessionId) === generation,
+                beforeEnter: () => {
+                  try {
+                    if (!ctx.stillCurrent()) {
+                      refusal = fail(
+                        'tool_disabled',
+                        'Permissions changed while running; text may already have been typed',
+                      );
+                      return false;
+                    }
+                    return deps.generation(t.sessionId) === generation;
+                  } catch (error) {
+                    predicateError = { error };
+                    return false;
+                  }
+                },
               },
             );
+            if (predicateError !== undefined) throw predicateError.error;
             if (refusal) return refusal;
             if (outcome !== 'submitted') return restarting();
             if (o.submit) deps.noteInput(t.sessionId, '\r');

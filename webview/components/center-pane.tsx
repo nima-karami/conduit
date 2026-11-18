@@ -1,4 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import type { ActivityEntry, ActivityLookup } from '../../src/conduit-mcp/activity-log';
+import type { ActivityPage, ActivityQuery } from '../../src/conduit-mcp/activity-query';
 import { adapterFor } from '../../src/conduit-mcp/adapters';
 import type { AgentCli } from '../../src/conduit-mcp/install-types';
 import type { McpNotConnected } from '../../src/conduit-mcp/ui-types';
@@ -51,6 +53,9 @@ import { GitHistoryView } from './git-history-view';
 import { McpSetupBanner } from './mcp-setup-banner';
 import { MissingHomeState, StartRefusedState } from './missing-home-state';
 import type { DockHandlers } from './panel-frame';
+import { PermissionsActivity } from './permissions-activity';
+import type { ActivityExceptionSource } from './permissions-activity-why';
+import { RefusalChip, type RefusalChipData } from './refusal-chip';
 import { RemoteDiffView } from './remote-diff-view';
 import { RemoteDocView } from './remote-doc-view';
 import { RemoteHistoryView } from './remote-history-view';
@@ -87,6 +92,15 @@ function WaitingLine({ sessionId, onOpen }: { sessionId: string; onOpen: () => v
 
 export function CenterPane({
   sessions,
+  activitySessionId,
+  refusalsBySession,
+  onRefusalClick,
+  activityMachineId,
+  getActivity,
+  activityItem,
+  getActivityRow,
+  allowActivityOnce,
+  onAddActivityException,
   agents,
   repos,
   activeId,
@@ -154,6 +168,15 @@ export function CenterPane({
   confirmRemoteClose,
 }: {
   sessions: Session[];
+  activitySessionId?: string;
+  refusalsBySession?: Readonly<Record<string, RefusalChipData>>;
+  onRefusalClick?: (sessionId: string, latest: RefusalChipData['latest']) => void;
+  activityMachineId?: string;
+  getActivity(query: ActivityQuery): Promise<ActivityPage | null>;
+  activityItem?: Pick<ActivityEntry, 'id' | 'at'>;
+  getActivityRow?(id: string, at: string): Promise<ActivityLookup | null>;
+  allowActivityOnce?(id: string, at: string): Promise<boolean>;
+  onAddActivityException?(source: ActivityExceptionSource): void;
   agents: AgentDefinition[];
   /** Folder history — the empty state's "Reopen last" route reads it (D8). */
   repos: RepoDTO[];
@@ -401,6 +424,21 @@ export function CenterPane({
         onOpenCommitFile={onOpenCommitFile}
         onReviewCommit={onReviewCommit}
       />
+    ) : doc.kind === 'permissions-activity' ? (
+      <PermissionsActivity
+        key={JSON.stringify([activitySessionId, activityMachineId, activityItem])}
+        sessionId={activitySessionId}
+        machineId={activityMachineId}
+        sessions={sessions.map((s) => ({ id: s.id, name: s.name }))}
+        machines={remoteRows
+          .map((r) => ({ id: r.key.machineId, name: r.machineName }))
+          .filter((m, i, all) => all.findIndex((x) => x.id === m.id) === i)}
+        getActivity={getActivity}
+        item={activityItem}
+        getActivityRow={getActivityRow}
+        allowOnce={allowActivityOnce}
+        onAddException={onAddActivityException}
+      />
     ) : doc.kind === 'request' ? (
       <RequestTab
         requestId={requestIdOfPath(doc.path) ?? ''}
@@ -458,6 +496,11 @@ export function CenterPane({
             {isSplit && (
               <div className="termhost__bar">
                 <span className="termhost__name">{s.name}</span>
+                <RefusalChip
+                  data={refusalsBySession?.[s.id]}
+                  sessionName={s.name}
+                  onClick={onRefusalClick ? (latest) => onRefusalClick(s.id, latest) : undefined}
+                />
                 <button className="termhost__close" title="Close split" onClick={onCloseSplit}>
                   ✕
                 </button>
@@ -602,7 +645,22 @@ export function CenterPane({
             groupActive={layout.activeGroup === g}
             showTerminal={g === 1}
             terminalFocusKey={g === 1 && activeId ? terminalTabFocusKey(activeId) : undefined}
-            trailing={g === 1 && activeId ? <LiveSessionPill sessionId={activeId} /> : undefined}
+            trailing={
+              g === 1 && activeId ? (
+                <>
+                  <LiveSessionPill sessionId={activeId} />
+                  {view.activeDocId === null && (
+                    <RefusalChip
+                      data={refusalsBySession?.[activeId]}
+                      sessionName={active?.name ?? activeId}
+                      onClick={
+                        onRefusalClick ? (latest) => onRefusalClick(activeId, latest) : undefined
+                      }
+                    />
+                  )}
+                </>
+              ) : undefined
+            }
             split={{
               // Group 1's button splits group 1's shown doc even while group 2 is active (spec §2.4
               // flow 2), with or without a pointer-down focusing group 1 first.
@@ -676,7 +734,7 @@ export function CenterPane({
       }
     >
       <RequestPopup sessions={sessions} />
-      {sessions.length === 0 ? (
+      {sessions.length === 0 && groupOne.activeDocId === null ? (
         <CenterEmptyState repos={repos} agents={agents} onNewSession={onNewSession} />
       ) : (
         <EditorGroups

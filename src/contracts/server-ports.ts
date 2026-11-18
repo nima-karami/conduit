@@ -15,6 +15,7 @@ import type { NetworkPort } from '../conduit-mcp/remote-routing';
 import type { BlockedKind } from '../conduit-mcp/request-types';
 import type { CliPolicyLayers, GlobalPolicy } from '../conduit-mcp/tool-policy';
 import type { CompiledRules } from '../limit-rules';
+import type { NativeLaunchPreparation } from '../native-launch';
 import type { PtyWriter } from '../pty-writer';
 import type { ActivitySnapshot, SessionActivity } from '../session-activity';
 import type { SessionManager } from '../session-manager';
@@ -25,6 +26,7 @@ import type {
   SessionOpener,
   SpawnSpec,
 } from '../types';
+import type { NativeLaunchEvidence } from './native-launch';
 import type { ServerEvent, ServerEvents } from './server-protocol';
 import type { TokenRecord } from './session-identity';
 import type { FirstPaint } from './terminal-link';
@@ -38,13 +40,7 @@ export type SessionStorePort = Pick<
   SessionManager,
   'get' | 'list' | 'setMcp' | 'touch' | 'setStatus' | 'onChange'
 > & {
-  /**
-   * Reads the session record's persisted `lastGeneration` (sessions.json, C4 PersistedLaunchCounter),
-   * increments and persists it, and returns it with a fresh launch id. The counter lives on the
-   * record because a token row is revoked when its exit is recorded while the pane outlives the
-   * process: a counter restarting at 1 would deliver a previous life's in-flight input.
-   */
-  allocateLaunch(sessionId: string): LaunchIds;
+  nativeLaunchOf(sessionId: string): NativeLaunchEvidence | null;
 };
 
 /**
@@ -63,6 +59,7 @@ export type DomainOpenOutcome =
    * structured field of the tool error, so it can `close_session` it before opening another (F3).
    */
   | { ok: false; code: 'spawn_unconfirmed'; message: string; sessionId: string }
+  | { ok: false; code: 'open_failed'; message: string; sessionId: string }
   /** The stopping transition (D32): nothing was created. */
   | { ok: false; code: 'server_stopping'; message: string };
 export type DomainOpenFailureCode = Extract<DomainOpenOutcome, { ok: false }>['code'];
@@ -98,6 +95,13 @@ export interface DomainPort
     | 'addRoot'
     | 'git'
   > {
+  codexPosture: {
+    link(sessionId: string, ids: import('./terminal-runtime').LaunchIds, threadId: string): boolean;
+    get(
+      sessionId: string,
+      ids: import('./terminal-runtime').LaunchIds,
+    ): import('./native-launch').CodexPostureUpdate | null;
+  };
   openSession(req: McpOpenRequest): Promise<DomainOpenOutcome>;
   /**
    * The server-local close, shared with C2 `sessions.remove`: kills or retires the terminal
@@ -124,7 +128,12 @@ export interface DomainPort
   limitRules(): CompiledRules;
   messagingOn(): boolean;
   /** ServerSettings.mcpToolPolicy and mcpToolPolicyByCli, read per call. */
-  toolPolicy(): { global: GlobalPolicy; byCli: CliPolicyLayers };
+  toolPolicy(): {
+    global: GlobalPolicy;
+    byCli: CliPolicyLayers;
+    explicitGlobal?: import('../conduit-mcp/tool-policy').PolicyLayer;
+    resolvedGlobal?: import('../conduit-mcp/tool-policy').PolicyLayer;
+  };
   /** The human's answer to a usage-limit request (CON-21): docs/plans/2026-11-14-request-queue-machinery.plan.md C12. */
   limit: {
     resumeNow(sessionId: string): Promise<boolean>;
@@ -141,6 +150,11 @@ export interface DomainPort
 export interface LaunchPort {
   /** Today's wait for the MCP endpoint, so a launch restored at start isn't wired tokenless. */
   whenLaunchReady(): Promise<void>;
+  prepareNativeLaunch(
+    sessionId: string,
+    def: AgentDefinition,
+    spec: SpawnSpec,
+  ): NativeLaunchPreparation;
   /**
    * Resets the session's per-launch host state, reserves its token row through TokenStorePort, and
    * returns the spec with the MCP env and argv injected.
@@ -150,7 +164,7 @@ export interface LaunchPort {
     def: AgentDefinition,
     spec: SpawnSpec,
     ids: LaunchIds,
-  ): Promise<SpawnSpec>;
+  ): SpawnSpec;
   onSessionDeleted(sessionId: string): Promise<void>;
 }
 
@@ -307,7 +321,7 @@ export interface TokenStorePort {
    * session's earlier row is revoked, as today, unless it is `unconfirmed`: then it becomes
    * `superseded` (D21).
    */
-  reserve(sessionId: string, ids: LaunchIds): Promise<{ token: string }>;
+  reserve(sessionId: string, ids: LaunchIds): { token: string };
   /** The reply or a late registration: the row becomes `live`. */
   resolveAddress(launchId: string, hcAddress: string): Promise<void>;
   /** Connection loss mid-spawn, or `server.restart`'s settle bound (D32). */
@@ -351,6 +365,7 @@ export interface McpHostDeps {
 }
 
 export type ObservedEntry =
+  | { postureChanged: import('./terminal-runtime').LaunchIds }
   | { action: ClaudeAction | CodexAction; failed?: boolean }
   | { feed: 'unavailable' }
   | { gap: number };

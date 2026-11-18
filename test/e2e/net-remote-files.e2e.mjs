@@ -15,6 +15,7 @@ import {
 import { assert, phase, pollUntil, REPO, runScenario, showRightView } from './harness.mjs';
 import { SERVER_PROTOCOL_GENERATION, teardownNames } from './harness-server-teardown.mjs';
 import { ECHO_AGENT, linkView, networkState, startServer } from './net-helpers.mjs';
+import { assignProfileCas } from './permissions-policy-helpers.mjs';
 
 // The remote Files tab over one ssh link, on fake-ssh: B's session folder holds a.txt, .env,
 // .ssh/id_rsa and sub/b.txt. A's Files tree for the remote session lists a.txt and sub, not the
@@ -60,16 +61,8 @@ async function serverClient(userDataDir) {
 
 /** Gives one agent session the Lead profile through CON-24's assignment message, as the renderer does. */
 async function assignLead(appC2, sessionId) {
-  const r = await appC2.call('mcp.fromRenderer', {
-    windowId: 1,
-    message: {
-      type: 'mcp:setAssignment',
-      requestId: 1,
-      point: { kind: 'session', sessionId },
-      profileId: 'lead',
-    },
-  });
-  assert(r.reply?.ok === true, `setAssignment lead: ${JSON.stringify(r)}`);
+  const r = await assignProfileCas(appC2, { kind: 'session', sessionId }, 'lead');
+  assert(r.reply?.result?.ok === true, `assign lead: ${JSON.stringify(r)}`);
 }
 
 /** Numbered screenshots when CONDUIT_E2E_SHOTS names a directory; nothing otherwise. */
@@ -449,16 +442,8 @@ async function run(page, userDataDir, log) {
         "15. B narrows A's agents to Worker; a routed open_session asks; Allow in A's pop-up lets it run",
       );
       const aId = (await networkState({ c2: appC2 })).machineId;
-      const peer = await b.c2.call('mcp.fromRenderer', {
-        windowId: 1,
-        message: {
-          type: 'mcp:setAssignment',
-          requestId: 1,
-          point: { kind: 'peer', machineId: aId },
-          profileId: 'worker',
-        },
-      });
-      assert(peer.reply?.ok === true, `B's peer assignment: ${JSON.stringify(peer)}`);
+      const peer = await assignProfileCas(b.c2, { kind: 'peer', machineId: aId }, 'worker');
+      assert(peer.reply?.result?.ok === true, `B's peer assignment: ${JSON.stringify(peer)}`);
       // The tool call waits for B's answer, which waits for the owner here: started, not awaited.
       const routed = callAppTool(page, lead.sessionId, 'open_session', {
         machine: bId,

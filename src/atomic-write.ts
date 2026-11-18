@@ -28,26 +28,77 @@ const writerKey = (filePath: string) => {
  * See docs (multi-repo run retro) / the update-durability fix.
  */
 /** The subset of `node:fs` the sync writer needs; injectable so the failure path is testable. */
-type SyncFs = Pick<typeof fs, 'writeFileSync' | 'renameSync' | 'unlinkSync'>;
+type SyncFs = Pick<typeof fs, 'writeFileSync' | 'renameSync' | 'unlinkSync'> &
+  Partial<Pick<typeof fs, 'openSync' | 'fsyncSync' | 'closeSync'>>;
 
 export function atomicWriteFileSync(
   filePath: string,
   data: string | Uint8Array,
   io: SyncFs = fs,
-  options: { mode?: number } = {},
+  options: { mode?: number; syncData?: boolean; retryLockedRename?: boolean } = {},
 ): void {
   const tmp = temporaryPath(filePath);
-  // The mode applies as the temp file is created, so a private file is never briefly readable.
-  io.writeFileSync(tmp, data, options.mode === undefined ? undefined : { mode: options.mode });
   try {
-    io.renameSync(tmp, filePath);
-  } catch (e) {
+    if (options.syncData) {
+      if (!io.openSync || !io.fsyncSync || !io.closeSync)
+        throw new Error('Synchronous data flush requires file descriptor operations');
+      const fd = io.openSync(tmp, 'wx', options.mode);
+      let writeError: unknown;
+      try {
+        io.writeFileSync(fd, data);
+        io.fsyncSync(fd);
+      } catch (error) {
+        writeError = error;
+      }
+      try {
+        io.closeSync(fd);
+      } catch (error) {
+        if (writeError !== undefined)
+          throw new AggregateError(
+            [writeError, error],
+            'Writing and closing temporary file failed',
+          );
+        throw error;
+      }
+      if (writeError !== undefined) throw writeError;
+    } else {
+      io.writeFileSync(tmp, data, options.mode === undefined ? undefined : { mode: options.mode });
+    }
+    const delays = options.retryLockedRename ? [10, 25, 50] : [];
+    let attempt = 0;
+    for (;;) {
+      try {
+        io.renameSync(tmp, filePath);
+        break;
+      } catch (error) {
+        const locked =
+          typeof error === 'object' &&
+          error !== null &&
+          'code' in error &&
+          typeof error.code === 'string' &&
+          LOCKED_RENAME_CODES.has(error.code);
+        if (!locked || attempt >= delays.length) throw error;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delays[attempt++]);
+      }
+    }
+  } catch (error) {
     try {
       io.unlinkSync(tmp);
-    } catch {
-      /* temp already gone — nothing to clean */
+    } catch (cleanupError) {
+      if (
+        !(
+          typeof cleanupError === 'object' &&
+          cleanupError !== null &&
+          'code' in cleanupError &&
+          cleanupError.code === 'ENOENT'
+        )
+      )
+        throw new AggregateError(
+          [error, cleanupError],
+          'Atomic write and temporary cleanup failed',
+        );
     }
-    throw e;
+    throw error;
   }
   const key = writerKey(filePath);
   const previous = writers.get(key);

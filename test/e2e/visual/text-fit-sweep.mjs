@@ -303,10 +303,10 @@ const SCENES = {
       .then((h) => h.jsonValue());
     await sleep(2500);
     await c.rightClickSel(`.session[data-sessionid="${id}"]`);
-    const opened = await c.clickMenuItem(/MCP tools/);
-    if (!opened) throw new Error('no "MCP tools…" item on the fake MCP session');
+    const opened = await c.clickMenuItem(/Permissions/);
+    if (!opened) throw new Error('no "Permissions…" item on the fake MCP session');
     await sleep(900);
-    await c.shot('mcp-tools-dialog');
+    await c.shot('session-permissions-dialog');
     await c.dismiss();
     await c.page.evaluate((sid) => window.agentDeck.post({ type: 'kill', id: sid }), id);
     await sleep(800);

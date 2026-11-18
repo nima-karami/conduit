@@ -248,6 +248,10 @@ export interface ServerSnapshot {
  * never as an RPC error; `sessions.create` refuses as an RPC error (ServerErrorKind). MCP opens are
  * not C2 calls: they refuse in MCP's tool-result envelope (C7 DomainOpenOutcome → ToolError).
  */
+export { NATIVE_LAUNCH_REFUSAL_MESSAGES } from './native-launch';
+
+import type { NativeLaunchFailure } from './native-launch';
+
 export type SessionStartResult =
   | {
       ok: true;
@@ -297,6 +301,7 @@ export type SessionStartResult =
         | { reason: 'home-missing' }
         /** The saved command failed coercion; today's can't-start line, status `stale`. */
         | { reason: 'command-invalid' }
+        | { reason: 'native_permissions'; problem: NativeLaunchFailure }
         | SpawnUnconfirmed
         | ServerStopping;
       /** The stored history, written before the can't-start line as today, when there is one. */
@@ -449,7 +454,10 @@ export interface ServerMethods {
    * In place: C1 `retire` (no exit), status stays `running`, restartSeq bumps; the remounted pane's
    * `sessions.start` is the spawn.
    */
-  'sessions.restart': { params: { sessionId: string }; result: Reply<'agentScope:result'> };
+  'sessions.restart': {
+    params: { sessionId: string; expectedGeneration?: number | null };
+    result: Reply<'agentScope:result'>;
+  };
   'sessions.relaunch': { params: { sessionIds: string[] }; result: { relaunched: string[] } };
   /** The same server-local close as C7 DomainPort.closeSession. */
   'sessions.remove': { params: { sessionId: string }; result: Empty };
@@ -543,7 +551,7 @@ export interface ServerMethods {
   };
   'machines.probeAgents': { params: { machineId: string }; result: { agents: string[] } };
   'link.setCapability': {
-    params: { machineId: string; capability: Capability; on: boolean };
+    params: { machineId: string; capability: Capability; on: boolean; expectedToken: string };
     result: Record<string, never>;
   };
   'link.setAddresses': {

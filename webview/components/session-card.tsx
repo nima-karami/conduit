@@ -6,6 +6,7 @@ import { canRelaunch } from '../../src/stale-sessions';
 import type { Session } from '../../src/types';
 import { IconChevron, IconClose, IconPin, SessionGlyph } from '../icons';
 import { SIDEBAR_STR } from '../sidebar-strings';
+import { RefusalChip, type RefusalChipData } from './refusal-chip';
 
 interface AgentRowDragProps {
   onDragStart: (e: React.DragEvent) => void;
@@ -91,6 +92,10 @@ export function AgentRow({
   onContextMenu,
   onFocus,
   drag,
+  permissionLabel,
+  onPermissions,
+  refusal,
+  onRefusal,
 }: {
   session: Session;
   row: AgentRowModel;
@@ -119,6 +124,10 @@ export function AgentRow({
   onContextMenu?: (e: React.MouseEvent) => void;
   onFocus?: () => void;
   drag?: AgentRowDragProps;
+  permissionLabel?: string | null;
+  onPermissions?: () => void;
+  refusal?: RefusalChipData;
+  onRefusal?: (latest: RefusalChipData['latest']) => void;
 }) {
   const endRename = (draft: string | null) => {
     const next = draft?.trim();
@@ -212,6 +221,23 @@ export function AgentRow({
             {space !== undefined && <span className="session__space">{` · ${space}`}</span>}
           </span>
         </button>
+      )}
+      {permissionLabel && onPermissions && (
+        <button
+          type="button"
+          className="session__permission"
+          title="Permissions…"
+          aria-label={`Permissions · ${session.name}: ${permissionLabel}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onPermissions();
+          }}
+        >
+          {permissionLabel}
+        </button>
+      )}
+      {!editing && (
+        <RefusalChip data={refusal} sessionName={session.name} compact onClick={onRefusal} />
       )}
       {hasKids && (
         <button

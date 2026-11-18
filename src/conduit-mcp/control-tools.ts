@@ -177,6 +177,7 @@ export interface PreparedCall<T> {
 }
 /** Built per call by the host from the caller's resolved policy. */
 export interface ControlCallContext {
+  stillCurrent(): boolean;
   move: Move | undefined;
   reach: Reach | undefined;
   /** Bound by the host to flow.requestUi with this call's in-flight entry and caller. */
@@ -761,16 +762,16 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
           } catch (e) {
             return failed(tool, caller, e, abs);
           }
+          if ('sessionId' in outcome) token.keep();
           if (!outcome.ok)
             return {
               ok: false,
               error: toolError(
                 outcome.code,
                 outcome.message,
-                outcome.code === 'spawn_unconfirmed' ? outcome.sessionId : undefined,
+                'sessionId' in outcome ? outcome.sessionId : undefined,
               ),
             };
-          token.keep();
           deps.info('control open', {
             tool,
             caller: caller.handle,
@@ -882,7 +883,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
         },
       }));
     },
-    async prepareOpenFile(caller, raw) {
+    async prepareOpenFile(caller, raw, ctx) {
       const a = parseFileArgs(raw);
       if (isFail(a)) return a;
       if (a.kind === 'many') {
@@ -904,6 +905,14 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
                   continue;
                 }
                 try {
+                  if (!ctx.stillCurrent()) {
+                    results.push({
+                      path,
+                      opened: false,
+                      error: fail('tool_disabled', 'Permissions changed while running').error,
+                    });
+                    continue;
+                  }
                   await deps.openFile({
                     callerSessionId: who.sessionId,
                     path,

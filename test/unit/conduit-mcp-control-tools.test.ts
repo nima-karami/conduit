@@ -25,6 +25,7 @@ const noUi: ControlCallContext['ui'] = async () => {
   throw new Error('the open tools never ask the renderer');
 };
 const ctxOf = (move?: Move): ControlCallContext => ({
+  stillCurrent: () => true,
   move,
   reach: undefined,
   ui: noUi,
@@ -452,6 +453,29 @@ describe('createControlHandlers', () => {
       },
     });
   });
+
+  it.each(['open_failed', 'spawn_unconfirmed'] as const)(
+    '%s consumes the existing open budget when a pane was created',
+    async (refusal) => {
+      const h = harness();
+      let count = 0;
+      h.outcome = async () => ({
+        ok: false,
+        code: refusal,
+        message: 'launch refused',
+        sessionId: `created-${++count}`,
+      });
+      const c = whenOn(h.deps);
+      for (let i = 0; i < ACT_RATE_PER_CALLER; i++) {
+        expect(await c.openSession(caller(), sessionArgs())).toMatchObject({
+          ok: false,
+          error: { code: refusal, sessionId: `created-${i + 1}` },
+        });
+      }
+      expect(code(await c.openSession(caller(), sessionArgs()))).toBe('rate_limited');
+      expect(count).toBe(ACT_RATE_PER_CALLER);
+    },
+  );
 
   it('server_stopping is retryable', async () => {
     const h = harness();
@@ -1254,3 +1278,65 @@ describe('list_agents (flexible-agent-contracts §4.2)', () => {
     expect(code(await c.prepareListAgents(caller(), { path: '/repo' }))).toBe('invalid_args');
   });
 });
+
+it.each(['false', 'throw'] as const)(
+  'multi-path file dispatch retains earlier result when current predicate becomes %s',
+  async (change) => {
+    let current = true;
+    let release!: () => void;
+    let entered = false;
+    const gate = new Promise<void>((done) => {
+      release = done;
+    });
+    const h = harness();
+    for (const path of ['/a.ts', '/b.ts', '/c.ts']) h.kinds[path] = 'file';
+    h.deps.openFile = async (request) => {
+      h.files.push(request);
+      if (request.path === '/a.ts') {
+        entered = true;
+        await gate;
+      }
+      return { sessionId: 'opened' };
+    };
+    const ctx = {
+      ...ctxOf(),
+      stillCurrent: () => {
+        if (!current && change === 'throw') throw new Error('authority producer failed');
+        return current;
+      },
+    };
+    const control = createControlHandlers(h.deps);
+    const preparedResult = await control.prepareOpenFile(
+      caller(),
+      { paths: ['/a.ts', '/b.ts', '/c.ts'], focus: true },
+      ctx,
+    );
+    if (!preparedResult.ok || 'done' in preparedResult.value)
+      throw new Error('expected prepared file batch');
+    const prepared = preparedResult.value;
+    const result = prepared.run();
+    await Promise.resolve();
+    expect(entered).toBe(true);
+    current = false;
+    release();
+    expect(await result).toMatchObject({
+      ok: true,
+      value: {
+        results: [
+          { path: '/a.ts', opened: true },
+          {
+            path: '/b.ts',
+            opened: false,
+            error: { code: change === 'throw' ? 'open_failed' : 'tool_disabled' },
+          },
+          {
+            path: '/c.ts',
+            opened: false,
+            error: { code: change === 'throw' ? 'open_failed' : 'tool_disabled' },
+          },
+        ],
+      },
+    });
+    expect(h.files.map((request) => request.path)).toEqual(['/a.ts']);
+  },
+);

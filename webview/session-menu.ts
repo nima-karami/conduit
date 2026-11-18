@@ -38,6 +38,17 @@ export type SessionMenuAction =
   | 'closeOthers'
   | 'closeAll';
 
+export function canOpenSessionPermissions(
+  sessionId: string,
+  ownedSessions: readonly { id: string }[],
+  policySessions: Readonly<Record<string, unknown>> | undefined,
+): boolean {
+  return (
+    ownedSessions.some((session) => session.id === sessionId) &&
+    policySessions?.[sessionId] !== undefined
+  );
+}
+
 /** Why messaging works or does not for this session, as the old card's badge said it. */
 export type SessionMcpLink = CardMcpStatus | { kind: 'unavailable'; reason: McpUnavailableReason };
 
@@ -160,7 +171,7 @@ export function buildSessionMenu(input: SessionMenuInput): MenuItem[] {
       ),
     );
   }
-  if (input.mcpSwitchable) messaging.push(item('mcpTools', MCP_STR.tools.menuItem));
+  if (input.mcpSwitchable) messaging.push(item('mcpTools', 'Permissions…'));
   if (input.mcpSetupNeeded) messaging.push(item('setupMcp', MCP_STR.install.setupCommand));
 
   const groups: MenuItem[][] = [

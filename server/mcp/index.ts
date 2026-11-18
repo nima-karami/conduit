@@ -283,6 +283,7 @@ export function createMcp(deps: McpServerDeps): ServerMcp {
     tokens,
     launch: {
       whenLaunchReady: () => h.whenLaunchReady(),
+      prepareNativeLaunch: (sessionId, def, spec) => h.prepareNativeLaunch(sessionId, def, spec),
       prepareLaunch(sessionId, def, spec, ids) {
         prepared.set(sessionId, ids.generation);
         // D28: a binding belongs to one generation.

@@ -11,6 +11,7 @@ import {
   isCompatibleCore,
 } from '../../src/contracts/hc';
 import schema from '../../src/contracts/hc/hc.openrpc.json';
+import type { NativeLaunchEvidence } from '../../src/contracts/native-launch';
 import type {
   AttentionPort,
   DomainOpenFailureCode,
@@ -237,7 +238,11 @@ describe('server ports', () => {
   it('carry launch uncertainty and stopping in the MCP open outcome', () => {
     expectTypeOf<McpOpenOutcome>().toExtend<DomainOpenOutcome>();
     expectTypeOf<DomainOpenFailureCode>().toEqualTypeOf<
-      'unknown_agent' | 'brief_unavailable' | 'spawn_unconfirmed' | 'server_stopping'
+      | 'unknown_agent'
+      | 'brief_unavailable'
+      | 'spawn_unconfirmed'
+      | 'server_stopping'
+      | 'open_failed'
     >();
     expectTypeOf<
       Extract<DomainOpenOutcome, { code: 'spawn_unconfirmed' }>['sessionId']
@@ -276,10 +281,12 @@ describe('server ports', () => {
   });
 
   // The ids have one producer (W4) and travel explicitly; the reserve behind prepareLaunch persists.
-  it('pass launch ids explicitly through an async launch seam', () => {
-    expectTypeOf<SessionStorePort['allocateLaunch']>().returns.toEqualTypeOf<LaunchIds>();
+  it('pass launch ids explicitly through a synchronous launch seam', () => {
+    expectTypeOf<
+      SessionStorePort['nativeLaunchOf']
+    >().returns.toEqualTypeOf<NativeLaunchEvidence | null>();
     expectTypeOf<LaunchPort['prepareLaunch']>().parameter(3).toEqualTypeOf<LaunchIds>();
-    expectTypeOf<LaunchPort['prepareLaunch']>().returns.toEqualTypeOf<Promise<SpawnSpec>>();
+    expectTypeOf<LaunchPort['prepareLaunch']>().returns.toEqualTypeOf<SpawnSpec>();
     expectTypeOf<Parameters<TerminalRuntime['spawn']>[3]>().toEqualTypeOf<LaunchIds>();
   });
 

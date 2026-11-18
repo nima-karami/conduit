@@ -39,6 +39,7 @@ const stateOf = (entries: Array<[AssignmentPoint, Assignment]>): PolicyState => 
   assignments: new Map(entries.map(([p, a]) => [pointKey(p), a])),
   grants: [],
   overrides: [],
+  sessionDenials: [],
   failClosed: false,
 });
 
@@ -559,6 +560,7 @@ describe('explicit session choices are pinned', () => {
     assignments: new Map([...m.values()].map(([p, a]) => [pointKey(p), a])),
     grants: [],
     overrides: [],
+    sessionDenials: [],
     failClosed: false,
   });
   const CODEX = { ...P, sessionId: 's9', launchedCli: 'codex' as CliKind };
@@ -589,6 +591,7 @@ describe('explicit session choices are pinned', () => {
         profiles: [],
         assignments: [...m.values()].map(([point, assignment]) => ({ point, assignment })),
         overrides: [],
+        sessionDenials: [],
         migratedFrom: null,
         notes: { onScreenOnlyOffered: [] },
       }),

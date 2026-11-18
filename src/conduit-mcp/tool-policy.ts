@@ -63,7 +63,7 @@ export type When = (typeof WHEN_VALUES)[number];
 export type Reach = (typeof REACH_VALUES)[number];
 export type Move = (typeof MOVE_VALUES)[number];
 export type PolicyField = 'access' | 'when' | 'reach' | 'move';
-export type PolicyValue = Access | When | Reach | Move;
+type PolicyValue = Access | When | Reach | Move;
 
 /** Only the tool's applicable fields are present (spec §3.2). */
 export interface ToolPolicy {
@@ -265,7 +265,7 @@ export function isMachineTool(t: ToolName): boolean {
   return MACHINES.has(t);
 }
 
-const isRecord = (v: unknown): v is Record<string, unknown> =>
+export const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
 const offered = (tool: ToolName, field: PolicyField): readonly PolicyValue[] => {
@@ -448,7 +448,7 @@ export function coercePolicyPatch(tool: ToolName, v: unknown): ToolPolicyPatch |
 /** Also the call flow's fail-closed answer for a policy that reached it as 'off'. */
 export const toolDisabled = (tool: ToolName): ToolError =>
   toolError('tool_disabled', `${tool} is not enabled for this session`, undefined, {
-    hint: `Turn on ${tool} in Settings → MCP (it is off for this session or CLI)`,
+    hint: `Review access to ${tool} in Settings → Permissions`,
   });
 
 export const NOT_IN_SESSION_HINT =

@@ -613,6 +613,7 @@ function realManager(dial: SshDial) {
     changed: () => undefined,
     onOwnerKey: () => false,
     reconnected: () => undefined,
+    connectionReplaced: () => undefined,
   });
   return { clock, store, manager };
 }

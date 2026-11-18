@@ -45,7 +45,7 @@ export function createTokenStore(
         createdAt: '2026-11-02T00:00:00.000Z',
       });
     },
-    async reserve(sessionId, ids) {
+    reserve(sessionId, ids) {
       for (const [id, row] of rows) {
         if (row.sessionId !== sessionId) continue;
         if (row.state === 'unconfirmed') row.state = 'superseded';

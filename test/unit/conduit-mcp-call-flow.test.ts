@@ -17,7 +17,12 @@ import {
 import type { Prepared, PreparedCall } from '../../src/conduit-mcp/control-tools';
 import type { GrantChoice } from '../../src/conduit-mcp/grant-store';
 import type { JsonRpcId } from '../../src/conduit-mcp/json-rpc';
-import type { OneUseOverride, PolicyDecision } from '../../src/conduit-mcp/policy-types';
+import type {
+  Grant,
+  OneUseOverride,
+  PolicyCommitError,
+  PolicyDecision,
+} from '../../src/conduit-mcp/policy-types';
 import type { CliKind } from '../../src/conduit-mcp/tool-policy';
 import type { Result } from '../../src/conduit-mcp/types';
 import {
@@ -46,6 +51,20 @@ const HELD: OneUseOverride = {
   tool: 'open_session',
   target: { sessionId: null, path: null, folder: null, projectId: null },
   createdAt: '2026-11-15T00:00:00.000Z',
+};
+const CREATED: Grant = {
+  id: 'new-grant',
+  who: { kind: 'session', sessionId: CALLER },
+  tool: 'open_session',
+  on: { kind: 'anywhere' },
+  for: 'session-end',
+  anchorSessionId: CALLER,
+  createdAt: '2026-11-15T00:00:00.000Z',
+  expiresAt: null,
+  lastUsedAt: null,
+  state: 'active',
+  endedAt: null,
+  requestId: 'perm-1',
 };
 const ALWAYS_GRANT: GrantChoice = { who: 'session', on: 'anywhere', for: 'session-end' };
 
@@ -80,6 +99,7 @@ function setup() {
   const reDecides: string[][] = [];
   const grants: Array<{ choice: GrantChoice; requestId: string }> = [];
   const answerCommits: string[][] = [];
+  const cleanupIds: string[][] = [];
   let perm = 0;
   const owners = new Map<string, number | null>([
     [CALLER, 1],
@@ -93,10 +113,15 @@ function setup() {
     messagingOn: true,
     appUp: true,
     redecide: { kind: 'ready' } as AnswerDecision,
-    grantOutcome: 'made' as GrantOutcome,
+    grantOutcome: { ok: true, grants: [CREATED] } as GrantOutcome,
     commitOk: true,
+    commitError: null as PolicyCommitError | null,
+    throwAt: '',
+    cleanupThrows: false,
     awaitingChanged: 0,
     sendThrows: false,
+    denialFails: false,
+    denialRechecks: false,
   };
   const uiSent: Array<{ windowId: number; msg: HostToWebview }> = [];
   const notReady = new Set<number>();
@@ -108,6 +133,15 @@ function setup() {
     },
     clearTimer: (h) => {
       timers.delete(h as number);
+    },
+    saveSessionDenial: (_id, _session, _tool, callback) => {
+      if (state.denialFails) return { ok: false, error: 'save-failed' };
+      callback();
+      if (state.denialRechecks) {
+        policies.set(CALLER, { ...ASK, decision: 'deny' });
+        flow.recheck();
+      }
+      return { ok: true };
     },
     newAskId: () => `ask-${++ask}`,
     ownerWindowOf: (id) => owners.get(id) ?? null,
@@ -121,6 +155,7 @@ function setup() {
       return `perm-${++perm}`;
     },
     settlePermission: (e) => {
+      if (state.throwAt === 'settle') throw new Error('broken settle');
       settled.push(e);
     },
     onAwaitingChanged: () => state.awaitingChanged++,
@@ -201,22 +236,33 @@ function setup() {
       commit: () => {
         commits.n++;
         events.push('commit');
-        if (o.commitResult === false) return null;
-        return { decision: o.commitTo ?? decision, held: o.held ?? [] };
+        if (o.commitResult === false) return { ok: false, error: 'policy-changed' };
+        return { ok: true, decision: o.commitTo ?? decision, held: o.held ?? [] };
       },
       permission: { why: 'the policy asks', targets: [], grantable: true },
       denyReason: () => o.denyReason ?? null,
       reDecide: (held) => {
+        if (state.throwAt === 'reDecide') throw new Error('broken reDecide');
         reDecides.push(held.map((h) => h.id));
         return o.redecide ?? state.redecide;
       },
       grant: (choice, requestId) => {
+        if (state.throwAt === 'grant') throw new Error('broken grant');
         grants.push({ choice, requestId });
         return o.grantOutcome ?? state.grantOutcome;
       },
       commitAnswered: (held) => {
+        if (state.throwAt === 'commit') throw new Error('broken commit');
         answerCommits.push(held.map((h) => h.id));
-        return o.commitOk ?? state.commitOk;
+        if (state.commitError !== null) return { ok: false, error: state.commitError };
+        return (o.commitOk ?? state.commitOk)
+          ? { ok: true, overrides: [] }
+          : { ok: false, error: 'policy-changed' };
+      },
+      revokeCreatedGrants: (ids) => {
+        cleanupIds.push([...ids]);
+        if (state.cleanupThrows) throw new Error('broken cleanup');
+        return { ok: true };
       },
       source: 'global',
       args: { path: '/repo', agent: 'claude' },
@@ -255,6 +301,7 @@ function setup() {
     reDecides,
     grants,
     answerCommits,
+    cleanupIds,
     owners,
     policies,
     state,
@@ -356,7 +403,7 @@ describe('createCallFlow', () => {
         code: 'tool_disabled',
         message: 'open_session is not enabled for this session',
         retryable: false,
-        hint: 'Turn on open_session in Settings → MCP (it is off for this session or CLI)',
+        hint: 'Review access to open_session in Settings → Permissions',
       },
     });
     expect(t.asks()).toEqual([]);
@@ -507,7 +554,7 @@ describe('createCallFlow', () => {
 
   it('a grant the re-decide refuses (session gone) → cancelled, run not called', async () => {
     const t = setup();
-    const c = t.call({ grantOutcome: 'session-gone' });
+    const c = t.call({ grantOutcome: { ok: false, error: 'session-gone' } });
     await t.flush();
     answerLast(t, t.flow, 'always');
     const r = await c.promise;
@@ -562,7 +609,7 @@ describe('createCallFlow', () => {
 
   it('a grant scope that does not resolve ends the ask withdrawn with that reason, creating nothing more', async () => {
     const t = setup();
-    const c = t.call({ grantOutcome: 'scope' });
+    const c = t.call({ grantOutcome: { ok: false, error: 'scope' } });
     await t.flush();
     answerLast(t, t.flow, 'always');
     const r = await c.promise;
@@ -689,14 +736,221 @@ describe('createCallFlow', () => {
     expect(t.reDecides[0]).toEqual(['ov-held']);
   });
 
+  it('acknowledges a durable answer before waiting for the tool to finish', async () => {
+    const t = setup();
+    const runGate = gate();
+    const c = t.call({ runGate });
+    await t.flush();
+    const result = await t.flow.answerPermission(
+      'perm-1',
+      { outcome: 'allowed', grant: ALWAYS_GRANT },
+      1,
+    );
+    expect(result).toEqual({ ok: true });
+    expect(runGate.held).toBe(true);
+    expect(c.out.done).toBe(false);
+    runGate.go();
+    expect(await c.promise).toEqual({ ok: true, value: 'opened' });
+  });
+
+  it('returns a commit IO failure without creating or running new authority', async () => {
+    const t = setup();
+    t.state.commitError = 'save-failed';
+    const c = t.call();
+    await t.flush();
+    expect(
+      await t.flow.answerPermission('perm-1', { outcome: 'allowed', grant: ALWAYS_GRANT }, 1),
+    ).toEqual({
+      ok: false,
+      reason: 'not_answerable',
+      message: 'Permissions could not be saved (save-failed)',
+    });
+    expect(t.grants).toEqual([]);
+    expect(c.spies.run).toBe(0);
+    expect(errCode(await c.promise)).toBe('policy_unavailable');
+  });
+
+  it.each(['reDecide', 'commit', 'grant', 'settle'])(
+    'refuses the receipt and propagates a throwing %s producer',
+    async (stage) => {
+      const t = setup();
+      const c = t.call();
+      const failed = c.promise.catch((error: unknown) => error);
+      await t.flush();
+      t.state.throwAt = stage;
+      const receipt = t.flow.answerPermission(
+        'perm-1',
+        { outcome: 'allowed', grant: ALWAYS_GRANT },
+        1,
+      );
+      expect(await receipt).toEqual({
+        ok: false,
+        reason: 'not_answerable',
+        message: 'Permission answer failed before the action ran',
+      });
+      expect(await failed).toEqual(new Error(`broken ${stage}`));
+      expect(c.spies.run).toBe(0);
+      expect(t.cleanupIds).toEqual(stage === 'settle' ? [['new-grant']] : []);
+    },
+  );
+
+  it('preserves settlement and cleanup exceptions while refusing the receipt', async () => {
+    const t = setup();
+    const c = t.call();
+    const failed = c.promise.catch((error: unknown) => error);
+    await t.flush();
+    t.state.throwAt = 'settle';
+    t.state.cleanupThrows = true;
+    const receipt = t.flow.answerPermission(
+      'perm-1',
+      { outcome: 'allowed', grant: ALWAYS_GRANT },
+      1,
+    );
+    expect((await receipt).ok).toBe(false);
+    const error = await failed;
+    expect(error).toBeInstanceOf(AggregateError);
+    if (!(error instanceof AggregateError)) throw new Error('missing aggregate');
+    expect(error.errors).toEqual([new Error('broken settle'), new Error('broken cleanup')]);
+    expect(c.spies.run).toBe(0);
+    expect(t.cleanupIds).toEqual([['new-grant']]);
+  });
+
+  it('does not create a grant when the answered commit refuses', async () => {
+    const t = setup();
+    const c = t.call({ commitOk: false });
+    await t.flush();
+    const receipt = await t.flow.answerPermission(
+      'perm-1',
+      { outcome: 'allowed', grant: ALWAYS_GRANT },
+      1,
+    );
+    expect(receipt.ok).toBe(false);
+    expect(t.grants).toEqual([]);
+    expect(c.spies.run).toBe(0);
+    await c.promise;
+  });
+
+  it('returns the grant persistence failure instead of acknowledging an accepted queue item', async () => {
+    const t = setup();
+    const c = t.call({ grantOutcome: { ok: false, error: 'save-failed' } });
+    await t.flush();
+    expect(
+      await t.flow.answerPermission('perm-1', { outcome: 'allowed', grant: ALWAYS_GRANT }, 1),
+    ).toEqual({
+      ok: false,
+      reason: 'not_answerable',
+      message: 'Permissions could not be saved (save-failed)',
+    });
+    expect(errCode(await c.promise)).toBe('cancelled');
+    expect(c.spies.run).toBe(0);
+    expect(t.settled).toMatchObject([{ end: 'withdrawn', answer: null }]);
+  });
+
+  it.each(['cancel', 'dispose', 'gone', 'window'] as const)(
+    'settles answer receipt on %s before continuation without executing',
+    async (how) => {
+      const t = setup();
+      const c = t.call({ connId: 1, requestId: 'call' });
+      await t.flush();
+      const receipt = t.flow.answerPermission(
+        'perm-1',
+        { outcome: 'allowed', grant: ALWAYS_GRANT },
+        1,
+      );
+      if (how === 'cancel') t.flow.cancelled(1, 'call');
+      else if (how === 'dispose') t.flow.dispose();
+      else if (how === 'gone') t.flow.sessionGone(CALLER);
+      else t.flow.windowReset(1);
+      expect(await receipt).toMatchObject({ ok: false, reason: 'not_answerable' });
+      expect(await c.promise).toBeNull();
+      expect(c.spies.run).toBe(0);
+      expect(t.grants).toHaveLength(0);
+    },
+  );
+
+  it('returns the policy redecision or consume failure to the answer owner', async () => {
+    for (const mode of ['redecision', 'consume'] as const) {
+      const t = setup();
+      const c = t.call(
+        mode === 'redecision'
+          ? { redecide: { kind: 'withdraw', reason: 'new deny' } }
+          : { commitOk: false },
+      );
+      await t.flush();
+      expect(await t.flow.answerPermission('perm-1', { outcome: 'allowed' }, 1)).toEqual({
+        ok: false,
+        reason: 'not_answerable',
+        message: mode === 'redecision' ? 'new deny' : 'the policy changed while the request waited',
+      });
+      expect(c.spies.run).toBe(0);
+      await c.promise;
+    }
+  });
+
+  it('settles a durable session denial before its synchronous policy recheck', async () => {
+    const t = setup();
+    const c = t.call();
+    await t.flush();
+    t.state.denialRechecks = true;
+    expect(
+      await t.flow.answerPermission('perm-1', { outcome: 'denied', scope: 'session' }, 1),
+    ).toEqual({ ok: true });
+    expect(errCode(await c.promise)).toBe('denied');
+    expect(t.settled).toMatchObject([
+      { requestId: 'perm-1', end: 'answered', answer: { outcome: 'denied', scope: 'session' } },
+    ]);
+  });
+
+  it('still cancels an ordinary answer receipt and other waits on denial recheck', async () => {
+    const t = setup();
+    const denial = t.call({ connId: 1, requestId: 'denial' });
+    const ordinary = t.call({ connId: 2, requestId: 'ordinary' });
+    const pending = t.call({ connId: 3, requestId: 'pending' });
+    await t.flush();
+    const ordinaryReceipt = t.flow.answerPermission('perm-2', { outcome: 'allowed' }, 1);
+    t.state.denialRechecks = true;
+    const denialReceipt = t.flow.answerPermission(
+      'perm-1',
+      { outcome: 'denied', scope: 'session' },
+      1,
+    );
+    expect(await denialReceipt).toEqual({ ok: true });
+    expect(await ordinaryReceipt).toMatchObject({ ok: false, reason: 'not_answerable' });
+    expect(errCode(await denial.promise)).toBe('denied');
+    expect(await ordinary.promise).toBeNull();
+    expect(errCode(await pending.promise)).toBe('cancelled');
+  });
+
+  it('keeps the exact wait open when a session denial cannot be saved', async () => {
+    const t = setup();
+    const c = t.call();
+    await t.flush();
+    t.state.denialFails = true;
+    expect(t.flow.ownsPermissionWait('perm-1', 1)).toBe(true);
+    expect(t.flow.ownsPermissionWait('perm-1', 2)).toBe(false);
+    expect(
+      await t.flow.answerPermission('perm-1', { outcome: 'denied', scope: 'session' }, 1),
+    ).toMatchObject({ ok: false, reason: 'not_answerable' });
+    expect(t.flow.ownsPermissionWait('perm-1', 1)).toBe(true);
+    t.state.denialFails = false;
+    expect(
+      await t.flow.answerPermission('perm-1', { outcome: 'denied', scope: 'session' }, 1),
+    ).toEqual({ ok: true });
+    expect(errCode(await c.promise)).toBe('denied');
+  });
+
   it("answerPermission from a window that is not the ask's owner is refused and the ask keeps waiting", async () => {
     const t = setup();
     const c = t.call();
     await t.flush();
-    expect(t.flow.answerPermission('perm-1', { outcome: 'denied' }, 2)).toBe(false);
+    expect(await t.flow.answerPermission('perm-1', { outcome: 'denied' }, 2)).toEqual({
+      ok: false,
+      reason: 'not_answerable',
+      message: 'nothing is waiting on this request',
+    });
     expect(t.asks()).toHaveLength(1);
     expect(c.out.done).toBe(false);
-    expect(t.flow.answerPermission('perm-1', { outcome: 'denied' }, 1)).toBe(true);
+    expect(await t.flow.answerPermission('perm-1', { outcome: 'denied' }, 1)).toEqual({ ok: true });
     expect(errCode(await c.promise)).toBe('denied');
     expect(t.closed()).toContainEqual({
       type: 'mcp:askClosed',
@@ -711,7 +965,9 @@ describe('createCallFlow', () => {
     t.state.appUp = false;
     const c = t.call();
     await t.flush();
-    expect(t.flow.answerPermission('perm-1', { outcome: 'denied' }, NO_OWNER_WINDOW)).toBe(false);
+    expect(await t.flow.answerPermission('perm-1', { outcome: 'denied' }, NO_OWNER_WINDOW)).toEqual(
+      { ok: false, reason: 'not_answerable', message: 'nothing is waiting on this request' },
+    );
     expect(c.out.done).toBe(false);
     t.advance(ASK_TIMEOUT_MS.claude);
     expect(errCode(await c.promise)).toBe('approval_timeout');
@@ -721,8 +977,12 @@ describe('createCallFlow', () => {
     const t = setup();
     const c = t.call();
     await t.flush();
-    expect(t.flow.answerPermission('perm-missing', { outcome: 'denied' }, 1)).toBe(false);
-    expect(t.flow.answerPermission('perm-1', { outcome: 'denied' }, 1)).toBe(true);
+    expect(await t.flow.answerPermission('perm-missing', { outcome: 'denied' }, 1)).toEqual({
+      ok: false,
+      reason: 'not_answerable',
+      message: 'nothing is waiting on this request',
+    });
+    expect(await t.flow.answerPermission('perm-1', { outcome: 'denied' }, 1)).toEqual({ ok: true });
     expect(errCode(await c.promise)).toBe('denied');
   });
 

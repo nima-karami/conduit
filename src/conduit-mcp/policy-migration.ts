@@ -24,6 +24,8 @@ import {
 
 export interface LegacyPolicy {
   global: GlobalPolicy;
+  explicitGlobal?: PolicyLayer;
+  resolvedGlobal?: PolicyLayer;
   byCli: CliPolicyLayers;
   sessions: Array<{ sessionId: string; layer: PolicyLayer; cli: CliKind | null }>;
 }
@@ -82,21 +84,52 @@ export function migrateLegacyPolicy(
   const { global, byCli, sessions } = legacy;
   const assignments: PolicyFile['assignments'] = [];
   const onScreenOnlyOffered: string[] = [];
+  let summaryTruncated = false;
+  const summary: NonNullable<PolicyFile['notes']['migrationSummary']> = [];
+  const capture = (
+    point: NonNullable<PolicyFile['notes']['migrationSummary']>[number]['point'],
+    layer: PolicyLayer,
+    assignment: Assignment,
+    provenance?: 'resolved-global',
+  ) => {
+    const fields = TOOL_NAMES.flatMap((tool) =>
+      TOOL_SPECS[tool].fields.flatMap((field) => {
+        const value = layer[tool]?.[field];
+        return value === undefined ? [] : [{ tool, field, value }];
+      }),
+    );
+    if (!fields.length) return;
+    if (summary.length >= 16 || (point.kind === 'session' && point.sessionId.length > 256)) {
+      summaryTruncated = true;
+      return;
+    }
+    if (fields.length > 128) summaryTruncated = true;
+    summary.push({
+      point,
+      fields: fields.slice(0, 128),
+      profileId: assignment.profileId as 'worker' | 'lead',
+      exceptions: assignment.exceptions.length,
+      onScreenOnly: assignment.onScreenOnly,
+      ...(provenance ? { provenance } : {}),
+    });
+  };
 
   const defaultAssignment = assignmentFor((tool) => resolvePolicy(tool, { global }).policy);
+  if (legacy.explicitGlobal) capture({ kind: 'default' }, legacy.explicitGlobal, defaultAssignment);
+  else if (legacy.resolvedGlobal)
+    capture({ kind: 'default' }, legacy.resolvedGlobal, defaultAssignment, 'resolved-global');
   if (!isPlainWorker(defaultAssignment))
     assignments.push({ point: { kind: 'default' }, assignment: defaultAssignment });
 
   for (const cli of CLI_KINDS) {
     const layer = byCli[cli];
     if (layer === undefined || !hasFields(layer)) continue;
-    assignments.push({
-      point: { kind: 'cli', cli },
-      assignment: assignmentFor(
-        (tool) => resolvePolicy(tool, { cli: layer, global }).policy,
-        pinsOf(layer),
-      ),
-    });
+    const assignment = assignmentFor(
+      (tool) => resolvePolicy(tool, { cli: layer, global }).policy,
+      pinsOf(layer),
+    );
+    capture({ kind: 'cli', cli }, layer, assignment);
+    assignments.push({ point: { kind: 'cli', cli }, assignment });
   }
 
   for (const s of sessions) {
@@ -106,9 +139,22 @@ export function migrateLegacyPolicy(
       (tool) => resolvePolicy(tool, { session: s.layer, cli: cliLayer, global }).policy,
       pinsOf(s.layer),
     );
+    capture({ kind: 'session', sessionId: s.sessionId }, s.layer, assignment);
     assignments.push({ point: { kind: 'session', sessionId: s.sessionId }, assignment });
     if (assignment.profileId === 'lead') onScreenOnlyOffered.push(s.sessionId);
   }
 
-  return { assignments, migratedFrom: 'v0.64', notes: { onScreenOnlyOffered } };
+  return {
+    assignments,
+    migratedFrom: 'v0.64',
+    notes: {
+      onScreenOnlyOffered,
+      ...(summary.length
+        ? {
+            migrationSummary: summary,
+            ...(summaryTruncated ? { migrationSummaryTruncated: true } : {}),
+          }
+        : {}),
+    },
+  };
 }

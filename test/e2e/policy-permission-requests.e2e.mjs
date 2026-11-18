@@ -308,7 +308,11 @@ await runScenario(
       'no denied Activity row for the exception refusal',
     );
     const refusal = activityRows().find(isRefusal);
-    const once = await policyRequest(page, { type: 'mcp:allowOnce', activityId: refusal.id });
+    const once = await policyRequest(page, {
+      type: 'mcp:allowOnce',
+      activityId: refusal.id,
+      at: refusal.at,
+    });
     assert(once.ok === true, `mcp:allowOnce ${refusal.id}: ${JSON.stringify(once)}`);
 
     const retried = await callTool(page, x.sessionId, 'close_session', { session: t2.handle });

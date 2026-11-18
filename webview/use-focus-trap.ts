@@ -1,6 +1,6 @@
 import { type RefObject, useCallback, useEffect, useState } from 'react';
 
-const FOCUSABLE = 'button, [href], input, [tabindex]:not([tabindex="-1"])';
+const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]';
 
 export function useFocusTrap(ref: RefObject<HTMLElement | null>): { restoreFocus(): void } {
   // Read during render, not in an effect: a child's autoFocus runs before any effect of ours.
@@ -12,7 +12,7 @@ export function useFocusTrap(ref: RefObject<HTMLElement | null>): { restoreFocus
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Tab') return;
       const items = [...el.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-        (item) => !item.matches(':disabled'),
+        (item) => !item.matches(':disabled, [tabindex="-1"]') && !item.closest('[hidden]'),
       );
       if (items.length === 0) {
         e.preventDefault();
@@ -21,7 +21,7 @@ export function useFocusTrap(ref: RefObject<HTMLElement | null>): { restoreFocus
       const first = items[0];
       const last = items[items.length - 1];
       const active = document.activeElement;
-      if (e.shiftKey ? active === first : active === last) {
+      if (active === el || (e.shiftKey ? active === first : active === last)) {
         e.preventDefault();
         (e.shiftKey ? last : first).focus();
       }

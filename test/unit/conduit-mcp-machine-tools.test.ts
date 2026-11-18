@@ -84,6 +84,10 @@ function portWith(over: Partial<NetworkPort>): NetworkPort {
     throw new Error('not used by the machine tools');
   };
   return {
+    grantPeerEligible: () => false,
+    onGrantPeerEligibilityChange: () => () => undefined,
+    hasPeer: () => null,
+    inboundPrincipal: () => null,
     remoteEntries: unused,
     resolve: unused,
     enqueue: unused,
@@ -96,6 +100,7 @@ function portWith(over: Partial<NetworkPort>): NetworkPort {
     disconnectMachine: async () => ({ ok: true, value: { machine: 'win-box', state: 'down' } }),
     selfName: () => 'this-machine',
     answerRemoteRequest: () => Promise.reject(new Error('not used by this test')),
+    nativeSupport: () => false,
     pushPolicy: () => Promise.reject(new Error('not used by this test')),
     revokeRemoteGrant: () => Promise.reject(new Error('not used by this test')),
     ...over,
@@ -124,6 +129,7 @@ function rig(network: NetworkPort | undefined) {
   };
   const tools = createMachineTools(deps, prepared);
   const ctx = (signal: AbortSignal): ControlCallContext => ({
+    stillCurrent: () => true,
     move: undefined,
     reach: undefined,
     signal,

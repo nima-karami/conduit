@@ -337,3 +337,18 @@ describe('link store: remove', () => {
     expect(writes).toEqual([]);
   });
 });
+
+it('peerKnown distinguishes authoritative absence from corrupt or newer unknown baselines', () => {
+  for (const text of [null, '{bad', '{"version":99}']) {
+    const mem = memoryIo(text === null ? {} : { [FILE]: text });
+    const store = openLinkStore(FILE, { now: () => T0, log: logSpy(), io: mem.io });
+    expect(store.peerKnown('m-aaaaaaaa')).toBe(text === null ? false : null);
+    if (store.writable) {
+      store.put(rec('m-aaaaaaaa'));
+      expect(store.peerKnown('m-aaaaaaaa')).toBe(true);
+      expect(store.peerKnown('m-bbbbbbbb')).toBe(false);
+      store.revoke('m-aaaaaaaa', T0);
+      expect(store.peerKnown('m-aaaaaaaa')).toBe(false);
+    }
+  }
+});

@@ -95,7 +95,13 @@ export type FsResult =
   | { op: 'write'; hash: string };
 /** The lowest peer minor that serves policy frames: an older peer gets no snapshot and refuses pushes. */
 export const POLICY_MIN_MINOR = 5;
-export const LINK_FEATURES = ['messaging', 'monitor', 'drive', 'view'] as const;
+export const LINK_FEATURES = [
+  'messaging',
+  'monitor',
+  'drive',
+  'view',
+  'native-profile-v1',
+] as const;
 export type LinkFeature = (typeof LINK_FEATURES)[number];
 // The session tools a lead may route to a peer; anything else in a `call` is a malformed frame.
 export const ROUTED_TOOLS = [

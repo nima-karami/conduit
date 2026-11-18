@@ -35,6 +35,7 @@ function snapshot(sessions: MonitorSession[]): MonitorSnapshot {
 function link(machineId: string, name: string, o: Partial<NetworkLinkView> = {}): NetworkLinkView {
   return {
     machineId,
+    editToken: 'fixture',
     name,
     trust: 'own',
     transport: 'ssh',

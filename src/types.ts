@@ -1,4 +1,5 @@
 import type { PolicyLayer } from './conduit-mcp/tool-policy';
+import type { NativeLaunchFailure } from './contracts/native-launch';
 import type { SessionRuntime } from './contracts/session-identity';
 import type { RepoInfo } from './repo-scan';
 
@@ -200,10 +201,9 @@ export interface Session {
 }
 
 /** A missing home is `homeMissing`; this is the other reason a start is refused. */
-export interface StartRefusal {
-  reason: 'unresolvable';
-  command: string;
-}
+export type StartRefusal =
+  | { reason: 'unresolvable'; command: string }
+  | { reason: 'native_permissions'; problem: NativeLaunchFailure };
 
 /** `typeable` ⊆ `unseen`, in unseen order (mf-live-edits spec §2.1). */
 export interface AgentScopeView {

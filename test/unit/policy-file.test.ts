@@ -3,9 +3,12 @@ import {
   type GrantsFile,
   type PolicyFile,
   parseGrantsFile,
+  parsePolicyBackup,
   parsePolicyFile,
   serializeGrantsFile,
   serializePolicyFile,
+  validatePolicyAssignment,
+  validatePolicyProfile,
   validateRemotePolicyDoc,
 } from '../../src/conduit-mcp/policy-file';
 import { OBSERVER } from '../../src/conduit-mcp/policy-profiles';
@@ -34,7 +37,7 @@ function rulesFor(decision: Decision = 'allow'): Record<ToolName, ToolRule> {
 }
 
 const validFile = (): PolicyFile => ({
-  version: 1,
+  version: 2,
   profiles: [{ id: 'p-1', name: 'Mine', builtIn: false, rules: rulesFor('ask') }],
   assignments: [
     {
@@ -82,11 +85,82 @@ const validFile = (): PolicyFile => ({
 });
 
 describe('policy file', () => {
+  it('identifies a duplicate profile safely', () => {
+    const file = validFile();
+    const profile = { ...file.profiles[0], id: `p-bad\n${'x'.repeat(200)}` };
+    expect(parsePolicyFile(JSON.stringify({ ...file, profiles: [profile, profile] }))).toEqual({
+      ok: false,
+      reason: 'corrupt',
+      duplicateProfileId: `p-bad${'x'.repeat(59)}`,
+    });
+  });
+
+  it('removes Unicode category C and truncates on code point boundaries', () => {
+    const file = validFile();
+    const profile = { ...file.profiles[0], id: `p-\u202e\ud800${'a'.repeat(61)}😀tail` };
+    expect(parsePolicyFile(JSON.stringify({ ...file, profiles: [profile, profile] }))).toEqual({
+      ok: false,
+      reason: 'corrupt',
+      duplicateProfileId: `p-${'a'.repeat(61)}😀`,
+    });
+  });
+
+  it.each([1, 2])('refuses ambiguous profile IDs in local policy v%s', (version) => {
+    const file = validFile();
+    const profile = file.profiles[0];
+    expect(
+      parsePolicyFile(
+        JSON.stringify({
+          ...file,
+          version,
+          profiles: [profile, { ...profile, name: 'Duplicate' }],
+        }),
+      ),
+    ).toEqual({ ok: false, reason: 'corrupt', duplicateProfileId: 'p-1' });
+  });
+
+  it('rejects native authority injected into a v1 file and reads vetted v2 modes', () => {
+    const file = validFile();
+    const native = {
+      ...file,
+      profiles: file.profiles.map((profile) => ({
+        ...profile,
+        nativeModes: { claude: 'plan', codex: 'read-only' },
+      })),
+      assignments: file.assignments.map((entry) =>
+        entry.point.kind === 'default'
+          ? { ...entry, assignment: { ...entry.assignment, applyNative: true } }
+          : entry,
+      ),
+    };
+    expect(parsePolicyFile(JSON.stringify({ ...native, version: 1 }))).toEqual({
+      ok: false,
+      reason: 'corrupt',
+    });
+    expect(parsePolicyFile(JSON.stringify({ ...native, version: 2 }))).toEqual({
+      ok: true,
+      file: { ...native, version: 2, sessionDenials: [] },
+    });
+    for (const point of [
+      { kind: 'peer', machineId: 'm-9' },
+      { kind: 'cli', cli: 'cursor' },
+    ]) {
+      expect(
+        validatePolicyAssignment(point, {
+          profileId: 'observer',
+          exceptions: [],
+          onScreenOnly: false,
+          applyNative: true,
+        }),
+      ).toBeNull();
+    }
+  });
+
   it('round-trips a policy file', () => {
     const file = validFile();
     const text = serializePolicyFile(file);
     expect(text).toBe(`${JSON.stringify(file, null, 2)}\n`);
-    expect(parsePolicyFile(text)).toEqual({ ok: true, file });
+    expect(parsePolicyFile(text)).toEqual({ ok: true, file: { ...file, sessionDenials: [] } });
   });
 
   it('round-trips pinned on a session assignment, and rejects a non-string pin', () => {
@@ -101,7 +175,7 @@ describe('policy file', () => {
       },
     });
     const text = serializePolicyFile(file);
-    expect(parsePolicyFile(text)).toEqual({ ok: true, file });
+    expect(parsePolicyFile(text)).toEqual({ ok: true, file: { ...file, sessionDenials: [] } });
     const raw: { assignments: Array<{ assignment: { pinned?: unknown } }> } = JSON.parse(text);
     raw.assignments[raw.assignments.length - 1].assignment.pinned = [1];
     expect(parsePolicyFile(JSON.stringify(raw))).toEqual({ ok: false, reason: 'corrupt' });
@@ -146,13 +220,13 @@ describe('policy file', () => {
     expect(parsed.file.assignments[2]?.assignment.pinned).toEqual(pinsExpected);
   });
 
-  it('corrupt → corrupt, version 2 → newer', () => {
+  it('corrupt → corrupt, version 4 → newer', () => {
     expect(parsePolicyFile('{not json')).toEqual({ ok: false, reason: 'corrupt' });
     expect(parsePolicyFile('[]')).toEqual({ ok: false, reason: 'corrupt' });
     expect(parsePolicyFile('{"version":"1"}')).toEqual({ ok: false, reason: 'corrupt' });
     expect(parsePolicyFile('{"version":0}')).toEqual({ ok: false, reason: 'corrupt' });
-    expect(parsePolicyFile('{"version":2}')).toEqual({ ok: false, reason: 'newer' });
-    const newer = serializePolicyFile(validFile()).replace('"version": 1', '"version": 2');
+    expect(parsePolicyFile('{"version":4}')).toEqual({ ok: false, reason: 'newer' });
+    const newer = serializePolicyFile(validFile()).replace('"version": 2', '"version": 4');
     expect(parsePolicyFile(newer)).toEqual({ ok: false, reason: 'newer' });
   });
 
@@ -236,6 +310,31 @@ describe('policy file', () => {
     expect(parseGrantsFile(text)).toEqual({ ok: true, file });
   });
 
+  it('validates optional grant lifecycle fields without inventing legacy values', () => {
+    const file = validGrants();
+    const legacy = parseGrantsFile(serializeGrantsFile(file));
+    expect(legacy.ok && legacy.file.grants[0].useCount).toBeUndefined();
+    Object.assign(file.grants[0], {
+      useCount: 0,
+      lifecycleRevision: 0,
+      lastConsentedAt: '2026-11-14T12:00:00.000Z',
+    });
+    expect(parseGrantsFile(serializeGrantsFile(file))).toEqual({ ok: true, file });
+    for (const [field, value] of [
+      ['useCount', -1],
+      ['useCount', 1.5],
+      ['lifecycleRevision', Number.MAX_SAFE_INTEGER + 1],
+      ['lastConsentedAt', 'bad'],
+    ] as const) {
+      const invalid = structuredClone(file);
+      Object.assign(invalid.grants[0], { [field]: value });
+      expect(parseGrantsFile(serializeGrantsFile(invalid))).toEqual({
+        ok: false,
+        reason: 'corrupt',
+      });
+    }
+  });
+
   it('grants file: invalid grant → corrupt, version 2 → newer', () => {
     const valid = serializeGrantsFile(validGrants());
     expect(parseGrantsFile(valid).ok).toBe(true);
@@ -265,7 +364,7 @@ describe('policy file', () => {
   it('an unknown field is kept', () => {
     const policy = serializePolicyFile(validFile());
     const policyExtras: Array<[string, string, string]> = [
-      ['"version": 1,', '"version": 1,\n  "extra": true,', '"extra": true'],
+      ['"version": 2,', '"version": 2,\n  "extra": true,', '"extra": true'],
       ['"id": "p-1"', '"id": "p-1", "futureField": 1', '"futureField": 1'],
       ['"onScreenOnly": true', '"onScreenOnly": true, "futureField": "x"', '"futureField": "x"'],
     ];
@@ -569,4 +668,111 @@ describe('validateRemotePolicyDoc', () => {
     expect(Object.keys(r.doc.profiles[0]?.rules ?? {}).sort()).toEqual([...TOOL_NAMES].sort());
     expect(r.doc.assignments[0]?.assignment.pinned).toBeUndefined();
   });
+});
+
+describe('local owner edit validators', () => {
+  it('rejects builtin edits, incomplete rules, invalid values and unprintable names', () => {
+    const profile = { ...structuredClone(OBSERVER), id: 'p-copy', name: 'Copy', builtIn: false };
+    expect(validatePolicyProfile(profile)).toEqual(profile);
+    const circular: Record<string, unknown> = { ...profile };
+    circular.extra = circular;
+    expect(validatePolicyProfile(circular)).toBeNull();
+    expect(validatePolicyProfile(OBSERVER)).toBeNull();
+    expect(validatePolicyProfile({ ...profile, builtIn: true })).toBeNull();
+    expect(validatePolicyProfile({ ...profile, name: '' })).toBeNull();
+    expect(validatePolicyProfile({ ...profile, name: 'x'.repeat(81) })).toBeNull();
+    expect(validatePolicyProfile({ ...profile, rules: {} })).toBeNull();
+    expect(
+      validatePolicyProfile({
+        ...profile,
+        rules: { ...profile.rules, open_file: { ...profile.rules.open_file, when: 'sometimes' } },
+      }),
+    ).toBeNull();
+  });
+
+  it('validates local scopes and limits and normalizes pins defensively', () => {
+    const assignment = {
+      profileId: 'worker',
+      exceptions: [
+        {
+          tool: 'open_file',
+          scope: { kind: 'session', sessionId: 's1' },
+          rule: { decision: 'deny' },
+        },
+      ],
+      onScreenOnly: false,
+      pinned: ['open_file.access', 'open_file.access'],
+    };
+    const entry = validatePolicyAssignment({ kind: 'session', sessionId: 's1' }, assignment);
+    expect(entry?.assignment.pinned).toEqual(['open_file.access']);
+    expect(entry?.assignment).not.toBe(assignment);
+    expect(validatePolicyAssignment({ kind: 'cli', cli: 'fake' }, assignment)).toBeNull();
+    expect(
+      validatePolicyAssignment(
+        { kind: 'default' },
+        {
+          ...assignment,
+          exceptions: [
+            {
+              tool: 'open_file',
+              scope: { kind: 'path', path: 'x'.repeat(1025) },
+              rule: { decision: 'deny' },
+            },
+          ],
+        },
+      ),
+    ).toBeNull();
+    expect(
+      validatePolicyAssignment({ kind: 'default' }, { ...assignment, onScreenOnly: 'yes' }),
+    ).toBeNull();
+    expect(
+      validatePolicyAssignment({ kind: 'default' }, assignment)?.assignment.pinned,
+    ).toBeUndefined();
+  });
+});
+
+it('reads protective v3 session denials and rejects a marker as a primary', () => {
+  const denial = {
+    id: 'd1',
+    requestId: 'r1',
+    sessionId: 's1',
+    tool: 'open_file',
+    createdAt: '2026-11-14T12:00:00.000Z',
+  };
+  const parsed = parsePolicyFile(
+    JSON.stringify({ ...validFile(), version: 3, sessionDenials: [denial] }),
+  );
+  expect(parsed.ok && parsed.file.version).toBe(3);
+  expect(parsePolicyFile(JSON.stringify({ version: 3, kind: 'recovery-unavailable' })).ok).toBe(
+    false,
+  );
+});
+
+it('accepts only the exact recovery marker and validates v3 denials', () => {
+  expect(parsePolicyBackup(JSON.stringify({ version: 3, kind: 'recovery-unavailable' }))).toEqual({
+    kind: 'recovery-unavailable',
+  });
+  expect(
+    parsePolicyBackup(JSON.stringify({ version: 3, kind: 'recovery-unavailable', extra: true })),
+  ).toEqual({ kind: 'bad', reason: 'corrupt' });
+  expect(parsePolicyFile(JSON.stringify({ ...validFile(), version: 3 }))).toEqual({
+    ok: false,
+    reason: 'corrupt',
+  });
+  expect(
+    parsePolicyFile(JSON.stringify({ ...validFile(), version: 3, sessionDenials: [{ id: 'd' }] })),
+  ).toEqual({ ok: false, reason: 'corrupt' });
+});
+
+it.each([
+  '0',
+  '2026-11-14',
+  '2026-11-14T12:00:00Z',
+  '2026-02-30T12:00:00.000Z',
+  '2026-11-14T12:00:00.000+00:00',
+])('rejects noncanonical denial timestamp %s', (createdAt) => {
+  const denial = { id: 'd', requestId: 'r', sessionId: 's', tool: 'open_session', createdAt };
+  expect(
+    parsePolicyFile(JSON.stringify({ ...validFile(), version: 3, sessionDenials: [denial] })),
+  ).toEqual({ ok: false, reason: 'corrupt' });
 });

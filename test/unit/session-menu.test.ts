@@ -4,6 +4,7 @@ import { MCP_STR } from '../../webview/conduit-mcp-strings';
 import {
   buildSelectionMenu,
   buildSessionMenu,
+  canOpenSessionPermissions,
   type SessionMenuAction,
   type SessionMenuInput,
 } from '../../webview/session-menu';
@@ -167,7 +168,7 @@ describe('buildSessionMenu — entries, order and separators', () => {
       'Connected to Conduit as claude-1',
       'Open messages',
       'Pause notices for claude-1',
-      'MCP tools…',
+      'Permissions…',
       'Set up Conduit MCP…',
       'Rename',
     ]);
@@ -180,7 +181,7 @@ describe('buildSessionMenu — entries, order and separators', () => {
     expect(labels(paused)).toContain('Resume notices for claude-1');
     // Tools without a handle yet open their own group.
     const tools = buildSessionMenu(input({ mcpSwitchable: true }).value);
-    expect(find(tools, 'MCP tools…')?.separatorBefore).toBe(true);
+    expect(find(tools, 'Permissions…')?.separatorBefore).toBe(true);
     // Not connected or unavailable: the reason in words, with no messaging entries.
     const missing = buildSessionMenu(
       input({ mcpLink: { kind: 'not-connected', cli: 'codex', install: 'not-installed' } }).value,
@@ -302,4 +303,10 @@ describe('close sub-agents and the multi-selection menu', () => {
     items[0]?.onClick();
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+});
+
+it('requires both current window coverage and a policy projection', () => {
+  expect(canOpenSessionPermissions('s1', [{ id: 's1' }], { s1: {} })).toBe(true);
+  expect(canOpenSessionPermissions('s1', [], { s1: {} })).toBe(false);
+  expect(canOpenSessionPermissions('s1', [{ id: 's1' }], {})).toBe(false);
 });

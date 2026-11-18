@@ -29,8 +29,12 @@ function harness() {
   let seq = 0;
   const timers: FakeTimer[] = [];
   const ended: RequestRecord[] = [];
+  const warnings: Array<{ message: string; data: unknown }> = [];
   let changed = 0;
   const deps: QueueDeps = {
+    warn: (message, data) => {
+      warnings.push({ message, data });
+    },
     now: () => t,
     newId: () => `r_${String(++seq).padStart(12, '0')}`,
     machineId: 'm-test0001',
@@ -63,6 +67,8 @@ function harness() {
   };
   return {
     queue,
+    deps,
+    warnings,
     ended,
     advance,
     liveTimers: () => timers.filter((x) => x.live).length,
@@ -604,4 +610,55 @@ describe('permission requests', () => {
     if (missing.ok) return;
     expect(missing.reason).toBe('not_found');
   });
+});
+
+it.each(['onEnded', 'onChanged', 'clearTimer'] as const)(
+  'commits answers despite throwing %s notification',
+  (stage) => {
+    const h = harness();
+    const made = h.queue.createAgent(stamp(), input({ expiresInMs: 1000 }));
+    if (made.kind !== 'created') throw new Error('expected request');
+    const calls: string[] = [];
+    h.deps.onEnded = (r) => {
+      calls.push('ended');
+      r.title = 'observer mutation';
+      if (stage === 'onEnded') throw new Error(stage);
+    };
+    h.deps.onChanged = () => {
+      calls.push('changed');
+      if (stage === 'onChanged') throw new Error(stage);
+    };
+    h.deps.clearTimer = () => {
+      calls.push('timer');
+      if (stage === 'clearTimer') throw new Error(stage);
+    };
+    const result = h.queue.answer(
+      made.request.id,
+      { outcome: 'approved' },
+      { kind: 'you', windowId: 1 },
+    );
+    expect(result.ok).toBe(true);
+    expect(calls).toEqual(['timer', 'ended', 'changed']);
+    expect(h.warnings).toEqual([
+      {
+        message: 'request notification failed after commit',
+        data: { requestId: made.request.id, stage, error: new Error(stage) },
+      },
+    ]);
+    expect(h.queue.get(made.request.id)?.state).toBe('answered');
+    if (!result.ok) throw new Error('expected committed answer');
+    expect(result.record.title).toBe('Deploy?');
+  },
+);
+it('refuses before canonical answer when timestamp preparation throws', () => {
+  const h = harness();
+  const made = h.queue.createAgent(stamp(), input());
+  if (made.kind !== 'created') throw new Error('expected request');
+  h.deps.now = () => {
+    throw new Error('clock failed');
+  };
+  expect(
+    h.queue.answer(made.request.id, { outcome: 'approved' }, { kind: 'you', windowId: 1 }),
+  ).toEqual({ ok: false, reason: 'not_answerable', message: 'the request could not be committed' });
+  expect(h.queue.get(made.request.id)?.state).toBe('open');
 });

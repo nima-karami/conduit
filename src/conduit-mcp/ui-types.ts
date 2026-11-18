@@ -2,12 +2,13 @@
 // type-only, from node-free modules (./types, ./install-types, ../git-range, ../protocol), so the
 // renderer never reaches a node-backed one (plan ruling 8). The ../protocol ↔ ui-types cycle is
 // type-only and erased at build.
-import type { RemoteGrantView } from '../contracts/remote-policy';
+import type { NativeSelection, NativeSessionUi } from '../contracts/native-launch';
+import type { RemoteGrantView, RemotePolicyPoint } from '../contracts/remote-policy';
 import type { RefEndpoint } from '../git-range';
 import type { ParsedPatchFile } from '../patch-parse';
 import type { CommitNode } from '../protocol';
 import type { AgentCli, UserInstallState } from './install-types';
-import type { PolicyUiState } from './policy-types';
+import type { Assignment, PolicyUiState, Profile, ProfileId } from './policy-types';
 import type { RequestsUiState } from './request-types';
 import type {
   GateClosedReason,
@@ -140,6 +141,11 @@ export interface McpThreadView {
 }
 
 /** A machine's rules as this machine holds them: its mirror, or its draft over it (CON-46 L4). */
+export type RemotePolicyEdit =
+  | { kind: 'assignment'; point: RemotePolicyPoint; assignment: Assignment | null }
+  | { kind: 'profile'; profile: Profile }
+  | { kind: 'delete-profile'; profileId: ProfileId; replacement: ProfileId };
+
 export type RemotePolicyStatus = 'applied' | 'pushing' | 'waiting' | 'conflict' | 'refused';
 
 export interface RemotePolicyUi {
@@ -150,11 +156,13 @@ export interface RemotePolicyUi {
   /** B's rev as last mirrored; null when no copy is held (link gone, or never received). */
   rev: number | null;
   status: RemotePolicyStatus;
+  nativeSupport: boolean;
+  nativeReviewRequired: boolean;
   /** B's message when it refused the push; null otherwise. */
   refusal: string | null;
   /** The rules the owner sees: the draft over the mirror, else the mirror. */
   policy: PolicyUiState;
-  /** B's rules when a push hit a newer rev; null otherwise. */
+  /** Current receiver rules available for conflict or native launch review. */
   conflict: PolicyUiState | null;
   grants: RemoteGrantView[];
 }
@@ -166,7 +174,11 @@ interface McpPolicyUi extends PolicyUiState {
 
 export function emptyPolicyUi(): McpPolicyUi {
   return {
+    editToken: '',
+    saveError: null,
+    backupWarning: null,
     profiles: [],
+    assignments: [],
     sessions: {},
     grants: [],
     legacy: { global: {}, byCli: {}, sessions: {} },
@@ -176,6 +188,12 @@ export function emptyPolicyUi(): McpPolicyUi {
 }
 
 export interface McpUiState {
+  native: Record<string, NativeSessionUi>;
+  nativeImpact: {
+    id: string;
+    total: number;
+    rows: Array<{ sessionId: string; before: NativeSelection; after: NativeSelection }>;
+  } | null;
   enabled: boolean;
   storeError: string | null;
   loading: boolean;

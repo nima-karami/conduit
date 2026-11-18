@@ -1,5 +1,6 @@
 // Node-free: pure text in, text out.
 // Unknown fields are kept and written back (SERVER_FILE_VERSION reader rule); a narrowing field needs a version bump.
+import { parseNativeModes } from '../contracts/native-launch';
 import {
   REMOTE_POLICY_ASSIGNMENTS_MAX,
   REMOTE_POLICY_DOC_MAX_BYTES,
@@ -13,6 +14,7 @@ import {
 import { judgePersistedVersion, type ServerFile } from '../contracts/session-identity';
 import { printableName } from '../network/addresses';
 import { GRANT_FORS } from './grant-store';
+import { supportsNativePoint } from './policy-native';
 import { BUILT_IN_PROFILES, OBSERVER, pointKey } from './policy-profiles';
 import { withPinned } from './policy-projection';
 import type {
@@ -23,17 +25,20 @@ import type {
   Grant,
   GrantState,
   GrantWho,
+  MigrationSummaryRow,
   OneUseOverride,
   PolicyTarget,
   Profile,
   ProfileId,
   Scope,
+  SessionDenial,
   ToolRule,
 } from './policy-types';
 import {
   CLI_KINDS,
   type CliKind,
   isToolName,
+  isValidField,
   MOVE_VALUES,
   REACH_VALUES,
   TOOL_NAMES,
@@ -42,14 +47,22 @@ import {
 } from './tool-policy';
 
 export interface PolicyFile {
-  version: 1;
+  version: 1 | 2 | 3;
   /** Bumped on every change to the portable projection (see policy-service). A missing rev reads as 0. */
   rev?: number;
   profiles: Profile[];
   assignments: Array<{ point: AssignmentPoint; assignment: Assignment }>;
   overrides: OneUseOverride[];
+  activityReceipts?: { id: string; at: string }[];
+  activityReceiptCutoff?: string;
+  sessionDenials?: SessionDenial[];
   migratedFrom: 'v0.64' | null;
-  notes: { onScreenOnlyOffered: string[] };
+  notes: {
+    onScreenOnlyOffered: string[];
+    migrationAcknowledged?: boolean;
+    migrationSummary?: MigrationSummaryRow[];
+    migrationSummaryTruncated?: boolean;
+  };
 }
 
 export interface GrantsFile {
@@ -91,6 +104,29 @@ const isCliKind = (v: unknown): v is CliKind => oneOf(CLI_KINDS)(v);
 const isProfileId = (v: unknown): v is ProfileId =>
   isStr(v) && (v === 'observer' || v === 'worker' || v === 'lead' || v.startsWith('p-'));
 
+const isMigrationRow = (v: unknown): v is MigrationSummaryRow =>
+  isObj(v) &&
+  isObj(v.point) &&
+  (v.provenance === undefined ||
+    (v.provenance === 'resolved-global' && v.point.kind === 'default')) &&
+  (v.point.kind === 'default' ||
+    (v.point.kind === 'cli' && isCliKind(v.point.cli)) ||
+    (v.point.kind === 'session' && isStr(v.point.sessionId) && v.point.sessionId.length <= 256)) &&
+  Array.isArray(v.fields) &&
+  v.fields.length <= 128 &&
+  v.fields.every(
+    (f: unknown) =>
+      isObj(f) &&
+      isToolName(f.tool) &&
+      oneOf(['access', 'when', 'reach', 'move'] as const)(f.field) &&
+      isValidField(f.tool, f.field, f.value),
+  ) &&
+  (v.profileId === 'worker' || v.profileId === 'lead') &&
+  Number.isSafeInteger(v.exceptions) &&
+  (v.exceptions as number) >= 0 &&
+  (v.exceptions as number) <= 512 &&
+  isBool(v.onScreenOnly);
+
 const isToolRule = (v: unknown): v is ToolRule =>
   isObj(v) &&
   isDecision(v.decision) &&
@@ -102,7 +138,12 @@ const isRules = (v: unknown): v is Partial<Record<ToolName, ToolRule>> =>
   isObj(v) && TOOL_NAMES.every((t) => v[t] === undefined || isToolRule(v[t]));
 
 const isProfile = (v: unknown): v is RawProfile =>
-  isObj(v) && isProfileId(v.id) && isStr(v.name) && isBool(v.builtIn) && isRules(v.rules);
+  isObj(v) &&
+  isProfileId(v.id) &&
+  isStr(v.name) &&
+  isBool(v.builtIn) &&
+  isRules(v.rules) &&
+  (v.nativeModes === undefined || parseNativeModes(v.nativeModes) !== null);
 
 const isScope = (v: unknown): v is Scope =>
   isObj(v) &&
@@ -128,7 +169,8 @@ const isAssignment = (v: unknown): v is Assignment =>
   isProfileId(v.profileId) &&
   arrayOf(isException)(v.exceptions) &&
   isBool(v.onScreenOnly) &&
-  (v.pinned === undefined || arrayOf(isStr)(v.pinned));
+  (v.pinned === undefined || arrayOf(isStr)(v.pinned)) &&
+  (v.applyNative === undefined || isBool(v.applyNative));
 
 const isPoint = (v: unknown): v is AssignmentPoint =>
   isObj(v) &&
@@ -138,7 +180,10 @@ const isPoint = (v: unknown): v is AssignmentPoint =>
     v.kind === 'default');
 
 const isAssignmentEntry = (v: unknown): v is PolicyFile['assignments'][number] =>
-  isObj(v) && isPoint(v.point) && isAssignment(v.assignment);
+  isObj(v) &&
+  isPoint(v.point) &&
+  isAssignment(v.assignment) &&
+  (v.assignment.applyNative !== true || supportsNativePoint(v.point));
 
 const isTarget = (v: unknown): v is PolicyTarget =>
   isObj(v) &&
@@ -153,18 +198,63 @@ const isOverride = (v: unknown): v is OneUseOverride =>
   isStr(v.sessionId) &&
   isToolName(v.tool) &&
   isTarget(v.target) &&
-  isIso(v.createdAt);
+  isIso(v.createdAt) &&
+  (v.generation === undefined || (Number.isSafeInteger(v.generation) && Number(v.generation) > 0));
+
+export const ACTIVITY_RECEIPTS_MAX = 4096;
+const isCanonicalUtc = (v: unknown): v is string => isIso(v) && new Date(v).toISOString() === v;
+const isActivityReceipt = (v: unknown): v is { id: string; at: string } =>
+  isObj(v) &&
+  Object.keys(v).length === 2 &&
+  isStr(v.id) &&
+  v.id.length > 0 &&
+  v.id.length <= 512 &&
+  !/\p{C}/u.test(v.id) &&
+  isCanonicalUtc(v.at);
+
+export const SESSION_DENIALS_MAX = 4096;
+const isSessionDenial = (v: unknown): v is SessionDenial =>
+  isObj(v) &&
+  isStr(v.id) &&
+  isStr(v.requestId) &&
+  isStr(v.sessionId) &&
+  isToolName(v.tool) &&
+  isIso(v.createdAt) &&
+  new Date(v.createdAt).toISOString() === v.createdAt;
 
 const isFile = (v: unknown): v is RawPolicyFile =>
   isObj(v) &&
-  v.version === 1 &&
+  (v.version === 1 || v.version === 2 || v.version === 3) &&
+  !(v.version === 3 && v.kind === 'recovery-unavailable') &&
   (v.rev === undefined || isRev(v.rev)) &&
   arrayOf(isProfile)(v.profiles) &&
   arrayOf(isAssignmentEntry)(v.assignments) &&
+  (v.version !== 1 ||
+    (v.profiles.every((p) => !('nativeModes' in p)) &&
+      v.assignments.every((a) => !('applyNative' in a.assignment)))) &&
   arrayOf(isOverride)(v.overrides) &&
+  (v.version !== 3 ||
+    (arrayOf(isSessionDenial)(v.sessionDenials) &&
+      v.sessionDenials.length <= SESSION_DENIALS_MAX &&
+      new Set(v.sessionDenials.map((d) => d.requestId)).size === v.sessionDenials.length &&
+      new Set(v.sessionDenials.map((d) => d.id)).size === v.sessionDenials.length)) &&
+  (v.activityReceipts === undefined ||
+    (v.version === 3 &&
+      arrayOf(isActivityReceipt)(v.activityReceipts) &&
+      v.activityReceipts.length <= ACTIVITY_RECEIPTS_MAX &&
+      new Set(v.activityReceipts.map((r) => r.id)).size === v.activityReceipts.length)) &&
+  (v.activityReceiptCutoff === undefined ||
+    (v.version === 3 && isCanonicalUtc(v.activityReceiptCutoff))) &&
+  (v.activityReceipts === undefined || v.activityReceiptCutoff !== undefined) &&
   (v.migratedFrom === null || v.migratedFrom === 'v0.64') &&
   isObj(v.notes) &&
-  arrayOf(isStr)(v.notes.onScreenOnlyOffered);
+  arrayOf(isStr)(v.notes.onScreenOnlyOffered) &&
+  (v.notes.migrationAcknowledged === undefined || isBool(v.notes.migrationAcknowledged)) &&
+  (v.notes.migrationSummary === undefined ||
+    (Array.isArray(v.notes.migrationSummary) &&
+      v.notes.migrationSummary.length <= 16 &&
+      v.notes.migrationSummary.every(isMigrationRow))) &&
+  (v.notes.migrationSummaryTruncated === undefined || isBool(v.notes.migrationSummaryTruncated));
 
 const GRANT_STATES: readonly GrantState[] = ['active', 'suspended', 'expired', 'revoked'];
 const ENDED_STATES: readonly GrantState[] = ['expired', 'revoked'];
@@ -186,6 +276,10 @@ const isGrant = (v: unknown): v is Grant =>
   isIso(v.createdAt) &&
   orNull(isIso)(v.expiresAt) &&
   orNull(isIso)(v.lastUsedAt) &&
+  (v.lastConsentedAt === undefined || isIso(v.lastConsentedAt)) &&
+  (v.useCount === undefined || (Number.isSafeInteger(v.useCount) && Number(v.useCount) >= 0)) &&
+  (v.lifecycleRevision === undefined ||
+    (Number.isSafeInteger(v.lifecycleRevision) && Number(v.lifecycleRevision) >= 0)) &&
   oneOf(GRANT_STATES)(v.state) &&
   (oneOf(ENDED_STATES)(v.state) ? isIso(v.endedAt) : v.endedAt === null) &&
   orNull(isStr)(v.requestId);
@@ -223,7 +317,13 @@ function completeRules(rules: Partial<Record<ToolName, ToolRule>>): Record<ToolN
   return out;
 }
 
-const completeProfile = (p: RawProfile): Profile => ({ ...p, rules: completeRules(p.rules) });
+const completeProfile = (p: RawProfile): Profile => ({
+  ...p,
+  ...(p.nativeModes && {
+    nativeModes: { claude: p.nativeModes.claude, codex: p.nativeModes.codex },
+  }),
+  rules: completeRules(p.rules),
+});
 
 // Pins sit on non-default points only, sorted and unique (see plan third-pass rulings); a hand-edited file is brought to that shape.
 const normaliseEntry = (
@@ -236,22 +336,61 @@ const normaliseEntry = (
   ),
 });
 
-export function parsePolicyFile(text: string): Parsed<PolicyFile> {
+export function parsePolicyFile(
+  text: string,
+): Parsed<PolicyFile> | { ok: false; reason: 'corrupt'; duplicateProfileId: string } {
   const parsed = parseVersioned(text, 'conduit-mcp/policy.json', isFile);
   if (!parsed.ok) return parsed;
   const { profiles, assignments, ...rest } = parsed.file;
+  const seen = new Set<string>();
+  for (const profile of profiles) {
+    if (seen.has(profile.id)) {
+      return {
+        ok: false,
+        reason: 'corrupt',
+        duplicateProfileId: Array.from(profile.id)
+          .filter((char) => !/\p{C}/u.test(char))
+          .slice(0, 64)
+          .join(''),
+      };
+    }
+    seen.add(profile.id);
+  }
   return {
     ok: true,
     file: {
       ...rest,
+      sessionDenials: parsed.file.version === 3 ? parsed.file.sessionDenials : [],
       assignments: assignments.map(normaliseEntry),
       profiles: profiles.map(completeProfile),
     },
   };
 }
 
+export function parsePolicyBackup(
+  text: string,
+):
+  | { kind: 'policy'; file: PolicyFile }
+  | { kind: 'recovery-unavailable' }
+  | { kind: 'bad'; reason: 'corrupt' | 'newer' } {
+  try {
+    const raw: unknown = JSON.parse(text);
+    if (
+      isObj(raw) &&
+      raw.version === 3 &&
+      raw.kind === 'recovery-unavailable' &&
+      Object.keys(raw).length === 2
+    )
+      return { kind: 'recovery-unavailable' };
+  } catch {
+    /* parsed below */
+  }
+  const result = parsePolicyFile(text);
+  return result.ok ? { kind: 'policy', file: result.file } : { kind: 'bad', reason: result.reason };
+}
+
 export function serializePolicyFile(f: PolicyFile): string {
-  return toText(f);
+  return toText({ ...f, version: f.version === 3 ? 3 : 2 });
 }
 
 export function parseGrantsFile(text: string): Parsed<GrantsFile> {
@@ -274,11 +413,15 @@ export function validateRemotePolicyDoc(v: unknown): RemoteDocCheck {
     return refuse(`profiles has more than ${REMOTE_POLICY_PROFILES_MAX} entries`);
 
   const profiles: Profile[] = [];
+  const seenProfiles = new Map<string, number>();
   for (const [i, raw] of v.profiles.entries()) {
     const at = `profiles[${i}]`;
     if (!isProfile(raw)) return refuse(`${at} is malformed`);
     // Built-in profiles come from policy-profiles on every machine; a pushed copy would only shadow them.
     if (!raw.id.startsWith('p-')) return refuse(`${at}.id is not a custom profile id`);
+    const first = seenProfiles.get(raw.id);
+    if (first !== undefined) return refuse(`${at}.id duplicates profiles[${first}].id`);
+    seenProfiles.set(raw.id, i);
     if (raw.name.length > REMOTE_POLICY_NAME_MAX) return refuse(`${at}.name too long`);
     if (!printableName(raw.name, REMOTE_POLICY_NAME_MAX))
       return refuse(raw.name.trim() === '' ? `${at}.name empty` : `${at}.name not printable`);
@@ -328,4 +471,45 @@ export function validateRemotePolicyDoc(v: unknown): RemoteDocCheck {
 
 export function serializeGrantsFile(f: GrantsFile): string {
   return toText(f);
+}
+
+export function validatePolicyAssignment(
+  point: unknown,
+  assignment: unknown,
+): PolicyFile['assignments'][number] | null {
+  const entry = { point, assignment };
+  if (!isAssignmentEntry(entry)) return null;
+  if (entry.assignment.exceptions.length > REMOTE_POLICY_EXCEPTIONS_MAX) return null;
+  for (const exception of entry.assignment.exceptions) {
+    const scope = exception.scope;
+    if (
+      (scope.kind === 'path' || scope.kind === 'folder') &&
+      scope.path.length > REMOTE_POLICY_PATH_MAX
+    )
+      return null;
+  }
+  try {
+    JSON.stringify({ point, assignment });
+    return structuredClone(normaliseEntry(entry));
+  } catch {
+    return null;
+  }
+}
+
+export function validatePolicyProfile(raw: unknown): Profile | null {
+  if (
+    !isProfile(raw) ||
+    !raw.id.startsWith('p-') ||
+    raw.id.length < 3 ||
+    raw.builtIn ||
+    !printableName(raw.name, REMOTE_POLICY_NAME_MAX) ||
+    !TOOL_NAMES.every((tool) => isToolRule(raw.rules[tool]))
+  )
+    return null;
+  try {
+    JSON.stringify(raw);
+    return structuredClone(completeProfile(raw));
+  } catch {
+    return null;
+  }
 }

@@ -64,7 +64,11 @@ function setup(exported = false) {
       message: 'not used by this test',
     }),
     revokeRemoteGrant: () => ({ ok: false, code: 'not_found', message: 'not used by this test' }),
-    remotePolicySink: () => ({ apply: () => undefined, setLinkState: () => undefined }),
+    remotePolicySink: () => ({
+      apply: () => undefined,
+      setLinkState: () => undefined,
+      connectionReplaced: () => undefined,
+    }),
   };
   const svc = createMessaging({
     file: join(dir, 'outbox.json'),

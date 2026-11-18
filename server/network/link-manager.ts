@@ -10,6 +10,7 @@ import {
   LINK_FEATURES,
   LINK_PING_MS,
   LINK_PROTOCOL,
+  type LinkFeature,
   type LinkFrame,
   type LinkState,
   OWN_DEFAULT_CAPABILITIES,
@@ -73,6 +74,7 @@ export interface LinkManagerDeps {
   onOwnerKey(pair: { publicKey: string; privateKey: string }): boolean;
   /** A live connection was swapped for a new one: frames on the old one may never have landed. */
   reconnected(machineId: string): void;
+  connectionReplaced(machineId: string): void;
   /** Opens the ssh child for an ssh peer; the bridge's preamble has already proved access. */
   sshDial: SshDial;
   dialTimeoutMs?: number;
@@ -124,7 +126,12 @@ export interface LinkManager {
   forget(machineId: string): boolean;
   /** True for an ssh record the peer dialed to us: a controller, with no endpoint of ours to dial. */
   isSshController(machineId: string): boolean;
-  setCapability(machineId: string, capability: Capability, on: boolean): boolean;
+  setCapability(
+    machineId: string,
+    capability: Capability,
+    on: boolean,
+    expectedToken: string,
+  ): 'ok' | 'not-found' | 'conflict';
   setAddresses(machineId: string, addresses: string[]): boolean;
   /** Null when the link isn't up; otherwise whether the socket still has room. */
   send(machineId: string, frame: LinkFrame): boolean | null;
@@ -132,6 +139,7 @@ export interface LinkManager {
   view(machineId: string): LinkView | null;
   /** The protocol minor the peer's hello reported; null until its hello has landed. */
   peerMinor(machineId: string): number | null;
+  peerHasFeature(machineId: string, feature: LinkFeature): boolean;
   onRevoked(listener: (machineId: string) => void): () => void;
 }
 
@@ -600,6 +608,7 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     ) {
       p.record = deps.store.update(p.record.machineId, { name: hello.selfName }) ?? p.record;
     }
+    if (replaced) deps.connectionReplaced(p.record.machineId);
     event(p, { kind: 'up', at: deps.now() });
     opened.start({ onFrame: (f) => onFrame(p, opened, f), onClose: () => onClose(p, opened) });
     // A change made during the handshake missed this hello, and any connection it went out on.
@@ -836,10 +845,23 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     }
   };
 
+  const tokenNonce = randomBytes(16).toString('hex');
+  const stateVersions = new WeakMap<LinkStateMachine, number>();
+  let nextStateVersion = 0;
+  const editToken = (p: Peer) => {
+    let version = stateVersions.get(p.sm);
+    if (version === undefined) {
+      version = ++nextStateVersion;
+      stateVersions.set(p.sm, version);
+    }
+    return `${tokenNonce}:${deps.store.revision(p.record.machineId)}:${version}`;
+  };
   const viewOf = (p: Peer): LinkView => {
+    p.record = deps.store.get(p.record.machineId) ?? p.record;
     const peerFeatures = p.peerHello?.features ?? null;
     return {
       machineId: p.record.machineId,
+      editToken: editToken(p),
       name: p.record.name,
       transport: p.record.transport,
       state: p.sm.state,
@@ -1026,15 +1048,17 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       finishRevoke(p);
       return true;
     },
-    setCapability(machineId, capability, on) {
+    setCapability(machineId, capability, on, expectedToken) {
       const p = peerOf(machineId);
-      if (!p || terminal(p)) return false;
+      if (!p || terminal(p) || deps.store.revision(machineId) === null) return 'not-found';
+      if (editToken(p) !== expectedToken) return 'conflict';
+      p.record = deps.store.get(machineId) ?? p.record;
       const capabilities = { ...p.record.capabilities, [capability]: on };
       p.record = deps.store.update(machineId, { capabilities }) ?? p.record;
       p.conn?.send({ t: 'caps', capabilities });
       deps.audit.record({ kind: 'link.capability', peer: machineId, detail: { capability, on } });
       deps.changed();
-      return true;
+      return 'ok';
     },
     setAddresses(machineId, addresses) {
       const p = peerOf(machineId);
@@ -1055,6 +1079,12 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     },
     views: () => [...peers.values()].map(viewOf),
     peerMinor: (machineId) => peerOf(machineId)?.peerHello?.protocol.minor ?? null,
+    peerHasFeature(machineId, feature) {
+      const p = peerOf(machineId);
+      return (
+        p?.sm.state === 'up' && p.conn !== null && p.peerHello?.features.includes(feature) === true
+      );
+    },
     view: (machineId) => {
       const p = peerOf(machineId);
       return p ? viewOf(p) : null;

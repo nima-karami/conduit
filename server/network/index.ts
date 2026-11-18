@@ -218,6 +218,19 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
   let emitTimer: (() => void) | null = null;
   let mcp: McpNetworkPort | null = null;
   const portListeners = new Set<() => void>();
+  const grantEligibilityListeners = new Set<() => void>();
+  const grantEligibilitySeen = new Map<string, boolean>();
+  const grantPeerEligible = (id: string): boolean => {
+    const view = manager.view(id);
+    return (
+      store.peerKnown(id) === true &&
+      view !== null &&
+      view !== undefined &&
+      view.state !== 'revoked' &&
+      view.state !== 'incompatible' &&
+      view.state !== 'identity-changed'
+    );
+  };
   const directory = createRemoteDirectory(() => identity.machineId);
   /** The last state each link was seen in, to act once on up and down. */
   const seen = new Map<string, LinkState>();
@@ -230,6 +243,15 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
   // only the C2 broadcast below is coalesced.
   const onLinksChanged = (): void => {
     const views = manager.views();
+    const ids = new Set([...grantEligibilitySeen.keys(), ...views.map((v) => v.machineId)]);
+    let eligibilityChanged = false;
+    for (const id of ids) {
+      const eligible = grantPeerEligible(id);
+      if ((grantEligibilitySeen.get(id) ?? false) !== eligible) eligibilityChanged = true;
+      if (views.some((view) => view.machineId === id)) grantEligibilitySeen.set(id, eligible);
+      else grantEligibilitySeen.delete(id);
+    }
+    if (eligibilityChanged) for (const listener of grantEligibilityListeners) listener();
     directory.setLinks(
       views.map((v) => ({
         machineId: v.machineId,
@@ -393,6 +415,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
     },
     changed,
     onOwnerKey: (pair) => onOwnerKey(pair),
+    connectionReplaced: (machineId) => policy.connectionReplaced(machineId),
     reconnected: (machineId) => {
       messaging.reconnected(machineId);
       publisher.pushTo(machineId);
@@ -582,6 +605,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
   const policy = createPolicySync({
     b: deps.policyPorts.b,
     a: deps.policyPorts.a,
+    peerHasFeature: (machineId, feature) => manager.peerHasFeature(machineId, feature),
     links: () => manager.views().map((v) => ({ machineId: v.machineId, state: v.state })),
     linkOf: (machineId) => store.get(machineId),
     peerMinor: (machineId) => manager.peerMinor(machineId),
@@ -612,6 +636,13 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
   manager.onRevoked((machineId) => messaging.revoked(machineId));
 
   const networkPort: NetworkPort = {
+    hasPeer: (machineId) => store.peerKnown(machineId),
+    grantPeerEligible,
+    onGrantPeerEligibilityChange(listener) {
+      grantEligibilityListeners.add(listener);
+      return () => grantEligibilityListeners.delete(listener);
+    },
+    inboundPrincipal: (machineId, handle) => calls.inboundPrincipal(machineId, handle),
     remoteEntries: () => directory.entries(),
     resolve: (target) => directory.resolve(target),
     enqueue: (msg, recipients) => messaging.enqueue(msg, recipients),
@@ -640,6 +671,7 @@ export function createNetwork(deps: NetworkDeps): NetworkService {
       const sent = await requests.answerRemote(machineId, requestId, answer);
       return sent.ok ? { ok: true, value: null } : sent;
     },
+    nativeSupport: (machineId) => manager.peerHasFeature(machineId, 'native-profile-v1'),
     pushPolicy: (machineId: string, baseRev: number, doc: RemotePolicyDoc) =>
       policy.push(machineId, baseRev, doc),
     revokeRemoteGrant: (machineId: string, grantId: string) => policy.revoke(machineId, grantId),

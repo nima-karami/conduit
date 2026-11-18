@@ -1,24 +1,26 @@
 import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { cliKindOfHandle } from '../../src/conduit-mcp/handles';
-import type { AskAnswer, AskSummary } from '../../src/conduit-mcp/ui-types';
+import type { AskSummary } from '../../src/conduit-mcp/ui-types';
 import { MCP_STR } from '../conduit-mcp-strings';
 import { IconChevron, IconChevronDown } from '../icons';
-import { answerAsk, type PendingAskView, subscribeAskFocus, useAsks } from '../mcp-ask-store';
+import { type PendingAskView, subscribeAskFocus, useAsks } from '../mcp-ask-store';
 import { requestTerminalFocus } from '../terminal-bus';
+import { useConduitMcp } from '../use-conduit-mcp';
+import { useOwnerPermissions } from '../use-owner-permissions';
+import { PermissionsRequestBody } from './permissions-request-body';
 
 export interface ApprovalCardProps {
   announce(text: string): void;
 }
 
 const STR = MCP_STR.ask;
-const ANSWERS: readonly AskAnswer[] = ['deny', 'approve', 'always'];
 // After the shown ask changes without the user paging (answered, expired, cancelled), a press
 // this soon was aimed at the ask that left: the second click of a double-click, a repeated
 // Enter, or a click already on its way. Time, not a fresh-press rule, because a screen reader's
 // browse mode activates with a bare click that no keydown or mousedown precedes.
 const SWAP_GUARD_MS = 400;
 
-function summaryText(s: AskSummary): string {
+export function summaryText(s: AskSummary): string {
   switch (s.tool) {
     case 'open_session':
       return STR.summary.open_session(s);
@@ -70,6 +72,8 @@ function reasonText(a: PendingAskView): string {
  */
 export function ApprovalCard({ announce }: ApprovalCardProps) {
   const asks = useAsks();
+  const api = useConduitMcp();
+  const permissions = useOwnerPermissions(api, asks);
   // By id, not index: an arrival or another ask closing must never swap the ask under the
   // pointer. null, or an ask that has closed, shows the oldest.
   const [shownId, setShownId] = useState<string | null>(null);
@@ -146,6 +150,7 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
     setShownId(askId);
   };
   const rawOpen = rawOpenFor === ask.askId;
+  const permission = permissions.rows.find((r) => r.id === ask.askId);
 
   const giveBackFocus = () => {
     const back = returnTo.current;
@@ -165,18 +170,6 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
     if (e.key !== 'Escape') return;
     e.stopPropagation();
     giveBackFocus();
-  };
-
-  const onAnswer = (answer: AskAnswer) => {
-    if (Date.now() < guardUntil.current) return;
-    const region = regionRef.current;
-    const focusInside = !!region && region.contains(document.activeElement);
-    const wasLast = asks.length === 1;
-    answerAsk(ask.askId, answer);
-    if (!focusInside) return;
-    // The answered ask's buttons are about to go; the next press must land on the new content.
-    if (wasLast) giveBackFocus();
-    else region.focus();
   };
 
   // Rendered inside the floating stack (<Toasts>), which owns the portal and the anchor.
@@ -244,20 +237,39 @@ export function ApprovalCard({ announce }: ApprovalCardProps) {
           {rawOpen && <pre className="askcard__args">{JSON.stringify(ask.args, null, 2)}</pre>}
         </div>
       </div>
-      <div className="askcard__actions" key={ask.askId}>
-        {(ask.grantable ? ANSWERS : ANSWERS.filter((a) => a !== 'always')).map((answer) => (
-          <button
-            key={answer}
-            type="button"
-            className={answer === 'approve' ? 'btn btn--sm btn--primary' : 'btn btn--sm'}
-            data-answer={answer}
-            aria-disabled={guarded}
-            onClick={() => onAnswer(answer)}
-          >
-            {STR[answer]}
+      {permission ? (
+        <PermissionsRequestBody
+          key={ask.askId}
+          kind="local"
+          guarded={guarded}
+          request={permission}
+          answer={async (id, answer) => {
+            if (Date.now() < guardUntil.current)
+              return {
+                ok: false,
+                reason: 'not_answerable',
+                message: 'Wait for the current request.',
+              };
+            const focusInside = !!regionRef.current?.contains(document.activeElement);
+            const wasLast = asks.length === 1;
+            const result = await api.answerPermission(id, answer);
+            if (result.ok && focusInside) {
+              if (wasLast) giveBackFocus();
+              else regionRef.current?.focus();
+            }
+            return result;
+          }}
+        />
+      ) : permissions.error ? (
+        <div role="alert">
+          Could not load permission options.{' '}
+          <button type="button" className="btn btn--sm" onClick={permissions.retry}>
+            Retry
           </button>
-        ))}
-      </div>
+        </div>
+      ) : (
+        <p role="status">Loading permission options…</p>
+      )}
     </section>
   );
 }

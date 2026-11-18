@@ -13,7 +13,7 @@ import {
   type RequestMirror,
 } from '../contracts/link-protocol';
 import type { GrantChoice } from './grant-store';
-import type { PermissionAnswer, PolicyTarget } from './policy-types';
+import type { PermissionAnswer, PolicyEditResult, PolicyTarget } from './policy-types';
 import {
   type CreateInput,
   parseListRequests,
@@ -72,7 +72,20 @@ const REMOTE_GRANT: GrantChoice = { who: 'peer', on: 'target', for: 'until-revok
 
 export type RemoteAnswerResult =
   | { ok: true }
-  | { ok: false; reason: 'not_found' | 'already_ended' | 'invalid_args'; message: string };
+  | {
+      ok: false;
+      reason:
+        | 'not_found'
+        | 'already_ended'
+        | 'invalid_args'
+        | 'policy_unavailable'
+        | 'peer_unreachable';
+      message: string;
+    };
+
+export type RemotePermissionPreflightResult =
+  | { ok: true; createdGrantIds: readonly string[] }
+  | Extract<RemoteAnswerResult, { ok: false }>;
 
 export interface RemotePermissionFields {
   tool: ToolName;
@@ -166,6 +179,11 @@ export interface RequestServiceDeps {
   onChanged(): void;
   onNew(r: RequestRecord): void;
   replyToQuestion(r: RequestRecord, text: string): Promise<boolean>;
+  onRemotePermissionAnswer(
+    record: RequestRecord,
+    answer: AnswerInput,
+  ): RemotePermissionPreflightResult;
+  rollbackRemotePermissionGrants(record: RequestRecord, ids: readonly string[]): PolicyEditResult;
   onPermissionAnswer(
     r: RequestRecord,
     a: PermissionAnswer,
@@ -212,6 +230,7 @@ export interface RequestService {
   retryDeliveries(): void;
   purge(): void;
   ui(): RequestsUiState;
+  ownerPermissions(): RequestRecord[];
   presence(): HumanPresence;
   createPermission(sessionId: string, fields: PermissionFields, expiresAt: string): RequestRecord;
   /** A permission a peer asked for over the link; `ended` settles on its answer or expiry. */
@@ -286,7 +305,11 @@ const toPermissionAnswer = (a: AnswerInput): PermissionAnswer | null => {
     return a.grant === undefined ? { outcome: 'allowed' } : { outcome: 'allowed', grant: a.grant };
   }
   if (a.outcome === 'denied') {
-    return a.reason === undefined ? { outcome: 'denied' } : { outcome: 'denied', reason: a.reason };
+    return {
+      outcome: 'denied',
+      ...(a.reason === undefined ? {} : { reason: a.reason }),
+      ...(a.scope === undefined ? {} : { scope: a.scope }),
+    };
   }
   return null;
 };
@@ -349,10 +372,17 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     }
   };
 
+  const reportNotification = (requestId: string | null, stage: string, fn: () => void): void => {
+    try {
+      fn();
+    } catch (error) {
+      deps.warn('request notification failed after commit', { requestId, stage, error });
+    }
+  };
   const changed = (): void => {
     markDirty();
-    deps.onChanged();
-    for (const listener of mirrorListeners) listener();
+    reportNotification(null, 'onChanged', () => deps.onChanged());
+    for (const listener of mirrorListeners) reportNotification(null, 'mirror', listener);
   };
 
   const deliverOne = async (id: string): Promise<void> => {
@@ -377,22 +407,21 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
   });
 
   const queue: RequestQueue = createRequestQueue({
+    warn: deps.warn,
     now: () => deps.now(),
     newId: () => deps.newId(),
     machineId: deps.machineId,
     setTimer: (fn, ms) => deps.setTimer(fn, ms),
     clearTimer: (t) => deps.clearTimer(t),
     onEnded: (r) => {
-      const settle = remoteWaits.get(r.id);
-      if (settle !== undefined) {
-        remoteWaits.delete(r.id);
-        settle(r);
-      }
-      // A waiting call returns the answer itself and marks it delivered, so only an unwaited end
-      // goes to the inbox.
       const hadWaiter = waits.isWaiting(r.id);
-      waits.ended(r.id);
-      if (isAgentEnd(r) && !hadWaiter && r.deliveredAt === null) void deliverOne(r.id);
+      const settle = remoteWaits.get(r.id);
+      remoteWaits.delete(r.id);
+      reportNotification(r.id, 'remoteWait', () => settle?.(r));
+      reportNotification(r.id, 'localWait', () => waits.ended(r.id));
+      reportNotification(r.id, 'lateDelivery', () => {
+        if (isAgentEnd(r) && !hadWaiter && r.deliveredAt === null) void deliverOne(r.id);
+      });
     },
     onChanged: changed,
   });
@@ -639,7 +668,7 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     machineId: string,
   ): RemoteAnswerResult => {
     const refuse = (
-      reason: 'not_found' | 'already_ended' | 'invalid_args',
+      reason: Extract<RemoteAnswerResult, { ok: false }>['reason'],
       message: string,
     ): RemoteAnswerResult => ({ ok: false, reason, message });
     const r = queue.get(requestId);
@@ -663,12 +692,44 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
       return refuse('invalid_args', 'a grant needs a grantable permission');
     }
     const input = wantsGrant === true ? { ...rest, grant: REMOTE_GRANT } : rest;
-    const res = queue.answer(requestId, input, { kind: 'remote', machineId });
-    if (res.ok) return { ok: true };
-    if (res.reason === 'not_found' || res.reason === 'already_ended') {
-      return refuse(res.reason, res.message);
+    const checked = validateAnswer(r, input);
+    if (!checked.ok) return refuse('invalid_args', checked.error.message);
+    let createdGrantIds: readonly string[] = [];
+    if (r.remote && r.permission) {
+      let preflight: RemotePermissionPreflightResult;
+      try {
+        preflight = deps.onRemotePermissionAnswer(r, checked.value);
+      } catch (error) {
+        deps.warn('remote permission preflight failed', { requestId, stage: 'preflight', error });
+        return refuse(
+          'policy_unavailable',
+          'Permissions could not be saved; no answer was committed',
+        );
+      }
+      if (!preflight.ok) return preflight;
+      createdGrantIds = preflight.createdGrantIds;
     }
-    return refuse('invalid_args', res.message);
+    const res = queue.answer(requestId, checked.value, { kind: 'remote', machineId });
+    if (res.ok) return { ok: true };
+    if (createdGrantIds.length > 0) {
+      try {
+        const rollback = deps.rollbackRemotePermissionGrants(r, createdGrantIds);
+        if (!rollback.ok)
+          deps.warn('remote permission rollback could not be saved', {
+            requestId,
+            stage: 'rollback',
+            result: rollback,
+          });
+      } catch (error) {
+        deps.warn('remote permission rollback failed', { requestId, stage: 'rollback', error });
+      }
+    }
+    if (res.reason === 'not_found' || res.reason === 'already_ended')
+      return refuse(res.reason, res.message);
+    return refuse(
+      res.reason === 'not_answerable' ? 'policy_unavailable' : 'invalid_args',
+      res.message,
+    );
   };
 
   return {
@@ -849,6 +910,14 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
       };
     },
 
+    ownerPermissions() {
+      return structuredClone(
+        queue
+          .records()
+          .filter((r) => r.kind === 'permission' && r.remote == null && r.session !== null),
+      );
+    },
+
     presence() {
       return presence;
     },
@@ -907,10 +976,11 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     },
 
     applyRemoteAnswer(requestId, answer, answerId, machineId) {
-      const seen = remoteAnswers.get(answerId);
+      const cacheKey = `${machineId}:${answerId}`;
+      const seen = remoteAnswers.get(cacheKey);
       if (seen !== undefined) return seen;
       const result = applyRemote(requestId, answer, machineId);
-      remoteAnswers.set(answerId, result);
+      remoteAnswers.set(cacheKey, result);
       if (remoteAnswers.size > REMOTE_ANSWER_DEDUPE_MAX) {
         for (const oldest of remoteAnswers.keys()) {
           remoteAnswers.delete(oldest);
@@ -947,6 +1017,17 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
           message: 'only permission requests are answered here',
         };
       }
+      if (
+        typeof answer === 'object' &&
+        answer !== null &&
+        'scope' in answer &&
+        (r.remote != null || r.state !== 'open')
+      )
+        return {
+          ok: false,
+          reason: 'invalid_answer',
+          message: 'session scope requires an open local request',
+        };
       const checked = validateAnswer(r, answer);
       if (!checked.ok) {
         return { ok: false, reason: 'invalid_answer', message: checked.error.message };

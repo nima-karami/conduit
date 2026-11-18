@@ -1,9 +1,15 @@
 import * as fs from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import * as net from 'node:net';
 import * as os from 'node:os';
+import { tmpdir } from 'node:os';
 import * as path from 'node:path';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { writeServerSecret } from '../../server/lifecycle/server-secret';
 import { createShimEndpoint } from '../../server/mcp/endpoint';
+import { type Identity, loadIdentity } from '../../server/network/identity';
+import { createNetwork, type NetworkService } from '../../server/network/index';
 import { createSessionScreens, type SessionScreens } from '../../server/runtime/session-screens';
 import { createTokenStore } from '../../server/runtime/testing/token-store';
 import { AgentRegistry } from '../../src/agent-registry';
@@ -27,17 +33,18 @@ import {
   NOTICE_SPACING_MS,
 } from '../../src/conduit-mcp/notice-gate';
 import { composeNotice } from '../../src/conduit-mcp/notice-text';
-import { reasonText } from '../../src/conduit-mcp/policy-engine';
-import {
-  parsePolicyFile,
-  serializeGrantsFile,
-  serializePolicyFile,
-} from '../../src/conduit-mcp/policy-file';
-import { BUILT_IN_PROFILES } from '../../src/conduit-mcp/policy-profiles';
-import type { OneUseOverride } from '../../src/conduit-mcp/policy-types';
+import { serializeGrantsFile, serializePolicyFile } from '../../src/conduit-mcp/policy-file';
+import type { PolicyIo } from '../../src/conduit-mcp/policy-file-fs';
+import { BUILT_IN_PROFILES, OBSERVER, pointKey } from '../../src/conduit-mcp/policy-profiles';
+import { applyLegacyPatch } from '../../src/conduit-mcp/policy-projection';
+import type {
+  Assignment,
+  AssignmentPoint,
+  OneUseOverride,
+} from '../../src/conduit-mcp/policy-types';
+import type { createRemotePolicy } from '../../src/conduit-mcp/remote-policy';
 import type { NetworkPort, RemoteEntry } from '../../src/conduit-mcp/remote-routing';
-import type { RequestsIo } from '../../src/conduit-mcp/request-file-fs';
-import type { AnswerInput } from '../../src/conduit-mcp/request-types';
+import type { AnswerInput, RequestRecord } from '../../src/conduit-mcp/request-types';
 import { screenVerdict } from '../../src/conduit-mcp/screen-verdict';
 import type { StoreIo } from '../../src/conduit-mcp/store';
 import {
@@ -47,31 +54,167 @@ import {
   type PolicyLayer,
   TOOL_NAMES,
   type ToolName,
+  type ToolPolicyPatch,
 } from '../../src/conduit-mcp/tool-policy';
 import { RATE_LIMIT_PER_MIN } from '../../src/conduit-mcp/tools';
 import { type MessageRecord, THREAD_AGENT_LIMIT, toolError } from '../../src/conduit-mcp/types';
-import type { RequestMirror } from '../../src/contracts/link-protocol';
-
+import type { MonitorSession, RequestMirror } from '../../src/contracts/link-protocol';
 import type {
   ConnectMachineOk,
   ConnectMachineResult,
   DisconnectMachineResult,
   MachineView,
 } from '../../src/contracts/machines';
+import type { NetworkState } from '../../src/contracts/network-state';
 import type { RemoteCaller } from '../../src/contracts/remote-principal';
-import type { McpHostDeps, NeedsYouFact, TokenStorePort } from '../../src/contracts/server-ports';
+import type {
+  McpHostDeps,
+  NeedsYouFact,
+  ServerEventSink,
+  TokenStorePort,
+} from '../../src/contracts/server-ports';
 import type { ServerEvents } from '../../src/contracts/server-protocol';
 import type {
   LaunchIds,
   RuntimeEvent,
   RuntimeTerminal,
+  TerminalRuntime,
 } from '../../src/contracts/terminal-runtime';
 import { compileLimitRules, DEFAULT_LIMIT_RULES } from '../../src/limit-rules';
 import type { HostToWebview } from '../../src/protocol';
 import { createPtyWriter } from '../../src/pty-writer';
 import { COMMAND_AGENT_ID, commandDef } from '../../src/session-command';
-import type { AgentDefinition, Session, SpawnSpec } from '../../src/types';
+import type { AgentDefinition, Session, SessionCommand, SpawnSpec } from '../../src/types';
 import { testEndpoint } from '../helpers/test-endpoint';
+
+const quiet = {
+  debug: () => undefined,
+  warn: () => undefined,
+  error: () => undefined,
+};
+const TEST_APP_VERSION = '9.8.7';
+const grantNetworkCleanup: Array<() => Promise<void> | void> = [];
+afterEach(async () => {
+  for (const c of grantNetworkCleanup.splice(0).reverse()) await c();
+});
+
+/** What a test server's ports answer with: its ssh config, its sessions, and its observer and events. */
+interface ServerOpts {
+  identity?: Identity;
+  policySink?: () => ReturnType<typeof createRemotePolicy> | null;
+  sshConfig?: () => string | null;
+  sessions?: MonitorSession[];
+  observe?: TerminalRuntime['observe'];
+  emitTo?: (peer: object, ...event: Parameters<ServerEventSink>) => void;
+}
+
+function grantNetworkServer(
+  name: string,
+  endpointIn?: (root: string) => string,
+  opts: ServerOpts = {},
+) {
+  const root = mkdtempSync(join(tmpdir(), 'conduit-net-'));
+  const dir = join(root, 'network');
+  const loaded = loadIdentity(dir);
+  if (loaded.kind === 'newer') throw new Error('unexpected');
+  const secret = writeServerSecret(root);
+  const states: NetworkState[] = [];
+  const opened: Array<{ command: SessionCommand; folder: string }> = [];
+  const net = createNetwork({
+    dir,
+    userData: root,
+    instance: 'service-test',
+    linkEndpoint: endpointIn ? endpointIn(root) : join(root, 'conduit-link.sock'),
+    appVersion: TEST_APP_VERSION,
+    secret: () => secret,
+    identity: opts.identity ?? loaded.identity,
+    settings: () => ({
+      networkBindHost: '127.0.0.1',
+      networkPort: 0,
+      networkSelfName: name,
+    }),
+    readSshConfig: opts.sshConfig ?? (() => null),
+    sessionRoots: () => null,
+    emit: (s) => states.push(s),
+    log: { ...quiet, info: () => undefined },
+    observe: opts.observe ?? (async () => null),
+    emitTo: opts.emitTo ?? (() => {}),
+    openCommandSession: async (command, folder) => {
+      opened.push({ command, folder });
+      return 'sess-needs-person';
+    },
+    bootstrap: {
+      local: {
+        version: TEST_APP_VERSION,
+        linkMajor: 1,
+        platform: 'linux',
+        arch: 'x64',
+      },
+      runtime: { nodeExe: null, serverDir: root, hcExe: root, shimFile: root },
+      noDownload: false,
+    },
+    drive: {
+      applyHumanInput: () => false,
+      resize: () => {},
+      liveSession: () => false,
+      agentExists: () => false,
+      isDirectory: async () => false,
+      openSession: async () => {
+        throw new Error('drive is not exercised by this test');
+      },
+      closeSession: async () => {},
+    },
+    requestPorts: {
+      b: {
+        mirrorOf: () => [],
+        hasEnded: () => false,
+        onMirrorChange: () => () => {},
+        applyRemoteAnswer: async () => ({
+          ok: false,
+          error: {
+            code: 'refused',
+            message: 'not wired in this fixture',
+            retryable: false,
+          },
+        }),
+      },
+      a: { apply: () => {}, setLinkState: () => {} },
+    },
+    policyPorts: {
+      b: {
+        policyDoc: () => null,
+        onPolicyDocChange: () => () => {},
+        applyRemotePolicy: () => ({
+          ok: false,
+          code: 'policy_unavailable',
+          message: 'not wired in this fixture',
+        }),
+        revokeRemoteGrant: () => ({
+          ok: false,
+          code: 'policy_unavailable',
+          message: 'not wired in this fixture',
+        }),
+      },
+      a: opts.policySink ?? (() => null),
+    },
+    monitor: {
+      sessions: () => opts.sessions ?? [],
+      requests: () => [],
+      youUnread: () => 0,
+      ownerPresence: () => 'here',
+      agents: () => [],
+    },
+  });
+  grantNetworkCleanup.push(() => rmSync(root, { recursive: true, force: true }));
+  grantNetworkCleanup.push(() => net.stop());
+  return { net, dir, states, opened };
+}
+
+async function call<T>(net: NetworkService, method: string, params: unknown = {}): Promise<T> {
+  const answer = net.handle(method, params);
+  if (answer === null) throw new Error(`not a network method: ${method}`);
+  return (await answer) as T;
+}
 
 /** A signal that is never aborted: the routed calls below run to their own answer. */
 const LIVE = new AbortController().signal;
@@ -158,7 +301,9 @@ interface Harness {
   calls: string[];
   alive: Set<string>;
   gens: Map<string, number>;
+  terminals: Map<string, RuntimeTerminal>;
   writer: ReturnType<typeof createPtyWriter>;
+  typingSequences: string[];
   /** Gap releases, when the harness holds submit gaps. */
   gaps: Array<() => void>;
   /** Calls to the writer's echo-quiet wait; notices must never make one (spec R5 amended). */
@@ -188,7 +333,7 @@ interface Harness {
   activations: Array<{ id: string; raise: boolean }>;
   closes: string[];
   tokens: TokenStorePort;
-  prepareLaunch(sessionId: string, def: AgentDefinition, spec: SpawnSpec): Promise<SpawnSpec>;
+  prepareLaunch(sessionId: string, def: AgentDefinition, spec: SpawnSpec): SpawnSpec;
   spawn(sessionId: string, cols?: number, rows?: number): void;
   respawn(sessionId: string, cols?: number, rows?: number): void;
   resize(sessionId: string, cols: number, rows: number): void;
@@ -238,8 +383,8 @@ function harness(
     registry?: AgentRegistry;
     messagingOn?: () => boolean;
     storeIo?: StoreIo;
-    policyIo?: RequestsIo;
-    grantsIo?: RequestsIo;
+    policyIo?: PolicyIo;
+    grantsIo?: PolicyIo;
     activityIo?: ActivityIo;
     listen?: boolean;
     platform?: ConduitMcpHostDeps['platform'];
@@ -264,8 +409,12 @@ function harness(
     /** Records every line the host sends into `calls`, so ordering against setMcp is visible. */
     recordSends?: boolean;
     installState?: McpHostDeps['domain']['installState'];
+    nativeLaunchOf?: McpHostDeps['sessions']['nativeLaunchOf'];
+    codexPosture?: McpHostDeps['domain']['codexPosture'];
     toolPolicy?: () => { global: GlobalPolicy; byCli: CliPolicyLayers };
     kindOf?: (abs: string) => Promise<PathKind>;
+    beforeClose?: (id: string) => Promise<void>;
+    beforeSnapshot?: (id: string) => Promise<void>;
     bracketedPaste?: () => boolean;
     /** Timers fire only through advance(); otherwise asks and UI waits never expire. */
     manualTimers?: boolean;
@@ -386,6 +535,7 @@ function harness(
   };
   let submitEnterCalls = 0;
   let quietCalls = 0;
+  const typingSequences: string[] = [];
   const writer = createPtyWriter({
     generation: (id) => gens.get(id),
     input: (id, data) => {
@@ -433,10 +583,11 @@ function harness(
       return true;
     },
     onChange: () => ({ dispose: () => [] }),
-    allocateLaunch,
+    nativeLaunchOf: opts.nativeLaunchOf ?? (() => null),
   };
   const registry = opts.registry ?? new AgentRegistry(DEFS);
   const domain: McpHostDeps['domain'] = {
+    codexPosture: opts.codexPosture ?? { link: () => false, get: () => null },
     bracketedPaste: opts.bracketedPaste ?? (() => false),
     limitRules: () => compileLimitRules(DEFAULT_LIMIT_RULES),
     homeOf: (id: string) => sessions.get(id)?.home,
@@ -460,6 +611,7 @@ function harness(
       return { ok: true as const, sessionId: id, label: `S ${id}` };
     },
     closeSession: async (id: string) => {
+      await opts.beforeClose?.(id);
       closes.push(id);
       sessions.delete(id);
       return { ok: true as const };
@@ -584,7 +736,10 @@ function harness(
     attention,
     typing: {
       submit: writer.submit,
-      sequence: writer.sequence,
+      sequence: (id, write, options) => {
+        typingSequences.push(id);
+        return writer.sequence(id, write, options);
+      },
       submitEnter: (sessionId, opts) => {
         submitEnterCalls += 1;
         return writer.submitEnter(sessionId, opts);
@@ -601,6 +756,7 @@ function harness(
       get: (id) => terminals.get(id),
       screen: async (id) => {
         screenReads.push(id);
+        await opts.beforeSnapshot?.(id);
         return (await screens.snapshot(id)) ?? null;
       },
       on: (listener) => {
@@ -686,7 +842,9 @@ function harness(
     calls,
     alive,
     gens,
+    terminals,
     writer,
+    typingSequences,
     gaps,
     quietCalls: () => quietCalls,
     lateEchoSleeps,
@@ -865,7 +1023,7 @@ describe('createConduitMcpHost — launch', () => {
     await h.host.start();
     expect(h.host.uiState()).toMatchObject({
       policy: {
-        profiles: expect.arrayContaining([{ id: 'worker', name: 'Worker', builtIn: true }]),
+        profiles: expect.arrayContaining([BUILT_IN_PROFILES.find((p) => p.id === 'worker')]),
       },
     });
     await h.host.stop();
@@ -1009,14 +1167,60 @@ describe('createConduitMcpHost — launch', () => {
     expect(out.args).not.toContain('--settings');
   });
 
-  it('async prepareLaunch reserves the token row with the caller allocated launch ids', async () => {
+  it('broadcasts recorded native preparation only after the matching terminal is live', async () => {
+    const intent = { family: 'claude', optedIn: true, requested: { mode: 'plan' } } as const;
+    const evidence = {
+      version: 1,
+      generation: 1,
+      launchId: '1'.padStart(32, '0'),
+      preparedAt: 100,
+      intent,
+    } as const;
+    const h = harness({
+      manualTimers: true,
+      nativeLaunchOf: (id) => (id === 'c1' ? evidence : null),
+    });
+    h.sessions.set('c1', session('c1', { agentId: CLAUDE.id }));
+    h.sessions.set('sh1', session('sh1', { agentId: SHELL.id, mcpHandle: 'claude-9' }));
+    const original = spec('/usr/bin/claude');
+    expect(h.host.prepareNativeLaunch('c1', CLAUDE, original)).toEqual({
+      ok: false,
+      problem: 'policy-unavailable',
+    });
+    await h.host.start();
+    h.prepareLaunch('c1', CLAUDE, original);
+    await until(() => h.broadcasts.some((m) => m.type === 'mcp:state'));
+    expect(h.host.uiState().native).toMatchObject({
+      c1: {
+        atLaunch: null,
+        next: {
+          status: 'available',
+          intent: { family: 'claude', optedIn: false, requested: null },
+        },
+      },
+      sh1: { atLaunch: null, next: { status: 'not-applicable' } },
+    });
+    h.broadcasts.length = 0;
+    h.spawn('c1');
+    await until(() => h.broadcasts.some((m) => m.type === 'mcp:state'));
+    expect(h.broadcasts.findLast((m) => m.type === 'mcp:state')).toMatchObject({
+      state: { native: { c1: { atLaunch: { intent, preparedAt: 100 } } } },
+    });
+    const terminal = h.terminals.get('c1');
+    if (!terminal) throw new Error('fake runtime did not register terminal');
+    terminal.launchId = '2'.padStart(32, '0');
+    expect(h.host.uiState().native.c1.atLaunch).toBeNull();
+    terminal.launchId = evidence.launchId;
+    h.respawn('c1');
+    expect(h.host.uiState().native.c1.atLaunch).toBeNull();
+  });
+
+  it('synchronous prepareLaunch reserves the token row with the caller allocated launch ids', async () => {
     const h = harness();
     await h.host.start();
     h.sessions.set('s1', session('s1'));
     const ids: LaunchIds = { generation: 7, launchId: 'f'.repeat(32) };
-    const pending = h.host.prepareLaunch('s1', FAKE, spec(), ids);
-    expect(pending).toBeInstanceOf(Promise);
-    const wired = await pending;
+    const wired = h.host.prepareLaunch('s1', FAKE, spec(), ids);
     expect(wired.env?.CONDUIT_SESSION_TOKEN).toBe('tok1');
     expect(h.tokens.rows()).toMatchObject({
       state: 'loaded',
@@ -1222,7 +1426,7 @@ describe('createConduitMcpHost — launch', () => {
     await expect
       .poll(() => {
         h.sessions.set('s1', session('s1'));
-        return h.prepareLaunch('s1', FAKE, spec()).then((out) => out.env?.CONDUIT_SESSION_TOKEN);
+        return h.prepareLaunch('s1', FAKE, spec()).env?.CONDUIT_SESSION_TOKEN;
       })
       .toBeDefined();
     expect(h.host.uiState().loading).toBe(true);
@@ -1275,38 +1479,21 @@ describe('createConduitMcpHost — launch', () => {
     await started;
   });
 
-  it('stop waits for a launch reservation before returning', async () => {
+  it('a launch reservation completes synchronously before stop begins', async () => {
     const h = harness();
     h.sessions.set('s1', session('s1'));
-    let release = () => {};
-    let entered = () => {};
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
+    const reserve = vi.spyOn(h.tokens, 'reserve');
+    const prepared = h.prepareLaunch('s1', FAKE, spec());
+    expect(prepared.command).toBe(spec().command);
+    expect(reserve).toHaveBeenCalledTimes(1);
+    expect(h.tokens.rows()).toMatchObject({
+      state: 'loaded',
+      rows: [{ sessionId: 's1', state: 'reserved' }],
     });
-    const reserving = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const reserve = h.tokens.reserve.bind(h.tokens);
-    vi.spyOn(h.tokens, 'reserve').mockImplementation(async (...args) => {
-      entered();
-      await blocked;
-      return reserve(...args);
-    });
-    const launch = h.prepareLaunch('s1', FAKE, spec());
-    await reserving;
-    let stopped = false;
-    const stopping = h.host.stop().then(() => {
-      stopped = true;
-    });
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    try {
-      expect(stopped).toBe(false);
-    } finally {
-      release();
-    }
-    await stopping;
-    await launch;
-    expect(fs.existsSync(path.join(h.dir, 'handles.json'))).toBe(false);
+    const handles = fs.readFileSync(path.join(h.dir, 'handles.json'), 'utf8');
+    await h.host.stop();
+    expect(reserve).toHaveBeenCalledTimes(1);
+    expect(fs.readFileSync(path.join(h.dir, 'handles.json'), 'utf8')).toBe(handles);
   });
 
   it('a tick that throws is logged, not left unhandled', async () => {
@@ -2362,7 +2549,7 @@ describe('policy.json is loaded before the endpoint takes connections', () => {
           order.push('policy-read');
           return null;
         },
-        write: async () => undefined,
+        writeSync: () => true,
       },
       createEndpoint: () => ({
         listen: async () => {
@@ -2511,30 +2698,480 @@ describe('a launch waits for the endpoint (conductor decision: restored sessions
   });
 });
 
+async function saveHostAssignment(
+  h: Harness,
+  point: AssignmentPoint,
+  assignment: Assignment | null,
+) {
+  const expectedToken = h.host.uiState().policy.editToken;
+  const edit = { kind: 'assignment' as const, point, assignment };
+  let review: HostToWebview | undefined;
+  await h.host.handleRenderer(
+    { type: 'mcp:reviewLocalPolicy', requestId: 1, expectedToken, edit },
+    (m) => {
+      review = m;
+    },
+    1,
+  );
+  if (review?.type !== 'mcp:reviewLocalPolicyResult' || !review.result.ok)
+    throw new Error(`policy fixture review failed: ${JSON.stringify(review)}`);
+  const nativeReview = review.result.requiresNativeReview ? review.result.digest : undefined;
+  let answer: HostToWebview | undefined;
+  await h.host.handleRenderer(
+    {
+      type: 'mcp:saveAssignment',
+      requestId: 1,
+      point,
+      assignment,
+      expectedToken,
+      ...(nativeReview === undefined ? {} : { nativeReview }),
+    },
+    (m) => {
+      answer = m;
+    },
+    1,
+  );
+  expect(answer).toMatchObject({ type: 'mcp:policyEditResult', result: { ok: true } });
+}
+
+async function setProfile(
+  h: Harness,
+  point: AssignmentPoint,
+  profileId: 'observer' | 'worker' | 'lead',
+) {
+  const policy = h.host.uiState().policy;
+  const existing = policy.assignments.find(
+    (a) => pointKey(a.point) === pointKey(point),
+  )?.assignment;
+  await saveHostAssignment(h, point, {
+    ...(existing ?? { exceptions: [], onScreenOnly: false }),
+    profileId,
+  });
+}
+
+async function setPointHostPolicy(
+  h: Harness,
+  point: AssignmentPoint,
+  tool: ToolName,
+  patch: ToolPolicyPatch,
+) {
+  const policy = h.host.uiState().policy;
+  const lower =
+    point.kind === 'session'
+      ? (policy.sessions[point.sessionId]?.inheritedPoint ?? { kind: 'default' as const })
+      : point.kind === 'cli'
+        ? { kind: 'default' as const }
+        : null;
+  const assignment = applyLegacyPatch(
+    {
+      profiles: policy.profiles,
+      assignments: new Map(
+        policy.assignments.map((entry) => [pointKey(entry.point), entry.assignment]),
+      ),
+      grants: [],
+      overrides: [],
+      sessionDenials: [],
+      failClosed: false,
+    },
+    point,
+    lower,
+    tool,
+    patch,
+  );
+  if (!assignment) throw new Error('cannot project scoped policy fixture');
+  await saveHostAssignment(h, point, assignment);
+}
+
 async function setHostPolicy(h: Harness, id: string, layer: PolicyLayer | undefined) {
   const current = h.host.uiState().policy.legacy.sessions[id] ?? {};
+  const point = { kind: 'session' as const, sessionId: id };
   for (const tool of TOOL_NAMES) {
     const old = current[tool];
     const next = layer?.[tool];
     if (!old && !next) continue;
-    const patch = {
+    await setPointHostPolicy(h, point, tool, {
       ...(old?.access !== undefined ? { access: 'inherit' as const } : {}),
       ...(old?.when !== undefined ? { when: 'inherit' as const } : {}),
       ...(old?.reach !== undefined ? { reach: 'inherit' as const } : {}),
       ...(old?.move !== undefined ? { move: 'inherit' as const } : {}),
       ...next,
-    };
-    let answer: HostToWebview | undefined;
-    await h.host.handleRenderer(
-      { type: 'mcp:setToolPolicy', requestId: 1, sessionId: id, tool, patch },
-      (m) => {
-        answer = m;
-      },
-      1,
-    );
-    expect(answer).toEqual({ type: 'mcp:toolPolicyResult', requestId: 1, ok: true });
+    });
   }
 }
+
+describe('owner durable permission edits', () => {
+  it('ignores retired tokenless policy messages without changing authority', async () => {
+    const h = harness();
+    h.sessions.set('s1', session('s1'));
+    await h.host.start();
+    const before = h.host.uiState().policy;
+    const replies: HostToWebview[] = [];
+    for (const message of [
+      {
+        type: 'mcp:setAssignment',
+        requestId: 1,
+        point: { kind: 'session', sessionId: 's1' },
+        profileId: 'lead',
+      },
+      {
+        type: 'mcp:setAssignment',
+        requestId: 2,
+        point: { kind: 'default' },
+        profileId: 'lead',
+        machine: 'remote',
+      },
+      {
+        type: 'mcp:setPointPolicy',
+        requestId: 3,
+        point: { kind: 'default' },
+        tool: 'open_file',
+        patch: { access: 'on' },
+      },
+      {
+        type: 'mcp:setPointPolicy',
+        requestId: 4,
+        point: { kind: 'default' },
+        tool: 'open_file',
+        patch: { access: 'on' },
+        machine: 'remote',
+      },
+      {
+        type: 'mcp:setToolPolicy',
+        requestId: 5,
+        sessionId: 's1',
+        tool: 'open_file',
+        patch: { access: 'on' },
+      },
+    ])
+      await h.host.handleRenderer(
+        message as unknown as McpRendererMessage,
+        (m) => replies.push(m),
+        1,
+      );
+    expect(replies).toEqual([]);
+    expect(h.host.uiState().policy).toEqual(before);
+  });
+
+  it('scopes local review and save to the ready session owner and rejects extra nested fields', async () => {
+    const write = vi.fn(() => true as const);
+    const h = harness({ policyIo: { read: () => null, writeSync: write } });
+    h.sessions.set('s1', session('s1'));
+    await h.host.start();
+    const expectedToken = h.host.uiState().policy.editToken;
+    const edit = {
+      kind: 'assignment',
+      point: { kind: 'session', sessionId: 's1' },
+      assignment: { profileId: 'worker', exceptions: [], onScreenOnly: false, applyNative: true },
+    };
+    const send = async (message: unknown, sender: number) => {
+      let result: HostToWebview | undefined;
+      await h.host.handleRenderer(
+        message as McpRendererMessage,
+        (m) => {
+          result = m;
+        },
+        sender,
+      );
+      return result;
+    };
+    const review = { type: 'mcp:reviewLocalPolicy', requestId: 4, expectedToken, edit };
+    const initialWrites = write.mock.calls.length;
+    expect(await send(review, 2)).toMatchObject({ result: { ok: false, error: 'invalid-value' } });
+    expect(await send({ ...review, secret: { arbitrary: 'data' } }, 1)).toMatchObject({
+      result: { ok: false, error: 'invalid-value' },
+    });
+    const globalReview = { ...review, edit: { ...edit, point: { kind: 'default' } } };
+    expect(await send(globalReview, 0)).toMatchObject({
+      result: { ok: false, error: 'invalid-value' },
+    });
+    h.presence.ready.delete(1);
+    expect(await send(globalReview, 1)).toMatchObject({
+      result: { ok: false, error: 'invalid-value' },
+    });
+    expect(await send(review, 1)).toMatchObject({ result: { ok: false, error: 'invalid-value' } });
+    h.presence.ready.add(1);
+    const baseSave = {
+      type: 'mcp:saveAssignment',
+      requestId: 5,
+      expectedToken,
+      point: edit.point,
+      assignment: edit.assignment,
+    };
+    for (const extra of [
+      { nativeConsent: true },
+      { nativeConsent: false },
+      { nativeReview: true },
+      { nativeReview: 'invalid' },
+    ])
+      expect(await send({ ...baseSave, ...extra }, 1)).toMatchObject({
+        result: { ok: false, error: 'invalid-value' },
+      });
+    expect(await send({ ...baseSave, point: { kind: 'default' } }, 0)).toMatchObject({
+      result: { ok: false, error: 'invalid-value' },
+    });
+
+    expect(
+      await send(
+        {
+          type: 'mcp:saveAssignment',
+          requestId: 5,
+          expectedToken,
+          point: edit.point,
+          assignment: edit.assignment,
+        },
+        2,
+      ),
+    ).toMatchObject({ result: { ok: false, error: 'invalid-value' } });
+    expect(
+      await send(
+        { ...review, edit: { ...edit, assignment: { ...edit.assignment, secret: 'not allowed' } } },
+        1,
+      ),
+    ).toMatchObject({ result: { ok: false, error: 'invalid-value' } });
+    for (const badEdit of [
+      { ...edit, point: { ...edit.point, machineId: 'extra' } },
+      {
+        ...edit,
+        assignment: {
+          ...edit.assignment,
+          exceptions: [
+            {
+              tool: 'open_session',
+              scope: { kind: 'anywhere', path: '/extra' },
+              rule: { decision: 'ask' },
+            },
+          ],
+        },
+      },
+      {
+        ...edit,
+        assignment: {
+          ...edit.assignment,
+          exceptions: [
+            {
+              tool: 'open_session',
+              scope: { kind: 'anywhere' },
+              rule: { decision: 'ask', secret: true },
+            },
+          ],
+        },
+      },
+      { ...edit, assignment: { ...edit.assignment, pinned: ['x'.repeat(1024 * 1024)] } },
+    ]) {
+      expect(await send({ ...review, edit: badEdit }, 1)).toMatchObject({
+        result: { ok: false, error: 'invalid-value' },
+      });
+      expect(
+        await send({ ...baseSave, point: badEdit.point, assignment: badEdit.assignment }, 1),
+      ).toMatchObject({ result: { ok: false, error: 'invalid-value' } });
+    }
+    expect(write).toHaveBeenCalledTimes(initialWrites);
+    expect(await send(review, 1)).toMatchObject({
+      type: 'mcp:reviewLocalPolicyResult',
+      requestId: 4,
+      result: { ok: true, requiresNativeReview: true },
+    });
+  });
+
+  it('returns exact save failures and conflicts and refuses remote or malformed full edits', async () => {
+    let down = false;
+    const policy = serializePolicyFile({
+      version: 1,
+      profiles: [],
+      assignments: [],
+      overrides: [],
+      migratedFrom: null,
+      notes: { onScreenOnlyOffered: [] },
+    });
+    const write = vi.fn((_text: string): true => {
+      if (down) throw new Error('disk full');
+      return true;
+    });
+    const h = harness({ policyIo: { read: () => policy, writeSync: write } });
+    h.sessions.set('s1', session('s1'));
+    await h.host.start();
+    const token = h.host.uiState().policy.editToken;
+    const send = async (message: unknown) => {
+      let result: HostToWebview | undefined;
+      await h.host.handleRenderer(
+        message as McpRendererMessage,
+        (m) => {
+          result = m;
+        },
+        1,
+      );
+      return result;
+    };
+    const assignment = { profileId: 'lead', exceptions: [], onScreenOnly: false };
+    const command = {
+      type: 'mcp:saveAssignment',
+      requestId: 800,
+      point: { kind: 'session', sessionId: 's1' },
+      assignment,
+      expectedToken: token,
+    };
+    down = true;
+    expect(await send(command)).toEqual({
+      type: 'mcp:policyEditResult',
+      requestId: 800,
+      result: { ok: false, error: 'save-failed' },
+    });
+    expect(h.host.uiState().policy.sessions.s1?.profileId).toBe('worker');
+    down = false;
+    expect(await send(command)).toEqual({
+      type: 'mcp:policyEditResult',
+      requestId: 800,
+      result: { ok: true },
+    });
+    expect(h.host.uiState().policy.sessions.s1?.profileId).toBe('lead');
+    expect(await send(command)).toMatchObject({ result: { ok: false, error: 'conflict' } });
+    const fresh = h.host.uiState().policy.editToken;
+    const attempts = write.mock.calls.length;
+    for (const message of [
+      { ...command, expectedToken: fresh, machine: 'other' },
+      { ...command, expectedToken: fresh, point: { kind: 'session', sessionId: 'missing' } },
+      {
+        ...command,
+        expectedToken: fresh,
+        assignment: {
+          ...assignment,
+          exceptions: [
+            { tool: 'open_file', scope: { kind: 'anywhere' }, rule: { decision: 'banana' } },
+          ],
+        },
+      },
+      { ...command, expectedToken: '' },
+      {
+        type: 'mcp:saveProfile',
+        requestId: 800,
+        expectedToken: fresh,
+        profile: BUILT_IN_PROFILES[0],
+      },
+      { type: 'mcp:policyRetry', requestId: 800, machine: 'other' },
+    ])
+      expect(await send(message)).toMatchObject({ result: { ok: false, error: 'invalid-value' } });
+    expect(write.mock.calls).toHaveLength(attempts);
+  });
+});
+
+describe('owner policy previews', () => {
+  it('resolves a live owner request and rejects stale or malformed input', async () => {
+    const h = harness();
+    await h.host.start();
+    await launch(h, 's1');
+    h.sessions.set('s2', session('s2'));
+    const expectedToken = h.host.uiState().policy.editToken;
+    const draft = {
+      point: { kind: 'session', sessionId: 's1' },
+      assignment: { profileId: 'lead', exceptions: [], onScreenOnly: false },
+    };
+    const base = {
+      type: 'mcp:preview',
+      requestId: 908,
+      sessionId: 's1',
+      intent: { tool: 'close_session', targetSessionId: 's2' },
+      draft,
+      expectedToken,
+    };
+    const send = async (message: unknown, sender = 1) => {
+      let result: HostToWebview | undefined;
+      await h.host.handleRenderer(
+        message as McpRendererMessage,
+        (m) => {
+          result = m;
+        },
+        sender,
+      );
+      return result;
+    };
+    expect(await send(base)).toMatchObject({
+      type: 'mcp:previewResult',
+      result: { ok: true, runtime: 'unevaluated' },
+    });
+    expect(
+      await send({ ...base, intent: { tool: 'open_file', path: '/w/file.txt' } }),
+    ).toMatchObject({ result: { ok: true, runtime: 'unevaluated' } });
+    expect(await send({ ...base, expectedToken: 'stale' })).toMatchObject({
+      result: { ok: false, error: 'conflict' },
+    });
+    expect(await send(base, 2)).toMatchObject({ result: { ok: false, error: 'invalid-value' } });
+    for (const intent of [
+      { tool: 'open_file', path: '../relative' },
+      { tool: 'close_session', targetSessionId: 'missing' },
+      { tool: 'read_screen', targetSessionId: 's2' },
+      { tool: 'close_session', targetSessionId: 's2', principal: {} },
+    ])
+      expect(await send({ ...base, intent })).toMatchObject({
+        result: { ok: false, error: 'invalid-value' },
+      });
+    expect(await send({ ...base, secret: true })).toMatchObject({
+      result: { ok: false, error: 'invalid-value' },
+    });
+    expect(
+      await send({ type: 'mcp:replay', requestId: 909, draft, expectedToken: 'stale' }),
+    ).toMatchObject({ result: { ok: false, error: 'conflict' } });
+    expect(h.closes).toEqual([]);
+    expect(h.files).toEqual([]);
+  });
+});
+
+describe('owner Activity queries', () => {
+  it('returns Activity only through the renderer query and rejects malformed filters', async () => {
+    const read = vi.fn(() => '');
+    const h = harness({
+      activityIo: {
+        append: () => undefined,
+        read,
+        list: () => [],
+        remove: () => undefined,
+        readArgs: () => 'SECRET',
+        writeArgs: () => undefined,
+      },
+    });
+    await h.host.start();
+    const send = async (query: unknown) => {
+      let result: HostToWebview | undefined;
+      await h.host.handleRenderer(
+        { type: 'mcp:activity:get', requestId: 910, query } as McpRendererMessage,
+        (m) => {
+          result = m;
+        },
+        1,
+      );
+      return result;
+    };
+    expect(await send({})).toEqual({
+      type: 'mcp:activity',
+      requestId: 910,
+      page: { rows: [], next: null, writable: true, error: null },
+    });
+    for (const query of [
+      null,
+      [],
+      { limit: 201 },
+      { limit: 0 },
+      { limit: 1.5 },
+      { cli: 'unknown' },
+      { decision: 'off' },
+      { lane: 'raw' },
+      { before: '../args' },
+      { since: 'yesterday' },
+      { sessionId: '' },
+      { action: 'x'.repeat(513) },
+      { rawArgs: true },
+    ]) {
+      expect(await send(query)).toMatchObject({
+        type: 'mcp:activity',
+        page: {
+          rows: [],
+          next: null,
+          error: 'Invalid Activity query',
+        },
+      });
+    }
+    expect(read).not.toHaveBeenCalled();
+  });
+});
 
 describe('control tools: gate, effective tool list, list_changed, session layer (spec 2026-10-30-conduit-mcp-tool-policy §3.3)', () => {
   // Every tool but open_terminal defaults to ask or on (tool-policy spec §3.2).
@@ -2603,21 +3240,8 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     await c.listed();
     const raw = await helloOnly(h.ep, a.token);
     await raw.request(1, 'tools/list');
-    const set = async (access: 'on' | 'inherit') => {
-      const replies: HostToWebview[] = [];
-      await h.host.handleRenderer(
-        {
-          type: 'mcp:setToolPolicy',
-          requestId: 1,
-          sessionId: 's1',
-          tool: 'open_terminal',
-          patch: { access },
-        },
-        (m) => replies.push(m),
-        1,
-      );
-      return replies;
-    };
+    const set = (access: 'on' | 'inherit') =>
+      setPointHostPolicy(h, { kind: 'session', sessionId: 's1' }, 'open_terminal', { access });
     await set('on');
     await settleNotes();
     expect(c.notifications).toEqual(['notifications/tools/list_changed']);
@@ -2640,17 +3264,7 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     const cb = await client(h.ep, b.token);
     await ca.listed();
     await cb.listed();
-    await h.host.handleRenderer(
-      {
-        type: 'mcp:setPointPolicy',
-        requestId: 1,
-        point: { kind: 'default' },
-        tool: 'open_terminal',
-        patch: { access: 'on' },
-      },
-      () => undefined,
-      1,
-    );
+    await setPointHostPolicy(h, { kind: 'default' }, 'open_terminal', { access: 'on' });
     await settleNotes();
     expect(ca.notifications).toEqual(['notifications/tools/list_changed']);
     expect(cb.notifications).toEqual([]);
@@ -2662,17 +3276,7 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     await h.host.start();
     const a = await launch(h, 's1', CLAUDE);
     const c = await client(h.ep, a.token);
-    await h.host.handleRenderer(
-      {
-        type: 'mcp:setPointPolicy',
-        requestId: 1,
-        point: { kind: 'default' },
-        tool: 'open_file',
-        patch: { access: 'off' },
-      },
-      () => undefined,
-      1,
-    );
+    await setPointHostPolicy(h, { kind: 'default' }, 'open_file', { access: 'off' });
     const before = await c.listed();
     expect(before).not.toContain('open_file');
     await setHostPolicy(h, 's1', { open_terminal: { access: 'on' } });
@@ -2686,78 +3290,53 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     });
   });
 
-  it('a sleeping claude session takes a default edit from its persisted agent; an unknown agent lowers onto the default', async () => {
+  it('full default edits preserve existing sleeping session assignments', async () => {
     const h = harness();
     h.sessions.set('s1', session('s1', { agentId: 'claude' }));
     h.sessions.set('gone', session('gone', { agentId: 'removed-profile' }));
     await h.host.start();
     await setHostPolicy(h, 's1', { open_file: { access: 'off' } });
     await setHostPolicy(h, 'gone', { open_file: { access: 'off' } });
-    let answer: HostToWebview | undefined;
-    await h.host.handleRenderer(
-      {
-        type: 'mcp:setPointPolicy',
-        requestId: 2,
-        point: { kind: 'default' },
-        tool: 'send_input',
-        patch: { access: 'on' },
-      },
-      (m) => {
-        answer = m;
-      },
-      1,
+    const sessionsBefore = h.host
+      .uiState()
+      .policy.assignments.filter((a) => a.point.kind === 'session');
+    await setPointHostPolicy(h, { kind: 'default' }, 'send_input', { access: 'on' });
+    expect(h.host.uiState().policy.assignments.filter((a) => a.point.kind === 'session')).toEqual(
+      sessionsBefore,
     );
-    expect(answer).toEqual({ type: 'mcp:policyResult', requestId: 2, ok: true });
     expect(h.host.uiState().policy.legacy.sessions.s1).toEqual({
       open_file: { access: 'off' },
+      send_input: { access: 'ask' },
     });
-    // An unresolved agent lowers onto the default, so it takes the default edit too.
     expect(h.host.uiState().policy.legacy.sessions.gone).toEqual({
       open_file: { access: 'off' },
+      send_input: { access: 'ask' },
     });
   });
 
-  it('a sleeping claude session follows its cli:claude point, and a default edit does not pass that point', async () => {
+  it('full CLI and default edits preserve the session assignment', async () => {
     const h = harness();
     h.sessions.set('s1', session('s1', { agentId: 'claude' }));
     await h.host.start();
     await setHostPolicy(h, 's1', { open_file: { access: 'off' } });
-    const setPoint = async (
-      requestId: number,
+    const setPoint = (
+      _requestId: number,
       point: { kind: 'default' } | { kind: 'cli'; cli: 'claude' },
       patch: { access: 'on' | 'off' },
-    ) => {
-      let answer: HostToWebview | undefined;
-      await h.host.handleRenderer(
-        { type: 'mcp:setPointPolicy', requestId, point, tool: 'send_input', patch },
-        (m) => {
-          answer = m;
-        },
-        1,
-      );
-      expect(answer).toEqual({ type: 'mcp:policyResult', requestId, ok: true });
-    };
+    ) => setPointHostPolicy(h, point, 'send_input', patch);
+    const before = h.host.uiState().policy.assignments.find((a) => a.point.kind === 'session');
     await setPoint(2, { kind: 'cli', cli: 'claude' }, { access: 'off' });
-    // s1 inherits cli:claude's send_input, so it is not an override of its own.
+    expect(h.host.uiState().policy.assignments.find((a) => a.point.kind === 'session')).toEqual(
+      before,
+    );
     expect(h.host.uiState().policy.legacy.sessions.s1).toEqual({
       open_file: { access: 'off' },
+      send_input: { access: 'ask' },
     });
     // Explicit, not inherited: s1 must keep this value when the default moves off it.
-    let explicit: HostToWebview | undefined;
-    await h.host.handleRenderer(
-      {
-        type: 'mcp:setToolPolicy',
-        requestId: 4,
-        sessionId: 's1',
-        tool: 'send_input',
-        patch: { access: 'ask' },
-      },
-      (m) => {
-        explicit = m;
-      },
-      1,
-    );
-    expect(explicit).toEqual({ type: 'mcp:toolPolicyResult', requestId: 4, ok: true });
+    await setPointHostPolicy(h, { kind: 'session', sessionId: 's1' }, 'send_input', {
+      access: 'ask',
+    });
     await setPoint(3, { kind: 'default' }, { access: 'on' });
     expect(h.host.uiState().policy.legacy.sessions.s1).toEqual({
       open_file: { access: 'off' },
@@ -2769,36 +3348,10 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     const h = harness();
     h.sessions.set('s1', session('s1', { agentId: 'codex' }));
     await h.host.start();
-    let point: HostToWebview | undefined;
-    await h.host.handleRenderer(
-      {
-        type: 'mcp:setPointPolicy',
-        requestId: 1,
-        point: { kind: 'cli', cli: 'codex' },
-        tool: 'send_input',
-        patch: { access: 'off' },
-      },
-      (m) => {
-        point = m;
-      },
-      1,
-    );
-    expect(point).toEqual({ type: 'mcp:policyResult', requestId: 1, ok: true });
-    let edit: HostToWebview | undefined;
-    await h.host.handleRenderer(
-      {
-        type: 'mcp:setToolPolicy',
-        requestId: 2,
-        sessionId: 's1',
-        tool: 'open_file',
-        patch: { access: 'off' },
-      },
-      (m) => {
-        edit = m;
-      },
-      1,
-    );
-    expect(edit).toEqual({ type: 'mcp:toolPolicyResult', requestId: 2, ok: true });
+    await setPointHostPolicy(h, { kind: 'cli', cli: 'codex' }, 'send_input', { access: 'off' });
+    await setPointHostPolicy(h, { kind: 'session', sessionId: 's1' }, 'open_file', {
+      access: 'off',
+    });
     // The default stays ask; s1's send_input equals cli:codex, so it is inherited, not an override.
     expect(h.host.uiState().policy.legacy.global.send_input).toBeUndefined();
     expect(h.host.uiState().policy.legacy.sessions.s1).toEqual({
@@ -2815,21 +3368,7 @@ describe('control tools: gate, effective tool list, list_changed, session layer 
     const h = harness();
     h.sessions.set('s1', session('s1', { agentId: 'codex' }));
     await h.host.start();
-    let point: HostToWebview | undefined;
-    await h.host.handleRenderer(
-      {
-        type: 'mcp:setPointPolicy',
-        requestId: 1,
-        point: { kind: 'cli', cli: 'codex' },
-        tool: 'send_input',
-        patch: { access: 'off' },
-      },
-      (m) => {
-        point = m;
-      },
-      1,
-    );
-    expect(point).toEqual({ type: 'mcp:policyResult', requestId: 1, ok: true });
+    await setPointHostPolicy(h, { kind: 'cli', cli: 'codex' }, 'send_input', { access: 'off' });
     await setHostPolicy(h, 's1', { open_file: { access: 'off' } });
     // s1 holds an assignment of its own, so only its differences from cli:codex are overrides.
     expect(h.host.uiState().policy.legacy.sessions.s1).toEqual({
@@ -3701,9 +4240,7 @@ describe('typed-command detection → notConnected (spec 2026-10-27-conduit-mcp-
     await expect
       .poll(() => {
         h.sessions.set('sh1', session('sh1', { agentId: 'pwsh' }));
-        return h
-          .prepareLaunch('sh1', SHELL, spec('/usr/bin/pwsh'))
-          .then((out) => out.env?.CONDUIT_SESSION_TOKEN);
+        return h.prepareLaunch('sh1', SHELL, spec('/usr/bin/pwsh')).env?.CONDUIT_SESSION_TOKEN;
       })
       .toBeDefined();
     await typedAndWaited(h, 'sh1', 'claude\r');
@@ -3895,12 +4432,13 @@ async function until<T>(f: () => T | undefined | false, ms = 3_000): Promise<T> 
 }
 
 describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-policy §2.3–§2.4, §3.3)', () => {
-  it('spends an allow-once override across an approved multi-target ask', async () => {
+  it('unstamped multi-target denial cannot authorize dispatch', async () => {
     const rows: Array<Record<string, unknown>> = [];
     const activityIo: ActivityIo = {
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -3934,8 +4472,8 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
         },
       ],
     });
-    const policyIo: RequestsIo = { read: () => policy, write: async () => undefined };
-    const grantsIo: RequestsIo = { read: () => null, write: async () => undefined };
+    const policyIo: PolicyIo = { read: () => policy, writeSync: () => true };
+    const grantsIo: PolicyIo = { read: () => null, writeSync: () => true };
     const h = harness({
       kinds: { '/w/a.ts': 'file', '/w/b.ts': 'file' },
       policyIo,
@@ -3953,26 +4491,16 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(denied?.id).toEqual(expect.any(String));
     let reply: HostToWebview | undefined;
     await h.host.handleRenderer(
-      { type: 'mcp:allowOnce', requestId: 1, activityId: String(denied?.id) },
+      { type: 'mcp:allowOnce', requestId: 1, activityId: String(denied?.id), at: '' },
       (m) => {
         reply = m;
       },
       1,
     );
-    expect(reply).toEqual({ type: 'mcp:policyResult', requestId: 1, ok: true });
+    expect(reply).toMatchObject({ ok: false });
     c.call(2, 'open_file', args);
-    const ask = await until(() => h.toOwner.find((item) => item.msg.type === 'mcp:ask'));
-    if (ask.msg.type !== 'mcp:ask') throw new Error('expected ask');
-    await h.host.handleRenderer(
-      { type: 'mcp:askAnswer', askId: ask.msg.askId, answer: 'approve' },
-      () => undefined,
-      1,
-    );
-    expect(c.errorOf(await c.reply(2))).toBe('ok');
-    expect(h.files).toHaveLength(2);
-    c.call(3, 'open_file', args);
-    expect(c.errorOf(await c.reply(3))).toBe('tool_disabled');
-    expect(h.files).toHaveLength(2);
+    expect(c.errorOf(await c.reply(2))).toBe('tool_disabled');
+    expect(h.files).toHaveLength(0);
   });
   const asksOf = (h: Harness) =>
     h.toOwner.flatMap((s) => (s.msg.type === 'mcp:ask' ? [{ to: s.to, ...s.msg }] : []));
@@ -3997,10 +4525,752 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     return { h, c };
   }
 
+  it('records the decisive local deny and initial ask traces only', async () => {
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line));
+      },
+      read: () => '',
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const { h, c } = await asking({ activityIo });
+    await launch(h, 's2');
+    await setPolicy(h, { close_session: { access: 'off', when: 'always', reach: 'any' } });
+    c.call(1, 'close_session', { session: 's2' });
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    expect(rows.find((r) => r.action === 'close_session')?.trace).toMatchObject({
+      decision: 'deny',
+      reason: { by: 'deny', point: { kind: 'session', sessionId: 's1' } },
+      withoutWinner: { decision: 'ask' },
+      facts: {
+        principal: { kind: 'session', sessionId: 's1', generation: 1 },
+        tool: 'close_session',
+        targets: [{ sessionId: 's2' }],
+      },
+      runtime: { outcome: 'not-reached' },
+    });
+    c.call(3, 'close_session', { session: 'missing' });
+    expect(c.errorOf(await c.reply(3))).toBe('tool_disabled');
+    expect(rows.filter((r) => r.action === 'close_session')[1]?.trace).toBeUndefined();
+    c.call(2, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    expect(
+      rows.find((r) => r.action === 'open_session' && r.outcome === 'asked')?.trace,
+    ).toMatchObject({
+      decision: 'ask',
+      facts: { tool: 'open_session' },
+      runtime: { outcome: 'not-reached' },
+    });
+    await answer(h, askIdOf(h), 'deny');
+    await c.reply(2);
+    expect(
+      rows.find((r) => r.action === 'open_session' && r.outcome === 'denied')?.trace,
+    ).toBeUndefined();
+  });
+
+  it('omits the local ask trace if its policy source changes while preparing', async () => {
+    let release!: () => void;
+    let entered = false;
+    const wait = new Promise<void>((done) => {
+      release = done;
+    });
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line));
+      },
+      read: () => '',
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const { h, c } = await asking({
+      activityIo,
+      kindOf: async () => {
+        entered = true;
+        await wait;
+        return 'dir';
+      },
+    });
+    c.call(1, 'open_session', OPEN);
+    await until(() => entered);
+    await setPolicy(h, { open_session: { access: 'ask' } });
+    release();
+    await until(() => asksOf(h).length === 1);
+    expect(
+      rows.find((r) => r.action === 'open_session' && r.outcome === 'asked')?.trace,
+    ).toBeUndefined();
+    await answer(h, askIdOf(h), 'deny');
+    await c.reply(1);
+  });
+
+  it('records the committed policy on a successful single-target handler', async () => {
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line));
+      },
+      read: () => '',
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const { h, c } = await asking({ activityIo });
+    await setPolicy(h, { open_session: { access: 'on', when: 'always' } });
+    c.call(1, 'open_session', OPEN);
+    expect(c.errorOf(await c.reply(1))).toBe('ok');
+    expect(rows.find((r) => r.action === 'open_session')?.trace).toMatchObject({
+      decision: 'allow',
+      runtime: { outcome: 'proceeded', code: null },
+    });
+  });
+
+  it('does not claim a later grant authorized an already committed Ask', async () => {
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line));
+      },
+      read: () => '',
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const { h, c } = await asking({ activityIo });
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    await answer(h, askIdOf(h), 'always');
+    expect(c.errorOf(await c.reply(1))).toBe('ok');
+    const final = rows.find((r) => r.action === 'open_session' && r.outcome === 'ok');
+    expect(final?.trace).toBeUndefined();
+    expect(final?.decidedBy).toContain('Ask:');
+  });
+
+  it('records the later committed allow when the assignment changes during prepare', async () => {
+    let entered = false;
+    let release!: () => void;
+    const wait = new Promise<void>((done) => {
+      release = done;
+    });
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line));
+      },
+      read: () => '',
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const { h, c } = await asking({
+      activityIo,
+      kindOf: async () => {
+        entered = true;
+        await wait;
+        return 'dir';
+      },
+    });
+    await setPolicy(h, { open_session: { access: 'on', when: 'always' } });
+    c.call(1, 'open_session', OPEN);
+    await until(() => entered);
+    let reply: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:saveAssignment',
+        requestId: 41,
+        point: { kind: 'session', sessionId: 's1' },
+        assignment: {
+          profileId: 'lead',
+          onScreenOnly: false,
+          exceptions: [
+            {
+              tool: 'open_session',
+              scope: { kind: 'anywhere' },
+              rule: { decision: 'allow', when: 'always' },
+            },
+          ],
+        },
+        expectedToken: h.host.uiState().policy.editToken,
+      },
+      (m) => {
+        reply = m;
+      },
+      1,
+    );
+    expect(reply).toMatchObject({ result: { ok: true } });
+    release();
+    expect(c.errorOf(await c.reply(1))).toBe('ok');
+    expect(rows.find((r) => r.action === 'open_session')?.trace).toMatchObject({
+      decision: 'allow',
+      reason: { by: 'exception', profileId: 'lead' },
+      runtime: { outcome: 'proceeded' },
+    });
+  });
+
+  it('does not attach a terminal trace after cancellation during a handler', async () => {
+    let entered = false;
+    let release!: () => void;
+    const wait = new Promise<void>((done) => {
+      release = done;
+    });
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line));
+      },
+      read: () => '',
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const { h, c } = await asking({
+      activityIo,
+      beforeClose: async () => {
+        entered = true;
+        await wait;
+      },
+    });
+    await launch(h, 's2');
+    h.owners.set('s2', null);
+    await setPolicy(h, { close_session: { access: 'on', when: 'always', reach: 'any' } });
+    c.call(1, 'close_session', { session: 's2' });
+    await until(() => entered);
+    c.cancel(1);
+    await c.barrier(2);
+    release();
+    await until(() => rows.find((r) => r.action === 'close_session'));
+    expect(rows.find((r) => r.action === 'close_session')).toMatchObject({ outcome: 'withdrawn' });
+    expect(rows.find((r) => r.action === 'close_session')?.trace).toBeUndefined();
+  });
+
+  it('omits a completed handler trace when the caller generation changes while awaiting it', async () => {
+    let entered = false;
+    let release!: () => void;
+    const wait = new Promise<void>((done) => {
+      release = done;
+    });
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line));
+      },
+      read: () => '',
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const { h, c } = await asking({
+      activityIo,
+      beforeClose: async () => {
+        entered = true;
+        await wait;
+      },
+    });
+    await launch(h, 's2');
+    h.owners.set('s2', null);
+    await setPolicy(h, { close_session: { access: 'on', when: 'always', reach: 'any' } });
+    c.call(1, 'close_session', { session: 's2' });
+    await until(() => entered);
+    const terminal = h.terminals.get('s1');
+    if (!terminal) throw new Error('missing terminal');
+    terminal.generation += 1;
+    release();
+    await c.reply(1);
+    expect(rows.find((r) => r.action === 'close_session')?.trace).toBeUndefined();
+    expect(h.toWindow.filter(({ msg }) => msg.type === 'mcp:activityRecorded')).toEqual([]);
+  });
+
+  it('records a direct fresh denial when policy changes during preparation', async () => {
+    let entered = false;
+    let release!: () => void;
+    const wait = new Promise<void>((done) => {
+      release = done;
+    });
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line));
+      },
+      read: () => '',
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const { h, c } = await asking({
+      activityIo,
+      kindOf: async () => {
+        entered = true;
+        await wait;
+        return 'dir';
+      },
+    });
+    await setPolicy(h, { open_session: { access: 'on', when: 'always' } });
+    c.call(1, 'open_session', OPEN);
+    await until(() => entered);
+    await setPolicy(h, { open_session: { access: 'off', when: 'always' } });
+    release();
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    expect(rows.find((r) => r.action === 'open_session')?.trace).toMatchObject({
+      decision: 'deny',
+      runtime: { outcome: 'not-reached' },
+    });
+  });
+
+  const runningUi = (h: Harness) =>
+    h.toWindow.flatMap(({ windowId, msg }) =>
+      msg.type === 'mcp:ui' ? [{ windowId, ...msg }] : [],
+    );
+  const replyRunningUi = (h: Harness, ui: ReturnType<typeof runningUi>[number]) =>
+    h.host.handleRenderer(
+      { type: 'mcp:uiResult', requestId: ui.requestId, result: { kind: 'closeSession', ok: true } },
+      () => undefined,
+      ui.windowId,
+    );
+  const runningOutput = (reply: Record<string, unknown> | undefined): unknown => {
+    const value = reply?.result as
+      | { structuredContent?: unknown; content: Array<{ text: string }> }
+      | undefined;
+    return value?.structuredContent ?? JSON.parse(value?.content[0]?.text ?? '{}');
+  };
+  async function runningTargets(h: Harness) {
+    await launch(h, 's2');
+    await launch(h, 's3');
+    h.owners.set('s2', 2);
+    h.owners.set('s3', 2);
+  }
+
+  it.each(['reach', 'master', 'ask'] as const)(
+    'running local batch stops after first UI yield changes %s authority',
+    async (change) => {
+      let master = true;
+      const { h, c } = await asking({ messagingOn: () => master });
+      await runningTargets(h);
+      await setPolicy(h, { close_session: { access: 'on', when: 'always', reach: 'any' } });
+      c.call(1, 'close_session', { sessions: ['s2', 's3'] });
+      const first = await until(() => runningUi(h)[0]);
+      if (change === 'master') master = false;
+      else
+        await setPolicy(h, {
+          close_session: {
+            access: change === 'ask' ? 'ask' : 'on',
+            when: 'always',
+            reach: change === 'reach' ? 'opened' : 'any',
+          },
+        });
+      await replyRunningUi(h, first);
+      await vi.waitFor(() =>
+        expect(c.lines.some((line) => line.id === 1) || runningUi(h).length > 1).toBe(true),
+      );
+      expect(runningUi(h)).toHaveLength(1);
+      expect(runningOutput(await c.reply(1))).toMatchObject({
+        results: [
+          {
+            closed: false,
+            error: {
+              code: 'tool_disabled',
+              message: expect.stringContaining('may already have completed'),
+            },
+          },
+          { closed: false, error: { code: 'tool_disabled' } },
+        ],
+      });
+      expect(h.host.uiState().policy.grants).toEqual([]);
+    },
+  );
+
+  it('running local batch refuses newly minted unconsumed override authority', async () => {
+    const rows: Array<Record<string, unknown>> = [];
+    let saved = '';
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line));
+      },
+      read: () => '',
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const { h, c } = await asking({
+      activityIo,
+      policyIo: {
+        read: () => null,
+        writeSync: (value) => {
+          saved = value;
+          return true;
+        },
+      },
+    });
+    await runningTargets(h);
+    await setPolicy(h, { close_session: { access: 'off', when: 'always', reach: 'any' } });
+    c.call(90, 'close_session', { session: 's3' });
+    expect(c.errorOf(await c.reply(90))).toBe('tool_disabled');
+    const denied = rows.find((row) => row.action === 'close_session' && row.decision === 'deny');
+    if (!denied) throw new Error('missing denied activity');
+    await setPolicy(h, { close_session: { access: 'on', when: 'always', reach: 'any' } });
+    c.call(1, 'close_session', { sessions: ['s2', 's3'] });
+    const first = await until(() => runningUi(h)[0]);
+    let edited: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:saveAssignment',
+        requestId: 91,
+        point: { kind: 'session', sessionId: 's1' },
+        assignment: {
+          profileId: 'lead',
+          onScreenOnly: false,
+          exceptions: [
+            {
+              tool: 'close_session',
+              scope: { kind: 'session', sessionId: 's3' },
+              rule: { decision: 'deny', when: 'always', reach: 'any' },
+            },
+          ],
+        },
+        expectedToken: h.host.uiState().policy.editToken,
+      },
+      (value) => {
+        edited = value;
+      },
+      1,
+    );
+    expect(edited).toMatchObject({ result: { ok: true } });
+    await h.host.handleRenderer(
+      { type: 'mcp:allowOnce', requestId: 92, activityId: String(denied.id), at: '' },
+      (value) => {
+        edited = value;
+      },
+      1,
+    );
+    expect(edited).toMatchObject({ ok: false });
+    expect(JSON.parse(saved).overrides).toHaveLength(0);
+    await replyRunningUi(h, first);
+    await vi.waitFor(() =>
+      expect(c.lines.some((line) => line.id === 1) || runningUi(h).length > 1).toBe(true),
+    );
+    expect(runningUi(h)).toHaveLength(1);
+    expect(runningOutput(await c.reply(1))).toMatchObject({
+      results: [{ closed: false }, { closed: false }],
+    });
+    expect(JSON.parse(saved).overrides).toHaveLength(0);
+  });
+
+  it('running local batch retains actually consumed one-use authority across UI waits', async () => {
+    let saved = serializePolicyFile({
+      version: 1,
+      profiles: [],
+      assignments: [
+        {
+          point: { kind: 'session', sessionId: 's1' },
+          assignment: {
+            profileId: 'lead',
+            onScreenOnly: false,
+            exceptions: [
+              {
+                tool: 'close_session',
+                scope: { kind: 'anywhere' },
+                rule: { decision: 'deny', when: 'always', reach: 'any' },
+              },
+            ],
+          },
+        },
+      ],
+      overrides: ['s2', 's3'].map((sessionId, i) => ({
+        id: `once-${i}`,
+        sessionId: 's1',
+        tool: 'close_session',
+        target: { sessionId, path: null, folder: '/w', projectId: null },
+        createdAt: new Date(0).toISOString(),
+      })),
+      migratedFrom: null,
+      notes: { onScreenOnlyOffered: [] },
+    });
+    const { h, c } = await asking({
+      policyIo: {
+        read: () => saved,
+        writeSync: (value) => {
+          saved = value;
+          return true;
+        },
+      },
+    });
+    await runningTargets(h);
+    c.call(1, 'close_session', { sessions: ['s2', 's3'] });
+    await vi.waitFor(() =>
+      expect(runningUi(h).length > 0 || c.lines.some((line) => line.id === 1)).toBe(true),
+    );
+    const first = runningUi(h)[0];
+    expect(first).toBeDefined();
+    if (!first) throw new Error('missing first UI');
+    expect(JSON.parse(saved).overrides).toEqual([]);
+    await replyRunningUi(h, first);
+    const second = await until(() => runningUi(h)[1]);
+    await replyRunningUi(h, second);
+    expect(runningOutput(await c.reply(1))).toMatchObject({
+      results: [{ closed: true }, { closed: true }],
+    });
+    expect(JSON.parse(saved).overrides).toEqual([]);
+  });
+
+  it('running local batch continues unchanged Ask only with actual prior owner Allow', async () => {
+    const { h, c } = await asking();
+    await runningTargets(h);
+    await setPolicy(h, { close_session: { access: 'ask', when: 'always', reach: 'any' } });
+    c.call(1, 'close_session', { sessions: ['s2', 's3'] });
+    await until(() => asksOf(h).length === 1);
+    await answer(h, askIdOf(h), 'approve');
+    await vi.waitFor(() =>
+      expect(runningUi(h).length > 0 || c.lines.some((line) => line.id === 1)).toBe(true),
+    );
+    const first = runningUi(h)[0];
+    expect(first).toBeDefined();
+    if (!first) throw new Error('missing first UI');
+    await replyRunningUi(h, first);
+    const second = await until(() => runningUi(h)[1]);
+    await replyRunningUi(h, second);
+    expect(runningOutput(await c.reply(1))).toMatchObject({
+      results: [{ closed: true }, { closed: true }],
+    });
+  });
+
+  it.each(['reach', 'master', 'deny', 'viewing', 'unchanged'] as const)(
+    'queued send_input checks current %s authority inside actual writer slot',
+    async (change) => {
+      let release!: () => void;
+      let entered = false;
+      let master = true;
+      const gate = new Promise<void>((done) => {
+        release = done;
+      });
+      const { h, c } = await asking({ messagingOn: () => master });
+      await launch(h, 's2');
+      await setPolicy(h, {
+        send_input: {
+          access: 'on',
+          when: change === 'viewing' ? 'viewing' : 'always',
+          reach: 'any',
+        },
+      });
+      const held = h.writer.submitEnter('s2', {
+        beforeEnter: async () => {
+          entered = true;
+          await gate;
+          return false;
+        },
+      });
+      await until(() => entered);
+      c.call(1, 'send_input', {
+        session: 's2',
+        text: 'queued-sensitive-text',
+        keys: ['tab'],
+        submit: true,
+      });
+      await until(() => h.typingSequences.includes('s2'));
+      if (change === 'master') master = false;
+      else if (change === 'viewing') h.presence.shown.set(1, new Set());
+      else
+        await setPolicy(h, {
+          send_input: {
+            access: change === 'deny' ? 'off' : 'on',
+            when: 'always',
+            reach: change === 'reach' ? 'opened' : 'any',
+          },
+        });
+      release();
+      await held;
+      const reply = await c.reply(1);
+      if (change === 'unchanged') {
+        expect(c.errorOf(reply)).toBe('ok');
+        expect(h.inputs.filter(([id]) => id === 's2')).toEqual([
+          ['s2', 'queued-sensitive-text'],
+          ['s2', '\t'],
+          ['s2', '\r'],
+        ]);
+      } else {
+        expect(c.errorOf(reply)).toBe('tool_disabled');
+        expect(h.inputs.filter(([id]) => id === 's2')).toEqual([]);
+        expect(runningOutput(reply)).toMatchObject({
+          error: { code: 'tool_disabled', retryable: false },
+        });
+      }
+    },
+  );
+
+  it.each(['policy', 'throw', 'undefined'] as const)(
+    'delayed send_input Enter preserves truthful %s refusal after text',
+    async (change) => {
+      let broken = false;
+      const { h, c } = await asking({
+        holdGaps: true,
+        messagingOn: () => {
+          if (broken) {
+            broken = false;
+            throw change === 'undefined' ? undefined : new Error('authority producer failed');
+          }
+          return true;
+        },
+      });
+      await launch(h, 's2');
+      await setPolicy(h, { send_input: { access: 'on', when: 'always', reach: 'any' } });
+      c.call(1, 'send_input', { session: 's2', text: 'already-typed', submit: true });
+      await until(() => h.gaps.length > 0);
+      expect(h.inputs.filter(([id]) => id === 's2')).toEqual([['s2', 'already-typed']]);
+      if (change !== 'policy') broken = true;
+      else await setPolicy(h, { send_input: { access: 'off', when: 'always', reach: 'any' } });
+      h.gaps.shift()?.();
+      const reply = await c.reply(1);
+      broken = false;
+      expect(c.errorOf(reply)).toBe(change !== 'policy' ? 'open_failed' : 'tool_disabled');
+      expect(JSON.stringify(reply)).toContain(
+        change === 'undefined'
+          ? 'undefined'
+          : change === 'throw'
+            ? 'authority producer failed'
+            : 'text may already have been typed',
+      );
+      expect(h.inputs.filter(([id]) => id === 's2')).toEqual([['s2', 'already-typed']]);
+    },
+  );
+
+  it('read_screen refuses asynchronously captured rows after owner policy changes', async () => {
+    let release!: () => void;
+    let entered = false;
+    let hold = false;
+    const gate = new Promise<void>((done) => {
+      release = done;
+    });
+    const { h, c } = await asking({
+      beforeSnapshot: async (id) => {
+        if (hold && id === 's2') {
+          entered = true;
+          await gate;
+        }
+      },
+    });
+    await launch(h, 's2');
+    h.output('s2', 'SENSITIVE_SCREEN_ROWS');
+    await setPolicy(h, { read_screen: { access: 'on', when: 'always', reach: 'any' } });
+    hold = true;
+    c.call(1, 'read_screen', { session: 's2' });
+    await until(() => entered);
+    await setPolicy(h, { read_screen: { access: 'off', when: 'always', reach: 'any' } });
+    release();
+    const reply = await c.reply(1);
+    expect(c.errorOf(reply)).toBe('tool_disabled');
+    expect(JSON.stringify(reply)).not.toContain('SENSITIVE_SCREEN_ROWS');
+    expect(runningOutput(reply)).toMatchObject({
+      error: { code: 'tool_disabled', retryable: false },
+    });
+    expect(runningOutput(reply)).not.toHaveProperty('rows');
+    expect(runningOutput(reply)).not.toHaveProperty('cursor_row');
+  });
+
+  it('local close Ask prepared for unrelated target refuses same Ask reach narrowing', async () => {
+    const { h, c } = await asking();
+    await launch(h, 's2');
+    h.owners.set('s2', null);
+    await setPolicy(h, { close_session: { access: 'ask', when: 'always', reach: 'any' } });
+    c.call(1, 'close_session', { session: 's2' });
+    await until(() => asksOf(h).length === 1);
+    await setPolicy(h, { close_session: { access: 'ask', when: 'always', reach: 'opened' } });
+    c.send({ id: 2, method: 'tools/list' });
+    const listed = await c.reply(2);
+    expect(listed).toMatchObject({
+      result: {
+        tools: expect.arrayContaining([expect.objectContaining({ name: 'close_session' })]),
+      },
+    });
+    expect(h.host.uiState().awaitingApproval).toEqual(['s1']);
+    let receipt: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:permissionAnswer', requestId: askIdOf(h), answer: { outcome: 'allowed' } },
+      (value) => {
+        receipt = value;
+      },
+      1,
+    );
+    expect(receipt).toMatchObject({ type: 'mcp:permissionResult', ok: false });
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    expect(h.closes).toEqual([]);
+    expect(h.host.uiState().policy.grants).toEqual([]);
+    expect(h.host.uiState().awaitingApproval).toEqual([]);
+  });
+
+  it.each(['move', 'master', 'viewing', 'home', 'project', 'generation', 'ask'] as const)(
+    'local async prepare refuses changed %s authority',
+    async (change) => {
+      let release!: () => void;
+      let entered = false;
+      let master = true;
+      const gate = new Promise<void>((done) => {
+        release = done;
+      });
+      const { h, c } = await asking({
+        messagingOn: () => master,
+        kindOf: async (path) => {
+          if (path === '/w') {
+            entered = true;
+            await gate;
+          }
+          return 'dir';
+        },
+      });
+      await setPolicy(h, {
+        open_session: {
+          access: 'on',
+          when: change === 'viewing' ? 'viewing' : 'always',
+          move: 'yes',
+        },
+      });
+      c.call(1, 'open_session', { ...OPEN, focus: true });
+      await until(() => entered);
+      const original = h.sessions.get('s1');
+      if (!original) throw new Error('missing caller');
+      const initialHome = original.home;
+      const initialProject = original.projectId;
+      if (change === 'move')
+        await setPolicy(h, { open_session: { access: 'on', when: 'always', move: 'no' } });
+      else if (change === 'master') master = false;
+      else if (change === 'viewing') h.presence.shown.set(1, new Set());
+      else if (change === 'home') original.home = '/another';
+      else if (change === 'project') original.projectId = 'another-project';
+      else if (change === 'generation') {
+        const terminal = h.terminals.get('s1');
+        if (!terminal) throw new Error('missing terminal');
+        terminal.generation += 1;
+      } else await setPolicy(h, { open_session: { access: 'ask', when: 'always', move: 'yes' } });
+      release();
+      expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+      expect(h.opens).toEqual([]);
+      expect(asksOf(h)).toEqual([]);
+      master = true;
+      h.presence.shown.delete(1);
+      original.home = initialHome;
+      original.projectId = initialProject;
+      await setPolicy(h, { open_session: { access: 'on', when: 'always', move: 'yes' } });
+      if (change !== 'generation') {
+        c.call(2, 'open_session', OPEN);
+        expect(c.errorOf(await c.reply(2))).toBe('ok');
+        expect(h.opens).toHaveLength(1);
+      }
+    },
+  );
+
   it('gate precedence', async () => {
     const { h, c } = await asking();
-    h.presence.ready.delete(1);
     await setPolicy(h, { open_terminal: { access: 'off' } });
+    h.presence.ready.delete(1);
     c.call(1, 'open_terminal', { path: '/w', command: 'node' });
     expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
     c.call(2, 'open_session', OPEN);
@@ -4024,12 +5294,331 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(c.errorOf(await c.reply(6))).toBe('ok');
   });
 
-  it('an override waits for a call that runs: an off-screen call is refused and keeps it, the next on-screen call spends it', async () => {
+  it('notifies only the current owner of a persisted refusal and actual retry', async () => {
+    const { h, c } = await asking();
+    await launch(h, 's2');
+    await setPolicy(h, { close_session: { access: 'off', when: 'always', reach: 'any' } });
+    h.owners.set('s1', 2);
+    c.call(1, 'close_session', { session: 's2' });
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    const events = () => h.toWindow.filter(({ msg }) => msg.type === 'mcp:activityRecorded');
+    expect(events()).toHaveLength(1);
+    const first = events()[0];
+    expect(first.windowId).toBe(2);
+    if (first.msg.type !== 'mcp:activityRecorded') throw new Error('missing event');
+    const firstEvent = first.msg;
+    expect(firstEvent).toMatchObject({
+      sessionId: 's1',
+      generation: 1,
+      tool: 'close_session',
+      outcome: 'denied',
+    });
+    let page: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:activity:get', requestId: 2, query: {} },
+      (m) => {
+        page = m;
+      },
+      2,
+    );
+    if (page?.type !== 'mcp:activity') throw new Error('missing activity');
+    const row = page.page.rows.find((r) => r.id === firstEvent.id);
+    expect(row).toMatchObject({
+      id: firstEvent.id,
+      at: firstEvent.at,
+      action: firstEvent.tool,
+      outcome: 'denied',
+      decidedBy: firstEvent.decidedBy,
+    });
+    let result: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:allowOnce', requestId: 3, activityId: firstEvent.id, at: firstEvent.at },
+      (m) => {
+        result = m;
+      },
+      2,
+    );
+    expect(result).toMatchObject({ ok: true });
+    h.owners.set('s2', null);
+    c.call(4, 'close_session', { session: 's2' });
+    expect(c.errorOf(await c.reply(4))).toBe('ok');
+    expect(events()).toHaveLength(2);
+    const second = events()[1];
+    expect(second.windowId).toBe(2);
+    expect(second.msg).toMatchObject({
+      type: 'mcp:activityRecorded',
+      sessionId: 's1',
+      generation: 1,
+      tool: 'close_session',
+      outcome: 'ok',
+    });
+    expect(second.msg).not.toHaveProperty('decidedBy');
+    expect(h.broadcasts.filter((m) => m.type === 'mcp:activityRecorded')).toEqual([]);
+  });
+
+  it('does not notify when the Activity append fails', async () => {
+    const io: ActivityIo = {
+      append: () => {
+        throw new Error('disk full');
+      },
+      read: () => '',
+      list: () => [],
+      remove: () => {},
+      readArgs: () => null,
+      writeArgs: () => {},
+    };
+    const { h, c } = await asking({ activityIo: io });
+    await setPolicy(h, { open_file: { access: 'off' } });
+    c.call(1, 'open_file', { path: '/w/a.ts' });
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    expect(h.toWindow.filter(({ msg }) => msg.type === 'mcp:activityRecorded')).toEqual([]);
+  });
+
+  it('does not notify an absent or unready owner even if the row is saved', async () => {
+    const { h, c } = await asking();
+    await setPolicy(h, { open_file: { access: 'off' } });
+    h.presence.ready.delete(1);
+    c.call(1, 'open_file', { path: '/w/a.ts' });
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    h.owners.set('s1', null);
+    c.call(2, 'open_file', { path: '/w/a.ts' });
+    expect(c.errorOf(await c.reply(2))).toBe('tool_disabled');
+    let page: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:activity:get', requestId: 3, query: {} },
+      (m) => {
+        page = m;
+      },
+      2,
+    );
+    if (page?.type !== 'mcp:activity') throw new Error('missing activity');
+    expect(page.page.rows.filter((row) => row.action === 'open_file')).toHaveLength(2);
+    expect(h.toWindow.filter(({ msg }) => msg.type === 'mcp:activityRecorded')).toEqual([]);
+  });
+
+  it('persists a canonical Windows session target and rechecks its exact identity for allow once', async () => {
+    const { h, c } = await asking();
+    await launch(h, 's2');
+    const target = h.sessions.get('s2');
+    if (!target) throw new Error('missing target');
+    target.home = 'C:/Users/Test/target';
+    await setPolicy(h, { close_session: { access: 'off', when: 'always', reach: 'any' } });
+    c.call(1, 'close_session', { session: 's2' });
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    let page: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:activity:get', requestId: 2, query: {} },
+      (m) => {
+        page = m;
+      },
+      1,
+    );
+    if (page?.type !== 'mcp:activity') throw new Error('missing activity');
+    const row = page.page.rows.find((r) => r.action === 'close_session');
+    if (!row?.trace) throw new Error('missing Windows decision trace');
+    expect(row.trace).toMatchObject({
+      reason: { by: 'deny' },
+      facts: {
+        targets: [{ sessionId: 's2', path: null, folder: 'C:/Users/Test/target', projectId: null }],
+      },
+    });
+    const issue = async () => {
+      let reply: HostToWebview | undefined;
+      await h.host.handleRenderer(
+        { type: 'mcp:allowOnce', requestId: 3, activityId: row.id, at: row.at },
+        (m) => {
+          reply = m;
+        },
+        1,
+      );
+      return reply;
+    };
+    target.home = 'C:/Users/Test/other';
+    expect(await issue()).toMatchObject({ ok: false });
+    target.home = 'c:\\users\\test\\target';
+    expect(await issue()).toMatchObject({ ok: true });
+    h.owners.set('s2', null);
+    c.call(4, 'close_session', { session: 's2' });
+    expect(c.errorOf(await c.reply(4))).toBe('ok');
+    expect(h.closes).toEqual(['s2']);
+    expect(await issue()).toMatchObject({ ok: false });
+  });
+
+  it('issues a stamped close-session override only to the current owner and spends it once', async () => {
+    const { h, c } = await asking();
+    await launch(h, 's2');
+    await setPolicy(h, { close_session: { access: 'off', when: 'always', reach: 'any' } });
+    c.call(1, 'close_session', { session: 's2' });
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    let page: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:activity:get', requestId: 2, query: {} },
+      (m) => {
+        page = m;
+      },
+      1,
+    );
+    if (page?.type !== 'mcp:activity') throw new Error('missing activity');
+    const row = page.page.rows.find((r) => r.action === 'close_session');
+    if (!row) throw new Error('missing deny');
+    const send = async (sender: number) => {
+      let answer: HostToWebview | undefined;
+      await h.host.handleRenderer(
+        { type: 'mcp:allowOnce', requestId: 3, activityId: row.id, at: row.at },
+        (m) => {
+          answer = m;
+        },
+        sender,
+      );
+      return answer;
+    };
+    expect(await send(2)).toMatchObject({ ok: false });
+    const issued = await Promise.all([send(1), send(1)]);
+    expect(issued.map((result) => result?.type === 'mcp:policyResult' && result.ok).sort()).toEqual(
+      [false, true],
+    );
+    expect(h.closes).toHaveLength(0);
+    h.owners.set('s2', null);
+    c.call(4, 'close_session', { session: 's2' });
+    expect(c.errorOf(await c.reply(4))).toBe('ok');
+    expect(await send(1)).toMatchObject({ ok: false });
+  });
+
+  it('retains a stamped close-session override when the caller goes off screen', async () => {
+    const { h, c } = await asking();
+    await launch(h, 's2');
+    await setPolicy(h, { close_session: { access: 'off', when: 'viewing', reach: 'any' } });
+    c.call(1, 'close_session', { session: 's2' });
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    let page: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:activity:get', requestId: 2, query: {} },
+      (m) => {
+        page = m;
+      },
+      1,
+    );
+    if (page?.type !== 'mcp:activity') throw new Error('missing activity');
+    const row = page.page.rows.find((r) => r.action === 'close_session');
+    if (!row) throw new Error('missing deny');
+    let result: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:allowOnce', requestId: 3, activityId: row.id, at: row.at },
+      (m) => {
+        result = m;
+      },
+      1,
+    );
+    expect(result).toMatchObject({ ok: true });
+    h.owners.set('s2', null);
+    h.presence.shown.set(1, new Set());
+    c.call(4, 'close_session', { session: 's2' });
+    expect(c.errorOf(await c.reply(4))).toBe('caller_not_visible');
+    expect(h.closes).toEqual([]);
+    h.presence.shown.delete(1);
+    c.call(5, 'close_session', { session: 's2' });
+    expect(c.errorOf(await c.reply(5))).toBe('ok');
+    expect(h.closes).toEqual(['s2']);
+  });
+
+  it('spends a stamped close-session override on only one concurrent retry', async () => {
+    let releaseClose: (() => void) | undefined;
+    let closeStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      closeStarted = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    const { h, c } = await asking({
+      beforeClose: async () => {
+        closeStarted?.();
+        await blocked;
+      },
+    });
+    await launch(h, 's2');
+    await setPolicy(h, { close_session: { access: 'off', when: 'always', reach: 'any' } });
+    c.call(1, 'close_session', { session: 's2' });
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    let page: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:activity:get', requestId: 2, query: {} },
+      (m) => {
+        page = m;
+      },
+      1,
+    );
+    if (page?.type !== 'mcp:activity') throw new Error('missing activity');
+    const row = page.page.rows.find((r) => r.action === 'close_session');
+    if (!row) throw new Error('missing deny');
+    let result: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:allowOnce', requestId: 3, activityId: row.id, at: row.at },
+      (m) => {
+        result = m;
+      },
+      1,
+    );
+    expect(result).toMatchObject({ ok: true });
+    h.owners.set('s2', null);
+    c.call(4, 'close_session', { session: 's2' });
+    await started;
+    c.call(5, 'close_session', { session: 's2' });
+    expect(c.errorOf(await c.reply(5))).toBe('tool_disabled');
+    releaseClose?.();
+    expect(c.errorOf(await c.reply(4))).toBe('ok');
+    expect(h.closes).toEqual(['s2']);
+    let after: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:activity:get', requestId: 6, query: {} },
+      (m) => {
+        after = m;
+      },
+      1,
+    );
+    if (after?.type !== 'mcp:activity') throw new Error('missing activity');
+    const rows = after.page.rows.filter((r) => r.action === 'close_session' && r.id !== row.id);
+    expect(rows.map((r) => r.outcome).sort()).toEqual(['denied', 'ok']);
+    expect(rows.find((r) => r.outcome === 'denied')).toMatchObject({ decision: 'deny' });
+  });
+
+  it('rejects a correctly stamped unsupported file denial without dispatch', async () => {
+    const { h, c } = await asking();
+    await setPolicy(h, { open_file: { access: 'off' } });
+    c.call(1, 'open_file', { path: '/w/a.ts' });
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    let page: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:activity:get', requestId: 2, query: {} },
+      (m) => {
+        page = m;
+      },
+      1,
+    );
+    if (page?.type !== 'mcp:activity') throw new Error('missing activity');
+    const row = page.page.rows.find((r) => r.action === 'open_file');
+    if (!row) throw new Error('missing deny');
+    let result: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:allowOnce', requestId: 3, activityId: row.id, at: row.at },
+      (m) => {
+        result = m;
+      },
+      1,
+    );
+    expect(result).toMatchObject({ ok: false });
+    c.call(4, 'open_file', { path: '/w/a.ts' });
+    expect(c.errorOf(await c.reply(4))).toBe('tool_disabled');
+    expect(h.files).toHaveLength(0);
+  });
+
+  it('unstamped file denial cannot authorize dispatch', async () => {
     const rows: Array<Record<string, unknown>> = [];
     const activityIo: ActivityIo = {
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -4042,31 +5631,25 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     const denied = rows.find((row) => row.decision === 'deny');
     let answer: HostToWebview | undefined;
     await h.host.handleRenderer(
-      { type: 'mcp:allowOnce', requestId: 1, activityId: String(denied?.id) },
+      { type: 'mcp:allowOnce', requestId: 1, activityId: String(denied?.id), at: '' },
       (m) => {
         answer = m;
       },
       1,
     );
-    expect(answer).toEqual({ type: 'mcp:policyResult', requestId: 1, ok: true });
-
-    h.presence.shown.set(1, new Set());
+    expect(answer).toMatchObject({ ok: false });
     c.call(2, 'open_file', { path: '/w/a.ts' });
-    expect(c.errorOf(await c.reply(2))).toBe('caller_not_visible');
-    expect(h.files).toEqual([]);
-
-    h.presence.shown.set(1, new Set(['s1']));
-    c.call(3, 'open_file', { path: '/w/a.ts' });
-    expect(c.errorOf(await c.reply(3))).toBe('ok');
-    expect(h.files).toHaveLength(1);
+    expect(c.errorOf(await c.reply(2))).toBe('tool_disabled');
+    expect(h.files).toHaveLength(0);
   });
 
-  it('a messaging call after its one-use override is spent is refused', async () => {
+  it('unstamped messaging denial cannot authorize dispatch', async () => {
     const rows: Array<Record<string, unknown>> = [];
     const activityIo: ActivityIo = {
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -4082,42 +5665,42 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
         type: 'mcp:allowOnce',
         requestId: 2,
         activityId: String(rows.find((r) => r.decision === 'deny')?.id),
+        at: '',
       },
       (m) => {
         allowed = m;
       },
       1,
     );
-    expect(allowed).toEqual({ type: 'mcp:policyResult', requestId: 2, ok: true });
-
+    expect(allowed).toMatchObject({ ok: false });
     c.call(3, 'list_sessions');
-    c.call(4, 'list_sessions');
-    const codes = [c.errorOf(await c.reply(3)), c.errorOf(await c.reply(4))].sort();
-    expect(codes).toEqual(['ok', 'tool_disabled']);
+    expect(c.errorOf(await c.reply(3))).toBe('tool_disabled');
   });
 
-  it('an override is kept when a messaging call is refused for store_unavailable', async () => {
+  it('unstamped denial cannot bypass policy when message store is unavailable', async () => {
     const rows: Array<Record<string, unknown>> = [];
     const activityIo: ActivityIo = {
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
       writeArgs: () => undefined,
     };
     const writes: string[] = [];
-    const policyIo: RequestsIo = {
+    const policyIo: PolicyIo = {
       read: () => null,
-      write: async (t) => {
+      writeSync: (t) => {
         writes.push(t);
+        return true;
       },
     };
     const { h, c } = await asking({
       storeIo: failingIo(),
       policyIo,
-      grantsIo: { read: () => null, write: async () => undefined },
+      grantsIo: { read: () => null, writeSync: () => true },
       activityIo,
       manualTimers: true,
     });
@@ -4130,27 +5713,19 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
         type: 'mcp:allowOnce',
         requestId: 2,
         activityId: String(rows.find((r) => r.decision === 'deny')?.id),
+        at: '',
       },
       (m) => {
         allowed = m;
       },
       1,
     );
-    expect(allowed).toEqual({ type: 'mcp:policyResult', requestId: 2, ok: true });
-    h.advance(1_000);
-    const saved = () => {
-      const parsed = parsePolicyFile(writes.at(-1) ?? '');
-      return parsed.ok ? parsed.file.overrides.length : -1;
-    };
-    expect(saved()).toBe(1);
-
+    expect(allowed).toMatchObject({ ok: false });
     c.call(3, 'list_sessions');
-    expect(c.errorOf(await c.reply(3))).toBe('store_unavailable');
-    h.advance(1_000);
-    expect(saved()).toBe(1);
+    expect(c.errorOf(await c.reply(3))).toBe('tool_disabled');
   });
 
-  it('two concurrent calls on one one-use override run exactly once', async () => {
+  it('unstamped file denial cannot authorize concurrent calls', async () => {
     const policy = serializePolicyFile({
       version: 1,
       profiles: [],
@@ -4179,6 +5754,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -4186,8 +5762,8 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     };
     const { h, c } = await asking({
       kinds: { '/w': 'dir', '/w/a.ts': 'file' },
-      policyIo: { read: () => policy, write: async () => undefined },
-      grantsIo: { read: () => null, write: async () => undefined },
+      policyIo: { read: () => policy, writeSync: () => true },
+      grantsIo: { read: () => null, writeSync: () => true },
       activityIo,
     });
     c.call(1, 'open_file', { path: '/w/a.ts' });
@@ -4198,19 +5774,21 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
         type: 'mcp:allowOnce',
         requestId: 2,
         activityId: String(rows.find((r) => r.decision === 'deny')?.id),
+        at: '',
       },
       (m) => {
         allowed = m;
       },
       1,
     );
-    expect(allowed).toEqual({ type: 'mcp:policyResult', requestId: 2, ok: true });
-
+    expect(allowed).toMatchObject({ ok: false });
     c.call(3, 'open_file', { path: '/w/a.ts' });
     c.call(4, 'open_file', { path: '/w/a.ts' });
-    const codes = [c.errorOf(await c.reply(3)), c.errorOf(await c.reply(4))].sort();
-    expect(codes).toEqual(['ok', 'tool_disabled']);
-    expect(h.files).toHaveLength(1);
+    expect([c.errorOf(await c.reply(3)), c.errorOf(await c.reply(4))]).toEqual([
+      'tool_disabled',
+      'tool_disabled',
+    ]);
+    expect(h.files).toHaveLength(0);
   });
 
   it('two concurrent calls on two one-use overrides for one target both run, each spending one', async () => {
@@ -4249,6 +5827,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -4256,8 +5835,8 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     };
     const { c } = await asking({
       kinds: { '/w': 'dir', '/w/a.ts': 'file' },
-      policyIo: { read: () => policy, write: async () => undefined },
-      grantsIo: { read: () => null, write: async () => undefined },
+      policyIo: { read: () => policy, writeSync: () => true },
+      grantsIo: { read: () => null, writeSync: () => true },
       activityIo,
     });
     const before = rows.length;
@@ -4275,7 +5854,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(c.errorOf(await c.reply(5))).toBe('tool_disabled');
   });
 
-  it('a call refused because a concurrent call spent its override records denied, never allow', async () => {
+  it('unstamped concurrent refusals remain denied in activity', async () => {
     const policy = serializePolicyFile({
       version: 1,
       profiles: [],
@@ -4304,6 +5883,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -4311,8 +5891,8 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     };
     const { h, c } = await asking({
       kinds: { '/w': 'dir', '/w/a.ts': 'file' },
-      policyIo: { read: () => policy, write: async () => undefined },
-      grantsIo: { read: () => null, write: async () => undefined },
+      policyIo: { read: () => policy, writeSync: () => true },
+      grantsIo: { read: () => null, writeSync: () => true },
       activityIo,
     });
     c.call(1, 'open_file', { path: '/w/a.ts' });
@@ -4322,6 +5902,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
         type: 'mcp:allowOnce',
         requestId: 2,
         activityId: String(rows.find((r) => r.decision === 'deny')?.id),
+        at: '',
       },
       () => undefined,
       1,
@@ -4330,31 +5911,25 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     const before = rows.length;
     c.call(3, 'open_file', { path: '/w/a.ts' });
     c.call(4, 'open_file', { path: '/w/a.ts' });
-    const codes = [c.errorOf(await c.reply(3)), c.errorOf(await c.reply(4))].sort();
-    expect(codes).toEqual(['ok', 'tool_disabled']);
+    expect([c.errorOf(await c.reply(3)), c.errorOf(await c.reply(4))]).toEqual([
+      'tool_disabled',
+      'tool_disabled',
+    ]);
     expect(
       rows
         .slice(before)
         .filter((r) => r.action === 'open_file')
-        .map((r) => `${String(r.decision)}/${String(r.outcome)}`)
-        .sort(),
-    ).toEqual(['allow/ok', 'deny/denied']);
-    const refusedRow = rows.slice(before).find((r) => r.outcome === 'denied');
-    expect(refusedRow).toMatchObject({
-      decision: 'deny',
-      decidedBy: reasonText({ by: 'deny', point: { kind: 'session', sessionId: 's1' } }, 'deny', {
-        profileName: (id) => id,
-        cliName: (k) => k,
-      }),
-    });
+        .map((r) => r.outcome),
+    ).toEqual(['denied', 'denied']);
   });
 
-  it('an override is kept when the ask that would spend it is refused for rate_limited', async () => {
+  it('unstamped multi-target request cannot issue authority', async () => {
     const rows: Array<Record<string, unknown>> = [];
     const activityIo: ActivityIo = {
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -4388,8 +5963,8 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
         },
       ],
     });
-    const policyIo: RequestsIo = { read: () => policy, write: async () => undefined };
-    const grantsIo: RequestsIo = { read: () => null, write: async () => undefined };
+    const policyIo: PolicyIo = { read: () => policy, writeSync: () => true };
+    const grantsIo: PolicyIo = { read: () => null, writeSync: () => true };
     const { h, c } = await asking({
       kinds: { '/w': 'dir', '/w/a.ts': 'file', '/w/b.ts': 'file' },
       policyIo,
@@ -4402,27 +5977,16 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     const denied = rows.find((row) => row.decision === 'deny');
     let allowed: HostToWebview | undefined;
     await h.host.handleRenderer(
-      { type: 'mcp:allowOnce', requestId: 2, activityId: String(denied?.id) },
+      { type: 'mcp:allowOnce', requestId: 2, activityId: String(denied?.id), at: '' },
       (m) => {
         allowed = m;
       },
       1,
     );
-    expect(allowed).toEqual({ type: 'mcp:policyResult', requestId: 2, ok: true });
-
-    for (const id of [10, 11, 12]) c.call(id, 'open_file', { paths: ['/w/b.ts'] });
-    await until(() => asksOf(h).length === 3);
-    c.call(20, 'open_file', both);
-    expect(c.errorOf(await c.reply(20))).toBe('rate_limited');
-
-    await answer(h, asksOf(h)[0]?.askId ?? '', 'deny');
-    expect(c.errorOf(await c.reply(10))).toBe('denied');
-    c.call(21, 'open_file', both);
-    await until(() => asksOf(h).length === 4 || c.lines.some((l) => l.id === 21));
-    expect(c.lines.find((l) => l.id === 21)).toBeUndefined();
-    expect(asksOf(h)).toHaveLength(4);
-    await answer(h, asksOf(h).at(-1)?.askId ?? '', 'approve');
-    expect(c.errorOf(await c.reply(21))).toBe('ok');
+    expect(allowed).toMatchObject({ ok: false });
+    c.call(3, 'open_file', both);
+    expect(c.errorOf(await c.reply(3))).toBe('tool_disabled');
+    expect(h.files).toHaveLength(0);
   });
 
   it('on/viewing open_session runs with an unready owner or no owner window', async () => {
@@ -4578,21 +6142,175 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(h.host.uiState().awaitingApproval).toEqual([]);
   });
 
+  it('reports only receiver sessions whose next native selection changed after a durable push', async () => {
+    const profile = {
+      ...OBSERVER,
+      id: 'p-private' as const,
+      name: 'Private',
+      builtIn: false,
+      nativeModes: { claude: 'plan' as const, codex: 'unset' as const },
+    };
+    const policy = serializePolicyFile({
+      version: 2,
+      profiles: [profile],
+      assignments: [
+        {
+          point: { kind: 'session', sessionId: 'local-secret-session' },
+          assignment: {
+            profileId: 'p-private',
+            exceptions: [],
+            onScreenOnly: false,
+            applyNative: true,
+          },
+        },
+      ],
+      overrides: [],
+      migratedFrom: null,
+      notes: { onScreenOnlyOffered: [] },
+    });
+    const h = harness({ policyIo: { read: () => policy, writeSync: () => true } });
+    h.sessions.set('local-secret-session', session('local-secret-session', { agentId: CLAUDE.id }));
+    h.sessions.set('shell', session('shell', { agentId: SHELL.id }));
+    await h.host.start();
+    const port = h.host.networkPort();
+    const doc = port.policyDoc();
+    const changed = {
+      ...profile,
+      nativeModes: { ...profile.nativeModes, claude: 'acceptEdits' as const },
+    };
+    expect(port.applyRemotePolicy(doc.rev, { profiles: [changed], assignments: [] }, true).ok).toBe(
+      true,
+    );
+    expect(h.host.uiState().nativeImpact).toMatchObject({
+      total: 1,
+      rows: [
+        {
+          sessionId: 'local-secret-session',
+          before: { intent: { requested: { mode: 'plan' } } },
+          after: { intent: { requested: { mode: 'acceptEdits' } } },
+        },
+      ],
+    });
+    expect(JSON.stringify(port.policyDoc())).not.toContain('local-secret-session');
+    expect(port.applyRemotePolicy(doc.rev, { profiles: [profile], assignments: [] }, true).ok).toBe(
+      false,
+    );
+    expect(h.host.uiState().nativeImpact?.total).toBe(1);
+    await h.host.onSessionDeleted('unrelated');
+    expect(h.host.uiState().nativeImpact?.total).toBe(1);
+    await h.host.onSessionDeleted('local-secret-session');
+    expect(h.host.uiState().nativeImpact).toBeNull();
+  });
+
+  it('bounds receiver impact, replaces and clears it, and retains it after a failed save', async () => {
+    const profile = {
+      ...OBSERVER,
+      id: 'p-impact' as const,
+      name: 'Impact',
+      builtIn: false,
+      nativeModes: { claude: 'plan' as const, codex: 'unset' as const },
+    };
+    const assignment = {
+      point: { kind: 'default' as const },
+      assignment: {
+        profileId: 'p-impact' as const,
+        exceptions: [],
+        onScreenOnly: false,
+        applyNative: true,
+      },
+    };
+    const policy = serializePolicyFile({
+      version: 2,
+      profiles: [profile],
+      assignments: [assignment],
+      overrides: [],
+      migratedFrom: null,
+      notes: { onScreenOnlyOffered: [] },
+    });
+    let writable = true;
+    const h = harness({
+      policyIo: {
+        read: () => policy,
+        writeSync: () => {
+          if (!writable) throw new Error('owned policy write fault');
+          return true;
+        },
+      },
+    });
+    for (let i = 0; i < 105; i++) {
+      const id = `local-${i}`;
+      h.sessions.set(id, session(id, { agentId: CLAUDE.id }));
+    }
+    await h.host.start();
+    const port = h.host.networkPort();
+    const changed = {
+      ...profile,
+      nativeModes: { ...profile.nativeModes, claude: 'acceptEdits' as const },
+    };
+    const push = (p: typeof profile | typeof changed) =>
+      port.applyRemotePolicy(
+        port.policyDoc().rev,
+        { profiles: [p], assignments: [assignment] },
+        true,
+      );
+    expect(push(changed).ok).toBe(true);
+    const first = h.host.uiState().nativeImpact;
+    expect(first?.total).toBe(105);
+    expect(first?.rows).toHaveLength(100);
+    await h.host.onSessionDeleted('local-104');
+    expect(h.host.uiState().nativeImpact?.total).toBe(104);
+    await h.host.onSessionDeleted('local-0');
+    expect(h.host.uiState().nativeImpact?.total).toBe(103);
+    expect(h.host.uiState().nativeImpact?.rows).toHaveLength(100);
+    expect(push(profile).ok).toBe(true);
+    const second = h.host.uiState().nativeImpact;
+    expect(second?.total).toBe(105);
+    expect(second?.id).not.toBe(first?.id);
+    if (!first || !second) throw new Error('expected impact notices');
+    const dismiss = (id: string, senderId = 1) =>
+      h.host.handleRenderer(
+        { type: 'mcp:dismissNativeImpact', requestId: 1, id },
+        () => {},
+        senderId,
+      );
+    await dismiss(first.id);
+    await dismiss(second.id, 999);
+    expect(h.host.uiState().nativeImpact).toEqual(second);
+    expect(second?.rows[0]).toMatchObject({
+      before: { intent: { requested: { mode: 'acceptEdits' } } },
+      after: { intent: { requested: { mode: 'plan' } } },
+    });
+    await dismiss(second.id);
+    expect(h.host.uiState().nativeImpact).toBeNull();
+    expect(push(changed).ok).toBe(true);
+    const third = h.host.uiState().nativeImpact;
+    writable = false;
+    expect(push(profile).ok).toBe(false);
+    expect(h.host.uiState().nativeImpact).toEqual(third);
+    writable = true;
+    expect(push(changed).ok).toBe(true);
+    expect(h.host.uiState().nativeImpact).toBeNull();
+  });
+
   it('a pushed doc that now denies a waiting ask re-decides it at once', async () => {
     const { h, c } = await asking();
     c.call(1, 'open_session', OPEN);
     await until(() => asksOf(h).length === 1 && asksOf(h));
     expect(h.host.uiState().awaitingApproval).toEqual(['s1']);
     const port = h.host.networkPort();
-    const applied = port.applyRemotePolicy(port.policyDoc().rev, {
-      profiles: [],
-      assignments: [
-        {
-          point: { kind: 'default' },
-          assignment: { profileId: 'observer', exceptions: [], onScreenOnly: false },
-        },
-      ],
-    });
+    const applied = port.applyRemotePolicy(
+      port.policyDoc().rev,
+      {
+        profiles: [],
+        assignments: [
+          {
+            point: { kind: 'default' },
+            assignment: { profileId: 'observer', exceptions: [], onScreenOnly: false },
+          },
+        ],
+      },
+      true,
+    );
     expect(applied.ok).toBe(true);
     expect(h.host.uiState().awaitingApproval).toEqual([]);
     expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
@@ -4774,17 +6492,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     h.host.refresh();
     await c.barrier(2);
     expect(closedOf(h)).toEqual([]);
-    await h.host.handleRenderer(
-      {
-        type: 'mcp:setPointPolicy',
-        requestId: 1,
-        point: { kind: 'default' },
-        tool: 'open_session',
-        patch: { access: 'off' },
-      },
-      () => undefined,
-      1,
-    );
+    await setPointHostPolicy(h, { kind: 'default' }, 'open_session', { access: 'off' });
     expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
   });
 
@@ -4830,6 +6538,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -4889,39 +6598,39 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     });
   });
 
-  it('mcp:setAssignment on an unknown session point is refused and saves nothing', async () => {
+  it('full assignment for an unknown session is refused and saves nothing', async () => {
     const writes: string[] = [];
-    const policyIo: RequestsIo = {
-      read: () => null,
-      write: async (t) => {
-        writes.push(t);
-      },
-    };
-    const { h } = await asking({ policyIo, manualTimers: true });
-    const replies: HostToWebview[] = [];
-    const post = (requestId: number, sessionId: string) =>
-      h.host.handleRenderer(
-        {
-          type: 'mcp:setAssignment',
-          requestId,
-          point: { kind: 'session', sessionId },
-          profileId: 'lead',
+    const { h } = await asking({
+      policyIo: {
+        read: () => null,
+        writeSync: (t) => {
+          writes.push(t);
+          return true;
         },
-        (m) => replies.push(m),
-        1,
-      );
-    await post(1, 'ghost');
-    expect(replies).toEqual([
-      { type: 'mcp:policyResult', requestId: 1, ok: false, error: 'unknown-session' },
-    ]);
-    h.advance(1_000);
+      },
+      manualTimers: true,
+    });
+    let reply: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:saveAssignment',
+        requestId: 1,
+        point: { kind: 'session', sessionId: 'ghost' },
+        assignment: { profileId: 'lead', exceptions: [], onScreenOnly: false },
+        expectedToken: h.host.uiState().policy.editToken,
+      },
+      (m) => {
+        reply = m;
+      },
+      1,
+    );
+    expect(reply).toMatchObject({
+      type: 'mcp:policyEditResult',
+      result: { ok: false, error: 'invalid-value' },
+    });
     expect(writes.join('')).not.toContain('ghost');
-
-    await post(2, 's1');
-    expect(replies.at(-1)).toEqual({ type: 'mcp:policyResult', requestId: 2, ok: true });
-    h.advance(1_000);
-    expect(writes.join('')).toContain('"s1"');
-    expect(writes.join('')).not.toContain('ghost');
+    await setProfile(h, { kind: 'session', sessionId: 's1' }, 'lead');
+    expect(writes.join('')).toContain('s1');
   });
 
   it('a waiting permission ask counts once in waitingAsks and awaitingApproval, and stays out of requests.open', async () => {
@@ -4936,19 +6645,85 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     await c.reply(1);
   });
 
-  const setDefaultAccess = (h: Harness, tool: string, access: 'ask' | 'on' | 'off') =>
-    h.host.handleRenderer(
+  const setDefaultAccess = (h: Harness, tool: ToolName, access: 'ask' | 'on' | 'off') =>
+    setPointHostPolicy(h, { kind: 'default' }, tool, { access });
+  const grantPaths = (h: Harness) => h.host.uiState().policy.grants.map((g) => g.on);
+
+  it('attributes an approved ask and its grant to the original call only', async () => {
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line) as Record<string, unknown>);
+      },
+      read: () => '',
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const { h, c } = await asking({ activityIo });
+    await runningTargets(h);
+    await setPolicy(h, { close_session: { access: 'ask', when: 'always', reach: 'any' } });
+    c.call(1, 'close_session', { session: 's2' });
+    await until(() => asksOf(h).length === 1);
+    const id = askIdOf(h);
+    await h.host.handleRenderer(
       {
-        type: 'mcp:setPointPolicy',
-        requestId: 90,
-        point: { kind: 'default' },
-        tool,
-        patch: { access },
-      } as McpRendererMessage,
+        type: 'mcp:permissionAnswer',
+        requestId: id,
+        answer: { outcome: 'allowed', grant: { who: 'session', on: 'anywhere', for: '1h' } },
+      },
       () => undefined,
       1,
     );
-  const grantPaths = (h: Harness) => h.host.uiState().policy.grants.map((g) => g.on);
+    await replyRunningUi(h, await until(() => runningUi(h)[0]));
+    expect(c.errorOf(await c.reply(1))).toBe('ok');
+    const asked = rows.find((r) => r.requestId === id && r.outcome === 'asked');
+    const completed = rows.find((r) => r.requestId === id && r.outcome === 'ok');
+    expect(completed?.decidedBy).toBe(`${String(asked?.decidedBy)}; allowed by grant`);
+    c.call(2, 'close_session', { session: 's2' });
+    await replyRunningUi(h, await until(() => runningUi(h)[1]));
+    expect(c.errorOf(await c.reply(2))).toBe('ok');
+    expect(
+      rows.filter((r) => r.action === 'close_session' && r.outcome === 'ok').at(-1),
+    ).toMatchObject({
+      requestId: null,
+      decidedBy: 'allowed by grant',
+    });
+  });
+
+  it('a failed two-target grant save leaves no partial consent or executed files', async () => {
+    const writeSync = vi.fn((_text: string): true => {
+      throw new Error('grants disk full');
+    });
+    const { h, c } = await asking({
+      grantsIo: { read: () => null, writeSync },
+      kinds: { '/w/a.ts': 'file', '/w/b.ts': 'file' },
+    });
+    await setPolicy(h, { open_file: { access: 'ask' } });
+    c.call(1, 'open_file', { paths: ['/w/a.ts', '/w/b.ts'] });
+    await until(() => asksOf(h).length === 1);
+    let response: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:permissionAnswer',
+        requestId: askIdOf(h),
+        answer: { outcome: 'allowed', grant: { who: 'session', on: 'target', for: '1h' } },
+      },
+      (m) => {
+        response = m;
+      },
+      1,
+    );
+    expect(response).toMatchObject({ type: 'mcp:permissionResult', ok: false });
+    expect(writeSync).toHaveBeenCalledTimes(1);
+    expect(h.host.uiState().policy.grants).toHaveLength(0);
+    expect(h.files).toHaveLength(0);
+    const cancelled = await c.reply(1);
+    expect(c.errorOf(cancelled)).toBe('cancelled');
+    expect(JSON.stringify(cancelled)).toContain('Permissions could not be saved (save-failed)');
+    expect(h.host.uiState().awaitingApproval).toEqual([]);
+  });
 
   it('a target grant on a two-target open_file makes one grant per target, live and late', async () => {
     const kinds = {
@@ -5095,11 +6870,13 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     ]);
     expect(h.opens).toEqual([]);
     let notice = '';
-    for (let id = 2; id < 30 && !notice.includes('You can retry open_session now'); id++) {
-      c.call(id, 'read_inbox');
-      await c.barrier(id);
-      notice = JSON.stringify(c.lines.filter((l) => l.id === id).at(-1) ?? null);
-      await new Promise((r) => setImmediate(r));
+    const noticeDeadline = Date.now() + 3_000;
+    let noticeId = 2;
+    while (Date.now() < noticeDeadline && !notice.includes('You can retry open_session now')) {
+      c.call(noticeId, 'read_inbox');
+      notice = JSON.stringify(await c.reply(noticeId++));
+      if (!notice.includes('You can retry open_session now'))
+        await new Promise((resolve) => setTimeout(resolve, 5));
     }
     expect(notice).toContain('You can retry open_session now');
     expect(h.opens).toEqual([]);
@@ -5111,16 +6888,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     c.call(1, 'open_session', OPEN);
     await until(() => asksOf(h).length === 1);
     const requestId = askIdOf(h);
-    await h.host.handleRenderer(
-      {
-        type: 'mcp:setAssignment',
-        requestId: 9,
-        point: { kind: 'session', sessionId: 's1' },
-        profileId: 'observer',
-      },
-      (m) => replies.push(m),
-      1,
-    );
+    await setProfile(h, { kind: 'session', sessionId: 's1' }, 'observer');
     const reply = await c.reply(1);
     expect(c.errorOf(reply)).toBe('tool_disabled');
     expect(closedOf(h)).toEqual([
@@ -5140,7 +6908,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       releaseKind = resolve;
     });
     let kindAsked = 0;
-    const grantsIo: RequestsIo = {
+    const grantsIo: PolicyIo = {
       read: () =>
         serializeGrantsFile({
           version: 1,
@@ -5161,7 +6929,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
             },
           ],
         }),
-      write: async () => undefined,
+      writeSync: () => true,
     };
     const h = harness({
       kinds: { '/w/a.ts': 'file' },
@@ -5174,19 +6942,10 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
         return 'file';
       },
     });
+    h.sessions.set('s1', session('s1'));
     await h.host.start();
     const launched = await launch(h, 's1');
-    await h.host.handleRenderer(
-      {
-        type: 'mcp:setPointPolicy',
-        requestId: 1,
-        point: { kind: 'default' },
-        tool: 'open_file',
-        patch: { access: 'ask' },
-      },
-      () => undefined,
-      1,
-    );
+    await setPointHostPolicy(h, { kind: 'default' }, 'open_file', { access: 'ask' });
     const c = await rawClient(h.ep, launched.token);
     c.call(2, 'open_file', { paths: ['/w/a.ts'] });
     await until(() => kindAsked === 1);
@@ -5202,6 +6961,148 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     releaseKind();
     expect(c.errorOf(await c.reply(2))).toBe('tool_disabled');
     await h.host.stop();
+  });
+
+  it('keeps expired permission history with no further authority after a late grant', async () => {
+    const { h, c } = await asking({ manualTimers: true });
+    const replies: HostToWebview[] = [];
+    const query = () =>
+      h.host.handleRenderer(
+        { type: 'mcp:ownerPermissions:get', requestId: 42, state: 'closed' },
+        (m) => replies.push(m),
+        1,
+      );
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    const id = askIdOf(h);
+    h.advance(10 * 60_000);
+    await c.reply(1);
+    await query();
+    expect(replies.pop()).toMatchObject({ page: { permissions: [{ id, answerable: true }] } });
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:permissionAnswer',
+        requestId: id,
+        answer: { outcome: 'allowed', grant: { who: 'session', on: 'anywhere', for: '1h' } },
+      },
+      (m) => replies.push(m),
+      1,
+    );
+    expect(replies.pop()).toMatchObject({ ok: true });
+    await query();
+    expect(replies.pop()).toMatchObject({
+      page: {
+        permissions: [
+          { id, state: 'expired', answerable: false, nextTimeGrantSaved: true, choices: [] },
+        ],
+      },
+    });
+  });
+
+  it('omits an expired permission when its principal no longer exists', async () => {
+    const { h, c } = await asking({ manualTimers: true });
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    h.advance(10 * 60_000);
+    await c.reply(1);
+    h.sessions.delete('s1');
+    const replies: HostToWebview[] = [];
+    await h.host.handleRenderer(
+      { type: 'mcp:ownerPermissions:get', requestId: 42, state: 'closed' },
+      (m) => replies.push(m),
+      1,
+    );
+    expect(replies).toMatchObject([{ page: { permissions: [] } }]);
+  });
+
+  it('pages equal-time owner permissions without mixing owners or losing rows', async () => {
+    const h = harness({ manualTimers: true, kinds: { '/w': 'dir' } });
+    await h.host.start();
+    for (let n = 0; n < 36; n++) {
+      const sessionId = `page-${n}`;
+      h.owners.set(sessionId, (n % 2) + 1);
+      const launched = await launch(h, sessionId);
+      const c = await rawClient(h.ep, launched.token);
+      for (let request = 1; request <= 3; request++) c.call(request, 'open_session', OPEN);
+      if (n % 6 === 5) {
+        await until(() => asksOf(h).length === (n + 1) * 3);
+        h.clock.t += 61_000;
+      }
+    }
+    const asks = asksOf(h);
+    const pages = async (sender: number, state: 'open' | 'closed') => {
+      const ids: string[] = [];
+      const times: Array<string | null> = [];
+      let cursor: { at: string; id: string } | undefined;
+      do {
+        const replies: HostToWebview[] = [];
+        await h.host.handleRenderer(
+          { type: 'mcp:ownerPermissions:get', requestId: 42, state, ...(cursor ? { cursor } : {}) },
+          (message) => replies.push(message),
+          sender,
+        );
+        const reply = replies[0];
+        if (reply?.type !== 'mcp:ownerPermissions') throw new Error('missing owner page');
+        expect(reply.page.permissions.length).toBeLessThanOrEqual(50);
+        ids.push(...reply.page.permissions.map((r) => r.id));
+        times.push(
+          ...reply.page.permissions.map((r) => (state === 'open' ? r.createdAt : r.endedAt)),
+        );
+        cursor = reply.page.nextCursor ?? undefined;
+      } while (cursor);
+      expect(times[49]).toBe(times[50]);
+      return ids;
+    };
+    for (const sender of [1, 2]) {
+      const expected = asks
+        .filter((a) => h.owners.get(a.callerSessionId) === sender)
+        .map((a) => a.askId)
+        .sort();
+      const actual = await pages(sender, 'open');
+      expect(actual).toHaveLength(54);
+      expect([...actual].sort()).toEqual([...expected].sort());
+      expect(new Set(actual).size).toBe(54);
+    }
+    for (const ask of asks)
+      await answer(h, ask.askId, 'deny', h.owners.get(ask.callerSessionId) ?? 1);
+    for (const sender of [1, 2]) {
+      const expected = asks
+        .filter((a) => h.owners.get(a.callerSessionId) === sender)
+        .map((a) => a.askId)
+        .sort()
+        .reverse();
+      const actual = await pages(sender, 'closed');
+      expect(actual).toHaveLength(54);
+      expect(actual).toEqual(expected);
+      expect(new Set(actual).size).toBe(54);
+    }
+  }, 30_000);
+
+  it('addresses owner permission pages only to the waiting window', async () => {
+    const { h, c } = await asking();
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    const replies: HostToWebview[] = [];
+    const query = (sender: number) =>
+      h.host.handleRenderer(
+        { type: 'mcp:ownerPermissions:get', requestId: 42, state: 'open' },
+        (message) => replies.push(message),
+        sender,
+      );
+    await query(2);
+    expect(replies.pop()).toEqual({
+      type: 'mcp:ownerPermissions',
+      requestId: 42,
+      page: { permissions: [], nextCursor: null },
+    });
+    await query(1);
+    expect(replies.pop()).toMatchObject({
+      type: 'mcp:ownerPermissions',
+      requestId: 42,
+      page: { permissions: [{ id: askIdOf(h), answerable: true }], nextCursor: null },
+    });
+    await answer(h, askIdOf(h), 'deny');
+    await c.reply(1);
   });
 
   it('mcp:permissionAnswer from a window that does not own the ask is refused; the owner window answers', async () => {
@@ -5251,7 +7152,230 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(c.errorOf(await c.reply(1))).toBe('denied');
   });
 
-  it('mcp:revokeGrant and mcp:setAssignment answer with mcp:policyResult', async () => {
+  it('addresses local lifecycle replies to a ready owner and rejects machine fields', async () => {
+    const { h, c } = await asking();
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    await answer(h, askIdOf(h, 1), 'always');
+    expect(c.errorOf(await c.reply(1))).toBe('ok');
+    const [grant] = h.host.uiState().policy.grants;
+    const token = h.host.uiState().policy.editToken;
+    const replies: HostToWebview[] = [];
+    const send = (message: unknown, windowId = 1) =>
+      h.host.handleRenderer(
+        message as McpRendererMessage,
+        (reply) => replies.push(reply),
+        windowId,
+      );
+    const operation = {
+      kind: 'revoke',
+      id: grant.id,
+      revision: grant.lifecycleRevision ?? 0,
+      expectedToken: token,
+    };
+    await send({
+      type: 'mcp:grantLifecycle',
+      requestId: 1,
+      operation,
+      machine: 'other',
+    });
+    await send({ type: 'mcp:grantLifecycle', requestId: 2, operation }, 999);
+    expect(replies).toEqual([]);
+    await send({ type: 'mcp:grantLifecycle', requestId: 3, operation });
+    expect(replies).toMatchObject([
+      {
+        type: 'mcp:grantLifecycleResult',
+        requestId: 3,
+        result: { ok: true, undoToken: expect.any(String) },
+      },
+    ]);
+    const response = replies[0];
+    if (
+      response.type !== 'mcp:grantLifecycleResult' ||
+      !response.result.ok ||
+      !response.result.undoToken
+    )
+      throw new Error('missing receipt');
+    await send(
+      {
+        type: 'mcp:grantLifecycle',
+        requestId: 4,
+        operation: { kind: 'undo', token: response.result.undoToken },
+      },
+      2,
+    );
+    expect(replies[1]).toMatchObject({ requestId: 4, result: { ok: false } });
+    await send({
+      type: 'mcp:grantLifecycle',
+      requestId: 5,
+      operation: { kind: 'undo', token: response.result.undoToken },
+    });
+    expect(replies[2]).toEqual({
+      type: 'mcp:grantLifecycleResult',
+      requestId: 5,
+      result: { ok: true },
+    });
+  });
+
+  it('invalidates a peer receipt through a real network revoke and re-pair', async () => {
+    const a = grantNetworkServer('grant-a');
+    const b = grantNetworkServer('grant-b');
+    await a.net.start();
+    await b.net.start();
+    const pair = async () => {
+      const started = await call<{
+        pairingId: string;
+        code: string[];
+        addresses: string[];
+      }>(a.net, 'pairing.start');
+      const joined = await call<{ pairingId: string }>(b.net, 'pairing.join', {
+        code: started.code.join(' '),
+        address: started.addresses[0],
+      });
+      await until(
+        () =>
+          a.net.state().pairing?.state === 'confirm' && b.net.state().pairing?.state === 'confirm',
+      );
+      await call(a.net, 'pairing.confirm', { pairingId: started.pairingId });
+      await call(b.net, 'pairing.confirm', { pairingId: joined.pairingId });
+    };
+    await pair();
+    const aId = a.net.state().machineId;
+    const bId = b.net.state().machineId;
+    await until(() => a.net.state().links.find((l) => l.machineId === bId)?.state === 'up');
+    const grantsIo: PolicyIo = {
+      read: () =>
+        JSON.stringify({
+          version: 1,
+          grants: [
+            {
+              id: 'peer-grant',
+              who: { kind: 'peer', machineId: bId },
+              tool: 'open_session',
+              on: { kind: 'anywhere' },
+              for: 'until-revoked',
+              anchorSessionId: null,
+              createdAt: new Date().toISOString(),
+              expiresAt: null,
+              lastUsedAt: null,
+              state: 'active',
+              endedAt: null,
+              requestId: null,
+            },
+          ],
+        }),
+      writeSync: () => true,
+    };
+    const h = harness({ network: a.net.port(), grantsIo });
+    await h.host.start();
+    const replies: HostToWebview[] = [];
+    const send = (operation: unknown) =>
+      h.host.handleRenderer(
+        {
+          type: 'mcp:grantLifecycle',
+          requestId: 1,
+          operation,
+        } as McpRendererMessage,
+        (reply) => replies.push(reply),
+        1,
+      );
+    await send({
+      kind: 'revoke',
+      id: 'peer-grant',
+      revision: 0,
+      expectedToken: h.host.uiState().policy.editToken,
+    });
+    const response = replies[0];
+    if (
+      response?.type !== 'mcp:grantLifecycleResult' ||
+      !response.result.ok ||
+      !response.result.undoToken
+    )
+      throw new Error('missing receipt');
+    await call(b.net, 'link.revoke', { machineId: aId });
+    await until(() => a.net.state().links.find((l) => l.machineId === bId)?.state === 'revoked');
+    expect(a.net.port().grantPeerEligible(bId)).toBe(false);
+    await pair();
+    await until(() => a.net.port().grantPeerEligible(bId));
+    await send({ kind: 'undo', token: response.result.undoToken });
+    expect(replies[1]).toMatchObject({
+      type: 'mcp:grantLifecycleResult',
+      result: { ok: false },
+    });
+    await h.host.stop();
+  });
+
+  it('invalidates a peer receipt after an eligibility loss and recovery notification', async () => {
+    let eligible = true;
+    let onEligibility = () => {};
+    const network = inboundNetwork(() => null);
+    network.grantPeerEligible = () => eligible;
+    network.onGrantPeerEligibilityChange = (listener) => {
+      onEligibility = listener;
+      return () => {};
+    };
+    const grantsIo: PolicyIo = {
+      read: () =>
+        JSON.stringify({
+          version: 1,
+          grants: [
+            {
+              id: 'peer-grant',
+              who: { kind: 'peer', machineId: 'm-peer' },
+              tool: 'open_session',
+              on: { kind: 'anywhere' },
+              for: 'until-revoked',
+              anchorSessionId: null,
+              createdAt: new Date().toISOString(),
+              expiresAt: null,
+              lastUsedAt: null,
+              state: 'active',
+              endedAt: null,
+              requestId: null,
+            },
+          ],
+        }),
+      writeSync: () => true,
+    };
+    const h = harness({ network, grantsIo });
+    await h.host.start();
+    const replies: HostToWebview[] = [];
+    const send = (operation: unknown) =>
+      h.host.handleRenderer(
+        {
+          type: 'mcp:grantLifecycle',
+          requestId: 1,
+          operation,
+        } as McpRendererMessage,
+        (reply) => replies.push(reply),
+        1,
+      );
+    await send({
+      kind: 'revoke',
+      id: 'peer-grant',
+      revision: 0,
+      expectedToken: h.host.uiState().policy.editToken,
+    });
+    const response = replies[0];
+    if (
+      response?.type !== 'mcp:grantLifecycleResult' ||
+      !response.result.ok ||
+      !response.result.undoToken
+    )
+      throw new Error('missing receipt');
+    eligible = false;
+    onEligibility();
+    eligible = true;
+    onEligibility();
+    await send({ kind: 'undo', token: response.result.undoToken });
+    expect(replies[1]).toMatchObject({
+      type: 'mcp:grantLifecycleResult',
+      result: { ok: false },
+    });
+    await h.host.stop();
+  });
+
+  it('revokes a grant and assigns a profile through the owner CAS path', async () => {
     const { h, c } = await asking();
     const post = async (msg: unknown) => {
       const replies: HostToWebview[] = [];
@@ -5275,57 +7399,47 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     await answer(h, askIdOf(h, 2), 'deny');
     expect(c.errorOf(await c.reply(2))).toBe('denied');
 
-    const point = { kind: 'session', sessionId: 's1' };
-    expect(
-      await post({
-        type: 'mcp:setAssignment',
-        requestId: 3,
-        point: { kind: 'x' },
-        profileId: 'lead',
-      }),
-    ).toEqual([{ type: 'mcp:policyResult', requestId: 3, ok: false, error: 'invalid-value' }]);
-    expect(
-      await post({ type: 'mcp:setAssignment', requestId: 4, point, profileId: 'nope' }),
-    ).toEqual([{ type: 'mcp:policyResult', requestId: 4, ok: false, error: 'unknown-profile' }]);
-    expect(
-      await post({ type: 'mcp:setAssignment', requestId: 5, point, profileId: 'lead' }),
-    ).toEqual([{ type: 'mcp:policyResult', requestId: 5, ok: true }]);
+    await setProfile(h, { kind: 'session', sessionId: 's1' }, 'lead');
     expect(h.host.uiState().policy.sessions.s1?.profileId).toBe('lead');
     c.call(3, 'open_session', OPEN);
     expect(c.errorOf(await c.reply(3))).toBe('ok');
     expect(asksOf(h)).toHaveLength(2);
   });
 
-  it('mcp:setToolPolicy replies unknown-session / unknown-tool / invalid-value / ok', async () => {
+  it('rejects malformed full rules and publishes a valid owner edit', async () => {
     const h = harness();
     await h.host.start();
     const a = await launch(h, 's1');
     const c = await client(h.ep, a.token);
     await c.listed();
-    const set = async (m: { sessionId: string; tool: string; patch: unknown }) => {
-      const replies: HostToWebview[] = [];
-      const msg: unknown = { type: 'mcp:setToolPolicy', requestId: 9, ...m };
-      await h.host.handleRenderer(msg as McpRendererMessage, (r) => replies.push(r), 1);
-      return replies;
+    let reply: HostToWebview | undefined;
+    const malformed: unknown = {
+      type: 'mcp:saveAssignment',
+      requestId: 9,
+      point: { kind: 'session', sessionId: 's1' },
+      expectedToken: h.host.uiState().policy.editToken,
+      assignment: {
+        profileId: 'worker',
+        onScreenOnly: false,
+        exceptions: [{ tool: 'rm_rf', scope: { kind: 'anywhere' }, rule: { decision: 'allow' } }],
+      },
     };
-    const refused = (error: string) => [
-      { type: 'mcp:toolPolicyResult', requestId: 9, ok: false, error },
-    ];
-    expect(await set({ sessionId: 'nope', tool: 'open_file', patch: { access: 'on' } })).toEqual(
-      refused('unknown-session'),
+    await h.host.handleRenderer(
+      malformed as McpRendererMessage,
+      (m) => {
+        reply = m;
+      },
+      1,
     );
-    expect(await set({ sessionId: 's1', tool: 'rm_rf', patch: { access: 'on' } })).toEqual(
-      refused('unknown-tool'),
-    );
-    for (const patch of [{ access: 'yes' }, { move: 'no' }, {}, 'inherit', null])
-      expect(await set({ sessionId: 's1', tool: 'open_file', patch })).toEqual(
-        refused('invalid-value'),
-      );
-    expect(h.sessions.get('s1')?.mcpToolPolicy).toBeUndefined();
+    expect(reply).toMatchObject({
+      type: 'mcp:policyEditResult',
+      result: { ok: false, error: 'invalid-value' },
+    });
     expect(c.notifications).toEqual([]);
-    expect(
-      await set({ sessionId: 's1', tool: 'open_terminal', patch: { access: 'ask', move: 'no' } }),
-    ).toEqual([{ type: 'mcp:toolPolicyResult', requestId: 9, ok: true }]);
+    await setPointHostPolicy(h, { kind: 'session', sessionId: 's1' }, 'open_terminal', {
+      access: 'ask',
+      move: 'no',
+    });
     expect(h.host.uiState().policy.legacy.sessions.s1?.open_terminal).toMatchObject({
       access: 'ask',
       move: 'no',
@@ -5895,6 +8009,10 @@ describe('createConduitMcpHost — wait_sessions', () => {
     let monitor = true;
     let changed = () => {};
     const network: NetworkPort = {
+      hasPeer: () => null,
+      grantPeerEligible: () => true,
+      onGrantPeerEligibilityChange: () => () => {},
+      inboundPrincipal: () => null,
       remoteEntries: () => [entry],
       resolve: (target) =>
         target === address || target === 'fake-9@peer'
@@ -5926,6 +8044,7 @@ describe('createConduitMcpHost — wait_sessions', () => {
       }),
       selfName: () => 'this-machine',
       answerRemoteRequest: () => Promise.reject(new Error('not used by this test')),
+      nativeSupport: () => false,
       pushPolicy: () => Promise.reject(new Error('not used by this test')),
       revokeRemoteGrant: () => Promise.reject(new Error('not used by this test')),
     };
@@ -6119,7 +8238,7 @@ describe('createConduitMcpHost — wait_sessions', () => {
     });
     const h = harness({
       manualTimers: true,
-      policyIo: { read: () => migrated, write: async () => undefined },
+      policyIo: { read: () => migrated, writeSync: () => true },
     });
     const { ca } = await pairForWait(h);
     const base = h.pendingTimers;
@@ -6288,6 +8407,7 @@ describe('createConduitMcpHost — requests', () => {
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -6791,14 +8911,15 @@ describe('NET wiring at the host: a peer link revoke and its audit notes', () =>
 
   it('peerRevoked ends that peer grant and saves it', async () => {
     const written: string[] = [];
-    const grantsIo: RequestsIo = {
+    const grantsIo: PolicyIo = {
       read: () =>
         serializeGrantsFile({
           version: 1,
           grants: [peerGrant('g-m1', 'm-1'), peerGrant('g-m2', 'm-2')],
         }),
-      write: async (text) => {
+      writeSync: (text) => {
         written.push(text);
+        return true;
       },
     };
     const h = harness({ grantsIo });
@@ -6819,6 +8940,7 @@ describe('NET wiring at the host: a peer link revoke and its audit notes', () =>
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -6851,6 +8973,7 @@ describe('recordObserved', () => {
       append: (_day, line) => {
         rows.push(JSON.parse(line) as Record<string, unknown>);
       },
+      read: () => '',
       list: () => [],
       remove: () => undefined,
       readArgs: () => null,
@@ -7286,6 +9409,10 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
       throw new Error('not used by the machine tools');
     };
     const network: NetworkPort = {
+      hasPeer: () => null,
+      grantPeerEligible: () => true,
+      onGrantPeerEligibilityChange: () => () => {},
+      inboundPrincipal: () => null,
       remoteEntries: () => [],
       resolve: unused,
       enqueue: unused,
@@ -7303,28 +9430,15 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
         (async () => ({ ok: true, value: { machine: 'win-box', state: 'down' } })),
       selfName: () => 'this-machine',
       answerRemoteRequest: () => Promise.reject(new Error('not used by this test')),
+      nativeSupport: () => false,
       pushPolicy: () => Promise.reject(new Error('not used by this test')),
       revokeRemoteGrant: () => Promise.reject(new Error('not used by this test')),
     };
     return { network, connects };
   }
 
-  const setProfile = async (h: Harness, profileId: 'observer' | 'worker' | 'lead') => {
-    let reply: HostToWebview | undefined;
-    await h.host.handleRenderer(
-      {
-        type: 'mcp:setAssignment',
-        requestId: 1,
-        point: { kind: 'session', sessionId: 's1' },
-        profileId,
-      },
-      (m) => {
-        reply = m;
-      },
-      1,
-    );
-    expect(reply).toEqual({ type: 'mcp:policyResult', requestId: 1, ok: true });
-  };
+  const setSessionProfile = (h: Harness, profileId: 'observer' | 'worker' | 'lead') =>
+    setProfile(h, { kind: 'session', sessionId: 's1' }, profileId);
 
   const asksOf = (h: Harness) =>
     h.toOwner.flatMap((s) => (s.msg.type === 'mcp:ask' ? [{ to: s.to, ...s.msg }] : []));
@@ -7356,7 +9470,7 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
     expect(await names()).toEqual(
       expect.arrayContaining(['list_machines', 'connect_machine', 'disconnect_machine']),
     );
-    await setProfile(h, 'observer');
+    await setSessionProfile(h, 'observer');
     const after = await names();
     expect(after).toContain('list_machines');
     expect(after).not.toContain('connect_machine');
@@ -7366,7 +9480,7 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
   it('an observer is denied connect_machine: tool_disabled, and no card', async () => {
     const { network, connects } = machineNet({});
     const { h, c } = await machineSession({ network });
-    await setProfile(h, 'observer');
+    await setSessionProfile(h, 'observer');
     c.call(1, 'connect_machine', { machine: 'win-box' });
     expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
     expect(connects).toEqual([]);
@@ -7388,7 +9502,7 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
   it('a lead connects a machine already added without a card', async () => {
     const { network, connects } = machineNet({});
     const { h, c } = await machineSession({ network });
-    await setProfile(h, 'lead');
+    await setSessionProfile(h, 'lead');
     c.call(1, 'connect_machine', { machine: 'win-box' });
     expect(c.errorOf(await c.reply(1))).toBe('ok');
     expect(asksOf(h)).toEqual([]);
@@ -7398,7 +9512,7 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
   it('a lead is still asked for an ssh target that is not added, and deny stops the dial', async () => {
     const { network, connects } = machineNet({ listMachines: () => [] });
     const { h, c } = await machineSession({ network });
-    await setProfile(h, 'lead');
+    await setSessionProfile(h, 'lead');
     c.call(1, 'connect_machine', { machine: 'new.example' });
     await until(() => asksOf(h).length === 1);
     await answerAsk(h, 1, 'deny');
@@ -7409,7 +9523,7 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
   it('an always answer to a forced ask makes no grant: the next unknown target asks again', async () => {
     const { network, connects } = machineNet({ listMachines: () => [] });
     const { h, c } = await machineSession({ network });
-    await setProfile(h, 'lead');
+    await setSessionProfile(h, 'lead');
     c.call(1, 'connect_machine', { machine: 'new.example' });
     await until(() => asksOf(h).length === 1);
     await answerAsk(h, 1, 'always');
@@ -7482,7 +9596,7 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
       },
     });
     const { h, c } = await machineSession({ network });
-    await setProfile(h, 'lead');
+    await setSessionProfile(h, 'lead');
     c.call(1, 'connect_machine', { machine: 'win-box' });
     await until(() => started);
     c.sock.destroy();
@@ -7505,7 +9619,7 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
   it('a lead connecting a machine that is added by its name is not asked', async () => {
     const { network } = machineNet({});
     const { h, c } = await machineSession({ network });
-    await setProfile(h, 'lead');
+    await setSessionProfile(h, 'lead');
     c.call(1, 'connect_machine', { machine: 'win-box' });
     expect(c.errorOf(await c.reply(1))).toBe('ok');
     expect(asksOf(h)).toEqual([]);
@@ -7513,7 +9627,7 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
 
   it('without a network every machine tool says host_unavailable, and asks nothing first', async () => {
     const { h, c } = await machineSession({});
-    await setProfile(h, 'lead');
+    await setSessionProfile(h, 'lead');
     c.call(1, 'connect_machine', { machine: 'new.example' });
     expect(c.errorOf(await c.reply(1))).toBe('host_unavailable');
     c.call(2, 'list_machines', {});
@@ -7537,7 +9651,7 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
       },
     });
     const { h, c } = await machineSession({ network });
-    await setProfile(h, 'lead');
+    await setSessionProfile(h, 'lead');
     c.call(7, 'connect_machine', { machine: 'win-box' });
     await until(() => started);
     c.cancel(7);
@@ -7551,7 +9665,7 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
       connectMachine: () => new Promise<ConnectMachineResult>(() => undefined),
     });
     const { h, c } = await machineSession({ network, manualTimers: true });
-    await setProfile(h, 'lead');
+    await setSessionProfile(h, 'lead');
     c.call(1, 'connect_machine', { machine: 'win-box' });
     await until(() => connects.length === 1);
     h.advance(119_999);
@@ -7560,6 +9674,33 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
     expect(c.errorOf(await c.reply(1))).toBe('ssh_unreachable');
   });
 });
+
+function inboundNetwork(principal: () => RemoteCaller | null): NetworkPort {
+  const unused = (): never => {
+    throw new Error('unused inbound network operation');
+  };
+  return {
+    hasPeer: () => true,
+    grantPeerEligible: () => true,
+    onGrantPeerEligibilityChange: () => () => {},
+    inboundPrincipal: principal,
+    remoteEntries: () => [],
+    resolve: unused,
+    enqueue: unused,
+    call: unused,
+    waitReading: unused,
+    peerCapabilitiesOf: unused,
+    onChange: () => () => undefined,
+    listMachines: () => [],
+    connectMachine: unused,
+    disconnectMachine: unused,
+    answerRemoteRequest: unused,
+    nativeSupport: () => false,
+    pushPolicy: unused,
+    selfName: () => 'this machine',
+    revokeRemoteGrant: unused,
+  };
+}
 
 describe('createConduitMcpHost — a remote lead (routed calls, CON-40 S2, plan decision 4)', () => {
   const LEAD: RemoteCaller = {
@@ -7572,11 +9713,64 @@ describe('createConduitMcpHost — a remote lead (routed calls, CON-40 S2, plan 
   };
 
   async function withLocal(over: Parameters<typeof harness>[0] = {}) {
-    const h = harness({ kinds: { '/w/wt': 'dir', '/w/src': 'dir' }, ...over });
+    const h = harness({
+      kinds: { '/w/wt': 'dir', '/w/src': 'dir' },
+      network: inboundNetwork(() => structuredClone(LEAD)),
+      ...over,
+    });
     await h.host.start();
     await launch(h, 's1');
     return h;
   }
+
+  it('records the actual inbound master floor with authenticated facts', async () => {
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line));
+      },
+      read: () => '',
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const h = await withLocal({ activityIo, messagingOn: () => false });
+    await h.host
+      .networkPort()
+      .callAsRemote(LEAD, 'open_session', { path: '/w/wt', agent: 'e2e-fake-mcp' }, LIVE);
+    expect(rows.find((r) => r.action === 'open_session')?.trace).toMatchObject({
+      decision: 'deny',
+      reason: { by: 'floor', floor: 'master-off' },
+      facts: {
+        principal: { kind: 'remote', machineId: LEAD.machineId, capabilities: LEAD.capabilities },
+      },
+    });
+  });
+
+  it('records the receiver commit for a successful single-target call', async () => {
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line));
+      },
+      read: () => '',
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const h = await withLocal({ activityIo });
+    const result = await h.host
+      .networkPort()
+      .callAsRemote(LEAD, 'open_session', { path: '/w/wt', agent: 'e2e-fake-mcp' }, LIVE);
+    expect(result.ok).toBe(true);
+    expect(rows.find((r) => r.action === 'open_session')?.trace).toMatchObject({
+      decision: 'allow',
+      facts: { principal: { kind: 'remote', machineId: LEAD.machineId } },
+      runtime: { outcome: 'proceeded', code: null },
+    });
+  });
 
   it('list_agents runs for the lead and answers ok', async () => {
     const h = await withLocal();
@@ -7702,7 +9896,7 @@ describe('createConduitMcpHost — a remote lead (routed calls, CON-40 S2, plan 
       migratedFrom: null,
       notes: { onScreenOnlyOffered: [] },
     });
-    const h = await withLocal({ policyIo: { read: () => policy, write: async () => undefined } });
+    const h = await withLocal({ policyIo: { read: () => policy, writeSync: () => true } });
     const port = h.host.networkPort();
     const call = port.callAsRemote(
       LEAD,
@@ -7753,7 +9947,11 @@ describe('createConduitMcpHost — a remote lead: the refusals the host adds (CO
   };
 
   async function withLocal(over: Parameters<typeof harness>[0] = {}) {
-    const h = harness({ kinds: { '/w/wt': 'dir' }, ...over });
+    const h = harness({
+      kinds: { '/w/wt': 'dir' },
+      network: inboundNetwork(() => structuredClone(LEAD)),
+      ...over,
+    });
     await h.host.start();
     await launch(h, 's1');
     return h;
@@ -7913,11 +10111,13 @@ describe('createConduitMcpHost — a routed ask waits for the owner on this mach
     notes: { onScreenOnlyOffered: [] },
   });
 
-  async function withAsk() {
+  async function withAsk(over: Parameters<typeof harness>[0] = {}) {
     const h = harness({
       kinds: { '/w/wt': 'dir', '/w/src': 'dir' },
       manualTimers: true,
-      policyIo: { read: () => ASK_POLICY, write: async () => undefined },
+      policyIo: { read: () => ASK_POLICY, writeSync: () => true },
+      network: inboundNetwork(() => structuredClone(LEAD)),
+      ...over,
     });
     await h.host.start();
     await launch(h, 's1');
@@ -7925,7 +10125,565 @@ describe('createConduitMcpHost — a routed ask waits for the owner on this mach
   }
 
   const openArgs = (p: string) => ({ path: p, agent: 'e2e-fake-mcp' });
+  it('records the original remote ask and leaves the later result untraced', async () => {
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line));
+      },
+      read: () => '',
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const h = await withAsk({ activityIo });
+    const ctl = new AbortController();
+    const pending = h.host
+      .networkPort()
+      .callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), ctl.signal);
+    await waitForAsks(h);
+    expect(rows.find((r) => r.outcome === 'asked')?.trace).toMatchObject({
+      decision: 'ask',
+      facts: { principal: { kind: 'remote', machineId: LEAD.machineId }, tool: 'open_session' },
+    });
+    ctl.abort();
+    await pending;
+    expect(rows.find((r) => r.outcome !== 'asked')?.trace).toBeUndefined();
+  });
+
   const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+  async function peerRule(h: Harness, tool: ToolName, rule: Record<string, unknown>) {
+    let result: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:saveAssignment',
+        requestId: 999,
+        point: { kind: 'peer', machineId: LEAD.machineId },
+        assignment: {
+          profileId: 'lead',
+          onScreenOnly: false,
+          exceptions: [{ tool, scope: { kind: 'anywhere' }, rule }],
+        },
+        expectedToken: h.host.uiState().policy.editToken,
+      },
+      (m) => {
+        result = m;
+      },
+      1,
+    );
+    expect(result).toMatchObject({ result: { ok: true } });
+  }
+
+  it('records the exact fresh remote denial that stops a prepared call', async () => {
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line));
+      },
+      read: () => '',
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    let entered = false;
+    let release!: () => void;
+    const wait = new Promise<void>((done) => {
+      release = done;
+    });
+    const h = await withAsk({
+      activityIo,
+      kindOf: async () => {
+        entered = true;
+        await wait;
+        return 'dir';
+      },
+    });
+    await peerRule(h, 'open_session', { decision: 'allow' });
+    const pending = h.host
+      .networkPort()
+      .callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), LIVE);
+    await until(() => entered);
+    await peerRule(h, 'open_session', { decision: 'deny' });
+    release();
+    expect((await pending).ok).toBe(false);
+    expect(rows.find((r) => r.action === 'open_session')?.trace).toMatchObject({
+      decision: 'deny',
+      reason: { by: 'deny' },
+      runtime: { outcome: 'not-reached' },
+    });
+  });
+
+  it.each(['read_screen', 'send_input', 'close_session'] as const)(
+    'refuses unchanged Ask after prepared %s reach narrows',
+    async (tool) => {
+      const h = await withAsk();
+      await peerRule(h, tool, { decision: 'ask', when: 'always', reach: 'any' });
+      const port = h.host.networkPort();
+      if (tool === 'close_session') h.owners.set('s1', null);
+      const args =
+        tool === 'send_input' ? { session: 's1', text: 'must not run' } : { session: 's1' };
+      const call = port.callAsRemote(LEAD, tool, args, LIVE);
+      const [asked] = await waitForAsks(h);
+      await peerRule(h, tool, { decision: 'ask', when: 'always', reach: 'self' });
+      const result = port.applyRemoteAnswer(
+        asked.id,
+        { outcome: 'allowed', grant: true },
+        'narrowed',
+        LEAD.machineId,
+      );
+      expect(port.mirrorOf().find((r) => r.id === asked.id)?.state).toBe('withdrawn');
+      await call;
+      expect(result).toMatchObject({ ok: false, reason: 'policy_unavailable' });
+      expect(h.host.uiState().policy.grants).toEqual([]);
+      expect(h.inputs).toEqual([]);
+      expect(h.closes).toEqual([]);
+    },
+  );
+
+  it('refuses unchanged Ask when prepared move changes and an acknowledged aborted signal cannot revive', async () => {
+    const h = await withAsk();
+    const port = h.host.networkPort();
+    await peerRule(h, 'open_session', { decision: 'ask', when: 'always', move: 'yes' });
+    const call = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), LIVE);
+    const [asked] = await waitForAsks(h);
+    await peerRule(h, 'open_session', { decision: 'ask', when: 'always', move: 'no' });
+    expect(
+      port.applyRemoteAnswer(asked.id, { outcome: 'allowed', grant: true }, 'move', LEAD.machineId),
+    ).toMatchObject({ ok: false, reason: 'policy_unavailable' });
+    expect(port.mirrorOf().find((r) => r.id === asked.id)?.state).toBe('withdrawn');
+    await call;
+    const ctl = new AbortController();
+    const second = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), ctl.signal);
+    const [next] = await waitForAsks(h);
+    expect(
+      port.applyRemoteAnswer(next.id, { outcome: 'allowed' }, 'allow', LEAD.machineId),
+    ).toEqual({ ok: true });
+    ctl.abort();
+    expect(await second).toMatchObject({ ok: false });
+    expect(h.opens).toEqual([]);
+  });
+
+  it('applicable drive capability narrowing refuses attach_folder consent', async () => {
+    let principal = {
+      ...structuredClone(LEAD),
+      capabilities: { ...LEAD.capabilities, drive: true },
+    };
+    const h = await withAsk({ network: inboundNetwork(() => principal) });
+    const current = h.sessions.get('s1');
+    if (!current) throw new Error('missing session');
+    h.sessions.set('s1', {
+      ...current,
+      openedBy: { handle: LEAD.handle, machineId: LEAD.machineId },
+    });
+    await peerRule(h, 'attach_folder', { decision: 'ask', when: 'always', reach: 'opened' });
+    const port = h.host.networkPort();
+    const ctl = new AbortController();
+    const call = port.callAsRemote(
+      principal,
+      'attach_folder',
+      { path: '/w/src', session: 's1' },
+      ctl.signal,
+    );
+    const [asked] = await waitForAsks(h);
+    principal = { ...principal, capabilities: { ...principal.capabilities, drive: false } };
+    const result = port.applyRemoteAnswer(
+      asked.id,
+      { outcome: 'allowed', grant: true },
+      'caps',
+      LEAD.machineId,
+    );
+    expect(port.mirrorOf().find((r) => r.id === asked.id)?.state).toBe('withdrawn');
+    await call;
+    expect(result).toMatchObject({ ok: false, reason: 'policy_unavailable' });
+    expect(h.host.uiState().policy.grants).toEqual([]);
+    expect(h.sessions.get('s1')?.roots).toEqual([]);
+  });
+
+  it('refuses an unasked Allow becoming Ask during asynchronous preparation', async () => {
+    let release!: () => void;
+    let entered = false;
+    const gate = new Promise<void>((done) => {
+      release = done;
+    });
+    const h = await withAsk({
+      kindOf: async (path) => {
+        if (path === '/w/wt') {
+          entered = true;
+          await gate;
+        }
+        return 'dir';
+      },
+    });
+    await peerRule(h, 'open_session', { decision: 'allow', when: 'always', move: 'no' });
+    const call = h.host.networkPort().callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), LIVE);
+    await until(() => entered);
+    await peerRule(h, 'open_session', { decision: 'ask', when: 'always', move: 'no' });
+    release();
+    expect(await call).toMatchObject({ ok: false, error: { code: 'policy_unavailable' } });
+    expect(h.opens).toEqual([]);
+    expect(h.host.networkPort().mirrorOf()).toEqual([]);
+  });
+
+  it('refuses an original signal aborted during prepare even with a newly live principal', async () => {
+    let release!: () => void;
+    let entered = false;
+    const gate = new Promise<void>((done) => {
+      release = done;
+    });
+    let principal: RemoteCaller | null = structuredClone(LEAD);
+    const h = await withAsk({
+      network: inboundNetwork(() => principal),
+      kindOf: async (path) => {
+        if (path === '/w/wt') {
+          entered = true;
+          await gate;
+        }
+        return 'dir';
+      },
+    });
+    await peerRule(h, 'open_session', { decision: 'allow', when: 'always', move: 'no' });
+    const ctl = new AbortController();
+    const call = h.host
+      .networkPort()
+      .callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), ctl.signal);
+    await until(() => entered);
+    principal = null;
+    ctl.abort();
+    principal = structuredClone(LEAD);
+    release();
+    expect(await call).toMatchObject({ ok: false, error: { code: 'peer_unreachable' } });
+    expect(h.opens).toEqual([]);
+    expect(h.host.networkPort().mirrorOf()).toEqual([]);
+  });
+
+  it('rechecks prepared move and fresh principal after durable owner acknowledgement before action', async () => {
+    let principal: RemoteCaller | null = structuredClone(LEAD);
+    const h = await withAsk({ network: inboundNetwork(() => principal) });
+    const port = h.host.networkPort();
+    await peerRule(h, 'open_session', { decision: 'ask', when: 'always', move: 'yes' });
+    const call = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), LIVE);
+    const [asked] = await waitForAsks(h);
+    expect(
+      port.applyRemoteAnswer(asked.id, { outcome: 'allowed', grant: true }, 'ack', LEAD.machineId),
+    ).toEqual({ ok: true });
+    const changed = peerRule(h, 'open_session', { decision: 'ask', when: 'always', move: 'no' });
+    await changed;
+    expect(await call).toMatchObject({ ok: false, error: { code: 'policy_unavailable' } });
+    expect(h.opens).toEqual([]);
+    expect(h.host.uiState().policy.grants).toHaveLength(1);
+    const second = port.callAsRemote(LEAD, 'open_session', openArgs('/w/src'), LIVE);
+    const [next] = await waitForAsks(h);
+    expect(
+      port.applyRemoteAnswer(next.id, { outcome: 'allowed' }, 'second', LEAD.machineId),
+    ).toEqual({ ok: true });
+    principal = null;
+    expect(await second).toMatchObject({ ok: false, error: { code: 'peer_unreachable' } });
+    expect(h.opens).toEqual([]);
+  });
+
+  it('absolute ask deadline refuses grant even before a delayed expiry timer fires', async () => {
+    const h = await withAsk();
+    const ctl = new AbortController();
+    const port = h.host.networkPort();
+    const call = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), ctl.signal);
+    const [asked] = await waitForAsks(h);
+    h.clock.t += 45_000;
+    const result = port.applyRemoteAnswer(
+      asked.id,
+      { outcome: 'allowed', grant: true },
+      'late',
+      LEAD.machineId,
+    );
+    ctl.abort();
+    await call;
+    expect(result).toMatchObject({ ok: false, reason: 'peer_unreachable' });
+    expect(h.host.uiState().policy.grants).toEqual([]);
+    expect(h.opens).toEqual([]);
+  });
+
+  it('true queue precommit failure rolls back only new owner grants through storage recovery', async () => {
+    let text = serializeGrantsFile({
+      version: 1,
+      grants: [
+        {
+          id: 'prior',
+          who: { kind: 'peer', machineId: LEAD.machineId },
+          tool: 'open_session',
+          on: { kind: 'path', path: '/prior' },
+          for: 'until-revoked',
+          anchorSessionId: null,
+          createdAt: new Date(1_000_000).toISOString(),
+          expiresAt: null,
+          lastUsedAt: null,
+          state: 'active',
+          endedAt: null,
+          requestId: 'prior',
+        },
+      ],
+    });
+    let down = false;
+    let armed = true;
+    const io: PolicyIo = {
+      read: () => text,
+      writeSync: (value) => {
+        if (down) throw new Error('rollback storage unavailable');
+        text = value;
+        if (armed) {
+          armed = false;
+          down = true;
+          vi.spyOn(Date.prototype, 'toISOString').mockImplementationOnce(() => {
+            throw new Error('queue timestamp failed');
+          });
+        }
+        return true;
+      },
+    };
+    const h = await withAsk({ grantsIo: io });
+    const ctl = new AbortController();
+    const port = h.host.networkPort();
+    const call = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), ctl.signal);
+    const [asked] = await waitForAsks(h);
+    const result = port.applyRemoteAnswer(
+      asked.id,
+      { outcome: 'allowed', grant: true },
+      'commit',
+      LEAD.machineId,
+    );
+    vi.restoreAllMocks();
+    expect(result).toEqual({
+      ok: false,
+      reason: 'policy_unavailable',
+      message: 'the request could not be committed',
+    });
+    expect(h.host.uiState().policy.grants.map((g) => [g.requestId, g.state])).toEqual([
+      ['prior', 'active'],
+      [asked.id, 'revoked'],
+    ]);
+    expect(h.host.uiState().policy.saveError).toContain('active here');
+    expect(h.opens).toEqual([]);
+    ctl.abort();
+    await call;
+    down = false;
+    await h.host.stop();
+    const restarted = await withAsk({ grantsIo: io });
+    expect(restarted.host.uiState().policy.grants.map((g) => [g.requestId, g.state])).toEqual([
+      ['prior', 'active'],
+      [asked.id, 'revoked'],
+    ]);
+  });
+
+  it.each(['deadline', 'abort'] as const)(
+    'running remote consent respects %s after timely owner answer',
+    async (change) => {
+      let release!: () => void;
+      let entered = false;
+      let finished = false;
+      const gate = new Promise<void>((done) => {
+        release = done;
+      });
+      const h = await withAsk({
+        beforeClose: async (id) => {
+          if (id === 's2') {
+            entered = true;
+            await gate;
+          }
+        },
+      });
+      await launch(h, 's2');
+      await launch(h, 's3');
+      h.owners.set('s2', null);
+      h.owners.set('s3', null);
+      await peerRule(h, 'close_session', { decision: 'ask', when: 'always', reach: 'any' });
+      const port = h.host.networkPort();
+      const controller = new AbortController();
+      const call = port.callAsRemote(
+        LEAD,
+        'close_session',
+        { sessions: ['s2', 's3'] },
+        controller.signal,
+      );
+      void call.then(() => {
+        finished = true;
+      });
+      const [asked] = await waitForAsks(h);
+      expect(
+        port.applyRemoteAnswer(asked.id, { outcome: 'allowed' }, 'timely', LEAD.machineId),
+      ).toEqual({ ok: true });
+      await vi.waitFor(() => expect(entered || finished).toBe(true));
+      expect(entered).toBe(true);
+      h.clock.t += 46_000;
+      if (change === 'abort') controller.abort();
+      release();
+      expect(await call).toMatchObject({
+        ok: true,
+        value: { results: [{ closed: true }, { closed: change === 'deadline' }] },
+      });
+      expect(h.closes).toEqual(change === 'deadline' ? ['s2', 's3'] : ['s2']);
+    },
+  );
+
+  it('queued routed send_input uses actual receiving owner freshness before writing', async () => {
+    let release!: () => void;
+    let entered = false;
+    const gate = new Promise<void>((done) => {
+      release = done;
+    });
+    const h = await withAsk();
+    await launch(h, 's2');
+    await peerRule(h, 'send_input', { decision: 'allow', when: 'always', reach: 'any' });
+    const held = h.writer.submitEnter('s2', {
+      beforeEnter: async () => {
+        entered = true;
+        await gate;
+        return false;
+      },
+    });
+    await until(() => entered);
+    const call = h.host
+      .networkPort()
+      .callAsRemote(
+        LEAD,
+        'send_input',
+        { session: 's2', text: 'remote-sensitive-text', submit: true },
+        LIVE,
+      );
+    await until(() => h.typingSequences.includes('s2'));
+    await peerRule(h, 'send_input', { decision: 'deny', when: 'always', reach: 'any' });
+    release();
+    await held;
+    expect(await call).toMatchObject({
+      ok: false,
+      error: { code: 'tool_disabled', retryable: false },
+    });
+    expect(h.inputs.filter(([id]) => id === 's2')).toEqual([]);
+  });
+
+  it('remote durable consent refuses failed primary then explicit fresh retry creates one grant and action', async () => {
+    let failed = true;
+    const writes: string[] = [];
+    const h = await withAsk({
+      grantsIo: {
+        read: () => null,
+        writeSync: (text) => {
+          if (failed) throw new Error('disk full');
+          writes.push(text);
+          return true;
+        },
+      },
+    });
+    const port = h.host.networkPort();
+    const call = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), LIVE);
+    const [asked] = await waitForAsks(h);
+    const refusal = port.applyRemoteAnswer(
+      asked.id,
+      { outcome: 'allowed', grant: true },
+      'failed',
+      LEAD.machineId,
+    );
+    expect(refusal).toEqual({
+      ok: false,
+      reason: 'policy_unavailable',
+      message: 'Permissions could not be saved (save-failed)',
+    });
+    expect(h.opens).toEqual([]);
+    expect(h.host.uiState().policy.grants).toEqual([]);
+    expect(port.mirrorOf().find((r) => r.id === asked.id)?.state).toBe('open');
+    failed = false;
+    expect(
+      port.applyRemoteAnswer(
+        asked.id,
+        { outcome: 'allowed', grant: true },
+        'failed',
+        LEAD.machineId,
+      ),
+    ).toEqual(refusal);
+    expect(writes).toHaveLength(0);
+    expect(
+      port.applyRemoteAnswer(
+        asked.id,
+        { outcome: 'allowed', grant: true },
+        'retry',
+        LEAD.machineId,
+      ),
+    ).toEqual({ ok: true });
+    expect(
+      port.applyRemoteAnswer(
+        asked.id,
+        { outcome: 'allowed', grant: true },
+        'retry',
+        LEAD.machineId,
+      ),
+    ).toEqual({ ok: true });
+    expect((await call).ok).toBe(true);
+    expect(h.opens).toHaveLength(1);
+    expect(h.host.uiState().policy.grants).toHaveLength(1);
+    expect(writes).toHaveLength(1);
+  });
+
+  it.each(['master', 'floor', 'controller', 'deny'] as const)(
+    'fresh %s change refuses a remote answer without grant or action',
+    async (change) => {
+      let principal: RemoteCaller | null = structuredClone(LEAD);
+      let master = true;
+      const h = await withAsk({
+        network: inboundNetwork(() => principal),
+        messagingOn: () => master,
+      });
+      const port = h.host.networkPort();
+      const call = port.callAsRemote(LEAD, 'open_session', openArgs('/w/wt'), LIVE);
+      const [asked] = await waitForAsks(h);
+      if (change === 'master') master = false;
+      else if (change === 'controller') principal = null;
+      else if (change === 'deny')
+        await peerRule(h, 'open_session', { decision: 'deny', when: 'always', move: 'yes' });
+      else if (principal) principal.controller = false;
+      const refusal = port.applyRemoteAnswer(
+        asked.id,
+        { outcome: 'allowed', grant: true },
+        'a',
+        LEAD.machineId,
+      );
+      expect(refusal.ok).toBe(false);
+      expect(port.mirrorOf().find((r) => r.id === asked.id)?.state).toBe('withdrawn');
+      expect(h.opens).toEqual([]);
+      expect(h.host.uiState().policy.grants).toEqual([]);
+      if (refusal.ok) throw new Error('Expected refusal');
+      expect(await call).toMatchObject({
+        ok: false,
+        error: {
+          code:
+            change === 'master'
+              ? 'messaging_off'
+              : change === 'controller'
+                ? 'peer_unreachable'
+                : 'policy_unavailable',
+          message: refusal.message,
+        },
+      });
+      master = true;
+      principal = structuredClone(LEAD);
+      await peerRule(h, 'open_session', { decision: 'ask', when: 'always', move: 'yes' });
+      expect(
+        port.applyRemoteAnswer(
+          asked.id,
+          { outcome: 'allowed', grant: true },
+          'relaxed',
+          LEAD.machineId,
+        ),
+      ).toMatchObject({ ok: false, reason: 'already_ended' });
+      expect(h.opens).toEqual([]);
+      await h.host.stop();
+      const saved = JSON.parse(fs.readFileSync(path.join(h.dir, 'requests.json'), 'utf8'));
+      expect(saved.requests.find((r: RequestRecord) => r.id === asked.id)).toMatchObject({
+        state: 'withdrawn',
+        withdrawnBy: 'conduit',
+        withdrawReason: refusal.message,
+      });
+    },
+  );
 
   it('an allow runs the call the lead made, once the owner answers', async () => {
     const h = await withAsk();
@@ -8047,6 +10805,10 @@ describe('createConduitMcpHost — a remote answer that does not reach its machi
       throw new Error('not used by the remote requests');
     };
     const network: NetworkPort = {
+      hasPeer: () => null,
+      grantPeerEligible: () => true,
+      onGrantPeerEligibilityChange: () => () => {},
+      inboundPrincipal: () => null,
       remoteEntries: () => [],
       resolve: unused,
       enqueue: unused,
@@ -8059,6 +10821,7 @@ describe('createConduitMcpHost — a remote answer that does not reach its machi
       disconnectMachine: unused,
       selfName: () => 'this-machine',
       answerRemoteRequest: vi.fn(answer),
+      nativeSupport: () => false,
       pushPolicy: () => Promise.reject(new Error('not used by this test')),
       revokeRemoteGrant: () => Promise.reject(new Error('not used by this test')),
     };
@@ -8096,13 +10859,14 @@ describe('createConduitMcpHost — a remote answer that does not reach its machi
     ['peer_incompatible', 'peer_incompatible'],
     ['peer_revoked', 'peer_revoked'],
     ['peer_unsupported', 'not_answerable'],
+    ['policy_unavailable', 'not_answerable'],
   ] as const)('a %s from the link reaches the renderer as %s', async (code, reason) => {
     const network = remoteNet(async () => ({
       ok: false,
       error: toolError(code, 'the link refused it'),
     }));
     const reply = await answerOf(network, () => {});
-    expect(reply).toMatchObject({ result: { ok: false, reason } });
+    expect(reply).toMatchObject({ result: { ok: false, reason, message: 'the link refused it' } });
     expect(network.answerRemoteRequest).toHaveBeenCalledTimes(1);
   });
 });
@@ -8157,6 +10921,10 @@ describe('routed session tools on this machine (CON-40 S3, plan decision 5)', ()
       throw new Error('not used by the routed tools');
     };
     const network: NetworkPort = {
+      hasPeer: () => null,
+      grantPeerEligible: () => true,
+      onGrantPeerEligibilityChange: () => () => {},
+      inboundPrincipal: () => null,
       remoteEntries: () => over.entries ?? [REMOTE_CLAUDE],
       resolve: (target) =>
         target === REMOTE_CLAUDE.address
@@ -8176,6 +10944,7 @@ describe('routed session tools on this machine (CON-40 S3, plan decision 5)', ()
       disconnectMachine: unused,
       selfName: () => 'this-machine',
       answerRemoteRequest: () => Promise.reject(new Error('not used by this test')),
+      nativeSupport: () => false,
       pushPolicy: () => Promise.reject(new Error('not used by this test')),
       revokeRemoteGrant: () => Promise.reject(new Error('not used by this test')),
     };
@@ -8199,20 +10968,7 @@ describe('routed session tools on this machine (CON-40 S3, plan decision 5)', ()
     sessionId: string,
     profileId: 'observer' | 'worker' | 'lead',
   ) {
-    let reply: HostToWebview | undefined;
-    await h.host.handleRenderer(
-      {
-        type: 'mcp:setAssignment',
-        requestId: 1,
-        point: { kind: 'session', sessionId },
-        profileId,
-      },
-      (m) => {
-        reply = m;
-      },
-      1,
-    );
-    expect(reply).toEqual({ type: 'mcp:policyResult', requestId: 1, ok: true });
+    await setProfile(h, { kind: 'session', sessionId }, profileId);
   }
 
   it('list_agents with a machine forwards its other args under my handle and returns B rows as they are', async () => {
@@ -8518,6 +11274,10 @@ describe('createConduitMcpHost — remote requests (CON-42 A side)', () => {
       throw new Error('not used by the remote requests');
     };
     const network: NetworkPort = {
+      hasPeer: () => null,
+      grantPeerEligible: () => true,
+      onGrantPeerEligibilityChange: () => () => {},
+      inboundPrincipal: () => null,
       remoteEntries: () => [],
       resolve: unused,
       enqueue: unused,
@@ -8530,6 +11290,7 @@ describe('createConduitMcpHost — remote requests (CON-42 A side)', () => {
       disconnectMachine: unused,
       selfName: () => 'this-machine',
       answerRemoteRequest,
+      nativeSupport: () => false,
       pushPolicy: () => Promise.reject(new Error('not used by this test')),
       revokeRemoteGrant: () => Promise.reject(new Error('not used by this test')),
     };
@@ -8774,6 +11535,10 @@ describe('remote policy edits from this machine (CON-46 L4)', () => {
       throw new Error('not used by the remote policy tests');
     };
     const network: NetworkPort = {
+      hasPeer: () => null,
+      grantPeerEligible: () => true,
+      onGrantPeerEligibilityChange: () => () => {},
+      inboundPrincipal: () => null,
       remoteEntries: () => [],
       resolve: unused,
       enqueue: unused,
@@ -8786,6 +11551,7 @@ describe('remote policy edits from this machine (CON-46 L4)', () => {
       disconnectMachine: unused,
       selfName: () => 'this-machine',
       answerRemoteRequest: unused,
+      nativeSupport: () => false,
       pushPolicy: async (machineId, baseRev, doc) => {
         pushes.push([machineId, baseRev, doc]);
         return { ok: true, value: { rev: baseRev + 1 } };
@@ -8815,27 +11581,24 @@ describe('remote policy edits from this machine (CON-46 L4)', () => {
 
     expect(
       await post(h, {
-        type: 'mcp:setAssignment',
+        type: 'mcp:remoteEdit',
         requestId: 1,
-        point: { kind: 'default' },
-        profileId: 'lead',
         machine: MACHINE,
+        expectedToken: h.host.uiState().policy.machines[0].policy.editToken,
+        edit: {
+          kind: 'assignment',
+          point: { kind: 'default' },
+          assignment: { profileId: 'lead', exceptions: [], onScreenOnly: false },
+        },
       }),
-    ).toEqual([{ type: 'mcp:policyResult', requestId: 1, ok: true }]);
+    ).toEqual([{ type: 'mcp:policyEditResult', requestId: 1, result: { ok: true } }]);
     await settle();
     expect(pushes).toEqual([[MACHINE, 3, LEAD_DEFAULT]]);
     expect(h.host.uiState().policy.machines).toMatchObject([
-      { machineId: MACHINE, name: 'win-box', status: 'applied', rev: 3 },
+      { machineId: MACHINE, name: 'win-box', status: 'applied', rev: 4 },
     ]);
 
-    expect(
-      await post(h, {
-        type: 'mcp:setAssignment',
-        requestId: 2,
-        point: { kind: 'default' },
-        profileId: 'worker',
-      }),
-    ).toEqual([{ type: 'mcp:policyResult', requestId: 2, ok: true }]);
+    await setProfile(h, { kind: 'default' }, 'worker');
     await settle();
     expect(pushes).toHaveLength(1);
     expect(h.host.uiState().policy.machines).toHaveLength(1);
@@ -8849,14 +11612,25 @@ describe('remote policy edits from this machine (CON-46 L4)', () => {
     sink.apply(MACHINE, RULES_AT_3);
     sink.setLinkState(MACHINE, 'down');
 
-    await post(h, {
-      type: 'mcp:setPointPolicy',
-      requestId: 3,
-      point: { kind: 'default' },
-      tool: 'send_input',
-      patch: { access: 'off' },
-      machine: MACHINE,
-    });
+    expect(
+      await post(h, {
+        type: 'mcp:remoteEdit',
+        requestId: 3,
+        machine: MACHINE,
+        expectedToken: h.host.uiState().policy.machines[0].policy.editToken,
+        edit: {
+          kind: 'assignment',
+          point: { kind: 'default' },
+          assignment: {
+            profileId: 'worker',
+            onScreenOnly: false,
+            exceptions: [
+              { tool: 'send_input', scope: { kind: 'anywhere' }, rule: { decision: 'deny' } },
+            ],
+          },
+        },
+      }),
+    ).toEqual([{ type: 'mcp:policyEditResult', requestId: 3, result: { ok: true } }]);
     await settle();
     expect(pushes).toEqual([]);
     expect(h.host.uiState().policy.machines).toMatchObject([
@@ -8865,7 +11639,7 @@ describe('remote policy edits from this machine (CON-46 L4)', () => {
     await until(() => savedDrafts(h.dir)?.[MACHINE] !== undefined);
     expect(
       JSON.parse(fs.readFileSync(path.join(h.dir, 'remote-policy.json'), 'utf8')),
-    ).toMatchObject({ version: 1, drafts: { [MACHINE]: { baseRev: 3 } } });
+    ).toMatchObject({ version: 2, drafts: { [MACHINE]: { baseRev: 3 } } });
 
     const again = harness({ dir: h.dir, network, manualTimers: true });
     await again.host.start();
@@ -8883,13 +11657,19 @@ describe('remote policy edits from this machine (CON-46 L4)', () => {
     sink.setLinkState(MACHINE, 'up');
     expect(
       await post(h, {
-        type: 'mcp:setAssignment',
+        type: 'mcp:remoteEdit',
         requestId: 4,
-        point: { kind: 'session', sessionId: 's1' },
-        profileId: 'lead',
         machine: MACHINE,
+        expectedToken: h.host.uiState().policy.machines[0].policy.editToken,
+        edit: {
+          kind: 'assignment',
+          point: { kind: 'session', sessionId: 's1' },
+          assignment: { profileId: 'lead', exceptions: [], onScreenOnly: false },
+        },
       }),
-    ).toEqual([{ type: 'mcp:policyResult', requestId: 4, ok: false, error: 'invalid_args' }]);
+    ).toEqual([
+      { type: 'mcp:policyEditResult', requestId: 4, result: { ok: false, error: 'invalid-value' } },
+    ]);
     await settle();
     expect(pushes).toEqual([]);
   });
@@ -8908,6 +11688,170 @@ describe('remote policy edits from this machine (CON-46 L4)', () => {
     expect(revokes).toHaveLength(1);
   });
 
+  it('rejects remote policy edits from an unready or non-owner window', async () => {
+    const { network, pushes } = remoteNet();
+    const h = harness({ network, manualTimers: true });
+    await h.host.start();
+    const sink = h.host.networkPort().remotePolicySink();
+    sink.apply(MACHINE, RULES_AT_3);
+    sink.setLinkState(MACHINE, 'down');
+    const token = h.host.uiState().policy.machines[0].policy.editToken;
+    const edit = {
+      type: 'mcp:remoteEdit' as const,
+      requestId: 81,
+      machine: MACHINE,
+      expectedToken: token,
+      edit: { kind: 'assignment' as const, point: { kind: 'default' as const }, assignment: null },
+    };
+    const responses: HostToWebview[] = [];
+    await h.host.handleRenderer(edit, (m) => responses.push(m), 0);
+    h.presence.ready.delete(1);
+    await h.host.handleRenderer(edit, (m) => responses.push(m), 1);
+    expect(responses).toEqual([
+      {
+        type: 'mcp:policyEditResult',
+        requestId: 81,
+        result: { ok: false, error: 'invalid-value' },
+      },
+      {
+        type: 'mcp:policyEditResult',
+        requestId: 81,
+        result: { ok: false, error: 'invalid-value' },
+      },
+    ]);
+    expect(h.host.uiState().policy.machines[0].policy.editToken).toBe(token);
+    expect(pushes).toEqual([]);
+  });
+
+  it('full remote edits use owner CAS, preserve custom portable rules, and return durable failures', async () => {
+    const { network, pushes } = remoteNet();
+    const h = harness({ network, manualTimers: true });
+    await h.host.start();
+    const sink = h.host.networkPort().remotePolicySink();
+    sink.apply(MACHINE, RULES_AT_3);
+    sink.setLinkState(MACHINE, 'down');
+    const token = () => h.host.uiState().policy.machines[0].policy.editToken;
+    const reply = (requestId: number, result: unknown) => [
+      { type: 'mcp:policyEditResult', requestId, result },
+    ];
+    const original = token();
+    const profile = {
+      rules: structuredClone(OBSERVER.rules),
+      id: 'p-custom-portable' as const,
+      name: 'Custom portable',
+      builtIn: false,
+    };
+    expect(
+      await post(h, {
+        type: 'mcp:remoteEdit',
+        requestId: 80,
+        machine: MACHINE,
+        expectedToken: original,
+        edit: { kind: 'profile', profile },
+      }),
+    ).toEqual(reply(80, { ok: true }));
+    expect(
+      await post(h, {
+        type: 'mcp:remoteEdit',
+        requestId: 81,
+        machine: MACHINE,
+        expectedToken: original,
+        edit: { kind: 'assignment', point: { kind: 'default' }, assignment: null },
+      }),
+    ).toEqual(reply(81, { ok: false, error: 'conflict' }));
+    const assignment = { profileId: profile.id, exceptions: [], onScreenOnly: false };
+    expect(
+      await post(h, {
+        type: 'mcp:remoteEdit',
+        requestId: 82,
+        machine: MACHINE,
+        expectedToken: token(),
+        edit: { kind: 'assignment', point: { kind: 'default' }, assignment },
+      }),
+    ).toEqual(reply(82, { ok: true }));
+    const before = token();
+    const file = path.join(h.dir, 'remote-policy.json');
+    const bytes = fs.readFileSync(file, 'utf8');
+    for (const point of [{ kind: 'session', sessionId: 's1' }, { kind: 'default' }]) {
+      expect(
+        await post(h, {
+          type: 'mcp:remoteEdit',
+          requestId: 83,
+          machine: MACHINE,
+          expectedToken: before,
+          edit: {
+            kind: 'assignment',
+            point,
+            assignment: {
+              ...assignment,
+              exceptions: [
+                {
+                  tool: 'close_session',
+                  scope: { kind: 'session', sessionId: 's1' },
+                  rule: { decision: 'allow' },
+                },
+              ],
+            },
+          },
+        }),
+      ).toEqual(reply(83, { ok: false, error: 'invalid-value' }));
+    }
+    expect(token()).toBe(before);
+    expect(fs.readFileSync(file, 'utf8')).toBe(bytes);
+    fs.renameSync(file, `${file}.test-backup`);
+    fs.mkdirSync(file);
+    try {
+      expect(
+        await post(h, {
+          type: 'mcp:remoteEdit',
+          requestId: 84,
+          machine: MACHINE,
+          expectedToken: before,
+          edit: { kind: 'assignment', point: { kind: 'default' }, assignment: null },
+        }),
+      ).toEqual(reply(84, { ok: false, error: 'save-failed' }));
+      expect(token()).toBe(before);
+      expect(h.host.uiState().policy.machines[0].policy.saveError).toContain('saved');
+    } finally {
+      fs.rmdirSync(file);
+      fs.renameSync(`${file}.test-backup`, file);
+    }
+    expect(
+      await post(h, {
+        type: 'mcp:remotePolicy',
+        requestId: 85,
+        machine: MACHINE,
+        expectedToken: before,
+        action: 'retry-save',
+      }),
+    ).toEqual(reply(85, { ok: true }));
+    expect(token()).toBe(before);
+    expect(h.host.uiState().policy.machines[0].policy.saveError).toBeNull();
+    expect(h.host.uiState().policy.machines[0].policy.profiles).toContainEqual(profile);
+    expect(h.host.uiState().policy.machines[0].policy.assignments).toEqual([
+      { point: { kind: 'default' }, assignment },
+    ]);
+    expect(pushes).toEqual([]);
+    expect(
+      await post(h, { type: 'mcp:remotePolicy', machine: MACHINE, action: 'discard' }),
+    ).toEqual([
+      {
+        type: 'mcp:policyEditResult',
+        requestId: undefined,
+        result: { ok: false, error: 'invalid-value' },
+      },
+    ]);
+    sink.apply(MACHINE, RULES_AT_3);
+    await settle();
+    expect(pushes).toEqual([
+      [
+        MACHINE,
+        3,
+        { profiles: [profile], assignments: [{ point: { kind: 'default' }, assignment }] },
+      ],
+    ]);
+  });
+
   it('mcp:remotePolicy discard clears the draft and returns the machine to applied', async () => {
     const { network, pushes } = remoteNet();
     const h = harness({ network, manualTimers: true });
@@ -8915,17 +11859,78 @@ describe('remote policy edits from this machine (CON-46 L4)', () => {
     const sink = h.host.networkPort().remotePolicySink();
     sink.apply(MACHINE, RULES_AT_3);
     sink.setLinkState(MACHINE, 'down');
+    expect(
+      await post(h, {
+        type: 'mcp:remoteEdit',
+        requestId: 7,
+        machine: MACHINE,
+        expectedToken: h.host.uiState().policy.machines[0].policy.editToken,
+        edit: {
+          kind: 'assignment',
+          point: { kind: 'default' },
+          assignment: { profileId: 'lead', exceptions: [], onScreenOnly: false },
+        },
+      }),
+    ).toEqual([{ type: 'mcp:policyEditResult', requestId: 7, result: { ok: true } }]);
     await post(h, {
-      type: 'mcp:setAssignment',
-      requestId: 7,
-      point: { kind: 'default' },
-      profileId: 'lead',
+      type: 'mcp:remotePolicy',
+      requestId: 93,
       machine: MACHINE,
+      action: 'discard',
+      expectedToken: h.host.uiState().policy.machines[0].policy.editToken,
     });
-    await post(h, { type: 'mcp:remotePolicy', machine: MACHINE, action: 'discard' });
     expect(h.host.uiState().policy.machines).toMatchObject([{ status: 'applied' }]);
     await until(() => Object.keys(savedDrafts(h.dir) ?? { x: 1 }).length === 0);
     expect(savedDrafts(h.dir)).toEqual({});
     expect(pushes).toEqual([]);
+  });
+});
+
+describe('linked Codex posture routing', () => {
+  it('only links a live owner and addresses sanitized changes', async () => {
+    const ids = { generation: 1, launchId: '1'.padStart(32, '0') };
+    const evidence = {
+      version: 1,
+      ...ids,
+      preparedAt: 100,
+      intent: { family: 'codex', optedIn: false, requested: null },
+    } as const;
+    let linked = false;
+    const h = harness({
+      nativeLaunchOf: () => evidence,
+      codexPosture: {
+        link: (_id, _ids, threadId) => {
+          linked = threadId === '01a1d190-1af2-7db3-ae44-cb9dacc349ed';
+          return linked;
+        },
+        get: () => (linked ? { freshness: 'current', reading: null, lastKnown: null } : null),
+      },
+    });
+    h.sessions.set('c1', session('c1', { agentId: CODEX.id }));
+    await h.host.start();
+    h.prepareLaunch('c1', CODEX, spec('/usr/bin/codex'));
+    h.spawn('c1');
+    const request = {
+      type: 'mcp:linkCodexThread',
+      requestId: 1,
+      sessionId: 'c1',
+      generation: 1,
+      threadId: '01a1d190-1af2-7db3-ae44-cb9dacc349ed',
+    } as const;
+    const replies: HostToWebview[] = [];
+    await h.host.handleRenderer(request, (m) => replies.push(m), 2);
+    expect(replies.pop()).toMatchObject({ view: { status: 'unavailable' } });
+    expect(linked).toBe(false);
+    await h.host.handleRenderer(request, (m) => replies.push(m), 1);
+    expect(replies.pop()).toMatchObject({
+      view: { status: 'linked', source: 'linked-codex-thread' },
+    });
+    h.host.recordObserved('c1', 'codex', { postureChanged: ids });
+    expect(h.toWindow.at(-1)).toMatchObject({
+      windowId: 1,
+      msg: { type: 'mcp:codexPostureChanged', view: { status: 'linked' } },
+    });
+    expect(JSON.stringify(h.host.uiState())).not.toContain(request.threadId);
+    await h.host.stop();
   });
 });

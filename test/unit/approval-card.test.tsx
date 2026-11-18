@@ -17,6 +17,53 @@ vi.mock('../../webview/bridge', () => ({
   },
   post: bridge.post,
 }));
+const owner = vi.hoisted(() => ({ loaded: true }));
+vi.mock('../../webview/use-owner-permissions', () => {
+  return {
+    useOwnerPermissions: (_api: unknown, asks: AskMsg[]) => ({
+      error: false,
+      retry: vi.fn(),
+      rows: asks
+        .map((ask) =>
+          owner.loaded
+            ? {
+                id: ask.askId,
+                sessionId: ask.callerSessionId,
+                requester: ask.callerHandle,
+                space: null,
+                lead: null,
+                machine: 'local',
+                title: 'Permission',
+                tool: ask.tool,
+                why: 'Worker',
+                state: 'open',
+                createdAt: new Date(0).toISOString(),
+                expiresAt: null,
+                endedAt: null,
+                withdrawReason: null,
+                grantable: ask.grantable,
+                answerable: true,
+                choices: ask.grantable
+                  ? [{ who: 'session', on: 'target', for: 'session-end' }]
+                  : [],
+              }
+            : null,
+        )
+        .filter(Boolean),
+    }),
+  };
+});
+vi.mock('../../webview/use-conduit-mcp', () => ({
+  useConduitMcp: () => ({
+    getOwnerPermissions: vi.fn(),
+    answerPermission: async (requestId: string, answer: unknown) => {
+      bridge.post({ type: 'mcp:permissionAnswer', requestId, answer });
+      for (const listener of bridge.listeners)
+        listener({ type: 'mcp:askClosed', askId: requestId, outcome: 'answered' });
+      return { ok: true };
+    },
+  }),
+}));
 const terminals = vi.hoisted(() => ({ focus: vi.fn() }));
 vi.mock('../../webview/terminal-bus', () => ({ requestTerminalFocus: terminals.focus }));
 
@@ -45,6 +92,7 @@ const flushFrames = () =>
 
 beforeEach(async () => {
   frames = [];
+  owner.loaded = true;
   clock.t = 1_000_000;
   vi.spyOn(Date, 'now').mockImplementation(() => clock.t);
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb));
@@ -108,8 +156,21 @@ function mount(announce = vi.fn()): typeof announce {
 const region = () => document.querySelector<HTMLElement>('.askcard');
 const rawToggle = () => document.querySelector<HTMLButtonElement>('.askcard button[aria-expanded]');
 const rawArgs = () => document.querySelector('.askcard pre.askcard__args');
-const button = (answer: string) =>
-  document.querySelector<HTMLButtonElement>(`.askcard button[data-answer="${answer}"]`);
+const button = (answer: string) => {
+  const label = answer === 'deny' ? 'Deny' : answer === 'always' ? 'Allow' : 'Allow once';
+  return [...document.querySelectorAll<HTMLButtonElement>('.askcard button')].find(
+    (b) => b.textContent === label,
+  );
+};
+const openAnswer = (answer: string) => {
+  const label = answer === 'deny' ? 'Deny ▾' : answer === 'always' ? 'Allow…' : null;
+  if (label)
+    act(() =>
+      [...document.querySelectorAll<HTMLButtonElement>('.askcard button')]
+        .find((b) => b.textContent === label)
+        ?.click(),
+    );
+};
 const next = () =>
   act(() =>
     document.querySelector<HTMLButtonElement>('button[aria-label="Next request"]')?.click(),
@@ -130,9 +191,20 @@ const pressEnter = () =>
     el?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     if (el instanceof HTMLButtonElement) el.click();
   });
-const answered = () => bridge.post.mock.calls.map(([m]) => (m as { askId: string }).askId);
+const answerPosts = () =>
+  bridge.post.mock.calls.map(([m]) => m).filter((m) => m.type === 'mcp:permissionAnswer');
+const answered = () => answerPosts().map((m) => (m as { requestId: string }).requestId);
 
 describe('ApprovalCard', () => {
+  it('offers no mutation while owner options are loading', () => {
+    owner.loaded = false;
+    mount();
+    emit(ask('a1'));
+    expect(region()?.textContent).toContain('Loading permission options');
+    expect(region()?.textContent).not.toContain('Allow once');
+    expect(answerPosts()).toEqual([]);
+  });
+
   it('renders nothing with no asks', () => {
     mount();
     expect(region()).toBeNull();
@@ -149,18 +221,16 @@ describe('ApprovalCard', () => {
     expect(r?.textContent).toContain('fake-1 requests open_session');
     expect(r?.textContent).toContain('Open a claude session in /w/a1');
     expect(r?.textContent).toContain('Ask: set for Other');
-    expect(
-      [...(r?.querySelectorAll('button[data-answer]') ?? [])].map((b) => b.textContent),
-    ).toEqual(['Deny', 'Approve', 'Always for this session']);
+    expect(r?.textContent).toContain('Allow once');
+    expect(r?.textContent).toContain('Allow…');
     expect(r?.textContent).not.toContain('1 of');
   });
 
   it('a forced ask offers Deny and Approve only: no Always', () => {
     mount();
     emit({ ...ask('a1'), grantable: false });
-    expect(
-      [...(region()?.querySelectorAll('button[data-answer]') ?? [])].map((b) => b.textContent),
-    ).toEqual(['Deny', 'Approve']);
+    expect(region()?.textContent).toContain('Allow once');
+    expect(region()?.textContent).not.toContain('Allow…');
   });
 
   it('names the model and the first message length in the open_session summary', () => {
@@ -292,8 +362,9 @@ describe('ApprovalCard', () => {
     (answer) => {
       mount();
       emit(ask('a1'));
+      openAnswer(answer);
       act(() => button(answer)?.click());
-      expect(bridge.post).toHaveBeenCalledWith({ type: 'mcp:askAnswer', askId: 'a1', answer });
+      expect(answered()).toEqual(['a1']);
       expect(region()).toBeNull();
     },
   );
@@ -310,11 +381,7 @@ describe('ApprovalCard', () => {
     expect(region()?.textContent).toContain('2 of 2');
     expect(region()?.textContent).toContain('codex-2 requests open_session');
     act(() => button('approve')?.click());
-    expect(bridge.post).toHaveBeenCalledWith({
-      type: 'mcp:askAnswer',
-      askId: 'a2',
-      answer: 'approve',
-    });
+    expect(answered()).toEqual(['a2']);
     // The index clamps to the one left, and the pager goes away.
     expect(region()?.textContent).toContain('fake-1 requests open_session');
     expect(region()?.textContent).not.toContain('of 1');
@@ -332,7 +399,7 @@ describe('ApprovalCard', () => {
       region()?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     });
     expect(document.activeElement).toBe(outside);
-    expect(bridge.post).not.toHaveBeenCalled();
+    expect(answerPosts()).toEqual([]);
     expect(region()).not.toBeNull();
   });
 
@@ -424,31 +491,36 @@ describe('ApprovalCard', () => {
       expect(answered()).toEqual(['a1']);
     });
 
-    it('Enter twice → one answer; focus moves to the region', () => {
+    it('Enter twice → one answer; focus moves to the region', async () => {
       mount();
       emit(ask('a1'));
       emit(ask('a2', { handle: 'codex-2' }));
       act(() => button('approve')?.focus());
       pressEnter();
+      await act(async () => undefined);
       expect(document.activeElement).toBe(region());
       pressEnter();
       expect(answered()).toEqual(['a1']);
     });
 
     it('a bare click on the next ask after the guard answers it (screen-reader browse mode)', () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       mount();
       emit(ask('a1'));
       emit(ask('a2', { handle: 'codex-2' }));
       act(() => button('approve')?.click());
       clock.advance(400);
+      act(() => vi.advanceTimersByTime(400));
+      openAnswer('deny');
       act(() => button('deny')?.click());
-      expect(bridge.post.mock.calls.map(([m]) => m)).toEqual([
-        { type: 'mcp:askAnswer', askId: 'a1', answer: 'approve' },
-        { type: 'mcp:askAnswer', askId: 'a2', answer: 'deny' },
+      expect(answerPosts()).toEqual([
+        { type: 'mcp:permissionAnswer', requestId: 'a1', answer: { outcome: 'allowed' } },
+        { type: 'mcp:permissionAnswer', requestId: 'a2', answer: { outcome: 'denied' } },
       ]);
     });
 
     it('a click within 400 ms of the shown ask expiring is ignored', () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       mount();
       emit(ask('a1'));
       emit(ask('a2', { handle: 'codex-2' }));
@@ -457,6 +529,7 @@ describe('ApprovalCard', () => {
       press('approve');
       expect(answered()).toEqual([]);
       clock.advance(1);
+      act(() => vi.advanceTimersByTime(400));
       press('approve');
       expect(answered()).toEqual(['a2']);
     });
@@ -488,7 +561,7 @@ describe('ApprovalCard', () => {
       'askcard__summary',
       'askcard__reason',
       'askcard__raw',
-      'askcard__actions',
+      'permissions-request-body',
     ];
     expect(order()).toEqual(want);
     expect(region()?.querySelector('.askcard__head .askcard__pager')?.textContent).toContain(
@@ -501,32 +574,21 @@ describe('ApprovalCard', () => {
     expect(order()).toEqual(want);
   });
 
-  it('the buttons read disabled for the swap guard and re-enable on their own (QA L3)', () => {
+  it('disables answer controls during the swap guard', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    const disabled = () =>
-      ['deny', 'approve', 'always'].map((a) => button(a)?.getAttribute('aria-disabled'));
-    const wait = (ms: number) =>
-      act(() => {
-        clock.advance(ms);
-        vi.advanceTimersByTime(ms);
-      });
     mount();
     emit(ask('a1'));
-    emit(ask('a2', { handle: 'codex-2' }));
-    expect(disabled()).toEqual(['false', 'false', 'false']);
+    emit(ask('a2'));
     press('approve');
-    expect(disabled()).toEqual(['true', 'true', 'true']);
-    press('deny');
-    expect(answered()).toEqual(['a1']);
-    wait(399);
-    expect(disabled()).toEqual(['true', 'true', 'true']);
-    wait(1);
-    expect(disabled()).toEqual(['false', 'false', 'false']);
-    press('deny');
-    expect(answered()).toEqual(['a1', 'a2']);
+    expect(button('approve')?.disabled).toBe(true);
+    act(() => {
+      clock.advance(400);
+      vi.advanceTimersByTime(400);
+    });
+    expect(button('approve')?.disabled).toBe(false);
   });
 
-  it('answering the last ask from inside the card returns focus (review r1-S2 C7)', () => {
+  it('answering the last ask from inside the card returns focus (review r1-S2 C7)', async () => {
     const outside = document.createElement('button');
     document.body.appendChild(outside);
     outside.focus();
@@ -535,11 +597,12 @@ describe('ApprovalCard', () => {
     act(() => store.requestAskFocus());
     act(() => button('approve')?.focus());
     press('approve');
+    await act(async () => undefined);
     expect(region()).toBeNull();
     expect(document.activeElement).toBe(outside);
   });
 
-  it("with nowhere to return to, the last answer lands in the caller's terminal (QA)", () => {
+  it("with nowhere to return to, the last answer lands in the caller's terminal (QA)", async () => {
     const textarea = document.createElement('textarea');
     textarea.className = 'xterm-helper-textarea';
     document.body.appendChild(textarea);
@@ -547,14 +610,16 @@ describe('ApprovalCard', () => {
     mount();
     emit(ask('a1'));
     // Tabbed in, not sent by the chip: nothing recorded to go back to.
+    openAnswer('deny');
     act(() => button('deny')?.focus());
     pressEnter();
+    await act(async () => undefined);
     expect(region()).toBeNull();
     expect(terminals.focus).toHaveBeenCalledWith('s-a1');
     expect(document.activeElement).toBe(textarea);
   });
 
-  it('a focus request from nowhere (body) also returns to the terminal', () => {
+  it('a focus request from nowhere (body) also returns to the terminal', async () => {
     const textarea = document.createElement('textarea');
     document.body.appendChild(textarea);
     terminals.focus.mockImplementation(() => textarea.focus());
@@ -563,6 +628,7 @@ describe('ApprovalCard', () => {
     act(() => store.requestAskFocus());
     act(() => button('approve')?.focus());
     pressEnter();
+    await act(async () => undefined);
     expect(terminals.focus).toHaveBeenCalledWith('s-a1');
     expect(document.activeElement).toBe(textarea);
   });

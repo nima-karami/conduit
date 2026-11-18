@@ -196,6 +196,8 @@ export function createServices(o: ServicesOptions) {
     runtime,
     launch: {
       whenLaunchReady: () => m().launch.whenLaunchReady(),
+      prepareNativeLaunch: (sessionId, def, spec) =>
+        m().launch.prepareNativeLaunch(sessionId, def, spec),
       prepareLaunch: (sessionId, def, spec, ids) =>
         m().launch.prepareLaunch(sessionId, def, spec, ids),
       async onSessionDeleted(sessionId) {
@@ -388,7 +390,7 @@ export function createServices(o: ServicesOptions) {
                   policyListeners.delete(fn);
                 };
               },
-              applyRemotePolicy: (baseRev, doc) => {
+              applyRemotePolicy: (baseRev, doc, senderSupportsNative) => {
                 const port = mcp?.networkPort();
                 if (port === undefined)
                   return {
@@ -396,7 +398,7 @@ export function createServices(o: ServicesOptions) {
                     code: 'policy_unavailable',
                     message: 'this machine is not ready to take remote policy',
                   };
-                return port.applyRemotePolicy(baseRev, doc);
+                return port.applyRemotePolicy(baseRev, doc, senderSupportsNative);
               },
               revokeRemoteGrant: (grantId) => {
                 const port = mcp?.networkPort();

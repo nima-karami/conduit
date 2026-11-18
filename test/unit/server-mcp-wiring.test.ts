@@ -115,9 +115,10 @@ function harness(opts: { manualTimers?: boolean; policy?: GlobalPolicy } = {}) {
       },
       setStatus: () => true,
       onChange: () => ({ dispose: () => [] }),
-      allocateLaunch,
+      nativeLaunchOf: () => null,
     } as McpHostDeps['sessions'],
     domain: {
+      codexPosture: { link: () => false, get: () => null },
       bracketedPaste: () => false,
       limitRules: () => compileLimitRules(DEFAULT_LIMIT_RULES),
       homeOf: (id: string) => sessions.get(id)?.home,

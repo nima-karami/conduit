@@ -197,7 +197,7 @@ export function createAppControlHandlers(
     const r: Reach = reach !== undefined && isValidField(tool, 'reach', reach) ? reach : 'self';
     if (r === 'any' || reachAdmits(r, actor, t, deps.ownerWindowOf)) return null;
     return fail('out_of_reach', REACH_REFUSAL[r], {
-      hint: `widen ${tool}'s reach in Settings → MCP to act on this session`,
+      hint: `widen ${tool}'s reach in Settings → Permissions to act on this session`,
     });
   };
 
@@ -292,6 +292,16 @@ export function createAppControlHandlers(
   const logged = (tool: ControlTool, caller: Caller, data: Record<string, unknown>) =>
     deps.info('control app', { tool, caller: caller.handle, ...data });
 
+  const staleCurrent = (ctx: ControlCallContext, afterUi = false): Fail | null =>
+    ctx.stillCurrent()
+      ? null
+      : fail(
+          'tool_disabled',
+          afterUi
+            ? 'Permissions changed while running; UI work may already have completed'
+            : 'Permissions changed while running',
+        );
+
   /** The caller-routed open tools share their exec: re-route, ask the renderer, expect 'opened'. */
   const openExec =
     <T>(
@@ -305,8 +315,12 @@ export function createAppControlHandlers(
     async (token: { keep(): void }): Promise<Result<T>> => {
       const w = routeWindow(who.sessionId);
       if (isFail(w)) return w;
+      const before = staleCurrent(ctx);
+      if (before) return before;
       const r = await ctx.ui(w, who.sessionId, action);
       if (!r.ok) return r;
+      const after = staleCurrent(ctx, true);
+      if (after) return after;
       if (r.value.kind !== 'opened') return wrongAnswer(r.value);
       token.keep();
       logged(tool, caller, {});
@@ -323,7 +337,11 @@ export function createAppControlHandlers(
     closedBy: CloseOpener | undefined,
     ctx: ControlCallContext,
   ): Promise<Result<CloseSessionOutput>> => {
+    const before = staleCurrent(ctx);
+    if (before) return before;
     const domainClose = async (): Promise<Result<CloseSessionOutput>> => {
+      const current = staleCurrent(ctx);
+      if (current) return current;
       const result = await deps.closeSession(sessionId, closedBy ? { closedBy } : {});
       if (!result.ok) return fail(result.code, result.message);
       return { ok: true, value: { closed: sessionId } };
@@ -332,6 +350,8 @@ export function createAppControlHandlers(
     if (currentWindow === null || !deps.windowReady(currentWindow)) return domainClose();
     const r = await ctx.ui(currentWindow, sessionId, { kind: 'closeSession', target: sessionId });
     if (!r.ok) return r;
+    const after = staleCurrent(ctx, true);
+    if (after) return after;
     const v = r.value;
     // No caller to answer on this path: a window that does not know the session cannot close it,
     // so the domain does (deterministic, and the same outcome as a windowless close).
@@ -372,15 +392,20 @@ export function createAppControlHandlers(
       closed: false,
       error: { code: f.error.code, message: f.error.message },
     });
-    if (isFail(e.target)) return refused(e.target);
-    const t = e.target;
-    const again = recheckTarget('close_session', t.sessionId, who, ctx.reach);
-    if (again) return refused(again);
-    const windowed = remoteWindowRefusal(who, t.sessionId);
-    if (windowed) return refused(windowed);
-    const charge = who.spend();
-    if (isFail(charge)) return refused(charge);
+    let charge: { refund(): void } | undefined;
+    const targetId = isFail(e.target) ? undefined : e.target.sessionId;
     try {
+      const current = staleCurrent(ctx);
+      if (current) return refused(current);
+      if (isFail(e.target)) return refused(e.target);
+      const t = e.target;
+      const again = recheckTarget('close_session', t.sessionId, who, ctx.reach);
+      if (again) return refused(again);
+      const windowed = remoteWindowRefusal(who, t.sessionId);
+      if (windowed) return refused(windowed);
+      const spent = who.spend();
+      if (isFail(spent)) return refused(spent);
+      charge = spent;
       const r = await closeRouted(t.sessionId, closerOf(caller, who), ctx);
       // A failed close refunds its token, as a single close does.
       if (!r.ok) {
@@ -390,13 +415,13 @@ export function createAppControlHandlers(
       logged('close_session', caller, { target: t.sessionId });
       return { session: e.name, closed: true };
     } catch (err) {
-      charge.refund();
+      charge?.refund();
       // Reported on this entry: a throw out of the call would hide the entries already closed.
       const message = err instanceof Error ? err.message : String(err);
       deps.info('control call failed', {
         tool: 'close_session',
         caller: caller.handle,
-        target: t.sessionId,
+        target: targetId,
         error: message,
       });
       return refused(fail('open_failed', message));
@@ -626,8 +651,12 @@ export function createAppControlHandlers(
           exec: async (token) => {
             const w2 = routeWindow(who.sessionId);
             if (isFail(w2)) return w2;
+            const before = staleCurrent(ctx);
+            if (before) return before;
             const r = await ctx.ui(w2, who.sessionId, { kind: 'closeFiles', paths });
             if (!r.ok) return r;
+            const after = staleCurrent(ctx, true);
+            if (after) return after;
             const v = r.value;
             if (v.kind !== 'closeFiles') return wrongAnswer(v);
             token.keep();

@@ -117,8 +117,9 @@ describe('bannerActions', () => {
 });
 
 describe('agentScopeToast (spec §3.3)', () => {
-  it('maps all eight reasons', () => {
+  it('maps all reasons', () => {
     const all: Record<AgentScopeReason, string | null> = {
+      staleGeneration: null,
       busy: ADD_DIR_BUSY_TITLE,
       notReady: "claude isn't ready for input yet — try again in a moment",
       writeFailed: "Couldn't type /add-dir — claude isn't running",

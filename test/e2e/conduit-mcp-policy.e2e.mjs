@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   activeSessionId,
+  askAnswerControl,
   callTool,
   clickAskAnswer,
   FAKE_AGENT_ID,
@@ -176,28 +177,14 @@ await runScenario(
     log('ask → approve ✓');
 
     phase('double-click two asks');
-    const rects = () =>
-      page.evaluate(() =>
-        Array.from(document.querySelectorAll('.askcard button[data-answer]'), (b) => {
-          const r = b.getBoundingClientRect();
-          return [b.getAttribute('data-answer'), r.x, r.y, r.width, r.height].join(' ');
-        }),
-      );
-    // The card's entrance animation moves its buttons; a rect read mid-animation compares nothing.
-    const settled = () =>
-      page.waitForFunction(
-        () => document.querySelector('.askcard')?.getAnimations().length === 0,
-        null,
-        {
-          timeout: 5_000,
-        },
-      );
-    const disabledNow = () =>
-      page.evaluate(() =>
-        Array.from(document.querySelectorAll('.askcard button[data-answer]'), (b) =>
-          b.getAttribute('aria-disabled'),
-        ),
-      );
+    await page.evaluate(() => {
+      window.__policyAsks = [];
+      window.__permissionResults = [];
+      window.__offPermissionProbe = window.agentDeck.subscribe((message) => {
+        if (message.type === 'mcp:ask') window.__policyAsks.push(message);
+        if (message.type === 'mcp:permissionResult') window.__permissionResults.push(message);
+      });
+    });
     const tabBefore = await page.evaluate(
       () =>
         document
@@ -212,77 +199,144 @@ await runScenario(
     await waitCard(a.handle);
     await startCall(page, a.sessionId, 'open_session', openArgs(false));
     await page.locator('.askcard', { hasText: '1 of 2' }).waitFor({ timeout: 10_000 });
-    const summaryHeight = () =>
-      page.evaluate(
-        () => document.querySelector('.askcard__summary')?.getBoundingClientRect().height,
-      );
-    const tallSummary = await summaryHeight();
-    await settled();
-    const atTwo = await rects();
-    // Every press from the first on: what it reached outside the card, and how each button it
-    // reached inside the card read at that moment.
+    const ids = await page.evaluate(() => window.__policyAsks.map((ask) => ask.askId));
+    assert(
+      ids.length === 2 && ids[0] !== ids[1],
+      `expected two distinct ask IDs: ${JSON.stringify(ids)}`,
+    );
+    const commitDeny = await askAnswerControl(page, 'deny');
     await page.evaluate(() => {
       window.__behindCard = [];
       window.__cardPresses = [];
+      window.__guardStates = [];
       window.__pressProbe = (e) => {
-        const t = e.target instanceof Element ? e.target : null;
-        if (t?.closest('.askcard')) {
-          window.__cardPresses.push(t.closest('button')?.getAttribute('aria-disabled') ?? 'none');
-          return;
-        }
-        window.__behindCard.push(t ? `${t.tagName}.${t.className}` : 'null');
+        const target = e.target instanceof Element ? e.target : null;
+        if (target?.closest('.askcard')) {
+          const button = target.closest('button');
+          window.__cardPresses.push({
+            text: button?.textContent?.trim() ?? '',
+            disabled: button?.disabled ?? null,
+          });
+        } else window.__behindCard.push(target ? `${target.tagName}.${target.className}` : 'null');
       };
+      window.__guardProbe = new MutationObserver(() => {
+        const summary = document.querySelector('.askcard__summary')?.textContent ?? '';
+        const button = [
+          ...document.querySelectorAll('.askcard .permissions-request-body button'),
+        ].find((item) => item.textContent.trim() === 'Allow once');
+        if (button) window.__guardStates.push({ summary, disabled: button.disabled });
+      });
+      window.__guardProbe.observe(document.querySelector('.askcard'), {
+        subtree: true,
+        childList: true,
+        attributes: true,
+      });
       document.addEventListener('click', window.__pressProbe, { capture: true });
     });
-    await page.locator('.askcard button[data-answer="deny"]').dblclick();
-    await page.locator('.askcard', { hasNotText: '1 of 2' }).waitFor({ timeout: 5_000 });
-    await settled();
-    const atOne = await rects();
-    const shortSummary = await summaryHeight();
+    await commitDeny.dblclick();
     const firstDenied = await resultAfter(a.sessionId, first, 10_000);
-    assert(errCode(firstDenied) === 'denied', `double-click: ${JSON.stringify(firstDenied)}`);
     assert(
-      tallSummary > shortSummary,
-      `the summaries are the same height (${tallSummary}, ${shortSummary}): the swap tests nothing`,
-    );
-    assert(
-      JSON.stringify(atTwo) === JSON.stringify(atOne),
-      `the buttons moved on the swap: ${JSON.stringify(atTwo)} → ${JSON.stringify(atOne)}`,
-    );
-    const presses = await page.evaluate(() => window.__cardPresses);
-    assert(
-      JSON.stringify(presses) === JSON.stringify(['false', 'true']),
-      `the double-click's presses read aria-disabled ${JSON.stringify(presses)}, want false then true`,
+      errCode(firstDenied) === 'denied',
+      `double-click first ask: ${JSON.stringify(firstDenied)}`,
     );
     assert(
       await until(
-        async () =>
-          JSON.stringify(await disabledNow()) === JSON.stringify(['false', 'false', 'false']),
-        2_000,
+        async () => (await page.locator('.askcard__summary').textContent())?.includes(target),
+        5_000,
       ),
-      `the buttons never re-enabled: ${JSON.stringify(await disabledNow())}`,
+      'the second ask did not appear',
     );
-    const behind = await page.evaluate(() => {
-      document.removeEventListener('click', window.__pressProbe, { capture: true });
-      return window.__behindCard;
-    });
     assert(
-      behind.length === 0,
-      `a press reached the app behind the card: ${JSON.stringify(behind)}`,
+      await until(
+        () =>
+          page.evaluate(
+            (id) =>
+              window.__permissionResults.some(
+                (result) => result.requestId === id && result.ok === true,
+              ),
+            ids[0],
+          ),
+        5_000,
+      ),
+      'no typed permission result for first ask',
     );
-    const tabAfter = await page.evaluate(
-      () =>
-        document
-          .querySelector('.tabbar [role="tab"][aria-selected="true"]')
-          ?.getAttribute('data-tabid') ?? null,
+    const probe = await page.evaluate(() => ({
+      presses: window.__cardPresses,
+      behind: window.__behindCard,
+      guards: window.__guardStates,
+      results: window.__permissionResults,
+    }));
+    assert(
+      probe.presses.some((press) => press.text === 'Deny' && press.disabled === false),
+      `no enabled first deny click: ${JSON.stringify(probe.presses)}`,
     );
-    assert(tabAfter === tabBefore, `the active tab changed: ${tabBefore} → ${tabAfter}`);
-    assert((await card.count()) === 1, 'the second click answered the next ask');
+    assert(
+      probe.behind.length === 0,
+      `a press reached the app behind the card: ${JSON.stringify(probe.behind)}`,
+    );
+    assert(
+      probe.guards.some(
+        (state) =>
+          state.summary.includes(target) && !state.summary.includes(longTarget) && state.disabled,
+      ),
+      `the sibling never showed disabled answer controls: ${JSON.stringify(probe.guards)}`,
+    );
+    assert(
+      probe.results.some((result) => result.requestId === ids[0] && result.ok === true),
+      `no typed permission result for first ask: ${JSON.stringify(probe.results)}`,
+    );
+    assert(
+      !probe.results.some((result) => result.requestId === ids[1]),
+      `double-click answered the sibling: ${JSON.stringify(probe.results)}`,
+    );
+    assert(
+      records(a.sessionId, 'RESULT').length === first + 1,
+      'the second agent call already settled',
+    );
+    assert(
+      (await page.evaluate(
+        () =>
+          document
+            .querySelector('.tabbar [role="tab"][aria-selected="true"]')
+            ?.getAttribute('data-tabid') ?? null,
+      )) === tabBefore,
+      'the active tab changed',
+    );
+    await page.evaluate(() => {
+      document.removeEventListener('click', window.__pressProbe, { capture: true });
+      window.__guardProbe.disconnect();
+    });
+    await page
+      .getByRole('button', { name: 'Allow once', exact: true })
+      .waitFor({ state: 'visible' });
+    assert(
+      await until(
+        async () =>
+          !(await card.getByRole('button', { name: 'Allow once', exact: true }).isDisabled()),
+        5_000,
+      ),
+      'sibling controls did not re-enable',
+    );
     await clickAskAnswer(page, 'deny');
-    await card.waitFor({ state: 'detached', timeout: 5_000 });
     const secondDenied = await resultAfter(a.sessionId, first + 1, 10_000);
     assert(errCode(secondDenied) === 'denied', `second ask: ${JSON.stringify(secondDenied)}`);
-    log('a double-click answers one ask; the buttons hold still, read disabled, nothing behind ✓');
+    assert(
+      await until(
+        () =>
+          page.evaluate(
+            (id) =>
+              window.__permissionResults.some(
+                (result) => result.requestId === id && result.ok === true,
+              ),
+            ids[1],
+          ),
+        5_000,
+      ),
+      'no typed permission result for second ask',
+    );
+    await card.waitFor({ state: 'detached', timeout: 5_000 });
+    await page.evaluate(() => window.__offPermissionProbe());
+    log('double-click settles only the first ask; sibling guarded and separately answerable ✓');
 
     phase('always');
     await makeActive(a.sessionId);

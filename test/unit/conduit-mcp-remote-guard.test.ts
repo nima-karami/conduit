@@ -26,6 +26,7 @@ const LEAD: RemoteCaller = {
 const remote: Caller = { handle: 'claude-3@m-0123abcd', sessionId: null, remote: LEAD };
 const local: Caller = { handle: 'claude-1', sessionId: 'caller-1' };
 const ctx: ControlCallContext = {
+  stillCurrent: () => true,
   move: undefined,
   reach: 'any',
   signal: new AbortController().signal,

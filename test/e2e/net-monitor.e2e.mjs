@@ -15,6 +15,12 @@ import {
 
 const log = makeLog('net-monitor');
 const WAIT_MS = 15_000;
+async function setCapability(server, params) {
+  const state = await networkState(server);
+  const link = state.links.find((row) => row.machineId === params.machineId);
+  assert(link, 'link is present');
+  return server.c2.call('link.setCapability', { ...params, expectedToken: link.editToken });
+}
 async function eventually(what, check) {
   assert(await until(check, WAIT_MS), `timed out waiting for: ${what}`);
 }
@@ -157,7 +163,7 @@ async function run() {
     );
     proxy.resume();
     await eventually('link reconnected', () => linkView(a.c2, bId).then((l) => l?.state === 'up'));
-    await b.c2.call('link.setCapability', { machineId: aId, capability: 'monitor', on: false });
+    await setCapability(b, { machineId: aId, capability: 'monitor', on: false });
     await eventually('peer capability disabled', () =>
       linkView(a.c2, bId).then((l) => l?.peerCapabilities?.monitor === false),
     );

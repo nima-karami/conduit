@@ -25,6 +25,7 @@ export interface QueueDeps {
   machineId: string;
   setTimer(fn: () => void, ms: number): unknown;
   clearTimer(t: unknown): void;
+  warn(message: string, data?: unknown): void;
   onEnded(r: RequestRecord): void;
   onChanged(): void;
 }
@@ -114,14 +115,25 @@ export function createRequestQueue(deps: QueueDeps): RequestQueue {
     );
   };
 
-  // A transition to an end state: the one place that sets endedAt, stops the
-  // timer, and tells the owner, so no path can skip one of them.
+  const notify = (id: string, stage: string, fn: () => void): void => {
+    try {
+      fn();
+    } catch (error) {
+      deps.warn('request notification failed after commit', { requestId: id, stage, error });
+    }
+  };
+
+  const terminalNotifications = (r: RequestRecord): void => {
+    const id = r.id;
+    notify(id, 'clearTimer', () => disarm(id));
+    notify(id, 'onEnded', () => deps.onEnded(r));
+    notify(id, 'onChanged', () => deps.onChanged());
+  };
+
   const finish = (r: RequestRecord, state: RequestRecord['state']): void => {
     r.state = state;
     r.endedAt = iso(deps.now());
-    disarm(r.id);
-    deps.onEnded(clone(r));
-    deps.onChanged();
+    terminalNotifications(clone(r));
   };
 
   const expire = (r: RequestRecord): void => {
@@ -422,13 +434,37 @@ export function createRequestQueue(deps: QueueDeps): RequestQueue {
           message: 'attention requests are answered in the app, not here',
         };
       }
-      const checked = validateAnswer(r, input);
-      if (!checked.ok) {
-        return { ok: false, reason: 'invalid_answer', message: checked.error.message };
+      let prepared: RequestRecord;
+      let returned: RequestRecord;
+      let notification: RequestRecord;
+      try {
+        const checked = validateAnswer(r, input);
+        if (!checked.ok)
+          return { ok: false, reason: 'invalid_answer', message: checked.error.message };
+        const at = iso(deps.now());
+        prepared = clone({
+          ...r,
+          state: 'answered',
+          endedAt: at,
+          answer: { ...checked.value, answeredBy: by, at },
+        });
+        returned = clone(prepared);
+        notification = clone(prepared);
+      } catch (error) {
+        deps.warn('request answer could not be committed', {
+          requestId: id,
+          stage: 'prepare',
+          error,
+        });
+        return {
+          ok: false,
+          reason: 'not_answerable',
+          message: 'the request could not be committed',
+        };
       }
-      r.answer = { ...checked.value, answeredBy: by, at: iso(deps.now()) };
-      finish(r, 'answered');
-      return { ok: true, record: clone(r) };
+      store.set(id, prepared);
+      terminalNotifications(notification);
+      return { ok: true, record: returned };
     },
 
     withdraw(id, by, reason) {

@@ -18,7 +18,7 @@ import {
 import type { GitCall, GitRun } from '../../src/conduit-mcp/git-refs';
 import type { Move, Reach } from '../../src/conduit-mcp/tool-policy';
 import type { Caller } from '../../src/conduit-mcp/tools';
-import type { Result } from '../../src/conduit-mcp/types';
+import { type Result, toolError } from '../../src/conduit-mcp/types';
 import type { McpUiAction, McpUiResult } from '../../src/conduit-mcp/ui-types';
 import { PRETTY_FORMAT } from '../../src/git-history';
 import type { SessionOpResult } from '../../src/session-ops';
@@ -155,7 +155,12 @@ interface UiCall {
   action: McpUiAction;
 }
 function context(
-  o: { reach?: Reach; move?: Move; answer?: (a: McpUiAction) => Result<McpUiResult> } = {},
+  o: {
+    stillCurrent?: () => boolean;
+    reach?: Reach;
+    move?: Move;
+    answer?: (a: McpUiAction) => Result<McpUiResult>;
+  } = {},
 ) {
   const calls: UiCall[] = [];
   const answer =
@@ -174,6 +179,7 @@ function context(
       }
     });
   const ctx: ControlCallContext = {
+    stillCurrent: o.stillCurrent ?? (() => true),
     move: o.move,
     reach: o.reach,
     signal: new AbortController().signal,
@@ -1364,6 +1370,7 @@ describe('open_git_history', () => {
     await budgetIntact(app, 'show');
     const app2 = build(harness());
     const throwing: ControlCallContext = {
+      stillCurrent: () => true,
       move: undefined,
       reach: undefined,
       signal: new AbortController().signal,
@@ -1512,4 +1519,177 @@ describe('contract S1: unknown_session lists only targets within reach', () => {
     expect(r.error.valid).toEqual(['claude-1', 'claude-2', 'codex-1']);
     expect(r.error.hint).toEqual(expect.stringContaining('valid'));
   });
+});
+
+it.each(['open', 'close', 'files'] as const)(
+  'refuses stale successful %s UI acknowledgment with honest uncertainty',
+  async (kind) => {
+    const h = harness();
+    const app = build(h);
+    let current = true;
+    const { ctx, calls } = context({
+      reach: 'any',
+      stillCurrent: () => current,
+      answer: (action) => {
+        current = false;
+        if (action.kind === 'closeSession')
+          return { ok: true, value: { kind: 'closeSession', ok: true } };
+        if (action.kind === 'closeFiles')
+          return { ok: true, value: { kind: 'closeFiles', closed: [], skipped: [] } };
+        return { ok: true, value: { kind: 'opened' } };
+      },
+    });
+    const result =
+      kind === 'open'
+        ? await runIt(app.prepareOpenUrl(caller(), { url: 'https://example.com' }, ctx))
+        : kind === 'close'
+          ? await runIt(app.prepareCloseSession(caller(), { session: 'opened-1' }, ctx))
+          : await runIt(app.prepareCloseFiles(caller(), { all: true }, ctx));
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'tool_disabled',
+        retryable: false,
+        message: expect.stringContaining('may already have completed'),
+      },
+    });
+    expect(calls).toHaveLength(1);
+  },
+);
+it('stops batch dispatch and charges after first UI response loses authority', async () => {
+  const h = harness();
+  let reservations = 0;
+  h.deps.now = () => {
+    reservations++;
+    return 1_000_000;
+  };
+  const app = build(h);
+  let current = true;
+  const { ctx, calls } = context({
+    reach: 'any',
+    stillCurrent: () => current,
+    answer: () => {
+      current = false;
+      return { ok: true, value: { kind: 'closeSession', ok: true } };
+    },
+  });
+  const result = await runIt(
+    app.prepareCloseSession(caller(), { sessions: ['opened-1', 'same-1'] }, ctx),
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    value: {
+      results: [
+        {
+          closed: false,
+          error: {
+            code: 'tool_disabled',
+            message: expect.stringContaining('may already have completed'),
+          },
+        },
+        { closed: false, error: { code: 'tool_disabled' } },
+      ],
+    },
+  });
+  expect(calls).toHaveLength(1);
+  expect(h.closes).toEqual([]);
+  expect(reservations).toBe(2);
+});
+it('checks every target before domain dispatch and preserves results when predicate throws', async () => {
+  const h = harness();
+  const app = build(h);
+  let changed = false;
+  h.windows.set('opened-1', null);
+  h.windows.set('same-1', null);
+  h.deps.closeSession = async (id) => {
+    h.closes.push(id);
+    changed = true;
+    return { ok: true };
+  };
+  const { ctx } = context({
+    reach: 'any',
+    stillCurrent: () => {
+      if (changed) throw new Error('authority producer failed');
+      return true;
+    },
+  });
+  const result = await runIt(
+    app.prepareCloseSession(caller(), { sessions: ['opened-1', 'same-1'] }, ctx),
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    value: {
+      results: [
+        { closed: true },
+        { closed: false, error: { code: 'open_failed', message: 'authority producer failed' } },
+      ],
+    },
+  });
+  expect(h.closes).toEqual(['opened-1']);
+});
+it('stale authority before UI dispatch sends nothing and blocks unknown-session fallback', async () => {
+  const h = harness();
+  const app = build(h);
+  const { ctx, calls } = context({ stillCurrent: () => false });
+  expect(
+    await runIt(app.prepareOpenUrl(caller(), { url: 'https://example.com' }, ctx)),
+  ).toMatchObject({ ok: false, error: { code: 'tool_disabled' } });
+  expect(calls).toEqual([]);
+  let current = true;
+  const fallback = context({
+    stillCurrent: () => current,
+    answer: () => {
+      current = false;
+      return { ok: true, value: { kind: 'unknownSession' } };
+    },
+  });
+  expect(await app.closeRouted('opened-1', undefined, fallback.ctx)).toMatchObject({
+    ok: false,
+    error: { code: 'tool_disabled' },
+  });
+  expect(h.closes).toEqual([]);
+});
+
+it('preserves an original typed UI timeout when authority also becomes stale', async () => {
+  const h = harness();
+  const app = build(h);
+  let current = true;
+  const original = {
+    ok: false as const,
+    error: toolError('approval_timeout', 'the original UI timed out'),
+  };
+  const { ctx } = context({
+    stillCurrent: () => current,
+    answer: () => {
+      current = false;
+      return original;
+    },
+  });
+  expect(await runIt(app.prepareOpenUrl(caller(), { url: 'https://example.com' }, ctx))).toEqual(
+    original,
+  );
+});
+
+it.each([
+  { kind: 'closeSession', ok: false, unsaved: ['/private/unsaved'] } as const,
+  { kind: 'failed', message: '/private/failure' } as const,
+])('does not accept stale successful-transport UI payload $kind', async (payload) => {
+  const h = harness();
+  const app = build(h);
+  let current = true;
+  const { ctx } = context({
+    reach: 'any',
+    stillCurrent: () => current,
+    answer: () => {
+      current = false;
+      return {
+        ok: true,
+        value:
+          payload.kind === 'closeSession' ? { ...payload, unsaved: [...payload.unsaved] } : payload,
+      };
+    },
+  });
+  const result = await runIt(app.prepareCloseSession(caller(), { session: 'opened-1' }, ctx));
+  expect(result).toMatchObject({ ok: false, error: { code: 'tool_disabled', retryable: false } });
+  expect(JSON.stringify(result)).not.toContain('/private/');
 });

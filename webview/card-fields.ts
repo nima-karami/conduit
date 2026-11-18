@@ -1,3 +1,4 @@
+import { NATIVE_LAUNCH_REFUSAL_MESSAGES } from '../src/contracts/native-launch';
 import type { Session } from '../src/types';
 import { CANT_START_TITLE, MISSING_HOME_TITLE, notFoundSegments } from './agent-scope-copy';
 
@@ -18,7 +19,9 @@ export function fieldValue(session: Session, agentLabel: string, field: RowField
 /** Why a stopped session will not start, for the row's tooltip (spec §6 relocation table). */
 export function cantStartReason(session: Session): string {
   if (session.homeMissing) return `${CANT_START_TITLE}: ${MISSING_HOME_TITLE}`;
-  if (session.startRefusal)
+  if (session.startRefusal?.reason === 'native_permissions')
+    return `${CANT_START_TITLE}: ${NATIVE_LAUNCH_REFUSAL_MESSAGES[session.startRefusal.problem]}`;
+  if (session.startRefusal?.reason === 'unresolvable')
     return `${CANT_START_TITLE}: ${notFoundSegments(session.startRefusal.command)
       .map((s) => s.text)
       .join('')}`;

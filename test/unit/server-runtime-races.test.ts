@@ -4,7 +4,7 @@ import { createRuntimeServices } from '../../server/runtime';
 import { exitReasonOf } from '../../server/runtime/runtime';
 import {
   type Harness,
-  harness,
+  runtimeHarness as harness,
   hcLabelsFor,
   labelsFor,
   launch,

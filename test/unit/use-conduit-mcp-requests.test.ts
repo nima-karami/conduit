@@ -137,3 +137,84 @@ describe('setAway', () => {
     });
   });
 });
+
+describe('acknowledged remote policy edits', () => {
+  it('correlates remoteEdit typed results and passes the selected owner token', async () => {
+    const api = await mountApi();
+    expect(typeof api.remoteEdit).toBe('function');
+    const edit = {
+      kind: 'assignment' as const,
+      point: { kind: 'default' as const },
+      assignment: { profileId: 'lead' as const, exceptions: [], onScreenOnly: false },
+    };
+    let settled = false;
+    const pending = api.remoteEdit('m-1', 'owner-token', edit).then((result) => {
+      settled = true;
+      return result;
+    });
+    const request = bridge.post.mock.calls.at(-1)?.[0];
+    if (request?.type !== 'mcp:remoteEdit') throw new Error('missing full edit');
+    expect(request).toMatchObject({ machine: 'm-1', expectedToken: 'owner-token', edit });
+    emit({ type: 'mcp:policyEditResult', requestId: request.requestId + 1, result: { ok: true } });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    emit({
+      type: 'mcp:policyEditResult',
+      requestId: request.requestId,
+      result: { ok: false, error: 'save-failed' },
+    });
+    await expect(pending).resolves.toEqual({ ok: false, error: 'save-failed' });
+  });
+  it('remotePolicy returns conflict and nullable timeout instead of unacknowledged success', async () => {
+    const api = await mountApi();
+    const first = api.remotePolicy('m-1', 'discard', 'owner-token');
+    expect(first).toBeInstanceOf(Promise);
+    const request = bridge.post.mock.calls.at(-1)?.[0];
+    if (request?.type !== 'mcp:remotePolicy') throw new Error('missing acknowledged action');
+    expect(request).toMatchObject({
+      machine: 'm-1',
+      action: 'discard',
+      expectedToken: 'owner-token',
+    });
+    emit({
+      type: 'mcp:policyEditResult',
+      requestId: request.requestId,
+      result: { ok: false, error: 'conflict' },
+    });
+    await expect(first).resolves.toEqual({ ok: false, error: 'conflict' });
+    vi.useFakeTimers();
+    const baseline = bridge.listeners.length;
+    const second = api.remotePolicy('m-1', 'retry-save', 'owner-token');
+    vi.advanceTimersByTime(10_000);
+    await expect(second).resolves.toBeNull();
+    expect(bridge.listeners.length).toBe(baseline);
+  });
+});
+
+describe('grantLifecycle', () => {
+  it('correlates replies and returns the typed result', async () => {
+    const api = await mountApi();
+    const pending = api.grantLifecycle({ kind: 'undo', token: 'receipt' });
+    const sent = bridge.post.mock.calls.at(-1)?.[0];
+    expect(sent).toMatchObject({
+      type: 'mcp:grantLifecycle',
+      operation: { kind: 'undo', token: 'receipt' },
+    });
+    if (!sent || sent.type !== 'mcp:grantLifecycle') throw new Error('missing request');
+    emit({ type: 'mcp:grantLifecycleResult', requestId: sent.requestId + 1, result: { ok: true } });
+    emit({
+      type: 'mcp:grantLifecycleResult',
+      requestId: sent.requestId,
+      result: { ok: false, error: 'conflict' },
+    });
+    await expect(pending).resolves.toEqual({ ok: false, error: 'conflict' });
+  });
+
+  it('returns null when no host responds', async () => {
+    const api = await mountApi();
+    vi.useFakeTimers();
+    const pending = api.grantLifecycle({ kind: 'undo', token: 'receipt' });
+    vi.advanceTimersByTime(10_000);
+    await expect(pending).resolves.toBeNull();
+  });
+});

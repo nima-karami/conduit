@@ -1,16 +1,26 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmdirSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { until } from './conduit-mcp-helpers.mjs';
-import { assert, finishScenario, makeLog, phase, REPO } from './harness.mjs';
+import { c2Auth } from './c2-auth.mjs';
+import { tapMcp, until } from './conduit-mcp-helpers.mjs';
+import { assert, finishScenario, launchApp, makeLog, phase, REPO } from './harness.mjs';
 import {
   callTool,
   ECHO_AGENT,
   linkView,
   networkState,
   startAgent,
-  startServerPair,
+  startServer,
 } from './net-helpers.mjs';
+import { assignProfileCas } from './permissions-policy-helpers.mjs';
 
 // Remote rules over one ssh link, on fake-ssh (CON-46 L5; plan
 // docs/plans/2026-11-16-remote-ssh-rules.plan.md, slice L5 steps 1-4):
@@ -63,30 +73,21 @@ function fromRenderer(server, message) {
 
 /** Gives one agent session a policy profile through CON-24's assignment message, as the renderer sends it. */
 async function assignProfile(server, sessionId, profileId) {
-  const r = await fromRenderer(server, {
-    type: 'mcp:setAssignment',
-    requestId: 1,
-    point: { kind: 'session', sessionId },
-    profileId,
+  const r = await assignProfileCas(server.c2, { kind: 'session', sessionId }, profileId, {
+    claimSessions: true,
   });
   assert(
-    r.reply?.ok === true,
-    `setAssignment ${profileId} on ${server.label}: ${JSON.stringify(r)}`,
+    r.reply?.result?.ok === true,
+    `assign ${profileId} on ${server.label}: ${JSON.stringify(r)}`,
   );
 }
 
 /** Edits the default point's profile on a server; `machine` makes it an edit of that remote machine. */
 async function setDefault(server, profileId, machine) {
-  const r = await fromRenderer(server, {
-    type: 'mcp:setAssignment',
-    requestId: 1,
-    point: { kind: 'default' },
-    profileId,
-    ...(machine === undefined ? {} : { machine }),
-  });
+  const r = await assignProfileCas(server.c2, { kind: 'default' }, profileId, { machine });
   assert(
-    r.reply?.ok === true,
-    `setAssignment default ${profileId} on ${server.label}: ${JSON.stringify(r)}`,
+    r.reply?.result?.ok === true,
+    `assign default ${profileId} on ${server.label}: ${JSON.stringify(r)}`,
   );
 }
 
@@ -120,12 +121,32 @@ async function run() {
   const sshDir = mkdtempSync(join(tmpdir(), 'policy-ssh-'));
   const saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
   let pair;
+  let launched;
   try {
     // Both servers inherit this; only A dials, so B never reads the stand-in settings.
     process.env.CONDUIT_SSH_PATH = process.execPath;
     process.env.CONDUIT_E2E_SSH_ARGS_PREFIX = JSON.stringify([FAKE_SSH]);
-    pair = await startServerPair();
+    pair = {
+      a: null,
+      b: null,
+      stopAll: async () => {
+        await Promise.all([pair.a?.stop(), pair.b?.stop()]);
+      },
+    };
+    pair.a = await startServer('a', { electronProfile: true });
+    pair.b = await startServer('b');
     const { a, b } = pair;
+    await Promise.all(
+      [a, b].map((server) =>
+        server.c2.call('serverSettings.patch', {
+          patch: {
+            networkBindHost: '127.0.0.1',
+            networkPort: 0,
+            networkSelfName: `net-${server.label}`,
+          },
+        }),
+      ),
+    );
 
     phase('0. A adds B over fake-ssh; the link is up and A has its Lead agent');
     const added = await a.c2.call('link.sshAdd', {
@@ -213,12 +234,14 @@ async function run() {
     );
     const reapply = await fromRenderer(a, {
       type: 'mcp:remotePolicy',
+      requestId: 8,
       machine: bId,
+      expectedToken: row.policy.editToken,
       action: 'reapply',
     });
     assert(
-      reapply.reply === undefined,
-      `mcp:remotePolicy has no reply: ${JSON.stringify(reapply)}`,
+      reapply.reply?.type === 'mcp:policyEditResult' && reapply.reply.result.ok === true,
+      `mcp:remotePolicy durable acknowledgement: ${JSON.stringify(reapply)}`,
     );
     await eventually('A re-applies on top; B has lead at r0+4', async () => {
       row = await machineRow(a, bId);
@@ -230,13 +253,11 @@ async function run() {
     });
 
     phase('4. a peer grant made on B shows on A; A revokes it and it is gone on B');
-    const grantPeer = await fromRenderer(b, {
-      type: 'mcp:setAssignment',
-      requestId: 1,
-      point: { kind: 'peer', machineId: aId },
-      profileId: 'worker',
-    });
-    assert(grantPeer.reply?.ok === true, `peer assignment on B: ${JSON.stringify(grantPeer)}`);
+    const grantPeer = await assignProfileCas(b.c2, { kind: 'peer', machineId: aId }, 'worker');
+    assert(
+      grantPeer.reply?.result?.ok === true,
+      `peer assignment on B: ${JSON.stringify(grantPeer)}`,
+    );
     typeCall(a, aa, 'open_session', {
       machine: bId,
       agent: ECHO_AGENT,
@@ -279,10 +300,459 @@ async function run() {
       );
       return !row.grants.some((g) => g.id === grant.id) && !stillOnB;
     });
+
+    phase('4b. a custom pending remote profile survives an actual controller restart');
+    const restartDown = await callTool(a, aa, 'disconnect_machine', { machine: bId });
+    assert(restartDown.state === 'down', `restart disconnect: ${JSON.stringify(restartDown)}`);
+    await eventually(
+      'B is disabled before controller restart',
+      async () => (await linkView(a.c2, bId))?.state !== 'up',
+    );
+    const restartReceiverPath = join(b.userData, 'conduit-mcp', 'policy.json');
+    const restartReceiverBytes = readFileSync(restartReceiverPath);
+    const restartReceiverRev = policyFileOf(b).rev;
+    const worker = (await machineRow(a, bId)).policy.profiles.find(
+      (profile) => profile.id === 'worker',
+    );
+    assert(worker, 'remote Worker full rules missing');
+    const restartProfile = {
+      ...structuredClone(worker),
+      id: 'p-restart',
+      name: 'Restart copy',
+      builtIn: false,
+    };
+    const restartEdit = async (edit, expectedToken) => {
+      const currentToken = expectedToken ?? (await machineRow(a, bId)).policy.editToken;
+      return fromRenderer(a, {
+        type: 'mcp:remoteEdit',
+        requestId: 90,
+        machine: bId,
+        expectedToken: currentToken,
+        edit,
+      });
+    };
+    const profileSaved = await restartEdit({ kind: 'profile', profile: restartProfile });
+    assert(
+      profileSaved.reply?.result?.ok === true,
+      `pending custom profile refused: ${JSON.stringify(profileSaved)}`,
+    );
+    const assignmentSaved = await restartEdit({
+      kind: 'assignment',
+      point: { kind: 'cli', cli: 'codex' },
+      assignment: { profileId: 'p-restart', exceptions: [], onScreenOnly: false },
+    });
+    assert(
+      assignmentSaved.reply?.result?.ok === true,
+      `pending CLI assignment refused: ${JSON.stringify(assignmentSaved)}`,
+    );
+    const restartPath = join(a.userData, 'conduit-mcp', 'remote-policy.json');
+    const restartBytes = readFileSync(restartPath);
+    const pendingDraft = JSON.parse(restartBytes.toString('utf8')).drafts[bId];
+    const hasRestartCopy = (doc) =>
+      doc.profiles.some(
+        (profile) =>
+          profile.id === 'p-restart' &&
+          profile.name === 'Restart copy' &&
+          JSON.stringify(profile.rules) === JSON.stringify(restartProfile.rules),
+      ) &&
+      doc.assignments.some(
+        (entry) =>
+          entry.point.kind === 'cli' &&
+          entry.point.cli === 'codex' &&
+          entry.assignment.profileId === 'p-restart',
+      );
+    assert(
+      pendingDraft && hasRestartCopy(pendingDraft.doc),
+      'custom pending copy not durably saved',
+    );
+    assert(
+      readFileSync(restartReceiverPath).equals(restartReceiverBytes),
+      'offline custom edit changed B',
+    );
+    const oldRestartToken = (await machineRow(a, bId)).policy.editToken;
+    const restartHello = () =>
+      a.c2.call('hello', {
+        appVersion: JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8')).version,
+        generation: 1,
+        auth: c2Auth(a.userData),
+      });
+    const oldController = await restartHello();
+    await a.restart();
+    const newController = await restartHello();
+    assert(
+      newController.instance === oldController.instance && newController.pid !== oldController.pid,
+      'controller restart changed profile identity or reused the old server process',
+    );
+    const loaded = await machineRow(a, bId);
+    assert(
+      loaded?.status === 'waiting' &&
+        loaded.link !== 'up' &&
+        loaded.policy.editToken !== oldRestartToken &&
+        hasRestartCopy(loaded.policy),
+      `controller did not load pending copy/new token: ${JSON.stringify(loaded)}`,
+    );
+    assert(
+      readFileSync(restartPath).equals(restartBytes) &&
+        readFileSync(restartReceiverPath).equals(restartReceiverBytes),
+      'restart changed durable intent or B',
+    );
+    const stale = await restartEdit(
+      { kind: 'profile', profile: { ...restartProfile, name: 'Wrong stale copy' } },
+      oldRestartToken,
+    );
+    assert(
+      stale.reply?.result?.ok === false && stale.reply.result.error === 'conflict',
+      `old controller token was accepted: ${JSON.stringify(stale)}`,
+    );
+    assert(
+      readFileSync(restartPath).equals(restartBytes) &&
+        readFileSync(restartReceiverPath).equals(restartReceiverBytes),
+      'stale token changed disk or B',
+    );
+    await eventually('preexisting A agent is adopted and connected', async () => {
+      const snapshot = await a.c2.call('events.subscribe');
+      const generation = snapshot.sessions.find((session) => session.id === aa.sessionId)?.runtime
+        ?.generation;
+      if (typeof generation !== 'number' || snapshot.mcp.sessions[aa.sessionId]?.connected !== true)
+        return false;
+      aa.generation = generation;
+      return true;
+    });
+    const restartUp = await callTool(a, aa, 'connect_machine', { machine: 'fake' });
+    assert(restartUp.state === 'up', `restart reconnect: ${JSON.stringify(restartUp)}`);
+    await eventually(
+      'reloaded custom profile and CLI assignment reach B exactly once',
+      async () => {
+        const current = await machineRow(a, bId);
+        return (
+          current?.status === 'applied' &&
+          hasRestartCopy(current.policy) &&
+          policyFileOf(b).rev === restartReceiverRev + 1 &&
+          hasRestartCopy(policyFileOf(b)) &&
+          JSON.parse(readFileSync(restartPath, 'utf8')).drafts[bId] === undefined
+        );
+      },
+    );
+    log(
+      'actual controller restart retained custom profile/CLI assignment; stale token refused; explicit reconnect applied',
+    );
+
+    phase('5. hidden Electron adopts the same controller and acknowledges real Settings actions');
+    const helloParams = {
+      appVersion: JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8')).version,
+      generation: 1,
+      auth: c2Auth(a.userData),
+    };
+    const beforeHello = await a.c2.call('hello', helloParams);
+    launched = await launchApp({ userDataDir: a.userData, openFolder: false });
+    const { page } = launched;
+    await tapMcp(page);
+    const afterHello = await a.c2.call('hello', helloParams);
+    assert(
+      beforeHello.pid === afterHello.pid &&
+        beforeHello.instance === afterHello.instance &&
+        JSON.stringify(beforeHello.supervisor) === JSON.stringify(afterHello.supervisor),
+      'Electron attachment replaced the existing controller server',
+    );
+    const rendererNetwork = await page.evaluate(
+      () =>
+        new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            off();
+            reject(new Error('No renderer network reply'));
+          }, 10_000);
+          const off = window.agentDeck.subscribe((message) => {
+            if (message.type !== 'network:state') return;
+            clearTimeout(timer);
+            off();
+            resolve(message.state);
+          });
+          window.agentDeck.post({ type: 'network:get' });
+        }),
+    );
+    assert(rendererNetwork.machineId === aId, 'renderer attached to another machine');
+    await eventually('renderer shows the preexisting A session and B policy identity', async () => {
+      const current = await machineRow(a, bId);
+      return page.evaluate(
+        ({ sessionId, handle, machineId, token, rev }) =>
+          window.__mcp?.sessions[sessionId]?.handle === handle &&
+          window.__mcp.policy.machines.some(
+            (machine) =>
+              machine.machineId === machineId &&
+              machine.rev === rev &&
+              machine.policy.editToken === token,
+          ),
+        {
+          sessionId: aa.sessionId,
+          handle: (await mcpOf(a)).sessions[aa.sessionId].handle,
+          machineId: bId,
+          token: current.policy.editToken,
+          rev: current.rev,
+        },
+      );
+    });
+    const openSettings = () => page.locator('.footbtn[title^="Settings"]').click();
+    await openSettings();
+    await page.getByRole('button', { name: 'Links', exact: true }).click();
+    const linked = await linkView(a.c2, bId);
+    const permissions = page.getByRole('region', { name: `${linked.name} permissions` });
+    await permissions.waitFor();
+    const monitor = permissions.getByRole('button', { name: `monitor for ${linked.name}` });
+    await monitor.click();
+    await eventually(
+      'Links changed the authority on A',
+      async () =>
+        (await linkView(a.c2, bId))?.capabilities.monitor === !linked.capabilities.monitor,
+    );
+    await eventually(
+      'Links renders the confirmed capability and fresh token',
+      async () =>
+        (await monitor.getAttribute('aria-pressed')) === String(!linked.capabilities.monitor),
+    );
+    await monitor.click();
+    await eventually(
+      'Links restored the authority on A',
+      async () => (await linkView(a.c2, bId))?.capabilities.monitor === linked.capabilities.monitor,
+    );
+    const linkEvidence = process.env.CONDUIT_PERMISSIONS_EVIDENCE_DIR;
+    if (linkEvidence) {
+      mkdirSync(linkEvidence, { recursive: true });
+      await page.screenshot({ path: join(linkEvidence, '17-link-own.png') });
+    }
+    await permissions.getByRole('button', { name: `Activity involving ${linked.name}` }).click();
+    const activity = page.getByRole('main', { name: 'Permissions Activity' });
+    await activity.waitFor();
+    const machineFilter = activity.getByPlaceholder('All machines (ID)');
+    assert((await machineFilter.inputValue()) === bId, 'Activity opened outside the link scope');
+    await page.locator('.footbtn[title^="Settings"]').click();
+    await page
+      .locator('.settings__navitem')
+      .filter({ hasText: /^Links$/ })
+      .click();
+    const remoteName = (await machineRow(a, bId)).name;
+    const links = page.locator('.settings-links');
+    await links.getByRole('button', { name: remoteName, exact: true }).click();
+    const remoteEditor = links.getByRole('region', {
+      name: `${remoteName} permissions`,
+      exact: true,
+    });
+    await remoteEditor.waitFor({ state: 'visible' });
+    const evidence = join(REPO, '.autoloop', 'evidence');
+    mkdirSync(evidence, { recursive: true });
+    const draftPath = join(a.userData, 'conduit-mcp', 'remote-policy.json');
+    const backup = `${draftPath}.net-policy-backup`;
+    for (const action of ['discard', 'reapply']) {
+      phase(`6. actual Settings ${action}: save failure and explicit retry`);
+      const down = await callTool(a, aa, 'disconnect_machine', { machine: bId });
+      assert(down.state === 'down', `UI conflict disconnect: ${JSON.stringify(down)}`);
+      await eventually(
+        'link down before UI draft',
+        async () => (await linkView(a.c2, bId))?.state !== 'up',
+      );
+      const priorB = policyFileOf(b);
+      const draftProfile = defaultProfileOf(b) === 'lead' ? 'worker' : 'lead';
+      const ownProfile = defaultProfileOf(b) === 'observer' ? 'worker' : 'observer';
+      const token = (await machineRow(a, bId)).policy.editToken;
+      await remoteEditor.getByLabel('Default profile', { exact: true }).selectOption(draftProfile);
+      await eventually('Links editor saves the offline draft', async () => {
+        const pending = await machineRow(a, bId);
+        return (
+          pending?.status === 'waiting' &&
+          pending.policy.editToken !== token &&
+          pending.policy.assignments.find((entry) => entry.point.kind === 'default')?.assignment
+            .profileId === draftProfile
+        );
+      });
+      assert(
+        defaultProfileOf(b) ===
+          priorB.assignments.find((entry) => entry.point.kind === 'default')?.assignment.profileId,
+        'offline renderer edit changed B',
+      );
+      await setDefault(b, ownProfile);
+      const receiverBytes = readFileSync(join(b.userData, 'conduit-mcp', 'policy.json'), 'utf8');
+      const receiverRev = policyFileOf(b).rev;
+      const up = await callTool(a, aa, 'connect_machine', { machine: 'fake' });
+      assert(up.state === 'up', `UI conflict reconnect: ${JSON.stringify(up)}`);
+      let conflict;
+      await eventually('independent real conflict is visible to the renderer', async () => {
+        conflict = await machineRow(a, bId);
+        return (
+          conflict?.status === 'conflict' &&
+          page.evaluate(
+            (id) =>
+              window.__mcp.policy.machines.some(
+                (machine) => machine.machineId === id && machine.status === 'conflict',
+              ),
+            bId,
+          )
+        );
+      });
+      const button = remoteEditor.getByRole('button', {
+        name: action === 'discard' ? "Use machine's rules" : 'Apply my changes',
+        exact: true,
+      });
+      await button.waitFor({ state: 'visible' });
+      await button.scrollIntoViewIfNeeded();
+      await page.screenshot({
+        path: join(evidence, `remote-editor-runtime-${action}-conflict.png`),
+      });
+      const bytes = readFileSync(draftPath);
+      const beforeDoc = JSON.stringify(conflict.policy.assignments);
+      renameSync(draftPath, backup);
+      let obstructed = false;
+      try {
+        mkdirSync(draftPath);
+        obstructed = true;
+        await button.click();
+        const failure = remoteEditor
+          .getByRole('alert')
+          .filter({ hasText: 'Remote pending rules could not be saved' });
+        const actionFailure = remoteEditor
+          .getByRole('alert')
+          .filter({ hasText: 'The change could not be saved (save-failed).' });
+        await failure.waitFor({ state: 'visible' });
+        await actionFailure.waitFor({ state: 'visible' });
+        await remoteEditor
+          .getByRole('button', { name: 'Retry saving', exact: true })
+          .waitFor({ state: 'visible' });
+        const refused = await machineRow(a, bId);
+        assert(
+          refused.status === 'conflict' &&
+            refused.policy.editToken === conflict.policy.editToken &&
+            JSON.stringify(refused.policy.assignments) === beforeDoc,
+          `${action} save failure changed draft/token`,
+        );
+        assert(
+          readFileSync(join(b.userData, 'conduit-mcp', 'policy.json'), 'utf8') === receiverBytes,
+          `${action} save failure pushed B`,
+        );
+        await failure.scrollIntoViewIfNeeded();
+        await page.screenshot({
+          path: join(evidence, `remote-editor-runtime-${action}-error.png`),
+        });
+        const originalTheme = await page.evaluate(() => document.documentElement.dataset.theme);
+        const originalSize = await launched.app.evaluate((electron) =>
+          electron.BrowserWindow.getAllWindows()[0].getContentSize(),
+        );
+        const setTheme = async (theme) => {
+          await page.evaluate(
+            (theme) =>
+              new Promise((resolve, reject) => {
+                const timer = setTimeout(() => {
+                  off();
+                  reject(new Error('No settings state'));
+                }, 10_000);
+                const off = window.agentDeck.subscribe((message) => {
+                  if (message.type !== 'state') return;
+                  clearTimeout(timer);
+                  off();
+                  window.agentDeck.post({
+                    type: 'updateSettings',
+                    settings: { ...message.settings, theme },
+                  });
+                  resolve();
+                });
+                window.agentDeck.post({ type: 'ready' });
+              }),
+            theme,
+          );
+          await page.waitForFunction(
+            (theme) => document.documentElement.dataset.theme === theme,
+            theme,
+          );
+        };
+        try {
+          await launched.app.evaluate((electron) =>
+            electron.BrowserWindow.getAllWindows()[0].setContentSize(1024, 820),
+          );
+          await page.waitForFunction(() => window.innerWidth === 1024);
+          for (const theme of ['aero-dark', 'aero']) {
+            await setTheme(theme);
+            await failure.scrollIntoViewIfNeeded();
+            assert(
+              (await failure.isVisible()) && (await button.isVisible()),
+              `save failure controls hidden at ${theme}/1024`,
+            );
+            await page.evaluate(
+              () =>
+                new Promise((resolve) =>
+                  requestAnimationFrame(() => requestAnimationFrame(resolve)),
+                ),
+            );
+            await page.screenshot({
+              path: join(evidence, `remote-editor-runtime-${action}-error-${theme}-1024.png`),
+            });
+          }
+        } finally {
+          await setTheme(originalTheme);
+          await launched.app.evaluate(
+            (electron, size) => electron.BrowserWindow.getAllWindows()[0].setContentSize(...size),
+            originalSize,
+          );
+        }
+      } finally {
+        if (obstructed) rmdirSync(draftPath);
+        renameSync(backup, draftPath);
+      }
+      assert(readFileSync(draftPath).equals(bytes), 'restoring fault changed original draft bytes');
+      await remoteEditor.getByRole('button', { name: 'Retry saving', exact: true }).click();
+      await eventually(
+        'explicit save retry clears the error without resolving conflict',
+        async () => {
+          const retried = await machineRow(a, bId);
+          return (
+            retried?.status === 'conflict' &&
+            retried.policy.saveError === null &&
+            retried.policy.editToken === conflict.policy.editToken &&
+            JSON.stringify(retried.policy.assignments) === beforeDoc &&
+            readFileSync(join(b.userData, 'conduit-mcp', 'policy.json'), 'utf8') === receiverBytes
+          );
+        },
+      );
+      await remoteEditor
+        .getByRole('button', { name: 'Retry saving', exact: true })
+        .waitFor({ state: 'hidden' });
+      await button.click();
+      await eventually('explicit UI retry applies the acknowledged choice', async () => {
+        const current = await machineRow(a, bId);
+        return (
+          current?.status === 'applied' &&
+          current.policy.editToken !== conflict.policy.editToken &&
+          current.policy.assignments.find((entry) => entry.point.kind === 'default')?.assignment
+            .profileId === (action === 'discard' ? ownProfile : draftProfile) &&
+          defaultProfileOf(b) === (action === 'discard' ? ownProfile : draftProfile) &&
+          policyFileOf(b).rev === receiverRev + (action === 'discard' ? 0 : 1) &&
+          current.rev === receiverRev + (action === 'discard' ? 0 : 1)
+        );
+      });
+      await remoteEditor
+        .getByRole('status')
+        .filter({ hasText: /^Rules applied$/ })
+        .waitFor({ state: 'visible' });
+      assert(
+        (await remoteEditor
+          .getByRole('alert')
+          .filter({ hasText: 'Remote pending rules could not be saved' })
+          .count()) === 0 &&
+          (await remoteEditor
+            .getByRole('alert')
+            .filter({ hasText: 'The change could not be saved (save-failed).' })
+            .count()) === 0,
+        'successful explicit action retained its inline failure',
+      );
+      await links.getByRole('button', { name: remoteName, exact: true }).scrollIntoViewIfNeeded();
+      await page.screenshot({
+        path: join(evidence, `remote-editor-runtime-${action}-recovered.png`),
+      });
+      const savedDrafts = JSON.parse(readFileSync(draftPath, 'utf8')).drafts;
+      assert(savedDrafts[bId] === undefined, `${action} left a pending draft after application`);
+      log(`actual Electron Settings ${action} fault/retry verified; B ${defaultProfileOf(b)}`);
+    }
   } catch (error) {
-    if (pair) for (const server of [pair.a, pair.b]) dumpServerLog(server);
+    if (pair) for (const server of [pair.a, pair.b]) if (server) dumpServerLog(server);
     throw error;
   } finally {
+    await launched?.cleanup();
     for (const key of ENV_KEYS) {
       if (saved[key] === undefined) delete process.env[key];
       else process.env[key] = saved[key];

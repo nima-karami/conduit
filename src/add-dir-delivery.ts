@@ -2,6 +2,7 @@
 // revised per conductor after real-claude QA). Renderer-safe.
 
 export type AgentScopeReason =
+  | 'staleGeneration'
   | 'noSession'
   | 'notRunning'
   | 'notClaude'

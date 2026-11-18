@@ -35,6 +35,9 @@ export interface GrantStore {
     requestId: string | null,
   ): Grant;
   touch(id: string): void;
+  extend(id: string, revision: number): Grant | null;
+  renew(id: string, revision: number): Grant | null;
+  restore(previous: Grant, revision: number): Grant | null;
   revoke(id: string): Grant | null;
   sessionEnded(sessionId: string): Grant[];
   peerRevoked(machineId: string): Grant[];
@@ -54,6 +57,7 @@ export function createGrantStore(deps: GrantStoreDeps): GrantStore {
   const iso = (ms: number) => new Date(ms).toISOString();
 
   const end = (g: Grant, state: Grant['state'], now: number): void => {
+    g.lifecycleRevision = Math.min(Number.MAX_SAFE_INTEGER, (g.lifecycleRevision ?? 0) + 1);
     g.state = state;
     g.endedAt = iso(now);
   };
@@ -80,6 +84,8 @@ export function createGrantStore(deps: GrantStoreDeps): GrantStore {
         createdAt: iso(now),
         expiresAt: expiryFor(forDur, now),
         lastUsedAt: null,
+        useCount: 0,
+        lifecycleRevision: 0,
         state: 'active',
         endedAt: null,
         requestId,
@@ -90,7 +96,93 @@ export function createGrantStore(deps: GrantStoreDeps): GrantStore {
 
     touch(id) {
       const g = grants.get(id);
-      if (g?.state === 'active') g.lastUsedAt = iso(deps.now());
+      if (g?.state === 'active') {
+        g.lastUsedAt = iso(deps.now());
+        if (g.useCount !== undefined)
+          g.useCount = Math.min(Number.MAX_SAFE_INTEGER, g.useCount + 1);
+      }
+    },
+
+    extend(id, revision) {
+      const g = grants.get(id);
+      const now = deps.now();
+      if (
+        g?.state !== 'active' ||
+        g.expiresAt === null ||
+        Date.parse(g.expiresAt) <= now ||
+        (g.lifecycleRevision ?? 0) !== revision ||
+        revision >= Number.MAX_SAFE_INTEGER
+      )
+        return null;
+      const expiry = Math.max(now, Date.parse(g.expiresAt)) + 3_600_000;
+      if (!Number.isFinite(new Date(expiry).getTime())) return null;
+      g.expiresAt = iso(expiry);
+      g.lastConsentedAt = iso(now);
+      g.lifecycleRevision = revision + 1;
+      return copyGrant(g);
+    },
+
+    renew(id, revision) {
+      const g = grants.get(id);
+      const now = deps.now();
+      if (
+        g?.state !== 'expired' ||
+        (g.lifecycleRevision ?? 0) !== revision ||
+        revision >= Number.MAX_SAFE_INTEGER
+      )
+        return null;
+      const duration = g.for === '1h' ? 3_600_000 : g.for === '24h' ? 86_400_000 : 0;
+      if (duration && !Number.isFinite(new Date(now + duration).getTime())) return null;
+      const expiry = expiryFor(g.for, now);
+      if (g.for === 'session-end' && g.anchorSessionId === null) return null;
+      g.state = 'active';
+      g.endedAt = null;
+      g.expiresAt = expiry;
+      g.lastConsentedAt = iso(now);
+      g.lifecycleRevision = revision + 1;
+      return copyGrant(g);
+    },
+
+    restore(previous, revision) {
+      const current = grants.get(previous.id);
+      if (
+        current?.state !== 'revoked' ||
+        (current.lifecycleRevision ?? 0) !== revision ||
+        revision >= Number.MAX_SAFE_INTEGER ||
+        (previous.state !== 'active' && previous.state !== 'suspended') ||
+        (previous.expiresAt !== null && Date.parse(previous.expiresAt) <= deps.now()) ||
+        JSON.stringify([
+          current.who,
+          current.tool,
+          current.on,
+          current.for,
+          current.anchorSessionId,
+          current.createdAt,
+          current.requestId,
+          current.expiresAt,
+          current.lastUsedAt,
+          current.lastConsentedAt,
+          current.useCount,
+        ]) !==
+          JSON.stringify([
+            previous.who,
+            previous.tool,
+            previous.on,
+            previous.for,
+            previous.anchorSessionId,
+            previous.createdAt,
+            previous.requestId,
+            previous.expiresAt,
+            previous.lastUsedAt,
+            previous.lastConsentedAt,
+            previous.useCount,
+          ])
+      )
+        return null;
+      const restored = copyGrant(previous);
+      restored.lifecycleRevision = revision + 1;
+      grants.set(restored.id, restored);
+      return copyGrant(restored);
     },
 
     revoke(id) {
@@ -133,8 +225,7 @@ export function createGrantStore(deps: GrantStoreDeps): GrantStore {
       for (const g of grants.values()) {
         if (g.state !== 'active') continue;
         const timedOut = g.expiresAt !== null && Date.parse(g.expiresAt) <= now;
-        const idle =
-          g.for === 'session-end' && now - Date.parse(g.lastUsedAt ?? g.createdAt) > GRANT_DECAY_MS;
+        const idle = g.for === 'session-end' && now - lastActivity(g) > GRANT_DECAY_MS;
         if (!timedOut && !idle) continue;
         end(g, 'expired', now);
         changed.push(copyGrant(g));
@@ -179,6 +270,13 @@ export function grantWhoFor(choice: GrantChoice['who'], principal: Principal): G
   return principal.kind === 'remote' ? { kind: 'peer', machineId: principal.machineId } : null;
 }
 
+const lastActivity = (g: Grant): number =>
+  Math.max(
+    Date.parse(g.createdAt),
+    Date.parse(g.lastUsedAt ?? g.createdAt),
+    Date.parse(g.lastConsentedAt ?? g.createdAt),
+  );
+
 const within = (deadline: number, now: number): boolean => {
   const left = deadline - now;
   return left > 0 && left < GRANT_EXPIRING_MS;
@@ -187,7 +285,5 @@ const within = (deadline: number, now: number): boolean => {
 export function isExpiring(g: Grant, now: number): boolean {
   if (g.state !== 'active') return false;
   if (g.expiresAt !== null && within(Date.parse(g.expiresAt), now)) return true;
-  return (
-    g.for === 'session-end' && within(Date.parse(g.lastUsedAt ?? g.createdAt) + GRANT_DECAY_MS, now)
-  );
+  return g.for === 'session-end' && within(lastActivity(g) + GRANT_DECAY_MS, now);
 }

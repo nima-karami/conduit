@@ -124,7 +124,7 @@ describe('persistent TokenStorePort', () => {
     fs.writeFileSync(file, '{"version":1,"rows":[{"sessionId":');
     const store = createPersistentTokenStore({ file, randomToken: tokenSource() });
     expect(store.rows()).toEqual({ state: 'unreadable' });
-    await expect(store.reserve('s1', ids(1))).rejects.toThrow('token store unreadable');
+    expect(() => store.reserve('s1', ids(1))).toThrow('token store unreadable');
     await store.revoke({ sessionId: 's1' });
     expect(store.rows()).toEqual({ state: 'unreadable' });
     expect(fs.readFileSync(file, 'utf8')).toBe('{"version":1,"rows":[{"sessionId":');
@@ -137,7 +137,7 @@ describe('persistent TokenStorePort', () => {
     fs.writeFileSync(file, newer);
     const store = createPersistentTokenStore({ file, randomToken: tokenSource() });
     expect(store.rows()).toEqual({ state: 'unreadable' });
-    await expect(store.reserve('s1', ids(1))).rejects.toThrow('token store unreadable');
+    expect(() => store.reserve('s1', ids(1))).toThrow('token store unreadable');
     await store.markSuperseded(ids(1).launchId);
     expect(fs.readFileSync(file, 'utf8')).toBe(newer);
   });
@@ -151,7 +151,7 @@ describe('persistent TokenStorePort', () => {
         throw new Error('EACCES');
       },
     });
-    await expect(store.reserve('s1', ids(1))).rejects.toThrow('EACCES');
+    expect(() => store.reserve('s1', ids(1))).toThrow('EACCES');
     expect(store.rows()).toEqual({ state: 'missing' });
   });
 });

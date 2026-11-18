@@ -741,3 +741,34 @@ describe('serveCall: a drop, a revoke or a removal cancels the call it serves', 
     ]);
   });
 });
+
+it('provides current authenticated inbound principals with cloned capabilities', () => {
+  const t = setup({});
+  expect(t.calls).toHaveProperty('inboundPrincipal');
+  const first = t.calls.inboundPrincipal(machine, 'claude-3');
+  expect(first).toMatchObject({
+    machineId: machine,
+    controller: true,
+    capabilities: { drive: false },
+  });
+  if (!first) throw new Error('expected inbound principal');
+  first.capabilities.drive = true;
+  expect(t.calls.inboundPrincipal(machine, 'claude-3')?.capabilities.drive).toBe(false);
+  expect(t.calls.inboundPrincipal(machine, 'claude-3@other')).toBeNull();
+  expect(setup({ link: dialedSsh() }).calls.inboundPrincipal(machine, 'claude-3')).toBeNull();
+  expect(
+    setup({ link: sshController({ transport: 'tls' }) }).calls.inboundPrincipal(
+      machine,
+      'claude-3',
+    ),
+  ).toBeNull();
+  expect(setup({ state: 'down' }).calls.inboundPrincipal(machine, 'claude-3')).toBeNull();
+  t.setLink(sshController({ capabilities: { messaging: false, monitor: false, drive: true } }));
+  expect(t.calls.inboundPrincipal(machine, 'claude-3')?.capabilities).toEqual({
+    messaging: false,
+    monitor: false,
+    drive: true,
+  });
+  t.setLink(dialedSsh());
+  expect(t.calls.inboundPrincipal(machine, 'claude-3')).toBeNull();
+});

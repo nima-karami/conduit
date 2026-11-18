@@ -71,6 +71,7 @@ function ruleSet(rule: (tool: ToolName, worker: ToolRule) => ToolRule): Record<T
 
 export const WORKER_PROFILE: Profile = {
   id: 'worker',
+  nativeModes: { claude: 'unset', codex: 'unset' },
   name: 'Worker',
   builtIn: true,
   rules: ruleSet((_tool, worker) => worker),
@@ -78,6 +79,7 @@ export const WORKER_PROFILE: Profile = {
 
 export const OBSERVER: Profile = {
   id: 'observer',
+  nativeModes: { claude: 'plan', codex: 'read-only' },
   name: 'Observer',
   builtIn: true,
   rules: ruleSet((tool, worker) => ({
@@ -88,6 +90,7 @@ export const OBSERVER: Profile = {
 
 const LEAD: Profile = {
   id: 'lead',
+  nativeModes: { claude: 'acceptEdits', codex: 'workspace-write' },
   name: 'Lead',
   builtIn: true,
   rules: ruleSet((tool, worker) => ({
@@ -168,12 +171,15 @@ export function effectiveRule(
   a: Assignment,
   tool: ToolName,
   target: PolicyTarget | null,
+  visit?: (exception: Exception, index: number) => void,
 ): ToolRule {
   const rule: ToolRule = { ...profile.rules[tool] };
   const applicable = a.exceptions
-    .filter((e) => e.tool === tool && matchesScope(e.scope, target))
-    .sort(applyOrder);
-  for (const e of applicable) {
+    .map((exception, index) => ({ exception, index }))
+    .filter(({ exception }) => exception.tool === tool && matchesScope(exception.scope, target))
+    .sort((a, b) => applyOrder(a.exception, b.exception));
+  for (const { exception: e, index } of applicable) {
+    visit?.(e, index);
     if (e.rule.decision !== undefined) rule.decision = e.rule.decision;
     if (e.rule.when !== undefined) rule.when = e.rule.when;
     if (e.rule.reach !== undefined) rule.reach = e.rule.reach;

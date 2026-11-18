@@ -1,6 +1,17 @@
-import { readFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  promises as fsp,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  truncateSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRolloutFs } from '../../server/domain/codex-rollout-fs';
 import {
   type CodexWatchDeps,
   createCodexRolloutWatch,
@@ -21,6 +32,7 @@ const DAY13 = '/sessions/2026/11/13';
 const FILE_A = `${DAY12}/rollout-a.jsonl`;
 const FILE_B = `${DAY12}/rollout-b.jsonl`;
 const NOW = Date.parse('2026-11-12T21:02:00Z');
+const IDS = { generation: 1, launchId: 'a'.repeat(32) };
 const LAUNCH = Date.parse('2026-11-12T21:00:40Z');
 
 interface Live {
@@ -69,15 +81,43 @@ function harness() {
         const i = content.indexOf('\n');
         return i < 0 ? null : content.slice(0, i);
       },
-      readFrom: async (p, offset) => {
+      readFrom: async function* (p, offset, discarding = false) {
         const content = files.get(p) ?? '';
-        return { data: content.slice(offset), size: content.length };
+        yield {
+          kind: 'start',
+          identity: { dev: 1, ino: 1, fileSize: content.length },
+          highWater: content.length,
+        };
+        const tail = content.slice(offset);
+        const end = tail.lastIndexOf('\n') + 1;
+        if (end)
+          yield {
+            kind: 'lines',
+            lines: tail.slice(0, end).split('\n').slice(0, -1),
+            cursors: tail
+              .slice(0, end)
+              .split('\n')
+              .slice(0, -1)
+              .map(
+                (_, index, lines) =>
+                  offset + lines.slice(0, index + 1).reduce((n, line) => n + line.length + 1, 0),
+              ),
+            cursor: offset + end,
+            discarding,
+          };
+        yield { kind: 'end', cursor: offset + end, discarding };
       },
+      pathIdentity: async (p) => ({
+        dev: 1,
+        ino: 1,
+        fileSize: (files.get(p) ?? '').length,
+      }),
       exists: async (p) => dirs.has(p),
     },
     samePath: (a, b) => a === b,
     episodeOpen: () => false,
     onSignal: (s) => signals.push(s),
+    onPosture: () => {},
     onBound: (id) => bound.push(id),
     onAction: (sessionId, action) => actions.push({ sessionId, action }),
     onFeed: (sessionId, state) => feeds.push({ sessionId, state }),
@@ -108,7 +148,9 @@ async function flush(): Promise<void> {
 }
 
 beforeEach(() => {
-  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+  vi.useFakeTimers({
+    toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+  });
 });
 
 afterEach(() => {
@@ -119,7 +161,7 @@ describe('codex rollout watch', () => {
   it('binds the primary file on its first line and reads its appended limit line', async () => {
     const h = harness();
     const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
 
     h.files.set(FILE_A, `${PRIMARY}\n`);
@@ -133,14 +175,18 @@ describe('codex rollout watch', () => {
     vi.advanceTimersByTime(250);
     await flush();
     expect(h.signals).toContainEqual(
-      expect.objectContaining({ kind: 'limited', sessionId: 's1', source: 'codex-rollout' }),
+      expect.objectContaining({
+        kind: 'limited',
+        sessionId: 's1',
+        source: 'codex-rollout',
+      }),
     );
   });
 
   it('does not bind a subagent meta line even with the same cwd', async () => {
     const h = harness();
     const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
     h.files.set(FILE_A, `${GUARDIAN}\n`);
     h.emit(DAY12, 'rollout-a.jsonl');
@@ -151,8 +197,8 @@ describe('codex rollout watch', () => {
   it('refuses an ambiguous file when two unbound sessions qualify, and warns', async () => {
     const h = harness();
     const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
-    watch.track('s2', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+    watch.track('s2', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
     h.files.set(FILE_A, `${PRIMARY}\n`);
     h.emit(DAY12, 'rollout-a.jsonl');
@@ -166,7 +212,7 @@ describe('codex rollout watch', () => {
     const h = harness();
     h.files.set(FILE_A, `${PRIMARY}\n${LIMIT_TASK_COMPLETE}\n`);
     const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
     expect(watch.boundFile('s1')).toBe(FILE_A);
     expect(h.signals.map((s) => s.kind)).toEqual(['limited']);
@@ -180,7 +226,7 @@ describe('codex rollout watch', () => {
     // An earlier finished turn, then the turn that ended in the limit.
     h.files.set(FILE_A, [PRIMARY, ...turn, ...limit].join('\n') + '\n');
     const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
     expect(h.signals.map((s) => s.kind)).toEqual(['reset-info', 'limited']);
 
@@ -188,7 +234,7 @@ describe('codex rollout watch', () => {
     // The limit, then a later turn started: the limit is history.
     g.files.set(FILE_A, [PRIMARY, ...limit, turn[0]].join('\n') + '\n');
     const w2 = createCodexRolloutWatch(g.deps);
-    w2.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    w2.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
     expect(g.signals.map((s) => s.kind)).toEqual(['reset-info']);
   });
@@ -200,7 +246,7 @@ describe('codex rollout watch', () => {
     h.deps.episodeOpen = () => true;
     h.files.set(FILE_A, [PRIMARY, ...limit, turn[0]].join('\n') + '\n');
     const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
     expect(h.signals.map((s) => s.kind)).toEqual(['reset-info', 'resumed']);
   });
@@ -208,7 +254,7 @@ describe('codex rollout watch', () => {
   it('holds a partial last line back until its newline arrives', async () => {
     const h = harness();
     const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
     h.files.set(FILE_A, `${PRIMARY}\n`);
     h.emit(DAY12, 'rollout-a.jsonl');
@@ -231,7 +277,7 @@ describe('codex rollout watch', () => {
   it('watches the day folders only, never the sessions root', async () => {
     const h = harness();
     const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
     expect(h.opened).toEqual([DAY12]);
 
@@ -245,7 +291,7 @@ describe('codex rollout watch', () => {
   it('releases its folder watch when the last unbound session is untracked', async () => {
     const h = harness();
     const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
     expect(h.live.size).toBe(1);
     watch.untrack('s1');
@@ -256,7 +302,7 @@ describe('codex rollout watch', () => {
     const h = harness();
     h.files.set(FILE_A, `${PRIMARY}\n`);
     const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
     expect(watch.boundFile('s1')).toBe(FILE_A);
     watch.dispose();
@@ -268,7 +314,7 @@ describe('codex rollout watch', () => {
     const h = harness();
     h.files.set(FILE_A, `${PRIMARY}\n`);
     const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
     expect(watch.boundFile('s1')).toBe(FILE_A);
 
@@ -277,7 +323,11 @@ describe('codex rollout watch', () => {
       '01a1d190-aaaa-7db3-ae44-cb9dacc349ed',
     );
     h.files.set(FILE_B, `${later}\n`);
-    watch.track('s2', { cwd: '/work/project', launchAt: Date.parse('2026-11-12T21:01:20Z') });
+    watch.track('s2', {
+      cwd: '/work/project',
+      ids: IDS,
+      launchAt: Date.parse('2026-11-12T21:01:20Z'),
+    });
     await flush();
     expect(watch.boundFile('s2')).toBe(FILE_B);
     expect(watch.boundFile('s1')).toBe(FILE_A);
@@ -286,7 +336,7 @@ describe('codex rollout watch', () => {
   it('re-reads a first line that did not parse yet, instead of caching the miss', async () => {
     const h = harness();
     const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
     h.files.set(FILE_A, `${PRIMARY.slice(0, 40)}\n`);
     h.emit(DAY12, 'rollout-a.jsonl');
@@ -303,7 +353,7 @@ describe('codex rollout watch', () => {
     const h = harness();
     h.files.set(FILE_A, `${PRIMARY}\n`);
     const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
     expect(watch.boundFile('s1')).toBe(FILE_A);
 
@@ -318,7 +368,7 @@ describe('codex rollout watch', () => {
     const h = harness();
     h.failWatch.add(DAY12);
     const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
     const openWarnings = () => h.warnings.filter((w) => w === 'could not watch rollout folder');
     vi.advanceTimersByTime(2000);
@@ -340,7 +390,7 @@ describe('codex rollout watch', () => {
     const h = harness();
     h.files.set(FILE_A, `${PRIMARY}\n`);
     const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
     expect(watch.boundFile('s1')).toBe(FILE_A);
     const openedBefore = h.opened.filter((d) => d === DAY12).length;
@@ -365,14 +415,14 @@ describe('codex rollout watch', () => {
     const h = harness();
     h.failWatch.add(DAY12);
     const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
     const openWarnings = () => h.warnings.filter((w) => w === 'could not watch rollout folder');
     expect(openWarnings()).toHaveLength(1);
 
     watch.untrack('s1');
     await flush();
-    watch.track('s2', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s2', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
     expect(openWarnings()).toHaveLength(2);
   });
@@ -380,7 +430,7 @@ describe('codex rollout watch', () => {
     const h = harness();
     h.files.set(FILE_A, `${[PRIMARY, ...ACTION_LINES].join('\n')}\n`);
     const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
     expect(watch.boundFile('s1')).toBe(FILE_A);
     expect(h.actions).toEqual([]);
@@ -389,7 +439,7 @@ describe('codex rollout watch', () => {
   it('new item_completed emits one action', async () => {
     const h = harness();
     const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
     h.files.set(FILE_A, `${PRIMARY}\n`);
     h.emit(DAY12, 'rollout-a.jsonl');
@@ -417,7 +467,7 @@ describe('codex rollout watch', () => {
   it('new FileChange item emits one file-change action with its paths only', async () => {
     const h = harness();
     const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
     h.files.set(FILE_A, `${PRIMARY}\n`);
     h.emit(DAY12, 'rollout-a.jsonl');
@@ -430,7 +480,10 @@ describe('codex rollout watch', () => {
     expect(h.actions).toEqual([
       {
         sessionId: 's1',
-        action: { kind: 'file-change', paths: ['/work/project/a.txt', '/work/project/b.txt'] },
+        action: {
+          kind: 'file-change',
+          paths: ['/work/project/a.txt', '/work/project/b.txt'],
+        },
       },
     ]);
   });
@@ -438,8 +491,8 @@ describe('codex rollout watch', () => {
   it('ambiguous bind reports unavailable once per session', async () => {
     const h = harness();
     const watch = createCodexRolloutWatch(h.deps);
-    watch.track('s1', { cwd: '/work/project', launchAt: LAUNCH });
-    watch.track('s2', { cwd: '/work/project', launchAt: LAUNCH });
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+    watch.track('s2', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
     await flush();
     h.files.set(FILE_A, `${PRIMARY}\n`);
     h.emit(DAY12, 'rollout-a.jsonl');
@@ -457,5 +510,622 @@ describe('codex rollout watch', () => {
     h.emit(DAY12, 'rollout-b.jsonl');
     await flush();
     expect(h.feeds).toHaveLength(2);
+  });
+});
+
+describe('bounded stream integration', () => {
+  it('does not retry an incomplete line without another notification', async () => {
+    const h = harness();
+    h.files.set(FILE_A, `${PRIMARY}\npartial`);
+    const read = h.deps.fs.readFrom;
+    let reads = 0;
+    h.deps.fs.readFrom = (file, offset, discard) => {
+      reads++;
+      return read(file, offset, discard);
+    };
+    const watch = createCodexRolloutWatch(h.deps);
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+    await flush();
+    expect(reads).toBe(1);
+    vi.advanceTimersByTime(10_000);
+    await flush();
+    expect(reads).toBe(1);
+    watch.dispose();
+  });
+
+  it.skipIf(process.platform === 'win32').each(['replacement', 'truncation'] as const)(
+    'rejects an in-flight real descriptor after %s',
+    async (change) => {
+      const dir = mkdtempSync(join(tmpdir(), 'rollout-revision-'));
+      const realFile = join(dir, 'rollout.jsonl');
+      const oldFile = join(dir, 'old.jsonl');
+      const content = `${PRIMARY}\n${LIMIT_TASK_COMPLETE}\n`;
+      writeFileSync(realFile, content);
+      const h = harness();
+      h.files.set(FILE_A, content);
+      const real = createRolloutFs({
+        onFirstLineTooLong: () => {},
+        chunkBytes: 64,
+      });
+      const open = fsp.open.bind(fsp);
+      let close: ReturnType<typeof vi.spyOn> | undefined;
+      const openSpy = vi.spyOn(fsp, 'open').mockImplementation(async (...args) => {
+        const handle = await open(...args);
+        close = vi.spyOn(handle, 'close');
+        return handle;
+      });
+      let release: (() => void) | undefined;
+      let paused = false;
+      let finished = false;
+      let opens = 0;
+      h.deps.fs.readFrom = async function* (_file, offset, discard) {
+        opens++;
+        try {
+          for await (const event of real.readFrom(realFile, offset, discard)) {
+            yield event;
+            if (event.kind === 'start' && opens === 1) {
+              paused = true;
+              await new Promise<void>((resolve) => {
+                release = resolve;
+              });
+            }
+          }
+        } finally {
+          finished = true;
+        }
+      };
+      h.deps.fs.pathIdentity = () => real.pathIdentity(realFile);
+      const updates: string[] = [];
+      h.deps.onPosture = (id) => updates.push(id);
+      const watch = createCodexRolloutWatch(h.deps);
+      try {
+        watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+        await vi.waitFor(() => expect(paused).toBe(true));
+        if (change === 'replacement') {
+          renameSync(realFile, oldFile);
+          writeFileSync(realFile, content);
+        } else {
+          truncateSync(realFile, 0);
+        }
+        release?.();
+        await vi.waitFor(() => expect(finished).toBe(true));
+        expect(close).toHaveBeenCalledOnce();
+        expect(h.signals).toEqual([]);
+        expect(h.actions).toEqual([]);
+        expect(updates).toEqual([]);
+        expect(watch.linkPosture('s1', IDS, '01a1d190-1af2-7db3-ae44-cb9dacc349ed')).toBe(false);
+        if (change === 'truncation') writeFileSync(realFile, content);
+        h.emit(DAY12, 'rollout-a.jsonl');
+        vi.advanceTimersByTime(250);
+        await flush();
+        await vi.waitFor(() => expect(opens).toBe(2));
+        await vi.waitFor(() => expect(h.signals.map((s) => s.kind)).toEqual(['limited']));
+        expect(h.actions).toEqual([]);
+        expect(updates).toEqual([]);
+        expect(watch.linkPosture('s1', IDS, '01a1d190-1af2-7db3-ae44-cb9dacc349ed')).toBe(false);
+        appendFileSync(realFile, `${ACTION_LINES.join('\n')}\n`);
+        h.emit(DAY12, 'rollout-a.jsonl');
+        vi.advanceTimersByTime(250);
+        await vi.waitFor(() => expect(h.actions.length).toBeGreaterThan(0));
+      } finally {
+        release?.();
+        watch.dispose();
+        openSpy.mockRestore();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'retires established posture after a real in-flight short read',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'rollout-short-'));
+      const realFile = join(dir, 'rollout.jsonl');
+      const uuid = '01a1d190-1af2-7db3-ae44-cb9dacc349ed';
+      const initial = `${PRIMARY}\n`;
+      writeFileSync(realFile, initial);
+      const h = harness();
+      h.files.set(FILE_A, initial);
+      const real = createRolloutFs({
+        onFirstLineTooLong: () => {},
+        chunkBytes: 64,
+      });
+      let release: (() => void) | undefined;
+      let pause = false;
+      let paused = false;
+      let completed = 0;
+      h.deps.fs.readFrom = async function* (_file, offset, discard) {
+        try {
+          for await (const event of real.readFrom(realFile, offset, discard)) {
+            yield event;
+            if (pause && event.kind === 'start') {
+              paused = true;
+              await new Promise<void>((resolve) => {
+                release = resolve;
+              });
+            }
+          }
+        } finally {
+          completed++;
+        }
+      };
+      h.deps.fs.pathIdentity = () => real.pathIdentity(realFile);
+      const updates: string[] = [];
+      h.deps.onPosture = (id) => updates.push(id);
+      const watch = createCodexRolloutWatch(h.deps);
+      try {
+        watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+        await vi.waitFor(() => expect(completed).toBe(1));
+        expect(watch.linkPosture('s1', IDS, uuid)).toBe(true);
+        writeFileSync(realFile, `${initial}${LIMIT_TASK_COMPLETE}\n`);
+        pause = true;
+        h.emit(DAY12, 'rollout-a.jsonl');
+        vi.advanceTimersByTime(250);
+        await vi.waitFor(() => expect(paused).toBe(true));
+        truncateSync(realFile, 0);
+        release?.();
+        await vi.waitFor(() => expect(completed).toBe(2));
+        expect(watch.getPosture('s1', IDS)).toBeNull();
+        expect(watch.linkPosture('s1', IDS, uuid)).toBe(false);
+        expect(watch.linkPosture('s1', { ...IDS, generation: 2 }, uuid)).toBe(false);
+        expect(updates).toEqual(['s1']);
+        expect(h.signals).toEqual([]);
+        pause = false;
+        writeFileSync(realFile, `${initial}${LIMIT_TASK_COMPLETE}\n`);
+        h.emit(DAY12, 'rollout-a.jsonl');
+        vi.advanceTimersByTime(250);
+        await vi.waitFor(() => expect(h.signals.map((s) => s.kind)).toEqual(['limited']));
+        expect(watch.linkPosture('s1', IDS, uuid)).toBe(false);
+      } finally {
+        release?.();
+        watch.dispose();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('replays a real multi-chunk archive around an oversized resume', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rollout-replay-'));
+    try {
+      for (const laterLimit of [false, true]) {
+        const h = harness();
+        const realFile = join(dir, laterLimit ? 'later.jsonl' : 'early.jsonl');
+        const resume = fixture('turn.jsonl').split('\n')[0] ?? '';
+        const rows = [PRIMARY, LIMIT_TASK_COMPLETE, `${resume}${' '.repeat(4096)}`];
+        if (laterLimit) rows.push(LIMIT_TASK_COMPLETE);
+        const content = `${rows.join('\n')}\n`;
+        writeFileSync(realFile, content);
+        h.files.set(FILE_A, content);
+        const real = createRolloutFs({
+          onFirstLineTooLong: () => {},
+          recordMaxBytes: 2048,
+          chunkBytes: 64,
+        });
+        let completed = false;
+        h.deps.fs.readFrom = async function* (_file, offset, discard) {
+          yield* real.readFrom(realFile, offset, discard);
+          completed = true;
+        };
+        h.deps.fs.pathIdentity = () => real.pathIdentity(realFile);
+        const watch = createCodexRolloutWatch(h.deps);
+        watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+        await vi.waitFor(() => expect(completed).toBe(true));
+        expect(h.signals.map((signal) => signal.kind)).toEqual(laterLimit ? ['limited'] : []);
+        watch.dispose();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('forgets replay conclusions across a gap', async () => {
+    const h = harness();
+    const content = `${PRIMARY}\n${LIMIT_TASK_COMPLETE}\nmissing\n`;
+    h.files.set(FILE_A, content);
+    h.deps.fs.readFrom = async function* () {
+      yield {
+        kind: 'start',
+        identity: { dev: 1, ino: 1, fileSize: content.length },
+        highWater: content.length,
+      };
+      yield {
+        kind: 'lines',
+        lines: [PRIMARY, LIMIT_TASK_COMPLETE],
+        cursors: [PRIMARY.length + 1, content.length - 8],
+        cursor: content.length - 8,
+        discarding: false,
+      };
+      yield { kind: 'gap', cursor: content.length, discarding: false };
+      yield { kind: 'end', cursor: content.length, discarding: false };
+    };
+    const watch = createCodexRolloutWatch(h.deps);
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+    await flush();
+    expect(h.signals).toEqual([]);
+    watch.dispose();
+  });
+
+  it('resumes at the next record when a live batch callback throws', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rollout-callback-'));
+    const realFile = join(dir, 'rollout.jsonl');
+    const initial = `${PRIMARY}\n`;
+    writeFileSync(realFile, initial);
+    const h = harness();
+    h.files.set(FILE_A, initial);
+    const real = createRolloutFs({ onFirstLineTooLong: () => {} });
+    h.deps.fs.readFrom = (_file, offset, discard) => real.readFrom(realFile, offset, discard);
+    h.deps.fs.pathIdentity = () => real.pathIdentity(realFile);
+    let attempts = 0;
+    h.deps.onAction = () => {
+      attempts++;
+      throw new Error('callback failed');
+    };
+    const watch = createCodexRolloutWatch(h.deps);
+    try {
+      watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+      await vi.waitFor(() =>
+        expect(watch.linkPosture('s1', IDS, '01a1d190-1af2-7db3-ae44-cb9dacc349ed')).toBe(true),
+      );
+      appendFileSync(realFile, `${ACTION_LINES[1]}\n${LIMIT_TASK_COMPLETE}\n`);
+      h.emit(DAY12, 'rollout-a.jsonl');
+      vi.advanceTimersByTime(250);
+      await vi.waitFor(() => expect(attempts).toBe(1));
+      h.emit(DAY12, 'rollout-a.jsonl');
+      vi.advanceTimersByTime(250);
+      await vi.waitFor(() => expect(h.signals.map((s) => s.kind)).toEqual(['limited']));
+      expect(attempts).toBe(1);
+    } finally {
+      watch.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('commits a delivered live batch before a later read error', async () => {
+    const h = harness();
+    h.files.set(FILE_A, `${PRIMARY}\n`);
+    const watch = createCodexRolloutWatch(h.deps);
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+    await flush();
+    const line = ACTION_LINES[1] ?? '';
+    const oldSize = `${PRIMARY}\n`.length;
+    const content = `${PRIMARY}\n${line}\n`;
+    h.files.set(FILE_A, content);
+    const original = h.deps.fs.readFrom;
+    let fail = true;
+    h.deps.fs.readFrom = async function* (file, offset, discard) {
+      if (!fail) {
+        yield* original(file, offset, discard);
+        return;
+      }
+      fail = false;
+      yield {
+        kind: 'start',
+        identity: { dev: 1, ino: 1, fileSize: content.length },
+        highWater: content.length,
+      };
+      yield {
+        kind: 'lines',
+        lines: [line],
+        cursors: [content.length],
+        cursor: content.length,
+        discarding: false,
+      };
+      throw new Error('read failed');
+    };
+    h.emit(DAY12, 'rollout-a.jsonl');
+    vi.advanceTimersByTime(250);
+    await flush();
+    const delivered = h.actions.length;
+    expect(delivered).toBeGreaterThan(0);
+    expect(content.length).toBeGreaterThan(oldSize);
+    h.emit(DAY12, 'rollout-a.jsonl');
+    vi.advanceTimersByTime(250);
+    await flush();
+    expect(h.actions).toHaveLength(delivered);
+    watch.dispose();
+  });
+
+  it('blocks links during an in-flight read and rejects an old generation', async () => {
+    const h = harness();
+    const uuid = '01a1d190-1af2-7db3-ae44-cb9dacc349ed';
+    h.files.set(FILE_A, `${PRIMARY}\n`);
+    const watch = createCodexRolloutWatch(h.deps);
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+    await flush();
+    const read = h.deps.fs.readFrom;
+    let release: (() => void) | undefined;
+    h.deps.fs.readFrom = async function* (file, offset, discard) {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      yield* read(file, offset, discard);
+    };
+    h.emit(DAY12, 'rollout-a.jsonl');
+    vi.advanceTimersByTime(250);
+    await flush();
+    expect(watch.linkPosture('s1', IDS, uuid)).toBe(false);
+    watch.untrack('s1');
+    watch.track('s1', {
+      cwd: '/work/project',
+      ids: { ...IDS, generation: 2 },
+      launchAt: LAUNCH,
+    });
+    release?.();
+    await flush();
+    expect(watch.linkPosture('s1', IDS, uuid)).toBe(false);
+    watch.dispose();
+  });
+});
+
+describe('linked posture continuity', () => {
+  it('never accepts later records after an oversized metadata gap', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rollout-meta-gap-'));
+    const realFile = join(dir, 'rollout.jsonl');
+    const content = `${PRIMARY}\n`;
+    writeFileSync(realFile, content);
+    const h = harness();
+    h.files.set(FILE_A, content);
+    const real = createRolloutFs({
+      onFirstLineTooLong: () => {},
+      recordMaxBytes: 64,
+    });
+    let reads = 0;
+    h.deps.fs.readFrom = async function* (_file, offset, discard) {
+      try {
+        yield* real.readFrom(realFile, offset, discard);
+      } finally {
+        reads++;
+      }
+    };
+    h.deps.fs.pathIdentity = () => real.pathIdentity(realFile);
+    const watch = createCodexRolloutWatch(h.deps);
+    try {
+      watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+      await vi.waitFor(() => expect(reads).toBe(1));
+      appendFileSync(realFile, `${LIMIT_TASK_COMPLETE}\n${ACTION_LINES.join('\n')}\n`);
+      h.emit(DAY12, 'rollout-a.jsonl');
+      vi.advanceTimersByTime(250);
+      await vi.waitFor(() => expect(reads).toBe(2));
+      expect(h.signals).toEqual([]);
+      expect(h.actions).toEqual([]);
+    } finally {
+      watch.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a replacement with a different session identity', async () => {
+    const h = harness();
+    h.files.set(FILE_A, `${PRIMARY}\n`);
+    const watch = createCodexRolloutWatch(h.deps);
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+    await flush();
+    const read = h.deps.fs.readFrom;
+    let changed = false;
+    h.deps.fs.readFrom = async function* (file, offset, discard) {
+      for await (const event of read(file, offset, discard)) {
+        if (!changed && event.kind === 'start') {
+          changed = true;
+          yield {
+            ...event,
+            identity: { dev: 1, ino: 2, fileSize: event.highWater },
+          };
+        } else yield event;
+      }
+    };
+    h.emit(DAY12, 'rollout-a.jsonl');
+    vi.advanceTimersByTime(250);
+    await flush();
+    h.files.set(
+      FILE_A,
+      `${PRIMARY.replaceAll('01a1d190-1af2-7db3-ae44-cb9dacc349ed', '01a1d190-aaaa-7db3-ae44-cb9dacc349ed')}\n${LIMIT_TASK_COMPLETE}\n`,
+    );
+    h.emit(DAY12, 'rollout-a.jsonl');
+    vi.advanceTimersByTime(250);
+    await flush();
+    expect(h.signals).toEqual([]);
+    expect(h.actions).toEqual([]);
+    expect(watch.linkPosture('s1', IDS, '01a1d190-1af2-7db3-ae44-cb9dacc349ed')).toBe(false);
+    watch.dispose();
+  });
+
+  it.each(['replacement', 'truncation'] as const)(
+    'replays a later notification after %s without restoring posture',
+    async (mode) => {
+      const h = harness();
+      h.files.set(FILE_A, `${PRIMARY}\n`);
+      const watch = createCodexRolloutWatch(h.deps);
+      watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+      await flush();
+      const original = h.deps.fs.readFrom;
+      let first = true;
+      h.deps.fs.readFrom = async function* (file, offset, discard) {
+        if (first) {
+          first = false;
+          const size = mode === 'truncation' ? 0 : offset;
+          yield {
+            kind: 'start',
+            identity: {
+              dev: 1,
+              ino: mode === 'replacement' ? 2 : 1,
+              fileSize: size,
+            },
+            highWater: size,
+          };
+          yield { kind: 'end', cursor: size, discarding: false };
+          return;
+        }
+        yield* original(file, offset, discard);
+      };
+      h.emit(DAY12, 'rollout-a.jsonl');
+      vi.advanceTimersByTime(250);
+      await flush();
+      h.files.set(FILE_A, `${PRIMARY}\n${LIMIT_TASK_COMPLETE}\n`);
+      h.emit(DAY12, 'rollout-a.jsonl');
+      vi.advanceTimersByTime(250);
+      await flush();
+      expect(h.signals.map((s) => s.kind)).toEqual(['limited']);
+      expect(h.actions).toEqual([]);
+      expect(watch.linkPosture('s1', IDS, '01a1d190-1af2-7db3-ae44-cb9dacc349ed')).toBe(false);
+      h.files.delete(FILE_A);
+      h.files.set(FILE_B, `${PRIMARY}\n`);
+      watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+      await flush();
+      expect(watch.boundFile('s1')).toBe(FILE_B);
+      expect(watch.linkPosture('s1', IDS, '01a1d190-1af2-7db3-ae44-cb9dacc349ed')).toBe(false);
+      watch.dispose();
+    },
+  );
+
+  it('marks errors stale, recovers only on context, and invalidates replacement', async () => {
+    const h = harness();
+    let mode: 'normal' | 'error' | 'replacement' = 'normal';
+    const read = h.deps.fs.readFrom;
+    h.deps.fs.readFrom = async function* (file, offset, discard) {
+      if (mode === 'error') throw new Error('unavailable');
+      for await (const event of read(file, offset, discard)) {
+        if (mode === 'replacement' && event.kind === 'start')
+          yield {
+            ...event,
+            identity: { dev: 1, ino: 2, fileSize: event.highWater },
+          };
+        else yield event;
+      }
+    };
+    const watch = createCodexRolloutWatch(h.deps);
+    const uuid = '01a1d190-1af2-7db3-ae44-cb9dacc349ed';
+    const context = JSON.stringify({
+      type: 'turn_context',
+      timestamp: '2026-11-17T12:00:00Z',
+      payload: {
+        sandbox_policy: { type: 'read-only' },
+        approval_policy: 'never',
+      },
+    });
+    h.files.set(FILE_A, `${PRIMARY}\n${context}\n`);
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+    await flush();
+    mode = 'error';
+    h.emit(DAY12, 'rollout-a.jsonl');
+    vi.advanceTimersByTime(250);
+    await flush();
+    expect(watch.linkPosture('s1', IDS, uuid)).toBe(true);
+    expect(watch.getPosture('s1', IDS)?.freshness).toBe('stale');
+    mode = 'error';
+    h.emit(DAY12, 'rollout-a.jsonl');
+    vi.advanceTimersByTime(250);
+    await flush();
+    expect(watch.getPosture('s1', IDS)?.freshness).toBe('stale');
+    mode = 'normal';
+    h.files.set(FILE_A, `${PRIMARY}\n${context}\n${context}\n`);
+    h.emit(DAY12, 'rollout-a.jsonl');
+    vi.advanceTimersByTime(250);
+    await flush();
+    expect(watch.getPosture('s1', IDS)?.freshness).toBe('current');
+    mode = 'replacement';
+    h.emit(DAY12, 'rollout-a.jsonl');
+    vi.advanceTimersByTime(250);
+    await flush();
+    expect(watch.getPosture('s1', IDS)).toBeNull();
+    expect(watch.linkPosture('s1', IDS, uuid)).toBe(false);
+    watch.dispose();
+  });
+});
+
+describe('linked posture', () => {
+  it('uses only the bound UUID and folds each complete context in order', async () => {
+    const h = harness();
+    const updates: string[] = [];
+    h.deps.onPosture = (id) => updates.push(id);
+    const watch = createCodexRolloutWatch(h.deps);
+    h.files.set(FILE_A, `${PRIMARY}\n`);
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+    await flush();
+    expect(watch.linkPosture('s1', IDS, '01a1d190-aaaa-7db3-ae44-cb9dacc349ed')).toBe(false);
+    expect(
+      watch.linkPosture('s1', { ...IDS, generation: 2 }, '01a1d190-1af2-7db3-ae44-cb9dacc349ed'),
+    ).toBe(false);
+    expect(watch.linkPosture('s1', IDS, '01a1d190-1af2-7db3-ae44-cb9dacc349ed')).toBe(true);
+    expect(watch.getPosture('s1', IDS)?.reading).toBeNull();
+    const context = (payload: object) =>
+      JSON.stringify({
+        type: 'turn_context',
+        timestamp: '2026-11-17T12:00:00Z',
+        payload,
+      });
+    h.files.set(
+      FILE_A,
+      `${PRIMARY}\n${context({ sandbox_policy: { type: 'workspace-write' }, approval_policy: 'never' })}\n${context({})}\n`,
+    );
+    h.emit(DAY12, 'rollout-a.jsonl');
+    vi.advanceTimersByTime(250);
+    await flush();
+    expect(updates).toEqual(['s1']);
+    expect(watch.getPosture('s1', IDS)).toEqual({
+      freshness: 'current',
+      reading: {
+        status: 'unknown',
+        reportedAt: Date.parse('2026-11-17T12:00:00Z'),
+      },
+      lastKnown: {
+        status: 'known',
+        reportedAt: Date.parse('2026-11-17T12:00:00Z'),
+        sandbox: 'workspace-write',
+        approval: 'never',
+      },
+    });
+    watch.untrack('s1');
+    expect(watch.getPosture('s1', IDS)).toBeNull();
+    watch.dispose();
+  });
+});
+
+describe('posture retirement', () => {
+  it('permanently retires only matching IDs even when a read is in flight', async () => {
+    const h = harness();
+    const uuid = '01a1d190-1af2-7db3-ae44-cb9dacc349ed';
+    let release: (() => void) | undefined;
+    let hold = false;
+    const read = h.deps.fs.readFrom;
+    h.deps.fs.readFrom = async function* (file, offset, discard) {
+      for await (const event of read(file, offset, discard)) {
+        if (hold) {
+          hold = false;
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        yield event;
+      }
+    };
+    const watch = createCodexRolloutWatch(h.deps);
+    h.files.set(FILE_A, `${PRIMARY}\n`);
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+    await flush();
+    expect(watch.linkPosture('s1', IDS, uuid)).toBe(true);
+    watch.unlinkPosture('s1', { ...IDS, generation: 2 });
+    expect(watch.getPosture('s1', IDS)).not.toBeNull();
+    hold = true;
+    const context = JSON.stringify({
+      type: 'turn_context',
+      timestamp: '2026-11-17T12:00:00Z',
+      payload: {
+        sandbox_policy: { type: 'read-only' },
+        approval_policy: 'never',
+      },
+    });
+    h.files.set(FILE_A, `${PRIMARY}\n${context}\n`);
+    h.emit(DAY12, 'rollout-a.jsonl');
+    vi.advanceTimersByTime(250);
+    await flush();
+    expect(release).toBeDefined();
+    watch.unlinkPosture('s1', IDS);
+    expect(watch.getPosture('s1', IDS)).toBeNull();
+    expect(watch.linkPosture('s1', IDS, uuid)).toBe(false);
+    release?.();
+    await flush();
+    expect(watch.linkPosture('s1', IDS, uuid)).toBe(false);
+    expect(watch.boundFile('s1')).toBe(FILE_A);
+    watch.dispose();
   });
 });

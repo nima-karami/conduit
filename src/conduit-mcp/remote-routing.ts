@@ -81,6 +81,7 @@ export type RemotePolicyPushResult =
 /** What the link feeds A's copy of a machine's rules. `apply` takes a full snapshot; the states mark it stale or drop it. */
 export interface RemotePolicySink {
   apply(machineId: string, snap: RemotePolicySnapshot): void;
+  connectionReplaced(machineId: string): void;
   setLinkState(machineId: string, state: 'up' | 'down' | 'gone'): void;
 }
 
@@ -96,9 +97,14 @@ export type RemotePolicyApplyResult =
 
 export type RemoteGrantRevokeResult =
   | { ok: true }
-  | { ok: false; code: 'not_found'; message: string };
+  | { ok: false; code: 'not_found' | 'policy_unavailable'; message: string };
 
 export interface NetworkPort {
+  nativeSupport(machineId: string): boolean;
+  hasPeer(machineId: string): boolean | null;
+  grantPeerEligible(machineId: string): boolean;
+  onGrantPeerEligibilityChange(listener: () => void): () => void;
+  inboundPrincipal(machineId: string, handle: string): RemoteCaller | null;
   remoteEntries(): RemoteEntry[];
   /**
    * Runs a session tool on a machine I dialed over ssh, as `principalHandle` there (CON-40 S3). The
@@ -228,7 +234,11 @@ export interface McpNetworkPort {
   /** Fires when B's rules or grants change; returns its unsubscribe (CON-46 L2). */
   onPolicyDocChange(listener: () => void): () => void;
   /** Applies a controller's pushed doc to B's rules; B validates it and refuses a stale rev (CON-46 L2). */
-  applyRemotePolicy(baseRev: number, doc: unknown): RemotePolicyApplyResult;
+  applyRemotePolicy(
+    baseRev: number,
+    doc: unknown,
+    senderSupportsNative: boolean,
+  ): RemotePolicyApplyResult;
   /** Revokes a grant of B's, as the controller asked (CON-46 L2). */
   revokeRemoteGrant(grantId: string): RemoteGrantRevokeResult;
   /** A's copy of the rules a machine I dialed owns (CON-46 L4). */

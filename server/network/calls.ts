@@ -74,6 +74,7 @@ export interface CallsDeps {
 }
 
 export interface Calls {
+  inboundPrincipal(machineId: string, handle: string): RemoteCaller | null;
   /** Serving side for a `call` frame; always answers it with exactly one call.result. */
   serveCall(machineId: string, frame: CallFrame): Promise<void>;
   /** Routing side: runs a session tool on a machine I dialed, as `principalHandle` on my side. */
@@ -167,6 +168,20 @@ export function createCalls(deps: CallsDeps): Calls {
     deps.audit.record({ kind: 'call.refused', peer: machineId, detail: { reason } });
   };
 
+  const inboundPrincipal = (machineId: string, handle: string): RemoteCaller | null => {
+    const link = deps.linkOf(machineId);
+    if (!BARE_HANDLE.test(handle) || !isInboundSsh(link) || deps.linkState(machineId) !== 'up')
+      return null;
+    return {
+      kind: 'remote',
+      handle,
+      machineId: link.machineId,
+      trust: 'own',
+      controller: true,
+      capabilities: { ...link.capabilities },
+    };
+  };
+
   const serveCall = async (machineId: string, frame: CallFrame): Promise<void> => {
     const link = deps.linkOf(machineId);
     if (link === null || !isInboundSsh(link))
@@ -189,14 +204,14 @@ export function createCalls(deps: CallsDeps): Calls {
     }
     deps.log('routed call serving', { machineId, tool: frame.tool, id: frame.id });
     // The machine id is the link's own, never the frame's: a peer cannot name another machine.
-    const principal: RemoteCaller = {
-      kind: 'remote',
-      handle: frame.principal.handle,
-      machineId: link.machineId,
-      trust: 'own',
-      controller: true,
-      capabilities: { ...link.capabilities },
-    };
+    const principal = inboundPrincipal(machineId, frame.principal.handle);
+    if (principal === null) {
+      deps.send(
+        machineId,
+        errorFrame(frame.id, toolError('peer_unreachable', 'the controller link is not live')),
+      );
+      return;
+    }
     const inFlight = servedSetOf(machineId);
     const controller = new AbortController();
     inFlight.add(controller);
@@ -377,6 +392,7 @@ export function createCalls(deps: CallsDeps): Calls {
   };
 
   return {
+    inboundPrincipal,
     serveCall,
     call,
     onResult(machineId, frame) {

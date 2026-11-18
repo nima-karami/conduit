@@ -472,6 +472,13 @@ describe('validateAnswer', () => {
 
   it('allowed/denied valid only for permission', () => {
     const perm = rec('permission', 'policy');
+    expect(unwrap(validateAnswer(perm, { outcome: 'denied', scope: 'session' }))).toEqual({
+      outcome: 'denied',
+      scope: 'session',
+    });
+    expect(codeOf(validateAnswer(perm, { outcome: 'allowed', scope: 'session' }))).toBe(
+      'invalid_args',
+    );
     expect(unwrap(validateAnswer(perm, { outcome: 'allowed' }))).toEqual({ outcome: 'allowed' });
     expect(unwrap(validateAnswer(perm, { outcome: 'denied', reason: 'no' }))).toEqual({
       outcome: 'denied',

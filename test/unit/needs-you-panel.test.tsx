@@ -86,6 +86,7 @@ function mcp(open: RequestView[]): ConduitMcpApi {
   const state = {
     enabled: true,
     storeError: null,
+    native: {},
     loading: false,
     sessions: {},
     threads: [],
@@ -101,6 +102,7 @@ function mcp(open: RequestView[]): ConduitMcpApi {
   } as unknown as McpUiState;
   return {
     state,
+    getOwnerPermissions: vi.fn(async () => ({ permissions: [], nextCursor: null })),
     getThread: vi.fn(async () => null),
     send: vi.fn(async () => null),
     getAttachment: vi.fn(async () => null),
@@ -108,7 +110,6 @@ function mcp(open: RequestView[]): ConduitMcpApi {
     allowMore: vi.fn(),
     pause: vi.fn(),
     retry: vi.fn(),
-    setToolPolicy: vi.fn(async () => true),
     answerRequest: vi.fn(async () => ({
       ok: false as const,
       reason: 'not_found' as const,
@@ -176,6 +177,58 @@ describe('NeedsYouPanel', () => {
     expect(q('.needs-filterbar')).toBeTruthy();
     act(() => q<HTMLButtonElement>('.needs-filterbar__clear').click());
     expect(document.querySelector('.needs-filterbar')).toBeNull();
+  });
+
+  it('puts owner permissions in the open list and expired permissions in History', async () => {
+    const api = mcp(OPEN);
+    const row = {
+      id: 'p1',
+      sessionId: 's1',
+      requester: 'claude-7',
+      space: 'sp1',
+      lead: 's1',
+      machine: 'local',
+      title: 'Close target',
+      tool: 'close_session' as const,
+      why: 'Worker asks',
+      state: 'open' as const,
+      createdAt: ago(2),
+      expiresAt: null,
+      endedAt: null,
+      withdrawReason: null,
+      grantable: true,
+      answerable: true,
+      choices: [{ who: 'session' as const, on: 'target' as const, for: 'session-end' as const }],
+    };
+    vi.mocked(api.getOwnerPermissions).mockImplementation(async (state) => ({
+      permissions:
+        state === 'open'
+          ? [row]
+          : [
+              {
+                ...row,
+                id: 'p2',
+                state: 'expired' as const,
+                title: 'Expired target',
+                endedAt: ago(1),
+              },
+            ],
+      nextCursor: null,
+    }));
+    render(api);
+    await act(async () => undefined);
+    expect([...document.querySelectorAll('[role="option"]')].map((e) => e.textContent)).toEqual([
+      expect.stringContaining('Close target'),
+      expect.stringContaining('Delete 41'),
+    ]);
+    act(() =>
+      [...document.querySelectorAll<HTMLButtonElement>('.needs-seg__btn')]
+        .find((b) => b.textContent === REQ_STR.history)
+        ?.click(),
+    );
+    expect(q('.needs-list').textContent).toContain('Expired target');
+    act(() => (q('[role="option"]') as HTMLElement).click());
+    expect(q('.needs-permission').textContent).toContain('Allow next time');
   });
 
   it('What the icons mean opens the legend', () => {
