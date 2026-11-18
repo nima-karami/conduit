@@ -17648,16 +17648,33 @@ button.toggle--on .toggle__knob {
   margin-block: 12px;
   border-collapse: collapse;
   text-align: start;
-  overflow-wrap: anywhere;
 }
 .permissions-assignments__table :is(th, td) {
   border-bottom: 1px solid var(--border);
   padding: 8px;
   text-align: start;
-  vertical-align: top;
+  vertical-align: middle;
+  white-space: nowrap;
 }
-.permissions-assignments__table th {
-  min-width: 0;
+/* Only the name column may wrap; the others are short by design. */
+.permissions-assignments__table tbody th {
+  width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.permissions-assignments__table .permissions-assignments__actions {
+  text-align: end;
+}
+.permissions-assignments__actions > .btn + .btn {
+  margin-inline-start: 6px;
+}
+.permissions-assignments__muted {
+  color: var(--text-dim);
+}
+.permissions-assignments__sessions > summary {
+  cursor: pointer;
+  padding-block: 6px;
+  color: var(--text-dim);
 }
 .permissions-profile-editor__name {
   padding: 5px 9px;

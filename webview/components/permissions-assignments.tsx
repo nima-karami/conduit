@@ -80,6 +80,11 @@ function exceptionEntries(assignment: Assignment) {
     return { entry, index, key: `${signature}:${count}` };
   });
 }
+/** A count, not the list: the list lives in the edit view, where it has room. */
+function exceptionCount(assignment: Assignment): string {
+  const n = assignment.exceptions.length;
+  return n === 0 ? 'None' : n === 1 ? '1 exception' : `${n} exceptions`;
+}
 function facts(policy: PolicyUiState, assignment: Assignment) {
   const profile = profileFor(policy, assignment);
   return (
@@ -298,34 +303,63 @@ export function PermissionsAssignments({
     .filter((session) => policy.sessions[session.id])
     .map((session) => ({ id: session.id, label: session.name }));
 
-  const start = (target: AssignmentPoint) => {
+  const start = (target: AssignmentPoint): Edit => {
     const current = assignmentAt(policy, target) ?? inheritedAt(policy, target);
-    setEditing({
+    const edit: Edit = {
       point: target,
       draft: structuredClone(current),
       before: structuredClone(current),
       token: policy.editToken,
-    });
+    };
+    setEditing(edit);
     setError(null);
+    return edit;
   };
-  const requestReview = async (candidate: Assignment | null) => {
-    if (!editing) return;
+  // Reset goes through the same review as an edit, so its impact is shown before saving.
+  const reviewReset = (target: AssignmentPoint) => void requestReview(null, start(target));
+  const actions = (item: AssignmentPoint, explicit: boolean, name: string) => (
+    <td className="permissions-assignments__actions">
+      <button
+        type="button"
+        className="btn btn--sm"
+        disabled={readOnly}
+        aria-label={`${explicit ? 'Edit' : 'Add'} assignment · ${name}`}
+        onClick={() => start(item)}
+      >
+        {explicit ? 'Edit' : 'Add'}
+      </button>
+      {explicit && (
+        <button
+          type="button"
+          className="btn btn--sm"
+          disabled={readOnly || pending}
+          aria-label={`Reset assignment · ${name}`}
+          title="Remove this assignment so it inherits again"
+          onClick={() => reviewReset(item)}
+        >
+          Reset
+        </button>
+      )}
+    </td>
+  );
+  const requestReview = async (candidate: Assignment | null, from: Edit | null = editing) => {
+    if (!from) return;
     const frozen = candidate === null ? null : structuredClone(candidate);
     setPending(true);
     setError(null);
     try {
       const result = await mcp.reviewLocalPolicy(
-        { kind: 'assignment', point: editing.point, assignment: frozen },
-        editing.token,
+        { kind: 'assignment', point: from.point, assignment: frozen },
+        from.token,
       );
       if (!result?.ok) {
         setError(`Could not review permissions (${result?.error ?? 'timeout'}).`);
         return;
       }
       setReview({
-        ...editing,
+        ...from,
         candidate: frozen,
-        after: structuredClone(frozen ?? inheritedAt(policy, editing.point)),
+        after: structuredClone(frozen ?? inheritedAt(policy, from.point)),
         ...(result.requiresNativeReview ? { digest: result.digest } : {}),
       });
     } catch {
@@ -566,7 +600,9 @@ export function PermissionsAssignments({
             <th scope="col">Applies to</th>
             <th scope="col">Profile</th>
             <th scope="col">Exceptions</th>
-            <th scope="col">Actions</th>
+            <th scope="col">
+              <span className="sr-only">Actions</span>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -580,82 +616,72 @@ export function PermissionsAssignments({
                   <th scope="row">{label(item)}</th>
                   <td>
                     {profileFor(policy, value)?.name ?? value.profileId}
-                    {!explicit && item.kind !== 'default' ? ' (default)' : ''}
+                    {!explicit && item.kind !== 'default' && (
+                      <span className="permissions-assignments__muted"> · inherited</span>
+                    )}
                   </td>
-                  <td>
-                    {value.exceptions.length
-                      ? value.exceptions
-                          .map(
-                            (entry) =>
-                              `${entry.tool}: ${Object.entries(entry.rule)
-                                .map(([field, v]) => `${field} ${v}`)
-                                .join(', ')} · ${describeExceptionScope(entry.scope)}`,
-                          )
-                          .join('; ')
-                      : 'none'}
-                  </td>
-                  <td>
-                    <button
-                      type="button"
-                      className="btn btn--sm"
-                      disabled={readOnly}
-                      onClick={() => start(item)}
-                    >
-                      {explicit ? 'Edit' : 'Add'}
-                    </button>
-                  </td>
+                  <td>{exceptionCount(value)}</td>
+                  {actions(item, explicit !== undefined, label(item))}
                 </tr>
               );
             })}
-          {Object.entries(policy.sessions).map(([id, row]) => {
-            const item: AssignmentPoint = { kind: 'session', sessionId: id };
-            const explicit = assignmentAt(policy, item);
-            const value = explicit ?? inheritedAt(policy, item);
-            return (
-              <tr key={id}>
-                <th scope="row">{sessions.find((session) => session.id === id)?.name ?? id}</th>
-                <td>
-                  {row.profileName} · {label(row.sourcePoint)}
-                </td>
-                <td>
-                  {value.exceptions.length
-                    ? value.exceptions
-                        .map(
-                          (entry) =>
-                            `${entry.tool}: ${Object.entries(entry.rule)
-                              .map(([field, v]) => `${field} ${v}`)
-                              .join(', ')} · ${describeExceptionScope(entry.scope)}`,
-                        )
-                        .join('; ')
-                    : 'none'}
-                </td>
-                <td>
-                  {sessions.some((session) => session.id === id) && (
-                    <button
-                      type="button"
-                      className="btn btn--sm"
-                      disabled={readOnly}
-                      onClick={() => start(item)}
-                    >
-                      {explicit ? 'Edit' : 'Add'}
-                    </button>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
           {policy.assignments
             .filter(({ point: item }) => item.kind === 'peer')
             .map(({ point: item, assignment }) => (
               <tr key={pointKey(item)}>
                 <th scope="row">{label(item)}</th>
                 <td>{profileFor(policy, assignment)?.name ?? assignment.profileId}</td>
-                <td>{assignment.exceptions.length} exceptions</td>
+                <td>{exceptionCount(assignment)}</td>
                 <td />
               </tr>
             ))}
         </tbody>
       </table>
+      {Object.keys(policy.sessions).length > 0 && (
+        <details className="permissions-assignments__sessions">
+          <summary>Sessions ({Object.keys(policy.sessions).length})</summary>
+          <table className="permissions-assignments__table">
+            <thead>
+              <tr>
+                <th scope="col">Session</th>
+                <th scope="col">Profile</th>
+                <th scope="col">Exceptions</th>
+                <th scope="col">
+                  <span className="sr-only">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(policy.sessions).map(([id, row]) => {
+                const item: AssignmentPoint = { kind: 'session', sessionId: id };
+                const explicit = assignmentAt(policy, item);
+                const value = explicit ?? inheritedAt(policy, item);
+                const name = sessions.find((session) => session.id === id)?.name ?? id;
+                return (
+                  <tr key={id}>
+                    <th scope="row">{name}</th>
+                    <td>
+                      {row.profileName}
+                      {!explicit && (
+                        <span className="permissions-assignments__muted">
+                          {' '}
+                          · from {label(row.sourcePoint)}
+                        </span>
+                      )}
+                    </td>
+                    <td>{exceptionCount(value)}</td>
+                    {sessions.some((session) => session.id === id) ? (
+                      actions(item, explicit !== undefined, name)
+                    ) : (
+                      <td />
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </details>
+      )}
     </section>
   );
 }
