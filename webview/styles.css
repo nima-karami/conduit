@@ -8168,7 +8168,7 @@ body.gh-resizing {
   display: flex;
   flex-direction: column;
 }
-/* The MCP section bounds its own panels, so the pane never overflows and needs no override. */
+/* Panels scroll inside the MCP section so its tab bar stays put; see spec 2026-11-18-mcp-full-screen §2. */
 .settings__pane--mcp {
   display: flex;
   flex-direction: column;

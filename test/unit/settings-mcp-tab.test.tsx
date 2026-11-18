@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, type ComponentProps, useEffect } from 'react';
+import { act, type ComponentProps, useEffect, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentCli, McpInstallStatus } from '../../src/conduit-mcp/install-types';
@@ -34,7 +34,15 @@ vi.mock('../../webview/components/permissions-roles', () => ({
       registerBack(() => roles.stepBack());
       return () => registerBack(null);
     }, [registerBack]);
-    return <p>roles panel</p>;
+    const [count, setCount] = useState(0);
+    return (
+      <>
+        <p>roles panel</p>
+        <button type="button" className="roles-counter" onClick={() => setCount((n) => n + 1)}>
+          count {count}
+        </button>
+      </>
+    );
   },
 }));
 vi.mock('../../webview/bridge', async (importOriginal) => {
@@ -179,12 +187,17 @@ describe('Settings → MCP tab', () => {
     expect(selectedMcpTab()).toBe('Settings');
     await render({ page: { navSeq: 2, initialMcpTab: 'roles' } });
     expect(selectedMcpTab()).toBe('Roles');
-    await render({ tab: 'general', page: { navSeq: 3 } });
+    await act(async () => document.body.querySelector<HTMLElement>('.roles-counter')?.click());
+    expect(document.body.querySelector('.roles-counter')?.textContent).toBe('count 1');
+    await render({ page: { navSeq: 3, initialMcpTab: 'roles' } });
+    expect(selectedMcpTab()).toBe('Roles');
+    expect(document.body.querySelector('.roles-counter')?.textContent).toBe('count 1');
+    await render({ tab: 'general', page: { navSeq: 4 } });
     expect(navLabels().indexOf('General')).toBe(0);
     expect(document.body.querySelector('.settings__navitem--active')?.textContent).toBe('General');
     expect(document.body.querySelector('.settings-page')).toBe(page);
     expect(row?.isConnected).toBe(false);
-    await render({ page: { navSeq: 4 } });
+    await render({ page: { navSeq: 5 } });
     expect(document.body.querySelector('.settings-page')).toBe(page);
     expect(selectedMcpTab()).toBe('Settings');
   });
