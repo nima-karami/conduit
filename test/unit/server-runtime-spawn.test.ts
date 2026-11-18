@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   type Harness,
-  harness,
+  runtimeHarness as harness,
   hcLabelsFor,
   INSTANCE,
   labelsFor,

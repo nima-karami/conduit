@@ -48,7 +48,7 @@ export function parseNativeModes(value: unknown): NativeModes | null {
   return { claude, codex };
 }
 
-export function parseNativeLaunchIntent(value: unknown): NativeLaunchIntent | null {
+function parseNativeLaunchIntent(value: unknown): NativeLaunchIntent | null {
   if (!record(value)) return null;
   const { family, optedIn, requested } = value;
   if (family !== 'claude' && family !== 'codex') return null;

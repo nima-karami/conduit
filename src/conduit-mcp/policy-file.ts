@@ -171,6 +171,7 @@ const isFile = (v: unknown): v is RawPolicyFile =>
   (v.version === 1 || v.version === 2) &&
   (v.rev === undefined || isRev(v.rev)) &&
   arrayOf(isProfile)(v.profiles) &&
+  new Set(v.profiles.map((p) => p.id)).size === v.profiles.length &&
   arrayOf(isAssignmentEntry)(v.assignments) &&
   (v.version !== 1 ||
     (v.profiles.every((p) => !('nativeModes' in p)) &&
@@ -294,11 +295,15 @@ export function validateRemotePolicyDoc(v: unknown): RemoteDocCheck {
     return refuse(`profiles has more than ${REMOTE_POLICY_PROFILES_MAX} entries`);
 
   const profiles: Profile[] = [];
+  const seenProfiles = new Map<string, number>();
   for (const [i, raw] of v.profiles.entries()) {
     const at = `profiles[${i}]`;
     if (!isProfile(raw)) return refuse(`${at} is malformed`);
     // Built-in profiles come from policy-profiles on every machine; a pushed copy would only shadow them.
     if (!raw.id.startsWith('p-')) return refuse(`${at}.id is not a custom profile id`);
+    const first = seenProfiles.get(raw.id);
+    if (first !== undefined) return refuse(`${at}.id duplicates profiles[${first}].id`);
+    seenProfiles.set(raw.id, i);
     if (raw.name.length > REMOTE_POLICY_NAME_MAX) return refuse(`${at}.name too long`);
     if (!printableName(raw.name, REMOTE_POLICY_NAME_MAX))
       return refuse(raw.name.trim() === '' ? `${at}.name empty` : `${at}.name not printable`);

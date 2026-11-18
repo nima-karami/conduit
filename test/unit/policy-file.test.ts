@@ -84,6 +84,20 @@ const validFile = (): PolicyFile => ({
 });
 
 describe('policy file', () => {
+  it.each([1, 2])('refuses ambiguous profile IDs in local policy v%s', (version) => {
+    const file = validFile();
+    const profile = file.profiles[0];
+    expect(
+      parsePolicyFile(
+        JSON.stringify({
+          ...file,
+          version,
+          profiles: [profile, { ...profile, name: 'Duplicate' }],
+        }),
+      ),
+    ).toEqual({ ok: false, reason: 'corrupt' });
+  });
+
   it('rejects native authority injected into a v1 file and reads vetted v2 modes', () => {
     const file = validFile();
     const native = {

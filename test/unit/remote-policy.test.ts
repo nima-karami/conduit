@@ -536,6 +536,36 @@ it('old connection completion cannot clear the same draft submitted in a new lif
     policy: { assignments: LEAD_DEFAULT.assignments },
   });
 });
+it.each(['snapshot-first', 'ack-first'] as const)(
+  'matching Conduit-only snapshot and ack preserve the editor token in the same turn (%s)',
+  async (order) => {
+    const { store, pushPolicy } = rig();
+    let acknowledge!: (value: Awaited<ReturnType<NetworkPort['pushPolicy']>>) => void;
+    pushPolicy.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          acknowledge = resolve;
+        }),
+    );
+    mirrored(store);
+    expect(store.edit('m-1', (svc) => svc.setAssignment({ kind: 'default' }, 'lead'))).toEqual({
+      ok: true,
+    });
+    await Promise.resolve();
+    const token = store.ui(NAMES)[0].policy.editToken;
+    if (order === 'ack-first') acknowledge({ ok: true, value: { rev: 4 } });
+    store.apply('m-1', snap(4, LEAD_DEFAULT));
+    expect(store.ui(NAMES)[0].policy.editToken).toBe(token);
+    if (order === 'snapshot-first') acknowledge({ ok: true, value: { rev: 4 } });
+    await settle();
+    expect(store.ui(NAMES)[0]).toMatchObject({
+      rev: 4,
+      status: 'applied',
+      policy: { editToken: token },
+    });
+  },
+);
+
 it('successful ack promotes submitted rules before cleanup and failed cleanup never resends current intent', async () => {
   const { store, pushPolicy, drafts } = rig();
   let reply!: (value: Awaited<ReturnType<NetworkPort['pushPolicy']>>) => void;
@@ -876,18 +906,37 @@ describe('remote native review', () => {
     }
   });
 
-  it('an unreadable snapshot arriving before dispatch makes the old display stale', async () => {
+  it.each([2, 4])(
+    'an unreadable revision %s arriving before dispatch makes the old display stale',
+    async (rev) => {
+      const { store, pushPolicy } = rig({ support: true });
+      mirrored(store);
+      expect(store.editFull('m-1', token(store), edit, true)).toEqual({ ok: true });
+      const before = token(store);
+      const invalid = { ...EMPTY, assignments: [{}] } as unknown as RemotePolicyDoc;
+      store.apply('m-1', snap(rev, invalid));
+      await settle();
+      expect(pushPolicy).not.toHaveBeenCalled();
+      expect(token(store)).not.toBe(before);
+      expect(store.ui(NAMES)[0]).toMatchObject({ rev: 3, status: 'waiting', conflict: null });
+      expect(store.reapply('m-1', token(store), true)).toEqual({ ok: false, error: 'not-found' });
+    },
+  );
+
+  it('rejects duplicate profiles in a snapshot before dispatching a pending draft', async () => {
     const { store, pushPolicy } = rig({ support: true });
     mirrored(store);
     expect(store.editFull('m-1', token(store), edit, true)).toEqual({ ok: true });
     const before = token(store);
-    const invalid = { ...EMPTY, assignments: [{}] } as unknown as RemotePolicyDoc;
-    store.apply('m-1', snap(4, invalid));
+    const profile: Profile = { ...structuredClone(OBSERVER), id: 'p-duplicate', builtIn: false };
+    store.apply(
+      'm-1',
+      snap(3, { profiles: [profile, { ...profile, name: 'duplicate' }], assignments: [] }),
+    );
     await settle();
     expect(pushPolicy).not.toHaveBeenCalled();
     expect(token(store)).not.toBe(before);
     expect(store.ui(NAMES)[0]).toMatchObject({ rev: 3, status: 'waiting', conflict: null });
-    expect(store.reapply('m-1', token(store), true)).toEqual({ ok: false, error: 'not-found' });
   });
 
   it('an invalid push conflict cannot replace the receiver policy used for review', async () => {

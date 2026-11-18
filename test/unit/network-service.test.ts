@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -7,20 +8,32 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { createConnection } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { Duplex, PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { writeServerSecret } from '../../server/lifecycle/server-secret';
 import type { AuditEvent } from '../../server/network/audit-log';
 import { handleMachineCall } from '../../server/network/c2';
-import { loadIdentity } from '../../server/network/identity';
+import { type Identity, loadIdentity, signProof, verifyProof } from '../../server/network/identity';
 import { createNetwork, type NetworkService } from '../../server/network/index';
+import { openConnection } from '../../server/network/link-connection';
 import type { Machines } from '../../server/network/machines';
+import * as sshDialer from '../../server/network/ssh-dialer';
 import { RpcFault } from '../../server/transport/pipe';
 import { CONNECT_BUDGET_MS } from '../../src/conduit-mcp/machine-tools';
+import { createRemotePolicy } from '../../src/conduit-mcp/remote-policy';
 import type { McpNetworkPort, RemoteEntry } from '../../src/conduit-mcp/remote-routing';
 import type { MessageRecord } from '../../src/conduit-mcp/types';
-import { LINK_PROTOCOL, type MonitorSession } from '../../src/contracts/link-protocol';
+import {
+  type HelloFrame,
+  LINK_FEATURES,
+  LINK_PROTOCOL,
+  type LinkFrame,
+  type MonitorSession,
+  OWN_DEFAULT_CAPABILITIES,
+} from '../../src/contracts/link-protocol';
 import type { NetworkState } from '../../src/contracts/network-state';
 import type { ServerEventSink } from '../../src/contracts/server-ports';
 import type { TerminalRuntime } from '../../src/contracts/terminal-runtime';
@@ -41,6 +54,8 @@ afterEach(async () => {
 
 /** What a test server's ports answer with: its ssh config, its sessions, and its observer and events. */
 interface ServerOpts {
+  identity?: Identity;
+  policySink?: () => ReturnType<typeof createRemotePolicy> | null;
   sshConfig?: () => string | null;
   sessions?: MonitorSession[];
   observe?: TerminalRuntime['observe'];
@@ -62,7 +77,7 @@ function server(name: string, endpointIn?: (root: string) => string, opts: Serve
     linkEndpoint: endpointIn ? endpointIn(root) : join(root, 'conduit-link.sock'),
     appVersion: TEST_APP_VERSION,
     secret: () => secret,
-    identity: loaded.identity,
+    identity: opts.identity ?? loaded.identity,
     settings: () => ({ networkBindHost: '127.0.0.1', networkPort: 0, networkSelfName: name }),
     readSshConfig: opts.sshConfig ?? (() => null),
     sessionRoots: () => null,
@@ -117,7 +132,7 @@ function server(name: string, endpointIn?: (root: string) => string, opts: Serve
           message: 'not wired in this fixture',
         }),
       },
-      a: () => null,
+      a: opts.policySink ?? (() => null),
     },
     monitor: {
       sessions: () => opts.sessions ?? [],
@@ -244,7 +259,180 @@ const auditKinds = (dir: string) =>
     .split('\n')
     .map((l) => JSON.parse(l).kind);
 
+function testStreamPair(): [Duplex, Duplex] {
+  const a = new PassThrough();
+  const b = new PassThrough();
+  const end = (readable: PassThrough, writable: PassThrough) => {
+    const stream = new Duplex({
+      read() {
+        readable.resume();
+      },
+      write(chunk: Buffer, _encoding, callback) {
+        writable.write(chunk, callback);
+      },
+      final(callback) {
+        writable.end(callback);
+      },
+      destroy(error, callback) {
+        readable.destroy();
+        writable.destroy();
+        callback(error);
+      },
+    });
+    readable.on('data', (chunk: Buffer) => {
+      if (!stream.push(chunk)) readable.pause();
+    });
+    readable.on('end', () => stream.push(null));
+    return stream;
+  };
+  return [end(a, b), end(b, a)];
+}
+
+function testHello(id: Identity): HelloFrame {
+  return {
+    t: 'hello',
+    protocol: LINK_PROTOCOL,
+    machineId: id.machineId,
+    serverKey: id.serverKeyRaw.toString('base64'),
+    ownerKey: null,
+    selfName: 'peer',
+    features: [...LINK_FEATURES],
+    capabilities: { ...OWN_DEFAULT_CAPABILITIES },
+    nonce: randomBytes(32).toString('base64'),
+  };
+}
+
+async function signedPeer(stream: Duplex, id: Identity, frames: LinkFrame[]) {
+  const hello = testHello(id);
+  if (!hello.nonce) throw new Error('missing nonce');
+  const nonce = hello.nonce;
+  const result = await openConnection(stream, {
+    hello,
+    now: Date.now,
+    log: quiet,
+    proof: {
+      sign: (nonce, peer) => signProof(id, nonce, peer),
+      verify: (peer, signature) =>
+        verifyProof(peer.serverKey, signature, nonce, peer.machineId, id.machineId),
+    },
+  });
+  if ('error' in result) throw new Error(`peer handshake: ${result.error}`);
+  result.start({
+    onFrame: (frame) => frames.push(frame),
+    onClose: () => undefined,
+  });
+  return result;
+}
+
 describe('network service over C2 calls', { timeout: 60_000 }, () => {
+  it('invalidates native review on an authenticated same-state SSH replacement', async () => {
+    let owner: ReturnType<typeof createRemotePolicy> | null = null;
+    let initialPeer: Promise<Awaited<ReturnType<typeof signedPeer>>> | undefined;
+    const peerDir = mkdtempSync(join(tmpdir(), 'conduit-peer-'));
+    cleanup.push(() => rmSync(peerDir, { recursive: true, force: true }));
+    const firstIdentity = loadIdentity(join(peerDir, 'first'));
+    const secondIdentity = loadIdentity(join(peerDir, 'second'));
+    if (firstIdentity.kind === 'newer' || secondIdentity.kind === 'newer')
+      throw new Error('unexpected identity');
+    const [peerIdentity, localIdentity] = [firstIdentity.identity, secondIdentity.identity].sort(
+      (a, b) => a.machineId.localeCompare(b.machineId),
+    );
+    if (peerIdentity.machineId === localIdentity.machineId) throw new Error('duplicate identity');
+    const initialFrames: LinkFrame[] = [];
+    const spy = vi.spyOn(sshDialer, 'createSshDial').mockImplementation(() => () => {
+      const [near, far] = testStreamPair();
+      initialPeer = signedPeer(far, peerIdentity, initialFrames);
+      return { stream: near, failure: async () => null };
+    });
+    cleanup.push(() => spy.mockRestore());
+    const a = server('controller', undefined, { identity: localIdentity, policySink: () => owner });
+    let nextId = 0;
+    const controller = createRemotePolicy({
+      network: () => a.net.port(),
+      draftsIo: { read: () => null, writeSync: () => true },
+      now: Date.now,
+      newId: () => `test-${++nextId}`,
+      setTimer: () => null,
+      clearTimer: () => undefined,
+      warn: () => undefined,
+    });
+    owner = controller;
+    await a.net.start();
+    const added = await a.net.addSshPeer({
+      target: 'test',
+      node: 'node',
+      mainJs: 'main',
+      userData: 'data',
+    });
+    expect(added).toEqual({ ok: true, machineId: peerIdentity.machineId });
+    if (!initialPeer) throw new Error('missing initial stream');
+    const first = await initialPeer;
+    const empty = { profiles: [], assignments: [] };
+    first.send({ t: 'policy.changed', rev: 3, doc: empty, grants: [] });
+    const id = peerIdentity.machineId;
+    const ui = () => controller.ui((machine) => machine)[0];
+    await until(() => ui()?.policy != null);
+    const edit = {
+      kind: 'assignment' as const,
+      point: { kind: 'default' as const },
+      assignment: {
+        profileId: 'observer' as const,
+        exceptions: [],
+        onScreenOnly: false,
+        applyNative: true,
+      },
+    };
+    expect(owner.editFull(id, ui().policy.editToken, edit, true)).toEqual({
+      ok: true,
+    });
+    await until(() => initialFrames.some((frame) => frame.t === 'policy.push'));
+    const push = initialFrames.find((frame) => frame.t === 'policy.push');
+    if (push?.t !== 'policy.push') throw new Error('missing push');
+    const oldToken = ui().policy.editToken;
+    const socket = createConnection(join(dirname(a.dir), 'conduit-link.sock'));
+    cleanup.push(() => {
+      socket.destroy();
+    });
+    await new Promise<void>((resolve, reject) => {
+      socket.once('connect', resolve);
+      socket.once('error', reject);
+    });
+    const secret = readFileSync(join(dirname(a.dir), 'server-secret'), 'utf8').trim();
+    const body = Buffer.from(JSON.stringify({ t: 'bridge', v: 1, secret }));
+    const preamble = Buffer.alloc(4 + body.length);
+    preamble.writeUInt32BE(body.length, 0);
+    body.copy(preamble, 4);
+    socket.write(preamble);
+    const replacementFrames: LinkFrame[] = [];
+    const replacement = await signedPeer(socket, peerIdentity, replacementFrames);
+    const changed = {
+      profiles: [],
+      assignments: [
+        {
+          point: { kind: 'default' as const },
+          assignment: {
+            profileId: 'lead' as const,
+            exceptions: [],
+            onScreenOnly: false,
+            applyNative: true,
+          },
+        },
+      ],
+    };
+    replacement.send({ t: 'policy.changed', rev: 3, doc: changed, grants: [] });
+    replacement.send({ t: 'policy.pushed', id: push.id, ok: true, rev: 4 });
+    await until(() => ui().nativeReviewRequired);
+    expect(ui().policy.editToken).not.toBe(oldToken);
+    expect(owner.reapply(id, oldToken, true)).toEqual({
+      ok: false,
+      error: 'conflict',
+    });
+    expect(ui().rev).toBe(3);
+    expect(ui().conflict?.assignments).toEqual(changed.assignments);
+    expect(ui().status).not.toBe('applied');
+    expect(replacementFrames.filter((frame) => frame.t === 'policy.push')).toHaveLength(0);
+  });
+
   it('pairs two servers, links them own and up, then a revoke reaches the peer', async () => {
     const a = server('net-a');
     const b = server('net-b');

@@ -1,9 +1,9 @@
+import { posix, win32 } from 'node:path';
 import type {
   NativeLaunchFailure,
   NativeLaunchIntent,
   NativeSelection,
 } from './contracts/native-launch';
-import { commandLeaf } from './launch-args';
 import type { HostPlatform } from './lsp-binary';
 import { coerceModel } from './session-command';
 import type { AgentDefinition, SpawnSpec } from './types';
@@ -64,10 +64,13 @@ export function prepareNativeLaunch(
   )
     return { ok: false, problem: 'conflict' };
 
-  const direct = (command: string): boolean =>
-    commandLeaf(command) === intent.family &&
-    !/\.bat$/i.test(command) &&
-    (platform === 'win32' || !/\.(cmd|exe)$/i.test(command));
+  const direct = (command: string): boolean => {
+    if (platform !== 'win32') return posix.basename(command) === intent.family;
+    const leaf = win32.basename(command).toLowerCase();
+    return (
+      leaf === intent.family || leaf === `${intent.family}.exe` || leaf === `${intent.family}.cmd`
+    );
+  };
   const modelFlag = intent.family === 'claude' ? '--model' : '-m';
   const validArgs =
     def.args.length === 0 ||

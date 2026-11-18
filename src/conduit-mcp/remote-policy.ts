@@ -249,8 +249,7 @@ export function createRemotePolicy(deps: RemotePolicyDeps): RemotePolicy {
     e.link === 'up' && deps.network()?.nativeSupport(machineId) === true;
   const signature = (e: Entry): string =>
     JSON.stringify([
-      baseOf(e),
-      e.mirror?.rev,
+      baseOf(e)?.doc,
       e.mirror && nativeProjection(e.mirror.doc),
       e.conflict,
       e.nativeReviewRequired,
@@ -335,12 +334,6 @@ export function createRemotePolicy(deps: RemotePolicyDeps): RemotePolicy {
     const settle = (result: RemotePolicyPushResult, wire: RemotePolicyDoc): void => {
       if (!current()) return;
       const before = signature(e);
-      const stableAck =
-        result.ok &&
-        e.mirror !== null &&
-        equalDoc(submitted.doc, wire) &&
-        nativeProjection(e.mirror.doc) === nativeProjection(wire) &&
-        (e.mirror.rev <= result.value.rev || equalDoc(e.mirror.doc, wire));
       if (result.ok) {
         if (e.mirror === null || e.mirror.rev <= result.value.rev)
           e.mirror = {
@@ -381,7 +374,7 @@ export function createRemotePolicy(deps: RemotePolicyDeps): RemotePolicy {
         e.refusal = result.error.message;
         e.status = 'refused';
       }
-      if (!stableAck) rotateIfChanged(e, before);
+      rotateIfChanged(e, before);
       if (!e.fresh) e.editToken = deps.newId();
       notify();
     };
@@ -543,7 +536,6 @@ export function createRemotePolicy(deps: RemotePolicyDeps): RemotePolicy {
   return {
     apply(machineId, snap) {
       const e = entry(machineId);
-      if (e.fresh && e.mirror !== null && snap.rev < e.mirror.rev) return;
       const checked = validateRemotePolicyDoc(snap.doc);
       if (!revIsValid(snap.rev) || !checked.ok) {
         stale(e);
@@ -552,6 +544,7 @@ export function createRemotePolicy(deps: RemotePolicyDeps): RemotePolicy {
         notify();
         return;
       }
+      if (e.fresh && e.mirror !== null && snap.rev < e.mirror.rev) return;
       const before = signature(e);
       if (e.link !== 'up') e.epoch++;
       e.mirror = { rev: snap.rev, doc: checked.doc, grants: structuredClone(snap.grants) };

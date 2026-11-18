@@ -63,7 +63,7 @@ export interface Harness {
   close(): Promise<void>;
 }
 
-export async function harness(overrides: Partial<HcRuntimeDeps> = {}): Promise<Harness> {
+export async function runtimeHarness(overrides: Partial<HcRuntimeDeps> = {}): Promise<Harness> {
   const fake = new FakeHc();
   await fake.listen();
   const attachChannels: number[] = [];

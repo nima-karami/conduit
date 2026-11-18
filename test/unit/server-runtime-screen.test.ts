@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { type Harness, harness, labelsFor, launch } from '../../server/runtime/testing/harness';
+import {
+  type Harness,
+  runtimeHarness as harness,
+  labelsFor,
+  launch,
+} from '../../server/runtime/testing/harness';
 import { FrameKind } from '../../src/contracts/frames';
 
 let h: Harness;

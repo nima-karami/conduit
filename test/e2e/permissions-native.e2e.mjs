@@ -27,14 +27,19 @@ function launchProbe(server, cli, label) {
     `
 const { writeFileSync } = require('node:fs');
 const args = process.argv.slice(2);
-const modeFlag = ${JSON.stringify(cli === 'claude' ? '--permission-mode' : '--sandbox')};
-const get = (flag) => { const i = args.indexOf(flag); return i === -1 ? null : args[i + 1]; };
+const modelFlag = ${JSON.stringify(cli === 'claude' ? '--model' : '-m')};
+const length = ${cli === 'claude' ? 2 : 4};
+const nativeParts = new Set([
+  '--permission-mode', '--sandbox', '--ask-for-approval',
+  'plan', 'acceptEdits', 'read-only', 'workspace-write', 'on-request',
+]);
+const nativeFlags = new Set(['--permission-mode', '--sandbox', '--ask-for-approval', '-s', '-a']);
+const modelIndex = args.indexOf(modelFlag);
 writeFileSync(${JSON.stringify(record)}, JSON.stringify({
-  mode: get(modeFlag),
-  approval: get('--ask-for-approval'),
-  first: args[0] === modeFlag,
-  model: get(${JSON.stringify(cli === 'claude' ? '--model' : '-m')}) === 'owned-test-model',
-  claudeMcpSuffix: args.includes('--mcp-config') && args.indexOf('--mcp-config') > args.indexOf(modeFlag),
+  prefix: args.slice(0, length).map((item) => nativeParts.has(item) ? item : null),
+  nativeFlagCount: args.filter((item) => nativeFlags.has(item.split('=', 1)[0])).length,
+  modelIndex: modelIndex >= 0 && args[modelIndex + 1] === 'owned-test-model' ? modelIndex : -1,
+  claudeMcpIndex: args.indexOf('--mcp-config'),
 }));
 process.stdin.resume();
 `,
@@ -108,7 +113,7 @@ async function launchCases(server) {
   const worker = await start(server, workerId);
   assert(worker.ok && worker.spawned, `Worker probe did not start: ${JSON.stringify(worker)}`);
   assert(
-    (await actualArgs(workerProbe)).mode === null,
+    (await actualArgs(workerProbe)).nativeFlagCount === 0,
     'an implicit Worker launch got native flags',
   );
 
@@ -119,7 +124,7 @@ async function launchCases(server) {
   const optOut = await start(server, offId);
   assert(optOut.ok && optOut.spawned, 'the opt-out probe did not start');
   assert(
-    (await actualArgs(offProbe)).mode === null,
+    (await actualArgs(offProbe)).nativeFlagCount === 0,
     'opt-out accidentally applied native Lead mode',
   );
 
@@ -148,7 +153,10 @@ async function launchCases(server) {
   assert(claude.ok && claude.spawned, `Claude probe did not start: ${JSON.stringify(claude)}`);
   const cl = await actualArgs(claudeProbe);
   assert(
-    cl.mode === 'plan' && cl.first && cl.model && cl.claudeMcpSuffix,
+    JSON.stringify(cl.prefix) === JSON.stringify(['--permission-mode', 'plan']) &&
+      cl.nativeFlagCount === 1 &&
+      cl.modelIndex === 2 &&
+      cl.claudeMcpIndex > cl.modelIndex + 1,
     `Claude argv order: ${JSON.stringify(cl)}`,
   );
 
@@ -171,7 +179,10 @@ async function launchCases(server) {
   assert(codex.ok && codex.spawned, `MCP-off Codex probe did not start: ${JSON.stringify(codex)}`);
   const co = await actualArgs(codexProbe);
   assert(
-    co.mode === 'workspace-write' && co.approval === 'on-request' && co.first && co.model,
+    JSON.stringify(co.prefix) ===
+      JSON.stringify(['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request']) &&
+      co.nativeFlagCount === 2 &&
+      co.modelIndex === 4,
     `Codex argv order: ${JSON.stringify(co)}`,
   );
 

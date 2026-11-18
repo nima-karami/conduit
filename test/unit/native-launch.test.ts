@@ -90,6 +90,18 @@ describe('native launch argv preparation', () => {
     ).toEqual({ ok: false, problem: 'unsupported' });
   });
 
+  it.each([
+    ['/usr/bin/wrapper\\claude', '/usr/bin/claude'],
+    ['/usr/bin/claude', '/usr/bin/wrapper\\claude'],
+  ])(
+    'rejects POSIX backslashes inside a configured or resolved executable basename',
+    (command, resolved) => {
+      expect(
+        prepareNativeLaunch(claude, { command, args: [] }, { ...spec, command: resolved }, 'linux'),
+      ).toEqual({ ok: false, problem: 'unsupported' });
+    },
+  );
+
   it('refuses known native launch while policy is unavailable', () => {
     expect(
       prepareNativeLaunch(

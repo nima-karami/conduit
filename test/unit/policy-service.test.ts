@@ -24,7 +24,8 @@ import type {
   Profile,
   ProfileId,
 } from '../../src/conduit-mcp/policy-types';
-import { type CliKind, DEFAULT_TOOL_POLICY } from '../../src/conduit-mcp/tool-policy';
+import { type CliKind, DEFAULT_TOOL_POLICY, TOOL_GROUPS } from '../../src/conduit-mcp/tool-policy';
+import { prepareNativeLaunch } from '../../src/native-launch';
 
 const DEFAULT_RULES = OBSERVER.rules;
 
@@ -2847,6 +2848,44 @@ describe('native profile authority', () => {
   } as const;
   const token = (service: PolicyService) => service.ui([]).editToken;
 
+  it('keeps migrated all-on Lead native launch opted out', async () => {
+    const actual = await vi.importActual<typeof import('../../src/conduit-mcp/policy-migration')>(
+      '../../src/conduit-mcp/policy-migration',
+    );
+    vi.mocked(migrateLegacyPolicy).mockImplementationOnce(actual.migrateLegacyPolicy);
+    const h = harness();
+    const layer: import('../../src/conduit-mcp/tool-policy').PolicyLayer = {};
+    for (const group of TOOL_GROUPS.filter((g) => g.group === 'sessions' || g.group === 'editor')) {
+      for (const tool of group.tools) layer[tool] = { access: 'on' };
+    }
+    h.deps.legacy = () => ({
+      global: DEFAULT_TOOL_POLICY,
+      byCli: {},
+      sessions: [{ sessionId: 's1', layer, cli: null }],
+    });
+    h.service.start();
+    h.fire(WRITE_MS);
+    const saved = parsePolicyFile(h.policyWrites[0] ?? '');
+    expect(saved.ok).toBe(true);
+    if (!saved.ok) throw new Error('migration did not persist');
+    expect(saved.file.assignments).toEqual([
+      expect.objectContaining({
+        point: { kind: 'session', sessionId: 's1' },
+        assignment: expect.objectContaining({ profileId: 'lead', onScreenOnly: true }),
+      }),
+    ]);
+    expect(saved.file.assignments[0]?.assignment).not.toHaveProperty('applyNative');
+    const selection = h.service.nativeLaunch('s1', 'claude');
+    expect(selection).toEqual({
+      status: 'available',
+      intent: { family: 'claude', optedIn: false, requested: null },
+    });
+    const spec = { command: 'claude', args: ['--model', 'sonnet'], cwd: '/work' };
+    expect(
+      prepareNativeLaunch(selection, { command: 'claude', args: spec.args }, spec, 'linux'),
+    ).toMatchObject({ ok: true, spec });
+  });
+
   it('requires owner consent and refuses legacy materialization over inherited opt-in', () => {
     const { service, policyWrites } = harness();
     service.start();
@@ -2900,6 +2939,51 @@ describe('native profile authority', () => {
     const recovery = harness({ policy: '{"version":99}', lastGood: policyText() }).service;
     recovery.start();
     expect(recovery.nativeLaunch('s1', 'codex')).toEqual({ status: 'unavailable' });
+  });
+
+  it('refuses duplicate portable profile orderings before altering a private opted-in session', () => {
+    const neutral: Profile = {
+      id: 'p-native',
+      name: 'Neutral',
+      builtIn: false,
+      rules: DEFAULT_RULES,
+      nativeModes: { claude: 'unset', codex: 'unset' },
+    };
+    const planned: Profile = {
+      ...neutral,
+      name: 'Plan',
+      nativeModes: { claude: 'plan', codex: 'unset' },
+    };
+    const { service, policyWrites } = harness({
+      policy: policyText({
+        profiles: [neutral],
+        assignments: [
+          {
+            point: { kind: 'session', sessionId: 's1' },
+            assignment: { ...optedIn, profileId: neutral.id, exceptions: [] },
+          },
+        ],
+      }),
+    });
+    service.start();
+    const launch = {
+      status: 'available',
+      intent: { family: 'claude', optedIn: true, requested: null },
+    };
+    expect(service.nativeLaunch('s1', 'claude')).toEqual(launch);
+    for (const profiles of [
+      [planned, neutral],
+      [neutral, planned],
+    ]) {
+      expect(service.applyRemoteDoc(0, { profiles, assignments: [] }, true)).toMatchObject({
+        ok: false,
+        code: 'invalid_args',
+        message: expect.stringContaining('duplicates'),
+      });
+      expect(service.nativeLaunch('s1', 'claude')).toEqual(launch);
+      expect(service.remoteDoc().rev).toBe(0);
+      expect(policyWrites).toHaveLength(0);
+    }
   });
 
   it('protects retained private assignments and refuses a legacy controller native delta', () => {

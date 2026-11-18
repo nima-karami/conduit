@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { disposeHarnesses, FakeRuntime, harness, isFault } from '../../server/domain/testing/fakes';
 import { createPersistentTokenStore } from '../../server/mcp/token-file';
+import { hcLabelsFor, runtimeHarness } from '../../server/runtime/testing/harness';
 import type { SessionStartResult } from '../../src/contracts/server-protocol';
 import { COMMAND_AGENT_ID } from '../../src/session-command';
 import { PTY_SETTLE_MS } from '../../src/timed-messages';
@@ -1058,15 +1059,44 @@ describe('server domain: native launch commitment', () => {
     rmSync(path, { recursive: true });
     writeFileSync(path, previous);
 
-    const terminal = h.runtime.live(id, prior.generation, prior.launchId, { cols: 80, rows: 24 });
-    await store.resolveAddress(prior.launchId, terminal.target.terminal);
-    expect(store.rows()).toMatchObject({ state: 'loaded', rows: [{ ...prior, state: 'live' }] });
-    h.runtime.fire({
-      type: 'spawned',
-      sessionId: id,
-      generation: prior.generation,
-      size: terminal.size,
-    });
-    expect(await start(h, id)).toMatchObject({ ok: true, spawned: false, generation: 1 });
+    const rh = await runtimeHarness({ tokens: store });
+    try {
+      rh.fake.terminals.push({
+        address: 'late-address',
+        name: prior.launchId,
+        labels: hcLabelsFor(id, prior),
+        argv: ['node'],
+        cwd: '/work',
+        state: 'live',
+        created_ms: 1,
+        screen: 'exact',
+        cols: 80,
+        rows: 24,
+      });
+      const adopted = await rh.runtime.reconcile();
+      expect(adopted).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            sessionId: id,
+            generation: prior.generation,
+          }),
+        ]),
+      );
+      expect(rh.runtime.get(id)).toMatchObject({
+        sessionId: id,
+        generation: prior.generation,
+        launchId: prior.launchId,
+        target: { terminal: 'late-address' },
+      });
+      expect(store.rows()).toMatchObject({
+        state: 'loaded',
+        rows: [{ ...prior, state: 'live', hcAddress: 'late-address' }],
+      });
+      expect(
+        rh.fake.calls.filter((c) => c.method === 'terminal.run' || c.method === 'terminal.kill'),
+      ).toEqual([]);
+    } finally {
+      await rh.close();
+    }
   });
 });
