@@ -25,15 +25,10 @@ await runScenario(
         access: 'on',
         when: 'always',
       });
-      await setSessionPolicy(page, lead.sessionId, 'read_screen', {
-        access: 'on',
-        when: 'always',
-        reach: 'opened',
-      });
+      await setSessionPolicy(page, lead.sessionId, 'read_screen', { when: 'always' });
       await setSessionPolicy(page, lead.sessionId, 'send_input', {
         access: 'on',
         when: 'always',
-        reach: 'opened',
       });
       const opened = await callTool(page, lead.sessionId, 'open_session', {
         agent: 'e2e-fake-startup',
