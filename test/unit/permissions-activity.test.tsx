@@ -42,6 +42,8 @@ it('queries the scoped activity and opens recorded facts by keyboard', async () 
       />,
     ),
   );
+  expect(host.querySelector('section[aria-label="Permissions Activity"]')).not.toBeNull();
+  expect(host.querySelector('main')).toBeNull();
   expect(getActivity).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', limit: 50 }));
   expect(host.textContent).toContain('Observed');
   expect(host.textContent).toContain('Session One');

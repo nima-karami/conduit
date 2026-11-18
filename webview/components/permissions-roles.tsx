@@ -11,6 +11,7 @@ import type {
 import { TOOL_NAMES } from '../../src/conduit-mcp/tool-policy';
 import type { Session } from '../../src/types';
 import type { ConduitMcpApi } from '../use-conduit-mcp';
+import type { BackHandler } from './mcp-section';
 import { PermissionsProfileEditor } from './permissions-profile-editor';
 import { PermissionsProfiles } from './permissions-profiles';
 
@@ -45,7 +46,7 @@ export function PermissionsRoles({
   serverConnected: boolean;
   mcp: ConduitMcpApi;
   sessions: Session[];
-  registerBack(handler: (() => boolean) | null): void;
+  registerBack(handler: BackHandler | null): void;
 }) {
   const policy = mcp.state?.policy;
   useEffect(() => {

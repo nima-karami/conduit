@@ -5,6 +5,12 @@ import { CLI_KINDS } from '../../src/conduit-mcp/tool-policy';
 import { subscribe } from '../bridge';
 import { type ActivityExceptionSource, PermissionsActivityWhy } from './permissions-activity-why';
 
+export interface ActivityScope {
+  sessionId?: string;
+  machineId?: string;
+  item?: Pick<ActivityEntry, 'id' | 'at'>;
+}
+
 type Option = { id: string; name: string };
 type Filters = {
   session: string;
@@ -152,7 +158,7 @@ export function PermissionsActivity({
       .filter(Boolean)
       .join(' · ') || 'Unknown';
   return (
-    <main className="permissions-activity" aria-label="Permissions Activity">
+    <section className="permissions-activity" aria-label="Permissions Activity">
       <header className="permissions-activity__header">
         <h1 ref={heading} tabIndex={-1}>
           Permissions Activity
@@ -360,6 +366,6 @@ export function PermissionsActivity({
           />
         </div>
       )}
-    </main>
+    </section>
   );
 }

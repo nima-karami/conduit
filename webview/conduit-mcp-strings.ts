@@ -73,8 +73,21 @@ const PROJECT_SCOPE = { project: 'Project', local: 'Local' } satisfies Record<Pr
 const installErrorText = (code: string): string => INSTALL_ERROR_TEXT[code] ?? code;
 const scopeThreadCount = (n: number) => `${n.toLocaleString()} ${n === 1 ? 'thread' : 'threads'}`;
 
+export const MCP_TAB_ORDER = ['settings', 'roles', 'agents', 'grants', 'activity'] as const;
+export type McpTabId = (typeof MCP_TAB_ORDER)[number];
+
 export const MCP_STR = {
   tab: 'Messages',
+  sections: {
+    tablistLabel: 'MCP sections',
+    tabs: {
+      settings: 'Settings',
+      roles: 'Roles',
+      agents: 'Agents',
+      grants: 'Grants',
+      activity: 'Activity',
+    } satisfies Record<McpTabId, string>,
+  },
   firstRun: 'Agents in your sessions can message each other and you. Messages appear here.',
   noUnread: 'No unread messages',
   noMessagesInScope: 'No messages in this scope',
