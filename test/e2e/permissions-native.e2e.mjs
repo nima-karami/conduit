@@ -76,13 +76,25 @@ async function owner(server, message) {
   return result.reply?.result;
 }
 
-async function assign(server, point, profileId, applyNative, nativeConsent) {
+async function assign(server, point, profileId, applyNative, reviewed) {
+  const expectedToken = (await snapshot(server)).mcp.policy.editToken;
+  const assignment = { profileId, applyNative, exceptions: [], onScreenOnly: false };
+  let nativeReview;
+  if (reviewed) {
+    const review = await owner(server, {
+      type: 'mcp:reviewLocalPolicy',
+      expectedToken,
+      edit: { kind: 'assignment', point, assignment },
+    });
+    if (!review?.ok) return review;
+    nativeReview = review.requiresNativeReview ? review.digest : undefined;
+  }
   return owner(server, {
     type: 'mcp:saveAssignment',
     point,
-    expectedToken: (await snapshot(server)).mcp.policy.editToken,
-    assignment: { profileId, applyNative, exceptions: [], onScreenOnly: false },
-    nativeConsent,
+    expectedToken,
+    assignment,
+    ...(nativeReview === undefined ? {} : { nativeReview }),
   });
 }
 
@@ -93,6 +105,19 @@ async function create(server, probe, args) {
     command: { command: probe.command, args },
     brief: { kind: 'none' },
     placement: { focus: false },
+  });
+  // This fixture is the owner window. The app normally sends this presence after creating a row.
+  const ownedSessionIds = (await snapshot(server)).sessions.map(({ id }) => id);
+  await server.c2.call('ui.presence', {
+    windows: [
+      {
+        windowId: 1,
+        focused: true,
+        ready: true,
+        visibleSessionIds: ownedSessionIds,
+        ownedSessionIds,
+      },
+    ],
   });
   return session.sessionId;
 }
@@ -150,14 +175,50 @@ async function launchCases(server) {
     refused?.error === 'native-review-required',
     'an unreviewed native assignment was accepted',
   );
-  const claudeEdit = await assign(
-    server,
-    { kind: 'session', sessionId: claudeId },
-    'observer',
-    true,
-    true,
+  const point = { kind: 'session', sessionId: claudeId };
+  const assignment = {
+    profileId: 'observer',
+    applyNative: true,
+    exceptions: [],
+    onScreenOnly: false,
+  };
+  const expectedToken = (await snapshot(server)).mcp.policy.editToken;
+  const review = await owner(server, {
+    type: 'mcp:reviewLocalPolicy',
+    expectedToken,
+    edit: { kind: 'assignment', point, assignment },
+  });
+  assert(
+    review?.ok && review.requiresNativeReview,
+    `native review failed: ${JSON.stringify(review)}`,
   );
+  const different = await owner(server, {
+    type: 'mcp:saveAssignment',
+    expectedToken,
+    point,
+    assignment: { ...assignment, onScreenOnly: true },
+    nativeReview: review.digest,
+  });
+  assert(
+    different?.error === 'native-review-required',
+    'a different candidate reused the native review',
+  );
+  const claudeEdit = await owner(server, {
+    type: 'mcp:saveAssignment',
+    expectedToken,
+    point,
+    assignment,
+    nativeReview: review.digest,
+  });
   assert(claudeEdit?.ok, `reviewed Observer assignment failed: ${JSON.stringify(claudeEdit)}`);
+  const stale = await owner(server, {
+    type: 'mcp:saveAssignment',
+    expectedToken,
+    point,
+    assignment,
+    nativeReview: review.digest,
+  });
+  assert(stale?.error === 'conflict', 'an old token and digest were accepted');
   const claude = await start(server, claudeId);
   assert(claude.ok && claude.spawned, `Claude probe did not start: ${JSON.stringify(claude)}`);
   const cl = await actualArgs(claudeProbe);

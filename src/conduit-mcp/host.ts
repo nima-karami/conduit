@@ -106,13 +106,15 @@ import {
 import { composeUnreadBanner } from './notice-text';
 import { type AttentionRaise, bannerCandidates, createNotifier, type Notifier } from './notifier';
 import { reasonText } from './policy-engine';
-import { createPolicyIo, type PolicyIo } from './policy-file-fs';
+import { validatePolicyAssignment, validatePolicyProfile } from './policy-file';
+import { createPolicyIo, POLICY_MAX_BYTES, type PolicyIo } from './policy-file-fs';
 import { isNativeFamily } from './policy-native';
 import { createPolicyService } from './policy-service';
 import { forcesAsk, resolveTargets, type TargetDeps } from './policy-targets';
 import type {
   AssignmentPoint,
   GrantBatchResult,
+  LocalPolicyEdit,
   OneUseOverride,
   PolicyDecision,
   PolicyInput,
@@ -1820,6 +1822,109 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     if (point.kind === 'peer') return 'machineId' in point && typeof point.machineId === 'string';
     return point.kind === 'cli' && 'cli' in point && CLI_KINDS.some((kind) => kind === point.cli);
   };
+  const keys = (v: unknown, allowed: readonly string[]): v is Record<string, unknown> =>
+    typeof v === 'object' &&
+    v !== null &&
+    !Array.isArray(v) &&
+    Object.keys(v).every((k) => allowed.includes(k));
+  const boundedString = (v: unknown) => typeof v === 'string' && v.length <= POLICY_MAX_BYTES;
+  const knownRule = (v: unknown) => keys(v, ['decision', 'when', 'reach', 'move']);
+  const knownPoint = (v: unknown): v is AssignmentPoint =>
+    keys(v, ['kind', 'sessionId', 'machineId', 'cli']) &&
+    validPoint(v) &&
+    keys(
+      v,
+      v.kind === 'session'
+        ? ['kind', 'sessionId']
+        : v.kind === 'peer'
+          ? ['kind', 'machineId']
+          : v.kind === 'cli'
+            ? ['kind', 'cli']
+            : ['kind'],
+    ) &&
+    Object.values(v).every(boundedString);
+  const knownAssignment = (point: AssignmentPoint, v: unknown): boolean => {
+    if (v === null)
+      return !!validatePolicyAssignment(point, {
+        profileId: 'worker',
+        exceptions: [],
+        onScreenOnly: false,
+      });
+    if (
+      !keys(v, ['profileId', 'exceptions', 'onScreenOnly', 'applyNative', 'pinned']) ||
+      !Array.isArray(v.exceptions) ||
+      v.exceptions.length > 1024 ||
+      (v.pinned !== undefined &&
+        (!Array.isArray(v.pinned) || v.pinned.length > 1024 || !v.pinned.every(boundedString)))
+    )
+      return false;
+    if (
+      !v.exceptions.every(
+        (e) =>
+          keys(e, ['tool', 'scope', 'rule']) &&
+          keys(e.scope, ['kind', 'projectId', 'path', 'sessionId']) &&
+          keys(
+            e.scope,
+            e.scope.kind === 'space'
+              ? ['kind', 'projectId']
+              : e.scope.kind === 'path' || e.scope.kind === 'folder'
+                ? ['kind', 'path']
+                : e.scope.kind === 'session'
+                  ? ['kind', 'sessionId']
+                  : ['kind'],
+          ) &&
+          Object.values(e.scope).every(boundedString) &&
+          knownRule(e.rule),
+      )
+    )
+      return false;
+    return !!validatePolicyAssignment(point, v);
+  };
+  const knownProfile = (v: unknown): boolean =>
+    keys(v, ['id', 'name', 'builtIn', 'nativeModes', 'rules']) &&
+    keys(v.rules, TOOL_NAMES) &&
+    Object.values(v.rules).every(knownRule) &&
+    (v.nativeModes === undefined || keys(v.nativeModes, ['claude', 'codex'])) &&
+    !!validatePolicyProfile(v);
+  const withinPolicyLimit = (root: unknown): boolean => {
+    let remaining = POLICY_MAX_BYTES;
+    const visit = (v: unknown, depth: number): boolean => {
+      if (depth > 8 || --remaining < 0) return false;
+      if (typeof v === 'string') {
+        remaining -= Buffer.byteLength(v);
+        return remaining >= 0;
+      }
+      if (v === null || typeof v === 'boolean' || typeof v === 'number') return true;
+      if (Array.isArray(v))
+        return v.length <= remaining && v.every((item) => visit(item, depth + 1));
+      if (typeof v !== 'object') return false;
+      return Object.entries(v).every(
+        ([key, value]) => visit(key, depth + 1) && visit(value, depth + 1),
+      );
+    };
+    return visit(root, 0);
+  };
+  const validLocalEdit = (v: unknown): v is LocalPolicyEdit => {
+    if (!keys(v, ['kind', 'point', 'assignment', 'profile', 'profileId', 'replacement']))
+      return false;
+    if (v.kind === 'assignment' && keys(v, ['kind', 'point', 'assignment']) && knownPoint(v.point))
+      return knownAssignment(v.point, v.assignment);
+    if (v.kind === 'profile' && keys(v, ['kind', 'profile'])) return knownProfile(v.profile);
+    return (
+      v.kind === 'delete-profile' &&
+      keys(v, ['kind', 'profileId', 'replacement']) &&
+      boundedString(v.profileId) &&
+      boundedString(v.replacement)
+    );
+  };
+  const localOwner = (sender: number, edit: LocalPolicyEdit): boolean =>
+    sender !== NO_OWNER_WINDOW &&
+    sender > 0 &&
+    deps.windowReady(sender) &&
+    (edit.kind !== 'assignment' ||
+      edit.point.kind !== 'session' ||
+      (!!deps.sessions.get(edit.point.sessionId) &&
+        deps.ownerWindowOf(edit.point.sessionId) === sender));
   /** An optional machine an edit names: a string, or absent for this machine's own rules. */
   const machineArg = (machine: unknown): machine is string | undefined =>
     machine === undefined || (typeof machine === 'string' && machine.length > 0);
@@ -3973,42 +4078,85 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           scheduleBroadcast();
           return;
         }
+        case 'mcp:reviewLocalPolicy':
         case 'mcp:saveAssignment':
         case 'mcp:saveProfile':
         case 'mcp:deleteProfile':
         case 'mcp:policyRetry': {
           if (!Number.isSafeInteger(m.requestId) || m.requestId < 0) return;
-          const validToken =
+          const edit =
+            m.type === 'mcp:reviewLocalPolicy'
+              ? m.edit
+              : m.type === 'mcp:saveAssignment'
+                ? { kind: 'assignment', point: m.point, assignment: m.assignment }
+                : m.type === 'mcp:saveProfile'
+                  ? { kind: 'profile', profile: m.profile }
+                  : m.type === 'mcp:deleteProfile'
+                    ? { kind: 'delete-profile', profileId: m.profileId, replacement: m.replacement }
+                    : null;
+          let bounded = false;
+          try {
+            bounded = edit !== null && withinPolicyLimit(edit) && validLocalEdit(edit);
+          } catch {
+            bounded = false;
+          }
+          const tokenValid =
             m.type === 'mcp:policyRetry' ||
             (typeof m.expectedToken === 'string' &&
               m.expectedToken.length > 0 &&
               m.expectedToken.length <= 512);
+          const authorized =
+            m.type === 'mcp:policyRetry'
+              ? senderId > 0 && senderId !== NO_OWNER_WINDOW && deps.windowReady(senderId)
+              : bounded && edit !== null && validLocalEdit(edit) && localOwner(senderId, edit);
+          const envelopeKeys =
+            m.type === 'mcp:reviewLocalPolicy'
+              ? ['type', 'requestId', 'expectedToken', 'edit']
+              : m.type === 'mcp:saveAssignment'
+                ? ['type', 'requestId', 'expectedToken', 'point', 'assignment', 'nativeReview']
+                : m.type === 'mcp:saveProfile'
+                  ? ['type', 'requestId', 'expectedToken', 'profile', 'nativeReview']
+                  : m.type === 'mcp:deleteProfile'
+                    ? [
+                        'type',
+                        'requestId',
+                        'expectedToken',
+                        'profileId',
+                        'replacement',
+                        'nativeReview',
+                      ]
+                    : ['type', 'requestId'];
           const invalid =
+            !keys(m, envelopeKeys) ||
+            !withinPolicyLimit(m) ||
+            !authorized ||
+            !tokenValid ||
             'machine' in m ||
-            !validToken ||
-            ('nativeConsent' in m && typeof m.nativeConsent !== 'boolean') ||
-            (m.type === 'mcp:saveAssignment' &&
-              (!validPoint(m.point) ||
-                (m.point.kind === 'session' && !deps.sessions.get(m.point.sessionId)))) ||
-            (m.type === 'mcp:deleteProfile' &&
-              (typeof m.profileId !== 'string' || typeof m.replacement !== 'string'));
+            'nativeConsent' in m ||
+            ('nativeReview' in m &&
+              (typeof m.nativeReview !== 'string' || !/^[a-f0-9]{64}$/.test(m.nativeReview)));
+          if (m.type === 'mcp:reviewLocalPolicy') {
+            reply({
+              type: 'mcp:reviewLocalPolicyResult',
+              requestId: m.requestId,
+              result: invalid
+                ? { ok: false, error: 'invalid-value' }
+                : policyService.reviewLocalPolicy(m.edit, m.expectedToken),
+            });
+            return;
+          }
           const result = invalid
             ? { ok: false as const, error: 'invalid-value' as const }
             : m.type === 'mcp:saveAssignment'
-              ? policyService.saveAssignment(
-                  m.point,
-                  m.assignment,
-                  m.expectedToken,
-                  m.nativeConsent,
-                )
+              ? policyService.saveAssignment(m.point, m.assignment, m.expectedToken, m.nativeReview)
               : m.type === 'mcp:saveProfile'
-                ? policyService.saveProfile(m.profile, m.expectedToken, m.nativeConsent)
+                ? policyService.saveProfile(m.profile, m.expectedToken, m.nativeReview)
                 : m.type === 'mcp:deleteProfile'
                   ? policyService.deleteProfile(
                       m.profileId,
                       m.replacement,
                       m.expectedToken,
-                      m.nativeConsent,
+                      m.nativeReview,
                     )
                   : policyService.retrySave();
           reply({ type: 'mcp:policyEditResult', requestId: m.requestId, result });

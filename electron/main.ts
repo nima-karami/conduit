@@ -4016,6 +4016,7 @@ app.whenReady().then(() => {
         case 'mcp:activity:get':
         case 'mcp:linkCodexThread':
         case 'mcp:codexPostureQuery':
+        case 'mcp:reviewLocalPolicy':
         case 'mcp:saveAssignment':
         case 'mcp:saveProfile':
         case 'mcp:deleteProfile':

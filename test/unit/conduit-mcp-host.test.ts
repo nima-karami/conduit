@@ -2581,6 +2581,127 @@ async function setHostPolicy(h: Harness, id: string, layer: PolicyLayer | undefi
 }
 
 describe('owner durable permission edits', () => {
+  it('scopes local review and save to the ready session owner and rejects extra nested fields', async () => {
+    const write = vi.fn(() => true as const);
+    const h = harness({ policyIo: { read: () => null, writeSync: write } });
+    h.sessions.set('s1', session('s1'));
+    await h.host.start();
+    const expectedToken = h.host.uiState().policy.editToken;
+    const edit = {
+      kind: 'assignment',
+      point: { kind: 'session', sessionId: 's1' },
+      assignment: { profileId: 'worker', exceptions: [], onScreenOnly: false, applyNative: true },
+    };
+    const send = async (message: unknown, sender: number) => {
+      let result: HostToWebview | undefined;
+      await h.host.handleRenderer(
+        message as McpRendererMessage,
+        (m) => {
+          result = m;
+        },
+        sender,
+      );
+      return result;
+    };
+    const review = { type: 'mcp:reviewLocalPolicy', requestId: 4, expectedToken, edit };
+    const initialWrites = write.mock.calls.length;
+    expect(await send(review, 2)).toMatchObject({ result: { ok: false, error: 'invalid-value' } });
+    expect(await send({ ...review, secret: { arbitrary: 'data' } }, 1)).toMatchObject({
+      result: { ok: false, error: 'invalid-value' },
+    });
+    const globalReview = { ...review, edit: { ...edit, point: { kind: 'default' } } };
+    expect(await send(globalReview, 0)).toMatchObject({
+      result: { ok: false, error: 'invalid-value' },
+    });
+    h.presence.ready.delete(1);
+    expect(await send(globalReview, 1)).toMatchObject({
+      result: { ok: false, error: 'invalid-value' },
+    });
+    expect(await send(review, 1)).toMatchObject({ result: { ok: false, error: 'invalid-value' } });
+    h.presence.ready.add(1);
+    const baseSave = {
+      type: 'mcp:saveAssignment',
+      requestId: 5,
+      expectedToken,
+      point: edit.point,
+      assignment: edit.assignment,
+    };
+    for (const extra of [
+      { nativeConsent: true },
+      { nativeConsent: false },
+      { nativeReview: true },
+      { nativeReview: 'invalid' },
+    ])
+      expect(await send({ ...baseSave, ...extra }, 1)).toMatchObject({
+        result: { ok: false, error: 'invalid-value' },
+      });
+    expect(await send({ ...baseSave, point: { kind: 'default' } }, 0)).toMatchObject({
+      result: { ok: false, error: 'invalid-value' },
+    });
+
+    expect(
+      await send(
+        {
+          type: 'mcp:saveAssignment',
+          requestId: 5,
+          expectedToken,
+          point: edit.point,
+          assignment: edit.assignment,
+        },
+        2,
+      ),
+    ).toMatchObject({ result: { ok: false, error: 'invalid-value' } });
+    expect(
+      await send(
+        { ...review, edit: { ...edit, assignment: { ...edit.assignment, secret: 'not allowed' } } },
+        1,
+      ),
+    ).toMatchObject({ result: { ok: false, error: 'invalid-value' } });
+    for (const badEdit of [
+      { ...edit, point: { ...edit.point, machineId: 'extra' } },
+      {
+        ...edit,
+        assignment: {
+          ...edit.assignment,
+          exceptions: [
+            {
+              tool: 'open_session',
+              scope: { kind: 'anywhere', path: '/extra' },
+              rule: { decision: 'ask' },
+            },
+          ],
+        },
+      },
+      {
+        ...edit,
+        assignment: {
+          ...edit.assignment,
+          exceptions: [
+            {
+              tool: 'open_session',
+              scope: { kind: 'anywhere' },
+              rule: { decision: 'ask', secret: true },
+            },
+          ],
+        },
+      },
+      { ...edit, assignment: { ...edit.assignment, pinned: ['x'.repeat(1024 * 1024)] } },
+    ]) {
+      expect(await send({ ...review, edit: badEdit }, 1)).toMatchObject({
+        result: { ok: false, error: 'invalid-value' },
+      });
+      expect(
+        await send({ ...baseSave, point: badEdit.point, assignment: badEdit.assignment }, 1),
+      ).toMatchObject({ result: { ok: false, error: 'invalid-value' } });
+    }
+    expect(write).toHaveBeenCalledTimes(initialWrites);
+    expect(await send(review, 1)).toMatchObject({
+      type: 'mcp:reviewLocalPolicyResult',
+      requestId: 4,
+      result: { ok: true, requiresNativeReview: true },
+    });
+  });
+
   it('returns exact save failures and conflicts and refuses remote or malformed full edits', async () => {
     let down = false;
     const policy = serializePolicyFile({

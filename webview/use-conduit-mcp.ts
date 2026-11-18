@@ -3,6 +3,8 @@ import type { ActivityPage, ActivityQuery } from '../src/conduit-mcp/activity-qu
 import type {
   Assignment,
   AssignmentPoint,
+  LocalPolicyEdit,
+  LocalPolicyReviewResult,
   PermissionAnswer,
   PolicyEditResult,
   Profile,
@@ -53,19 +55,23 @@ export interface ConduitMcpApi {
     point: AssignmentPoint,
     assignment: Assignment | null,
     expectedToken: string,
-    nativeConsent?: boolean,
+    nativeReview?: string,
   ): Promise<PolicyEditResult | null>;
   saveProfile(
     profile: Profile,
     expectedToken: string,
-    nativeConsent?: boolean,
+    nativeReview?: string,
   ): Promise<PolicyEditResult | null>;
   deleteProfile(
     profileId: ProfileId,
     replacement: ProfileId,
     expectedToken: string,
-    nativeConsent?: boolean,
+    nativeReview?: string,
   ): Promise<PolicyEditResult | null>;
+  reviewLocalPolicy(
+    edit: LocalPolicyEdit,
+    expectedToken: string,
+  ): Promise<LocalPolicyReviewResult | null>;
   retryPolicy(): Promise<PolicyEditResult | null>;
   getActivity(query: ActivityQuery): Promise<ActivityPage | null>;
   getOwnerPermissions(
@@ -149,7 +155,7 @@ export function getRequestsSnapshot(): RequestsUiState | null {
 }
 
 const api: Omit<ConduitMcpApi, 'state'> = {
-  async saveAssignment(point, assignment, expectedToken, nativeConsent) {
+  async saveAssignment(point, assignment, expectedToken, nativeReview) {
     const r = await requestHost(
       (requestId) => ({
         type: 'mcp:saveAssignment',
@@ -157,28 +163,28 @@ const api: Omit<ConduitMcpApi, 'state'> = {
         point,
         assignment,
         expectedToken,
-        ...(nativeConsent === undefined ? {} : { nativeConsent }),
+        ...(nativeReview === undefined ? {} : { nativeReview }),
       }),
       ['mcp:policyEditResult'],
       REQUEST_TIMEOUT_MS,
     );
     return r?.result ?? null;
   },
-  async saveProfile(profile, expectedToken, nativeConsent) {
+  async saveProfile(profile, expectedToken, nativeReview) {
     const r = await requestHost(
       (requestId) => ({
         type: 'mcp:saveProfile',
         requestId,
         profile,
         expectedToken,
-        ...(nativeConsent === undefined ? {} : { nativeConsent }),
+        ...(nativeReview === undefined ? {} : { nativeReview }),
       }),
       ['mcp:policyEditResult'],
       REQUEST_TIMEOUT_MS,
     );
     return r?.result ?? null;
   },
-  async deleteProfile(profileId, replacement, expectedToken, nativeConsent) {
+  async deleteProfile(profileId, replacement, expectedToken, nativeReview) {
     const r = await requestHost(
       (requestId) => ({
         type: 'mcp:deleteProfile',
@@ -186,9 +192,17 @@ const api: Omit<ConduitMcpApi, 'state'> = {
         profileId,
         replacement,
         expectedToken,
-        ...(nativeConsent === undefined ? {} : { nativeConsent }),
+        ...(nativeReview === undefined ? {} : { nativeReview }),
       }),
       ['mcp:policyEditResult'],
+      REQUEST_TIMEOUT_MS,
+    );
+    return r?.result ?? null;
+  },
+  async reviewLocalPolicy(edit, expectedToken) {
+    const r = await requestHost(
+      (requestId) => ({ type: 'mcp:reviewLocalPolicy', requestId, expectedToken, edit }),
+      ['mcp:reviewLocalPolicyResult'],
       REQUEST_TIMEOUT_MS,
     );
     return r?.result ?? null;

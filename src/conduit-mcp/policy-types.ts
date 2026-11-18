@@ -219,3 +219,12 @@ export interface PolicyUiState {
   legacy: { global: PolicyLayer; byCli: CliPolicyLayers; sessions: Record<string, PolicyLayer> };
   readOnly: boolean;
 }
+
+export type LocalPolicyEdit =
+  | { kind: 'assignment'; point: AssignmentPoint; assignment: Assignment | null }
+  | { kind: 'profile'; profile: Profile }
+  | { kind: 'delete-profile'; profileId: ProfileId; replacement: ProfileId };
+export type LocalPolicyReviewResult =
+  | { ok: true; requiresNativeReview: false }
+  | { ok: true; requiresNativeReview: true; digest: string }
+  | { ok: false; error: PolicyEditError };

@@ -2893,6 +2893,178 @@ describe('native profile authority', () => {
     ).toMatchObject({ ok: true, spec });
   });
 
+  it('binds review to the exact local candidate', () => {
+    const { service } = harness();
+    service.start();
+    const current = token(service);
+    const assignment = { ...optedIn, exceptions: [] };
+    const review = service.reviewLocalPolicy({ kind: 'assignment', point, assignment }, current);
+    expect(review.ok && review.requiresNativeReview).toBe(true);
+    if (!review.ok || !review.requiresNativeReview) throw new Error('review missing');
+    expect(
+      service.saveAssignment(
+        point,
+        { ...assignment, onScreenOnly: !assignment.onScreenOnly },
+        current,
+        review.digest,
+      ),
+    ).toEqual({ ok: false, error: 'native-review-required' });
+    expect(service.saveAssignment(point, assignment, current, review.digest)).toEqual({ ok: true });
+    expect(service.saveAssignment(point, assignment, current, review.digest)).toEqual({
+      ok: false,
+      error: 'conflict',
+    });
+  });
+
+  it('rejects an old digest with a fresh edit token after an unrelated policy edit', () => {
+    const h = harness();
+    h.service.start();
+    const oldToken = token(h.service);
+    const assignment = { ...optedIn, exceptions: [] };
+    const edit = { kind: 'assignment', point, assignment } as const;
+    const oldReview = h.service.reviewLocalPolicy(edit, oldToken);
+    if (!oldReview.ok || !oldReview.requiresNativeReview) throw new Error('review missing');
+    const otherPoint = { kind: 'session', sessionId: 's1' } as const;
+    const ordinary = { profileId: 'lead' as const, exceptions: [], onScreenOnly: false };
+    expect(h.service.saveAssignment(otherPoint, ordinary, oldToken)).toEqual({ ok: true });
+    const freshToken = token(h.service);
+    expect(freshToken).not.toBe(oldToken);
+    const before = h.service.ui([]);
+    const bytes = [...h.policyWrites];
+    expect(h.service.saveAssignment(point, assignment, freshToken, oldReview.digest)).toEqual({
+      ok: false,
+      error: 'native-review-required',
+    });
+    expect(h.policyWrites).toEqual(bytes);
+    expect(h.service.ui([]).profiles).toEqual(before.profiles);
+    expect(h.service.ui([]).assignments).toEqual(before.assignments);
+    const freshReview = h.service.reviewLocalPolicy(edit, freshToken);
+    if (!freshReview.ok || !freshReview.requiresNativeReview)
+      throw new Error('fresh review missing');
+    expect(freshReview.digest).not.toBe(oldReview.digest);
+    expect(h.service.saveAssignment(point, assignment, freshToken, freshReview.digest)).toEqual({
+      ok: true,
+    });
+  });
+
+  it('keeps review stable across grant changes and fails closed on persistence failure', () => {
+    const original = policyText();
+    const h = harness({
+      policy: original,
+      grants: serializeGrantsFile({ version: 1, grants: [grant()] }),
+    });
+    h.service.start();
+    let durable = original;
+    const write = h.deps.policyIo.writeSync;
+    h.deps.policyIo.writeSync = (bytes) => {
+      const result = write(bytes);
+      if (result) durable = bytes;
+      return result;
+    };
+    const current = token(h.service);
+    const assignment = { ...optedIn, exceptions: [] };
+    const edit = { kind: 'assignment', point, assignment } as const;
+    const review = h.service.reviewLocalPolicy(edit, current);
+    if (!review.ok || !review.requiresNativeReview) throw new Error('review missing');
+    expect(h.service.revokeGrant('g1')).toEqual({ ok: true });
+    expect(h.service.reviewLocalPolicy(edit, current)).toEqual(review);
+    expect(h.policyWrites).toEqual([]);
+    expect(
+      Reflect.apply(h.service.saveAssignment, h.service, [point, assignment, current, true]),
+    ).toEqual({ ok: false, error: 'native-review-required' });
+    expect(durable).toBe(original);
+    h.setWriteDown(true);
+    expect(h.service.saveAssignment(point, assignment, current, review.digest)).toEqual({
+      ok: false,
+      error: 'save-failed',
+    });
+    expect(h.policyWrites).toEqual([]);
+    expect(durable).toBe(original);
+    expect(h.service.ui([]).assignments).toEqual([]);
+    expect(token(h.service)).toBe(current);
+    h.setWriteDown(false);
+    expect(h.service.saveAssignment(point, assignment, current, review.digest)).toEqual({
+      ok: true,
+    });
+    const saved = parsePolicyFile(h.policyWrites[0] ?? '');
+    if (!saved.ok) throw new Error('policy did not persist');
+    expect(saved.file.assignments).toEqual([{ point, assignment }]);
+    const initial = parsePolicyFile(original);
+    if (!initial.ok) throw new Error('invalid fixture');
+    expect(h.policyWrites[0]).toBe(
+      serializePolicyFile({ ...initial.file, assignments: [{ point, assignment }], rev: 1 }),
+    );
+    expect(durable).toBe(h.policyWrites[0]);
+    expect(h.policyWrites).toHaveLength(1);
+  });
+
+  it('normalizes pins but preserves exception order in the review digest', () => {
+    const { service } = harness();
+    service.start();
+    const point = { kind: 'cli', cli: 'claude' } as const;
+    const one = {
+      tool: 'open_session',
+      scope: { kind: 'anywhere' },
+      rule: { decision: 'ask' },
+    } as const;
+    const two = {
+      tool: 'send_input',
+      scope: { kind: 'anywhere' },
+      rule: { decision: 'deny' },
+    } as const;
+    const assignment = {
+      ...optedIn,
+      exceptions: [one, two],
+      pinned: ['send_input.decision', 'open_session.decision'],
+    };
+    const current = token(service);
+    const review = service.reviewLocalPolicy({ kind: 'assignment', point, assignment }, current);
+    const reorderedPins = service.reviewLocalPolicy(
+      {
+        kind: 'assignment',
+        point,
+        assignment: { ...assignment, pinned: [...assignment.pinned].reverse() },
+      },
+      current,
+    );
+    const reorderedRules = service.reviewLocalPolicy(
+      { kind: 'assignment', point, assignment: { ...assignment, exceptions: [two, one] } },
+      current,
+    );
+    expect(review).toEqual(reorderedPins);
+    expect(review).not.toEqual(reorderedRules);
+  });
+
+  it('reviews profile and replacement edits and preview does not write', () => {
+    const h = harness();
+    h.service.start();
+    const profile = {
+      ...OBSERVER,
+      id: 'p-review' as const,
+      name: 'Review',
+      builtIn: false,
+      nativeModes: { claude: 'plan' as const, codex: 'unset' as const },
+    };
+    const current = token(h.service);
+    const review = h.service.reviewLocalPolicy({ kind: 'profile', profile }, current);
+    expect(h.policyWrites).toHaveLength(0);
+    if (!review.ok || !review.requiresNativeReview) throw new Error('review missing');
+    expect(h.service.saveProfile(profile, current, 'wrong')).toEqual({
+      ok: false,
+      error: 'native-review-required',
+    });
+    expect(h.service.saveProfile(profile, current, review.digest)).toEqual({ ok: true });
+    const next = token(h.service);
+    const deletion = h.service.reviewLocalPolicy(
+      { kind: 'delete-profile', profileId: profile.id, replacement: 'worker' },
+      next,
+    );
+    if (!deletion.ok || !deletion.requiresNativeReview) throw new Error('review missing');
+    expect(h.service.deleteProfile(profile.id, 'worker', next, deletion.digest)).toEqual({
+      ok: true,
+    });
+  });
+
   it('requires owner consent and refuses legacy materialization over inherited opt-in', () => {
     const { service, policyWrites } = harness();
     service.start();
@@ -2901,7 +3073,14 @@ describe('native profile authority', () => {
       ok: false,
       error: 'native-review-required',
     });
-    expect(service.saveAssignment(point, assignment, token(service), true)).toEqual({ ok: true });
+    const review = service.reviewLocalPolicy(
+      { kind: 'assignment', point, assignment },
+      token(service),
+    );
+    if (!review.ok || !review.requiresNativeReview) throw new Error('review missing');
+    expect(service.saveAssignment(point, assignment, token(service), review.digest)).toEqual({
+      ok: true,
+    });
     const saves = policyWrites.length;
     expect(service.setAssignment({ kind: 'session', sessionId: 's1' }, 'observer')).toEqual({
       ok: false,
@@ -2920,13 +3099,15 @@ describe('native profile authority', () => {
       status: 'available',
       intent: { family: 'claude', optedIn: true, requested: { mode: 'plan' } },
     });
+    const sessionPoint = { kind: 'session', sessionId: 's1' } as const;
+    const sessionAssignment = { ...assignment, applyNative: false };
+    const secondReview = service.reviewLocalPolicy(
+      { kind: 'assignment', point: sessionPoint, assignment: sessionAssignment },
+      token(service),
+    );
+    if (!secondReview.ok || !secondReview.requiresNativeReview) throw new Error('review missing');
     expect(
-      service.saveAssignment(
-        { kind: 'session', sessionId: 's1' },
-        { ...assignment, applyNative: false },
-        token(service),
-        true,
-      ),
+      service.saveAssignment(sessionPoint, sessionAssignment, token(service), secondReview.digest),
     ).toEqual({ ok: true });
     expect(service.nativeLaunch('s1', 'claude')).toEqual({
       status: 'available',

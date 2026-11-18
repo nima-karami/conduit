@@ -145,6 +145,7 @@ async function render(remote: RemoteSessionRow | null) {
               setAssignment: async () => true,
               revokeGrant: async () => true,
               allowOnce: async () => true,
+              reviewLocalPolicy: async () => null,
               saveAssignment: async () => ({ ok: true as const }),
               saveProfile: async () => ({ ok: true as const }),
               deleteProfile: async () => ({ ok: true as const }),

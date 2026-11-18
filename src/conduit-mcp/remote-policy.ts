@@ -651,13 +651,20 @@ export function createRemotePolicy(deps: RemotePolicyDeps): RemotePolicy {
           return { ok: false, error: 'invalid-value' };
         return prepareEdit(
           machineId,
-          (svc) =>
-            svc.saveAssignment(
+          (svc) => {
+            const assignment = edit.assignment === null ? null : checked.assignment;
+            const token = svc.ui([]).editToken;
+            const review = svc.reviewLocalPolicy(
+              { kind: 'assignment', point: checked.point, assignment },
+              token,
+            );
+            return svc.saveAssignment(
               checked.point,
-              edit.assignment === null ? null : checked.assignment,
-              svc.ui([]).editToken,
-              true,
-            ),
+              assignment,
+              token,
+              review.ok && review.requiresNativeReview ? review.digest : undefined,
+            );
+          },
           nativeConsent,
         );
       }
@@ -669,7 +676,15 @@ export function createRemotePolicy(deps: RemotePolicyDeps): RemotePolicy {
           return { ok: false, error: 'invalid-value' };
         return prepareEdit(
           machineId,
-          (svc) => svc.saveProfile(edit.profile, svc.ui([]).editToken, true),
+          (svc) => {
+            const token = svc.ui([]).editToken;
+            const review = svc.reviewLocalPolicy({ kind: 'profile', profile: edit.profile }, token);
+            return svc.saveProfile(
+              edit.profile,
+              token,
+              review.ok && review.requiresNativeReview ? review.digest : undefined,
+            );
+          },
           nativeConsent,
         );
       }
@@ -681,7 +696,19 @@ export function createRemotePolicy(deps: RemotePolicyDeps): RemotePolicy {
       )
         return prepareEdit(
           machineId,
-          (svc) => svc.deleteProfile(edit.profileId, edit.replacement, svc.ui([]).editToken, true),
+          (svc) => {
+            const token = svc.ui([]).editToken;
+            const review = svc.reviewLocalPolicy(
+              { kind: 'delete-profile', profileId: edit.profileId, replacement: edit.replacement },
+              token,
+            );
+            return svc.deleteProfile(
+              edit.profileId,
+              edit.replacement,
+              token,
+              review.ok && review.requiresNativeReview ? review.digest : undefined,
+            );
+          },
           nativeConsent,
         );
       return { ok: false, error: 'invalid-value' };

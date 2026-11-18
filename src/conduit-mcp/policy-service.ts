@@ -1,5 +1,6 @@
 // see POL §4-§5
 
+import { createHash } from 'node:crypto';
 import type { NativeFamily, NativeSelection } from '../contracts/native-launch';
 import type { RemoteGrantView, RemotePolicyDoc } from '../contracts/remote-policy';
 import { type ActivityIo, type ActivityLog, createActivityLog } from './activity-log';
@@ -41,6 +42,8 @@ import type {
   Grant,
   GrantBatchResult,
   GrantWho,
+  LocalPolicyEdit,
+  LocalPolicyReviewResult,
   OneUseOverride,
   PolicyCommitResult,
   PolicyDecision,
@@ -131,15 +134,16 @@ export interface PolicyService {
     point: AssignmentPoint,
     assignment: Assignment | null,
     expectedToken: string,
-    nativeConsent?: boolean,
+    nativeReview?: string,
   ): PolicyEditResult;
-  saveProfile(profile: Profile, expectedToken: string, nativeConsent?: boolean): PolicyEditResult;
+  saveProfile(profile: Profile, expectedToken: string, nativeReview?: string): PolicyEditResult;
   deleteProfile(
     profileId: ProfileId,
     replacement: ProfileId,
     expectedToken: string,
-    nativeConsent?: boolean,
+    nativeReview?: string,
   ): PolicyEditResult;
+  reviewLocalPolicy(edit: LocalPolicyEdit, expectedToken: string): LocalPolicyReviewResult;
   retrySave(): PolicyEditResult;
   peerRevoked(machineId: string): void;
   allowOnce(activityId: string): PolicyEditResult | { ok: false; error: 'not-overridable' };
@@ -626,39 +630,101 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     return { ok: true };
   };
 
-  const saveReviewedPolicy = (
-    candidate: PolicyFile,
-    portable: boolean,
-    nativeConsent?: boolean,
-  ): PolicyEditResult => {
+  const buildLocalCandidate = (
+    edit: LocalPolicyEdit,
+    expectedToken: string,
+  ):
+    | { ok: true; candidate: PolicyFile; portable: boolean }
+    | { ok: false; error: import('./policy-types').PolicyEditError } => {
+    if (expectedToken !== editToken) return { ok: false, error: 'conflict' };
     if (!policyWritable) return { ok: false, error: 'read-only' };
-    if (nativeConsent !== true && nativeProjection(candidate) !== nativeProjection(file))
-      return { ok: false, error: 'native-review-required' };
-    return savePolicy(candidate, portable);
+    const candidate = structuredClone(file);
+    let portable = true;
+    if (edit.kind === 'assignment') {
+      const checked = validatePolicyAssignment(
+        edit.point,
+        edit.assignment ?? { profileId: 'worker', exceptions: [], onScreenOnly: false },
+      );
+      if (!checked) return { ok: false, error: 'invalid-value' };
+      portable = setPointAssignment(
+        candidate,
+        checked.point,
+        edit.assignment === null ? null : checked.assignment,
+      );
+    } else if (edit.kind === 'profile') {
+      const checked = validatePolicyProfile(edit.profile);
+      if (!checked) return { ok: false, error: 'invalid-value' };
+      candidate.profiles = [...candidate.profiles.filter((p) => p.id !== checked.id), checked];
+    } else if (edit.kind === 'delete-profile') {
+      const { profileId, replacement } = edit;
+      if (
+        BUILT_IN_PROFILES.some((p) => p.id === profileId) ||
+        !file.profiles.some((p) => p.id === profileId) ||
+        profileId === replacement ||
+        !profileById(stateNow(), replacement)
+      )
+        return { ok: false, error: 'unknown-profile' };
+      candidate.profiles = candidate.profiles.filter((p) => p.id !== profileId);
+      for (const entry of candidate.assignments)
+        if (entry.assignment.profileId === profileId) entry.assignment.profileId = replacement;
+    } else return { ok: false, error: 'invalid-value' };
+    const valid = validateCandidate(candidate);
+    return valid.ok ? { ok: true, candidate, portable } : { ok: false, error: valid.error };
   };
-
+  const canonical = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(canonical);
+    if (value !== null && typeof value === 'object')
+      return Object.fromEntries(
+        Object.entries(value)
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+          .map(([key, v]) => [key, canonical(v)]),
+      );
+    return value;
+  };
+  const projection = (policy: PolicyFile) => {
+    const parsed = parsePolicyFile(serializePolicyFile(policy));
+    if (!parsed.ok) throw new Error('Invalid policy candidate');
+    return { profiles: parsed.file.profiles, assignments: parsed.file.assignments };
+  };
+  const digestFor = (candidate: PolicyFile): string =>
+    createHash('sha256')
+      .update(
+        JSON.stringify(
+          canonical(['local-policy-review-v1', editToken, projection(file), projection(candidate)]),
+        ),
+      )
+      .digest('hex');
+  const reviewLocalPolicy = (
+    edit: LocalPolicyEdit,
+    expectedToken: string,
+  ): LocalPolicyReviewResult => {
+    const built = buildLocalCandidate(edit, expectedToken);
+    if (!built.ok) return built;
+    return nativeProjection(built.candidate) === nativeProjection(file)
+      ? { ok: true, requiresNativeReview: false }
+      : { ok: true, requiresNativeReview: true, digest: digestFor(built.candidate) };
+  };
+  const saveLocalPolicy = (
+    edit: LocalPolicyEdit,
+    expectedToken: string,
+    nativeReview?: string,
+  ): PolicyEditResult => {
+    const built = buildLocalCandidate(edit, expectedToken);
+    if (!built.ok) return built;
+    if (
+      nativeProjection(built.candidate) !== nativeProjection(file) &&
+      nativeReview !== digestFor(built.candidate)
+    )
+      return { ok: false, error: 'native-review-required' };
+    return savePolicy(built.candidate, built.portable);
+  };
   const saveAssignment = (
     point: AssignmentPoint,
     assignment: Assignment | null,
     expectedToken: string,
-    nativeConsent?: boolean,
-  ): PolicyEditResult => {
-    if (expectedToken !== editToken) return { ok: false, error: 'conflict' };
-    if (!policyWritable) return { ok: false, error: 'read-only' };
-    let checked: Assignment | null = null;
-    if (assignment !== null) {
-      const entry = validatePolicyAssignment(point, assignment);
-      if (entry === null) return { ok: false, error: 'invalid-value' };
-      checked = entry.assignment;
-    } else if (
-      !validatePolicyAssignment(point, { profileId: 'worker', exceptions: [], onScreenOnly: false })
-    )
-      return { ok: false, error: 'invalid-value' };
-    const candidate = structuredClone(file);
-    const portable = setPointAssignment(candidate, point, checked);
-    const valid = validateCandidate(candidate);
-    return valid.ok ? saveReviewedPolicy(candidate, portable, nativeConsent) : valid;
-  };
+    nativeReview?: string,
+  ): PolicyEditResult =>
+    saveLocalPolicy({ kind: 'assignment', point, assignment }, expectedToken, nativeReview);
 
   const revokeGrants = (ids: readonly string[]): PolicyEditResult => {
     const candidate = grantCandidate();
@@ -850,31 +916,16 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
 
     saveAssignment,
 
-    saveProfile(profile, expectedToken, nativeConsent) {
-      if (expectedToken !== editToken) return { ok: false, error: 'conflict' };
-      const checked = validatePolicyProfile(profile);
-      if (checked === null) return { ok: false, error: 'invalid-value' };
-      const candidate = structuredClone(file);
-      candidate.profiles = [...candidate.profiles.filter((p) => p.id !== checked.id), checked];
-      const valid = validateCandidate(candidate);
-      return valid.ok ? saveReviewedPolicy(candidate, true, nativeConsent) : valid;
+    reviewLocalPolicy,
+    saveProfile(profile, expectedToken, nativeReview) {
+      return saveLocalPolicy({ kind: 'profile', profile }, expectedToken, nativeReview);
     },
-
-    deleteProfile(profileId, replacement, expectedToken, nativeConsent) {
-      if (expectedToken !== editToken) return { ok: false, error: 'conflict' };
-      if (
-        BUILT_IN_PROFILES.some((p) => p.id === profileId) ||
-        !file.profiles.some((p) => p.id === profileId) ||
-        profileId === replacement ||
-        !profileById(stateNow(), replacement)
-      )
-        return { ok: false, error: 'unknown-profile' };
-      const candidate = structuredClone(file);
-      candidate.profiles = candidate.profiles.filter((p) => p.id !== profileId);
-      for (const entry of candidate.assignments)
-        if (entry.assignment.profileId === profileId) entry.assignment.profileId = replacement;
-      const valid = validateCandidate(candidate);
-      return valid.ok ? saveReviewedPolicy(candidate, true, nativeConsent) : valid;
+    deleteProfile(profileId, replacement, expectedToken, nativeReview) {
+      return saveLocalPolicy(
+        { kind: 'delete-profile', profileId, replacement },
+        expectedToken,
+        nativeReview,
+      );
     },
 
     retrySave() {
@@ -912,7 +963,9 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       let portable = false;
       for (const w of writes)
         if (setPointAssignment(candidate, w.point, w.assignment)) portable = true;
-      return saveReviewedPolicy(candidate, portable);
+      if (nativeProjection(candidate) !== nativeProjection(file))
+        return { ok: false, error: 'native-review-required' };
+      return savePolicy(candidate, portable);
     },
 
     createGrants,

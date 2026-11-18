@@ -6,6 +6,8 @@ import type { AgentCli } from './conduit-mcp/install-types';
 import type {
   Assignment,
   AssignmentPoint,
+  LocalPolicyEdit,
+  LocalPolicyReviewResult,
   PermissionAnswer,
   PolicyEditResult,
   Profile,
@@ -761,6 +763,7 @@ export type HostToWebview =
       generation: number;
       view: CodexPostureView;
     }
+  | { type: 'mcp:reviewLocalPolicyResult'; requestId: number; result: LocalPolicyReviewResult }
   | { type: 'mcp:policyEditResult'; requestId: number; result: PolicyEditResult }
   | { type: 'mcp:policyResult'; requestId: number; ok: true }
   | { type: 'mcp:policyResult'; requestId: number; ok: false; error: string }
@@ -1317,14 +1320,14 @@ export type WebviewToHost =
       point: AssignmentPoint;
       assignment: Assignment | null;
       expectedToken: string;
-      nativeConsent?: boolean;
+      nativeReview?: string;
     }
   | {
       type: 'mcp:saveProfile';
       requestId: number;
       profile: Profile;
       expectedToken: string;
-      nativeConsent?: boolean;
+      nativeReview?: string;
     }
   | {
       type: 'mcp:deleteProfile';
@@ -1332,7 +1335,13 @@ export type WebviewToHost =
       profileId: ProfileId;
       replacement: ProfileId;
       expectedToken: string;
-      nativeConsent?: boolean;
+      nativeReview?: string;
+    }
+  | {
+      type: 'mcp:reviewLocalPolicy';
+      requestId: number;
+      expectedToken: string;
+      edit: LocalPolicyEdit;
     }
   | { type: 'mcp:policyRetry'; requestId: number }
   | {

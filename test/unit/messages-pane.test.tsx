@@ -140,6 +140,7 @@ function fakeApi(state: McpUiState | null, o: Partial<ConduitMcpApi> = {}): Cond
     setAssignment: async () => true,
     revokeGrant: async () => true,
     allowOnce: async () => true,
+    reviewLocalPolicy: async () => null,
     saveAssignment: async () => ({ ok: true as const }),
     saveProfile: async () => ({ ok: true as const }),
     deleteProfile: async () => ({ ok: true as const }),
