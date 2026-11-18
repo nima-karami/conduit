@@ -122,15 +122,19 @@ export function waitForServerSnapshot(
 /** A person's action can wait for reconnect; terminal input continues to be dropped (D29). */
 export function createServerCalls(lifecycle: () => ConnectionLifecycle | null) {
   const waiters = new Set<{ settle(c: ServerClient | null): void }>();
+  let readyClient: ServerClient | null = null;
+  const client = (): ServerClient | null => {
+    const current = lifecycle()?.client();
+    return current && current === readyClient ? current : null;
+  };
   const settle = (client: ServerClient | null) => {
     for (const waiter of [...waiters]) waiter.settle(client);
   };
   const whenConnected = (timeoutMs = APP_HELLO_TIMEOUT_MS): Promise<ServerClient> => {
-    const current = lifecycle();
-    const client = current?.client();
-    if (client) return Promise.resolve(client);
-    const state = current?.current().state ?? 'connecting';
-    if (state !== 'connecting' && state !== 'reconnecting') return Promise.reject(disconnected());
+    const connection = client();
+    if (connection) return Promise.resolve(connection);
+    const state = lifecycle()?.current().state ?? 'connecting';
+    if (terminalState(state)) return Promise.reject(disconnected());
     return new Promise((resolve, reject) => {
       const waiter = {
         settle: (connection: ServerClient | null) => {
@@ -145,9 +149,15 @@ export function createServerCalls(lifecycle: () => ConnectionLifecycle | null) {
     });
   };
   return {
+    client,
     whenConnected,
-    connected: (client: ServerClient) => settle(client),
+    connected: (connection: ServerClient) => {
+      if (!connection.subscribedOnce || lifecycle()?.client() !== connection) return;
+      readyClient = connection;
+      settle(connection);
+    },
     stateChanged: (s: ReturnType<Lifecycle['current']>) => {
+      if (s.state !== 'connected') readyClient = null;
       if (terminalState(s.state)) settle(null);
     },
     call: async <M extends ServerMethod>(

@@ -84,6 +84,7 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
   client(): ServerClient | null;
   onState(cb: (s: ServerLifecycleState) => void): () => void;
   onConnected(cb: (c: ServerClient) => void): () => void;
+  setupFailed(client: ServerClient, detail: string): void;
   retry(): Promise<void>;
   restartService(): Promise<void>;
   stopAllAndContinue(): Promise<void>;
@@ -515,6 +516,12 @@ export function createServerLifecycle(d: ServerLifecycleDeps): {
     onConnected(cb) {
       connectedListeners.add(cb);
       return () => connectedListeners.delete(cb);
+    },
+    setupFailed(c, detail) {
+      if (conn !== c || state.state !== 'connected') return;
+      begin();
+      drop();
+      unavailable('start-failed', detail);
     },
     async retry() {
       const e = fresh();

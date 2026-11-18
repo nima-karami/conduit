@@ -183,7 +183,11 @@ describe('server connection waits', () => {
   it('releases all pending calls on a connection and cancels their deadlines', async () => {
     vi.useFakeTimers();
     try {
-      const calls = createServerCalls(() => null);
+      let current: ServerClient | null = null;
+      const calls = createServerCalls(() => ({
+        current: () => ({ state: 'connecting' }),
+        client: () => current,
+      }));
       const first = calls.whenConnected(50);
       const second = calls.whenConnected(50);
       const client = new ServerClient({
@@ -192,6 +196,8 @@ describe('server connection waits', () => {
         readSecret: () => null,
         log: () => {},
       });
+      vi.spyOn(client, 'subscribedOnce', 'get').mockReturnValue(true);
+      current = client;
       calls.connected(client);
       await expect(first).resolves.toBe(client);
       await expect(second).resolves.toBe(client);
@@ -200,6 +206,58 @@ describe('server connection waits', () => {
       vi.useRealTimers();
     }
   });
+  it('keeps owner calls queued until the current client has authenticated', async () => {
+    vi.useFakeTimers();
+    try {
+      const makeClient = () =>
+        new ServerClient({
+          endpoint: '/unused',
+          appVersion: '1',
+          readSecret: () => null,
+          log: () => {},
+        });
+      const beforeAuth = makeClient();
+      const afterAuth = makeClient();
+      const firstCall = vi.spyOn(beforeAuth, 'call').mockResolvedValue({});
+      vi.spyOn(afterAuth, 'subscribedOnce', 'get').mockReturnValue(true);
+      const reply = {
+        type: 'mcp:activity' as const,
+        requestId: 17,
+        page: { rows: [], next: null, writable: true, error: null },
+      };
+      const secondCall = vi.spyOn(afterAuth, 'call').mockResolvedValue({ reply });
+      const state = {
+        state: 'connected',
+        hello: { pid: 1, generation: 1, instance: 'i', serverVersion: '1' },
+      } as const;
+      let current = beforeAuth;
+      const calls = createServerCalls(() => ({ current: () => state, client: () => current }));
+      const params = {
+        windowId: 1,
+        message: { type: 'mcp:activity:get', requestId: 17, query: {} } as const,
+      };
+      const result = calls.call('mcp.fromRenderer', params);
+      calls.connected(beforeAuth);
+      await Promise.resolve();
+      expect(firstCall).not.toHaveBeenCalled();
+
+      calls.stateChanged({ state: 'reconnecting' });
+      current = afterAuth;
+      vi.spyOn(beforeAuth, 'subscribedOnce', 'get').mockReturnValue(true);
+      calls.connected(beforeAuth);
+      await Promise.resolve();
+      expect(firstCall).not.toHaveBeenCalled();
+      expect(secondCall).not.toHaveBeenCalled();
+
+      calls.connected(afterAuth);
+      await expect(result).resolves.toEqual({ reply });
+      expect(secondCall).toHaveBeenCalledExactlyOnceWith('mcp.fromRenderer', params, undefined);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('refuses pending calls when startup reaches an unavailable state', async () => {
     const calls = createServerCalls(() => null);
     const reply = calls.whenConnected().catch((error: unknown) => error);

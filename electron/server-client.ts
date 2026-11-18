@@ -218,9 +218,9 @@ export class ServerClient {
     return true;
   }
 
-  async subscribe(h: Subscriber): Promise<void> {
+  async subscribe(h: Subscriber, timeoutMs?: number): Promise<void> {
     this.subscriber = h;
-    await this.resubscribe();
+    await this.resubscribe(timeoutMs);
   }
 
   /** True once events.subscribe has succeeded on this connection: it got past the auth gate. */
@@ -238,14 +238,14 @@ export class ServerClient {
     this.teardown();
   }
 
-  private async resubscribe(): Promise<void> {
+  private async resubscribe(timeoutMs?: number): Promise<void> {
     const h = this.subscriber;
     if (!h) return;
     this.snapshotSeq = null;
     let snapshot: ServerSnapshot;
     try {
       // A bare await, not a .catch hop: the reply's events must see snapshotSeq set in the same turn.
-      snapshot = await this.call('events.subscribe', {});
+      snapshot = await this.call('events.subscribe', {}, { timeoutMs });
     } catch (error) {
       // The secret moved on under this connection. Dropping the socket makes the lifecycle redial,
       // and the redial re-reads the secret.
