@@ -15,7 +15,7 @@ import {
 import { assert, phase, pollUntil, REPO, runScenario, showRightView } from './harness.mjs';
 import { SERVER_PROTOCOL_GENERATION, teardownNames } from './harness-server-teardown.mjs';
 import { ECHO_AGENT, linkView, networkState, startServer } from './net-helpers.mjs';
-import { assignProfileCas } from './permissions-policy-helpers.mjs';
+import { assignLocalSessionProfile, assignProfileCas } from './permissions-policy-helpers.mjs';
 
 // The remote Files tab over one ssh link, on fake-ssh: B's session folder holds a.txt, .env,
 // .ssh/id_rsa and sub/b.txt. A's Files tree for the remote session lists a.txt and sub, not the
@@ -57,12 +57,6 @@ async function serverClient(userDataDir) {
   );
   assert(ok && c2, 'the app server pipe never accepted a hello');
   return c2;
-}
-
-/** Gives one agent session the Lead profile through CON-24's assignment message, as the renderer does. */
-async function assignLead(appC2, sessionId) {
-  const r = await assignProfileCas(appC2, { kind: 'session', sessionId }, 'lead');
-  assert(r.reply?.result?.ok === true, `assign lead: ${JSON.stringify(r)}`);
 }
 
 /** Numbered screenshots when CONDUIT_E2E_SHOTS names a directory; nothing otherwise. */
@@ -158,7 +152,8 @@ async function run(page, userDataDir, log) {
       await tapMcp(page);
       const work = mkdtempSync(join(tmpdir(), 'net-remote-files-'));
       const lead = await openFake(page, work);
-      await assignLead(appC2, lead.sessionId);
+      const assignment = await assignLocalSessionProfile(page, appC2, lead.sessionId, 'lead');
+      assert(assignment.ok === true, `assign lead: ${JSON.stringify(assignment)}`);
       const opened = await callAppTool(page, lead.sessionId, 'open_session', {
         machine: bId,
         agent: ECHO_AGENT,
