@@ -17,7 +17,7 @@ await runScenario(
   'permissions-activity-empty',
   async ({ page, log }) => {
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
-    const settings = page.locator('.settings');
+    const settings = page.locator('.settings-page');
     await settings.getByRole('button', { name: 'Permissions', exact: true }).click();
     await settings.getByRole('button', { name: 'Activity', exact: true }).click();
     const activity = page.getByRole('main', { name: 'Permissions Activity' });

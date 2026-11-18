@@ -130,7 +130,7 @@ await runScenario(
     await capture(page, '11-session-activity.png');
 
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
-    const settings = page.locator('.settings');
+    const settings = page.locator('.settings-page');
     await settings.getByRole('button', { name: 'MCP', exact: true }).click();
     await settings.getByRole('switch').first().waitFor();
     await settings.getByRole('button', { name: 'Open Permissions', exact: true }).click();
