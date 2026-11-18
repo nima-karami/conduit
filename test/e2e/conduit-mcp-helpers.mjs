@@ -161,7 +161,12 @@ function registerFakeAgents(label, agents) {
         id,
         label: agentLabel,
         command: process.execPath,
-        args: [FAKE_AGENT, '--records', recordsDir],
+        args: [
+          FAKE_AGENT,
+          '--records',
+          recordsDir,
+          ...(id === 'e2e-fake-startup' ? ['--startup-block'] : []),
+        ],
         icon: 'terminal',
         color: 'green',
         cwdStrategy: 'workspaceFolder',
@@ -174,6 +179,13 @@ function registerFakeAgents(label, agents) {
 /** @param {string} label @returns {string} the userDataDir */
 export function fakeAgentProfile(label) {
   return registerFakeAgents(label, [[FAKE_AGENT_ID, 'Fake MCP']]);
+}
+
+export function startupAgentProfile(label) {
+  return registerFakeAgents(label, [
+    [FAKE_AGENT_ID, 'Fake MCP'],
+    ['e2e-fake-startup', 'Startup fake'],
+  ]);
 }
 
 /**

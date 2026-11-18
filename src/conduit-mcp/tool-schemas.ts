@@ -258,7 +258,7 @@ function controlSchemas(): ToolSchema[] {
     {
       name: 'open_session',
       description:
-        "Open a new Conduit session running an agent in a folder (absolute, or relative to your session's home folder). agent is a registered id from list_agents, or an agent CLI's command name on PATH, e.g. \"kiro\". model picks the agent's model, for agents whose CLI takes one. message is the new session's first task, delivered once its prompt is ready. close_when_done:true closes the session once its program exits; finished output is lost. focus:true (default) moves the human's view to it, which can end your on-screen access; when opening several, pass focus:false for all but the last.",
+        "Open an agent session in a folder (absolute or relative to your home folder). agent is a list_agents id or CLI command on PATH; model selects its model. message is its first task. startup is running, starting, or waiting_at_prompt: for the latter, read_screen and send_input if allowed, or ask the human. Conduit follows up if it remains stuck. close_when_done:true closes on exit and loses output. focus:true (default) moves the human's view to it, which can end your on-screen access; when opening several, pass focus:false for all but the last.",
       inputSchema: {
         ...OBJECT,
         properties: {

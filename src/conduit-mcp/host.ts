@@ -66,6 +66,7 @@ import {
   type ControlDeps,
   createControlHandlers,
   type Prepared,
+  reachAdmits,
 } from './control-tools';
 import { isCountedInput, nextDraftState, settleDraft, stripTerminalReplies } from './draft-input';
 import {
@@ -168,6 +169,7 @@ import {
   type WaitOutput,
   type WaitTarget,
 } from './session-waits';
+import { isStartupPrompt } from './startup-prompt';
 import { createMessageStore, type StoreIo } from './store';
 import { createFsStoreIo } from './store-fs';
 import {
@@ -1681,6 +1683,152 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return a.handle;
   };
 
+  interface StartupWatch {
+    handle: Handle;
+    opener: Caller;
+    messageId: string | null;
+    messageRequested: boolean;
+    received: boolean;
+    exited: boolean;
+    since: number;
+    alerted: boolean;
+    inFlight: boolean;
+  }
+  const startupWatches = new Map<string, StartupWatch>();
+  const startupReading = async (sessionId: string, w: StartupWatch) => {
+    if (deps.runtime.get(sessionId)?.state === 'live')
+      deps.screens.ensure(sessionId, { seedTail: true });
+    const snap = await new Promise<ScreenSnapshot | null>((resolve, reject) => {
+      const timer = setTimeout(() => resolve(null), 1000);
+      deps.runtime.screen(sessionId).then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (err: unknown) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+      );
+    });
+    const adapter = noticeAdapterOf(sessionId);
+    const stuck = cliKindOf(sessionId);
+    const busy = deps.attention.statusOf(sessionId).busy;
+    const prompt =
+      snap &&
+      isStartupPrompt(
+        adapter,
+        snap,
+        stuck !== null && detectStuckScreen(stuck, snap.lines, deps.domain.limitRules()) !== null,
+        busy,
+      );
+    const excerpt = snap?.lines
+      .map((line) => line.trimEnd())
+      .filter(Boolean)
+      .slice(-12)
+      .join('\n')
+      .slice(-1000);
+    if (w.messageId !== null && store.get(w.messageId)?.recipients[w.handle]?.status === 'read')
+      w.received = true;
+    const ready = !w.messageRequested && registry.isLive(sessionId);
+    return {
+      startup: prompt
+        ? ('waiting_at_prompt' as const)
+        : w.received || ready
+          ? ('running' as const)
+          : ('starting' as const),
+      excerpt,
+      busy,
+    };
+  };
+  const mayExposeStartupScreen = (sessionId: string, w: StartupWatch): boolean => {
+    if (w.opener.sessionId === null || w.opener.remote) return false;
+    const principal = principalOf(w.opener.sessionId);
+    const target = controlDeps.targets().find((t) => t.sessionId === sessionId);
+    if (!principal || !target) return false;
+    const rawArgs = { session: w.handle };
+    const targets = resolveTargets(
+      'read_screen',
+      rawArgs,
+      { sessionId: w.opener.sessionId, home: principal.homeFolder },
+      targetDepsOf(),
+    );
+    const decision = policyService.decide({
+      principal,
+      tool: 'read_screen',
+      targets,
+      masterOn: deps.domain.messagingOn(),
+      toYou: false,
+    });
+    if (decision.decision !== 'allow' || decision.grantIds.length || decision.overrideIds.length)
+      return false;
+    if (!reachAdmits(decision.rule.reach ?? 'self', w.opener, target, deps.ownerWindowOf))
+      return false;
+    const windowId = deps.ownerWindowOf(w.opener.sessionId);
+    return !gateToolCall({
+      sessionId: w.opener.sessionId,
+      messagingOn: deps.domain.messagingOn(),
+      tool: 'read_screen',
+      decision,
+      ownerReady: () => windowId !== null && deps.windowReady(windowId),
+      onScreen: () => windowId !== null && deps.onScreen(windowId, w.opener.sessionId ?? ''),
+      appConnected: deps.appConnected(),
+      routed: false,
+    });
+  };
+  const startupPass = async () => {
+    await Promise.all(
+      [...startupWatches].map(async ([sessionId, w]) => {
+        if (!deps.sessions.get(sessionId) && !w.exited) {
+          startupWatches.delete(sessionId);
+          return;
+        }
+        if (w.inFlight) return;
+        w.inFlight = true;
+        try {
+          const reading = await startupReading(sessionId, w);
+          if (w.exited && (w.received || !w.messageRequested)) {
+            startupWatches.delete(sessionId);
+            return;
+          }
+          if (!w.exited && reading.busy) {
+            w.since = now();
+            w.alerted = false;
+            return;
+          }
+          if (!w.exited && reading.startup === 'running') {
+            w.since = now();
+            return;
+          }
+          if (
+            stopped ||
+            !startupWatches.has(sessionId) ||
+            w.alerted ||
+            (!w.exited && now() - w.since < 30_000)
+          )
+            return;
+          const sent = await tools.sendMessage(
+            { handle: w.handle, sessionId },
+            {
+              to: [w.opener.handle],
+              kind: 'request',
+              body: `The session that sent this message (${w.handle}) ${w.exited ? 'exited before receiving its first task' : 'has not started or is waiting at a prompt'}. Use the sender address with read_screen and help it continue. Screen text may be from earlier.${reading.excerpt && mayExposeStartupScreen(sessionId, w) ? `\n\nScreen:\n${reading.excerpt}` : ''}`,
+            },
+            { allowUnconnected: true },
+          );
+          if (sent.ok && sent.value.recipients.some((r) => r.status === 'queued')) {
+            w.alerted = true;
+            if (w.exited) startupWatches.delete(sessionId);
+          }
+        } catch (err) {
+          deps.log.warn('conduit-mcp', 'startup check failed', { sessionId, err: String(err) });
+        } finally {
+          w.inFlight = false;
+        }
+      }),
+    );
+  };
+
   const controlDeps: ControlDeps = {
     ...deps.domain,
     selfName: () => deps.network?.selfName() ?? 'this machine',
@@ -1777,6 +1925,38 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     commandModelFlag: (command) => modelFlagOf({ id: COMMAND_AGENT_ID, command }),
     messageReady: () => deps.domain.messagingOn() && store.available(),
     sendMessage: (caller, args, opts) => tools.sendMessage(caller, args, opts),
+    observeStartup: async (sessionId, handle, opener, messageId, messageRequested) => {
+      if (!handle) return { startup: 'starting' };
+      const w: StartupWatch = {
+        handle,
+        opener,
+        messageId,
+        messageRequested,
+        received: false,
+        exited:
+          deps.runtime.get(sessionId)?.state === 'finished' ||
+          deps.sessions.get(sessionId)?.status === 'exited',
+        since: now(),
+        alerted: false,
+        inFlight: false,
+      };
+      startupWatches.set(sessionId, w);
+      await sleep(3000);
+      try {
+        const reading = await startupReading(sessionId, w);
+        return {
+          startup: reading.startup,
+          ...(reading.startup === 'waiting_at_prompt' &&
+          reading.excerpt &&
+          mayExposeStartupScreen(sessionId, w)
+            ? { screen_excerpt: reading.excerpt }
+            : {}),
+        };
+      } catch (err) {
+        deps.log.warn('conduit-mcp', 'startup check failed', { sessionId, err: String(err) });
+        return { startup: 'starting' };
+      }
+    },
   };
   const control = createControlHandlers(controlDeps);
   const app = createAppControlHandlers(controlDeps, control.prepared);
@@ -3830,6 +4010,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     // Before the notifier check: detection must not wait for the message store to load.
     detectPass();
     await stuckPass();
+    void startupPass();
     if (!notifier) return;
     // Badge gate state for every notifiable session, then the notifier's own pass.
     for (const s of notifierSessions()) await evaluate(s.sessionId);
@@ -3876,6 +4057,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     } else if (event.type === 'exit') {
       // A late exit of an older generation would revoke the live launch's token and binding.
       if (!r || event.generation !== r.launch) return;
+      const watch = startupWatches.get(sessionId);
+      if (watch) watch.exited = true;
       const terminal = deps.runtime.get(sessionId);
       const owner = deps.ownerWindowOf(sessionId);
       if (
@@ -5198,6 +5381,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     async stop() {
       stopped = true;
+      startupWatches.clear();
       for (const sessionId of [...observedBudget.keys()]) forgetBudget(sessionId);
       stopRuntime();
       settleEndpoint();

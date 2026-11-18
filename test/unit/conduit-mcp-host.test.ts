@@ -3417,6 +3417,7 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
       handle: 'fake-2',
       label: 'S n1',
       agent: 'e2e-fake-mcp',
+      startup: 'starting',
     });
     expect(h.opens).toEqual([
       {
@@ -3458,6 +3459,98 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
       from: 'fake-1',
     });
     expect(inbox.body.messages[0].body).toContain('start on T1');
+  });
+
+  it('alerts once per stuck episode, rearms after delivery, and hides screen text when denied', async () => {
+    const h = harness({ kinds: { '/w/wt': 'dir' } });
+    await h.host.start();
+    const a = await launch(h, 's1');
+    await setHostPolicy(h, 's1', {
+      open_session: { access: 'on' },
+      read_screen: { access: 'off' },
+    });
+    const c = await client(h.ep, a.token);
+    await c.call('open_session', {
+      path: 'wt',
+      agent: 'e2e-fake-mcp',
+      focus: false,
+      message: 'task',
+    });
+    const n1 = await launch(h, 'n1');
+    h.output('n1', 'Startup approval required\r\nPress 1');
+    h.clock.t += 30_000;
+    await h.host.tick();
+    let first: { body: { messages: Array<{ body: string }> } } | undefined;
+    await vi.waitFor(async () => {
+      const result = await c.call('read_inbox');
+      if (result.body.messages.length) first = result;
+      expect(first).toBeDefined();
+    });
+    expect(first?.body.messages[0].body).not.toContain('Startup approval required');
+    expect(first?.body.messages[0].body).toContain('Screen text may be from earlier');
+    await h.host.tick();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect((await c.call('read_inbox')).body.messages).toHaveLength(0);
+    h.busy.add('n1');
+    await h.host.tick();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    h.busy.delete('n1');
+    h.clock.t += 30_000;
+    await h.host.tick();
+    let second: unknown;
+    await vi.waitFor(async () => {
+      const result = await c.call('read_inbox');
+      if (result.body.messages.length) second = result.body.messages[0];
+      expect(second).toBeDefined();
+    });
+    await h.host.tick();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect((await c.call('read_inbox')).body.messages).toHaveLength(0);
+    h.output('n1', '\x1b[2J\x1b[Hfake❯ ');
+    await h.host.tick();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    h.output('n1', '\x1b[2J\x1b[HStartup approval required\r\nPress 1');
+    h.clock.t += 30_000;
+    await h.host.tick();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect((await c.call('read_inbox')).body.messages).toHaveLength(0);
+    const child = await client(h.ep, n1.token);
+    await child.call('read_inbox');
+    h.output('n1', '\x1b[2J\x1b[Hfake❯ ');
+    await h.host.tick();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    h.busy.add('n1');
+    await h.host.tick();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    h.busy.delete('n1');
+    h.output('n1', '\x1b[2J\x1b[HStartup approval required\r\nPress 1');
+    h.clock.t += 30_000;
+    await h.host.tick();
+    let third: unknown;
+    await vi.waitFor(async () => {
+      const result = await c.call('read_inbox');
+      if (result.body.messages.length) third = result.body.messages[0];
+      expect(third).toBeDefined();
+    });
+  });
+
+  it('reports an exit before the first task was received', async () => {
+    const h = harness({ kinds: { '/w/wt': 'dir' } });
+    await h.host.start();
+    const a = await launch(h, 's1');
+    await on(h, 's1', ['open_session']);
+    const c = await client(h.ep, a.token);
+    await c.call('open_session', { path: 'wt', agent: 'e2e-fake-mcp', message: 'task' });
+    await launch(h, 'n1');
+    h.exit('n1');
+    await h.host.tick();
+    let message: { body: string } | undefined;
+    await vi.waitFor(async () => {
+      const result = await c.call('read_inbox');
+      message ??= result.body.messages[0];
+      expect(message).toBeDefined();
+    });
+    expect(message?.body).toContain('exited before receiving its first task');
   });
 
   it('claimHandle at create: a later prepareLaunch keeps the same handle', async () => {

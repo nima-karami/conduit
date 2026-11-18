@@ -1279,6 +1279,7 @@ export function createDomain(deps: DomainDeps): Domain {
     brief: BriefRequest | undefined;
     command?: SessionCommand;
     openedBy?: SessionOpener;
+    lockTitle?: boolean;
     closeWhenDone?: boolean;
     model?: string;
     cardId?: string;
@@ -1303,6 +1304,7 @@ export function createDomain(deps: DomainDeps): Domain {
         ...(i.name !== undefined ? { name: i.name } : {}),
         ...(i.command ? { command: i.command } : {}),
         ...(i.openedBy ? { openedBy: i.openedBy } : {}),
+        ...(i.lockTitle ? { lockTitle: true } : {}),
         ...(i.closeWhenDone ? { closeWhenDone: true } : {}),
         ...(i.model !== undefined ? { model: i.model } : {}),
         id: c.id,
@@ -1384,6 +1386,7 @@ export function createDomain(deps: DomainDeps): Domain {
       brief: command ? { kind: 'none' } : undefined,
       ...(command ? { command } : {}),
       openedBy: req.openedBy,
+      lockTitle: req.lockTitle,
       closeWhenDone: req.closeWhenDone,
       ...(req.model !== undefined ? { model: req.model } : {}),
       opener: {

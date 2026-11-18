@@ -161,6 +161,8 @@ export interface Session {
   mcpToolPolicy?: PolicyLayer;
   /** Only when agentId === COMMAND_AGENT_ID (src/session-command.ts). Persisted. */
   command?: SessionCommand;
+  /** Preserve a label supplied by an MCP opener across terminal title changes. Persisted. */
+  titleLocked?: boolean;
   /** The MCP caller that opened this session. Persisted. */
   openedBy?: SessionOpener;
   /** Opened with close_when_done: closes once its program exits. Persisted. */

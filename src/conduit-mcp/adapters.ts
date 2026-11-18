@@ -45,6 +45,8 @@ export interface McpAdapter {
   wiring: McpWiringKind;
   /** null ⇒ pull-only */
   screen: ScreenPatterns | null;
+  /** Screens that require a person or opener to answer before work can continue. */
+  startupPrompts?: readonly RegExp[];
   e2eOnly: boolean;
   brief: BriefSupport | null;
   /** 'queues': typed input mid-turn is queued, so a notice may go in while busy. see docs/runs/2026-11-09-con172/measure.md */
@@ -60,6 +62,12 @@ const FAKE_SCREEN: ScreenPatterns = { blocking: [/Esc to cancel/], emptyInput: [
 export const MCP_ADAPTERS: readonly McpAdapter[] = [
   {
     id: 'claude',
+    startupPrompts: [
+      /trust.*(folder|workspace)/i,
+      /permission.*(allow|approve)/i,
+      /continuing automatically at/i,
+      /^\s*[❯>]\s*\d+\.\s/,
+    ],
     leaves: ['claude'],
     ids: [],
     wiring: 'mcp-config-flag',
@@ -77,6 +85,12 @@ export const MCP_ADAPTERS: readonly McpAdapter[] = [
     // Idle row measured in Conduit (fixture codex-idle). An approval replaces the composer, so it
     // never reads as empty.
     id: 'codex',
+    startupPrompts: [
+      /trust.*(folder|workspace|directory)/i,
+      /enter continue · esc quit/i,
+      /enter to confirm or esc to cancel/i,
+      /continuing automatically at/i,
+    ],
     leaves: ['codex'],
     ids: [],
     wiring: 'codex-c-flags',
@@ -95,6 +109,11 @@ export const MCP_ADAPTERS: readonly McpAdapter[] = [
   },
   {
     id: 'cursor',
+    startupPrompts: [
+      /trust.*(folder|workspace|directory)/i,
+      /MCP Server Approval Required/i,
+      /Run this (MCP tool|command)\?/i,
+    ],
     leaves: ['agent', 'cursor-agent'],
     ids: [],
     // Cursor parks the cursor 5-6 rows below its `→` input row (S0, spec §3.4), so the row is
@@ -117,8 +136,9 @@ export const MCP_ADAPTERS: readonly McpAdapter[] = [
   },
   {
     id: 'fake',
+    startupPrompts: [/startup approval required/i],
     leaves: [],
-    ids: ['e2e-fake-mcp'],
+    ids: ['e2e-fake-mcp', 'e2e-fake-startup'],
     wiring: 'mcp-config-flag',
     screen: FAKE_SCREEN,
     e2eOnly: true,
@@ -127,6 +147,7 @@ export const MCP_ADAPTERS: readonly McpAdapter[] = [
   },
   {
     id: 'fake-queue',
+    startupPrompts: [/startup approval required/i],
     leaves: [],
     ids: ['e2e-fake-mcp-queue'],
     wiring: 'mcp-config-flag',

@@ -910,6 +910,24 @@ describe('session tool descriptions', () => {
 describe('open_session model and message (CON-148)', () => {
   const NO_MOVE = ctxOf();
 
+  it('distinguishes a failed first-message store from an open with no message', async () => {
+    const seen: Array<[string | null, boolean]> = [];
+    const h = harness({
+      observeStartup: async (_id, _handle, _caller, messageId, requested) => {
+        seen.push([messageId, requested]);
+        return { startup: 'starting' };
+      },
+      sendMessage: async () => ({ ok: false, error: toolError('open_failed', 'store failed') }),
+    });
+    await whenOn(h.deps).openSession(caller(), sessionArgs());
+    const failed = await whenOn(h.deps).openSession(caller(), sessionArgs({ message: 'task' }));
+    expect(seen).toEqual([
+      [null, false],
+      [null, true],
+    ]);
+    expect(failed.ok && failed.value).toMatchObject({ startup: 'starting', message: { id: null } });
+  });
+
   it('passes a valid model through to openSession', async () => {
     const h = harness();
     const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ model: 'gpt-6.1-terra' }));
