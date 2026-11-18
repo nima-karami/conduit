@@ -125,6 +125,7 @@ export function McpSection({
             getActivityRow={mcp.getActivityRow}
             allowOnce={mcp.allowOnce}
             onAddException={onAddActivityException}
+            registerBack={registerBack}
           />
         )}
       </div>

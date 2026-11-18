@@ -11,7 +11,7 @@ const api = vi.hoisted(() => ({
   getActivityRow: vi.fn(),
   allowOnce: vi.fn(),
 }));
-const mounts = vi.hoisted(() => ({ activity: 0 }));
+const mounts = vi.hoisted(() => ({ activity: 0, registerBack: undefined as unknown }));
 vi.mock('../../webview/use-conduit-mcp', () => ({ useConduitMcp: () => api }));
 vi.mock('../../webview/components/permissions-roles', () => ({
   PermissionsRoles: () => <p>roles panel</p>,
@@ -31,11 +31,14 @@ vi.mock('../../webview/components/permissions-activity', async () => {
       sessionId,
       machines,
       sessions,
+      registerBack,
     }: {
+      registerBack?: unknown;
       sessionId?: string;
       machines: Array<{ id: string; name: string }>;
       sessions: Array<{ id: string; name: string }>;
     }) => {
+      mounts.registerBack = registerBack;
       useEffect(() => {
         mounts.activity += 1;
       }, []);
@@ -148,4 +151,10 @@ it('registerBack is called with null on unmount', async () => {
   root = null;
   await act(async () => current?.unmount());
   expect(registerBack).toHaveBeenCalledWith(null);
+});
+
+it('the Activity tab hands registerBack to PermissionsActivity', async () => {
+  const registerBack = vi.fn();
+  await render(props({ tab: 'activity', registerBack }));
+  expect(mounts.registerBack).toBe(registerBack);
 });
