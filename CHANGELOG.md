@@ -6,7 +6,9 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
-## [0.68.0] — 2026-11-18
+## [0.68.1] — 2026-11-18
+
+First published build of the 0.68 permissions release. The 0.68.0 tag was never published: its release checks failed on end-to-end tests that hadn't been updated for the new permission routes. No app changes since 0.68.0.
 
 ### Added
 - Permission assignments can opt in to a profile’s supported Claude Code and Codex launch flags. The session records the flags Conduit prepared for its current launch.
@@ -24,6 +26,10 @@ All notable user-facing changes to Conduit. Format follows
 - Agent actions now recheck current permissions and session context after preparation and before using your approval.
 - Remote permission answers now report saving failures before accepting consent. Requests withdraw if new rules deny them.
 - Permission restrictions stay active if saving fails and retry saving after storage recovers. A notice shows saving problems and lets you retry manually.
+
+## [0.68.0] — 2026-11-18 (not published)
+
+Tagged but never published. Its changes ship in 0.68.1.
 
 ## [0.67.0] — 2026-11-16
 
