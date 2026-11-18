@@ -116,7 +116,9 @@ await runScenario(
     writeFileSync(join(dirA, 'fixture.txt'), 'migrate fixture\n');
 
     const makeActive = async (sessionId) => {
-      await page.locator(`.session[data-sessionid="${sessionId}"]`).click();
+      await page
+        .locator(`.session[data-sessionid="${sessionId}"] [data-agent-action="select"]`)
+        .click();
       assert(
         await until(async () => (await activeSessionId(page)) === sessionId, 5_000),
         `${sessionId} never became active`,
@@ -132,6 +134,11 @@ await runScenario(
       );
     }
     log('mcpToolOverrides → session layer, old over new ✓');
+
+    const upgrade = page.getByRole('dialog', { name: 'Permissions have a new home' });
+    await upgrade.getByRole('rowheader', { name: 'v050-old' }).waitFor();
+    await upgrade.getByRole('button', { name: 'Done' }).click();
+    await upgrade.waitFor({ state: 'hidden' });
 
     phase('setup');
     const a = await openFake(page, dirA);

@@ -77,8 +77,10 @@ await runScenario(
     writeFileSync(join(dirF, 'far.txt'), 'far fixture\n');
 
     const isActive = async (p, sessionId) => (await activeSessionId(p)) === sessionId;
+    const selectSession = (p, sessionId) =>
+      p.locator(`.session[data-sessionid="${sessionId}"] [data-agent-action="select"]`).click();
     const makeActive = async (sessionId) => {
-      await page.locator(`.session[data-sessionid="${sessionId}"]`).click();
+      await selectSession(page, sessionId);
       assert(
         await until(() => isActive(page, sessionId), 5_000),
         `${sessionId} never became active`,
@@ -282,7 +284,7 @@ await runScenario(
     );
     await sleep(1_000);
     assert(await exists(w2.page, fw.sessionId), 'a dirty cross-window close still closed F');
-    await w2.page.locator(`.session[data-sessionid="${fw.sessionId}"]`).click();
+    await selectSession(w2.page, fw.sessionId);
     assert(await until(() => isActive(w2.page, fw.sessionId), 5_000), 'F never became active');
     await tab(w2.page, 'far.txt').click();
     await w2.page.locator('.viewer__monaco .monaco-editor').first().click();

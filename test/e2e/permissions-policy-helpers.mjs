@@ -93,6 +93,21 @@ export async function saveAssignmentPage(page, point, assignment, expectedToken,
   );
 }
 
+/** Use the live renderer's owner identity for a session assignment. */
+export async function assignLocalSessionProfile(page, c2, sessionId, profileId) {
+  const { policy } = (await c2.call('events.subscribe')).mcp;
+  const point = { kind: 'session', sessionId };
+  const existing = policy.assignments.find(
+    (entry) => entry.point.kind === 'session' && entry.point.sessionId === sessionId,
+  )?.assignment;
+  return saveAssignmentPage(
+    page,
+    point,
+    { ...(existing ?? { exceptions: [], onScreenOnly: false }), profileId },
+    policy.editToken,
+  );
+}
+
 let projectionModule;
 
 /** Build a fixture assignment with the same legacy-to-assignment projection used by the host. */

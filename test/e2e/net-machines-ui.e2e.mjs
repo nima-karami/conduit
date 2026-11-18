@@ -14,7 +14,7 @@ import {
 import { assert, logicalLines, phase, pollUntil, REPO, runScenario } from './harness.mjs';
 import { SERVER_PROTOCOL_GENERATION, teardownNames } from './harness-server-teardown.mjs';
 import { ECHO_AGENT, linkView, networkState, readAudit, startServer } from './net-helpers.mjs';
-import { assignProfileCas } from './permissions-policy-helpers.mjs';
+import { assignLocalSessionProfile } from './permissions-policy-helpers.mjs';
 
 // The Machines UI over one ssh link, on fake-ssh: the app (A) adds server B over C2, shows B's
 // machine row as Connected, and an agent on A with Lead opens a session on B. That session is drawn
@@ -51,12 +51,6 @@ async function serverClient(userDataDir) {
   );
   assert(ok && c2, 'the app server pipe never accepted a hello');
   return c2;
-}
-
-/** Gives one agent session the Lead profile through CON-24's assignment message, as the renderer does. */
-async function assignLead(appC2, sessionId) {
-  const r = await assignProfileCas(appC2, { kind: 'session', sessionId }, 'lead');
-  assert(r.reply?.result?.ok === true, `assign lead: ${JSON.stringify(r)}`);
 }
 
 /** A read_screen result as plain text: the echo's own `ECHO:` prefixes and padding removed. */
@@ -128,7 +122,8 @@ async function run(page, userDataDir, log) {
       await tapMcp(page);
       const work = mkdtempSync(join(tmpdir(), 'net-machines-ui-'));
       const lead = await openFake(page, work);
-      await assignLead(appC2, lead.sessionId);
+      const assignment = await assignLocalSessionProfile(page, appC2, lead.sessionId, 'lead');
+      assert(assignment.ok === true, `assign lead: ${JSON.stringify(assignment)}`);
       const opened = await callAppTool(page, lead.sessionId, 'open_session', {
         machine: bId,
         agent: ECHO_AGENT,

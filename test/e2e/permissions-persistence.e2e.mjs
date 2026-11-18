@@ -540,11 +540,15 @@ await runScenario(
       const denyA = {
         ...baseAsk,
         exceptions: [
-          ...baseAsk.exceptions,
           {
             tool: 'close_session',
             scope: { kind: 'session', sessionId: targetA.sessionId },
-            rule: { decision: 'deny' },
+            rule: { decision: 'deny', when: 'always', reach: 'any' },
+          },
+          {
+            tool: 'close_session',
+            scope: { kind: 'session', sessionId: targetB.sessionId },
+            rule: { decision: 'ask', when: 'always', reach: 'any' },
           },
         ],
       };
@@ -587,8 +591,25 @@ await runScenario(
         queried.page.error === null,
         `denial Activity query failed: ${JSON.stringify(queried.page)}`,
       );
-      const deniedRow = queried.page.rows.find((row) => row.outcome === 'denied');
+      const deniedRow = queried.page.rows.find(
+        (row) => row.outcome === 'denied' && row.target === targetA.sessionId,
+      );
       assert(deniedRow, 'prior explicit-deny Activity row missing');
+      assert(deniedRow.trace?.winnerDigest, 'prior explicit deny had no unambiguous winner');
+      const beforeOverrideIds = savedPolicy().overrides.map((entry) => entry.id);
+      const once = await ownerEdit(
+        page,
+        { type: 'mcp:allowOnce', activityId: deniedRow.id, at: deniedRow.at },
+        'mcp:policyResult',
+      );
+      assert(once.ok === true, `prior deny override refused: ${JSON.stringify(once)}`);
+      const override = savedPolicy().overrides.find(
+        (entry) => !beforeOverrideIds.includes(entry.id),
+      );
+      assert(
+        override?.target.sessionId === targetA.sessionId,
+        'one-use override missing or wrong target',
+      );
       await setConsumeAssignment(baseAsk);
       const closeBefore = await startCall(page, consumeCaller.sessionId, 'close_session', {
         sessions: [targetA.handle, targetB.handle],
@@ -603,20 +624,6 @@ await runScenario(
           return consumeAsk !== undefined;
         }, 10_000),
         'multi-target close did not ask',
-      );
-      const beforeOverrideIds = savedPolicy().overrides.map((entry) => entry.id);
-      const once = await ownerEdit(
-        page,
-        { type: 'mcp:allowOnce', activityId: deniedRow.id },
-        'mcp:policyResult',
-      );
-      assert(once.ok === true, `prior deny override refused: ${JSON.stringify(once)}`);
-      const override = savedPolicy().overrides.find(
-        (entry) => !beforeOverrideIds.includes(entry.id),
-      );
-      assert(
-        override?.target.sessionId === targetA.sessionId,
-        'one-use override missing or wrong target',
       );
       await setConsumeAssignment(denyA);
       assert(

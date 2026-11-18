@@ -9,13 +9,15 @@ import {
   callTool as callAppTool,
   fakeAgentProfile,
   openFake,
+  resultAfter,
+  startCall,
   tapMcp,
   until,
 } from './conduit-mcp-helpers.mjs';
 import { assert, phase, pollUntil, REPO, runScenario, showRightView } from './harness.mjs';
 import { SERVER_PROTOCOL_GENERATION, teardownNames } from './harness-server-teardown.mjs';
 import { ECHO_AGENT, linkView, networkState, startServer } from './net-helpers.mjs';
-import { assignProfileCas } from './permissions-policy-helpers.mjs';
+import { assignLocalSessionProfile, assignProfileCas } from './permissions-policy-helpers.mjs';
 
 // The remote Files tab over one ssh link, on fake-ssh: B's session folder holds a.txt, .env,
 // .ssh/id_rsa and sub/b.txt. A's Files tree for the remote session lists a.txt and sub, not the
@@ -57,12 +59,6 @@ async function serverClient(userDataDir) {
   );
   assert(ok && c2, 'the app server pipe never accepted a hello');
   return c2;
-}
-
-/** Gives one agent session the Lead profile through CON-24's assignment message, as the renderer does. */
-async function assignLead(appC2, sessionId) {
-  const r = await assignProfileCas(appC2, { kind: 'session', sessionId }, 'lead');
-  assert(r.reply?.result?.ok === true, `assign lead: ${JSON.stringify(r)}`);
 }
 
 /** Numbered screenshots when CONDUIT_E2E_SHOTS names a directory; nothing otherwise. */
@@ -158,7 +154,8 @@ async function run(page, userDataDir, log) {
       await tapMcp(page);
       const work = mkdtempSync(join(tmpdir(), 'net-remote-files-'));
       const lead = await openFake(page, work);
-      await assignLead(appC2, lead.sessionId);
+      const assignment = await assignLocalSessionProfile(page, appC2, lead.sessionId, 'lead');
+      assert(assignment.ok === true, `assign lead: ${JSON.stringify(assignment)}`);
       const opened = await callAppTool(page, lead.sessionId, 'open_session', {
         machine: bId,
         agent: ECHO_AGENT,
@@ -439,13 +436,13 @@ async function run(page, userDataDir, log) {
       log('remote Changes refreshed with fresh.txt ✓');
 
       phase(
-        "15. B narrows A's agents to Worker; a routed open_session asks; Allow in A's pop-up lets it run",
+        "15. B narrows A's agents to Worker; a routed open_session asks; Allow once lets it run",
       );
       const aId = (await networkState({ c2: appC2 })).machineId;
       const peer = await assignProfileCas(b.c2, { kind: 'peer', machineId: aId }, 'worker');
       assert(peer.reply?.result?.ok === true, `B's peer assignment: ${JSON.stringify(peer)}`);
-      // The tool call waits for B's answer, which waits for the owner here: started, not awaited.
-      const routed = callAppTool(page, lead.sessionId, 'open_session', {
+      // Wait for the tool result after answering B's request from this window.
+      const beforeRouted = await startCall(page, lead.sessionId, 'open_session', {
         machine: bId,
         agent: ECHO_AGENT,
         path: bWork,
@@ -456,20 +453,20 @@ async function run(page, userDataDir, log) {
       const askRow = page.locator('.needs-list [role="option"]', { hasText: bName });
       await askRow.first().waitFor({ state: 'visible', timeout: WAIT_MS });
       await askRow.first().click();
-      const popup = page.locator('.reqtpl-popup');
+      const popup = page.locator('.reqtpl-popup .permissions-request-body');
       await popup.waitFor({ state: 'visible', timeout: WAIT_MS });
       await shot('6', 'remote-permission', popup);
-      const allow = popup.getByRole('button', { name: 'Allow', exact: true });
+      const allow = popup.getByRole('button', { name: 'Allow once', exact: true });
       // The template ignores presses briefly after a request appears (its swap guard).
       assert(
         await pollUntil(async () => await allow.isEnabled(), 5_000, 100),
-        'Allow stayed disabled',
+        'Allow once stayed disabled',
       );
       await allow.click();
-      const allowedCall = await routed;
+      const allowedCall = await resultAfter(lead.sessionId, beforeRouted, WAIT_MS);
       assert(
         typeof allowedCall?.session_id === 'string',
-        `open_session after Allow: ${JSON.stringify(allowedCall)}`,
+        `open_session after Allow once: ${JSON.stringify(allowedCall)}`,
       );
       log("B's permission ask answered from A's pop-up ✓");
     } finally {
