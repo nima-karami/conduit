@@ -307,7 +307,7 @@ export class SessionManager {
     return true;
   }
 
-  /** A caller-supplied label is authoritative over subsequent terminal titles. */
+  // see spec 2026-11-07-flexible-agent-contracts §3.2.1
   applyTitle(id: string, title: string) {
     const s = this.sessions.get(id);
     if (!s) return;

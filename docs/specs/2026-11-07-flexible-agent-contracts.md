@@ -77,16 +77,18 @@ notices for unknown CLIs · one CLI catalog refactor (v1) · new Settings UI.
 message has been read (or an agent with no first message has connected), `waiting_at_prompt` for a
 recognized active blocking prompt, and `starting` otherwise. A failed first-message store is never
 reported as delivered. A permitted screen excerpt accompanies a recognized prompt. Screen excerpts
-obey the caller's `read_screen` access and reach; remote callers receive no excerpt unless separately
+obey the caller's `read_screen` access and reach; remote callers and decisions relying on grants or overrides receive no excerpt unless separately
 read through that tool. Existing output fields and first-message errors remain unchanged.
 
 The host continues observing opened sessions and sends the opener one inbox request after a stuck
-episode persists for 30 seconds. A busy episode re-arms the watch, even if identical prompt text
+episode persists for 30 seconds. At least three seconds of sustained busy activity re-arms the watch, even if identical prompt text
 remains visible: a repeated approval can otherwise be missed. This may report historical screen text,
 so the notice says it may be from earlier. There is at most one notice while the same episode stays
 idle. Session deletion, exit, and host shutdown remove the watch. Explicitly supplied labels are persisted as authoritative
 Conduit session names against terminal title changes; a human rename remains effective. Unlabeled
-sessions retain the existing title policy. Routed opens are supervised on the destination host.
+sessions retain the existing title policy. A labeled helper ignores CLI title changes, including CLI
+`/rename`; a rename in the Conduit UI still wins. Routed opens are supervised on the destination host.
+Supervision ends after ten minutes, is in memory, and does not resume after a host restart.
 
 ### 3.3 Waits
 `wait_sessions` clamps the effective `timeout_s` (including the default 120 s) to

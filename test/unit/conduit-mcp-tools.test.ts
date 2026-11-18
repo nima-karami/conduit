@@ -346,6 +346,20 @@ describe('sendMessage', () => {
     expect((await h.tools.sendMessage(CLAUDE, send())).ok).toBe(true);
   });
 
+  it('internal system notices do not consume or depend on an agent send budget', async () => {
+    const h = await harness();
+    for (let i = 0; i < RATE_LIMIT_PER_MIN; i++)
+      expect((await h.tools.sendMessage(CLAUDE, send())).ok).toBe(true);
+    expect((await h.tools.sendMessage(CLAUDE, send(), { systemGenerated: true })).ok).toBe(true);
+    expect(errCode(await h.tools.sendMessage(CLAUDE, send()))).toBe('rate_limited');
+    h.advance(60_001);
+    const thread = okValue(await h.tools.sendMessage(CLAUDE, send())).thread_id;
+    for (let i = 0; i < RATE_LIMIT_PER_MIN; i++)
+      expect((await h.tools.sendMessage(CLAUDE, send(), { systemGenerated: true })).ok).toBe(true);
+    expect((await h.tools.sendMessage(CLAUDE, send())).ok).toBe(true);
+    expect((await h.tools.sendMessage(CLAUDE, send('reply', { thread_id: thread }))).ok).toBe(true);
+  });
+
   it('thread_id without participation → not_found', async () => {
     const h = await harness();
     const t = okValue(await h.tools.sendMessage(CLAUDE, send())).thread_id;

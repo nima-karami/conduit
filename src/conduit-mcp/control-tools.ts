@@ -145,6 +145,7 @@ export interface ControlDeps {
     opener: Caller,
     messageId: string | null,
     messageRequested: boolean,
+    options: { signal: AbortSignal; deadlineMs?: number },
   ): Promise<Pick<OpenSessionOutput, 'startup' | 'screen_excerpt'>>;
 }
 export interface TargetSession {
@@ -194,6 +195,8 @@ export interface ControlCallContext {
   ui(windowId: number, routedSessionId: string, action: McpUiAction): Promise<Result<McpUiResult>>;
   /** The call's cancel: a notifications/cancelled or a closed connection aborts it. */
   signal: AbortSignal;
+  /** Last safe time to spend observing startup, in host clock milliseconds. */
+  deadlineMs?: number;
 }
 export interface ControlHandlers {
   prepareOpenSession(
@@ -708,6 +711,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     tool: 'open_session' | 'open_terminal',
     caller: Caller,
     a: Common & OpenExtras & Partial<SessionExtras>,
+    ctx: ControlCallContext,
     resolve: () => Promise<Result<Resolved>>,
   ): Promise<Result<Prepared<OpenSessionOutput>>> {
     return prepared(tool, caller, async (who) => {
@@ -793,7 +797,10 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
           if (a.message === undefined) {
             const startup =
               tool === 'open_session'
-                ? await deps.observeStartup?.(outcome.sessionId, handle, caller, null, false)
+                ? await deps.observeStartup?.(outcome.sessionId, handle, caller, null, false, {
+                    signal: ctx.signal,
+                    deadlineMs: ctx.deadlineMs,
+                  })
                 : undefined;
             return {
               ok: true,
@@ -813,6 +820,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
             caller,
             message.id,
             true,
+            { signal: ctx.signal, deadlineMs: ctx.deadlineMs },
           );
           return {
             ok: true,
@@ -882,7 +890,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     async prepareOpenSession(caller, raw, ctx) {
       const a = parseSessionArgs(raw);
       if (isFail(a)) return a;
-      return prepareOpen('open_session', caller, focusFor(a, ctx), () =>
+      return prepareOpen('open_session', caller, focusFor(a, ctx), ctx, () =>
         resolveSessionAgent(a.agent),
       );
     },
@@ -894,6 +902,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
         'open_terminal',
         caller,
         focusFor({ ...a, label: a.label ?? leaf }, ctx),
+        ctx,
         async () =>
           deps.resolveCommand(a.command.command) === undefined
             ? fail('command_not_found', `command not found: ${a.command.command}`)

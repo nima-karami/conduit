@@ -258,7 +258,7 @@ function controlSchemas(): ToolSchema[] {
     {
       name: 'open_session',
       description:
-        "Open an agent session in a folder (absolute or relative to your home folder). agent is a list_agents id or CLI command on PATH; model selects its model. message is its first task. startup is running, starting, or waiting_at_prompt: for the latter, read_screen and send_input if allowed, or ask the human. Conduit follows up if it remains stuck. close_when_done:true closes on exit and loses output. focus:true (default) moves the human's view to it, which can end your on-screen access; when opening several, pass focus:false for all but the last.",
+        "Open an agent session in a folder (absolute or relative to your home folder). agent is a list_agents id or CLI command on PATH; model selects its model. message is its first task. startup is running, starting, or waiting_at_prompt: for the latter, read_screen and send_input if allowed, or ask the human. Conduit follows up if it remains stuck; supervision lasts up to ten minutes and ends on host restart. close_when_done:true closes on exit and loses output. focus:true (default) moves the human's view to it, which can end your on-screen access; when opening several, pass focus:false for all but the last.",
       inputSchema: {
         ...OBJECT,
         properties: {

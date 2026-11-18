@@ -169,7 +169,7 @@ import {
   type WaitOutput,
   type WaitTarget,
 } from './session-waits';
-import { isStartupPrompt } from './startup-prompt';
+import { isStartupPrompt, waitForStartup } from './startup-prompt';
 import { createMessageStore, type StoreIo } from './store';
 import { createFsStoreIo } from './store-fs';
 import {
@@ -1693,23 +1693,39 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     since: number;
     alerted: boolean;
     inFlight: boolean;
+    busySince: number | undefined;
+    lastScanAt: number;
+    lastOutputAt: number | undefined;
+    retryAt: number;
+    openedAt: number;
   }
   const startupWatches = new Map<string, StartupWatch>();
-  const startupReading = async (sessionId: string, w: StartupWatch) => {
-    if (deps.runtime.get(sessionId)?.state === 'live')
+  const startupReading = async (
+    sessionId: string,
+    w: StartupWatch,
+    options?: { signal: AbortSignal; deadlineMs?: number },
+  ) => {
+    if (deps.runtime.get(sessionId)?.state === 'live' && noticeAdapterOf(sessionId))
       deps.screens.ensure(sessionId, { seedTail: true });
     const snap = await new Promise<ScreenSnapshot | null>((resolve, reject) => {
-      const timer = setTimeout(() => resolve(null), 1000);
-      deps.runtime.screen(sessionId).then(
-        (value) => {
-          clearTimeout(timer);
-          resolve(value);
-        },
-        (err: unknown) => {
-          clearTimeout(timer);
-          reject(err);
-        },
-      );
+      const timeout = Math.max(0, Math.min(1000, (options?.deadlineMs ?? Infinity) - now()));
+      const finish = (value: ScreenSnapshot | null) => {
+        clearTimeout(timer);
+        options?.signal.removeEventListener('abort', abort);
+        resolve(value);
+      };
+      const abort = () => finish(null);
+      const timer = setTimeout(() => finish(null), timeout);
+      if (options?.signal.aborted) {
+        finish(null);
+        return;
+      }
+      options?.signal.addEventListener('abort', abort, { once: true });
+      deps.runtime.screen(sessionId).then(finish, (err: unknown) => {
+        clearTimeout(timer);
+        options?.signal.removeEventListener('abort', abort);
+        reject(err);
+      });
     });
     const adapter = noticeAdapterOf(sessionId);
     const stuck = cliKindOf(sessionId);
@@ -1730,7 +1746,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       .slice(-1000);
     if (w.messageId !== null && store.get(w.messageId)?.recipients[w.handle]?.status === 'read')
       w.received = true;
-    const ready = !w.messageRequested && registry.isLive(sessionId);
+    const ready = (!w.messageRequested || w.messageId === null) && registry.isLive(sessionId);
     return {
       startup: prompt
         ? ('waiting_at_prompt' as const)
@@ -1779,21 +1795,44 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   const startupPass = async () => {
     await Promise.all(
       [...startupWatches].map(async ([sessionId, w]) => {
-        if (!deps.sessions.get(sessionId) && !w.exited) {
+        if (!deps.sessions.get(sessionId)) {
           startupWatches.delete(sessionId);
           return;
         }
         if (w.inFlight) return;
+        const t = now();
+        if (t - w.openedAt >= 600_000) {
+          startupWatches.delete(sessionId);
+          return;
+        }
+        if (t < w.retryAt) return;
+        if (w.messageId !== null && store.get(w.messageId)?.recipients[w.handle]?.status === 'read')
+          w.received = true;
+        const deliveryPending = w.messageId !== null && !w.received;
+        let deliveryDue = deliveryPending && !w.alerted && t - w.openedAt >= 30_000;
+        const busy = deps.attention.statusOf(sessionId).busy;
+        if (!w.exited && busy) {
+          w.busySince ??= t;
+          if (!deliveryDue) return;
+        } else {
+          if (w.busySince !== undefined && t - w.busySince >= 3_000) {
+            w.since = Math.min(t, deps.attention.lastOutputAt(sessionId) ?? t);
+            w.alerted = false;
+            deliveryDue = deliveryPending && t - w.openedAt >= 30_000;
+          }
+          w.busySince = undefined;
+        }
+        const outputAt = deps.attention.lastOutputAt(sessionId);
+        const deadlineDue = !w.alerted && (deliveryDue || t - w.since >= 30_000);
+        if (!w.exited && !deadlineDue && (outputAt === w.lastOutputAt || t - w.lastScanAt < 3_000))
+          return;
         w.inFlight = true;
         try {
           const reading = await startupReading(sessionId, w);
+          w.lastScanAt = now();
+          w.lastOutputAt = outputAt;
           if (w.exited && (w.received || !w.messageRequested)) {
             startupWatches.delete(sessionId);
-            return;
-          }
-          if (!w.exited && reading.busy) {
-            w.since = now();
-            w.alerted = false;
             return;
           }
           if (!w.exited && reading.startup === 'running') {
@@ -1802,9 +1841,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           }
           if (
             stopped ||
-            !startupWatches.has(sessionId) ||
+            startupWatches.get(sessionId) !== w ||
+            !deps.sessions.get(sessionId) ||
+            now() - w.openedAt >= 600_000 ||
             w.alerted ||
-            (!w.exited && now() - w.since < 30_000)
+            (!w.exited &&
+              now() - w.since < 30_000 &&
+              !(w.messageId !== null && !w.received && now() - w.openedAt >= 30_000))
           )
             return;
           const sent = await tools.sendMessage(
@@ -1812,14 +1855,25 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             {
               to: [w.opener.handle],
               kind: 'request',
-              body: `The session that sent this message (${w.handle}) ${w.exited ? 'exited before receiving its first task' : 'has not started or is waiting at a prompt'}. Use the sender address with read_screen and help it continue. Screen text may be from earlier.${reading.excerpt && mayExposeStartupScreen(sessionId, w) ? `\n\nScreen:\n${reading.excerpt}` : ''}`,
+              body: `Conduit startup check: The session that sent this message (${w.handle}) ${w.exited ? 'exited before receiving its first task' : w.messageId !== null && !w.received ? 'has not received its first task' : 'has not started or is waiting at a prompt'}. Use the sender address with read_screen and help it continue. Screen text may be from earlier.${reading.excerpt && mayExposeStartupScreen(sessionId, w) ? `\n\nScreen:\n${reading.excerpt}` : ''}`,
             },
-            { allowUnconnected: true },
+            { allowUnconnected: true, systemGenerated: true },
           );
           if (sent.ok && sent.value.recipients.some((r) => r.status === 'queued')) {
             w.alerted = true;
             if (w.exited) startupWatches.delete(sessionId);
           }
+          if (
+            !sent.ok &&
+            (sent.error.code === 'unknown_session' ||
+              sent.error.code === 'refused' ||
+              sent.error.code === 'rate_limited')
+          )
+            startupWatches.delete(sessionId);
+          else if (sent.ok && sent.value.recipients.every((r) => r.status === 'refused'))
+            startupWatches.delete(sessionId);
+          else if (!sent.ok || !sent.value.recipients.some((r) => r.status === 'queued'))
+            w.retryAt = now() + 30_000;
         } catch (err) {
           deps.log.warn('conduit-mcp', 'startup check failed', { sessionId, err: String(err) });
         } finally {
@@ -1925,7 +1979,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     commandModelFlag: (command) => modelFlagOf({ id: COMMAND_AGENT_ID, command }),
     messageReady: () => deps.domain.messagingOn() && store.available(),
     sendMessage: (caller, args, opts) => tools.sendMessage(caller, args, opts),
-    observeStartup: async (sessionId, handle, opener, messageId, messageRequested) => {
+    observeStartup: async (sessionId, handle, opener, messageId, messageRequested, options) => {
       if (!handle) return { startup: 'starting' };
       const w: StartupWatch = {
         handle,
@@ -1936,14 +1990,21 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         exited:
           deps.runtime.get(sessionId)?.state === 'finished' ||
           deps.sessions.get(sessionId)?.status === 'exited',
+        busySince: undefined,
+        lastScanAt: now(),
+        lastOutputAt: deps.attention.lastOutputAt(sessionId),
+        retryAt: 0,
+        openedAt: now(),
         since: now(),
         alerted: false,
         inFlight: false,
       };
       startupWatches.set(sessionId, w);
-      await sleep(3000);
+      if (!(await waitForStartup(options, now, sleep))) return { startup: 'starting' };
       try {
-        const reading = await startupReading(sessionId, w);
+        const reading = await startupReading(sessionId, w, options);
+        if (options.signal.aborted || now() >= (options.deadlineMs ?? Infinity))
+          return { startup: 'starting' };
         return {
           startup: reading.startup,
           ...(reading.startup === 'waiting_at_prompt' &&
@@ -2725,6 +2786,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               action,
             }),
           signal: inflight.signal,
+          deadlineMs:
+            inflight.startedAt +
+            askBudgetMs(cliKindOfHandle(handle), wiredAtLaunch(sessionId)) -
+            5_000,
         };
         return flow.runControl<StructuredOutput>({
           inflight,
@@ -3265,6 +3330,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         // Nothing asks through a window for a remote lead, and close refuses before it would.
         ui: async () => ({ ok: false, error: windowNotReady() }),
         signal,
+        get deadlineMs() {
+          return pending.deadline - 5_000;
+        },
       };
       const prepared = await prepareControl(caller, name, args, ctx);
       if (!prepared.ok) return prepared;
@@ -4332,6 +4400,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
 
     async onSessionDeleted(sessionId) {
+      startupWatches.delete(sessionId);
       deleting.add(sessionId);
       if (nativeImpact?.rows.some((row) => row.sessionId === sessionId)) {
         const rows = nativeImpact.rows.filter((row) => row.sessionId !== sessionId);

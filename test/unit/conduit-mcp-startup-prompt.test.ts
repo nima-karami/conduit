@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { MCP_ADAPTERS } from '../../src/conduit-mcp/adapters';
-import { isStartupPrompt } from '../../src/conduit-mcp/startup-prompt';
+import { isStartupPrompt, waitForStartup } from '../../src/conduit-mcp/startup-prompt';
 import idle from './fixtures/conduit-mcp/screens/claude-idle.json';
 import permission from './fixtures/conduit-mcp/screens/claude-permission.json';
 import trust from './fixtures/conduit-mcp/screens/claude-trust.json';
@@ -28,5 +28,26 @@ describe('startup prompt detection', () => {
     expect(isStartupPrompt(claude, permission, false)).toBe(true);
     expect(isStartupPrompt(claude, permission, false, true)).toBe(false);
     expect(isStartupPrompt(claude, permission, false)).toBe(true);
+  });
+});
+
+describe('bounded startup wait', () => {
+  it('skips or trims the wait to leave time for the screen read', async () => {
+    const signal = new AbortController().signal;
+    const sleep = vi.fn(async (_ms: number) => {});
+    expect(await waitForStartup({ signal, deadlineMs: 1000 }, () => 0, sleep)).toBe(false);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(await waitForStartup({ signal, deadlineMs: 2500 }, () => 0, sleep)).toBe(true);
+    expect(sleep).toHaveBeenCalledWith(1500);
+  });
+  it('ends promptly when cancelled even if the delay has not finished', async () => {
+    const controller = new AbortController();
+    const waiting = waitForStartup(
+      { signal: controller.signal },
+      () => 0,
+      () => new Promise(() => {}),
+    );
+    controller.abort();
+    await expect(waiting).resolves.toBe(false);
   });
 });

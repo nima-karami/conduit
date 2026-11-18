@@ -224,11 +224,13 @@ async function submit() {
       return;
     }
     const tool = call[1];
+    let callId;
     const result = await callTool(tool, args, (id) => {
+      callId = id;
       lastCallId = id;
       record('CALL', { tool, id });
     });
-    record('RESULT', { tool, result });
+    record('RESULT', { tool, id: callId, result });
     prompt();
     return;
   }

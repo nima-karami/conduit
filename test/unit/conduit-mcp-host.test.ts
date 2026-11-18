@@ -3461,6 +3461,42 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
     expect(inbox.body.messages[0].body).toContain('start on T1');
   });
 
+  it('includes the startup screen in the result and follow-up when read_screen is allowed', async () => {
+    let initialized = false;
+    const h = harness({
+      kinds: { '/w/wt': 'dir' },
+      beforeSnapshot: async (id) => {
+        if (id !== 'n1' || initialized) return;
+        initialized = true;
+        await launch(h, id);
+        h.output(id, 'Startup approval required\r\nPress 1');
+      },
+    });
+    await h.host.start();
+    const a = await launch(h, 's1');
+    await setHostPolicy(h, 's1', {
+      open_session: { access: 'on', when: 'always' },
+      read_screen: { access: 'on', when: 'always', reach: 'opened' },
+    });
+    const c = await client(h.ep, a.token);
+    const opened = await c.call('open_session', {
+      path: 'wt',
+      agent: 'e2e-fake-mcp',
+      message: 'task',
+    });
+    expect(opened.body.startup).toBe('waiting_at_prompt');
+    expect(opened.body.screen_excerpt).toContain('Startup approval required');
+    h.clock.t += 30_000;
+    await h.host.tick();
+    let notice: { body: string } | undefined;
+    await vi.waitFor(async () => {
+      const result = await c.call('read_inbox');
+      notice ??= result.body.messages[0];
+      expect(notice).toBeDefined();
+    });
+    expect(notice?.body).toContain('Startup approval required');
+  });
+
   it('alerts once per stuck episode, rearms after delivery, and hides screen text when denied', async () => {
     const h = harness({ kinds: { '/w/wt': 'dir' } });
     await h.host.start();
@@ -3494,6 +3530,20 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
     h.busy.add('n1');
     await h.host.tick();
     await new Promise((resolve) => setTimeout(resolve, 20));
+    h.clock.t += 1_000;
+    await h.host.tick();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    h.busy.delete('n1');
+    await h.host.tick();
+    h.clock.t += 30_000;
+    await h.host.tick();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect((await c.call('read_inbox')).body.messages).toHaveLength(0);
+    h.busy.add('n1');
+    await h.host.tick();
+    h.clock.t += 3_000;
+    await h.host.tick();
+    h.lastOut.set('n1', h.clock.t);
     h.busy.delete('n1');
     h.clock.t += 30_000;
     await h.host.tick();
@@ -3522,6 +3572,9 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
     h.busy.add('n1');
     await h.host.tick();
     await new Promise((resolve) => setTimeout(resolve, 20));
+    h.clock.t += 3_000;
+    await h.host.tick();
+    h.lastOut.set('n1', h.clock.t);
     h.busy.delete('n1');
     h.output('n1', '\x1b[2J\x1b[HStartup approval required\r\nPress 1');
     h.clock.t += 30_000;
@@ -3551,6 +3604,142 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
       expect(message).toBeDefined();
     });
     expect(message?.body).toContain('exited before receiving its first task');
+  });
+
+  it('does not report a helper that was deliberately deleted after exit', async () => {
+    const h = harness({ kinds: { '/w/wt': 'dir' } });
+    await h.host.start();
+    const a = await launch(h, 's1');
+    await on(h, 's1', ['open_session']);
+    const c = await client(h.ep, a.token);
+    await c.call('open_session', { path: 'wt', agent: 'e2e-fake-mcp', message: 'task' });
+    await launch(h, 'n1');
+    h.exit('n1');
+    await h.host.onSessionDeleted('n1');
+    h.sessions.delete('n1');
+    await h.host.tick();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect((await c.call('read_inbox')).body.messages).toHaveLength(0);
+  });
+
+  it('does not repeatedly snapshot an unchanged watched session', async () => {
+    const h = harness({ kinds: { '/w/wt': 'dir' } });
+    await h.host.start();
+    const a = await launch(h, 's1');
+    await on(h, 's1', ['open_session']);
+    const c = await client(h.ep, a.token);
+    await c.call('open_session', { path: 'wt', agent: 'e2e-fake-mcp', message: 'task' });
+    await launch(h, 'n1');
+    const s2 = await launch(h, 's2');
+    await client(h.ep, s2.token);
+    await c.call('send_message', { to: ['fake-3'], body: 'task' });
+    h.screenReads.length = 0;
+    for (let i = 0; i < 10; i++) await h.host.tick();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(h.screenReads.filter((id) => id === 'n1').length).toBe(
+      h.screenReads.filter((id) => id === 's2').length,
+    );
+  });
+
+  it('alerts about an unread first task even during sustained output, without repeating while busy', async () => {
+    const h = harness({ kinds: { '/w/wt': 'dir' } });
+    await h.host.start();
+    const a = await launch(h, 's1');
+    await on(h, 's1', ['open_session']);
+    const c = await client(h.ep, a.token);
+    await c.call('open_session', { path: 'wt', agent: 'e2e-fake-mcp', message: 'task' });
+    await launch(h, 'n1');
+    h.busy.add('n1');
+    await h.host.tick();
+    h.clock.t += 31_000;
+    await h.host.tick();
+    let notice: { body: string } | undefined;
+    await vi.waitFor(async () => {
+      const result = await c.call('read_inbox');
+      notice ??= result.body.messages[0];
+      expect(notice).toBeDefined();
+    });
+    expect(notice?.body).toContain('has not received its first task');
+    h.clock.t += 31_000;
+    await h.host.tick();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect((await c.call('read_inbox')).body.messages).toHaveLength(0);
+  });
+
+  it('expires supervision ten minutes after opening', async () => {
+    const h = harness({ kinds: { '/w/wt': 'dir' } });
+    await h.host.start();
+    const a = await launch(h, 's1');
+    await on(h, 's1', ['open_session']);
+    const c = await client(h.ep, a.token);
+    await c.call('open_session', { path: 'wt', agent: 'e2e-fake-mcp', message: 'task' });
+    await launch(h, 'n1');
+    h.clock.t += 600_000;
+    await h.host.tick();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect((await c.call('read_inbox')).body.messages).toHaveLength(0);
+  });
+
+  it('skips observation when the caller budget is nearly spent but keeps supervising', async () => {
+    let h: Harness;
+    h = harness({
+      kindOf: async () => {
+        h.clock.t += 20_000;
+        return 'dir';
+      },
+    });
+    await h.host.start();
+    const a = await launch(h, 's1');
+    await on(h, 's1', ['open_session']);
+    const c = await client(h.ep, a.token);
+    const started = h.clock.t;
+    const opened = await c.call('open_session', {
+      path: 'wt',
+      agent: 'e2e-fake-mcp',
+      message: 'task',
+    });
+    expect(opened.body.startup).toBe('starting');
+    expect(h.clock.t - started).toBe(20_000);
+    expect(h.screenReads).not.toContain('n1');
+    h.clock.t += 30_000;
+    await h.host.tick();
+    let notice: unknown;
+    await vi.waitFor(async () => {
+      const result = await c.call('read_inbox');
+      if (result.body.messages.length) notice = result.body.messages[0];
+      expect(notice).toBeDefined();
+    });
+  });
+
+  it('does not repeatedly report a failed first-message store once the helper connects', async () => {
+    const io = failingIo();
+    io.fail = false;
+    let failOnce = true;
+    const append = io.appendLog;
+    io.appendLog = async (line: string) => {
+      if (failOnce) {
+        failOnce = false;
+        throw new Error('disk full');
+      }
+      await append(line);
+    };
+    const h = harness({ kinds: { '/w/wt': 'dir' }, storeIo: io });
+    await h.host.start();
+    const a = await launch(h, 's1');
+    await on(h, 's1', ['open_session']);
+    const c = await client(h.ep, a.token);
+    const opened = await c.call('open_session', {
+      path: 'wt',
+      agent: 'e2e-fake-mcp',
+      message: 'task',
+    });
+    expect(opened.body.message.id).toBeNull();
+    const child = await launch(h, 'n1');
+    await client(h.ep, child.token);
+    h.clock.t += 30_000;
+    await h.host.tick();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect((await c.call('read_inbox')).body.messages).toHaveLength(0);
   });
 
   it('claimHandle at create: a later prepareLaunch keeps the same handle', async () => {

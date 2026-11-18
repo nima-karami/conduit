@@ -13,6 +13,7 @@ import { c2Auth } from './c2-auth.mjs';
 import { tapMcp, until } from './conduit-mcp-helpers.mjs';
 import { assert, finishScenario, launchApp, makeLog, phase, REPO } from './harness.mjs';
 import {
+  agentRecords,
   callTool,
   ECHO_AGENT,
   linkView,
@@ -258,6 +259,7 @@ async function run() {
       grantPeer.reply?.result?.ok === true,
       `peer assignment on B: ${JSON.stringify(grantPeer)}`,
     );
+    const previousOpenCalls = agentRecords(a, aa.sessionId, 'CALL').length;
     typeCall(a, aa, 'open_session', {
       machine: bId,
       agent: ECHO_AGENT,
@@ -299,6 +301,13 @@ async function run() {
         (g) => g.id === grant.id && g.state === 'active',
       );
       return !row.grants.some((g) => g.id === grant.id) && !stillOnB;
+    });
+
+    await eventually('the granted open_session finishes before disconnect', () => {
+      const call = agentRecords(a, aa.sessionId, 'CALL')
+        .slice(previousOpenCalls)
+        .find((r) => r.tool === 'open_session');
+      return call && agentRecords(a, aa.sessionId, 'RESULT').some((r) => r.id === call.id);
     });
 
     phase('4b. a custom pending remote profile survives an actual controller restart');
