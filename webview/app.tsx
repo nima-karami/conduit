@@ -5595,12 +5595,6 @@ export function App() {
             onContextMenu={onSessionContextMenu}
             onRowMenu={openSessionMenu}
             sessionsLoaded={sessionsLoaded}
-            permissionLabels={mcp.state?.policy.sessions}
-            onPermissions={(id) => {
-              const coverage = permissionCoverageRef.current;
-              if (canOpenSessionPermissions(id, coverage.sessions, coverage.policy))
-                setPermissionsFor(id);
-            }}
             mcpBadges={mcp.state?.sessions ?? NO_MCP_BADGES}
             mcpNotConnected={mcp.state?.notConnected ?? NO_NOT_CONNECTED}
             mcpEnabled={mcp.state?.enabled ?? false}

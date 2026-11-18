@@ -81,29 +81,35 @@ await runScenario(
     await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
     await dialog.waitFor({ state: 'hidden' });
 
-    const badge = row.getByRole('button', { name: /Permissions · .*Lead/ });
-    await badge.waitFor();
-    const policy = JSON.parse(
-      readFileSync(join(userDataDir, 'conduit-mcp', 'policy.json'), 'utf8'),
+    const readPolicy = () =>
+      JSON.parse(readFileSync(join(userDataDir, 'conduit-mcp', 'policy.json'), 'utf8'));
+    assert(
+      await until(
+        async () =>
+          readPolicy().assignments.some(
+            ({ point, assignment }) =>
+              point.kind === 'session' &&
+              point.sessionId === session.sessionId &&
+              assignment.profileId === 'lead',
+          ),
+        10_000,
+      ),
+      'the Lead assignment was not durably written',
     );
     assert(
-      policy.assignments.some(
-        ({ point, assignment }) =>
-          point.kind === 'session' &&
-          point.sessionId === session.sessionId &&
-          assignment.profileId === 'lead',
+      await until(
+        async () =>
+          /^Lead\b/.test((await mcpState(page))?.policy.sessions[session.sessionId]?.label ?? ''),
+        10_000,
       ),
-      'the profile badge appeared before the session assignment was durably written',
+      'the session projection does not show the Lead profile',
     );
     await capture(page, '03-lead-applied.png');
-    await badge.click();
+    await row.click({ button: 'right' });
+    await menu.click();
     await dialog.waitFor();
     await page.keyboard.press('Escape');
     await dialog.waitFor({ state: 'hidden' });
-    assert(
-      await badge.evaluate((node) => node === node.ownerDocument.activeElement),
-      'closing the dialog did not restore its invoking badge',
-    );
 
     assert(!(await callTool(page, session.sessionId, 'list_sessions', {}))?.error, 'list_sessions');
     assert(
@@ -114,7 +120,8 @@ await runScenario(
       ),
       'owner policy did not retain the saved profile',
     );
-    await badge.click();
+    await row.click({ button: 'right' });
+    await menu.click();
     await dialog.getByRole('button', { name: 'View Activity' }).click();
     await dialog.waitFor({ state: 'hidden' });
     const activity = page.getByRole('main', { name: 'Permissions Activity' });
@@ -179,9 +186,7 @@ await runScenario(
     await settings.getByRole('button', { name: 'Activity', exact: true }).click();
     await settings.waitFor({ state: 'hidden' });
     await activity.waitFor();
-    log(
-      'owner modal, keyboard tabs, durable exact native profile, badge and scoped Activity verified',
-    );
+    log('owner modal, keyboard tabs, durable exact native profile and scoped Activity verified');
   },
   { userDataDir, env, openFolder: false },
 );

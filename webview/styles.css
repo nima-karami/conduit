@@ -17218,20 +17218,6 @@ button.toggle--on .toggle__knob {
   position: relative;
 }
 
-.session__permission {
-  white-space: nowrap;
-  color: var(--text-dim);
-  background: var(--raise);
-  border: 1px solid var(--border);
-  border-radius: var(--r-badge);
-  font: inherit;
-  padding: 2px 5px;
-  cursor: pointer;
-}
-.session__permission:focus-visible {
-  box-shadow: var(--focus-ring);
-}
-
 .refusal-chip {
   flex: 0 0 auto;
   border: 1px solid var(--border);
