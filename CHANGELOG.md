@@ -29,7 +29,7 @@ First published build of the 0.68 permissions release. The 0.68.0 tag was never 
 
 ## [0.68.0] — 2026-11-18 (not published)
 
-Tagged but never published. Its changes ship in 0.68.1.
+- Tagged but never published. Its changes ship in 0.68.1.
 
 ## [0.67.0] — 2026-11-16
 
