@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { BUILT_IN_PROFILES } from '../../src/conduit-mcp/policy-profiles';
 import type { Profile } from '../../src/conduit-mcp/policy-types';
-import { PermissionsSettings } from '../../webview/components/permissions-settings';
+import { PermissionsRoles } from '../../webview/components/permissions-roles';
 
 const api = vi.hoisted(() => ({
   state: { policy: { editToken: 'v1', readOnly: false, profiles: [] as Profile[] } },
@@ -40,8 +40,10 @@ it('reviews the frozen copy and requires confirmation before saving its digest',
   const root = createRoot(host);
   await act(async () =>
     root.render(
-      <PermissionsSettings
+      <PermissionsRoles
         serverConnected
+        mcp={api as never}
+        registerBack={() => {}}
         sessions={[{ id: 's1', name: 'Lane one' } as import('../../src/types').Session]}
       />,
     ),
@@ -94,7 +96,11 @@ it('shows only changed custom rules, including their conditions, in the review',
   const host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);
-  await act(async () => root.render(<PermissionsSettings serverConnected />));
+  await act(async () =>
+    root.render(
+      <PermissionsRoles serverConnected mcp={api as never} sessions={[]} registerBack={() => {}} />,
+    ),
+  );
   const edit = host.querySelector<HTMLButtonElement>('[aria-label="Edit Custom"]');
   await act(async () => edit?.click());
   const group = host.querySelector('[aria-label="open_session decision"]');
