@@ -299,6 +299,7 @@
      live band is `--layer-modal` + clamped modal depth), the floating stack (toasts, the
      approval card, the update item) above every modal, popovers above it (a menu opened into
      the stack corner must take its clicks), the mermaid theatre above both. */
+  --layer-page: 50;
   --layer-modal: 60;
   --layer-toast: 80;
   --layer-popover: 200;
@@ -8091,22 +8092,38 @@ body.gh-resizing {
   cursor: default;
 }
 
-/* ---------- settings modal ---------- */
-/* Sixteen Appearance controls do not fit the 560px dialog this shipped as — 8d draws the
-   modal at ~1060px for exactly that reason (handoff open item 3). It takes whatever the
-   window gives it; at the design's own 820px window that clamps to ~756 and the pane still
-   scrolls, which 8d also shows. */
-.settings {
-  width: 830px;
-  max-width: calc(100vw - 48px);
-  height: 1060px;
-  max-height: calc(100vh - 52px);
-}
-.settings__head {
+/* ---------- settings page ---------- */
+/* A fixed page over the still-mounted, inert workbench (terminals keep their size), so it
+   reproduces the shell's geometry like .board and sits below the drag region of .topbar. */
+.settings-page {
+  position: fixed;
+  top: calc(var(--win-pad) + var(--density-topbar-h) + var(--gutter));
+  left: var(--win-pad);
+  right: var(--win-pad);
+  bottom: var(--win-pad);
+  z-index: var(--layer-page);
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+  overflow: hidden;
+  background: var(--panel);
+  border-radius: var(--r-card);
+}
+.settings-page__back {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-ctl);
+  padding: var(--density-settings-navitem-pad);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: calc(13px * var(--font-scale));
+  font-weight: 500;
+  cursor: pointer;
+}
+.settings-page__back svg {
+  transform: rotate(180deg);
 }
 .settings__body {
   flex: 1;

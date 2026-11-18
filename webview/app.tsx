@@ -3459,11 +3459,24 @@ export function App() {
   // close button + Esc. Defined here because it needs forceCloseDoc (declared above).
   const closeReviewTab = useCallback(() => forceCloseDoc(REVIEW_DOC_ID), [forceCloseDoc]);
 
+  const settingsOpenerRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const el = settingsOpenerRef.current;
+    if (settingsOpen || !el) return;
+    settingsOpenerRef.current = null;
+    const sessionId = activeIdRef.current;
+    if (el.isConnected) el.focus();
+    else if (sessionId) requestDocFocus(terminalFocusKey(sessionId));
+  }, [settingsOpen]);
+
   const openSettingsAt = useCallback(
     (tab: SettingsTab, cli?: AgentCli, opts?: { releaseNotes?: boolean }) => {
       setSettingsTab(tab);
       setSettingsFocusCli(cli);
       setSettingsAboutReleaseNotes(!!opts?.releaseNotes);
+      if (settingsOpenerRef.current === null && document.activeElement instanceof HTMLElement) {
+        settingsOpenerRef.current = document.activeElement;
+      }
       setSettingsOpen(true);
     },
     [],
@@ -5878,7 +5891,9 @@ export function App() {
               openSettings={() => openSettingsAt('permissions')}
             />
           )}
-          <div className="workbench">{visibleOrder.map(renderRegion)}</div>
+          <div className="workbench" inert={settingsOpen}>
+            {visibleOrder.map(renderRegion)}
+          </div>
           {newSession && (
             <NewSessionModal
               prefill={newSession}
