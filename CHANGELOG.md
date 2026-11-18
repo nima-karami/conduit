@@ -6,12 +6,9 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
-### Fixed
-- Permission requests from the app wait for the background service to reconnect and authenticate after a restart.
+## [0.68.2] — 2026-11-18
 
-## [0.68.1] — 2026-11-18
-
-First published build of the 0.68 permissions release. The 0.68.0 tag was never published: its release checks failed on end-to-end tests that hadn't been updated for the new permission routes. No app changes since 0.68.0.
+First published build of the 0.68 permissions release. The 0.68.0 and 0.68.1 tags were never published: their release checks caught end-to-end tests that needed updating and the fix below.
 
 ### Added
 - Permission assignments can opt in to a profile’s supported Claude Code and Codex launch flags. The session records the flags Conduit prepared for its current launch.
@@ -20,6 +17,7 @@ First published build of the 0.68 permissions release. The 0.68.0 tag was never 
 - Open the exact Activity entry from a session’s refusal badge or notification.
 
 ### Fixed
+- After the background service restarts, the app waits until it has reconnected and proven itself before sending permission edits, grants or Activity queries, instead of sending them early and getting "auth required".
 - Codex scheduling recovers after a rollout file is replaced when the original path still reports the same thread ID. The retired launch’s linked mode remains unavailable.
 - A pending remote permission edit clears when a replacement connection confirms the same rules were saved.
 - Remote permission edits and conflict choices confirm saved intent, reject stale rules, and show saving failures without losing pending changes.
@@ -30,9 +28,13 @@ First published build of the 0.68 permissions release. The 0.68.0 tag was never 
 - Remote permission answers now report saving failures before accepting consent. Requests withdraw if new rules deny them.
 - Permission restrictions stay active if saving fails and retry saving after storage recovers. A notice shows saving problems and lets you retry manually.
 
+## [0.68.1] — 2026-11-18 (not published)
+
+- Tagged but never published. Its changes ship in 0.68.2.
+
 ## [0.68.0] — 2026-11-18 (not published)
 
-- Tagged but never published. Its changes ship in 0.68.1.
+- Tagged but never published. Its changes ship in 0.68.2.
 
 ## [0.67.0] — 2026-11-16
 
