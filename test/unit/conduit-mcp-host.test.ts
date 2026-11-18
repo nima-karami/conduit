@@ -5477,6 +5477,132 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(h.host.uiState().awaitingApproval).toEqual([]);
   });
 
+  it('reports only receiver sessions whose next native selection changed after a durable push', async () => {
+    const profile = {
+      ...OBSERVER,
+      id: 'p-private' as const,
+      name: 'Private',
+      builtIn: false,
+      nativeModes: { claude: 'plan' as const, codex: 'unset' as const },
+    };
+    const policy = serializePolicyFile({
+      version: 2,
+      profiles: [profile],
+      assignments: [
+        {
+          point: { kind: 'session', sessionId: 'local-secret-session' },
+          assignment: {
+            profileId: 'p-private',
+            exceptions: [],
+            onScreenOnly: false,
+            applyNative: true,
+          },
+        },
+      ],
+      overrides: [],
+      migratedFrom: null,
+      notes: { onScreenOnlyOffered: [] },
+    });
+    const h = harness({ policyIo: { read: () => policy, writeSync: () => true } });
+    h.sessions.set('local-secret-session', session('local-secret-session', { agentId: CLAUDE.id }));
+    h.sessions.set('shell', session('shell', { agentId: SHELL.id }));
+    await h.host.start();
+    const port = h.host.networkPort();
+    const doc = port.policyDoc();
+    const changed = {
+      ...profile,
+      nativeModes: { ...profile.nativeModes, claude: 'acceptEdits' as const },
+    };
+    expect(port.applyRemotePolicy(doc.rev, { profiles: [changed], assignments: [] }, true).ok).toBe(
+      true,
+    );
+    expect(h.host.uiState().nativeImpact).toMatchObject({
+      total: 1,
+      rows: [
+        {
+          sessionId: 'local-secret-session',
+          before: { intent: { requested: { mode: 'plan' } } },
+          after: { intent: { requested: { mode: 'acceptEdits' } } },
+        },
+      ],
+    });
+    expect(JSON.stringify(port.policyDoc())).not.toContain('local-secret-session');
+    expect(port.applyRemotePolicy(doc.rev, { profiles: [profile], assignments: [] }, true).ok).toBe(
+      false,
+    );
+    expect(h.host.uiState().nativeImpact?.total).toBe(1);
+  });
+
+  it('bounds receiver impact, replaces and clears it, and retains it after a failed save', async () => {
+    const profile = {
+      ...OBSERVER,
+      id: 'p-impact' as const,
+      name: 'Impact',
+      builtIn: false,
+      nativeModes: { claude: 'plan' as const, codex: 'unset' as const },
+    };
+    const assignment = {
+      point: { kind: 'default' as const },
+      assignment: {
+        profileId: 'p-impact' as const,
+        exceptions: [],
+        onScreenOnly: false,
+        applyNative: true,
+      },
+    };
+    const policy = serializePolicyFile({
+      version: 2,
+      profiles: [profile],
+      assignments: [assignment],
+      overrides: [],
+      migratedFrom: null,
+      notes: { onScreenOnlyOffered: [] },
+    });
+    let writable = true;
+    const h = harness({
+      policyIo: {
+        read: () => policy,
+        writeSync: () => {
+          if (!writable) throw new Error('owned policy write fault');
+          return true;
+        },
+      },
+    });
+    for (let i = 0; i < 105; i++) {
+      const id = `local-${i}`;
+      h.sessions.set(id, session(id, { agentId: CLAUDE.id }));
+    }
+    await h.host.start();
+    const port = h.host.networkPort();
+    const changed = {
+      ...profile,
+      nativeModes: { ...profile.nativeModes, claude: 'acceptEdits' as const },
+    };
+    const push = (p: typeof profile | typeof changed) =>
+      port.applyRemotePolicy(
+        port.policyDoc().rev,
+        { profiles: [p], assignments: [assignment] },
+        true,
+      );
+    expect(push(changed).ok).toBe(true);
+    const first = h.host.uiState().nativeImpact;
+    expect(first?.total).toBe(105);
+    expect(first?.rows).toHaveLength(100);
+    expect(push(profile).ok).toBe(true);
+    const second = h.host.uiState().nativeImpact;
+    expect(second?.total).toBe(105);
+    expect(second?.rows[0]).toMatchObject({
+      before: { intent: { requested: { mode: 'acceptEdits' } } },
+      after: { intent: { requested: { mode: 'plan' } } },
+    });
+    writable = false;
+    expect(push(changed).ok).toBe(false);
+    expect(h.host.uiState().nativeImpact).toEqual(second);
+    writable = true;
+    expect(push(profile).ok).toBe(true);
+    expect(h.host.uiState().nativeImpact).toBeNull();
+  });
+
   it('a pushed doc that now denies a waiting ask re-decides it at once', async () => {
     const { h, c } = await asking();
     c.call(1, 'open_session', OPEN);
@@ -6415,14 +6541,23 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       !response.result.undoToken
     )
       throw new Error('missing receipt');
+    await send(
+      {
+        type: 'mcp:grantLifecycle',
+        requestId: 4,
+        operation: { kind: 'undo', token: response.result.undoToken },
+      },
+      2,
+    );
+    expect(replies[1]).toMatchObject({ requestId: 4, result: { ok: false } });
     await send({
       type: 'mcp:grantLifecycle',
-      requestId: 4,
+      requestId: 5,
       operation: { kind: 'undo', token: response.result.undoToken },
     });
-    expect(replies[1]).toEqual({
+    expect(replies[2]).toEqual({
       type: 'mcp:grantLifecycleResult',
-      requestId: 4,
+      requestId: 5,
       result: { ok: true },
     });
   });

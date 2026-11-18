@@ -72,6 +72,7 @@ function uiState(o: Partial<McpUiState> = {}): McpUiState {
     enabled: true,
     storeError: null,
     native: {},
+    nativeImpact: null,
     loading: false,
     sessions: {},
     threads: [],

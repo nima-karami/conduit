@@ -7,10 +7,14 @@ import { agentRecords, startAgent, startServer } from './net-helpers.mjs';
 const log = makeLog('permissions-lifecycle');
 const rows = (server, agent) => agentRecords(server, agent.sessionId, 'RESULT');
 const state = async (server) => (await server.c2.call('events.subscribe')).mcp.policy;
-const command = async (server, message) =>
-  (await server.c2.call('mcp.fromRenderer', { windowId: 1, message })).reply;
-const lifecycle = async (server, operation) => {
-  const reply = await command(server, { type: 'mcp:grantLifecycle', requestId: 100, operation });
+const command = async (server, message, windowId = 1) =>
+  (await server.c2.call('mcp.fromRenderer', { windowId, message })).reply;
+const lifecycle = async (server, operation, windowId = 1) => {
+  const reply = await command(
+    server,
+    { type: 'mcp:grantLifecycle', requestId: 100, operation },
+    windowId,
+  );
   assert(
     reply?.type === 'mcp:grantLifecycleResult' && reply.requestId === 100,
     JSON.stringify(reply),
@@ -37,6 +41,13 @@ async function run() {
           ready: true,
           visibleSessionIds: [caller.sessionId],
           ownedSessionIds: [caller.sessionId],
+        },
+        {
+          windowId: 2,
+          focused: false,
+          ready: true,
+          visibleSessionIds: [],
+          ownedSessionIds: [],
         },
       ],
     });
@@ -136,6 +147,11 @@ async function run() {
       `revoke: ${JSON.stringify(revoked)}`,
     );
     assert(diskGrant(grant.id).state === 'revoked', 'receipt preceded durable revoke');
+    const otherUndo = await lifecycle(server, { kind: 'undo', token: revoked.undoToken }, 2);
+    assert(
+      otherUndo.ok === false && diskGrant(grant.id).state === 'revoked',
+      'another ready owner window restored the grant',
+    );
     const undone = await lifecycle(server, { kind: 'undo', token: revoked.undoToken });
     assert(
       undone.ok === true && diskGrant(grant.id).state === 'active',

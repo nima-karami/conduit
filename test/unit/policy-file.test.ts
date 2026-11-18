@@ -85,6 +85,26 @@ const validFile = (): PolicyFile => ({
 });
 
 describe('policy file', () => {
+  it('identifies a duplicate profile safely', () => {
+    const file = validFile();
+    const profile = { ...file.profiles[0], id: `p-bad\n${'x'.repeat(200)}` };
+    expect(parsePolicyFile(JSON.stringify({ ...file, profiles: [profile, profile] }))).toEqual({
+      ok: false,
+      reason: 'corrupt',
+      duplicateProfileId: `p-bad${'x'.repeat(59)}`,
+    });
+  });
+
+  it('removes Unicode category C and truncates on code point boundaries', () => {
+    const file = validFile();
+    const profile = { ...file.profiles[0], id: `p-\u202e\ud800${'a'.repeat(61)}😀tail` };
+    expect(parsePolicyFile(JSON.stringify({ ...file, profiles: [profile, profile] }))).toEqual({
+      ok: false,
+      reason: 'corrupt',
+      duplicateProfileId: `p-${'a'.repeat(61)}😀`,
+    });
+  });
+
   it.each([1, 2])('refuses ambiguous profile IDs in local policy v%s', (version) => {
     const file = validFile();
     const profile = file.profiles[0];
@@ -96,7 +116,7 @@ describe('policy file', () => {
           profiles: [profile, { ...profile, name: 'Duplicate' }],
         }),
       ),
-    ).toEqual({ ok: false, reason: 'corrupt' });
+    ).toEqual({ ok: false, reason: 'corrupt', duplicateProfileId: 'p-1' });
   });
 
   it('rejects native authority injected into a v1 file and reads vetted v2 modes', () => {

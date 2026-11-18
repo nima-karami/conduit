@@ -184,7 +184,6 @@ const isFile = (v: unknown): v is RawPolicyFile =>
   !(v.version === 3 && v.kind === 'recovery-unavailable') &&
   (v.rev === undefined || isRev(v.rev)) &&
   arrayOf(isProfile)(v.profiles) &&
-  new Set(v.profiles.map((p) => p.id)).size === v.profiles.length &&
   arrayOf(isAssignmentEntry)(v.assignments) &&
   (v.version !== 1 ||
     (v.profiles.every((p) => !('nativeModes' in p)) &&
@@ -279,10 +278,26 @@ const normaliseEntry = (
   ),
 });
 
-export function parsePolicyFile(text: string): Parsed<PolicyFile> {
+export function parsePolicyFile(
+  text: string,
+): Parsed<PolicyFile> | { ok: false; reason: 'corrupt'; duplicateProfileId: string } {
   const parsed = parseVersioned(text, 'conduit-mcp/policy.json', isFile);
   if (!parsed.ok) return parsed;
   const { profiles, assignments, ...rest } = parsed.file;
+  const seen = new Set<string>();
+  for (const profile of profiles) {
+    if (seen.has(profile.id)) {
+      return {
+        ok: false,
+        reason: 'corrupt',
+        duplicateProfileId: Array.from(profile.id)
+          .filter((char) => !/\p{C}/u.test(char))
+          .slice(0, 64)
+          .join(''),
+      };
+    }
+    seen.add(profile.id);
+  }
   return {
     ok: true,
     file: {

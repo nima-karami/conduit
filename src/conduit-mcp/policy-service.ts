@@ -75,6 +75,7 @@ export interface PolicyServiceDeps {
   peerKnown(id: string): boolean | null;
   grantBindingsCurrent(grant: Grant): boolean;
   now(): number;
+  monotonicNow(): number;
   newId(): string;
   setTimer(fn: () => void, ms: number): unknown;
   clearTimer(t: unknown): void;
@@ -131,8 +132,13 @@ export interface PolicyService {
   ): GrantBatchResult;
   extendGrant(id: string, revision: number, expectedToken: string): GrantLifecycleResult;
   renewGrant(id: string, revision: number, expectedToken: string): GrantLifecycleResult;
-  revokeGrantWithUndo(id: string, revision: number, expectedToken: string): GrantLifecycleResult;
-  undoGrantRevoke(token: string): GrantLifecycleResult;
+  revokeGrantWithUndo(
+    id: string,
+    revision: number,
+    expectedToken: string,
+    windowId: number,
+  ): GrantLifecycleResult;
+  undoGrantRevoke(token: string, windowId: number): GrantLifecycleResult;
   peerEligibilityChanged(): void;
   revokeGrant(id: string): PolicyEditResult;
   revokeGrants(ids: readonly string[]): PolicyEditResult;
@@ -221,7 +227,14 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
   let authorityEpoch = 0n;
   const receipts = new Map<
     string,
-    { previous: Grant; revision: number; token: string; epoch: bigint; deadline: number }
+    {
+      previous: Grant;
+      revision: number;
+      token: string;
+      epoch: bigint;
+      deadline: number;
+      windowId: number;
+    }
   >();
   let backupWarning: string | null = null;
   const invalidateAuthority = (): void => {
@@ -500,6 +513,10 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     deps.warn(`${why}; policy is read-only and not saved`, e);
     const good = readLastGood();
     const usable = good.kind === 'ok' ? good.policy : null;
+    saveErrors.set(
+      'policy',
+      `${why}; ${usable ? 'using the last saved copy' : 'no saved copy is available; every session is Observer'}`,
+    );
     failClosed = usable === null;
     file = usable ?? {
       ...emptyFile(),
@@ -580,9 +597,11 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     const parsed = parsePolicyFile(text);
     if (!parsed.ok) {
       unreadablePolicy(
-        parsed.reason === 'newer'
-          ? 'policy.json is from a newer version'
-          : 'policy.json is unreadable',
+        'duplicateProfileId' in parsed
+          ? `policy.json has duplicate profile ID: ${parsed.duplicateProfileId}`
+          : parsed.reason === 'newer'
+            ? 'policy.json is from a newer version'
+            : 'policy.json is unreadable',
       );
       return;
     }
@@ -1030,7 +1049,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       return saveGrants(candidate.all());
     },
 
-    revokeGrantWithUndo(id, revision, expectedToken) {
+    revokeGrantWithUndo(id, revision, expectedToken, windowId) {
       if (expectedToken !== editToken) return { ok: false, error: 'conflict' };
       const original = grants.all().find((g) => g.id === id);
       if (!original) return { ok: false, error: 'not-found' };
@@ -1040,14 +1059,14 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       const revoked = candidate.revoke(id);
       if (!revoked) return { ok: false, error: 'conflict' };
       const before = authorityEpoch;
-      const deadline = deps.now() + 5000;
+      const deadline = deps.monotonicNow() + 5000;
       const result = saveGrants(candidate.all(), true);
       if (!result.ok) return result;
       if (
         authorityEpoch !== before + 1n ||
         editToken !== expectedToken ||
         (revoked.lifecycleRevision ?? 0) >= Number.MAX_SAFE_INTEGER ||
-        deps.now() >= deadline
+        deps.monotonicNow() >= deadline
       )
         return { ok: true };
       const token = deps.newId();
@@ -1057,16 +1076,17 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
         token: expectedToken,
         epoch: authorityEpoch,
         deadline,
+        windowId,
       });
       return { ok: true, undoToken: token };
     },
 
-    undoGrantRevoke(token) {
+    undoGrantRevoke(token, windowId) {
       const receipt = receipts.get(token);
+      if (!receipt || receipt.windowId !== windowId) return { ok: false, error: 'conflict' };
       receipts.delete(token);
       if (
-        !receipt ||
-        deps.now() >= receipt.deadline ||
+        deps.monotonicNow() >= receipt.deadline ||
         receipt.epoch !== authorityEpoch ||
         receipt.token !== editToken ||
         !deps.grantBindingsCurrent(receipt.previous)

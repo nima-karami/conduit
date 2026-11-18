@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActivityIo } from '../../src/conduit-mcp/activity-log';
 import {
   type PolicyFile,
@@ -33,6 +33,17 @@ import type {
 } from '../../src/conduit-mcp/policy-types';
 import { type CliKind, DEFAULT_TOOL_POLICY, TOOL_GROUPS } from '../../src/conduit-mcp/tool-policy';
 import { prepareNativeLaunch } from '../../src/native-launch';
+
+const recoveryTestDirs: string[] = [];
+function recoveryTestDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  recoveryTestDirs.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of recoveryTestDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
 
 const DEFAULT_RULES = OBSERVER.rules;
 
@@ -111,6 +122,7 @@ interface Opts {
 
 function harness(o: Opts = {}) {
   let now = T0;
+  let monotonic = 0;
   let ids = 0;
   const timers: Array<{ fn: () => void; ms: number }> = [];
   const policyWrites: string[] = [];
@@ -171,6 +183,7 @@ function harness(o: Opts = {}) {
     grantsIo,
     activityIo,
     now: () => now,
+    monotonicNow: () => monotonic,
     newId: () => `${o.idPrefix ?? 'id'}${++ids}`,
     setTimer: (fn, ms) => {
       const t = { fn, ms };
@@ -227,6 +240,13 @@ function harness(o: Opts = {}) {
     changed: () => changed,
     advance: (ms: number) => {
       now += ms;
+      monotonic += ms;
+    },
+    advanceMonotonic: (ms: number) => {
+      monotonic += ms;
+    },
+    setWallTime: (ms: number) => {
+      now = ms;
     },
     now: () => now,
   };
@@ -244,14 +264,39 @@ describe('policy service', () => {
     });
     h.service.start();
     const token = h.service.ui([]).editToken;
-    const revoked = h.service.revokeGrantWithUndo('g1', 0, token);
+    const revoked = h.service.revokeGrantWithUndo('g1', 0, token, 1);
     expect(revoked.ok && revoked.undoToken).toBeTruthy();
     expect(h.service.ui([]).grants[0]).toMatchObject({ state: 'revoked', lifecycleRevision: 1 });
     if (!revoked.ok || !revoked.undoToken) throw new Error('missing receipt');
     h.advance(4999);
-    expect(h.service.undoGrantRevoke(revoked.undoToken)).toEqual({ ok: true });
+    expect(h.service.undoGrantRevoke(revoked.undoToken, 1)).toEqual({ ok: true });
     expect(h.service.ui([]).grants[0]).toMatchObject({ state: 'active', lifecycleRevision: 2 });
-    expect(h.service.undoGrantRevoke(revoked.undoToken)).toMatchObject({ ok: false });
+    expect(h.service.undoGrantRevoke(revoked.undoToken, 1)).toMatchObject({ ok: false });
+  });
+
+  it('expires Undo by monotonic time after the wall clock moves backward', () => {
+    const h = harness({
+      policy: policyText(),
+      grants: serializeGrantsFile({ version: 1, grants: [grant()] }),
+    });
+    h.service.start();
+    const result = h.service.revokeGrantWithUndo('g1', 0, h.service.ui([]).editToken, 1);
+    if (!result.ok || !result.undoToken) throw new Error('missing receipt');
+    h.setWallTime(T0 - 60_000);
+    h.advanceMonotonic(5000);
+    expect(h.service.undoGrantRevoke(result.undoToken, 1)).toMatchObject({ ok: false });
+  });
+
+  it('does not consume a receipt presented by a different window', () => {
+    const h = harness({
+      policy: policyText(),
+      grants: serializeGrantsFile({ version: 1, grants: [grant()] }),
+    });
+    h.service.start();
+    const result = h.service.revokeGrantWithUndo('g1', 0, h.service.ui([]).editToken, 1);
+    if (!result.ok || !result.undoToken) throw new Error('missing receipt');
+    expect(h.service.undoGrantRevoke(result.undoToken, 2)).toMatchObject({ ok: false });
+    expect(h.service.undoGrantRevoke(result.undoToken, 1)).toEqual({ ok: true });
   });
 
   it('rejects receipt at deadline or after another authority mutation', () => {
@@ -261,14 +306,14 @@ describe('policy service', () => {
     });
     h.service.start();
     const token = h.service.ui([]).editToken;
-    const first = h.service.revokeGrantWithUndo('g1', 0, token);
+    const first = h.service.revokeGrantWithUndo('g1', 0, token, 1);
     if (!first.ok || !first.undoToken) throw new Error('missing receipt');
     h.advance(5000);
-    expect(h.service.undoGrantRevoke(first.undoToken)).toMatchObject({ ok: false });
-    const second = h.service.revokeGrantWithUndo('g2', 0, token);
+    expect(h.service.undoGrantRevoke(first.undoToken, 1)).toMatchObject({ ok: false });
+    const second = h.service.revokeGrantWithUndo('g2', 0, token, 1);
     if (!second.ok || !second.undoToken) throw new Error('missing receipt');
     h.service.peerEligibilityChanged();
-    expect(h.service.undoGrantRevoke(second.undoToken)).toMatchObject({ ok: false });
+    expect(h.service.undoGrantRevoke(second.undoToken, 1)).toMatchObject({ ok: false });
   });
 
   it('revalidates bindings and invalidates undo when another grant or denial changes', () => {
@@ -281,12 +326,12 @@ describe('policy service', () => {
     h.service.start();
     const token = h.service.ui([]).editToken;
     live = false;
-    expect(h.service.revokeGrantWithUndo('g1', 0, token)).toMatchObject({ ok: false });
+    expect(h.service.revokeGrantWithUndo('g1', 0, token, 1)).toMatchObject({ ok: false });
     live = true;
-    const first = h.service.revokeGrantWithUndo('g1', 0, token);
+    const first = h.service.revokeGrantWithUndo('g1', 0, token, 1);
     if (!first.ok || !first.undoToken) throw new Error('missing receipt');
     expect(h.service.revokeGrant('g2')).toEqual({ ok: true });
-    expect(h.service.undoGrantRevoke(first.undoToken)).toMatchObject({ ok: false });
+    expect(h.service.undoGrantRevoke(first.undoToken, 1)).toMatchObject({ ok: false });
   });
 
   it('keeps an undo receipt valid across grant usage but not a denial', () => {
@@ -299,7 +344,7 @@ describe('policy service', () => {
     });
     h.service.start();
     const token = h.service.ui([]).editToken;
-    const first = h.service.revokeGrantWithUndo('g1', 0, token);
+    const first = h.service.revokeGrantWithUndo('g1', 0, token, 1);
     if (!first.ok || !first.undoToken) throw new Error('missing receipt');
     const input = {
       principal: session(),
@@ -311,11 +356,11 @@ describe('policy service', () => {
     const decision = h.service.decide(input);
     expect(decision.grantIds).toContain('g2');
     expect(h.service.commit(input, decision)).toMatchObject({ ok: true });
-    expect(h.service.undoGrantRevoke(first.undoToken)).toEqual({ ok: true });
-    const second = h.service.revokeGrantWithUndo('g1', 2, token);
+    expect(h.service.undoGrantRevoke(first.undoToken, 1)).toEqual({ ok: true });
+    const second = h.service.revokeGrantWithUndo('g1', 2, token, 1);
     if (!second.ok || !second.undoToken) throw new Error('missing receipt');
     expect(h.service.saveSessionDenial('r1', 's1', 'open_session', () => {})).toEqual({ ok: true });
-    expect(h.service.undoGrantRevoke(second.undoToken)).toMatchObject({ ok: false });
+    expect(h.service.undoGrantRevoke(second.undoToken, 1)).toMatchObject({ ok: false });
   });
 
   it('rejects undo if bindings cease to be current and preserves suspended state', () => {
@@ -327,20 +372,20 @@ describe('policy service', () => {
     });
     h.service.start();
     const token = h.service.ui([]).editToken;
-    const first = h.service.revokeGrantWithUndo('g1', 0, token);
+    const first = h.service.revokeGrantWithUndo('g1', 0, token, 1);
     if (!first.ok || !first.undoToken) throw new Error('missing receipt');
     live = false;
-    expect(h.service.undoGrantRevoke(first.undoToken)).toMatchObject({ ok: false });
+    expect(h.service.undoGrantRevoke(first.undoToken, 1)).toMatchObject({ ok: false });
     live = true;
-    expect(h.service.undoGrantRevoke(first.undoToken)).toMatchObject({ ok: false });
+    expect(h.service.undoGrantRevoke(first.undoToken, 1)).toMatchObject({ ok: false });
     const h2 = harness({
       policy: policyText(),
       grants: serializeGrantsFile({ version: 1, grants: [grant({ state: 'suspended' })] }),
     });
     h2.service.start();
-    const second = h2.service.revokeGrantWithUndo('g1', 0, h2.service.ui([]).editToken);
+    const second = h2.service.revokeGrantWithUndo('g1', 0, h2.service.ui([]).editToken, 1);
     if (!second.ok || !second.undoToken) throw new Error('missing receipt');
-    expect(h2.service.undoGrantRevoke(second.undoToken)).toEqual({ ok: true });
+    expect(h2.service.undoGrantRevoke(second.undoToken, 1)).toEqual({ ok: true });
     expect(h2.service.ui([]).grants[0]).toMatchObject({ state: 'suspended' });
   });
 
@@ -372,10 +417,10 @@ describe('policy service', () => {
     });
     h.service.start();
     expect(h.service.saveSessionDenial('r2', 's2', 'open_session', () => {})).toEqual({ ok: true });
-    const result = h.service.revokeGrantWithUndo('g1', 0, h.service.ui([]).editToken);
+    const result = h.service.revokeGrantWithUndo('g1', 0, h.service.ui([]).editToken, 1);
     if (!result.ok || !result.undoToken) throw new Error('missing receipt');
     h.service.sessionEnded('s2');
-    expect(h.service.undoGrantRevoke(result.undoToken)).toMatchObject({ ok: false });
+    expect(h.service.undoGrantRevoke(result.undoToken, 1)).toMatchObject({ ok: false });
   });
 
   it('does not persist undo receipts across a new service instance', () => {
@@ -384,11 +429,11 @@ describe('policy service', () => {
       grants: serializeGrantsFile({ version: 1, grants: [grant()] }),
     });
     h.service.start();
-    const result = h.service.revokeGrantWithUndo('g1', 0, h.service.ui([]).editToken);
+    const result = h.service.revokeGrantWithUndo('g1', 0, h.service.ui([]).editToken, 1);
     if (!result.ok || !result.undoToken) throw new Error('missing receipt');
     const restarted = harness({ policy: policyText(), grants: h.grantWrites.at(-1) });
     restarted.service.start();
-    expect(restarted.service.undoGrantRevoke(result.undoToken)).toMatchObject({ ok: false });
+    expect(restarted.service.undoGrantRevoke(result.undoToken, 1)).toMatchObject({ ok: false });
     expect(restarted.service.ui([]).grants[0]).toMatchObject({ state: 'revoked' });
   });
 
@@ -399,7 +444,7 @@ describe('policy service', () => {
     });
     h.service.start();
     h.setWriteDown(true);
-    expect(h.service.revokeGrantWithUndo('g1', 0, h.service.ui([]).editToken)).toMatchObject({
+    expect(h.service.revokeGrantWithUndo('g1', 0, h.service.ui([]).editToken, 1)).toMatchObject({
       ok: false,
       error: 'save-failed',
       applied: 'tightening',
@@ -3554,7 +3599,7 @@ it('keeps the second denial when final backup fails and fails closed if primary 
 });
 
 it('recovers restrictively from an actual marker after a second denial loses its backup and primary', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'con25-denial-recovery-'));
+  const dir = recoveryTestDir('con25-denial-recovery-');
   const primaryPath = path.join(dir, 'policy.json');
   const backupPath = path.join(dir, 'policy.last-good.json');
   const primary = createPolicyIo(primaryPath);
@@ -3731,7 +3776,7 @@ it('restarts correctly at each durable denial crash boundary', () => {
     [next, marker, true],
     [next, next, true],
   ] as const) {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'con25-crash-state-'));
+    const dir = recoveryTestDir('con25-crash-state-');
     const h = harness();
     h.deps.policyIo = createPolicyIo(path.join(dir, 'policy.json'));
     h.deps.lastGoodIo = createPolicyIo(path.join(dir, 'policy.last-good.json'));
@@ -3785,4 +3830,23 @@ it('warns before notifying when a durable marker outlives a failed denial primar
   expect(h.service.saveSessionDenial('r', 's1', 'open_session', settle)).toEqual({ ok: true });
   expect(h.service.ui([]).backupWarning).toBeNull();
   expect(settle).toHaveBeenCalledOnce();
+});
+
+it('exposes a safe duplicate ID and fallback in recovery while preserving policy bytes', () => {
+  const profile = {
+    id: 'p-bad\nname',
+    name: 'Duplicate',
+    builtIn: false,
+    rules: DEFAULT_RULES,
+  } as const;
+  const original = policyText({ profiles: [profile, profile] });
+  const h = harness({ policy: original, lastGood: null });
+  h.service.start();
+  expect(h.service.ui([])).toMatchObject({
+    readOnly: true,
+    saveError:
+      'policy.json has duplicate profile ID: p-badname; no saved copy is available; every session is Observer',
+  });
+  expect(h.service.nativeLaunch('s1', 'claude')).toEqual({ status: 'unavailable' });
+  expect(h.policyWrites).toEqual([]);
 });

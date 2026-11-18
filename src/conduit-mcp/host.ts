@@ -1805,6 +1805,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       (grant.for !== 'session-end' ||
         (grant.anchorSessionId !== null && principalOf(grant.anchorSessionId) !== null)),
     now,
+    monotonicNow: () => performance.now(),
     newId: () => randomBytes(12).toString('hex'),
     ...requestTimers,
     warn: (message, error) => deps.log.warn('conduit-mcp', message, { error: String(error) }),
@@ -3198,6 +3199,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return { atLaunch, next: next ?? { status: 'not-applicable' } };
   }
 
+  let nativeImpact: McpUiState['nativeImpact'] = null;
+
   function uiState(): McpUiState {
     const allSessions = deps.sessions.list();
     const nextNative = policyService.nativeLaunchSelections(
@@ -3238,6 +3241,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     for (const message of youPending)
       youUnreadByThread.set(message.threadId, (youUnreadByThread.get(message.threadId) ?? 0) + 1);
     return {
+      nativeImpact,
       enabled: deps.domain.messagingOn(),
       storeError,
       loading,
@@ -3921,7 +3925,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             reply({
               type: 'mcp:grantLifecycleResult',
               requestId: m.requestId,
-              result: policyService.undoGrantRevoke(op.token),
+              result: policyService.undoGrantRevoke(op.token, senderId),
             });
             return;
           }
@@ -3938,7 +3942,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               ? policyService.extendGrant(op.id, op.revision, op.expectedToken)
               : op.kind === 'renew'
                 ? policyService.renewGrant(op.id, op.revision, op.expectedToken)
-                : policyService.revokeGrantWithUndo(op.id, op.revision, op.expectedToken);
+                : policyService.revokeGrantWithUndo(op.id, op.revision, op.expectedToken, senderId);
           reply({ type: 'mcp:grantLifecycleResult', requestId: m.requestId, result });
           return;
         }
@@ -4545,8 +4549,27 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       // A pushed doc or a revoke can allow or deny an ask that waits on it, so the waiting asks are
       // re-decided at once, as refresh() does after a local change.
       applyRemotePolicy: (baseRev, doc, senderSupportsNative) => {
+        const sessions = deps.sessions.list().flatMap(({ id }) => {
+          const family = persistedLaunchedCli(id) ?? null;
+          return isNativeFamily(family) ? [{ id, family }] : [];
+        });
+        const before = policyService.nativeLaunchSelections(sessions);
         const res = policyService.applyRemoteDoc(baseRev, doc, senderSupportsNative);
-        if (res.ok) flow.recheck();
+        if (res.ok) {
+          const after = policyService.nativeLaunchSelections(sessions);
+          const changed = sessions.flatMap(({ id }) => {
+            const previous = before.get(id);
+            const next = after.get(id);
+            return previous && next && JSON.stringify(previous) !== JSON.stringify(next)
+              ? [{ sessionId: id, before: previous, after: next }]
+              : [];
+          });
+          nativeImpact = changed.length
+            ? { total: changed.length, rows: changed.slice(0, 100) }
+            : null;
+          scheduleBroadcast();
+          flow.recheck();
+        }
         return res;
       },
       revokeRemoteGrant: (grantId) => {

@@ -72,6 +72,7 @@ function mcpState(open: RequestView[], ended: RequestView[] = []): McpUiState {
     policy: emptyPolicyUi(),
     storeError: null,
     native: {},
+    nativeImpact: null,
     loading: false,
     sessions: {},
     threads: [],

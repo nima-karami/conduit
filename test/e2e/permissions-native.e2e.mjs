@@ -619,6 +619,94 @@ async function upgradeCase(controller, receiver) {
   });
 }
 
+async function receiverImpactCase(controller, receiver) {
+  phase('An authenticated profile edit reports receiver-local next-launch impact');
+  const receiverId = (await networkState(receiver)).machineId;
+  const localBefore = (await snapshot(receiver)).mcp.policy;
+  const worker = localBefore.profiles.find(({ id }) => id === 'worker');
+  assert(worker, 'receiver Worker profile missing');
+  const profile = {
+    ...worker,
+    id: 'p-native-impact-e2e',
+    name: 'Receiver-local native fixture',
+    builtIn: false,
+    nativeModes: { claude: 'unset', codex: 'read-only' },
+  };
+  const review = await owner(receiver, {
+    type: 'mcp:reviewLocalPolicy',
+    expectedToken: localBefore.editToken,
+    edit: { kind: 'profile', profile },
+  });
+  assert(review?.ok && review.requiresNativeReview, 'receiver did not review its custom profile');
+  const profileSave = await owner(receiver, {
+    type: 'mcp:saveProfile',
+    expectedToken: localBefore.editToken,
+    profile,
+    nativeReview: review.digest,
+  });
+  assert(profileSave?.ok, 'receiver custom profile did not save');
+  const probe = launchProbe(receiver, 'codex', 'impact-probe');
+  const sessionId = await create(receiver, probe, []);
+  const assigned = await assign(receiver, { kind: 'session', sessionId }, profile.id, true, true);
+  assert(assigned?.ok, 'receiver-private assignment did not save');
+  const launched = await start(receiver, sessionId);
+  assert(launched.ok && launched.spawned, 'receiver-private process did not start');
+  const initialArgs = await actualArgs(probe);
+  assert(initialArgs.prefix[1] === 'read-only', 'receiver-private process started with wrong mode');
+
+  let mirror;
+  await eventually('controller did not receive the actual custom profile', async () => {
+    mirror = (await snapshot(controller)).mcp.policy.machines.find(
+      (entry) => entry.machineId === receiverId,
+    );
+    return (
+      mirror?.status === 'applied' &&
+      mirror.nativeSupport &&
+      mirror.policy.profiles.some(({ id }) => id === profile.id)
+    );
+  });
+  const applied = await owner(controller, {
+    type: 'mcp:remoteEdit',
+    machine: receiverId,
+    expectedToken: mirror.policy.editToken,
+    nativeConsent: true,
+    edit: {
+      kind: 'profile',
+      profile: { ...profile, nativeModes: { ...profile.nativeModes, codex: 'workspace-write' } },
+    },
+  });
+  assert(applied?.ok, 'controller custom native profile edit failed');
+  let impact;
+  await eventually('receiver did not report its private next-launch impact', async () => {
+    impact = (await snapshot(receiver)).mcp.nativeImpact;
+    return impact?.rows.some(({ sessionId: id }) => id === sessionId);
+  });
+  const row = impact.rows.find(({ sessionId: id }) => id === sessionId);
+  assert(
+    impact.total === 1 &&
+      row.before.intent.requested.sandbox === 'read-only' &&
+      row.after.intent.requested.sandbox === 'workspace-write',
+    'receiver impact did not identify the exact before and after mode',
+  );
+  const accepted = await nativeOf(receiver, sessionId);
+  assert(
+    accepted.atLaunch?.intent.requested.sandbox === 'read-only' &&
+      accepted.next.intent.requested.sandbox === 'workspace-write',
+    'receiver edit mixed the launch request with the new next-launch policy',
+  );
+  await eventually('controller did not observe the applied portable edit', async () => {
+    const controllerMcp = (await snapshot(controller)).mcp;
+    const changed = controllerMcp.policy.machines.find((entry) => entry.machineId === receiverId);
+    if (changed?.status !== 'applied' || changed.rev <= mirror.rev) return false;
+    assert(
+      !JSON.stringify([changed.policy, controllerMcp.nativeImpact]).includes(sessionId),
+      'receiver-private affected session ID leaked into the controller policy',
+    );
+    return true;
+  });
+  await receiver.c2.call('sessions.remove', { sessionId });
+}
+
 async function run() {
   const saved = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
   let controller;
@@ -635,6 +723,7 @@ async function run() {
     await postureCase(controller, codexHome);
     await launchCases(receiver);
     await upgradeCase(controller, receiver);
+    await receiverImpactCase(controller, receiver);
     log(
       'verified real launch arguments, adopted evidence, and explicit review of an older pending draft',
     );

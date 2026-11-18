@@ -2,7 +2,7 @@
 // type-only, from node-free modules (./types, ./install-types, ../git-range, ../protocol), so the
 // renderer never reaches a node-backed one (plan ruling 8). The ../protocol ↔ ui-types cycle is
 // type-only and erased at build.
-import type { NativeSessionUi } from '../contracts/native-launch';
+import type { NativeSelection, NativeSessionUi } from '../contracts/native-launch';
 import type { RemoteGrantView, RemotePolicyPoint } from '../contracts/remote-policy';
 import type { RefEndpoint } from '../git-range';
 import type { ParsedPatchFile } from '../patch-parse';
@@ -189,6 +189,10 @@ export function emptyPolicyUi(): McpPolicyUi {
 
 export interface McpUiState {
   native: Record<string, NativeSessionUi>;
+  nativeImpact: {
+    total: number;
+    rows: Array<{ sessionId: string; before: NativeSelection; after: NativeSelection }>;
+  } | null;
   enabled: boolean;
   storeError: string | null;
   loading: boolean;

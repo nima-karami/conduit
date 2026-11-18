@@ -251,7 +251,8 @@ export interface ServerSnapshot {
 export const NATIVE_LAUNCH_REFUSAL_MESSAGES = {
   conflict: 'Native flags conflict with launcher arguments',
   unsupported: 'A direct, supported launcher is required',
-  'policy-unavailable': 'Permissions could not be loaded',
+  'policy-unavailable':
+    'Permissions could not be loaded. Open Settings → Permissions for recovery.',
   'save-failed': 'Launch settings could not be saved',
 } as const;
 

@@ -49,6 +49,7 @@ function mcpState(legacy: Legacy, machines: RemotePolicyUi[] = []): McpUiState {
     enabled: true,
     storeError: null,
     native: {},
+    nativeImpact: null,
     loading: false,
     sessions: {},
     threads: [],
