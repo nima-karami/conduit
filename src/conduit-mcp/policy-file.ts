@@ -219,6 +219,10 @@ const isGrant = (v: unknown): v is Grant =>
   isIso(v.createdAt) &&
   orNull(isIso)(v.expiresAt) &&
   orNull(isIso)(v.lastUsedAt) &&
+  (v.lastConsentedAt === undefined || isIso(v.lastConsentedAt)) &&
+  (v.useCount === undefined || (Number.isSafeInteger(v.useCount) && Number(v.useCount) >= 0)) &&
+  (v.lifecycleRevision === undefined ||
+    (Number.isSafeInteger(v.lifecycleRevision) && Number(v.lifecycleRevision) >= 0)) &&
   oneOf(GRANT_STATES)(v.state) &&
   (oneOf(ENDED_STATES)(v.state) ? isIso(v.endedAt) : v.endedAt === null) &&
   orNull(isStr)(v.requestId);

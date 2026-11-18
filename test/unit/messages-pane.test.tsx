@@ -133,6 +133,7 @@ function fakeApi(state: McpUiState | null, o: Partial<ConduitMcpApi> = {}): Cond
     allowMore: vi.fn(),
     pause: vi.fn(),
     retry: vi.fn(),
+    grantLifecycle: async () => null,
     getOwnerPermissions: async () => null,
     getActivity: async () => null,
     linkCodexThread: async () => ({ status: 'unavailable' as const }),

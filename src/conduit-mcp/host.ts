@@ -839,6 +839,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   });
   // Set by start: a host that never listened has no connections, so no waits to wake.
   let stopAttentionWatch: (() => void) | undefined;
+  let stopGrantEligibilityWatch: (() => void) | undefined;
   let stopNetworkWatch: (() => void) | undefined;
 
   const loadCounters = (): HandleCounters => {
@@ -1796,6 +1797,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     activityIo: deps.activityIo ?? createActivityIo(deps.dir),
     hasSession: (id) => deps.sessions.get(id) !== undefined,
     peerKnown: (id) => deps.network?.hasPeer(id) ?? null,
+    grantBindingsCurrent: (grant) =>
+      (grant.who.kind !== 'session' || principalOf(grant.who.sessionId) !== null) &&
+      (grant.who.kind !== 'peer' ||
+        deps.network?.grantPeerEligible(grant.who.machineId) === true) &&
+      (grant.on.kind !== 'session' || deps.sessions.get(grant.on.sessionId) !== undefined) &&
+      (grant.for !== 'session-end' ||
+        (grant.anchorSessionId !== null && principalOf(grant.anchorSessionId) !== null)),
     now,
     newId: () => randomBytes(12).toString('hex'),
     ...requestTimers,
@@ -3543,6 +3551,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         sessionWaits.notify();
         requestService.onAttention(factsWithHandles());
       });
+      stopGrantEligibilityWatch = deps.network?.onGrantPeerEligibilityChange(() =>
+        policyService.peerEligibilityChanged(),
+      );
       stopNetworkWatch = deps.network?.onChange(() => {
         policyService.reconcilePrincipals();
         syncToolLists();
@@ -3888,6 +3899,47 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               ? { status: 'linked', source: 'linked-codex-thread', ...posture }
               : { status: 'unavailable' },
           });
+          return;
+        }
+        case 'mcp:grantLifecycle': {
+          if (
+            !Number.isSafeInteger(m.requestId) ||
+            m.requestId < 0 ||
+            senderId <= 0 ||
+            !deps.windowReady(senderId) ||
+            'machine' in m ||
+            typeof m.operation !== 'object' ||
+            m.operation === null ||
+            'machine' in m.operation
+          )
+            return;
+          const op = m.operation;
+          const bounded = (value: unknown): value is string =>
+            typeof value === 'string' && value.length > 0 && value.length <= 256;
+          if (op.kind === 'undo') {
+            if (!bounded(op.token)) return;
+            reply({
+              type: 'mcp:grantLifecycleResult',
+              requestId: m.requestId,
+              result: policyService.undoGrantRevoke(op.token),
+            });
+            return;
+          }
+          if (
+            (op.kind !== 'extend' && op.kind !== 'renew' && op.kind !== 'revoke') ||
+            !bounded(op.id) ||
+            !bounded(op.expectedToken) ||
+            !Number.isSafeInteger(op.revision) ||
+            op.revision < 0
+          )
+            return;
+          const result =
+            op.kind === 'extend'
+              ? policyService.extendGrant(op.id, op.revision, op.expectedToken)
+              : op.kind === 'renew'
+                ? policyService.renewGrant(op.id, op.revision, op.expectedToken)
+                : policyService.revokeGrantWithUndo(op.id, op.revision, op.expectedToken);
+          reply({ type: 'mcp:grantLifecycleResult', requestId: m.requestId, result });
           return;
         }
         case 'mcp:ownerPermissions:get': {
@@ -4570,6 +4622,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       broadcastTimer = undefined;
       for (const sessionId of lateEchoWatchers.keys()) cancelLateEcho(sessionId);
       stopAttentionWatch?.();
+      stopGrantEligibilityWatch?.();
       stopNetworkWatch?.();
       sessionWaits.dispose();
       flow.dispose();

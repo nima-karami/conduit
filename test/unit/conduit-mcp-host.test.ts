@@ -1,9 +1,15 @@
 import * as fs from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import * as net from 'node:net';
 import * as os from 'node:os';
+import { tmpdir } from 'node:os';
 import * as path from 'node:path';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { writeServerSecret } from '../../server/lifecycle/server-secret';
 import { createShimEndpoint } from '../../server/mcp/endpoint';
+import { type Identity, loadIdentity } from '../../server/network/identity';
+import { createNetwork, type NetworkService } from '../../server/network/index';
 import { createSessionScreens, type SessionScreens } from '../../server/runtime/session-screens';
 import { createTokenStore } from '../../server/runtime/testing/token-store';
 import { AgentRegistry } from '../../src/agent-registry';
@@ -36,6 +42,7 @@ import {
 import type { PolicyIo } from '../../src/conduit-mcp/policy-file-fs';
 import { BUILT_IN_PROFILES, OBSERVER } from '../../src/conduit-mcp/policy-profiles';
 import type { OneUseOverride } from '../../src/conduit-mcp/policy-types';
+import type { createRemotePolicy } from '../../src/conduit-mcp/remote-policy';
 import type { NetworkPort, RemoteEntry } from '../../src/conduit-mcp/remote-routing';
 import type { AnswerInput, RequestRecord } from '../../src/conduit-mcp/request-types';
 import { screenVerdict } from '../../src/conduit-mcp/screen-verdict';
@@ -50,28 +57,163 @@ import {
 } from '../../src/conduit-mcp/tool-policy';
 import { RATE_LIMIT_PER_MIN } from '../../src/conduit-mcp/tools';
 import { type MessageRecord, THREAD_AGENT_LIMIT, toolError } from '../../src/conduit-mcp/types';
-import type { RequestMirror } from '../../src/contracts/link-protocol';
-
+import type { MonitorSession, RequestMirror } from '../../src/contracts/link-protocol';
 import type {
   ConnectMachineOk,
   ConnectMachineResult,
   DisconnectMachineResult,
   MachineView,
 } from '../../src/contracts/machines';
+import type { NetworkState } from '../../src/contracts/network-state';
 import type { RemoteCaller } from '../../src/contracts/remote-principal';
-import type { McpHostDeps, NeedsYouFact, TokenStorePort } from '../../src/contracts/server-ports';
+import type {
+  McpHostDeps,
+  NeedsYouFact,
+  ServerEventSink,
+  TokenStorePort,
+} from '../../src/contracts/server-ports';
 import type { ServerEvents } from '../../src/contracts/server-protocol';
 import type {
   LaunchIds,
   RuntimeEvent,
   RuntimeTerminal,
+  TerminalRuntime,
 } from '../../src/contracts/terminal-runtime';
 import { compileLimitRules, DEFAULT_LIMIT_RULES } from '../../src/limit-rules';
 import type { HostToWebview } from '../../src/protocol';
 import { createPtyWriter } from '../../src/pty-writer';
 import { COMMAND_AGENT_ID, commandDef } from '../../src/session-command';
-import type { AgentDefinition, Session, SpawnSpec } from '../../src/types';
+import type { AgentDefinition, Session, SessionCommand, SpawnSpec } from '../../src/types';
 import { testEndpoint } from '../helpers/test-endpoint';
+
+const quiet = {
+  debug: () => undefined,
+  warn: () => undefined,
+  error: () => undefined,
+};
+const TEST_APP_VERSION = '9.8.7';
+const grantNetworkCleanup: Array<() => Promise<void> | void> = [];
+afterEach(async () => {
+  for (const c of grantNetworkCleanup.splice(0).reverse()) await c();
+});
+
+/** What a test server's ports answer with: its ssh config, its sessions, and its observer and events. */
+interface ServerOpts {
+  identity?: Identity;
+  policySink?: () => ReturnType<typeof createRemotePolicy> | null;
+  sshConfig?: () => string | null;
+  sessions?: MonitorSession[];
+  observe?: TerminalRuntime['observe'];
+  emitTo?: (peer: object, ...event: Parameters<ServerEventSink>) => void;
+}
+
+function grantNetworkServer(
+  name: string,
+  endpointIn?: (root: string) => string,
+  opts: ServerOpts = {},
+) {
+  const root = mkdtempSync(join(tmpdir(), 'conduit-net-'));
+  const dir = join(root, 'network');
+  const loaded = loadIdentity(dir);
+  if (loaded.kind === 'newer') throw new Error('unexpected');
+  const secret = writeServerSecret(root);
+  const states: NetworkState[] = [];
+  const opened: Array<{ command: SessionCommand; folder: string }> = [];
+  const net = createNetwork({
+    dir,
+    userData: root,
+    instance: 'service-test',
+    linkEndpoint: endpointIn ? endpointIn(root) : join(root, 'conduit-link.sock'),
+    appVersion: TEST_APP_VERSION,
+    secret: () => secret,
+    identity: opts.identity ?? loaded.identity,
+    settings: () => ({
+      networkBindHost: '127.0.0.1',
+      networkPort: 0,
+      networkSelfName: name,
+    }),
+    readSshConfig: opts.sshConfig ?? (() => null),
+    sessionRoots: () => null,
+    emit: (s) => states.push(s),
+    log: { ...quiet, info: () => undefined },
+    observe: opts.observe ?? (async () => null),
+    emitTo: opts.emitTo ?? (() => {}),
+    openCommandSession: async (command, folder) => {
+      opened.push({ command, folder });
+      return 'sess-needs-person';
+    },
+    bootstrap: {
+      local: {
+        version: TEST_APP_VERSION,
+        linkMajor: 1,
+        platform: 'linux',
+        arch: 'x64',
+      },
+      runtime: { nodeExe: null, serverDir: root, hcExe: root, shimFile: root },
+      noDownload: false,
+    },
+    drive: {
+      applyHumanInput: () => false,
+      resize: () => {},
+      liveSession: () => false,
+      agentExists: () => false,
+      isDirectory: async () => false,
+      openSession: async () => {
+        throw new Error('drive is not exercised by this test');
+      },
+      closeSession: async () => {},
+    },
+    requestPorts: {
+      b: {
+        mirrorOf: () => [],
+        hasEnded: () => false,
+        onMirrorChange: () => () => {},
+        applyRemoteAnswer: async () => ({
+          ok: false,
+          error: {
+            code: 'refused',
+            message: 'not wired in this fixture',
+            retryable: false,
+          },
+        }),
+      },
+      a: { apply: () => {}, setLinkState: () => {} },
+    },
+    policyPorts: {
+      b: {
+        policyDoc: () => null,
+        onPolicyDocChange: () => () => {},
+        applyRemotePolicy: () => ({
+          ok: false,
+          code: 'policy_unavailable',
+          message: 'not wired in this fixture',
+        }),
+        revokeRemoteGrant: () => ({
+          ok: false,
+          code: 'policy_unavailable',
+          message: 'not wired in this fixture',
+        }),
+      },
+      a: opts.policySink ?? (() => null),
+    },
+    monitor: {
+      sessions: () => opts.sessions ?? [],
+      requests: () => [],
+      youUnread: () => 0,
+      ownerPresence: () => 'here',
+      agents: () => [],
+    },
+  });
+  grantNetworkCleanup.push(() => rmSync(root, { recursive: true, force: true }));
+  grantNetworkCleanup.push(() => net.stop());
+  return { net, dir, states, opened };
+}
+
+async function call<T>(net: NetworkService, method: string, params: unknown = {}): Promise<T> {
+  const answer = net.handle(method, params);
+  if (answer === null) throw new Error(`not a network method: ${method}`);
+  return (await answer) as T;
+}
 
 /** A signal that is never aborted: the routed calls below run to their own answer. */
 const LIVE = new AbortController().signal;
@@ -6229,6 +6371,220 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     expect(c.errorOf(await c.reply(1))).toBe('denied');
   });
 
+  it('addresses local lifecycle replies to a ready owner and rejects machine fields', async () => {
+    const { h, c } = await asking();
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    await answer(h, askIdOf(h, 1), 'always');
+    expect(c.errorOf(await c.reply(1))).toBe('ok');
+    const [grant] = h.host.uiState().policy.grants;
+    const token = h.host.uiState().policy.editToken;
+    const replies: HostToWebview[] = [];
+    const send = (message: unknown, windowId = 1) =>
+      h.host.handleRenderer(
+        message as McpRendererMessage,
+        (reply) => replies.push(reply),
+        windowId,
+      );
+    const operation = {
+      kind: 'revoke',
+      id: grant.id,
+      revision: grant.lifecycleRevision ?? 0,
+      expectedToken: token,
+    };
+    await send({
+      type: 'mcp:grantLifecycle',
+      requestId: 1,
+      operation,
+      machine: 'other',
+    });
+    await send({ type: 'mcp:grantLifecycle', requestId: 2, operation }, 999);
+    expect(replies).toEqual([]);
+    await send({ type: 'mcp:grantLifecycle', requestId: 3, operation });
+    expect(replies).toMatchObject([
+      {
+        type: 'mcp:grantLifecycleResult',
+        requestId: 3,
+        result: { ok: true, undoToken: expect.any(String) },
+      },
+    ]);
+    const response = replies[0];
+    if (
+      response.type !== 'mcp:grantLifecycleResult' ||
+      !response.result.ok ||
+      !response.result.undoToken
+    )
+      throw new Error('missing receipt');
+    await send({
+      type: 'mcp:grantLifecycle',
+      requestId: 4,
+      operation: { kind: 'undo', token: response.result.undoToken },
+    });
+    expect(replies[1]).toEqual({
+      type: 'mcp:grantLifecycleResult',
+      requestId: 4,
+      result: { ok: true },
+    });
+  });
+
+  it('invalidates a peer receipt through a real network revoke and re-pair', async () => {
+    const a = grantNetworkServer('grant-a');
+    const b = grantNetworkServer('grant-b');
+    await a.net.start();
+    await b.net.start();
+    const pair = async () => {
+      const started = await call<{
+        pairingId: string;
+        code: string[];
+        addresses: string[];
+      }>(a.net, 'pairing.start');
+      const joined = await call<{ pairingId: string }>(b.net, 'pairing.join', {
+        code: started.code.join(' '),
+        address: started.addresses[0],
+      });
+      await until(
+        () =>
+          a.net.state().pairing?.state === 'confirm' && b.net.state().pairing?.state === 'confirm',
+      );
+      await call(a.net, 'pairing.confirm', { pairingId: started.pairingId });
+      await call(b.net, 'pairing.confirm', { pairingId: joined.pairingId });
+    };
+    await pair();
+    const aId = a.net.state().machineId;
+    const bId = b.net.state().machineId;
+    await until(() => a.net.state().links.find((l) => l.machineId === bId)?.state === 'up');
+    const grantsIo: PolicyIo = {
+      read: () =>
+        JSON.stringify({
+          version: 1,
+          grants: [
+            {
+              id: 'peer-grant',
+              who: { kind: 'peer', machineId: bId },
+              tool: 'open_session',
+              on: { kind: 'anywhere' },
+              for: 'until-revoked',
+              anchorSessionId: null,
+              createdAt: new Date().toISOString(),
+              expiresAt: null,
+              lastUsedAt: null,
+              state: 'active',
+              endedAt: null,
+              requestId: null,
+            },
+          ],
+        }),
+      writeSync: () => true,
+    };
+    const h = harness({ network: a.net.port(), grantsIo });
+    await h.host.start();
+    const replies: HostToWebview[] = [];
+    const send = (operation: unknown) =>
+      h.host.handleRenderer(
+        {
+          type: 'mcp:grantLifecycle',
+          requestId: 1,
+          operation,
+        } as McpRendererMessage,
+        (reply) => replies.push(reply),
+        1,
+      );
+    await send({
+      kind: 'revoke',
+      id: 'peer-grant',
+      revision: 0,
+      expectedToken: h.host.uiState().policy.editToken,
+    });
+    const response = replies[0];
+    if (
+      response?.type !== 'mcp:grantLifecycleResult' ||
+      !response.result.ok ||
+      !response.result.undoToken
+    )
+      throw new Error('missing receipt');
+    await call(b.net, 'link.revoke', { machineId: aId });
+    await until(() => a.net.state().links.find((l) => l.machineId === bId)?.state === 'revoked');
+    expect(a.net.port().grantPeerEligible(bId)).toBe(false);
+    await pair();
+    await until(() => a.net.port().grantPeerEligible(bId));
+    await send({ kind: 'undo', token: response.result.undoToken });
+    expect(replies[1]).toMatchObject({
+      type: 'mcp:grantLifecycleResult',
+      result: { ok: false },
+    });
+    await h.host.stop();
+  });
+
+  it('invalidates a peer receipt after an eligibility loss and recovery notification', async () => {
+    let eligible = true;
+    let onEligibility = () => {};
+    const network = inboundNetwork(() => null);
+    network.grantPeerEligible = () => eligible;
+    network.onGrantPeerEligibilityChange = (listener) => {
+      onEligibility = listener;
+      return () => {};
+    };
+    const grantsIo: PolicyIo = {
+      read: () =>
+        JSON.stringify({
+          version: 1,
+          grants: [
+            {
+              id: 'peer-grant',
+              who: { kind: 'peer', machineId: 'm-peer' },
+              tool: 'open_session',
+              on: { kind: 'anywhere' },
+              for: 'until-revoked',
+              anchorSessionId: null,
+              createdAt: new Date().toISOString(),
+              expiresAt: null,
+              lastUsedAt: null,
+              state: 'active',
+              endedAt: null,
+              requestId: null,
+            },
+          ],
+        }),
+      writeSync: () => true,
+    };
+    const h = harness({ network, grantsIo });
+    await h.host.start();
+    const replies: HostToWebview[] = [];
+    const send = (operation: unknown) =>
+      h.host.handleRenderer(
+        {
+          type: 'mcp:grantLifecycle',
+          requestId: 1,
+          operation,
+        } as McpRendererMessage,
+        (reply) => replies.push(reply),
+        1,
+      );
+    await send({
+      kind: 'revoke',
+      id: 'peer-grant',
+      revision: 0,
+      expectedToken: h.host.uiState().policy.editToken,
+    });
+    const response = replies[0];
+    if (
+      response?.type !== 'mcp:grantLifecycleResult' ||
+      !response.result.ok ||
+      !response.result.undoToken
+    )
+      throw new Error('missing receipt');
+    eligible = false;
+    onEligibility();
+    eligible = true;
+    onEligibility();
+    await send({ kind: 'undo', token: response.result.undoToken });
+    expect(replies[1]).toMatchObject({
+      type: 'mcp:grantLifecycleResult',
+      result: { ok: false },
+    });
+    await h.host.stop();
+  });
+
   it('mcp:revokeGrant and mcp:setAssignment answer with mcp:policyResult', async () => {
     const { h, c } = await asking();
     const post = async (msg: unknown) => {
@@ -6874,6 +7230,8 @@ describe('createConduitMcpHost — wait_sessions', () => {
     let changed = () => {};
     const network: NetworkPort = {
       hasPeer: () => null,
+      grantPeerEligible: () => true,
+      onGrantPeerEligibilityChange: () => () => {},
       inboundPrincipal: () => null,
       remoteEntries: () => [entry],
       resolve: (target) =>
@@ -8272,6 +8630,8 @@ describe('machine tools at the host (spec 4.6, 5.1, RS-D6)', () => {
     };
     const network: NetworkPort = {
       hasPeer: () => null,
+      grantPeerEligible: () => true,
+      onGrantPeerEligibilityChange: () => () => {},
       inboundPrincipal: () => null,
       remoteEntries: () => [],
       resolve: unused,
@@ -8555,6 +8915,8 @@ function inboundNetwork(principal: () => RemoteCaller | null): NetworkPort {
   };
   return {
     hasPeer: () => true,
+    grantPeerEligible: () => true,
+    onGrantPeerEligibilityChange: () => () => {},
     inboundPrincipal: principal,
     remoteEntries: () => [],
     resolve: unused,
@@ -9562,6 +9924,8 @@ describe('createConduitMcpHost — a remote answer that does not reach its machi
     };
     const network: NetworkPort = {
       hasPeer: () => null,
+      grantPeerEligible: () => true,
+      onGrantPeerEligibilityChange: () => () => {},
       inboundPrincipal: () => null,
       remoteEntries: () => [],
       resolve: unused,
@@ -9676,6 +10040,8 @@ describe('routed session tools on this machine (CON-40 S3, plan decision 5)', ()
     };
     const network: NetworkPort = {
       hasPeer: () => null,
+      grantPeerEligible: () => true,
+      onGrantPeerEligibilityChange: () => () => {},
       inboundPrincipal: () => null,
       remoteEntries: () => over.entries ?? [REMOTE_CLAUDE],
       resolve: (target) =>
@@ -10040,6 +10406,8 @@ describe('createConduitMcpHost — remote requests (CON-42 A side)', () => {
     };
     const network: NetworkPort = {
       hasPeer: () => null,
+      grantPeerEligible: () => true,
+      onGrantPeerEligibilityChange: () => () => {},
       inboundPrincipal: () => null,
       remoteEntries: () => [],
       resolve: unused,
@@ -10299,6 +10667,8 @@ describe('remote policy edits from this machine (CON-46 L4)', () => {
     };
     const network: NetworkPort = {
       hasPeer: () => null,
+      grantPeerEligible: () => true,
+      onGrantPeerEligibilityChange: () => () => {},
       inboundPrincipal: () => null,
       remoteEntries: () => [],
       resolve: unused,

@@ -6,6 +6,7 @@ import type { AgentCli } from './conduit-mcp/install-types';
 import type {
   Assignment,
   AssignmentPoint,
+  GrantLifecycleResult,
   LocalPolicyEdit,
   LocalPolicyReviewResult,
   PermissionAnswer,
@@ -765,6 +766,7 @@ export type HostToWebview =
     }
   | { type: 'mcp:reviewLocalPolicyResult'; requestId: number; result: LocalPolicyReviewResult }
   | { type: 'mcp:policyEditResult'; requestId: number; result: PolicyEditResult }
+  | { type: 'mcp:grantLifecycleResult'; requestId: number; result: GrantLifecycleResult }
   | { type: 'mcp:policyResult'; requestId: number; ok: true }
   | { type: 'mcp:policyResult'; requestId: number; ok: false; error: string }
   | { type: 'mcp:toolPolicyResult'; requestId: number; ok: true }
@@ -1360,6 +1362,18 @@ export type WebviewToHost =
       patch: unknown;
       /** The machine whose rules this edits (CON-46); absent edits this machine's rules. */
       machine?: string;
+    }
+  | {
+      type: 'mcp:grantLifecycle';
+      requestId: number;
+      operation:
+        | {
+            kind: 'extend' | 'renew' | 'revoke';
+            id: string;
+            revision: number;
+            expectedToken: string;
+          }
+        | { kind: 'undo'; token: string };
     }
   | { type: 'mcp:revokeGrant'; requestId: number; grantId: string; machine?: string }
   // Discard a machine's draft, or re-apply it on top of that machine's current rules (CON-46).

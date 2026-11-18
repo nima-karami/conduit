@@ -462,6 +462,12 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
     await until(() => linkTo(a.net, bId)?.state === 'up' && linkTo(b.net, aId)?.state === 'up');
     expect(linkTo(a.net, bId)?.name).toBe('net-b');
     expect(a.net.port().hasPeer(bId)).toBe(true);
+    expect(a.net.port().grantPeerEligible(bId)).toBe(true);
+    expect(a.net.port().grantPeerEligible('m-deadbeef')).toBe(false);
+    let eligibilityChanges = 0;
+    const stopEligibility = a.net.port().onGrantPeerEligibilityChange(() => {
+      eligibilityChanges++;
+    });
     expect(a.net.port().hasPeer('m-deadbeef')).toBe(false);
     expect(linkTo(b.net, aId)?.capabilities).toEqual({
       messaging: true,
@@ -479,10 +485,14 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
     await call(b.net, 'link.setCapability', { machineId: aId, capability: 'monitor', on: true });
     await until(() => a.net.port().peerCapabilitiesOf(bId)?.monitor === true);
 
+    expect(eligibilityChanges).toBe(0);
     await call(b.net, 'link.revoke', { machineId: aId });
     await until(() => linkTo(a.net, bId)?.state === 'revoked');
     expect(linkTo(a.net, bId)?.revokedBy).toBe('peer');
     expect(a.net.port().hasPeer(bId)).toBe(false);
+    expect(a.net.port().grantPeerEligible(bId)).toBe(false);
+    expect(eligibilityChanges).toBe(1);
+    stopEligibility();
     expect(auditKinds(b.dir)).toEqual(expect.arrayContaining(['pairing.linked', 'link.revoked']));
     expect(tapped.map((e) => e.kind)).toEqual(auditKinds(b.dir));
     expect(a.states.length).toBeGreaterThan(0);

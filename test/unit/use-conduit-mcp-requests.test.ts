@@ -190,3 +190,31 @@ describe('acknowledged remote policy edits', () => {
     expect(bridge.listeners.length).toBe(baseline);
   });
 });
+
+describe('grantLifecycle', () => {
+  it('correlates replies and returns the typed result', async () => {
+    const api = await mountApi();
+    const pending = api.grantLifecycle({ kind: 'undo', token: 'receipt' });
+    const sent = bridge.post.mock.calls.at(-1)?.[0];
+    expect(sent).toMatchObject({
+      type: 'mcp:grantLifecycle',
+      operation: { kind: 'undo', token: 'receipt' },
+    });
+    if (!sent || sent.type !== 'mcp:grantLifecycle') throw new Error('missing request');
+    emit({ type: 'mcp:grantLifecycleResult', requestId: sent.requestId + 1, result: { ok: true } });
+    emit({
+      type: 'mcp:grantLifecycleResult',
+      requestId: sent.requestId,
+      result: { ok: false, error: 'conflict' },
+    });
+    await expect(pending).resolves.toEqual({ ok: false, error: 'conflict' });
+  });
+
+  it('returns null when no host responds', async () => {
+    const api = await mountApi();
+    vi.useFakeTimers();
+    const pending = api.grantLifecycle({ kind: 'undo', token: 'receipt' });
+    vi.advanceTimersByTime(10_000);
+    await expect(pending).resolves.toBeNull();
+  });
+});

@@ -102,6 +102,8 @@ export type RemoteGrantRevokeResult =
 export interface NetworkPort {
   nativeSupport(machineId: string): boolean;
   hasPeer(machineId: string): boolean | null;
+  grantPeerEligible(machineId: string): boolean;
+  onGrantPeerEligibilityChange(listener: () => void): () => void;
   inboundPrincipal(machineId: string, handle: string): RemoteCaller | null;
   remoteEntries(): RemoteEntry[];
   /**

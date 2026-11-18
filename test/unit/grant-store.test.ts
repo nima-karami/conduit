@@ -57,6 +57,114 @@ const target = (over: Partial<PolicyTarget> = {}): PolicyTarget => ({
 const ANYWHERE = { kind: 'anywhere' } as const;
 
 describe('grant store', () => {
+  it('counts successful touches for new grants while preserving legacy unknown counts', () => {
+    const grant = store.create(
+      { kind: 'session', sessionId: 's1' },
+      'send_message',
+      ANYWHERE,
+      '1h',
+      null,
+      null,
+    );
+    expect(grant.useCount).toBe(0);
+    store.touch(grant.id);
+    expect(store.all()[0].useCount).toBe(1);
+    store.load([{ ...grant, useCount: Number.MAX_SAFE_INTEGER }]);
+    store.touch(grant.id);
+    expect(store.all()[0].useCount).toBe(Number.MAX_SAFE_INTEGER);
+    const { useCount: _count, ...legacy } = grant;
+    store.load([legacy]);
+    store.touch(grant.id);
+    expect(store.all()[0].useCount).toBeUndefined();
+  });
+
+  it('extends, expires, renews, and restores with monotonic revisions', () => {
+    const g = store.create(
+      { kind: 'session', sessionId: 's1' },
+      'send_message',
+      ANYWHERE,
+      '1h',
+      null,
+      null,
+    );
+    store.touch(g.id);
+    expect(store.all()[0].lifecycleRevision).toBe(0);
+    t += MIN;
+    expect(store.extend(g.id, 0)).toMatchObject({
+      expiresAt: iso(T0 + 2 * HOUR),
+      lastConsentedAt: iso(t),
+      lifecycleRevision: 1,
+    });
+    expect(store.extend(g.id, 0)).toBeNull();
+    t = T0 + 2 * HOUR;
+    store.tick();
+    expect(store.all()[0]).toMatchObject({ state: 'expired', lifecycleRevision: 2 });
+    expect(store.renew(g.id, 2)).toMatchObject({
+      id: g.id,
+      who: g.who,
+      on: g.on,
+      expiresAt: iso(t + HOUR),
+      lifecycleRevision: 3,
+    });
+    const previous = store.all()[0];
+    expect(store.revoke(g.id)).toMatchObject({ lifecycleRevision: 4 });
+    expect(store.restore(previous, 4)).toMatchObject({ state: 'active', lifecycleRevision: 5 });
+    expect(store.restore(previous, 4)).toBeNull();
+  });
+
+  it('restores suspended grants as suspended and rejects unsafe revision overflow', () => {
+    const g = store.create(
+      { kind: 'session', sessionId: 's1' },
+      'send_message',
+      ANYWHERE,
+      '1h',
+      null,
+      null,
+    );
+    const suspended = { ...g, state: 'suspended' as const };
+    store.load([suspended]);
+    store.revoke(g.id);
+    expect(store.restore(suspended, 1)).toMatchObject({ state: 'suspended', lifecycleRevision: 2 });
+    store.load([{ ...g, lifecycleRevision: Number.MAX_SAFE_INTEGER }]);
+    expect(store.extend(g.id, Number.MAX_SAFE_INTEGER)).toBeNull();
+  });
+
+  it('renews the original 24-hour duration and refuses stale or altered restoration', () => {
+    const g = store.create(
+      { kind: 'session', sessionId: 's1' },
+      'send_message',
+      ANYWHERE,
+      '24h',
+      null,
+      null,
+    );
+    t += DAY;
+    expect(store.extend(g.id, 0)).toBeNull();
+    store.tick();
+    expect(store.renew(g.id, 1)).toMatchObject({ expiresAt: iso(t + DAY), lifecycleRevision: 2 });
+    const prior = store.all()[0];
+    store.revoke(g.id);
+    expect(store.restore({ ...prior, on: { kind: 'session', sessionId: 'other' } }, 3)).toBeNull();
+    expect(store.restore({ ...prior, expiresAt: iso(t + 2 * DAY) }, 3)).toBeNull();
+    expect(store.restore(prior, 3)).toMatchObject({ lifecycleRevision: 4 });
+  });
+
+  it('uses explicit consent for session-end idle decay', () => {
+    const g = store.create(
+      { kind: 'session', sessionId: 's1' },
+      'send_message',
+      ANYWHERE,
+      'session-end',
+      's1',
+      null,
+    );
+    store.load([{ ...g, lastConsentedAt: iso(T0 + DAY) }]);
+    t = T0 + GRANT_DECAY_MS + 1;
+    expect(store.tick()).toHaveLength(0);
+    t += DAY;
+    expect(store.tick()).toHaveLength(1);
+  });
+
   it('session-end grant expires at sessionEnded and after 7 days unused', () => {
     const byEnd = store.create(
       { kind: 'session', sessionId: 's1' },

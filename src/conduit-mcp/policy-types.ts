@@ -99,6 +99,9 @@ export interface Grant {
   createdAt: string;
   expiresAt: string | null;
   lastUsedAt: string | null;
+  lastConsentedAt?: string;
+  useCount?: number;
+  lifecycleRevision?: number;
   state: GrantState;
   endedAt: string | null;
   requestId: string | null;
@@ -193,6 +196,10 @@ export type PolicyCommitError = 'policy-changed' | 'save-failed' | 'too-large' |
 export type PolicyCommitResult =
   | { ok: true; overrides: OneUseOverride[] }
   | { ok: false; error: PolicyCommitError };
+export type GrantLifecycleResult =
+  | { ok: true; undoToken?: string }
+  | { ok: false; error: PolicyEditError; applied?: 'tightening' };
+
 export type GrantBatchResult =
   | { ok: true; grants: Grant[] }
   | { ok: false; error: PolicyEditError };

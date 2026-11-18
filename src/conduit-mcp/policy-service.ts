@@ -41,6 +41,7 @@ import type {
   Decision,
   Grant,
   GrantBatchResult,
+  GrantLifecycleResult,
   GrantWho,
   LocalPolicyEdit,
   LocalPolicyReviewResult,
@@ -72,6 +73,7 @@ export interface PolicyServiceDeps {
   activityIo: ActivityIo;
   hasSession(id: string): boolean;
   peerKnown(id: string): boolean | null;
+  grantBindingsCurrent(grant: Grant): boolean;
   now(): number;
   newId(): string;
   setTimer(fn: () => void, ms: number): unknown;
@@ -127,6 +129,11 @@ export interface PolicyService {
     targets: readonly PolicyTarget[],
     requestId: string | null,
   ): GrantBatchResult;
+  extendGrant(id: string, revision: number, expectedToken: string): GrantLifecycleResult;
+  renewGrant(id: string, revision: number, expectedToken: string): GrantLifecycleResult;
+  revokeGrantWithUndo(id: string, revision: number, expectedToken: string): GrantLifecycleResult;
+  undoGrantRevoke(token: string): GrantLifecycleResult;
+  peerEligibilityChanged(): void;
   revokeGrant(id: string): PolicyEditResult;
   revokeGrants(ids: readonly string[]): PolicyEditResult;
   reconcilePrincipals(): void;
@@ -211,7 +218,16 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
   let conservativeRetryTimer: unknown = null;
   let conservativeRetryAttempts = 0;
   let editToken = '';
+  let authorityEpoch = 0n;
+  const receipts = new Map<
+    string,
+    { previous: Grant; revision: number; token: string; epoch: bigint; deadline: number }
+  >();
   let backupWarning: string | null = null;
+  const invalidateAuthority = (): void => {
+    authorityEpoch++;
+    receipts.clear();
+  };
   const saveErrors = new Map<'policy' | 'grants', string>();
   const remoteListeners = new Set<() => void>();
   const remembered = new Map<string, Remembered>();
@@ -324,6 +340,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     onFailedPrimary?: () => void,
   ): PolicyEditResult {
     if (!policyWritable && !conservative) return { ok: false, error: 'read-only' };
+    const authorityChanged = JSON.stringify(file) !== JSON.stringify(candidate);
     const assignmentsChanged =
       JSON.stringify([file.profiles, file.assignments]) !==
       JSON.stringify([candidate.profiles, candidate.assignments]);
@@ -340,6 +357,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     }
     if (!result.ok) candidate.rev = file.rev;
     file = candidate;
+    if (authorityChanged) invalidateAuthority();
     if (assignmentsChanged) editToken = deps.newId();
     if (result.ok) {
       pendingConservativePolicy = false;
@@ -372,6 +390,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       deps.onChanged();
       return result;
     }
+    if (JSON.stringify(grants.all()) !== JSON.stringify(candidate)) invalidateAuthority();
     grants.load(candidate);
     if (result.ok) pendingConservativeGrants = false;
     else {
@@ -417,6 +436,10 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
           grant.anchorSessionId !== null &&
           !deps.hasSession(grant.anchorSessionId));
       if (peerGone || sessionGone) {
+        grant.lifecycleRevision = Math.min(
+          Number.MAX_SAFE_INTEGER,
+          (grant.lifecycleRevision ?? 0) + 1,
+        );
         grant.state = peerGone ? 'revoked' : 'expired';
         grant.endedAt = new Date(deps.now()).toISOString();
       }
@@ -425,6 +448,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
   };
 
   const grantsChanged = (): void => {
+    invalidateAuthority();
     saveGrants(grants.all(), true);
   };
 
@@ -846,10 +870,6 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       const fresh = decideEngine(stateNow(), { ...input, heldOverrides: held, now });
       if (DECISION_RANK[fresh.decision] < DECISION_RANK[decision.decision])
         return { ok: false, error: 'policy-changed' };
-      if (decision.grantIds.length > 0) {
-        for (const id of decision.grantIds) grants.touch(id);
-        markGrants();
-      }
       const used = new Set(decision.overrideIds.filter((id) => !heldIds.has(id)));
       const removed = file.overrides.filter((o) => used.has(o.id));
       if (removed.length > 0) {
@@ -865,6 +885,10 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
             return { ok: false, error: saved.error };
           throw new Error(`Unexpected conservative save failure: ${saved.error}`);
         }
+      }
+      if (decision.grantIds.length > 0) {
+        for (const id of decision.grantIds) grants.touch(id);
+        markGrants();
       }
       return { ok: true, overrides: removed };
     },
@@ -977,8 +1001,81 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     },
 
     peerRevoked(machineId) {
+      invalidateAuthority();
       if (grants.peerRevoked(machineId).length === 0) return;
       grantsChanged();
+    },
+
+    peerEligibilityChanged() {
+      invalidateAuthority();
+    },
+
+    extendGrant(id, revision, expectedToken) {
+      if (expectedToken !== editToken) return { ok: false, error: 'conflict' };
+      const original = grants.all().find((g) => g.id === id);
+      if (!original) return { ok: false, error: 'not-found' };
+      if (!deps.grantBindingsCurrent(original)) return { ok: false, error: 'invalid-value' };
+      const candidate = grantCandidate();
+      if (!candidate.extend(id, revision)) return { ok: false, error: 'conflict' };
+      return saveGrants(candidate.all());
+    },
+
+    renewGrant(id, revision, expectedToken) {
+      if (expectedToken !== editToken) return { ok: false, error: 'conflict' };
+      const original = grants.all().find((g) => g.id === id);
+      if (!original) return { ok: false, error: 'not-found' };
+      if (!deps.grantBindingsCurrent(original)) return { ok: false, error: 'invalid-value' };
+      const candidate = grantCandidate();
+      if (!candidate.renew(id, revision)) return { ok: false, error: 'conflict' };
+      return saveGrants(candidate.all());
+    },
+
+    revokeGrantWithUndo(id, revision, expectedToken) {
+      if (expectedToken !== editToken) return { ok: false, error: 'conflict' };
+      const original = grants.all().find((g) => g.id === id);
+      if (!original) return { ok: false, error: 'not-found' };
+      if (!deps.grantBindingsCurrent(original)) return { ok: false, error: 'invalid-value' };
+      if ((original.lifecycleRevision ?? 0) !== revision) return { ok: false, error: 'conflict' };
+      const candidate = grantCandidate();
+      const revoked = candidate.revoke(id);
+      if (!revoked) return { ok: false, error: 'conflict' };
+      const before = authorityEpoch;
+      const deadline = deps.now() + 5000;
+      const result = saveGrants(candidate.all(), true);
+      if (!result.ok) return result;
+      if (
+        authorityEpoch !== before + 1n ||
+        editToken !== expectedToken ||
+        (revoked.lifecycleRevision ?? 0) >= Number.MAX_SAFE_INTEGER ||
+        deps.now() >= deadline
+      )
+        return { ok: true };
+      const token = deps.newId();
+      receipts.set(token, {
+        previous: original,
+        revision: revoked.lifecycleRevision ?? 0,
+        token: expectedToken,
+        epoch: authorityEpoch,
+        deadline,
+      });
+      return { ok: true, undoToken: token };
+    },
+
+    undoGrantRevoke(token) {
+      const receipt = receipts.get(token);
+      receipts.delete(token);
+      if (
+        !receipt ||
+        deps.now() >= receipt.deadline ||
+        receipt.epoch !== authorityEpoch ||
+        receipt.token !== editToken ||
+        !deps.grantBindingsCurrent(receipt.previous)
+      )
+        return { ok: false, error: 'conflict' };
+      const candidate = grantCandidate();
+      if (!candidate.restore(receipt.previous, receipt.revision))
+        return { ok: false, error: 'conflict' };
+      return saveGrants(candidate.all());
     },
 
     revokeGrant(id) {
@@ -1159,6 +1256,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     },
 
     sessionEnded(sessionId) {
+      invalidateAuthority();
       const assignments = file.assignments.length;
       const overrides = file.overrides.length;
       const denials = (file.sessionDenials ?? []).length;

@@ -225,6 +225,7 @@ export function createRemotePolicy(deps: RemotePolicyDeps): RemotePolicy {
       activityIo: noActivity,
       hasSession: () => false,
       peerKnown: () => null,
+      grantBindingsCurrent: () => false,
       now: deps.now,
       newId: deps.newId,
       setTimer: deps.setTimer,

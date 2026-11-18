@@ -130,6 +130,7 @@ async function render(
               allowMore: noop,
               pause: noop,
               retry: noop,
+              grantLifecycle: async () => null,
               getOwnerPermissions: async () => null,
               getActivity: async () => null,
               linkCodexThread: async () => ({ status: 'unavailable' as const }),

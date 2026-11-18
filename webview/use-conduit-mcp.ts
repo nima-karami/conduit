@@ -3,6 +3,7 @@ import type { ActivityPage, ActivityQuery } from '../src/conduit-mcp/activity-qu
 import type {
   Assignment,
   AssignmentPoint,
+  GrantLifecycleResult,
   LocalPolicyEdit,
   LocalPolicyReviewResult,
   PermissionAnswer,
@@ -89,6 +90,9 @@ export interface ConduitMcpApi {
     profileId: ProfileId | null,
     machine?: string,
   ): Promise<boolean>;
+  grantLifecycle(
+    operation: Extract<WebviewToHost, { type: 'mcp:grantLifecycle' }>['operation'],
+  ): Promise<GrantLifecycleResult | null>;
   revokeGrant(grantId: string, machine?: string): Promise<boolean>;
   allowOnce(activityId: string): Promise<boolean>;
   getThread(threadId: string): Promise<McpThreadView | null>;
@@ -247,6 +251,14 @@ const api: Omit<ConduitMcpApi, 'state'> = {
       REQUEST_TIMEOUT_MS,
     );
     return r?.page ?? null;
+  },
+  async grantLifecycle(operation) {
+    const r = await requestHost(
+      (requestId) => ({ type: 'mcp:grantLifecycle', requestId, operation }),
+      ['mcp:grantLifecycleResult'],
+      REQUEST_TIMEOUT_MS,
+    );
+    return r?.result ?? null;
   },
   async getActivity(query) {
     const r = await requestHost(

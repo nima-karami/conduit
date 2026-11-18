@@ -84,6 +84,8 @@ function portWith(over: Partial<NetworkPort>): NetworkPort {
     throw new Error('not used by the machine tools');
   };
   return {
+    grantPeerEligible: () => false,
+    onGrantPeerEligibilityChange: () => () => undefined,
     hasPeer: () => null,
     inboundPrincipal: () => null,
     remoteEntries: unused,

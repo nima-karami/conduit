@@ -290,6 +290,31 @@ describe('policy file', () => {
     expect(parseGrantsFile(text)).toEqual({ ok: true, file });
   });
 
+  it('validates optional grant lifecycle fields without inventing legacy values', () => {
+    const file = validGrants();
+    const legacy = parseGrantsFile(serializeGrantsFile(file));
+    expect(legacy.ok && legacy.file.grants[0].useCount).toBeUndefined();
+    Object.assign(file.grants[0], {
+      useCount: 0,
+      lifecycleRevision: 0,
+      lastConsentedAt: '2026-11-14T12:00:00.000Z',
+    });
+    expect(parseGrantsFile(serializeGrantsFile(file))).toEqual({ ok: true, file });
+    for (const [field, value] of [
+      ['useCount', -1],
+      ['useCount', 1.5],
+      ['lifecycleRevision', Number.MAX_SAFE_INTEGER + 1],
+      ['lastConsentedAt', 'bad'],
+    ] as const) {
+      const invalid = structuredClone(file);
+      Object.assign(invalid.grants[0], { [field]: value });
+      expect(parseGrantsFile(serializeGrantsFile(invalid))).toEqual({
+        ok: false,
+        reason: 'corrupt',
+      });
+    }
+  });
+
   it('grants file: invalid grant → corrupt, version 2 → newer', () => {
     const valid = serializeGrantsFile(validGrants());
     expect(parseGrantsFile(valid).ok).toBe(true);
