@@ -90,6 +90,7 @@ export interface ConduitMcpApi {
     profileId: ProfileId | null,
     machine?: string,
   ): Promise<boolean>;
+  dismissNativeImpact(id: string): Promise<boolean>;
   grantLifecycle(
     operation: Extract<WebviewToHost, { type: 'mcp:grantLifecycle' }>['operation'],
   ): Promise<GrantLifecycleResult | null>;
@@ -251,6 +252,14 @@ const api: Omit<ConduitMcpApi, 'state'> = {
       REQUEST_TIMEOUT_MS,
     );
     return r?.page ?? null;
+  },
+  async dismissNativeImpact(id) {
+    const r = await requestHost(
+      (requestId) => ({ type: 'mcp:dismissNativeImpact', requestId, id }),
+      ['mcp:dismissNativeImpactResult'],
+      REQUEST_TIMEOUT_MS,
+    );
+    return r?.dismissed ?? false;
   },
   async grantLifecycle(operation) {
     const r = await requestHost(

@@ -190,6 +190,7 @@ export function emptyPolicyUi(): McpPolicyUi {
 export interface McpUiState {
   native: Record<string, NativeSessionUi>;
   nativeImpact: {
+    id: string;
     total: number;
     rows: Array<{ sessionId: string; before: NativeSelection; after: NativeSelection }>;
   } | null;

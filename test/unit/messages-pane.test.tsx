@@ -134,6 +134,7 @@ function fakeApi(state: McpUiState | null, o: Partial<ConduitMcpApi> = {}): Cond
     allowMore: vi.fn(),
     pause: vi.fn(),
     retry: vi.fn(),
+    dismissNativeImpact: async () => false,
     grantLifecycle: async () => null,
     getOwnerPermissions: async () => null,
     getActivity: async () => null,

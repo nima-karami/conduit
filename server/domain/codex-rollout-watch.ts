@@ -3,7 +3,6 @@ import { type DirWatch, EXISTS_POLL_MS, type watchDir } from '../../electron/wat
 import {
   bindsTo,
   type CodexAction,
-  LineSplitter,
   parseRolloutMeta,
   type RolloutMeta,
   rolloutActions,
@@ -13,6 +12,11 @@ import {
 import type { LimitSignal } from '../../src/contracts/auto-resume';
 import type { CodexPostureUpdate } from '../../src/contracts/native-launch';
 import type { LaunchIds } from '../../src/contracts/terminal-runtime';
+import {
+  type RolloutIdentity,
+  type RolloutReadEvent,
+  RolloutShortReadError,
+} from './codex-rollout-fs';
 
 const READ_DEBOUNCE_MS = 250;
 
@@ -24,14 +28,8 @@ export interface CodexWatchDeps {
   fs: {
     readdir(p: string): Promise<string[]>;
     readFirstLine(p: string): Promise<string | null>;
-    readFrom(
-      p: string,
-      offset: number,
-    ): Promise<{
-      data: string;
-      size: number;
-      identity: { dev: number; ino: number; fileSize: number } | null;
-    }>;
+    readFrom(p: string, offset: number, discarding?: boolean): AsyncIterable<RolloutReadEvent>;
+    pathIdentity(p: string): Promise<RolloutIdentity>;
     exists(p: string): Promise<boolean>;
   };
   samePath(a: string, b: string): boolean;
@@ -66,7 +64,8 @@ interface Tracked {
   launchAt: number;
   boundFile: string | null;
   offset: number;
-  splitter: LineSplitter;
+  discarding: boolean;
+  streamInvalid: boolean;
   reading: boolean;
   readAgain: boolean;
   /** The first read after a bind is history, not news (see readBound). */
@@ -247,7 +246,8 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
     if (!s) return;
     s.boundFile = file;
     s.offset = 0;
-    s.splitter = new LineSplitter();
+    s.discarding = false;
+    s.streamInvalid = false;
     s.replayed = false;
     deps.onBound(sessionId);
     deps.log.debug('codex rollout bound', { sessionId, file });
@@ -265,109 +265,175 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
     }, READ_DEBOUNCE_MS);
   };
 
-  /** The newest reset-info, and the limit only when no turn started after it. */
-  const replayState = (sessionId: string, lines: readonly string[]): LimitSignal[] => {
-    let reset: LimitSignal | null = null;
-    let limited: LimitSignal | null = null;
-    let resumedAfter: LimitSignal | null = null;
-    for (const line of lines) {
-      for (const signal of rolloutSignals(sessionId, line, true, deps.now())) {
-        if (signal.kind === 'reset-info') reset = signal;
-        else if (signal.kind === 'limited') {
-          limited = signal;
-          resumedAfter = null;
-        } else if (signal.kind === 'resumed') {
-          if (limited) resumedAfter = signal;
-          limited = null;
-        }
-      }
-    }
-    const out: LimitSignal[] = [];
-    if (reset) out.push(reset);
-    if (limited) out.push(limited);
-    // A turn that started after the last limit still answers an episode the rules opened.
-    else if (resumedAfter && deps.episodeOpen(sessionId)) out.push(resumedAfter);
-    return out;
-  };
-
   const sameIds = (a: LaunchIds, b: LaunchIds): boolean =>
     a.generation === b.generation && a.launchId === b.launchId;
 
   const readBound = async (sessionId: string): Promise<void> => {
     const s = sessions.get(sessionId);
-    if (!s?.boundFile) return;
+    if (!s?.boundFile || s.streamInvalid) return;
     if (s.reading) {
       s.readAgain = true;
       return;
     }
     s.reading = true;
     const file = s.boundFile;
+    const current = (): boolean => sessions.get(sessionId) === s && s.boundFile === file;
+    let cursor = s.offset;
+    let discarding = s.discarding;
+    let identity: RolloutIdentity = null;
+    let highWater = 0;
+    let ended = false;
+    let metaId = s.metaId;
+    let valid = false;
+    let posture = { ...s.posture };
+    let postureChanged = false;
+    let reset: LimitSignal | null = null;
+    let limited: LimitSignal | null = null;
+    let resumed: LimitSignal | null = null;
+    const replay = !s.replayed;
+    const invalidate = (): void => {
+      if (!current()) return;
+      s.streamInvalid = true;
+      if (s.postureRetired) return;
+      const linked = s.linked;
+      s.linked = false;
+      s.identity = null;
+      s.metaId = null;
+      s.posture = { freshness: 'current', reading: null, lastKnown: null };
+      if (linked && current()) deps.onPosture(sessionId, s.ids);
+    };
+    const revisionCurrent = async (): Promise<boolean> => {
+      if (!identity) return true;
+      const path = await deps.fs.pathIdentity(file);
+      return (
+        current() &&
+        !!path &&
+        path.dev === identity.dev &&
+        path.ino === identity.ino &&
+        path.fileSize >= highWater
+      );
+    };
     try {
-      const offset = s.offset;
-      const { data, size, identity } = await deps.fs.readFrom(file, offset);
-      if (sessions.get(sessionId) !== s || s.boundFile !== file) return;
-      const firstEnd = data.indexOf('\n');
-      const firstMeta =
-        offset === 0 && firstEnd >= 0 ? parseRolloutMeta(data.slice(0, firstEnd)) : null;
-      const expectedMeta = metas.get(file);
-      const valid =
-        identity !== null &&
-        identity.fileSize >= offset &&
-        (offset === 0
-          ? !!firstMeta && !firstMeta.isSubThread && firstMeta.id === expectedMeta?.id
-          : !!s.identity && identity.dev === s.identity.dev && identity.ino === s.identity.ino);
-      if (!s.postureRetired && !valid) {
-        const wasLinked = s.linked;
-        s.linked = false;
-        s.identity = null;
-        s.metaId = null;
-        s.posture = { freshness: 'current', reading: null, lastKnown: null };
-        if (wasLinked) deps.onPosture(sessionId, s.ids);
-      } else if (!s.postureRetired && identity) {
-        s.identity = { dev: identity.dev, ino: identity.ino };
-        if (firstMeta) s.metaId = firstMeta.id;
-      }
-      s.offset = size;
-      const lines = s.splitter.push(data);
-      let postureChanged = false;
-      if (valid && !s.postureRetired) {
-        for (const line of lines) {
-          const reading = rolloutPosture(line);
-          if (!reading) continue;
-          s.posture = {
-            freshness: reading.status === 'known' ? 'current' : s.posture.freshness,
-            reading,
-            lastKnown: reading.status === 'known' ? reading : s.posture.lastKnown,
-          };
+      for await (const event of deps.fs.readFrom(file, cursor, discarding)) {
+        if (!current()) return;
+        if (event.kind === 'start') {
+          identity = event.identity;
+          highWater = event.highWater;
+          if (
+            highWater < cursor ||
+            (s.identity &&
+              (!identity || s.identity.dev !== identity.dev || s.identity.ino !== identity.ino))
+          ) {
+            invalidate();
+            return;
+          }
+          valid = !!identity && (cursor === 0 || !!s.identity);
+          continue;
+        }
+        if (!(await revisionCurrent())) {
+          invalidate();
+          return;
+        }
+        if (!current()) return;
+        cursor = event.cursor;
+        discarding = event.discarding;
+        if (event.kind === 'gap') {
+          reset = limited = resumed = null;
+          posture = { ...posture, freshness: 'stale', reading: null };
           postureChanged = true;
         }
-      }
-      if (postureChanged && s.linked && sessions.get(sessionId) === s)
-        deps.onPosture(sessionId, s.ids);
-      if (!s.replayed) {
-        // A late bind replays the whole file: only its END state is news. Replaying an old
-        // task_started as `resumed` would close the rule-opened episode and open a duplicate
-        // (blockers D2, review of d30afb9f B3).
-        s.replayed = true;
-        if (sessions.get(sessionId) === s)
-          for (const signal of replayState(sessionId, lines)) deps.onSignal(signal);
-      } else {
-        for (const line of lines) {
-          if (sessions.get(sessionId) !== s) break;
-          const signals = rolloutSignals(sessionId, line, deps.episodeOpen(sessionId), deps.now());
-          for (const signal of signals) deps.onSignal(signal);
-          for (const action of rolloutActions(line)) deps.onAction(sessionId, action);
+        if (event.kind === 'lines') {
+          for (const line of event.lines) {
+            if (s.offset === 0 && metaId === null) {
+              const meta = parseRolloutMeta(line);
+              const expected = metas.get(file);
+              if (!meta || meta.isSubThread || meta.id !== expected?.id) {
+                invalidate();
+                return;
+              }
+              metaId = meta.id;
+            }
+            if (valid && !s.postureRetired) {
+              const reading = rolloutPosture(line);
+              if (reading) {
+                posture = {
+                  freshness: reading.status === 'known' ? 'current' : posture.freshness,
+                  reading,
+                  lastKnown: reading.status === 'known' ? reading : posture.lastKnown,
+                };
+                postureChanged = true;
+              }
+            }
+            if (replay) {
+              for (const signal of rolloutSignals(sessionId, line, true, deps.now())) {
+                if (signal.kind === 'reset-info') reset = signal;
+                else if (signal.kind === 'limited') {
+                  limited = signal;
+                  resumed = null;
+                } else if (signal.kind === 'resumed') {
+                  if (limited) resumed = signal;
+                  limited = null;
+                }
+              }
+            }
+          }
+        }
+        if (!replay) {
+          s.offset = cursor;
+          s.discarding = discarding;
+          if (event.kind === 'lines')
+            for (const line of event.lines) {
+              for (const signal of rolloutSignals(
+                sessionId,
+                line,
+                deps.episodeOpen(sessionId),
+                deps.now(),
+              )) {
+                if (!current()) return;
+                deps.onSignal(signal);
+              }
+              for (const action of rolloutActions(line)) {
+                if (!current()) return;
+                deps.onAction(sessionId, action);
+              }
+            }
+        }
+        if (event.kind === 'end') {
+          ended = true;
+          if (replay) {
+            s.offset = cursor;
+            s.discarding = discarding;
+            s.replayed = true;
+          }
+          if (valid && !s.postureRetired) {
+            s.identity = identity && { dev: identity.dev, ino: identity.ino };
+            s.metaId = metaId;
+            s.posture = posture;
+            if (postureChanged && s.linked && current()) deps.onPosture(sessionId, s.ids);
+          }
+          if (replay) {
+            const result: LimitSignal[] = [];
+            if (reset) result.push(reset);
+            if (limited) result.push(limited);
+            else if (resumed && deps.episodeOpen(sessionId)) result.push(resumed);
+            for (const signal of result) {
+              if (!current()) return;
+              deps.onSignal(signal);
+            }
+          }
         }
       }
+      if (!ended && current()) throw new Error('incomplete rollout read');
     } catch (err) {
-      if (sessions.get(sessionId) === s && s.boundFile === file && !s.postureRetired) {
+      if (err instanceof RolloutShortReadError) invalidate();
+      else if (sessions.get(sessionId) === s && s.boundFile === file && !s.postureRetired) {
         s.posture = { ...s.posture, freshness: 'stale' };
         if (s.linked) deps.onPosture(sessionId, s.ids);
       }
       deps.log.warn('rollout read failed', { file, error: String(err) });
     } finally {
       s.reading = false;
-      if (s.readAgain) {
+      if (s.readAgain && current()) {
         s.readAgain = false;
         void readBound(sessionId);
       }
@@ -390,7 +456,8 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
         launchAt: s.launchAt,
         boundFile: null,
         offset: 0,
-        splitter: new LineSplitter(),
+        discarding: false,
+        streamInvalid: false,
         reading: false,
         readAgain: false,
         replayed: false,
@@ -406,6 +473,8 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
         !s ||
         !sameIds(s.ids, ids) ||
         s.postureRetired ||
+        s.streamInvalid ||
+        s.reading ||
         !s.identity ||
         s.metaId !== threadId ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(threadId)

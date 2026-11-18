@@ -4030,6 +4030,7 @@ app.whenReady().then(() => {
         case 'mcp:retry':
         case 'mcp:setAssignment':
         case 'mcp:setPointPolicy':
+        case 'mcp:dismissNativeImpact':
         case 'mcp:grantLifecycle':
         case 'mcp:revokeGrant':
         case 'mcp:allowOnce':

@@ -138,6 +138,7 @@ async function render(remote: RemoteSessionRow | null) {
               allowMore: noop,
               pause: noop,
               retry: noop,
+              dismissNativeImpact: async () => false,
               grantLifecycle: async () => null,
               getOwnerPermissions: async () => null,
               getActivity: async () => null,

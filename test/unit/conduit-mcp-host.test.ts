@@ -5531,6 +5531,10 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
       false,
     );
     expect(h.host.uiState().nativeImpact?.total).toBe(1);
+    await h.host.onSessionDeleted('unrelated');
+    expect(h.host.uiState().nativeImpact?.total).toBe(1);
+    await h.host.onSessionDeleted('local-secret-session');
+    expect(h.host.uiState().nativeImpact).toBeNull();
   });
 
   it('bounds receiver impact, replaces and clears it, and retains it after a failed save', async () => {
@@ -5588,18 +5592,38 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     const first = h.host.uiState().nativeImpact;
     expect(first?.total).toBe(105);
     expect(first?.rows).toHaveLength(100);
+    await h.host.onSessionDeleted('local-104');
+    expect(h.host.uiState().nativeImpact?.total).toBe(104);
+    await h.host.onSessionDeleted('local-0');
+    expect(h.host.uiState().nativeImpact?.total).toBe(103);
+    expect(h.host.uiState().nativeImpact?.rows).toHaveLength(100);
     expect(push(profile).ok).toBe(true);
     const second = h.host.uiState().nativeImpact;
     expect(second?.total).toBe(105);
+    expect(second?.id).not.toBe(first?.id);
+    if (!first || !second) throw new Error('expected impact notices');
+    const dismiss = (id: string, senderId = 1) =>
+      h.host.handleRenderer(
+        { type: 'mcp:dismissNativeImpact', requestId: 1, id },
+        () => {},
+        senderId,
+      );
+    await dismiss(first.id);
+    await dismiss(second.id, 999);
+    expect(h.host.uiState().nativeImpact).toEqual(second);
     expect(second?.rows[0]).toMatchObject({
       before: { intent: { requested: { mode: 'acceptEdits' } } },
       after: { intent: { requested: { mode: 'plan' } } },
     });
+    await dismiss(second.id);
+    expect(h.host.uiState().nativeImpact).toBeNull();
+    expect(push(changed).ok).toBe(true);
+    const third = h.host.uiState().nativeImpact;
     writable = false;
-    expect(push(changed).ok).toBe(false);
-    expect(h.host.uiState().nativeImpact).toEqual(second);
+    expect(push(profile).ok).toBe(false);
+    expect(h.host.uiState().nativeImpact).toEqual(third);
     writable = true;
-    expect(push(profile).ok).toBe(true);
+    expect(push(changed).ok).toBe(true);
     expect(h.host.uiState().nativeImpact).toBeNull();
   });
 

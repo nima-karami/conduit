@@ -704,7 +704,36 @@ async function receiverImpactCase(controller, receiver) {
     );
     return true;
   });
+  const dismiss = async (id) =>
+    (
+      await receiver.c2.call('mcp.fromRenderer', {
+        windowId: 1,
+        message: { type: 'mcp:dismissNativeImpact', requestId: 32, id },
+      })
+    ).reply;
+  const staleNotice = await dismiss('outdated-receiver-impact');
+  assert(staleNotice?.dismissed === false, 'an unrelated ID cleared the receiver notice');
+  const dismissed = await dismiss(impact.id);
+  assert(dismissed?.dismissed === true, 'owner could not dismiss the exact receiver notice');
+  assert((await snapshot(receiver)).mcp.nativeImpact === null, 'dismissed notice remained visible');
+
+  const currentMirror = (await snapshot(controller)).mcp.policy.machines.find(
+    (entry) => entry.machineId === receiverId,
+  );
+  const changeBack = await owner(controller, {
+    type: 'mcp:remoteEdit',
+    machine: receiverId,
+    expectedToken: currentMirror.policy.editToken,
+    nativeConsent: true,
+    edit: { kind: 'profile', profile },
+  });
+  assert(changeBack?.ok, 'controller could not send another reviewed edit');
+  await eventually('new receiver impact notice did not arrive', async () => {
+    const current = (await snapshot(receiver)).mcp.nativeImpact;
+    return current?.id !== impact.id && current?.rows.some(({ sessionId: id }) => id === sessionId);
+  });
   await receiver.c2.call('sessions.remove', { sessionId });
+  assert((await snapshot(receiver)).mcp.nativeImpact === null, 'removed session remained affected');
 }
 
 async function run() {

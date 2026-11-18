@@ -766,6 +766,7 @@ export type HostToWebview =
     }
   | { type: 'mcp:reviewLocalPolicyResult'; requestId: number; result: LocalPolicyReviewResult }
   | { type: 'mcp:policyEditResult'; requestId: number; result: PolicyEditResult }
+  | { type: 'mcp:dismissNativeImpactResult'; requestId: number; dismissed: boolean }
   | { type: 'mcp:grantLifecycleResult'; requestId: number; result: GrantLifecycleResult }
   | { type: 'mcp:policyResult'; requestId: number; ok: true }
   | { type: 'mcp:policyResult'; requestId: number; ok: false; error: string }
@@ -1363,6 +1364,7 @@ export type WebviewToHost =
       /** The machine whose rules this edits (CON-46); absent edits this machine's rules. */
       machine?: string;
     }
+  | { type: 'mcp:dismissNativeImpact'; requestId: number; id: string }
   | {
       type: 'mcp:grantLifecycle';
       requestId: number;

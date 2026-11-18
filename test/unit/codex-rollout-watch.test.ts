@@ -1,6 +1,16 @@
-import { readFileSync } from 'node:fs';
+import {
+  promises as fsp,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  truncateSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRolloutFs } from '../../server/domain/codex-rollout-fs';
 import {
   type CodexWatchDeps,
   createCodexRolloutWatch,
@@ -70,14 +80,25 @@ function harness() {
         const i = content.indexOf('\n');
         return i < 0 ? null : content.slice(0, i);
       },
-      readFrom: async (p, offset) => {
+      readFrom: async function* (p, offset, discarding = false) {
         const content = files.get(p) ?? '';
-        return {
-          data: content.slice(offset),
-          size: content.length,
+        yield {
+          kind: 'start',
           identity: { dev: 1, ino: 1, fileSize: content.length },
+          highWater: content.length,
         };
+        const tail = content.slice(offset);
+        const end = tail.lastIndexOf('\n') + 1;
+        if (end)
+          yield {
+            kind: 'lines',
+            lines: tail.slice(0, end).split('\n').slice(0, -1),
+            cursor: offset + end,
+            discarding,
+          };
+        yield { kind: 'end', cursor: offset + end, discarding };
       },
+      pathIdentity: async (p) => ({ dev: 1, ino: 1, fileSize: (files.get(p) ?? '').length }),
       exists: async (p) => dirs.has(p),
     },
     samePath: (a, b) => a === b,
@@ -470,17 +491,336 @@ describe('codex rollout watch', () => {
   });
 });
 
+describe('bounded stream integration', () => {
+  it('does not retry an incomplete line without another notification', async () => {
+    const h = harness();
+    h.files.set(FILE_A, `${PRIMARY}\npartial`);
+    const read = h.deps.fs.readFrom;
+    let reads = 0;
+    h.deps.fs.readFrom = (file, offset, discard) => {
+      reads++;
+      return read(file, offset, discard);
+    };
+    const watch = createCodexRolloutWatch(h.deps);
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+    await flush();
+    expect(reads).toBe(1);
+    vi.advanceTimersByTime(10_000);
+    await flush();
+    expect(reads).toBe(1);
+    watch.dispose();
+  });
+
+  it.skipIf(process.platform === 'win32').each(['replacement', 'truncation'] as const)(
+    'rejects an in-flight real descriptor after %s',
+    async (change) => {
+      const dir = mkdtempSync(join(tmpdir(), 'rollout-revision-'));
+      const realFile = join(dir, 'rollout.jsonl');
+      const oldFile = join(dir, 'old.jsonl');
+      const content = `${PRIMARY}\n${LIMIT_TASK_COMPLETE}\n`;
+      writeFileSync(realFile, content);
+      const h = harness();
+      h.files.set(FILE_A, content);
+      const real = createRolloutFs({ onFirstLineTooLong: () => {}, chunkBytes: 64 });
+      const open = fsp.open.bind(fsp);
+      let close: ReturnType<typeof vi.spyOn> | undefined;
+      const openSpy = vi.spyOn(fsp, 'open').mockImplementation(async (...args) => {
+        const handle = await open(...args);
+        close = vi.spyOn(handle, 'close');
+        return handle;
+      });
+      let release: (() => void) | undefined;
+      let paused = false;
+      let finished = false;
+      let opens = 0;
+      h.deps.fs.readFrom = async function* (_file, offset, discard) {
+        opens++;
+        try {
+          for await (const event of real.readFrom(realFile, offset, discard)) {
+            yield event;
+            if (event.kind === 'start' && opens === 1) {
+              paused = true;
+              await new Promise<void>((resolve) => {
+                release = resolve;
+              });
+            }
+          }
+        } finally {
+          finished = true;
+        }
+      };
+      h.deps.fs.pathIdentity = () => real.pathIdentity(realFile);
+      const updates: string[] = [];
+      h.deps.onPosture = (id) => updates.push(id);
+      const watch = createCodexRolloutWatch(h.deps);
+      try {
+        watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+        await vi.waitFor(() => expect(paused).toBe(true));
+        if (change === 'replacement') {
+          renameSync(realFile, oldFile);
+          writeFileSync(realFile, content);
+        } else {
+          truncateSync(realFile, 0);
+        }
+        release?.();
+        await vi.waitFor(() => expect(finished).toBe(true));
+        expect(close).toHaveBeenCalledOnce();
+        expect(h.signals).toEqual([]);
+        expect(h.actions).toEqual([]);
+        expect(updates).toEqual([]);
+        expect(watch.linkPosture('s1', IDS, '01a1d190-1af2-7db3-ae44-cb9dacc349ed')).toBe(false);
+        if (change === 'truncation') writeFileSync(realFile, content);
+        h.emit(DAY12, 'rollout-a.jsonl');
+        vi.advanceTimersByTime(250);
+        await flush();
+        expect(opens).toBe(1);
+        expect(h.signals).toEqual([]);
+        expect(h.actions).toEqual([]);
+        expect(updates).toEqual([]);
+      } finally {
+        release?.();
+        watch.dispose();
+        openSpy.mockRestore();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'retires established posture after a real in-flight short read',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'rollout-short-'));
+      const realFile = join(dir, 'rollout.jsonl');
+      const uuid = '01a1d190-1af2-7db3-ae44-cb9dacc349ed';
+      const initial = `${PRIMARY}\n`;
+      writeFileSync(realFile, initial);
+      const h = harness();
+      h.files.set(FILE_A, initial);
+      const real = createRolloutFs({ onFirstLineTooLong: () => {}, chunkBytes: 64 });
+      let release: (() => void) | undefined;
+      let pause = false;
+      let paused = false;
+      let completed = 0;
+      h.deps.fs.readFrom = async function* (_file, offset, discard) {
+        try {
+          for await (const event of real.readFrom(realFile, offset, discard)) {
+            yield event;
+            if (pause && event.kind === 'start') {
+              paused = true;
+              await new Promise<void>((resolve) => {
+                release = resolve;
+              });
+            }
+          }
+        } finally {
+          completed++;
+        }
+      };
+      h.deps.fs.pathIdentity = () => real.pathIdentity(realFile);
+      const updates: string[] = [];
+      h.deps.onPosture = (id) => updates.push(id);
+      const watch = createCodexRolloutWatch(h.deps);
+      try {
+        watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+        await vi.waitFor(() => expect(completed).toBe(1));
+        expect(watch.linkPosture('s1', IDS, uuid)).toBe(true);
+        writeFileSync(realFile, `${initial}${LIMIT_TASK_COMPLETE}\n`);
+        pause = true;
+        h.emit(DAY12, 'rollout-a.jsonl');
+        vi.advanceTimersByTime(250);
+        await vi.waitFor(() => expect(paused).toBe(true));
+        truncateSync(realFile, 0);
+        release?.();
+        await vi.waitFor(() => expect(completed).toBe(2));
+        expect(watch.getPosture('s1', IDS)).toBeNull();
+        expect(watch.linkPosture('s1', IDS, uuid)).toBe(false);
+        expect(watch.linkPosture('s1', { ...IDS, generation: 2 }, uuid)).toBe(false);
+        expect(updates).toEqual(['s1']);
+        expect(h.signals).toEqual([]);
+      } finally {
+        release?.();
+        watch.dispose();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('replays a real multi-chunk archive around an oversized resume', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rollout-replay-'));
+    try {
+      for (const laterLimit of [false, true]) {
+        const h = harness();
+        const realFile = join(dir, laterLimit ? 'later.jsonl' : 'early.jsonl');
+        const resume = fixture('turn.jsonl').split('\n')[0] ?? '';
+        const rows = [PRIMARY, LIMIT_TASK_COMPLETE, `${resume}${' '.repeat(4096)}`];
+        if (laterLimit) rows.push(LIMIT_TASK_COMPLETE);
+        const content = `${rows.join('\n')}\n`;
+        writeFileSync(realFile, content);
+        h.files.set(FILE_A, content);
+        const real = createRolloutFs({
+          onFirstLineTooLong: () => {},
+          recordMaxBytes: 2048,
+          chunkBytes: 64,
+        });
+        let completed = false;
+        h.deps.fs.readFrom = async function* (_file, offset, discard) {
+          yield* real.readFrom(realFile, offset, discard);
+          completed = true;
+        };
+        h.deps.fs.pathIdentity = () => real.pathIdentity(realFile);
+        const watch = createCodexRolloutWatch(h.deps);
+        watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+        await vi.waitFor(() => expect(completed).toBe(true));
+        expect(h.signals.map((signal) => signal.kind)).toEqual(laterLimit ? ['limited'] : []);
+        watch.dispose();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('forgets replay conclusions across a gap', async () => {
+    const h = harness();
+    const content = `${PRIMARY}\n${LIMIT_TASK_COMPLETE}\nmissing\n`;
+    h.files.set(FILE_A, content);
+    h.deps.fs.readFrom = async function* () {
+      yield {
+        kind: 'start',
+        identity: { dev: 1, ino: 1, fileSize: content.length },
+        highWater: content.length,
+      };
+      yield {
+        kind: 'lines',
+        lines: [PRIMARY, LIMIT_TASK_COMPLETE],
+        cursor: content.length - 8,
+        discarding: false,
+      };
+      yield { kind: 'gap', cursor: content.length, discarding: false };
+      yield { kind: 'end', cursor: content.length, discarding: false };
+    };
+    const watch = createCodexRolloutWatch(h.deps);
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+    await flush();
+    expect(h.signals).toEqual([]);
+    watch.dispose();
+  });
+
+  it('commits a delivered live batch before a later read error', async () => {
+    const h = harness();
+    h.files.set(FILE_A, `${PRIMARY}\n`);
+    const watch = createCodexRolloutWatch(h.deps);
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+    await flush();
+    const line = ACTION_LINES[1] ?? '';
+    const oldSize = `${PRIMARY}\n`.length;
+    const content = `${PRIMARY}\n${line}\n`;
+    h.files.set(FILE_A, content);
+    const original = h.deps.fs.readFrom;
+    let fail = true;
+    h.deps.fs.readFrom = async function* (file, offset, discard) {
+      if (!fail) {
+        yield* original(file, offset, discard);
+        return;
+      }
+      fail = false;
+      yield {
+        kind: 'start',
+        identity: { dev: 1, ino: 1, fileSize: content.length },
+        highWater: content.length,
+      };
+      yield { kind: 'lines', lines: [line], cursor: content.length, discarding: false };
+      throw new Error('read failed');
+    };
+    h.emit(DAY12, 'rollout-a.jsonl');
+    vi.advanceTimersByTime(250);
+    await flush();
+    const delivered = h.actions.length;
+    expect(delivered).toBeGreaterThan(0);
+    expect(content.length).toBeGreaterThan(oldSize);
+    h.emit(DAY12, 'rollout-a.jsonl');
+    vi.advanceTimersByTime(250);
+    await flush();
+    expect(h.actions).toHaveLength(delivered);
+    watch.dispose();
+  });
+
+  it('blocks links during an in-flight read and rejects an old generation', async () => {
+    const h = harness();
+    const uuid = '01a1d190-1af2-7db3-ae44-cb9dacc349ed';
+    h.files.set(FILE_A, `${PRIMARY}\n`);
+    const watch = createCodexRolloutWatch(h.deps);
+    watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+    await flush();
+    const read = h.deps.fs.readFrom;
+    let release: (() => void) | undefined;
+    h.deps.fs.readFrom = async function* (file, offset, discard) {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      yield* read(file, offset, discard);
+    };
+    h.emit(DAY12, 'rollout-a.jsonl');
+    vi.advanceTimersByTime(250);
+    await flush();
+    expect(watch.linkPosture('s1', IDS, uuid)).toBe(false);
+    watch.untrack('s1');
+    watch.track('s1', { cwd: '/work/project', ids: { ...IDS, generation: 2 }, launchAt: LAUNCH });
+    release?.();
+    await flush();
+    expect(watch.linkPosture('s1', IDS, uuid)).toBe(false);
+    watch.dispose();
+  });
+});
+
 describe('linked posture continuity', () => {
+  it.each(['replacement', 'truncation'] as const)(
+    'never processes a later notification after %s',
+    async (mode) => {
+      const h = harness();
+      h.files.set(FILE_A, `${PRIMARY}\n`);
+      const watch = createCodexRolloutWatch(h.deps);
+      watch.track('s1', { cwd: '/work/project', ids: IDS, launchAt: LAUNCH });
+      await flush();
+      const original = h.deps.fs.readFrom;
+      let first = true;
+      h.deps.fs.readFrom = async function* (file, offset, discard) {
+        if (first) {
+          first = false;
+          const size = mode === 'truncation' ? 0 : offset;
+          yield {
+            kind: 'start',
+            identity: { dev: 1, ino: mode === 'replacement' ? 2 : 1, fileSize: size },
+            highWater: size,
+          };
+          yield { kind: 'end', cursor: size, discarding: false };
+          return;
+        }
+        yield* original(file, offset, discard);
+      };
+      h.emit(DAY12, 'rollout-a.jsonl');
+      vi.advanceTimersByTime(250);
+      await flush();
+      h.files.set(FILE_A, `${PRIMARY}\n${LIMIT_TASK_COMPLETE}\n`);
+      h.emit(DAY12, 'rollout-a.jsonl');
+      vi.advanceTimersByTime(250);
+      await flush();
+      expect(h.signals).toEqual([]);
+      expect(h.actions).toEqual([]);
+      watch.dispose();
+    },
+  );
+
   it('marks errors stale, recovers only on context, and invalidates replacement', async () => {
     const h = harness();
     let mode: 'normal' | 'error' | 'replacement' = 'normal';
     const read = h.deps.fs.readFrom;
-    h.deps.fs.readFrom = async (file, offset) => {
+    h.deps.fs.readFrom = async function* (file, offset, discard) {
       if (mode === 'error') throw new Error('unavailable');
-      const result = await read(file, offset);
-      return mode === 'replacement'
-        ? { ...result, identity: { dev: 1, ino: 2, fileSize: result.identity?.fileSize ?? 0 } }
-        : result;
+      for await (const event of read(file, offset, discard)) {
+        if (mode === 'replacement' && event.kind === 'start')
+          yield { ...event, identity: { dev: 1, ino: 2, fileSize: event.highWater } };
+        else yield event;
+      }
     };
     const watch = createCodexRolloutWatch(h.deps);
     const uuid = '01a1d190-1af2-7db3-ae44-cb9dacc349ed';
@@ -567,13 +907,16 @@ describe('posture retirement', () => {
     let release: (() => void) | undefined;
     let hold = false;
     const read = h.deps.fs.readFrom;
-    h.deps.fs.readFrom = async (file, offset) => {
-      const result = await read(file, offset);
-      if (hold)
-        await new Promise<void>((resolve) => {
-          release = resolve;
-        });
-      return result;
+    h.deps.fs.readFrom = async function* (file, offset, discard) {
+      for await (const event of read(file, offset, discard)) {
+        if (hold) {
+          hold = false;
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        yield event;
+      }
     };
     const watch = createCodexRolloutWatch(h.deps);
     h.files.set(FILE_A, `${PRIMARY}\n`);

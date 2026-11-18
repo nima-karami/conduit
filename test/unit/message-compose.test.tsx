@@ -48,6 +48,7 @@ function fakeApi(o: Partial<ConduitMcpApi> = {}): ConduitMcpApi {
     allowMore: vi.fn(),
     pause: vi.fn(),
     retry: vi.fn(),
+    dismissNativeImpact: async () => false,
     grantLifecycle: async () => null,
     getOwnerPermissions: async () => null,
     getActivity: async () => null,

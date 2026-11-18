@@ -3199,7 +3199,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return { atLaunch, next: next ?? { status: 'not-applicable' } };
   }
 
-  let nativeImpact: McpUiState['nativeImpact'] = null;
+  let nativeImpact: { id: string; rows: NonNullable<McpUiState['nativeImpact']>['rows'] } | null =
+    null;
 
   function uiState(): McpUiState {
     const allSessions = deps.sessions.list();
@@ -3241,7 +3242,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     for (const message of youPending)
       youUnreadByThread.set(message.threadId, (youUnreadByThread.get(message.threadId) ?? 0) + 1);
     return {
-      nativeImpact,
+      nativeImpact: nativeImpact
+        ? {
+            id: nativeImpact.id,
+            total: nativeImpact.rows.length,
+            rows: nativeImpact.rows.slice(0, 100),
+          }
+        : null,
       enabled: deps.domain.messagingOn(),
       storeError,
       loading,
@@ -3790,6 +3797,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     async onSessionDeleted(sessionId) {
       deleting.add(sessionId);
+      if (nativeImpact?.rows.some((row) => row.sessionId === sessionId)) {
+        const rows = nativeImpact.rows.filter((row) => row.sessionId !== sessionId);
+        nativeImpact = rows.length ? { ...nativeImpact, rows } : null;
+        scheduleBroadcast();
+      }
       try {
         forgetBudget(sessionId);
         const closing = closingWhenDone.get(sessionId);
@@ -3903,6 +3915,26 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               ? { status: 'linked', source: 'linked-codex-thread', ...posture }
               : { status: 'unavailable' },
           });
+          return;
+        }
+        case 'mcp:dismissNativeImpact': {
+          if (
+            !Number.isSafeInteger(m.requestId) ||
+            m.requestId < 0 ||
+            senderId <= 0 ||
+            !deps.windowReady(senderId) ||
+            'machine' in m ||
+            typeof m.id !== 'string' ||
+            m.id.length === 0 ||
+            m.id.length > 256
+          )
+            return;
+          const dismissed = nativeImpact?.id === m.id;
+          if (dismissed) {
+            nativeImpact = null;
+            scheduleBroadcast();
+          }
+          reply({ type: 'mcp:dismissNativeImpactResult', requestId: m.requestId, dismissed });
           return;
         }
         case 'mcp:grantLifecycle': {
@@ -4565,7 +4597,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               : [];
           });
           nativeImpact = changed.length
-            ? { total: changed.length, rows: changed.slice(0, 100) }
+            ? { id: randomBytes(16).toString('hex'), rows: changed }
             : null;
           scheduleBroadcast();
           flow.recheck();
