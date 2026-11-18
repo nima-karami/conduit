@@ -24,6 +24,7 @@ quarantined.
 **Waivers / user decisions.**
 - 2026-11-18 owner: build it myself on this branch; read-only rule lifted for this task only.
 - UI-only first: no change to `src/conduit-mcp` policy model or persistence.
+- 2026-11-18 owner: `npm run e2e:remote` may push its temporary `ci/e2e/<sha>-<rand>` ref to origin (auto-deleted by the run). The branch itself is never pushed or merged by this run.
 
 **Decisions queued (not guessed).**
 1. "Reset to <built-in>" on a custom role needs the app to remember which role it was copied from (model change).
