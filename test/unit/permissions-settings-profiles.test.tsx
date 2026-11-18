@@ -72,6 +72,44 @@ it('reviews the frozen copy and requires confirmation before saving its digest',
   await act(async () => root.unmount());
 });
 
+it('opens Sessions by default and reveals other groups and options on demand', async () => {
+  const profile: Profile = {
+    ...structuredClone(BUILT_IN_PROFILES[1]),
+    id: 'p-custom',
+    name: 'Custom',
+    builtIn: false,
+  };
+  api.state.policy.profiles = [profile];
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () =>
+    root.render(
+      <PermissionsRoles serverConnected mcp={api as never} sessions={[]} registerBack={() => {}} />,
+    ),
+  );
+  await act(async () =>
+    host.querySelector<HTMLButtonElement>('[aria-label="Edit Custom"]')?.click(),
+  );
+  expect(host.querySelector('[aria-label="open_session decision"]')).toBeTruthy();
+  expect(host.querySelector('[aria-label="send_message decision"]')).toBeNull();
+  expect(host.querySelector('.permissions-pill')).toBeTruthy();
+  const messaging = [...host.querySelectorAll('summary')].find((s) =>
+    s.textContent?.startsWith('Messaging'),
+  );
+  await act(async () => messaging?.click());
+  expect(host.querySelector('[aria-label="send_message decision"]')).toBeTruthy();
+  const row = host.querySelector('[aria-label="open_session decision"]')?.closest('.policyrow');
+  expect(row?.querySelector('select')).toBeNull();
+  const more = [...(row?.querySelectorAll('summary') ?? [])].find(
+    (s) => s.textContent === 'More options',
+  );
+  await act(async () => more?.click());
+  expect(row?.querySelector('select')).toBeTruthy();
+  await act(async () => root.unmount());
+  api.state.policy.profiles = [];
+});
+
 it('shows only changed custom rules, including their conditions, in the review', async () => {
   const profile: Profile = {
     ...structuredClone(BUILT_IN_PROFILES[1]),

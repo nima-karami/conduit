@@ -114,6 +114,7 @@ export const MCP_STR = {
       closeDrawer: 'Close',
       decision: { allow: 'Allow', ask: 'Ask', deny: 'Deny' },
       moreOptions: 'More options',
+      screenCondition: 'Screen condition',
     },
   },
   firstRun: 'Agents in your sessions can message each other and you. Messages appear here.',

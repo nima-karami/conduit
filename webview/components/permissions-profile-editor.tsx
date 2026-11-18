@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { type ReactNode, useId, useState } from 'react';
 import type {
   Decision,
   PolicyEditResult,
@@ -12,10 +12,12 @@ import {
   TOOL_NAMES,
   TOOL_SPECS,
   type ToolName,
+  WHEN_VALUES,
   type When,
 } from '../../src/conduit-mcp/tool-policy';
 import type { NativeModes } from '../../src/contracts/native-launch';
 import { MCP_STR } from '../conduit-mcp-strings';
+import { groupCounts, groupState, groupText } from './permissions-role-summary';
 import { SegmentedRadios } from './segmented-radios';
 
 export interface PermissionsProfileEditorProps {
@@ -30,7 +32,36 @@ const decisions: readonly { id: Decision; label: string }[] = [
   { id: 'ask', label: 'Ask' },
   { id: 'deny', label: 'Deny' },
 ];
+const STR = MCP_STR.sections.roles;
 const unsetModes: NativeModes = { claude: 'unset', codex: 'unset' };
+
+/** A disclosure whose body is not rendered while closed, so closed groups add no controls. */
+function Disclosure({
+  summary,
+  defaultOpen = false,
+  className,
+  children,
+}: {
+  summary: ReactNode;
+  defaultOpen?: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <details className={className} open={open}>
+      <summary
+        onClick={(event) => {
+          event.preventDefault();
+          setOpen((value) => !value);
+        }}
+      >
+        {summary}
+      </summary>
+      {open && children}
+    </details>
+  );
+}
 
 export function PermissionsProfileEditor({
   draft,
@@ -98,74 +129,117 @@ export function PermissionsProfileEditor({
         onChange={(e) => setProfile((current) => ({ ...current, name: e.target.value }))}
       />
       <h3>Decisions</h3>
-      {TOOL_GROUPS.map(({ group, tools }) => (
-        <details key={group} open>
-          <summary>{MCP_STR.tools.group[group]}</summary>
-          {tools.map((tool) => {
-            const rule = profile.rules[tool];
-            const spec = TOOL_SPECS[tool];
-            return (
-              <section className="policyrow" key={tool}>
-                <div className="policyrow__main">
-                  <div className="policyrow__label">
-                    <code className="policyrow__name">{tool}</code>
-                    <span className="policyrow__desc">{MCP_STR.tools.description[tool]}</span>
+      {TOOL_GROUPS.map(({ group, tools }) => {
+        const counts = groupCounts(profile, tools);
+        const state = groupState(counts);
+        return (
+          <Disclosure
+            key={group}
+            defaultOpen={group === 'sessions'}
+            summary={
+              <>
+                {MCP_STR.tools.group[group]}{' '}
+                <span className="permissions-pill" data-state={state}>
+                  {STR.pill[state]}
+                </span>{' '}
+                <span className="permissions-role-list__counts">{groupText(counts)}</span>
+              </>
+            }
+          >
+            {tools.map((tool) => {
+              const rule = profile.rules[tool];
+              const spec = TOOL_SPECS[tool];
+              const hasReach = spec.fields.includes('reach') && rule.reach !== null;
+              const hasMove = spec.fields.includes('move') && rule.move !== null;
+              const hasWhen = spec.fields.includes('when') && rule.when !== null;
+              return (
+                <section className="policyrow" key={tool}>
+                  <div className="policyrow__main">
+                    <div className="policyrow__label">
+                      <code className="policyrow__name">{tool}</code>
+                      <span className="policyrow__desc">{MCP_STR.tools.description[tool]}</span>
+                    </div>
+                    <SegmentedRadios
+                      label={`${tool} decision`}
+                      value={rule.decision}
+                      options={decisions}
+                      disabled={disabled}
+                      onChange={(decision) => updateRule(tool, { decision })}
+                    />
                   </div>
-                  <SegmentedRadios
-                    label={`${tool} decision`}
-                    value={rule.decision}
-                    options={decisions}
-                    disabled={disabled}
-                    onChange={(decision) => updateRule(tool, { decision })}
-                  />
-                </div>
-                {spec.fields.includes('reach') && rule.reach !== null && (
-                  <label>
-                    Reach{' '}
-                    <select
-                      className="selectfield"
-                      value={rule.reach}
-                      disabled={disabled}
-                      onChange={(e) =>
-                        updateRule(tool, {
-                          reach: REACH_VALUES.find((v) => v === e.target.value) ?? rule.reach,
-                        })
-                      }
-                    >
-                      {(spec.reach ?? []).map((value) => (
-                        <option key={value} value={value}>
-                          {MCP_STR.tools.reach[value]}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-                {spec.fields.includes('move') && rule.move !== null && (
-                  <label>
-                    Move{' '}
-                    <select
-                      className="selectfield"
-                      value={rule.move}
-                      disabled={disabled}
-                      onChange={(e) =>
-                        updateRule(tool, {
-                          move: MOVE_VALUES.find((v) => v === e.target.value) ?? rule.move,
-                        })
-                      }
-                    >
-                      {MOVE_VALUES.map((value) => (
-                        <option key={value} value={value}>
-                          {MCP_STR.tools.move[value]}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-              </section>
-            );
-          })}
-        </details>
-      ))}
+                  {(hasReach || hasMove || hasWhen) && (
+                    <Disclosure summary={STR.moreOptions}>
+                      {hasWhen && (
+                        <label>
+                          {STR.screenCondition}{' '}
+                          <select
+                            className="selectfield"
+                            value={rule.when ?? ''}
+                            disabled={disabled}
+                            onChange={(e) =>
+                              updateRule(tool, {
+                                when: WHEN_VALUES.find((v) => v === e.target.value) ?? rule.when,
+                              })
+                            }
+                          >
+                            {WHEN_VALUES.map((value) => (
+                              <option key={value} value={value}>
+                                {MCP_STR.tools.when[value]}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+                      {hasReach && rule.reach !== null && (
+                        <label>
+                          Reach{' '}
+                          <select
+                            className="selectfield"
+                            value={rule.reach}
+                            disabled={disabled}
+                            onChange={(e) =>
+                              updateRule(tool, {
+                                reach: REACH_VALUES.find((v) => v === e.target.value) ?? rule.reach,
+                              })
+                            }
+                          >
+                            {(spec.reach ?? []).map((value) => (
+                              <option key={value} value={value}>
+                                {MCP_STR.tools.reach[value]}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+                      {hasMove && rule.move !== null && (
+                        <label>
+                          Move{' '}
+                          <select
+                            className="selectfield"
+                            value={rule.move}
+                            disabled={disabled}
+                            onChange={(e) =>
+                              updateRule(tool, {
+                                move: MOVE_VALUES.find((v) => v === e.target.value) ?? rule.move,
+                              })
+                            }
+                          >
+                            {MOVE_VALUES.map((value) => (
+                              <option key={value} value={value}>
+                                {MCP_STR.tools.move[value]}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+                    </Disclosure>
+                  )}
+                </section>
+              );
+            })}
+          </Disclosure>
+        );
+      })}
       <fieldset disabled={disabled}>
         <legend>Screen condition</legend>
         <p>
