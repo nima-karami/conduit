@@ -20,7 +20,7 @@ describe('handleUpdaterError', () => {
         type: 'updateStatus',
         status: 'error',
         command: "sudo apt install '/tmp/x y/conduit_1.2.3_amd64.deb'",
-        message: expect.stringMatching(/no password prompt/i),
+        message: expect.stringMatching(/couldn't install/i),
       }),
     );
     expect(onEvent).toHaveBeenCalledWith('deb-install-failed', {

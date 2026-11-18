@@ -12,8 +12,8 @@ describe('debInstallFailure', () => {
     });
     expect(result).not.toBeNull();
     expect(result?.command).toBe("sudo apt install '/tmp/x y/conduit_1.2.3_amd64.deb'");
-    expect(result?.message).toMatch(/no password prompt/i);
-    expect(result?.message).toMatch(/polkit/i);
+    expect(result?.message).toMatch(/couldn't install/i);
+    expect(result?.message).not.toMatch(/no password prompt|no polkit/i);
   });
 
   it('quotes a path containing a single quote safely', () => {

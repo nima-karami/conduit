@@ -6,6 +6,10 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A failed Linux .deb update no longer retries automatically when Conduit quits, and the failure message no longer assumes why authentication failed.
+
 ## [0.69.0] — 2026-11-18
 
 ### Changed

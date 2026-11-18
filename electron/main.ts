@@ -1921,7 +1921,14 @@ app.whenReady().then(() => {
 
   // Auto-update lifecycle (no-op in dev; active only in packaged builds). Update events are
   // shared notifications — broadcast to every window.
-  const stopUpdater = initUpdater(broadcast, (event, data) => log.info('updater', event, data));
+  const stopUpdater = initUpdater(
+    broadcast,
+    (event, data) => log.info('updater', event, data),
+    () => ({
+      focused: BrowserWindow.getAllWindows().some((w) => w.isFocused()),
+      visible: BrowserWindow.getAllWindows().some((w) => w.isVisible()),
+    }),
+  );
 
   // ── Quit / close / update-relaunch guard (dirty-quit-guard spec §2) ──────────────
   // A window whose close the guard already proceeded: its re-fired close event passes through.

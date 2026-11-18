@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { app } from 'electron';
 import { autoUpdater } from 'electron-updater';
@@ -17,6 +18,9 @@ let pendingVersion: string | undefined;
 // The downloaded update file of the most recent `update-downloaded`. An install failure
 // arrives as a bare `error` with no file, so the .deb path has to be remembered here.
 let pendingDownloadedFile: string | null = null;
+let explicitInstallInProgress = false;
+let downloadedAt: number | null = null;
+let downloadedVersion: string | undefined;
 
 // An unpacked build (electron-builder --dir) is isPackaged but ships no
 // resources/app-update.yml; electron-updater then ENOENTs on every check.
@@ -33,6 +37,10 @@ let lastSend: ((msg: HostToWebview) => void) | null = null;
 export function initUpdater(
   send: (msg: HostToWebview) => void,
   onEvent: (event: string, data?: Record<string, unknown>) => void = () => {},
+  windowState: () => { focused: boolean; visible: boolean } = () => ({
+    focused: false,
+    visible: false,
+  }),
 ): () => void {
   if (!app.isPackaged) return () => {};
 
@@ -45,6 +53,31 @@ export function initUpdater(
       lastSend = null;
     };
   }
+
+  const originalLogger = autoUpdater.logger;
+  let awaitingPkexecStderr = false;
+  let pkexecStderr: string | null = null;
+  autoUpdater.logger = {
+    info(message) {
+      if (typeof message === 'string' && message.startsWith('Executing: pkexec with args:')) {
+        awaitingPkexecStderr = true;
+        pkexecStderr = null;
+      } else {
+        awaitingPkexecStderr = false;
+      }
+      originalLogger?.info(message);
+    },
+    warn(message) {
+      originalLogger?.warn(message);
+    },
+    error(message) {
+      if (awaitingPkexecStderr) {
+        pkexecStderr = String(message).split(os.homedir()).join('~').slice(0, 4000);
+        awaitingPkexecStderr = false;
+      }
+      originalLogger?.error(message);
+    },
+  };
 
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
@@ -75,7 +108,10 @@ export function initUpdater(
   });
 
   autoUpdater.on('update-downloaded', (info) => {
+    if (info.downloadedFile !== pendingDownloadedFile) autoUpdater.autoInstallOnAppQuit = true;
     pendingDownloadedFile = info.downloadedFile;
+    downloadedAt = Date.now();
+    downloadedVersion = info.version;
     onEvent('downloaded', { version: info.version });
     send({
       type: 'updateStatus',
@@ -91,6 +127,40 @@ export function initUpdater(
   });
 
   autoUpdater.on('error', (err) => {
+    const match =
+      err instanceof Error ? /^Command pkexec exited with code (\d+)$/.exec(err.message) : null;
+    if (
+      process.platform === 'linux' &&
+      pendingDownloadedFile?.toLowerCase().endsWith('.deb') &&
+      match
+    ) {
+      const environment = Object.fromEntries(
+        [
+          'DISPLAY',
+          'WAYLAND_DISPLAY',
+          'XDG_SESSION_ID',
+          'XDG_SESSION_TYPE',
+          'DBUS_SESSION_BUS_ADDRESS',
+        ].map((key) => [key, Boolean(process.env[key])]),
+      );
+      onEvent('deb-install-diagnostic', {
+        exitCode: Number(match[1]),
+        stderr: pkexecStderr,
+        environment,
+        ...windowState(),
+        version: downloadedVersion,
+        fileExists: fs.existsSync(pendingDownloadedFile),
+        ageSeconds: downloadedAt === null ? null : Math.floor((Date.now() - downloadedAt) / 1000),
+      });
+      pkexecStderr = null;
+    }
+    if (
+      explicitInstallInProgress &&
+      process.platform === 'linux' &&
+      pendingDownloadedFile?.toLowerCase().endsWith('.deb')
+    ) {
+      autoUpdater.autoInstallOnAppQuit = false;
+    }
     handleUpdaterError(err, {
       platform: process.platform,
       downloadedFile: pendingDownloadedFile,
@@ -111,6 +181,7 @@ export function initUpdater(
       intervalId = null;
     }
     lastSend = null;
+    autoUpdater.logger = originalLogger;
   };
 }
 
@@ -156,5 +227,10 @@ export function checkForUpdate(): void {
 export function quitAndInstall(): void {
   // isSilent=true, isForceRunAfter=true: with the one-click installer the update applies
   // with no installer UI and the app relaunches. (The old `false` showed the full wizard.)
-  autoUpdater.quitAndInstall(true, true);
+  explicitInstallInProgress = true;
+  try {
+    autoUpdater.quitAndInstall(true, true);
+  } finally {
+    explicitInstallInProgress = false;
+  }
 }
