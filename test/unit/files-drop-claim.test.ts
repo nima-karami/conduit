@@ -5,7 +5,7 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings';
-import { CustomShaderEditor } from '../../webview/components/settings-modal';
+import { CustomShaderEditor } from '../../webview/components/settings-page';
 import { installUnclaimedDropGuard } from '../../webview/unclaimed-drop-guard';
 
 // The guard stamps dropEffect 'none' on every Files dragover, so a Files drop target claims the
@@ -21,7 +21,7 @@ const AUDITED: Record<string, string> = {
   'webview/components/folder-section.tsx': 'rows and sections set dropEffect',
   'webview/components/panel-frame.tsx': 'dock handlers from app.tsx',
   'webview/components/project-group-header.tsx': 'sidebar handlers, own drags only',
-  'webview/components/settings-modal.tsx': 'shader textarea sets dropEffect (tested below)',
+  'webview/components/settings-page.tsx': 'shader textarea sets dropEffect (tested below)',
   'webview/components/sidebar.tsx': 'acts only on its own card/group drags',
   'webview/components/terminal-pane.tsx': 'onPathDragOver sets dropEffect',
 };

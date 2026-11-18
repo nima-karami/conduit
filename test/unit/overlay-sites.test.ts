@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest';
  *
  * Invariant 2 is intentionally narrower than "the string 'Escape' never appears": `compare-
  * dialog.tsx`'s `RefCombobox` keeps its own Escape-closes-the-list handling until T3.1 puts that
- * list on a `Popover` (T2.3's own scope note), and `settings-modal.tsx`'s shortcut recorder keeps
+ * list on a `Popover` (T2.3's own scope note), and `settings-page.tsx`'s shortcut recorder keeps
  * a bare `if (e.key === 'Escape') return;` guard so its OWN "next key is the combo" listener
  * doesn't record Escape as a shortcut — `stopPropagation` (which the overlay store calls) does
  * not stop a sibling listener on the same target, so the guard is a real, load-bearing no-op, not
@@ -31,7 +31,6 @@ const DIALOG_FILES = [
   'new-session-modal',
   'web-prompt-modal',
   'icon-picker-modal',
-  'settings-modal',
   'command-palette',
   'compare-dialog',
   'timed-message-dialog',
@@ -39,6 +38,7 @@ const DIALOG_FILES = [
 
 const ALL_FILES = [
   ...DIALOG_FILES,
+  'settings-page',
   'mermaid-zoom-overlay',
   'context-menu',
   'popover',
@@ -86,6 +86,16 @@ describe('files tab menus', () => {
       expect(src).not.toMatch(/createPortal\(/);
     },
   );
+});
+
+describe('settings page', () => {
+  const src = readSrc('settings-page');
+
+  it('is one overlay entry, not a modal layer', () => {
+    expect(src).toContain("useOverlayEntry('modal'");
+    expect(src).not.toMatch(/useEscapeKey\(/);
+    expect(src).not.toContain('modal__backdrop');
+  });
 });
 
 describe('overlay migration static guard', () => {
