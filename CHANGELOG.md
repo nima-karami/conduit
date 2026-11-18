@@ -6,6 +6,11 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.68.3] — 2026-11-18
+
+### Changed
+- Agent rows in the sidebar no longer show a permission profile label (such as "Lead +6"). Open a session's permissions from its row menu → Permissions….
+
 ## [0.68.2] — 2026-11-18
 
 First published build of the 0.68 permissions release. The 0.68.0 and 0.68.1 tags were never published: their release checks caught end-to-end tests that needed updating and the fix below.
