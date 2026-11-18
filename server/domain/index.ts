@@ -1838,7 +1838,12 @@ export function createDomain(deps: DomainDeps): Domain {
     projectName: (id) => (id ? (projectStore.list().find((p) => p.id === id)?.name ?? null) : null),
     installState: (cli) => deps.installState(cli),
     messagingOn: () => settings().conduitMcp,
-    toolPolicy: () => ({ global: settings().mcpToolPolicy, byCli: settings().mcpToolPolicyByCli }),
+    toolPolicy: () => ({
+      global: settings().mcpToolPolicy,
+      byCli: settings().mcpToolPolicyByCli,
+      explicitGlobal: settingsStore.explicitGlobal,
+      resolvedGlobal: settingsStore.resolvedGlobal,
+    }),
     limit: {
       resumeNow: (id) => monitor.resumeNow(id),
       autoResumeOn: (id) => setSessionAutoResume(id, 'on'),

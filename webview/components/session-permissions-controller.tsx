@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { ActivityEntry } from '../../src/conduit-mcp/activity-log';
 import { pointKey } from '../../src/conduit-mcp/policy-profiles';
 import type {
   Assignment,
@@ -41,7 +42,7 @@ export function SessionPermissionsController({
   mcp: ConduitMcpApi;
   onClose(): void;
   onOpenSettings(): void;
-  onOpenActivity(): void;
+  onOpenActivity(item?: Pick<ActivityEntry, 'id' | 'at'>): void;
   onRelaunch(id: string, generation: number | null): Promise<void>;
 }) {
   const row = policy.sessions[session.id];

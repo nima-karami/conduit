@@ -7,9 +7,15 @@ import {
   useRef,
   useState,
 } from 'react';
-
-import type { RequestsUiState, RequestView } from '../../src/conduit-mcp/request-types';
+import type { PermissionAnswer } from '../../src/conduit-mcp/policy-types';
+import type {
+  OwnerPermissionView,
+  PermissionAnswerResult,
+  RequestsUiState,
+  RequestView,
+} from '../../src/conduit-mcp/request-types';
 import type { Session } from '../../src/types';
+import type { PendingAskView } from '../mcp-ask-store';
 import { REQ_STR } from '../request-strings';
 import {
   ageLabel,
@@ -24,10 +30,15 @@ import {
   type SortKey,
   sortRequests,
 } from '../request-view-model';
+import { summaryText } from './approval-card';
+import { PermissionsRequestBody } from './permissions-request-body';
 import { RequestTypeIcon } from './request-type-icon';
 
 export interface NeedsYouPaneProps {
   requests: RequestsUiState | null;
+  permissions?: readonly OwnerPermissionView[];
+  asks?: readonly PendingAskView[];
+  onPermissionAnswer?(id: string, answer: PermissionAnswer): Promise<PermissionAnswerResult>;
   sessions: readonly Session[];
   spaceNames: ReadonlyMap<string, string>;
   sort: SortKey;
@@ -160,6 +171,7 @@ export function NeedsYouPane(p: NeedsYouPaneProps): JSX.Element {
     if (p.historySignal) setView('history');
   }, [p.historySignal]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const announcement = useArrivalAnnouncer(requests);
 
   const sessionMap = new Map<string, SessionInfo>(
@@ -211,7 +223,7 @@ export function NeedsYouPane(p: NeedsYouPaneProps): JSX.Element {
     else if (k === 'End') go(rows.length - 1);
     else if (k === 'Enter') {
       e.preventDefault();
-      p.onOpen(rows[activeIndex].id);
+      openRow(rows[activeIndex].id);
     } else if (k === 'o') {
       const sessionId = rows[activeIndex].sessionId;
       if (sessionId !== null) {
@@ -220,6 +232,16 @@ export function NeedsYouPane(p: NeedsYouPaneProps): JSX.Element {
       }
     }
   };
+
+  const openRow = (id: string) => {
+    if (p.permissions?.some((r) => r.id === id))
+      setExpandedId((current) => (current === id ? null : id));
+    else p.onOpen(id);
+  };
+  const expanded = rows.some((row) => row.id === expandedId)
+    ? p.permissions?.find((r) => r.id === expandedId)
+    : undefined;
+  const expandedAsk = p.asks?.find((ask) => ask.askId === expanded?.id);
 
   const viewRow = (
     <div className="needs-viewrow">
@@ -371,7 +393,7 @@ export function NeedsYouPane(p: NeedsYouPaneProps): JSX.Element {
                   className={`needs-row${i === activeIndex ? ' needs-row--active' : ''}`}
                   onClick={() => {
                     setActiveId(c.id);
-                    p.onOpen(c.id);
+                    openRow(c.id);
                   }}
                 >
                   <div className="needs-row__line">
@@ -417,7 +439,7 @@ export function NeedsYouPane(p: NeedsYouPaneProps): JSX.Element {
                   className={`needs-row${i === activeIndex ? ' needs-row--active' : ''}`}
                   onClick={() => {
                     setActiveId(c.id);
-                    p.onOpen(c.id);
+                    openRow(c.id);
                   }}
                 >
                   <div className="needs-row__line">
@@ -448,6 +470,30 @@ export function NeedsYouPane(p: NeedsYouPaneProps): JSX.Element {
       {filterBar}
       {legend}
       {body}
+      {expanded && p.onPermissionAnswer && (
+        <section
+          className="needs-permission"
+          aria-label={`Permission request from ${expanded.requester}`}
+        >
+          <strong>Permission · {expanded.requester}</strong>
+          <p>{expanded.title}</p>
+          {expandedAsk && (
+            <>
+              <p>{summaryText(expandedAsk.summary)}</p>
+              <details>
+                <summary>Raw arguments</summary>
+                <pre>{JSON.stringify(expandedAsk.args, null, 2)}</pre>
+              </details>
+            </>
+          )}
+          <PermissionsRequestBody
+            key={expanded.id}
+            kind="local"
+            request={expanded}
+            answer={p.onPermissionAnswer}
+          />
+        </section>
+      )}
       <div className="needs-sr" aria-live="polite">
         {announcement}
       </div>

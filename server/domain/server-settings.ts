@@ -1,6 +1,14 @@
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { atomicWriteFileSync } from '../../src/atomic-write';
+import {
+  coercePolicyLayer,
+  DEFAULT_TOOL_POLICY,
+  isRecord,
+  type PolicyLayer,
+  TOOL_NAMES,
+  TOOL_SPECS,
+} from '../../src/conduit-mcp/tool-policy';
 import { readBlob } from '../../src/config';
 import { SERVER_SETTINGS_KEYS, type ServerSettings } from '../../src/contracts/server-protocol';
 import { judgePersistedVersion, SERVER_FILE_VERSION } from '../../src/contracts/session-identity';
@@ -20,7 +28,7 @@ const pick = (raw: Record<string, unknown>): ServerSettings => serverPart(coerce
  * migrate them (autoResumeOnLimit → autoResume, spec 2026-11-13 §3 "Settings"), and are never
  * written back.
  */
-const LEGACY_READ_KEYS: readonly string[] = ['autoResumeOnLimit'];
+const LEGACY_READ_KEYS: readonly string[] = ['autoResumeOnLimit', 'mcpTools'];
 
 const keysOf = (raw: unknown, keep: readonly string[]): Record<string, unknown> =>
   typeof raw === 'object' && raw !== null
@@ -31,6 +39,8 @@ const serverKeysOf = (raw: unknown): Record<string, unknown> => keysOf(raw, SERV
 /** The sole writer of server-settings.json (D7); the app's settings.json is only ever read, once. */
 export class ServerSettingsStore {
   private value: ServerSettings;
+  readonly explicitGlobal: PolicyLayer | undefined;
+  readonly resolvedGlobal: PolicyLayer | undefined;
   private readonly writable: boolean;
   private readonly file: string;
 
@@ -46,7 +56,49 @@ export class ServerSettingsStore {
     } catch {
       parsed = undefined;
     }
+    const appBlob = readBlob(join(userData, 'settings.json'));
+    let appPayload: unknown;
+    try {
+      const app = appBlob ? JSON.parse(appBlob) : undefined;
+      appPayload = app?.version === 1 ? app.settings : undefined;
+    } catch {
+      appPayload = undefined;
+    }
     const judged = judgePersistedVersion(FILE, parsed?.version);
+    const source = judged === 'read' ? parsed?.settings : appPayload;
+    const raw =
+      typeof source === 'object' && source !== null ? (source as Record<string, unknown>) : {};
+    const globalLayer = coercePolicyLayer(raw.mcpToolPolicy);
+    const rawGlobal = raw.mcpToolPolicy;
+    const complete =
+      typeof rawGlobal === 'object' &&
+      rawGlobal !== null &&
+      TOOL_NAMES.every((tool) => Object.hasOwn(rawGlobal, tool));
+    const legacyTools = raw.mcpTools;
+    const legacyBooleans =
+      !isRecord(rawGlobal) &&
+      isRecord(legacyTools) &&
+      TOOL_NAMES.some((tool) => typeof Reflect.get(legacyTools, tool) === 'boolean');
+    const effectiveGlobal = legacyBooleans ? coerceSettings(raw).mcpToolPolicy : globalLayer;
+    this.explicitGlobal = complete ? undefined : globalLayer;
+    this.resolvedGlobal =
+      complete || legacyBooleans
+        ? coercePolicyLayer(
+            Object.fromEntries(
+              TOOL_NAMES.map((tool) => [
+                tool,
+                Object.fromEntries(
+                  TOOL_SPECS[tool].fields.flatMap((field) => {
+                    const value = effectiveGlobal?.[tool]?.[field];
+                    return value !== undefined && value !== DEFAULT_TOOL_POLICY[tool][field]
+                      ? [[field, value]]
+                      : [];
+                  }),
+                ),
+              ]),
+            ),
+          )
+        : undefined;
     if (judged === 'read') {
       this.writable = true;
       this.value = pick(keysOf(parsed?.settings, [...SERVER_SETTINGS_KEYS, ...LEGACY_READ_KEYS]));
@@ -55,7 +107,7 @@ export class ServerSettingsStore {
     this.writable = judged !== 'newer' && (blob === undefined || this.backUp(userData, blob));
     // Missing or corrupt: seeded from the app's file, which mirrors these keys (D7). A newer file
     // is unreadable for this run and is never replaced, so the seed only lives in memory.
-    this.value = serverPart(restoreSettings(readBlob(join(userData, 'settings.json'))));
+    this.value = serverPart(restoreSettings(appBlob));
     this.write();
   }
 

@@ -92,7 +92,7 @@ export function PermissionsProfileEditor({
       <label htmlFor={`${id}-name`}>Name</label>{' '}
       <input
         id={`${id}-name`}
-        className="input"
+        className="permissions-profile-editor__name"
         value={profile.name}
         disabled={disabled}
         onChange={(e) => setProfile((current) => ({ ...current, name: e.target.value }))}

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assignmentFor,
   decide,
+  decideWithTrace,
   reasonText,
   visibleTools,
 } from '../../src/conduit-mcp/policy-engine';
@@ -1418,4 +1419,100 @@ it('passes only the exact session denial target with an override and respects fl
   ).not.toBe('session-deny');
   expect(visibleTools(s, session({ sessionId: 's1' }), NOW)).toContain('open_session');
   expect(visibleTools({ ...s, overrides: [] }, session(), NOW)).not.toContain('open_session');
+});
+
+describe('decision provenance', () => {
+  it('re-evaluates a uniquely proven denial without mutating the policy', () => {
+    const exception: Exception = {
+      tool: 'send_message',
+      scope: { kind: 'session', sessionId: 's2' },
+      rule: { decision: 'deny' },
+    };
+    const policy = state({ default: assignment('worker', [exception]) });
+    const facts = input({ targets: [target({ sessionId: 's2' })] });
+    const result = decideWithTrace(policy, facts);
+    expect(result.decision).toEqual(decide(policy, facts));
+    expect(result.trace.winner).toEqual({
+      kind: 'exception',
+      point: { kind: 'default' },
+      index: 0,
+      exception,
+      scope: exception.scope,
+      rule: { ...WORKER_PROFILE.rules.send_message, decision: 'deny' },
+    });
+    expect(result.trace.withoutWinner).toEqual({
+      decision: decide(state({ default: assignment('worker') }), facts).decision,
+      reason: decide(state({ default: assignment('worker') }), facts).reason,
+    });
+    expect(policy.assignments.get('default')?.exceptions).toEqual([exception]);
+    const ambiguous = state({
+      default: assignment('worker', [exception, exception]),
+    });
+    expect(decideWithTrace(ambiguous, facts).trace.withoutWinner).toBeNull();
+    const parent: Exception = {
+      tool: 'send_message',
+      scope: { kind: 'anywhere' },
+      rule: { when: 'always' },
+    };
+    expect(
+      decideWithTrace(state({ default: assignment('worker', [parent, exception]) }), facts).trace
+        .winner,
+    ).toBeNull();
+    const tied: Exception = { ...exception, rule: { decision: 'allow' } };
+    expect(
+      decideWithTrace(state({ default: assignment('worker', [exception, tied]) }), facts).trace
+        .winner,
+    ).toBeNull();
+
+    expect(decideWithTrace(policy, { ...facts, masterOn: false }).trace.withoutWinner).toBeNull();
+    expect(
+      decideWithTrace(policy, {
+        ...facts,
+        targets: [target({ sessionId: 's2' }), target({ sessionId: 's3' })],
+      }).trace.withoutWinner,
+    ).toBeNull();
+  });
+
+  it('only removes a unique session denial and respects overlapping contributors', () => {
+    const denial = {
+      id: 'd1',
+      requestId: 'r1',
+      sessionId: 's1',
+      tool: 'send_message' as const,
+      createdAt: iso(NOW),
+    };
+    const policy = state({}, { sessionDenials: [denial] });
+    const facts = input({ targets: [target({ sessionId: 's2' })] });
+    const result = decideWithTrace(policy, facts);
+    expect(result.trace.winner).toEqual({
+      kind: 'session-deny',
+      denialId: 'd1',
+    });
+    const direct = decide(state({}), facts);
+    expect(result.trace.withoutWinner).toEqual({
+      decision: direct.decision,
+      reason: direct.reason,
+    });
+    expect(
+      decideWithTrace(state({}, { sessionDenials: [denial, { ...denial, id: 'd2' }] }), facts).trace
+        .withoutWinner,
+    ).toBeNull();
+    expect(
+      decideWithTrace(
+        state(
+          {
+            default: assignment('worker', [
+              {
+                tool: 'send_message',
+                scope: { kind: 'anywhere' },
+                rule: { decision: 'deny' },
+              },
+            ]),
+          },
+          { sessionDenials: [denial] },
+        ),
+        facts,
+      ).trace.withoutWinner,
+    ).toBeNull();
+  });
 });

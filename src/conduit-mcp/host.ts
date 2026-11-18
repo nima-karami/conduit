@@ -105,13 +105,15 @@ import {
 } from './notice-gate';
 import { composeUnreadBanner } from './notice-text';
 import { type AttentionRaise, bannerCandidates, createNotifier, type Notifier } from './notifier';
-import { reasonText } from './policy-engine';
+import { reasonText, samePath } from './policy-engine';
 import { validatePolicyAssignment, validatePolicyProfile } from './policy-file';
 import { createPolicyIo, POLICY_MAX_BYTES, type PolicyIo } from './policy-file-fs';
 import { isNativeFamily } from './policy-native';
 import { createPolicyService } from './policy-service';
 import { forcesAsk, resolveTargets, type TargetDeps } from './policy-targets';
 import type {
+  ActivityDecisionTraceV1,
+  Assignment,
   AssignmentPoint,
   GrantBatchResult,
   LocalPolicyEdit,
@@ -171,7 +173,6 @@ import { createFsStoreIo } from './store-fs';
 import {
   CLI_KINDS,
   type CliKind,
-  coercePolicyPatch,
   gateToolCall,
   isMessagingTool,
   isRequestTool,
@@ -416,6 +417,50 @@ const samePreparedConditions = (
   conditions: PreparedPolicyConditions,
 ): boolean =>
   rule.when === conditions.when && rule.reach === conditions.reach && rule.move === conditions.move;
+
+type SealedPolicyTrace = {
+  input: Omit<PolicyInput, 'now'>;
+  decision: PolicyDecision;
+  trace: ActivityDecisionTraceV1;
+  reason: string;
+};
+const traceableSingle = (
+  tool: ToolName,
+  args: Record<string, unknown>,
+  targets: readonly PolicyTarget[],
+): boolean => {
+  if (targets.length !== 1) return false;
+  switch (tool) {
+    case 'open_session':
+    case 'open_terminal':
+      return typeof args.path === 'string' && args.machine === undefined;
+    case 'open_file':
+      return (
+        (typeof args.path === 'string' && args.paths === undefined) ||
+        (args.path === undefined &&
+          Array.isArray(args.paths) &&
+          args.paths.length === 1 &&
+          typeof args.paths[0] === 'string')
+      );
+    case 'close_session':
+      return (
+        typeof args.session === 'string' && args.sessions === undefined && args.children !== true
+      );
+    case 'send_input':
+    case 'read_screen':
+    case 'focus_session':
+      return typeof args.session === 'string';
+    case 'send_message':
+      return Array.isArray(args.to) && args.to.length === 1 && typeof args.to[0] === 'string';
+    case 'open_review':
+    case 'open_git_history':
+      return typeof args.repo === 'string';
+    case 'open_diff':
+      return typeof args.patch_file === 'string';
+    default:
+      return false;
+  }
+};
 
 /** How the owner's end of a remote ask reads to the lead's call: an allow, or the refusal it means. */
 const ownerOutcomeOf = (r: RequestRecord, withdrawalError?: ToolError): Result<AnswerInput> => {
@@ -1782,6 +1827,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return {
       kind: 'session',
       sessionId,
+      generation:
+        deps.runtime.get(sessionId)?.state === 'live'
+          ? deps.runtime.get(sessionId)?.generation
+          : undefined,
       handle: session.mcpHandle,
       launchedCli: launchedCli(sessionId),
       homeFolder: session.home,
@@ -1938,6 +1987,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   const machineArg = (machine: unknown): machine is string | undefined =>
     machine === undefined || (typeof machine === 'string' && machine.length > 0);
   const raisedRequests = new Map<InFlight, { id: string; why: string; approved: boolean }>();
+  const initialAskTraces = new Map<InFlight, ActivityDecisionTraceV1>();
   const emptyTarget: PolicyTarget = { sessionId: null, path: null, folder: null, projectId: null };
   /** The targets an answer's grants cover, or null when a target cannot resolve the scope. */
   const grantTargetsFor = (
@@ -2037,6 +2087,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         durationMs: null,
         requestId: record.id,
         count: null,
+        ...(initialAskTraces.has(r.inflight) ? { trace: initialAskTraces.get(r.inflight) } : {}),
       });
       policyService.activity.recordAskArgs(record.id, r.args);
       raisedRequests.set(r.inflight, { id: record.id, why: r.why, approved: false });
@@ -2164,7 +2215,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     const evaluated: {
       current: { input: Omit<PolicyInput, 'now'>; decision: PolicyDecision } | null;
       spent: boolean;
-    } = { current: null, spent: false };
+      immediateTrace: ActivityDecisionTraceV1 | null;
+      committed: SealedPolicyTrace | null;
+      terminal: SealedPolicyTrace | null;
+    } = { current: null, spent: false, immediateTrace: null, committed: null, terminal: null };
     try {
       const handle = sessionId ? handleOf(sessionId) : undefined;
       const result = await (async (): Promise<Result<StructuredOutput> | null> => {
@@ -2194,6 +2248,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           { sessionId, home: principal.homeFolder },
           targetDepsOf(),
         );
+        const traceable = traceableSingle(name, rawArgs, targets);
         const policyInput = {
           principal,
           tool: name,
@@ -2210,12 +2265,17 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               rawArgs.to.length > 0 &&
               rawArgs.to.every((recipient) => recipient === HUMAN_HANDLE)),
         };
-        const resolved = policyService.decide(policyInput);
+        const captured = policyService.decideWithTrace(
+          policyInput,
+          deps.runtime.get(sessionId)?.generation ?? null,
+        );
+        const resolved = captured.decision;
         evaluated.current = { input: policyInput, decision: resolved };
         const windowId = deps.ownerWindowOf(sessionId);
+        const gateMaster = deps.domain.messagingOn();
         const refused = gateToolCall({
           sessionId,
-          messagingOn: deps.domain.messagingOn(),
+          messagingOn: gateMaster,
           tool: name,
           decision: resolved,
           ownerReady: () => windowId !== null && deps.windowReady(windowId),
@@ -2223,7 +2283,28 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           appConnected: deps.appConnected(),
           routed: isRoutedCall(name, rawArgs),
         });
-        if (refused) return { ok: false, error: refused };
+        if (refused) {
+          if (
+            resolved.decision === 'deny' &&
+            ((refused.code === 'tool_disabled' && gateMaster) ||
+              (refused.code === 'messaging_off' &&
+                !gateMaster &&
+                resolved.reason.by === 'floor' &&
+                resolved.reason.floor === 'master-off'))
+          )
+            evaluated.immediateTrace = traceable ? captured.trace : null;
+          else if (
+            traceable &&
+            captured.trace &&
+            gateMaster &&
+            (refused.code === 'window_not_ready' || refused.code === 'caller_not_visible')
+          )
+            evaluated.immediateTrace = {
+              ...captured.trace,
+              runtime: { outcome: 'refused', code: null },
+            };
+          return { ok: false, error: refused };
+        }
         // A concurrent call may have spent the override this decision relies on. decide and commit
         // run back to back, so the re-decide sees the state the commit did: a second override for
         // the target can stand in for the spent one.
@@ -2231,12 +2312,48 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           input: Omit<PolicyInput, 'now'> = policyInput,
           decision: PolicyDecision = resolved,
         ): AskCommit => {
-          const committed = policyService.commit(input, decision);
+          initialAskTraces.delete(inflight);
+          const committed = policyService.commit(input, decision, [], {
+            generation: deps.runtime.get(sessionId)?.generation ?? null,
+            onSuccess: (fresh) => {
+              if (traceable && fresh.trace)
+                evaluated.committed = {
+                  input,
+                  decision: fresh.decision,
+                  trace: fresh.trace,
+                  reason: reasonOf(fresh.decision),
+                };
+              if (
+                traceable &&
+                resolved.decision === 'ask' &&
+                fresh.decision.decision === 'ask' &&
+                fresh.trace &&
+                captured.trace &&
+                JSON.stringify(fresh.decision) === JSON.stringify(resolved) &&
+                JSON.stringify(fresh.trace.facts) === JSON.stringify(captured.trace.facts) &&
+                JSON.stringify(fresh.trace.assignment) === JSON.stringify(captured.trace.assignment)
+              )
+                initialAskTraces.set(inflight, fresh.trace);
+            },
+          });
           if (committed.ok) return { ok: true, decision, held: committed.overrides };
           if (committed.error !== 'policy-changed') return committed;
           const again = policyService.decide(input);
           const retried =
-            again.decision === 'allow' ? policyService.commit(input, again) : committed;
+            again.decision === 'allow'
+              ? policyService.commit(input, again, [], {
+                  generation: deps.runtime.get(sessionId)?.generation ?? null,
+                  onSuccess: (fresh) => {
+                    if (traceable && fresh.trace)
+                      evaluated.committed = {
+                        input,
+                        decision: fresh.decision,
+                        trace: fresh.trace,
+                        reason: reasonOf(fresh.decision),
+                      };
+                  },
+                })
+              : committed;
           if (retried.ok) {
             evaluated.current = { input, decision: again };
             return { ok: true, decision: again, held: retried.overrides };
@@ -2246,10 +2363,50 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           return retried;
         };
         const caller = { handle, sessionId };
+        const sealHandled = <T extends Result<unknown> | null>(result: T): T => {
+          const sealed = evaluated.committed;
+          const current = principalOf(sessionId);
+          if (
+            result !== null &&
+            !inflight.cancelled &&
+            sealed &&
+            current &&
+            current.sessionId === principal.sessionId &&
+            current.handle === principal.handle &&
+            current.launchedCli === principal.launchedCli &&
+            current.homeFolder === principal.homeFolder &&
+            current.projectId === principal.projectId &&
+            sealed.trace.facts.principal.kind === 'session' &&
+            deps.runtime.get(sessionId)?.generation === sealed.trace.facts.principal.generation
+          ) {
+            const after = policyService.decideWithTrace(
+              {
+                ...sealed.input,
+                principal: current,
+                masterOn: deps.domain.messagingOn(),
+                forceAsk: forcesAsk(name, rawArgs, (ref) =>
+                  isKnownMachine(deps.network?.listMachines() ?? [], ref),
+                ),
+              },
+              sealed.trace.facts.principal.generation,
+            );
+            if (
+              after.trace &&
+              JSON.stringify(after.decision) === JSON.stringify(sealed.decision) &&
+              JSON.stringify(after.trace.facts) === JSON.stringify(sealed.trace.facts) &&
+              JSON.stringify(after.trace.assignment) === JSON.stringify(sealed.trace.assignment)
+            )
+              evaluated.terminal = {
+                ...sealed,
+                trace: { ...sealed.trace, runtime: { outcome: 'proceeded', code: null } },
+              };
+          }
+          return result;
+        };
         if (isRequestTool(name)) {
           const committed = commitResolved();
           if (!committed.ok) return { ok: false, error: commitFailure(committed.error) };
-          return runRequest(caller, name, args, ctx);
+          return sealHandled(await runRequest(caller, name, args, ctx));
         }
         if (isMessagingTool(name)) {
           if (!store.available()) {
@@ -2260,7 +2417,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           }
           const committed = commitResolved();
           if (!committed.ok) return { ok: false, error: commitFailure(committed.error) };
-          return runMessaging(caller, name, args, ctx);
+          return sealHandled(await runMessaging(caller, name, args, ctx));
         }
         const preparedConditions: PreparedPolicyConditions = {
           when: resolved.rule.when,
@@ -2271,6 +2428,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         const preparedGeneration = deps.runtime.get(sessionId)?.generation;
         const currentLocalDecision = (
           held: readonly OneUseOverride[] = [],
+          onRefusal?: (value: SealedPolicyTrace) => void,
         ): Result<{ input: Omit<PolicyInput, 'now'>; decision: PolicyDecision }> => {
           const current = principalOf(sessionId);
           if (
@@ -2300,7 +2458,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             forceAsk,
             heldOverrides: held,
           };
-          const decision = policyService.decide(input);
+          const fresh = policyService.decideWithTrace(
+            input,
+            deps.runtime.get(sessionId)?.generation ?? null,
+          );
+          const decision = fresh.decision;
           evaluated.current = { input, decision };
           const currentWindow = deps.ownerWindowOf(sessionId);
           const gate = gateToolCall({
@@ -2313,7 +2475,25 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             appConnected: deps.appConnected(),
             routed: isRoutedCall(name, rawArgs),
           });
-          if (gate) return { ok: false, error: gate };
+          if (gate) {
+            if (
+              traceable &&
+              fresh.trace &&
+              (decision.decision === 'deny' ||
+                gate.code === 'window_not_ready' ||
+                gate.code === 'caller_not_visible')
+            )
+              onRefusal?.({
+                input,
+                decision,
+                trace:
+                  decision.decision === 'deny'
+                    ? fresh.trace
+                    : { ...fresh.trace, runtime: { outcome: 'refused', code: null } },
+                reason: reasonOf(decision),
+              });
+            return { ok: false, error: gate };
+          }
           if (!samePreparedConditions(decision.rule, preparedConditions))
             return {
               ok: false,
@@ -2337,12 +2517,21 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         const controlCtx: ControlCallContext = {
           stillCurrent: () => {
             const fresh = currentLocalDecision(committedOverrides);
-            if (!fresh.ok) return false;
+            if (!fresh.ok) {
+              evaluated.committed = null;
+              return false;
+            }
+            if (
+              evaluated.committed &&
+              JSON.stringify(fresh.value.decision) !== JSON.stringify(evaluated.committed.decision)
+            )
+              evaluated.committed = null;
             const heldIds = new Set(committedOverrides.map((override) => override.id));
-            return (
+            const allowed =
               (fresh.value.decision.decision === 'allow' || ownerAllowed) &&
-              fresh.value.decision.overrideIds.every((id) => heldIds.has(id))
-            );
+              fresh.value.decision.overrideIds.every((id) => heldIds.has(id));
+            if (!allowed) evaluated.committed = null;
+            return allowed;
           },
           move: resolved.rule.move ?? undefined,
           reach: resolved.rule.reach ?? undefined,
@@ -2364,7 +2553,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           tool: name,
           decision: resolved,
           commit: () => {
-            const fresh = currentLocalDecision();
+            const fresh = currentLocalDecision([], (value) => {
+              evaluated.terminal = value;
+            });
             if (
               !fresh.ok ||
               (resolved.decision === 'allow' && fresh.value.decision.decision === 'ask')
@@ -2390,9 +2581,23 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             return grantsFor(choice, p, name, policyInput.targets, requestId);
           },
           commitAnswered: (held) => {
-            const fresh = currentLocalDecision(held);
+            const fresh = currentLocalDecision(held, (value) => {
+              evaluated.terminal = value;
+            });
             if (!fresh.ok) return { ok: false, error: 'policy-changed' };
-            const committed = policyService.commit(fresh.value.input, fresh.value.decision, held);
+            evaluated.committed = null;
+            const committed = policyService.commit(fresh.value.input, fresh.value.decision, held, {
+              generation: deps.runtime.get(sessionId)?.generation ?? null,
+              onSuccess: (captured) => {
+                if (traceable && captured.trace)
+                  evaluated.committed = {
+                    input: fresh.value.input,
+                    decision: captured.decision,
+                    trace: captured.trace,
+                    reason: reasonOf(captured.decision),
+                  };
+              },
+            });
             if (!committed.ok) evaluated.spent = true;
             else {
               committedOverrides = [
@@ -2410,7 +2615,22 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           revokeCreatedGrants: (ids) => policyService.revokeGrants(ids),
           source: sourceOf(resolved),
           args,
-          prepare: () => prepareControl(caller, name, args, controlCtx),
+          prepare: async () => {
+            const prepared = await prepareControl(caller, name, args, controlCtx);
+            if (!prepared.ok || 'done' in prepared.value) return prepared;
+            const p = prepared.value;
+            return {
+              ok: true,
+              value: {
+                ...p,
+                run: async () => {
+                  const result = await p.run();
+                  sealHandled(result);
+                  return result;
+                },
+              },
+            };
+          },
         });
       })();
       // spec 2026-10-30-conduit-mcp-tool-policy §2.4: no reply after notifications/cancelled.
@@ -2422,7 +2642,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           ? { cancelled: true }
           : { ok: result.ok, ...(result.ok ? {} : { code: result.error.code }) }),
       });
-      const record = evaluated.current;
+      const record = evaluated.terminal ?? evaluated.current;
       const value =
         result?.ok && typeof result.value === 'object' && result.value !== null
           ? result.value
@@ -2454,7 +2674,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         summary: null,
         decision: decision?.decision ?? null,
         decidedBy: (() => {
-          const reason = decision ? reasonOf(decision) : 'unknown';
+          const reason = evaluated.terminal?.reason ?? (decision ? reasonOf(decision) : 'unknown');
           const raised = raisedRequests.get(inflight);
           return !cancelled && result?.ok && raised?.approved && reason !== raised.why
             ? `${raised.why}; ${reason}`
@@ -2470,6 +2690,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         durationMs: now() - startedAt,
         requestId,
         count: null,
+        ...(!cancelled && (evaluated.terminal?.trace ?? evaluated.immediateTrace)
+          ? { trace: evaluated.terminal?.trace ?? evaluated.immediateTrace ?? undefined }
+          : {}),
       });
 
       if (record) policyService.noteDecision(activityId, record.input, record.decision);
@@ -2481,6 +2704,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         : { ...built, content: [...built.content, { type: 'text', text: banner }] };
     } finally {
       raisedRequests.delete(inflight);
+      initialAskTraces.delete(inflight);
       inflight.end();
     }
   };
@@ -2614,7 +2838,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     pending: PendingRemotePermission,
     ownerAllow: boolean,
     phase: 'pending' | 'running' = 'pending',
-  ): Result<{ input: Omit<PolicyInput, 'now'>; decision: PolicyDecision }> => {
+    onRefusal?: (value: SealedPolicyTrace) => void,
+  ): Result<{
+    input: Omit<PolicyInput, 'now'>;
+    decision: PolicyDecision;
+    trace: ActivityDecisionTraceV1 | null;
+  }> => {
     if (pending.signal.aborted || (phase === 'pending' && now() >= pending.deadline))
       return {
         ok: false,
@@ -2634,11 +2863,20 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       masterOn: deps.domain.messagingOn(),
       toYou: false,
     };
-    const decision = policyService.decide(input);
-    if (!input.masterOn && pending.tool !== 'list_agents')
+    const captured = policyService.decideWithTrace(input, null);
+    const decision = captured.decision;
+    const refuse = () => {
+      if (captured.trace)
+        onRefusal?.({ input, decision, trace: captured.trace, reason: reasonOf(decision) });
+    };
+    if (!input.masterOn && pending.tool !== 'list_agents') {
+      if (decision.reason.by === 'floor' && decision.reason.floor === 'master-off') refuse();
       return { ok: false, error: toolError('messaging_off', 'Conduit messaging is turned off') };
-    if (decision.decision === 'deny')
+    }
+    if (decision.decision === 'deny') {
+      refuse();
       return { ok: false, error: toolError('policy_unavailable', reasonOf(decision)) };
+    }
     if (!samePreparedConditions(decision.rule, pending.conditions))
       return {
         ok: false,
@@ -2647,9 +2885,11 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           'Permissions changed after this action was prepared',
         ),
       };
-    if (decision.decision === 'ask' && !ownerAllow)
+    if (decision.decision === 'ask' && !ownerAllow) {
+      refuse();
       return { ok: false, error: toolError('policy_unavailable', reasonOf(decision)) };
-    return { ok: true, value: { input, decision } };
+    }
+    return { ok: true, value: { input, decision, trace: captured.trace } };
   };
 
   /**
@@ -2660,6 +2900,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     remote: RemoteCaller,
     decision: PolicyDecision,
     pending: PendingRemotePermission,
+    trace: ActivityDecisionTraceV1 | null,
   ): Promise<{ requestId: string; outcome: Result<AnswerInput> }> => {
     const { tool: name, targets, signal } = pending;
     pending.deadline = now() + REMOTE_ASK_MS;
@@ -2682,6 +2923,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       durationMs: null,
       requestId: created.id,
       count: null,
+      ...(trace ? { trace } : {}),
     });
     // The lead has gone (its link dropped or it was revoked), so the owner has nothing to answer for.
     // An already-aborted signal never fires its listener, so it is withdrawn here at once.
@@ -2736,7 +2978,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       masterOn: deps.domain.messagingOn(),
       toYou: false,
     };
-    const decision = policyService.decide(policyInput);
+    const captured = policyService.decideWithTrace(policyInput, null);
+    const decision = captured.decision;
     const pending: PendingRemotePermission = {
       machineId: remote.machineId,
       handle: remote.handle,
@@ -2754,14 +2997,59 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     };
 
     let raised: string | null = null;
+    let raisedWhy: string | null = null;
+    let immediateDeny = false;
+    let terminal: SealedPolicyTrace | null = null;
+    let committedTrace: SealedPolicyTrace | null = null;
+    const traceable = traceableSingle(name, rawArgs, targets);
+    const recordRefusal = (value: SealedPolicyTrace): void => {
+      if (traceable && !signal.aborted) terminal = value;
+    };
+    const commitFresh = (value: { input: Omit<PolicyInput, 'now'>; decision: PolicyDecision }) => {
+      committedTrace = null;
+      return policyService.commit(value.input, value.decision, [], {
+        generation: null,
+        onSuccess: (result) => {
+          if (traceable && result.trace)
+            committedTrace = {
+              input: value.input,
+              decision: result.decision,
+              trace: result.trace,
+              reason: reasonOf(result.decision),
+            };
+        },
+      });
+    };
     const result = await (async (): Promise<Result<StructuredOutput>> => {
-      if (!policyInput.masterOn && name !== 'list_agents')
+      if (!policyInput.masterOn && name !== 'list_agents') {
+        immediateDeny = decision.reason.by === 'floor' && decision.reason.floor === 'master-off';
         return { ok: false, error: toolError('messaging_off', 'Conduit messaging is turned off') };
-      if (decision.decision === 'deny') return { ok: false, error: toolDisabled(name) };
+      }
+      if (decision.decision === 'deny') {
+        immediateDeny = true;
+        return { ok: false, error: toolDisabled(name) };
+      }
       let ownerAllowed = false;
       let phase: 'pending' | 'running' = 'pending';
       const ctx: ControlCallContext = {
-        stillCurrent: () => freshRemotePolicy(pending, ownerAllowed, phase).ok,
+        stillCurrent: () => {
+          const fresh = freshRemotePolicy(pending, ownerAllowed, phase);
+          if (!fresh.ok) {
+            committedTrace = null;
+            return false;
+          }
+          if (
+            committedTrace &&
+            (!fresh.value.trace ||
+              JSON.stringify(fresh.value.decision) !== JSON.stringify(committedTrace.decision) ||
+              JSON.stringify(fresh.value.trace.facts) !==
+                JSON.stringify(committedTrace.trace.facts) ||
+              JSON.stringify(fresh.value.trace.assignment) !==
+                JSON.stringify(committedTrace.trace.assignment))
+          )
+            committedTrace = null;
+          return true;
+        },
         move: decision.rule.move ?? undefined,
         reach: decision.rule.reach ?? undefined,
         // Nothing asks through a window for a remote lead, and close refuses before it would.
@@ -2772,9 +3060,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       if (!prepared.ok) return prepared;
       const p = prepared.value;
       if ('done' in p) {
-        const fresh = freshRemotePolicy(pending, false);
+        const fresh = freshRemotePolicy(pending, false, 'pending', recordRefusal);
         if (!fresh.ok) return fresh;
-        const committed = policyService.commit(fresh.value.input, fresh.value.decision);
+        const committed = commitFresh(fresh.value);
         if (!committed.ok) return { ok: false, error: commitFailure(committed.error) };
         return p.done;
       }
@@ -2783,30 +3071,46 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       try {
         if (asked) {
           pending.grantable = !decision.forcedAsk && p.alwaysAsk !== true;
-          const owner = await askOwner(remote, decision, pending);
+          raisedWhy = reasonOf(decision);
+          const owner = await askOwner(
+            remote,
+            decision,
+            pending,
+            decision.decision === 'ask' && traceable ? captured.trace : null,
+          );
           raised = owner.requestId;
           if (!owner.outcome.ok) {
             p.release();
             return owner.outcome;
           }
         }
-        const fresh = freshRemotePolicy(pending, asked);
+        const fresh = freshRemotePolicy(pending, asked, 'pending', recordRefusal);
         if (!fresh.ok) {
           p.release();
           return fresh;
         }
-        const committed = policyService.commit(fresh.value.input, fresh.value.decision);
+        const committed = commitFresh(fresh.value);
         if (!committed.ok) {
           p.release();
           return { ok: false, error: commitFailure(committed.error) };
         }
         ownerAllowed = asked;
         phase = 'running';
-        return await p.run();
+        const result = await p.run();
+        if (committedTrace && !ctx.stillCurrent()) committedTrace = null;
+        const sealed = committedTrace as SealedPolicyTrace | null;
+        if (!signal.aborted && sealed)
+          terminal = {
+            ...sealed,
+            trace: { ...sealed.trace, runtime: { outcome: 'proceeded', code: null } },
+          };
+        return result;
       } finally {
         p.budget?.dispose();
       }
     })();
+    const finalTrace = terminal as SealedPolicyTrace | null;
+    const finalDecision = finalTrace?.decision ?? decision;
     const activityId = policyService.activity.record({
       lane: 'conduit',
       principal: { handle: remote.handle, sessionId: null, machineId: remote.machineId },
@@ -2814,14 +3118,25 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       action: name,
       target: targets[0]?.path ?? targets[0]?.sessionId ?? null,
       summary: null,
-      decision: decision.decision,
-      decidedBy: reasonOf(decision),
-      outcome: result.ok ? 'ok' : outcomeOfRemoteError(result.error.code, decision.decision),
+      decision: finalDecision.decision,
+      decidedBy: (() => {
+        const initial =
+          result.ok && finalTrace ? (raisedWhy ?? reasonOf(decision)) : reasonOf(decision);
+        const current = finalTrace?.reason ?? initial;
+        return result.ok && raised !== null && current !== initial
+          ? `${initial}; ${current}`
+          : current;
+      })(),
+      outcome: result.ok ? 'ok' : outcomeOfRemoteError(result.error.code, finalDecision.decision),
       durationMs: now() - startedAt,
       requestId: raised,
       count: null,
+      ...(!signal.aborted &&
+      (finalTrace?.trace ?? (immediateDeny && traceable ? captured.trace : null))
+        ? { trace: finalTrace?.trace ?? captured.trace ?? undefined }
+        : {}),
     });
-    policyService.noteDecision(activityId, policyInput, decision);
+    policyService.noteDecision(activityId, finalTrace?.input ?? policyInput, finalDecision);
     deps.log.info('conduit-mcp', 'remote call', {
       tool: name,
       machineId: remote.machineId,
@@ -4023,12 +4338,15 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
                     if (grantTargetsFor(choice, p, r.permission.targets) !== null)
                       choices.push(choice);
                   }
-            if (r.state === 'expired' && (!late || choices.length === 0)) return [];
+            if (r.state === 'expired' && p === null) return [];
             return [
               {
                 id: r.id,
                 sessionId: r.session,
                 requester: r.requester,
+                space: r.space,
+                lead: r.lead,
+                machine: r.machine,
                 title: r.title,
                 tool: r.permission.tool,
                 why: r.permission.why,
@@ -4038,7 +4356,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
                 endedAt: r.endedAt,
                 withdrawReason: r.withdrawReason,
                 grantable,
-                answerable: live || late,
+                answerable: live || (late && choices.length > 0),
+                nextTimeGrantSaved: r.permission.lateGrant !== null,
                 choices,
               },
             ];
@@ -4064,6 +4383,125 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               nextCursor: after.length > 50 && last ? { at: key(last), id: last.id } : null,
             },
           });
+          return;
+        }
+        case 'mcp:preview': {
+          if (!Number.isSafeInteger(m.requestId) || m.requestId < 0) return;
+          const invalid = () =>
+            reply({
+              type: 'mcp:previewResult',
+              requestId: m.requestId,
+              result: { ok: false, error: 'invalid-value' },
+            });
+          const draft: unknown = m.draft;
+          if (
+            !keys(m, ['type', 'requestId', 'sessionId', 'intent', 'draft', 'expectedToken']) ||
+            typeof m.expectedToken !== 'string' ||
+            !boundedString(m.expectedToken) ||
+            typeof m.sessionId !== 'string' ||
+            !boundedString(m.sessionId) ||
+            !withinPolicyLimit(draft) ||
+            (draft !== null &&
+              (!keys(draft, ['point', 'assignment']) ||
+                !knownPoint(draft.point) ||
+                !knownAssignment(draft.point, draft.assignment) ||
+                !localOwner(senderId, {
+                  kind: 'assignment',
+                  point: draft.point,
+                  assignment: draft.assignment as Assignment | null,
+                })))
+          ) {
+            invalid();
+            return;
+          }
+          const principal = principalOf(m.sessionId);
+          if (
+            !principal ||
+            !runtime.get(m.sessionId) ||
+            senderId === NO_OWNER_WINDOW ||
+            senderId <= 0 ||
+            deps.ownerWindowOf(m.sessionId) !== senderId ||
+            !deps.windowReady(senderId)
+          ) {
+            invalid();
+            return;
+          }
+          const intent: unknown = m.intent;
+          let args: Record<string, unknown>;
+          if (
+            keys(intent, ['tool', 'targetSessionId']) &&
+            intent.tool === 'close_session' &&
+            typeof intent.targetSessionId === 'string' &&
+            intent.targetSessionId.length > 0 &&
+            intent.targetSessionId.length <= 512 &&
+            deps.sessions.get(intent.targetSessionId)
+          ) {
+            args = { session: intent.targetSessionId };
+          } else if (
+            keys(intent, ['tool', 'path']) &&
+            intent.tool === 'open_file' &&
+            typeof intent.path === 'string' &&
+            intent.path.length > 0 &&
+            intent.path.length <= 512 &&
+            path.isAbsolute(intent.path) &&
+            [...intent.path].every((c) => c.charCodeAt(0) >= 32 && c.charCodeAt(0) !== 127)
+          ) {
+            args = { path: intent.path };
+          } else {
+            invalid();
+            return;
+          }
+          const tool = intent.tool;
+          const targets = resolveTargets(
+            tool,
+            args,
+            { sessionId: m.sessionId, home: principal.homeFolder },
+            targetDepsOf(),
+          );
+          if (targets.length !== 1) {
+            invalid();
+            return;
+          }
+          const result = policyService.preview(
+            { principal, tool, targets, masterOn: deps.domain.messagingOn(), toYou: false },
+            m.draft,
+            m.expectedToken,
+          );
+          reply({ type: 'mcp:previewResult', requestId: m.requestId, result });
+          return;
+        }
+        case 'mcp:replay': {
+          if (!Number.isSafeInteger(m.requestId) || m.requestId < 0) return;
+          const draft: unknown = m.draft;
+          const valid =
+            keys(m, ['type', 'requestId', 'draft', 'expectedToken']) &&
+            typeof m.expectedToken === 'string' &&
+            boundedString(m.expectedToken) &&
+            withinPolicyLimit(draft) &&
+            keys(draft, ['point', 'assignment']) &&
+            knownPoint(draft.point) &&
+            knownAssignment(draft.point, draft.assignment) &&
+            localOwner(senderId, {
+              kind: 'assignment',
+              point: draft.point,
+              assignment: draft.assignment as Assignment | null,
+            });
+          const result = valid
+            ? policyService.replay(m.draft, m.expectedToken)
+            : { ok: false as const, error: 'invalid-value' as const };
+          reply({ type: 'mcp:replayResult', requestId: m.requestId, result });
+          return;
+        }
+        case 'mcp:activity:lookup': {
+          if (!Number.isSafeInteger(m.requestId) || m.requestId < 0) return;
+          const result =
+            keys(m, ['type', 'requestId', 'id', 'at']) &&
+            senderId > 0 &&
+            senderId !== NO_OWNER_WINDOW &&
+            deps.windowReady(senderId)
+              ? policyService.activity.lookup(m.id, m.at)
+              : { ok: false as const, error: 'invalid-value' as const };
+          reply({ type: 'mcp:activity:row', requestId: m.requestId, result });
           return;
         }
         case 'mcp:activity:get': {
@@ -4152,28 +4590,6 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           if (!r.ok) deps.log.warn('conduit-mcp', 'allowMore failed', { code: r.error.code });
           return;
         }
-        case 'mcp:setToolPolicy': {
-          const refuse = (error: 'unknown-session' | 'unknown-tool' | 'invalid-value') =>
-            reply({ type: 'mcp:toolPolicyResult', requestId: m.requestId, ok: false, error });
-          if (!deps.sessions.get(m.sessionId)) return refuse('unknown-session');
-          if (!isToolName(m.tool)) return refuse('unknown-tool');
-          // The renderer is never load-bearing: the patch is re-checked here.
-          const patch = coercePolicyPatch(m.tool, m.patch);
-          if (!patch) return refuse('invalid-value');
-          const result = policyService.applyLegacyPatch(
-            { kind: 'session', sessionId: m.sessionId },
-            policyService.legacyLowerPoint(knownLaunchedCli(m.sessionId)),
-            m.tool,
-            patch,
-          );
-          reply({ type: 'mcp:toolPolicyResult', requestId: m.requestId, ...result });
-          if (result.ok) {
-            syncToolLists();
-            flow.recheck();
-          }
-          scheduleBroadcast();
-          return;
-        }
         case 'mcp:reviewLocalPolicy':
         case 'mcp:saveAssignment':
         case 'mcp:saveProfile':
@@ -4237,7 +4653,16 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               requestId: m.requestId,
               result: invalid
                 ? { ok: false, error: 'invalid-value' }
-                : policyService.reviewLocalPolicy(m.edit, m.expectedToken),
+                : policyService.reviewLocalPolicy(
+                    m.edit,
+                    m.expectedToken,
+                    deps.sessions.list().flatMap((s) => {
+                      const family = persistedLaunchedCli(s.id);
+                      return family === 'claude' || family === 'codex'
+                        ? [{ sessionId: s.id, family }]
+                        : [];
+                    }),
+                  ),
             });
             return;
           }
@@ -4263,97 +4688,21 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           scheduleBroadcast();
           return;
         }
-        case 'mcp:setAssignment': {
-          if (
-            !validPoint(m.point) ||
-            (m.profileId !== null && typeof m.profileId !== 'string') ||
-            !machineArg(m.machine)
-          ) {
-            reply({
-              type: 'mcp:policyResult',
-              requestId: m.requestId,
-              ok: false,
-              error: 'invalid-value',
-            });
-            return;
-          }
-          const point = m.point;
-          const profileId = m.profileId;
-          if (m.machine !== undefined) {
-            // A session id names one of this machine's own sessions, so it never travels (CON-46).
-            if (point.kind === 'session') {
-              reply({
-                type: 'mcp:policyResult',
-                requestId: m.requestId,
-                ok: false,
-                error: 'invalid_args',
-              });
-              return;
-            }
-            const result = remotePolicy.edit(m.machine, (svc) =>
-              svc.setAssignment(point, profileId),
-            );
-            reply({ type: 'mcp:policyResult', requestId: m.requestId, ...result });
-            return;
-          }
-          if (m.point.kind === 'session' && !deps.sessions.get(m.point.sessionId)) {
-            reply({
-              type: 'mcp:policyResult',
-              requestId: m.requestId,
-              ok: false,
-              error: 'unknown-session',
-            });
-            return;
-          }
-          const result = policyService.setAssignment(m.point, m.profileId);
-          reply({ type: 'mcp:policyResult', requestId: m.requestId, ...result });
-          if (result.ok) {
-            syncToolLists();
-            flow.recheck();
-          }
-          return;
-        }
-        case 'mcp:setPointPolicy': {
-          if (
-            !validPoint(m.point) ||
-            (m.point.kind !== 'default' && m.point.kind !== 'cli') ||
-            !isToolName(m.tool) ||
-            !machineArg(m.machine)
-          ) {
-            reply({
-              type: 'mcp:policyResult',
-              requestId: m.requestId,
-              ok: false,
-              error: 'invalid-value',
-            });
-            return;
-          }
-          const patch = coercePolicyPatch(m.tool, m.patch);
-          if (!patch) {
-            reply({
-              type: 'mcp:policyResult',
-              requestId: m.requestId,
-              ok: false,
-              error: 'invalid-value',
-            });
-            return;
-          }
-          const point = m.point;
-          const tool = m.tool;
-          const lower = point.kind === 'cli' ? { kind: 'default' as const } : null;
-          if (m.machine !== undefined) {
-            const result = remotePolicy.edit(m.machine, (svc) =>
-              svc.applyLegacyPatch(point, lower, tool, patch),
-            );
-            reply({ type: 'mcp:policyResult', requestId: m.requestId, ...result });
-            return;
-          }
-          const result = policyService.applyLegacyPatch(point, lower, tool, patch);
-          reply({ type: 'mcp:policyResult', requestId: m.requestId, ...result });
-          if (result.ok) {
-            syncToolLists();
-            flow.recheck();
-          }
+        case 'mcp:acknowledgeMigration': {
+          const valid =
+            keys(m, ['type', 'requestId', 'expectedToken']) &&
+            Number.isSafeInteger(m.requestId) &&
+            m.requestId >= 0 &&
+            typeof m.expectedToken === 'string' &&
+            m.expectedToken.length > 0 &&
+            m.expectedToken.length <= 512 &&
+            senderId > 0 &&
+            senderId !== NO_OWNER_WINDOW &&
+            deps.windowReady(senderId);
+          const result = valid
+            ? policyService.acknowledgeMigration(m.expectedToken)
+            : { ok: false as const, error: 'invalid-value' as const };
+          reply({ type: 'mcp:policyEditResult', requestId: m.requestId, result });
           return;
         }
         case 'mcp:revokeGrant': {
@@ -4387,6 +4736,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         case 'mcp:remoteEdit':
         case 'mcp:remotePolicy': {
           if (
+            senderId <= 0 ||
+            senderId === NO_OWNER_WINDOW ||
+            !deps.windowReady(senderId) ||
             !machineArg(m.machine) ||
             m.machine === undefined ||
             typeof m.expectedToken !== 'string' ||
@@ -4414,10 +4766,150 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           return;
         }
         case 'mcp:allowOnce': {
-          const result =
-            typeof m.activityId === 'string'
-              ? policyService.allowOnce(m.activityId)
-              : { ok: false as const, error: 'not-found' };
+          const denied = { ok: false as const, error: 'not-found' as const };
+          let result: typeof denied | ReturnType<typeof policyService.saveActivityOverride> =
+            denied;
+          if (
+            !Number.isSafeInteger(m.requestId) ||
+            m.requestId < 0 ||
+            senderId <= 0 ||
+            senderId === NO_OWNER_WINDOW ||
+            !deps.windowReady(senderId)
+          ) {
+            reply({ type: 'mcp:policyResult', requestId: m.requestId, ...denied });
+            return;
+          }
+          const found = policyService.activity.lookup(m.activityId, m.at);
+          if (found.ok) {
+            const trace = found.row.trace;
+            const facts = trace?.facts;
+            const actor = facts?.principal;
+            const recorded = facts?.targets[0];
+            if (
+              trace?.winnerDigest &&
+              trace.decision === 'deny' &&
+              trace.reason.by === 'deny' &&
+              trace.runtime.outcome === 'not-reached' &&
+              facts &&
+              facts.tool === 'close_session' &&
+              facts.targets.length === 1 &&
+              actor?.kind === 'session' &&
+              actor.generation !== null &&
+              recorded?.sessionId &&
+              recorded.path === null &&
+              facts.masterOn &&
+              !facts.toYou &&
+              !facts.forceAsk &&
+              found.row.lane === 'conduit' &&
+              found.row.outcome === 'denied' &&
+              found.row.action === facts.tool &&
+              found.row.principal.sessionId === actor.sessionId &&
+              found.row.cli === actor.launchedCli &&
+              deps.ownerWindowOf(actor.sessionId) === senderId
+            ) {
+              const callerId = actor.sessionId;
+              const targetId = recorded.sessionId;
+              const override: OneUseOverride = {
+                id: randomBytes(12).toString('hex'),
+                sessionId: callerId,
+                generation: actor.generation,
+                tool: 'close_session',
+                target: recorded,
+                createdAt: new Date(now()).toISOString(),
+              };
+              const current = () => {
+                const principal = principalOf(callerId);
+                const targets = principal
+                  ? resolveTargets(
+                      'close_session',
+                      { session: targetId },
+                      { sessionId: callerId, home: principal.homeFolder },
+                      targetDepsOf(),
+                    )
+                  : [];
+                const target = targets[0];
+                if (
+                  !principal ||
+                  principal.generation !== actor.generation ||
+                  principal.launchedCli !== actor.launchedCli ||
+                  principal.projectId !== actor.projectId ||
+                  deps.ownerWindowOf(callerId) !== senderId ||
+                  !deps.windowReady(senderId) ||
+                  !deps.domain.messagingOn() ||
+                  targets.length !== 1 ||
+                  !target ||
+                  target.sessionId !== recorded.sessionId ||
+                  !samePath(target.path, recorded.path) ||
+                  !samePath(target.folder, recorded.folder) ||
+                  target.projectId !== recorded.projectId
+                )
+                  return null;
+                const input = {
+                  principal,
+                  tool: 'close_session' as const,
+                  targets,
+                  masterOn: true,
+                  toYou: false,
+                  forceAsk: false,
+                };
+                const original = policyService.decideWithTrace(input, actor.generation);
+                if (
+                  original.decision.decision !== 'deny' ||
+                  original.decision.reason.by !== 'deny' ||
+                  original.trace?.winnerDigest !== trace.winnerDigest
+                )
+                  return null;
+                const proposed = policyService.decide({ ...input, heldOverrides: [override] });
+                if (
+                  proposed.decision !== 'allow' ||
+                  proposed.reason.by !== 'override' ||
+                  proposed.reason.overrideId !== override.id ||
+                  gateToolCall({
+                    sessionId: callerId,
+                    messagingOn: true,
+                    tool: 'close_session',
+                    decision: proposed,
+                    ownerReady: () => deps.windowReady(senderId),
+                    onScreen: () => deps.onScreen(senderId, callerId),
+                    appConnected: deps.appConnected(),
+                  })
+                )
+                  return null;
+                return { principal, proposed };
+              };
+              const before = current();
+              if (before) {
+                const controller = new AbortController();
+                const prepared = await app.prepareCloseSession(
+                  { handle: before.principal.handle, sessionId: callerId },
+                  { session: targetId },
+                  {
+                    stillCurrent: () => current() !== null,
+                    move: before.proposed.rule.move ?? undefined,
+                    reach: before.proposed.rule.reach ?? undefined,
+                    signal: controller.signal,
+                    ui: async () => ({
+                      ok: false,
+                      error: toolError('tool_disabled', 'Preflight cannot dispatch'),
+                    }),
+                  },
+                );
+                if (prepared.ok && !('done' in prepared.value)) {
+                  prepared.value.release();
+                  prepared.value.budget?.dispose();
+                  const after = current();
+                  if (
+                    after &&
+                    JSON.stringify(after.proposed.rule) === JSON.stringify(before.proposed.rule)
+                  )
+                    result = policyService.saveActivityOverride(
+                      { id: m.activityId, at: m.at },
+                      override,
+                    );
+                }
+              }
+            }
+          }
           reply({ type: 'mcp:policyResult', requestId: m.requestId, ...result });
           return;
         }

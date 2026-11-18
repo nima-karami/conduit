@@ -65,6 +65,7 @@ export type Principal =
   | {
       kind: 'session';
       sessionId: string;
+      generation?: number;
       handle: string;
       launchedCli: CliKind | null;
       homeFolder: string | null;
@@ -115,7 +116,13 @@ export interface SessionDenial {
   createdAt: string;
 }
 
+export interface ActivityReceipt {
+  id: string;
+  at: string;
+}
+
 export interface OneUseOverride {
+  generation?: number;
   id: string;
   sessionId: string;
   tool: ToolName;
@@ -204,8 +211,27 @@ export type GrantBatchResult =
   | { ok: true; grants: Grant[] }
   | { ok: false; error: PolicyEditError };
 
+export interface MigrationSummaryRow {
+  provenance?: 'resolved-global';
+  point:
+    | { kind: 'default' }
+    | { kind: 'cli'; cli: CliKind }
+    | { kind: 'session'; sessionId: string };
+  fields: Array<{ tool: ToolName; field: 'access' | 'when' | 'reach' | 'move'; value: string }>;
+  profileId: 'worker' | 'lead';
+  exceptions: number;
+  onScreenOnly: boolean;
+}
+
 // see plan C8
 export interface PolicyUiState {
+  migration?: {
+    migratedFrom: 'v0.64';
+    offeredSessionIds: string[];
+    acknowledged: boolean;
+    summary?: MigrationSummaryRow[];
+    summaryTruncated?: boolean;
+  } | null;
   editToken: string;
   saveError: string | null;
   backupWarning: string | null;
@@ -235,7 +261,76 @@ export type LocalPolicyEdit =
   | { kind: 'assignment'; point: AssignmentPoint; assignment: Assignment | null }
   | { kind: 'profile'; profile: Profile }
   | { kind: 'delete-profile'; profileId: ProfileId; replacement: ProfileId };
+export interface ProfileReviewDisplay {
+  before: Profile | null;
+  after: Profile;
+  optedInPoints: AssignmentPoint[];
+  affectedSessions: Array<{
+    sessionId: string;
+    family: 'claude' | 'codex';
+    point: AssignmentPoint;
+  }>;
+  truncated: boolean;
+}
 export type LocalPolicyReviewResult =
-  | { ok: true; requiresNativeReview: false }
-  | { ok: true; requiresNativeReview: true; digest: string }
+  | { ok: true; requiresNativeReview: false; profileDisplay?: ProfileReviewDisplay }
+  | { ok: true; requiresNativeReview: true; digest: string; profileDisplay?: ProfileReviewDisplay }
   | { ok: false; error: PolicyEditError };
+
+export interface ActivityDecisionTraceV1 {
+  v: 1;
+  decidedAt: string;
+  facts: {
+    v: 1;
+    principal:
+      | {
+          kind: 'session';
+          sessionId: string;
+          launchedCli: CliKind | null;
+          generation: number | null;
+          projectId: string | null;
+        }
+      | {
+          kind: 'remote';
+          machineId: string;
+          handle: string;
+          trust: 'own';
+          controller: boolean;
+          capabilities: Capabilities;
+        };
+    tool: ToolName;
+    targets: readonly PolicyTarget[];
+    masterOn: boolean;
+    toYou: boolean;
+    forceAsk: boolean;
+  };
+  decision: Decision;
+  reason: Reason;
+  rule: PolicyDecision['rule'];
+  forcedAsk: boolean;
+  assignment: { point: AssignmentPoint; profileId: ProfileId; profileName: string } | null;
+  runtime: { outcome: 'not-reached' | 'proceeded' | 'refused' | 'unknown'; code: null };
+  stages: readonly ('floors' | 'explicit-deny' | 'grants' | 'assignment')[];
+  withoutWinner: { decision: Decision; reason: Reason } | null;
+  winnerDigest?: string;
+}
+
+export type PreviewDraft = { point: AssignmentPoint; assignment: Assignment | null };
+export type PreviewResult =
+  | { ok: true; decision: PolicyDecision; editToken: string; runtime: 'unevaluated' }
+  | { ok: false; error: 'conflict' | 'invalid-value' | 'read-only' | 'not-found' };
+export type ReplayResult =
+  | {
+      ok: true;
+      editToken: string;
+      sampled: number;
+      changed: number;
+      skipped: { aggregate: number; legacy: number; incomplete: number; remote: number };
+      truncated: boolean;
+      since: string;
+    }
+  | { ok: false; error: 'conflict' | 'invalid-value' | 'read-only' | 'unavailable' };
+
+export type PreviewIntent =
+  | { tool: 'close_session'; targetSessionId: string }
+  | { tool: 'open_file'; path: string };

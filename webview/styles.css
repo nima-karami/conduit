@@ -17541,6 +17541,126 @@ button.toggle--on .toggle__knob {
   margin: 0;
 }
 
+.permissions-request-body__why,
+.permissions-request-body__remote,
+.permissions-request-body__grant,
+.permissions-request-body__status,
+.permissions-request-body__unavailable,
+.permissions-request-body__expired,
+.permissions-request-body__error {
+  margin: 6px 0;
+}
+.permissions-request-body__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.permissions-request-body__panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.permissions-request-body__field {
+  display: grid;
+  grid-template-columns: 55px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+.permissions-request-body__field select {
+  min-width: 0;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border-2);
+  border-radius: 4px;
+  padding: 4px;
+}
+.permissions-request-body__error {
+  color: var(--text);
+}
+
+.permissions-upgrade {
+  width: min(760px, 92vw);
+}
+.permissions-upgrade__table {
+  width: 100%;
+  margin-block: 12px;
+  border-collapse: collapse;
+  text-align: start;
+}
+.permissions-upgrade__table :is(th, td) {
+  border-bottom: 1px solid var(--border);
+  padding: 7px 6px;
+}
+
+.needs-permission {
+  margin: 0 12px;
+  padding: 10px;
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  color: var(--text);
+}
+.needs-permission > p {
+  margin: 6px 0;
+}
+
+.settings-links h2 {
+  margin: 0 0 16px;
+  font-size: calc(16px * var(--font-scale));
+}
+.settings-links h3 {
+  margin: 20px 0 4px;
+}
+.settings-links h4 {
+  margin: 20px 0 8px;
+}
+.settings-links dl {
+  margin: 0;
+  max-width: 440px;
+}
+.settings-links dl > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.settings-links dd {
+  margin: 0;
+}
+
+.permissions-activity__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.permissions-assignments__table {
+  width: 100%;
+  margin-block: 12px;
+  border-collapse: collapse;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+.permissions-assignments__table :is(th, td) {
+  border-bottom: 1px solid var(--border);
+  padding: 8px;
+  text-align: start;
+  vertical-align: top;
+}
+.permissions-assignments__table th {
+  min-width: 0;
+}
+.permissions-profile-editor__name {
+  padding: 5px 9px;
+  color: var(--text);
+  background: var(--raise);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  font: inherit;
+}
+
 /* ═════════ interaction state vocabulary ══════════════════════════════════════
    docs/specs/archive/2026-08-01-interaction-state-vocabulary.md. Read it before touching
    a value here; test/unit/state-vocabulary.test.ts holds the line.

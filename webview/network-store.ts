@@ -3,7 +3,9 @@
 
 import { useSyncExternalStore } from 'react';
 import type { NetworkState } from '../src/contracts/network-state';
+import type { Capability } from '../src/contracts/remote-principal';
 import { post, subscribe as subscribeHost } from './bridge';
+import { requestHost } from './host-request';
 
 let state: NetworkState | null = null;
 let started = false;
@@ -33,4 +35,17 @@ export const getNetworkState = (): NetworkState | null => state;
 
 export function useNetworkState(): NetworkState | null {
   return useSyncExternalStore(subscribeNetworkState, getNetworkState, getNetworkState);
+}
+
+export async function setLinkCapability(
+  machineId: string,
+  capability: Capability,
+  on: boolean,
+): Promise<boolean> {
+  const reply = await requestHost(
+    (requestId) => ({ type: 'network:setCapability', requestId, machineId, capability, on }),
+    ['network:capabilityResult'],
+    15_000,
+  );
+  return reply?.ok === true;
 }

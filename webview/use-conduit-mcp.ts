@@ -1,4 +1,5 @@
 import { useMemo, useSyncExternalStore } from 'react';
+import type { ActivityLookup } from '../src/conduit-mcp/activity-log';
 import type { ActivityPage, ActivityQuery } from '../src/conduit-mcp/activity-query';
 import type {
   Assignment,
@@ -8,8 +9,12 @@ import type {
   LocalPolicyReviewResult,
   PermissionAnswer,
   PolicyEditResult,
+  PreviewDraft,
+  PreviewIntent,
+  PreviewResult,
   Profile,
   ProfileId,
+  ReplayResult,
 } from '../src/conduit-mcp/policy-types';
 import type {
   AnswerInput,
@@ -20,7 +25,6 @@ import type {
   RequestAnswerResult,
   RequestsUiState,
 } from '../src/conduit-mcp/request-types';
-import type { ToolName, ToolPolicyPatch } from '../src/conduit-mcp/tool-policy';
 import type { ToolErrorCode } from '../src/conduit-mcp/types';
 import type {
   McpAttachmentPayload,
@@ -48,10 +52,9 @@ const REFUSALS: readonly AnswerRefusal[] = [
 const refusalOf = (reason: string | undefined): AnswerRefusal =>
   REFUSALS.find((r) => r === reason) ?? 'not_answerable';
 
-type PolicyPoint = Extract<WebviewToHost, { type: 'mcp:setPointPolicy' }>['point'];
-
 export interface ConduitMcpApi {
   state: McpUiState | null;
+  acknowledgeMigration(expectedToken: string): Promise<PolicyEditResult | null>;
   saveAssignment(
     point: AssignmentPoint,
     assignment: Assignment | null,
@@ -75,6 +78,14 @@ export interface ConduitMcpApi {
   ): Promise<LocalPolicyReviewResult | null>;
   retryPolicy(): Promise<PolicyEditResult | null>;
   getActivity(query: ActivityQuery): Promise<ActivityPage | null>;
+  getActivityRow(id: string, at: string): Promise<ActivityLookup | null>;
+  previewPolicy(
+    sessionId: string,
+    intent: PreviewIntent,
+    draft: PreviewDraft | null,
+    expectedToken: string,
+  ): Promise<PreviewResult | null>;
+  replayPolicy(draft: PreviewDraft, expectedToken: string): Promise<ReplayResult | null>;
   getOwnerPermissions(
     state: 'open' | 'closed',
     cursor?: OwnerPermissionCursor,
@@ -85,17 +96,12 @@ export interface ConduitMcpApi {
     threadId: string,
   ): Promise<CodexPostureView>;
   codexPostureQuery(sessionId: string, generation: number): Promise<CodexPostureView>;
-  setAssignment(
-    point: AssignmentPoint,
-    profileId: ProfileId | null,
-    machine?: string,
-  ): Promise<boolean>;
   dismissNativeImpact(id: string): Promise<boolean>;
   grantLifecycle(
     operation: Extract<WebviewToHost, { type: 'mcp:grantLifecycle' }>['operation'],
   ): Promise<GrantLifecycleResult | null>;
   revokeGrant(grantId: string, machine?: string): Promise<boolean>;
-  allowOnce(activityId: string): Promise<boolean>;
+  allowOnce(activityId: string, at: string): Promise<boolean>;
   getThread(threadId: string): Promise<McpThreadView | null>;
   send(
     req: Omit<Extract<WebviewToHost, { type: 'mcp:compose' }>, 'type' | 'requestId'>,
@@ -108,16 +114,6 @@ export interface ConduitMcpApi {
   allowMore(threadId: string): void;
   pause(sessionId: string, paused: boolean): void;
   retry(): void;
-  /** False when the host refused it or didn't answer: the caller reverts. */
-  setToolPolicy(sessionId: string, tool: ToolName, patch: ToolPolicyPatch): Promise<boolean>;
-  /** False when the host refused it or didn't answer: the caller reverts. `machine` edits that
-   *  machine's rules instead of this one's (CON-46). */
-  setPointPolicy(
-    point: PolicyPoint,
-    tool: ToolName,
-    patch: ToolPolicyPatch,
-    machine?: string,
-  ): Promise<boolean>;
   remoteEdit(
     machine: string,
     expectedToken: string,
@@ -160,6 +156,14 @@ export function getRequestsSnapshot(): RequestsUiState | null {
 }
 
 const api: Omit<ConduitMcpApi, 'state'> = {
+  async acknowledgeMigration(expectedToken) {
+    const r = await requestHost(
+      (requestId) => ({ type: 'mcp:acknowledgeMigration', requestId, expectedToken }),
+      ['mcp:policyEditResult'],
+      REQUEST_TIMEOUT_MS,
+    );
+    return r?.result ?? null;
+  },
   async saveAssignment(point, assignment, expectedToken, nativeReview) {
     const r = await requestHost(
       (requestId) => ({
@@ -269,6 +273,30 @@ const api: Omit<ConduitMcpApi, 'state'> = {
     );
     return r?.result ?? null;
   },
+  async previewPolicy(sessionId, intent, draft, expectedToken) {
+    const r = await requestHost(
+      (requestId) => ({ type: 'mcp:preview', requestId, sessionId, intent, draft, expectedToken }),
+      ['mcp:previewResult'],
+      REQUEST_TIMEOUT_MS,
+    );
+    return r?.result ?? null;
+  },
+  async replayPolicy(draft, expectedToken) {
+    const r = await requestHost(
+      (requestId) => ({ type: 'mcp:replay', requestId, draft, expectedToken }),
+      ['mcp:replayResult'],
+      REQUEST_TIMEOUT_MS,
+    );
+    return r?.result ?? null;
+  },
+  async getActivityRow(id, at) {
+    const response = await requestHost(
+      (requestId) => ({ type: 'mcp:activity:lookup', requestId, id, at }),
+      ['mcp:activity:row'],
+      10_000,
+    );
+    return response?.result ?? null;
+  },
   async getActivity(query) {
     const r = await requestHost(
       (requestId) => ({ type: 'mcp:activity:get', requestId, query }),
@@ -276,14 +304,6 @@ const api: Omit<ConduitMcpApi, 'state'> = {
       REQUEST_TIMEOUT_MS,
     );
     return r?.page ?? null;
-  },
-  async setAssignment(point, profileId, machine) {
-    const r = await requestHost(
-      (requestId) => ({ type: 'mcp:setAssignment', requestId, point, profileId, machine }),
-      ['mcp:policyResult'],
-      REQUEST_TIMEOUT_MS,
-    );
-    return r?.ok === true;
   },
   async revokeGrant(grantId, machine) {
     const r = await requestHost(
@@ -293,9 +313,9 @@ const api: Omit<ConduitMcpApi, 'state'> = {
     );
     return r?.ok === true;
   },
-  async allowOnce(activityId) {
+  async allowOnce(activityId, at) {
     const r = await requestHost(
-      (requestId) => ({ type: 'mcp:allowOnce', requestId, activityId }),
+      (requestId) => ({ type: 'mcp:allowOnce', requestId, activityId, at }),
       ['mcp:policyResult'],
       REQUEST_TIMEOUT_MS,
     );
@@ -337,22 +357,6 @@ const api: Omit<ConduitMcpApi, 'state'> = {
   },
   retry() {
     post({ type: 'mcp:retry' });
-  },
-  async setToolPolicy(sessionId, tool, patch) {
-    const r = await requestHost(
-      (requestId) => ({ type: 'mcp:setToolPolicy', requestId, sessionId, tool, patch }),
-      ['mcp:toolPolicyResult'],
-      REQUEST_TIMEOUT_MS,
-    );
-    return r?.ok === true;
-  },
-  async setPointPolicy(point, tool, patch, machine) {
-    const r = await requestHost(
-      (requestId) => ({ type: 'mcp:setPointPolicy', requestId, point, tool, patch, machine }),
-      ['mcp:policyResult'],
-      REQUEST_TIMEOUT_MS,
-    );
-    return r?.ok === true;
   },
   async remoteEdit(machine, expectedToken, edit, nativeConsent) {
     const result = await requestHost(

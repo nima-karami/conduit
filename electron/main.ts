@@ -4019,6 +4019,9 @@ app.whenReady().then(() => {
         case 'mcp:thread:get':
         case 'mcp:ownerPermissions:get':
         case 'mcp:activity:get':
+        case 'mcp:activity:lookup':
+        case 'mcp:preview':
+        case 'mcp:replay':
         case 'mcp:linkCodexThread':
         case 'mcp:codexPostureQuery':
         case 'mcp:reviewLocalPolicy':
@@ -4026,6 +4029,7 @@ app.whenReady().then(() => {
         case 'mcp:saveProfile':
         case 'mcp:deleteProfile':
         case 'mcp:policyRetry':
+        case 'mcp:acknowledgeMigration':
         case 'mcp:remoteEdit':
         case 'mcp:remotePolicy':
         case 'mcp:markRead':
@@ -4033,13 +4037,10 @@ app.whenReady().then(() => {
         case 'mcp:pause':
         case 'mcp:attachment:get':
         case 'mcp:retry':
-        case 'mcp:setAssignment':
-        case 'mcp:setPointPolicy':
         case 'mcp:dismissNativeImpact':
         case 'mcp:grantLifecycle':
         case 'mcp:revokeGrant':
         case 'mcp:allowOnce':
-        case 'mcp:setToolPolicy':
         case 'mcp:askAnswer':
         case 'mcp:uiResult':
         case 'mcp:requestAnswer':
@@ -4047,6 +4048,35 @@ app.whenReady().then(() => {
         case 'mcp:setAway': {
           const r = await callServer('mcp.fromRenderer', { windowId: senderId, message: m });
           if (r.reply) replyHere(r.reply);
+          break;
+        }
+        case 'network:setCapability': {
+          const valid =
+            Object.keys(m).sort().join(',') === 'capability,machineId,on,requestId,type' &&
+            Number.isSafeInteger(m.requestId) &&
+            m.requestId > 0 &&
+            typeof m.machineId === 'string' &&
+            /^m-[0-9a-f]{8}$/.test(m.machineId) &&
+            (m.capability === 'messaging' ||
+              m.capability === 'monitor' ||
+              m.capability === 'drive') &&
+            typeof m.on === 'boolean' &&
+            windows.get(senderId) === senderWin &&
+            presence.isReady(senderId);
+          let ok = false;
+          if (valid) {
+            try {
+              await callServer('link.setCapability', {
+                machineId: m.machineId,
+                capability: m.capability,
+                on: m.on,
+              });
+              ok = true;
+            } catch (error) {
+              log.warn('network', 'set capability failed', { error: String(error) });
+            }
+          }
+          replyHere({ type: 'network:capabilityResult', requestId: m.requestId, ok });
           break;
         }
         case 'network:get':

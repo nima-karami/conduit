@@ -24,6 +24,7 @@ import {
   type SessionSnapshots,
 } from '../src/changes-view-model';
 import { sessionExitAction, shouldConfirmClose } from '../src/close-decision';
+import type { ActivityEntry } from '../src/conduit-mcp/activity-log';
 import type { AgentCli } from '../src/conduit-mcp/install-types';
 import type { Handle } from '../src/conduit-mcp/types';
 import type { McpNotConnected, McpSessionBadge } from '../src/conduit-mcp/ui-types';
@@ -143,6 +144,8 @@ import { NativeImpactNotice } from './components/native-impact-notice';
 import { NewSessionModal } from './components/new-session-modal';
 import { type DockHandlers, PanelFrame } from './components/panel-frame';
 import { PermissionStoreNotice } from './components/permission-store-notice';
+import type { AssignmentExceptionSeed } from './components/permissions-assignments';
+import { PermissionsUpgradeDialog } from './components/permissions-upgrade-dialog';
 import { ProjectPicker } from './components/project-picker';
 import { QuitScrim } from './components/quit-scrim';
 import { RightPane, type RightPaneHandle } from './components/right-pane';
@@ -603,6 +606,9 @@ export function App() {
   const newAgentRef = useRef<() => void>(() => openNewSession());
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [activityExceptionSeed, setActivityExceptionSeed] =
+    useState<AssignmentExceptionSeed | null>(null);
+  const [migrationDismissed, setMigrationDismissed] = useState(false);
   const [webPromptOpen, setWebPromptOpen] = useState(false);
   const [docState, dispatchDocs] = useReducer(docsReducer, initialDocs);
   // Latest docs for effects that must read them without re-firing on every docs change (the
@@ -1065,11 +1071,15 @@ export function App() {
   // rail and the topbar's aggregate chip can never disagree about who is waiting (D16).
   const { sessions, snooze, snoozed } = useSnooze(hostSessions);
   const mcp = useConduitMcp();
-  const [activitySessionId, setActivitySessionId] = useState<string | undefined>();
-  const openActivity = useCallback((scope?: string) => {
-    const owner = activeIdRef.current;
-    if (!owner) return;
-    setActivitySessionId(scope);
+  const [activityScope, setActivityScope] = useState<{
+    sessionId?: string;
+    machineId?: string;
+    item?: Pick<ActivityEntry, 'id' | 'at'>;
+  }>({});
+  const openActivity = useCallback((scope: typeof activityScope = {}) => {
+    const owner = activeIdRef.current ?? '';
+    setActiveRemote(null);
+    setActivityScope(scope);
     setCenterView('editor');
     dispatchDocs({
       type: 'open',
@@ -1975,7 +1985,7 @@ export function App() {
   // session's remembered view (its last active doc, or the Terminal).
   // A remote session owns its own tabs (remote-file docs carry its row id), so while one is shown
   // the centre shows its docs, never the local session's behind it (plan CON-43 decision 10).
-  const docOwnerId = activeRemote ? remoteKeyId(activeRemote) : activeId;
+  const docOwnerId = activeRemote ? remoteKeyId(activeRemote) : (activeId ?? '');
   const visibleDocs = useMemo(
     () => docState.docs.filter((d) => d.sessionId === docOwnerId),
     [docState.docs, docOwnerId],
@@ -5424,7 +5434,22 @@ export function App() {
             and falls back to the editor start state instead of a void. */}
           <ErrorBoundary onReset={() => setCenterView('editor')}>
             <CenterPane
-              activitySessionId={activitySessionId}
+              activitySessionId={activityScope.sessionId}
+              activityMachineId={activityScope.machineId}
+              activityItem={activityScope.item}
+              getActivityRow={mcp.getActivityRow}
+              allowActivityOnce={mcp.allowOnce}
+              onAddActivityException={({ row, tool, scope }) => {
+                const id =
+                  row.trace?.facts.principal.kind === 'session'
+                    ? row.trace.facts.principal.sessionId
+                    : null;
+                const coverage = permissionCoverageRef.current;
+                if (!id || !canOpenSessionPermissions(id, coverage.sessions, coverage.policy))
+                  return;
+                setActivityExceptionSeed({ sessionId: id, tool, scope });
+                openSettingsAt('permissions');
+              }}
               getActivity={mcp.getActivity}
               serverState={serverState}
               onRetryLaunch={(sessionId) => post({ type: 'session:retryLaunch', sessionId })}
@@ -5727,10 +5752,51 @@ export function App() {
     );
   };
 
+  const policyForUpgrade =
+    !migrationDismissed &&
+    !releaseNotesOpen &&
+    !settingsOpen &&
+    !permissionsFor &&
+    mcp.state?.policy;
+  const migration =
+    policyForUpgrade && !policyForUpgrade.migration?.acknowledged
+      ? policyForUpgrade.migration
+      : null;
   const modal = slot.current;
   return (
     <SidebarTreeProvider value={sidebarTree}>
       <WorkbenchChromeProvider value={chrome}>
+        {migration && policyForUpgrade && !modal && (
+          <PermissionsUpgradeDialog
+            migration={migration}
+            editToken={policyForUpgrade.editToken}
+            acknowledge={mcp.acknowledgeMigration}
+            sessions={Object.fromEntries(
+              hostSessions.map((session) => [
+                session.id,
+                {
+                  name: session.name,
+                  onScreenOnly:
+                    policyForUpgrade.assignments.find(
+                      ({ point }) => point.kind === 'session' && point.sessionId === session.id,
+                    )?.assignment.onScreenOnly === true,
+                },
+              ]),
+            )}
+            onReview={() => {
+              setMigrationDismissed(true);
+              openSettingsAt('permissions');
+            }}
+            onReviewSession={(id) => {
+              const coverage = permissionCoverageRef.current;
+              if (!canOpenSessionPermissions(id, coverage.sessions, coverage.policy)) return;
+              setMigrationDismissed(true);
+              setPermissionsFor(id);
+            }}
+            onDone={() => setMigrationDismissed(true)}
+          />
+        )}
+
         {releaseNotesOpen && releaseNotesView && (
           <WhatsNewDialog
             release={{
@@ -5747,7 +5813,7 @@ export function App() {
             }}
           />
         )}
-        <div className="shell">
+        <div className="shell" inert={Boolean(migration && policyForUpgrade && !modal)}>
           <AnimatedBg />
           <div ref={navLiveRef} className="sr-only" aria-live="polite" role="status" />
           <div
@@ -5848,9 +5914,19 @@ export function App() {
             <SettingsModal
               agents={agents}
               permissionSessions={hostSessions}
-              onOpenPermissionActivity={() => {
+              activityExceptionSeed={activityExceptionSeed}
+              onActivityExceptionSeedConsumed={() => setActivityExceptionSeed(null)}
+              onOpenPermissionActivity={(machineId) => {
                 setSettingsOpen(false);
-                openActivity();
+                openActivity({ machineId });
+              }}
+              onAddMachine={() => {
+                setSettingsOpen(false);
+                openAddMachine();
+              }}
+              onOpenRequest={(id) => {
+                setSettingsOpen(false);
+                openRequest(id);
               }}
               initialTab={settingsTab}
               initialAboutReleaseNotes={settingsAboutReleaseNotes}
@@ -5859,6 +5935,7 @@ export function App() {
               projectPath={active?.home || null}
               onClose={() => {
                 setSettingsAboutReleaseNotes(false);
+                setActivityExceptionSeed(null);
                 setSettingsOpen(false);
               }}
               onCheckUpdate={() => post({ type: 'updateCheck' })}
@@ -5993,9 +6070,9 @@ export function App() {
                     policy={mcp.state.policy}
                     native={mcp.state.native[target.id]}
                     mcp={mcp}
-                    onOpenActivity={() => {
+                    onOpenActivity={(item) => {
                       setPermissionsFor(null);
-                      openActivity(target.id);
+                      openActivity({ sessionId: target.id, item });
                     }}
                     onOpenSettings={() => {
                       setPermissionsFor(null);

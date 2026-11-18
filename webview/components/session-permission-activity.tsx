@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
+import type { ActivityEntry } from '../../src/conduit-mcp/activity-log';
 import type { ActivityPage, ActivityQuery } from '../../src/conduit-mcp/activity-query';
 
 export function SessionPermissionActivity({
   sessionId,
   getActivity,
+  onOpenActivity,
 }: {
   sessionId: string;
+  onOpenActivity?(item: Pick<ActivityEntry, 'id' | 'at'>): void;
   getActivity(query: ActivityQuery): Promise<ActivityPage | null>;
 }) {
   const [state, setState] = useState<
@@ -49,6 +52,15 @@ export function SessionPermissionActivity({
               {row.decision ? ` · ${row.decision}` : ''}
               {row.outcome ? ` · ${row.outcome}` : ''}
               {row.summary ? ` · ${row.summary}` : ''}
+              {onOpenActivity && row.count === null && (
+                <button
+                  type="button"
+                  className="btn btn--sm"
+                  onClick={() => onOpenActivity({ id: row.id, at: row.at })}
+                >
+                  Why
+                </button>
+              )}
             </li>
           ))}
         </ul>

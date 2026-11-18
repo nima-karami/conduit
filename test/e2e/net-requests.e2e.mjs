@@ -21,6 +21,7 @@ import {
   startAgent,
   startServerPair,
 } from './net-helpers.mjs';
+import { assignProfileCas } from './permissions-policy-helpers.mjs';
 
 // Request mirrors and remote answers over one ssh link, on fake-ssh (CON-42 L5b; plan
 // docs/plans/2026-11-16-remote-ssh-requests.plan.md, slice L5 steps 1-4):
@@ -62,18 +63,12 @@ async function permissionRow(server, machineId) {
 
 /** Gives one agent session a policy profile through CON-24's assignment message, as the renderer sends it. */
 async function assignProfile(server, sessionId, profileId) {
-  const r = await server.c2.call('mcp.fromRenderer', {
-    windowId: 1,
-    message: {
-      type: 'mcp:setAssignment',
-      requestId: 1,
-      point: { kind: 'session', sessionId },
-      profileId,
-    },
+  const r = await assignProfileCas(server.c2, { kind: 'session', sessionId }, profileId, {
+    claimSessions: true,
   });
   assert(
-    r.reply?.ok === true,
-    `setAssignment ${profileId} on ${server.label}: ${JSON.stringify(r)}`,
+    r.reply?.result?.ok === true,
+    `assign ${profileId} on ${server.label}: ${JSON.stringify(r)}`,
   );
 }
 
@@ -82,16 +77,8 @@ async function assignProfile(server, sessionId, profileId) {
  * session, so it applies to every call A's agents route to B.
  */
 async function assignPeer(server, machineId, profileId) {
-  const r = await server.c2.call('mcp.fromRenderer', {
-    windowId: 1,
-    message: {
-      type: 'mcp:setAssignment',
-      requestId: 1,
-      point: { kind: 'peer', machineId },
-      profileId,
-    },
-  });
-  assert(r.reply?.ok === true, `setAssignment peer on ${server.label}: ${JSON.stringify(r)}`);
+  const r = await assignProfileCas(server.c2, { kind: 'peer', machineId }, profileId);
+  assert(r.reply?.result?.ok === true, `assign peer on ${server.label}: ${JSON.stringify(r)}`);
 }
 
 /** Answers a request through the renderer message path, as a window does; resolves its result. */

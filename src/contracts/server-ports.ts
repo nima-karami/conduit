@@ -128,7 +128,12 @@ export interface DomainPort
   limitRules(): CompiledRules;
   messagingOn(): boolean;
   /** ServerSettings.mcpToolPolicy and mcpToolPolicyByCli, read per call. */
-  toolPolicy(): { global: GlobalPolicy; byCli: CliPolicyLayers };
+  toolPolicy(): {
+    global: GlobalPolicy;
+    byCli: CliPolicyLayers;
+    explicitGlobal?: import('../conduit-mcp/tool-policy').PolicyLayer;
+    resolvedGlobal?: import('../conduit-mcp/tool-policy').PolicyLayer;
+  };
   /** The human's answer to a usage-limit request (CON-21): docs/plans/2026-11-14-request-queue-machinery.plan.md C12. */
   limit: {
     resumeNow(sessionId: string): Promise<boolean>;

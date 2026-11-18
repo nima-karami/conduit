@@ -14,6 +14,7 @@ import {
 import { assert, logicalLines, phase, pollUntil, REPO, runScenario } from './harness.mjs';
 import { SERVER_PROTOCOL_GENERATION, teardownNames } from './harness-server-teardown.mjs';
 import { ECHO_AGENT, linkView, networkState, readAudit, startServer } from './net-helpers.mjs';
+import { assignProfileCas } from './permissions-policy-helpers.mjs';
 
 // The Machines UI over one ssh link, on fake-ssh: the app (A) adds server B over C2, shows B's
 // machine row as Connected, and an agent on A with Lead opens a session on B. That session is drawn
@@ -54,16 +55,8 @@ async function serverClient(userDataDir) {
 
 /** Gives one agent session the Lead profile through CON-24's assignment message, as the renderer does. */
 async function assignLead(appC2, sessionId) {
-  const r = await appC2.call('mcp.fromRenderer', {
-    windowId: 1,
-    message: {
-      type: 'mcp:setAssignment',
-      requestId: 1,
-      point: { kind: 'session', sessionId },
-      profileId: 'lead',
-    },
-  });
-  assert(r.reply?.ok === true, `setAssignment lead: ${JSON.stringify(r)}`);
+  const r = await assignProfileCas(appC2, { kind: 'session', sessionId }, 'lead');
+  assert(r.reply?.result?.ok === true, `assign lead: ${JSON.stringify(r)}`);
 }
 
 /** A read_screen result as plain text: the echo's own `ECHO:` prefixes and padding removed. */

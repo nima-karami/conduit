@@ -477,56 +477,35 @@ describe('RequestTemplate remote permission', () => {
     },
   });
 
-  it('a grantable permission shows Deny, Allow and Always; Allow sends no grant key', async () => {
+  it('allows once without creating a grant', async () => {
     const m = await mount(remoteAsk('perm-allow', true));
-    expect(buttonNamed(REQ_STR.reqTpl.permissionDeny)).toBeDefined();
-    expect(buttonNamed(REQ_STR.reqTpl.permissionAllow)).toBeDefined();
-    expect(buttonNamed(REQ_STR.reqTpl.permissionAlways)).toBeDefined();
     expect(rootEl().textContent).toContain('a routed open');
-    expect(buttonNamed(REQ_STR.openTerminal)).toBeUndefined();
-    click(must(buttonNamed(REQ_STR.reqTpl.permissionAllow), 'Allow'));
-    await act(async () => undefined);
-    expect(m.onSend).toHaveBeenCalledTimes(1);
-    const [sent] = m.onSend.mock.calls[0] ?? [];
-    expect(sent).toStrictEqual({ outcome: 'allowed' });
-    expect(sent).not.toHaveProperty('grant');
+    await clickAsync(must(buttonNamed('Allow once'), 'Allow once'));
+    expect(m.onSend).toHaveBeenCalledWith({ outcome: 'allowed' });
   });
 
-  it('Deny sends denied', async () => {
-    const m = await mount(remoteAsk('perm-deny', true));
-    await clickAsync(must(buttonNamed(REQ_STR.reqTpl.permissionDeny), 'Deny'));
-    expect(m.onSend.mock.calls[0]?.[0]).toStrictEqual({ outcome: 'denied' });
-  });
-
-  it('Always for this target sends allowed with the peer, target, until-revoked grant', async () => {
-    const m = await mount(remoteAsk('perm-always', true));
-    await clickAsync(must(buttonNamed(REQ_STR.reqTpl.permissionAlways), 'Always'));
-    expect(m.onSend.mock.calls[0]?.[0]).toStrictEqual({
+  it('confirms denial and grants explicitly', async () => {
+    const denied = await mount(remoteAsk('perm-deny', true));
+    click(must(buttonNamed('Deny ▾'), 'Deny'));
+    await clickAsync(must(buttonNamed('Deny'), 'Confirm denial'));
+    expect(denied.onSend).toHaveBeenCalledWith({ outcome: 'denied' });
+    await denied.unmount();
+    const allowed = await mount(remoteAsk('perm-grant', true));
+    click(must(buttonNamed('Allow…'), 'Allow…'));
+    await clickAsync(must(buttonNamed('Allow'), 'Confirm grant'));
+    expect(allowed.onSend).toHaveBeenCalledWith({
       outcome: 'allowed',
       grant: { who: 'peer', on: 'target', for: 'until-revoked' },
     });
   });
 
-  it('a permission that is not grantable has no Always', async () => {
-    await mount(remoteAsk('perm-once', false));
-    expect(buttonNamed(REQ_STR.reqTpl.permissionDeny)).toBeDefined();
-    expect(buttonNamed(REQ_STR.reqTpl.permissionAllow)).toBeDefined();
-    expect(buttonNamed(REQ_STR.reqTpl.permissionAlways)).toBeUndefined();
-  });
-
-  it('a stale machine disables every answer button, with a title saying why', async () => {
+  it('omits grant controls when unavailable or offline', async () => {
+    const once = await mount(remoteAsk('perm-once', false));
+    expect(buttonNamed('Allow…')).toBeUndefined();
+    await once.unmount();
     await mount(remoteAsk('perm-stale', true, true));
-    const hint = REQ_STR.reqTpl.offlineHint('Studio PC');
-    for (const name of [
-      REQ_STR.reqTpl.permissionDeny,
-      REQ_STR.reqTpl.permissionAllow,
-      REQ_STR.reqTpl.permissionAlways,
-    ]) {
-      const b = must(buttonNamed(name), name);
-      expect(b.disabled).toBe(true);
-      expect(b.title).toBe(hint);
-    }
-    expect(host.querySelector('.reqtpl-chip')?.textContent).toBe(REQ_STR.offline('Studio PC'));
+    expect(buttonNamed('Allow once')).toBeUndefined();
+    expect(rootEl().textContent).toContain('Studio PC is offline');
   });
 
   it('a stale question locks its options and Send', async () => {
@@ -548,7 +527,7 @@ describe('RequestTemplate remote permission', () => {
       message: 'raw host text',
       request: null,
     }));
-    await clickAsync(must(buttonNamed(REQ_STR.reqTpl.permissionAllow), 'Allow'));
+    await clickAsync(must(buttonNamed('Allow once'), 'Allow once'));
     expect(rootEl().textContent).toContain(REQ_STR.reqTpl.refusal.peerUnreachable('Studio PC'));
     expect(rootEl().textContent).not.toContain('raw host text');
   });
@@ -559,9 +538,10 @@ describe('RequestTemplate remote permission', () => {
     m.onSend.mockImplementationOnce(
       () => new Promise<RequestAnswerResult>((resolve) => (finish = resolve)),
     );
-    click(must(buttonNamed(REQ_STR.reqTpl.permissionDeny), 'Deny'));
-    expect(rootEl().textContent).toContain(REQ_STR.reqTpl.sending);
-    expect(must(buttonNamed(REQ_STR.reqTpl.permissionAllow), 'Allow').disabled).toBe(true);
+    click(must(buttonNamed('Deny ▾'), 'Deny'));
+    click(must(buttonNamed('Deny'), 'Confirm denial'));
+    expect(rootEl().textContent).toContain('Sending…');
+    expect(must(buttonNamed('Allow once'), 'Allow once').disabled).toBe(true);
     await act(async () => finish({ ok: true, request: m.request }));
   });
 

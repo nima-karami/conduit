@@ -1,6 +1,7 @@
 import type { AgentScopeReason } from './add-dir-delivery';
 import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
+import type { ActivityLookup } from './conduit-mcp/activity-log';
 import type { ActivityPage, ActivityQuery } from './conduit-mcp/activity-query';
 import type { AgentCli } from './conduit-mcp/install-types';
 import type {
@@ -11,8 +12,12 @@ import type {
   LocalPolicyReviewResult,
   PermissionAnswer,
   PolicyEditResult,
+  PreviewDraft,
+  PreviewIntent,
+  PreviewResult,
   Profile,
   ProfileId,
+  ReplayResult,
 } from './conduit-mcp/policy-types';
 import type {
   AnswerInput,
@@ -20,7 +25,7 @@ import type {
   OwnerPermissionPage,
   RequestAnswerResult,
 } from './conduit-mcp/request-types';
-import type { CliKind, PolicySource, ToolName, ToolPolicyPatch } from './conduit-mcp/tool-policy';
+import type { PolicySource, ToolName } from './conduit-mcp/tool-policy';
 import type { Handle, MessageKind, Priority, ToolErrorCode } from './conduit-mcp/types';
 import type {
   AskAnswer,
@@ -665,6 +670,7 @@ export type HostToWebview =
   // broadcast, plus replies to the sender's mcp:* requests.
   // Linked machines (CON-27 machinery; the Machines UI is CON-28).
   | { type: 'network:state'; state: NetworkState }
+  | { type: 'network:capabilityResult'; requestId: number; ok: boolean }
   // Remote panes and the Machines UI (docs/plans/2026-11-16-remote-ssh-machines-ui.plan.md).
   | { type: 'remote:attached'; requestId: number; result: RemoteAttachResult }
   | { type: 'remote:data'; viewId: string; data: string }
@@ -750,6 +756,9 @@ export type HostToWebview =
   // always the caller; closeSession names its target in the action.
   | { type: 'mcp:ui'; requestId: string; sessionId: string; action: McpUiAction }
   | { type: 'mcp:activity'; requestId: number; page: ActivityPage }
+  | { type: 'mcp:activity:row'; requestId: number; result: ActivityLookup }
+  | { type: 'mcp:previewResult'; requestId: number; result: PreviewResult }
+  | { type: 'mcp:replayResult'; requestId: number; result: ReplayResult }
   | { type: 'mcp:ownerPermissions'; requestId: number; page: OwnerPermissionPage }
   | {
       type: 'mcp:codexPostureResult';
@@ -770,26 +779,6 @@ export type HostToWebview =
   | { type: 'mcp:grantLifecycleResult'; requestId: number; result: GrantLifecycleResult }
   | { type: 'mcp:policyResult'; requestId: number; ok: true }
   | { type: 'mcp:policyResult'; requestId: number; ok: false; error: string }
-  | { type: 'mcp:toolPolicyResult'; requestId: number; ok: true }
-  | {
-      type: 'mcp:toolPolicyResult';
-      requestId: number;
-      ok: false;
-      error:
-        | 'unknown-session'
-        | 'unknown-tool'
-        | 'invalid-value'
-        | 'read-only'
-        | 'scoped'
-        | 'save-failed'
-        | 'too-large'
-        | 'conflict'
-        | 'unknown-profile'
-        | 'native-review-required'
-        | 'not-found'
-        | 'no-copy'
-        | 'busy';
-    }
   | {
       type: 'mcp:attachment';
       requestId: number;
@@ -1308,6 +1297,16 @@ export type WebviewToHost =
   | { type: 'mcp:requestAnswer'; requestId: string; answer: AnswerInput }
   | { type: 'mcp:permissionAnswer'; requestId: string; answer: PermissionAnswer }
   | { type: 'mcp:activity:get'; requestId: number; query: ActivityQuery }
+  | { type: 'mcp:activity:lookup'; requestId: number; id: string; at: string }
+  | {
+      type: 'mcp:preview';
+      requestId: number;
+      sessionId: string;
+      intent: PreviewIntent;
+      draft: PreviewDraft | null;
+      expectedToken: string;
+    }
+  | { type: 'mcp:replay'; requestId: number; draft: PreviewDraft; expectedToken: string }
   | {
       type: 'mcp:ownerPermissions:get';
       requestId: number;
@@ -1352,23 +1351,7 @@ export type WebviewToHost =
       edit: LocalPolicyEdit;
     }
   | { type: 'mcp:policyRetry'; requestId: number }
-  | {
-      type: 'mcp:setAssignment';
-      requestId: number;
-      point: AssignmentPoint;
-      profileId: ProfileId | null;
-      /** The machine whose rules this edits (CON-46); absent edits this machine's rules. */
-      machine?: string;
-    }
-  | {
-      type: 'mcp:setPointPolicy';
-      requestId: number;
-      point: { kind: 'default' } | { kind: 'cli'; cli: CliKind };
-      tool: string;
-      patch: unknown;
-      /** The machine whose rules this edits (CON-46); absent edits this machine's rules. */
-      machine?: string;
-    }
+  | { type: 'mcp:acknowledgeMigration'; requestId: number; expectedToken: string }
   | { type: 'mcp:dismissNativeImpact'; requestId: number; id: string }
   | {
       type: 'mcp:grantLifecycle';
@@ -1400,21 +1383,13 @@ export type WebviewToHost =
       action: 'discard' | 'reapply' | 'retry-save';
       nativeConsent?: boolean;
     }
-  | { type: 'mcp:allowOnce'; requestId: number; activityId: string }
+  | { type: 'mcp:allowOnce'; requestId: number; activityId: string; at: string }
   | { type: 'mcp:setAway'; away: boolean; until: string | null }
   // Answer from the approval card; counts only from the window the ask was sent to
   // (spec 2026-10-30-conduit-mcp-tool-policy §2.4). The host re-validates every field.
   | { type: 'mcp:askAnswer'; askId: string; answer: AskAnswer }
   // The host re-parses result against the wait's action kind and its window.
   | { type: 'mcp:uiResult'; requestId: string; result: unknown }
-  // Session policy layer edit (same spec §3.4); tool stays a string because the host validates it.
-  | {
-      type: 'mcp:setToolPolicy';
-      requestId: number;
-      sessionId: string;
-      tool: string;
-      patch: ToolPolicyPatch;
-    }
   // CONDUIT_E2E=1 ONLY: shift the host's schedule clock and re-evaluate, so the smoke scenario
   // proves interval repeats and the expiry windows in milliseconds instead of hours (§7).
   | { type: 'timer:test'; op: 'advance'; ms: number }
@@ -1533,6 +1508,13 @@ export type WebviewToHost =
   | { type: 'term:resize'; sessionId: string; cols: number; rows: number }
   | { type: 'term:dispose'; sessionId: string }
   | { type: 'network:get' }
+  | {
+      type: 'network:setCapability';
+      requestId: number;
+      machineId: string;
+      capability: import('./contracts/remote-principal').Capability;
+      on: boolean;
+    }
   | { type: 'remote:attach'; requestId: number; machineId: string; sessionId: string }
   | { type: 'remote:detach'; viewId: string }
   | { type: 'remote:input'; machineId: string; sessionId: string; data: string }

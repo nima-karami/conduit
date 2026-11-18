@@ -138,6 +138,9 @@ export interface OwnerPermissionView {
   id: string;
   sessionId: string;
   requester: string;
+  space: string | null;
+  lead: string | null;
+  machine: string;
   title: string;
   tool: ToolName;
   why: string;
@@ -148,6 +151,7 @@ export interface OwnerPermissionView {
   withdrawReason: string | null;
   grantable: boolean;
   answerable: boolean;
+  nextTimeGrantSaved?: boolean;
   choices: GrantChoice[];
 }
 export interface OwnerPermissionCursor {

@@ -24,6 +24,7 @@ import {
   until,
 } from './conduit-mcp-helpers.mjs';
 import { assert, phase, removeDir, runScenario } from './harness.mjs';
+import { saveAssignmentPage } from './permissions-policy-helpers.mjs';
 
 const errCode = (r) => r?.error?.code;
 const temp = (label) => mkdtempSync(join(tmpdir(), `policy-profiles-${label}-`));
@@ -108,46 +109,34 @@ const policyOf = async (page, id) => (await mcpState(page))?.policy?.sessions?.[
 
 async function setAssignment(page, sessionId, profileId) {
   await tapMcp(page);
-  const reply = await page.evaluate(
-    ({ s, p, ms }) =>
-      new Promise((resolve, reject) => {
-        window.__assignReq = (window.__assignReq ?? 800_000) + 1;
-        const requestId = window.__assignReq;
-        const timer = setTimeout(() => {
-          off();
-          reject(new Error(`mcp:setAssignment ${p} on ${s}: no mcp:policyResult in ${ms} ms`));
-        }, ms);
-        const off = window.agentDeck.subscribe((m) => {
-          if (m.type !== 'mcp:policyResult' || m.requestId !== requestId) return;
-          clearTimeout(timer);
-          off();
-          resolve(m);
-        });
-        window.agentDeck.post({
-          type: 'mcp:setAssignment',
-          requestId,
-          point: { kind: 'session', sessionId: s },
-          profileId: p,
-        });
-      }),
-    { s: sessionId, p: profileId, ms: 10_000 },
-  );
-  assert(
-    reply.ok === true,
-    `mcp:setAssignment ${profileId} on ${sessionId}: ${JSON.stringify(reply)}`,
-  );
+  await page.waitForFunction(() => Boolean(window.__mcp?.policy?.editToken), undefined, {
+    timeout: 10_000,
+  });
+  const policy = (await mcpState(page)).policy;
+  const point = { kind: 'session', sessionId };
+  const existing = policy.assignments.find(
+    (entry) => entry.point.kind === 'session' && entry.point.sessionId === sessionId,
+  )?.assignment;
+  const assignment = { ...(existing ?? { exceptions: [], onScreenOnly: false }), profileId };
+  const result = await saveAssignmentPage(page, point, assignment, policy.editToken);
+  assert(result.ok === true, `assign ${profileId} on ${sessionId}: ${JSON.stringify(result)}`);
 }
 
 await runScenario(
   'policy-profiles',
   async ({ page, log }) => {
     await tapMcp(page);
+    const migration = page.getByRole('dialog', { name: 'Permissions have a new home' });
+    await migration.getByRole('rowheader', { name: /^v064-all-on:/ }).waitFor();
+    await migration.getByRole('rowheader', { name: SEEDED_ID, exact: true }).waitFor();
+    await migration.getByRole('button', { name: 'Done', exact: true }).click();
+    await migration.waitFor({ state: 'hidden' });
     const dirC = temp('caller');
     const dirE = temp('active');
     const target = temp('target');
 
     const makeActive = async (sessionId) => {
-      await page.locator(`.session[data-sessionid="${sessionId}"]`).click();
+      await page.locator(`.session[data-sessionid="${sessionId}"] .session__name`).click();
       assert(
         await until(async () => (await activeSessionId(page)) === sessionId, 5_000),
         `${sessionId} never became active`,

@@ -22,16 +22,30 @@ afterEach(() => {
 });
 
 it('reviews the frozen copy and requires confirmation before saving its digest', async () => {
-  api.reviewLocalPolicy.mockResolvedValue({
+  api.reviewLocalPolicy.mockImplementation(async ({ profile }: { profile: Profile }) => ({
     ok: true,
     requiresNativeReview: true,
     digest: 'reviewed',
-  });
+    profileDisplay: {
+      before: null,
+      after: profile,
+      optedInPoints: [{ kind: 'default' }],
+      affectedSessions: [{ sessionId: 's1', family: 'claude', point: { kind: 'default' } }],
+      truncated: false,
+    },
+  }));
   api.saveProfile.mockResolvedValue({ ok: true });
   const host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);
-  await act(async () => root.render(<PermissionsSettings serverConnected />));
+  await act(async () =>
+    root.render(
+      <PermissionsSettings
+        serverConnected
+        sessions={[{ id: 's1', name: 'Lane one' } as import('../../src/types').Session]}
+      />,
+    ),
+  );
   const click = async (label: string) => {
     const button = [...host.querySelectorAll('button')].find(
       (element) => element.textContent === label || element.getAttribute('aria-label') === label,
@@ -47,6 +61,8 @@ it('reviews the frozen copy and requires confirmation before saving its digest',
   expect(host.textContent).toContain('After');
   expect(host.textContent).toContain('Tool rules in the new profile');
   expect(host.textContent).toContain('open_session');
+  expect(host.textContent).toContain('Default assignment');
+  expect(host.textContent).toContain('Lane one · claude · default assignment');
   const candidate = api.reviewLocalPolicy.mock.calls[0][0].profile;
   expect(candidate.builtIn).toBe(false);
   await click('Confirm and save');
@@ -62,7 +78,19 @@ it('shows only changed custom rules, including their conditions, in the review',
     builtIn: false,
   };
   api.state.policy.profiles = [profile];
-  api.reviewLocalPolicy.mockResolvedValue({ ok: true, requiresNativeReview: false });
+  api.reviewLocalPolicy.mockImplementation(
+    async ({ profile: candidate }: { profile: Profile }) => ({
+      ok: true,
+      requiresNativeReview: false,
+      profileDisplay: {
+        before: profile,
+        after: candidate,
+        optedInPoints: [],
+        affectedSessions: [],
+        truncated: false,
+      },
+    }),
+  );
   const host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);

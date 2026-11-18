@@ -9,8 +9,10 @@ All notable user-facing changes to Conduit. Format follows
 ### Added
 - Permission assignments can opt in to a profile’s supported Claude Code and Codex launch flags. The session records the flags Conduit prepared for its current launch.
 - Review a session’s effective permissions from its menu or permission badge. Settings → Permissions gives you profiles, assignments, grants, and a link to the Activity feed.
+- Review permission requests and grants in Needs You, edit rules for your own linked machines, and see the recorded reason for a decision in Permissions Activity.
 
 ### Fixed
+- Codex scheduling recovers after a rollout file is replaced when the original path still reports the same thread ID. The retired launch’s linked mode remains unavailable.
 - A pending remote permission edit clears when a replacement connection confirms the same rules were saved.
 - Remote permission edits and conflict choices confirm saved intent, reject stale rules, and show saving failures without losing pending changes.
 - Queued agent input, screen reads, and file batches recheck current permissions before writing, submitting, opening another file, or returning captured screen data.

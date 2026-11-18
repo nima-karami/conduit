@@ -17,8 +17,8 @@ it('queries the scoped activity and opens recorded facts by keyboard', async () 
     action: 'open_file',
     target: '/a',
     summary: null,
-    decision: 'allow',
-    decidedBy: 'policy',
+    decision: null,
+    decidedBy: 'cli',
     outcome: 'ok',
     durationMs: 4,
     requestId: null,
@@ -52,10 +52,13 @@ it('queries the scoped activity and opens recorded facts by keyboard', async () 
   });
   expect(document.activeElement).toBe(buttons[1]);
   await act(async () => buttons[1].click());
-  expect(host.querySelector('[aria-label="Why this activity"]')?.textContent).toContain(
-    'Full decision evidence is unavailable',
-  );
-  expect(host.querySelector('[aria-label="Why this activity"]')?.textContent).toContain('policy');
+  const details = host.querySelector('aside');
+  expect(details?.textContent).toContain('observed CLI action');
+  expect(details?.textContent).toContain('open_file · /a');
+  expect(details?.textContent).not.toContain('How Conduit decided');
+  expect(document.activeElement).toBe(details?.querySelector('h2'));
+  await act(async () => details?.querySelector('button')?.click());
+  expect(document.activeElement).toBe(buttons[1]);
   const more = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Load more');
   await act(async () => more?.click());
   expect(getActivity).toHaveBeenLastCalledWith(expect.objectContaining({ before: 'cursor' }));

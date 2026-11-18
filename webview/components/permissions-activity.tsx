@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ActivityEntry } from '../../src/conduit-mcp/activity-log';
+import type { ActivityEntry, ActivityLookup } from '../../src/conduit-mcp/activity-log';
 import type { ActivityPage, ActivityQuery } from '../../src/conduit-mcp/activity-query';
 import { CLI_KINDS } from '../../src/conduit-mcp/tool-policy';
+import { type ActivityExceptionSource, PermissionsActivityWhy } from './permissions-activity-why';
 
 type Option = { id: string; name: string };
 type Filters = {
@@ -16,19 +17,29 @@ type Filters = {
 
 export function PermissionsActivity({
   sessionId,
+  machineId,
   getActivity,
+  item,
+  getActivityRow,
+  allowOnce,
+  onAddException,
   sessions = [],
   machines = [],
 }: {
   sessionId?: string;
+  machineId?: string;
   getActivity(query: ActivityQuery): Promise<ActivityPage | null>;
+  item?: Pick<ActivityEntry, 'id' | 'at'>;
+  getActivityRow?(id: string, at: string): Promise<ActivityLookup | null>;
+  allowOnce?(id: string, at: string): Promise<boolean>;
+  onAddException?(source: ActivityExceptionSource): void;
   sessions?: readonly Option[];
   machines?: readonly Option[];
 }) {
   const [filters, setFilters] = useState<Filters>({
     session: sessionId ?? '',
     cli: '',
-    machine: '',
+    machine: machineId ?? '',
     decision: '',
     action: '',
     since: '',
@@ -39,20 +50,40 @@ export function PermissionsActivity({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [writable, setWritable] = useState(true);
-  const [cursor, setCursor] = useState<string | undefined>();
+  const [pagination, setPagination] = useState<{ before?: string }>({});
+  const [lookupError, setLookupError] = useState<string | null>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
   const [selected, setSelected] = useState<ActivityEntry | null>(null);
   const [focusIndex, setFocusIndex] = useState(0);
   const rowRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const change = <K extends keyof Filters>(key: K, value: Filters[K]) => {
-    setCursor(undefined);
+    setPagination({});
     setSelected(null);
     setFocusIndex(0);
     setFilters((previous) => ({ ...previous, [key]: value }));
   };
   useEffect(() => {
+    if (!item || !getActivityRow) return;
+    let alive = true;
+    void getActivityRow(item.id, item.at).then(
+      (found) => {
+        if (!alive) return;
+        if (found?.ok) setSelected(found.row);
+        else setLookupError('This Activity entry is unavailable.');
+      },
+      () => {
+        if (alive) setLookupError('This Activity entry is unavailable.');
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [item, getActivityRow]);
+  useEffect(() => {
     let alive = true;
     setLoading(true);
     setError(null);
+    const cursor = pagination.before;
     const since = filters.since ? new Date(filters.since) : null;
     void getActivity({
       ...(filters.session ? { sessionId: filters.session } : {}),
@@ -67,11 +98,11 @@ export function PermissionsActivity({
     }).then(
       (page) => {
         if (!alive) return;
+        if (page) setWritable(page.writable);
         if (!page || page.error) setError(page?.error ?? 'Activity could not be loaded.');
         else {
           setRows((previous) => (cursor ? [...previous, ...page.rows] : page.rows));
           setNext(page.next);
-          setWritable(page.writable);
         }
         setLoading(false);
       },
@@ -85,7 +116,7 @@ export function PermissionsActivity({
     return () => {
       alive = false;
     };
-  }, [filters, cursor, getActivity]);
+  }, [filters, pagination, getActivity]);
   const sessionName = (id: string | null) => sessions.find((s) => s.id === id)?.name ?? id;
   const machineName = (id: string | null) => machines.find((m) => m.id === id)?.name ?? id;
   const actor = (row: ActivityEntry) =>
@@ -98,7 +129,21 @@ export function PermissionsActivity({
       .join(' · ') || 'Unknown';
   return (
     <main className="permissions-activity" aria-label="Permissions Activity">
-      <h1>Permissions Activity</h1>
+      <header className="permissions-activity__header">
+        <h1 ref={heading} tabIndex={-1}>
+          Permissions Activity
+        </h1>
+        <button
+          type="button"
+          className="btn btn--sm"
+          onClick={() => {
+            setPagination({});
+          }}
+        >
+          Refresh
+        </button>
+      </header>
+      {lookupError && <p role="alert">{lookupError}</p>}
       <div className="permissions-activity__filters">
         <label>
           Session{' '}
@@ -260,40 +305,36 @@ export function PermissionsActivity({
         </table>
       )}
       {next && !loading && !error && (
-        <button type="button" className="btn btn--sm" onClick={() => setCursor(next)}>
+        <button
+          type="button"
+          className="btn btn--sm"
+          onClick={() => setPagination({ before: next })}
+        >
           Load more
         </button>
       )}
       {selected && (
-        <section className="permissions-activity__why" aria-label="Why this activity">
-          <h2>Why</h2>
-          <button type="button" className="btn btn--sm" onClick={() => setSelected(null)}>
-            Close
-          </button>
-          <p>Full decision evidence is unavailable for this activity.</p>
-          <dl>
-            <dt>Source</dt>
-            <dd>{selected.lane}</dd>
-            <dt>Actor</dt>
-            <dd>{actor(selected)}</dd>
-            <dt>Agent kind</dt>
-            <dd>{selected.cli ?? 'Unknown'}</dd>
-            <dt>Action</dt>
-            <dd>{selected.action}</dd>
-            <dt>Target</dt>
-            <dd>{selected.target ?? 'None recorded'}</dd>
-            <dt>Decision</dt>
-            <dd>{selected.decision ?? 'None recorded'}</dd>
-            <dt>Decided by</dt>
-            <dd>{selected.decidedBy || 'Not recorded'}</dd>
-            <dt>Outcome</dt>
-            <dd>{selected.outcome ?? 'Not recorded'}</dd>
-            <dt>Summary</dt>
-            <dd>{selected.summary ?? 'None recorded'}</dd>
-            <dt>Duration</dt>
-            <dd>{selected.durationMs === null ? 'Not recorded' : `${selected.durationMs} ms`}</dd>
-          </dl>
-        </section>
+        <div className="permissions-activity__why">
+          <PermissionsActivityWhy
+            key={JSON.stringify([selected.id, selected.at])}
+            row={selected}
+            canAllowOnce={
+              !!allowOnce &&
+              !!selected.trace?.winnerDigest &&
+              sessions.some((session) => session.id === selected.principal.sessionId)
+            }
+            canEditException={
+              !!onAddException &&
+              sessions.some((session) => session.id === selected.principal.sessionId)
+            }
+            onAllowOnce={(row) => allowOnce?.(row.id, row.at) ?? Promise.resolve(false)}
+            onAddException={(source) => onAddException?.(source)}
+            onClose={() => {
+              setSelected(null);
+              (rowRefs.current[focusIndex] ?? heading.current)?.focus();
+            }}
+          />
+        </div>
       )}
     </main>
   );

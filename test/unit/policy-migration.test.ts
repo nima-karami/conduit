@@ -368,3 +368,37 @@ describe('exactness with a non-default global', () => {
     }
   });
 });
+
+describe('migration summary provenance', () => {
+  it('records explicit layers and their actual converted assignment', () => {
+    const result = migrateLegacyPolicy({
+      global: DEFAULT_TOOL_POLICY,
+      explicitGlobal: { send_input: { access: 'off' } },
+      byCli: { claude: { open_session: { access: 'ask' } } },
+      sessions: [{ sessionId: 's1', cli: null, layer: { send_input: { access: 'off' } } }],
+    });
+    expect(result.notes.migrationSummary).toEqual([
+      expect.objectContaining({
+        point: { kind: 'default' },
+        fields: [{ tool: 'send_input', field: 'access', value: 'off' }],
+      }),
+      expect.objectContaining({
+        point: { kind: 'cli', cli: 'claude' },
+        fields: [{ tool: 'open_session', field: 'access', value: 'ask' }],
+      }),
+      expect.objectContaining({
+        point: { kind: 'session', sessionId: 's1' },
+        fields: [{ tool: 'send_input', field: 'access', value: 'off' }],
+      }),
+    ]);
+    expect(result.notes.migrationSummary?.[1]?.profileId).toBe(
+      result.assignments.find((row) => row.point.kind === 'cli')?.assignment.profileId,
+    );
+  });
+  it('does not produce a summary for empty defaults', () => {
+    expect(
+      migrateLegacyPolicy({ global: DEFAULT_TOOL_POLICY, byCli: {}, sessions: [] }).notes
+        .migrationSummary,
+    ).toBeUndefined();
+  });
+});

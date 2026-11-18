@@ -1,32 +1,13 @@
 import {
   Fragment,
-  type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
   useCallback,
   useEffect,
-  useId,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from 'react';
 import { AGENT_CLIS, type AgentCli } from '../../src/conduit-mcp/install-types';
-import type { PolicyEditResult } from '../../src/conduit-mcp/policy-types';
-import {
-  CLI_KINDS,
-  type CliKind,
-  coerceGlobalPolicy,
-  coercePolicyPatch,
-  type PolicyField,
-  type PolicyLayer,
-  type PolicyValue,
-  TOOL_NAMES,
-  type ToolName,
-  type ToolPolicy,
-  type ToolPolicyPatch,
-  withPolicyPatch,
-} from '../../src/conduit-mcp/tool-policy';
-import { emptyPolicyUi, type RemotePolicyUi } from '../../src/conduit-mcp/ui-types';
 import type { AutoResumeMode } from '../../src/contracts/scheduler';
 import type { LogLevel } from '../../src/logging';
 import type { AboutInfo } from '../../src/protocol';
@@ -58,6 +39,7 @@ import { CHROME_STR } from '../chrome-strings';
 import { MCP_STR } from '../conduit-mcp-strings';
 import { IconCheck, IconChevron, IconClose, IconDownload, IconRefreshCw } from '../icons';
 import { MACHINES_STR } from '../machines-strings';
+import { useNetworkState } from '../network-store';
 import { useSettings } from '../settings';
 import { DEFAULT_CUSTOM, validateShader } from '../shader-source';
 import { MONO_FONTS, THEMES, type ThemeDef, UI_FONTS } from '../themes';
@@ -67,12 +49,13 @@ import { AutoSaveDelayField } from './auto-save-delay-field';
 import { McpInstallRow } from './mcp-install-row';
 import { McpProjectEntries } from './mcp-project-entries';
 import { ModalLayer } from './modal-layer';
+import { OwnMachinePermissions } from './own-machine-permissions';
+import type { AssignmentExceptionSeed } from './permissions-assignments';
 import { PermissionsSettings } from './permissions-settings';
 import { ReleaseNotesPage } from './release-notes-page';
 import { SelectField } from './select-field';
 import { AgentRowPreview } from './session-card';
 import { ShortcutsTab } from './shortcuts-tab';
-import { restorePatch, ToolPolicyEditor } from './tool-policy-editor';
 import type { UpdateStatus } from './update-card';
 
 export type SettingsTab =
@@ -82,6 +65,7 @@ export type SettingsTab =
   | 'appearance'
   | 'shortcuts'
   | 'skills'
+  | 'links'
   | 'about';
 type Tab = SettingsTab;
 
@@ -108,9 +92,15 @@ export function SettingsModal({
   onSetChangesView,
   serverConnected = true,
   permissionSessions,
+  activityExceptionSeed,
+  onActivityExceptionSeedConsumed,
   onOpenPermissionActivity,
+  onAddMachine,
+  onOpenRequest,
 }: {
   agents: AgentDefinition[];
+  onAddMachine?: () => void;
+  onOpenRequest?: (id: string) => void;
   initialTab?: Tab;
   /** Opens About with the release-notes sub-page (What's new, status bar, About button). */
   initialAboutReleaseNotes?: boolean;
@@ -123,7 +113,9 @@ export function SettingsModal({
   onSetChangesView: (view: ChangesViewMode) => void;
   serverConnected?: boolean;
   permissionSessions?: Session[];
-  onOpenPermissionActivity?: () => void;
+  activityExceptionSeed?: AssignmentExceptionSeed | null;
+  onActivityExceptionSeedConsumed?: () => void;
+  onOpenPermissionActivity?: (machineId?: string) => void;
   onCheckUpdate?: () => void;
   onRelaunch?: () => void;
   updateStatus?: UpdateStatus | null;
@@ -152,6 +144,7 @@ export function SettingsModal({
     { id: 'general', label: 'General' },
     { id: 'mcp', label: MCP_STR.install.tab },
     { id: 'permissions', label: 'Permissions' },
+    { id: 'links', label: 'Links' },
     { id: 'appearance', label: 'Appearance' },
     { id: 'shortcuts', label: 'Shortcuts' },
     { id: 'skills', label: 'Skills' },
@@ -222,6 +215,7 @@ export function SettingsModal({
                 projectPath={projectPath}
                 focusCli={focusCli}
                 onFocusCliSpent={spendFocusCli}
+                onOpenPermissions={() => setTab('permissions')}
                 serverConnected={serverConnected}
               />
             )}
@@ -229,6 +223,15 @@ export function SettingsModal({
               <PermissionsSettings
                 serverConnected={serverConnected}
                 sessions={permissionSessions}
+                exceptionSeed={activityExceptionSeed}
+                onExceptionSeedConsumed={onActivityExceptionSeedConsumed}
+                onOpenActivity={onOpenPermissionActivity}
+              />
+            )}
+            {tab === 'links' && (
+              <LinksTab
+                onAddMachine={onAddMachine}
+                onOpenRequest={onOpenRequest}
                 onOpenActivity={onOpenPermissionActivity}
               />
             )}
@@ -251,6 +254,65 @@ export function SettingsModal({
         </div>
       </div>
     </ModalLayer>
+  );
+}
+
+function LinksTab({
+  onAddMachine,
+  onOpenRequest,
+  onOpenActivity,
+}: {
+  onAddMachine?: () => void;
+  onOpenRequest?: (id: string) => void;
+  onOpenActivity?: (machineId: string) => void;
+}) {
+  const network = useNetworkState();
+  const mcp = useConduitMcp();
+  const [selected, setSelected] = useState<string | null>(null);
+  const link = network?.links.find((item) => item.machineId === selected) ?? network?.links[0];
+  return (
+    <section className="settings-links">
+      <h2>Links</h2>
+      <div className="policycli__bar">
+        {network?.links.map((item) => (
+          <button
+            type="button"
+            className="btn btn--sm"
+            aria-pressed={item.machineId === link?.machineId}
+            key={item.machineId}
+            onClick={() => setSelected(item.machineId)}
+          >
+            {item.name}
+          </button>
+        ))}
+        {onAddMachine && (
+          <button type="button" className="btn btn--sm" onClick={onAddMachine}>
+            Add machine…
+          </button>
+        )}
+      </div>
+      {!network ? (
+        <p>Loading links…</p>
+      ) : !link ? (
+        <p>No linked machines yet.</p>
+      ) : (
+        <OwnMachinePermissions
+          key={link.machineId}
+          link={link}
+          remote={
+            mcp.state?.policy.machines.find((machine) => machine.machineId === link.machineId) ??
+            null
+          }
+          mcp={mcp}
+          onOpenRequest={onOpenRequest}
+          onOpenActivity={onOpenActivity ? () => onOpenActivity(link.machineId) : undefined}
+          sshController={
+            link.transport === 'ssh' &&
+            network.machines.some((machine) => machine.machine_id === link.machineId)
+          }
+        />
+      )}
+    </section>
   );
 }
 
@@ -914,360 +976,13 @@ function Toggle({
   );
 }
 
-type PolicyTab = 'all' | CliKind;
-const POLICY_TABS: readonly PolicyTab[] = ['all', ...CLI_KINDS];
-
-interface PendingPick {
-  patch: ToolPolicyPatch;
-  settled: boolean;
-  // The host's last yes for this tool, kept until a broadcast reflects it: a refusal reverts here.
-  confirmed?: Partial<ToolPolicy>;
-}
-type PendingPicks = Partial<Record<PolicyTab, Partial<Record<ToolName, PendingPick>>>>;
-type FailedPicks = Partial<Record<PolicyTab, ReadonlySet<ToolName>>>;
-
-const withoutTool = (set: ReadonlySet<ToolName> | undefined, tool: ToolName) => {
-  const next = new Set(set);
-  next.delete(tool);
-  return next;
-};
-
-const putPick = (
-  pending: PendingPicks,
-  t: PolicyTab,
-  tool: ToolName,
-  pick: PendingPick | null,
-): PendingPicks => {
-  const picks: Partial<Record<ToolName, PendingPick>> = { ...pending[t] };
-  if (pick) picks[tool] = pick;
-  else delete picks[tool];
-  return { ...pending, [t]: picks };
-};
-
-/** A broadcast carries the host's answer for every pick that has landed; the picks still in
- *  flight keep their optimistic value. */
-const dropSettled = (pending: PendingPicks): PendingPicks => {
-  const next: PendingPicks = {};
-  for (const t of POLICY_TABS) {
-    const kept: Partial<Record<ToolName, PendingPick>> = {};
-    for (const tool of TOOL_NAMES) {
-      const pick = pending[t]?.[tool];
-      if (pick && !pick.settled) kept[tool] = { ...pick, confirmed: undefined };
-    }
-    if (Object.keys(kept).length > 0) next[t] = kept;
-  }
-  return next;
-};
-
-function withPending(
-  layer: PolicyLayer | undefined,
-  picks: Partial<Record<ToolName, PendingPick>> | undefined,
-): PolicyLayer | undefined {
-  let next = layer;
-  for (const tool of TOOL_NAMES) {
-    const pick = picks?.[tool];
-    if (pick) next = withPolicyPatch(next, tool, pick.patch);
-  }
-  return next;
-}
-
-const NO_MACHINES: RemotePolicyUi[] = [];
-
-const remoteActionError = (result: PolicyEditResult | null): string | null => {
-  if (result === null)
-    return "Conduit did not confirm this change. Reopen this machine's rules before trying again.";
-  if (result.ok) return null;
-  switch (result.error) {
-    case 'conflict':
-      return 'These rules changed. Review the latest version before trying again.';
-    case 'native-review-required':
-      return 'Review the native launch changes in Permissions before applying these rules.';
-    case 'busy':
-      return 'A change is being sent. Wait for it to finish before trying again.';
-    case 'save-failed':
-      return "Couldn't save this machine's pending rules. Fix the save problem, then try again.";
-    case 'read-only':
-      return "This machine's pending rules are read-only.";
-    default:
-      return "Couldn't update these rules. Reopen this machine's rules and try again.";
-  }
-};
-
-const remoteStatusText = (r: RemotePolicyUi): string => {
-  const R = MCP_STR.tools.remote;
-  switch (r.status) {
-    case 'applied':
-      return R.applied(r.name);
-    case 'waiting':
-      return R.waiting(r.name);
-    case 'pushing':
-      return R.pushing(r.name);
-    case 'refused':
-      return R.refused(r.name, r.refusal ?? '');
-    case 'conflict':
-      return R.conflict(r.name);
-  }
-};
-
-/** The tool policy under the MCP master: the global layer, or one CLI's layer over it
- *  (tool-policy spec §8–§9). Disabled, not hidden, while the master is off so the user can
- *  see what turning it on would allow. */
-function McpToolPolicyRows({
-  settings,
-  serverConnected,
-}: {
-  settings: AppSettings;
-  serverConnected: boolean;
-}) {
-  const idBase = useId();
-  const [tab, setTab] = useState<PolicyTab>('all');
-  const mcp = useConduitMcp();
-  // '' is this machine; a machine's id is never empty.
-  const [machineId, setMachineId] = useState('');
-  const [remoteActionPending, setRemoteActionPending] = useState(false);
-  const [remoteActionFailure, setRemoteActionFailure] = useState<string | null>(null);
-  const remoteActionSeq = useRef(0);
-  const machines = mcp.state?.policy.machines ?? NO_MACHINES;
-  // A machine that has since left the list falls back to this machine's rows.
-  const remote =
-    machineId === '' ? null : (machines.find((m) => m.machineId === machineId) ?? null);
-  const remoteId = remote?.machineId;
-  const localLegacy = mcp.state?.policy.legacy;
-  const legacy = useMemo(
-    () => remote?.policy.legacy ?? localLegacy ?? emptyPolicyUi().legacy,
-    [remote, localLegacy],
-  );
-  const [pending, setPending] = useState<PendingPicks>({});
-  const [failed, setFailed] = useState<FailedPicks>({});
-  const [seenLegacy, setSeenLegacy] = useState(legacy);
-  // Only the newest pick per tab and tool may settle it, so an older answer landing late can't.
-  const seqRef = useRef(new Map<string, number>());
-  const legacyRef = useRef(legacy);
-  legacyRef.current = legacy;
-  // A pick is for the machine it was made on; one that lands after the user switched is dropped.
-  const machineRef = useRef(remoteId);
-  machineRef.current = remoteId;
-  const off = !settings.conduitMcp || !serverConnected;
-  const global = useMemo(
-    () => coerceGlobalPolicy(withPending(legacy.global, pending.all)),
-    [legacy.global, pending.all],
-  );
-  const tabId = (t: PolicyTab) => `${idBase}-tab-${t}`;
-  const panelId = `${idBase}-panel`;
-
-  if (seenLegacy !== legacy) {
-    setSeenLegacy(legacy);
-    setPending(dropSettled);
-  }
-
-  const selectMachine = (id: string) => {
-    remoteActionSeq.current++;
-    setRemoteActionPending(false);
-    setRemoteActionFailure(null);
-    setMachineId(id);
-    setPending({});
-    setFailed({});
-  };
-
-  const actOnRemote = async (action: 'discard' | 'reapply') => {
-    if (!remote || remoteActionPending) return;
-    const selected = remote.machineId;
-    const seq = ++remoteActionSeq.current;
-    setRemoteActionPending(true);
-    setRemoteActionFailure(null);
-    let failure: string | null;
-    try {
-      failure = remoteActionError(
-        await mcp.remotePolicy(selected, action, remote.policy.editToken),
-      );
-    } catch {
-      failure = "Couldn't update these rules. Reopen this machine's rules and try again.";
-    }
-    if (remoteActionSeq.current !== seq || machineRef.current !== selected) return;
-    setRemoteActionPending(false);
-    setRemoteActionFailure(failure);
-  };
-
-  const select = (t: PolicyTab) => {
-    setTab(t);
-    document.getElementById(tabId(t))?.focus();
-  };
-  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    const i = POLICY_TABS.indexOf(tab);
-    const n = POLICY_TABS.length;
-    if (e.key === 'ArrowRight') select(POLICY_TABS[(i + 1) % n]);
-    else if (e.key === 'ArrowLeft') select(POLICY_TABS[(i - 1 + n) % n]);
-    else if (e.key === 'Home') select(POLICY_TABS[0]);
-    else if (e.key === 'End') select(POLICY_TABS[n - 1]);
-    else return;
-    e.preventDefault();
-  };
-
-  const persistedEntry = (t: PolicyTab, tool: ToolName) => {
-    const layer = t === 'all' ? legacyRef.current.global : legacyRef.current.byCli[t];
-    return layer?.[tool];
-  };
-
-  const pick = async (t: PolicyTab, tool: ToolName, patch: ToolPolicyPatch) => {
-    const key = `${remoteId ?? ''}|${t}:${tool}`;
-    const seq = (seqRef.current.get(key) ?? 0) + 1;
-    seqRef.current.set(key, seq);
-    setPending((p) =>
-      putPick(p, t, tool, {
-        patch: { ...p[t]?.[tool]?.patch, ...patch },
-        settled: false,
-        confirmed: p[t]?.[tool]?.confirmed,
-      }),
-    );
-    setFailed((f) => ({ ...f, [t]: withoutTool(f[t], tool) }));
-    const point = t === 'all' ? { kind: 'default' as const } : { kind: 'cli' as const, cli: t };
-    const ok = await mcp.setPointPolicy(point, tool, patch, remoteId);
-    if (machineRef.current !== remoteId) return;
-    const latest = seqRef.current.get(key) === seq;
-    if (ok) {
-      setPending((p) => {
-        const current = p[t]?.[tool];
-        if (!current) return p;
-        const base: PolicyLayer = { [tool]: current.confirmed ?? persistedEntry(t, tool) };
-        return putPick(p, t, tool, {
-          ...current,
-          settled: latest || current.settled,
-          confirmed: withPolicyPatch(base, tool, patch)?.[tool],
-        });
-      });
-      return;
-    }
-    if (!latest) return;
-    setPending((p) => {
-      const base = p[t]?.[tool]?.confirmed ?? persistedEntry(t, tool);
-      return putPick(p, t, tool, { patch: restorePatch(base), settled: true, confirmed: base });
-    });
-    setFailed((f) => ({ ...f, [t]: new Set(f[t]).add(tool) }));
-  };
-
-  const onChange = (tool: ToolName, field: PolicyField, value: PolicyValue | 'inherit') => {
-    // The global layer is complete: it has no Inherit to write.
-    if (tab === 'all' && value === 'inherit') return;
-    const patch = coercePolicyPatch(tool, { [field]: value });
-    if (!patch) return;
-    void pick(tab, tool, patch);
-  };
-
-  return (
-    <>
-      {off && <p className="settools__hint">{MCP_STR.tools.masterOffHint}</p>}
-      {machines.length > 0 && (
-        <div className="policycli__bar">
-          <span className="policycli__label" aria-hidden="true">
-            {MCP_STR.tools.remote.machineLabel}
-          </span>
-          <SelectField
-            value={remoteId ?? ''}
-            ariaLabel={MCP_STR.tools.remote.machineLabel}
-            options={[
-              { value: '', label: MCP_STR.tools.remote.thisMachine },
-              ...machines.map((m) => ({ value: m.machineId, label: m.name })),
-            ]}
-            onChange={selectMachine}
-          />
-        </div>
-      )}
-      {remote && (
-        <>
-          <p className="settools__hint" role="status">
-            {remoteStatusText(remote)}
-          </p>
-          {remote.policy.saveError && (
-            <p className="settools__hint" role="status">
-              {remote.policy.saveError}
-            </p>
-          )}
-          {remoteActionFailure && (
-            <p className="settools__hint" role="status">
-              {remoteActionFailure}
-            </p>
-          )}
-          {remote.status === 'conflict' && (
-            <div className="policycli__bar">
-              <button
-                type="button"
-                className="btn btn--sm"
-                disabled={remoteActionPending}
-                onClick={() => void actOnRemote('discard')}
-              >
-                {MCP_STR.tools.remote.takeTheirs(remote.name)}
-              </button>
-              <button
-                type="button"
-                className="btn btn--sm"
-                disabled={remoteActionPending}
-                onClick={() => void actOnRemote('reapply')}
-              >
-                {MCP_STR.tools.remote.applyMine}
-              </button>
-            </div>
-          )}
-        </>
-      )}
-      <div className="policycli__bar">
-        <span className="policycli__label" aria-hidden="true">
-          {MCP_STR.tools.defaultsFor}
-        </span>
-        <div
-          className="seg policycli"
-          role="tablist"
-          aria-label={MCP_STR.tools.defaultsFor}
-          onKeyDown={onKeyDown}
-        >
-          {POLICY_TABS.map((t) => (
-            <button
-              key={t}
-              id={tabId(t)}
-              type="button"
-              role="tab"
-              data-cli={t}
-              aria-selected={t === tab}
-              aria-controls={panelId}
-              tabIndex={t === tab ? 0 : -1}
-              className={t === tab ? 'seg__btn seg__btn--active' : 'seg__btn'}
-              onClick={() => setTab(t)}
-            >
-              {t === 'all' ? MCP_STR.tools.layerName.global : MCP_STR.tools.cliName[t]}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div id={panelId} role="tabpanel" aria-labelledby={tabId(tab)}>
-        {tab !== 'all' && <p className="settools__hint">{MCP_STR.tools.cliLayerNote}</p>}
-        <ToolPolicyEditor
-          layer={tab === 'all' ? 'global' : 'cli'}
-          layers={
-            tab === 'all'
-              ? { global }
-              : { cli: withPending(legacy.byCli[tab], pending[tab]), global }
-          }
-          sourceName={(s) =>
-            s === 'cli' && tab !== 'all'
-              ? MCP_STR.tools.cliName[tab]
-              : MCP_STR.tools.layerName.global
-          }
-          disabled={off}
-          failed={failed[tab]}
-          onChange={onChange}
-        />
-      </div>
-      <p className="settools__hint">{MCP_STR.tools.overrideNote}</p>
-    </>
-  );
-}
-
-/** Settings → MCP (spec 2026-10-27-conduit-mcp-install §12: Messaging, Agent CLIs, Tools, Suggestions). */
 function McpTab({
   settings,
   update,
   projectPath,
   focusCli,
   onFocusCliSpent,
+  onOpenPermissions,
   serverConnected,
 }: {
   settings: AppSettings;
@@ -1275,6 +990,7 @@ function McpTab({
   projectPath: string | null;
   focusCli?: AgentCli;
   onFocusCliSpent: () => void;
+  onOpenPermissions: () => void;
   serverConnected: boolean;
 }) {
   const S = MCP_STR.install;
@@ -1325,7 +1041,9 @@ function McpTab({
       </SetGroup>
 
       <SetGroup title={S.toolsTitle}>
-        <McpToolPolicyRows settings={settings} serverConnected={serverConnected} />
+        <button type="button" className="btn" onClick={onOpenPermissions}>
+          Open Permissions
+        </button>
       </SetGroup>
 
       <SetGroup title={S.suggestTitle}>

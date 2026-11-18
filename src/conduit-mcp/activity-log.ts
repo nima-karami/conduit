@@ -10,8 +10,9 @@ import {
   isActivityDay,
   parseActivityEntry,
   parseActivityQuery,
+  parseActivityTrace,
 } from './activity-query';
-import type { Decision } from './policy-types';
+import type { ActivityDecisionTraceV1, Decision } from './policy-types';
 import type { CliKind, ToolName } from './tool-policy';
 
 export type ActivityLane = 'conduit' | 'observed' | 'note';
@@ -30,7 +31,11 @@ export interface ActivityEntry {
   id: string;
   at: string;
   lane: ActivityLane;
-  principal: { handle: string | null; sessionId: string | null; machineId: string | null };
+  principal: {
+    handle: string | null;
+    sessionId: string | null;
+    machineId: string | null;
+  };
   cli: CliKind | null;
   action: string;
   target: string | null;
@@ -41,6 +46,7 @@ export interface ActivityEntry {
   durationMs: number | null;
   requestId: string | null;
   count: number | null;
+  trace?: ActivityDecisionTraceV1;
 }
 
 export const COUNTED_TOOLS: readonly ToolName[] = [
@@ -74,7 +80,16 @@ export interface ActivityLog {
   writable(): boolean;
   query(input: ActivityQuery): ActivityPage;
   recentDenies(): ReadonlyMap<string, ActivityEntry>;
+  lookup(id: string, at: string): ActivityLookup;
+  replaySample(eligible?: (row: ActivityEntry, invalidTrace: boolean) => boolean): ActivitySample;
 }
+
+export type ActivityLookup =
+  | { ok: true; row: ActivityEntry }
+  | { ok: false; error: 'invalid-value' | 'not-found' | 'unavailable' };
+export type ActivitySample =
+  | { ok: true; rows: ActivityEntry[]; truncated: boolean; since: string }
+  | { ok: false; error: 'unavailable' };
 
 type NewEntry = Omit<ActivityEntry, 'v' | 'id' | 'at'>;
 type Principal = ActivityEntry['principal'];
@@ -133,6 +148,7 @@ export function createActivityLog(deps: {
   const isoNow = (): string => new Date(deps.now()).toISOString();
 
   function build(e: NewEntry, id: string, at: string): ActivityEntry {
+    const trace = e.lane === 'conduit' && e.count === null ? parseActivityTrace(e.trace) : null;
     return {
       v: 1,
       id,
@@ -153,6 +169,7 @@ export function createActivityLog(deps: {
       durationMs: e.durationMs,
       requestId: e.requestId,
       count: e.count,
+      ...(trace === null ? {} : { trace }),
     };
   }
 
@@ -256,7 +273,12 @@ export function createActivityLog(deps: {
     const body: Record<string, { at: string; args: unknown }> = {};
     for (const [id, rec] of asks) body[id] = { at: new Date(rec.at).toISOString(), args: rec.args };
     try {
-      io.writeArgs(JSON.stringify({ version: SERVER_FILE_VERSION[ASK_ARGS_FILE], asks: body }));
+      io.writeArgs(
+        JSON.stringify({
+          version: SERVER_FILE_VERSION[ASK_ARGS_FILE],
+          asks: body,
+        }),
+      );
     } catch (error) {
       warn('activity ask args write failed', error);
     }
@@ -270,6 +292,75 @@ export function createActivityLog(deps: {
       warn(`activity purge could not remove ${day}`, error);
       return false;
     }
+  }
+
+  function visit(
+    nowMs: number,
+    take: (row: ActivityEntry, invalidTrace: boolean) => void,
+  ): string | null {
+    const now = new Date(nowMs).toISOString();
+    const today = dayOf(now);
+    const firstDay = dayOf(new Date(nowMs - 29 * 86_400_000).toISOString());
+    let files: Array<{ day: string; bytes: number }>;
+    try {
+      files = io.list();
+    } catch {
+      return 'Activity day files could not be read';
+    }
+    if (
+      files.some((f) => !isActivityDay(f.day) || !Number.isSafeInteger(f.bytes) || f.bytes < 0) ||
+      new Set(files.map((f) => f.day)).size !== files.length
+    )
+      return 'Activity day listing is corrupt';
+    const days = files
+      .filter((f) => f.day >= firstDay && f.day <= today)
+      .sort((a, b) => b.day.localeCompare(a.day));
+    let remaining = ACTIVITY_MAX_BYTES;
+    for (const file of days) {
+      if (file.bytes > remaining) return 'Activity exceeds the read budget';
+      let text: string;
+      try {
+        text = io.read(file.day, remaining);
+      } catch {
+        return 'Activity day could not be read within the byte budget';
+      }
+      remaining -= Buffer.byteLength(text);
+      if (remaining < 0) return 'Activity exceeds the read budget';
+      const lines = text.split('\n');
+      for (let index = 0; index < lines.length; index++) {
+        const line = lines[index];
+        if (line.length === 0 && index === lines.length - 1) continue;
+        let raw: unknown;
+        try {
+          raw = JSON.parse(line);
+        } catch {
+          return 'Activity contains a corrupt row';
+        }
+        const row = parseActivityEntry(raw);
+        if (row === null || dayOf(row.at) !== file.day) return 'Activity contains a corrupt row';
+        take(
+          row,
+          typeof raw === 'object' && raw !== null && 'trace' in raw && row.trace === undefined,
+        );
+      }
+    }
+    for (const bucket of buckets.values()) {
+      const row = countedRow(bucket);
+      if (dayOf(row.at) >= firstDay && dayOf(row.at) <= today) take(row, false);
+    }
+    return null;
+  }
+
+  function insert(selected: ActivityEntry[], row: ActivityEntry, limit: number): void {
+    let low = 0;
+    let high = selected.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (compareActivityRows(selected[mid], row) < 0) low = mid + 1;
+      else high = mid;
+    }
+    selected.splice(low, 0, row);
+    if (selected.length > limit) selected.pop();
   }
 
   return {
@@ -363,76 +454,83 @@ export function createActivityLog(deps: {
 
     query(input) {
       const writable = failedAt === null;
-      const fail = (error: string): ActivityPage => ({ rows: [], next: null, writable, error });
+      const fail = (error: string): ActivityPage => ({
+        rows: [],
+        next: null,
+        writable,
+        error,
+      });
       const query = parseActivityQuery(input);
       if (query === null) return fail('Invalid Activity query');
       const limit = query.limit ?? 100;
       const selected: ActivityEntry[] = [];
       const nowMs = deps.now();
-      const today = dayOf(isoNow());
-      const firstDay = dayOf(new Date(nowMs - 29 * 86_400_000).toISOString());
-      const take = (row: ActivityEntry): void => {
-        if (
-          dayOf(row.at) < firstDay ||
-          row.at > new Date(nowMs).toISOString() ||
-          !activityMatches(row, query)
-        )
-          return;
-        let low = 0;
-        let high = selected.length;
-        while (low < high) {
-          const mid = (low + high) >>> 1;
-          if (compareActivityRows(selected[mid], row) < 0) low = mid + 1;
-          else high = mid;
-        }
-        selected.splice(low, 0, row);
-        if (selected.length > limit + 1) selected.pop();
-      };
-      let files: Array<{ day: string; bytes: number }>;
-      try {
-        files = io.list();
-      } catch {
-        return fail('Activity day files could not be read');
-      }
-      if (files.some((f) => !isActivityDay(f.day) || !Number.isSafeInteger(f.bytes) || f.bytes < 0))
-        return fail('Activity day listing is corrupt');
-      const days = files
-        .filter((f) => f.day >= firstDay && f.day <= today)
-        .sort((a, b) => b.day.localeCompare(a.day));
-      let remaining = ACTIVITY_MAX_BYTES;
-      for (const file of days) {
-        if (file.bytes > remaining) return fail('Activity exceeds the read budget');
-        let text: string;
-        try {
-          text = io.read(file.day, remaining);
-        } catch {
-          return fail('Activity day could not be read within the byte budget');
-        }
-        remaining -= Buffer.byteLength(text);
-        if (remaining < 0) return fail('Activity exceeds the read budget');
-        const lines = text.split('\n');
-        for (let index = 0; index < lines.length; index++) {
-          const line = lines[index];
-          if (line.length === 0 && index === lines.length - 1) continue;
-          let raw: unknown;
-          try {
-            raw = JSON.parse(line);
-          } catch {
-            return fail('Activity contains a corrupt row');
-          }
-          const row = parseActivityEntry(raw);
-          if (row === null || dayOf(row.at) !== file.day)
-            return fail('Activity contains a corrupt row');
-          take(row);
-        }
-      }
-      for (const bucket of buckets.values()) take(countedRow(bucket));
+      const now = new Date(nowMs).toISOString();
+      const error = visit(nowMs, (row) => {
+        if (row.at <= now && activityMatches(row, query)) insert(selected, row, limit + 1);
+      });
+      if (error !== null) return fail(error);
       const rows = selected.slice(0, limit);
       return {
         rows,
         next: selected.length > limit ? activityCursor(rows[rows.length - 1]) : null,
         writable,
         error: null,
+      };
+    },
+
+    lookup(id, at) {
+      if (
+        typeof id !== 'string' ||
+        id.length === 0 ||
+        id.length > 512 ||
+        /\p{Cc}/u.test(id) ||
+        typeof at !== 'string' ||
+        !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(at) ||
+        !Number.isFinite(Date.parse(at)) ||
+        new Date(at).toISOString() !== at
+      )
+        return { ok: false, error: 'invalid-value' };
+      const nowMs = deps.now();
+      const now = new Date(nowMs).toISOString();
+      let found: ActivityEntry | null = null;
+      let matches = 0;
+      let gap = failedAt !== null;
+      const error = visit(nowMs, (row) => {
+        if (row.lane === 'note' && row.action === 'gap') gap = true;
+        if (row.id === id) {
+          matches++;
+          if (row.at === at && row.at <= now) found = row;
+        }
+      });
+      if (error !== null || gap || matches > 1) return { ok: false, error: 'unavailable' };
+      if (found === null) return { ok: false, error: 'not-found' };
+      return { ok: true, row: found };
+    },
+
+    replaySample(eligible = () => true) {
+      const nowMs = deps.now();
+      const since = new Date(nowMs - 7 * 86_400_000).toISOString();
+      const selected: ActivityEntry[] = [];
+      const ids = new Set<string>();
+      let ambiguous = failedAt !== null;
+      const error = visit(nowMs, (row, invalidTrace) => {
+        if (row.lane === 'note' && row.action === 'gap') ambiguous = true;
+        if (ids.has(row.id)) ambiguous = true;
+        ids.add(row.id);
+        if (
+          row.at >= since &&
+          row.at <= new Date(nowMs).toISOString() &&
+          eligible(row, invalidTrace)
+        )
+          insert(selected, row, 1001);
+      });
+      if (error !== null || ambiguous) return { ok: false, error: 'unavailable' };
+      return {
+        ok: true,
+        rows: selected,
+        truncated: selected.length > 1000,
+        since,
       };
     },
 

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { until } from './conduit-mcp-helpers.mjs';
 import { assert, finishScenario, makeLog, phase, REPO } from './harness.mjs';
 import { callTool, linkView, networkState, startAgent, startServerPair } from './net-helpers.mjs';
+import { assignProfileCas } from './permissions-policy-helpers.mjs';
 
 // The machine tools over one ssh link, on fake-ssh: A adds B, then an agent on A lists, connects,
 // disconnects and reconnects B, with B's own session still running. The owner's needs-person pane
@@ -25,16 +26,10 @@ async function eventually(what, check) {
  * sends it (mcp.fromRenderer tunnels it to the host). Lead is what allows connect and disconnect.
  */
 async function assignLead(server, sessionId) {
-  const r = await server.c2.call('mcp.fromRenderer', {
-    windowId: 1,
-    message: {
-      type: 'mcp:setAssignment',
-      requestId: 1,
-      point: { kind: 'session', sessionId },
-      profileId: 'lead',
-    },
+  const r = await assignProfileCas(server.c2, { kind: 'session', sessionId }, 'lead', {
+    claimSessions: true,
   });
-  assert(r.reply?.ok === true, `setAssignment lead on ${server.label}: ${JSON.stringify(r)}`);
+  assert(r.reply?.result?.ok === true, `assign lead on ${server.label}: ${JSON.stringify(r)}`);
 }
 
 async function run() {

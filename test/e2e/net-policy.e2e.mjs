@@ -20,6 +20,7 @@ import {
   startAgent,
   startServer,
 } from './net-helpers.mjs';
+import { assignProfileCas } from './permissions-policy-helpers.mjs';
 
 // Remote rules over one ssh link, on fake-ssh (CON-46 L5; plan
 // docs/plans/2026-11-16-remote-ssh-rules.plan.md, slice L5 steps 1-4):
@@ -72,30 +73,21 @@ function fromRenderer(server, message) {
 
 /** Gives one agent session a policy profile through CON-24's assignment message, as the renderer sends it. */
 async function assignProfile(server, sessionId, profileId) {
-  const r = await fromRenderer(server, {
-    type: 'mcp:setAssignment',
-    requestId: 1,
-    point: { kind: 'session', sessionId },
-    profileId,
+  const r = await assignProfileCas(server.c2, { kind: 'session', sessionId }, profileId, {
+    claimSessions: true,
   });
   assert(
-    r.reply?.ok === true,
-    `setAssignment ${profileId} on ${server.label}: ${JSON.stringify(r)}`,
+    r.reply?.result?.ok === true,
+    `assign ${profileId} on ${server.label}: ${JSON.stringify(r)}`,
   );
 }
 
 /** Edits the default point's profile on a server; `machine` makes it an edit of that remote machine. */
 async function setDefault(server, profileId, machine) {
-  const r = await fromRenderer(server, {
-    type: 'mcp:setAssignment',
-    requestId: 1,
-    point: { kind: 'default' },
-    profileId,
-    ...(machine === undefined ? {} : { machine }),
-  });
+  const r = await assignProfileCas(server.c2, { kind: 'default' }, profileId, { machine });
   assert(
-    r.reply?.ok === true,
-    `setAssignment default ${profileId} on ${server.label}: ${JSON.stringify(r)}`,
+    r.reply?.result?.ok === true,
+    `assign default ${profileId} on ${server.label}: ${JSON.stringify(r)}`,
   );
 }
 
@@ -261,13 +253,11 @@ async function run() {
     });
 
     phase('4. a peer grant made on B shows on A; A revokes it and it is gone on B');
-    const grantPeer = await fromRenderer(b, {
-      type: 'mcp:setAssignment',
-      requestId: 1,
-      point: { kind: 'peer', machineId: aId },
-      profileId: 'worker',
-    });
-    assert(grantPeer.reply?.ok === true, `peer assignment on B: ${JSON.stringify(grantPeer)}`);
+    const grantPeer = await assignProfileCas(b.c2, { kind: 'peer', machineId: aId }, 'worker');
+    assert(
+      grantPeer.reply?.result?.ok === true,
+      `peer assignment on B: ${JSON.stringify(grantPeer)}`,
+    );
     typeCall(a, aa, 'open_session', {
       machine: bId,
       agent: ECHO_AGENT,
@@ -501,31 +491,47 @@ async function run() {
         },
       );
     });
-    const bridgeEdit = async (message) =>
-      page.evaluate(
-        (command) =>
-          new Promise((resolve, reject) => {
-            window.__remoteEditorSeq = (window.__remoteEditorSeq ?? 100) + 1;
-            const requestId = window.__remoteEditorSeq;
-            const timer = setTimeout(() => {
-              off();
-              reject(new Error('No remote editor receipt'));
-            }, 10_000);
-            const off = window.agentDeck.subscribe((reply) => {
-              if (reply.type !== 'mcp:policyEditResult' || reply.requestId !== requestId) return;
-              clearTimeout(timer);
-              off();
-              resolve(reply.result);
-            });
-            window.agentDeck.post({ ...command, requestId });
-          }),
-        message,
-      );
+    const openSettings = () => page.locator('.footbtn[title^="Settings"]').click();
+    await openSettings();
+    await page.getByRole('button', { name: 'Links', exact: true }).click();
+    const linked = await linkView(a.c2, bId);
+    const permissions = page.getByRole('region', { name: `${linked.name} permissions` });
+    await permissions.waitFor();
+    const monitor = permissions.getByRole('button', { name: `monitor for ${linked.name}` });
+    await monitor.click();
+    await eventually(
+      'Links changed the authority on A',
+      async () =>
+        (await linkView(a.c2, bId))?.capabilities.monitor === !linked.capabilities.monitor,
+    );
+    await monitor.click();
+    await eventually(
+      'Links restored the authority on A',
+      async () => (await linkView(a.c2, bId))?.capabilities.monitor === linked.capabilities.monitor,
+    );
+    const linkEvidence = process.env.CONDUIT_PERMISSIONS_EVIDENCE_DIR;
+    if (linkEvidence) {
+      mkdirSync(linkEvidence, { recursive: true });
+      await page.screenshot({ path: join(linkEvidence, '17-link-own.png') });
+    }
+    await permissions.getByRole('button', { name: `Activity involving ${linked.name}` }).click();
+    const activity = page.getByRole('main', { name: 'Permissions Activity' });
+    await activity.waitFor();
+    const machineFilter = activity.getByPlaceholder('All machines (ID)');
+    assert((await machineFilter.inputValue()) === bId, 'Activity opened outside the link scope');
     await page.locator('.footbtn[title^="Settings"]').click();
-    await page.locator('.settings__navitem').filter({ hasText: /^MCP$/ }).click();
-    await page.getByRole('button', { name: 'Machine to edit', exact: true }).click();
+    await page
+      .locator('.settings__navitem')
+      .filter({ hasText: /^Links$/ })
+      .click();
     const remoteName = (await machineRow(a, bId)).name;
-    await page.getByRole('menuitem', { name: remoteName, exact: true }).click();
+    const links = page.locator('.settings-links');
+    await links.getByRole('button', { name: remoteName, exact: true }).click();
+    const remoteEditor = links.getByRole('region', {
+      name: `${remoteName} permissions`,
+      exact: true,
+    });
+    await remoteEditor.waitFor({ state: 'visible' });
     const evidence = join(REPO, '.autoloop', 'evidence');
     mkdirSync(evidence, { recursive: true });
     const draftPath = join(a.userData, 'conduit-mcp', 'remote-policy.json');
@@ -542,21 +548,16 @@ async function run() {
       const draftProfile = defaultProfileOf(b) === 'lead' ? 'worker' : 'lead';
       const ownProfile = defaultProfileOf(b) === 'observer' ? 'worker' : 'observer';
       const token = (await machineRow(a, bId)).policy.editToken;
-      const edited = await bridgeEdit({
-        type: 'mcp:remoteEdit',
-        machine: bId,
-        expectedToken: token,
-        edit: {
-          kind: 'assignment',
-          point: { kind: 'default' },
-          assignment: {
-            profileId: draftProfile,
-            exceptions: [],
-            onScreenOnly: false,
-          },
-        },
+      await remoteEditor.getByLabel('Default profile', { exact: true }).selectOption(draftProfile);
+      await eventually('Links editor saves the offline draft', async () => {
+        const pending = await machineRow(a, bId);
+        return (
+          pending?.status === 'waiting' &&
+          pending.policy.editToken !== token &&
+          pending.policy.assignments.find((entry) => entry.point.kind === 'default')?.assignment
+            .profileId === draftProfile
+        );
       });
-      assert(edited.ok === true, `actual Electron remoteEdit: ${JSON.stringify(edited)}`);
       assert(
         defaultProfileOf(b) ===
           priorB.assignments.find((entry) => entry.point.kind === 'default')?.assignment.profileId,
@@ -564,6 +565,7 @@ async function run() {
       );
       await setDefault(b, ownProfile);
       const receiverBytes = readFileSync(join(b.userData, 'conduit-mcp', 'policy.json'), 'utf8');
+      const receiverRev = policyFileOf(b).rev;
       const up = await callTool(a, aa, 'connect_machine', { machine: 'fake' });
       assert(up.state === 'up', `UI conflict reconnect: ${JSON.stringify(up)}`);
       let conflict;
@@ -580,8 +582,8 @@ async function run() {
           )
         );
       });
-      const button = page.getByRole('button', {
-        name: action === 'discard' ? `Use ${remoteName}'s rules` : 'Apply mine on top',
+      const button = remoteEditor.getByRole('button', {
+        name: action === 'discard' ? "Use machine's rules" : 'Apply my changes',
         exact: true,
       });
       await button.waitFor({ state: 'visible' });
@@ -597,11 +599,17 @@ async function run() {
         mkdirSync(draftPath);
         obstructed = true;
         await button.click();
-        const failure = page.getByText(
-          "Couldn't save this machine's pending rules. Fix the save problem, then try again.",
-          { exact: true },
-        );
+        const failure = remoteEditor
+          .getByRole('alert')
+          .filter({ hasText: 'Remote pending rules could not be saved' });
+        const actionFailure = remoteEditor
+          .getByRole('alert')
+          .filter({ hasText: 'The change could not be saved (save-failed).' });
         await failure.waitFor({ state: 'visible' });
+        await actionFailure.waitFor({ state: 'visible' });
+        await remoteEditor
+          .getByRole('button', { name: 'Retry saving', exact: true })
+          .waitFor({ state: 'visible' });
         const refused = await machineRow(a, bId);
         assert(
           refused.status === 'conflict' &&
@@ -682,6 +690,23 @@ async function run() {
         renameSync(backup, draftPath);
       }
       assert(readFileSync(draftPath).equals(bytes), 'restoring fault changed original draft bytes');
+      await remoteEditor.getByRole('button', { name: 'Retry saving', exact: true }).click();
+      await eventually(
+        'explicit save retry clears the error without resolving conflict',
+        async () => {
+          const retried = await machineRow(a, bId);
+          return (
+            retried?.status === 'conflict' &&
+            retried.policy.saveError === null &&
+            retried.policy.editToken === conflict.policy.editToken &&
+            JSON.stringify(retried.policy.assignments) === beforeDoc &&
+            readFileSync(join(b.userData, 'conduit-mcp', 'policy.json'), 'utf8') === receiverBytes
+          );
+        },
+      );
+      await remoteEditor
+        .getByRole('button', { name: 'Retry saving', exact: true })
+        .waitFor({ state: 'hidden' });
       await button.click();
       await eventually('explicit UI retry applies the acknowledged choice', async () => {
         const current = await machineRow(a, bId);
@@ -690,24 +715,27 @@ async function run() {
           current.policy.editToken !== conflict.policy.editToken &&
           current.policy.assignments.find((entry) => entry.point.kind === 'default')?.assignment
             .profileId === (action === 'discard' ? ownProfile : draftProfile) &&
-          defaultProfileOf(b) === (action === 'discard' ? ownProfile : draftProfile)
+          defaultProfileOf(b) === (action === 'discard' ? ownProfile : draftProfile) &&
+          policyFileOf(b).rev === receiverRev + (action === 'discard' ? 0 : 1) &&
+          current.rev === receiverRev + (action === 'discard' ? 0 : 1)
         );
       });
-      await page
-        .getByText(`Applied on ${remoteName}`, { exact: true })
+      await remoteEditor
+        .getByRole('status')
+        .filter({ hasText: /^Rules applied$/ })
         .waitFor({ state: 'visible' });
       assert(
-        (await page
-          .getByText(
-            "Couldn't save this machine's pending rules. Fix the save problem, then try again.",
-            { exact: true },
-          )
-          .count()) === 0,
+        (await remoteEditor
+          .getByRole('alert')
+          .filter({ hasText: 'Remote pending rules could not be saved' })
+          .count()) === 0 &&
+          (await remoteEditor
+            .getByRole('alert')
+            .filter({ hasText: 'The change could not be saved (save-failed).' })
+            .count()) === 0,
         'successful explicit action retained its inline failure',
       );
-      await page
-        .getByRole('button', { name: 'Machine to edit', exact: true })
-        .scrollIntoViewIfNeeded();
+      await links.getByRole('button', { name: remoteName, exact: true }).scrollIntoViewIfNeeded();
       await page.screenshot({
         path: join(evidence, `remote-editor-runtime-${action}-recovered.png`),
       });

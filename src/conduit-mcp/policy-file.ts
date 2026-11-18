@@ -25,6 +25,7 @@ import type {
   Grant,
   GrantState,
   GrantWho,
+  MigrationSummaryRow,
   OneUseOverride,
   PolicyTarget,
   Profile,
@@ -37,6 +38,7 @@ import {
   CLI_KINDS,
   type CliKind,
   isToolName,
+  isValidField,
   MOVE_VALUES,
   REACH_VALUES,
   TOOL_NAMES,
@@ -51,9 +53,16 @@ export interface PolicyFile {
   profiles: Profile[];
   assignments: Array<{ point: AssignmentPoint; assignment: Assignment }>;
   overrides: OneUseOverride[];
+  activityReceipts?: { id: string; at: string }[];
+  activityReceiptCutoff?: string;
   sessionDenials?: SessionDenial[];
   migratedFrom: 'v0.64' | null;
-  notes: { onScreenOnlyOffered: string[] };
+  notes: {
+    onScreenOnlyOffered: string[];
+    migrationAcknowledged?: boolean;
+    migrationSummary?: MigrationSummaryRow[];
+    migrationSummaryTruncated?: boolean;
+  };
 }
 
 export interface GrantsFile {
@@ -94,6 +103,29 @@ const isCliKind = (v: unknown): v is CliKind => oneOf(CLI_KINDS)(v);
 
 const isProfileId = (v: unknown): v is ProfileId =>
   isStr(v) && (v === 'observer' || v === 'worker' || v === 'lead' || v.startsWith('p-'));
+
+const isMigrationRow = (v: unknown): v is MigrationSummaryRow =>
+  isObj(v) &&
+  isObj(v.point) &&
+  (v.provenance === undefined ||
+    (v.provenance === 'resolved-global' && v.point.kind === 'default')) &&
+  (v.point.kind === 'default' ||
+    (v.point.kind === 'cli' && isCliKind(v.point.cli)) ||
+    (v.point.kind === 'session' && isStr(v.point.sessionId) && v.point.sessionId.length <= 256)) &&
+  Array.isArray(v.fields) &&
+  v.fields.length <= 128 &&
+  v.fields.every(
+    (f: unknown) =>
+      isObj(f) &&
+      isToolName(f.tool) &&
+      oneOf(['access', 'when', 'reach', 'move'] as const)(f.field) &&
+      isValidField(f.tool, f.field, f.value),
+  ) &&
+  (v.profileId === 'worker' || v.profileId === 'lead') &&
+  Number.isSafeInteger(v.exceptions) &&
+  (v.exceptions as number) >= 0 &&
+  (v.exceptions as number) <= 512 &&
+  isBool(v.onScreenOnly);
 
 const isToolRule = (v: unknown): v is ToolRule =>
   isObj(v) &&
@@ -166,7 +198,19 @@ const isOverride = (v: unknown): v is OneUseOverride =>
   isStr(v.sessionId) &&
   isToolName(v.tool) &&
   isTarget(v.target) &&
-  isIso(v.createdAt);
+  isIso(v.createdAt) &&
+  (v.generation === undefined || (Number.isSafeInteger(v.generation) && Number(v.generation) > 0));
+
+export const ACTIVITY_RECEIPTS_MAX = 4096;
+const isCanonicalUtc = (v: unknown): v is string => isIso(v) && new Date(v).toISOString() === v;
+const isActivityReceipt = (v: unknown): v is { id: string; at: string } =>
+  isObj(v) &&
+  Object.keys(v).length === 2 &&
+  isStr(v.id) &&
+  v.id.length > 0 &&
+  v.id.length <= 512 &&
+  !/\p{C}/u.test(v.id) &&
+  isCanonicalUtc(v.at);
 
 export const SESSION_DENIALS_MAX = 4096;
 const isSessionDenial = (v: unknown): v is SessionDenial =>
@@ -194,9 +238,23 @@ const isFile = (v: unknown): v is RawPolicyFile =>
       v.sessionDenials.length <= SESSION_DENIALS_MAX &&
       new Set(v.sessionDenials.map((d) => d.requestId)).size === v.sessionDenials.length &&
       new Set(v.sessionDenials.map((d) => d.id)).size === v.sessionDenials.length)) &&
+  (v.activityReceipts === undefined ||
+    (v.version === 3 &&
+      arrayOf(isActivityReceipt)(v.activityReceipts) &&
+      v.activityReceipts.length <= ACTIVITY_RECEIPTS_MAX &&
+      new Set(v.activityReceipts.map((r) => r.id)).size === v.activityReceipts.length)) &&
+  (v.activityReceiptCutoff === undefined ||
+    (v.version === 3 && isCanonicalUtc(v.activityReceiptCutoff))) &&
+  (v.activityReceipts === undefined || v.activityReceiptCutoff !== undefined) &&
   (v.migratedFrom === null || v.migratedFrom === 'v0.64') &&
   isObj(v.notes) &&
-  arrayOf(isStr)(v.notes.onScreenOnlyOffered);
+  arrayOf(isStr)(v.notes.onScreenOnlyOffered) &&
+  (v.notes.migrationAcknowledged === undefined || isBool(v.notes.migrationAcknowledged)) &&
+  (v.notes.migrationSummary === undefined ||
+    (Array.isArray(v.notes.migrationSummary) &&
+      v.notes.migrationSummary.length <= 16 &&
+      v.notes.migrationSummary.every(isMigrationRow))) &&
+  (v.notes.migrationSummaryTruncated === undefined || isBool(v.notes.migrationSummaryTruncated));
 
 const GRANT_STATES: readonly GrantState[] = ['active', 'suspended', 'expired', 'revoked'];
 const ENDED_STATES: readonly GrantState[] = ['expired', 'revoked'];

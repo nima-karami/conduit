@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import type { ActivityEntry, ActivityLookup } from '../../src/conduit-mcp/activity-log';
 import type { ActivityPage, ActivityQuery } from '../../src/conduit-mcp/activity-query';
 import { adapterFor } from '../../src/conduit-mcp/adapters';
 import type { AgentCli } from '../../src/conduit-mcp/install-types';
@@ -53,6 +54,7 @@ import { McpSetupBanner } from './mcp-setup-banner';
 import { MissingHomeState, StartRefusedState } from './missing-home-state';
 import type { DockHandlers } from './panel-frame';
 import { PermissionsActivity } from './permissions-activity';
+import type { ActivityExceptionSource } from './permissions-activity-why';
 import { RemoteDiffView } from './remote-diff-view';
 import { RemoteDocView } from './remote-doc-view';
 import { RemoteHistoryView } from './remote-history-view';
@@ -90,7 +92,12 @@ function WaitingLine({ sessionId, onOpen }: { sessionId: string; onOpen: () => v
 export function CenterPane({
   sessions,
   activitySessionId,
+  activityMachineId,
   getActivity,
+  activityItem,
+  getActivityRow,
+  allowActivityOnce,
+  onAddActivityException,
   agents,
   repos,
   activeId,
@@ -159,7 +166,12 @@ export function CenterPane({
 }: {
   sessions: Session[];
   activitySessionId?: string;
+  activityMachineId?: string;
   getActivity(query: ActivityQuery): Promise<ActivityPage | null>;
+  activityItem?: Pick<ActivityEntry, 'id' | 'at'>;
+  getActivityRow?(id: string, at: string): Promise<ActivityLookup | null>;
+  allowActivityOnce?(id: string, at: string): Promise<boolean>;
+  onAddActivityException?(source: ActivityExceptionSource): void;
   agents: AgentDefinition[];
   /** Folder history — the empty state's "Reopen last" route reads it (D8). */
   repos: RepoDTO[];
@@ -409,13 +421,18 @@ export function CenterPane({
       />
     ) : doc.kind === 'permissions-activity' ? (
       <PermissionsActivity
-        key={activitySessionId ?? '@all'}
+        key={JSON.stringify([activitySessionId, activityMachineId, activityItem])}
         sessionId={activitySessionId}
+        machineId={activityMachineId}
         sessions={sessions.map((s) => ({ id: s.id, name: s.name }))}
         machines={remoteRows
           .map((r) => ({ id: r.key.machineId, name: r.machineName }))
           .filter((m, i, all) => all.findIndex((x) => x.id === m.id) === i)}
         getActivity={getActivity}
+        item={activityItem}
+        getActivityRow={getActivityRow}
+        allowOnce={allowActivityOnce}
+        onAddException={onAddActivityException}
       />
     ) : doc.kind === 'request' ? (
       <RequestTab
@@ -692,7 +709,7 @@ export function CenterPane({
       }
     >
       <RequestPopup sessions={sessions} />
-      {sessions.length === 0 ? (
+      {sessions.length === 0 && groupOne.activeDocId === null ? (
         <CenterEmptyState repos={repos} agents={agents} onNewSession={onNewSession} />
       ) : (
         <EditorGroups

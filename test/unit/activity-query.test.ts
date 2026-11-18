@@ -149,3 +149,133 @@ describe('Activity query', () => {
     );
   });
 });
+
+describe('Activity decision trace', () => {
+  it('round trips only strictly bounded trace metadata', () => {
+    const trace = {
+      v: 1,
+      decidedAt: '2026-11-17T12:30:00.000Z',
+      facts: {
+        v: 1,
+        principal: {
+          kind: 'session',
+          sessionId: 's1',
+          launchedCli: 'codex',
+          generation: 1,
+          projectId: null,
+        },
+        tool: 'open_file',
+        targets: [{ sessionId: null, path: '/work/a', folder: '/work', projectId: null }],
+        masterOn: true,
+        toYou: false,
+        forceAsk: false,
+      },
+      decision: 'allow',
+      reason: { by: 'profile', point: { kind: 'default' }, profileId: 'worker' },
+      rule: { when: 'always', reach: 'window', move: null },
+      forcedAsk: false,
+      assignment: null,
+      runtime: { outcome: 'unknown', code: null },
+      stages: ['floors', 'explicit-deny', 'grants', 'assignment'],
+      withoutWinner: null,
+    } as const;
+    const h = harness([row('safe', { trace })]);
+    expect(h.log.query({}).rows[0].trace).toEqual(trace);
+    const hostile = harness([
+      row('bad', { trace: { ...trace, secret: 'SECRET' } as typeof trace }),
+    ]);
+    expect(hostile.log.query({}).rows[0].trace).toBeUndefined();
+    const remote = {
+      ...trace,
+      facts: {
+        ...trace.facts,
+        principal: {
+          kind: 'remote' as const,
+          machineId: 'm1',
+          handle: 'peer',
+          trust: 'own' as const,
+          controller: false,
+          capabilities: { messaging: true, monitor: false, drive: false },
+        },
+      },
+    };
+    expect(harness([row('remote', { trace: remote })]).log.query({}).rows[0].trace).toEqual(remote);
+    const oversized = {
+      ...trace,
+      facts: {
+        ...trace.facts,
+        targets: Array.from({ length: 16 }, (_, i) => ({
+          sessionId: `s${i}`.padEnd(512, 'x'),
+          path: `/${i}`.padEnd(512, 'x'),
+          folder: `/${i}`.padEnd(512, 'y'),
+          projectId: `p${i}`.padEnd(512, 'z'),
+        })),
+      },
+    };
+    expect(
+      harness([row('large', { trace: oversized })]).log.query({}).rows[0].trace,
+    ).toBeUndefined();
+
+    const writer = harness();
+    const { v: _v, id: _id, at: _at, ...entry } = row('write', { trace });
+    writer.log.record(entry);
+    const maliciousPrincipal = Object.assign(
+      Object.create({ toJSON: () => ({ command: 'SECRET' }) }),
+      trace.facts.principal,
+    );
+    writer.log.record({
+      ...entry,
+      trace: { ...trace, facts: { ...trace.facts, principal: maliciousPrincipal } },
+    });
+
+    const hiddenSerializer = { ...trace.facts.principal };
+    Object.defineProperty(hiddenSerializer, 'toJSON', {
+      value: () => ({ command: 'SECRET'.repeat(5000) }),
+    });
+    writer.log.record({
+      ...entry,
+      trace: { ...trace, facts: { ...trace.facts, principal: hiddenSerializer } },
+    });
+    writer.log.record({ ...entry, trace: { ...trace, secret: 'SECRET' } as typeof trace });
+    expect(writer.log.query({}).rows.find((r) => r.id === 'pending-1')?.trace).toEqual(trace);
+    const invalid = {
+      ...trace,
+      facts: { ...trace.facts, targets: Array.from({ length: 17 }, () => trace.facts.targets[0]) },
+    };
+    writer.log.record({ ...entry, trace: invalid });
+    expect(writer.log.query({}).rows.find((r) => r.id === 'pending-5')?.trace).toBeUndefined();
+    expect([...writer.files.values()].join('')).not.toContain('SECRET');
+    expect(
+      Math.max(
+        ...[...writer.files.values()].flatMap((file) =>
+          file
+            .trim()
+            .split('\n')
+            .map((line) => Buffer.byteLength(line)),
+        ),
+      ),
+    ).toBeLessThan(16384);
+    const observed = harness([
+      row('observed', { lane: 'observed', trace }),
+      row('counted', { count: 2, trace }),
+    ]);
+    expect(observed.log.query({}).rows.every((r) => r.trace === undefined)).toBe(true);
+    const control = {
+      ...trace,
+      facts: { ...trace.facts, principal: { ...trace.facts.principal, sessionId: 's\n1' } },
+    };
+    const badPath = {
+      ...trace,
+      facts: { ...trace.facts, targets: [{ ...trace.facts.targets[0], path: '../secret' }] },
+    };
+    const extra = {
+      ...trace,
+      facts: { ...trace.facts, principal: { ...trace.facts.principal, command: 'SECRET' } },
+    };
+    for (const bad of [control, badPath, extra]) {
+      const parsed = harness([row('bad', { trace: bad })]).log.query({}).rows[0];
+      expect(parsed.trace).toBeUndefined();
+      expect(parsed.action).toBe('open_file');
+    }
+  });
+});

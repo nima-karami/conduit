@@ -14,6 +14,7 @@ import type {
   Assignment,
   AssignmentPoint,
   Decision,
+  Exception,
   FloorId,
   Grant,
   GrantWho,
@@ -26,6 +27,7 @@ import type {
   Profile,
   ProfileId,
   Reason,
+  Scope,
   ToolRule,
 } from './policy-types';
 import { type CliKind, TOOL_NAMES, type ToolName } from './tool-policy';
@@ -79,7 +81,11 @@ const OWN_PEER_ASSIGNMENT: Assignment = {
   })),
   onScreenOnly: false,
 };
-const DEFAULT_ASSIGNMENT: Assignment = { profileId: 'worker', exceptions: [], onScreenOnly: false };
+const DEFAULT_ASSIGNMENT: Assignment = {
+  profileId: 'worker',
+  exceptions: [],
+  onScreenOnly: false,
+};
 // see docs/plans/2026-11-16-remote-ssh-routed-tools.plan.md, decision 2: the controller is the lead
 const CONTROLLER_ASSIGNMENT: Assignment = {
   profileId: 'lead',
@@ -93,7 +99,12 @@ const FLOOR_TEXT: Record<FloorId, string> = {
   'local-to-you': 'always allowed to you',
 };
 
-const EMPTY_TARGET: PolicyTarget = { sessionId: null, path: null, folder: null, projectId: null };
+const EMPTY_TARGET: PolicyTarget = {
+  sessionId: null,
+  path: null,
+  folder: null,
+  projectId: null,
+};
 
 function resolveTargets(targets: readonly PolicyTarget[], principal: Principal): PolicyTarget[] {
   const list = targets.length === 0 ? [EMPTY_TARGET] : targets;
@@ -171,7 +182,10 @@ export function assignmentFor(
     const point: AssignmentPoint = { kind: 'peer', machineId: p.machineId };
     const stored = state.assignments.get(pointKey(point));
     if (stored) return { point, assignment: stored };
-    return { point, assignment: p.controller ? CONTROLLER_ASSIGNMENT : OWN_PEER_ASSIGNMENT };
+    return {
+      point,
+      assignment: p.controller ? CONTROLLER_ASSIGNMENT : OWN_PEER_ASSIGNMENT,
+    };
   }
   const candidates: AssignmentPoint[] = omitSession
     ? []
@@ -185,7 +199,80 @@ export function assignmentFor(
   return { point: { kind: 'default' }, assignment: DEFAULT_ASSIGNMENT };
 }
 
+function normalizedScope(scope: Scope): Scope {
+  return scope.kind === 'folder' || scope.kind === 'path'
+    ? { kind: scope.kind, path: folderKey(scope.path) }
+    : { ...scope };
+}
+
+type DenyWinner =
+  | {
+      kind: 'exception';
+      point: AssignmentPoint;
+      index: number;
+      exception: Exception;
+      scope: Scope;
+      rule: ToolRule;
+    }
+  | { kind: 'session-deny'; denialId: string };
+type DecisionStage = 'floors' | 'explicit-deny' | 'grants' | 'assignment';
+interface TraceRecorder {
+  stages: DecisionStage[];
+  winner: DenyWinner | null;
+}
+
 export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
+  return evaluate(state, input);
+}
+
+export function decideWithTrace(
+  state: PolicyState,
+  input: PolicyInput,
+): {
+  decision: PolicyDecision;
+  trace: {
+    stages: DecisionStage[];
+    winner: DenyWinner | null;
+    withoutWinner: Pick<PolicyDecision, 'decision' | 'reason'> | null;
+  };
+} {
+  const recorder: TraceRecorder = { stages: [], winner: null };
+  const decision = evaluate(state, input, recorder);
+  let withoutWinner: Pick<PolicyDecision, 'decision' | 'reason'> | null = null;
+  const winner = recorder.winner;
+  if (winner) {
+    let candidate: PolicyState;
+    if (winner.kind === 'session-deny') {
+      candidate = {
+        ...state,
+        sessionDenials: state.sessionDenials.filter((d) => d.id !== winner.denialId),
+      };
+    } else {
+      const key = pointKey(winner.point);
+      const assignment = state.assignments.get(key);
+      if (!assignment)
+        return {
+          decision,
+          trace: { ...recorder, winner: null, withoutWinner },
+        };
+      const assignments = new Map(state.assignments);
+      assignments.set(key, {
+        ...assignment,
+        exceptions: assignment.exceptions.filter((_, i) => i !== winner.index),
+      });
+      candidate = { ...state, assignments };
+    }
+    const result = evaluate(candidate, input);
+    withoutWinner = { decision: result.decision, reason: result.reason };
+  }
+  return { decision, trace: { ...recorder, withoutWinner } };
+}
+
+function evaluate(
+  state: PolicyState,
+  input: PolicyInput,
+  recorder?: TraceRecorder,
+): PolicyDecision {
   const { principal, tool, masterOn, toYou, now } = input;
   const { point, assignment } = assignmentFor(state, principal);
   const profile = profileById(state, assignment.profileId) ?? OBSERVER;
@@ -200,6 +287,7 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
   const ruleFor = (t: PolicyTarget): ToolRule =>
     forcedFor(t) ? { ...baseRuleFor(t), decision: 'ask' } : baseRuleFor(t);
 
+  recorder?.stages.push('floors');
   if (!masterOn && tool !== 'list_agents')
     return done('deny', { by: 'floor', floor: 'master-off' }, ruleFor(primary));
   if (principal.kind === 'remote' && !remoteAllows(principal, tool))
@@ -219,7 +307,11 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
             o.sessionId === principal.sessionId &&
             o.tool === tool &&
             o.target.sessionId === t.sessionId &&
-            samePath(o.target.path, t.path),
+            samePath(o.target.path, t.path) &&
+            (o.generation === undefined ||
+              (o.generation === principal.generation &&
+                samePath(o.target.folder, t.folder) &&
+                o.target.projectId === t.projectId)),
         )
       : undefined;
 
@@ -228,11 +320,18 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
       ? state.sessionDenials.find((d) => d.sessionId === principal.sessionId && d.tool === tool)
       : undefined;
 
+  recorder?.stages.push('explicit-deny');
   const evaluated = targets.map((t) => {
-    const rule = ruleFor(t);
-    const fromException = assignment.exceptions.some(
-      (e) => e.tool === tool && e.rule.decision !== undefined && matchesScope(e.scope, t),
+    const matching: Array<{ exception: Exception; index: number }> = [];
+    const base = forPrincipal(
+      principal,
+      effectiveRule(profile, assignment, tool, t, (exception, index) => {
+        matching.push({ exception, index });
+      }),
     );
+    const forced = input.forceAsk === true && base.decision !== 'deny';
+    const rule = forced ? { ...base, decision: 'ask' as const } : base;
+    const fromException = matching.some(({ exception }) => exception.rule.decision !== undefined);
     const explicitDeny = (rule.decision === 'deny' && fromException) || denial !== undefined;
     return {
       target: t,
@@ -240,14 +339,51 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
       fromException,
       override: explicitDeny ? overrideFor(t) : undefined,
       explicitDeny,
-      forced: forcedFor(t),
+      forced,
+      matching,
     };
   });
 
   // see POL §4.3
   const explicit = evaluated.filter((e) => e.explicitDeny);
   const unpassed = explicit.find((e) => e.override === undefined);
-  if (unpassed)
+  if (unpassed) {
+    if (
+      recorder &&
+      input.targets.length === 1 &&
+      targets.length === 1 &&
+      (input.targets[0].sessionId !== null ||
+        input.targets[0].path !== null ||
+        input.targets[0].folder !== null)
+    ) {
+      const matching = unpassed.matching;
+      const denials =
+        principal.kind === 'session'
+          ? state.sessionDenials.filter(
+              (d) => d.sessionId === principal.sessionId && d.tool === tool,
+            )
+          : [];
+      if (
+        denials.length === 1 &&
+        matching.length === 0 &&
+        state.sessionDenials.filter((d) => d.id === denials[0].id).length === 1
+      )
+        recorder.winner = { kind: 'session-deny', denialId: denials[0].id };
+      else if (
+        denials.length === 0 &&
+        matching.length === 1 &&
+        matching[0].exception.rule.decision === 'deny' &&
+        state.assignments.get(pointKey(point)) === assignment
+      )
+        recorder.winner = {
+          kind: 'exception',
+          point,
+          index: matching[0].index,
+          exception: matching[0].exception,
+          scope: normalizedScope(matching[0].exception.scope),
+          rule: unpassed.rule,
+        };
+    }
     return done(
       'deny',
       denial ? { by: 'session-deny', denialId: denial.id } : { by: 'deny', point },
@@ -256,9 +392,11 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
       [],
       unpassed.target,
     );
+  }
   const passing = explicit.filter((e) => e.override !== undefined);
   const overrideIds = [...new Set(passing.flatMap((e) => (e.override ? [e.override.id] : [])))];
 
+  recorder?.stages.push('grants');
   const decided = evaluated.map((e) => {
     const grant =
       e.explicitDeny || e.forced
@@ -294,6 +432,7 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
     if (granted?.grant)
       return done('allow', { by: 'grant', grantId: granted.grant.id }, granted.rule, grantIds);
   }
+  recorder?.stages.push('assignment');
   const reason: Reason = strictest.fromException
     ? { by: 'exception', point, profileId: profile.id }
     : { by: 'profile', point, profileId: profile.id };

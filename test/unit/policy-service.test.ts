@@ -316,18 +316,47 @@ describe('policy service', () => {
     expect(h.service.undoGrantRevoke(second.undoToken, 1)).toMatchObject({ ok: false });
   });
 
-  it('revalidates bindings and invalidates undo when another grant or denial changes', () => {
-    let live = true;
+  it.each(['active', 'suspended'] as const)(
+    'durably revokes an ineligible %s grant but refuses undo and stale authority',
+    (state) => {
+      const h = harness({
+        policy: policyText(),
+        grants: serializeGrantsFile({ version: 1, grants: [grant({ state })] }),
+        grantBindingsCurrent: () => false,
+      });
+      h.service.start();
+      const token = h.service.ui([]).editToken;
+      expect(h.service.revokeGrantWithUndo('g1', 0, 'stale-token', 1)).toEqual({
+        ok: false,
+        error: 'conflict',
+      });
+      expect(h.service.revokeGrantWithUndo('g1', 1, token, 1)).toEqual({
+        ok: false,
+        error: 'conflict',
+      });
+      expect(h.service.extendGrant('g1', 0, token)).toEqual({ ok: false, error: 'invalid-value' });
+      expect(h.service.renewGrant('g1', 0, token)).toEqual({ ok: false, error: 'invalid-value' });
+      const result = h.service.revokeGrantWithUndo('g1', 0, token, 1);
+      if (!result.ok || !result.undoToken)
+        throw new Error(`revoke failed: ${JSON.stringify(result)}`);
+      expect(h.service.ui([]).grants[0]).toMatchObject({ state: 'revoked', lifecycleRevision: 1 });
+      const saved = JSON.parse(h.grantWrites.at(-1) ?? 'null');
+      expect(saved).toMatchObject({ grants: [{ state: 'revoked', lifecycleRevision: 1 }] });
+      expect(h.service.undoGrantRevoke(result.undoToken, 1)).toEqual({
+        ok: false,
+        error: 'conflict',
+      });
+      expect(h.service.ui([]).grants[0]).toMatchObject({ state: 'revoked', lifecycleRevision: 1 });
+    },
+  );
+
+  it('invalidates undo when another grant changes', () => {
     const h = harness({
       policy: policyText(),
       grants: serializeGrantsFile({ version: 1, grants: [grant(), grant({ id: 'g2' })] }),
-      grantBindingsCurrent: () => live,
     });
     h.service.start();
     const token = h.service.ui([]).editToken;
-    live = false;
-    expect(h.service.revokeGrantWithUndo('g1', 0, token, 1)).toMatchObject({ ok: false });
-    live = true;
     const first = h.service.revokeGrantWithUndo('g1', 0, token, 1);
     if (!first.ok || !first.undoToken) throw new Error('missing receipt');
     expect(h.service.revokeGrant('g2')).toEqual({ ok: true });
@@ -2048,6 +2077,46 @@ describe('policy service', () => {
       ),
     ).toEqual({ ok: true });
     expect(h.service.commit(input, decision)).toEqual({ ok: false, error: 'policy-changed' });
+  });
+
+  it('reports the actual successful commit evaluation only, with incomplete traces omitted', () => {
+    const h = harness();
+    h.service.start();
+    const input = {
+      principal: session(),
+      tool: 'open_session' as const,
+      targets: [target({ path: '/work/app', folder: '/work/app' })],
+      masterOn: true,
+      toYou: false,
+    };
+    const asked = h.service.decide(input);
+    const onSuccess = vi.fn();
+    expect(h.service.commit(input, asked, [], { generation: 1, onSuccess })).toEqual({
+      ok: true,
+      overrides: [],
+    });
+    expect(onSuccess).toHaveBeenCalledOnce();
+    expect(onSuccess.mock.calls[0][0]).toMatchObject({
+      decision: asked,
+      trace: { decidedAt: iso(T0), decision: 'ask' },
+    });
+    const incomplete = vi.fn();
+    h.service.commit(input, asked, [], { generation: null, onSuccess: incomplete });
+    expect(incomplete.mock.calls[0][0].trace).toBeNull();
+    expect(
+      h.service.applyLegacyPatch(
+        { kind: 'session', sessionId: 's1' },
+        { kind: 'default' },
+        'open_session',
+        { access: 'off' },
+      ),
+    ).toEqual({ ok: true });
+    const failed = vi.fn();
+    expect(h.service.commit(input, asked, [], { generation: 1, onSuccess: failed })).toEqual({
+      ok: false,
+      error: 'policy-changed',
+    });
+    expect(failed).not.toHaveBeenCalled();
   });
 
   it('a commit whose fresh decide still allows goes through, and an ask still commits', () => {
@@ -3853,4 +3922,172 @@ it('exposes a safe duplicate ID and fallback in recovery while preserving policy
   });
   expect(h.service.nativeLaunch('s1', 'claude')).toEqual({ status: 'unavailable' });
   expect(h.policyWrites).toEqual([]);
+});
+
+describe('migration acknowledgement', () => {
+  it('only exposes recorded offers and durably acknowledges with the current token', () => {
+    const blank = harness({ policy: policyText({ migratedFrom: 'v0.64' }) });
+    blank.service.start();
+    expect(blank.service.ui([]).migration).toBeNull();
+    const h = harness({
+      policy: policyText({ migratedFrom: 'v0.64', notes: { onScreenOnlyOffered: ['s1'] } }),
+    });
+    h.service.start();
+    const before = h.service.ui([]);
+    expect(before.migration).toEqual({
+      migratedFrom: 'v0.64',
+      offeredSessionIds: ['s1'],
+      acknowledged: false,
+    });
+    expect(h.service.acknowledgeMigration('stale')).toEqual({ ok: false, error: 'conflict' });
+    expect(h.service.acknowledgeMigration(before.editToken)).toEqual({ ok: true });
+    expect(h.service.ui([]).migration?.acknowledged).toBe(true);
+    const saved = h.policyWrites.at(-1);
+    expect(saved).toBeDefined();
+    const restarted = harness({ policy: saved });
+    restarted.service.start();
+    expect(restarted.service.ui([]).migration?.acknowledged).toBe(true);
+  });
+  it('does not acknowledge when the primary write fails', () => {
+    const h = harness({
+      policy: policyText({ migratedFrom: 'v0.64', notes: { onScreenOnlyOffered: ['s1'] } }),
+      writeFails: true,
+    });
+    h.service.start();
+    const result = h.service.acknowledgeMigration(h.service.ui([]).editToken);
+    expect(result.ok).toBe(false);
+    expect(h.service.ui([]).migration?.acknowledged).toBe(false);
+  });
+});
+
+it('persists activity receipts with their override and refuses reuse after restart', () => {
+  const h = harness({ policy: policyText() });
+  h.service.start();
+  const receipt = { id: 'activity-1', at: iso(T0) };
+  const override: OneUseOverride = {
+    id: 'override-1',
+    sessionId: 's1',
+    generation: 1,
+    tool: 'open_session',
+    target: target({ sessionId: 's2' }),
+    createdAt: iso(T0),
+  };
+  expect(h.service.saveActivityOverride(receipt, override)).toEqual({ ok: true });
+  expect(JSON.parse(h.lastGoodWrites.at(-2) ?? '{}')).toEqual({
+    version: 3,
+    kind: 'recovery-unavailable',
+  });
+  const saved = JSON.parse(h.policyWrites.at(-1) ?? '{}');
+  expect(saved.activityReceipts).toEqual([receipt]);
+  expect(saved.overrides).toEqual([override]);
+  const restart = harness({ policy: h.policyWrites.at(-1) });
+  restart.service.start();
+  expect(restart.service.saveActivityOverride(receipt, { ...override, id: 'new' })).toEqual({
+    ok: false,
+    error: 'not-found',
+  });
+});
+
+it('keeps receipt unspent after a failed primary and fails closed when backup is lost', () => {
+  const h = harness({ policy: policyText() });
+  h.service.start();
+  const receipt = { id: 'activity-1', at: iso(T0) };
+  const override: OneUseOverride = {
+    id: 'override-1',
+    sessionId: 's1',
+    generation: 1,
+    tool: 'open_session',
+    target: target({ sessionId: 's2' }),
+    createdAt: iso(T0),
+  };
+  const failed = vi.spyOn(h.deps.policyIo, 'writeSync').mockImplementationOnce(() => {
+    throw new Error('primary');
+  });
+  expect(h.service.saveActivityOverride(receipt, override)).toEqual({
+    ok: false,
+    error: 'save-failed',
+  });
+  const recovered = harness({ lastGood: h.lastGoodWrites.at(-1) });
+  recovered.service.start();
+  expect(recovered.service.ui([]).readOnly).toBe(true);
+  failed.mockRestore();
+  expect(h.service.saveActivityOverride(receipt, override)).toEqual({ ok: true });
+});
+
+it('returns normalized profile review and actual opted-in reach at the reviewed token', () => {
+  const h = harness();
+  h.service.start();
+  const profile = {
+    ...structuredClone(OBSERVER),
+    id: 'p-reach' as const,
+    name: 'Reach',
+    builtIn: false,
+    nativeModes: { claude: 'plan' as const, codex: 'unset' as const },
+  };
+  let current = h.service.ui([]).editToken;
+  const initial = h.service.reviewLocalPolicy({ kind: 'profile', profile }, current);
+  if (!initial.ok || !initial.requiresNativeReview) throw new Error('missing review');
+  expect(h.service.saveProfile(profile, current, initial.digest)).toEqual({ ok: true });
+  current = h.service.ui([]).editToken;
+  const point = { kind: 'default' } as const;
+  const assignment = {
+    profileId: profile.id,
+    exceptions: [],
+    onScreenOnly: false,
+    applyNative: true,
+  };
+  const assignmentReview = h.service.reviewLocalPolicy(
+    { kind: 'assignment', point, assignment },
+    current,
+  );
+  if (!assignmentReview.ok || !assignmentReview.requiresNativeReview)
+    throw new Error('missing assignment review');
+  expect(h.service.saveAssignment(point, assignment, current, assignmentReview.digest)).toEqual({
+    ok: true,
+  });
+  current = h.service.ui([]).editToken;
+  const changed = {
+    ...profile,
+    nativeModes: { ...profile.nativeModes, claude: 'acceptEdits' as const },
+  };
+  const review = h.service.reviewLocalPolicy({ kind: 'profile', profile: changed }, current, [
+    { sessionId: 's1', family: 'claude' },
+    { sessionId: 's2', family: 'codex' },
+  ]);
+  if (!review.ok || !review.requiresNativeReview) throw new Error('missing profile review');
+  expect(review.profileDisplay).toMatchObject({
+    before: profile,
+    after: changed,
+    optedInPoints: [point],
+    affectedSessions: [{ sessionId: 's1', family: 'claude', point }],
+  });
+  expect(h.service.saveProfile({ ...changed, name: 'Different' }, current, review.digest)).toEqual({
+    ok: false,
+    error: 'native-review-required',
+  });
+  expect(h.service.saveProfile(changed, current, review.digest)).toEqual({ ok: true });
+});
+
+it('persists and acknowledges captured migration summary without an on-screen offer', () => {
+  const summary: import('../../src/conduit-mcp/policy-types').MigrationSummaryRow[] = [
+    {
+      point: { kind: 'default' },
+      fields: [{ tool: 'send_input', field: 'access', value: 'off' }],
+      profileId: 'worker',
+      exceptions: 1,
+      onScreenOnly: false,
+    },
+  ];
+  const h = harness({
+    policy: policyText({
+      migratedFrom: 'v0.64',
+      notes: { onScreenOnlyOffered: [], migrationSummary: summary },
+    }),
+  });
+  h.service.start();
+  expect(h.service.ui([]).migration?.summary).toEqual(summary);
+  expect(h.service.acknowledgeMigration(h.service.ui([]).editToken)).toEqual({ ok: true });
+  const restarted = harness({ policy: h.policyWrites.at(-1) });
+  restarted.service.start();
+  expect(restarted.service.ui([]).migration).toMatchObject({ summary, acknowledged: true });
 });

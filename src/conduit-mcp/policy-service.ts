@@ -3,7 +3,13 @@
 import { createHash } from 'node:crypto';
 import type { NativeFamily, NativeSelection } from '../contracts/native-launch';
 import type { RemoteGrantView, RemotePolicyDoc } from '../contracts/remote-policy';
-import { type ActivityIo, type ActivityLog, createActivityLog } from './activity-log';
+import {
+  ACTIVITY_RETENTION_MS,
+  type ActivityIo,
+  type ActivityLog,
+  createActivityLog,
+} from './activity-log';
+import { parseActivityTrace } from './activity-query';
 import {
   createGrantStore,
   type GrantChoice,
@@ -16,9 +22,11 @@ import {
   decide as decideEngine,
   isLiveGrant,
   samePath,
+  decideWithTrace as traceEngine,
   visibleTools as visibleEngine,
 } from './policy-engine';
 import {
+  ACTIVITY_RECEIPTS_MAX,
   type PolicyFile,
   parseGrantsFile,
   parsePolicyBackup,
@@ -36,6 +44,8 @@ import { assignmentMap, nativeProjection, selectNative } from './policy-native';
 import { BUILT_IN_PROFILES, OBSERVER, pointKey, profileById } from './policy-profiles';
 import { legacyLowerPoint, projectLegacyLayer, propagateLegacyPatch } from './policy-projection';
 import type {
+  ActivityDecisionTraceV1,
+  ActivityReceipt,
   Assignment,
   AssignmentPoint,
   Decision,
@@ -53,9 +63,12 @@ import type {
   PolicyState,
   PolicyTarget,
   PolicyUiState,
+  PreviewDraft,
+  PreviewResult,
   Principal,
   Profile,
   ProfileId,
+  ReplayResult,
 } from './policy-types';
 import {
   CLI_KINDS,
@@ -98,10 +111,27 @@ export interface PolicyService {
   start(): void;
   stop(): Promise<void>;
   decide(input: Omit<PolicyInput, 'now'>): PolicyDecision;
+  preview(
+    input: Omit<PolicyInput, 'now'>,
+    draft: PreviewDraft | null,
+    expectedToken: string,
+  ): PreviewResult;
+  replay(draft: PreviewDraft, expectedToken: string): ReplayResult;
+  decideWithTrace(
+    input: Omit<PolicyInput, 'now'>,
+    generation: number | null,
+  ): { decision: PolicyDecision; trace: ActivityDecisionTraceV1 | null };
   commit(
     input: Omit<PolicyInput, 'now'>,
     decision: PolicyDecision,
     held?: readonly OneUseOverride[],
+    capture?: {
+      generation: number | null;
+      onSuccess: (result: {
+        decision: PolicyDecision;
+        trace: ActivityDecisionTraceV1 | null;
+      }) => void;
+    },
   ): PolicyCommitResult;
   noteDecision(activityId: string, input: Omit<PolicyInput, 'now'>, decision: PolicyDecision): void;
   visibleTools(p: Principal): ToolName[];
@@ -130,6 +160,7 @@ export interface PolicyService {
     targets: readonly PolicyTarget[],
     requestId: string | null,
   ): GrantBatchResult;
+  acknowledgeMigration(expectedToken: string): PolicyEditResult;
   extendGrant(id: string, revision: number, expectedToken: string): GrantLifecycleResult;
   renewGrant(id: string, revision: number, expectedToken: string): GrantLifecycleResult;
   revokeGrantWithUndo(
@@ -156,9 +187,14 @@ export interface PolicyService {
     expectedToken: string,
     nativeReview?: string,
   ): PolicyEditResult;
-  reviewLocalPolicy(edit: LocalPolicyEdit, expectedToken: string): LocalPolicyReviewResult;
+  reviewLocalPolicy(
+    edit: LocalPolicyEdit,
+    expectedToken: string,
+    sessions?: readonly { sessionId: string; family: NativeFamily }[],
+  ): LocalPolicyReviewResult;
   retrySave(): PolicyEditResult;
   peerRevoked(machineId: string): void;
+  saveActivityOverride(receipt: ActivityReceipt, override: OneUseOverride): PolicyEditResult;
   allowOnce(activityId: string): PolicyEditResult | { ok: false; error: 'not-overridable' };
   saveSessionDenial(
     requestId: string,
@@ -262,6 +298,73 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     sessionDenials: file.sessionDenials ?? [],
     failClosed,
   });
+
+  const captureDecision = (
+    input: Omit<PolicyInput, 'now'>,
+    generation: number | null,
+    now: number,
+    state: PolicyState,
+  ) => {
+    const result = traceEngine(state, { ...input, now });
+    if (
+      !Number.isFinite(now) ||
+      !Number.isFinite(new Date(now).getTime()) ||
+      input.targets.length === 0 ||
+      input.targets.some((t) => t.sessionId === null && t.path === null && t.folder === null) ||
+      (input.principal.kind === 'session' &&
+        (!Number.isSafeInteger(generation) || generation === null || generation <= 0))
+    )
+      return { decision: result.decision, trace: null };
+    const p = input.principal;
+    const principal =
+      p.kind === 'session'
+        ? {
+            kind: p.kind,
+            sessionId: p.sessionId,
+            launchedCli: p.launchedCli,
+            generation,
+            projectId: p.projectId,
+          }
+        : {
+            kind: p.kind,
+            machineId: p.machineId,
+            handle: p.handle,
+            trust: p.trust,
+            controller: p.controller,
+            capabilities: p.capabilities,
+          };
+    const { point, assignment } = assignmentFor(state, p);
+    const profile = profileById(state, assignment.profileId) ?? OBSERVER;
+    const trace = parseActivityTrace({
+      v: 1,
+      decidedAt: new Date(now).toISOString(),
+      facts: {
+        v: 1,
+        principal,
+        tool: input.tool,
+        targets: input.targets,
+        masterOn: input.masterOn,
+        toYou: input.toYou,
+        forceAsk: input.forceAsk === true,
+      },
+      decision: result.decision.decision,
+      reason: result.decision.reason,
+      rule: result.decision.rule,
+      forcedAsk: result.decision.forcedAsk,
+      assignment: { point, profileId: profile.id, profileName: profile.name },
+      runtime: { outcome: 'not-reached', code: null },
+      stages: result.trace.stages,
+      withoutWinner: result.trace.withoutWinner,
+      ...(result.trace.winner?.kind === 'exception'
+        ? {
+            winnerDigest: createHash('sha256')
+              .update(JSON.stringify(result.trace.winner))
+              .digest('hex'),
+          }
+        : {}),
+    });
+    return { decision: result.decision, trace };
+  };
 
   let stopped = false;
 
@@ -742,12 +845,65 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
   const reviewLocalPolicy = (
     edit: LocalPolicyEdit,
     expectedToken: string,
+    sessions: readonly { sessionId: string; family: NativeFamily }[] = [],
   ): LocalPolicyReviewResult => {
     const built = buildLocalCandidate(edit, expectedToken);
     if (!built.ok) return built;
+    const before = projection(file);
+    const after = projection(built.candidate);
+    const profile =
+      edit.kind === 'profile' ? after.profiles.find((p) => p.id === edit.profile.id) : undefined;
+    let profileDisplay: import('./policy-types').ProfileReviewDisplay | undefined;
+    if (profile) {
+      const beforeState = {
+        ...stateNow(),
+        profiles: before.profiles,
+        assignments: assignmentMap(before.assignments),
+      };
+      const afterState = {
+        ...stateNow(),
+        profiles: after.profiles,
+        assignments: assignmentMap(after.assignments),
+      };
+      const points = after.assignments
+        .filter(
+          ({ point, assignment }) =>
+            assignment.profileId === profile.id &&
+            assignment.applyNative === true &&
+            (point.kind === 'default' ||
+              point.kind === 'session' ||
+              (point.kind === 'cli' && (point.cli === 'claude' || point.cli === 'codex'))),
+        )
+        .map(({ point }) => point);
+      const affected = sessions.flatMap(({ sessionId, family }) => {
+        if (
+          JSON.stringify(selectNative(beforeState, sessionId, family)) ===
+          JSON.stringify(selectNative(afterState, sessionId, family))
+        )
+          return [];
+        const principal = {
+          kind: 'session' as const,
+          sessionId,
+          handle: '',
+          launchedCli: family,
+          homeFolder: null,
+          projectId: null,
+        };
+        const selected = assignmentFor(afterState, principal);
+        return [{ sessionId, family, point: selected.point }];
+      });
+      profileDisplay = {
+        before: before.profiles.find((p) => p.id === profile.id) ?? null,
+        after: profile,
+        optedInPoints: points.slice(0, 100),
+        affectedSessions: affected.slice(0, 100),
+        truncated: points.length > 100 || affected.length > 100,
+      };
+    }
+    const display = profileDisplay ? { profileDisplay } : {};
     return nativeProjection(built.candidate) === nativeProjection(file)
-      ? { ok: true, requiresNativeReview: false }
-      : { ok: true, requiresNativeReview: true, digest: digestFor(built.candidate) };
+      ? { ok: true, requiresNativeReview: false, ...display }
+      : { ok: true, requiresNativeReview: true, digest: digestFor(built.candidate), ...display };
   };
   const saveLocalPolicy = (
     edit: LocalPolicyEdit,
@@ -868,7 +1024,118 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       return decideEngine(stateNow(), { ...input, now: deps.now() });
     },
 
-    commit(input, decision, held = []) {
+    preview(input, draft, expectedToken) {
+      if (expectedToken !== editToken) return { ok: false, error: 'conflict' };
+      if (!policyWritable) return { ok: false, error: 'read-only' };
+      if (input.principal.kind !== 'session' || !deps.hasSession(input.principal.sessionId))
+        return { ok: false, error: 'not-found' };
+      const now = deps.now();
+      const current = stateNow();
+      if (captureDecision(input, 1, now, current).trace === null)
+        return { ok: false, error: 'invalid-value' };
+      let candidate = current;
+      if (draft !== null) {
+        const built = buildLocalCandidate({ kind: 'assignment', ...draft }, expectedToken);
+        if (!built.ok)
+          return {
+            ok: false,
+            error:
+              built.error === 'read-only'
+                ? 'read-only'
+                : built.error === 'conflict'
+                  ? 'conflict'
+                  : 'invalid-value',
+          };
+        candidate = { ...current, assignments: assignmentMap(built.candidate.assignments) };
+      }
+      const decision = decideEngine(candidate, { ...input, now });
+      if (expectedToken !== editToken) return { ok: false, error: 'conflict' };
+      return { ok: true, decision, editToken, runtime: 'unevaluated' };
+    },
+
+    replay(draft, expectedToken) {
+      const built = buildLocalCandidate({ kind: 'assignment', ...draft }, expectedToken);
+      if (!built.ok)
+        return {
+          ok: false,
+          error:
+            built.error === 'read-only'
+              ? 'read-only'
+              : built.error === 'conflict'
+                ? 'conflict'
+                : 'invalid-value',
+        };
+      const skipped = { aggregate: 0, legacy: 0, incomplete: 0, remote: 0 };
+      const sample = activity.replaySample((row, invalidTrace) => {
+        if (row.count !== null) {
+          skipped.aggregate++;
+          return false;
+        }
+        if (!row.trace) {
+          if (invalidTrace) skipped.incomplete++;
+          else skipped.legacy++;
+          return false;
+        }
+        if (row.trace.facts.principal.kind === 'remote') {
+          skipped.remote++;
+          return false;
+        }
+        if (
+          row.trace.facts.targets.length === 0 ||
+          row.trace.facts.targets.some(
+            (t) => t.sessionId === null && t.path === null && t.folder === null,
+          )
+        ) {
+          skipped.incomplete++;
+          return false;
+        }
+        return true;
+      });
+      if (!sample.ok) return { ok: false, error: 'unavailable' };
+      const current = stateNow();
+      const candidate = { ...current, assignments: assignmentMap(built.candidate.assignments) };
+      let changed = 0;
+      for (const row of sample.rows.slice(0, 1000)) {
+        const trace = row.trace;
+        if (trace?.facts.principal.kind !== 'session') continue;
+        const p = trace.facts.principal;
+        const input: PolicyInput = {
+          principal: {
+            kind: 'session',
+            sessionId: p.sessionId,
+            handle: '',
+            launchedCli: p.launchedCli,
+            homeFolder: null,
+            projectId: p.projectId,
+          },
+          tool: trace.facts.tool,
+          targets: trace.facts.targets,
+          masterOn: trace.facts.masterOn,
+          toYou: trace.facts.toYou,
+          forceAsk: trace.facts.forceAsk,
+          now: Date.parse(trace.decidedAt),
+        };
+        const before = decideEngine(current, input);
+        const after = decideEngine(candidate, input);
+        if (before.decision !== after.decision) changed++;
+      }
+      if (expectedToken !== editToken) return { ok: false, error: 'conflict' };
+      return {
+        ok: true,
+        editToken,
+        sampled: Math.min(sample.rows.length, 1000),
+        changed,
+        skipped,
+        truncated: sample.truncated,
+        since: sample.since,
+      };
+    },
+
+    decideWithTrace(input, generation) {
+      return captureDecision(input, generation, deps.now(), stateNow());
+    },
+
+    commit(input, decision, held = [], capture) {
       // A concurrent call decided on the same override; the first commit spent it. A held
       // override was spent when its card was raised, so it is not checked against the saved
       // list again.
@@ -886,7 +1153,11 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       );
       if (decision.grantIds.some((id) => !live.has(id)))
         return { ok: false, error: 'policy-changed' };
-      const fresh = decideEngine(stateNow(), { ...input, heldOverrides: held, now });
+      const commitInput = { ...input, heldOverrides: held };
+      const captured = capture
+        ? captureDecision(commitInput, capture.generation, now, stateNow())
+        : null;
+      const fresh = captured?.decision ?? decideEngine(stateNow(), { ...commitInput, now });
       if (DECISION_RANK[fresh.decision] < DECISION_RANK[decision.decision])
         return { ok: false, error: 'policy-changed' };
       const used = new Set(decision.overrideIds.filter((id) => !heldIds.has(id)));
@@ -909,6 +1180,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
         for (const id of decision.grantIds) grants.touch(id);
         markGrants();
       }
+      if (captured) capture?.onSuccess(captured);
       return { ok: true, overrides: removed };
     },
 
@@ -1053,7 +1325,6 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       if (expectedToken !== editToken) return { ok: false, error: 'conflict' };
       const original = grants.all().find((g) => g.id === id);
       if (!original) return { ok: false, error: 'not-found' };
-      if (!deps.grantBindingsCurrent(original)) return { ok: false, error: 'invalid-value' };
       if ((original.lifecycleRevision ?? 0) !== revision) return { ok: false, error: 'conflict' };
       const candidate = grantCandidate();
       const revoked = candidate.revoke(id);
@@ -1192,6 +1463,72 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
           };
     },
 
+    saveActivityOverride(receipt, override) {
+      if (!policyWritable) return { ok: false, error: 'read-only' };
+      const now = deps.now();
+      const day = new Date(now).toISOString().slice(0, 10);
+      const cutoff = new Date(
+        Date.parse(`${day}T00:00:00.000Z`) - ACTIVITY_RETENTION_MS,
+      ).toISOString();
+      const watermark =
+        file.activityReceiptCutoff && file.activityReceiptCutoff > cutoff
+          ? file.activityReceiptCutoff
+          : cutoff;
+      const canonical = (value: string) => {
+        const time = Date.parse(value);
+        return Number.isFinite(time) && new Date(time).toISOString() === value;
+      };
+      if (
+        !receipt.id ||
+        receipt.id.length > 512 ||
+        /\p{C}/u.test(receipt.id) ||
+        !canonical(receipt.at) ||
+        receipt.at < watermark ||
+        Date.parse(receipt.at) > now ||
+        !Number.isSafeInteger(override.generation) ||
+        (override.generation ?? 0) < 1 ||
+        (override.target.sessionId === null && override.target.path === null)
+      )
+        return { ok: false, error: 'invalid-value' };
+      const receipts = (file.activityReceipts ?? []).filter((r) => r.at >= watermark);
+      if (receipts.some((r) => r.id === receipt.id)) return { ok: false, error: 'not-found' };
+      if (receipts.length >= ACTIVITY_RECEIPTS_MAX) return { ok: false, error: 'too-large' };
+      if (
+        file.overrides.some(
+          (o) =>
+            o.sessionId === override.sessionId &&
+            o.tool === override.tool &&
+            o.target.sessionId === override.target.sessionId &&
+            samePath(o.target.path, override.target.path) &&
+            samePath(o.target.folder, override.target.folder) &&
+            o.target.projectId === override.target.projectId,
+        )
+      )
+        return { ok: false, error: 'busy' };
+      const candidate = structuredClone(file);
+      candidate.version = 3;
+      candidate.sessionDenials ??= [];
+      candidate.activityReceiptCutoff = watermark;
+      candidate.activityReceipts = [...receipts, receipt];
+      candidate.overrides = [...candidate.overrides, override];
+      if (Buffer.byteLength(serializePolicyFile(candidate)) > POLICY_MAX_BYTES)
+        return { ok: false, error: 'too-large' };
+      try {
+        if (
+          deps.lastGoodIo.writeSync(
+            JSON.stringify({ version: 3, kind: 'recovery-unavailable' }),
+          ) !== true
+        )
+          throw new Error('Marker writer did not complete synchronously');
+      } catch (error) {
+        deps.warn('Policy recovery marker could not be saved', error);
+        return { ok: false, error: 'save-failed' };
+      }
+      return savePolicy(candidate, false, false, undefined, () => {
+        backupWarning = 'Permissions backup is unavailable until permissions are saved again';
+      });
+    },
+
     allowOnce(activityId) {
       const rem = remembered.get(activityId);
       if (rem === undefined && spent.has(activityId)) return { ok: false, error: 'not-found' };
@@ -1275,6 +1612,19 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       });
     },
 
+    acknowledgeMigration(expectedToken) {
+      if (expectedToken !== editToken) return { ok: false, error: 'conflict' };
+      if (
+        file.migratedFrom !== 'v0.64' ||
+        (file.notes.onScreenOnlyOffered.length === 0 && !file.notes.migrationSummary?.length)
+      )
+        return { ok: false, error: 'not-found' };
+      if (file.notes.migrationAcknowledged) return { ok: true };
+      const candidate = structuredClone(file);
+      candidate.notes.migrationAcknowledged = true;
+      return savePolicy(candidate, false);
+    },
+
     sessionEnded(sessionId) {
       invalidateAuthority();
       const assignments = file.assignments.length;
@@ -1345,6 +1695,19 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
         byCli[cli] = projectLegacyLayer(st, { kind: 'cli', cli }, { kind: 'default' });
       }
       return {
+        migration:
+          file.migratedFrom === 'v0.64' &&
+          (file.notes.onScreenOnlyOffered.length > 0 || !!file.notes.migrationSummary?.length)
+            ? {
+                migratedFrom: 'v0.64',
+                offeredSessionIds: [...file.notes.onScreenOnlyOffered],
+                ...(file.notes.migrationSummary
+                  ? { summary: structuredClone(file.notes.migrationSummary) }
+                  : {}),
+                ...(file.notes.migrationSummaryTruncated ? { summaryTruncated: true } : {}),
+                acknowledged: file.notes.migrationAcknowledged === true,
+              }
+            : null,
         editToken,
         saveError: [...saveErrors.values()].join('; ') || null,
         backupWarning,

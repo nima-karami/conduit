@@ -9,6 +9,8 @@ export interface PermissionsProfilesProps {
   profiles: readonly Profile[];
   onCopy(profile: Profile): void;
   onEdit(profile: Profile): void;
+  onDelete?(profile: Profile): void;
+  readOnly?: boolean;
 }
 
 const DECISION_LABEL: Record<Decision, string> = { allow: 'Allow', ask: 'Ask', deny: 'Deny' };
@@ -56,7 +58,13 @@ function groupSummary(profile: Profile, tools: readonly ToolName[]): string {
     .join(' · ');
 }
 
-export function PermissionsProfiles({ profiles, onCopy, onEdit }: PermissionsProfilesProps) {
+export function PermissionsProfiles({
+  profiles,
+  onCopy,
+  onEdit,
+  onDelete,
+  readOnly,
+}: PermissionsProfilesProps) {
   const [expanded, setExpanded] = useState(false);
   const detailId = useId();
   const shownProfiles = [...BUILT_IN_PROFILES, ...profiles.filter((profile) => !profile.builtIn)];
@@ -109,6 +117,17 @@ export function PermissionsProfiles({ profiles, onCopy, onEdit }: PermissionsPro
                         aria-label={`Edit ${profile.name}`}
                       >
                         Edit
+                      </button>
+                    )}
+                    {!profile.builtIn && onDelete && (
+                      <button
+                        type="button"
+                        className="btn btn--sm"
+                        disabled={readOnly}
+                        onClick={() => onDelete(profile)}
+                        aria-label={`Delete ${profile.name}`}
+                      >
+                        Delete
                       </button>
                     )}
                   </span>

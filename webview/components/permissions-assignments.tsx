@@ -1,15 +1,21 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { pointKey } from '../../src/conduit-mcp/policy-profiles';
 import type {
   Assignment,
   AssignmentPoint,
   PolicyUiState,
+  PreviewDraft,
   Profile,
   ProfileId,
+  ReplayResult,
+  Scope,
 } from '../../src/conduit-mcp/policy-types';
-import { CLI_KINDS, TOOL_NAMES } from '../../src/conduit-mcp/tool-policy';
+import { CLI_KINDS, TOOL_NAMES, type ToolName } from '../../src/conduit-mcp/tool-policy';
+import { folderKey } from '../../src/folder-key';
 import type { Session } from '../../src/types';
 import type { ConduitMcpApi } from '../use-conduit-mcp';
+import { PermissionsAssignmentExceptions } from './permissions-assignment-exceptions';
+import { PermissionsCheckRequest } from './permissions-check-request';
 import {
   describeExceptionScope,
   SessionPermissionExceptions,
@@ -115,24 +121,110 @@ function facts(policy: PolicyUiState, assignment: Assignment) {
     </>
   );
 }
+export interface AssignmentExceptionSeed {
+  sessionId: string;
+  tool: ToolName;
+  scope: Scope;
+}
+
+function sameScope(a: Scope, b: Scope): boolean {
+  if (a.kind === 'session' && b.kind === 'session') return a.sessionId === b.sessionId;
+  if (a.kind === 'path' && b.kind === 'path') return folderKey(a.path) === folderKey(b.path);
+  return false;
+}
+
+function ReplayPreview({
+  draft,
+  token,
+  replayPolicy,
+}: {
+  draft: PreviewDraft;
+  token: string;
+  replayPolicy: ConduitMcpApi['replayPolicy'];
+}) {
+  const key = JSON.stringify([draft, token]);
+  const current = useRef(key);
+  const generation = useRef(0);
+  if (current.current !== key) {
+    current.current = key;
+    generation.current++;
+  }
+  const [response, setResponse] = useState<{
+    key: string;
+    generation: number;
+    result: ReplayResult | null;
+  } | null>(null);
+  const [pendingKey, setPendingKey] = useState<{ key: string; generation: number } | null>(null);
+  const pending = pendingKey?.key === key && pendingKey.generation === generation.current;
+  const result =
+    response?.key === key && response.generation === generation.current
+      ? response.result
+      : undefined;
+  const run = async () => {
+    const runGeneration = ++generation.current;
+    setPendingKey({ key, generation: runGeneration });
+    setResponse(null);
+    try {
+      const value = await replayPolicy(draft, token);
+      if (current.current === key && generation.current === runGeneration)
+        setResponse({ key, generation: runGeneration, result: value });
+    } catch {
+      if (current.current === key && generation.current === runGeneration)
+        setResponse({ key, generation: runGeneration, result: null });
+    } finally {
+      if (generation.current === runGeneration) setPendingKey(null);
+    }
+  };
+  return (
+    <section aria-label="Seven-day policy replay">
+      <h3>Over the last seven days</h3>
+      <p>Compare this draft with current policy using recorded facts. No requests are run.</p>
+      <button type="button" className="btn btn--sm" disabled={pending} onClick={() => void run()}>
+        {pending ? 'Checking…' : 'Compare Activity'}
+      </button>
+      <div role="status" aria-live="polite">
+        {result?.ok && (
+          <p>
+            {result.changed} changed of {result.sampled} evaluated since {result.since}.{' '}
+            {result.truncated ? 'The sample is limited to the newest 1,000 eligible entries. ' : ''}
+            Skipped: {result.skipped.aggregate} aggregated, {result.skipped.legacy} without traces,{' '}
+            {result.skipped.incomplete} incomplete, {result.skipped.remote} remote. Runtime
+            conditions were not evaluated.
+          </p>
+        )}
+        {result && !result.ok && (
+          <p>
+            {result.error === 'conflict'
+              ? 'Permissions changed. Cancel and reopen this assignment.'
+              : `Comparison unavailable (${result.error}).`}
+          </p>
+        )}
+        {result === null && <p>Comparison unavailable. Try again.</p>}
+      </div>
+    </section>
+  );
+}
+
 export function PermissionsAssignments({
   policy,
   sessions,
   mcp,
   serverConnected,
+  exceptionSeed,
+  onExceptionSeedConsumed,
 }: {
   policy: PolicyUiState;
   sessions: Session[];
   mcp: ConduitMcpApi;
   serverConnected: boolean;
+  exceptionSeed?: AssignmentExceptionSeed | null;
+  onExceptionSeedConsumed?: () => void;
 }) {
   const [selected, setSelected] = useState('default');
   const [editing, setEditing] = useState<Edit | null>(null);
   const [review, setReview] = useState<Review | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [decision, setDecision] = useState<'allow' | 'ask' | 'deny'>('ask');
-  const [tool, setTool] = useState<(typeof TOOL_NAMES)[number]>('open_session');
   const readOnly = policy.readOnly || !serverConnected;
   const points: AssignmentPoint[] = [
     { kind: 'default' },
@@ -147,6 +239,65 @@ export function PermissionsAssignments({
       ),
   ];
   const point = points.find((item) => pointKey(item) === selected) ?? points[0];
+  const consumedSeed = useRef<string | null>(null);
+  useEffect(() => {
+    if (!exceptionSeed) {
+      consumedSeed.current = null;
+      return;
+    }
+    const seedKey = JSON.stringify(exceptionSeed);
+    if (consumedSeed.current === seedKey) return;
+    consumedSeed.current = seedKey;
+    const { sessionId, tool, scope } = exceptionSeed;
+    const supported =
+      (tool === 'close_session' && scope.kind === 'session') ||
+      (tool === 'open_file' && scope.kind === 'path');
+    if (
+      readOnly ||
+      !supported ||
+      !sessions.some((session) => session.id === sessionId) ||
+      !policy.sessions[sessionId]
+    ) {
+      setError('This Activity entry cannot seed a local assignment.');
+      onExceptionSeedConsumed?.();
+      return;
+    }
+    const target: AssignmentPoint = { kind: 'session', sessionId };
+    const before = structuredClone(assignmentAt(policy, target) ?? inheritedAt(policy, target));
+    const matches = before.exceptions
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry }) => entry.tool === tool && sameScope(entry.scope, scope));
+    if (matches.length > 1) {
+      setError('This assignment has multiple exceptions for that target. Edit them directly.');
+      onExceptionSeedConsumed?.();
+      return;
+    }
+    const exceptions =
+      matches.length === 1
+        ? before.exceptions.map((entry, index) =>
+            index === matches[0].index
+              ? { ...entry, rule: { ...entry.rule, decision: 'allow' as const } }
+              : entry,
+          )
+        : [
+            ...before.exceptions,
+            { tool, scope: structuredClone(scope), rule: { decision: 'allow' as const } },
+          ];
+    setSelected(pointKey(target));
+    setReview(null);
+    setEditing({
+      point: target,
+      before,
+      draft: { ...structuredClone(before), exceptions },
+      token: policy.editToken,
+    });
+    setError(null);
+    onExceptionSeedConsumed?.();
+  }, [exceptionSeed, onExceptionSeedConsumed, policy, readOnly, sessions]);
+  const checkSessions = sessions
+    .filter((session) => policy.sessions[session.id])
+    .map((session) => ({ id: session.id, label: session.name }));
+
   const start = (target: AssignmentPoint) => {
     const current = assignmentAt(policy, target) ?? inheritedAt(policy, target);
     setEditing({
@@ -212,12 +363,27 @@ export function PermissionsAssignments({
     (review ?? editing)?.token !== undefined && (review ?? editing)?.token !== policy.editToken;
   if (review)
     return (
-      <section>
+      <section className="permissions-assignments">
         <h2>Review assignment · {label(review.point)}</h2>
         <h3>Before</h3>
         {facts(policy, review.before)}
         <h3>After</h3>
         {facts(policy, review.after)}
+        {!stale && (
+          <>
+            <PermissionsCheckRequest
+              sessions={checkSessions}
+              draft={{ point: review.point, assignment: review.candidate }}
+              expectedToken={review.token}
+              previewPolicy={mcp.previewPolicy}
+            />
+            <ReplayPreview
+              draft={{ point: review.point, assignment: review.candidate }}
+              token={review.token}
+              replayPolicy={mcp.replayPolicy}
+            />
+          </>
+        )}
         {review.digest && (
           <p>Confirming authorizes the reviewed native mode changes for future launches.</p>
         )}
@@ -254,13 +420,14 @@ export function PermissionsAssignments({
     const disabled = readOnly || pending || stale;
     const update = (draft: Assignment) => setEditing({ ...editing, draft });
     return (
-      <section>
+      <section className="permissions-assignments">
         <h2>Edit assignment · {label(editing.point)}</h2>
         {stale && <p role="alert">Permissions changed. Cancel and reopen this assignment.</p>}
         {error && <p role="alert">{error}</p>}
         <label>
           Profile{' '}
           <select
+            className="selectfield"
             value={editing.draft.profileId}
             disabled={disabled}
             onChange={(event) => {
@@ -305,78 +472,26 @@ export function PermissionsAssignments({
             onChange={update}
           />
         ) : (
-          <section>
-            <h3>Exceptions</h3>
-            {exceptionEntries(editing.draft).map(({ entry, index, key }) => (
-              <p key={key}>
-                {entry.tool} · {describeExceptionScope(entry.scope)} ·{' '}
-                {Object.entries(entry.rule)
-                  .map(([field, value]) => `${field}: ${value}`)
-                  .join(', ')}{' '}
-                <button
-                  type="button"
-                  disabled={disabled}
-                  onClick={() =>
-                    update({
-                      ...editing.draft,
-                      exceptions: editing.draft.exceptions.filter((_, at) => at !== index),
-                    })
-                  }
-                >
-                  Remove
-                </button>
-              </p>
-            ))}
-            <label>
-              Action{' '}
-              <select
-                value={tool}
-                disabled={disabled}
-                onChange={(event) => {
-                  const found = TOOL_NAMES.find((item) => item === event.target.value);
-                  if (found) setTool(found);
-                }}
-              >
-                {TOOL_NAMES.map((item) => (
-                  <option key={item}>{item}</option>
-                ))}
-              </select>
-            </label>{' '}
-            <label>
-              Decision{' '}
-              <select
-                value={decision}
-                disabled={disabled}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  if (value === 'allow' || value === 'ask' || value === 'deny') setDecision(value);
-                }}
-              >
-                <option value="allow">Allow</option>
-                <option value="ask">Ask</option>
-                <option value="deny">Deny</option>
-              </select>
-            </label>{' '}
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={() =>
-                update({
-                  ...editing.draft,
-                  exceptions: [
-                    ...editing.draft.exceptions,
-                    {
-                      tool,
-                      scope: { kind: 'anywhere' },
-                      rule: { decision },
-                    },
-                  ],
-                })
-              }
-            >
-              Add exception anywhere
-            </button>
-          </section>
+          <PermissionsAssignmentExceptions
+            assignment={editing.draft}
+            disabled={disabled}
+            onChange={update}
+          />
+        )}
+        {!stale && (
+          <>
+            <PermissionsCheckRequest
+              sessions={checkSessions}
+              draft={{ point: editing.point, assignment: editing.draft }}
+              expectedToken={editing.token}
+              previewPolicy={mcp.previewPolicy}
+            />
+            <ReplayPreview
+              draft={{ point: editing.point, assignment: editing.draft }}
+              token={editing.token}
+              replayPolicy={mcp.replayPolicy}
+            />
+          </>
         )}
         <button
           type="button"
@@ -411,7 +526,7 @@ export function PermissionsAssignments({
     );
   }
   return (
-    <section>
+    <section className="permissions-assignments">
       <h2>Assignments</h2>
       {readOnly && (
         <p role="status">
@@ -420,7 +535,11 @@ export function PermissionsAssignments({
       )}
       <label>
         Assignment point{' '}
-        <select value={selected} onChange={(event) => setSelected(event.target.value)}>
+        <select
+          className="selectfield"
+          value={selected}
+          onChange={(event) => setSelected(event.target.value)}
+        >
           {points.map((item) => (
             <option key={pointKey(item)} value={pointKey(item)}>
               {item.kind === 'session'
@@ -433,8 +552,15 @@ export function PermissionsAssignments({
       <button type="button" className="btn" disabled={readOnly} onClick={() => start(point)}>
         {assignmentAt(policy, point) ? 'Edit assignment' : 'Add assignment'}
       </button>
+      <PermissionsCheckRequest
+        sessions={checkSessions}
+        draft={null}
+        expectedToken={policy.editToken}
+        previewPolicy={mcp.previewPolicy}
+      />
+      {error && <p role="alert">{error}</p>}
       <h3>Who gets which profile</h3>
-      <table>
+      <table className="permissions-assignments__table">
         <thead>
           <tr>
             <th scope="col">Applies to</th>
@@ -469,7 +595,12 @@ export function PermissionsAssignments({
                       : 'none'}
                   </td>
                   <td>
-                    <button type="button" disabled={readOnly} onClick={() => start(item)}>
+                    <button
+                      type="button"
+                      className="btn btn--sm"
+                      disabled={readOnly}
+                      onClick={() => start(item)}
+                    >
                       {explicit ? 'Edit' : 'Add'}
                     </button>
                   </td>
@@ -500,7 +631,12 @@ export function PermissionsAssignments({
                 </td>
                 <td>
                   {sessions.some((session) => session.id === id) && (
-                    <button type="button" disabled={readOnly} onClick={() => start(item)}>
+                    <button
+                      type="button"
+                      className="btn btn--sm"
+                      disabled={readOnly}
+                      onClick={() => start(item)}
+                    >
                       {explicit ? 'Edit' : 'Add'}
                     </button>
                   )}

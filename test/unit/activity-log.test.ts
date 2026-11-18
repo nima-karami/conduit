@@ -129,7 +129,11 @@ describe('activity log', () => {
         'count',
       ].sort(),
     );
-    expect(JSON.parse(line)).toMatchObject({ v: 1, id: 'id-1', at: '2026-11-14T10:05:00.000Z' });
+    expect(JSON.parse(line)).toMatchObject({
+      v: 1,
+      id: 'id-1',
+      at: '2026-11-14T10:05:00.000Z',
+    });
   });
 
   it('counted tools aggregate per session per hour, denies still get rows', () => {
@@ -213,7 +217,10 @@ describe('activity log', () => {
     log.flushCounts(false);
     expect(io.written).toHaveLength(1);
     expect(io.written[0]?.day).toBe('2026-11-14');
-    expect(rows(io)[0]).toMatchObject({ at: '2026-11-14T23:00:00.000Z', count: 1 });
+    expect(rows(io)[0]).toMatchObject({
+      at: '2026-11-14T23:00:00.000Z',
+      count: 1,
+    });
   });
 
   it('a counted bucket keeps its own copy of the principal', () => {
@@ -369,12 +376,92 @@ describe('activity log', () => {
     for (let i = 0; i < 201; i++) {
       clock.now = T0 + i;
       ids.push(
-        log.record({ ...base, action: 'send_message', decision: 'deny', outcome: 'denied' }),
+        log.record({
+          ...base,
+          action: 'send_message',
+          decision: 'deny',
+          outcome: 'denied',
+        }),
       );
     }
     const denies = log.recentDenies();
     expect(denies.size).toBe(200);
     expect(denies.has(ids[0] ?? '')).toBe(false);
     expect(denies.get(ids[200] ?? '')?.decision).toBe('deny');
+  });
+});
+
+describe('bounded authority scan', () => {
+  it('finds an exact row and refuses duplicate IDs across timestamps in one visit', () => {
+    const io = fakeIo();
+    const { log, clock } = harness(io);
+    const id = log.record({
+      ...base,
+      action: 'close_session',
+      decision: 'deny',
+    });
+    const at = new Date(clock.now).toISOString();
+    const read = vi.spyOn(io, 'read');
+    expect(log.lookup(id, at)).toMatchObject({ ok: true, row: { id, at } });
+    expect(read).toHaveBeenCalledTimes(1);
+    clock.now += 1000;
+    const duplicate = { ...rows(io)[0], at: new Date(clock.now).toISOString() };
+    io.written.push({
+      day: duplicate.at.slice(0, 10),
+      line: `${JSON.stringify(duplicate)}\n`,
+    });
+    expect(log.lookup(id, at)).toEqual({ ok: false, error: 'unavailable' });
+  });
+
+  it('samples newest seven-day rows once and fails closed on a recording gap', () => {
+    const io = fakeIo();
+    const { log, clock } = harness(io);
+    for (let i = 0; i < 1002; i++) log.record({ ...base, action: 'close_session' });
+    const read = vi.spyOn(io, 'read');
+    const sample = log.replaySample();
+    expect(sample.ok && sample.rows).toHaveLength(1001);
+    expect(sample.ok && sample.truncated).toBe(true);
+    expect(read).toHaveBeenCalledTimes(1);
+    io.failAppend = true;
+    clock.now++;
+    log.record({ ...base, action: 'close_session' });
+    expect(log.replaySample()).toEqual({ ok: false, error: 'unavailable' });
+  });
+});
+
+describe('bounded scan failures and ordering', () => {
+  it('validates lookup, rejects corrupt or oversized storage and reports missing rows', () => {
+    const io = fakeIo();
+    const { log } = harness(io);
+    const at = new Date(T0).toISOString();
+    expect(log.lookup('', at)).toEqual({ ok: false, error: 'invalid-value' });
+    expect(log.lookup('id', 'bad')).toEqual({
+      ok: false,
+      error: 'invalid-value',
+    });
+    expect(log.lookup('id', at)).toEqual({ ok: false, error: 'not-found' });
+    io.written.push({ day: at.slice(0, 10), line: '{bad}\n' });
+    expect(log.lookup('id', at)).toEqual({ ok: false, error: 'unavailable' });
+    io.written = [];
+    vi.spyOn(io, 'list').mockReturnValue([{ day: at.slice(0, 10), bytes: ACTIVITY_MAX_BYTES + 1 }]);
+    expect(log.replaySample()).toEqual({ ok: false, error: 'unavailable' });
+  });
+
+  it('orders equal timestamps and excludes rows outside the retention and replay windows', () => {
+    const io = fakeIo();
+    const { log, clock } = harness(io);
+    clock.now -= 30 * 86_400_000;
+    log.record({ ...base, action: 'close_session' });
+    clock.now = T0 - 8 * 86_400_000;
+    log.record({ ...base, action: 'close_session' });
+    clock.now = T0;
+    const a = log.record({ ...base, action: 'close_session' });
+    const b = log.record({ ...base, action: 'close_session' });
+    const sample = log.replaySample();
+    expect(sample.ok && sample.rows.map((row) => row.id)).toEqual([b, a]);
+    expect(log.lookup('id-1', new Date(T0 - 30 * 86_400_000).toISOString())).toEqual({
+      ok: false,
+      error: 'not-found',
+    });
   });
 });

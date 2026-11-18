@@ -12,6 +12,7 @@ import {
   startAgent,
   startServerPair,
 } from './net-helpers.mjs';
+import { assignProfileCas } from './permissions-policy-helpers.mjs';
 
 // The six session tools across one ssh link, on fake-ssh: an agent on A with Lead lists B's agents,
 // opens a session on B, reads and types into it by its handle@machine address, sees it as its own
@@ -48,16 +49,10 @@ async function generationOf(server, sessionId) {
 
 /** Gives one agent session the Lead profile through CON-24's assignment message, as the renderer sends it. */
 async function assignLead(server, sessionId) {
-  const r = await server.c2.call('mcp.fromRenderer', {
-    windowId: 1,
-    message: {
-      type: 'mcp:setAssignment',
-      requestId: 1,
-      point: { kind: 'session', sessionId },
-      profileId: 'lead',
-    },
+  const r = await assignProfileCas(server.c2, { kind: 'session', sessionId }, 'lead', {
+    claimSessions: true,
   });
-  assert(r.reply?.ok === true, `setAssignment lead on ${server.label}: ${JSON.stringify(r)}`);
+  assert(r.reply?.result?.ok === true, `assign lead on ${server.label}: ${JSON.stringify(r)}`);
 }
 
 /** How many of B's log lines say it started serving a call of this tool (the line is written before the effect). */

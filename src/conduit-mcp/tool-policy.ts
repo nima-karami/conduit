@@ -63,7 +63,7 @@ export type When = (typeof WHEN_VALUES)[number];
 export type Reach = (typeof REACH_VALUES)[number];
 export type Move = (typeof MOVE_VALUES)[number];
 export type PolicyField = 'access' | 'when' | 'reach' | 'move';
-export type PolicyValue = Access | When | Reach | Move;
+type PolicyValue = Access | When | Reach | Move;
 
 /** Only the tool's applicable fields are present (spec §3.2). */
 export interface ToolPolicy {
@@ -265,7 +265,7 @@ export function isMachineTool(t: ToolName): boolean {
   return MACHINES.has(t);
 }
 
-const isRecord = (v: unknown): v is Record<string, unknown> =>
+export const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
 const offered = (tool: ToolName, field: PolicyField): readonly PolicyValue[] => {

@@ -9,6 +9,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, join, resolve } from 'node:path';
 import { openSession, profileDir, REPO, tapBridge, typeLine } from './harness.mjs';
+import { projectedAssignment, saveAssignmentPage } from './permissions-policy-helpers.mjs';
 
 /** The installed-CLI fake (plan 2026-10-27-conduit-mcp-install T5.1); reads Install's entry. */
 export const FAKE_CLI = join(REPO, 'test', 'e2e', 'fixtures', 'fake-agent-cli.mjs');
@@ -380,33 +381,26 @@ export const activeSessionId = (page) =>
   );
 
 /**
- * Patch one tool's session layer through the host's `mcp:setToolPolicy`, as the dialog does, and
+ * Save one tool's session rule through the full-assignment CAS path, and
  * wait for the session to reflect it (`'inherit'` = the field is gone).
  * @param {Record<string, string>} patch e.g. `{ when: 'always' }`
  */
 export async function setSessionPolicy(page, sessionId, tool, patch) {
   await tapMcp(page);
-  const ok = await page.evaluate(
-    ({ s, t, p }) =>
-      new Promise((resolve) => {
-        window.__policyReq = (window.__policyReq ?? 900_000) + 1;
-        const requestId = window.__policyReq;
-        const off = window.agentDeck.subscribe((m) => {
-          if (m.type !== 'mcp:toolPolicyResult' || m.requestId !== requestId) return;
-          off();
-          resolve(m.ok);
-        });
-        window.agentDeck.post({
-          type: 'mcp:setToolPolicy',
-          requestId,
-          sessionId: s,
-          tool: t,
-          patch: p,
-        });
-      }),
-    { s: sessionId, t: tool, p: patch },
-  );
-  if (!ok) throw new Error(`mcp:setToolPolicy refused ${tool} ${JSON.stringify(patch)}`);
+  await page.waitForFunction(() => Boolean(window.__mcp?.policy?.editToken), undefined, {
+    timeout: 10_000,
+  });
+  const state = await mcpState(page);
+  const policy = state.policy;
+  const point = { kind: 'session', sessionId };
+  const lower = policy.sessions[sessionId]?.inheritedPoint ?? { kind: 'default' };
+  const assignment = await projectedAssignment(policy, point, lower, tool, patch);
+  if (!assignment) throw new Error('Cannot project a scoped policy fixture');
+  const result = await saveAssignmentPage(page, point, assignment, policy.editToken);
+  if (!result.ok)
+    throw new Error(
+      `saveAssignment refused ${tool} ${JSON.stringify(patch)}: ${JSON.stringify(result)}`,
+    );
   try {
     await page.waitForFunction(
       ({ id, t, p }) => {
@@ -431,68 +425,46 @@ export async function setSessionPolicy(page, sessionId, tool, patch) {
 }
 
 /**
- * Patch one tool's default-point (global) layer through the host's `mcp:setPointPolicy`, and wait
+ * Save one tool's default-point rule through the full-assignment CAS path, and wait
  * until the host acknowledges it and its projected `policy.legacy.global` shows every field. Rejects
  * on a refusal or after `ms`.
  * @param {Record<string, string>} policy e.g. `{ access: 'ask' }`
  */
 export async function setGlobalPolicy(page, tool, policy, ms = 10_000) {
   await tapMcp(page);
-  return page.evaluate(
-    ({ t, p, ms }) =>
-      new Promise((resolve, reject) => {
-        window.__policyReq = (window.__policyReq ?? 900_000) + 1;
-        const requestId = window.__policyReq;
-        let acked = false;
-        let matched = false;
-        // The projection is a diff against Worker, so a field equal to Worker is absent: 'inherit'.
-        const matches = (s) => {
-          const layer = s?.policy?.legacy?.global?.[t] ?? {};
-          return Object.entries(p).every(([f, v]) =>
-            v === 'inherit' ? !(f in layer) : layer[f] === v,
-          );
-        };
-        const finish = () => {
-          if (!acked || !matched) return;
-          clearTimeout(timer);
-          off();
-          resolve();
-        };
-        const timer = setTimeout(() => {
-          off();
-          const seen = JSON.stringify(window.__mcp?.policy?.legacy?.global?.[t] ?? null);
-          reject(
-            new Error(
-              `setGlobalPolicy ${t} ${JSON.stringify(p)}: not projected in ${ms} ms (last: ${seen}). ${NOT_PROJECTED_HINT}`,
-            ),
-          );
-        }, ms);
-        const off = window.agentDeck.subscribe((m) => {
-          if (m.type === 'mcp:policyResult' && m.requestId === requestId) {
-            if (!m.ok) {
-              clearTimeout(timer);
-              off();
-              reject(new Error(`setGlobalPolicy ${t} ${JSON.stringify(p)}: refused (${m.error})`));
-              return;
-            }
-            acked = true;
-            // A no-op edit broadcasts nothing new, so the state that is already in place counts.
-            if (matches(window.__mcp)) matched = true;
-          } else if (m.type === 'mcp:state' && matches(m.state)) {
-            matched = true;
-          }
-          finish();
-        });
-        window.agentDeck.post({
-          type: 'mcp:setPointPolicy',
-          requestId,
-          point: { kind: 'default' },
-          tool: t,
-          patch: p,
-        });
-      }),
-    { t: tool, p: policy, ms },
-  );
+  await page.waitForFunction(() => Boolean(window.__mcp?.policy?.editToken), undefined, {
+    timeout: 10_000,
+  });
+  const state = await mcpState(page);
+  const point = { kind: 'default' };
+  const assignment = await projectedAssignment(state.policy, point, null, tool, policy);
+  if (!assignment) throw new Error('Cannot project a scoped policy fixture');
+  const result = await saveAssignmentPage(page, point, assignment, state.policy.editToken);
+  if (!result.ok)
+    throw new Error(
+      `saveAssignment refused ${tool} ${JSON.stringify(policy)}: ${JSON.stringify(result)}`,
+    );
+  try {
+    await page.waitForFunction(
+      ({ t, p }) => {
+        const layer = window.__mcp?.policy?.legacy?.global?.[t] ?? {};
+        return Object.entries(p).every(([f, v]) =>
+          v === 'inherit' ? !(f in layer) : layer[f] === v,
+        );
+      },
+      { t: tool, p: policy },
+      { timeout: ms },
+    );
+  } catch (cause) {
+    const seen = await page.evaluate(
+      (t) => JSON.stringify(window.__mcp?.policy?.legacy?.global?.[t] ?? null),
+      tool,
+    );
+    throw new Error(
+      `setGlobalPolicy ${tool} ${JSON.stringify(policy)}: not projected in ${ms} ms (last: ${seen}). ${NOT_PROJECTED_HINT}`,
+      { cause },
+    );
+  }
 }
 
 /**
@@ -520,7 +492,26 @@ export async function resultAfter(sessionId, before, ms) {
   return result;
 }
 
-/** Answer the shown approval card. @param {'approve' | 'deny' | 'always'} answer */
-export function clickAskAnswer(page, answer) {
-  return page.locator(`.askcard button[data-answer="${answer}"]`).click();
+/** Opens the relevant controls and returns the button that commits the answer. */
+export async function askAnswerControl(page, answer) {
+  const card = page.locator('.askcard');
+  const legacy = card.locator(`button[data-answer="${answer}"]`);
+  const next = card.getByRole('button', {
+    name: { approve: 'Allow once', deny: 'Deny ▾', always: 'Allow…' }[answer],
+    exact: true,
+  });
+  await next.or(legacy).waitFor();
+  if (await legacy.isVisible()) return legacy;
+  if (answer === 'approve') return next;
+  await next.click();
+  if (answer === 'deny') return card.getByRole('button', { name: 'Deny', exact: true });
+  await card.getByLabel('Who', { exact: true }).selectOption('session');
+  await card.getByLabel('On', { exact: true }).selectOption('anywhere');
+  await card.getByLabel('For', { exact: true }).selectOption('session-end');
+  return card.getByRole('button', { name: 'Allow', exact: true });
+}
+
+/** Answers the shown approval card. @param {'approve' | 'deny' | 'always'} answer */
+export async function clickAskAnswer(page, answer) {
+  await (await askAnswerControl(page, answer)).click();
 }

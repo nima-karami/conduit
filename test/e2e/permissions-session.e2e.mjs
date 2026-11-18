@@ -124,7 +124,9 @@ await runScenario(
 
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     const settings = page.locator('.settings');
-    await settings.getByRole('button', { name: 'Permissions', exact: true }).click();
+    await settings.getByRole('button', { name: 'MCP', exact: true }).click();
+    await settings.getByRole('switch').first().waitFor();
+    await settings.getByRole('button', { name: 'Open Permissions', exact: true }).click();
     const profiles = settings.getByRole('tab', { name: 'Profiles', exact: true });
     await profiles.waitFor();
     const copy = settings.getByRole('button', { name: 'Copy Worker' });
@@ -132,7 +134,7 @@ await runScenario(
     await capture(page, '13-settings-profiles.png');
     await copy.click();
     await settings.getByLabel('Name', { exact: true }).fill('Review workspace');
-    await capture(page, '20-settings-profile-editor.png');
+    await capture(page, '24-settings-profile-editor.png');
     await settings
       .getByRole('combobox', { name: 'Codex', exact: true })
       .selectOption('workspace-write');
@@ -149,6 +151,17 @@ await runScenario(
       ),
       'the exact reviewed native profile was not persisted',
     );
+    await settings.getByRole('button', { name: 'Delete Review workspace' }).click();
+    await settings.getByRole('button', { name: 'Review deletion' }).click();
+    await settings.getByRole('button', { name: 'Confirm deletion' }).click();
+    await settings
+      .getByRole('button', { name: 'Edit Review workspace' })
+      .waitFor({ state: 'hidden' });
+    const afterDeletion = JSON.parse(readFileSync(join(userDataDir, 'conduit-mcp', 'policy.json')));
+    assert(
+      !afterDeletion.profiles.some((profile) => profile.name === 'Review workspace'),
+      'profile deletion did not persist',
+    );
     await profiles.focus();
     await page.keyboard.press('ArrowRight');
     const assignments = settings.getByRole('tab', { name: 'Assignments' });
@@ -157,10 +170,10 @@ await runScenario(
       'keyboard did not select the Assignments tab',
     );
     await settings.getByRole('heading', { name: 'Who gets which profile' }).waitFor();
-    await capture(page, '18-settings-assignments.png');
+    await capture(page, '14-settings-assignments.png');
     await page.keyboard.press('End');
     await settings.getByText('No grants yet.').waitFor();
-    await capture(page, '14-settings-grants.png');
+    await capture(page, '07-settings-grants.png');
     await settings.getByRole('button', { name: 'Activity', exact: true }).click();
     await settings.waitFor({ state: 'hidden' });
     await activity.waitFor();

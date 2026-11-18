@@ -1,4 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import type { ActivityEntry } from '../../src/conduit-mcp/activity-log';
 import type { ActivityPage, ActivityQuery } from '../../src/conduit-mcp/activity-query';
 import type {
   Assignment,
@@ -45,7 +46,7 @@ export interface PermissionsSessionDialogProps {
   getActivity(query: ActivityQuery): Promise<ActivityPage | null>;
   onRetry(): Promise<PolicyEditResult | null>;
   onOpenSettings(): void;
-  onOpenActivity(): void;
+  onOpenActivity(item?: Pick<ActivityEntry, 'id' | 'at'>): void;
   onClose(): void;
   onReview(candidate: Assignment | null): void;
   onBack(): void;
@@ -425,8 +426,12 @@ export function PermissionsSessionDialog({
                   </ul>
                 )}
               </section>
-              <SessionPermissionActivity sessionId={session.id} getActivity={getActivity} />
-              <button type="button" onClick={onOpenActivity}>
+              <SessionPermissionActivity
+                sessionId={session.id}
+                getActivity={getActivity}
+                onOpenActivity={onOpenActivity}
+              />
+              <button type="button" className="btn btn--sm" onClick={() => onOpenActivity()}>
                 View Activity
               </button>
               <div className="confirm__actions">
