@@ -154,6 +154,8 @@ await runScenario(
     await settings.getByRole('button', { name: 'Delete Review workspace' }).click();
     await settings.getByRole('button', { name: 'Review deletion' }).click();
     await settings.getByRole('button', { name: 'Confirm deletion' }).click();
+    // The deletion editor hides the profile list before the host acknowledges deletion.
+    await settings.getByRole('heading', { name: 'Profiles', exact: true }).waitFor();
     await settings
       .getByRole('button', { name: 'Edit Review workspace' })
       .waitFor({ state: 'hidden' });
