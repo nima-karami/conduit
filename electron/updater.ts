@@ -35,14 +35,28 @@ function isSupported(): boolean {
 
 let lastSend: ((msg: HostToWebview) => void) | null = null;
 
-function linuxSessionState(): { scopeKind: string; sessionId: string | null } {
+export function cgroupScopeKind(cgroup: string): string {
+  const lines = cgroup.trim().split('\n');
+  const line =
+    lines.find((entry) => entry.startsWith('0::')) ??
+    lines.find((entry) => /^\d+:name=systemd:/.test(entry)) ??
+    lines[0];
+  const leaf =
+    line
+      ?.replace(/^\d+:[^:]*:/, '')
+      .split('/')
+      .at(-1) ?? '';
+  if (/^session-[^/]+\.scope$/.test(leaf)) return 'session.scope';
+  if (/^app-[^/]+\.scope$/.test(leaf)) return 'app.scope';
+  if (leaf.endsWith('.scope')) return 'terminal-or-other.scope';
+  if (leaf.endsWith('.service')) return 'service';
+  return 'other';
+}
+
+function linuxSessionState() {
   let scopeKind = 'unavailable';
   try {
-    const cgroup = fs.readFileSync('/proc/self/cgroup', 'utf8');
-    if (/\/session-[^/\s]+\.scope(?:[/\s]|$)/.test(cgroup)) scopeKind = 'session.scope';
-    else if (/\/app-[^/\s]+\.scope(?:[/\s]|$)/.test(cgroup)) scopeKind = 'app.scope';
-    else if (/\/[^/\s]+\.service(?:[/\s]|$)/.test(cgroup)) scopeKind = 'service';
-    else scopeKind = 'other';
+    scopeKind = cgroupScopeKind(fs.readFileSync('/proc/self/cgroup', 'utf8'));
   } catch {
     // /proc can be unavailable in a sandbox.
   }
@@ -52,10 +66,17 @@ function linuxSessionState(): { scopeKind: string; sessionId: string | null } {
     {
       encoding: 'utf8',
       timeout: 1000,
+      env: { ...process.env, LC_ALL: 'C' },
     },
   );
   const id = result.stdout?.trim();
-  return { scopeKind, sessionId: result.status === 0 && id && /^[a-z0-9]+$/i.test(id) ? id : null };
+  const sessionId = result.status === 0 && id && /^[a-z0-9]+$/i.test(id) ? id : null;
+  const sessionLookup = sessionId
+    ? 'found'
+    : !result.error && result.stderr?.includes('Caller does not belong to any known session')
+      ? 'none'
+      : 'unavailable';
+  return { scopeKind, sessionId, sessionLookup };
 }
 
 const debInstallers = new Map([
@@ -65,14 +86,41 @@ const debInstallers = new Map([
   ['gdebi.desktop', 'GDebi'],
 ]);
 
-async function openSystemInstaller(file: string): Promise<string | null> {
+function redactDiagnostic(message: unknown): string {
+  return String(message).split(os.homedir()).join('~').slice(0, 4000);
+}
+
+async function openSystemInstaller(
+  file: string,
+  onEvent: UpdaterErrorContext['onEvent'],
+): Promise<string | null> {
   const handler = spawnSync(
     '/usr/bin/xdg-mime',
     ['query', 'default', 'application/vnd.debian.binary-package'],
     { encoding: 'utf8', timeout: 1000 },
   );
-  const name = handler.status === 0 ? debInstallers.get(handler.stdout.trim()) : undefined;
-  if (!name || (await shell.openPath(file))) return null;
+  if (handler.error) throw handler.error;
+  if (handler.status !== 0) {
+    onEvent('deb-installer-open-failed', {
+      reason: 'handler-query-failed',
+      error: redactDiagnostic(handler.stderr),
+    });
+    return null;
+  }
+  const desktopId = handler.stdout.trim();
+  const name = debInstallers.get(desktopId);
+  if (!name) {
+    onEvent('deb-installer-open-failed', {
+      reason: 'unrecognized-handler',
+      desktopId: redactDiagnostic(desktopId),
+    });
+    return null;
+  }
+  const error = await shell.openPath(file);
+  if (error) {
+    onEvent('deb-installer-open-failed', { reason: 'open-failed', error: redactDiagnostic(error) });
+    return null;
+  }
   return name;
 }
 
@@ -104,8 +152,9 @@ export function initUpdater(
       originalLogger?.debug?.(message);
     },
     info(message) {
-      if (message.startsWith('Install: isSilent:')) pkexecAttempts.length = 0;
-      const args = /^Executing: pkexec with args:(.*)$/.exec(message)?.[1];
+      const line = typeof message === 'string' ? message : '';
+      if (line.startsWith('Install: isSilent:')) pkexecAttempts.length = 0;
+      const args = /^Executing: pkexec with args:(.*)$/.exec(line)?.[1];
       pkexecCommand =
         args === undefined ? undefined : (/,-c,'([a-z-]+)/.exec(args)?.[1] ?? 'unknown');
       originalLogger?.info(message);
@@ -117,7 +166,7 @@ export function initUpdater(
       if (pkexecCommand !== undefined) {
         pkexecAttempts.push({
           command: pkexecCommand,
-          stderr: String(message).split(os.homedir()).join('~').slice(0, 4000),
+          stderr: redactDiagnostic(message),
         });
         pkexecCommand = undefined;
       }
@@ -210,7 +259,9 @@ export function initUpdater(
     void handleUpdaterError(err, {
       platform: process.platform,
       downloadedFile: pendingDownloadedFile,
-      openInstaller: explicitInstallInProgress ? openSystemInstaller : undefined,
+      openInstaller: explicitInstallInProgress
+        ? (file) => openSystemInstaller(file, onEvent)
+        : undefined,
       send,
       onEvent,
     });
@@ -257,11 +308,12 @@ export async function handleUpdaterError(err: unknown, ctx: UpdaterErrorContext)
         if (installer) {
           message = `The update opened in ${installer}. Click Install there, then restart Conduit. You can also install it from a terminal:`;
           ctx.onEvent('deb-installer-opened');
-        } else {
-          ctx.onEvent('deb-installer-open-failed');
         }
-      } catch {
-        ctx.onEvent('deb-installer-open-failed');
+      } catch (error) {
+        ctx.onEvent('deb-installer-open-failed', {
+          reason: 'exception',
+          error: redactDiagnostic(error),
+        });
       }
     }
     ctx.send({

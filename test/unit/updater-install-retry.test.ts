@@ -23,7 +23,7 @@ vi.mock('node:child_process', () => ({
 vi.mock('electron', () => ({ app: { isPackaged: true }, shell: { openPath: updater.openPath } }));
 vi.mock('electron-updater', () => ({ autoUpdater: updater }));
 
-import { initUpdater, quitAndInstall } from '../../electron/updater';
+import { cgroupScopeKind, initUpdater, quitAndInstall } from '../../electron/updater';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -37,6 +37,7 @@ describe('explicit deb install failure', () => {
       updater.on.mock.calls.map(([event, handler]) => [event, handler]),
     );
     handlers['update-downloaded']({ version: '1', downloadedFile: '/tmp/update.deb' });
+    expect(() => updater.logger.info({ message: 'diagnostic' })).not.toThrow();
     updater.quitAndInstall.mockImplementation(() => {
       updater.logger.info(
         "Executing: pkexec with args: --disable-internal-agent,/bin/bash,-c,'dpkg -i /tmp/update.deb'",
@@ -68,6 +69,7 @@ describe('explicit deb install failure', () => {
         ],
         scopeKind: 'app.scope',
         sessionId: '54',
+        sessionLookup: 'found',
         focused: true,
         visible: true,
         version: '1',
@@ -87,6 +89,10 @@ describe('explicit deb install failure', () => {
       ),
     );
     expect(updater.openPath).not.toHaveBeenCalled();
+    expect(onEvent).toHaveBeenCalledWith('deb-installer-open-failed', {
+      reason: 'unrecognized-handler',
+      desktopId: 'org.gnome.FileRoller.desktop',
+    });
     handlers['update-downloaded']({ version: '1', downloadedFile: '/tmp/update.deb' });
     expect(updater.autoInstallOnAppQuit).toBe(false);
     handlers['update-downloaded']({ version: '2', downloadedFile: '/tmp/next.deb' });
@@ -117,3 +123,15 @@ it.each(['linux', 'win32'])(
     }
   },
 );
+
+it.each([
+  ['0::/user.slice/session-54.scope', 'session.scope'],
+  ['0::/user.slice/user@1000.service/app-conduit-99.scope', 'app.scope'],
+  ['0::/user.slice/user@1000.service/vte-spawn-99.scope', 'terminal-or-other.scope'],
+  ['0::/user.slice/user@1000.service/custom.scope', 'terminal-or-other.scope'],
+  ['0::/system.slice/conduit.service', 'service'],
+  ['0::/user.slice', 'other'],
+  ['2:cpu:/user.slice\n1:name=systemd:/user.slice/session-54.scope', 'session.scope'],
+])('classifies the cgroup leaf in %s', (line, kind) => {
+  expect(cgroupScopeKind(line)).toBe(kind);
+});
