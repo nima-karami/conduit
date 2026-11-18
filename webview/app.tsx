@@ -1110,6 +1110,12 @@ export function App() {
   );
 
   const [activityScope, setActivityScope] = useState<ActivityScope>({});
+  const closeSettings = useCallback(() => {
+    setSettingsAboutReleaseNotes(false);
+    setActivityExceptionSeed(null);
+    setActivityScope({});
+    setSettingsOpen(false);
+  }, []);
   const openActivity = useCallback(
     (scope: ActivityScope = {}) => {
       setActivityScope(scope);
@@ -1796,11 +1802,7 @@ export function App() {
       reopenLastSession: () => reopenLastRef.current(),
       // Multi-window Slice A: open a new empty window (host owns the window registry).
       newWindow: () => post({ type: 'win:new' }),
-      openSettings: () => {
-        setSettingsTab('general');
-        setSettingsFocusCli(undefined);
-        setSettingsOpen(true);
-      },
+      openSettings: () => openSettingsAt('general'),
       // Global save (K2): route Mod+S — pressed ANYWHERE, including the terminal or
       // sidebar — to the active doc's registered save. Self-guarded (no active doc /
       // clean / in-flight → no-op), so it never fights Monaco's own focused binding.
@@ -1872,6 +1874,7 @@ export function App() {
     openGlobalSearchSeeded,
     openReviewTab,
     openGitHistoryTab,
+    openSettingsAt,
     settings.htmlDefaultView,
     activateDocByUser,
     splitRight,
@@ -5944,11 +5947,11 @@ export function App() {
                 });
               }}
               onAddMachine={() => {
-                setSettingsOpen(false);
+                closeSettings();
                 openAddMachine();
               }}
               onOpenRequest={(id) => {
-                setSettingsOpen(false);
+                closeSettings();
                 openRequest(id);
               }}
               initialTab={settingsTab}
@@ -5959,12 +5962,7 @@ export function App() {
               navSeq={settingsSeq}
               about={state?.about}
               projectPath={active?.home || null}
-              onClose={() => {
-                setSettingsAboutReleaseNotes(false);
-                setActivityExceptionSeed(null);
-                setActivityScope({});
-                setSettingsOpen(false);
-              }}
+              onClose={closeSettings}
               onCheckUpdate={() => post({ type: 'updateCheck' })}
               onRelaunch={() => post({ type: 'updateRelaunch' })}
               updateStatus={updateStatus}

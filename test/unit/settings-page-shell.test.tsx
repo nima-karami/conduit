@@ -77,4 +77,11 @@ describe('workbench behind Settings', () => {
     const app = readFileSync(join(__dirname, '../../webview/app.tsx'), 'utf8');
     expect(app).toMatch(/<div className="workbench" inert=\{settingsOpen\}>/);
   });
+
+  it('app.tsx closes Settings only through closeSettings', () => {
+    const app = readFileSync(join(__dirname, '../../webview/app.tsx'), 'utf8');
+    const closes = app.match(/setSettingsOpen\(false\)/g) ?? [];
+    expect(closes).toHaveLength(1);
+    expect(app).toMatch(/const closeSettings = useCallback\([\s\S]*?setSettingsOpen\(false\);/);
+  });
 });
