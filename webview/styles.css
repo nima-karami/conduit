@@ -8647,7 +8647,7 @@ body.gh-resizing {
   height: 46px;
   padding: 4px;
   /* The chip's outline belongs to the picker, not to the theme it depicts — Aero's own
-     panel colour is white and would vanish against the settings modal. */
+     panel colour is white and would vanish against the settings page. */
   border: 1px solid rgba(var(--overlay), 0.22);
   border-radius: 6px;
   overflow: hidden;
@@ -17755,6 +17755,7 @@ button.toggle--on .toggle__knob {
     .seg__btn,
     .statusbar__attn,
     .settings__navitem,
+    .settings-page__back,
     .relnotes__ver,
     .searchgroup__head,
     .searchmatch,
@@ -17883,6 +17884,7 @@ button.toggle--on .toggle__knob {
     .seg__btn,
     .statusbar__attn,
     .settings__navitem,
+    .settings-page__back,
     .relnotes__ver,
     .searchgroup__head,
     .searchmatch,

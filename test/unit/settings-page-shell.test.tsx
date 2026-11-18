@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -71,17 +73,8 @@ describe('SettingsPage shell', () => {
 });
 
 describe('workbench behind Settings', () => {
-  it('workbench is inert while Settings is open', async () => {
-    const host = document.createElement('div');
-    document.body.append(host);
-    root = createRoot(host);
-    await act(async () =>
-      root?.render(
-        <div className="workbench" inert={true}>
-          <button type="button">terminal</button>
-        </div>,
-      ),
-    );
-    expect(host.querySelector('.workbench')?.hasAttribute('inert')).toBe(true);
+  it('app.tsx marks the workbench inert exactly while Settings is open', () => {
+    const app = readFileSync(join(__dirname, '../../webview/app.tsx'), 'utf8');
+    expect(app).toMatch(/<div className="workbench" inert=\{settingsOpen\}>/);
   });
 });

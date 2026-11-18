@@ -3474,7 +3474,11 @@ export function App() {
       setSettingsTab(tab);
       setSettingsFocusCli(cli);
       setSettingsAboutReleaseNotes(!!opts?.releaseNotes);
-      if (settingsOpenerRef.current === null && document.activeElement instanceof HTMLElement) {
+      if (
+        settingsOpenerRef.current === null &&
+        document.activeElement instanceof HTMLElement &&
+        document.activeElement !== document.body
+      ) {
         settingsOpenerRef.current = document.activeElement;
       }
       setSettingsOpen(true);
