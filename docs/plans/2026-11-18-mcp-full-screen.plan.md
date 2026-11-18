@@ -13,7 +13,7 @@ Renderer-only (plus one banner string in `src/contracts/native-launch.ts`). `Set
 app.tsx  openSettingsAt(tab, cli?, {releaseNotes?, mcpTab?})   openActivity(scope)
    │ settingsOpen · settingsTab · settingsMcpTab · settingsSeq · activityScope · exception seed
    ▼
-<SettingsPage key={settingsSeq}> ── nav (General MCP Links Appearance Shortcuts Skills About) ── Back ──► onClose
+<SettingsPage navSeq={settingsSeq}> ── nav (General MCP Links Appearance Shortcuts Skills About) ── Back ──► onClose
    │ tab === 'mcp'
    ▼
 <McpSection tab onTabChange settings={<McpTab/>}>
@@ -308,7 +308,7 @@ Invariants: `git diff --stat main -- src/conduit-mcp` is empty; policy tests are
 - [ ] Failing: view mode lists each exception as `<tool>: role says <Decision> → this agent: <Decision>` (role decision from `profile.rules[tool].decision`); "Edit changes" enters the existing exceptions editor; "Reset all to role" stages an edit with no exceptions and goes to Review.
 
 ### Slice 5: Copy sweep, CHANGELOG, guards
-**Check:** `rg -n -i "profile" webview/components/permissions-*.tsx webview/components/mcp-section.tsx webview/permissions-strings.ts` shows only identifiers/types, never user-visible text; `verify:quick` exit 0.
+**Check:** `rg -n -i "profile" webview/components/permissions-*.tsx webview/components/mcp-section.tsx webview/conduit-mcp-strings.ts` (the `MCP_STR.sections` block) shows only identifiers/types, never user-visible text; `verify:quick` exit 0.
 **Parallel groups:** Serial: T5.1, T5.2
 **Claims (serial lane):** `CHANGELOG.md`, `webview/conduit-mcp-strings.ts`
 
