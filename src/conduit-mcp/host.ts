@@ -68,7 +68,14 @@ import {
   type Prepared,
 } from './control-tools';
 import { isCountedInput, nextDraftState, settleDraft, stripTerminalReplies } from './draft-input';
-import { type GrantChoice, grantScopeFor, grantWhoFor } from './grant-store';
+import {
+  GRANT_CHOICE_ON,
+  GRANT_FORS,
+  GRANT_WHO_KINDS,
+  type GrantChoice,
+  grantScopeFor,
+  grantWhoFor,
+} from './grant-store';
 import {
   agentHandlePrefix,
   cliKindOfHandle,
@@ -1208,7 +1215,14 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           };
         return flow.answerPermission(r.id, a, by.windowId);
       }
-      if (by.kind !== 'you' || by.windowId === null || by.windowId === NO_OWNER_WINDOW) {
+      if (
+        by.kind !== 'you' ||
+        by.windowId === null ||
+        by.windowId === NO_OWNER_WINDOW ||
+        r.session === null ||
+        deps.ownerWindowOf(r.session) !== by.windowId ||
+        !deps.windowReady(by.windowId)
+      ) {
         return {
           ok: false,
           reason: 'not_answerable',
@@ -1854,6 +1868,18 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     clearTimer:
       deps.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout> | undefined)),
     newAskId: deps.newAskId ?? (() => randomBytes(12).toString('hex')),
+    saveSessionDenial: (id, sessionId, tool, beforeNotify) => {
+      const row = requestService.ownerPermissions().find((r) => r.id === id);
+      if (
+        !row ||
+        row.state !== 'open' ||
+        row.session !== sessionId ||
+        row.permission?.tool !== tool ||
+        principalOf(sessionId) === null
+      )
+        return { ok: false, error: 'invalid-value' };
+      return policyService.saveSessionDenial(id, sessionId, tool, beforeNotify);
+    },
     // Re-checked here, not trusted from the gate: the window may have reloaded during prepare.
     ownerWindowOf: (sessionId) => {
       const w = deps.ownerWindowOf(sessionId);
@@ -3748,6 +3774,94 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
             view: posture
               ? { status: 'linked', source: 'linked-codex-thread', ...posture }
               : { status: 'unavailable' },
+          });
+          return;
+        }
+        case 'mcp:ownerPermissions:get': {
+          if (
+            !Number.isSafeInteger(m.requestId) ||
+            m.requestId < 0 ||
+            (m.state !== 'open' && m.state !== 'closed')
+          )
+            return;
+          const cursor = m.cursor;
+          if (
+            cursor !== undefined &&
+            (typeof cursor !== 'object' ||
+              cursor === null ||
+              typeof cursor.at !== 'string' ||
+              cursor.at.length > 30 ||
+              !Number.isFinite(Date.parse(cursor.at)) ||
+              new Date(cursor.at).toISOString() !== cursor.at ||
+              typeof cursor.id !== 'string' ||
+              cursor.id.length === 0 ||
+              cursor.id.length > 256)
+          )
+            return;
+          const rows = requestService.ownerPermissions().flatMap((r) => {
+            if (!r.session || !r.permission || (r.state === 'open') !== (m.state === 'open'))
+              return [];
+            const live = r.state === 'open' && flow.ownsPermissionWait(r.id, senderId);
+            const current =
+              deps.ownerWindowOf(r.session) === senderId && deps.windowReady(senderId);
+            const p = principalOf(r.session);
+            if (r.state === 'open' ? !live : !current) return [];
+            const grantable = r.permission.grantable !== false;
+            const late =
+              r.state === 'expired' &&
+              current &&
+              p !== null &&
+              r.permission.lateGrant === null &&
+              grantable;
+            const choices: GrantChoice[] = [];
+            if (grantable && p !== null && (live || late))
+              for (const who of GRANT_WHO_KINDS)
+                for (const on of GRANT_CHOICE_ON)
+                  for (const duration of GRANT_FORS) {
+                    const choice: GrantChoice = { who, on, for: duration };
+                    if (grantTargetsFor(choice, p, r.permission.targets) !== null)
+                      choices.push(choice);
+                  }
+            if (r.state === 'expired' && (!late || choices.length === 0)) return [];
+            return [
+              {
+                id: r.id,
+                sessionId: r.session,
+                requester: r.requester,
+                title: r.title,
+                tool: r.permission.tool,
+                why: r.permission.why,
+                state: r.state,
+                createdAt: r.createdAt,
+                expiresAt: r.expiresAt,
+                endedAt: r.endedAt,
+                withdrawReason: r.withdrawReason,
+                grantable,
+                answerable: live || late,
+                choices,
+              },
+            ];
+          });
+          const key = (r: (typeof rows)[number]) =>
+            m.state === 'open' ? r.createdAt : (r.endedAt ?? '');
+          const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+          const direction = m.state === 'open' ? 1 : -1;
+          rows.sort((a, b) => direction * (compare(key(a), key(b)) || compare(a.id, b.id)));
+          const retained = m.state === 'closed' ? rows.slice(0, 200) : rows;
+          const after = cursor
+            ? retained.filter(
+                (r) => direction * (compare(key(r), cursor.at) || compare(r.id, cursor.id)) > 0,
+              )
+            : retained;
+          const permissions = after.slice(0, 50);
+          const last = permissions[permissions.length - 1];
+          reply({
+            type: 'mcp:ownerPermissions',
+            requestId: m.requestId,
+            page: {
+              permissions,
+              nextCursor: after.length > 50 && last ? { at: key(last), id: last.id } : null,
+            },
           });
           return;
         }

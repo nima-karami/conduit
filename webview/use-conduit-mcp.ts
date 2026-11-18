@@ -11,6 +11,8 @@ import type {
 import type {
   AnswerInput,
   AnswerRefusal,
+  OwnerPermissionCursor,
+  OwnerPermissionPage,
   PermissionAnswerResult,
   RequestAnswerResult,
   RequestsUiState,
@@ -66,6 +68,10 @@ export interface ConduitMcpApi {
   ): Promise<PolicyEditResult | null>;
   retryPolicy(): Promise<PolicyEditResult | null>;
   getActivity(query: ActivityQuery): Promise<ActivityPage | null>;
+  getOwnerPermissions(
+    state: 'open' | 'closed',
+    cursor?: OwnerPermissionCursor,
+  ): Promise<OwnerPermissionPage | null>;
   linkCodexThread(
     sessionId: string,
     generation: number,
@@ -214,6 +220,19 @@ const api: Omit<ConduitMcpApi, 'state'> = {
     return r?.sessionId === sessionId && r.generation === generation
       ? r.view
       : { status: 'unavailable' };
+  },
+  async getOwnerPermissions(state, cursor) {
+    const r = await requestHost(
+      (requestId) => ({
+        type: 'mcp:ownerPermissions:get',
+        requestId,
+        state,
+        ...(cursor ? { cursor } : {}),
+      }),
+      ['mcp:ownerPermissions'],
+      REQUEST_TIMEOUT_MS,
+    );
+    return r?.page ?? null;
   },
   async getActivity(query) {
     const r = await requestHost(

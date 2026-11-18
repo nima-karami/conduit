@@ -27,6 +27,7 @@ const emptyState: PolicyState = {
   assignments: new Map(),
   grants: [],
   overrides: [],
+  sessionDenials: [],
   failClosed: false,
 };
 const DECISION_OF: Record<Access, Decision> = { off: 'deny', ask: 'ask', on: 'allow' };

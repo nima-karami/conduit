@@ -419,7 +419,7 @@ export function validateAnswer(
   a: unknown,
 ): Result<AnswerInput> {
   if (r.kind === 'attend') return fail('invalid_args', 'attend requests are not answered here');
-  const obj = argsObject(a, ['outcome', 'text', 'values', 'reason', 'grant']);
+  const obj = argsObject(a, ['outcome', 'text', 'values', 'reason', 'grant', 'scope']);
   if (!obj.ok) return obj;
   const o = obj.value;
 
@@ -439,7 +439,12 @@ export function validateAnswer(
     );
   }
 
-  const { text, values, reason, grant } = o;
+  const { text, values, reason, grant, scope } = o;
+  if (
+    scope !== undefined &&
+    (scope !== 'session' || r.kind !== 'permission' || answer !== 'denied')
+  )
+    return fail('invalid_args', 'session scope requires an open local permission denial');
   if (text !== undefined && typeof text !== 'string')
     return fail('invalid_args', 'text must be a string');
   if (reason !== undefined && typeof reason !== 'string') {
@@ -476,6 +481,7 @@ export function validateAnswer(
   if (typeof text === 'string') value.text = text;
   if (typeof reason === 'string') value.reason = reason;
   if (chosenGrant !== null) value.grant = chosenGrant;
+  if (scope === 'session') value.scope = scope;
   if (shape.values) {
     const chosen = validateValues(r, values);
     if (!chosen.ok) return chosen;

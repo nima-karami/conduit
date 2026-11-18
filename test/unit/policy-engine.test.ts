@@ -72,6 +72,7 @@ const state = (
   assignments: new Map(Object.entries(assignments)),
   grants: [],
   overrides: [],
+  sessionDenials: [],
   failClosed: false,
   ...over,
 });
@@ -1346,4 +1347,62 @@ describe('an ssh controller is a Lead remote principal (CON-40 G2)', () => {
       }
     }
   });
+});
+
+it('enforces a session denial ahead of grants and below floors', () => {
+  const denial = {
+    id: 'd1',
+    requestId: 'r1',
+    sessionId: 's1',
+    tool: 'open_session' as const,
+    createdAt: new Date(NOW).toISOString(),
+  };
+  const s = state({ default: assignment('lead') }, { sessionDenials: [denial], grants: [grant()] });
+  expect(decide(s, input({ tool: 'open_session' }))).toMatchObject({
+    decision: 'deny',
+    reason: { by: 'session-deny', denialId: 'd1' },
+  });
+  expect(decide(s, input({ tool: 'open_session', masterOn: false })).reason).toEqual({
+    by: 'floor',
+    floor: 'master-off',
+  });
+  expect(decide(s, input({ tool: 'read_inbox' })).reason.by).not.toBe('session-deny');
+});
+
+it('passes only the exact session denial target with an override and respects floors', () => {
+  const denial = {
+    id: 'd1',
+    requestId: 'r1',
+    sessionId: 's1',
+    tool: 'open_session' as const,
+    createdAt: iso(NOW),
+  };
+  const override: OneUseOverride = {
+    id: 'o1',
+    sessionId: 's1',
+    tool: 'open_session',
+    target: target({ sessionId: 's2' }),
+    createdAt: iso(NOW),
+  };
+  const s = state(
+    { default: assignment('lead') },
+    { sessionDenials: [denial], overrides: [override] },
+  );
+  expect(
+    decide(s, input({ tool: 'open_session', targets: [target({ sessionId: 's2' })] })),
+  ).toMatchObject({ decision: 'allow', reason: { by: 'override', overrideId: 'o1' } });
+  expect(
+    decide(s, input({ tool: 'open_session', targets: [target({ sessionId: 's3' })] })),
+  ).toMatchObject({ decision: 'deny', reason: { by: 'session-deny', denialId: 'd1' } });
+  expect(
+    decide(
+      s,
+      input({ tool: 'open_session', targets: [target({ sessionId: 's2' })], masterOn: false }),
+    ).reason,
+  ).toEqual({ by: 'floor', floor: 'master-off' });
+  expect(
+    decide(s, input({ tool: 'open_session', principal: session({ sessionId: 's9' }) })).reason.by,
+  ).not.toBe('session-deny');
+  expect(visibleTools(s, session({ sessionId: 's1' }), NOW)).toContain('open_session');
+  expect(visibleTools({ ...s, overrides: [] }, session(), NOW)).not.toContain('open_session');
 });

@@ -104,6 +104,14 @@ export interface Grant {
   requestId: string | null;
 }
 
+export interface SessionDenial {
+  id: string;
+  requestId: string;
+  sessionId: string;
+  tool: ToolName;
+  createdAt: string;
+}
+
 export interface OneUseOverride {
   id: string;
   sessionId: string;
@@ -117,6 +125,7 @@ export type FloorId = 'master-off' | 'remote-capability' | 'local-to-you';
 export type Reason =
   | { by: 'floor'; floor: FloorId }
   | { by: 'deny'; point: AssignmentPoint }
+  | { by: 'session-deny'; denialId: string }
   | { by: 'override'; overrideId: string }
   | { by: 'grant'; grantId: string }
   | { by: 'exception'; point: AssignmentPoint; profileId: ProfileId }
@@ -129,6 +138,7 @@ export interface PolicyState {
   assignments: ReadonlyMap<string, Assignment>;
   grants: readonly Grant[];
   overrides: readonly OneUseOverride[];
+  sessionDenials: readonly SessionDenial[];
   /** see POL §5: an unreadable policy with no saved copy makes every principal Observer. */
   failClosed: boolean;
 }
@@ -163,7 +173,7 @@ export interface PolicyDecision {
 
 export type PermissionAnswer =
   | { outcome: 'allowed'; grant?: GrantChoice }
-  | { outcome: 'denied'; reason?: string };
+  | { outcome: 'denied'; reason?: string; scope?: 'session' };
 
 export type PolicyEditError =
   | 'conflict'

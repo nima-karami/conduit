@@ -4012,6 +4012,7 @@ app.whenReady().then(() => {
         }
         case 'mcp:compose':
         case 'mcp:thread:get':
+        case 'mcp:ownerPermissions:get':
         case 'mcp:activity:get':
         case 'mcp:linkCodexThread':
         case 'mcp:codexPostureQuery':

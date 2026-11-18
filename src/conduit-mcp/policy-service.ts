@@ -20,7 +20,9 @@ import {
 import {
   type PolicyFile,
   parseGrantsFile,
+  parsePolicyBackup,
   parsePolicyFile,
+  SESSION_DENIALS_MAX,
   serializeGrantsFile,
   serializePolicyFile,
   validatePolicyAssignment,
@@ -141,6 +143,12 @@ export interface PolicyService {
   retrySave(): PolicyEditResult;
   peerRevoked(machineId: string): void;
   allowOnce(activityId: string): PolicyEditResult | { ok: false; error: 'not-overridable' };
+  saveSessionDenial(
+    requestId: string,
+    sessionId: string,
+    tool: ToolName,
+    beforeNotify: () => void,
+  ): PolicyEditResult;
   sessionEnded(sessionId: string): void;
   readonly activity: ActivityLog;
   ui(
@@ -218,6 +226,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     assignments: assignmentMap(file.assignments),
     grants: grants.all(),
     overrides: file.overrides,
+    sessionDenials: file.sessionDenials ?? [],
     failClosed,
   });
 
@@ -264,7 +273,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     }
   }
 
-  function writeLastGood(): void {
+  function writeLastGood(notifyFailure = true): void {
     if (!policyWritable) return;
     try {
       const text = serializePolicyFile(file);
@@ -275,7 +284,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     } catch (error) {
       backupWarning = 'Permissions were saved, but their backup could not be saved';
       deps.warn(backupWarning, error);
-      deps.onChanged();
+      if (notifyFailure) deps.onChanged();
     }
   }
 
@@ -307,6 +316,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     candidate: PolicyFile,
     portable: boolean,
     conservative = false,
+    beforeNotify?: () => void,
   ): PolicyEditResult {
     if (!policyWritable && !conservative) return { ok: false, error: 'read-only' };
     const assignmentsChanged =
@@ -327,14 +337,18 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     if (assignmentsChanged) editToken = deps.newId();
     if (result.ok) {
       pendingConservativePolicy = false;
-      writeLastGood();
+      writeLastGood(beforeNotify === undefined);
     } else {
       pendingConservativePolicy = true;
       saveErrors.set('policy', 'Restrictions are active here; policy could not be saved');
     }
-    scheduleConservativeRetry();
-    if (portable) notifyRemote();
-    deps.onChanged();
+    try {
+      beforeNotify?.();
+    } finally {
+      scheduleConservativeRetry();
+      if (portable) notifyRemote();
+      deps.onChanged();
+    }
     return result.ok ? result : { ...result, applied: 'tightening' };
   }
 
@@ -410,7 +424,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
 
   // Only `absent` may migrate from legacy: a copy that exists but can't be used is a fault to
   // fail closed on, never a reason to rebuild the policy from the old settings.
-  type LastGoodFault = 'unreadable' | 'newer' | 'read-failed';
+  type LastGoodFault = 'unreadable' | 'newer' | 'read-failed' | 'recovery-unavailable';
   type LastGood =
     | { kind: 'absent' }
     | { kind: 'ok'; policy: PolicyFile }
@@ -419,6 +433,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     unreadable: 'is unreadable',
     newer: 'is from a newer version',
     'read-failed': 'could not be read',
+    'recovery-unavailable': 'is unavailable after a permissions save',
   };
 
   function readLastGood(): LastGood {
@@ -430,14 +445,19 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       return { kind: 'bad', reason: 'read-failed' };
     }
     if (text === null) return { kind: 'absent' };
-    const parsed = parsePolicyFile(text);
-    if (!parsed.ok) {
+    const parsed = parsePolicyBackup(text);
+    if (parsed.kind === 'recovery-unavailable') {
+      deps.warn('policy.last-good.json recovery is unavailable after a permissions save');
+      return { kind: 'bad', reason: 'recovery-unavailable' };
+    }
+    if (parsed.kind === 'bad') {
+      const reason = parsed.reason;
       deps.warn(
-        parsed.reason === 'newer'
+        reason === 'newer'
           ? 'policy.last-good.json is from a newer version'
           : 'policy.last-good.json is unreadable',
       );
-      return { kind: 'bad', reason: parsed.reason === 'newer' ? 'newer' : 'unreadable' };
+      return { kind: 'bad', reason: reason === 'newer' ? 'newer' : 'unreadable' };
     }
     return { kind: 'ok', policy: parsed.file };
   }
@@ -782,7 +802,11 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     },
 
     noteDecision(activityId, input, decision) {
-      if (decision.reason.by !== 'deny' || input.principal.kind !== 'session') return;
+      if (
+        (decision.reason.by !== 'deny' && decision.reason.by !== 'session-deny') ||
+        input.principal.kind !== 'session'
+      )
+        return;
       if (decision.deniedTarget === null) return;
       const principal = input.principal;
       remembered.set(activityId, {
@@ -1038,19 +1062,64 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       return { ok: true };
     },
 
+    saveSessionDenial(requestId, sessionId, tool, beforeNotify) {
+      if (!policyWritable) return { ok: false, error: 'read-only' };
+      const existing = (file.sessionDenials ?? []).find((d) => d.requestId === requestId);
+      if (existing) {
+        if (existing.sessionId !== sessionId || existing.tool !== tool)
+          return { ok: false, error: 'invalid-value' };
+        beforeNotify();
+        return { ok: true };
+      }
+      if ((file.sessionDenials ?? []).length >= SESSION_DENIALS_MAX)
+        return { ok: false, error: 'too-large' };
+      const candidate = structuredClone(file);
+      candidate.version = 3;
+      candidate.sessionDenials = [
+        ...(candidate.sessionDenials ?? []),
+        {
+          id: deps.newId(),
+          requestId,
+          sessionId,
+          tool,
+          createdAt: new Date(deps.now()).toISOString(),
+        },
+      ];
+      if (Buffer.byteLength(serializePolicyFile(candidate)) > POLICY_MAX_BYTES)
+        return { ok: false, error: 'too-large' };
+      try {
+        if (
+          deps.lastGoodIo.writeSync(
+            JSON.stringify({ version: 3, kind: 'recovery-unavailable' }),
+          ) !== true
+        )
+          throw new Error('Marker writer did not complete synchronously');
+      } catch (error) {
+        deps.warn('Policy recovery marker could not be saved', error);
+        return { ok: false, error: 'save-failed' };
+      }
+      return savePolicy(candidate, false, false, beforeNotify);
+    },
+
     sessionEnded(sessionId) {
       const assignments = file.assignments.length;
       const overrides = file.overrides.length;
+      const denials = (file.sessionDenials ?? []).length;
       const candidate = structuredClone(file);
       candidate.assignments = candidate.assignments.filter(
         (a) => pointKey(a.point) !== pointKey({ kind: 'session', sessionId }),
       );
       candidate.overrides = candidate.overrides.filter((o) => o.sessionId !== sessionId);
+      candidate.sessionDenials = (candidate.sessionDenials ?? []).filter(
+        (d) => d.sessionId !== sessionId,
+      );
       for (const [id, rem] of remembered) {
         if (rem.sessionId === sessionId) remembered.delete(id);
       }
       const policyChanged =
-        candidate.assignments.length !== assignments || candidate.overrides.length !== overrides;
+        candidate.assignments.length !== assignments ||
+        candidate.overrides.length !== overrides ||
+        candidate.sessionDenials.length !== denials;
       if (policyChanged) savePolicy(candidate, false, true);
       const endedGrants = grants.sessionEnded(sessionId);
       if (endedGrants.length > 0) grantsChanged();

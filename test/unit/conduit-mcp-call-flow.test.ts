@@ -120,6 +120,8 @@ function setup() {
     cleanupThrows: false,
     awaitingChanged: 0,
     sendThrows: false,
+    denialFails: false,
+    denialRechecks: false,
   };
   const uiSent: Array<{ windowId: number; msg: HostToWebview }> = [];
   const notReady = new Set<number>();
@@ -131,6 +133,15 @@ function setup() {
     },
     clearTimer: (h) => {
       timers.delete(h as number);
+    },
+    saveSessionDenial: (_id, _session, _tool, callback) => {
+      if (state.denialFails) return { ok: false, error: 'save-failed' };
+      callback();
+      if (state.denialRechecks) {
+        policies.set(CALLER, { ...ASK, decision: 'deny' });
+        flow.recheck();
+      }
+      return { ok: true };
     },
     newAskId: () => `ask-${++ask}`,
     ownerWindowOf: (id) => owners.get(id) ?? null,
@@ -874,6 +885,58 @@ describe('createCallFlow', () => {
       expect(c.spies.run).toBe(0);
       await c.promise;
     }
+  });
+
+  it('settles a durable session denial before its synchronous policy recheck', async () => {
+    const t = setup();
+    const c = t.call();
+    await t.flush();
+    t.state.denialRechecks = true;
+    expect(
+      await t.flow.answerPermission('perm-1', { outcome: 'denied', scope: 'session' }, 1),
+    ).toEqual({ ok: true });
+    expect(errCode(await c.promise)).toBe('denied');
+    expect(t.settled).toMatchObject([
+      { requestId: 'perm-1', end: 'answered', answer: { outcome: 'denied', scope: 'session' } },
+    ]);
+  });
+
+  it('still cancels an ordinary answer receipt and other waits on denial recheck', async () => {
+    const t = setup();
+    const denial = t.call({ connId: 1, requestId: 'denial' });
+    const ordinary = t.call({ connId: 2, requestId: 'ordinary' });
+    const pending = t.call({ connId: 3, requestId: 'pending' });
+    await t.flush();
+    const ordinaryReceipt = t.flow.answerPermission('perm-2', { outcome: 'allowed' }, 1);
+    t.state.denialRechecks = true;
+    const denialReceipt = t.flow.answerPermission(
+      'perm-1',
+      { outcome: 'denied', scope: 'session' },
+      1,
+    );
+    expect(await denialReceipt).toEqual({ ok: true });
+    expect(await ordinaryReceipt).toMatchObject({ ok: false, reason: 'not_answerable' });
+    expect(errCode(await denial.promise)).toBe('denied');
+    expect(await ordinary.promise).toBeNull();
+    expect(errCode(await pending.promise)).toBe('cancelled');
+  });
+
+  it('keeps the exact wait open when a session denial cannot be saved', async () => {
+    const t = setup();
+    const c = t.call();
+    await t.flush();
+    t.state.denialFails = true;
+    expect(t.flow.ownsPermissionWait('perm-1', 1)).toBe(true);
+    expect(t.flow.ownsPermissionWait('perm-1', 2)).toBe(false);
+    expect(
+      await t.flow.answerPermission('perm-1', { outcome: 'denied', scope: 'session' }, 1),
+    ).toMatchObject({ ok: false, reason: 'not_answerable' });
+    expect(t.flow.ownsPermissionWait('perm-1', 1)).toBe(true);
+    t.state.denialFails = false;
+    expect(
+      await t.flow.answerPermission('perm-1', { outcome: 'denied', scope: 'session' }, 1),
+    ).toEqual({ ok: true });
+    expect(errCode(await c.promise)).toBe('denied');
   });
 
   it("answerPermission from a window that is not the ask's owner is refused and the ask keeps waiting", async () => {

@@ -230,6 +230,7 @@ export interface RequestService {
   retryDeliveries(): void;
   purge(): void;
   ui(): RequestsUiState;
+  ownerPermissions(): RequestRecord[];
   presence(): HumanPresence;
   createPermission(sessionId: string, fields: PermissionFields, expiresAt: string): RequestRecord;
   /** A permission a peer asked for over the link; `ended` settles on its answer or expiry. */
@@ -304,7 +305,11 @@ const toPermissionAnswer = (a: AnswerInput): PermissionAnswer | null => {
     return a.grant === undefined ? { outcome: 'allowed' } : { outcome: 'allowed', grant: a.grant };
   }
   if (a.outcome === 'denied') {
-    return a.reason === undefined ? { outcome: 'denied' } : { outcome: 'denied', reason: a.reason };
+    return {
+      outcome: 'denied',
+      ...(a.reason === undefined ? {} : { reason: a.reason }),
+      ...(a.scope === undefined ? {} : { scope: a.scope }),
+    };
   }
   return null;
 };
@@ -905,6 +910,14 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
       };
     },
 
+    ownerPermissions() {
+      return structuredClone(
+        queue
+          .records()
+          .filter((r) => r.kind === 'permission' && r.remote == null && r.session !== null),
+      );
+    },
+
     presence() {
       return presence;
     },
@@ -1004,6 +1017,17 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
           message: 'only permission requests are answered here',
         };
       }
+      if (
+        typeof answer === 'object' &&
+        answer !== null &&
+        'scope' in answer &&
+        (r.remote != null || r.state !== 'open')
+      )
+        return {
+          ok: false,
+          reason: 'invalid_answer',
+          message: 'session scope requires an open local request',
+        };
       const checked = validateAnswer(r, answer);
       if (!checked.ok) {
         return { ok: false, reason: 'invalid_answer', message: checked.error.message };

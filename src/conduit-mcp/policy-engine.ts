@@ -220,12 +220,17 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
         )
       : undefined;
 
+  const denial =
+    principal.kind === 'session'
+      ? state.sessionDenials.find((d) => d.sessionId === principal.sessionId && d.tool === tool)
+      : undefined;
+
   const evaluated = targets.map((t) => {
     const rule = ruleFor(t);
     const fromException = assignment.exceptions.some(
       (e) => e.tool === tool && e.rule.decision !== undefined && matchesScope(e.scope, t),
     );
-    const explicitDeny = rule.decision === 'deny' && fromException;
+    const explicitDeny = (rule.decision === 'deny' && fromException) || denial !== undefined;
     return {
       target: t,
       rule,
@@ -239,7 +244,15 @@ export function decide(state: PolicyState, input: PolicyInput): PolicyDecision {
   // see POL §4.3
   const explicit = evaluated.filter((e) => e.explicitDeny);
   const unpassed = explicit.find((e) => e.override === undefined);
-  if (unpassed) return done('deny', { by: 'deny', point }, unpassed.rule, [], [], unpassed.target);
+  if (unpassed)
+    return done(
+      'deny',
+      denial ? { by: 'session-deny', denialId: denial.id } : { by: 'deny', point },
+      unpassed.rule,
+      [],
+      [],
+      unpassed.target,
+    );
   const passing = explicit.filter((e) => e.override !== undefined);
   const overrideIds = [...new Set(passing.flatMap((e) => (e.override ? [e.override.id] : [])))];
 
@@ -312,6 +325,11 @@ function isDeniedForEveryTarget(
   if (principal.kind === 'remote' && !remoteAllows(principal, tool)) return true;
   if (principal.kind === 'session' && (tool === 'send_message' || tool === 'request_input'))
     return false;
+  if (
+    principal.kind === 'session' &&
+    state.sessionDenials.some((d) => d.sessionId === principal.sessionId && d.tool === tool)
+  )
+    return !state.overrides.some((o) => o.sessionId === principal.sessionId && o.tool === tool);
   // see POL §4.3 (T2.3 ruling)
   const narrowerAllows = assignment.exceptions.some(
     (e) =>
@@ -366,6 +384,8 @@ export function reasonText(
       return 'allowed by grant';
     case 'override':
       return 'allowed once';
+    case 'session-deny':
+      return 'denied for session';
     case 'deny':
       return `denied by exception (${pointLabel(reason.point, names.cliName)})`;
     case 'exception':

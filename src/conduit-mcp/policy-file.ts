@@ -30,6 +30,7 @@ import type {
   Profile,
   ProfileId,
   Scope,
+  SessionDenial,
   ToolRule,
 } from './policy-types';
 import {
@@ -44,12 +45,13 @@ import {
 } from './tool-policy';
 
 export interface PolicyFile {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   /** Bumped on every change to the portable projection (see policy-service). A missing rev reads as 0. */
   rev?: number;
   profiles: Profile[];
   assignments: Array<{ point: AssignmentPoint; assignment: Assignment }>;
   overrides: OneUseOverride[];
+  sessionDenials?: SessionDenial[];
   migratedFrom: 'v0.64' | null;
   notes: { onScreenOnlyOffered: string[] };
 }
@@ -166,9 +168,20 @@ const isOverride = (v: unknown): v is OneUseOverride =>
   isTarget(v.target) &&
   isIso(v.createdAt);
 
+export const SESSION_DENIALS_MAX = 4096;
+const isSessionDenial = (v: unknown): v is SessionDenial =>
+  isObj(v) &&
+  isStr(v.id) &&
+  isStr(v.requestId) &&
+  isStr(v.sessionId) &&
+  isToolName(v.tool) &&
+  isIso(v.createdAt) &&
+  new Date(v.createdAt).toISOString() === v.createdAt;
+
 const isFile = (v: unknown): v is RawPolicyFile =>
   isObj(v) &&
-  (v.version === 1 || v.version === 2) &&
+  (v.version === 1 || v.version === 2 || v.version === 3) &&
+  !(v.version === 3 && v.kind === 'recovery-unavailable') &&
   (v.rev === undefined || isRev(v.rev)) &&
   arrayOf(isProfile)(v.profiles) &&
   new Set(v.profiles.map((p) => p.id)).size === v.profiles.length &&
@@ -177,6 +190,11 @@ const isFile = (v: unknown): v is RawPolicyFile =>
     (v.profiles.every((p) => !('nativeModes' in p)) &&
       v.assignments.every((a) => !('applyNative' in a.assignment)))) &&
   arrayOf(isOverride)(v.overrides) &&
+  (v.version !== 3 ||
+    (arrayOf(isSessionDenial)(v.sessionDenials) &&
+      v.sessionDenials.length <= SESSION_DENIALS_MAX &&
+      new Set(v.sessionDenials.map((d) => d.requestId)).size === v.sessionDenials.length &&
+      new Set(v.sessionDenials.map((d) => d.id)).size === v.sessionDenials.length)) &&
   (v.migratedFrom === null || v.migratedFrom === 'v0.64') &&
   isObj(v.notes) &&
   arrayOf(isStr)(v.notes.onScreenOnlyOffered);
@@ -265,14 +283,37 @@ export function parsePolicyFile(text: string): Parsed<PolicyFile> {
     ok: true,
     file: {
       ...rest,
+      sessionDenials: parsed.file.version === 3 ? parsed.file.sessionDenials : [],
       assignments: assignments.map(normaliseEntry),
       profiles: profiles.map(completeProfile),
     },
   };
 }
 
+export function parsePolicyBackup(
+  text: string,
+):
+  | { kind: 'policy'; file: PolicyFile }
+  | { kind: 'recovery-unavailable' }
+  | { kind: 'bad'; reason: 'corrupt' | 'newer' } {
+  try {
+    const raw: unknown = JSON.parse(text);
+    if (
+      isObj(raw) &&
+      raw.version === 3 &&
+      raw.kind === 'recovery-unavailable' &&
+      Object.keys(raw).length === 2
+    )
+      return { kind: 'recovery-unavailable' };
+  } catch {
+    /* parsed below */
+  }
+  const result = parsePolicyFile(text);
+  return result.ok ? { kind: 'policy', file: result.file } : { kind: 'bad', reason: result.reason };
+}
+
 export function serializePolicyFile(f: PolicyFile): string {
-  return toText({ ...f, version: 2 });
+  return toText({ ...f, version: f.version === 3 ? 3 : 2 });
 }
 
 export function parseGrantsFile(text: string): Parsed<GrantsFile> {

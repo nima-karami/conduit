@@ -1,3 +1,6 @@
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActivityIo } from '../../src/conduit-mcp/activity-log';
 import {
@@ -6,7 +9,11 @@ import {
   serializeGrantsFile,
   serializePolicyFile,
 } from '../../src/conduit-mcp/policy-file';
-import type { PolicyIo } from '../../src/conduit-mcp/policy-file-fs';
+import {
+  createPolicyIo,
+  POLICY_MAX_BYTES,
+  type PolicyIo,
+} from '../../src/conduit-mcp/policy-file-fs';
 import { migrateLegacyPolicy } from '../../src/conduit-mcp/policy-migration';
 import { OBSERVER } from '../../src/conduit-mcp/policy-profiles';
 import {
@@ -3027,4 +3034,279 @@ describe('native profile authority', () => {
       rev: 1,
     });
   });
+});
+
+it('commits session denial between marker and backup before notification, and retries idempotently', () => {
+  const h = harness({ policy: policyText() });
+  h.service.start();
+  const before = h.changed();
+  const callback = vi.fn(() => {
+    expect(h.changed()).toBe(before);
+    expect(JSON.parse(h.lastGoodWrites.at(-1) ?? '{}').sessionDenials).toHaveLength(1);
+    expect(JSON.parse(h.policyWrites.at(-1) ?? '{}').sessionDenials).toHaveLength(1);
+  });
+  expect(h.service.saveSessionDenial('r1', 's1', 'open_session', callback)).toEqual({ ok: true });
+  expect(callback).toHaveBeenCalledOnce();
+  expect(JSON.parse(h.lastGoodWrites.at(-1) ?? '{}').sessionDenials).toHaveLength(1);
+  expect(h.service.saveSessionDenial('r1', 's1', 'open_session', () => {})).toEqual({ ok: true });
+  expect(h.policyWrites).toHaveLength(1);
+  h.service.sessionEnded('s1');
+  expect(JSON.parse(h.policyWrites.at(-1) ?? '{}')).toMatchObject({
+    version: 3,
+    sessionDenials: [],
+  });
+});
+
+it('fails closed when a marker is the only recovery copy', () => {
+  const h = harness({ lastGood: JSON.stringify({ version: 3, kind: 'recovery-unavailable' }) });
+  h.service.start();
+  expect(h.service.ui([]).readOnly).toBe(true);
+  expect(h.legacyCalls()).toBe(0);
+});
+
+it('leaves the prior authority and wait untouched when marker or primary fails', () => {
+  const h = harness({ policy: policyText() });
+  h.service.start();
+  const notify = vi.fn();
+  const marker = vi.spyOn(h.deps.lastGoodIo, 'writeSync').mockImplementationOnce(() => {
+    throw new Error('marker');
+  });
+  expect(h.service.saveSessionDenial('r1', 's1', 'open_session', notify)).toEqual({
+    ok: false,
+    error: 'save-failed',
+  });
+  expect(h.policyWrites).toHaveLength(0);
+  expect(notify).not.toHaveBeenCalled();
+  marker.mockRestore();
+  const primary = vi.spyOn(h.deps.policyIo, 'writeSync').mockImplementationOnce(() => {
+    throw new Error('primary');
+  });
+  expect(h.service.saveSessionDenial('r1', 's1', 'open_session', notify)).toEqual({
+    ok: false,
+    error: 'save-failed',
+  });
+  expect(JSON.parse(h.lastGoodWrites.at(-1) ?? '{}')).toEqual({
+    version: 3,
+    kind: 'recovery-unavailable',
+  });
+  expect(notify).not.toHaveBeenCalled();
+  primary.mockRestore();
+  expect(h.service.saveSessionDenial('r1', 's1', 'open_session', notify)).toEqual({ ok: true });
+});
+
+it('keeps the second denial when final backup fails and fails closed if primary is lost', () => {
+  const h = harness({ policy: policyText() });
+  h.service.start();
+  expect(h.service.saveSessionDenial('r1', 's1', 'open_session', () => {})).toEqual({ ok: true });
+  const original = h.deps.lastGoodIo.writeSync;
+  vi.spyOn(h.deps.lastGoodIo, 'writeSync').mockImplementation((text) => {
+    if (JSON.parse(text).kind !== 'recovery-unavailable') throw new Error('backup');
+    return original(text);
+  });
+  expect(h.service.saveSessionDenial('r2', 's1', 'open_file', () => {})).toEqual({ ok: true });
+  expect(JSON.parse(h.policyWrites.at(-1) ?? '{}').sessionDenials).toHaveLength(2);
+  expect(h.service.ui([]).backupWarning).not.toBeNull();
+  const restarted = harness({ lastGood: h.lastGoodWrites.at(-1) });
+  restarted.service.start();
+  expect(restarted.service.ui([]).readOnly).toBe(true);
+  expect(restarted.legacyCalls()).toBe(0);
+});
+
+it('recovers restrictively from an actual marker after a second denial loses its backup and primary', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'con25-denial-recovery-'));
+  const primaryPath = path.join(dir, 'policy.json');
+  const backupPath = path.join(dir, 'policy.last-good.json');
+  const primary = createPolicyIo(primaryPath);
+  const backup = createPolicyIo(backupPath);
+  primary.writeSync(policyText());
+  const h = harness();
+  h.deps.policyIo = primary;
+  h.deps.lastGoodIo = backup;
+  h.service.start();
+  expect(h.service.saveSessionDenial('r1', 's1', 'open_session', () => {})).toEqual({ ok: true });
+  expect(JSON.parse(backup.read() ?? '{}').sessionDenials).toHaveLength(1);
+  const original = backup.writeSync;
+  vi.spyOn(backup, 'writeSync').mockImplementation((text) => {
+    if (JSON.parse(text).kind !== 'recovery-unavailable') throw new Error('final backup');
+    return original(text);
+  });
+  expect(h.service.saveSessionDenial('r2', 's1', 'open_file', () => {})).toEqual({ ok: true });
+  expect(JSON.parse(primary.read() ?? '{}').sessionDenials).toHaveLength(2);
+  expect(JSON.parse(backup.read() ?? '{}')).toEqual({ version: 3, kind: 'recovery-unavailable' });
+  fs.writeFileSync(primaryPath, 'corrupt');
+  const restarted = harness();
+  restarted.deps.policyIo = createPolicyIo(primaryPath);
+  restarted.deps.lastGoodIo = createPolicyIo(backupPath);
+  restarted.service.start();
+  expect(restarted.service.ui([]).readOnly).toBe(true);
+  expect(restarted.legacyCalls()).toBe(0);
+  expect(
+    restarted.service.decide({
+      principal: session(),
+      tool: 'open_session',
+      targets: [],
+      masterOn: true,
+      toYou: false,
+    }).decision,
+  ).toBe('deny');
+});
+
+it('refuses record and byte caps without changing storage or invoking settlement', () => {
+  const base = {
+    id: '',
+    requestId: '',
+    sessionId: 's1',
+    tool: 'open_session' as const,
+    createdAt: iso(T0),
+  };
+  const full = Array.from({ length: 4096 }, (_, i) => ({
+    ...base,
+    id: `d${i}`,
+    requestId: `r${i}`,
+  }));
+  const h = harness({ policy: policyText({ version: 3, sessionDenials: full }) });
+  h.service.start();
+  const settle = vi.fn();
+  const writes = h.lastGoodWrites.length;
+  expect(h.service.saveSessionDenial('overflow', 's1', 'open_session', settle)).toEqual({
+    ok: false,
+    error: 'too-large',
+  });
+  expect(h.lastGoodWrites).toHaveLength(writes);
+  expect(h.policyWrites).toHaveLength(0);
+  expect(settle).not.toHaveBeenCalled();
+  const big = harness({
+    policy: policyText({
+      version: 3,
+      sessionDenials: [
+        { ...base, id: 'd', requestId: 'r', sessionId: 'x'.repeat(POLICY_MAX_BYTES) },
+      ],
+    }),
+  });
+  big.service.start();
+  expect(big.service.saveSessionDenial('overflow', 's1', 'open_session', settle)).toEqual({
+    ok: false,
+    error: 'too-large',
+  });
+  expect(big.policyWrites).toHaveLength(0);
+  expect(settle).not.toHaveBeenCalled();
+});
+
+it('propagates settlement exceptions after the durable primary without policy notification', () => {
+  const h = harness({ policy: policyText() });
+  h.service.start();
+  const before = h.changed();
+  expect(() =>
+    h.service.saveSessionDenial('r1', 's1', 'open_session', () => {
+      throw new Error('invariant');
+    }),
+  ).toThrow('invariant');
+  expect(h.changed()).toBeGreaterThan(before);
+  expect(JSON.parse(h.policyWrites.at(-1) ?? '{}').sessionDenials).toHaveLength(1);
+  expect(JSON.parse(h.lastGoodWrites.at(-1) ?? '{}').sessionDenials).toHaveLength(1);
+  expect(
+    h.service.decide({
+      principal: session(),
+      tool: 'open_session',
+      targets: [],
+      masterOn: true,
+      toYou: false,
+    }).reason.by,
+  ).toBe('session-deny');
+});
+
+it('reports recovery-unavailable distinctly and preserves backup warnings when settlement throws', () => {
+  const restarted = harness({
+    lastGood: JSON.stringify({ version: 3, kind: 'recovery-unavailable' }),
+  });
+  restarted.service.start();
+  expect(restarted.warnings).toContain(
+    'policy.last-good.json recovery is unavailable after a permissions save',
+  );
+  expect(
+    restarted
+      .activityRows()
+      .some((row) => String(row.summary).includes('unavailable after a permissions save')),
+  ).toBe(true);
+  const h = harness({ policy: policyText() });
+  h.service.start();
+  const original = h.deps.lastGoodIo.writeSync;
+  vi.spyOn(h.deps.lastGoodIo, 'writeSync').mockImplementation((text) => {
+    if (JSON.parse(text).kind !== 'recovery-unavailable') throw new Error('backup');
+    return original(text);
+  });
+  expect(() =>
+    h.service.saveSessionDenial('r', 's1', 'open_session', () => {
+      throw new Error('settlement');
+    }),
+  ).toThrow('settlement');
+  expect(h.service.ui([]).backupWarning).not.toBeNull();
+  expect(JSON.parse(h.lastGoodWrites.at(-1) ?? '{}').kind).toBe('recovery-unavailable');
+  expect(JSON.parse(h.policyWrites.at(-1) ?? '{}').sessionDenials).toHaveLength(1);
+});
+
+it('preserves a reentrant conservative failure and retries it without backing up unwritten state', () => {
+  const override: OneUseOverride = {
+    id: 'o',
+    sessionId: 's2',
+    tool: 'open_session',
+    target: target(),
+    createdAt: iso(T0),
+  };
+  const h = harness({ policy: policyText({ overrides: [override] }) });
+  h.service.start();
+  const original = h.deps.policyIo.writeSync;
+  let attempts = 0;
+  vi.spyOn(h.deps.policyIo, 'writeSync').mockImplementation((text) => {
+    attempts++;
+    if (attempts === 2) throw new Error('nested failure');
+    return original(text);
+  });
+  expect(
+    h.service.saveSessionDenial('r', 's1', 'open_session', () => h.service.sessionEnded('s2')),
+  ).toEqual({ ok: true });
+  expect(JSON.parse(h.policyWrites.at(-1) ?? '{}').overrides).toHaveLength(1);
+  expect(JSON.parse(h.lastGoodWrites.at(-1) ?? '{}').overrides).toHaveLength(1);
+  expect(h.timers.some((timer) => timer.ms === 250)).toBe(true);
+  h.fire(250);
+  expect(JSON.parse(h.policyWrites.at(-1) ?? '{}').overrides).toHaveLength(0);
+  expect(JSON.parse(h.lastGoodWrites.at(-1) ?? '{}').overrides).toHaveLength(0);
+});
+
+it('restarts correctly at each durable denial crash boundary', () => {
+  const denial = {
+    id: 'd',
+    requestId: 'r',
+    sessionId: 's1',
+    tool: 'open_session' as const,
+    createdAt: iso(T0),
+  };
+  const old = policyText();
+  const next = policyText({ version: 3, sessionDenials: [denial] });
+  const marker = JSON.stringify({ version: 3, kind: 'recovery-unavailable' });
+  for (const [primaryText, backupText, denied] of [
+    [old, old, false],
+    [old, marker, false],
+    [next, marker, true],
+    [next, next, true],
+  ] as const) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'con25-crash-state-'));
+    const h = harness();
+    h.deps.policyIo = createPolicyIo(path.join(dir, 'policy.json'));
+    h.deps.lastGoodIo = createPolicyIo(path.join(dir, 'policy.last-good.json'));
+    h.deps.policyIo.writeSync(primaryText);
+    h.deps.lastGoodIo.writeSync(backupText);
+    h.service.start();
+    expect(h.service.ui([]).readOnly).toBe(false);
+    expect(h.legacyCalls()).toBe(0);
+    expect(
+      h.service.decide({
+        principal: session(),
+        tool: 'open_session',
+        targets: [],
+        masterOn: true,
+        toYou: false,
+      }).reason.by === 'session-deny',
+    ).toBe(denied);
+  }
 });

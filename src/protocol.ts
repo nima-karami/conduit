@@ -11,7 +11,12 @@ import type {
   Profile,
   ProfileId,
 } from './conduit-mcp/policy-types';
-import type { AnswerInput, RequestAnswerResult } from './conduit-mcp/request-types';
+import type {
+  AnswerInput,
+  OwnerPermissionCursor,
+  OwnerPermissionPage,
+  RequestAnswerResult,
+} from './conduit-mcp/request-types';
 import type { CliKind, PolicySource, ToolName, ToolPolicyPatch } from './conduit-mcp/tool-policy';
 import type { Handle, MessageKind, Priority, ToolErrorCode } from './conduit-mcp/types';
 import type {
@@ -742,6 +747,7 @@ export type HostToWebview =
   // always the caller; closeSession names its target in the action.
   | { type: 'mcp:ui'; requestId: string; sessionId: string; action: McpUiAction }
   | { type: 'mcp:activity'; requestId: number; page: ActivityPage }
+  | { type: 'mcp:ownerPermissions'; requestId: number; page: OwnerPermissionPage }
   | {
       type: 'mcp:codexPostureResult';
       requestId: number;
@@ -1291,6 +1297,12 @@ export type WebviewToHost =
   | { type: 'mcp:requestAnswer'; requestId: string; answer: AnswerInput }
   | { type: 'mcp:permissionAnswer'; requestId: string; answer: PermissionAnswer }
   | { type: 'mcp:activity:get'; requestId: number; query: ActivityQuery }
+  | {
+      type: 'mcp:ownerPermissions:get';
+      requestId: number;
+      state: 'open' | 'closed';
+      cursor?: OwnerPermissionCursor;
+    }
   | {
       type: 'mcp:linkCodexThread';
       requestId: number;

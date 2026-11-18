@@ -138,6 +138,7 @@ async function render(remote: RemoteSessionRow | null) {
               allowMore: noop,
               pause: noop,
               retry: noop,
+              getOwnerPermissions: async () => null,
               getActivity: async () => null,
               linkCodexThread: async () => ({ status: 'unavailable' as const }),
               codexPostureQuery: async () => ({ status: 'unavailable' as const }),

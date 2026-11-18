@@ -48,6 +48,7 @@ function fakeApi(o: Partial<ConduitMcpApi> = {}): ConduitMcpApi {
     allowMore: vi.fn(),
     pause: vi.fn(),
     retry: vi.fn(),
+    getOwnerPermissions: async () => null,
     getActivity: async () => null,
     linkCodexThread: async () => ({ status: 'unavailable' as const }),
     codexPostureQuery: async () => ({ status: 'unavailable' as const }),

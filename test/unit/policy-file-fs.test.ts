@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -104,4 +105,30 @@ it('decodes UTF-8 at the byte cap', () => {
   const io = createPolicyIo(file, { maxBytes: 4 });
   io.writeSync('éé');
   expect(io.read()).toBe('éé');
+});
+
+it.skipIf(process.platform === 'win32')('rejects a FIFO without blocking', () => {
+  const file = process.env.CON25_FIFO_FILE;
+  if (file) {
+    expect(() => createPolicyIo(file).read()).toThrow(/regular file/);
+    return;
+  }
+  const fifo = location();
+  fs.mkdirSync(path.dirname(fifo), { recursive: true });
+  execFileSync('mkfifo', [fifo]);
+  execFileSync(
+    process.execPath,
+    [
+      'node_modules/vitest/vitest.mjs',
+      'run',
+      'test/unit/policy-file-fs.test.ts',
+      '-t',
+      'rejects a FIFO without blocking',
+    ],
+    {
+      env: { ...process.env, CON25_FIFO_FILE: fifo },
+      timeout: 5000,
+      stdio: 'pipe',
+    },
+  );
 });

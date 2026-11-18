@@ -3,6 +3,7 @@ import {
   type GrantsFile,
   type PolicyFile,
   parseGrantsFile,
+  parsePolicyBackup,
   parsePolicyFile,
   serializeGrantsFile,
   serializePolicyFile,
@@ -118,7 +119,7 @@ describe('policy file', () => {
     });
     expect(parsePolicyFile(JSON.stringify({ ...native, version: 2 }))).toEqual({
       ok: true,
-      file: { ...native, version: 2 },
+      file: { ...native, version: 2, sessionDenials: [] },
     });
     for (const point of [
       { kind: 'peer', machineId: 'm-9' },
@@ -139,7 +140,7 @@ describe('policy file', () => {
     const file = validFile();
     const text = serializePolicyFile(file);
     expect(text).toBe(`${JSON.stringify(file, null, 2)}\n`);
-    expect(parsePolicyFile(text)).toEqual({ ok: true, file });
+    expect(parsePolicyFile(text)).toEqual({ ok: true, file: { ...file, sessionDenials: [] } });
   });
 
   it('round-trips pinned on a session assignment, and rejects a non-string pin', () => {
@@ -154,7 +155,7 @@ describe('policy file', () => {
       },
     });
     const text = serializePolicyFile(file);
-    expect(parsePolicyFile(text)).toEqual({ ok: true, file });
+    expect(parsePolicyFile(text)).toEqual({ ok: true, file: { ...file, sessionDenials: [] } });
     const raw: { assignments: Array<{ assignment: { pinned?: unknown } }> } = JSON.parse(text);
     raw.assignments[raw.assignments.length - 1].assignment.pinned = [1];
     expect(parsePolicyFile(JSON.stringify(raw))).toEqual({ ok: false, reason: 'corrupt' });
@@ -199,13 +200,13 @@ describe('policy file', () => {
     expect(parsed.file.assignments[2]?.assignment.pinned).toEqual(pinsExpected);
   });
 
-  it('corrupt → corrupt, version 3 → newer', () => {
+  it('corrupt → corrupt, version 4 → newer', () => {
     expect(parsePolicyFile('{not json')).toEqual({ ok: false, reason: 'corrupt' });
     expect(parsePolicyFile('[]')).toEqual({ ok: false, reason: 'corrupt' });
     expect(parsePolicyFile('{"version":"1"}')).toEqual({ ok: false, reason: 'corrupt' });
     expect(parsePolicyFile('{"version":0}')).toEqual({ ok: false, reason: 'corrupt' });
-    expect(parsePolicyFile('{"version":3}')).toEqual({ ok: false, reason: 'newer' });
-    const newer = serializePolicyFile(validFile()).replace('"version": 2', '"version": 3');
+    expect(parsePolicyFile('{"version":4}')).toEqual({ ok: false, reason: 'newer' });
+    const newer = serializePolicyFile(validFile()).replace('"version": 2', '"version": 4');
     expect(parsePolicyFile(newer)).toEqual({ ok: false, reason: 'newer' });
   });
 
@@ -683,4 +684,50 @@ describe('local owner edit validators', () => {
       validatePolicyAssignment({ kind: 'default' }, assignment)?.assignment.pinned,
     ).toBeUndefined();
   });
+});
+
+it('reads protective v3 session denials and rejects a marker as a primary', () => {
+  const denial = {
+    id: 'd1',
+    requestId: 'r1',
+    sessionId: 's1',
+    tool: 'open_file',
+    createdAt: '2026-11-14T12:00:00.000Z',
+  };
+  const parsed = parsePolicyFile(
+    JSON.stringify({ ...validFile(), version: 3, sessionDenials: [denial] }),
+  );
+  expect(parsed.ok && parsed.file.version).toBe(3);
+  expect(parsePolicyFile(JSON.stringify({ version: 3, kind: 'recovery-unavailable' })).ok).toBe(
+    false,
+  );
+});
+
+it('accepts only the exact recovery marker and validates v3 denials', () => {
+  expect(parsePolicyBackup(JSON.stringify({ version: 3, kind: 'recovery-unavailable' }))).toEqual({
+    kind: 'recovery-unavailable',
+  });
+  expect(
+    parsePolicyBackup(JSON.stringify({ version: 3, kind: 'recovery-unavailable', extra: true })),
+  ).toEqual({ kind: 'bad', reason: 'corrupt' });
+  expect(parsePolicyFile(JSON.stringify({ ...validFile(), version: 3 }))).toEqual({
+    ok: false,
+    reason: 'corrupt',
+  });
+  expect(
+    parsePolicyFile(JSON.stringify({ ...validFile(), version: 3, sessionDenials: [{ id: 'd' }] })),
+  ).toEqual({ ok: false, reason: 'corrupt' });
+});
+
+it.each([
+  '0',
+  '2026-11-14',
+  '2026-11-14T12:00:00Z',
+  '2026-02-30T12:00:00.000Z',
+  '2026-11-14T12:00:00.000+00:00',
+])('rejects noncanonical denial timestamp %s', (createdAt) => {
+  const denial = { id: 'd', requestId: 'r', sessionId: 's', tool: 'open_session', createdAt };
+  expect(
+    parsePolicyFile(JSON.stringify({ ...validFile(), version: 3, sessionDenials: [denial] })),
+  ).toEqual({ ok: false, reason: 'corrupt' });
 });

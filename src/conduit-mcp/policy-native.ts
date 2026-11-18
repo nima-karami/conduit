@@ -67,6 +67,7 @@ export function nativeProjection(input: PolicyProjectionInput): string {
     assignments: assignmentMap(input.assignments),
     grants: [],
     overrides: [],
+    sessionDenials: [],
     failClosed: false,
   };
   const custom = input.profiles

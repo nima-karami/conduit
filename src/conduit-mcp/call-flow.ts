@@ -133,6 +133,12 @@ export interface CallFlowDeps {
   setTimer(fn: () => void, ms: number): unknown;
   clearTimer(handle: unknown): void;
   newAskId(): string;
+  saveSessionDenial(
+    requestId: string,
+    sessionId: string,
+    tool: ToolName,
+    beforeNotify: () => void,
+  ): PolicyEditResult;
   ownerWindowOf(sessionId: string): number | null;
   appConnected(): boolean;
   sendToOwner(sessionId: string, msg: HostToWebview): void;
@@ -179,6 +185,7 @@ export interface CallFlow {
   recheck(): void;
   /** false unless the ask exists, is waiting, and `fromWindowId` is its window. */
   answer(askId: string, fromWindowId: number, answer: AskAnswer): boolean;
+  ownsPermissionWait(requestId: string, windowId: number): boolean;
   answerPermission(
     askId: string,
     answer: PermissionAnswer,
@@ -229,9 +236,11 @@ const answerInputOf = (a: PermissionAnswer): AnswerInput =>
     ? a.grant === undefined
       ? { outcome: 'allowed' }
       : { outcome: 'allowed', grant: a.grant }
-    : a.reason === undefined
-      ? { outcome: 'denied' }
-      : { outcome: 'denied', reason: a.reason };
+    : {
+        outcome: 'denied',
+        ...(a.reason === undefined ? {} : { reason: a.reason }),
+        ...(a.scope === undefined ? {} : { scope: a.scope }),
+      };
 const SKIP_REASONS: ReadonlySet<unknown> = new Set(['unsaved', 'not_open']);
 
 /** A renderer failure message reaches an agent's terminal: no escape sequences, C0 or C1
@@ -300,7 +309,12 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
   const inflight = new Map<number, Map<JsonRpcId, Entry>>();
   const receipts = new Map<
     string,
-    { wait: Wait<AskMeta>; cancelled: boolean; resolve(result: PermissionAnswerResult): void }
+    {
+      wait: Wait<AskMeta>;
+      cancelled: boolean;
+      committedDenial: boolean;
+      resolve(result: PermissionAnswerResult): void;
+    }
   >();
   const refusedAnswer = (message: string): PermissionAnswerResult => ({
     ok: false,
@@ -314,7 +328,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
   };
   const cancelReceipts = (match: (wait: Wait<AskMeta>) => boolean, message: string): void => {
     for (const receipt of receipts.values()) {
-      if (!match(receipt.wait)) continue;
+      if (receipt.committedDenial || !match(receipt.wait)) continue;
       receipt.cancelled = true;
       receipt.resolve(refusedAnswer(message));
     }
@@ -477,7 +491,10 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
         !c.permission.grantable && end.answer.outcome === 'allowed'
           ? { outcome: 'allowed' }
           : end.answer;
-      if (c.inflight.cancelled || receipts.get(requestId)?.cancelled) {
+      if (
+        !receipts.get(requestId)?.committedDenial &&
+        (c.inflight.cancelled || receipts.get(requestId)?.cancelled)
+      ) {
         settle('withdrawn', null, 'the call was cancelled');
         return null;
       }
@@ -720,17 +737,36 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
 
     answer: (askId, fromWindowId, answer) => waits.answer(askId, fromWindowId, cardAnswer(answer)),
 
+    ownsPermissionWait(requestId, windowId) {
+      return (
+        windowId !== NO_OWNER_WINDOW &&
+        waits.pending().some((w) => w.id === requestId && w.windowId === windowId)
+      );
+    },
+
     answerPermission(askId, answer, fromWindowId) {
       const w = waits.pending().find((x) => x.id === askId);
       if (fromWindowId === NO_OWNER_WINDOW || w === undefined || w.windowId !== fromWindowId)
         return Promise.resolve(refusedAnswer('nothing is waiting on this request'));
       return new Promise((resolve) => {
-        receipts.set(askId, { wait: w, cancelled: false, resolve });
-        if (!waits.answer(askId, fromWindowId, answer)) {
-          finishReceipt(askId, refusedAnswer('nothing is waiting on this request'));
-          return;
-        }
-        deps.sendToOwner(w.callerSessionId, { type: 'mcp:askClosed', askId, outcome: 'answered' });
+        const receipt = { wait: w, cancelled: false, committedDenial: false, resolve };
+        receipts.set(askId, receipt);
+        const settle = () => {
+          if (!waits.answer(askId, fromWindowId, answer))
+            throw new Error('permission wait disappeared during denial save');
+          if (answer.outcome === 'denied' && answer.scope === 'session')
+            receipt.committedDenial = true;
+          deps.sendToOwner(w.callerSessionId, {
+            type: 'mcp:askClosed',
+            askId,
+            outcome: 'answered',
+          });
+        };
+        if (answer.outcome === 'denied' && answer.scope === 'session') {
+          const result = deps.saveSessionDenial(askId, w.callerSessionId, w.meta.tool, settle);
+          if (!result.ok)
+            finishReceipt(askId, refusedAnswer(`could not save session denial: ${result.error}`));
+        } else settle();
       });
     },
 

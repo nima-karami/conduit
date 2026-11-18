@@ -51,6 +51,7 @@ const stateOf = (entries: Array<[AssignmentPoint, Assignment]>): PolicyState => 
   assignments: new Map(entries.map(([p, a]) => [pointKey(p), a])),
   grants: [],
   overrides: [],
+  sessionDenials: [],
   failClosed: false,
 });
 
@@ -240,6 +241,7 @@ describe('migrateLegacyPolicy', () => {
           profiles: [],
           assignments: [...m.values()].map(([point, assignment]) => ({ point, assignment })),
           overrides: [],
+          sessionDenials: [],
           migratedFrom: 'v0.64',
           notes: { onScreenOnlyOffered: [] },
         }),

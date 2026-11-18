@@ -5882,6 +5882,142 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     await h.host.stop();
   });
 
+  it('omits an expired permission after a late grant', async () => {
+    const { h, c } = await asking({ manualTimers: true });
+    const replies: HostToWebview[] = [];
+    const query = () =>
+      h.host.handleRenderer(
+        { type: 'mcp:ownerPermissions:get', requestId: 42, state: 'closed' },
+        (m) => replies.push(m),
+        1,
+      );
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    const id = askIdOf(h);
+    h.advance(10 * 60_000);
+    await c.reply(1);
+    await query();
+    expect(replies.pop()).toMatchObject({ page: { permissions: [{ id, answerable: true }] } });
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:permissionAnswer',
+        requestId: id,
+        answer: { outcome: 'allowed', grant: { who: 'session', on: 'anywhere', for: '1h' } },
+      },
+      (m) => replies.push(m),
+      1,
+    );
+    expect(replies.pop()).toMatchObject({ ok: true });
+    await query();
+    expect(replies.pop()).toMatchObject({ page: { permissions: [] } });
+  });
+
+  it('omits an expired permission when its principal no longer exists', async () => {
+    const { h, c } = await asking({ manualTimers: true });
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    h.advance(10 * 60_000);
+    await c.reply(1);
+    h.sessions.delete('s1');
+    const replies: HostToWebview[] = [];
+    await h.host.handleRenderer(
+      { type: 'mcp:ownerPermissions:get', requestId: 42, state: 'closed' },
+      (m) => replies.push(m),
+      1,
+    );
+    expect(replies).toMatchObject([{ page: { permissions: [] } }]);
+  });
+
+  it('pages equal-time owner permissions without mixing owners or losing rows', async () => {
+    const h = harness({ manualTimers: true, kinds: { '/w': 'dir' } });
+    await h.host.start();
+    for (let n = 0; n < 36; n++) {
+      const sessionId = `page-${n}`;
+      h.owners.set(sessionId, (n % 2) + 1);
+      const launched = await launch(h, sessionId);
+      const c = await rawClient(h.ep, launched.token);
+      for (let request = 1; request <= 3; request++) c.call(request, 'open_session', OPEN);
+      if (n % 6 === 5) {
+        await until(() => asksOf(h).length === (n + 1) * 3);
+        h.clock.t += 61_000;
+      }
+    }
+    const asks = asksOf(h);
+    const pages = async (sender: number, state: 'open' | 'closed') => {
+      const ids: string[] = [];
+      const times: Array<string | null> = [];
+      let cursor: { at: string; id: string } | undefined;
+      do {
+        const replies: HostToWebview[] = [];
+        await h.host.handleRenderer(
+          { type: 'mcp:ownerPermissions:get', requestId: 42, state, ...(cursor ? { cursor } : {}) },
+          (message) => replies.push(message),
+          sender,
+        );
+        const reply = replies[0];
+        if (reply?.type !== 'mcp:ownerPermissions') throw new Error('missing owner page');
+        expect(reply.page.permissions.length).toBeLessThanOrEqual(50);
+        ids.push(...reply.page.permissions.map((r) => r.id));
+        times.push(
+          ...reply.page.permissions.map((r) => (state === 'open' ? r.createdAt : r.endedAt)),
+        );
+        cursor = reply.page.nextCursor ?? undefined;
+      } while (cursor);
+      expect(times[49]).toBe(times[50]);
+      return ids;
+    };
+    for (const sender of [1, 2]) {
+      const expected = asks
+        .filter((a) => h.owners.get(a.callerSessionId) === sender)
+        .map((a) => a.askId)
+        .sort();
+      const actual = await pages(sender, 'open');
+      expect(actual).toHaveLength(54);
+      expect([...actual].sort()).toEqual([...expected].sort());
+      expect(new Set(actual).size).toBe(54);
+    }
+    for (const ask of asks)
+      await answer(h, ask.askId, 'deny', h.owners.get(ask.callerSessionId) ?? 1);
+    for (const sender of [1, 2]) {
+      const expected = asks
+        .filter((a) => h.owners.get(a.callerSessionId) === sender)
+        .map((a) => a.askId)
+        .sort()
+        .reverse();
+      const actual = await pages(sender, 'closed');
+      expect(actual).toHaveLength(54);
+      expect(actual).toEqual(expected);
+      expect(new Set(actual).size).toBe(54);
+    }
+  }, 30_000);
+
+  it('addresses owner permission pages only to the waiting window', async () => {
+    const { h, c } = await asking();
+    c.call(1, 'open_session', OPEN);
+    await until(() => asksOf(h).length === 1);
+    const replies: HostToWebview[] = [];
+    const query = (sender: number) =>
+      h.host.handleRenderer(
+        { type: 'mcp:ownerPermissions:get', requestId: 42, state: 'open' },
+        (message) => replies.push(message),
+        sender,
+      );
+    await query(2);
+    expect(replies.pop()).toEqual({
+      type: 'mcp:ownerPermissions',
+      requestId: 42,
+      page: { permissions: [], nextCursor: null },
+    });
+    await query(1);
+    expect(replies.pop()).toMatchObject({
+      type: 'mcp:ownerPermissions',
+      requestId: 42,
+      page: { permissions: [{ id: askIdOf(h), answerable: true }], nextCursor: null },
+    });
+    await answer(h, askIdOf(h), 'deny');
+    await c.reply(1);
+  });
+
   it('mcp:permissionAnswer from a window that does not own the ask is refused; the owner window answers', async () => {
     const { h, c } = await asking();
     const replies: HostToWebview[] = [];

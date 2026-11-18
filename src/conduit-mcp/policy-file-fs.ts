@@ -15,7 +15,7 @@ export function createPolicyIo(
     read() {
       let fd: number;
       try {
-        fd = fs.openSync(file, 'r');
+        fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
       } catch (error) {
         if (
           typeof error === 'object' &&
@@ -27,8 +27,9 @@ export function createPolicyIo(
         throw error;
       }
       try {
-        if (fs.fstatSync(fd).size > options.maxBytes)
-          throw new Error('Permissions store is too large');
+        const stat = fs.fstatSync(fd);
+        if (!stat.isFile()) throw new Error('Permissions store is not a regular file');
+        if (stat.size > options.maxBytes) throw new Error('Permissions store is too large');
         const chunks: Buffer[] = [];
         let total = 0;
         while (true) {
