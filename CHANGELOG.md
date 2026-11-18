@@ -6,9 +6,11 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
-### Changed
+## [0.69.0] — 2026-11-18
 
-- Opened agent sessions report startup status and notify their opener when blocked; explicit session labels persist across terminal title changes.
+### Changed
+- When an agent opens a session through Conduit, it now learns whether that session actually started or is stuck at a prompt (such as trusting a folder or approving a tool). If a helper stays stuck, Conduit tells the agent that opened it once, so stuck helpers no longer sit forgotten.
+- A session opened with a name keeps that name on its tab, even when the agent inside changes its terminal title. Renaming it in Conduit still works.
 
 ## [0.68.4] — 2026-11-18
 
