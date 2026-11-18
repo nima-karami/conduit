@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { app } from 'electron';
+import { app, shell } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import type { HostToWebview } from '../src/protocol';
 import { debInstallFailure } from './deb-install-failure';
@@ -189,9 +189,10 @@ export function initUpdater(
     ) {
       autoUpdater.autoInstallOnAppQuit = false;
     }
-    handleUpdaterError(err, {
+    void handleUpdaterError(err, {
       platform: process.platform,
       downloadedFile: pendingDownloadedFile,
+      openInstaller: explicitInstallInProgress ? (file) => shell.openPath(file) : undefined,
       send,
       onEvent,
     });
@@ -216,13 +217,14 @@ export function initUpdater(
 interface UpdaterErrorContext {
   platform: string;
   downloadedFile: string | null;
+  openInstaller?: (file: string) => Promise<string>;
   send: (msg: HostToWebview) => void;
   onEvent: (event: string, data?: Record<string, unknown>) => void;
 }
 
 // electron-updater emits `error` for install failures too (DebUpdater catches them and
 // dispatches), so an unrecognised failure must keep its plain message.
-export function handleUpdaterError(err: unknown, ctx: UpdaterErrorContext): void {
+export async function handleUpdaterError(err: unknown, ctx: UpdaterErrorContext): Promise<void> {
   const failure = debInstallFailure({
     platform: ctx.platform,
     downloadedFile: ctx.downloadedFile,
@@ -230,10 +232,25 @@ export function handleUpdaterError(err: unknown, ctx: UpdaterErrorContext): void
   });
   if (failure) {
     ctx.onEvent('deb-install-failed', { command: failure.command });
+    let message = failure.message;
+    if (ctx.openInstaller && ctx.downloadedFile) {
+      try {
+        const error = await ctx.openInstaller(ctx.downloadedFile);
+        if (!error) {
+          message =
+            'The update opened in your system installer. Click Install there, then restart Conduit. You can also install it from a terminal:';
+          ctx.onEvent('deb-installer-opened');
+        } else {
+          ctx.onEvent('deb-installer-open-failed');
+        }
+      } catch {
+        ctx.onEvent('deb-installer-open-failed');
+      }
+    }
     ctx.send({
       type: 'updateStatus',
       status: 'error',
-      message: failure.message,
+      message,
       command: failure.command,
     });
     return;

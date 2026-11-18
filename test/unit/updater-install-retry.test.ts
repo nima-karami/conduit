@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const updater = vi.hoisted(() => ({
+  openPath: vi.fn(async () => ''),
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   autoDownload: false,
   autoInstallOnAppQuit: false,
@@ -13,7 +14,7 @@ vi.mock('node:fs', () => ({
   readFileSync: () => '0::/user.slice/app-conduit-99.scope\n',
 }));
 vi.mock('node:child_process', () => ({ spawnSync: () => ({ status: 0, stdout: '54\n' }) }));
-vi.mock('electron', () => ({ app: { isPackaged: true } }));
+vi.mock('electron', () => ({ app: { isPackaged: true }, shell: { openPath: updater.openPath } }));
 vi.mock('electron-updater', () => ({ autoUpdater: updater }));
 
 import { initUpdater, quitAndInstall } from '../../electron/updater';
@@ -21,10 +22,11 @@ import { initUpdater, quitAndInstall } from '../../electron/updater';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('explicit deb install failure', () => {
-  it('does not retry on later quit, while a new download restores install-on-quit', () => {
+  it('hands off the failed update and suppresses automatic retry until a different file downloads', async () => {
     vi.stubGlobal('process', { ...process, platform: 'linux', resourcesPath: '/tmp' });
     const onEvent = vi.fn();
-    const stop = initUpdater(vi.fn(), onEvent, () => ({ focused: true, visible: true }));
+    const send = vi.fn();
+    const stop = initUpdater(send, onEvent, () => ({ focused: true, visible: true }));
     const handlers = Object.fromEntries(
       updater.on.mock.calls.map(([event, handler]) => [event, handler]),
     );
@@ -42,6 +44,14 @@ describe('explicit deb install failure', () => {
     });
     quitAndInstall();
     expect(updater.autoInstallOnAppQuit).toBe(false);
+    expect(updater.openPath).toHaveBeenCalledWith('/tmp/update.deb');
+    await vi.waitFor(() =>
+      expect(send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringMatching(/Click Install there/),
+        }),
+      ),
+    );
     expect(onEvent).toHaveBeenCalledWith(
       'deb-install-diagnostic',
       expect.objectContaining({
