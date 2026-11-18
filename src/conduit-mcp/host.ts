@@ -1928,7 +1928,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
   /** An optional machine an edit names: a string, or absent for this machine's own rules. */
   const machineArg = (machine: unknown): machine is string | undefined =>
     machine === undefined || (typeof machine === 'string' && machine.length > 0);
-  const raisedRequests = new Map<InFlight, string>();
+  const raisedRequests = new Map<InFlight, { id: string; why: string; approved: boolean }>();
   const emptyTarget: PolicyTarget = { sessionId: null, path: null, folder: null, projectId: null };
   /** The targets an answer's grants cover, or null when a target cannot resolve the scope. */
   const grantTargetsFor = (
@@ -2030,10 +2030,12 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         count: null,
       });
       policyService.activity.recordAskArgs(record.id, r.args);
-      raisedRequests.set(r.inflight, record.id);
+      raisedRequests.set(r.inflight, { id: record.id, why: r.why, approved: false });
       return record.id;
     },
     settlePermission: (e) => {
+      const raised = [...raisedRequests.values()].find((request) => request.id === e.requestId);
+      if (raised && e.end === 'answered' && e.answer?.outcome === 'allowed') raised.approved = true;
       if (e.end === 'answered')
         requestService.endPermission(e.requestId, 'answered', e.answer, null, e.by);
       else requestService.endPermission(e.requestId, e.end, null, e.reason, e.by);
@@ -2417,7 +2419,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           ? result.value
           : null;
       const requestId =
-        raisedRequests.get(inflight) ??
+        raisedRequests.get(inflight)?.id ??
         (name === 'request_input' &&
         value &&
         'request_id' in value &&
@@ -2442,7 +2444,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           routedRefOf(name, args),
         summary: null,
         decision: decision?.decision ?? null,
-        decidedBy: decision ? reasonOf(decision) : 'unknown',
+        decidedBy: (() => {
+          const reason = decision ? reasonOf(decision) : 'unknown';
+          const raised = raisedRequests.get(inflight);
+          return !cancelled && result?.ok && raised?.approved && reason !== raised.why
+            ? `${raised.why}; ${reason}`
+            : reason;
+        })(),
         outcome: cancelled
           ? 'withdrawn'
           : result.ok

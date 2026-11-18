@@ -5713,6 +5713,49 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     );
   const grantPaths = (h: Harness) => h.host.uiState().policy.grants.map((g) => g.on);
 
+  it('attributes an approved ask and its grant to the original call only', async () => {
+    const rows: Array<Record<string, unknown>> = [];
+    const activityIo: ActivityIo = {
+      append: (_day, line) => {
+        rows.push(JSON.parse(line) as Record<string, unknown>);
+      },
+      read: () => '',
+      list: () => [],
+      remove: () => undefined,
+      readArgs: () => null,
+      writeArgs: () => undefined,
+    };
+    const { h, c } = await asking({ activityIo });
+    await runningTargets(h);
+    await setPolicy(h, { close_session: { access: 'ask', when: 'always', reach: 'any' } });
+    c.call(1, 'close_session', { session: 's2' });
+    await until(() => asksOf(h).length === 1);
+    const id = askIdOf(h);
+    await h.host.handleRenderer(
+      {
+        type: 'mcp:permissionAnswer',
+        requestId: id,
+        answer: { outcome: 'allowed', grant: { who: 'session', on: 'anywhere', for: '1h' } },
+      },
+      () => undefined,
+      1,
+    );
+    await replyRunningUi(h, await until(() => runningUi(h)[0]));
+    expect(c.errorOf(await c.reply(1))).toBe('ok');
+    const asked = rows.find((r) => r.requestId === id && r.outcome === 'asked');
+    const completed = rows.find((r) => r.requestId === id && r.outcome === 'ok');
+    expect(completed?.decidedBy).toBe(`${String(asked?.decidedBy)}; allowed by grant`);
+    c.call(2, 'close_session', { session: 's2' });
+    await replyRunningUi(h, await until(() => runningUi(h)[1]));
+    expect(c.errorOf(await c.reply(2))).toBe('ok');
+    expect(
+      rows.filter((r) => r.action === 'close_session' && r.outcome === 'ok').at(-1),
+    ).toMatchObject({
+      requestId: null,
+      decidedBy: 'allowed by grant',
+    });
+  });
+
   it('a failed two-target grant save leaves no partial consent or executed files', async () => {
     const writeSync = vi.fn((_text: string): true => {
       throw new Error('grants disk full');

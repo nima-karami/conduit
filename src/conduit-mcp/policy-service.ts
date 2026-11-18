@@ -321,6 +321,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
     portable: boolean,
     conservative = false,
     beforeNotify?: () => void,
+    onFailedPrimary?: () => void,
   ): PolicyEditResult {
     if (!policyWritable && !conservative) return { ok: false, error: 'read-only' };
     const assignmentsChanged =
@@ -333,6 +334,7 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       ? writePrimary(deps.policyIo, 'policy', serializePolicyFile(candidate))
       : { ok: false, error: 'read-only' };
     if (!result.ok && !conservative) {
+      onFailedPrimary?.();
       deps.onChanged();
       return result;
     }
@@ -1151,7 +1153,9 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
         deps.warn('Policy recovery marker could not be saved', error);
         return { ok: false, error: 'save-failed' };
       }
-      return savePolicy(candidate, false, false, beforeNotify);
+      return savePolicy(candidate, false, false, beforeNotify, () => {
+        backupWarning = 'Permissions backup is unavailable until permissions are saved again';
+      });
     },
 
     sessionEnded(sessionId) {

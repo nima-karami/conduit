@@ -3491,3 +3491,38 @@ it('restarts correctly at each durable denial crash boundary', () => {
     ).toBe(denied);
   }
 });
+
+it('warns before notifying when a durable marker outlives a failed denial primary, and clears only after backup', () => {
+  const h = harness({ policy: policyText() });
+  h.service.start();
+  const settle = vi.fn();
+  const notice = vi.fn(() => h.service.ui([]).backupWarning);
+  h.deps.onChanged = notice;
+  const primary = vi.spyOn(h.deps.policyIo, 'writeSync').mockImplementationOnce(() => {
+    throw new Error('primary');
+  });
+  expect(h.service.saveSessionDenial('r', 's1', 'open_session', settle)).toEqual({
+    ok: false,
+    error: 'save-failed',
+  });
+  expect(notice).toHaveReturnedWith(expect.stringContaining('backup'));
+  const warning = h.service.ui([]).backupWarning;
+  expect(warning).toContain('backup');
+  expect(h.policyWrites).toHaveLength(0);
+  expect(JSON.parse(h.lastGoodWrites.at(-1) ?? '{}').kind).toBe('recovery-unavailable');
+  expect(settle).not.toHaveBeenCalled();
+  primary.mockRestore();
+  const marker = vi.spyOn(h.deps.lastGoodIo, 'writeSync').mockImplementationOnce(() => {
+    throw new Error('marker');
+  });
+  expect(h.service.saveSessionDenial('r', 's1', 'open_session', settle)).toEqual({
+    ok: false,
+    error: 'save-failed',
+  });
+  expect(h.service.ui([]).backupWarning).toBe(warning);
+  expect(JSON.parse(h.lastGoodWrites.at(-1) ?? '{}').kind).toBe('recovery-unavailable');
+  marker.mockRestore();
+  expect(h.service.saveSessionDenial('r', 's1', 'open_session', settle)).toEqual({ ok: true });
+  expect(h.service.ui([]).backupWarning).toBeNull();
+  expect(settle).toHaveBeenCalledOnce();
+});
