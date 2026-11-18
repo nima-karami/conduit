@@ -124,18 +124,19 @@ await runScenario(
     await menu.click();
     await dialog.getByRole('button', { name: 'View Activity' }).click();
     await dialog.waitFor({ state: 'hidden' });
-    const activity = page.getByRole('main', { name: 'Permissions Activity' });
+    const activity = page.getByRole('region', { name: 'Permissions Activity' });
     await activity.waitFor();
     await activity.getByText('list_sessions', { exact: true }).first().waitFor();
     await capture(page, '11-session-activity.png');
 
-    await page.getByRole('button', { name: 'Settings', exact: true }).click();
     const settings = page.locator('.settings-page');
+    await settings.getByRole('button', { name: 'Back to Conduit' }).click();
+    await settings.waitFor({ state: 'hidden' });
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await settings.getByRole('button', { name: 'MCP', exact: true }).click();
     await settings.getByRole('switch').first().waitFor();
-    await settings.getByRole('button', { name: 'Open Permissions', exact: true }).click();
-    const profiles = settings.getByRole('tab', { name: 'Profiles', exact: true });
-    await profiles.waitFor();
+    const profiles = settings.getByRole('tab', { name: 'Roles', exact: true });
+    await profiles.click();
     const copy = settings.getByRole('button', { name: 'Copy Worker' });
     await copy.waitFor();
     await capture(page, '13-settings-profiles.png');
@@ -173,18 +174,17 @@ await runScenario(
     );
     await profiles.focus();
     await page.keyboard.press('ArrowRight');
-    const assignments = settings.getByRole('tab', { name: 'Assignments' });
+    const assignments = settings.getByRole('tab', { name: 'Agents' });
     assert(
       (await assignments.getAttribute('aria-selected')) === 'true',
-      'keyboard did not select the Assignments tab',
+      'keyboard did not select the Agents tab',
     );
     await settings.getByRole('heading', { name: 'Who gets which profile' }).waitFor();
     await capture(page, '14-settings-assignments.png');
-    await page.keyboard.press('End');
+    await page.keyboard.press('ArrowRight');
     await settings.getByText('No grants yet.').waitFor();
     await capture(page, '07-settings-grants.png');
-    await settings.getByRole('button', { name: 'Activity', exact: true }).click();
-    await settings.waitFor({ state: 'hidden' });
+    await settings.getByRole('tab', { name: 'Activity', exact: true }).click();
     await activity.waitFor();
     log('owner modal, keyboard tabs, durable exact native profile and scoped Activity verified');
   },
