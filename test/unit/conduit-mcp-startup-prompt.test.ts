@@ -38,7 +38,7 @@ describe('bounded startup wait', () => {
     expect(await waitForStartup({ signal, deadlineMs: 1000 }, () => 0, sleep)).toBe(false);
     expect(sleep).not.toHaveBeenCalled();
     expect(await waitForStartup({ signal, deadlineMs: 2500 }, () => 0, sleep)).toBe(true);
-    expect(sleep).toHaveBeenCalledWith(1500);
+    expect(sleep).toHaveBeenCalledWith(1500, signal);
   });
   it('ends promptly when cancelled even if the delay has not finished', async () => {
     const controller = new AbortController();

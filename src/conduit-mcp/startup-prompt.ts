@@ -4,7 +4,7 @@ import { type ScreenSnapshot, screenVerdict } from './screen-verdict';
 export async function waitForStartup(
   options: { signal: AbortSignal; deadlineMs?: number },
   now: () => number,
-  sleep: (ms: number) => Promise<void>,
+  sleep: (ms: number, signal: AbortSignal) => Promise<void>,
 ): Promise<boolean> {
   const remaining = (options.deadlineMs ?? Infinity) - now();
   if (options.signal.aborted || remaining <= 1000) return false;
@@ -15,7 +15,7 @@ export async function waitForStartup(
       resolve();
     };
     options.signal.addEventListener('abort', done, { once: true });
-    void sleep(wait).then(done, (err: unknown) => {
+    void sleep(wait, options.signal).then(done, (err: unknown) => {
       options.signal.removeEventListener('abort', done);
       reject(err);
     });

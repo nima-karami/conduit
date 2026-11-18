@@ -3680,6 +3680,90 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
     expect((await c.call('read_inbox')).body.messages).toHaveLength(0);
   });
 
+  it('aborts an in-flight startup screen read when stopping without sending a notice', async () => {
+    let block = false;
+    let entered = false;
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const io = failingIo();
+    io.fail = false;
+    const written: string[] = [];
+    const append = io.appendLog;
+    io.appendLog = async (line) => {
+      written.push(line);
+      await append(line);
+    };
+    const h = harness({
+      kinds: { '/w/wt': 'dir' },
+      storeIo: io,
+      beforeSnapshot: async (id) => {
+        if (id === 'n1' && block && !entered) {
+          entered = true;
+          await held;
+        }
+      },
+    });
+    await h.host.start();
+    const a = await launch(h, 's1');
+    await on(h, 's1', ['open_session']);
+    const c = await client(h.ep, a.token);
+    await c.call('open_session', { path: 'wt', agent: 'e2e-fake-mcp', message: 'task' });
+    await launch(h, 'n1');
+    block = true;
+    h.clock.t += 30_000;
+    await h.host.tick();
+    await vi.waitFor(() => expect(entered).toBe(true));
+    await h.host.stop();
+    const before = written.length;
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(written).toHaveLength(before);
+    expect(written.some((line) => line.includes('Conduit startup check'))).toBe(false);
+  });
+
+  it('drains an in-flight startup notice before stopping the message store', async () => {
+    let entered = false;
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const io = failingIo();
+    io.fail = false;
+    const written: string[] = [];
+    const append = io.appendLog;
+    io.appendLog = async (line) => {
+      if (line.includes('Conduit startup check')) {
+        entered = true;
+        await held;
+      }
+      written.push(line);
+      await append(line);
+    };
+    const h = harness({ kinds: { '/w/wt': 'dir' }, storeIo: io });
+    await h.host.start();
+    const a = await launch(h, 's1');
+    await on(h, 's1', ['open_session']);
+    const c = await client(h.ep, a.token);
+    await c.call('open_session', { path: 'wt', agent: 'e2e-fake-mcp', message: 'task' });
+    await launch(h, 'n1');
+    h.clock.t += 30_000;
+    await h.host.tick();
+    await vi.waitFor(() => expect(entered).toBe(true));
+    let stopped = false;
+    const stopping = h.host.stop().then(() => {
+      stopped = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(stopped).toBe(false);
+    release();
+    await stopping;
+    const before = written.length;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(written).toHaveLength(before);
+  });
+
   it('skips observation when the caller budget is nearly spent but keeps supervising', async () => {
     let h: Harness;
     h = harness({

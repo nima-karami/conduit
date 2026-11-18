@@ -1700,6 +1700,29 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     openedAt: number;
   }
   const startupWatches = new Map<string, StartupWatch>();
+  const startupStop = new AbortController();
+  const startupTasks = new Set<Promise<unknown>>();
+  const trackStartup = <T>(task: Promise<T>): Promise<T> => {
+    startupTasks.add(task);
+    void task.then(
+      () => startupTasks.delete(task),
+      () => startupTasks.delete(task),
+    );
+    return task;
+  };
+  const startupSleep =
+    deps.sleep ??
+    ((ms: number, signal: AbortSignal) =>
+      new Promise<void>((resolve) => {
+        const done = () => {
+          clearTimeout(timer);
+          signal.removeEventListener('abort', done);
+          resolve();
+        };
+        const timer = setTimeout(done, ms);
+        if (signal.aborted) done();
+        else signal.addEventListener('abort', done, { once: true });
+      }));
   const startupReading = async (
     sessionId: string,
     w: StartupWatch,
@@ -1828,7 +1851,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           return;
         w.inFlight = true;
         try {
-          const reading = await startupReading(sessionId, w);
+          const reading = await startupReading(sessionId, w, { signal: startupStop.signal });
           w.lastScanAt = now();
           w.lastOutputAt = outputAt;
           if (w.exited && (w.received || !w.messageRequested)) {
@@ -1979,45 +2002,50 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     commandModelFlag: (command) => modelFlagOf({ id: COMMAND_AGENT_ID, command }),
     messageReady: () => deps.domain.messagingOn() && store.available(),
     sendMessage: (caller, args, opts) => tools.sendMessage(caller, args, opts),
-    observeStartup: async (sessionId, handle, opener, messageId, messageRequested, options) => {
-      if (!handle) return { startup: 'starting' };
-      const w: StartupWatch = {
-        handle,
-        opener,
-        messageId,
-        messageRequested,
-        received: false,
-        exited:
-          deps.runtime.get(sessionId)?.state === 'finished' ||
-          deps.sessions.get(sessionId)?.status === 'exited',
-        busySince: undefined,
-        lastScanAt: now(),
-        lastOutputAt: deps.attention.lastOutputAt(sessionId),
-        retryAt: 0,
-        openedAt: now(),
-        since: now(),
-        alerted: false,
-        inFlight: false,
-      };
-      startupWatches.set(sessionId, w);
-      if (!(await waitForStartup(options, now, sleep))) return { startup: 'starting' };
-      try {
-        const reading = await startupReading(sessionId, w, options);
-        if (options.signal.aborted || now() >= (options.deadlineMs ?? Infinity))
-          return { startup: 'starting' };
-        return {
-          startup: reading.startup,
-          ...(reading.startup === 'waiting_at_prompt' &&
-          reading.excerpt &&
-          mayExposeStartupScreen(sessionId, w)
-            ? { screen_excerpt: reading.excerpt }
-            : {}),
-        };
-      } catch (err) {
-        deps.log.warn('conduit-mcp', 'startup check failed', { sessionId, err: String(err) });
-        return { startup: 'starting' };
-      }
-    },
+    observeStartup: (sessionId, handle, opener, messageId, messageRequested, options) =>
+      trackStartup(
+        (async () => {
+          if (!handle || stopped) return { startup: 'starting' as const };
+          options = { ...options, signal: AbortSignal.any([options.signal, startupStop.signal]) };
+          const w: StartupWatch = {
+            handle,
+            opener,
+            messageId,
+            messageRequested,
+            received: false,
+            exited:
+              deps.runtime.get(sessionId)?.state === 'finished' ||
+              deps.sessions.get(sessionId)?.status === 'exited',
+            busySince: undefined,
+            lastScanAt: now(),
+            lastOutputAt: deps.attention.lastOutputAt(sessionId),
+            retryAt: 0,
+            openedAt: now(),
+            since: now(),
+            alerted: false,
+            inFlight: false,
+          };
+          startupWatches.set(sessionId, w);
+          if (!(await waitForStartup(options, now, startupSleep)))
+            return { startup: 'starting' as const };
+          try {
+            const reading = await startupReading(sessionId, w, options);
+            if (options.signal.aborted || now() >= (options.deadlineMs ?? Infinity))
+              return { startup: 'starting' };
+            return {
+              startup: reading.startup,
+              ...(reading.startup === 'waiting_at_prompt' &&
+              reading.excerpt &&
+              mayExposeStartupScreen(sessionId, w)
+                ? { screen_excerpt: reading.excerpt }
+                : {}),
+            };
+          } catch (err) {
+            deps.log.warn('conduit-mcp', 'startup check failed', { sessionId, err: String(err) });
+            return { startup: 'starting' };
+          }
+        })(),
+      ),
   };
   const control = createControlHandlers(controlDeps);
   const app = createAppControlHandlers(controlDeps, control.prepared);
@@ -4078,7 +4106,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     // Before the notifier check: detection must not wait for the message store to load.
     detectPass();
     await stuckPass();
-    void startupPass();
+    if (stopped) return;
+    void trackStartup(startupPass());
     if (!notifier) return;
     // Badge gate state for every notifiable session, then the notifier's own pass.
     for (const s of notifierSessions()) await evaluate(s.sessionId);
@@ -5450,6 +5479,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     async stop() {
       stopped = true;
+      startupStop.abort();
       startupWatches.clear();
       for (const sessionId of [...observedBudget.keys()]) forgetBudget(sessionId);
       stopRuntime();
@@ -5464,6 +5494,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       stopNetworkWatch?.();
       sessionWaits.dispose();
       flow.dispose();
+      await Promise.allSettled([...startupTasks]);
       for (const c of conns.values()) c.close();
       notices.dispose();
       await requestService.stop();
