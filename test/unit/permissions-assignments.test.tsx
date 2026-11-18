@@ -64,3 +64,60 @@ it('reviews and saves the frozen assignment with the token and native digest', a
   await act(async () => root.unmount());
   host.remove();
 });
+
+it('resets a row from the table through review, and lists exceptions as a count', async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const policy: PolicyUiState = {
+    editToken: 'v2',
+    saveError: null,
+    backupWarning: null,
+    profiles: [...BUILT_IN_PROFILES],
+    assignments: [
+      {
+        point: { kind: 'cli', cli: 'claude' },
+        assignment: {
+          profileId: 'lead',
+          onScreenOnly: false,
+          exceptions: [
+            { tool: 'close_session', scope: { kind: 'anywhere' }, rule: { decision: 'allow' } },
+            { tool: 'open_file', scope: { kind: 'anywhere' }, rule: { decision: 'deny' } },
+          ],
+        },
+      },
+    ],
+    sessions: {},
+    grants: [],
+    legacy: { global: {}, byCli: {}, sessions: {} },
+    readOnly: false,
+  };
+  const reviewLocalPolicy = vi.fn(async (_edit: LocalPolicyEdit, _token: string) => ({
+    ok: true as const,
+  }));
+  const saveAssignment = vi.fn(async () => ({ ok: true as const }));
+  const mcp = { reviewLocalPolicy, saveAssignment } as unknown as ConduitMcpApi;
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () =>
+    root.render(<PermissionsAssignments policy={policy} sessions={[]} mcp={mcp} serverConnected />),
+  );
+  const row = [...host.querySelectorAll('tr')].find((tr) =>
+    tr.textContent?.startsWith('claude sessions'),
+  );
+  expect(row?.textContent).toContain('2 exceptions');
+  expect(row?.textContent).not.toContain('close_session');
+  expect(host.querySelector('[aria-label="Reset assignment · Default"]')).toBeNull();
+  const reset = host.querySelector<HTMLButtonElement>(
+    '[aria-label="Reset assignment · claude sessions"]',
+  );
+  expect(reset).toBeTruthy();
+  await act(async () => reset?.click());
+  expect(reviewLocalPolicy).toHaveBeenCalledWith(
+    { kind: 'assignment', point: { kind: 'cli', cli: 'claude' }, assignment: null },
+    'v2',
+  );
+  expect(saveAssignment).not.toHaveBeenCalled();
+  expect(host.textContent).toContain('Before');
+  await act(async () => root.unmount());
+  host.remove();
+});
