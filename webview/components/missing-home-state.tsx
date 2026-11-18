@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { NATIVE_LAUNCH_REFUSAL_MESSAGES } from '../../src/contracts/native-launch';
 import { presentRoots } from '../../src/session-folders';
 import { sessionNameFromPath } from '../../src/session-name';
 import { sessionSections } from '../../src/session-sections';
@@ -126,15 +127,17 @@ export function StartRefusedState({
     <>
       <h2 className="session-stale__title">{CANT_START_TITLE}</h2>
       <p className="session-stale__detail">
-        {notFoundSegments(session.startRefusal.command).map((seg) =>
-          seg.kind === 'name' ? (
-            <span key="name" className="session-stale__cmd" dir="ltr">
-              {seg.text}
-            </span>
-          ) : (
-            seg.text
-          ),
-        )}
+        {session.startRefusal.reason === 'native_permissions'
+          ? NATIVE_LAUNCH_REFUSAL_MESSAGES[session.startRefusal.problem]
+          : notFoundSegments(session.startRefusal.command).map((seg) =>
+              seg.kind === 'name' ? (
+                <span key="name" className="session-stale__cmd" dir="ltr">
+                  {seg.text}
+                </span>
+              ) : (
+                seg.text
+              ),
+            )}
       </p>
       <button
         ref={relaunchRef}

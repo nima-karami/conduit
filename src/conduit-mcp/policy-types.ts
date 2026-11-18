@@ -215,6 +215,10 @@ export interface PolicyUiState {
     string,
     {
       profileId: ProfileId;
+      sourcePoint: AssignmentPoint;
+      inheritedPoint: AssignmentPoint;
+      inheritedProfileId: ProfileId;
+      launchedCli: CliKind | null;
       profileName: string;
       exceptions: number;
       source: 'session' | 'cli' | 'default';

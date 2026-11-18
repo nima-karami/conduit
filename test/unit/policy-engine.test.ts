@@ -389,6 +389,19 @@ describe('decide', () => {
     ).toBe('deny');
   });
 
+  it('resolves inheritance without the session assignment', () => {
+    const s = state({
+      default: assignment('observer'),
+      'cli:claude': assignment('worker'),
+      'session:s1': assignment('lead'),
+    });
+    expect(assignmentFor(s, session({ launchedCli: 'claude' })).assignment.profileId).toBe('lead');
+    expect(assignmentFor(s, session({ launchedCli: 'claude' }), true)).toEqual({
+      point: { kind: 'cli', cli: 'claude' },
+      assignment: assignment('worker'),
+    });
+  });
+
   it('kind assignment ignored when launchedCli is null', () => {
     const s = state({ default: assignment('observer'), 'cli:claude': assignment('lead') });
     expect(assignmentFor(s, session({ launchedCli: null })).point).toEqual({ kind: 'default' });

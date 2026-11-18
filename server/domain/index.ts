@@ -1062,6 +1062,7 @@ export function createDomain(deps: DomainDeps): Domain {
     await deps.launch.whenLaunchReady();
     const s = mgr.get(id);
     if (!s) throw new RpcFault('not_found', 'Session no longer exists');
+    if (startRefusals.delete(id)) changed(false);
     // Neutralized history of the previous process, before the plan check as today, so a refused
     // start still shows it. Once per start: each call records the replay's tail in the ring.
     const replay = settings().scrollbackPersistence ? scrollback.replayForColdStart(id) : null;
@@ -1112,8 +1113,9 @@ export function createDomain(deps: DomainDeps): Domain {
       if (aug?.env) spec = { ...spec, env: { ...spec.env, ...aug.env } };
     }
     const refuseNative = (problem: NativeLaunchFailure): SessionStartResult => {
-      if (startRefusals.delete(id)) changed(false);
+      startRefusals.set(id, { reason: 'native_permissions', problem });
       refuseStart(id, `can't start: ${NATIVE_LAUNCH_REFUSAL_MESSAGES[problem]}`);
+      changed(false);
       return refused({ reason: 'native_permissions', problem });
     };
     const native = def ? deps.launch.prepareNativeLaunch(id, def, spec) : undefined;
@@ -1208,6 +1210,7 @@ export function createDomain(deps: DomainDeps): Domain {
       return refused(refusal, prelude);
     }
     if ('finished' in result) {
+      startRefusals.delete(id);
       exitCodes.set(id, result.finished.exitCode);
       setFacts(id, { spawn: 'none' });
       mgr.setStatus(id, 'exited');
@@ -1448,13 +1451,27 @@ export function createDomain(deps: DomainDeps): Domain {
     return { ok: true };
   }
 
-  async function restart(id: string): Promise<ServerMethods['sessions.restart']['result']> {
+  async function restart(
+    id: string,
+    expectedGeneration: unknown,
+  ): Promise<ServerMethods['sessions.restart']['result']> {
     await folders.pending(id);
     const s = mgr.get(id);
     if (!s || s.homeMissing) {
       const reason = s ? 'homeMissing' : 'noSession';
       log.info('agentScope', `restart refused: ${reason}`, { sessionId: id });
       return { sessionId: id, ok: false, reason };
+    }
+    if (
+      expectedGeneration !== undefined &&
+      (expectedGeneration === null
+        ? factsOf(id).spawn !== 'none' || isLive(id) || starts.has(id)
+        : !Number.isSafeInteger(expectedGeneration) ||
+          (expectedGeneration as number) < 1 ||
+          !isLive(id) ||
+          runtime.get(id)?.generation !== expectedGeneration)
+    ) {
+      return { sessionId: id, ok: false, reason: 'staleGeneration' };
     }
     // No exit for this generation: the session stays, and the remounted pane's start spawns.
     if (isLive(id)) {
@@ -1583,7 +1600,7 @@ export function createDomain(deps: DomainDeps): Domain {
       }
       return {};
     },
-    'sessions.restart': (p) => restart(str(p, 'sessionId')),
+    'sessions.restart': (p) => restart(str(p, 'sessionId'), p.expectedGeneration),
     'sessions.relaunch': (p) => relaunch(p.sessionIds),
     'sessions.remove': async (p) => {
       await closeSession(str(p, 'sessionId'));

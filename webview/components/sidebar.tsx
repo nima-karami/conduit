@@ -226,6 +226,8 @@ export function Sidebar({
   onContextMenu,
   onRowMenu,
   mcpBadges,
+  permissionLabels,
+  onPermissions,
   mcpNotConnected,
   mcpEnabled,
   renamingId,
@@ -275,6 +277,8 @@ export function Sidebar({
   onRowMenu?: (session: Session, at: { anchor: Rect; keyboard: true }, scope: RowMenuScope) => void;
   /** Messaging state by session id, for the row tooltip (conduit-mcp spec §8). */
   mcpBadges: Readonly<Record<string, McpSessionBadge>>;
+  permissionLabels?: Readonly<Record<string, { label: string | null }>>;
+  onPermissions?: (id: string) => void;
   /** Sessions whose agent CLI never reached the host, by session id (mcp-install spec §2.5). */
   mcpNotConnected: Readonly<Record<string, McpNotConnected>>;
   mcpEnabled: boolean;
@@ -966,6 +970,8 @@ export function Sidebar({
       <AgentRow
         key={s.id}
         session={s}
+        permissionLabel={permissionLabels?.[s.id]?.label}
+        onPermissions={onPermissions ? () => onPermissions(s.id) : undefined}
         row={row}
         icon={resolveAgentIcon({
           session: s,

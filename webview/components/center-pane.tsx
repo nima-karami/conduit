@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import type { ActivityPage, ActivityQuery } from '../../src/conduit-mcp/activity-query';
 import { adapterFor } from '../../src/conduit-mcp/adapters';
 import type { AgentCli } from '../../src/conduit-mcp/install-types';
 import type { McpNotConnected } from '../../src/conduit-mcp/ui-types';
@@ -51,6 +52,7 @@ import { GitHistoryView } from './git-history-view';
 import { McpSetupBanner } from './mcp-setup-banner';
 import { MissingHomeState, StartRefusedState } from './missing-home-state';
 import type { DockHandlers } from './panel-frame';
+import { PermissionsActivity } from './permissions-activity';
 import { RemoteDiffView } from './remote-diff-view';
 import { RemoteDocView } from './remote-doc-view';
 import { RemoteHistoryView } from './remote-history-view';
@@ -87,6 +89,8 @@ function WaitingLine({ sessionId, onOpen }: { sessionId: string; onOpen: () => v
 
 export function CenterPane({
   sessions,
+  activitySessionId,
+  getActivity,
   agents,
   repos,
   activeId,
@@ -154,6 +158,8 @@ export function CenterPane({
   confirmRemoteClose,
 }: {
   sessions: Session[];
+  activitySessionId?: string;
+  getActivity(query: ActivityQuery): Promise<ActivityPage | null>;
   agents: AgentDefinition[];
   /** Folder history — the empty state's "Reopen last" route reads it (D8). */
   repos: RepoDTO[];
@@ -400,6 +406,16 @@ export function CenterPane({
         viewStateId={tabStateKey(doc.id, group)}
         onOpenCommitFile={onOpenCommitFile}
         onReviewCommit={onReviewCommit}
+      />
+    ) : doc.kind === 'permissions-activity' ? (
+      <PermissionsActivity
+        key={activitySessionId ?? '@all'}
+        sessionId={activitySessionId}
+        sessions={sessions.map((s) => ({ id: s.id, name: s.name }))}
+        machines={remoteRows
+          .map((r) => ({ id: r.key.machineId, name: r.machineName }))
+          .filter((m, i, all) => all.findIndex((x) => x.id === m.id) === i)}
+        getActivity={getActivity}
       />
     ) : doc.kind === 'request' ? (
       <RequestTab

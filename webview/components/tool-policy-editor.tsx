@@ -81,7 +81,7 @@ export const restorePatch = (entry: Partial<ToolPolicy> | undefined): ToolPolicy
  * The words a choice shows in the editor; the session dialog announces a change with them.
  * null: Inherit isn't offered (the global layer, or a field the tool doesn't have).
  */
-export function policyChoiceLabel(
+function policyChoiceLabel(
   tool: ToolName,
   field: PolicyField,
   choice: Choice,

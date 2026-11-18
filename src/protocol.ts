@@ -1189,7 +1189,12 @@ export type WebviewToHost =
   // A running claude and its folders (mf-live-edits spec §3.1). The host types only its own
   // typeable list; the renderer never names a path.
   | { type: 'session:addDirsToAgent'; sessionId: string; requestId: number }
-  | { type: 'session:restart'; sessionId: string; requestId: number }
+  | {
+      type: 'session:restart';
+      sessionId: string;
+      requestId: number;
+      expectedGeneration?: number | null;
+    }
   | { type: 'session:dismissAgentScope'; sessionId: string }
   | { type: 'session:setProject'; sessionId: string; projectId: string | null; requestId?: number }
   | { type: 'project:create'; name: string; requestId: number }

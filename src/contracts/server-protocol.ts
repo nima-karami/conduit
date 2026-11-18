@@ -248,13 +248,9 @@ export interface ServerSnapshot {
  * never as an RPC error; `sessions.create` refuses as an RPC error (ServerErrorKind). MCP opens are
  * not C2 calls: they refuse in MCP's tool-result envelope (C7 DomainOpenOutcome → ToolError).
  */
-export const NATIVE_LAUNCH_REFUSAL_MESSAGES = {
-  conflict: 'Native flags conflict with launcher arguments',
-  unsupported: 'A direct, supported launcher is required',
-  'policy-unavailable':
-    'Permissions could not be loaded. Open Settings → Permissions for recovery.',
-  'save-failed': 'Launch settings could not be saved',
-} as const;
+export { NATIVE_LAUNCH_REFUSAL_MESSAGES } from './native-launch';
+
+import type { NativeLaunchFailure } from './native-launch';
 
 export type SessionStartResult =
   | {
@@ -305,7 +301,7 @@ export type SessionStartResult =
         | { reason: 'home-missing' }
         /** The saved command failed coercion; today's can't-start line, status `stale`. */
         | { reason: 'command-invalid' }
-        | { reason: 'native_permissions'; problem: keyof typeof NATIVE_LAUNCH_REFUSAL_MESSAGES }
+        | { reason: 'native_permissions'; problem: NativeLaunchFailure }
         | SpawnUnconfirmed
         | ServerStopping;
       /** The stored history, written before the can't-start line as today, when there is one. */
@@ -458,7 +454,10 @@ export interface ServerMethods {
    * In place: C1 `retire` (no exit), status stays `running`, restartSeq bumps; the remounted pane's
    * `sessions.start` is the spawn.
    */
-  'sessions.restart': { params: { sessionId: string }; result: Reply<'agentScope:result'> };
+  'sessions.restart': {
+    params: { sessionId: string; expectedGeneration?: number | null };
+    result: Reply<'agentScope:result'>;
+  };
   'sessions.relaunch': { params: { sessionIds: string[] }; result: { relaunched: string[] } };
   /** The same server-local close as C7 DomainPort.closeSession. */
   'sessions.remove': { params: { sessionId: string }; result: Empty };

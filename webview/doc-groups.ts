@@ -23,7 +23,8 @@ export function splitBehavior(kind: DocKind): SplitBehavior {
     kind === 'review' ||
     kind === 'git-history' ||
     kind === 'remote-history' ||
-    kind === 'request'
+    kind === 'request' ||
+    kind === 'permissions-activity'
     ? 'move'
     : 'duplicate';
 }

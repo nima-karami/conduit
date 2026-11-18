@@ -43,7 +43,7 @@ import type {
 } from '../../src/settings';
 import { AUTO_SAVE_MODES, DEFAULT_SETTINGS, THEME_DEFAULTS } from '../../src/settings';
 import type { SkillDestination, SkillInfo, SkillStatus } from '../../src/skills';
-import type { AgentDefinition } from '../../src/types';
+import type { AgentDefinition, Session } from '../../src/types';
 import { APPEARANCE_SECTIONS, type AppearanceControlId } from '../appearance-sections';
 import { AUTO_SAVE_COPY } from '../auto-save-copy';
 import {
@@ -67,6 +67,7 @@ import { AutoSaveDelayField } from './auto-save-delay-field';
 import { McpInstallRow } from './mcp-install-row';
 import { McpProjectEntries } from './mcp-project-entries';
 import { ModalLayer } from './modal-layer';
+import { PermissionsSettings } from './permissions-settings';
 import { ReleaseNotesPage } from './release-notes-page';
 import { SelectField } from './select-field';
 import { AgentRowPreview } from './session-card';
@@ -74,7 +75,14 @@ import { ShortcutsTab } from './shortcuts-tab';
 import { restorePatch, ToolPolicyEditor } from './tool-policy-editor';
 import type { UpdateStatus } from './update-card';
 
-export type SettingsTab = 'general' | 'mcp' | 'appearance' | 'shortcuts' | 'skills' | 'about';
+export type SettingsTab =
+  | 'general'
+  | 'mcp'
+  | 'permissions'
+  | 'appearance'
+  | 'shortcuts'
+  | 'skills'
+  | 'about';
 type Tab = SettingsTab;
 
 const BG_OPTS: { id: Background; label: string }[] = [
@@ -99,6 +107,8 @@ export function SettingsModal({
   updateStatus,
   onSetChangesView,
   serverConnected = true,
+  permissionSessions,
+  onOpenPermissionActivity,
 }: {
   agents: AgentDefinition[];
   initialTab?: Tab;
@@ -112,6 +122,8 @@ export function SettingsModal({
   /** The same path as the Changes header toggle, so switching to All unpins (spec D15). */
   onSetChangesView: (view: ChangesViewMode) => void;
   serverConnected?: boolean;
+  permissionSessions?: Session[];
+  onOpenPermissionActivity?: () => void;
   onCheckUpdate?: () => void;
   onRelaunch?: () => void;
   updateStatus?: UpdateStatus | null;
@@ -139,6 +151,7 @@ export function SettingsModal({
   const TAB_LABELS: { id: Tab; label: string }[] = [
     { id: 'general', label: 'General' },
     { id: 'mcp', label: MCP_STR.install.tab },
+    { id: 'permissions', label: 'Permissions' },
     { id: 'appearance', label: 'Appearance' },
     { id: 'shortcuts', label: 'Shortcuts' },
     { id: 'skills', label: 'Skills' },
@@ -210,6 +223,13 @@ export function SettingsModal({
                 focusCli={focusCli}
                 onFocusCliSpent={spendFocusCli}
                 serverConnected={serverConnected}
+              />
+            )}
+            {tab === 'permissions' && (
+              <PermissionsSettings
+                serverConnected={serverConnected}
+                sessions={permissionSessions}
+                onOpenActivity={onOpenPermissionActivity}
               />
             )}
             {tab === 'shortcuts' && <ShortcutsTab settings={settings} update={update} />}

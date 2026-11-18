@@ -73,7 +73,7 @@ await runScenario(
 
     phase('focused open');
     // open_session acts only while its caller is on screen (when: viewing).
-    await page.locator(`.session[data-sessionid="${main.sessionId}"]`).click();
+    await page.locator(`.session[data-sessionid="${main.sessionId}"] .session__name`).click();
     assert(
       await until(async () => (await activeSessionId(page)) === main.sessionId, 5_000),
       'main never became active',
@@ -115,7 +115,7 @@ await runScenario(
     log('worker refused tool_disabled ✓');
 
     phase('background open');
-    await page.locator(`.session[data-sessionid="${main.sessionId}"]`).click();
+    await page.locator(`.session[data-sessionid="${main.sessionId}"] .session__name`).click();
     assert(
       await until(async () => (await activeSessionId(page)) === main.sessionId, 5_000),
       'main never became active',

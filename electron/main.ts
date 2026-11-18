@@ -2731,7 +2731,12 @@ app.whenReady().then(() => {
           }
           const r = await callServer(
             m.type === 'session:addDirsToAgent' ? 'sessions.addDirs' : 'sessions.restart',
-            { sessionId },
+            {
+              sessionId,
+              ...(m.type === 'session:restart' && m.expectedGeneration !== undefined
+                ? { expectedGeneration: m.expectedGeneration }
+                : {}),
+            },
           );
           replyHere({ type: 'agentScope:result', requestId, ...r });
           break;

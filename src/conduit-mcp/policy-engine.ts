@@ -164,6 +164,7 @@ const OBSERVER_ASSIGNMENT: Assignment = {
 export function assignmentFor(
   state: PolicyState,
   p: Principal,
+  omitSession = false,
 ): { point: AssignmentPoint; assignment: Assignment } {
   if (state.failClosed) return { point: { kind: 'default' }, assignment: OBSERVER_ASSIGNMENT };
   if (p.kind === 'remote') {
@@ -172,7 +173,9 @@ export function assignmentFor(
     if (stored) return { point, assignment: stored };
     return { point, assignment: p.controller ? CONTROLLER_ASSIGNMENT : OWN_PEER_ASSIGNMENT };
   }
-  const candidates: AssignmentPoint[] = [{ kind: 'session', sessionId: p.sessionId }];
+  const candidates: AssignmentPoint[] = omitSession
+    ? []
+    : [{ kind: 'session', sessionId: p.sessionId }];
   if (p.launchedCli !== null) candidates.push({ kind: 'cli', cli: p.launchedCli });
   candidates.push({ kind: 'default' });
   for (const point of candidates) {

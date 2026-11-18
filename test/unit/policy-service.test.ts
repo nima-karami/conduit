@@ -1566,6 +1566,10 @@ describe('policy service', () => {
     const ui = h.service.ui([sessionRow('s1')]);
     expect(ui.sessions.s1).toEqual({
       profileId: 'lead',
+      sourcePoint: { kind: 'default' },
+      inheritedPoint: { kind: 'default' },
+      inheritedProfileId: 'lead',
+      launchedCli: null,
       profileName: 'Lead',
       exceptions: 1,
       source: 'default',

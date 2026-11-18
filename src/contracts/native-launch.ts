@@ -37,6 +37,14 @@ export interface NativeSessionUi {
 
 export type NativeLaunchFailure = 'conflict' | 'unsupported' | 'policy-unavailable' | 'save-failed';
 
+export const NATIVE_LAUNCH_REFUSAL_MESSAGES: Record<NativeLaunchFailure, string> = {
+  conflict: 'Native flags conflict with launcher arguments',
+  unsupported: 'A direct, supported launcher is required',
+  'policy-unavailable':
+    'Permissions could not be loaded. Open Settings → Permissions for recovery.',
+  'save-failed': 'Launch settings could not be saved',
+};
+
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 

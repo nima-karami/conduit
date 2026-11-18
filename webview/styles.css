@@ -15799,14 +15799,13 @@ button.toggle--on .toggle__knob {
   overflow-wrap: anywhere;
 }
 
-/* ---------- Conduit MCP: per-session tools dialog ----------
-   docs/specs/archive/2026-10-27-conduit-mcp-control-tools.md §8–§11: existing tokens only. */
+/* ---------- Session Permissions dialog ---------- */
 /* The frame never scrolls: Neon's chamfer ::after pokes past its corner, which on a scroll
    container is sideways overflow and parks the cut at the content's bottom (see .ctxmenu).
    The rows scroll in .mcptools__scroll; horizontal padding lives on the parts so the
    scrollbar sits at the frame's edge. */
 .mcptools {
-  width: min(560px, 92vw);
+  width: min(640px, 92vw);
   max-height: 86vh;
   display: flex;
   flex-direction: column;
@@ -17217,6 +17216,329 @@ button.toggle--on .toggle__knob {
   flex: 1;
   min-height: 200px;
   position: relative;
+}
+
+.session__permission {
+  color: var(--text-dim);
+  background: var(--raise);
+  border: 1px solid var(--border);
+  border-radius: var(--r-badge);
+  font: inherit;
+  padding: 2px 5px;
+  cursor: pointer;
+}
+.session__permission:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.session-permissions__section {
+  border-top: 1px solid var(--border);
+  padding: 14px 0;
+  overflow-wrap: anywhere;
+}
+.session-permissions__heading {
+  color: var(--text);
+  font-size: calc(12px * var(--font-scale));
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+.session-permissions__fieldset {
+  border: 0;
+  padding: 12px 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.session-permissions__exception {
+  padding: 10px;
+  margin-bottom: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  background: var(--raise);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.session-permissions__select {
+  max-width: 100%;
+  color: var(--text);
+  background: var(--raise);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-md);
+  font: inherit;
+  padding: 4px 6px;
+}
+.session-permissions__select:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+.session-permissions__review {
+  background: var(--raise);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 12px;
+}
+.session-permissions__table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: calc(12px * var(--font-scale));
+}
+.session-permissions__activity {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.session-permissions__refusal {
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-md);
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.session-permissions__profiles {
+  gap: 6px;
+}
+.session-permissions__profile {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  background: var(--raise);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+.session-permissions__profile:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.session-permissions__profile:focus-within {
+  box-shadow: var(--focus-ring);
+}
+
+.permissions-profiles,
+.permissions-profile-editor,
+.permissions-settings__review {
+  min-width: 0;
+  color: var(--text);
+}
+
+.permissions-profiles__heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.permissions-profiles__heading h2,
+.permissions-settings__review h2,
+.permissions-profile-editor h2 {
+  margin: 0 0 6px;
+}
+
+.permissions-profiles__description,
+.permissions-profiles__conditions,
+.permissions-profiles__note {
+  color: var(--text-dim);
+}
+
+.permissions-profiles__description,
+.permissions-profiles__conditions {
+  display: block;
+}
+
+.permissions-profiles__scroll {
+  overflow-x: auto;
+}
+
+.permissions-profiles__table,
+.permissions-settings__review table,
+.permissions-activity table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: start;
+  font-size: calc(13px * var(--font-scale));
+}
+
+.permissions-profiles__table th,
+.permissions-profiles__table td,
+.permissions-settings__review th,
+.permissions-settings__review td,
+.permissions-activity th,
+.permissions-activity td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  text-align: start;
+}
+
+.permissions-profiles__table thead th,
+.permissions-settings__review thead th,
+.permissions-activity thead th {
+  color: var(--text-dim);
+  border-bottom-color: var(--border-2);
+}
+
+.permissions-profiles__decision {
+  display: inline-block;
+  padding: 2px 5px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-ctl);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.permissions-profiles__decision[data-decision="ask"] {
+  border-style: dashed;
+}
+
+.permissions-profiles__decision[data-decision="deny"] {
+  background: var(--raise);
+}
+
+.permissions-profiles__actions,
+.permissions-profile-editor fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.permissions-profile-editor details,
+.permissions-profile-editor fieldset,
+.permissions-settings__review table {
+  margin-block: 10px;
+}
+
+.permissions-profile-editor fieldset {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+
+.permissions-activity {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: var(--density-settings-pane-pad);
+  background: var(--panel);
+  color: var(--text);
+}
+
+.permissions-activity h1 {
+  margin: 0 0 8px;
+  font-size: calc(16px * var(--font-scale));
+}
+
+.permissions-activity__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  margin-bottom: 10px;
+}
+
+.permissions-activity__filters label {
+  display: grid;
+  gap: 3px;
+  color: var(--text-dim);
+}
+
+.permissions-activity__filters input,
+.permissions-activity__filters select {
+  max-width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-ctl);
+  background: var(--raise);
+  color: var(--text);
+  font: inherit;
+}
+
+.permissions-activity table {
+  min-width: 660px;
+}
+
+.permissions-activity__why {
+  max-width: 640px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--raise);
+}
+
+.permissions-activity__why h2 {
+  margin: 0;
+}
+
+.permissions-activity__why dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+}
+
+.permissions-activity__why dt {
+  color: var(--text-dim);
+}
+
+.permissions-activity__why dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.native-impact-notice details {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.native-impact-notice ul {
+  max-height: 160px;
+  overflow: auto;
+  margin-block: 6px;
+}
+
+.native-impact-notice__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.permissions-settings__tabs,
+.permissions-settings__tabs [role="tablist"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.permissions-settings__tabs {
+  align-items: center;
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.permissions-grants__list {
+  display: grid;
+  gap: 6px;
+  padding-inline-start: 0;
+  list-style: none;
+}
+
+.permissions-grants__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+
+.permissions-grants__item p {
+  margin: 0;
 }
 
 /* ═════════ interaction state vocabulary ══════════════════════════════════════

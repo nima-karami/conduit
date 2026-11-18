@@ -69,6 +69,14 @@ describe('cantStartReason', () => {
         }),
       ),
     ).toBe("Can't start: codex wasn't found");
+    expect(
+      cantStartReason(
+        makeSession({
+          id: 'a',
+          startRefusal: { reason: 'native_permissions', problem: 'conflict' },
+        }),
+      ),
+    ).toBe("Can't start: Native flags conflict with launcher arguments");
     expect(cantStartReason(makeSession({ id: 'a' }))).toBe('');
   });
 });

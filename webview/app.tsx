@@ -26,11 +26,7 @@ import {
 import { sessionExitAction, shouldConfirmClose } from '../src/close-decision';
 import type { AgentCli } from '../src/conduit-mcp/install-types';
 import type { Handle } from '../src/conduit-mcp/types';
-import {
-  emptyPolicyUi,
-  type McpNotConnected,
-  type McpSessionBadge,
-} from '../src/conduit-mcp/ui-types';
+import type { McpNotConnected, McpSessionBadge } from '../src/conduit-mcp/ui-types';
 import type { MachineActionResult, MachineView } from '../src/contracts/machines';
 import {
   type DeleteOutcome,
@@ -143,7 +139,7 @@ import { ContextMenu, type MenuItem, type MenuState } from './components/context
 import { DirtyCloseDialog } from './components/dirty-close-dialog';
 import { ErrorBoundary } from './components/error-boundary';
 import { IconPickerModal } from './components/icon-picker-modal';
-import { McpToolsDialog } from './components/mcp-tools-dialog';
+import { NativeImpactNotice } from './components/native-impact-notice';
 import { NewSessionModal } from './components/new-session-modal';
 import { type DockHandlers, PanelFrame } from './components/panel-frame';
 import { PermissionStoreNotice } from './components/permission-store-notice';
@@ -152,6 +148,7 @@ import { QuitScrim } from './components/quit-scrim';
 import { RightPane, type RightPaneHandle } from './components/right-pane';
 import type { SearchScopeModel } from './components/search-pane';
 import { ServerBanner } from './components/server-banner';
+import { SessionPermissionsController } from './components/session-permissions-controller';
 import { SettingsModal, type SettingsTab } from './components/settings-modal';
 import { Sidebar } from './components/sidebar';
 import { StatusBar } from './components/status-bar';
@@ -192,6 +189,7 @@ import {
 import { reorderDock } from './dock-reorder';
 import type { DocsState, LocalDocKind, OpenDoc, OpenMode } from './docs';
 import {
+  ACTIVITY_DOC_PATH,
   backgroundOpenOutcome,
   commitDiffPath,
   docsReducer,
@@ -241,6 +239,7 @@ import {
 } from './fs-undo';
 import type { BulkTarget, GitActionIntent } from './git-intent';
 import { requestHistoryReveal } from './history-reveal';
+import { requestHost } from './host-request';
 import { bumpHtmlReload, getHtmlView, toggleHtmlView } from './html-view-store';
 import { type HunkActionHost, setHunkActionHost } from './hunk-actions';
 import {
@@ -354,7 +353,12 @@ import {
 } from './save-registry';
 import { selectionInActiveDoc } from './selection-registry';
 import { selectionSourceFor } from './selection-source';
-import { buildSelectionMenu, buildSessionMenu, type SessionMenuAction } from './session-menu';
+import {
+  buildSelectionMenu,
+  buildSessionMenu,
+  canOpenSessionPermissions,
+  type SessionMenuAction,
+} from './session-menu';
 import { sessionMcpLink, sessionSnoozeInput } from './session-menu-input';
 import { useSettings } from './settings';
 import { comboLabel, effectiveCombo, isWindows, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
@@ -696,7 +700,7 @@ export function App() {
   } | null>(null);
   const closeMovePicker = useCallback(() => setMovePicker(null), []);
   const [timedMessageFor, setTimedMessageFor] = useState<string | null>(null);
-  const [mcpToolsFor, setMcpToolsFor] = useState<string | null>(null);
+  const [permissionsFor, setPermissionsFor] = useState<string | null>(null);
 
   /** The palette acts on the ACTIVE session; the chip, the card menu and the stale card name one. */
   const openTimedMessages = useCallback(
@@ -1061,12 +1065,34 @@ export function App() {
   // rail and the topbar's aggregate chip can never disagree about who is waiting (D16).
   const { sessions, snooze, snoozed } = useSnooze(hostSessions);
   const mcp = useConduitMcp();
+  const [activitySessionId, setActivitySessionId] = useState<string | undefined>();
+  const openActivity = useCallback((scope?: string) => {
+    const owner = activeIdRef.current;
+    if (!owner) return;
+    setActivitySessionId(scope);
+    setCenterView('editor');
+    dispatchDocs({
+      type: 'open',
+      kind: 'permissions-activity',
+      path: ACTIVITY_DOC_PATH,
+      sessionId: owner,
+    });
+  }, []);
+  const permissionCoverageRef = useRef({
+    sessions: hostSessions,
+    policy: mcp.state?.policy.sessions,
+  });
+  permissionCoverageRef.current = { sessions: hostSessions, policy: mcp.state?.policy.sessions };
   const asks = useAsks();
   const agents: AgentDefinition[] = state?.agents ?? [];
 
   useEffect(() => {
-    if (mcpToolsFor && !sessions.some((s) => s.id === mcpToolsFor)) setMcpToolsFor(null);
-  }, [sessions, mcpToolsFor]);
+    if (
+      permissionsFor &&
+      !canOpenSessionPermissions(permissionsFor, hostSessions, mcp.state?.policy.sessions)
+    )
+      setPermissionsFor(null);
+  }, [hostSessions, mcp.state?.policy.sessions, permissionsFor]);
 
   // Auto-switch to a newly created (running) session (when enabled).
   const knownIds = useRef<Set<string>>(new Set());
@@ -3810,7 +3836,7 @@ export function App() {
       mcpHandle: badge?.handle ?? null,
       mcpPaused: badge?.paused === true,
       // Offered before any launch: a switchable session may not have a handle yet (spec §4).
-      mcpSwitchable: mcp.state?.switchable.includes(s.id) === true,
+      mcpSwitchable: canOpenSessionPermissions(s.id, hostSessions, mcp.state?.policy.sessions),
       // The banner's actions, reachable by keyboard while focus sits in xterm (spec 2026-10-27-conduit-mcp-install §2.5).
       mcpSetupNeeded: notConnected !== undefined,
       mcpLink: sessionMcpLink(badge, notConnected, mcp.state?.enabled ?? false),
@@ -3828,7 +3854,11 @@ export function App() {
         timed: () => openTimedMessages(s.id),
         messages: () => openMessages(badge?.handle ?? null),
         pauseMcp: () => mcp.pause(s.id, badge?.paused !== true),
-        mcpTools: () => setMcpToolsFor(s.id),
+        mcpTools: () => {
+          const coverage = permissionCoverageRef.current;
+          if (canOpenSessionPermissions(s.id, coverage.sessions, coverage.policy))
+            setPermissionsFor(s.id);
+        },
         setupMcp: () => openSettingsAt('mcp', notConnected?.cli),
         // From the live value: the menu may outlive a sidebar edit made while it was open.
         pin: () => {
@@ -4812,6 +4842,14 @@ export function App() {
         run: openReviewTab,
       },
       {
+        id: 'cmd:activity',
+        title: 'Open Permissions Activity',
+        keywords: ['permissions', 'audit', 'history'],
+        group: 'Commands',
+        icon: <IconClock size={14} />,
+        run: () => openActivity(),
+      },
+      {
         id: 'cmd:gitHistory',
         title: 'View commit history',
         keywords: ['log', 'commits', 'git log'],
@@ -5301,6 +5339,7 @@ export function App() {
     return [...cmds, ...groupCmds, ...settingsCmds, ...themeCmds, ...sessionSwitch, ...splitCmds];
   }, [
     machineCommands,
+    openActivity,
     layout,
     splitRight,
     moveTabToGroup,
@@ -5385,6 +5424,8 @@ export function App() {
             and falls back to the editor start state instead of a void. */}
           <ErrorBoundary onReset={() => setCenterView('editor')}>
             <CenterPane
+              activitySessionId={activitySessionId}
+              getActivity={mcp.getActivity}
               serverState={serverState}
               onRetryLaunch={(sessionId) => post({ type: 'session:retryLaunch', sessionId })}
               onDiscardLaunch={(sessionId) => post({ type: 'session:discardLaunch', sessionId })}
@@ -5523,6 +5564,12 @@ export function App() {
             onContextMenu={onSessionContextMenu}
             onRowMenu={openSessionMenu}
             sessionsLoaded={sessionsLoaded}
+            permissionLabels={mcp.state?.policy.sessions}
+            onPermissions={(id) => {
+              const coverage = permissionCoverageRef.current;
+              if (canOpenSessionPermissions(id, coverage.sessions, coverage.policy))
+                setPermissionsFor(id);
+            }}
             mcpBadges={mcp.state?.sessions ?? NO_MCP_BADGES}
             mcpNotConnected={mcp.state?.notConnected ?? NO_NOT_CONNECTED}
             mcpEnabled={mcp.state?.enabled ?? false}
@@ -5756,6 +5803,15 @@ export function App() {
             readOnly={mcp.state?.policy.readOnly ?? false}
             onRetry={mcp.retryPolicy}
           />
+          {serverState.state === 'connected' && mcp.state?.nativeImpact && (
+            <NativeImpactNotice
+              key={mcp.state.nativeImpact.id}
+              notice={mcp.state.nativeImpact}
+              sessions={hostSessions}
+              dismiss={mcp.dismissNativeImpact}
+              openSettings={() => openSettingsAt('permissions')}
+            />
+          )}
           <div className="workbench">{visibleOrder.map(renderRegion)}</div>
           {newSession && (
             <NewSessionModal
@@ -5791,6 +5847,11 @@ export function App() {
           {settingsOpen && (
             <SettingsModal
               agents={agents}
+              permissionSessions={hostSessions}
+              onOpenPermissionActivity={() => {
+                setSettingsOpen(false);
+                openActivity();
+              }}
               initialTab={settingsTab}
               initialAboutReleaseNotes={settingsAboutReleaseNotes}
               initialCli={settingsFocusCli}
@@ -5920,30 +5981,43 @@ export function App() {
                 />
               ) : null;
             })()}
-          {mcpToolsFor &&
+          {permissionsFor &&
             (() => {
-              const target = sessions.find((s) => s.id === mcpToolsFor);
-              return target ? (
-                <McpToolsDialog
-                  key={target.id}
-                  session={target}
-                  legacy={mcp.state?.policy.legacy ?? emptyPolicyUi().legacy}
-                  masterOn={settings.conduitMcp}
-                  connected={mcp.state?.sessions[target.id]?.connected === true}
-                  onChange={(tool, patch) => mcp.setToolPolicy(target.id, tool, patch)}
-                  onRelaunch={() => post({ type: 'relaunch', id: target.id })}
-                  announce={(text) => {
-                    if (navLiveRef.current) navLiveRef.current.textContent = text;
-                  }}
-                  onClose={() => {
-                    setMcpToolsFor(null);
-                    document
-                      .querySelector<HTMLElement>(
-                        `.session[data-sessionid="${CSS.escape(target.id)}"]`,
-                      )
-                      ?.focus();
-                  }}
-                />
+              const target = sessions.find((s) => s.id === permissionsFor);
+              return target &&
+                canOpenSessionPermissions(target.id, hostSessions, mcp.state?.policy.sessions) ? (
+                mcp.state?.policy.sessions[target.id] && mcp.state.native[target.id] ? (
+                  <SessionPermissionsController
+                    key={target.id}
+                    session={target}
+                    policy={mcp.state.policy}
+                    native={mcp.state.native[target.id]}
+                    mcp={mcp}
+                    onOpenActivity={() => {
+                      setPermissionsFor(null);
+                      openActivity(target.id);
+                    }}
+                    onOpenSettings={() => {
+                      setPermissionsFor(null);
+                      openSettingsAt('permissions');
+                    }}
+                    onRelaunch={async (id, generation) => {
+                      const result = await requestHost(
+                        (requestId) => ({
+                          type: 'session:restart',
+                          sessionId: id,
+                          requestId,
+                          expectedGeneration: generation,
+                        }),
+                        ['agentScope:result'],
+                        10_000,
+                      );
+                      if (!result?.ok) throw new Error(result?.reason ?? 'Restart timed out');
+                      requestAnimationFrame(() => requestTerminalFocus(id));
+                    }}
+                    onClose={() => setPermissionsFor(null)}
+                  />
+                ) : null
               ) : null;
             })()}
           <Toasts>

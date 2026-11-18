@@ -720,6 +720,61 @@ describe('server domain: close_when_done (CON-152)', () => {
 });
 
 describe('server domain: restart, retry, discard, close', () => {
+  it('relaunches only a still-dormant session when the captured generation is null', async () => {
+    const h = harness();
+    const dormant = await h.create();
+    expect(
+      await h.call('sessions.restart', { sessionId: dormant, expectedGeneration: null }),
+    ).toEqual({ ok: true, sessionId: dormant });
+    expect(h.calls).not.toContain(`retire:${dormant}`);
+    const live = await h.create();
+    await start(h, live);
+    expect(await h.call('sessions.restart', { sessionId: live, expectedGeneration: null })).toEqual(
+      { ok: false, sessionId: live, reason: 'staleGeneration' },
+    );
+    expect(h.calls).not.toContain(`retire:${live}`);
+  });
+
+  it('refuses a dormant restart while a launch is unconfirmed', async () => {
+    const runtime = new FakeRuntime();
+    runtime.nextSpawn = async (c) => ({
+      ok: false,
+      refusal: { reason: 'spawn_unconfirmed', launchId: c.ids.launchId },
+    });
+    const h = harness({ runtime });
+    const id = await h.create();
+    await start(h, id);
+    expect(await h.call('sessions.restart', { sessionId: id, expectedGeneration: null })).toEqual({
+      ok: false,
+      sessionId: id,
+      reason: 'staleGeneration',
+    });
+    expect(h.calls).not.toContain(`retire:${id}`);
+  });
+
+  it('only restarts the expected live generation', async () => {
+    const h = harness();
+    const id = await h.create();
+    await start(h, id);
+    expect(await h.call('sessions.restart', { sessionId: id, expectedGeneration: 2 })).toEqual({
+      ok: false,
+      sessionId: id,
+      reason: 'staleGeneration',
+    });
+    expect(h.calls).not.toContain(`retire:${id}`);
+    expect(await h.call('sessions.restart', { sessionId: id, expectedGeneration: 0 })).toEqual({
+      ok: false,
+      sessionId: id,
+      reason: 'staleGeneration',
+    });
+    expect(h.domain.snapshot().sessions.find((s) => s.id === id)?.restartSeq).toBeUndefined();
+    expect(await h.call('sessions.restart', { sessionId: id, expectedGeneration: 1 })).toEqual({
+      ok: true,
+      sessionId: id,
+    });
+    expect(h.calls).toContain(`retire:${id}`);
+  });
+
   it('restart retires the terminal, bumps restartSeq and keeps the status running', async () => {
     const h = harness();
     const id = await h.create();
@@ -1053,6 +1108,40 @@ describe('server domain: native launch commitment', () => {
       generation: 1,
       intent,
     });
+  });
+
+  it('publishes only a typed native refusal and clears it after a successful launch', async () => {
+    const h = harness();
+    const id = await h.create({ agentId: 'claude' });
+    h.deps.launch.prepareNativeLaunch = () => ({ ok: false, problem: 'conflict' });
+    expect(await start(h, id)).toMatchObject({
+      ok: false,
+      refusal: { reason: 'native_permissions', problem: 'conflict' },
+    });
+    expect(h.domain.snapshot().sessions.find((s) => s.id === id)?.startRefusal).toEqual({
+      reason: 'native_permissions',
+      problem: 'conflict',
+    });
+    h.deps.launch.prepareNativeLaunch = (_id, _def, spec) => ({ ok: true, spec, intent });
+    expect(await start(h, id)).toMatchObject({ ok: true });
+    expect(h.domain.snapshot().sessions.find((s) => s.id === id)?.startRefusal).toBeUndefined();
+  });
+
+  it('clears a native refusal when a later real spawn fails for another reason', async () => {
+    const h = harness();
+    const id = await h.create({ agentId: 'claude' });
+    h.deps.launch.prepareNativeLaunch = () => ({ ok: false, problem: 'conflict' });
+    await start(h, id);
+    expect(h.domain.snapshot().sessions.find((s) => s.id === id)?.startRefusal?.reason).toBe(
+      'native_permissions',
+    );
+    h.deps.launch.prepareNativeLaunch = (_id, _def, spec) => ({ ok: true, spec, intent });
+    h.runtime.nextSpawn = async () => ({
+      ok: false,
+      refusal: { reason: 'spawn_failed', message: 'unrelated failure' },
+    });
+    expect(await start(h, id)).toMatchObject({ ok: false, refusal: { reason: 'unresolvable' } });
+    expect(h.domain.snapshot().sessions.find((s) => s.id === id)?.startRefusal).toBeUndefined();
   });
 
   it('returns a typed failed open with the created pane id before any reservation', async () => {

@@ -156,6 +156,24 @@ describe('MissingHomeState (12d)', () => {
 });
 
 describe('StartRefusedState (review B1)', () => {
+  it('shows the actual native refusal rather than a missing command', async () => {
+    const onRelaunch = vi.fn();
+    host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    const s = session({
+      homeMissing: false,
+      startRefusal: { reason: 'native_permissions', problem: 'policy-unavailable' },
+    });
+    await act(async () =>
+      root?.render(createElement(StartRefusedState, { session: s, onRelaunch, relaunchRef: null })),
+    );
+    expect(host.querySelector('.session-stale__detail')?.textContent).toBe(
+      'Permissions could not be loaded. Open Settings → Permissions for recovery.',
+    );
+    expect(host.textContent).not.toContain("wasn't found");
+  });
+
   it("says Can't start and which command wasn't found, with Relaunch as the retry", async () => {
     const onRelaunch = vi.fn();
     host = document.createElement('div');

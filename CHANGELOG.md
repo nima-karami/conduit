@@ -8,6 +8,7 @@ All notable user-facing changes to Conduit. Format follows
 
 ### Added
 - Permission assignments can opt in to a profile’s supported Claude Code and Codex launch flags. The session records the flags Conduit prepared for its current launch.
+- Review a session’s effective permissions from its menu or permission badge. Settings → Permissions gives you profiles, assignments, grants, and a link to the Activity feed.
 
 ### Fixed
 - A pending remote permission edit clears when a replacement connection confirms the same rules were saved.

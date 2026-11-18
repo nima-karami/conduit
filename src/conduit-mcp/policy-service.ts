@@ -1315,6 +1315,8 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
           projectId: null,
         };
         const { point, assignment } = assignmentFor(st, principal);
+        const inherited =
+          point.kind === 'session' ? assignmentFor(st, principal, true) : { point, assignment };
         const profile = profileById(st, assignment.profileId) ?? OBSERVER;
         const exceptions = assignment.exceptions.length + (assignment.onScreenOnly ? 1 : 0);
         const source =
@@ -1323,6 +1325,10 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
           source === 'default' && assignment.profileId === 'worker' && exceptions === 0;
         sessionRows[row.sessionId] = {
           profileId: assignment.profileId,
+          sourcePoint: point,
+          inheritedPoint: inherited.point,
+          inheritedProfileId: inherited.assignment.profileId,
+          launchedCli: row.launchedCli,
           profileName: profile.name,
           exceptions,
           source,

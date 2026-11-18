@@ -314,20 +314,41 @@ const NOT_PROJECTED_HINT =
   "A value equal to the lower point is never shown: send 'inherit' or drop the field.";
 
 /**
- * Set one tool's session-layer access through the session's MCP tools dialog (card menu → MCP
- * tools…), and wait for the host to persist it: the dialog only reverts on a refusal, so the
- * click alone proves nothing.
+ * Set one tool's exact session exception through the Session Permissions dialog, review the
+ * candidate, and wait for the owner to persist its effective legacy projection.
  * @param {'On' | 'Off' | 'Ask' | 'Inherit'} value
  */
 export async function enableToolViaDialog(page, sessionId, tool, value) {
   await tapMcp(page);
   await page.locator(`.session[data-sessionid="${sessionId}"]`).click({ button: 'right' });
-  await page.locator('.ctxmenu__item', { hasText: 'MCP tools…' }).click();
-  const dialog = page.locator('.mcptools[role="dialog"]');
+  await page.locator('.ctxmenu__item', { hasText: 'Permissions…' }).click();
+  const dialog = page.getByRole('dialog', { name: /^Permissions · / });
   await dialog.waitFor({ timeout: 5_000 });
-  await dialog
-    .locator(`[role="radiogroup"][aria-label="${tool} access"] [data-seg="${SEG[value]}"]`)
-    .click();
+  const decision = { On: 'allow', Off: 'deny', Ask: 'ask' }[value];
+  const matching = dialog
+    .locator('.session-permissions__exception')
+    .filter({ hasText: `${tool} · Anywhere` });
+  if (value === 'Inherit') {
+    if ((await matching.count()) > 0) {
+      await matching
+        .first()
+        .getByRole('button', { name: /^Remove exception / })
+        .click();
+    } else {
+      await page.keyboard.press('Escape');
+      return;
+    }
+  } else if ((await matching.count()) > 0) {
+    await matching.first().getByLabel('Decision').selectOption(decision);
+  } else {
+    const editor = dialog.getByRole('group', { name: 'Add exception' });
+    await editor.getByLabel('Action').selectOption(tool);
+    await editor.getByLabel('Decision').selectOption(decision);
+    await editor.getByLabel('Target').selectOption('anywhere');
+    await editor.getByRole('button', { name: 'Add exception' }).click();
+  }
+  await dialog.getByRole('button', { name: 'Review changes' }).click();
+  await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
   const want = value === 'Inherit' ? null : SEG[value];
   try {
     await page.waitForFunction(
@@ -345,8 +366,7 @@ export async function enableToolViaDialog(page, sessionId, tool, value) {
       { cause },
     );
   }
-  await page.keyboard.press('Escape');
-  await dialog.waitFor({ state: 'detached', timeout: 5_000 });
+  await dialog.waitFor({ state: 'hidden', timeout: 5_000 });
 }
 
 /** The sessions of the latest host `state` (needs `tapBridge`). */
