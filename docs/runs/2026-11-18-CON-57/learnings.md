@@ -5,3 +5,6 @@
 - [implementation-plan] The plan's focus-restore snippet fired on app mount (`settingsOpen` starts false). Effects keyed on a boolean that starts false need an "armed" guard; the executor found it, the plan should have.
 - [build-and-verify] A plan step "focus X on mount" can overwrite a child's own focus (release-notes open path); the executor caught it only because existing focus tests covered it.
 - [instruction-file] `npm run e2e:remote` pushes a temporary ref to origin; the agent brief for any build under a "no push" rule must say whether that counts.
+- [implementation-plan] Slice 2's tasks T2.3–T2.5 each removed something a later task still needed (a type, a required prop), so "commit per task, tsc green" was impossible; the plan check should ask of every deletion "does a later task fix its callers?" and merge those tasks.
+- [build-and-verify] Capture-phase Esc in the overlay store bypasses element-level Escape handlers, so any inner panel that used to own Esc (Activity Why) silently stops working once its host becomes a page; list such handlers in the plan's Esc ladder.
+- [build-and-verify] Slice 3's plan lists two parallel groups; ran as one executor in sequence because two executors committing into one worktree contend on the git index for a small saving. Plans should mark small same-slice groups as "may serialize".
