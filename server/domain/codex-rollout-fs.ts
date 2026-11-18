@@ -5,10 +5,20 @@ import type { CodexWatchDeps } from './codex-rollout-watch';
 const MAX_BYTES = 1024 * 1024;
 const CHUNK_BYTES = 64 * 1024;
 
-export type RolloutIdentity = { dev: number; ino: number; fileSize: number } | null;
+export type RolloutIdentity = {
+  dev: number;
+  ino: number;
+  fileSize: number;
+} | null;
 export type RolloutReadEvent =
   | { kind: 'start'; identity: RolloutIdentity; highWater: number }
-  | { kind: 'lines'; lines: string[]; cursor: number; discarding: boolean }
+  | {
+      kind: 'lines';
+      lines: string[];
+      cursors: number[];
+      cursor: number;
+      discarding: boolean;
+    }
   | { kind: 'gap'; cursor: number; discarding: boolean }
   | { kind: 'end'; cursor: number; discarding: boolean };
 
@@ -80,6 +90,9 @@ export function createRolloutFs(i: {
           const { bytesRead } = await h.read(buf, 0, buf.length, pos);
           if (!bytesRead) throw new RolloutShortReadError('short rollout read');
           let index = 0;
+          let lines: string[] = [];
+          let cursors: number[] = [];
+          let linesCursor = cursor;
           while (index < bytesRead) {
             const nl = buf.indexOf(0x0a, index);
             const end = nl >= 0 && nl < bytesRead ? nl + 1 : bytesRead;
@@ -87,10 +100,32 @@ export function createRolloutFs(i: {
             pos += segment.length;
             index = end;
             if (discarding) {
+              if (lines.length) {
+                yield {
+                  kind: 'lines',
+                  lines,
+                  cursors,
+                  cursor: linesCursor,
+                  discarding: false,
+                };
+                lines = [];
+                cursors = [];
+              }
               cursor = pos;
               if (nl >= 0 && nl < bytesRead) discarding = false;
               yield { kind: 'gap', cursor, discarding };
             } else if (length + segment.length > cap) {
+              if (lines.length) {
+                yield {
+                  kind: 'lines',
+                  lines,
+                  cursors,
+                  cursor: linesCursor,
+                  discarding: false,
+                };
+                lines = [];
+                cursors = [];
+              }
               parts = [];
               length = 0;
               cursor = pos;
@@ -106,10 +141,20 @@ export function createRolloutFs(i: {
                 parts = [];
                 length = 0;
                 cursor = pos;
-                yield { kind: 'lines', lines: [line], cursor, discarding: false };
+                lines.push(line);
+                cursors.push(cursor);
+                linesCursor = cursor;
               }
             }
           }
+          if (lines.length)
+            yield {
+              kind: 'lines',
+              lines,
+              cursors,
+              cursor: linesCursor,
+              discarding: false,
+            };
         }
         yield { kind: 'end', cursor, discarding };
       } finally {

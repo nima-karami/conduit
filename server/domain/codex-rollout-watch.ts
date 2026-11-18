@@ -40,7 +40,10 @@ export interface CodexWatchDeps {
   onBound(sessionId: string): void;
   onAction(sessionId: string, action: CodexAction): void;
   onFeed(sessionId: string, state: 'unavailable'): void;
-  log: { debug(msg: string, data?: object): void; warn(msg: string, data?: object): void };
+  log: {
+    debug(msg: string, data?: object): void;
+    warn(msg: string, data?: object): void;
+  };
 }
 
 export interface CodexWatch {
@@ -65,7 +68,6 @@ interface Tracked {
   boundFile: string | null;
   offset: number;
   discarding: boolean;
-  streamInvalid: boolean;
   reading: boolean;
   readAgain: boolean;
   /** The first read after a bind is history, not news (see readBound). */
@@ -86,7 +88,11 @@ const isRolloutFile = (name: string): boolean =>
 
 function nextDay({ y, m, d }: Day): Day {
   const next = new Date(Date.UTC(y, m - 1, d + 1));
-  return { y: next.getUTCFullYear(), m: next.getUTCMonth() + 1, d: next.getUTCDate() };
+  return {
+    y: next.getUTCFullYear(),
+    m: next.getUTCMonth() + 1,
+    d: next.getUTCDate(),
+  };
 }
 
 export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
@@ -156,7 +162,11 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
           (_event, name) => onFolderEvent(dir, name),
           (error) => {
             folders.delete(dir);
-            if (error) deps.log.warn('rollout folder watch failed', { dir, error: String(error) });
+            if (error)
+              deps.log.warn('rollout folder watch failed', {
+                dir,
+                error: String(error),
+              });
             reconcile();
           },
         );
@@ -165,7 +175,10 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
       } catch (err) {
         if (!openWarned.has(dir)) {
           openWarned.add(dir);
-          deps.log.warn('could not watch rollout folder', { dir, error: String(err) });
+          deps.log.warn('could not watch rollout folder', {
+            dir,
+            error: String(err),
+          });
         }
         return;
       }
@@ -181,7 +194,10 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
         if (isRolloutFile(name)) await examine(join(dir, name));
       }
     } catch (err) {
-      deps.log.warn('could not list rollout folder', { dir, error: String(err) });
+      deps.log.warn('could not list rollout folder', {
+        dir,
+        error: String(err),
+      });
     }
   };
 
@@ -247,7 +263,6 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
     s.boundFile = file;
     s.offset = 0;
     s.discarding = false;
-    s.streamInvalid = false;
     s.replayed = false;
     deps.onBound(sessionId);
     deps.log.debug('codex rollout bound', { sessionId, file });
@@ -270,7 +285,7 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
 
   const readBound = async (sessionId: string): Promise<void> => {
     const s = sessions.get(sessionId);
-    if (!s?.boundFile || s.streamInvalid) return;
+    if (!s?.boundFile) return;
     if (s.reading) {
       s.readAgain = true;
       return;
@@ -293,10 +308,12 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
     const replay = !s.replayed;
     const invalidate = (): void => {
       if (!current()) return;
-      s.streamInvalid = true;
-      if (s.postureRetired) return;
+      s.offset = 0;
+      s.discarding = false;
+      s.replayed = false;
       const linked = s.linked;
       s.linked = false;
+      s.postureRetired = true;
       s.identity = null;
       s.metaId = null;
       s.posture = { freshness: 'current', reading: null, lastKnown: null };
@@ -338,6 +355,10 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
         cursor = event.cursor;
         discarding = event.discarding;
         if (event.kind === 'gap') {
+          if (s.offset === 0 && metaId === null) {
+            invalidate();
+            return;
+          }
           reset = limited = resumed = null;
           posture = { ...posture, freshness: 'stale', reading: null };
           postureChanged = true;
@@ -379,10 +400,14 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
           }
         }
         if (!replay) {
-          s.offset = cursor;
-          s.discarding = discarding;
+          if (event.kind !== 'lines') {
+            s.offset = cursor;
+            s.discarding = discarding;
+          }
           if (event.kind === 'lines')
-            for (const line of event.lines) {
+            for (const [index, line] of event.lines.entries()) {
+              s.offset = event.cursors[index]!;
+              s.discarding = event.discarding;
               for (const signal of rolloutSignals(
                 sessionId,
                 line,
@@ -403,11 +428,13 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
           if (replay) {
             s.offset = cursor;
             s.discarding = discarding;
-            s.replayed = true;
+            s.replayed = metaId !== null;
           }
-          if (valid && !s.postureRetired) {
+          if (valid) {
             s.identity = identity && { dev: identity.dev, ino: identity.ino };
             s.metaId = metaId;
+          }
+          if (valid && !s.postureRetired) {
             s.posture = posture;
             if (postureChanged && s.linked && current()) deps.onPosture(sessionId, s.ids);
           }
@@ -450,14 +477,13 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
         identity: null,
         metaId: null,
         linked: false,
-        postureRetired: false,
+        postureRetired: !!prev && sameIds(prev.ids, s.ids) && prev.postureRetired,
         posture: { freshness: 'current', reading: null, lastKnown: null },
         cwd: s.cwd,
         launchAt: s.launchAt,
         boundFile: null,
         offset: 0,
         discarding: false,
-        streamInvalid: false,
         reading: false,
         readAgain: false,
         replayed: false,
@@ -473,7 +499,6 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
         !s ||
         !sameIds(s.ids, ids) ||
         s.postureRetired ||
-        s.streamInvalid ||
         s.reading ||
         !s.identity ||
         s.metaId !== threadId ||
@@ -492,8 +517,6 @@ export function createCodexRolloutWatch(deps: CodexWatchDeps): CodexWatch {
       if (s && sameIds(s.ids, ids)) {
         s.linked = false;
         s.postureRetired = true;
-        s.identity = null;
-        s.metaId = null;
         s.posture = { freshness: 'current', reading: null, lastKnown: null };
       }
     },

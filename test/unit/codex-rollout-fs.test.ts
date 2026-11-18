@@ -19,18 +19,58 @@ async function events(
 }
 
 describe('createRolloutFs', () => {
+  it('batches records within a chunk while preserving gaps and their cursors', async () => {
+    const file = join(roots.root(), 'r.jsonl');
+    writeFileSync(file, 'a\nb\ntoolong\nc\nd\n');
+    const fs = createRolloutFs({
+      onFirstLineTooLong: () => {},
+      recordMaxBytes: 4,
+      chunkBytes: 64,
+    });
+    expect((await events(fs, file, 0)).slice(1)).toEqual([
+      {
+        kind: 'lines',
+        lines: ['a', 'b'],
+        cursors: [2, 4],
+        cursor: 4,
+        discarding: false,
+      },
+      { kind: 'gap', cursor: 12, discarding: false },
+      {
+        kind: 'lines',
+        lines: ['c', 'd'],
+        cursors: [14, 16],
+        cursor: 16,
+        discarding: false,
+      },
+      { kind: 'end', cursor: 16, discarding: false },
+    ]);
+  });
+
   it('preserves partial records and UTF-8 across chunks and notifications', async () => {
     const file = join(roots.root(), 'r.jsonl');
     writeFileSync(file, 'one\ncafé 😀');
     const fs = createRolloutFs({ onFirstLineTooLong: () => {}, chunkBytes: 3 });
     expect((await events(fs, file, 0)).slice(1)).toEqual([
-      { kind: 'lines', lines: ['one'], cursor: 4, discarding: false },
+      {
+        kind: 'lines',
+        lines: ['one'],
+        cursors: [4],
+        cursor: 4,
+        discarding: false,
+      },
       { kind: 'end', cursor: 4, discarding: false },
     ]);
     appendFileSync(file, '\n');
     const end = Buffer.byteLength('one\ncafé 😀\n');
     expect((await events(fs, file, 4)).slice(1)).toEqual([
-      { kind: 'lines', lines: ['café 😀'], cursor: end, discarding: false },
+      {
+        kind: 'lines',
+        lines: ['café 😀'],
+        cursors: [end],
+        cursor: end,
+        discarding: false,
+      },
       { kind: 'end', cursor: end, discarding: false },
     ]);
   });
@@ -38,7 +78,11 @@ describe('createRolloutFs', () => {
   it('skips oversized records across high-water marks and resumes after newline', async () => {
     const file = join(roots.root(), 'r.jsonl');
     writeFileSync(file, 'abcdef');
-    const fs = createRolloutFs({ onFirstLineTooLong: () => {}, recordMaxBytes: 4, chunkBytes: 3 });
+    const fs = createRolloutFs({
+      onFirstLineTooLong: () => {},
+      recordMaxBytes: 4,
+      chunkBytes: 3,
+    });
     const first = await events(fs, file, 0);
     expect(first.slice(1)).toEqual([
       { kind: 'gap', cursor: 6, discarding: true },
@@ -47,7 +91,13 @@ describe('createRolloutFs', () => {
     appendFileSync(file, 'gh\nok\n');
     expect((await events(fs, file, 6, true)).slice(1)).toEqual([
       { kind: 'gap', cursor: 9, discarding: false },
-      { kind: 'lines', lines: ['ok'], cursor: 12, discarding: false },
+      {
+        kind: 'lines',
+        lines: ['ok'],
+        cursors: [12],
+        cursor: 12,
+        discarding: false,
+      },
       { kind: 'end', cursor: 12, discarding: false },
     ]);
   });
@@ -57,10 +107,19 @@ describe('createRolloutFs', () => {
     writeFileSync(file, 'one\n');
     const fs = createRolloutFs({ onFirstLineTooLong: () => {} });
     const iterator = fs.readFrom(file, 0)[Symbol.asyncIterator]();
-    expect((await iterator.next()).value).toMatchObject({ kind: 'start', highWater: 4 });
+    expect((await iterator.next()).value).toMatchObject({
+      kind: 'start',
+      highWater: 4,
+    });
     appendFileSync(file, 'two\n');
-    expect((await iterator.next()).value).toMatchObject({ kind: 'lines', lines: ['one'] });
-    expect((await iterator.next()).value).toMatchObject({ kind: 'end', cursor: 4 });
+    expect((await iterator.next()).value).toMatchObject({
+      kind: 'lines',
+      lines: ['one'],
+    });
+    expect((await iterator.next()).value).toMatchObject({
+      kind: 'end',
+      cursor: 4,
+    });
     await iterator.return?.();
   });
 
@@ -73,7 +132,11 @@ describe('createRolloutFs', () => {
     const result = await events(fs, file, 0);
     expect(Math.max(...alloc.mock.calls.map(([size]) => size))).toBeLessThanOrEqual(64 * 1024);
     alloc.mockRestore();
-    expect(result.at(-1)).toEqual({ kind: 'end', cursor: 2 * 1024 * 1024, discarding: true });
+    expect(result.at(-1)).toEqual({
+      kind: 'end',
+      cursor: 2 * 1024 * 1024,
+      discarding: true,
+    });
     expect(result.some((e) => e.kind === 'lines')).toBe(false);
   });
 
