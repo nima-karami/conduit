@@ -2,7 +2,7 @@
 import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { SettingsModal, type SettingsTab } from '../../webview/components/settings-modal';
+import { SettingsPage, type SettingsTab } from '../../webview/components/settings-page';
 import { WhatsNewDialog } from '../../webview/components/whats-new-dialog';
 import { SettingsProvider } from '../../webview/settings';
 
@@ -65,7 +65,7 @@ function Workbench({
         />
       )}
       {settings && (
-        <SettingsModal
+        <SettingsPage
           agents={[]}
           initialTab={settings.tab}
           initialAboutReleaseNotes={settings.releaseNotes}
@@ -90,7 +90,7 @@ const button = (label: string | RegExp) =>
       ? b.textContent === label || b.getAttribute('aria-label') === label
       : label.test(b.textContent ?? ''),
   );
-const settings = () => document.querySelector('.modal.settings');
+const settings = () => document.querySelector('.settings-page');
 const backdrop = () => document.querySelector('.modal__backdrop');
 const navLabels = () =>
   [...document.querySelectorAll('.settings__navitem')].map((b) => b.textContent);
@@ -208,22 +208,18 @@ describe('Settings About release notes', () => {
     expect(settings()).toBeNull();
   });
 
-  it('the settings close control closes Settings from the sub-page', async () => {
+  it('the Back to Conduit control closes Settings from the sub-page', async () => {
     await mount({ tab: 'about' });
     await act(async () => button('Release notes')?.click());
-    await act(async () => button('Close settings')?.click());
+    await act(async () => button('Back to Conduit')?.click());
     expect(settings()).toBeNull();
   });
 
-  it('a scrim click closes Settings from the sub-page', async () => {
+  it('has no scrim to dismiss from the sub-page', async () => {
     await mount({ tab: 'about' });
     await act(async () => button('Release notes')?.click());
-    const scrim = backdrop();
-    if (!scrim) throw new Error('no backdrop');
-    await act(async () => {
-      scrim.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    expect(settings()).toBeNull();
+    expect(backdrop()).toBeNull();
+    expect(settings()).toBeTruthy();
   });
 
   it('opening with initialAboutReleaseNotes lands on the sub-page with focus inside Settings', async () => {

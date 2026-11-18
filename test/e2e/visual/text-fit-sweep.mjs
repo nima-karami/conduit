@@ -542,6 +542,7 @@ async function runPass({ theme, width, height, panels }, sceneNames, fixture) {
   const dismiss = async () => {
     await page.keyboard.press('Escape').catch(() => {});
     await page.evaluate(() => {
+      document.querySelector('.settings-page__back')?.click();
       for (const el of document.querySelectorAll('.modal__backdrop')) el.click();
     });
     await page.mouse.click(2, height - 2).catch(() => {});

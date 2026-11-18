@@ -170,12 +170,14 @@ export function SettingsPage({
   useOverlayEntry('modal', onEscape);
 
   const backRef = useRef<HTMLButtonElement>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
+    if (pageRef.current?.contains(document.activeElement)) return;
     backRef.current?.focus();
   }, []);
 
   return (
-    <div className="settings-page" role="region" aria-label="Settings">
+    <div ref={pageRef} className="settings-page" role="region" aria-label="Settings">
       <div className="settings__body">
         <nav className="settings__nav">
           <button ref={backRef} type="button" className="settings-page__back" onClick={onClose}>

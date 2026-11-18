@@ -45,7 +45,12 @@ async function openShortcuts(page) {
 
 async function closeSettings(page) {
   await page.keyboard.press('Escape');
-  await page.locator('.modal.settings').first().waitFor({ state: 'detached', timeout: 5000 });
+  await page.locator('.settings-page').first().waitFor({ state: 'detached', timeout: 5000 });
+  await page.waitForFunction(
+    () => document.activeElement?.matches('.footbtn[title^="Settings"]'),
+    null,
+    { timeout: 5000 },
+  );
 }
 
 const row = (page, description) =>
@@ -215,7 +220,7 @@ try {
   await page.keyboard.press('Escape');
   await waitRowCombo(page, DEF, 'Alt + D');
   assert(
-    (await page.locator('.modal.settings').count()) === 1,
+    (await page.locator('.settings-page').count()) === 1,
     'AC-8: Escape cancels the recording, not the modal',
   );
   assert(

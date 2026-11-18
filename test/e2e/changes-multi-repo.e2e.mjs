@@ -412,19 +412,17 @@ async function runFirstLaunch(page) {
     'picking ref pins it again',
   );
   await page.locator('.footbtn[title^="Settings"]').click();
-  // A select opened while the modal is still popping in is closed again at once.
+  // A select opened while the page is still opening is closed again at once.
   await waitFor(
     page,
-    () =>
-      document.querySelector('.modal.settings')?.parentElement?.getAnimations({ subtree: true })
-        .length === 0,
+    () => document.querySelector('.settings-page')?.getAnimations({ subtree: true }).length === 0,
     null,
-    'the Settings modal finished opening',
+    'the Settings page finished opening',
   );
-  await page.click('.modal.settings .selectfield[aria-label="Changes view"]');
+  await page.click('.settings-page .selectfield[aria-label="Changes view"]');
   await page.locator('.ctxmenu [role="menuitem"]', { hasText: 'All repos' }).click();
   await page.keyboard.press('Escape');
-  await page.locator('.modal.settings').waitFor({ state: 'detached', timeout: 5000 });
+  await page.locator('.settings-page').waitFor({ state: 'detached', timeout: 5000 });
   await headIs(
     page,
     [

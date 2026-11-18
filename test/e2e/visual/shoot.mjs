@@ -583,6 +583,7 @@ async function runTheme(theme, sceneNames, repo) {
   // dismissal is an outside-click listener.
   const dismiss = async () => {
     await page.evaluate(() => {
+      document.querySelector('.settings-page__back')?.click();
       for (const el of document.querySelectorAll('.modal__backdrop')) el.click();
       document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     });

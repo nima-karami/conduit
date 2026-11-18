@@ -61,7 +61,7 @@ async function assertFocusLanded(page, route) {
       () => {
         const active = document.activeElement;
         return (
-          !!document.querySelector('.modal.settings')?.contains(active) &&
+          !!document.querySelector('.settings-page')?.contains(active) &&
           active?.getAttribute('aria-selected') === 'true'
         );
       },
@@ -83,8 +83,8 @@ async function openReleaseNotesFromAbout(page) {
 }
 
 async function closeSettings(page) {
-  await page.locator('.settings .iconbtn[aria-label="Close settings"]').click();
-  await page.locator('.modal.settings').waitFor({ state: 'detached', timeout: 5000 });
+  await page.locator('.settings-page .settings-page__back').click();
+  await page.locator('.settings-page').waitFor({ state: 'detached', timeout: 5000 });
 }
 
 runScenario(
@@ -206,11 +206,11 @@ runScenario(
     await page.keyboard.press('Escape');
     await page.locator('.about__subtitle').waitFor({ state: 'detached', timeout: 5000 });
     assert(
-      await page.locator('.modal.settings').isVisible(),
+      await page.locator('.settings-page').isVisible(),
       'Settings stays open after first Escape',
     );
     await page.keyboard.press('Escape');
-    await page.locator('.modal.settings').waitFor({ state: 'detached', timeout: 5000 });
+    await page.locator('.settings-page').waitFor({ state: 'detached', timeout: 5000 });
     log('Back and Escape navigate the sub-page');
 
     // 4. What's new → "All release notes" closes the dialog and opens Settings on the sub-page.
@@ -219,7 +219,7 @@ runScenario(
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
     await dialog.getByRole('button', { name: 'All release notes' }).click();
     await dialog.waitFor({ state: 'detached', timeout: 5000 });
-    await page.locator('.modal.settings').waitFor({ state: 'visible', timeout: 5000 });
+    await page.locator('.settings-page').waitFor({ state: 'visible', timeout: 5000 });
     await waitShown(page, currentVersion);
     assert(
       (await page.locator('.settings__navitem--active').textContent()) === 'About',

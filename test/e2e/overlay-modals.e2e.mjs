@@ -293,7 +293,7 @@ runScenario('overlay-modals', async ({ page, log }) => {
   );
   log('displacement: opening Settings dismissed the open ContextMenu (pushOverlay N7) ✓');
   await page.keyboard.press('Escape');
-  await page.locator('.modal.settings').first().waitFor({ state: 'detached', timeout: 5000 });
+  await page.locator('.settings-page').first().waitFor({ state: 'detached', timeout: 5000 });
 
   // ── (6) Review navigator row's Discard confirm is a real top-level modal ────────────────────
   const rootB = mkdtempSync(join(tmpdir(), 'conduit-overlay-modals-review-'));

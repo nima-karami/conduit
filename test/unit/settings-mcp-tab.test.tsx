@@ -5,7 +5,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import type { AgentCli, McpInstallStatus } from '../../src/conduit-mcp/install-types';
 import type { WebviewToHost } from '../../src/protocol';
 import { type AppSettings, DEFAULT_SETTINGS } from '../../src/settings';
-import { SettingsModal } from '../../webview/components/settings-modal';
+import { SettingsPage } from '../../webview/components/settings-page';
 import { MCP_STR } from '../../webview/conduit-mcp-strings';
 import { SettingsProvider } from '../../webview/settings';
 
@@ -73,7 +73,7 @@ async function mount(
   await act(async () =>
     root?.render(
       <SettingsProvider>
-        <SettingsModal
+        <SettingsPage
           agents={[]}
           initialTab={o.tab ?? 'mcp'}
           projectPath={o.projectPath ?? null}

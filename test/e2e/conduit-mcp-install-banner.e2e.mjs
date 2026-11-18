@@ -100,7 +100,7 @@ await runScenario(
       .locator('.settings__navitem--active', { hasText: 'MCP' })
       .waitFor({ timeout: 5_000 });
     await page.keyboard.press('Escape');
-    await page.locator('.modal.settings').waitFor({ state: 'detached', timeout: 5_000 });
+    await page.locator('.settings-page').waitFor({ state: 'detached', timeout: 5_000 });
     log('palette Set up Conduit MCP… opens the MCP tab ✓');
 
     // 4. dismiss
