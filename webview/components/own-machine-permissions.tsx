@@ -42,8 +42,10 @@ export function OwnMachinePermissions({
     setPending(true);
     setFailure(null);
     try {
-      if (!(await setLinkCapability(link.machineId, capability, on)))
-        setFailure('The capability could not be changed.');
+      const result = await setLinkCapability(link.machineId, capability, on, link.editToken);
+      if (result === 'conflict')
+        setFailure('This link changed. Review its current settings and try again.');
+      else if (result === 'failed') setFailure('The capability could not be changed.');
     } catch {
       setFailure('The capability could not be changed.');
     } finally {

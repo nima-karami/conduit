@@ -17219,6 +17219,7 @@ button.toggle--on .toggle__knob {
 }
 
 .session__permission {
+  white-space: nowrap;
   color: var(--text-dim);
   background: var(--raise);
   border: 1px solid var(--border);
@@ -17228,6 +17229,26 @@ button.toggle--on .toggle__knob {
   cursor: pointer;
 }
 .session__permission:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.refusal-chip {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-badge);
+  background: var(--raise);
+  color: var(--text);
+  font: inherit;
+  padding: 2px 6px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.refusal-chip--compact {
+  color: var(--text-dim);
+  font-size: calc(10px * var(--font-scale));
+  padding: 1px 4px;
+}
+.refusal-chip:focus-visible {
   box-shadow: var(--focus-ring);
 }
 

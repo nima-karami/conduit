@@ -415,6 +415,7 @@ import { useConduitMcp } from './use-conduit-mcp';
 import { useDirtyClose } from './use-dirty-close';
 import { focusOpenModal, nextModalKey, useModalSlot } from './use-modal-slot';
 import { canNavigate, type NavHistoryDeps, useNavHistory } from './use-nav-history';
+import { usePermissionRefusals } from './use-permission-refusals';
 import { useReviewModeLayout } from './use-review-mode-layout';
 import { useSnooze } from './use-snooze';
 import { fileViewStateIds, renameViewState } from './view-state-store';
@@ -1088,6 +1089,7 @@ export function App() {
       sessionId: owner,
     });
   }, []);
+  const { refusalsBySession, openRefusal } = usePermissionRefusals(hostSessions, openActivity);
   const permissionCoverageRef = useRef({
     sessions: hostSessions,
     policy: mcp.state?.policy.sessions,
@@ -5434,6 +5436,8 @@ export function App() {
             and falls back to the editor start state instead of a void. */}
           <ErrorBoundary onReset={() => setCenterView('editor')}>
             <CenterPane
+              refusalsBySession={refusalsBySession}
+              onRefusalClick={openRefusal}
               activitySessionId={activityScope.sessionId}
               activityMachineId={activityScope.machineId}
               activityItem={activityScope.item}
@@ -5560,6 +5564,8 @@ export function App() {
           barless
         >
           <Sidebar
+            refusalsBySession={refusalsBySession}
+            onRefusalClick={openRefusal}
             sessions={treeSessions}
             projects={state?.projects ?? []}
             windowCount={Math.max(1, winList.length)}

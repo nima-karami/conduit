@@ -4052,7 +4052,8 @@ app.whenReady().then(() => {
         }
         case 'network:setCapability': {
           const valid =
-            Object.keys(m).sort().join(',') === 'capability,machineId,on,requestId,type' &&
+            Object.keys(m).sort().join(',') ===
+              'capability,expectedToken,machineId,on,requestId,type' &&
             Number.isSafeInteger(m.requestId) &&
             m.requestId > 0 &&
             typeof m.machineId === 'string' &&
@@ -4061,22 +4062,27 @@ app.whenReady().then(() => {
               m.capability === 'monitor' ||
               m.capability === 'drive') &&
             typeof m.on === 'boolean' &&
+            typeof m.expectedToken === 'string' &&
+            /^[0-9a-f]{32}:[0-9]+:[0-9]+$/.test(m.expectedToken) &&
             windows.get(senderId) === senderWin &&
             presence.isReady(senderId);
-          let ok = false;
+          let result: 'ok' | 'conflict' | 'failed' = 'failed';
           if (valid) {
             try {
               await callServer('link.setCapability', {
                 machineId: m.machineId,
                 capability: m.capability,
                 on: m.on,
+                expectedToken: m.expectedToken,
               });
-              ok = true;
+              result = 'ok';
             } catch (error) {
-              log.warn('network', 'set capability failed', { error: String(error) });
+              if (error instanceof ServerCallError && error.kind === 'conflict')
+                result = 'conflict';
+              else log.warn('network', 'set capability failed', { error: String(error) });
             }
           }
-          replyHere({ type: 'network:capabilityResult', requestId: m.requestId, ok });
+          replyHere({ type: 'network:capabilityResult', requestId: m.requestId, result });
           break;
         }
         case 'network:get':

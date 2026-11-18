@@ -670,7 +670,7 @@ export type HostToWebview =
   // broadcast, plus replies to the sender's mcp:* requests.
   // Linked machines (CON-27 machinery; the Machines UI is CON-28).
   | { type: 'network:state'; state: NetworkState }
-  | { type: 'network:capabilityResult'; requestId: number; ok: boolean }
+  | { type: 'network:capabilityResult'; requestId: number; result: 'ok' | 'conflict' | 'failed' }
   // Remote panes and the Machines UI (docs/plans/2026-11-16-remote-ssh-machines-ui.plan.md).
   | { type: 'remote:attached'; requestId: number; result: RemoteAttachResult }
   | { type: 'remote:data'; viewId: string; data: string }
@@ -755,6 +755,16 @@ export type HostToWebview =
   // An app-control tool's UI step (spec 2026-10-30-conduit-mcp-app-control §2.3). sessionId is
   // always the caller; closeSession names its target in the action.
   | { type: 'mcp:ui'; requestId: string; sessionId: string; action: McpUiAction }
+  | {
+      type: 'mcp:activityRecorded';
+      sessionId: string;
+      generation: number;
+      id: string;
+      at: string;
+      tool: ToolName;
+      outcome: 'ok' | 'error' | 'denied' | 'refused' | 'expired' | 'withdrawn';
+      decidedBy?: string;
+    }
   | { type: 'mcp:activity'; requestId: number; page: ActivityPage }
   | { type: 'mcp:activity:row'; requestId: number; result: ActivityLookup }
   | { type: 'mcp:previewResult'; requestId: number; result: PreviewResult }
@@ -1514,6 +1524,7 @@ export type WebviewToHost =
       machineId: string;
       capability: import('./contracts/remote-principal').Capability;
       on: boolean;
+      expectedToken: string;
     }
   | { type: 'remote:attach'; requestId: number; machineId: string; sessionId: string }
   | { type: 'remote:detach'; viewId: string }

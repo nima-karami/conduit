@@ -73,16 +73,21 @@ await runScenario(
       expectedToken,
     });
     assert(saved.ok === true, `could not prepare exact deny: ${JSON.stringify(saved)}`);
+    const callerCard = page.locator(`.session[data-sessionid="${caller.sessionId}"]`);
+    await callerCard.locator('.session__name').click();
     const result = await callTool(page, caller.sessionId, 'close_session', {
       session: target.handle,
     });
     assert(result?.error?.code === 'tool_disabled', JSON.stringify(result));
+    const notice = page.getByRole('region', { name: 'Notifications' }).getByRole('alert');
+    await notice.getByText('Conduit refused close_session for caller.', { exact: true }).waitFor();
+    await notice.getByRole('button', { name: 'Why?', exact: true }).waitFor();
+    const refusal = callerCard.getByRole('button', { name: /Why was caller's request refused/ });
+    await refusal.waitFor();
     await capture(page, '08-action-refused.png');
 
-    await page.getByRole('button', { name: 'Settings', exact: true }).click();
     const settings = page.locator('.settings');
-    await settings.getByRole('button', { name: 'Permissions', exact: true }).click();
-    await settings.getByRole('button', { name: 'Activity', exact: true }).click();
+    await refusal.click();
     const activity = page.getByRole('main', { name: 'Permissions Activity' });
     await activity.waitFor({ timeout: 7000 });
     const denial = activity
@@ -98,7 +103,6 @@ await runScenario(
       await capture(page, '09-activity-failed.png');
       throw error;
     }
-    await denial.getByRole('button', { name: 'Why' }).click();
     const why = activity.getByRole('complementary', { name: 'Why was this denied?' });
     await why.waitFor();
     await why
@@ -140,6 +144,7 @@ await runScenario(
     });
     assert(retry?.closed === target.sessionId, `agent retry: ${JSON.stringify(retry)}`);
     await targetRow.waitFor({ state: 'detached' });
+    await activity.getByRole('cell', { name: 'allowed once', exact: true }).waitFor();
     await capture(page, '10-action-retried.png');
     assert(
       await until(

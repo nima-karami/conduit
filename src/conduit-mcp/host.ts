@@ -2163,7 +2163,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return principal ? policyService.visibleTools(principal) : [];
   };
 
-  type CallContext = ToolCallContext & { connId: number };
+  type CallContext = ToolCallContext & { connId: number; isCurrent: () => boolean };
 
   /** prepareLaunch put Conduit's server, with its timeouts, in this session's CLI args. */
   const wiredAtLaunch = (sessionId: string): boolean => {
@@ -2212,6 +2212,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     // Before the first await: a notifications/cancelled read right after this line must find it.
     const inflight = flow.begin({ connId: ctx.connId, requestId: ctx.requestId });
     const startedAt = now();
+    const generation = sessionId ? deps.runtime.get(sessionId)?.generation : undefined;
     const evaluated: {
       current: { input: Omit<PolicyInput, 'now'>; decision: PolicyDecision } | null;
       spent: boolean;
@@ -2661,39 +2662,68 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         if (code === 'approval_timeout') return 'expired';
         return 'error';
       };
-      const activityId = policyService.activity.record({
-        lane: 'conduit',
-        principal: { handle: handle ?? null, sessionId, machineId: null },
-        cli: sessionId ? launchedCli(sessionId) : null,
-        action: name,
-        // A routed call names the machine it runs on, or the address it reaches (CON-40 S3 review).
-        target:
-          record?.input.targets[0]?.path ??
-          record?.input.targets[0]?.sessionId ??
-          routedRefOf(name, args),
-        summary: null,
-        decision: decision?.decision ?? null,
-        decidedBy: (() => {
-          const reason = evaluated.terminal?.reason ?? (decision ? reasonOf(decision) : 'unknown');
-          const raised = raisedRequests.get(inflight);
-          return !cancelled && result?.ok && raised?.approved && reason !== raised.why
-            ? `${raised.why}; ${reason}`
-            : reason;
-        })(),
-        outcome: cancelled
-          ? 'withdrawn'
-          : result.ok
-            ? 'ok'
-            : evaluated.spent
-              ? 'denied'
-              : outcomeOfError(result.error.code),
-        durationMs: now() - startedAt,
-        requestId,
-        count: null,
-        ...(!cancelled && (evaluated.terminal?.trace ?? evaluated.immediateTrace)
-          ? { trace: evaluated.terminal?.trace ?? evaluated.immediateTrace ?? undefined }
-          : {}),
-      });
+      const activityId = policyService.activity.record(
+        {
+          lane: 'conduit',
+          principal: { handle: handle ?? null, sessionId, machineId: null },
+          cli: sessionId ? launchedCli(sessionId) : null,
+          action: name,
+          // A routed call names the machine it runs on, or the address it reaches (CON-40 S3 review).
+          target:
+            record?.input.targets[0]?.path ??
+            record?.input.targets[0]?.sessionId ??
+            routedRefOf(name, args),
+          summary: null,
+          decision: decision?.decision ?? null,
+          decidedBy: (() => {
+            const reason =
+              evaluated.terminal?.reason ?? (decision ? reasonOf(decision) : 'unknown');
+            const raised = raisedRequests.get(inflight);
+            return !cancelled && result?.ok && raised?.approved && reason !== raised.why
+              ? `${raised.why}; ${reason}`
+              : reason;
+          })(),
+          outcome: cancelled
+            ? 'withdrawn'
+            : result.ok
+              ? 'ok'
+              : evaluated.spent
+                ? 'denied'
+                : outcomeOfError(result.error.code),
+          durationMs: now() - startedAt,
+          requestId,
+          count: null,
+          ...(!cancelled && (evaluated.terminal?.trace ?? evaluated.immediateTrace)
+            ? { trace: evaluated.terminal?.trace ?? evaluated.immediateTrace ?? undefined }
+            : {}),
+        },
+        (row) => {
+          if (
+            !sessionId ||
+            generation === undefined ||
+            !ctx.isCurrent() ||
+            deps.runtime.get(sessionId)?.generation !== generation ||
+            !isToolName(name) ||
+            row.outcome === null ||
+            row.outcome === 'asked'
+          )
+            return;
+          const owner = deps.ownerWindowOf(sessionId);
+          if (owner === null || owner <= 0 || owner === NO_OWNER_WINDOW || !deps.windowReady(owner))
+            return;
+          const decidedBy = row.decidedBy.replace(/\p{C}/gu, ' ').slice(0, 256);
+          sendToWindow(owner, {
+            type: 'mcp:activityRecorded',
+            sessionId,
+            generation,
+            id: row.id,
+            at: row.at,
+            tool: name,
+            outcome: row.outcome,
+            ...(row.outcome === 'denied' ? { decidedBy } : {}),
+          });
+        },
+      );
 
       if (record) policyService.noteDecision(activityId, record.input, record.decision);
       if (cancelled) return null;
@@ -3338,7 +3368,15 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         lastListed.set(conn.id, names.join(','));
         return toolSchemas().filter((t) => names.some((n) => n === t.name));
       },
-      call: (name, args, ctx) => callTool(current(), name, args, { ...ctx, connId: conn.id }),
+      call: (name, args, ctx) => {
+        const sessionId = current();
+        return callTool(sessionId, name, args, {
+          ...ctx,
+          connId: conn.id,
+          isCurrent: () =>
+            sessionId !== null && current() === sessionId && conns.get(conn.id) === conn,
+        });
+      },
       cancelled: (requestId) => {
         flow.cancelled(conn.id, requestId);
         sessionWaits.cancel((w) => w.key.connId === conn.id && w.key.requestId === requestId);

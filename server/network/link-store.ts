@@ -23,6 +23,7 @@ export interface LinkStore {
   links(): LinkRecord[];
   peerKnown(machineId: string): boolean | null;
   get(machineId: string): LinkRecord | null;
+  revision(machineId: string): number | null;
   /** A live link first, else an unexpired tombstone, else null. */
   byServerKey(serverKey: string): LinkRecord | { tombstone: Tombstone } | null;
   /** Inserts or replaces by machineId, and clears any tombstone for that machineId. */
@@ -117,6 +118,9 @@ export function openLinkStore(
   let state: LinksFile = { version: LINKS_VERSION, links: [], tombstones: [] };
   let writable = true;
   let baselineKnown = true;
+  let nextRevision = 0;
+  const revisions = new Map<string, number>();
+  const changed = (id: string) => revisions.set(id, ++nextRevision);
 
   const text = io.read(file);
   if (text !== null) {
@@ -151,6 +155,7 @@ export function openLinkStore(
   };
 
   const putLink = (r: LinkRecord): void => {
+    changed(r.machineId);
     state = {
       ...state,
       links: [...state.links.filter((l) => l.machineId !== r.machineId), copyLink(r)],
@@ -160,6 +165,10 @@ export function openLinkStore(
   };
 
   return {
+    revision: (machineId) =>
+      state.links.some((link) => link.machineId === machineId)
+        ? (revisions.get(machineId) ?? 0)
+        : null,
     get writable() {
       return writable;
     },
@@ -212,6 +221,7 @@ export function openLinkStore(
     setMachine(machineId, meta) {
       const found = state.links.find((l) => l.machineId === machineId);
       if (found?.transport !== 'ssh') return null;
+      changed(machineId);
       const next = copyLink({ ...found, machine: meta });
       state = {
         ...state,
@@ -224,6 +234,7 @@ export function openLinkStore(
       const found = state.links.find((l) => l.machineId === machineId);
       if (!found) return null;
       if (patch.ssh !== undefined && found.transport !== 'ssh') return null;
+      changed(machineId);
       const next = copyLink({ ...found, ...patch });
       state = {
         ...state,
@@ -242,6 +253,7 @@ export function openLinkStore(
     ],
     remove(machineId) {
       if (!state.links.some((l) => l.machineId === machineId)) return false;
+      changed(machineId);
       state = { ...state, links: state.links.filter((l) => l.machineId !== machineId) };
       persist();
       return true;
@@ -249,6 +261,7 @@ export function openLinkStore(
     revoke(machineId, at) {
       const found = state.links.find((l) => l.machineId === machineId);
       if (!found) return null;
+      changed(machineId);
       const tombstone: Tombstone = {
         linkId: found.linkId,
         machineId,

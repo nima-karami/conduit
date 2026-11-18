@@ -197,7 +197,7 @@ export function createAppControlHandlers(
     const r: Reach = reach !== undefined && isValidField(tool, 'reach', reach) ? reach : 'self';
     if (r === 'any' || reachAdmits(r, actor, t, deps.ownerWindowOf)) return null;
     return fail('out_of_reach', REACH_REFUSAL[r], {
-      hint: `widen ${tool}'s reach in Settings → MCP to act on this session`,
+      hint: `widen ${tool}'s reach in Settings → Permissions to act on this session`,
     });
   };
 

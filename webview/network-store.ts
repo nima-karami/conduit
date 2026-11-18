@@ -41,11 +41,20 @@ export async function setLinkCapability(
   machineId: string,
   capability: Capability,
   on: boolean,
-): Promise<boolean> {
+  expectedToken: string,
+): Promise<'ok' | 'conflict' | 'failed'> {
   const reply = await requestHost(
-    (requestId) => ({ type: 'network:setCapability', requestId, machineId, capability, on }),
+    (requestId) => ({
+      type: 'network:setCapability',
+      requestId,
+      machineId,
+      capability,
+      on,
+      expectedToken,
+    }),
     ['network:capabilityResult'],
     15_000,
   );
-  return reply?.ok === true;
+  if (reply?.result === 'conflict') post({ type: 'network:get' });
+  return reply?.result ?? 'failed';
 }

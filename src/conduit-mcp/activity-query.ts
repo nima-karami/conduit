@@ -55,7 +55,9 @@ const safeNullable = (v: unknown): boolean => v === null || safeText(v);
 const absolutePath = (v: unknown): boolean =>
   v === null ||
   (safeText(v) &&
-    (/^\/(?!\/)/.test(v) || /^[A-Za-z]:\\/.test(v) || /^\\\\[^\\]+\\[^\\]+/.test(v)) &&
+    (/^\/(?!\/)/.test(v) ||
+      /^[A-Za-z]:[\\/]/.test(v) ||
+      /^(?:\\\\|\/\/)(?![?.](?:[\\/]|$))[^\\/]+[\\/][^\\/]+(?:[\\/]|$)/.test(v)) &&
     !v.split(/[\\/]/).some((p) => p === '.' || p === '..'));
 const point = (v: unknown): boolean => {
   if (!object(v)) return false;

@@ -403,7 +403,7 @@ describe('createCallFlow', () => {
         code: 'tool_disabled',
         message: 'open_session is not enabled for this session',
         retryable: false,
-        hint: 'Turn on open_session in Settings → MCP (it is off for this session or CLI)',
+        hint: 'Review access to open_session in Settings → Permissions',
       },
     });
     expect(t.asks()).toEqual([]);

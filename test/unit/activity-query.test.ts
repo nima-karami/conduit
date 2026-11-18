@@ -181,6 +181,41 @@ describe('Activity decision trace', () => {
     } as const;
     const h = harness([row('safe', { trace })]);
     expect(h.log.query({}).rows[0].trace).toEqual(trace);
+    for (const folder of [
+      'C:/Users/Test/project',
+      'C:\\Users\\Test\\project',
+      '//server/share/project',
+      '\\\\server\\share\\project',
+    ]) {
+      const windowsTrace = {
+        ...trace,
+        facts: {
+          ...trace.facts,
+          targets: [{ sessionId: 's2', path: null, folder, projectId: null }],
+        },
+      };
+      expect(harness([row('win', { trace: windowsTrace })]).log.query({}).rows[0].trace).toEqual(
+        windowsTrace,
+      );
+    }
+    for (const folder of [
+      'C:relative',
+      'C:/safe/../evil',
+      '//server',
+      '//server/share/../evil',
+      '//?/C:/evil',
+    ]) {
+      const invalidTrace = {
+        ...trace,
+        facts: {
+          ...trace.facts,
+          targets: [{ sessionId: 's2', path: null, folder, projectId: null }],
+        },
+      };
+      expect(
+        harness([row('bad-win', { trace: invalidTrace })]).log.query({}).rows[0].trace,
+      ).toBeUndefined();
+    }
     const hostile = harness([
       row('bad', { trace: { ...trace, secret: 'SECRET' } as typeof trace }),
     ]);

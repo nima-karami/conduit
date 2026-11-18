@@ -4787,6 +4787,7 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     release();
     await c.reply(1);
     expect(rows.find((r) => r.action === 'close_session')?.trace).toBeUndefined();
+    expect(h.toWindow.filter(({ msg }) => msg.type === 'mcp:activityRecorded')).toEqual([]);
   });
 
   it('records a direct fresh denial when policy changes during preparation', async () => {
@@ -5291,6 +5292,156 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     h.presence.ready.delete(1);
     c.call(6, 'list_sessions');
     expect(c.errorOf(await c.reply(6))).toBe('ok');
+  });
+
+  it('notifies only the current owner of a persisted refusal and actual retry', async () => {
+    const { h, c } = await asking();
+    await launch(h, 's2');
+    await setPolicy(h, { close_session: { access: 'off', when: 'always', reach: 'any' } });
+    h.owners.set('s1', 2);
+    c.call(1, 'close_session', { session: 's2' });
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    const events = () => h.toWindow.filter(({ msg }) => msg.type === 'mcp:activityRecorded');
+    expect(events()).toHaveLength(1);
+    const first = events()[0];
+    expect(first.windowId).toBe(2);
+    if (first.msg.type !== 'mcp:activityRecorded') throw new Error('missing event');
+    const firstEvent = first.msg;
+    expect(firstEvent).toMatchObject({
+      sessionId: 's1',
+      generation: 1,
+      tool: 'close_session',
+      outcome: 'denied',
+    });
+    let page: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:activity:get', requestId: 2, query: {} },
+      (m) => {
+        page = m;
+      },
+      2,
+    );
+    if (page?.type !== 'mcp:activity') throw new Error('missing activity');
+    const row = page.page.rows.find((r) => r.id === firstEvent.id);
+    expect(row).toMatchObject({
+      id: firstEvent.id,
+      at: firstEvent.at,
+      action: firstEvent.tool,
+      outcome: 'denied',
+      decidedBy: firstEvent.decidedBy,
+    });
+    let result: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:allowOnce', requestId: 3, activityId: firstEvent.id, at: firstEvent.at },
+      (m) => {
+        result = m;
+      },
+      2,
+    );
+    expect(result).toMatchObject({ ok: true });
+    h.owners.set('s2', null);
+    c.call(4, 'close_session', { session: 's2' });
+    expect(c.errorOf(await c.reply(4))).toBe('ok');
+    expect(events()).toHaveLength(2);
+    const second = events()[1];
+    expect(second.windowId).toBe(2);
+    expect(second.msg).toMatchObject({
+      type: 'mcp:activityRecorded',
+      sessionId: 's1',
+      generation: 1,
+      tool: 'close_session',
+      outcome: 'ok',
+    });
+    expect(second.msg).not.toHaveProperty('decidedBy');
+    expect(h.broadcasts.filter((m) => m.type === 'mcp:activityRecorded')).toEqual([]);
+  });
+
+  it('does not notify when the Activity append fails', async () => {
+    const io: ActivityIo = {
+      append: () => {
+        throw new Error('disk full');
+      },
+      read: () => '',
+      list: () => [],
+      remove: () => {},
+      readArgs: () => null,
+      writeArgs: () => {},
+    };
+    const { h, c } = await asking({ activityIo: io });
+    await setPolicy(h, { open_file: { access: 'off' } });
+    c.call(1, 'open_file', { path: '/w/a.ts' });
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    expect(h.toWindow.filter(({ msg }) => msg.type === 'mcp:activityRecorded')).toEqual([]);
+  });
+
+  it('does not notify an absent or unready owner even if the row is saved', async () => {
+    const { h, c } = await asking();
+    await setPolicy(h, { open_file: { access: 'off' } });
+    h.presence.ready.delete(1);
+    c.call(1, 'open_file', { path: '/w/a.ts' });
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    h.owners.set('s1', null);
+    c.call(2, 'open_file', { path: '/w/a.ts' });
+    expect(c.errorOf(await c.reply(2))).toBe('tool_disabled');
+    let page: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:activity:get', requestId: 3, query: {} },
+      (m) => {
+        page = m;
+      },
+      2,
+    );
+    if (page?.type !== 'mcp:activity') throw new Error('missing activity');
+    expect(page.page.rows.filter((row) => row.action === 'open_file')).toHaveLength(2);
+    expect(h.toWindow.filter(({ msg }) => msg.type === 'mcp:activityRecorded')).toEqual([]);
+  });
+
+  it('persists a canonical Windows session target and rechecks its exact identity for allow once', async () => {
+    const { h, c } = await asking();
+    await launch(h, 's2');
+    const target = h.sessions.get('s2');
+    if (!target) throw new Error('missing target');
+    target.home = 'C:/Users/Test/target';
+    await setPolicy(h, { close_session: { access: 'off', when: 'always', reach: 'any' } });
+    c.call(1, 'close_session', { session: 's2' });
+    expect(c.errorOf(await c.reply(1))).toBe('tool_disabled');
+    let page: HostToWebview | undefined;
+    await h.host.handleRenderer(
+      { type: 'mcp:activity:get', requestId: 2, query: {} },
+      (m) => {
+        page = m;
+      },
+      1,
+    );
+    if (page?.type !== 'mcp:activity') throw new Error('missing activity');
+    const row = page.page.rows.find((r) => r.action === 'close_session');
+    if (!row?.trace) throw new Error('missing Windows decision trace');
+    expect(row.trace).toMatchObject({
+      reason: { by: 'deny' },
+      facts: {
+        targets: [{ sessionId: 's2', path: null, folder: 'C:/Users/Test/target', projectId: null }],
+      },
+    });
+    const issue = async () => {
+      let reply: HostToWebview | undefined;
+      await h.host.handleRenderer(
+        { type: 'mcp:allowOnce', requestId: 3, activityId: row.id, at: row.at },
+        (m) => {
+          reply = m;
+        },
+        1,
+      );
+      return reply;
+    };
+    target.home = 'C:/Users/Test/other';
+    expect(await issue()).toMatchObject({ ok: false });
+    target.home = 'c:\\users\\test\\target';
+    expect(await issue()).toMatchObject({ ok: true });
+    h.owners.set('s2', null);
+    c.call(4, 'close_session', { session: 's2' });
+    expect(c.errorOf(await c.reply(4))).toBe('ok');
+    expect(h.closes).toEqual(['s2']);
+    expect(await issue()).toMatchObject({ ok: false });
   });
 
   it('issues a stamped close-session override only to the current owner and spends it once', async () => {

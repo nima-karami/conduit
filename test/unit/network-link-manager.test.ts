@@ -237,14 +237,39 @@ describe('link manager', { timeout: 60_000 }, () => {
 
   it('a capability change reaches the peer', async () => {
     const { a, b } = await linkedPair();
-    expect(b.manager.setCapability(a.id.machineId, 'drive', true)).toBe(true);
+    expect(
+      b.manager.setCapability(
+        a.id.machineId,
+        'drive',
+        true,
+        b.manager.view(a.id.machineId)?.editToken ?? '',
+      ),
+    ).toBe('ok');
     await until(() => a.manager.view(b.id.machineId)?.peerCapabilities?.drive === true);
     expect(b.audit.some((e) => e.kind === 'link.capability')).toBe(true);
   });
 
+  it('rejects a stale capability edit, even after a change is reversed', async () => {
+    const { a, b } = await linkedPair();
+    const id = a.id.machineId;
+    const stale = b.manager.view(id)?.editToken ?? '';
+    expect(b.manager.setCapability(id, 'monitor', false, stale)).toBe('ok');
+    const next = b.manager.view(id)?.editToken ?? '';
+    expect(b.manager.setCapability(id, 'monitor', true, next)).toBe('ok');
+    expect(b.manager.setCapability(id, 'drive', true, stale)).toBe('conflict');
+    expect(b.manager.view(id)?.capabilities.drive).toBe(false);
+  });
+
   it('a peer enabling drive on its side never enables drive on mine', async () => {
     const { a, b } = await linkedPair();
-    expect(a.manager.setCapability(b.id.machineId, 'drive', true)).toBe(true);
+    expect(
+      a.manager.setCapability(
+        b.id.machineId,
+        'drive',
+        true,
+        a.manager.view(b.id.machineId)?.editToken ?? '',
+      ),
+    ).toBe('ok');
     await until(() => b.manager.view(a.id.machineId)?.peerCapabilities?.drive === true);
     expect(b.manager.view(a.id.machineId)?.capabilities.drive).toBe(false);
   });
@@ -277,7 +302,14 @@ describe('link manager', { timeout: 60_000 }, () => {
     sock.resume();
     await until(() => frames.some((f) => f.t === 'hello'));
     expect(frames.find((f) => f.t === 'hello')?.capabilities?.drive).toBe(false);
-    expect(b.manager.setCapability(a.id.machineId, 'drive', true)).toBe(true);
+    expect(
+      b.manager.setCapability(
+        a.id.machineId,
+        'drive',
+        true,
+        b.manager.view(a.id.machineId)?.editToken ?? '',
+      ),
+    ).toBe('ok');
     sock.write(
       encodeFrame({
         t: 'hello',

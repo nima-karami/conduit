@@ -171,7 +171,10 @@ export function handleNetworkCall(
       // The grant is re-applied on every connect (acceptSsh, plan CON-41 decision 3), so a toggle lasts one connection.
       if (capability === 'drive' && d.manager.isSshController(machineId))
         throw new RpcFault('invalid', 'drive on an ssh controller is granted by its connection');
-      known(d.manager.setCapability(machineId, capability, p.on), machineId);
+      const result = d.manager.setCapability(machineId, capability, p.on, str(p, 'expectedToken'));
+      if (result === 'conflict')
+        throw new RpcFault('conflict', 'Link changed; refresh before editing');
+      if (result === 'not-found') throw new RpcFault('not_found', `No link to ${machineId}`);
       return Promise.resolve({});
     }
     case 'link.setAddresses': {

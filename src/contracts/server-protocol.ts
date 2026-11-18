@@ -551,7 +551,7 @@ export interface ServerMethods {
   };
   'machines.probeAgents': { params: { machineId: string }; result: { agents: string[] } };
   'link.setCapability': {
-    params: { machineId: string; capability: Capability; on: boolean };
+    params: { machineId: string; capability: Capability; on: boolean; expectedToken: string };
     result: Record<string, never>;
   };
   'link.setAddresses': {

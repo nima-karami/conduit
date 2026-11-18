@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ActivityEntry, ActivityLookup } from '../../src/conduit-mcp/activity-log';
 import type { ActivityPage, ActivityQuery } from '../../src/conduit-mcp/activity-query';
 import { CLI_KINDS } from '../../src/conduit-mcp/tool-policy';
+import { subscribe } from '../bridge';
 import { type ActivityExceptionSource, PermissionsActivityWhy } from './permissions-activity-why';
 
 type Option = { id: string; name: string };
@@ -117,6 +118,29 @@ export function PermissionsActivity({
       alive = false;
     };
   }, [filters, pagination, getActivity]);
+  useEffect(() => {
+    if (
+      pagination.before ||
+      filters.machine ||
+      filters.lane === 'observed' ||
+      filters.lane === 'note'
+    )
+      return;
+    let refresh: ReturnType<typeof setTimeout> | undefined;
+    const unsubscribe = subscribe((message) => {
+      if (
+        message.type !== 'mcp:activityRecorded' ||
+        (filters.session && message.sessionId !== filters.session)
+      )
+        return;
+      if (refresh !== undefined) clearTimeout(refresh);
+      refresh = setTimeout(() => setPagination({}), 200);
+    });
+    return () => {
+      unsubscribe();
+      if (refresh !== undefined) clearTimeout(refresh);
+    };
+  }, [filters.session, filters.machine, filters.lane, pagination.before]);
   const sessionName = (id: string | null) => sessions.find((s) => s.id === id)?.name ?? id;
   const machineName = (id: string | null) => machines.find((m) => m.id === id)?.name ?? id;
   const actor = (row: ActivityEntry) =>

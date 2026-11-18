@@ -55,6 +55,7 @@ import { MissingHomeState, StartRefusedState } from './missing-home-state';
 import type { DockHandlers } from './panel-frame';
 import { PermissionsActivity } from './permissions-activity';
 import type { ActivityExceptionSource } from './permissions-activity-why';
+import { RefusalChip, type RefusalChipData } from './refusal-chip';
 import { RemoteDiffView } from './remote-diff-view';
 import { RemoteDocView } from './remote-doc-view';
 import { RemoteHistoryView } from './remote-history-view';
@@ -92,6 +93,8 @@ function WaitingLine({ sessionId, onOpen }: { sessionId: string; onOpen: () => v
 export function CenterPane({
   sessions,
   activitySessionId,
+  refusalsBySession,
+  onRefusalClick,
   activityMachineId,
   getActivity,
   activityItem,
@@ -166,6 +169,8 @@ export function CenterPane({
 }: {
   sessions: Session[];
   activitySessionId?: string;
+  refusalsBySession?: Readonly<Record<string, RefusalChipData>>;
+  onRefusalClick?: (sessionId: string, latest: RefusalChipData['latest']) => void;
   activityMachineId?: string;
   getActivity(query: ActivityQuery): Promise<ActivityPage | null>;
   activityItem?: Pick<ActivityEntry, 'id' | 'at'>;
@@ -491,6 +496,11 @@ export function CenterPane({
             {isSplit && (
               <div className="termhost__bar">
                 <span className="termhost__name">{s.name}</span>
+                <RefusalChip
+                  data={refusalsBySession?.[s.id]}
+                  sessionName={s.name}
+                  onClick={onRefusalClick ? (latest) => onRefusalClick(s.id, latest) : undefined}
+                />
                 <button className="termhost__close" title="Close split" onClick={onCloseSplit}>
                   ✕
                 </button>
@@ -635,7 +645,22 @@ export function CenterPane({
             groupActive={layout.activeGroup === g}
             showTerminal={g === 1}
             terminalFocusKey={g === 1 && activeId ? terminalTabFocusKey(activeId) : undefined}
-            trailing={g === 1 && activeId ? <LiveSessionPill sessionId={activeId} /> : undefined}
+            trailing={
+              g === 1 && activeId ? (
+                <>
+                  <LiveSessionPill sessionId={activeId} />
+                  {view.activeDocId === null && (
+                    <RefusalChip
+                      data={refusalsBySession?.[activeId]}
+                      sessionName={active?.name ?? activeId}
+                      onClick={
+                        onRefusalClick ? (latest) => onRefusalClick(activeId, latest) : undefined
+                      }
+                    />
+                  )}
+                </>
+              ) : undefined
+            }
             split={{
               // Group 1's button splits group 1's shown doc even while group 2 is active (spec §2.4
               // flow 2), with or without a pointer-down focusing group 1 first.

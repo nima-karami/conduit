@@ -1336,6 +1336,8 @@ export function createPolicyService(deps: PolicyServiceDeps): PolicyService {
       if (
         authorityEpoch !== before + 1n ||
         editToken !== expectedToken ||
+        !deps.grantBindingsCurrent(original) ||
+        (original.expiresAt !== null && Date.parse(original.expiresAt) <= deps.now()) ||
         (revoked.lifecycleRevision ?? 0) >= Number.MAX_SAFE_INTEGER ||
         deps.monotonicNow() >= deadline
       )

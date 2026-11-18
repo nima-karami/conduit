@@ -6,6 +6,7 @@ import { canRelaunch } from '../../src/stale-sessions';
 import type { Session } from '../../src/types';
 import { IconChevron, IconClose, IconPin, SessionGlyph } from '../icons';
 import { SIDEBAR_STR } from '../sidebar-strings';
+import { RefusalChip, type RefusalChipData } from './refusal-chip';
 
 interface AgentRowDragProps {
   onDragStart: (e: React.DragEvent) => void;
@@ -93,6 +94,8 @@ export function AgentRow({
   drag,
   permissionLabel,
   onPermissions,
+  refusal,
+  onRefusal,
 }: {
   session: Session;
   row: AgentRowModel;
@@ -123,6 +126,8 @@ export function AgentRow({
   drag?: AgentRowDragProps;
   permissionLabel?: string | null;
   onPermissions?: () => void;
+  refusal?: RefusalChipData;
+  onRefusal?: (latest: RefusalChipData['latest']) => void;
 }) {
   const endRename = (draft: string | null) => {
     const next = draft?.trim();
@@ -230,6 +235,9 @@ export function AgentRow({
         >
           {permissionLabel}
         </button>
+      )}
+      {!editing && (
+        <RefusalChip data={refusal} sessionName={session.name} compact onClick={onRefusal} />
       )}
       {hasKids && (
         <button

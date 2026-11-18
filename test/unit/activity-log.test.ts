@@ -247,6 +247,24 @@ describe('activity log', () => {
     expect(io.written[0]?.day).toBe('2026-11-14');
   });
 
+  it('notifies only after an individual row is appended, never on failure or aggregate', () => {
+    const io = fakeIo();
+    const { log } = harness(io);
+    const notified = vi.fn();
+    io.failAppend = true;
+    log.record({ ...base, action: 'close_session', decision: 'deny', outcome: 'denied' }, notified);
+    expect(notified).not.toHaveBeenCalled();
+    io.failAppend = false;
+    log.record(base, notified);
+    expect(notified).not.toHaveBeenCalled();
+    const id = log.record(
+      { ...base, action: 'close_session', decision: 'deny', outcome: 'denied' },
+      notified,
+    );
+    expect(notified).toHaveBeenCalledTimes(1);
+    expect(notified).toHaveBeenCalledWith(rows(io).find((row) => row.id === id));
+  });
+
   it('failed append marks unwritable and the next success writes one gap row', () => {
     const io = fakeIo();
     const { log, clock, warn } = harness(io);

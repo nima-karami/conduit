@@ -10,6 +10,7 @@ All notable user-facing changes to Conduit. Format follows
 - Permission assignments can opt in to a profile’s supported Claude Code and Codex launch flags. The session records the flags Conduit prepared for its current launch.
 - Review a session’s effective permissions from its menu or permission badge. Settings → Permissions gives you profiles, assignments, grants, and a link to the Activity feed.
 - Review permission requests and grants in Needs You, edit rules for your own linked machines, and see the recorded reason for a decision in Permissions Activity.
+- Open the exact Activity entry from a session’s refusal badge or notification.
 
 ### Fixed
 - Codex scheduling recovers after a rollout file is replaced when the original path still reports the same thread ID. The retired launch’s linked mode remains unavailable.

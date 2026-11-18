@@ -33,6 +33,7 @@ export interface NetworkPairingView {
 /** One linked machine as C2 reports it (link.list, network.changed). */
 export interface NetworkLinkView {
   machineId: string;
+  editToken: string;
   name: string;
   trust: 'own';
   /** How the link reaches the peer: TLS over the link port, or an ssh child's stdio. */

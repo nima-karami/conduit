@@ -73,7 +73,10 @@ export interface ActivityIo {
 }
 
 export interface ActivityLog {
-  record(e: Omit<ActivityEntry, 'v' | 'id' | 'at'>): string;
+  record(
+    e: Omit<ActivityEntry, 'v' | 'id' | 'at'>,
+    onPersisted?: (row: ActivityEntry) => void,
+  ): string;
   recordAskArgs(requestId: string, args: unknown): void;
   flushCounts(all: boolean): void;
   purge(): void;
@@ -173,7 +176,7 @@ export function createActivityLog(deps: {
     };
   }
 
-  function emit(row: ActivityEntry, nowIso: string): void {
+  function emit(row: ActivityEntry, nowIso: string): boolean {
     try {
       if (failedAt !== null) {
         const gap = build(
@@ -203,7 +206,7 @@ export function createActivityLog(deps: {
         failedAt = nowIso;
         warn('activity log write failed', error);
       }
-      return;
+      return false;
     }
     if (row.decision === 'deny') {
       denies.set(row.id, row);
@@ -212,6 +215,7 @@ export function createActivityLog(deps: {
         if (oldest !== undefined) denies.delete(oldest);
       }
     }
+    return true;
   }
 
   const countedRow = (bucket: Bucket): ActivityEntry =>
@@ -364,7 +368,7 @@ export function createActivityLog(deps: {
   }
 
   return {
-    record(e) {
+    record(e, onPersisted) {
       const at = isoNow();
       if (e.lane === 'conduit' && e.decision === 'allow' && COUNTED.has(e.action)) {
         const hour = hourOf(at);
@@ -393,7 +397,7 @@ export function createActivityLog(deps: {
         return bucket.id;
       }
       const row = build(e, deps.newId(), at);
-      emit(row, at);
+      if (emit(row, at)) onPersisted?.(row);
       return row.id;
     },
 

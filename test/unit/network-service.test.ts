@@ -148,6 +148,17 @@ function server(name: string, endpointIn?: (root: string) => string, opts: Serve
 }
 
 async function call<T>(net: NetworkService, method: string, params: unknown = {}): Promise<T> {
+  if (
+    method === 'link.setCapability' &&
+    typeof params === 'object' &&
+    params !== null &&
+    'machineId' in params &&
+    !('expectedToken' in params)
+  ) {
+    const id = params.machineId;
+    const token = net.state().links.find((link) => link.machineId === id)?.editToken;
+    if (token) params = { ...params, expectedToken: token };
+  }
   const answer = net.handle(method, params);
   if (answer === null) throw new Error(`not a network method: ${method}`);
   return (await answer) as T;
@@ -478,7 +489,20 @@ describe('network service over C2 calls', { timeout: 60_000 }, () => {
     // The snapshot b pushed on up is the baseline; a capability change must push a fresh one.
     await until(() => linkTo(a.net, bId)?.snapshot != null);
     const seqBefore = linkTo(a.net, bId)?.snapshot?.seq ?? 0;
+    const staleToken = linkTo(b.net, aId)?.editToken ?? '';
     await call(b.net, 'link.setCapability', { machineId: aId, capability: 'monitor', on: false });
+    await expect(
+      call(b.net, 'link.setCapability', {
+        machineId: aId,
+        capability: 'drive',
+        on: true,
+        expectedToken: staleToken,
+      }),
+    ).rejects.toMatchObject({ kind: 'conflict' });
+    expect(linkTo(b.net, aId)?.capabilities.drive).toBe(false);
+    expect(() =>
+      b.net.handle('link.setCapability', { machineId: aId, capability: 'drive', on: true }),
+    ).toThrow('Expected expectedToken');
     await until(() => a.net.port().peerCapabilitiesOf(bId)?.monitor === false);
     await until(() => (linkTo(a.net, bId)?.snapshot?.seq ?? 0) > seqBefore);
     expect(linkTo(a.net, bId)?.capabilities.monitor).toBe(true);

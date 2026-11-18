@@ -15,6 +15,12 @@ const log = makeLog('net-drive');
 const WAIT_MS = 15_000;
 const ECHO_AGENT = 'e2e-echo';
 
+async function setCapability(server, params) {
+  const state = await networkState(server);
+  const link = state.links.find((row) => row.machineId === params.machineId);
+  assert(link, 'link is present');
+  return server.c2.call('link.setCapability', { ...params, expectedToken: link.editToken });
+}
 async function eventually(what, check) {
   assert(await until(check, WAIT_MS), `timed out waiting for: ${what}`);
 }
@@ -99,7 +105,7 @@ async function run() {
     assert(!echoed(a, view.viewId, 'ECHO:refused'), 'echo received refused input');
 
     phase('3. B enables drive; A types and B echoes');
-    await b.c2.call('link.setCapability', { machineId: aId, capability: 'drive', on: true });
+    await setCapability(b, { machineId: aId, capability: 'drive', on: true });
     await eventually('B drive capability seen by A', () =>
       linkView(a.c2, bId).then((l) => l?.peerCapabilities.drive === true),
     );
@@ -146,7 +152,7 @@ async function run() {
     assert(!echoed(a, view.viewId, 'ECHO:cut-input'), 'input sent during the cut reached B');
 
     phase('6. B turns drive off; the next remote input is refused');
-    await b.c2.call('link.setCapability', { machineId: aId, capability: 'drive', on: false });
+    await setCapability(b, { machineId: aId, capability: 'drive', on: false });
     await eventually('B drive capability off seen by A', () =>
       linkView(a.c2, bId).then((l) => l?.peerCapabilities.drive === false),
     );
@@ -156,7 +162,7 @@ async function run() {
     assert(fault?.includes('capability_off'), `remote.input after off: ${fault}`);
 
     phase('7. drive back on; remote open and close');
-    await b.c2.call('link.setCapability', { machineId: aId, capability: 'drive', on: true });
+    await setCapability(b, { machineId: aId, capability: 'drive', on: true });
     await eventually('B drive capability on again', () =>
       linkView(a.c2, bId).then((l) => l?.peerCapabilities.drive === true),
     );
@@ -179,7 +185,7 @@ async function run() {
     // crosses the link and B has to refuse it on its own record.
     const marker = `B-OFF-${Date.now().toString(36)}`;
     proxy.pause();
-    await b.c2.call('link.setCapability', { machineId: aId, capability: 'drive', on: false });
+    await setCapability(b, { machineId: aId, capability: 'drive', on: false });
     assert(
       (await linkView(a.c2, bId))?.peerCapabilities.drive === true,
       'A saw B drive off while the link was paused',

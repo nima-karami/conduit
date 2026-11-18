@@ -504,6 +504,11 @@ async function run() {
       async () =>
         (await linkView(a.c2, bId))?.capabilities.monitor === !linked.capabilities.monitor,
     );
+    await eventually(
+      'Links renders the confirmed capability and fresh token',
+      async () =>
+        (await monitor.getAttribute('aria-pressed')) === String(!linked.capabilities.monitor),
+    );
     await monitor.click();
     await eventually(
       'Links restored the authority on A',

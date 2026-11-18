@@ -126,7 +126,12 @@ export interface LinkManager {
   forget(machineId: string): boolean;
   /** True for an ssh record the peer dialed to us: a controller, with no endpoint of ours to dial. */
   isSshController(machineId: string): boolean;
-  setCapability(machineId: string, capability: Capability, on: boolean): boolean;
+  setCapability(
+    machineId: string,
+    capability: Capability,
+    on: boolean,
+    expectedToken: string,
+  ): 'ok' | 'not-found' | 'conflict';
   setAddresses(machineId: string, addresses: string[]): boolean;
   /** Null when the link isn't up; otherwise whether the socket still has room. */
   send(machineId: string, frame: LinkFrame): boolean | null;
@@ -840,10 +845,23 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
     }
   };
 
+  const tokenNonce = randomBytes(16).toString('hex');
+  const stateVersions = new WeakMap<LinkStateMachine, number>();
+  let nextStateVersion = 0;
+  const editToken = (p: Peer) => {
+    let version = stateVersions.get(p.sm);
+    if (version === undefined) {
+      version = ++nextStateVersion;
+      stateVersions.set(p.sm, version);
+    }
+    return `${tokenNonce}:${deps.store.revision(p.record.machineId)}:${version}`;
+  };
   const viewOf = (p: Peer): LinkView => {
+    p.record = deps.store.get(p.record.machineId) ?? p.record;
     const peerFeatures = p.peerHello?.features ?? null;
     return {
       machineId: p.record.machineId,
+      editToken: editToken(p),
       name: p.record.name,
       transport: p.record.transport,
       state: p.sm.state,
@@ -1030,15 +1048,17 @@ export function createLinkManager(deps: LinkManagerDeps): LinkManager {
       finishRevoke(p);
       return true;
     },
-    setCapability(machineId, capability, on) {
+    setCapability(machineId, capability, on, expectedToken) {
       const p = peerOf(machineId);
-      if (!p || terminal(p)) return false;
+      if (!p || terminal(p) || deps.store.revision(machineId) === null) return 'not-found';
+      if (editToken(p) !== expectedToken) return 'conflict';
+      p.record = deps.store.get(machineId) ?? p.record;
       const capabilities = { ...p.record.capabilities, [capability]: on };
       p.record = deps.store.update(machineId, { capabilities }) ?? p.record;
       p.conn?.send({ t: 'caps', capabilities });
       deps.audit.record({ kind: 'link.capability', peer: machineId, detail: { capability, on } });
       deps.changed();
-      return true;
+      return 'ok';
     },
     setAddresses(machineId, addresses) {
       const p = peerOf(machineId);

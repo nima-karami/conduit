@@ -317,7 +317,7 @@ describe('policy service', () => {
   });
 
   it.each(['active', 'suspended'] as const)(
-    'durably revokes an ineligible %s grant but refuses undo and stale authority',
+    'durably revokes an ineligible %s grant without offering undo and rejects stale authority',
     (state) => {
       const h = harness({
         policy: policyText(),
@@ -337,18 +337,51 @@ describe('policy service', () => {
       expect(h.service.extendGrant('g1', 0, token)).toEqual({ ok: false, error: 'invalid-value' });
       expect(h.service.renewGrant('g1', 0, token)).toEqual({ ok: false, error: 'invalid-value' });
       const result = h.service.revokeGrantWithUndo('g1', 0, token, 1);
-      if (!result.ok || !result.undoToken)
-        throw new Error(`revoke failed: ${JSON.stringify(result)}`);
+      expect(result).toEqual({ ok: true });
       expect(h.service.ui([]).grants[0]).toMatchObject({ state: 'revoked', lifecycleRevision: 1 });
       const saved = JSON.parse(h.grantWrites.at(-1) ?? 'null');
       expect(saved).toMatchObject({ grants: [{ state: 'revoked', lifecycleRevision: 1 }] });
-      expect(h.service.undoGrantRevoke(result.undoToken, 1)).toEqual({
-        ok: false,
-        error: 'conflict',
-      });
       expect(h.service.ui([]).grants[0]).toMatchObject({ state: 'revoked', lifecycleRevision: 1 });
     },
   );
+
+  it('does not offer undo when bindings change while revocation is saved', () => {
+    let live = true;
+    const h = harness({
+      policy: policyText(),
+      grants: serializeGrantsFile({ version: 1, grants: [grant()] }),
+      grantBindingsCurrent: () => live,
+    });
+    h.service.start();
+    const write = h.deps.grantsIo.writeSync;
+    vi.spyOn(h.deps.grantsIo, 'writeSync').mockImplementation((text) => {
+      const result = write(text);
+      live = false;
+      return result;
+    });
+    expect(h.service.revokeGrantWithUndo('g1', 0, h.service.ui([]).editToken, 1)).toEqual({
+      ok: true,
+    });
+    expect(h.service.ui([]).grants[0]).toMatchObject({ state: 'revoked', lifecycleRevision: 1 });
+  });
+
+  it('does not offer undo if the grant expires while its revocation is saved', () => {
+    const h = harness({
+      policy: policyText(),
+      grants: serializeGrantsFile({ version: 1, grants: [grant({ expiresAt: iso(T0 + 1) })] }),
+    });
+    h.service.start();
+    const write = h.deps.grantsIo.writeSync;
+    vi.spyOn(h.deps.grantsIo, 'writeSync').mockImplementation((text) => {
+      const result = write(text);
+      h.advance(1);
+      return result;
+    });
+    expect(h.service.revokeGrantWithUndo('g1', 0, h.service.ui([]).editToken, 1)).toEqual({
+      ok: true,
+    });
+    expect(h.service.ui([]).grants[0]).toMatchObject({ state: 'revoked', lifecycleRevision: 1 });
+  });
 
   it('invalidates undo when another grant changes', () => {
     const h = harness({
