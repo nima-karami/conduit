@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const updater = vi.hoisted(() => ({
+  handler: 'snap-store_snap-store.desktop',
   openPath: vi.fn(async () => ''),
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   autoDownload: false,
@@ -13,7 +14,12 @@ vi.mock('node:fs', () => ({
   existsSync: () => true,
   readFileSync: () => '0::/user.slice/app-conduit-99.scope\n',
 }));
-vi.mock('node:child_process', () => ({ spawnSync: () => ({ status: 0, stdout: '54\n' }) }));
+vi.mock('node:child_process', () => ({
+  spawnSync: (cmd: string) => ({
+    status: 0,
+    stdout: cmd.endsWith('/xdg-mime') ? updater.handler : '54\n',
+  }),
+}));
 vi.mock('electron', () => ({ app: { isPackaged: true }, shell: { openPath: updater.openPath } }));
 vi.mock('electron-updater', () => ({ autoUpdater: updater }));
 
@@ -70,6 +76,17 @@ describe('explicit deb install failure', () => {
         environment: expect.objectContaining({ DISPLAY: expect.any(Boolean) }),
       }),
     );
+    updater.handler = 'org.gnome.FileRoller.desktop';
+    updater.openPath.mockClear();
+    quitAndInstall();
+    await vi.waitFor(() =>
+      expect(send).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          message: expect.stringMatching(/couldn't install/),
+        }),
+      ),
+    );
+    expect(updater.openPath).not.toHaveBeenCalled();
     handlers['update-downloaded']({ version: '1', downloadedFile: '/tmp/update.deb' });
     expect(updater.autoInstallOnAppQuit).toBe(false);
     handlers['update-downloaded']({ version: '2', downloadedFile: '/tmp/next.deb' });

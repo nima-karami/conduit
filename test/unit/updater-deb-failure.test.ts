@@ -47,8 +47,8 @@ describe('handleUpdaterError', () => {
 });
 
 it.each([
-  ['success', vi.fn(async () => ''), /Click Install there/],
-  ['no handler', vi.fn(async () => 'No application is registered'), /couldn't install/],
+  ['success', vi.fn(async () => 'App Center'), /Click Install there/],
+  ['no handler', vi.fn(async () => null), /couldn't install/],
   [
     'opening fails',
     vi.fn(async () => {

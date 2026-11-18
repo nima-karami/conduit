@@ -58,6 +58,24 @@ function linuxSessionState(): { scopeKind: string; sessionId: string | null } {
   return { scopeKind, sessionId: result.status === 0 && id && /^[a-z0-9]+$/i.test(id) ? id : null };
 }
 
+const debInstallers = new Map([
+  ['snap-store_snap-store.desktop', 'App Center'],
+  ['org.gnome.Software.desktop', 'GNOME Software'],
+  ['org.kde.discover.desktop', 'Discover'],
+  ['gdebi.desktop', 'GDebi'],
+]);
+
+async function openSystemInstaller(file: string): Promise<string | null> {
+  const handler = spawnSync(
+    '/usr/bin/xdg-mime',
+    ['query', 'default', 'application/vnd.debian.binary-package'],
+    { encoding: 'utf8', timeout: 1000 },
+  );
+  const name = handler.status === 0 ? debInstallers.get(handler.stdout.trim()) : undefined;
+  if (!name || (await shell.openPath(file))) return null;
+  return name;
+}
+
 export function initUpdater(
   send: (msg: HostToWebview) => void,
   onEvent: (event: string, data?: Record<string, unknown>) => void = () => {},
@@ -192,7 +210,7 @@ export function initUpdater(
     void handleUpdaterError(err, {
       platform: process.platform,
       downloadedFile: pendingDownloadedFile,
-      openInstaller: explicitInstallInProgress ? (file) => shell.openPath(file) : undefined,
+      openInstaller: explicitInstallInProgress ? openSystemInstaller : undefined,
       send,
       onEvent,
     });
@@ -217,7 +235,7 @@ export function initUpdater(
 interface UpdaterErrorContext {
   platform: string;
   downloadedFile: string | null;
-  openInstaller?: (file: string) => Promise<string>;
+  openInstaller?: (file: string) => Promise<string | null>;
   send: (msg: HostToWebview) => void;
   onEvent: (event: string, data?: Record<string, unknown>) => void;
 }
@@ -235,10 +253,9 @@ export async function handleUpdaterError(err: unknown, ctx: UpdaterErrorContext)
     let message = failure.message;
     if (ctx.openInstaller && ctx.downloadedFile) {
       try {
-        const error = await ctx.openInstaller(ctx.downloadedFile);
-        if (!error) {
-          message =
-            'The update opened in your system installer. Click Install there, then restart Conduit. You can also install it from a terminal:';
+        const installer = await ctx.openInstaller(ctx.downloadedFile);
+        if (installer) {
+          message = `The update opened in ${installer}. Click Install there, then restart Conduit. You can also install it from a terminal:`;
           ctx.onEvent('deb-installer-opened');
         } else {
           ctx.onEvent('deb-installer-open-failed');
