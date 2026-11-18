@@ -54,6 +54,8 @@ export interface OpenSessionOutput {
   handle: Handle | null;
   label: string;
   agent: string;
+  startup?: 'running' | 'waiting_at_prompt' | 'starting';
+  screen_excerpt?: string;
   /**
    * Present when open_session got a message. A failure to store it never fails the open: the
    * session is open and `id` is null with the reason (spec flexible-agent-contracts §3.2).
@@ -74,6 +76,7 @@ export interface McpOpenRequest {
   openedBy: SessionOpener;
   home: string;
   label: string | undefined;
+  lockTitle?: boolean;
   focus: boolean;
   launch: McpLaunch;
   /** The session closes once its program exits; finished output is lost (CON-152). */
@@ -136,6 +139,14 @@ export interface ControlDeps {
     args: unknown,
     opts?: SendOptions,
   ): Promise<Result<SendMessageOutput>>;
+  observeStartup?(
+    sessionId: string,
+    handle: Handle | null,
+    opener: Caller,
+    messageId: string | null,
+    messageRequested: boolean,
+    options: { signal: AbortSignal; deadlineMs?: number },
+  ): Promise<Pick<OpenSessionOutput, 'startup' | 'screen_excerpt'>>;
 }
 export interface TargetSession {
   sessionId: string;
@@ -184,6 +195,8 @@ export interface ControlCallContext {
   ui(windowId: number, routedSessionId: string, action: McpUiAction): Promise<Result<McpUiResult>>;
   /** The call's cancel: a notifications/cancelled or a closed connection aborts it. */
   signal: AbortSignal;
+  /** Last safe time to spend observing startup, in host clock milliseconds. */
+  deadlineMs?: number;
 }
 export interface ControlHandlers {
   prepareOpenSession(
@@ -698,6 +711,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     tool: 'open_session' | 'open_terminal',
     caller: Caller,
     a: Common & OpenExtras & Partial<SessionExtras>,
+    ctx: ControlCallContext,
     resolve: () => Promise<Result<Resolved>>,
   ): Promise<Result<Prepared<OpenSessionOutput>>> {
     return prepared(tool, caller, async (who) => {
@@ -754,6 +768,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
               openedBy: openerOf(caller, who),
               home: abs,
               label: a.label ?? label,
+              ...(a.label !== undefined ? { lockTitle: true } : {}),
               focus,
               launch,
               closeWhenDone: a.closeWhenDone,
@@ -779,15 +794,44 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
             path: abs,
           });
           const handle = deps.claimHandle(outcome.sessionId, tool);
-          if (a.message === undefined)
+          if (a.message === undefined) {
+            const startup =
+              tool === 'open_session'
+                ? await deps.observeStartup?.(outcome.sessionId, handle, caller, null, false, {
+                    signal: ctx.signal,
+                    deadlineMs: ctx.deadlineMs,
+                  })
+                : undefined;
             return {
               ok: true,
-              value: { session_id: outcome.sessionId, handle, label: outcome.label, agent },
+              value: {
+                session_id: outcome.sessionId,
+                handle,
+                label: outcome.label,
+                agent,
+                ...startup,
+              },
             };
+          }
           const message = await openMessage(caller, handle, a.message);
+          const startup = await deps.observeStartup?.(
+            outcome.sessionId,
+            handle,
+            caller,
+            message.id,
+            true,
+            { signal: ctx.signal, deadlineMs: ctx.deadlineMs },
+          );
           return {
             ok: true,
-            value: { session_id: outcome.sessionId, handle, label: outcome.label, agent, message },
+            value: {
+              session_id: outcome.sessionId,
+              handle,
+              label: outcome.label,
+              agent,
+              message,
+              ...startup,
+            },
           };
         },
       };
@@ -846,7 +890,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
     async prepareOpenSession(caller, raw, ctx) {
       const a = parseSessionArgs(raw);
       if (isFail(a)) return a;
-      return prepareOpen('open_session', caller, focusFor(a, ctx), () =>
+      return prepareOpen('open_session', caller, focusFor(a, ctx), ctx, () =>
         resolveSessionAgent(a.agent),
       );
     },
@@ -858,6 +902,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
         'open_terminal',
         caller,
         focusFor({ ...a, label: a.label ?? leaf }, ctx),
+        ctx,
         async () =>
           deps.resolveCommand(a.command.command) === undefined
             ? fail('command_not_found', `command not found: ${a.command.command}`)

@@ -224,11 +224,13 @@ async function submit() {
       return;
     }
     const tool = call[1];
+    let callId;
     const result = await callTool(tool, args, (id) => {
+      callId = id;
       lastCallId = id;
       record('CALL', { tool, id });
     });
-    record('RESULT', { tool, result });
+    record('RESULT', { tool, id: callId, result });
     prompt();
     return;
   }
@@ -266,6 +268,14 @@ async function submit() {
 }
 
 function key(ch) {
+  if (startupBlocked) {
+    if (ch === '1') {
+      startupBlocked = false;
+      write(`${ESC}[2J${ESC}[H`);
+      releaseStartup();
+    }
+    return;
+  }
   if (permit) {
     if (ch === '\r') record('PROMPT-ENTER');
     else if (ch === '1' || ch === '2') closePermit();
@@ -294,6 +304,8 @@ function key(ch) {
 }
 
 let pending = '';
+let startupBlocked = process.argv.includes('--startup-block');
+let releaseStartup = () => {};
 if (process.stdin.isTTY) process.stdin.setRawMode(true);
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => {
@@ -320,6 +332,12 @@ process.stdin.on('data', (chunk) => {
   }
 });
 
+if (startupBlocked) {
+  write(`${ESC}]0;CLI changed title\x07Startup approval required\r\nPress 1 to continue`);
+  await new Promise((resolve) => {
+    releaseStartup = resolve;
+  });
+}
 await connect();
 // Exits only on a typed `quit` or a kill (restart / dispose / quit).
 setInterval(() => {}, 1 << 30);

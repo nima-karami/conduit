@@ -19,6 +19,7 @@ export interface SessionCreateOpts {
   /** Requires agentId === COMMAND_AGENT_ID. */
   command?: SessionCommand;
   openedBy?: SessionOpener;
+  lockTitle?: boolean;
   closeWhenDone?: boolean;
   model?: string;
 }
@@ -91,6 +92,7 @@ export class SessionManager {
         ? { command: { command: opts.command.command, args: [...opts.command.args] } }
         : {}),
       ...(opts.openedBy ? { openedBy: { ...opts.openedBy } } : {}),
+      ...(opts.lockTitle ? { titleLocked: true } : {}),
       ...(opts.closeWhenDone ? { closeWhenDone: true } : {}),
       ...(opts.model !== undefined ? { model: opts.model } : {}),
     };
@@ -305,18 +307,12 @@ export class SessionManager {
     return true;
   }
 
-  /**
-   * Adopt the terminal's title (OSC 0/2) as the session name, if policy allows
-   * (see resolveTitleSync: ignores empty/path/folder titles). This is how an app
-   * running in the terminal — e.g. Claude Code, including a live `/rename` — drives
-   * the session label. A meaningful title always wins, so a `/rename` overrides a
-   * prior manual rename.
-   */
+  // see spec 2026-11-07-flexible-agent-contracts §3.2.1
   applyTitle(id: string, title: string) {
     const s = this.sessions.get(id);
     if (!s) return;
     let changed = false;
-    const next = resolveTitleSync(s, title);
+    const next = s.titleLocked ? null : resolveTitleSync(s, title);
     if (next && next !== s.name) {
       s.name = next;
       changed = true;

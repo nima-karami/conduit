@@ -420,6 +420,13 @@ describe('persistence — MCP control fields (control-tools spec §3.3)', () => 
     expect(x.openedBy).toEqual(opener);
   });
 
+  it('round-trips the opener label lock and rejects invalid values', () => {
+    const [saved] = sessionsOf(serializeSessions([{ ...s, titleLocked: true }]));
+    expect(saved.titleLocked).toBe(true);
+    const [invalid] = sessionsOf(v1([{ ...s, titleLocked: 'yes' }]));
+    expect(invalid.titleLocked).toBeUndefined();
+  });
+
   it('keeps the machineId of a remote opener through the round trip', () => {
     const remoteOpener = { handle: 'claude-3', machineId: 'm-0000000a' };
     const live: Session = { ...s, agentId: COMMAND_AGENT_ID, openedBy: remoteOpener };

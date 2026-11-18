@@ -910,6 +910,48 @@ describe('session tool descriptions', () => {
 describe('open_session model and message (CON-148)', () => {
   const NO_MOVE = ctxOf();
 
+  it('distinguishes a failed first-message store from an open with no message', async () => {
+    const seen: Array<[string | null, boolean]> = [];
+    const h = harness({
+      observeStartup: async (_id, _handle, _caller, messageId, requested) => {
+        seen.push([messageId, requested]);
+        return { startup: 'starting' };
+      },
+      sendMessage: async () => ({ ok: false, error: toolError('open_failed', 'store failed') }),
+    });
+    await whenOn(h.deps).openSession(caller(), sessionArgs());
+    const failed = await whenOn(h.deps).openSession(caller(), sessionArgs({ message: 'task' }));
+    expect(seen).toEqual([
+      [null, false],
+      [null, true],
+    ]);
+    expect(failed.ok && failed.value).toMatchObject({ startup: 'starting', message: { id: null } });
+  });
+
+  it('passes the caller deadline and cancellation to startup observation', async () => {
+    const aborter = new AbortController();
+    let observed: { signal: AbortSignal; deadlineMs?: number } | undefined;
+    const h = harness({
+      observeStartup: async (_id, _handle, _caller, _message, _requested, options) => {
+        observed = options;
+        return { startup: 'waiting_at_prompt', screen_excerpt: 'Trust this folder?' };
+      },
+    });
+    const context = { ...ctxOf(), signal: aborter.signal, deadlineMs: 1234 };
+    const prepared = await createControlHandlers(h.deps).prepareOpenSession(
+      caller(),
+      sessionArgs(),
+      context,
+    );
+    if (!prepared.ok || 'done' in prepared.value) throw new Error('expected prepared call');
+    const result = await prepared.value.run();
+    expect(observed).toEqual({ signal: aborter.signal, deadlineMs: 1234 });
+    expect(result.ok && result.value).toMatchObject({
+      startup: 'waiting_at_prompt',
+      screen_excerpt: 'Trust this folder?',
+    });
+  });
+
   it('passes a valid model through to openSession', async () => {
     const h = harness();
     const r = await whenOn(h.deps).openSession(caller(), sessionArgs({ model: 'gpt-6.1-terra' }));

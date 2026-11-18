@@ -628,6 +628,27 @@ describe('server domain: sessions.create and MCP opens', () => {
     expect(h.domain.sessions.get(sessionId)?.name).toBe('worker');
   });
 
+  it('preserves an opener label against terminal titles', async () => {
+    const h = harness();
+    const caller = await h.create();
+    const result = await h.domain.domain.openSession({
+      callerSessionId: caller,
+      openedBy: { handle: 'a1', sessionId: caller },
+      home: h.home,
+      label: 'worker',
+      lockTitle: true,
+      focus: false,
+      launch: { kind: 'agent', agentId: 'sh' },
+      closeWhenDone: false,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('open failed');
+    expect(h.domain.sessions.get(result.sessionId)).toMatchObject({
+      name: 'worker',
+      titleLocked: true,
+    });
+  });
+
   it('maps MCP opens: ok with label, unknown_agent, server_stopping with nothing created', async () => {
     const h = harness();
     const caller = await h.create();

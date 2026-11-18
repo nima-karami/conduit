@@ -57,6 +57,31 @@ describe('SessionManager (model)', () => {
     expect(s.name).toBe('My Session');
   });
 
+  it('keeps an MCP opener’s explicit label across terminal titles and restore', () => {
+    const s = mgr.create('claude', '/work/proj', {
+      name: 'Helper',
+      lockTitle: true,
+      openedBy: { handle: 'lead', sessionId: 'lead-id' },
+    });
+    mgr.applyTitle(s.id, 'CLI generated title');
+    expect(mgr.get(s.id)?.name).toBe('Helper');
+    mgr.rename(s.id, 'Renamed by user');
+    mgr.applyTitle(s.id, 'Another CLI title');
+    expect(mgr.get(s.id)?.name).toBe('Renamed by user');
+    const restored = new SessionManager(new AgentRegistry([claude]), seqIds());
+    restored.restore(mgr.list());
+    restored.applyTitle(s.id, 'Title after restore');
+    expect(restored.get(s.id)?.name).toBe('Renamed by user');
+  });
+
+  it('still adopts terminal titles when an MCP opener gave no label', () => {
+    const s = mgr.create('claude', '/work/proj', {
+      openedBy: { handle: 'lead', sessionId: 'lead-id' },
+    });
+    mgr.applyTitle(s.id, 'CLI generated title');
+    expect(mgr.get(s.id)?.name).toBe('CLI generated title');
+  });
+
   it('stamps createdAt and lastActiveAt from injected now on create', () => {
     let clock = 1000;
     const m = new SessionManager(new AgentRegistry([claude]), seqIds(), () => clock);

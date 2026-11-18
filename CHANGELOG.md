@@ -6,6 +6,10 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Opened agent sessions report startup status and notify their opener when blocked; explicit session labels persist across terminal title changes.
+
 ## [0.68.4] — 2026-11-18
 
 ### Changed

@@ -60,6 +60,7 @@ export const UI_TIMEOUT_MS = 5_000;
 const askMarginMs = (routesUi: boolean): number => (routesUi ? UI_TIMEOUT_MS : 0);
 
 export interface InFlight {
+  readonly startedAt: number;
   /** True once notifications/cancelled named this request. Never true for a null requestId. */
   readonly cancelled: boolean;
   /** Aborts with the cancel that ends this call, so work started for it stops too. */
@@ -621,6 +622,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
     begin(key) {
       const aborter = new AbortController();
       const entry: Entry = {
+        startedAt: deps.now(),
         cancelled: false,
         aborter,
         signal: aborter.signal,
@@ -632,7 +634,7 @@ export function createCallFlow(deps: CallFlowDeps): CallFlow {
           if (byId.size === 0) inflight.delete(key.connId);
         },
       };
-      keys.set(entry, { key, startedAt: deps.now() });
+      keys.set(entry, { key, startedAt: entry.startedAt });
       if (key.requestId !== null) {
         let byId = inflight.get(key.connId);
         if (!byId) {

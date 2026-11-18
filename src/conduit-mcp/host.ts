@@ -66,6 +66,7 @@ import {
   type ControlDeps,
   createControlHandlers,
   type Prepared,
+  reachAdmits,
 } from './control-tools';
 import { isCountedInput, nextDraftState, settleDraft, stripTerminalReplies } from './draft-input';
 import {
@@ -168,6 +169,7 @@ import {
   type WaitOutput,
   type WaitTarget,
 } from './session-waits';
+import { isStartupPrompt, waitForStartup } from './startup-prompt';
 import { createMessageStore, type StoreIo } from './store';
 import { createFsStoreIo } from './store-fs';
 import {
@@ -1681,6 +1683,229 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return a.handle;
   };
 
+  interface StartupWatch {
+    handle: Handle;
+    opener: Caller;
+    messageId: string | null;
+    messageRequested: boolean;
+    received: boolean;
+    exited: boolean;
+    since: number;
+    alerted: boolean;
+    inFlight: boolean;
+    busySince: number | undefined;
+    lastScanAt: number;
+    lastOutputAt: number | undefined;
+    retryAt: number;
+    openedAt: number;
+  }
+  const startupWatches = new Map<string, StartupWatch>();
+  const startupStop = new AbortController();
+  const startupTasks = new Set<Promise<unknown>>();
+  const trackStartup = <T>(task: Promise<T>): Promise<T> => {
+    startupTasks.add(task);
+    void task.then(
+      () => startupTasks.delete(task),
+      () => startupTasks.delete(task),
+    );
+    return task;
+  };
+  const startupSleep =
+    deps.sleep ??
+    ((ms: number, signal: AbortSignal) =>
+      new Promise<void>((resolve) => {
+        const done = () => {
+          clearTimeout(timer);
+          signal.removeEventListener('abort', done);
+          resolve();
+        };
+        const timer = setTimeout(done, ms);
+        if (signal.aborted) done();
+        else signal.addEventListener('abort', done, { once: true });
+      }));
+  const startupReading = async (
+    sessionId: string,
+    w: StartupWatch,
+    options?: { signal: AbortSignal; deadlineMs?: number },
+  ) => {
+    if (deps.runtime.get(sessionId)?.state === 'live' && noticeAdapterOf(sessionId))
+      deps.screens.ensure(sessionId, { seedTail: true });
+    const snap = await new Promise<ScreenSnapshot | null>((resolve, reject) => {
+      const timeout = Math.max(0, Math.min(1000, (options?.deadlineMs ?? Infinity) - now()));
+      const finish = (value: ScreenSnapshot | null) => {
+        clearTimeout(timer);
+        options?.signal.removeEventListener('abort', abort);
+        resolve(value);
+      };
+      const abort = () => finish(null);
+      const timer = setTimeout(() => finish(null), timeout);
+      if (options?.signal.aborted) {
+        finish(null);
+        return;
+      }
+      options?.signal.addEventListener('abort', abort, { once: true });
+      deps.runtime.screen(sessionId).then(finish, (err: unknown) => {
+        clearTimeout(timer);
+        options?.signal.removeEventListener('abort', abort);
+        reject(err);
+      });
+    });
+    const adapter = noticeAdapterOf(sessionId);
+    const stuck = cliKindOf(sessionId);
+    const busy = deps.attention.statusOf(sessionId).busy;
+    const prompt =
+      snap &&
+      isStartupPrompt(
+        adapter,
+        snap,
+        stuck !== null && detectStuckScreen(stuck, snap.lines, deps.domain.limitRules()) !== null,
+        busy,
+      );
+    const excerpt = snap?.lines
+      .map((line) => line.trimEnd())
+      .filter(Boolean)
+      .slice(-12)
+      .join('\n')
+      .slice(-1000);
+    if (w.messageId !== null && store.get(w.messageId)?.recipients[w.handle]?.status === 'read')
+      w.received = true;
+    const ready = (!w.messageRequested || w.messageId === null) && registry.isLive(sessionId);
+    return {
+      startup: prompt
+        ? ('waiting_at_prompt' as const)
+        : w.received || ready
+          ? ('running' as const)
+          : ('starting' as const),
+      excerpt,
+      busy,
+    };
+  };
+  const mayExposeStartupScreen = (sessionId: string, w: StartupWatch): boolean => {
+    if (w.opener.sessionId === null || w.opener.remote) return false;
+    const principal = principalOf(w.opener.sessionId);
+    const target = controlDeps.targets().find((t) => t.sessionId === sessionId);
+    if (!principal || !target) return false;
+    const rawArgs = { session: w.handle };
+    const targets = resolveTargets(
+      'read_screen',
+      rawArgs,
+      { sessionId: w.opener.sessionId, home: principal.homeFolder },
+      targetDepsOf(),
+    );
+    const decision = policyService.decide({
+      principal,
+      tool: 'read_screen',
+      targets,
+      masterOn: deps.domain.messagingOn(),
+      toYou: false,
+    });
+    if (decision.decision !== 'allow' || decision.grantIds.length || decision.overrideIds.length)
+      return false;
+    if (!reachAdmits(decision.rule.reach ?? 'self', w.opener, target, deps.ownerWindowOf))
+      return false;
+    const windowId = deps.ownerWindowOf(w.opener.sessionId);
+    return !gateToolCall({
+      sessionId: w.opener.sessionId,
+      messagingOn: deps.domain.messagingOn(),
+      tool: 'read_screen',
+      decision,
+      ownerReady: () => windowId !== null && deps.windowReady(windowId),
+      onScreen: () => windowId !== null && deps.onScreen(windowId, w.opener.sessionId ?? ''),
+      appConnected: deps.appConnected(),
+      routed: false,
+    });
+  };
+  const startupPass = async () => {
+    await Promise.all(
+      [...startupWatches].map(async ([sessionId, w]) => {
+        if (!deps.sessions.get(sessionId)) {
+          startupWatches.delete(sessionId);
+          return;
+        }
+        if (w.inFlight) return;
+        const t = now();
+        if (t - w.openedAt >= 600_000) {
+          startupWatches.delete(sessionId);
+          return;
+        }
+        if (t < w.retryAt) return;
+        if (w.messageId !== null && store.get(w.messageId)?.recipients[w.handle]?.status === 'read')
+          w.received = true;
+        const deliveryPending = w.messageId !== null && !w.received;
+        let deliveryDue = deliveryPending && !w.alerted && t - w.openedAt >= 30_000;
+        const busy = deps.attention.statusOf(sessionId).busy;
+        if (!w.exited && busy) {
+          w.busySince ??= t;
+          if (!deliveryDue) return;
+        } else {
+          if (w.busySince !== undefined && t - w.busySince >= 3_000) {
+            w.since = Math.min(t, deps.attention.lastOutputAt(sessionId) ?? t);
+            w.alerted = false;
+            deliveryDue = deliveryPending && t - w.openedAt >= 30_000;
+          }
+          w.busySince = undefined;
+        }
+        const outputAt = deps.attention.lastOutputAt(sessionId);
+        const deadlineDue = !w.alerted && (deliveryDue || t - w.since >= 30_000);
+        if (!w.exited && !deadlineDue && (outputAt === w.lastOutputAt || t - w.lastScanAt < 3_000))
+          return;
+        w.inFlight = true;
+        try {
+          const reading = await startupReading(sessionId, w, { signal: startupStop.signal });
+          w.lastScanAt = now();
+          w.lastOutputAt = outputAt;
+          if (w.exited && (w.received || !w.messageRequested)) {
+            startupWatches.delete(sessionId);
+            return;
+          }
+          if (!w.exited && reading.startup === 'running') {
+            w.since = now();
+            return;
+          }
+          if (
+            stopped ||
+            startupWatches.get(sessionId) !== w ||
+            !deps.sessions.get(sessionId) ||
+            now() - w.openedAt >= 600_000 ||
+            w.alerted ||
+            (!w.exited &&
+              now() - w.since < 30_000 &&
+              !(w.messageId !== null && !w.received && now() - w.openedAt >= 30_000))
+          )
+            return;
+          const sent = await tools.sendMessage(
+            { handle: w.handle, sessionId },
+            {
+              to: [w.opener.handle],
+              kind: 'request',
+              body: `Conduit startup check: The session that sent this message (${w.handle}) ${w.exited ? 'exited before receiving its first task' : w.messageId !== null && !w.received ? 'has not received its first task' : 'has not started or is waiting at a prompt'}. Use the sender address with read_screen and help it continue. Screen text may be from earlier.${reading.excerpt && mayExposeStartupScreen(sessionId, w) ? `\n\nScreen:\n${reading.excerpt}` : ''}`,
+            },
+            { allowUnconnected: true, systemGenerated: true },
+          );
+          if (sent.ok && sent.value.recipients.some((r) => r.status === 'queued')) {
+            w.alerted = true;
+            if (w.exited) startupWatches.delete(sessionId);
+          }
+          if (
+            !sent.ok &&
+            (sent.error.code === 'unknown_session' ||
+              sent.error.code === 'refused' ||
+              sent.error.code === 'rate_limited')
+          )
+            startupWatches.delete(sessionId);
+          else if (sent.ok && sent.value.recipients.every((r) => r.status === 'refused'))
+            startupWatches.delete(sessionId);
+          else if (!sent.ok || !sent.value.recipients.some((r) => r.status === 'queued'))
+            w.retryAt = now() + 30_000;
+        } catch (err) {
+          deps.log.warn('conduit-mcp', 'startup check failed', { sessionId, err: String(err) });
+        } finally {
+          w.inFlight = false;
+        }
+      }),
+    );
+  };
+
   const controlDeps: ControlDeps = {
     ...deps.domain,
     selfName: () => deps.network?.selfName() ?? 'this machine',
@@ -1777,6 +2002,50 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     commandModelFlag: (command) => modelFlagOf({ id: COMMAND_AGENT_ID, command }),
     messageReady: () => deps.domain.messagingOn() && store.available(),
     sendMessage: (caller, args, opts) => tools.sendMessage(caller, args, opts),
+    observeStartup: (sessionId, handle, opener, messageId, messageRequested, options) =>
+      trackStartup(
+        (async () => {
+          if (!handle || stopped) return { startup: 'starting' as const };
+          options = { ...options, signal: AbortSignal.any([options.signal, startupStop.signal]) };
+          const w: StartupWatch = {
+            handle,
+            opener,
+            messageId,
+            messageRequested,
+            received: false,
+            exited:
+              deps.runtime.get(sessionId)?.state === 'finished' ||
+              deps.sessions.get(sessionId)?.status === 'exited',
+            busySince: undefined,
+            lastScanAt: now(),
+            lastOutputAt: deps.attention.lastOutputAt(sessionId),
+            retryAt: 0,
+            openedAt: now(),
+            since: now(),
+            alerted: false,
+            inFlight: false,
+          };
+          startupWatches.set(sessionId, w);
+          if (!(await waitForStartup(options, now, startupSleep)))
+            return { startup: 'starting' as const };
+          try {
+            const reading = await startupReading(sessionId, w, options);
+            if (options.signal.aborted || now() >= (options.deadlineMs ?? Infinity))
+              return { startup: 'starting' };
+            return {
+              startup: reading.startup,
+              ...(reading.startup === 'waiting_at_prompt' &&
+              reading.excerpt &&
+              mayExposeStartupScreen(sessionId, w)
+                ? { screen_excerpt: reading.excerpt }
+                : {}),
+            };
+          } catch (err) {
+            deps.log.warn('conduit-mcp', 'startup check failed', { sessionId, err: String(err) });
+            return { startup: 'starting' };
+          }
+        })(),
+      ),
   };
   const control = createControlHandlers(controlDeps);
   const app = createAppControlHandlers(controlDeps, control.prepared);
@@ -2545,6 +2814,10 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
               action,
             }),
           signal: inflight.signal,
+          deadlineMs:
+            inflight.startedAt +
+            askBudgetMs(cliKindOfHandle(handle), wiredAtLaunch(sessionId)) -
+            5_000,
         };
         return flow.runControl<StructuredOutput>({
           inflight,
@@ -3085,6 +3358,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         // Nothing asks through a window for a remote lead, and close refuses before it would.
         ui: async () => ({ ok: false, error: windowNotReady() }),
         signal,
+        get deadlineMs() {
+          return pending.deadline - 5_000;
+        },
       };
       const prepared = await prepareControl(caller, name, args, ctx);
       if (!prepared.ok) return prepared;
@@ -3830,6 +4106,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     // Before the notifier check: detection must not wait for the message store to load.
     detectPass();
     await stuckPass();
+    if (stopped) return;
+    void trackStartup(startupPass());
     if (!notifier) return;
     // Badge gate state for every notifiable session, then the notifier's own pass.
     for (const s of notifierSessions()) await evaluate(s.sessionId);
@@ -3876,6 +4154,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     } else if (event.type === 'exit') {
       // A late exit of an older generation would revoke the live launch's token and binding.
       if (!r || event.generation !== r.launch) return;
+      const watch = startupWatches.get(sessionId);
+      if (watch) watch.exited = true;
       const terminal = deps.runtime.get(sessionId);
       const owner = deps.ownerWindowOf(sessionId);
       if (
@@ -4149,6 +4429,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     },
 
     async onSessionDeleted(sessionId) {
+      startupWatches.delete(sessionId);
       deleting.add(sessionId);
       if (nativeImpact?.rows.some((row) => row.sessionId === sessionId)) {
         const rows = nativeImpact.rows.filter((row) => row.sessionId !== sessionId);
@@ -5198,6 +5479,8 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     async stop() {
       stopped = true;
+      startupStop.abort();
+      startupWatches.clear();
       for (const sessionId of [...observedBudget.keys()]) forgetBudget(sessionId);
       stopRuntime();
       settleEndpoint();
@@ -5211,6 +5494,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       stopNetworkWatch?.();
       sessionWaits.dispose();
       flow.dispose();
+      await Promise.allSettled([...startupTasks]);
       for (const c of conns.values()) c.close();
       notices.dispose();
       await requestService.stop();

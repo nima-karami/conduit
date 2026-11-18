@@ -82,6 +82,7 @@ export interface ListAgentsOutput {
 /** Internal to Conduit: the open path stores its first message to a session that cannot read yet. */
 export interface SendOptions {
   allowUnconnected?: boolean;
+  systemGenerated?: boolean;
 }
 export interface ToolDeps {
   store: MessageStore;
@@ -388,7 +389,11 @@ export function createToolHandlers(deps: ToolDeps): ToolHandlers {
 
     const human = caller.handle === HUMAN_HANDLE;
     const now = deps.now();
-    if (!human && recentSends(caller.handle, now.getTime()).length >= RATE_LIMIT_PER_MIN) {
+    if (
+      !human &&
+      !opts.systemGenerated &&
+      recentSends(caller.handle, now.getTime()).length >= RATE_LIMIT_PER_MIN
+    ) {
       return fail('rate_limited', `more than ${RATE_LIMIT_PER_MIN} sends in a minute`);
     }
     // The human may post into any existing thread; an agent only into one it is part of (plan
@@ -516,7 +521,8 @@ export function createToolHandlers(deps: ToolDeps): ToolHandlers {
           });
       }
     }
-    if (!human) recentSends(caller.handle, now.getTime()).push(now.getTime());
+    if (!human && !opts.systemGenerated)
+      recentSends(caller.handle, now.getTime()).push(now.getTime());
     deps.onStored(msg);
     return {
       ok: true,

@@ -489,15 +489,29 @@ export function agentRecords(server, sessionId, kind) {
 
 /** Types `call <tool> <json>` into the fake agent and returns that call's result. */
 export async function callTool(server, agent, tool, args) {
-  const before = agentRecords(server, agent.sessionId, 'RESULT').length;
+  const before = agentRecords(server, agent.sessionId, 'CALL').length;
   server.c2.notify('term.input', {
     sessionId: agent.sessionId,
     generation: agent.generation,
     data: `call ${tool} ${JSON.stringify(args)}\r`,
   });
+  let call;
   assert(
-    await until(() => agentRecords(server, agent.sessionId, 'RESULT').length > before, 15_000),
+    await until(() => {
+      call = agentRecords(server, agent.sessionId, 'CALL')
+        .slice(before)
+        .find((r) => r.tool === tool);
+      return call !== undefined;
+    }, 15_000),
+    `no ${tool} call on ${server.label}`,
+  );
+  let result;
+  assert(
+    await until(() => {
+      result = agentRecords(server, agent.sessionId, 'RESULT').find((r) => r.id === call.id);
+      return result !== undefined;
+    }, 15_000),
     `no ${tool} result on ${server.label}`,
   );
-  return agentRecords(server, agent.sessionId, 'RESULT')[before].result;
+  return result.result;
 }
