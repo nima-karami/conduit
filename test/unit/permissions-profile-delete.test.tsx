@@ -23,6 +23,14 @@ beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
 
+const selectRole = async (host: HTMLElement, name: string) => {
+  const row = [...host.querySelectorAll('tbody tr')].find((tr) =>
+    tr.querySelector('th')?.textContent?.startsWith(name),
+  );
+  expect(row).toBeTruthy();
+  await act(async () => (row as HTMLElement).click());
+};
+
 it('requires replacement, reviews exact deletion and confirms the returned digest', async () => {
   const profile = {
     ...structuredClone(BUILT_IN_PROFILES[1]),
@@ -59,7 +67,8 @@ it('requires replacement, reviews exact deletion and confirms the returned diges
     expect(button).toBeTruthy();
     await act(async () => button?.click());
   };
-  await click('Delete Custom');
+  await selectRole(host, 'Custom');
+  await click('Delete');
   expect(host.textContent).toContain('Default · native modes enabled');
   expect(
     [...host.querySelectorAll('button')].find((b) => b.textContent === 'Review deletion')?.disabled,
@@ -103,8 +112,9 @@ it('blocks a stale review from being confirmed', async () => {
       <PermissionsRoles serverConnected mcp={api as never} sessions={[]} registerBack={() => {}} />,
     ),
   );
+  await selectRole(host, 'Stale');
   await act(async () =>
-    host.querySelector<HTMLButtonElement>('[aria-label="Delete Stale"]')?.click(),
+    [...host.querySelectorAll('button')].find((b) => b.textContent === 'Delete')?.click(),
   );
   await act(async () =>
     [...host.querySelectorAll('button')].find((b) => b.textContent === 'Review deletion')?.click(),

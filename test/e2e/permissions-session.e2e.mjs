@@ -137,10 +137,11 @@ await runScenario(
     await settings.getByRole('switch').first().waitFor();
     const profiles = settings.getByRole('tab', { name: 'Roles', exact: true });
     await profiles.click();
-    const copy = settings.getByRole('button', { name: 'Copy Worker' });
-    await copy.waitFor();
+    const workerRow = settings.getByRole('row', { name: /^Worker/ });
+    await workerRow.waitFor();
     await capture(page, '13-settings-profiles.png');
-    await copy.click();
+    await workerRow.click();
+    await settings.getByRole('button', { name: 'Duplicate role' }).click();
     await settings.getByLabel('Name', { exact: true }).fill('Review workspace');
     await capture(page, '24-settings-profile-editor.png');
     await settings
@@ -150,7 +151,8 @@ await runScenario(
     await settings.getByRole('heading', { name: 'Review profile changes' }).waitFor();
     await settings.getByRole('row', { name: /Codex.*workspace-write/ }).waitFor();
     await settings.getByRole('button', { name: 'Confirm and save' }).click();
-    await settings.getByRole('button', { name: 'Edit Review workspace' }).waitFor();
+    const reviewRow = settings.getByRole('row', { name: /^Review workspace/ });
+    await reviewRow.waitFor();
     const savedPolicy = JSON.parse(readFileSync(join(userDataDir, 'conduit-mcp', 'policy.json')));
     assert(
       savedPolicy.profiles.some(
@@ -159,14 +161,13 @@ await runScenario(
       ),
       'the exact reviewed native profile was not persisted',
     );
-    await settings.getByRole('button', { name: 'Delete Review workspace' }).click();
+    await reviewRow.click();
+    await settings.getByRole('button', { name: 'Delete', exact: true }).click();
     await settings.getByRole('button', { name: 'Review deletion' }).click();
     await settings.getByRole('button', { name: 'Confirm deletion' }).click();
     // The deletion editor hides the profile list before the host acknowledges deletion.
-    await settings.getByRole('heading', { name: 'Profiles', exact: true }).waitFor();
-    await settings
-      .getByRole('button', { name: 'Edit Review workspace' })
-      .waitFor({ state: 'hidden' });
+    await settings.getByRole('heading', { name: 'Roles', exact: true }).waitFor();
+    await reviewRow.waitFor({ state: 'hidden' });
     const afterDeletion = JSON.parse(readFileSync(join(userDataDir, 'conduit-mcp', 'policy.json')));
     assert(
       !afterDeletion.profiles.some((profile) => profile.name === 'Review workspace'),

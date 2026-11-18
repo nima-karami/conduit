@@ -21,6 +21,14 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+const selectRole = async (host: HTMLElement, name: string) => {
+  const row = [...host.querySelectorAll('tbody tr')].find((tr) =>
+    tr.querySelector('th')?.textContent?.startsWith(name),
+  );
+  expect(row).toBeTruthy();
+  await act(async () => (row as HTMLElement).click());
+};
+
 it('reviews the frozen copy and requires confirmation before saving its digest', async () => {
   api.reviewLocalPolicy.mockImplementation(async ({ profile }: { profile: Profile }) => ({
     ok: true,
@@ -55,7 +63,8 @@ it('reviews the frozen copy and requires confirmation before saving its digest',
     expect(button).toBeTruthy();
     await act(async () => button?.click());
   };
-  await click(`Copy ${BUILT_IN_PROFILES[0].name}`);
+  await selectRole(host, BUILT_IN_PROFILES[0].name);
+  await click('Duplicate role');
   await click('Review and save');
   expect(api.reviewLocalPolicy).toHaveBeenCalledOnce();
   expect(api.saveProfile).not.toHaveBeenCalled();
@@ -88,12 +97,13 @@ it('opens Sessions by default and reveals other groups and options on demand', a
       <PermissionsRoles serverConnected mcp={api as never} sessions={[]} registerBack={() => {}} />,
     ),
   );
+  await selectRole(host, 'Custom');
   await act(async () =>
-    host.querySelector<HTMLButtonElement>('[aria-label="Edit Custom"]')?.click(),
+    [...host.querySelectorAll('button')].find((b) => b.textContent === 'Edit')?.click(),
   );
   expect(host.querySelector('[aria-label="open_session decision"]')).toBeTruthy();
   expect(host.querySelector('[aria-label="send_message decision"]')).toBeNull();
-  expect(host.querySelector('.permissions-pill')).toBeTruthy();
+  expect(host.querySelector('.permissions-profile-editor .permissions-pill')).toBeTruthy();
   const messaging = [...host.querySelectorAll('summary')].find((s) =>
     s.textContent?.startsWith('Messaging'),
   );
@@ -139,7 +149,8 @@ it('shows only changed custom rules, including their conditions, in the review',
       <PermissionsRoles serverConnected mcp={api as never} sessions={[]} registerBack={() => {}} />,
     ),
   );
-  const edit = host.querySelector<HTMLButtonElement>('[aria-label="Edit Custom"]');
+  await selectRole(host, 'Custom');
+  const edit = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Edit');
   await act(async () => edit?.click());
   const group = host.querySelector('[aria-label="open_session decision"]');
   const next = profile.rules.open_session.decision === 'deny' ? 'allow' : 'deny';
@@ -158,4 +169,97 @@ it('shows only changed custom rules, including their conditions, in the review',
   expect(rows.some((row) => row.querySelector('th')?.textContent === 'read_screen')).toBe(false);
   await act(async () => root.unmount());
   api.state.policy.profiles = [];
+});
+
+it('steps back review, editor, drawer, closed, then reports nothing left', async () => {
+  const profile: Profile = {
+    ...structuredClone(BUILT_IN_PROFILES[1]),
+    id: 'p-custom',
+    name: 'Custom',
+    builtIn: false,
+  };
+  api.state.policy.profiles = [profile];
+  api.reviewLocalPolicy.mockImplementation(
+    async ({ profile: candidate }: { profile: Profile }) => ({
+      ok: true,
+      requiresNativeReview: false,
+      profileDisplay: {
+        before: profile,
+        after: candidate,
+        optedInPoints: [],
+        affectedSessions: [],
+        truncated: false,
+      },
+    }),
+  );
+  const registerBack = vi.fn();
+  const back = () => (registerBack.mock.lastCall?.[0] as (() => boolean) | null)?.();
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () =>
+    root.render(
+      <PermissionsRoles
+        serverConnected
+        mcp={api as never}
+        sessions={[]}
+        registerBack={registerBack}
+      />,
+    ),
+  );
+  expect(back()).toBe(false);
+  await selectRole(host, 'Custom');
+  await act(async () =>
+    [...host.querySelectorAll('button')].find((b) => b.textContent === 'Edit')?.click(),
+  );
+  await act(async () =>
+    [...host.querySelectorAll('button')].find((b) => b.textContent === 'Review and save')?.click(),
+  );
+  expect(host.textContent).toContain('Review profile changes');
+  await act(async () => void back());
+  expect(host.textContent).not.toContain('Review profile changes');
+  expect(host.querySelector('.permissions-profile-editor')).toBeTruthy();
+  await act(async () => void back());
+  expect(host.querySelector('.permissions-profile-editor')).toBeNull();
+  expect(host.querySelector('.permissions-drawer')).toBeTruthy();
+  await act(async () => void back());
+  expect(host.querySelector('.permissions-drawer')).toBeNull();
+  expect(back()).toBe(false);
+  await act(async () => root.unmount());
+  api.state.policy.profiles = [];
+});
+
+it('counts assignments per role and tags the role that new agents start with', async () => {
+  const profile: Profile = {
+    ...structuredClone(BUILT_IN_PROFILES[1]),
+    id: 'p-custom',
+    name: 'Custom',
+    builtIn: false,
+  };
+  const assignment = { exceptions: [], onScreenOnly: false, applyNative: false };
+  const policy = api.state.policy as Record<string, unknown>;
+  policy.profiles = [profile];
+  policy.assignments = [
+    { point: { kind: 'default' }, assignment: { ...assignment, profileId: 'p-custom' } },
+    { point: { kind: 'cli', cli: 'claude' }, assignment: { ...assignment, profileId: 'worker' } },
+  ];
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () =>
+    root.render(
+      <PermissionsRoles serverConnected mcp={api as never} sessions={[]} registerBack={() => {}} />,
+    ),
+  );
+  const row = (name: string) =>
+    [...host.querySelectorAll('tbody tr')].find((tr) =>
+      tr.querySelector('th')?.textContent?.startsWith(name),
+    );
+  expect(row('Custom')?.textContent).toContain('Used by 1 agent');
+  expect(row('Custom')?.textContent).toContain('New agents start here');
+  expect(row('Worker')?.textContent).toContain('Used by 1 agent');
+  expect(row('Worker')?.textContent).not.toContain('New agents start here');
+  await act(async () => root.unmount());
+  policy.profiles = [];
+  delete policy.assignments;
 });

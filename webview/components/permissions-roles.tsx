@@ -13,7 +13,8 @@ import type { Session } from '../../src/types';
 import type { ConduitMcpApi } from '../use-conduit-mcp';
 import type { BackHandler } from './mcp-section';
 import { PermissionsProfileEditor } from './permissions-profile-editor';
-import { PermissionsProfiles } from './permissions-profiles';
+import { PermissionsRoleDrawer } from './permissions-role-drawer';
+import { PermissionsRoleList } from './permissions-role-list';
 
 type Editing = { draft: Profile; before: Profile | null; token: string };
 type Review = Editing & { candidate: Profile; digest?: string; display: ProfileReviewDisplay };
@@ -49,16 +50,40 @@ export function PermissionsRoles({
   registerBack(handler: BackHandler | null): void;
 }) {
   const policy = mcp.state?.policy;
-  useEffect(() => {
-    registerBack(null);
-    return () => registerBack(null);
-  }, [registerBack]);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [review, setReview] = useState<Review | null>(null);
   const [pending, setPending] = useState(false);
   const inFlight = useRef(false);
   const [deletion, setDeletion] = useState<Deletion | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<ProfileId | null>(null);
+  // Esc ladder, spec 2026-11-18-mcp-full-screen §2.
+  useEffect(() => {
+    registerBack(() => {
+      if (pending) return true;
+      if (deletion) {
+        setDeletion(deletion.reviewed ? { ...deletion, reviewed: undefined } : null);
+        setError(null);
+        return true;
+      }
+      if (review) {
+        setEditing({ ...review, draft: review.candidate });
+        setReview(null);
+        setError(null);
+        return true;
+      }
+      if (editing) {
+        setEditing(null);
+        return true;
+      }
+      if (selectedId) {
+        setSelectedId(null);
+        return true;
+      }
+      return false;
+    });
+    return () => registerBack(null);
+  }, [registerBack, pending, deletion, review, editing, selectedId]);
   if (!policy) return <p>Loading permissions…</p>;
 
   const currentPolicy = policy;
@@ -434,23 +459,30 @@ export function PermissionsRoles({
         </button>
       </section>
     );
-  if (editing)
-    return (
-      <>
-        {editing.token !== currentPolicy.editToken && (
-          <p role="alert">
-            Permissions changed. Cancel and reopen the profile to edit the current version.
-          </p>
-        )}
-        <PermissionsProfileEditor
-          key={`${editing.draft.id}-${editing.token}`}
-          draft={editing.draft}
-          readOnly={readOnly || editing.token !== currentPolicy.editToken}
-          onCancel={() => setEditing(null)}
-          onReviewAndSave={requestReview}
-        />
-      </>
-    );
+  const roles = [...BUILT_IN_PROFILES, ...currentPolicy.profiles.filter((p) => !p.builtIn)];
+  const usage = new Map<ProfileId, number>();
+  for (const { assignment } of currentPolicy.assignments ?? [])
+    usage.set(assignment.profileId, (usage.get(assignment.profileId) ?? 0) + 1);
+  const newAgentRole =
+    currentPolicy.assignments?.find((entry) => entry.point.kind === 'default')?.assignment
+      .profileId ?? 'worker';
+  const selected = roles.find((p) => p.id === selectedId) ?? null;
+  const startDeletion = (profile: Profile) => {
+    if (profile.builtIn || readOnly) return;
+    const points = (currentPolicy.assignments ?? [])
+      .filter(({ assignment }) => assignment.profileId === profile.id)
+      .map(({ point, assignment }) => ({
+        point: structuredClone(point),
+        native: assignment.applyNative === true,
+      }));
+    setDeletion({
+      profile: structuredClone(profile),
+      token: currentPolicy.editToken,
+      replacement: points.length ? '' : 'worker',
+      points,
+    });
+    setError(null);
+  };
   return (
     <>
       {readOnly && (
@@ -458,30 +490,50 @@ export function PermissionsRoles({
           Permissions are read-only while the policy store is unavailable or disconnected.
         </p>
       )}
-      <PermissionsProfiles
-        profiles={currentPolicy.profiles}
-        readOnly={readOnly}
-        onDelete={(profile) => {
-          if (profile.builtIn || readOnly) return;
-          const points = (currentPolicy.assignments ?? [])
-            .filter(({ assignment }) => assignment.profileId === profile.id)
-            .map(({ point, assignment }) => ({
-              point: structuredClone(point),
-              native: assignment.applyNative === true,
-            }));
-          setDeletion({
-            profile: structuredClone(profile),
-            token: currentPolicy.editToken,
-            replacement: points.length ? '' : 'worker',
-            points,
-          });
-          setError(null);
-        }}
-        onCopy={(profile) => start(profile, true)}
-        onEdit={(profile) => {
-          if (!profile.builtIn) start(profile, false);
-        }}
-      />
+      <div className="permissions-roles">
+        <PermissionsRoleList
+          profiles={roles}
+          selectedId={selected?.id ?? null}
+          usage={usage}
+          newAgentRole={newAgentRole}
+          readOnly={readOnly}
+          onSelect={(profile) => setSelectedId(profile.id)}
+          onNew={() =>
+            start(roles.find((p) => p.id === newAgentRole) ?? BUILT_IN_PROFILES[1], true)
+          }
+        />
+        {editing ? (
+          <div className="permissions-roles__side">
+            {editing.token !== currentPolicy.editToken && (
+              <p role="alert">
+                Permissions changed. Cancel and reopen the profile to edit the current version.
+              </p>
+            )}
+            <PermissionsProfileEditor
+              key={`${editing.draft.id}-${editing.token}`}
+              draft={editing.draft}
+              readOnly={readOnly || editing.token !== currentPolicy.editToken}
+              onCancel={() => setEditing(null)}
+              onReviewAndSave={requestReview}
+            />
+          </div>
+        ) : (
+          selected && (
+            <div className="permissions-roles__side">
+              <PermissionsRoleDrawer
+                key={selected.id}
+                profile={selected}
+                used={usage.get(selected.id) ?? 0}
+                readOnly={readOnly}
+                onClose={() => setSelectedId(null)}
+                onDuplicate={(profile) => start(profile, true)}
+                onEdit={(profile) => start(profile, false)}
+                onDelete={startDeletion}
+              />
+            </div>
+          )
+        )}
+      </div>
     </>
   );
 }
