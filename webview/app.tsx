@@ -152,7 +152,7 @@ import { RightPane, type RightPaneHandle } from './components/right-pane';
 import type { SearchScopeModel } from './components/search-pane';
 import { ServerBanner } from './components/server-banner';
 import { SessionPermissionsController } from './components/session-permissions-controller';
-import { SettingsModal, type SettingsTab } from './components/settings-modal';
+import { SettingsPage, type SettingsTab } from './components/settings-page';
 import { Sidebar } from './components/sidebar';
 import { StatusBar } from './components/status-bar';
 import { TimedMessageDialog } from './components/timed-message-dialog';
@@ -5911,7 +5911,7 @@ export function App() {
             />
           )}
           {settingsOpen && (
-            <SettingsModal
+            <SettingsPage
               agents={agents}
               permissionSessions={hostSessions}
               activityExceptionSeed={activityExceptionSeed}

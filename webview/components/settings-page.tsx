@@ -37,7 +37,7 @@ import {
 } from '../bridge';
 import { CHROME_STR } from '../chrome-strings';
 import { MCP_STR } from '../conduit-mcp-strings';
-import { IconCheck, IconChevron, IconClose, IconDownload, IconRefreshCw } from '../icons';
+import { IconCheck, IconChevron, IconDownload, IconRefreshCw } from '../icons';
 import { MACHINES_STR } from '../machines-strings';
 import { useNetworkState } from '../network-store';
 import { useSettings } from '../settings';
@@ -45,10 +45,10 @@ import { DEFAULT_CUSTOM, validateShader } from '../shader-source';
 import { MONO_FONTS, THEMES, type ThemeDef, UI_FONTS } from '../themes';
 import { useConduitMcp } from '../use-conduit-mcp';
 import { useMcpInstall } from '../use-mcp-install';
+import { useOverlayEntry } from '../use-overlay-entry';
 import { AutoSaveDelayField } from './auto-save-delay-field';
 import { McpInstallRow } from './mcp-install-row';
 import { McpProjectEntries } from './mcp-project-entries';
-import { ModalLayer } from './modal-layer';
 import { OwnMachinePermissions } from './own-machine-permissions';
 import type { AssignmentExceptionSeed } from './permissions-assignments';
 import { PermissionsSettings } from './permissions-settings';
@@ -78,7 +78,7 @@ const BG_OPTS: { id: Background; label: string }[] = [
   { id: 'shader', label: 'Shader' },
 ];
 
-export function SettingsModal({
+export function SettingsPage({
   agents,
   initialTab = 'general',
   initialAboutReleaseNotes = false,
@@ -156,104 +156,105 @@ export function SettingsModal({
     pendingReleaseNotesBtnFocusRef.current = true;
   }, []);
 
-  const closeSettings = () => onClose();
-
   const openReleaseNotes = useCallback(() => {
     setTab('about');
     setAboutReleaseNotes(true);
   }, []);
+
+  const nestedBack = useRef<(() => boolean) | null>(null);
+  const onEscape = () => {
+    if (nestedBack.current?.()) return;
+    if (aboutReleaseNotes) leaveReleaseNotes();
+    else onClose();
+  };
+  useOverlayEntry('modal', onEscape);
+
+  const backRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    backRef.current?.focus();
+  }, []);
+
   return (
-    <ModalLayer
-      onDismiss={closeSettings}
-      onEscape={aboutReleaseNotes ? leaveReleaseNotes : closeSettings}
-    >
-      <div className="modal settings" onClick={(e) => e.stopPropagation()}>
-        <div className="modal__head settings__head">
-          <div>
-            <span className="modal__title">Settings</span>
-            <span className="modal__sub">Tune the look and behaviour of Conduit</span>
-          </div>
-          <button className="iconbtn" aria-label="Close settings" onClick={closeSettings}>
-            <IconClose size={15} />
+    <div className="settings-page" role="region" aria-label="Settings">
+      <div className="settings__body">
+        <nav className="settings__nav">
+          <button ref={backRef} type="button" className="settings-page__back" onClick={onClose}>
+            <IconChevron size={14} />
+            {CHROME_STR.settingsBack}
           </button>
-        </div>
+          {TAB_LABELS.map(({ id, label }) => (
+            <button
+              key={id}
+              className={`settings__navitem ${tab === id ? 'settings__navitem--active' : ''}`}
+              onClick={() => {
+                setAboutReleaseNotes(false);
+                setTab(id);
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
 
-        <div className="settings__body">
-          <nav className="settings__nav">
-            {TAB_LABELS.map(({ id, label }) => (
-              <button
-                key={id}
-                className={`settings__navitem ${tab === id ? 'settings__navitem--active' : ''}`}
-                onClick={() => {
-                  setAboutReleaseNotes(false);
-                  setTab(id);
-                }}
-              >
-                {label}
-              </button>
+        <div
+          ref={paneRef}
+          className={`settings__pane${aboutReleaseNotes ? ' settings__pane--relnotes' : ''}`}
+        >
+          {tab === 'appearance' && <Appearance settings={settings} update={update} />}
+          {tab === 'general' && (
+            <General
+              settings={settings}
+              update={update}
+              agents={agents}
+              onSetChangesView={onSetChangesView}
+              serverConnected={serverConnected}
+            />
+          )}
+          {tab === 'mcp' && (
+            <McpTab
+              settings={settings}
+              update={update}
+              projectPath={projectPath}
+              focusCli={focusCli}
+              onFocusCliSpent={spendFocusCli}
+              onOpenPermissions={() => setTab('permissions')}
+              serverConnected={serverConnected}
+            />
+          )}
+          {tab === 'permissions' && (
+            <PermissionsSettings
+              serverConnected={serverConnected}
+              sessions={permissionSessions}
+              exceptionSeed={activityExceptionSeed}
+              onExceptionSeedConsumed={onActivityExceptionSeedConsumed}
+              onOpenActivity={onOpenPermissionActivity}
+            />
+          )}
+          {tab === 'links' && (
+            <LinksTab
+              onAddMachine={onAddMachine}
+              onOpenRequest={onOpenRequest}
+              onOpenActivity={onOpenPermissionActivity}
+            />
+          )}
+          {tab === 'shortcuts' && <ShortcutsTab settings={settings} update={update} />}
+          {tab === 'skills' && <Skills projectPath={projectPath} />}
+          {tab === 'about' &&
+            (aboutReleaseNotes ? (
+              <AboutReleaseNotes installedVersion={about?.version} onBack={leaveReleaseNotes} />
+            ) : (
+              <About
+                about={about}
+                updateStatus={updateStatus ?? null}
+                onCheckUpdate={onCheckUpdate ?? (() => {})}
+                onRelaunch={onRelaunch ?? (() => {})}
+                releaseNotesBtnRef={releaseNotesBtnRef}
+                onShowReleaseNotes={openReleaseNotes}
+              />
             ))}
-          </nav>
-
-          <div
-            ref={paneRef}
-            className={`settings__pane${aboutReleaseNotes ? ' settings__pane--relnotes' : ''}`}
-          >
-            {tab === 'appearance' && <Appearance settings={settings} update={update} />}
-            {tab === 'general' && (
-              <General
-                settings={settings}
-                update={update}
-                agents={agents}
-                onSetChangesView={onSetChangesView}
-                serverConnected={serverConnected}
-              />
-            )}
-            {tab === 'mcp' && (
-              <McpTab
-                settings={settings}
-                update={update}
-                projectPath={projectPath}
-                focusCli={focusCli}
-                onFocusCliSpent={spendFocusCli}
-                onOpenPermissions={() => setTab('permissions')}
-                serverConnected={serverConnected}
-              />
-            )}
-            {tab === 'permissions' && (
-              <PermissionsSettings
-                serverConnected={serverConnected}
-                sessions={permissionSessions}
-                exceptionSeed={activityExceptionSeed}
-                onExceptionSeedConsumed={onActivityExceptionSeedConsumed}
-                onOpenActivity={onOpenPermissionActivity}
-              />
-            )}
-            {tab === 'links' && (
-              <LinksTab
-                onAddMachine={onAddMachine}
-                onOpenRequest={onOpenRequest}
-                onOpenActivity={onOpenPermissionActivity}
-              />
-            )}
-            {tab === 'shortcuts' && <ShortcutsTab settings={settings} update={update} />}
-            {tab === 'skills' && <Skills projectPath={projectPath} />}
-            {tab === 'about' &&
-              (aboutReleaseNotes ? (
-                <AboutReleaseNotes installedVersion={about?.version} onBack={leaveReleaseNotes} />
-              ) : (
-                <About
-                  about={about}
-                  updateStatus={updateStatus ?? null}
-                  onCheckUpdate={onCheckUpdate ?? (() => {})}
-                  onRelaunch={onRelaunch ?? (() => {})}
-                  releaseNotesBtnRef={releaseNotesBtnRef}
-                  onShowReleaseNotes={openReleaseNotes}
-                />
-              ))}
-          </div>
         </div>
       </div>
-    </ModalLayer>
+    </div>
   );
 }
 

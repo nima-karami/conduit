@@ -20,6 +20,7 @@ export const CHROME_STR = {
   devTitle: "Development build — isolated 'Conduit (dev)' profile",
   back: 'Back',
   forward: 'Forward',
+  settingsBack: 'Back to Conduit',
   search: 'Search sessions, agents, files',
   searchPlaceholder: 'Search sessions, agents, files…',
   minimize: 'Minimize',

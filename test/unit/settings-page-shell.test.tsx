@@ -1,0 +1,87 @@
+// @vitest-environment jsdom
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { SettingsPage } from '../../webview/components/settings-page';
+import { SettingsProvider } from '../../webview/settings';
+
+vi.mock('../../webview/bridge', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../webview/bridge')>()),
+  readLogTail: () => Promise.resolve({ off: true, tail: '' }),
+}));
+
+beforeAll(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+});
+let root: Root | null = null;
+afterEach(async () => {
+  const current = root;
+  root = null;
+  if (current) await act(async () => current.unmount());
+  document.body.innerHTML = '';
+});
+
+async function mount(onClose: () => void) {
+  const host = document.createElement('div');
+  document.body.append(host);
+  root = createRoot(host);
+  await act(async () =>
+    root?.render(
+      <SettingsProvider>
+        <SettingsPage agents={[]} onClose={onClose} onSetChangesView={() => {}} />
+      </SettingsProvider>,
+    ),
+  );
+}
+const back = () =>
+  [...document.querySelectorAll<HTMLElement>('button')].find(
+    (b) => b.textContent === 'Back to Conduit',
+  );
+
+describe('SettingsPage shell', () => {
+  it('renders a labelled region with a Back button and no modal backdrop', async () => {
+    await mount(() => {});
+    expect(document.querySelector('.modal__backdrop')).toBeNull();
+    const region = document.querySelector('[role="region"][aria-label="Settings"]');
+    expect(region).not.toBeNull();
+    expect(region?.classList.contains('settings-page')).toBe(true);
+    expect(back()).toBeDefined();
+  });
+
+  it('Back calls onClose once', async () => {
+    const onClose = vi.fn();
+    await mount(onClose);
+    await act(async () => back()?.click());
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('Esc calls onClose once when nothing nested is open', async () => {
+    const onClose = vi.fn();
+    await mount(onClose);
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('focus is on Back after open', async () => {
+    await mount(() => {});
+    expect(document.activeElement).toBe(back());
+  });
+});
+
+describe('workbench behind Settings', () => {
+  it('workbench is inert while Settings is open', async () => {
+    const host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () =>
+      root?.render(
+        <div className="workbench" inert={true}>
+          <button type="button">terminal</button>
+        </div>,
+      ),
+    );
+    expect(host.querySelector('.workbench')?.hasAttribute('inert')).toBe(true);
+  });
+});
