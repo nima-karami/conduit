@@ -29,6 +29,7 @@ import type { SearchFileResult, SearchQuery, TruncatedBy } from './content-searc
 import type { DisplayFacts } from './contracts/frames';
 import type { GitOp, GitReqArgs, GitResult } from './contracts/link-protocol';
 import type { AgentSetupStep, MachineActionResult, MachineMode } from './contracts/machines';
+import type { CodexPostureView } from './contracts/native-launch';
 import type { NetworkState } from './contracts/network-state';
 import type { Job, LimitEpisode } from './contracts/scheduler';
 import type { RuntimeHealth, ServerSettings } from './contracts/server-protocol';
@@ -741,6 +742,19 @@ export type HostToWebview =
   // always the caller; closeSession names its target in the action.
   | { type: 'mcp:ui'; requestId: string; sessionId: string; action: McpUiAction }
   | { type: 'mcp:activity'; requestId: number; page: ActivityPage }
+  | {
+      type: 'mcp:codexPostureResult';
+      requestId: number;
+      sessionId: string;
+      generation: number;
+      view: CodexPostureView;
+    }
+  | {
+      type: 'mcp:codexPostureChanged';
+      sessionId: string;
+      generation: number;
+      view: CodexPostureView;
+    }
   | { type: 'mcp:policyEditResult'; requestId: number; result: PolicyEditResult }
   | { type: 'mcp:policyResult'; requestId: number; ok: true }
   | { type: 'mcp:policyResult'; requestId: number; ok: false; error: string }
@@ -1277,6 +1291,14 @@ export type WebviewToHost =
   | { type: 'mcp:requestAnswer'; requestId: string; answer: AnswerInput }
   | { type: 'mcp:permissionAnswer'; requestId: string; answer: PermissionAnswer }
   | { type: 'mcp:activity:get'; requestId: number; query: ActivityQuery }
+  | {
+      type: 'mcp:linkCodexThread';
+      requestId: number;
+      sessionId: string;
+      generation: number;
+      threadId: string;
+    }
+  | { type: 'mcp:codexPostureQuery'; requestId: number; sessionId: string; generation: number }
   | {
       type: 'mcp:saveAssignment';
       requestId: number;

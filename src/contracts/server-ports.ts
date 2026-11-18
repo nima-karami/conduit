@@ -95,6 +95,13 @@ export interface DomainPort
     | 'addRoot'
     | 'git'
   > {
+  codexPosture: {
+    link(sessionId: string, ids: import('./terminal-runtime').LaunchIds, threadId: string): boolean;
+    get(
+      sessionId: string,
+      ids: import('./terminal-runtime').LaunchIds,
+    ): import('./native-launch').CodexPostureUpdate | null;
+  };
   openSession(req: McpOpenRequest): Promise<DomainOpenOutcome>;
   /**
    * The server-local close, shared with C2 `sessions.remove`: kills or retires the terminal
@@ -353,6 +360,7 @@ export interface McpHostDeps {
 }
 
 export type ObservedEntry =
+  | { postureChanged: import('./terminal-runtime').LaunchIds }
   | { action: ClaudeAction | CodexAction; failed?: boolean }
   | { feed: 'unavailable' }
   | { gap: number };

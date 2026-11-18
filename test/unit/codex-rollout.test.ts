@@ -1,7 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { bindsTo, LineSplitter, parseRolloutMeta, rolloutSignals } from '../../src/codex-rollout';
+import {
+  bindsTo,
+  LineSplitter,
+  parseRolloutMeta,
+  rolloutPosture,
+  rolloutSignals,
+} from '../../src/codex-rollout';
 
 const FIXTURES = join(__dirname, '..', 'fixtures', 'codex-rollout');
 const fixtureLines = (name: string): string[] =>
@@ -136,5 +142,46 @@ describe('LineSplitter', () => {
 
   it('strips CRLF and drops empty lines', () => {
     expect(new LineSplitter().push('one\r\n\ntwo\n')).toEqual(['one', 'two']);
+  });
+});
+
+describe('rolloutPosture', () => {
+  it('whitelists supported context leaves and retains no other fields', () => {
+    for (const sandbox of [
+      'read-only',
+      'workspace-write',
+      'danger-full-access',
+      'external-sandbox',
+    ]) {
+      for (const approval of ['on-request', 'on-failure', 'untrusted', 'never']) {
+        const record = JSON.stringify({
+          type: 'turn_context',
+          timestamp: '2026-11-17T12:00:00Z',
+          payload: {
+            sandbox_policy: { type: sandbox },
+            approval_policy: approval,
+            secret: 'sentinel',
+          },
+        });
+        expect(rolloutPosture(record)).toEqual({
+          status: 'known',
+          reportedAt: Date.parse('2026-11-17T12:00:00Z'),
+          sandbox,
+          approval,
+        });
+      }
+    }
+  });
+  it('returns unknown for malformed context and ignores foreign or torn lines', () => {
+    expect(
+      rolloutPosture(JSON.stringify({ type: 'turn_context', timestamp: 'bad', payload: {} })),
+    ).toEqual({ status: 'unknown', reportedAt: null });
+    expect(
+      rolloutPosture(
+        JSON.stringify({ type: 'turn_context', timestamp: '2026-11-17T12:00:00Z', payload: {} }),
+      ),
+    ).toEqual({ status: 'unknown', reportedAt: Date.parse('2026-11-17T12:00:00Z') });
+    expect(rolloutPosture('{')).toBeNull();
+    expect(rolloutPosture('{"type":"event_msg"}')).toBeNull();
   });
 });

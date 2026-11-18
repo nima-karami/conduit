@@ -247,6 +247,9 @@ export function harness(opts: HarnessOptions = {}) {
         track: (id) => codexWatchCalls.push(`track:${id}`),
         untrack: (id) => codexWatchCalls.push(`untrack:${id}`),
         boundFile: () => null,
+        linkPosture: () => false,
+        getPosture: () => null,
+        unlinkPosture: () => undefined,
         dispose: () => undefined,
       };
     },

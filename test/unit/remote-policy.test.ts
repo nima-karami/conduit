@@ -536,6 +536,125 @@ it('old connection completion cannot clear the same draft submitted in a new lif
     policy: { assignments: LEAD_DEFAULT.assignments },
   });
 });
+it('reconciles an exact transmitted document after replacement and ignores the retired ack', async () => {
+  const { store, pushPolicy, drafts } = rig();
+  let reply!: (value: Awaited<ReturnType<NetworkPort['pushPolicy']>>) => void;
+  pushPolicy.mockImplementation(
+    () =>
+      new Promise((done) => {
+        reply = done;
+      }),
+  );
+  mirrored(store);
+  store.edit('m-1', (svc) => svc.setAssignment({ kind: 'default' }, 'lead'));
+  await settle();
+  store.connectionReplaced('m-1');
+  store.apply('m-1', snap(4, LEAD_DEFAULT));
+  expect(store.ui(NAMES)[0].status).toBe('applied');
+  expect(persisted(drafts.state.text)?.drafts).toEqual({});
+  reply({ ok: true, value: { rev: 99 } });
+  await settle();
+  expect(store.ui(NAMES)[0]).toMatchObject({ status: 'applied', rev: 4 });
+  expect(pushPolicy).toHaveBeenCalledTimes(1);
+});
+
+it('rejects an older replacement snapshot after a newer snapshot of the dispatched draft', async () => {
+  const { store, pushPolicy, drafts } = rig();
+  pushPolicy.mockImplementation(() => new Promise(() => undefined));
+  mirrored(store, 1);
+  store.edit('m-1', (svc) => svc.setAssignment({ kind: 'default' }, 'lead'));
+  await settle();
+  store.apply('m-1', snap(3, LEAD_DEFAULT));
+  store.connectionReplaced('m-1');
+  store.apply('m-1', snap(2, LEAD_DEFAULT));
+  expect(store.ui(NAMES)[0]).toMatchObject({ rev: 3, status: 'waiting' });
+  expect(persisted(drafts.state.text)?.drafts['m-1']).toBeDefined();
+  expect(pushPolicy).toHaveBeenCalledTimes(1);
+  store.apply('m-1', snap(3, LEAD_DEFAULT));
+  expect(store.ui(NAMES)[0].status).toBe('applied');
+});
+
+it.each([
+  [4, OTHER],
+  [3, LEAD_DEFAULT],
+] as const)(
+  'does not reconcile a different or non-advanced replacement snapshot',
+  async (rev, doc) => {
+    const { store, pushPolicy, drafts } = rig();
+    pushPolicy.mockImplementation(() => new Promise(() => undefined));
+    mirrored(store);
+    store.edit('m-1', (svc) => svc.setAssignment({ kind: 'default' }, 'lead'));
+    await settle();
+    store.connectionReplaced('m-1');
+    store.apply('m-1', snap(rev, doc));
+    expect(persisted(drafts.state.text)?.drafts['m-1']).toBeDefined();
+    if (rev > 3) expect(store.ui(NAMES)[0].status).toBe('conflict');
+  },
+);
+
+it('does not reconcile a scheduled but undispatched edit', async () => {
+  const { store, pushPolicy, drafts } = rig();
+  mirrored(store);
+  store.edit('m-1', (svc) => svc.setAssignment({ kind: 'default' }, 'lead'));
+  store.connectionReplaced('m-1');
+  store.apply('m-1', snap(4, LEAD_DEFAULT));
+  await settle();
+  expect(store.ui(NAMES)[0].status).toBe('conflict');
+  expect(persisted(drafts.state.text)?.drafts['m-1']).toBeDefined();
+  expect(pushPolicy).not.toHaveBeenCalled();
+});
+
+it('does not reconcile a later draft with the old transmitted document', async () => {
+  const { store, pushPolicy, drafts } = rig();
+  pushPolicy.mockImplementation(() => new Promise(() => undefined));
+  mirrored(store);
+  store.edit('m-1', (svc) => svc.setAssignment({ kind: 'default' }, 'lead'));
+  await settle();
+  store.connectionReplaced('m-1');
+  store.edit('m-1', (svc) => svc.setAssignment({ kind: 'default' }, 'observer'));
+  store.apply('m-1', snap(4, LEAD_DEFAULT));
+  expect(store.ui(NAMES)[0].status).toBe('conflict');
+  expect(persisted(drafts.state.text)?.drafts['m-1']).toBeDefined();
+  expect(pushPolicy).toHaveBeenCalledTimes(1);
+});
+
+it('reconciles the stripped wire document after receiver capability changes', async () => {
+  const peer = { support: false };
+  const { store, pushPolicy } = rig(peer);
+  pushPolicy.mockImplementation(() => new Promise(() => undefined));
+  mirrored(store);
+  store.editFull('m-1', store.ui(NAMES)[0].policy.editToken, {
+    kind: 'assignment',
+    point: { kind: 'default' },
+    assignment: { ...OTHER.assignments[0].assignment, applyNative: false },
+  });
+  await settle();
+  expect(pushPolicy).toHaveBeenCalledWith('m-1', 3, OTHER);
+  store.connectionReplaced('m-1');
+  peer.support = true;
+  store.apply('m-1', snap(4, OTHER));
+  expect(store.ui(NAMES)[0].status).toBe('applied');
+  expect(pushPolicy).toHaveBeenCalledTimes(1);
+});
+
+it('reconciliation preserves safe memory state when draft cleanup fails', async () => {
+  const { store, pushPolicy, drafts } = rig();
+  pushPolicy.mockImplementation(() => new Promise(() => undefined));
+  mirrored(store);
+  store.edit('m-1', (svc) => svc.setAssignment({ kind: 'default' }, 'lead'));
+  await settle();
+  store.connectionReplaced('m-1');
+  drafts.state.fail = true;
+  store.apply('m-1', snap(4, LEAD_DEFAULT));
+  expect(store.ui(NAMES)[0]).toMatchObject({
+    status: 'applied',
+    policy: { saveError: expect.stringContaining('applied') },
+  });
+  expect(persisted(drafts.state.text)?.drafts['m-1']).toBeDefined();
+  drafts.state.fail = false;
+  expect(store.retrySave('m-1', store.ui(NAMES)[0].policy.editToken)).toEqual({ ok: true });
+  expect(persisted(drafts.state.text)?.drafts).toEqual({});
+});
 it.each(['snapshot-first', 'ack-first'] as const)(
   'matching Conduit-only snapshot and ack preserve the editor token in the same turn (%s)',
   async (order) => {

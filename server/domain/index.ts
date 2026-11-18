@@ -760,6 +760,8 @@ export function createDomain(deps: DomainDeps): Domain {
     samePath: (a, b) => folderKey(a) === folderKey(b),
     episodeOpen: (id) => monitor.episodes().some((e) => e.sessionId === id && e.state === 'open'),
     onSignal: (signal) => monitor.signal(signal),
+    onPosture: (sessionId, ids) =>
+      deps.observed.record(sessionId, 'codex', { postureChanged: ids }),
     onBound: (id) => monitor.onAdapterLive(id),
     onAction: (sessionId, action) => deps.observed.record(sessionId, 'codex', { action }),
     onFeed: (sessionId, state) => deps.observed.record(sessionId, 'codex', { feed: state }),
@@ -1228,7 +1230,7 @@ export function createDomain(deps: DomainDeps): Domain {
     const cli = cliOf(id);
     if (cli === 'codex') {
       codexWatch.untrack(id);
-      codexWatch.track(id, { cwd: spec.cwd, launchAt });
+      codexWatch.track(id, { cwd: spec.cwd, launchAt, ids });
     }
     // The host injected Claude's hooks for this launch (its own settings file, not a user's
     // --settings): they speak for the session (spec R13).
@@ -1456,7 +1458,13 @@ export function createDomain(deps: DomainDeps): Domain {
     }
     // No exit for this generation: the session stays, and the remounted pane's start spawns.
     if (isLive(id)) {
+      const terminal = runtime.get(id);
+      const retiredIds = terminal && {
+        generation: terminal.generation,
+        launchId: terminal.launchId,
+      };
       await runtime.retire(id);
+      if (retiredIds) codexWatch.unlinkPosture(id, retiredIds);
       setFacts(id, { spawn: 'none' });
       endEpisode(id);
       monitor.onSessionClosed(id);
@@ -1767,6 +1775,10 @@ export function createDomain(deps: DomainDeps): Domain {
   };
 
   const domain: DomainPort = {
+    codexPosture: {
+      link: (id, ids, threadId) => codexWatch.linkPosture(id, ids, threadId),
+      get: (id, ids) => codexWatch.getPosture(id, ids),
+    },
     bracketedPaste: (id) => !!pasteModes.get(id)?.on,
     limitRules: () => rules.current(),
     homeOf: (id) => mgr.get(id)?.home,

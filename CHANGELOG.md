@@ -10,6 +10,7 @@ All notable user-facing changes to Conduit. Format follows
 - Permission assignments can opt in to a profile’s supported Claude Code and Codex launch flags. The session records the flags Conduit prepared for its current launch.
 
 ### Fixed
+- A pending remote permission edit clears when a replacement connection confirms the same rules were saved.
 - Remote permission edits and conflict choices confirm saved intent, reject stale rules, and show saving failures without losing pending changes.
 - Queued agent input, screen reads, and file batches recheck current permissions before writing, submitting, opening another file, or returning captured screen data.
 - Running agent actions recheck permissions between targets and after waiting for the app, and report when earlier UI work may already have completed.

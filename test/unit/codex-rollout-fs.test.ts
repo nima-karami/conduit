@@ -12,10 +12,10 @@ describe('createRolloutFs', () => {
     writeFileSync(file, 'one\ntwo\npart');
     const fs = createRolloutFs({ onFirstLineTooLong: () => {} });
     const a = await fs.readFrom(file, 0);
-    expect(a).toEqual({ data: 'one\ntwo\n', size: 8 });
+    expect(a).toMatchObject({ data: 'one\ntwo\n', size: 8 });
     appendFileSync(file, 'ial\n');
-    expect(await fs.readFrom(file, a.size)).toEqual({ data: 'partial\n', size: 16 });
-    expect(await fs.readFrom(file, 16)).toEqual({ data: '', size: 16 });
+    expect(await fs.readFrom(file, a.size)).toMatchObject({ data: 'partial\n', size: 16 });
+    expect(await fs.readFrom(file, 16)).toMatchObject({ data: '', size: 16 });
   });
 
   it('never splits a multi-byte character across reads', async () => {
@@ -25,16 +25,19 @@ describe('createRolloutFs', () => {
     writeFileSync(file, bytes.subarray(0, bytes.length - 3));
     const fs = createRolloutFs({ onFirstLineTooLong: () => {} });
     const a = await fs.readFrom(file, 0);
-    expect(a).toEqual({ data: '', size: 0 });
+    expect(a).toMatchObject({ data: '', size: 0 });
     writeFileSync(file, bytes);
-    expect(await fs.readFrom(file, a.size)).toEqual({ data: `${line}\n`, size: bytes.length });
+    expect(await fs.readFrom(file, a.size)).toMatchObject({
+      data: `${line}\n`,
+      size: bytes.length,
+    });
   });
 
   it('a truncated file moves the offset back instead of past the end', async () => {
     const file = join(roots.root(), 'r.jsonl');
     writeFileSync(file, 'a\n');
     const fs = createRolloutFs({ onFirstLineTooLong: () => {} });
-    expect(await fs.readFrom(file, 50)).toEqual({ data: '', size: 2 });
+    expect(await fs.readFrom(file, 50)).toMatchObject({ data: '', size: 2 });
   });
 
   it('readFirstLine reads past one chunk and reports a line over the cap once per call', async () => {

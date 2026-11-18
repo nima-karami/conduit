@@ -24,6 +24,7 @@ import type {
   McpUiState,
   RemotePolicyEdit,
 } from '../src/conduit-mcp/ui-types';
+import type { CodexPostureView } from '../src/contracts/native-launch';
 import type { WebviewToHost } from '../src/protocol';
 import { post, subscribe } from './bridge';
 import { requestHost } from './host-request';
@@ -65,6 +66,12 @@ export interface ConduitMcpApi {
   ): Promise<PolicyEditResult | null>;
   retryPolicy(): Promise<PolicyEditResult | null>;
   getActivity(query: ActivityQuery): Promise<ActivityPage | null>;
+  linkCodexThread(
+    sessionId: string,
+    generation: number,
+    threadId: string,
+  ): Promise<CodexPostureView>;
+  codexPostureQuery(sessionId: string, generation: number): Promise<CodexPostureView>;
   setAssignment(
     point: AssignmentPoint,
     profileId: ProfileId | null,
@@ -187,6 +194,26 @@ const api: Omit<ConduitMcpApi, 'state'> = {
       REQUEST_TIMEOUT_MS,
     );
     return r?.result ?? null;
+  },
+  async linkCodexThread(sessionId, generation, threadId) {
+    const r = await requestHost(
+      (requestId) => ({ type: 'mcp:linkCodexThread', requestId, sessionId, generation, threadId }),
+      ['mcp:codexPostureResult'],
+      REQUEST_TIMEOUT_MS,
+    );
+    return r?.sessionId === sessionId && r.generation === generation
+      ? r.view
+      : { status: 'unavailable' };
+  },
+  async codexPostureQuery(sessionId, generation) {
+    const r = await requestHost(
+      (requestId) => ({ type: 'mcp:codexPostureQuery', requestId, sessionId, generation }),
+      ['mcp:codexPostureResult'],
+      REQUEST_TIMEOUT_MS,
+    );
+    return r?.sessionId === sessionId && r.generation === generation
+      ? r.view
+      : { status: 'unavailable' };
   },
   async getActivity(query) {
     const r = await requestHost(

@@ -83,3 +83,22 @@ export function parseNativeLaunchEvidence(value: unknown): NativeLaunchEvidence 
   const intent = parseNativeLaunchIntent(value.intent);
   return intent ? { version, generation, launchId, preparedAt, intent } : null;
 }
+
+export type CodexPostureReading =
+  | {
+      status: 'known';
+      reportedAt: number;
+      sandbox: 'read-only' | 'workspace-write' | 'danger-full-access' | 'external-sandbox';
+      approval: 'on-request' | 'on-failure' | 'untrusted' | 'never';
+    }
+  | { status: 'unknown'; reportedAt: number | null };
+
+export type KnownCodexPosture = Extract<CodexPostureReading, { status: 'known' }>;
+export interface CodexPostureUpdate {
+  freshness: 'current' | 'stale';
+  reading: CodexPostureReading | null;
+  lastKnown: KnownCodexPosture | null;
+}
+export type CodexPostureView =
+  | { status: 'unavailable' }
+  | ({ status: 'linked'; source: 'linked-codex-thread' } & CodexPostureUpdate);

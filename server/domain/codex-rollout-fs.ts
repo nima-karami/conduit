@@ -45,12 +45,15 @@ export function createRolloutFs(i: {
     readFrom: async (p, offset) => {
       const h = await fsp.open(p, 'r');
       try {
-        const { size } = await h.stat();
-        if (size <= offset) return { data: '', size: Math.min(size, offset) };
+        const stat = await h.stat();
+        const { size } = stat;
+        const identity =
+          stat.isFile() && stat.ino > 0 ? { dev: stat.dev, ino: stat.ino, fileSize: size } : null;
+        if (size <= offset) return { data: '', size: Math.min(size, offset), identity };
         const buf = Buffer.alloc(size - offset);
         const { bytesRead } = await h.read(buf, 0, buf.length, offset);
         const end = buf.subarray(0, bytesRead).lastIndexOf(0x0a) + 1;
-        return { data: buf.subarray(0, end).toString('utf8'), size: offset + end };
+        return { data: buf.subarray(0, end).toString('utf8'), size: offset + end, identity };
       } finally {
         await h.close();
       }

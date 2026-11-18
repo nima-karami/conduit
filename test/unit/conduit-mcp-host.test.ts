@@ -267,6 +267,7 @@ function harness(
     recordSends?: boolean;
     installState?: McpHostDeps['domain']['installState'];
     nativeLaunchOf?: McpHostDeps['sessions']['nativeLaunchOf'];
+    codexPosture?: McpHostDeps['domain']['codexPosture'];
     toolPolicy?: () => { global: GlobalPolicy; byCli: CliPolicyLayers };
     kindOf?: (abs: string) => Promise<PathKind>;
     beforeClose?: (id: string) => Promise<void>;
@@ -443,6 +444,7 @@ function harness(
   };
   const registry = opts.registry ?? new AgentRegistry(DEFS);
   const domain: McpHostDeps['domain'] = {
+    codexPosture: opts.codexPosture ?? { link: () => false, get: () => null },
     bracketedPaste: opts.bracketedPaste ?? (() => false),
     limitRules: () => compileLimitRules(DEFAULT_LIMIT_RULES),
     homeOf: (id: string) => sessions.get(id)?.home,
@@ -10287,5 +10289,54 @@ describe('remote policy edits from this machine (CON-46 L4)', () => {
     await until(() => Object.keys(savedDrafts(h.dir) ?? { x: 1 }).length === 0);
     expect(savedDrafts(h.dir)).toEqual({});
     expect(pushes).toEqual([]);
+  });
+});
+
+describe('linked Codex posture routing', () => {
+  it('only links a live owner and addresses sanitized changes', async () => {
+    const ids = { generation: 1, launchId: '1'.padStart(32, '0') };
+    const evidence = {
+      version: 1,
+      ...ids,
+      preparedAt: 100,
+      intent: { family: 'codex', optedIn: false, requested: null },
+    } as const;
+    let linked = false;
+    const h = harness({
+      nativeLaunchOf: () => evidence,
+      codexPosture: {
+        link: (_id, _ids, threadId) => {
+          linked = threadId === '01a1d190-1af2-7db3-ae44-cb9dacc349ed';
+          return linked;
+        },
+        get: () => (linked ? { freshness: 'current', reading: null, lastKnown: null } : null),
+      },
+    });
+    h.sessions.set('c1', session('c1', { agentId: CODEX.id }));
+    await h.host.start();
+    h.prepareLaunch('c1', CODEX, spec('/usr/bin/codex'));
+    h.spawn('c1');
+    const request = {
+      type: 'mcp:linkCodexThread',
+      requestId: 1,
+      sessionId: 'c1',
+      generation: 1,
+      threadId: '01a1d190-1af2-7db3-ae44-cb9dacc349ed',
+    } as const;
+    const replies: HostToWebview[] = [];
+    await h.host.handleRenderer(request, (m) => replies.push(m), 2);
+    expect(replies.pop()).toMatchObject({ view: { status: 'unavailable' } });
+    expect(linked).toBe(false);
+    await h.host.handleRenderer(request, (m) => replies.push(m), 1);
+    expect(replies.pop()).toMatchObject({
+      view: { status: 'linked', source: 'linked-codex-thread' },
+    });
+    h.host.recordObserved('c1', 'codex', { postureChanged: ids });
+    expect(h.toWindow.at(-1)).toMatchObject({
+      windowId: 1,
+      msg: { type: 'mcp:codexPostureChanged', view: { status: 'linked' } },
+    });
+    expect(JSON.stringify(h.host.uiState())).not.toContain(request.threadId);
+    await h.host.stop();
   });
 });

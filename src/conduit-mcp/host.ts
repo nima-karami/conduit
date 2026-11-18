@@ -3016,6 +3016,28 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     return { ok: true, request: ref.view };
   }
 
+  function postureIds(id: string, generation: number, sender: number) {
+    if (
+      sender === NO_OWNER_WINDOW ||
+      deps.ownerWindowOf(id) !== sender ||
+      !deps.windowReady(sender) ||
+      !deps.sessions.get(id)
+    )
+      return null;
+    const terminal = deps.runtime.get(id);
+    const evidence = deps.sessions.nativeLaunchOf(id);
+    if (
+      terminal?.state !== 'live' ||
+      terminal.generation !== generation ||
+      !evidence ||
+      evidence.generation !== generation ||
+      evidence.launchId !== terminal.launchId ||
+      evidence.intent.family !== 'codex'
+    )
+      return null;
+    return { generation, launchId: terminal.launchId };
+  }
+
   function nativeSessionUi(id: string, next: NativeSelection | undefined): NativeSessionUi {
     const terminal = deps.runtime.get(id);
     const evidence = deps.sessions.nativeLaunchOf(id);
@@ -3343,6 +3365,20 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     } else if (event.type === 'exit') {
       // A late exit of an older generation would revoke the live launch's token and binding.
       if (!r || event.generation !== r.launch) return;
+      const terminal = deps.runtime.get(sessionId);
+      const owner = deps.ownerWindowOf(sessionId);
+      if (
+        (!terminal || terminal.generation === event.generation) &&
+        owner !== null &&
+        deps.windowReady(owner)
+      ) {
+        sendToWindow(owner, {
+          type: 'mcp:codexPostureChanged',
+          sessionId,
+          generation: event.generation,
+          view: { status: 'unavailable' },
+        });
+      }
       cancelLateEcho(sessionId);
       deps.tokens.revoke({ sessionId }).catch((err: unknown) => {
         deps.log.warn('conduit-mcp', 'token not revoked', { sessionId, err: String(err) });
@@ -3684,6 +3720,37 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     async handleRenderer(m, reply, senderId) {
       switch (m.type) {
+        case 'mcp:linkCodexThread':
+        case 'mcp:codexPostureQuery': {
+          if (
+            !Number.isSafeInteger(m.requestId) ||
+            m.requestId < 0 ||
+            typeof m.sessionId !== 'string' ||
+            m.sessionId.length > 256 ||
+            !Number.isSafeInteger(m.generation) ||
+            m.generation < 1
+          )
+            return;
+          const ids = postureIds(m.sessionId, m.generation, senderId);
+          const allowed =
+            ids &&
+            (m.type !== 'mcp:linkCodexThread' ||
+              (typeof m.threadId === 'string' &&
+                m.threadId.length === 36 &&
+                /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(m.threadId) &&
+                deps.domain.codexPosture.link(m.sessionId, ids, m.threadId)));
+          const posture = allowed && ids ? deps.domain.codexPosture.get(m.sessionId, ids) : null;
+          reply({
+            type: 'mcp:codexPostureResult',
+            requestId: m.requestId,
+            sessionId: m.sessionId,
+            generation: m.generation,
+            view: posture
+              ? { status: 'linked', source: 'linked-codex-thread', ...posture }
+              : { status: 'unavailable' },
+          });
+          return;
+        }
         case 'mcp:activity:get': {
           if (!Number.isSafeInteger(m.requestId) || m.requestId < 0) return;
           const query = parseActivityQuery(m.query);
@@ -4066,6 +4133,22 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
     recordObserved(sessionId, cli, entry) {
       // A late row for a deleted session must not create a budget that nothing will ever clear.
       if (stopped || deleting.has(sessionId) || deps.sessions.get(sessionId) === undefined) return;
+      if ('postureChanged' in entry) {
+        const windowId = deps.ownerWindowOf(sessionId);
+        if (windowId === null) return;
+        const ids = postureIds(sessionId, entry.postureChanged.generation, windowId);
+        if (!ids || ids.launchId !== entry.postureChanged.launchId) return;
+        const posture = deps.domain.codexPosture.get(sessionId, ids);
+        sendToWindow(windowId, {
+          type: 'mcp:codexPostureChanged',
+          sessionId,
+          generation: ids.generation,
+          view: posture
+            ? { status: 'linked', source: 'linked-codex-thread', ...posture }
+            : { status: 'unavailable' },
+        });
+        return;
+      }
       if ('action' in entry) {
         const t = now();
         const minute = Math.floor(t / MINUTE_MS);

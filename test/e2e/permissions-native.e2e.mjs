@@ -1,11 +1,20 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { until } from './conduit-mcp-helpers.mjs';
 import { assert, finishScenario, makeLog, phase, REPO } from './harness.mjs';
 import { networkState, startServer } from './net-helpers.mjs';
 
 const log = makeLog('permissions-native');
-const ENV_KEYS = ['CONDUIT_SSH_PATH', 'CONDUIT_E2E_SSH_ARGS_PREFIX'];
+const ENV_KEYS = ['CONDUIT_SSH_PATH', 'CONDUIT_E2E_SSH_ARGS_PREFIX', 'CODEX_HOME'];
 const snapshot = (server) => server.c2.call('events.subscribe');
 const readJson = (file) => JSON.parse(readFileSync(file, 'utf8'));
 const policyPath = (server) => join(server.userData, 'conduit-mcp', 'policy.json');
@@ -260,6 +269,193 @@ async function launchCases(server) {
   });
 }
 
+async function postureCase(server, codexHome) {
+  phase('Linked Codex posture follows the owned rollout');
+  const threadId = '01a1d190-1af2-7db3-ae44-cb9dacc349ed';
+  const competingId = '01a1d190-2af4-7db3-ae44-cb9dacc349ee';
+  const nextThreadId = '01a1d190-3af4-7db3-ae44-cb9dacc349ef';
+  const secret = 'FIXTURE-SECRET-posture';
+  const probe = launchProbe(server, 'codex', 'posture-probe');
+  const sessionId = await create(server, probe, []);
+  await server.c2.call('ui.presence', {
+    windows: [
+      {
+        windowId: 1,
+        focused: true,
+        ready: true,
+        visibleSessionIds: [sessionId],
+        ownedSessionIds: [sessionId],
+      },
+    ],
+  });
+  const started = await start(server, sessionId);
+  assert(started.ok && started.spawned, 'posture probe did not start');
+  await actualArgs(probe);
+  const generation = started.generation;
+  const request = async (type, extra = {}) => {
+    const response = await server.c2.call('mcp.fromRenderer', {
+      windowId: 1,
+      message: { type, requestId: 1, sessionId, generation, ...extra },
+    });
+    assert(response.reply?.type === 'mcp:codexPostureResult', 'missing posture response');
+    return response.reply.view;
+  };
+  const now = new Date();
+  const two = (n) => String(n).padStart(2, '0');
+  const folder = join(
+    codexHome,
+    'sessions',
+    String(now.getFullYear()),
+    two(now.getMonth() + 1),
+    two(now.getDate()),
+  );
+  mkdirSync(folder, { recursive: true });
+  const stamp = `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}T${two(now.getHours())}-${two(now.getMinutes())}-${two(now.getSeconds())}`;
+  const rollout = (id) => join(folder, `rollout-${stamp}-${id}.jsonl`);
+  const line = (value) => `${JSON.stringify(value)}\n`;
+  const meta = (id) =>
+    line({
+      timestamp: now.toISOString(),
+      type: 'session_meta',
+      payload: {
+        id,
+        timestamp: now.toISOString(),
+        cwd: server.work,
+        originator: 'codex_cli_rs',
+        cli_version: '0.145.0',
+        source: 'cli',
+      },
+    });
+  const file = rollout(threadId);
+  writeFileSync(file, meta(threadId));
+  let linked;
+  await eventually('the real watcher did not bind the owned rollout', async () => {
+    linked = await request('mcp:linkCodexThread', { threadId });
+    return linked.status === 'linked';
+  });
+  assert(
+    linked.reading === null && linked.lastKnown === null,
+    'empty rollout did not link pending',
+  );
+  writeFileSync(rollout(competingId), meta(competingId));
+  const refused = await request('mcp:linkCodexThread', { threadId: competingId });
+  assert(refused.status === 'unavailable', 'competing same-cwd rollout replaced the bound thread');
+
+  const knownAt = '2026-11-17T12:00:00.000Z';
+  const unknownAt = '2026-11-17T12:00:01.000Z';
+  const eventStart = server.c2.events.length;
+  appendFileSync(
+    file,
+    [
+      {
+        timestamp: knownAt,
+        type: 'turn_context',
+        payload: {
+          approval_policy: 'on-request',
+          sandbox_policy: { type: 'workspace-write' },
+          secret,
+        },
+      },
+      {
+        timestamp: unknownAt,
+        type: 'turn_context',
+        payload: {
+          approval_policy: 'future-mode',
+          sandbox_policy: { type: 'workspace-write' },
+          secret,
+        },
+      },
+    ]
+      .map(line)
+      .join(''),
+  );
+  let changed;
+  await eventually('the owner did not receive the folded posture batch', () => {
+    changed = server.c2.events
+      .slice(eventStart)
+      .find(
+        (event) =>
+          event.type === 'ui.post' &&
+          event.data.message.type === 'mcp:codexPostureChanged' &&
+          event.data.message.sessionId === sessionId &&
+          event.data.message.view.reading?.status === 'unknown',
+      );
+    return Boolean(changed);
+  });
+  const view = changed.data.message.view;
+  assert(
+    changed.data.route.kind === 'window' &&
+      changed.data.route.windowId === 1 &&
+      changed.data.message.generation === generation,
+    'posture was not addressed to the current owner',
+  );
+  assert(
+    view.freshness === 'current' &&
+      view.reading.reportedAt === Date.parse(unknownAt) &&
+      view.lastKnown?.reportedAt === Date.parse(knownAt) &&
+      view.lastKnown.sandbox === 'workspace-write' &&
+      view.lastKnown.approval === 'on-request',
+    'batch lost the prior known reading',
+  );
+  const query = await request('mcp:codexPostureQuery');
+  const projection = JSON.stringify({ view, query, snapshot: await snapshot(server) });
+  assert(
+    ![secret, threadId, competingId, file].some((value) => projection.includes(value)),
+    'raw rollout data escaped into the projection',
+  );
+  const restart = await server.c2.call('sessions.restart', { sessionId });
+  assert(restart.ok, 'posture probe did not retire');
+  const retired = await request('mcp:codexPostureQuery');
+  assert(retired.status === 'unavailable', 'retired launch retained its posture');
+  rmSync(file);
+  rmSync(rollout(competingId));
+  const relaunched = await server.c2.call('sessions.relaunch', { sessionIds: [sessionId] });
+  assert(relaunched.relaunched.includes(sessionId), 'posture session was not marked for relaunch');
+  const next = await start(server, sessionId);
+  assert(
+    next.ok && next.spawned && next.generation > generation,
+    'posture probe did not spawn a new generation',
+  );
+  const oldGeneration = await request('mcp:codexPostureQuery');
+  assert(
+    oldGeneration.status === 'unavailable',
+    'old generation remained queryable after relaunch',
+  );
+  const pending = await request('mcp:codexPostureQuery', { generation: next.generation });
+  assert(pending.status === 'unavailable', 'new launch inherited the old link');
+  const oldLink = await request('mcp:linkCodexThread', { generation: next.generation, threadId });
+  assert(oldLink.status === 'unavailable', 'new launch accepted the previous thread');
+  const later = new Date();
+  const nextMeta = line({
+    timestamp: later.toISOString(),
+    type: 'session_meta',
+    payload: {
+      id: nextThreadId,
+      timestamp: later.toISOString(),
+      cwd: server.work,
+      originator: 'codex_cli_rs',
+      cli_version: '0.145.0',
+      source: 'cli',
+    },
+  });
+  writeFileSync(rollout(nextThreadId), nextMeta);
+  let nextLink;
+  await eventually('the new launch did not link its own rollout', async () => {
+    nextLink = await request('mcp:linkCodexThread', {
+      generation: next.generation,
+      threadId: nextThreadId,
+    });
+    return nextLink.status === 'linked';
+  });
+  assert(
+    nextLink.reading === null && nextLink.lastKnown === null,
+    'new launch inherited prior readings',
+  );
+  const staleLink = await request('mcp:linkCodexThread', { threadId: nextThreadId });
+  assert(staleLink.status === 'unavailable', 'old generation could link the new thread');
+  await server.c2.call('sessions.remove', { sessionId });
+}
+
 async function upgradeCase(controller, receiver) {
   phase('A restored older pending edit cannot acquire native authority on reconnect');
   for (const server of [controller, receiver]) {
@@ -366,13 +562,16 @@ async function run() {
   const saved = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
   let controller;
   let receiver;
+  const codexHome = mkdtempSync(join(tmpdir(), 'conduit-posture-e2e-'));
   try {
+    process.env.CODEX_HOME = codexHome;
     process.env.CONDUIT_SSH_PATH = process.execPath;
     process.env.CONDUIT_E2E_SSH_ARGS_PREFIX = JSON.stringify([
       join(REPO, 'test', 'e2e', 'fixtures', 'fake-ssh.cjs'),
     ]);
     controller = await startServer('native-a', { electronProfile: true });
     receiver = await startServer('native-b');
+    await postureCase(controller, codexHome);
     await launchCases(receiver);
     await upgradeCase(controller, receiver);
     log(
@@ -382,6 +581,7 @@ async function run() {
     try {
       await Promise.all([controller?.stop(), receiver?.stop()]);
     } finally {
+      rmSync(codexHome, { recursive: true, force: true });
       for (const key of ENV_KEYS) {
         if (saved[key] === undefined) delete process.env[key];
         else process.env[key] = saved[key];

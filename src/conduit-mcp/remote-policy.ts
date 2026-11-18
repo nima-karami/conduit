@@ -78,6 +78,12 @@ interface Entry {
   conflict: { rev: number; doc: RemotePolicyDoc } | null;
   refusal: string | null;
   nativeReviewRequired: boolean;
+  submitted: {
+    draft: RemotePolicyDraft;
+    baseRev: number;
+    doc: RemotePolicyDoc;
+    epoch: number;
+  } | null;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
@@ -175,6 +181,7 @@ export function createRemotePolicy(deps: RemotePolicyDeps): RemotePolicy {
       conflict: null,
       refusal: null,
       nativeReviewRequired: false,
+      submitted: null,
     };
     entries.set(machineId, fresh);
     return fresh;
@@ -299,6 +306,7 @@ export function createRemotePolicy(deps: RemotePolicyDeps): RemotePolicy {
       return null;
     }
     if (draft.baseRev !== mirror.rev) {
+      // The editor token does not track receiver revisions; the push still needs revision CAS.
       e.conflict = { rev: mirror.rev, doc: mirror.doc };
       e.status = 'conflict';
       return null;
@@ -310,6 +318,17 @@ export function createRemotePolicy(deps: RemotePolicyDeps): RemotePolicy {
       return null;
     }
     return wire;
+  };
+
+  const applied = (e: Entry): void => {
+    e.draft = null;
+    e.submitted = null;
+    clearReviewState(e);
+    e.status = 'applied';
+    const saved = persist(draftsNow());
+    if (!saved.ok)
+      storeError =
+        'Remote rules were applied, but their stale local pending copy could not be saved away';
   };
 
   const send = (machineId: string, e: Entry): void => {
@@ -341,14 +360,9 @@ export function createRemotePolicy(deps: RemotePolicyDeps): RemotePolicy {
             doc: structuredClone(wire),
             grants: e.mirror?.grants ?? [],
           };
-        e.draft = null;
-        clearReviewState(e);
-        e.status = 'applied';
-        const saved = persist(draftsNow());
-        if (!saved.ok)
-          storeError =
-            'Remote rules were applied, but their stale local pending copy could not be saved away';
+        applied(e);
       } else if (result.error.code === 'policy_conflict' && 'current' in result) {
+        e.submitted = null;
         const checked = validateRemotePolicyDoc(result.current.doc);
         if (!revIsValid(result.current.rev) || !checked.ok) {
           stale(e);
@@ -368,9 +382,11 @@ export function createRemotePolicy(deps: RemotePolicyDeps): RemotePolicy {
           }
         }
       } else if (result.error.code === 'peer_unreachable') {
+        e.submitted = null;
         e.refusal = null;
         e.status = 'waiting';
       } else {
+        e.submitted = null;
         e.refusal = result.error.message;
         e.status = 'refused';
       }
@@ -413,6 +429,12 @@ export function createRemotePolicy(deps: RemotePolicyDeps): RemotePolicy {
         return;
       }
       try {
+        e.submitted = {
+          draft: submitted,
+          baseRev: submitted.baseRev,
+          doc: structuredClone(wire),
+          epoch,
+        };
         void network.pushPolicy(machineId, submitted.baseRev, structuredClone(wire)).then(
           (result) => settle(result, wire),
           (error: unknown) => failed(error, wire),
@@ -430,6 +452,7 @@ export function createRemotePolicy(deps: RemotePolicyDeps): RemotePolicy {
     if (!saved.ok) return saved;
     const conflict = !e.fresh && e.conflict?.rev !== draft.baseRev ? e.conflict : null;
     e.draft = draft;
+    e.submitted = null;
     e.editToken = deps.newId();
     clearReviewState(e);
     e.conflict = conflict;
@@ -544,12 +567,29 @@ export function createRemotePolicy(deps: RemotePolicyDeps): RemotePolicy {
         notify();
         return;
       }
-      if (e.fresh && e.mirror !== null && snap.rev < e.mirror.rev) return;
+      if (
+        e.mirror !== null &&
+        snap.rev < e.mirror.rev &&
+        (e.fresh || (e.submitted !== null && e.submitted.draft === e.draft))
+      )
+        return;
       const before = signature(e);
       if (e.link !== 'up') e.epoch++;
       e.mirror = { rev: snap.rev, doc: checked.doc, grants: structuredClone(snap.grants) };
       e.link = 'up';
       e.fresh = true;
+      const submitted = e.submitted;
+      if (submitted && (submitted.draft !== e.draft || snap.rev > submitted.baseRev)) {
+        if (
+          submitted.draft === e.draft &&
+          submitted.epoch !== e.epoch &&
+          snap.rev > submitted.baseRev &&
+          equalDoc(checked.doc, submitted.doc)
+        )
+          applied(e);
+        else if (submitted.draft !== e.draft || !equalDoc(checked.doc, submitted.doc))
+          e.submitted = null;
+      }
       if (e.draft === null) {
         e.status = 'applied';
         clearReviewState(e);
@@ -577,6 +617,7 @@ export function createRemotePolicy(deps: RemotePolicyDeps): RemotePolicy {
       e.link = state;
       if (state === 'gone') {
         e.mirror = null;
+        e.submitted = null;
         e.editToken = deps.newId();
       }
       notify();
@@ -654,6 +695,7 @@ export function createRemotePolicy(deps: RemotePolicyDeps): RemotePolicy {
       const saved = persist(candidate);
       if (!saved.ok) return saved;
       e.draft = null;
+      e.submitted = null;
       clearReviewState(e);
       e.status = 'applied';
       e.editToken = deps.newId();

@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createDomain } from '../../server/domain';
 import { disposeHarnesses, FakeRuntime, harness, isFault } from '../../server/domain/testing/fakes';
 import { createPersistentTokenStore } from '../../server/mcp/token-file';
 import { hcLabelsFor, runtimeHarness } from '../../server/runtime/testing/harness';
@@ -36,6 +37,69 @@ describe('server domain: sessions.start', () => {
     const second = (await start(b, id)) as Started;
     expect(second.generation).toBe(2);
     expect(b.runtime.spawns[0]?.labels['conduit.generation']).toBe('2');
+  });
+
+  it('tracks spawned Codex launch IDs and retires the old association on relaunch', async () => {
+    const h = harness();
+    await h.domain.dispose();
+    const tracks: { sessionId: string; ids: { generation: number; launchId: string } }[] = [];
+    const retirements: string[] = [];
+    let active: { generation: number; launchId: string } | null = null;
+    const claude = h.deps.detectClis()[0];
+    if (!claude) throw new Error('missing test CLI');
+    h.deps.detectClis = () => [{ ...claude, id: 'codex', command: 'codex' }];
+    h.deps.createCodexWatch = () => ({
+      track: (sessionId, value) => {
+        active = value.ids;
+        tracks.push({ sessionId, ids: value.ids });
+      },
+      untrack: (sessionId) => {
+        active = null;
+        retirements.push(sessionId);
+      },
+      linkPosture: (_sessionId, ids) =>
+        active?.generation === ids.generation && active.launchId === ids.launchId,
+      getPosture: () => null,
+      unlinkPosture: (_sessionId, ids) => {
+        if (active?.generation === ids.generation && active.launchId === ids.launchId)
+          active = null;
+      },
+      boundFile: () => null,
+      dispose: () => {},
+    });
+    const domain = createDomain(h.deps);
+    domain.adopted([]);
+    const call = async (method: string, params: Record<string, unknown>) => {
+      const answer = await domain.handle({ id: 1, method, params });
+      if (!answer || 'error' in answer || !('result' in answer))
+        throw new Error(`failed ${method}`);
+      return answer.result;
+    };
+    try {
+      const created = (await call('sessions.create', { agentId: 'codex', home: h.home })) as {
+        sessionId: string;
+      };
+      const id = created.sessionId;
+      await call('sessions.start', { sessionId: id });
+      const first = h.runtime.spawns[0]?.ids;
+      if (!first) throw new Error('first spawn missing');
+      expect(tracks[0]).toEqual({ sessionId: id, ids: first });
+      expect(domain.domain.codexPosture.link(id, first, 'thread')).toBe(true);
+      await call('sessions.restart', { sessionId: id });
+      expect(domain.domain.codexPosture.link(id, first, 'thread')).toBe(false);
+      await call('sessions.relaunch', { sessionIds: [id] });
+      await call('sessions.start', { sessionId: id });
+      const second = h.runtime.spawns[1]?.ids;
+      if (!second) throw new Error('second spawn missing');
+      expect(second.generation).toBe(first.generation + 1);
+      expect(second.launchId).not.toBe(first.launchId);
+      expect(tracks[1]).toEqual({ sessionId: id, ids: second });
+      expect(retirements).toEqual([id, id]);
+      expect(domain.domain.codexPosture.link(id, first, 'thread')).toBe(false);
+      expect(domain.domain.codexPosture.link(id, second, 'thread')).toBe(true);
+    } finally {
+      await domain.dispose();
+    }
   });
 
   it('does not reserve or spawn a launch when sessions.json cannot be updated', async () => {

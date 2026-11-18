@@ -1,4 +1,5 @@
 import type { LimitSignal } from './contracts/auto-resume';
+import type { CodexPostureReading } from './contracts/native-launch';
 
 // see spec 2026-11-13-scheduler-auto-resume §3 "Codex adapter" and docs/runs/2026-11-13-con-11/spike.md S3
 const BIND_SLACK_MS = 5000;
@@ -22,6 +23,33 @@ function parseLine(line: string): Doc | null {
   } catch {
     return null;
   }
+}
+
+export function rolloutPosture(line: string): CodexPostureReading | null {
+  const doc = parseLine(line);
+  if (doc?.type !== 'turn_context') return null;
+  const at =
+    typeof doc.timestamp === 'string' && /(?:Z|[+-]\d{2}:\d{2})$/.test(doc.timestamp)
+      ? Date.parse(doc.timestamp)
+      : NaN;
+  const reportedAt = Number.isFinite(at) && at > 0 ? at : null;
+  const payload = asRecord(doc.payload);
+  const sandbox = asRecord(payload?.sandbox_policy)?.type;
+  const approval = payload?.approval_policy;
+  if (
+    reportedAt !== null &&
+    (sandbox === 'read-only' ||
+      sandbox === 'workspace-write' ||
+      sandbox === 'danger-full-access' ||
+      sandbox === 'external-sandbox') &&
+    (approval === 'on-request' ||
+      approval === 'on-failure' ||
+      approval === 'untrusted' ||
+      approval === 'never')
+  ) {
+    return { status: 'known', reportedAt, sandbox, approval };
+  }
+  return { status: 'unknown', reportedAt };
 }
 
 export function parseRolloutMeta(firstLine: string): RolloutMeta | null {
