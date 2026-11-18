@@ -92,8 +92,6 @@ export function AgentRow({
   onContextMenu,
   onFocus,
   drag,
-  permissionLabel,
-  onPermissions,
   refusal,
   onRefusal,
 }: {
@@ -124,8 +122,6 @@ export function AgentRow({
   onContextMenu?: (e: React.MouseEvent) => void;
   onFocus?: () => void;
   drag?: AgentRowDragProps;
-  permissionLabel?: string | null;
-  onPermissions?: () => void;
   refusal?: RefusalChipData;
   onRefusal?: (latest: RefusalChipData['latest']) => void;
 }) {
@@ -220,20 +216,6 @@ export function AgentRow({
             </span>
             {space !== undefined && <span className="session__space">{` · ${space}`}</span>}
           </span>
-        </button>
-      )}
-      {permissionLabel && onPermissions && (
-        <button
-          type="button"
-          className="session__permission"
-          title="Permissions…"
-          aria-label={`Permissions · ${session.name}: ${permissionLabel}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            onPermissions();
-          }}
-        >
-          {permissionLabel}
         </button>
       )}
       {!editing && (
