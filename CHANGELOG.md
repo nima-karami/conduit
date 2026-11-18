@@ -6,6 +6,11 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.68.4] — 2026-11-18
+
+### Changed
+- Settings → Permissions → Assignments is easier to read: each row shows its profile and how many exceptions it has, instead of the full list, with Edit and Reset buttons on the row. Reset still shows you the change before it saves. Sessions are in their own collapsible group.
+
 ## [0.68.3] — 2026-11-18
 
 ### Changed
