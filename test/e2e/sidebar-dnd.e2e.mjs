@@ -16,22 +16,22 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import {
   assert,
   createProject,
   e2ePlatformSupported,
   finishScenario,
-  launchElectron,
+  launchApp,
   makeLog,
   openSession,
-  profileDir,
+  probeProfile,
   REPO,
   selectSpace,
   shutdownApp,
   tapBridge,
 } from './harness.mjs';
+import { groupOf, waitFact } from './sidebar-tree-helpers.mjs';
 
 if (!e2ePlatformSupported()) {
   console.log('[sidebar-dnd] SKIP — suite does not run on this platform (macOS)');
@@ -40,22 +40,19 @@ if (!e2ePlatformSupported()) {
 
 const log = makeLog('sidebar-dnd');
 
-const require = createRequire(import.meta.url);
-const electronPath = require('electron');
-
 const RANK = ['pinned', 'blocked', 'done', 'working', 'idle', 'stopped'];
 
-async function launchOnDir(userDataDir) {
-  const app = await launchElectron({
-    executablePath: electronPath,
-    args: [`--user-data-dir=${userDataDir}`, REPO],
-    cwd: REPO,
-  });
-  const page = await app.firstWindow();
-  await page.waitForLoadState('domcontentloaded');
-  await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
-  return { app, page };
-}
+const QUIET = 'e2e-dnd-quiet';
+const EXITING = 'e2e-dnd-exiting';
+const agent = (id, program) => ({
+  id,
+  label: id,
+  command: process.execPath,
+  args: ['-e', program],
+  icon: 'terminal',
+  color: 'green',
+  cwdStrategy: 'workspaceFolder',
+});
 
 /** The tree's direct children in DOM order: `group:<key>` for headers, the session id for rows. */
 const treeOrder = (page) =>
@@ -89,7 +86,11 @@ function persistedSidebarUi(userDataDir) {
 }
 
 // Shared user-data dir: the fold must survive a relaunch on the same dir.
-const userDataDir = profileDir('w3');
+// Shell prompts can produce delayed Working → Idle transitions during a drag.
+const { userDataDir } = probeProfile('w3', [
+  agent(QUIET, "process.stdout.write('DND-READY\\r\\n'); setInterval(() => {}, 1e6)"),
+  agent(EXITING, "process.stdout.write('exiting\\r\\n')"),
+]);
 log('userDataDir:', userDataDir);
 
 let app1 = null;
@@ -106,17 +107,24 @@ const shutdownAll = async () => {
   app2 = null;
 };
 try {
-  const launch1 = await launchOnDir(userDataDir);
+  const launch1 = await launchApp({ userDataDir, openFolder: false });
   app1 = launch1.app;
   const { page } = launch1;
   page1 = page;
   await tapBridge(page);
 
-  const sid1 = await openSession(page, { path: REPO });
-  const sid2 = await openSession(page, { path: REPO });
+  const sid2 = await openSession(page, { path: REPO, agentId: QUIET });
+  const sid1 = await openSession(page, { path: REPO, agentId: QUIET });
+  const stopped = await openSession(page, { path: REPO, agentId: EXITING });
+  await page.waitForFunction(
+    (ids) => ids.every((id) => window.__capBy?.[id]?.includes('DND-READY')),
+    [sid1, sid2],
+    { timeout: 20_000 },
+  );
   log('sessions opened:', sid1, sid2);
 
-  // File sid1 into a project so the selection under test is keyed on a project id.
+  // File sid1 into a project after both probes have emitted their only output. The host snapshot
+  // acknowledging the change includes the attention state from that output.
   const projectId = await createProject(page, 'dnd-proj');
   assert(projectId, 'createProject returned no id');
   await page.evaluate(
@@ -137,25 +145,27 @@ try {
   // ── Scenarios 1 & 2: rank order, and no manual reorder ─────────────────
   log('Scenarios 1 & 2: the tree is in rank order and a row-on-row drop reorders nothing...');
   await selectSpace(page, 'all');
-  // Bash sessions flip working↔idle as they settle, and each flip can move a row; read the order
-  // only once no session's status has changed for ~1 s.
   await page.waitForFunction(
-    () => {
-      const sig = JSON.stringify((window.__sessions || []).map((s) => [s.id, s.status]));
-      const now = Date.now();
-      if (window.__statusSig !== sig) {
-        window.__statusSig = sig;
-        window.__statusSigAt = now;
-      }
-      return now - window.__statusSigAt >= 1000;
-    },
-    null,
-    { polling: 100, timeout: 30000 },
+    (id) => (window.__sessions || []).find((session) => session.id === id)?.status === 'exited',
+    stopped,
+    { timeout: 20_000 },
+  );
+  await page.locator('[data-agent-group="stopped"]').waitFor();
+  await waitFact(
+    () => groupOf(page, sid1),
+    (group) => group === 'idle',
+    'destination is Idle',
+  );
+  await waitFact(
+    () => groupOf(page, sid2),
+    (group) => group === 'idle',
+    'source is Idle',
   );
   const order0 = await treeOrder(page);
   const groups0 = order0.filter((k) => k.startsWith('group:')).map((k) => k.slice(6));
   assert(
-    groups0.length > 0 &&
+    groups0.includes('idle') &&
+      groups0.includes('stopped') &&
       groups0.every((g, i) => i === 0 || RANK.indexOf(g) > RANK.indexOf(groups0[i - 1])),
     `status groups must follow rank order ${RANK.join(' > ')}, got ${JSON.stringify(groups0)}`,
   );
@@ -199,7 +209,7 @@ try {
   // Rows stay draggable: a drag onto a Space row or another window is still a move.
   assert(dragged.draggable === 'true', `rows stay draggable, got ${dragged.draggable}`);
   try {
-    await page.waitForFunction(
+    const changed = await page.waitForFunction(
       ({ order, projects }) => {
         const currentOrder = [
           ...document.querySelectorAll('[data-agent-tree] > [role="treeitem"]'),
@@ -211,15 +221,23 @@ try {
         const currentProjects = Object.fromEntries(
           (window.__sessions || []).map((s) => [s.id, s.projectId ?? null]),
         );
-        return (
-          JSON.stringify(currentOrder) !== JSON.stringify(order) ||
-          JSON.stringify(currentProjects) !== JSON.stringify(projects)
-        );
+        if (
+          JSON.stringify(currentOrder) === JSON.stringify(order) &&
+          JSON.stringify(currentProjects) === JSON.stringify(projects)
+        )
+          return null;
+        return { order: currentOrder, projects: currentProjects };
       },
       { order: order0, projects: projectsBefore },
       { timeout: 800 },
     );
-    assert(false, 'row-on-row drop changed the tree or Space');
+    assert(
+      false,
+      `row-on-row drop changed the tree or Space: ${JSON.stringify({
+        before: { order: order0, projects: projectsBefore },
+        after: await changed.jsonValue(),
+      })}`,
+    );
   } catch (error) {
     if (error.name !== 'TimeoutError') throw error;
   }
@@ -320,7 +338,7 @@ try {
   log('first launch closed; relaunching on same userData dir...');
 
   // ── Relaunch: fold and selection must survive ──────────────────────────
-  const launch2 = await launchOnDir(userDataDir);
+  const launch2 = await launchApp({ userDataDir });
   app2 = launch2.app;
   page2 = launch2.page;
   await tapBridge(page2);
@@ -348,8 +366,7 @@ try {
     (await header2.getAttribute('aria-expanded')) === 'false',
     'Folded state should persist: Pinned is expanded after relaunch',
   );
-  // The relaunch opens the argv folder as another agent without a Space; the selection hides it,
-  // and the folded group itself must show no row.
+  // Space selection hides the other sessions, and the folded Pinned group hides its only row.
   const rowsShown = await page2.locator('[data-agent-tree] .session').count();
   assert(rowsShown === 0, `Folded state should persist: ${rowsShown} row(s) shown after relaunch`);
   const countAfterRelaunch = (await header2.locator('.proj__count').textContent())?.trim() ?? null;
