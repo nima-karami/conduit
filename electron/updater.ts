@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -34,6 +35,29 @@ function isSupported(): boolean {
 
 let lastSend: ((msg: HostToWebview) => void) | null = null;
 
+function linuxSessionState(): { scopeKind: string; sessionId: string | null } {
+  let scopeKind = 'unavailable';
+  try {
+    const cgroup = fs.readFileSync('/proc/self/cgroup', 'utf8');
+    if (/\/session-[^/\s]+\.scope(?:[/\s]|$)/.test(cgroup)) scopeKind = 'session.scope';
+    else if (/\/app-[^/\s]+\.scope(?:[/\s]|$)/.test(cgroup)) scopeKind = 'app.scope';
+    else if (/\/[^/\s]+\.service(?:[/\s]|$)/.test(cgroup)) scopeKind = 'service';
+    else scopeKind = 'other';
+  } catch {
+    // /proc can be unavailable in a sandbox.
+  }
+  const result = spawnSync(
+    '/usr/bin/loginctl',
+    ['show-session', 'self', '--property=Id', '--value'],
+    {
+      encoding: 'utf8',
+      timeout: 1000,
+    },
+  );
+  const id = result.stdout?.trim();
+  return { scopeKind, sessionId: result.status === 0 && id && /^[a-z0-9]+$/i.test(id) ? id : null };
+}
+
 export function initUpdater(
   send: (msg: HostToWebview) => void,
   onEvent: (event: string, data?: Record<string, unknown>) => void = () => {},
@@ -55,25 +79,29 @@ export function initUpdater(
   }
 
   const originalLogger = autoUpdater.logger;
-  let awaitingPkexecStderr = false;
-  let pkexecStderr: string | null = null;
+  let pkexecCommand: string | undefined;
+  const pkexecAttempts: { command: string; stderr: string }[] = [];
   autoUpdater.logger = {
+    debug(message) {
+      originalLogger?.debug?.(message);
+    },
     info(message) {
-      if (typeof message === 'string' && message.startsWith('Executing: pkexec with args:')) {
-        awaitingPkexecStderr = true;
-        pkexecStderr = null;
-      } else {
-        awaitingPkexecStderr = false;
-      }
+      if (message.startsWith('Install: isSilent:')) pkexecAttempts.length = 0;
+      const args = /^Executing: pkexec with args:(.*)$/.exec(message)?.[1];
+      pkexecCommand =
+        args === undefined ? undefined : (/,-c,'([a-z-]+)/.exec(args)?.[1] ?? 'unknown');
       originalLogger?.info(message);
     },
     warn(message) {
       originalLogger?.warn(message);
     },
     error(message) {
-      if (awaitingPkexecStderr) {
-        pkexecStderr = String(message).split(os.homedir()).join('~').slice(0, 4000);
-        awaitingPkexecStderr = false;
+      if (pkexecCommand !== undefined) {
+        pkexecAttempts.push({
+          command: pkexecCommand,
+          stderr: String(message).split(os.homedir()).join('~').slice(0, 4000),
+        });
+        pkexecCommand = undefined;
       }
       originalLogger?.error(message);
     },
@@ -145,14 +173,14 @@ export function initUpdater(
       );
       onEvent('deb-install-diagnostic', {
         exitCode: Number(match[1]),
-        stderr: pkexecStderr,
+        pkexecAttempts: [...pkexecAttempts],
+        ...linuxSessionState(),
         environment,
         ...windowState(),
         version: downloadedVersion,
         fileExists: fs.existsSync(pendingDownloadedFile),
         ageSeconds: downloadedAt === null ? null : Math.floor((Date.now() - downloadedAt) / 1000),
       });
-      pkexecStderr = null;
     }
     if (
       explicitInstallInProgress &&

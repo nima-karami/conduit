@@ -12,7 +12,7 @@ export interface DebInstallFailureInput {
   error: unknown;
 }
 
-// electron-updater discards stderr, so exit 127 does not identify the underlying cause.
+// The updater error event carries the exit status alone, which cannot identify the underlying cause.
 const PKEXEC_FAILURE = /^Command pkexec exited with code 127$/;
 
 /** POSIX single-quote a path so the copyable command survives spaces and quotes. */
