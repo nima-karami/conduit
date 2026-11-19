@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { TOOL_NAMES } from '../../src/conduit-mcp/tool-policy';
 import {
   isE2eIrrelevant,
   parseNameStatus,
@@ -285,11 +286,11 @@ describe('selectAffected: recent merged diffs', () => {
         'role-brief',
       ]),
     );
+    const directToolUse = new RegExp(`\\b(?:callTool|startCall|${TOOL_NAMES.join('|')})\\b`);
     const omittedCallers = scenarios.filter(
       (name) =>
-        /\b(?:callTool|startCall|open_session|send_message|list_sessions)\b/.test(
-          readFileSync(join(directory, `${name}.e2e.mjs`), 'utf8'),
-        ) && !result.names.includes(name),
+        directToolUse.test(readFileSync(join(directory, `${name}.e2e.mjs`), 'utf8')) &&
+        !result.names.includes(name),
     );
     expect(omittedCallers).toEqual([]);
     expect(selectAffected([m(file)], current).kind).toBe('full');
@@ -320,7 +321,7 @@ describe('selectAffected: recent merged diffs', () => {
         join(dir, 'nested', 'link.mjs'),
         "new URL('../net-helpers.mjs', import.meta.url);",
       );
-      expect(scenarioUsage(dir).mcp).toContain('one.e2e.mjs');
+      expect(scenarioUsage(dir, [...TOOL_NAMES]).mcp).toContain('one.e2e.mjs');
     } finally {
       rmSync(dir, { force: true, recursive: true });
     }

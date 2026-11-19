@@ -33,7 +33,6 @@ const LOCAL_IMPORT =
   /(?:\bfrom\s*|\bimport\s*(?:\(\s*)?|\bnew\s+URL\s*\(\s*)['"](\.\.?\/[^'"]+\.mjs)['"]/g;
 const MCP_PATH =
   /^src\/conduit-mcp\/(request-service|request-types|remote-requests|remote-routing|control-tools|tools)\.ts$/;
-const MCP_USE = /\b(callTool|startCall|open_session|send_message|list_sessions)\b/;
 const UPDATES = /^(settings-release-notes$|update-|markdown-(viewer|search|toc-collapse)$)/;
 
 function dependentFiles(imports, seeds) {
@@ -46,7 +45,16 @@ function dependentFiles(imports, seeds) {
   return dependents;
 }
 
-export function scenarioUsage(dir) {
+function registeredToolNames(dir) {
+  const schemas = readFileSync(join(dir, '../../src/conduit-mcp/tool-schemas.ts'), 'utf8');
+  return [...schemas.matchAll(/^\s*name:\s*['"]([a-z][a-z_]+)['"],?\s*$/gm)].map(
+    (match) => match[1],
+  );
+}
+
+export function scenarioUsage(dir, toolNames = registeredToolNames(dir)) {
+  if (!toolNames.length) throw new Error('No MCP tool names found in the tool schema registry');
+  const mcpUse = new RegExp(`\\b(?:callTool|startCall|${toolNames.join('|')})\\b`);
   const imports = {};
   const mcp = ['net-helpers.mjs', 'permissions-policy-helpers.mjs', 'conduit-mcp-helpers.mjs'];
   for (const entry of readdirSync(dir, { recursive: true, withFileTypes: true })) {
@@ -57,7 +65,7 @@ export function scenarioUsage(dir) {
     imports[file] = [...source.matchAll(LOCAL_IMPORT)].map((match) =>
       posix.join(posix.dirname(file), match[1]),
     );
-    if (MCP_USE.test(source)) mcp.push(file);
+    if (mcpUse.test(source)) mcp.push(file);
   }
   return { imports, mcp: [...dependentFiles(imports, mcp)] };
 }
