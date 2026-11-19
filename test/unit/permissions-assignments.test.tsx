@@ -171,7 +171,7 @@ it('reviews and saves the frozen assignment with the token and native digest', a
     reviewResult: { ok: true, requiresNativeReview: true, digest: 'digest' },
   });
   await act(async () => rowOf(host, 'Default').click());
-  await click(host, 'Add assignment');
+  await click(host, 'Edit changes');
   const native = [...host.querySelectorAll('input')].find((input) =>
     input.parentElement?.textContent?.includes('native modes'),
   );
@@ -205,7 +205,7 @@ it('shows exceptions as a count in the row and offers the reset review inside th
   expect(row.textContent).toContain('2 changes');
   expect(row.textContent).not.toContain('close_session');
   await act(async () => row.click());
-  await click(host, 'Edit assignment');
+  await click(host, 'Edit changes');
   await click(host, 'Review reset');
   expect(reviewLocalPolicy).toHaveBeenCalledWith(
     { kind: 'assignment', point: { kind: 'cli', cli: 'claude' }, assignment: null },
@@ -237,7 +237,7 @@ it('steps back review, edit, drawer, closed, then reports nothing to consume', a
   const m = await mount({ sessions: [session('s1', 'First')], policy: policyWith([], ['s1']) });
   expect(m.back()?.()).toBe(false);
   await act(async () => rowOf(m.host, 'First').click());
-  await click(m.host, 'Add assignment');
+  await click(m.host, 'Edit changes');
   await click(m.host, 'Review changes');
   expect(m.host.textContent).toContain('Review assignment');
   await act(async () => void m.back()?.());
@@ -257,7 +257,7 @@ it('consumes a back step without acting while a review request is pending', asyn
   const m = await mount({ sessions: [session('s1', 'First')], policy: policyWith([], ['s1']) });
   m.reviewLocalPolicy.mockImplementation(() => gate.promise);
   await act(async () => rowOf(m.host, 'First').click());
-  await click(m.host, 'Add assignment');
+  await click(m.host, 'Edit changes');
   await click(m.host, 'Review changes');
   let consumed: boolean | undefined;
   await act(async () => {
@@ -273,7 +273,7 @@ it('drops a review result that arrives after the user stepped back to the list',
   const m = await mount({ sessions: [session('s1', 'First')], policy: policyWith([], ['s1']) });
   m.reviewLocalPolicy.mockImplementation(() => gate.promise);
   await act(async () => rowOf(m.host, 'First').click());
-  await click(m.host, 'Add assignment');
+  await click(m.host, 'Edit changes');
   await click(m.host, 'Review changes');
   await act(async () => m.host.querySelector<HTMLElement>('[aria-label="Close"]')?.click());
   await act(async () => gate.resolve({ ok: true, requiresNativeReview: false }));
@@ -337,4 +337,92 @@ it('stages the new-agent role on the default assignment', async () => {
     'v1',
   );
   expect(saveAssignment).not.toHaveBeenCalled();
+});
+
+const sessionWithChanges = (): Assignment => ({
+  profileId: 'worker',
+  onScreenOnly: false,
+  exceptions: [
+    { tool: 'close_session', scope: { kind: 'anywhere' }, rule: { decision: 'allow' } },
+    { tool: 'open_file', scope: { kind: 'anywhere' }, rule: { decision: 'deny' } },
+  ],
+});
+const word = { allow: 'Allow', ask: 'Ask', deny: 'Deny' } as const;
+const workerRules = BUILT_IN_PROFILES.find((p) => p.id === 'worker')?.rules;
+
+async function openWithChanges() {
+  const m = await mount({
+    sessions: [session('s1', 'First')],
+    policy: policyWith(
+      [{ point: { kind: 'session', sessionId: 's1' }, assignment: sessionWithChanges() }],
+      ['s1'],
+    ),
+  });
+  await act(async () => rowOf(m.host, 'First').click());
+  return m;
+}
+
+it('lists each change as what the role says and what this agent does', async () => {
+  const { host } = await openWithChanges();
+  const lines = [...(drawer(host)?.querySelectorAll('li') ?? [])].map((li) => li.textContent);
+  expect(lines).toContain(
+    `close_session: role says ${word[workerRules?.close_session.decision ?? 'ask']} → this agent: Allow`,
+  );
+  expect(lines).toContain(
+    `open_file: role says ${word[workerRules?.open_file.decision ?? 'ask']} → this agent: Deny`,
+  );
+  expect(drawer(host)?.textContent).toContain('2 changes from Worker');
+});
+
+it('says Follows role in the drawer when there are no changes', async () => {
+  const m = await mount({ sessions: [session('s1', 'First')], policy: policyWith([], ['s1']) });
+  await act(async () => rowOf(m.host, 'First').click());
+  expect(drawer(m.host)?.textContent).toContain('Follows role');
+  expect(button(m.host, 'Reset all to role')).toBeUndefined();
+});
+
+it('enters the existing exceptions editor from Edit changes', async () => {
+  const { host } = await openWithChanges();
+  await click(host, 'Edit changes');
+  expect(host.textContent).toContain('Edit assignment');
+});
+
+it('stages a reset of every change and goes to Review without saving', async () => {
+  const { host, reviewLocalPolicy, saveAssignment } = await openWithChanges();
+  await click(host, 'Reset all to role');
+  expect(reviewLocalPolicy).toHaveBeenCalledWith(
+    {
+      kind: 'assignment',
+      point: { kind: 'session', sessionId: 's1' },
+      assignment: expect.objectContaining({ profileId: 'worker', exceptions: [] }),
+    },
+    'v1',
+  );
+  expect(host.textContent).toContain('Review assignment');
+  expect(saveAssignment).not.toHaveBeenCalled();
+});
+
+it('stages a role picked inside the drawer', async () => {
+  const { host, reviewLocalPolicy } = await openWithChanges();
+  const select = host.querySelector<HTMLSelectElement>('aside select[aria-label="Role"]');
+  if (!select) throw new Error('missing drawer role select');
+  await act(async () => {
+    select.value = 'lead';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  expect(reviewLocalPolicy).not.toHaveBeenCalled();
+  await click(host, 'Review changes');
+  expect(reviewLocalPolicy).toHaveBeenCalledWith(
+    expect.objectContaining({ assignment: expect.objectContaining({ profileId: 'lead' }) }),
+    'v1',
+  );
+});
+
+it('summarises what the agent can do per group with a worded pill', async () => {
+  const { host } = await openWithChanges();
+  const groups = [...(drawer(host)?.querySelectorAll('details') ?? [])];
+  expect(groups.length).toBeGreaterThan(0);
+  expect(groups[0].closest('section')?.textContent).toContain('What this agent can do');
+  for (const group of groups)
+    expect(group.querySelector('.permissions-pill')?.textContent).toMatch(/Allowed|Mixed|Denied/);
 });

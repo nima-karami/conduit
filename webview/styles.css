@@ -17830,38 +17830,103 @@ button.toggle--on .toggle__knob {
   justify-content: space-between;
   gap: 8px;
 }
-.permissions-assignments__table {
-  width: 100%;
-  margin-block: 12px;
-  border-collapse: collapse;
-  text-align: start;
+/* Agents tab shares the Roles list + drawer split; spec 2026-11-18-mcp-full-screen §4. */
+.permissions-agents-list {
+  min-width: 0;
+  color: var(--text);
 }
-.permissions-assignments__table :is(th, td) {
+.permissions-agents-list h3 {
+  margin: 0 0 8px;
+}
+.permissions-agents-list__new {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.permissions-agents-list__table {
+  width: 100%;
+  margin-block: 8px;
+  border-collapse: collapse;
+  font-size: calc(13px * var(--font-scale));
+}
+.permissions-agents-list__table :is(th, td) {
+  padding: 7px 8px;
   border-bottom: 1px solid var(--border);
-  padding: 8px;
   text-align: start;
   vertical-align: middle;
-  white-space: nowrap;
 }
-/* Only the name column may wrap; the others are short by design. */
-.permissions-assignments__table tbody th {
-  width: 100%;
-  white-space: normal;
+.permissions-agents-list__table thead th {
+  color: var(--text-dim);
+  border-bottom-color: var(--border-2);
+}
+.permissions-agents-list__table tbody th {
   overflow-wrap: anywhere;
 }
-.permissions-assignments__table .permissions-assignments__actions {
-  text-align: end;
+.permissions-agents-list__table .selectfield {
+  max-width: 100%;
 }
-.permissions-assignments__actions > .btn + .btn {
-  margin-inline-start: 6px;
+.permissions-agents-list__row[tabindex] {
+  cursor: pointer;
 }
-.permissions-assignments__muted {
+.permissions-agents-list__row[tabindex]:hover {
+  background: var(--raise);
+}
+.permissions-agents-list__row[aria-selected="true"] {
+  background: var(--accent-soft);
+}
+.permissions-agents-list__row:focus-visible {
+  outline: none;
+  box-shadow: inset var(--focus-ring);
+}
+.permissions-agents-list__title,
+.permissions-agents-list__subtitle {
+  display: block;
+}
+.permissions-agents-list__subtitle {
   color: var(--text-dim);
+  font-weight: 400;
+  font-size: calc(11px * var(--font-scale));
 }
-.permissions-assignments__sessions > summary {
+.permissions-agents-list__chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-ctl);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.permissions-agents-list__chip[data-changes="true"] {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.permissions-agents-list__defaults > summary {
   cursor: pointer;
   padding-block: 6px;
   color: var(--text-dim);
+}
+.permissions-agents-drawer__role {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-block: 8px;
+}
+.permissions-agents-drawer__summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+.permissions-agents-drawer__changes {
+  margin: 4px 0 10px;
+  padding-inline-start: 0;
+  list-style: none;
+}
+.permissions-agents-drawer__changes li {
+  padding: 3px 0;
+  overflow-wrap: anywhere;
 }
 .permissions-profile-editor__name {
   padding: 5px 9px;

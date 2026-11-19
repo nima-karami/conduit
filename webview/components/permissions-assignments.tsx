@@ -10,7 +10,12 @@ import type {
   ReplayResult,
   Scope,
 } from '../../src/conduit-mcp/policy-types';
-import { CLI_KINDS, TOOL_NAMES, type ToolName } from '../../src/conduit-mcp/tool-policy';
+import {
+  CLI_KINDS,
+  TOOL_GROUPS,
+  TOOL_NAMES,
+  type ToolName,
+} from '../../src/conduit-mcp/tool-policy';
 import { folderKey } from '../../src/folder-key';
 import type { Session } from '../../src/types';
 import { MCP_STR } from '../conduit-mcp-strings';
@@ -19,10 +24,13 @@ import type { BackHandler } from './mcp-section';
 import { type AgentRow, PermissionsAgentsList } from './permissions-agents-list';
 import { PermissionsAssignmentExceptions } from './permissions-assignment-exceptions';
 import { PermissionsCheckRequest } from './permissions-check-request';
+import { groupCounts, groupState, groupText } from './permissions-role-summary';
 import {
   describeExceptionScope,
   SessionPermissionExceptions,
 } from './session-permission-exceptions';
+
+const STR = MCP_STR.sections.agents;
 
 type Edit = {
   point: AssignmentPoint;
@@ -211,13 +219,31 @@ function ReplayPreview({
 function AgentDrawer({
   title,
   subtitle,
+  profile,
+  profiles,
+  changes,
+  readOnly,
+  error,
   onClose,
-  children,
+  onRoleChange,
+  onEditChanges,
+  onResetAll,
+  staged,
+  check,
 }: {
   title: string;
   subtitle: string;
+  profile: Profile | undefined;
+  profiles: readonly Profile[];
+  changes: { key: string; tool: ToolName; text: string }[];
+  readOnly: boolean;
+  error: string | null;
   onClose(): void;
-  children: ReactNode;
+  onRoleChange(id: ProfileId): void;
+  onEditChanges(): void;
+  onResetAll(): void;
+  staged: ReactNode;
+  check: ReactNode;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const titleId = useId();
@@ -228,17 +254,93 @@ function AgentDrawer({
         <h4 id={titleId} ref={heading} tabIndex={-1}>
           {title}
         </h4>
-        <button
-          type="button"
-          className="iconbtn"
-          aria-label={MCP_STR.sections.agents.closeDrawer}
-          onClick={onClose}
-        >
+        <button type="button" className="iconbtn" aria-label={STR.closeDrawer} onClick={onClose}>
           ✕
         </button>
       </header>
       <p className="permissions-drawer__note">{subtitle}</p>
-      {children}
+      {staged ?? (
+        <>
+          <label className="permissions-agents-drawer__role">
+            {STR.role}
+            <select
+              className="selectfield"
+              aria-label={STR.role}
+              value={profile?.id ?? ''}
+              disabled={readOnly}
+              onChange={(event) => {
+                const next = profiles.find((item) => item.id === event.target.value);
+                if (next) onRoleChange(next.id as ProfileId);
+              }}
+            >
+              {!profile && <option value="" />}
+              {profiles.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="permissions-agents-drawer__summary">
+            <p>
+              {changes.length > 0 && profile
+                ? STR.changesFrom(changes.length, profile.name)
+                : STR.changes(0)}
+            </p>
+            {changes.length > 0 && (
+              <button
+                type="button"
+                className="btn btn--sm"
+                disabled={readOnly}
+                onClick={onResetAll}
+              >
+                {STR.resetAll}
+              </button>
+            )}
+          </div>
+          {changes.length > 0 && (
+            <ul className="permissions-agents-drawer__changes">
+              {changes.map((change) => (
+                <li key={change.key}>{change.text}</li>
+              ))}
+            </ul>
+          )}
+          {error && <p role="alert">{error}</p>}
+          <button type="button" className="btn btn--sm" disabled={readOnly} onClick={onEditChanges}>
+            {STR.editChanges}
+          </button>
+          {profile && (
+            <section aria-label={STR.canDo}>
+              <h5>{STR.canDo}</h5>
+              {TOOL_GROUPS.map(({ group, tools }) => {
+                const counts = groupCounts(profile, tools);
+                return (
+                  <details key={group} className="permissions-drawer__group">
+                    <summary>
+                      {MCP_STR.tools.group[group]}{' '}
+                      <span className="permissions-pill" data-state={groupState(counts)}>
+                        {MCP_STR.sections.roles.pill[groupState(counts)]}
+                      </span>
+                      <span className="permissions-drawer__summary">{groupText(counts)}</span>
+                    </summary>
+                    <ul>
+                      {tools.map((tool) => (
+                        <li key={tool}>
+                          <code>{tool}</code>
+                          <span data-decision={profile.rules[tool].decision}>
+                            {MCP_STR.sections.roles.decision[profile.rules[tool].decision]}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                );
+              })}
+            </section>
+          )}
+          {check}
+        </>
+      )}
     </aside>
   );
 }
@@ -626,6 +728,26 @@ export function PermissionsAssignments({
       </section>
     );
   })();
+  const changesFor = (row: AgentRow) => {
+    const assignment = assignmentAt(policy, row.point);
+    if (!assignment || !row.profile) return [];
+    const { rules } = row.profile;
+    return exceptionEntries(assignment).map(({ entry, key }) => ({
+      key,
+      tool: entry.tool,
+      text: STR.changeLine(
+        entry.tool,
+        MCP_STR.sections.roles.decision[rules[entry.tool].decision],
+        MCP_STR.sections.roles.decision[entry.rule.decision ?? rules[entry.tool].decision],
+      ),
+    }));
+  };
+  const resetAll = (target: AssignmentPoint) => {
+    const edit = start(target);
+    const cleared = { ...edit, draft: { ...edit.draft, exceptions: [] } };
+    setEditing(cleared);
+    void requestReview(cleared.draft, cleared);
+  };
   return (
     <>
       {readOnly && (
@@ -656,33 +778,30 @@ export function PermissionsAssignments({
               key={openRow.key}
               title={openRow.title}
               subtitle={openRow.subtitle}
+              profile={openRow.profile}
+              profiles={policy.profiles}
+              changes={changesFor(openRow)}
+              readOnly={readOnly}
+              error={error}
               onClose={() => {
                 setSelected(null);
                 setEditing(null);
                 setReview(null);
                 setError(null);
               }}
-            >
-              {reviewing ?? editor ?? (
-                <>
-                  {error && <p role="alert">{error}</p>}
-                  <button
-                    type="button"
-                    className="btn"
-                    disabled={readOnly}
-                    onClick={() => start(openRow.point)}
-                  >
-                    {assignmentAt(policy, openRow.point) ? 'Edit assignment' : 'Add assignment'}
-                  </button>
-                  <PermissionsCheckRequest
-                    sessions={checkSessions}
-                    draft={null}
-                    expectedToken={policy.editToken}
-                    previewPolicy={mcp.previewPolicy}
-                  />
-                </>
-              )}
-            </AgentDrawer>
+              onRoleChange={(id) => start(openRow.point, id)}
+              onEditChanges={() => start(openRow.point)}
+              onResetAll={() => resetAll(openRow.point)}
+              staged={reviewing ?? editor}
+              check={
+                <PermissionsCheckRequest
+                  sessions={checkSessions}
+                  draft={null}
+                  expectedToken={policy.editToken}
+                  previewPolicy={mcp.previewPolicy}
+                />
+              }
+            />
           </div>
         )}
       </div>
