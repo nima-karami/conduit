@@ -32,6 +32,7 @@ import {
   openExternal,
   pathForDroppedFile,
   post,
+  readTerminalClipboard,
   subscribe,
   windowsPty,
 } from '../bridge';
@@ -111,7 +112,7 @@ const MENU_ICONS = {
 // copies only when a selection exists. Drives terminalClipboardAction.
 const IS_MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
 const IS_WINDOWS = typeof navigator !== 'undefined' && /Win/i.test(navigator.platform);
-const IS_LINUX = typeof navigator !== 'undefined' && /Linux/i.test(navigator.platform);
+const forwardedPasteKeys = new WeakSet<KeyboardEvent>();
 // Mirrors PATH_LINK_OPTS in electron/main.ts: the host folds case everywhere but Linux.
 const CONTEXT_PATH_OPTS = {
   platform: IS_WINDOWS ? ('win32' as const) : ('posix' as const),
@@ -219,16 +220,6 @@ function displayFactsOf(term: Terminal): DisplayFacts {
 
 function tellHostFacts(sessionId: string, term: Terminal) {
   post({ type: 'term:facts', sessionId, facts: displayFactsOf(term) });
-}
-
-// A rejected read() (permission, unsupported platform) means no image, not an error to toast.
-async function clipboardHasImage(): Promise<boolean> {
-  try {
-    const items = await navigator.clipboard.read();
-    return items.some((item) => item.types.some((t) => t.startsWith('image/')));
-  } catch {
-    return false;
-  }
 }
 
 /** True while a cold replay is queued: the fit is skipped and owed to the replay's end. */
@@ -1375,29 +1366,31 @@ export function TerminalPane({
     focusTerminal();
   };
 
-  // Paste via xterm's paste() so bracketed-paste mode is honoured: a multi-line paste
-  // reaches a TUI (e.g. Claude Code) as ONE atomic paste wrapped in ESC[200~/ESC[201~,
-  // not N lines each acting like Enter. Raw text via term:input would bypass that.
-  // The app removes the native Edit menu (Menu.setApplicationMenu(null)), so Ctrl/Cmd+V
-  // has no accelerator and never fires a native paste — the keydown handler calls this.
-  // On Linux an image-only clipboard is forwarded as a raw Ctrl+V so Claude Code reads the
-  // image itself; see pasteRoute for why 0x16 is never sent without an image.
-  const pasteFromClipboard = () => {
+  const pasteFromClipboard = async (key?: KeyboardEvent) => {
     const term = termRef.current;
     if (!term) return;
-    void (async () => {
-      let text: string;
-      try {
-        text = await navigator.clipboard.readText();
-      } catch {
-        pushToast({ message: 'Paste failed: clipboard is unavailable.', variant: 'error' });
-        return;
+    try {
+      const contents = await readTerminalClipboard();
+      if (termRef.current !== term) return;
+      const route = pasteRoute(contents);
+      if (route === 'text') {
+        // TUIs need xterm to apply bracketed paste when they request it.
+        term.paste(contents.text);
+      } else if (route === 'program') {
+        if (key) {
+          // xterm and its keyboard protocol handler need the original modifiers and keyCode.
+          forwardedPasteKeys.add(key);
+          term.textarea?.dispatchEvent(key);
+        } else {
+          pushToast({
+            message: 'To paste an image, press your program’s paste shortcut in the terminal.',
+            variant: 'info',
+          });
+        }
       }
-      const hasImage = !text && IS_LINUX && (await clipboardHasImage());
-      const route = pasteRoute({ text, hasImage, isLinux: IS_LINUX });
-      if (route === 'text') term.paste(text);
-      else if (route === 'raw-ctrl-v') post({ type: 'term:input', sessionId, data: '\x16' });
-    })();
+    } catch {
+      pushToast({ message: 'Paste failed: clipboard is unavailable.', variant: 'error' });
+    }
   };
 
   // Copy the current selection to the clipboard and clear it (so a following Ctrl+C
@@ -1418,7 +1411,7 @@ export function TerminalPane({
     if (action === 'copy') {
       copySelection();
     } else if (action === 'paste') {
-      pasteFromClipboard();
+      void pasteFromClipboard();
     } else if (action === 'clear') {
       term.clear();
     } else if (action === 'find') {
@@ -1615,6 +1608,7 @@ export function TerminalPane({
         // never collides with Monaco's global find or fires with no terminal focused.
         // See docs/specs/archive/2026-06-11-terminal-ergonomics.md.
         onKeyDownCapture={(e) => {
+          if (forwardedPasteKeys.has(e.nativeEvent)) return;
           const mod = e.metaKey || e.ctrlKey;
           // Capture phase so xterm doesn't also receive the zoom key.
           const zoom = fontZoomTarget(settings.terminalFontSize, e);
@@ -1639,7 +1633,7 @@ export function TerminalPane({
           if (clip === 'paste') {
             e.preventDefault();
             e.stopPropagation();
-            pasteFromClipboard();
+            void pasteFromClipboard(e.nativeEvent);
             return;
           }
           if (e.key === 'ContextMenu' || (e.shiftKey && !mod && !e.altKey && e.key === 'F10')) {

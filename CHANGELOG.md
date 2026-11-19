@@ -6,6 +6,10 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Terminal programs can receive their own image-paste shortcuts when the clipboard holds an image. Text still pastes normally.
+
 ## [0.69.1] — 2026-11-18
 
 ### Fixed

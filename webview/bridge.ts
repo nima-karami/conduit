@@ -48,6 +48,7 @@ import {
   mockSkills,
 } from './mock';
 import { isMonacoCancellation } from './monaco-cancellation';
+import type { TerminalClipboard } from './terminal-clipboard';
 
 export interface WinControls {
   minimize(): void;
@@ -80,6 +81,7 @@ interface HostBridge {
     opts?: { onConflict?: ImportConflictPolicy },
   ): Promise<ImportResult>;
   getPathForFile(file: File): string;
+  readTerminalClipboard(): Promise<TerminalClipboard>;
   revealLogs(): void;
   copyDiagnostics(): Promise<string | null>;
   readLogTail(n: number): Promise<{ off: boolean; tail: string }>;
@@ -138,6 +140,14 @@ export const initialSettings: AppSettings = host?.initialSettings ?? DEFAULT_SET
 
 /** The host's Windows pseudoconsole; the preview's fake shell has none. */
 export const windowsPty: WindowsPtyInfo | undefined = host?.windowsPty;
+
+export async function readTerminalClipboard(): Promise<TerminalClipboard> {
+  if (host) return host.readTerminalClipboard();
+  const text = await navigator.clipboard.readText();
+  const hasData =
+    !!text || (await navigator.clipboard.read()).some((item) => item.types.length > 0);
+  return { text, hasData };
+}
 
 if (host) host.subscribe((msg) => emit(msg));
 

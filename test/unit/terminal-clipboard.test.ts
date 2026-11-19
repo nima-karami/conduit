@@ -11,12 +11,26 @@ const k = (over: Partial<Parameters<typeof terminalClipboardAction>[0]>) => ({
 });
 
 describe('terminalClipboardAction', () => {
-  it('pastes on Ctrl/Cmd+V and Ctrl/Cmd+Shift+V', () => {
-    expect(terminalClipboardAction(k({ ctrlKey: true, key: 'v' }), false, false)).toBe('paste');
-    expect(terminalClipboardAction(k({ metaKey: true, key: 'v' }), false, true)).toBe('paste');
+  it.each(['win32', 'darwin', 'linux'])('claims text paste keys on %s', (platform) => {
+    const isMac = platform === 'darwin';
+    for (const shiftKey of [false, true]) {
+      const key = shiftKey ? 'V' : 'v';
+      expect(terminalClipboardAction(k({ ctrlKey: true, shiftKey, key }), false, isMac)).toBe(
+        'paste',
+      );
+      if (isMac) {
+        expect(terminalClipboardAction(k({ metaKey: true, shiftKey, key }), false, isMac)).toBe(
+          'paste',
+        );
+      }
+    }
+    expect(terminalClipboardAction(k({ altKey: true, key: 'v' }), false, isMac)).toBeNull();
+  });
+
+  it('leaves Ctrl+Alt+V to xterm', () => {
     expect(
-      terminalClipboardAction(k({ ctrlKey: true, shiftKey: true, key: 'V' }), false, false),
-    ).toBe('paste');
+      terminalClipboardAction(k({ ctrlKey: true, altKey: true, key: 'v' }), false, false),
+    ).toBeNull();
   });
 
   it('copies on Ctrl/Cmd+Shift+C regardless of selection or platform', () => {
@@ -48,32 +62,12 @@ describe('terminalClipboardAction', () => {
 });
 
 describe('pasteRoute', () => {
-  const o = (over: Partial<Parameters<typeof pasteRoute>[0]>) => ({
-    text: '',
-    hasImage: false,
-    isLinux: false,
-    ...over,
-  });
-
-  it('pastes text on every platform', () => {
-    expect(pasteRoute(o({ text: 'hi' }))).toBe('text');
-    expect(pasteRoute(o({ text: 'hi', isLinux: true }))).toBe('text');
-  });
-
-  it('forwards a raw Ctrl+V only for an image-only clipboard on Linux', () => {
-    expect(pasteRoute(o({ hasImage: true, isLinux: true }))).toBe('raw-ctrl-v');
-  });
-
-  it('does not forward Ctrl+V for an image on Windows or macOS', () => {
-    expect(pasteRoute(o({ hasImage: true, isLinux: false }))).toBe('none');
-  });
-
-  it('prefers text over an image when both are present on Linux', () => {
-    expect(pasteRoute(o({ text: 'hi', hasImage: true, isLinux: true }))).toBe('text');
-  });
-
-  it('does nothing without text or an image', () => {
-    expect(pasteRoute(o({}))).toBe('none');
-    expect(pasteRoute(o({ isLinux: true }))).toBe('none');
+  it.each([
+    { clipboard: 'text', text: 'hi', hasData: true, route: 'text' },
+    { clipboard: 'image', text: '', hasData: true, route: 'program' },
+    { clipboard: 'empty', text: '', hasData: false, route: 'none' },
+    { clipboard: 'text and image', text: 'hi', hasData: true, route: 'text' },
+  ])('routes $clipboard the same on every platform', ({ text, hasData, route }) => {
+    expect(pasteRoute({ text, hasData })).toBe(route);
   });
 });
