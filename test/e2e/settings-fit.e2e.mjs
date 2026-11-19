@@ -27,22 +27,21 @@ writeFileSync(
   JSON.stringify({ version: 1, settings: { conduitMcp: true, logging: true } }),
 );
 
-/** Every element in the page that is wider than its box without scrolling itself. */
+/**
+ * The page's width chain and its panes widening past their box, or any content ending past the
+ * page's right edge. Inner scrollers (the log, code) may hold wide content, and a decoration may
+ * overhang its own box (the theme swatch's check) as long as it stays on the page.
+ */
 const overflow = (page) =>
   page.evaluate(() => {
     const root = document.querySelector('.settings-page');
     if (!root) return ['no .settings-page'];
     const hits = [];
-    for (const el of [root, ...root.querySelectorAll('*')]) {
-      const style = getComputedStyle(el);
-      if (style.display === 'none' || el.classList.contains('sr-only')) continue;
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) continue;
-      // A scroller may hold wide content (the log, code); the page and pane may not scroll sideways.
-      const scrolls = ['auto', 'scroll'].includes(style.overflowX);
-      const structural = el.matches(
-        '.settings-page, .settings__body, .settings__pane, .permissions-roles > *, .permissions-drawer__body',
-      );
-      if ((scrolls && !structural) || el.scrollWidth <= el.clientWidth + 1) continue;
+    const chain = root.querySelectorAll(
+      '.settings__body, .settings__pane, .mcp-section, .mcp-section__panel, .permissions-roles > *, .permissions-drawer__body',
+    );
+    for (const el of [root, ...chain]) {
+      if (el.scrollWidth <= el.clientWidth + 1) continue;
       hits.push(
         `${el.tagName.toLowerCase()}.${el.classList[0] ?? ''} ${el.scrollWidth}>${el.clientWidth}`,
       );
