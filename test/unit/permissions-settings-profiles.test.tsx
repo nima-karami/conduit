@@ -263,9 +263,9 @@ it('counts assignments per role and tags the role that new agents start with', a
     [...host.querySelectorAll('tbody tr')].find((tr) =>
       tr.querySelector('th')?.textContent?.startsWith(name),
     );
-  expect(row('Custom')?.textContent).toContain('Used by 1 agent');
+  expect(row('Custom')?.querySelectorAll('td')[1]?.textContent).toBe('1 agent');
   expect(row('Custom')?.textContent).toContain('New agents start here');
-  expect(row('Worker')?.textContent).toContain('Used by 1 agent');
+  expect(row('Worker')?.querySelectorAll('td')[1]?.textContent).toBe('1 agent');
   expect(row('Worker')?.textContent).not.toContain('New agents start here');
   await act(async () => root.unmount());
   policy.profiles = [];

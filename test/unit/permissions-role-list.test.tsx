@@ -77,9 +77,9 @@ it('shows one text pill per tool group in every row', async () => {
 
 it('says how many agents use each role and which type it is', async () => {
   const { host } = await mount();
-  expect(rows(host)[1].textContent).toContain('Used by 3 agents');
-  expect(rows(host)[3].textContent).toContain('Used by 1 agent');
-  expect(rows(host)[3].textContent).not.toContain('Used by 1 agents');
+  const usedBy = (i: number) => rows(host)[i].querySelectorAll('td')[1]?.textContent;
+  expect(usedBy(1)).toBe('3 agents');
+  expect(usedBy(3)).toBe('1 agent');
   expect(rows(host)[0].textContent).toContain('Built-in');
   expect(rows(host)[3].textContent).toContain('Custom');
 });

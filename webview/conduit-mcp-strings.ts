@@ -104,6 +104,7 @@ export const MCP_STR = {
       builtIn: 'Built-in',
       custom: 'Custom',
       newAgentsStartHere: 'New agents start here',
+      usedByCount: (n: number) => plural(n, 'agent'),
       usedBy: (n: number) => `Used by ${plural(n, 'agent')}`,
       pill: { allowed: 'Allowed', mixed: 'Mixed', denied: 'Denied' },
       builtInDescription: BUILT_IN_ROLE_DESCRIPTION,

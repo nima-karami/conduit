@@ -71,7 +71,7 @@ export function PermissionsRoleList({
                 )}
               </th>
               <td>{profile.builtIn ? STR.builtIn : STR.custom}</td>
-              <td>{STR.usedBy(usage.get(profile.id) ?? 0)}</td>
+              <td>{STR.usedByCount(usage.get(profile.id) ?? 0)}</td>
               {TOOL_GROUPS.map(({ group, tools }) => {
                 const counts = groupCounts(profile, tools);
                 const state = groupState(counts);
