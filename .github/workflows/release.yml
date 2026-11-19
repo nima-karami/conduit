@@ -13,6 +13,8 @@ jobs:
   # Validate notes before the full e2e workflow so a missing CHANGELOG section fails early.
   release-notes-check:
     runs-on: ubuntu-latest
+    outputs:
+      reused-e2e: ${{ steps.proof.outputs.reused }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,6 +28,25 @@ jobs:
       - run: npm ci
       - run: node tools/release-notes.mjs "$GITHUB_REF_NAME"
 
+      - id: proof
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tree=$(git rev-parse 'HEAD^{tree}')
+          node --input-type=module - "$tree" <<'JS'
+          import { appendFileSync } from 'node:fs';
+          import { findReleaseTreeProof } from './test/e2e/ci-full-proof.mjs';
+          try {
+            const run = findReleaseTreeProof(process.env.GITHUB_REPOSITORY, process.argv[2]);
+            if (run) {
+              appendFileSync(process.env.GITHUB_OUTPUT, 'reused=true\n');
+              appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Full suite already passed for this tree in ${run.html_url}\n`);
+            }
+          } catch (error) {
+            console.warn(`Could not verify prior full run. Running the release suite. ${error.message}`);
+          }
+          JS
+
   # Run the full authoritative gate (Biome, typecheck, tests, fallow, audit, Semgrep,
   # gitleaks) on Linux first. Semgrep has no native Windows build and the security scan
   # is best-effort there, so gating on Linux keeps it deterministic. The build only runs
@@ -38,6 +59,7 @@ jobs:
   # §14 Q2): only passed proceeds (a flaky scenario fails the gate); a QUARANTINED-FAIL doesn't block. `gate` already
   # runs verify, so e2e doesn't repeat it.
   e2e:
+    if: needs.release-notes-check.outputs.reused-e2e != 'true'
     uses: ./.github/workflows/e2e.yml
     needs: release-notes-check
     with:
@@ -45,7 +67,13 @@ jobs:
       verify: false
 
   build-and-publish:
-    needs: [gate, e2e]
+    needs: [release-notes-check, gate, e2e]
+    if: >-
+      ${{ !cancelled() &&
+      needs.release-notes-check.result == 'success' &&
+      needs.gate.result == 'success' &&
+      (needs.e2e.result == 'success' ||
+        (needs.e2e.result == 'skipped' && needs.release-notes-check.outputs.reused-e2e == 'true')) }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

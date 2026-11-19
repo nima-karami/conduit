@@ -187,6 +187,8 @@ flaky-passed | failed | infra-error | cancelled | timed-out`.
   TIMEOUT in the run; it is never reported as a test failure. A real failure beats INFRA: a run with
   both is `failed`, and the INFRA names are listed with the command that re-runs them.
 
+Release reuse is specified in [Release tree proof](../2026-11-18-release-tree-proof.md).
+
 **When full runs happen:** nightly on `main` (schedule) and before a release. Integration merges run
 `--affected`. There is no `push: main` trigger and **no workflow concurrency group** (GitHub keeps
 one pending run per group and cancels the older one). Instead, `e2e:remote --full` attaches to an

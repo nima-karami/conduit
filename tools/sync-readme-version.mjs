@@ -1,7 +1,7 @@
 // Keep the version reference(s) in README.md in sync with package.json.
 //
 // Wired as the npm `version` lifecycle script, so it runs during `npm version`
-// (and therefore `npm run release`) after package.json is bumped but before the
+// after package.json is bumped but before the
 // version commit — the README change rides along in that commit. The "Version"
 // badge in the README is a dynamic shields.io GitHub-release badge and needs no
 // syncing; this only updates the `vX.Y.Z` prose token(s).

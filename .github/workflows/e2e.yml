@@ -442,6 +442,25 @@ jobs:
           echo "run status: $status"
           [ "$status" = passed ]
 
+      - id: release-proof
+        if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (inputs.selection || 'full') == 'full' && github.run_attempt == '1'
+        run: |
+          tree=$(git rev-parse 'HEAD^{tree}')
+          node --input-type=module - "$tree" <<'JS'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          import { cleanFullResult } from './test/e2e/ci-full-proof.mjs';
+          if (cleanFullResult(JSON.parse(readFileSync('out/result.json', 'utf8')))) {
+            appendFileSync(process.env.GITHUB_OUTPUT, `tree=${process.argv[2]}\n`);
+          }
+          JS
+      - if: steps.release-proof.outputs.tree != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-full-${{ steps.release-proof.outputs.tree }}
+          path: out/result.json
+          if-no-files-found: error
+          retention-days: 90
+
   # Nightly only, and whatever the verdict: a red nightly still records timings and flakes.
   state:
     needs: [prepare, shard]

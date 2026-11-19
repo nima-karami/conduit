@@ -40,16 +40,65 @@ function downloadResult(repo, artifactId) {
   }
 }
 
+function actionsApi(repo, path) {
+  return JSON.parse(execFileSync('gh', ['api', `repos/${repo}/${path}`], { encoding: 'utf8' }));
+}
+
+export function cleanFullResult(result) {
+  return (
+    result?.selection === 'full' &&
+    result.status === 'passed' &&
+    Array.isArray(result.results) &&
+    result.results.some((row) => row.status === 'PASS') &&
+    result.results.every(
+      (row) =>
+        ((row.status === 'PASS' || row.status === 'SKIP') && row.attempts === 1) ||
+        (row.status === 'EXCLUDED' && row.attempts === 0),
+    )
+  );
+}
+
+export function provesReleaseTree(run, result, { repo, tree }) {
+  return (
+    run.path === '.github/workflows/e2e.yml' &&
+    run.head_repository?.full_name === repo &&
+    run.head_commit?.tree_id === tree &&
+    run.conclusion === 'success' &&
+    run.run_attempt === 1 &&
+    (run.event === 'workflow_dispatch' ||
+      (run.event === 'schedule' && run.head_branch === 'main')) &&
+    result?.runId === run.id &&
+    result.sha === run.head_sha &&
+    cleanFullResult(result)
+  );
+}
+
+export function findReleaseTreeProof(repo, tree) {
+  if (!/^[0-9a-f]{40}$/.test(tree)) throw new Error('Expected a Git tree SHA');
+  const name = `e2e-full-${tree}`;
+  const { artifacts } = actionsApi(repo, `actions/artifacts?name=${name}&per_page=100`);
+  for (const artifact of artifacts) {
+    if (artifact.expired || artifact.name !== name || !artifact.workflow_run) continue;
+    try {
+      const run = actionsApi(repo, `actions/runs/${artifact.workflow_run.id}`);
+      const result = downloadResult(repo, artifact.id);
+      if (provesReleaseTree(run, result, { repo, tree })) return run;
+    } catch (error) {
+      console.warn(`Could not read release evidence artifact ${artifact.id}: ${error.message}`);
+    }
+  }
+  return null;
+}
+
 export function findFullTreeProof(repo, tree) {
-  const api = (path) =>
-    JSON.parse(execFileSync('gh', ['api', `repos/${repo}/${path}`], { encoding: 'utf8' }));
-  const { workflow_runs: runs } = api(
+  const { workflow_runs: runs } = actionsApi(
+    repo,
     'actions/workflows/e2e.yml/runs?branch=main&event=schedule&status=success&per_page=50',
   );
   for (const run of runs) {
     if (!matchingNightly(run, tree)) continue;
     try {
-      const { artifacts } = api(`actions/runs/${run.id}/artifacts?per_page=100`);
+      const { artifacts } = actionsApi(repo, `actions/runs/${run.id}/artifacts?per_page=100`);
       const available = (name) => artifacts.find((item) => item.name === name && !item.expired);
       const result = available('e2e-result');
       if (!result || !available('e2e-state')) continue;
