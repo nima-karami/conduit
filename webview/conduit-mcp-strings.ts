@@ -86,6 +86,8 @@ export type McpTabId = (typeof MCP_TAB_ORDER)[number];
 export const MCP_STR = {
   tab: 'Messages',
   sections: {
+    title: 'MCP',
+    subtitle: 'How agents talk to Conduit, and what they are allowed to do.',
     tablistLabel: 'MCP sections',
     tabs: {
       settings: 'Settings',

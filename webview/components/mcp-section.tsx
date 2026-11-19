@@ -48,6 +48,12 @@ export function McpSection({
   useEffect(() => () => registerBack(null), [registerBack]);
   return (
     <div className="mcp-section">
+      <div className="mcp-section__head">
+        <h2 className="mcp-section__title" id={`${tabsId}-title`}>
+          {MCP_STR.sections.title}
+        </h2>
+        <p className="mcp-section__sub">{MCP_STR.sections.subtitle}</p>
+      </div>
       <div className="mcp-section__tabs" role="tablist" aria-label={MCP_STR.sections.tablistLabel}>
         {MCP_TAB_ORDER.map((id, index) => (
           <button
@@ -61,7 +67,9 @@ export function McpSection({
             aria-selected={tab === id}
             aria-controls={`${tabsId}-section`}
             tabIndex={tab === id ? 0 : -1}
-            className={tab === id ? 'btn btn--sm btn--primary' : 'btn btn--sm'}
+            className={
+              tab === id ? 'mcp-section__tab mcp-section__tab--active' : 'mcp-section__tab'
+            }
             onClick={() => onTabChange(id)}
             onKeyDown={(event) => {
               let next: number;

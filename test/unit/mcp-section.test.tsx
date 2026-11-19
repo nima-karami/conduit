@@ -109,6 +109,19 @@ it('renders five tabs in order and selects the given one', async () => {
   expect(host.querySelector('[role="tabpanel"]')?.textContent).toBe('agents panel');
 });
 
+it('renders the MCP title, subtitle and a selected underline tab', async () => {
+  await render(props({ tab: 'roles' }));
+  const heading = host.querySelector('h2');
+  expect(heading?.textContent).toBe('MCP');
+  expect(heading?.tagName).toBe('H2');
+  expect(host.textContent).toContain(
+    'How agents talk to Conduit, and what they are allowed to do.',
+  );
+  const selected = tabs().filter((t) => t.getAttribute('aria-selected') === 'true');
+  expect(selected.map((t) => t.textContent)).toEqual(['Roles']);
+  expect(selected[0].className).toContain('mcp-section__tab--active');
+});
+
 it('ArrowRight, End and Home move the selected tab', async () => {
   const onTabChange = vi.fn();
   await render(props({ tab: 'roles', onTabChange }));

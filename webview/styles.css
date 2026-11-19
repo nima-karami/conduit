@@ -8180,12 +8180,41 @@ body.gh-resizing {
   min-height: 0;
   min-width: 0;
 }
-.mcp-section__tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+.mcp-section__head {
   flex: 0 0 auto;
   margin-bottom: 12px;
+}
+.mcp-section__title {
+  margin: 0 0 4px;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 600;
+}
+.mcp-section__sub {
+  margin: 0;
+  color: var(--text-dim);
+}
+.mcp-section__tabs {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border-2);
+}
+.mcp-section__tab {
+  padding: 8px 12px;
+  margin-bottom: -1px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+.mcp-section__tab--active {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+  font-weight: 600;
 }
 .mcp-section__panel {
   flex: 1;
@@ -17983,6 +18012,7 @@ button.toggle--on .toggle__knob {
     .seg__btn,
     .statusbar__attn,
     .settings__navitem,
+    .mcp-section__tab,
     .settings-page__back,
     .permissions-role-list__row,
     .permissions-agents-list__row[tabindex],
@@ -18114,6 +18144,7 @@ button.toggle--on .toggle__knob {
     .seg__btn,
     .statusbar__attn,
     .settings__navitem,
+    .mcp-section__tab,
     .settings-page__back,
     .permissions-role-list__row,
     .permissions-agents-list__row[tabindex],
