@@ -53,6 +53,25 @@ export function anchorPopover(
   return { x, y };
 }
 
+/** Prefer the right edge, then the left, and use the roomier side when both must overlap. */
+export function besidePopover(
+  rect: Rect,
+  menu: Size,
+  viewport: Size,
+  gap: number,
+  margin = 8,
+): Point {
+  const roomRight = viewport.width - rect.right - gap - margin;
+  const roomLeft = rect.left - gap - margin;
+  return {
+    x:
+      menu.width <= roomRight || (menu.width > roomLeft && roomRight >= roomLeft)
+        ? rect.right + gap
+        : rect.left - gap - menu.width,
+    y: rect.top,
+  };
+}
+
 /**
  * A menu hung from a trigger button, right edges aligned. It goes through `anchor` so the Popover
  * aligns it by its MEASURED width: a guessed width misses the button by the difference, which

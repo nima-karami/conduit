@@ -174,7 +174,6 @@ export const MCP_STR = {
         roleFor: (name: string) => `Role for ${name}`,
         resetToRole: 'Reset to role',
         customize: 'Customize…',
-        submenuGlyph: '▸',
       },
       canDo: 'What this agent can do',
       closeDrawer: 'Close',

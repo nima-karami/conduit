@@ -136,7 +136,12 @@ import { BranchChip } from './components/branch-chip';
 import { CenterPane } from './components/center-pane';
 import { CommandPalette, type PaletteEntry } from './components/command-palette';
 import { ConfirmDialog, type ConfirmState } from './components/confirm-dialog';
-import { ContextMenu, type MenuItem, type MenuState } from './components/context-menu';
+import {
+  ContextMenu,
+  type MenuEntry,
+  type MenuItem,
+  type MenuState,
+} from './components/context-menu';
 import { DirtyCloseDialog } from './components/dirty-close-dialog';
 import { ErrorBoundary } from './components/error-boundary';
 import { IconPickerModal } from './components/icon-picker-modal';
@@ -560,7 +565,7 @@ function moveFileTab(from: string, to: string): boolean {
 
 // Icons for the pure session menu builder (webview/session-menu.ts); onSessionContextMenu binds
 // every action to its session.
-const SESSION_MENU_ICONS: Record<SessionMenuAction, React.ReactNode> = {
+const SESSION_MENU_ICONS: Record<SessionMenuAction | 'mcpTools', React.ReactNode> = {
   select: <IconTerminal size={14} />,
   split: <IconSidebar size={14} />,
   relaunch: <IconSparkle size={14} />,
@@ -657,7 +662,6 @@ export function App() {
   const [menu, setMenu] = useState<MenuState | null>(null);
   // The row menu's Permissions submenu (canvas E1). Its own state: the row menu closes after the
   // activating item's handler runs, which would otherwise close the submenu it just opened.
-  const [permissionsMenu, setPermissionsMenu] = useState<MenuState | null>(null);
   useEffect(() => {
     const open = menu;
     return () => open?.onClosed?.();
@@ -3805,8 +3809,7 @@ export function App() {
   }, [sessions, closeSessions]);
 
   // Multi-window Slice B: "Move to new window" + one "Move to {title}" entry per OTHER open
-  // window (this window's own id comes from state.windowId). The flat context menu has no
-  // submenus, so the targets are inlined as sibling items. The move never restarts the PTY —
+  // window (this window's own id comes from state.windowId). The move never restarts the PTY —
   // the host reassigns ownership and the target re-mounts the same sessionId.
   const moveMenuItems = (sessionId: string): MenuItem[] => {
     const ownId = state?.windowId;
@@ -3846,7 +3849,7 @@ export function App() {
     scope: RowMenuScope = NO_SCOPE,
   ) => {
     const point = 'anchor' in at ? { x: at.anchor.left, y: at.anchor.bottom } : at;
-    const showMenu = (items: MenuItem[]) =>
+    const showMenu = (items: MenuEntry[]) =>
       setMenu(
         'anchor' in at ? { ...triggerMenu(at.anchor), keyboard: true, items } : { ...at, items },
       );
@@ -3893,7 +3896,32 @@ export function App() {
       mcpHandle: badge?.handle ?? null,
       mcpPaused: badge?.paused === true,
       // Offered before any launch: a switchable session may not have a handle yet (spec §4).
-      mcpSwitchable: canOpenSessionPermissions(s.id, hostSessions, mcp.state?.policy.sessions),
+      permissionsSubmenu: canOpenSessionPermissions(s.id, hostSessions, mcp.state?.policy.sessions)
+        ? () => {
+            const coverage = permissionCoverageRef.current;
+            const policy = mcpPolicyRef.current;
+            const summary = sessionPermissionSummary(policy, s.id);
+            if (
+              !policy ||
+              !summary ||
+              !canOpenSessionPermissions(s.id, coverage.sessions, coverage.policy)
+            )
+              return [];
+            const agentKey = pointKey({ kind: 'session', sessionId: s.id });
+            const toDrawer = (agentStage?: AgentStage) =>
+              openSettingsAt('mcp', undefined, { mcpTab: 'agents', agentKey, agentStage });
+            return buildPermissionsSubmenu({
+              name: s.name,
+              roles: policy.profiles,
+              summary,
+              readOnly: policy.readOnly || serverStateRef.current !== 'connected',
+              onPick: (profileId) =>
+                toDrawer(profileId === summary.profileId ? undefined : { kind: 'role', profileId }),
+              onReset: () => toDrawer({ kind: 'reset' }),
+              onCustomize: () => toDrawer(),
+            });
+          }
+        : undefined,
       mcpPermissions: sessionPermissionSummary(mcp.state?.policy, s.id),
       // The banner's actions, reachable by keyboard while focus sits in xterm (spec 2026-10-27-conduit-mcp-install §2.5).
       mcpSetupNeeded: notConnected !== undefined,
@@ -3912,35 +3940,6 @@ export function App() {
         timed: () => openTimedMessages(s.id),
         messages: () => openMessages(badge?.handle ?? null),
         pauseMcp: () => mcp.pause(s.id, badge?.paused !== true),
-        // Beside the row it was picked from; a bare call has only the right-click point.
-        mcpTools: (a) => {
-          const coverage = permissionCoverageRef.current;
-          const policy = mcpPolicyRef.current;
-          const summary = sessionPermissionSummary(policy, s.id);
-          if (
-            !policy ||
-            !summary ||
-            !canOpenSessionPermissions(s.id, coverage.sessions, coverage.policy)
-          )
-            return;
-          const agentKey = pointKey({ kind: 'session', sessionId: s.id });
-          const toDrawer = (agentStage?: AgentStage) =>
-            openSettingsAt('mcp', undefined, { mcpTab: 'agents', agentKey, agentStage });
-          setPermissionsMenu({
-            ...(a ? { x: a.rect.right, y: a.rect.top } : point),
-            keyboard: 'anchor' in at,
-            items: buildPermissionsSubmenu({
-              name: s.name,
-              roles: policy.profiles,
-              summary,
-              readOnly: policy.readOnly || serverStateRef.current !== 'connected',
-              onPick: (profileId) =>
-                toDrawer(profileId === summary.profileId ? undefined : { kind: 'role', profileId }),
-              onReset: () => toDrawer({ kind: 'reset' }),
-              onCustomize: () => toDrawer(),
-            }),
-          });
-        },
         setupMcp: () => openSettingsAt('mcp', notConnected?.cli),
         // From the live value: the menu may outlive a sidebar edit made while it was open.
         pin: () => {
@@ -4696,7 +4695,6 @@ export function App() {
     !!palette ||
     settingsOpen ||
     !!menu ||
-    !!permissionsMenu ||
     slot.current !== null ||
     !!newSession ||
     webPromptOpen ||
@@ -6054,9 +6052,6 @@ export function App() {
             />
           )}
           {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
-          {permissionsMenu && (
-            <ContextMenu menu={permissionsMenu} onClose={() => setPermissionsMenu(null)} />
-          )}
           {modal?.kind === 'dirty' && <DirtyCloseDialog key={modal.key} {...modal.props} />}
           {quitLocked && <QuitScrim />}
           {modal?.kind === 'confirm' && (

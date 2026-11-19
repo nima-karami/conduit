@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BUILT_IN_PROFILES } from '../../src/conduit-mcp/policy-profiles';
 import type { PolicyUiState } from '../../src/conduit-mcp/policy-types';
-import type { MenuItem } from '../../webview/components/context-menu';
+import type { MenuEntry, MenuItem } from '../../webview/components/context-menu';
 import { MCP_STR } from '../../webview/conduit-mcp-strings';
 import {
   buildPermissionsSubmenu,
@@ -22,7 +22,6 @@ const ACTIONS: SessionMenuAction[] = [
   'timed',
   'messages',
   'pauseMcp',
-  'mcpTools',
   'setupMcp',
   'pin',
   'rename',
@@ -57,7 +56,6 @@ function input(over: Partial<SessionMenuInput> = {}) {
     hasMcp: false,
     mcpHandle: null,
     mcpPaused: false,
-    mcpSwitchable: false,
     mcpSetupNeeded: false,
     mcpLink: null,
     snoozable: false,
@@ -71,9 +69,9 @@ function input(over: Partial<SessionMenuInput> = {}) {
   return { value, calls };
 }
 
-const labels = (items: MenuItem[]) => items.map((i) => i.label);
-const seps = (items: MenuItem[]) => items.filter((i) => i.separatorBefore).map((i) => i.label);
-const find = (items: MenuItem[], label: string) => items.find((i) => i.label === label);
+const labels = (items: MenuEntry[]) => items.map((i) => i.label);
+const seps = (items: MenuEntry[]) => items.filter((i) => i.separatorBefore).map((i) => i.label);
+const find = (items: MenuEntry[], label: string) => items.find((i) => i.label === label);
 
 const HEAD = ['Go to', 'Pin to top'];
 const ATTENTION = ['Timed message…'];
@@ -162,7 +160,7 @@ describe('buildSessionMenu — entries, order and separators', () => {
       input({
         hasMcp: true,
         mcpHandle: 'claude-1',
-        mcpSwitchable: true,
+        permissionsSubmenu: () => [],
         mcpSetupNeeded: true,
         mcpLink: { kind: 'connected', handle: 'claude-1' },
       }).value,
@@ -184,7 +182,7 @@ describe('buildSessionMenu — entries, order and separators', () => {
     );
     expect(labels(paused)).toContain('Resume notices for claude-1');
     // Tools without a handle yet open their own group.
-    const tools = buildSessionMenu(input({ mcpSwitchable: true }).value);
+    const tools = buildSessionMenu(input({ permissionsSubmenu: () => [] }).value);
     expect(find(tools, 'Permissions')?.separatorBefore).toBe(true);
     // Not connected or unavailable: the reason in words, with no messaging entries.
     const missing = buildSessionMenu(
@@ -235,11 +233,13 @@ describe('buildSessionMenu — entries, order and separators', () => {
       snoozable: true,
       hasMcp: true,
       mcpHandle: 'h-1',
-      mcpSwitchable: true,
+      permissionsSubmenu: () => [],
       mcpSetupNeeded: true,
       subAgentCount: 2,
     });
-    const items = buildSessionMenu(value).filter((i) => !i.disabled);
+    const items = buildSessionMenu(value).filter(
+      (i): i is MenuItem => !i.disabled && i.onClick !== undefined,
+    );
     const rect = { left: 1, top: 2, right: 3, bottom: 4, width: 2, height: 2 };
     for (const item of items) item.onClick({ rect });
     expect(calls.map((c) => c.action)).toEqual([
@@ -252,7 +252,6 @@ describe('buildSessionMenu — entries, order and separators', () => {
       'timed',
       'messages',
       'pauseMcp',
-      'mcpTools',
       'setupMcp',
       'rename',
       'setIcon',
@@ -274,7 +273,7 @@ describe('buildSessionMenu — entries, order and separators', () => {
 
   it('a bare programmatic call reaches the callback without an activation', () => {
     const { value, calls } = input();
-    find(buildSessionMenu(value), 'Move to space…')?.onClick();
+    find(buildSessionMenu(value), 'Move to space…')?.onClick?.();
     expect(calls).toEqual([{ action: 'moveSpace', arg: undefined }]);
   });
 });
@@ -294,7 +293,7 @@ describe('close sub-agents and the multi-selection menu', () => {
     const { value, calls } = input({ subAgentCount: 2 });
     const item = find(buildSessionMenu(value), 'Close all sub-agents (2)');
     expect(item?.danger).toBe(true);
-    item?.onClick();
+    item?.onClick?.();
     expect(calls).toEqual([{ action: 'closeSubAgents', arg: undefined }]);
   });
 
@@ -350,11 +349,14 @@ describe('Permissions submenu (canvas E1)', () => {
 
   it('shows the role and change count beside Permissions in the row menu', () => {
     const items = buildSessionMenu(
-      input({ mcpSwitchable: true, mcpPermissions: sessionPermissionSummary(policy, 's1') }).value,
+      input({
+        permissionsSubmenu: () => [],
+        mcpPermissions: sessionPermissionSummary(policy, 's1'),
+      }).value,
     );
     const item = find(items, 'Permissions');
     expect(item?.detail).toBe('Worker · 2 changes');
-    expect(item?.hint).toBe('▸');
+    expect(item?.submenu).toBeTypeOf('function');
   });
 
   it('lists the roles with the current one ticked, then the changes, Reset and Customize', () => {
@@ -381,11 +383,11 @@ describe('Permissions submenu (canvas E1)', () => {
     expect(items[0].disabled).toBe(true);
     expect(items.filter((i) => i.checked).map((i) => i.label)).toEqual(['Worker']);
     expect(find(items, '2 changes from Worker')?.disabled).toBe(true);
-    find(items, 'Lead')?.onClick();
+    items.find((item) => item.label === 'Lead')?.onClick();
     expect(onPick).toHaveBeenCalledWith('lead');
-    find(items, 'Reset to role')?.onClick();
+    items.find((item) => item.label === 'Reset to role')?.onClick();
     expect(onReset).toHaveBeenCalledOnce();
-    find(items, 'Customize…')?.onClick();
+    items.find((item) => item.label === 'Customize…')?.onClick();
     expect(onCustomize).toHaveBeenCalledOnce();
   });
 

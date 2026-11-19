@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createPortal } from 'react-dom';
 import {
   anchorPopover,
+  besidePopover,
   clampMenuPosition,
   type PopoverAlign,
   type PopoverSide,
@@ -22,6 +23,10 @@ export interface PopoverProps extends Omit<HTMLAttributes<HTMLDivElement>, 'chil
    *  overlap its anchor. */
   side?: PopoverSide;
   gap?: number;
+  /** Horizontal placement for a menu anchored to another menu. */
+  beside?: boolean;
+  /** Other frames in the same menu tree count as inside for dismissal. */
+  insideRef?: RefObject<Element | null>;
   /** Idempotent; fired from outside-mousedown / outside-scroll / blur / resize / Escape (stack). */
   onClose: () => void;
   /** Escape from the overlay stack, in place of `onClose` — for a popover whose Escape steps back
@@ -45,6 +50,8 @@ export function Popover({
   align = 'end',
   side = 'below',
   gap = 4,
+  beside = false,
+  insideRef,
   onClose,
   onEscape,
   triggerRef,
@@ -77,14 +84,14 @@ export function Popover({
     if (!el) return;
     const measure = () => {
       const r = el.getBoundingClientRect();
+      const size = { width: r.width, height: r.height };
+      const viewport = { width: window.innerWidth, height: window.innerHeight };
       const requested =
         at ??
-        anchorPopover(anchor as Rect, { width: r.width, height: r.height }, { align, side, gap });
-      const next = clampMenuPosition(
-        requested,
-        { width: r.width, height: r.height },
-        { width: window.innerWidth, height: window.innerHeight },
-      );
+        (beside
+          ? besidePopover(anchor as Rect, size, viewport, gap)
+          : anchorPopover(anchor as Rect, size, { align, side, gap }));
+      const next = clampMenuPosition(requested, size, viewport);
       setPos((prev) => (prev.x === next.x && prev.y === next.y ? prev : next));
     };
     measure();
@@ -93,7 +100,7 @@ export function Popover({
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [at?.x, at?.y, anchor, width, align, side, gap]);
+  }, [at?.x, at?.y, anchor, width, align, side, gap, beside]);
 
   // A scroll event is delivered in the NEXT frame's scroll steps, which run before that frame's
   // rAF callbacks. So one whose scroll ended before this popover opened (the trigger scrolled into
@@ -108,7 +115,7 @@ export function Popover({
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       const target = e.target as Node;
-      if (measureRef.current?.contains(target)) return;
+      if (measureRef.current?.contains(target) || insideRef?.current?.contains(target)) return;
       // Ignore mousedown on the registered trigger so its onClick can toggle correctly;
       // otherwise the dismiss here + the onClick reopen (close → open, not stay-closed).
       if (triggerRef?.current?.contains(target)) return;
@@ -119,7 +126,13 @@ export function Popover({
     // scroll — EXCEPT a scroll inside the frame's own overflow (tall popovers scroll
     // themselves), or it would dismiss the instant you drag its scrollbar.
     const onScroll = (e: Event) => {
-      if (!scrollArmed.current || measureRef.current?.contains(e.target as Node)) return;
+      const target = e.target as Node;
+      if (
+        !scrollArmed.current ||
+        measureRef.current?.contains(target) ||
+        insideRef?.current?.contains(target)
+      )
+        return;
       onClose();
     };
     window.addEventListener('scroll', onScroll, true);
@@ -131,7 +144,7 @@ export function Popover({
       window.removeEventListener('blur', onClose);
       window.removeEventListener('resize', onClose);
     };
-  }, [onClose, triggerRef]);
+  }, [onClose, triggerRef, insideRef]);
 
   return createPortal(
     <div
