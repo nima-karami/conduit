@@ -327,11 +327,12 @@ an overlap only queues jobs, it never cancels a run.
     Pass `--verify` to include the local gate's CI equivalent. Affected and full CLI runs retain
     verify by default so a broader run still reports gate failures. Pass `--no-verify` when the gate
     already ran. Verify failures are included in the verdict when verify runs.
-  - A scheduled nightly checks successful full runs from the same workflow for an unexpired
-    `e2e-result` artifact. It reuses the result only when the tested Git tree matches the
-    nightly checkout and the full result passed without flakes. The ref sweep still runs.
-    Reuse leaves the previous coverage and timing state in place. An absent or unreadable result
-    triggers the full nightly.
+  - A scheduled nightly checks prior successful scheduled full runs on main for unexpired
+    `e2e-result` and `e2e-state` artifacts. It reuses the result only when the tested Git tree
+    matches the nightly checkout and the full result passed without flakes. The ref sweep still
+    runs. Each new tree refreshes coverage and timing state even after a full dispatch.
+    A full dispatch with `mode=nightly` also exercises the lookup. Missing or unreadable evidence
+    triggers the full suite.
   - `test/e2e/remote-exclusions.json` (`{ "<name>": "<reason>" }`) lists scenarios the hosted
     runner can't run. `prepare` drops them from the plan and the result lists each as `EXCLUDED`
     with its reason (never silently); EXCLUDED is neutral to the verdict, but a selection with
@@ -402,9 +403,9 @@ an overlap only queues jobs, it never cancels a run.
 
 | Condition | Expected behavior |
 |---|---|
-| Two callers, same worktree + sha + selection | Second attaches to the first's run (found by querying in-flight runs' names/inputs) and pushes no ref; the run's `cleanup` job deletes the one ref |
+| Two callers, same sha + selection | Second attaches to the first's run (found by querying in-flight runs' names/inputs) and pushes no ref; the run's `cleanup` job deletes the one ref |
 | Two `--full` from different worktrees | Second waits client-side for the first to finish, printing "waiting for full run <url>", then dispatches. Best-effort: nightly/release don't coordinate, and an overlap only queues jobs |
-| New commit while an older run is in flight | Once the replacement appears, the CLI cancels older dispatches with the same worktree marker and matching CI ref |
+| New commit while an older run is in flight | The CLI cancels an older dispatch at a different SHA only when both use the same worktree marker and the replacement carries the same selection or is full and replaces a partial run |
 | Selection resolves to zero on a code change | Impossible by the §B2 rule (unmapped → full); docs-only → exit 0 "no e2e needed" |
 | Shard runner dies | Its unfinished scenarios → `INFRA`. Any FAIL/TIMEOUT elsewhere → run `failed`, exit 1; otherwise `infra-error`, exit 2. Either way the command prints `e2e:remote -- <INFRA names>` |
 | Run cancelled | `cancelled`, exit 2, even though report wrote INFRA rows; `cleanup` still deletes the ref |

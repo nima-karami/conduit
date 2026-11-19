@@ -85,32 +85,43 @@ export function parseTitle(title) {
   return { selection: m[1], nonce: m[2], selKey: lane ? selKey : null, lane: validLane };
 }
 
-function belongsToLane(run, lane) {
+function toolRunTitle(run) {
   const title = parseTitle(run.displayTitle);
-  if (!title?.lane || title.lane !== lane || run.event !== 'workflow_dispatch') return false;
+  if (!title?.selKey || run.event !== 'workflow_dispatch') return null;
   const rand = title.nonce.split('.').at(-1);
-  return (
-    /^[a-f0-9]{8}$/.test(rand) && run.headBranch === `ci/e2e/${run.headSha.slice(0, 7)}-${rand}`
-  );
+  return /^[a-f0-9]{8}$/.test(rand) &&
+    run.headBranch === `ci/e2e/${run.headSha.slice(0, 7)}-${rand}`
+    ? title
+    : null;
 }
 
 export function supersededRuns(runs, { lane, newer }) {
-  return runs.filter(
-    (run) =>
-      IN_FLIGHT.has(run.status) && belongsToLane(run, lane) && run.databaseId < newer.databaseId,
-  );
+  const next = toolRunTitle(newer);
+  if (next?.lane !== lane) return [];
+  return runs.filter((run) => {
+    if (
+      !IN_FLIGHT.has(run.status) ||
+      run.databaseId >= newer.databaseId ||
+      run.headSha === newer.headSha
+    )
+      return false;
+    const old = toolRunTitle(run);
+    return (
+      old?.lane === lane &&
+      (old.selKey === next.selKey || (next.selection === 'full' && old.selection !== 'full'))
+    );
+  });
 }
 
 export function matchInFlight(runs, { sha, selKey, full, lane }) {
   const live = runs.filter((r) => IN_FLIGHT.has(r.status));
-  const same = live.find(
-    (r) =>
-      belongsToLane(r, lane) && r.headSha === sha && parseTitle(r.displayTitle)?.selKey === selKey,
-  );
+  const same = live.find((r) => r.headSha === sha && toolRunTitle(r)?.selKey === selKey);
   if (same) return { attach: same };
   if (full) {
     const other = live.find(
-      (r) => !belongsToLane(r, lane) && parseTitle(r.displayTitle)?.selection === 'full',
+      (r) =>
+        parseTitle(r.displayTitle)?.selection === 'full' &&
+        (toolRunTitle(r)?.lane !== lane || toolRunTitle(r)?.selKey !== selKey),
     );
     if (other) return { waitFor: other };
   }

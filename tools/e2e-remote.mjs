@@ -7,8 +7,8 @@
  *
  * Pushes HEAD to an ephemeral `ci/e2e/<sha7>-<rand>` ref and dispatches e2e.yml there; the run
  * deletes its own ref, so this never does (and Ctrl-C needs no handling). A run already in flight
- * for the same worktree, sha, and selection is attached to instead. A newer dispatch
- * supersedes older runs from that worktree.
+ * for the same sha and selection is attached to instead. Only superseded runs from the
+ * same worktree can be cancelled.
  *
  * `--affected` (the default) diffs HEAD against its merge-base with origin/main; a diff of only
  * e2e-irrelevant files ends here, "no e2e needed", and pushes nothing. The run's `prepare` job

@@ -30,7 +30,7 @@ const run = (
 ) => ({
   databaseId: 1,
   url: 'https://x/runs/1',
-  displayTitle: 'e2e full full.aaaa',
+  displayTitle: 'e2e full full.deadbeef',
   status: 'in_progress',
   headSha: 'sha1',
   headBranch: 'ci/e2e/sha1-deadbeef',
@@ -121,7 +121,12 @@ describe('run correlation', () => {
 
   it('only supersedes older tool runs with the same worktree marker and matching ref', () => {
     const old = run({ displayTitle: namesTitle });
-    const newer = run({ databaseId: 8 });
+    const newer = run({
+      databaseId: 8,
+      displayTitle: namesTitle,
+      headSha: 'sha2',
+      headBranch: 'ci/e2e/sha2-deadbeef',
+    });
     expect(
       supersededRuns(
         [
@@ -135,6 +140,48 @@ describe('run correlation', () => {
         { lane, newer },
       ),
     ).toEqual([old]);
+  });
+
+  it('attaches to an equivalent dispatch in another lane only if the selection matches', () => {
+    const other = run({ displayTitle: namesTitle.replace(lane, 'b'.repeat(32)) });
+    const input = { sha: 'sha1', selKey: 'n-12345678', full: false, lane };
+    expect(matchInFlight([other], input)).toEqual({ attach: other });
+    expect(matchInFlight([other], { ...input, selKey: 'n-87654321' })).toEqual({ dispatch: true });
+    const older = run({
+      displayTitle: namesTitle,
+      headSha: 'older',
+      headBranch: 'ci/e2e/older-deadbeef',
+      databaseId: 0,
+    });
+    expect(supersededRuns([older], { lane, newer: other })).toEqual([]);
+  });
+
+  it('lets independent named and full runs at the same sha finish', () => {
+    const runs = [
+      run({ databaseId: 1, displayTitle: namesTitle }),
+      run({ databaseId: 2, displayTitle: namesTitle.replace('12345678', '87654321') }),
+      run({ databaseId: 3, displayTitle: `e2e full full.${lane}.deadbeef` }),
+      run({ databaseId: 4, displayTitle: namesTitle }),
+    ];
+    for (const newer of runs) {
+      expect(supersededRuns(runs, { lane, newer })).toEqual([]);
+    }
+  });
+
+  it('only a full dispatch can replace a different selection at an older sha', () => {
+    const old = run({ displayTitle: namesTitle });
+    const newer = run({
+      databaseId: 8,
+      displayTitle: `e2e full full.${lane}.deadbeef`,
+      headSha: 'sha2',
+      headBranch: 'ci/e2e/sha2-deadbeef',
+    });
+    expect(supersededRuns([old], { lane, newer })).toEqual([old]);
+    expect(supersededRuns([newer], { lane, newer: { ...old, databaseId: 9 } })).toEqual([]);
+    const differentSelection = { ...old, displayTitle: namesTitle.replace('12345678', '87654321') };
+    expect(
+      supersededRuns([differentSelection], { lane, newer: { ...newer, displayTitle: namesTitle } }),
+    ).toEqual([]);
   });
 
   it('names at a different sha → dispatch; completed runs are ignored', () => {

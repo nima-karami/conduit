@@ -95,7 +95,7 @@ jobs:
         with:
           node-version: 22
       - id: proof
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || (inputs.mode == 'nightly' && inputs.selection == 'full')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

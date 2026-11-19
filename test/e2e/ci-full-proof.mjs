@@ -3,11 +3,19 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-export function provesFullTree(run, tree, result, expectedTree) {
+function matchingNightly(run, tree) {
   return (
     run.conclusion === 'success' &&
-    (run.event === 'workflow_dispatch' || run.event === 'schedule') &&
-    tree === expectedTree &&
+    run.event === 'schedule' &&
+    run.head_branch === 'main' &&
+    run.display_title === 'e2e full schedule' &&
+    run.head_commit?.tree_id === tree
+  );
+}
+
+export function provesFullTree(run, result, tree) {
+  return (
+    matchingNightly(run, tree) &&
     result?.runId === run.id &&
     result.sha === run.head_sha &&
     result.selection === 'full' &&
@@ -20,31 +28,34 @@ export function provesFullTree(run, tree, result, expectedTree) {
   );
 }
 
-export function findFullTreeProof(repo, expectedTree) {
-  const gh = (...args) => execFileSync('gh', args, { encoding: 'utf8' });
-  const api = (path) => JSON.parse(gh('api', `repos/${repo}/${path}`));
-  const { workflow_runs: runs } = api('actions/workflows/e2e.yml/runs?status=success&per_page=50');
-  const trees = new Map();
-  for (const run of runs) {
-    if (!/^e2e full \S+$/.test(run.display_title)) continue;
-    if (!trees.has(run.head_sha)) {
-      trees.set(run.head_sha, api(`git/commits/${run.head_sha}`).tree.sha);
-    }
-    const tree = trees.get(run.head_sha);
-    if (tree !== expectedTree) continue;
+function downloadResult(repo, artifactId) {
+  const dir = mkdtempSync(join(tmpdir(), 'conduit-full-proof-'));
+  try {
+    const file = join(dir, 'result.zip');
+    const zip = execFileSync('gh', ['api', `repos/${repo}/actions/artifacts/${artifactId}/zip`]);
+    writeFileSync(file, zip);
+    return JSON.parse(execFileSync('unzip', ['-p', file, 'result.json']));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
-    const { artifacts } = api(`actions/runs/${run.id}/artifacts?name=e2e-result`);
-    const artifact = artifacts.find((item) => !item.expired);
-    if (!artifact) continue;
-    const zip = execFileSync('gh', ['api', `repos/${repo}/actions/artifacts/${artifact.id}/zip`]);
-    const dir = mkdtempSync(join(tmpdir(), 'conduit-full-proof-'));
+export function findFullTreeProof(repo, tree) {
+  const api = (path) =>
+    JSON.parse(execFileSync('gh', ['api', `repos/${repo}/${path}`], { encoding: 'utf8' }));
+  const { workflow_runs: runs } = api(
+    'actions/workflows/e2e.yml/runs?branch=main&event=schedule&status=success&per_page=50',
+  );
+  for (const run of runs) {
+    if (!matchingNightly(run, tree)) continue;
     try {
-      const file = join(dir, 'result.zip');
-      writeFileSync(file, zip);
-      const result = JSON.parse(execFileSync('unzip', ['-p', file, 'result.json']));
-      if (provesFullTree(run, tree, result, expectedTree)) return run;
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
+      const { artifacts } = api(`actions/runs/${run.id}/artifacts?per_page=100`);
+      const available = (name) => artifacts.find((item) => item.name === name && !item.expired);
+      const result = available('e2e-result');
+      if (!result || !available('e2e-state')) continue;
+      if (provesFullTree(run, downloadResult(repo, result.id), tree)) return run;
+    } catch (error) {
+      console.warn(`Could not read nightly run ${run.id}: ${error.message}`);
     }
   }
   return null;
