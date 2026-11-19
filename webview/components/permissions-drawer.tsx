@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useId, useLayoutEffect, useRef } from 'react';
-import { useToastFloor } from '../toast-floor';
+import { useToastSide } from '../toast-side';
 
 export interface PermissionsDrawerProps {
   title: string;
@@ -31,9 +31,8 @@ export function PermissionsDrawer({
   const titleId = useId();
   const aside = useRef<HTMLElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
-  const foot = useRef<HTMLElement>(null);
   const body = useRef<HTMLDivElement>(null);
-  useToastFloor(foot, footer !== undefined);
+  useToastSide(aside);
   useEffect(() => heading.current?.focus(), []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a different view starts at its heading.
   useLayoutEffect(() => {
@@ -83,11 +82,7 @@ export function PermissionsDrawer({
       <div ref={body} className="permissions-drawer__body">
         {children}
       </div>
-      {footer !== undefined && (
-        <footer ref={foot} className="permissions-drawer__foot">
-          {footer}
-        </footer>
-      )}
+      {footer !== undefined && <footer className="permissions-drawer__foot">{footer}</footer>}
     </aside>
   );
 }

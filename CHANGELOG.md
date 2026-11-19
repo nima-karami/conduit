@@ -12,6 +12,7 @@ All notable user-facing changes to Conduit. Format follows
 
 ### Fixed
 
+- Update notices stay beside the Permissions drawer so its controls remain clickable.
 - Permissions in an agent’s right-click menu opens beside the menu on hover and supports keyboard navigation.
 - Conduit tools use the file or folder checked by permissions, even if a symbolic link is redirected before the action runs.
 

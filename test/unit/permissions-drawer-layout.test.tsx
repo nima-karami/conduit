@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { act, useRef } from 'react';
+import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { toastFloorPx, useToastFloor, useToastSide } from '../../webview/toast-floor';
+import { PermissionsDrawer } from '../../webview/components/permissions-drawer';
 
 /**
  * CON-71: scrolling the MCP drawer scrolled the whole tab (list, drawer and all), because the
@@ -61,8 +61,8 @@ describe('MCP drawer height chain', () => {
     expect(rule('.permissions-drawer__head').overflow).toBeUndefined();
   });
 
-  it('raises the floating stack by the measured drawer footer floor', () => {
-    expect(rule('.toasts').bottom).toBe('calc(var(--toast-floor, 0px) + var(--toast-inset))');
+  it('places the floating stack beside the measured drawer column', () => {
+    expect(rule('.toasts').right).toBe('calc(var(--toast-side, 0px) + var(--toast-inset))');
   });
 });
 
@@ -70,64 +70,35 @@ beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
 
-function Footer({ active }: { active: boolean }) {
-  const ref = useRef<HTMLElement>(null);
-  useToastFloor(ref, active);
-  return <footer ref={ref} />;
-}
-
-describe('useToastFloor', () => {
-  it('sets --toast-floor to the distance from the footer top to the window bottom, then clears it', async () => {
-    const host = document.createElement('div');
-    document.body.append(host);
-    const root = createRoot(host);
-    const top = window.innerHeight - 60;
-    const spy = Element.prototype.getBoundingClientRect;
-    Element.prototype.getBoundingClientRect = () =>
-      ({ top, bottom: top + 60, left: 0, right: 0, width: 0, height: 60, x: 0, y: top }) as DOMRect;
-    try {
-      await act(async () => root.render(<Footer active />));
-      expect(toastFloorPx()).toBe(60);
-      expect(document.documentElement.style.getPropertyValue('--toast-floor')).toBe('60px');
-      await act(async () => root.render(<Footer active={false} />));
-      expect(toastFloorPx()).toBe(0);
-      expect(document.documentElement.style.getPropertyValue('--toast-floor')).toBe('');
-    } finally {
-      Element.prototype.getBoundingClientRect = spy;
-      await act(async () => root.unmount());
-      host.remove();
-    }
-  });
-});
-
-function SidePanel() {
-  const ref = useRef<HTMLElement>(null);
-  useToastSide(ref);
-  return <aside ref={ref} />;
-}
-
-it('uses horizontal clearance while a side panel is present, then restores the footer reserve', async () => {
+it.each([false, true])('reserves the actual drawer column with footer=%s', async (hasFooter) => {
   const host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);
   const measure = Element.prototype.getBoundingClientRect;
+  let distance = 440;
   Element.prototype.getBoundingClientRect = () =>
-    ({ top: window.innerHeight - 60, left: window.innerWidth - 460 }) as DOMRect;
+    ({ left: window.innerWidth - distance }) as DOMRect;
   const style = document.documentElement.style;
   try {
     await act(async () =>
       root.render(
-        <>
-          <Footer active />
-          <SidePanel />
-        </>,
+        <PermissionsDrawer
+          title="First"
+          closeLabel="Close"
+          closeGlyph="✕"
+          onClose={() => {}}
+          footer={hasFooter ? <button type="button">Review</button> : undefined}
+        >
+          <p>Drawer body</p>
+        </PermissionsDrawer>,
       ),
     );
+    expect(style.getPropertyValue('--toast-side')).toBe('440px');
+    distance = 460;
+    window.dispatchEvent(new Event('resize'));
     expect(style.getPropertyValue('--toast-side')).toBe('460px');
-    expect(style.getPropertyValue('--toast-floor')).toBe('');
-    await act(async () => root.render(<Footer active />));
+    await act(async () => root.render(null));
     expect(style.getPropertyValue('--toast-side')).toBe('');
-    expect(style.getPropertyValue('--toast-floor')).toBe('60px');
   } finally {
     Element.prototype.getBoundingClientRect = measure;
     await act(async () => root.unmount());

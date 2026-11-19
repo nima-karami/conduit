@@ -7402,12 +7402,12 @@ body.gh-resizing {
    approval card, transient toasts and the persistent update item share it, so nothing overlaps
    another outlet. Fixed at the window's bottom-right, --toast-inset from both edges; it overlays
    content (the status bar's right end included) and never moves for a state, a panel or a view,
-   except where a drawer reserves space above its footer or beside its panel (webview/toast-floor.ts).
+   except where a drawer reserves space beside its panel (webview/toast-side.ts).
    Above modals, below menus; pointer-events on the cards only. Silence = success. */
 .toasts {
   position: fixed;
   right: calc(var(--toast-side, 0px) + var(--toast-inset));
-  bottom: calc(var(--toast-floor, 0px) + var(--toast-inset));
+  bottom: var(--toast-inset);
   z-index: var(--layer-toast);
   display: flex;
   flex-direction: column;

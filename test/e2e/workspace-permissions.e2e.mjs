@@ -16,7 +16,10 @@ const work = join(userDataDir, 'work');
 mkdirSync(work);
 writeFileSync(
   join(userDataDir, 'settings.json'),
-  JSON.stringify({ version: 1, settings: { conduitMcp: true, restoreSessions: true } }),
+  JSON.stringify({
+    version: 1,
+    settings: { conduitMcp: true, restoreSessions: true, lastSeenVersion: '0.0.0' },
+  }),
 );
 
 await runScenario(
@@ -38,7 +41,7 @@ await runScenario(
     const before = await terminal.boundingBox();
     assert(before, 'terminal did not render');
 
-    const toast = page.locator('.toast').filter({ hasText: /Updated to v/ });
+    const toast = page.locator('[data-post-update-toast]');
     await toast.waitFor();
     const toastBefore = await toast.boundingBox();
     assert(toastBefore, 'update toast has no box');

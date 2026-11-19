@@ -25,7 +25,10 @@ const work = join(userDataDir, 'work');
 mkdirSync(work);
 writeFileSync(
   join(userDataDir, 'settings.json'),
-  JSON.stringify({ version: 1, settings: { conduitMcp: true, restoreSessions: true } }),
+  JSON.stringify({
+    version: 1,
+    settings: { conduitMcp: true, restoreSessions: true, lastSeenVersion: '0.0.0' },
+  }),
 );
 
 const scrollTops = (page) =>
@@ -113,6 +116,14 @@ await runScenario(
         .getByRole('tab', { name: 'Agents', exact: true })
         .getAttribute('aria-selected')) === 'true',
       'the drawer link did not select MCP › Agents',
+    );
+
+    const toast = page.locator('[data-post-update-toast]');
+    await toast.waitFor();
+    const [toastBox, drawerBox] = await Promise.all([toast.boundingBox(), drawer.boundingBox()]);
+    assert(
+      toastBox && drawerBox && toastBox.x + toastBox.width <= drawerBox.x,
+      'post-update toast overlaps the Settings permissions drawer',
     );
 
     // Give the drawer body more than it can show, then wheel over it.
