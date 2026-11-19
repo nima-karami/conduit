@@ -1,13 +1,14 @@
 import * as fs from 'node:fs';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { previewFileResponse } from '../../electron/preview-protocol';
+import { testTempDir } from '../helpers/temp-roots';
 
 describe('previewFileResponse', () => {
   it('streams the file with its type and length, without a whole-file readFile', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'pfr-'));
+    const dir = testTempDir('pfr-');
     const file = join(dir, 'a.html');
     const content = 'x'.repeat(200_000);
     writeFileSync(file, content);

@@ -2,7 +2,6 @@ import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createShimEndpoint } from '../../server/mcp/endpoint';
@@ -18,6 +17,7 @@ import {
   SHIM_RECONNECT,
   SHIM_WELCOME_TIMEOUT_MS,
 } from '../../src/contracts/shim-protocol';
+import { testTempDir } from '../helpers/temp-roots';
 import { testEndpoint } from '../helpers/test-endpoint';
 
 const SHIM = path.join(__dirname, '..', '..', 'resources', 'conduit-mcp', 'conduit-mcp-shim.cjs');
@@ -56,7 +56,7 @@ const INITIALIZED = '{"jsonrpc":"2.0","method":"notifications/initialized"}';
 
 /** A --require preload that delays net.connect, so stdin is provably read before the connect. */
 function delayedConnectPreload(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cmcp-shim-'));
+  const dir = testTempDir('cmcp-shim-');
   const file = path.join(dir, 'delay-connect.cjs');
   fs.writeFileSync(
     file,
@@ -70,10 +70,8 @@ function delayedConnectPreload(): string {
       '',
     ].join('\n'),
   );
-  preloadDirs.push(dir);
   return file;
 }
-const preloadDirs: string[] = [];
 
 interface Shim {
   child: ChildProcessWithoutNullStreams;
@@ -89,7 +87,6 @@ const closers: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
   for (const c of children.splice(0)) c.kill();
   for (const close of closers.splice(0)) await close();
-  for (const d of preloadDirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
 
 function start(
@@ -496,8 +493,7 @@ describe('conduit-mcp-shim: C6', () => {
   it('a connect error and its close schedule exactly one retry', async () => {
     // Nothing listens, so every attempt fails with an error followed by a close. A preload
     // counts the attempts on stderr.
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cmcp-shim-'));
-    preloadDirs.push(dir);
+    const dir = testTempDir('cmcp-shim-');
     const preload = path.join(dir, 'count-connect.cjs');
     fs.writeFileSync(
       preload,

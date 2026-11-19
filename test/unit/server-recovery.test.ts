@@ -13,6 +13,7 @@ import { instanceNames } from '../../src/instance-names';
 import { SessionActivity } from '../../src/session-activity';
 import type { AgentDefinition } from '../../src/types';
 import { allowPeerReset } from '../helpers/peer-socket';
+import { testTempDir } from '../helpers/temp-roots';
 import { testEndpoint } from '../helpers/test-endpoint';
 
 const shell: AgentDefinition = {
@@ -34,7 +35,7 @@ afterEach(async () => {
 async function harness(settings: Record<string, unknown> = {}, tokenBlob?: string) {
   const scratch = path.join(os.tmpdir(), 'Codex-scratch');
   fs.mkdirSync(scratch, { recursive: true });
-  const userData = fs.mkdtempSync(path.join(scratch, 'server-recovery-'));
+  const userData = testTempDir('server-recovery-', scratch);
   fs.writeFileSync(path.join(userData, 'settings.json'), JSON.stringify({ version: 1, settings }));
   if (tokenBlob !== undefined) {
     fs.mkdirSync(path.join(userData, 'conduit-mcp'));
@@ -88,7 +89,6 @@ async function harness(settings: Record<string, unknown> = {}, tokenBlob?: strin
   cleanup.push(async () => {
     await services.close();
     await fake.close();
-    fs.rmSync(userData, { recursive: true, force: true });
   });
   return {
     userData,

@@ -1,11 +1,12 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { countLinesOfFile } from '../../src/project-info';
+import { testTempDir } from '../helpers/temp-roots';
 
 const MB = 1024 * 1024;
-const tmp = (name: string) => join(mkdtempSync(join(tmpdir(), 'clc-')), name);
+const tmp = (name: string) => join(testTempDir('clc-'), name);
 
 describe('countLinesOfFile', () => {
   it('counts newlines in a small file', async () => {

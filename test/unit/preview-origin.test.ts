@@ -128,7 +128,6 @@ describe('previewVerdictForRequest — against the real filesystem', () => {
   });
 
   afterAll(() => {
-    fs.rmSync(path.join(rx, 'ylink'));
     fs.rmSync(base, { recursive: true, force: true });
   });
 

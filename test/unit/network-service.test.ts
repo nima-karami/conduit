@@ -44,6 +44,7 @@ import {
   SERVER_VERSION_FILE,
 } from '../../src/server-secret';
 import type { SessionCommand } from '../../src/types';
+import { testTempDir } from '../helpers/temp-roots';
 
 const quiet = { debug: () => undefined, warn: () => undefined, error: () => undefined };
 const TEST_APP_VERSION = '9.8.7';
@@ -63,7 +64,7 @@ interface ServerOpts {
 }
 
 function server(name: string, endpointIn?: (root: string) => string, opts: ServerOpts = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'conduit-net-'));
+  const root = testTempDir('conduit-net-');
   const dir = join(root, 'network');
   const loaded = loadIdentity(dir);
   if (loaded.kind === 'newer') throw new Error('unexpected');
@@ -142,7 +143,6 @@ function server(name: string, endpointIn?: (root: string) => string, opts: Serve
       agents: () => [],
     },
   });
-  cleanup.push(() => rmSync(root, { recursive: true, force: true }));
   cleanup.push(() => net.stop());
   return { net, dir, states, opened };
 }
