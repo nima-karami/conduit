@@ -448,7 +448,7 @@ export function coercePolicyPatch(tool: ToolName, v: unknown): ToolPolicyPatch |
 /** Also the call flow's fail-closed answer for a policy that reached it as 'off'. */
 export const toolDisabled = (tool: ToolName): ToolError =>
   toolError('tool_disabled', `${tool} is not enabled for this session`, undefined, {
-    hint: `Review access to ${tool} in Settings → Permissions`,
+    hint: `Review access to ${tool} in the agent’s Permissions side panel`,
   });
 
 export const NOT_IN_SESSION_HINT =

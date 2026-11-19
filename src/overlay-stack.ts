@@ -1,8 +1,8 @@
 /**
- * Pure ordering for the app's single overlay stack (modals + popovers). No DOM, no React —
+ * Pure ordering for the app's single overlay stack. No DOM, no React —
  * see `webview/overlay-store.ts` for the live singleton that wraps this.
  */
-export type OverlayKind = 'modal' | 'popover';
+export type OverlayKind = 'modal' | 'popover' | 'panel';
 
 export interface OverlayEntry {
   id: number;

@@ -136,7 +136,12 @@ import { BranchChip } from './components/branch-chip';
 import { CenterPane } from './components/center-pane';
 import { CommandPalette, type PaletteEntry } from './components/command-palette';
 import { ConfirmDialog, type ConfirmState } from './components/confirm-dialog';
-import { ContextMenu, type MenuItem, type MenuState } from './components/context-menu';
+import {
+  ContextMenu,
+  type MenuEntry,
+  type MenuItem,
+  type MenuState,
+} from './components/context-menu';
 import { DirtyCloseDialog } from './components/dirty-close-dialog';
 import { ErrorBoundary } from './components/error-boundary';
 import { IconPickerModal } from './components/icon-picker-modal';
@@ -152,7 +157,6 @@ import { QuitScrim } from './components/quit-scrim';
 import { RightPane, type RightPaneHandle } from './components/right-pane';
 import type { SearchScopeModel } from './components/search-pane';
 import { ServerBanner } from './components/server-banner';
-import { SessionPermissionsController } from './components/session-permissions-controller';
 import { SettingsPage, type SettingsTab } from './components/settings-page';
 import { Sidebar } from './components/sidebar';
 import { StatusBar } from './components/status-bar';
@@ -162,6 +166,7 @@ import { TopBar } from './components/top-bar';
 import type { UpdateStatus } from './components/update-card';
 import { WebPromptModal } from './components/web-prompt-modal';
 import { type ReleaseNotesView, WhatsNewDialog } from './components/whats-new-dialog';
+import { WorkspacePermissions } from './components/workspace-permissions';
 import { MCP_STR, type McpTabId } from './conduit-mcp-strings';
 import {
   getPinnedDiffs,
@@ -560,7 +565,7 @@ function moveFileTab(from: string, to: string): boolean {
 
 // Icons for the pure session menu builder (webview/session-menu.ts); onSessionContextMenu binds
 // every action to its session.
-const SESSION_MENU_ICONS: Record<SessionMenuAction, React.ReactNode> = {
+const SESSION_MENU_ICONS: Record<SessionMenuAction | 'mcpTools', React.ReactNode> = {
   select: <IconTerminal size={14} />,
   split: <IconSidebar size={14} />,
   relaunch: <IconSparkle size={14} />,
@@ -650,14 +655,12 @@ export function App() {
   const [settingsFocusCli, setSettingsFocusCli] = useState<AgentCli | undefined>(undefined);
   const [settingsMcpTab, setSettingsMcpTab] = useState<McpTabId>('settings');
   const [settingsAgentKey, setSettingsAgentKey] = useState<string | undefined>(undefined);
-  const [settingsAgentStage, setSettingsAgentStage] = useState<AgentStage | undefined>(undefined);
   const [settingsSeq, setSettingsSeq] = useState(0);
   const [recentsBySession, setRecentsBySession] = useState<Record<string, RecentDoc[]>>({});
   const [corpus, setCorpus] = useState<FolderCorpus>({});
   const [menu, setMenu] = useState<MenuState | null>(null);
   // The row menu's Permissions submenu (canvas E1). Its own state: the row menu closes after the
   // activating item's handler runs, which would otherwise close the submenu it just opened.
-  const [permissionsMenu, setPermissionsMenu] = useState<MenuState | null>(null);
   useEffect(() => {
     const open = menu;
     return () => open?.onClosed?.();
@@ -716,7 +719,24 @@ export function App() {
   } | null>(null);
   const closeMovePicker = useCallback(() => setMovePicker(null), []);
   const [timedMessageFor, setTimedMessageFor] = useState<string | null>(null);
-  const [permissionsFor, setPermissionsFor] = useState<string | null>(null);
+  const [workspacePermissions, setWorkspacePermissions] = useState<{
+    sessionId: string;
+    stage?: AgentStage;
+    opener?: HTMLElement;
+    revision: number;
+  } | null>(null);
+  const closeWorkspacePermissions = useCallback(() => setWorkspacePermissions(null), []);
+  const openWorkspacePermissions = (sessionId: string, stage?: AgentStage) => {
+    const opener =
+      document.querySelector<HTMLElement>(`.session[data-sessionid="${CSS.escape(sessionId)}"]`) ??
+      (document.activeElement instanceof HTMLElement ? document.activeElement : undefined);
+    setWorkspacePermissions((previous) => ({
+      sessionId,
+      stage,
+      opener,
+      revision: (previous?.revision ?? 0) + 1,
+    }));
+  };
 
   /** The palette acts on the ACTIVE session; the chip, the card menu and the stale card name one. */
   const openTimedMessages = useCallback(
@@ -1099,7 +1119,6 @@ export function App() {
         releaseNotes?: boolean;
         mcpTab?: McpTabId;
         agentKey?: string;
-        agentStage?: AgentStage;
       },
     ) => {
       setSettingsTab(tab);
@@ -1107,7 +1126,6 @@ export function App() {
       setSettingsAboutReleaseNotes(!!opts?.releaseNotes);
       setSettingsMcpTab(opts?.mcpTab ?? 'settings');
       setSettingsAgentKey(opts?.agentKey);
-      setSettingsAgentStage(opts?.agentStage);
       setSettingsSeq((n) => n + 1);
       if (
         settingsOpenerRef.current === null &&
@@ -1151,11 +1169,41 @@ export function App() {
 
   useEffect(() => {
     if (
-      permissionsFor &&
-      !canOpenSessionPermissions(permissionsFor, hostSessions, mcp.state?.policy.sessions)
+      workspacePermissions &&
+      (settingsOpen ||
+        !canOpenSessionPermissions(
+          workspacePermissions.sessionId,
+          hostSessions,
+          mcp.state?.policy.sessions,
+        ))
     )
-      setPermissionsFor(null);
-  }, [hostSessions, mcp.state?.policy.sessions, permissionsFor]);
+      closeWorkspacePermissions();
+  }, [
+    hostSessions,
+    mcp.state?.policy.sessions,
+    workspacePermissions,
+    settingsOpen,
+    closeWorkspacePermissions,
+  ]);
+
+  const relaunchPermissionSession = async (
+    sessionId: string,
+    expectedGeneration: number | null,
+  ) => {
+    const result = await requestHost(
+      (requestId) => ({ type: 'session:restart', sessionId, requestId, expectedGeneration }),
+      ['agentScope:result'],
+      10_000,
+    );
+    if (!result?.ok) throw new Error(result?.reason ?? 'Restart timed out');
+    requestAnimationFrame(() => requestTerminalFocus(sessionId));
+  };
+  const openSessionActivity = (sessionId: string, item?: ActivityScope['item']) => {
+    if (workspacePermissions?.opener?.isConnected)
+      settingsOpenerRef.current = workspacePermissions.opener;
+    closeWorkspacePermissions();
+    openActivity({ sessionId, item });
+  };
 
   // Auto-switch to a newly created (running) session (when enabled).
   const knownIds = useRef<Set<string>>(new Set());
@@ -3805,8 +3853,7 @@ export function App() {
   }, [sessions, closeSessions]);
 
   // Multi-window Slice B: "Move to new window" + one "Move to {title}" entry per OTHER open
-  // window (this window's own id comes from state.windowId). The flat context menu has no
-  // submenus, so the targets are inlined as sibling items. The move never restarts the PTY —
+  // window (this window's own id comes from state.windowId). The move never restarts the PTY —
   // the host reassigns ownership and the target re-mounts the same sessionId.
   const moveMenuItems = (sessionId: string): MenuItem[] => {
     const ownId = state?.windowId;
@@ -3846,7 +3893,7 @@ export function App() {
     scope: RowMenuScope = NO_SCOPE,
   ) => {
     const point = 'anchor' in at ? { x: at.anchor.left, y: at.anchor.bottom } : at;
-    const showMenu = (items: MenuItem[]) =>
+    const showMenu = (items: MenuEntry[]) =>
       setMenu(
         'anchor' in at ? { ...triggerMenu(at.anchor), keyboard: true, items } : { ...at, items },
       );
@@ -3893,7 +3940,30 @@ export function App() {
       mcpHandle: badge?.handle ?? null,
       mcpPaused: badge?.paused === true,
       // Offered before any launch: a switchable session may not have a handle yet (spec §4).
-      mcpSwitchable: canOpenSessionPermissions(s.id, hostSessions, mcp.state?.policy.sessions),
+      permissionsSubmenu: canOpenSessionPermissions(s.id, hostSessions, mcp.state?.policy.sessions)
+        ? () => {
+            const coverage = permissionCoverageRef.current;
+            const policy = mcpPolicyRef.current;
+            const summary = sessionPermissionSummary(policy, s.id);
+            if (
+              !policy ||
+              !summary ||
+              !canOpenSessionPermissions(s.id, coverage.sessions, coverage.policy)
+            )
+              return [];
+            const toDrawer = (stage?: AgentStage) => openWorkspacePermissions(s.id, stage);
+            return buildPermissionsSubmenu({
+              name: s.name,
+              roles: policy.profiles,
+              summary,
+              readOnly: policy.readOnly || serverStateRef.current !== 'connected',
+              onPick: (profileId) =>
+                toDrawer(profileId === summary.profileId ? undefined : { kind: 'role', profileId }),
+              onReset: () => toDrawer({ kind: 'reset' }),
+              onCustomize: () => toDrawer(),
+            });
+          }
+        : undefined,
       mcpPermissions: sessionPermissionSummary(mcp.state?.policy, s.id),
       // The banner's actions, reachable by keyboard while focus sits in xterm (spec 2026-10-27-conduit-mcp-install §2.5).
       mcpSetupNeeded: notConnected !== undefined,
@@ -3912,35 +3982,6 @@ export function App() {
         timed: () => openTimedMessages(s.id),
         messages: () => openMessages(badge?.handle ?? null),
         pauseMcp: () => mcp.pause(s.id, badge?.paused !== true),
-        // Beside the row it was picked from; a bare call has only the right-click point.
-        mcpTools: (a) => {
-          const coverage = permissionCoverageRef.current;
-          const policy = mcpPolicyRef.current;
-          const summary = sessionPermissionSummary(policy, s.id);
-          if (
-            !policy ||
-            !summary ||
-            !canOpenSessionPermissions(s.id, coverage.sessions, coverage.policy)
-          )
-            return;
-          const agentKey = pointKey({ kind: 'session', sessionId: s.id });
-          const toDrawer = (agentStage?: AgentStage) =>
-            openSettingsAt('mcp', undefined, { mcpTab: 'agents', agentKey, agentStage });
-          setPermissionsMenu({
-            ...(a ? { x: a.rect.right, y: a.rect.top } : point),
-            keyboard: 'anchor' in at,
-            items: buildPermissionsSubmenu({
-              name: s.name,
-              roles: policy.profiles,
-              summary,
-              readOnly: policy.readOnly || serverStateRef.current !== 'connected',
-              onPick: (profileId) =>
-                toDrawer(profileId === summary.profileId ? undefined : { kind: 'role', profileId }),
-              onReset: () => toDrawer({ kind: 'reset' }),
-              onCustomize: () => toDrawer(),
-            }),
-          });
-        },
         setupMcp: () => openSettingsAt('mcp', notConnected?.cli),
         // From the live value: the menu may outlive a sidebar edit made while it was open.
         pin: () => {
@@ -4696,7 +4737,7 @@ export function App() {
     !!palette ||
     settingsOpen ||
     !!menu ||
-    !!permissionsMenu ||
+    !!workspacePermissions ||
     slot.current !== null ||
     !!newSession ||
     webPromptOpen ||
@@ -5810,7 +5851,7 @@ export function App() {
     !migrationDismissed &&
     !releaseNotesOpen &&
     !settingsOpen &&
-    !permissionsFor &&
+    !workspacePermissions &&
     mcp.state?.policy;
   const migration =
     policyForUpgrade && !policyForUpgrade.migration?.acknowledged
@@ -5845,7 +5886,7 @@ export function App() {
               const coverage = permissionCoverageRef.current;
               if (!canOpenSessionPermissions(id, coverage.sessions, coverage.policy)) return;
               setMigrationDismissed(true);
-              setPermissionsFor(id);
+              openWorkspacePermissions(id);
             }}
             onDone={() => setMigrationDismissed(true)}
           />
@@ -5934,6 +5975,43 @@ export function App() {
           )}
           <div className="workbench" inert={settingsOpen}>
             {visibleOrder.map(renderRegion)}
+            {workspacePermissions &&
+              !settingsOpen &&
+              mcp.state?.policy &&
+              canOpenSessionPermissions(
+                workspacePermissions.sessionId,
+                hostSessions,
+                mcp.state.policy.sessions,
+              ) && (
+                <WorkspacePermissions
+                  key={`${workspacePermissions.sessionId}:${workspacePermissions.revision}`}
+                  sessions={hostSessions}
+                  policy={mcp.state.policy}
+                  mcp={mcp}
+                  serverConnected={serverState.state === 'connected'}
+                  agentKey={pointKey({
+                    kind: 'session',
+                    sessionId: workspacePermissions.sessionId,
+                  })}
+                  stage={workspacePermissions.stage}
+                  opener={workspacePermissions.opener}
+                  onClose={closeWorkspacePermissions}
+                  onOpenInSettings={() => {
+                    if (workspacePermissions.opener?.isConnected)
+                      settingsOpenerRef.current = workspacePermissions.opener;
+                    closeWorkspacePermissions();
+                    openSettingsAt('mcp', undefined, {
+                      mcpTab: 'agents',
+                      agentKey: pointKey({
+                        kind: 'session',
+                        sessionId: workspacePermissions.sessionId,
+                      }),
+                    });
+                  }}
+                  onOpenActivity={openSessionActivity}
+                  onRelaunch={relaunchPermissionSession}
+                />
+              )}
           </div>
           {newSession && (
             <NewSessionModal
@@ -6002,12 +6080,8 @@ export function App() {
               initialCli={settingsFocusCli}
               initialMcpTab={settingsMcpTab}
               initialAgentKey={settingsAgentKey}
-              initialAgentStage={settingsAgentStage}
-              onOpenSessionPermissions={(id) => {
-                const coverage = permissionCoverageRef.current;
-                if (canOpenSessionPermissions(id, coverage.sessions, coverage.policy))
-                  setPermissionsFor(id);
-              }}
+              onOpenSessionActivity={openSessionActivity}
+              onRelaunchPermissionSession={relaunchPermissionSession}
               navSeq={settingsSeq}
               about={state?.about}
               projectPath={active?.home || null}
@@ -6054,9 +6128,6 @@ export function App() {
             />
           )}
           {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
-          {permissionsMenu && (
-            <ContextMenu menu={permissionsMenu} onClose={() => setPermissionsMenu(null)} />
-          )}
           {modal?.kind === 'dirty' && <DirtyCloseDialog key={modal.key} {...modal.props} />}
           {quitLocked && <QuitScrim />}
           {modal?.kind === 'confirm' && (
@@ -6133,48 +6204,6 @@ export function App() {
                   onClose={() => setTimedMessageFor(null)}
                   requestConfirm={showConfirm}
                 />
-              ) : null;
-            })()}
-          {permissionsFor &&
-            (() => {
-              const target = sessions.find((s) => s.id === permissionsFor);
-              return target &&
-                canOpenSessionPermissions(target.id, hostSessions, mcp.state?.policy.sessions) ? (
-                mcp.state?.policy.sessions[target.id] && mcp.state.native[target.id] ? (
-                  <SessionPermissionsController
-                    key={target.id}
-                    session={target}
-                    policy={mcp.state.policy}
-                    native={mcp.state.native[target.id]}
-                    mcp={mcp}
-                    onOpenActivity={(item) => {
-                      setPermissionsFor(null);
-                      openActivity({ sessionId: target.id, item });
-                    }}
-                    onOpenSettings={() => {
-                      setPermissionsFor(null);
-                      openSettingsAt('mcp', undefined, {
-                        mcpTab: 'agents',
-                        agentKey: pointKey({ kind: 'session', sessionId: target.id }),
-                      });
-                    }}
-                    onRelaunch={async (id, generation) => {
-                      const result = await requestHost(
-                        (requestId) => ({
-                          type: 'session:restart',
-                          sessionId: id,
-                          requestId,
-                          expectedGeneration: generation,
-                        }),
-                        ['agentScope:result'],
-                        10_000,
-                      );
-                      if (!result?.ok) throw new Error(result?.reason ?? 'Restart timed out');
-                      requestAnimationFrame(() => requestTerminalFocus(id));
-                    }}
-                    onClose={() => setPermissionsFor(null)}
-                  />
-                ) : null
               ) : null;
             })()}
           <Toasts>

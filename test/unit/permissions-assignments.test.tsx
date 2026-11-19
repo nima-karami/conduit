@@ -83,7 +83,7 @@ async function mount(initial: {
   focusAgentKey?: string;
   focusAgentStage?: AgentStage;
   onFocusAgentSpent?: () => void;
-  onOpenSessionPermissions?: (sessionId: string) => void;
+  onOpenActivity?: (sessionId: string) => void;
   reviewResult?: unknown;
 }): Promise<Mount> {
   const reviewLocalPolicy = vi.fn(
@@ -91,7 +91,11 @@ async function mount(initial: {
       initial.reviewResult ?? { ok: true as const, requiresNativeReview: false as const },
   );
   const saveAssignment = vi.fn(async () => ({ ok: true as const }));
-  const mcp = { reviewLocalPolicy, saveAssignment } as unknown as ConduitMcpApi;
+  const mcp = {
+    reviewLocalPolicy,
+    saveAssignment,
+    getActivity: async () => ({ rows: [], next: null, writable: true, error: null }),
+  } as unknown as ConduitMcpApi;
   let handler: BackHandler | null = null;
   const registerBack = (next: BackHandler | null) => {
     handler = next;
@@ -112,7 +116,7 @@ async function mount(initial: {
           focusAgentKey={'focusAgentKey' in over ? over.focusAgentKey : initial.focusAgentKey}
           focusAgentStage={initial.focusAgentStage}
           onFocusAgentSpent={initial.onFocusAgentSpent}
-          onOpenSessionPermissions={initial.onOpenSessionPermissions}
+          onOpenActivity={initial.onOpenActivity}
           registerBack={registerBack}
         />,
       ),
@@ -180,7 +184,7 @@ it('reviews and saves the frozen assignment with the token and native digest', a
     reviewResult: { ok: true, requiresNativeReview: true, digest: 'digest' },
   });
   await act(async () => rowOf(host, 'Default').click());
-  await click(host, 'Edit changes');
+  await click(host, 'Edit assignment');
   const native = [...host.querySelectorAll('input')].find((input) =>
     input.parentElement?.textContent?.includes('native modes'),
   );
@@ -214,7 +218,7 @@ it('shows exceptions as a count in the row and offers the reset review inside th
   expect(row.textContent).toContain('2 changes');
   expect(row.textContent).not.toContain('close_session');
   await act(async () => row.click());
-  await click(host, 'Edit changes');
+  await click(host, 'Edit assignment');
   await click(host, 'Review reset');
   expect(reviewLocalPolicy).toHaveBeenCalledWith(
     { kind: 'assignment', point: { kind: 'cli', cli: 'claude' }, assignment: null },
@@ -289,7 +293,7 @@ it('read-only policy disables every drawer control and says why', async () => {
   });
   await act(async () => rowOf(host, 'claude sessions').click());
   const scope = drawer(host) as HTMLElement;
-  expect(button(scope, 'Edit changes')?.disabled).toBe(true);
+  expect(button(scope, 'Edit assignment')?.disabled).toBe(true);
   expect(button(scope, 'Reset all to role')?.disabled).toBe(true);
   expect(scope.querySelector<HTMLSelectElement>('select[aria-label="Role"]')?.disabled).toBe(true);
   expect(host.textContent).toContain('Permissions are read-only');
@@ -308,14 +312,14 @@ it('steps back review, edit, drawer, closed, then reports nothing to consume', a
   const m = await mount({ sessions: [session('s1', 'First')], policy: policyWith([], ['s1']) });
   expect(m.back()?.()).toBe(false);
   await act(async () => rowOf(m.host, 'First').click());
-  await click(m.host, 'Edit changes');
+  await click(m.host, 'Edit assignment');
   await click(m.host, 'Review changes');
   expect(m.host.textContent).toContain('Review assignment');
   await act(async () => void m.back()?.());
-  expect(m.host.textContent).toContain('Edit assignment');
+  expect(m.host.textContent).toContain('Edit assignment · Session s1');
   expect(m.host.textContent).not.toContain('Review assignment');
   await act(async () => void m.back()?.());
-  expect(m.host.textContent).not.toContain('Edit assignment');
+  expect(m.host.textContent).not.toContain('Edit assignment · Session s1');
   expect(drawer(m.host)).not.toBeNull();
   expect(m.back()?.()).toBe(true);
   await act(async () => void m.back()?.());
@@ -328,14 +332,14 @@ it('consumes a back step without acting while a review request is pending', asyn
   const m = await mount({ sessions: [session('s1', 'First')], policy: policyWith([], ['s1']) });
   m.reviewLocalPolicy.mockImplementation(() => gate.promise);
   await act(async () => rowOf(m.host, 'First').click());
-  await click(m.host, 'Edit changes');
+  await click(m.host, 'Edit assignment');
   await click(m.host, 'Review changes');
   let consumed: boolean | undefined;
   await act(async () => {
     consumed = m.back()?.();
   });
   expect(consumed).toBe(true);
-  expect(m.host.textContent).toContain('Edit assignment');
+  expect(m.host.textContent).toContain('Edit assignment · Session s1');
   await act(async () => gate.resolve({ ok: true, requiresNativeReview: false }));
 });
 
@@ -344,7 +348,7 @@ it('drops a review result that arrives after the user stepped back to the list',
   const m = await mount({ sessions: [session('s1', 'First')], policy: policyWith([], ['s1']) });
   m.reviewLocalPolicy.mockImplementation(() => gate.promise);
   await act(async () => rowOf(m.host, 'First').click());
-  await click(m.host, 'Edit changes');
+  await click(m.host, 'Edit assignment');
   await click(m.host, 'Review changes');
   await act(async () => m.host.querySelector<HTMLElement>('[aria-label="Close"]')?.click());
   await act(async () => gate.resolve({ ok: true, requiresNativeReview: false }));
@@ -454,9 +458,15 @@ it('says Follows role in the drawer when there are no changes', async () => {
   expect(button(m.host, 'Reset all to role')).toBeUndefined();
 });
 
-it('enters the existing exceptions editor from Edit changes', async () => {
+it('enters the existing exceptions editor from Edit assignment', async () => {
   const { host } = await openWithChanges();
-  await click(host, 'Edit changes');
+  const advanced = [...host.querySelectorAll('summary')].find(
+    (item) => item.textContent === 'Advanced settings',
+  )?.parentElement as HTMLDetailsElement | undefined;
+  expect(advanced?.open).toBe(false);
+  await act(async () => advanced?.querySelector('summary')?.click());
+  expect(advanced?.open).toBe(true);
+  await click(host, 'Edit assignment');
   expect(host.textContent).toContain('Edit assignment');
 });
 
@@ -493,7 +503,9 @@ it('stages a role picked inside the drawer', async () => {
 
 it('summarises what the agent can do per group with a worded pill', async () => {
   const { host } = await openWithChanges();
-  const groups = [...(drawer(host)?.querySelectorAll('details') ?? [])];
+  const groups = [
+    ...(drawer(host)?.querySelectorAll('.permissions-drawer__groups > details') ?? []),
+  ];
   expect(groups.length).toBeGreaterThan(0);
   expect(groups[0].closest('section')?.textContent).toContain('What this agent can do');
   for (const group of groups)
@@ -559,7 +571,7 @@ it('pins the staged actions in the drawer footer and scrolls only the body', asy
   const { host } = await withChanges();
   const aside = drawer(host);
   expect(aside?.querySelector('.permissions-drawer__foot')).toBeNull();
-  await click(host, 'Edit changes');
+  await click(host, 'Edit assignment');
   const children = [...(drawer(host)?.children ?? [])].map((el) => el.className);
   expect(children).toEqual([
     'permissions-drawer__head',
@@ -574,13 +586,14 @@ it('pins the staged actions in the drawer footer and scrolls only the body', asy
   ]);
 });
 
-it('offers the session dialog for the agent’s own permissions on a session row only', async () => {
-  const onOpenSessionPermissions = vi.fn();
-  const { host } = await withChanges(undefined, { onOpenSessionPermissions });
-  await click(host, 'Agent’s own permissions…');
-  expect(onOpenSessionPermissions).toHaveBeenCalledWith('s1');
+it('offers activity and grants in the session drawer', async () => {
+  const onOpenActivity = vi.fn();
+  const { host } = await withChanges(undefined, { onOpenActivity });
+  expect(drawer(host)?.querySelector('[aria-label="Active grants"]')).not.toBeNull();
+  await click(host, 'View Activity');
+  expect(onOpenActivity).toHaveBeenCalledWith('s1');
   await act(async () => rowOf(host, 'Default').click());
-  expect(button(host, 'Agent’s own permissions…')).toBeUndefined();
+  expect(button(host, 'View Activity')).toBeUndefined();
 });
 
 it('returns focus to the row when the drawer closes', async () => {

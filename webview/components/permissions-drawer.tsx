@@ -8,6 +8,8 @@ export interface PermissionsDrawerProps {
   closeLabel: string;
   closeGlyph: string;
   onClose(): void;
+  opener?: HTMLElement;
+  scrollKey?: string;
   /** Pinned under the scrolling body (canvas D3–D5); omitted when there is nothing to act on. */
   footer?: ReactNode;
   children: ReactNode;
@@ -21,6 +23,8 @@ export function PermissionsDrawer({
   closeLabel,
   closeGlyph,
   onClose,
+  opener,
+  scrollKey,
   footer,
   children,
 }: PermissionsDrawerProps) {
@@ -28,31 +32,38 @@ export function PermissionsDrawer({
   const aside = useRef<HTMLElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const foot = useRef<HTMLElement>(null);
+  const body = useRef<HTMLDivElement>(null);
   useToastFloor(foot, footer !== undefined);
   useEffect(() => heading.current?.focus(), []);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a different view starts at its heading.
+  useLayoutEffect(() => {
+    if (body.current) body.current.scrollTop = 0;
+  }, [scrollKey]);
   // Spec 2026-11-18-mcp-full-screen §10: closing returns focus to the row that opened it. A layout
   // cleanup still sees the drawer in the DOM, so it can tell whether focus was inside it.
   useLayoutEffect(() => {
-    const opener = document.activeElement;
+    const returnFocus = opener ?? document.activeElement;
     const node = aside.current;
     return () => {
       const active = document.activeElement;
-      const focusInside = node !== null && (active === null || node.contains(active));
+      const focusInside =
+        node !== null &&
+        (active === null || node.contains(active) || (opener && active === document.body));
       if (
         focusInside &&
-        opener instanceof HTMLElement &&
-        opener !== document.body &&
-        opener.isConnected &&
-        !node.contains(opener)
+        returnFocus instanceof HTMLElement &&
+        returnFocus !== document.body &&
+        returnFocus.isConnected &&
+        !node.contains(returnFocus)
       )
         queueMicrotask(() => {
           // The panel switched content (drawer → editor) rather than closing: the new one has
           // already taken focus.
-          if (document.activeElement?.closest('.permissions-drawer')) return;
-          if (opener.isConnected) opener.focus();
+          if (document.activeElement?.closest('.permissions-drawer, .settings-page')) return;
+          if (returnFocus.isConnected) returnFocus.focus();
         });
     };
-  }, []);
+  }, [opener]);
   return (
     <aside ref={aside} className="permissions-drawer" aria-labelledby={titleId}>
       <header className="permissions-drawer__head">
@@ -69,7 +80,9 @@ export function PermissionsDrawer({
           {closeGlyph}
         </button>
       </header>
-      <div className="permissions-drawer__body">{children}</div>
+      <div ref={body} className="permissions-drawer__body">
+        {children}
+      </div>
       {footer !== undefined && (
         <footer ref={foot} className="permissions-drawer__foot">
           {footer}

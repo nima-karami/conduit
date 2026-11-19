@@ -5,7 +5,8 @@ import { expect, it, vi } from 'vitest';
 import { BUILT_IN_PROFILES } from '../../src/conduit-mcp/policy-profiles';
 import type { LocalPolicyEdit, PolicyUiState } from '../../src/conduit-mcp/policy-types';
 import type { Session } from '../../src/types';
-import { SessionPermissionsController } from '../../webview/components/session-permissions-controller';
+import { SessionPermissionsDetails } from '../../webview/components/session-permissions-details';
+import { WorkspacePermissions } from '../../webview/components/workspace-permissions';
 import type { ConduitMcpApi } from '../../webview/use-conduit-mcp';
 
 it.each([false, true])('binds the draft to its policy token (stale=%s)', async (stale) => {
@@ -69,58 +70,51 @@ it.each([false, true])('binds the draft to its policy token (stale=%s)', async (
   const render = (currentPolicy: PolicyUiState) =>
     act(async () =>
       root.render(
-        <SessionPermissionsController
-          session={session}
+        <WorkspacePermissions
+          sessions={[session]}
+          agentKey="session:s1"
           policy={currentPolicy}
-          native={{ atLaunch: null, next: { status: 'not-applicable' } }}
           mcp={mcp}
+          serverConnected
           onClose={() => {}}
-          onOpenSettings={() => {}}
+          onOpenInSettings={() => {}}
           onOpenActivity={() => {}}
           onRelaunch={async () => {}}
         />,
       ),
     );
   await render(policy);
-  const lead = [...document.querySelectorAll('label')]
-    .find((label) => label.textContent?.trim() === 'Lead')
-    ?.querySelector('input');
-  expect(lead).toBeTruthy();
-  await act(async () => lead?.click());
+  const role = document.querySelector<HTMLSelectElement>('select[aria-label="Role"]');
+  expect(role).toBeTruthy();
+  await act(async () => {
+    if (!role) throw new Error('Role select is missing');
+    role.value = 'lead';
+    role.dispatchEvent(new Event('change', { bubbles: true }));
+  });
   const button = (label: string) =>
     [...document.querySelectorAll('button')].find((element) => element.textContent === label);
   if (stale) {
     await render({ ...policy, editToken: 'new' });
-    expect(button('Review changes')?.disabled).toBe(true);
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain('Close and reopen');
-    await act(async () => button('Review changes')?.click());
+    expect(button('Review')?.disabled).toBe(true);
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain('Permissions changed');
+    await act(async () => button('Review')?.click());
     expect(reviewLocalPolicy).not.toHaveBeenCalled();
     expect(saveAssignment).not.toHaveBeenCalled();
     await act(async () => root.unmount());
     host.remove();
     return;
   }
-  await act(async () => button('Review changes')?.click());
+  await act(async () => button('Review')?.click());
   expect(reviewLocalPolicy).toHaveBeenCalledOnce();
-  const dialog = document.querySelector('[role="dialog"]');
-  expect(document.activeElement).toBe(dialog);
-  const tab = new KeyboardEvent('keydown', {
-    key: 'Tab',
-    shiftKey: true,
-    bubbles: true,
-    cancelable: true,
-  });
-  dialog?.dispatchEvent(tab);
-  expect(tab.defaultPrevented).toBe(true);
-  expect(dialog?.contains(document.activeElement)).toBe(true);
+  expect(button('Review')?.disabled).toBe(true);
   await act(async () => resolveReview?.(approved));
   expect(document.activeElement).toBe(button('Back'));
   await act(async () => button('Back')?.click());
-  expect(document.activeElement).toBe(button('Review changes'));
-  await act(async () => button('Review changes')?.click());
+  expect(document.activeElement).toBe(button('Review'));
+  await act(async () => button('Review')?.click());
   await act(async () => resolveReview?.(approved));
   const edit = reviewLocalPolicy.mock.calls[0]?.[0] as unknown as { assignment: unknown };
-  await act(async () => button('Apply')?.click());
+  await act(async () => button('Confirm and save')?.click());
   expect(saveAssignment).toHaveBeenCalledWith(
     { kind: 'session', sessionId: 's1' },
     edit.assignment,
@@ -186,14 +180,6 @@ it('ignores a link result from an earlier launch after the new launch is queried
         resolveOld = resolve;
       }),
   );
-  const mcp = {
-    state: null,
-    linkCodexThread,
-    codexPostureQuery: async (_id: string, generation: number) =>
-      generation === 2 ? view('workspace-write') : { status: 'unavailable' as const },
-    retryPolicy: async () => ({ ok: true as const }),
-    getActivity: async () => ({ rows: [], next: null, writable: true, error: null }),
-  } as unknown as ConduitMcpApi;
   const native = {
     atLaunch: {
       intent: { family: 'codex' as const, optedIn: false, requested: null },
@@ -201,20 +187,23 @@ it('ignores a link result from an earlier launch after the new launch is queried
     },
     next: { status: 'not-applicable' as const },
   };
+  const mcp = {
+    state: { native: { s1: native }, sessions: {} },
+    linkCodexThread,
+    codexPostureQuery: async (_id: string, generation: number) =>
+      generation === 2 ? view('workspace-write') : { status: 'unavailable' as const },
+    retryPolicy: async () => ({ ok: true as const }),
+    getActivity: async () => ({ rows: [], next: null, writable: true, error: null }),
+  } as unknown as ConduitMcpApi;
   const host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);
   const render = (generation: number) =>
     root.render(
-      <SessionPermissionsController
+      <SessionPermissionsDetails
         session={{ ...session, runtime: runtime(generation) }}
         policy={policy}
-        native={native}
         mcp={mcp}
-        onClose={() => {}}
-        onOpenSettings={() => {}}
-        onOpenActivity={() => {}}
-        onRelaunch={async () => {}}
       />,
     );
   await act(async () => render(1));
@@ -276,7 +265,18 @@ it('offers a guarded relaunch for a recognized dormant session', async () => {
     readOnly: false,
   };
   const mcp = {
-    state: null,
+    state: {
+      native: {
+        s1: {
+          atLaunch: null,
+          next: {
+            status: 'available',
+            intent: { family: 'claude', optedIn: false, requested: null },
+          },
+        },
+      },
+      sessions: {},
+    },
     reviewLocalPolicy: async () => ({
       ok: true as const,
       requiresNativeReview: true as const,
@@ -292,23 +292,21 @@ it('offers a guarded relaunch for a recognized dormant session', async () => {
   const root = createRoot(host);
   await act(async () =>
     root.render(
-      <SessionPermissionsController
-        session={{
-          ...session,
-          status: 'exited',
-          runtime: { generation: null, spawn: 'none', reportedStatus: null, lastSize: null },
-        }}
-        policy={policy}
-        native={{
-          atLaunch: null,
-          next: {
-            status: 'available',
-            intent: { family: 'claude', optedIn: false, requested: null },
+      <WorkspacePermissions
+        sessions={[
+          {
+            ...session,
+            status: 'exited',
+            runtime: { generation: null, spawn: 'none', reportedStatus: null, lastSize: null },
           },
-        }}
+        ]}
+        agentKey="session:s1"
+        stage={{ kind: 'role', profileId: 'lead' }}
+        policy={policy}
         mcp={mcp}
+        serverConnected
         onClose={() => {}}
-        onOpenSettings={() => {}}
+        onOpenInSettings={() => {}}
         onOpenActivity={() => {}}
         onRelaunch={relaunch}
       />,
@@ -316,7 +314,6 @@ it('offers a guarded relaunch for a recognized dormant session', async () => {
   );
   const button = (label: string) =>
     [...document.querySelectorAll('button')].find((element) => element.textContent === label);
-  await act(async () => button('Review changes')?.click());
   expect(button('Apply and relaunch')).toBeTruthy();
   await act(async () => button('Apply and relaunch')?.click());
   expect(relaunch).toHaveBeenCalledWith('s1', null);

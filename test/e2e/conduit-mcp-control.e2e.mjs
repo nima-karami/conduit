@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import {
   activeSessionId,
   callTool,
-  enableToolViaDialog,
+  enableToolViaDrawer,
   FAKE_AGENT_ID,
   fakeAgentProfile,
   openFake,
@@ -49,8 +49,8 @@ await runScenario(
     const projectId = await createProject(page, 'p');
     const main = await openFake(page, dirA, { projectId });
     const worker = await openFake(page, dirB);
-    await enableToolViaDialog(page, main.sessionId, 'open_session', 'On');
-    await enableToolViaDialog(page, worker.sessionId, 'open_session', 'Off');
+    await enableToolViaDrawer(page, main.sessionId, 'open_session', 'On');
+    await enableToolViaDrawer(page, worker.sessionId, 'open_session', 'Off');
 
     phase('list_changed');
     assert(

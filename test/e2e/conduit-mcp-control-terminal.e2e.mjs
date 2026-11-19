@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   callTool,
-  enableToolViaDialog,
+  enableToolViaDrawer,
   fakeAgentProfile,
   openFake,
   sessions,
@@ -50,7 +50,7 @@ await runScenario(
 
     phase('setup');
     const main = await openFake(page, dirA);
-    await enableToolViaDialog(page, main.sessionId, 'open_terminal', 'On');
+    await enableToolViaDrawer(page, main.sessionId, 'open_terminal', 'On');
     // The phases below move the view off main; this scenario is about the command, not about
     // visibility (tool-policy spec §2.3).
     await setSessionPolicy(page, main.sessionId, 'open_terminal', { when: 'always' });

@@ -47,7 +47,7 @@ export function createScreenToolHandlers(
     const r = reach !== undefined && isValidField(tool, 'reach', reach) ? reach : 'self';
     if (reachAdmits(r, actor, t, deps.control.ownerWindowOf)) return null;
     return fail('out_of_reach', 'this session is outside the tool reach', {
-      hint: `widen ${tool}'s reach in Settings → Permissions to act on this session`,
+      hint: `widen ${tool}'s reach in the agent’s Permissions side panel to act on this session`,
     });
   };
   const target = (

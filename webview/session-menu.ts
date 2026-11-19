@@ -5,7 +5,7 @@ import type { PolicyUiState, ProfileId } from '../src/conduit-mcp/policy-types';
 import type { Handle, McpUnavailableReason } from '../src/conduit-mcp/types';
 import type { HostPlatform } from '../src/lsp-binary';
 import { platformWords } from '../src/platform-words';
-import type { MenuActivation, MenuItem } from './components/context-menu';
+import type { MenuActivation, MenuEntry, MenuItem } from './components/context-menu';
 import { MCP_STR } from './conduit-mcp-strings';
 import type { CardMcpStatus } from './mcp-card-status';
 import { SIDEBAR_STR } from './sidebar-strings';
@@ -25,7 +25,6 @@ export type SessionMenuAction =
   | 'timed'
   | 'messages'
   | 'pauseMcp'
-  | 'mcpTools'
   | 'setupMcp'
   | 'pin'
   | 'rename'
@@ -81,7 +80,7 @@ export interface SessionMenuInput {
   /** The pause entry names the handle; null while the session has none. */
   mcpHandle: Handle | null;
   mcpPaused: boolean;
-  mcpSwitchable: boolean;
+  permissionsSubmenu?: () => MenuItem[];
   /** The row's role and change count, shown beside Permissions (canvas E1). */
   mcpPermissions?: SessionPermissionSummary | null;
   mcpSetupNeeded: boolean;
@@ -91,7 +90,7 @@ export interface SessionMenuInput {
   /** Descendants under this row in the agent tree; the sub-agents entry shows only when > 0. */
   subAgentCount?: number;
   windowMoves: readonly MenuItem[];
-  icons: Readonly<Record<SessionMenuAction, ReactNode>>;
+  icons: Readonly<Record<SessionMenuAction | 'mcpTools', ReactNode>>;
   actions: Readonly<Record<SessionMenuAction, (activation?: MenuActivation) => void>>;
 }
 
@@ -114,7 +113,7 @@ export function buildSelectionMenu(input: {
   ];
 }
 
-export function buildSessionMenu(input: SessionMenuInput): MenuItem[] {
+export function buildSessionMenu(input: SessionMenuInput): MenuEntry[] {
   const { icons, actions } = input;
   const M = SIDEBAR_STR.menu;
   const item = (
@@ -156,7 +155,7 @@ export function buildSessionMenu(input: SessionMenuInput): MenuItem[] {
     ),
   );
 
-  const messaging: MenuItem[] = [];
+  const messaging: MenuEntry[] = [];
   // The old card's connection badge, in words: it explains and never acts.
   if (input.mcpLink)
     messaging.push({
@@ -175,19 +174,18 @@ export function buildSessionMenu(input: SessionMenuInput): MenuItem[] {
       ),
     );
   }
-  // Opens the role submenu beside this row (canvas E1); the action owns that second menu.
-  if (input.mcpSwitchable)
-    messaging.push(
-      item('mcpTools', PERM.permissions, {
-        detail: input.mcpPermissions
-          ? PERM.detail(input.mcpPermissions.roleName, input.mcpPermissions.changes)
-          : undefined,
-        hint: PERM.submenuGlyph,
-      }),
-    );
+  if (input.permissionsSubmenu)
+    messaging.push({
+      label: PERM.permissions,
+      icon: icons.mcpTools,
+      detail: input.mcpPermissions
+        ? PERM.detail(input.mcpPermissions.roleName, input.mcpPermissions.changes)
+        : undefined,
+      submenu: input.permissionsSubmenu,
+    });
   if (input.mcpSetupNeeded) messaging.push(item('setupMcp', MCP_STR.install.setupCommand));
 
-  const groups: MenuItem[][] = [
+  const groups: MenuEntry[][] = [
     head,
     lifecycle,
     attention,

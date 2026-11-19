@@ -157,7 +157,8 @@ export const MCP_STR = {
       resetAll: 'Reset all to role',
       changeLine: (role: string, roleDecision: string, decision: string) =>
         `${role} says ${roleDecision} → this agent: ${decision}`,
-      editChanges: 'Edit changes',
+      advancedSettings: 'Advanced settings',
+      editAssignment: 'Edit assignment',
       reset: 'Reset',
       resetChange: (tool: string) => `Reset ${tool} to role`,
       cancel: 'Cancel',
@@ -165,7 +166,6 @@ export const MCP_STR = {
       reviewReset: 'Review reset',
       back: 'Back',
       confirm: 'Confirm and save',
-      ownPermissions: 'Agent’s own permissions…',
       subtitle: (id: string, cli: string | null) => (cli ? `${id} · ${cli}` : id),
       menu: {
         permissions: 'Permissions',
@@ -174,7 +174,6 @@ export const MCP_STR = {
         roleFor: (name: string) => `Role for ${name}`,
         resetToRole: 'Reset to role',
         customize: 'Customize…',
-        submenuGlyph: '▸',
       },
       canDo: 'What this agent can do',
       closeDrawer: 'Close',

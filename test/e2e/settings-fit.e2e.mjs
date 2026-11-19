@@ -147,7 +147,8 @@ await runScenario(
     let hits = await overflow(page);
     assert(hits.length === 0, `the agent drawer overflows at 900px: ${hits.join('; ')}`);
 
-    await drawer.getByRole('button', { name: /Edit changes|Add a change/ }).click();
+    await drawer.getByText('Advanced settings', { exact: true }).click();
+    await drawer.getByRole('button', { name: 'Edit assignment', exact: true }).click();
     await drawer.getByRole('heading', { name: /^Edit assignment/ }).waitFor();
     tight = await tightControls(page, MIN_GAP);
     assert(tight.length === 0, `assignment editor controls touch: ${tight.join('; ')}`);

@@ -13,8 +13,9 @@ export interface SessionPermissionsNativeProps {
   native: NativeSessionUi;
   posture: CodexPostureView;
   handStarted: boolean;
+  applyNative?: boolean;
+  onApplyNativeChange?(apply: boolean): void;
   refusal?: StartRefusal;
-  onOpenSettings(): void;
   onLinkThread?: (uuid: string) => Promise<CodexPostureView>;
 }
 
@@ -40,8 +41,9 @@ export function SessionPermissionsNative({
   native,
   posture,
   handStarted,
+  applyNative,
+  onApplyNativeChange,
   refusal,
-  onOpenSettings,
   onLinkThread,
 }: SessionPermissionsNativeProps) {
   const fieldId = useId();
@@ -86,10 +88,18 @@ export function SessionPermissionsNative({
           <strong>Native launch refused</strong>
           <p>{NATIVE_LAUNCH_REFUSAL_MESSAGES[refusal.problem]}</p>
           <p>{RECOVERY[refusal.problem]}</p>
-          <button type="button" className="btn btn--sm" onClick={onOpenSettings}>
-            {MCP_STR.sections.agents.openInAgents}
-          </button>
         </div>
+      )}
+      {native.next.status === 'available' && (
+        <label className="permissions-field">
+          <input
+            type="checkbox"
+            checked={applyNative === true}
+            disabled={!onApplyNativeChange}
+            onChange={(event) => onApplyNativeChange?.(event.target.checked)}
+          />
+          Apply the role’s native mode on launch
+        </label>
       )}
       <p>
         <strong>Next launch:</strong>{' '}

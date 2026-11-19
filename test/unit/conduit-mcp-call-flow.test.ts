@@ -403,7 +403,7 @@ describe('createCallFlow', () => {
         code: 'tool_disabled',
         message: 'open_session is not enabled for this session',
         retryable: false,
-        hint: 'Review access to open_session in Settings → Permissions',
+        hint: 'Review access to open_session in the agent’s Permissions side panel',
       },
     });
     expect(t.asks()).toEqual([]);
