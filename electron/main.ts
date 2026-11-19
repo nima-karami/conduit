@@ -268,6 +268,7 @@ import { defaultTreeKillDeps } from './process-tree';
 import { ProjectWatcher } from './project-watcher';
 import { ProposalWatcher } from './proposal-watcher';
 import { stopAgentsBeforeQuit } from './quit-stop';
+import { relaunchApp } from './relaunch';
 import { createRemoteFiles } from './remote-files';
 import { createRemotePanes } from './remote-panes';
 import { createRepoTrackerHost } from './repo-tracker-host';
@@ -1124,12 +1125,12 @@ async function stopAllAgentsHeadless(): Promise<void> {
       error: async (message) => dialog.showErrorBox('Conduit', message),
       secondInstanceArrived: () => secondInstance,
     });
-    if (outcome === 'relaunch') app.relaunch({ args: relaunchArgs });
+    if (outcome === 'relaunch') relaunchApp(relaunchArgs);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error('headless stop failed', message);
     dialog.showErrorBox('Conduit', message);
-    if (secondInstance) app.relaunch({ args: relaunchArgs });
+    if (secondInstance) relaunchApp(relaunchArgs);
   } finally {
     app.removeListener('second-instance', arrived);
     app.quit();

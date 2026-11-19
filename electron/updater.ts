@@ -2,10 +2,11 @@ import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { app, shell } from 'electron';
+import { app, autoUpdater as electronAutoUpdater, shell } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import type { HostToWebview } from '../src/protocol';
 import { debInstallFailure } from './deb-install-failure';
+import { relaunchApp } from './relaunch';
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 export const UPDATES_UNAVAILABLE_MSG = "Updates aren't available in this build.";
@@ -77,6 +78,21 @@ function linuxSessionState() {
       ? 'none'
       : 'unavailable';
   return { scopeKind, sessionId, sessionLookup };
+}
+
+/** The `NoNewPrivs` field of /proc/<pid>/status: when set, setuid pkexec can't work. */
+export function noNewPrivsFromStatus(status: string): boolean | null {
+  const match = /^NoNewPrivs:\s*(\d)/m.exec(status);
+  return match ? match[1] === '1' : null;
+}
+
+function readNoNewPrivs(): boolean | null {
+  try {
+    return noNewPrivsFromStatus(fs.readFileSync('/proc/self/status', 'utf8'));
+  } catch {
+    // /proc can be unavailable in a sandbox.
+    return null;
+  }
 }
 
 const debInstallers = new Map([
@@ -245,6 +261,7 @@ export function initUpdater(
         environment,
         ...windowState(),
         version: downloadedVersion,
+        noNewPrivs: readNoNewPrivs(),
         fileExists: fs.existsSync(pendingDownloadedFile),
         ageSeconds: downloadedAt === null ? null : Math.floor((Date.now() - downloadedAt) / 1000),
       });
@@ -338,13 +355,39 @@ export function checkForUpdate(): void {
   void autoUpdater.checkForUpdates().catch(() => {});
 }
 
+/**
+ * How to call `quitAndInstall`: a .deb install must not let electron-updater relaunch, since its
+ * `app.relaunch()` child can never use pkexec (CON-74). AppImageUpdater already relaunches with
+ * a Node spawn, and needs isForceRunAfter, or it runs the new AppImage to exit after install.
+ */
+export function installPlan(
+  platform: string,
+  env: NodeJS.ProcessEnv,
+): { forceRunAfter: boolean; relaunchOurselves: boolean } {
+  const ownRelaunch = platform === 'linux' && !env.APPIMAGE;
+  return { forceRunAfter: !ownRelaunch, relaunchOurselves: ownRelaunch };
+}
+
 export function quitAndInstall(): void {
-  // isSilent=true, isForceRunAfter=true: with the one-click installer the update applies
-  // with no installer UI and the app relaunches. (The old `false` showed the full wizard.)
+  // isSilent=true: with the one-click installer the update applies with no installer UI.
+  // (The old `false` showed the full wizard.)
+  const plan = installPlan(process.platform, process.env);
+  // BaseUpdater emits this (in a setImmediate, before quitting) only when the install went
+  // through; a failed or ignored install ("quitAndInstallCalled is set") emits nothing.
+  const relaunchAfterInstall = () => relaunchApp();
+  if (plan.relaunchOurselves) {
+    electronAutoUpdater.once('before-quit-for-update', relaunchAfterInstall);
+  }
   explicitInstallInProgress = true;
   try {
-    autoUpdater.quitAndInstall(true, true);
+    autoUpdater.quitAndInstall(true, plan.forceRunAfter);
   } finally {
     explicitInstallInProgress = false;
+    // Queued after BaseUpdater's setImmediate, so it runs once that emit had its chance.
+    if (plan.relaunchOurselves) {
+      setImmediate(() =>
+        electronAutoUpdater.removeListener('before-quit-for-update', relaunchAfterInstall),
+      );
+    }
   }
 }
