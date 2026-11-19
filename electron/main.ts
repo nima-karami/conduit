@@ -1735,11 +1735,8 @@ app.whenReady().then(() => {
   // flush, because every mutation writes through.
   const reviewNotes = new Map<string, ReviewNotesData>();
   const notesWatcher = new NotesWatcher();
-  // Per-root write chain. Two quick patches otherwise race on writeAtomic's rename: if the EARLIER
-  // one lands last, the file holds stale notes while `recordWrite` already holds the NEWER
-  // fingerprint — so the watcher reads the app's own stale write as an external edit and
-  // broadcasts it back over correct in-memory state, taking the user's newest note off screen.
-  // Mirrors the pipeline-queue chain in conduit-fs.ts.
+  // Notes can delete the artifact as well as replace it. Keep those operations and their
+  // watcher fingerprints ordered together.
   const notesWriteChains = new Map<string, Promise<void>>();
 
   // One watch per OPENED project root (reconciled against the session list in sendProject,

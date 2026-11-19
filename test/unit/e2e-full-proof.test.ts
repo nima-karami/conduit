@@ -127,6 +127,18 @@ describe('release full-tree evidence', () => {
         scope,
       ),
     ).toBe(false);
+    expect(provesTagTree(run, withQuarantine, { ...scope, tree: 'another-tree' })).toBe(false);
+    expect(provesTagTree(run, { ...withQuarantine, selection: 'names' }, scope)).toBe(false);
+    expect(
+      provesTagTree(
+        run,
+        {
+          ...result,
+          results: [...result.results, { status: 'QUARANTINED-FAIL', attempts: 2 }],
+        },
+        scope,
+      ),
+    ).toBe(false);
     expect(provesTagTree({ ...run, run_attempt: 2 }, withQuarantine, scope)).toBe(false);
   });
 

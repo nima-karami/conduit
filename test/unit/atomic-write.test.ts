@@ -354,7 +354,7 @@ describe('atomic replacement sharing retries', () => {
       .mockRejectedValueOnce(Object.assign(new Error('sharing violation'), { code: 'EPERM' }))
       .mockResolvedValueOnce(undefined);
     const wait = vi.fn(async () => {});
-    await renameWithSharingRetry('temporary', 'plan.md', rename, wait);
+    await renameWithSharingRetry('temporary', 'plan.md', rename, wait, 'win32');
     expect(rename.mock.calls).toEqual([
       ['temporary', 'plan.md'],
       ['temporary', 'plan.md'],
@@ -362,11 +362,27 @@ describe('atomic replacement sharing retries', () => {
     expect(wait).toHaveBeenCalledExactlyOnceWith(20);
   });
 
+  it.each(['linux', 'darwin'] as const)(
+    'reports permission errors immediately on %s',
+    async (platform) => {
+      const error = Object.assign(new Error('permission denied'), { code: 'EPERM' });
+      const rename = vi.fn<typeof fs.promises.rename>().mockRejectedValue(error);
+      const wait = vi.fn(async () => {});
+      await expect(
+        renameWithSharingRetry('temporary', 'plan.md', rename, wait, platform),
+      ).rejects.toBe(error);
+      expect(rename).toHaveBeenCalledTimes(1);
+      expect(wait).not.toHaveBeenCalled();
+    },
+  );
+
   it('reports other errors without retrying', async () => {
     const error = Object.assign(new Error('missing directory'), { code: 'ENOENT' });
     const rename = vi.fn<typeof fs.promises.rename>().mockRejectedValue(error);
     const wait = vi.fn(async () => {});
-    await expect(renameWithSharingRetry('temporary', 'plan.md', rename, wait)).rejects.toBe(error);
+    await expect(
+      renameWithSharingRetry('temporary', 'plan.md', rename, wait, 'win32'),
+    ).rejects.toBe(error);
     expect(wait).not.toHaveBeenCalled();
   });
 });

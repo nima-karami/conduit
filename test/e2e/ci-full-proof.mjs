@@ -54,7 +54,7 @@ function fullResult(result, allowQuarantine) {
       (row) =>
         ((row.status === 'PASS' || row.status === 'SKIP') && row.attempts === 1) ||
         (row.status === 'EXCLUDED' && row.attempts === 0) ||
-        (allowQuarantine && row.status === 'QUARANTINED-FAIL' && [1, 2].includes(row.attempts)),
+        (allowQuarantine && row.status === 'QUARANTINED-FAIL' && row.attempts === 1),
     )
   );
 }

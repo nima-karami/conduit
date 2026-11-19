@@ -228,14 +228,14 @@ export function readArchitectureForProject(projectRoot: string): ArchDoc | null 
   return restoreArchitecture(readBlob(path.join(projectRoot, 'architecture.json')));
 }
 
+const writeTails = new Map<string, Promise<void>>();
+
 /**
  * Write `text` to `target` atomically: a sibling temp file is written then renamed over
  * the target, so a crash mid-write never leaves a truncated artifact. Errors are
  * SURFACED (the promise rejects) — a failed save must never be silently mistaken for
  * success, since `.conduit/` artifacts are committed and reviewed (ADR §5).
  */
-const writeTails = new Map<string, Promise<void>>();
-
 function writeAtomic(target: string, text: string): Promise<void> {
   // A retry of an older edit must finish before a newer edit can replace the file.
   const absolute = path.resolve(target);

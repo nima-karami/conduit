@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   appendPipelineQueueEntry,
   conduitDir,
@@ -14,11 +14,25 @@ import {
   writeArchitectureArtifactFile,
   writeBoardArtifactFile,
   writePipelineArtifactFile,
+  writePlanFile,
 } from '../../electron/conduit-fs';
 import { seedArchitecture, serializeArchitecture } from '../../src/architecture';
 import type { BoardData } from '../../src/board';
 import { readPipelineQueueArtifact } from '../../src/conduit-store';
 import { buildQueueEntry, emptyPipelineConfig, setTransitionSkill } from '../../src/pipeline';
+
+const { waitForRetry } = vi.hoisted(() => ({
+  waitForRetry: vi.fn<(ms: number) => Promise<void>>(),
+}));
+
+vi.mock('../../src/atomic-write', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/atomic-write')>();
+  return {
+    ...actual,
+    renameWithSharingRetry: (source: string, target: string) =>
+      actual.renameWithSharingRetry(source, target, fs.promises.rename, waitForRetry, 'win32'),
+  };
+});
 
 let root: string;
 
@@ -33,6 +47,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
+  waitForRetry.mockReset();
   fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -282,5 +298,44 @@ describe('conduit-fs writes to a user-owned artifact keep its permissions (POSIX
     expect(fs.readFileSync(file, 'utf8')).toBe(before);
     expect(fs.statSync(file).mode & 0o7777).toBe(0o444);
     expectNoTempLeftovers();
+  });
+});
+
+describe('conduit artifact write ordering', () => {
+  it('finishes a sharing-violation retry before starting the next write to the same plan', async () => {
+    const realRename = fs.promises.rename;
+    vi.spyOn(fs.promises, 'rename')
+      .mockImplementation(realRename)
+      .mockRejectedValueOnce(Object.assign(new Error('sharing violation'), { code: 'EPERM' }));
+    const mkdir = vi.spyOn(fs.promises, 'mkdir');
+    const retryStarted = Promise.withResolvers<void>();
+    const allowRetry = Promise.withResolvers<void>();
+    waitForRetry.mockImplementationOnce(() => {
+      retryStarted.resolve();
+      return allowRetry.promise;
+    });
+    const first = writePlanFile(root, 'ordering', 'first');
+    await retryStarted.promise;
+    const second = writePlanFile(root, 'ordering', 'second');
+    const directoryCreationsDuringRetry = mkdir.mock.calls.length;
+    allowRetry.resolve();
+    await Promise.all([first, second]);
+    expect(directoryCreationsDuringRetry).toBe(1);
+    expect(fs.readFileSync(conduitPath(root, 'plans', 'ordering.md'), 'utf8')).toBe('second');
+  });
+
+  it('unblocks the next write after a terminal failure and deletes the settled queue entry', async () => {
+    const target = conduitPath(root, 'plans', 'ordering.md');
+    const key = process.platform === 'win32' ? target.toLowerCase() : target;
+    const deleteEntry = vi.spyOn(Map.prototype, 'delete');
+    const realRename = fs.promises.rename;
+    const error = Object.assign(new Error('permanent failure'), { code: 'ENOENT' });
+    vi.spyOn(fs.promises, 'rename').mockImplementation(realRename).mockRejectedValueOnce(error);
+    const first = writePlanFile(root, 'ordering', 'first');
+    const second = writePlanFile(root, 'ordering', 'second');
+    await expect(first).rejects.toBe(error);
+    await second;
+    expect(fs.readFileSync(target, 'utf8')).toBe('second');
+    expect(deleteEntry).toHaveBeenCalledWith(key);
   });
 });

@@ -227,6 +227,7 @@ try {
   await menu.waitFor({ state: 'visible', timeout: 4000 });
   await menu.locator('.ctxmenu__item', { hasText: 'Delete' }).first().click();
 
+  const saveDeadline = Date.now() + 6000;
   // The save acknowledgment avoids opening the Windows destination while the host replaces it.
   await page.waitForFunction(
     () =>
@@ -235,11 +236,14 @@ try {
     null,
     { timeout: 6000 },
   );
-  const afterDelete = fenceOf(readPlan(), 'mermaid');
-  assert(
-    afterDelete !== null && !afterDelete.includes('txn -->|lookup| identity'),
-    'deleting the edge must reach the file within 6 s',
-  );
+  const remaining = saveDeadline - Date.now();
+  const afterDelete =
+    remaining > 0 &&
+    (await until(() => {
+      const fence = fenceOf(readPlan(), 'mermaid');
+      return fence !== null && !fence.includes('txn -->|lookup| identity') ? fence : null;
+    }, remaining));
+  assert(afterDelete, 'deleting the edge must reach the file within 6 s');
   log('edge deleted and written through ✓');
 
   // ── the bar counts one changed block plus one open comment ───────────────────────────────

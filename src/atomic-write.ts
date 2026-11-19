@@ -147,12 +147,14 @@ export async function renameWithSharingRetry(
   target: string,
   rename = fs.promises.rename,
   wait = (ms: number): Promise<void> => delay(ms),
+  platform = process.platform,
 ): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     try {
       await rename(source, target);
       return;
     } catch (error) {
+      if (platform !== 'win32') throw error;
       const backoff = sharingBackoff(error as NodeJS.ErrnoException, attempt);
       if (backoff === undefined) throw error;
       await wait(backoff);
