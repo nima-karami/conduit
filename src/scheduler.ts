@@ -381,10 +381,17 @@ export class Scheduler {
     return { ok: true, job: renewed };
   }
 
-  /** Deliver now. Consumes no repeat and does not move `nextAt` (spec 2026-08-28-timed-messages §2 "The dialog"). */
+  /** Manual Send now leaves repeats and timing intact (see spec 2026-08-28-timed-messages §2). */
   async sendNow(id: string): Promise<boolean> {
     const job = this.find(id);
-    if (!job || job.trigger.kind === 'limit-reset' || isTerminal(job.state)) return false;
+    if (!job || isTerminal(job.state)) return false;
+    if (limitTriggerOf(job)) {
+      if (job.state !== 'armed' || this.inFlight.has(id) || !this.deps.isAlive(job.sessionId))
+        return false;
+      this.checkResume(job, this.now());
+      this.onChangeAndArm();
+      return true;
+    }
     return this.sendOnce(job.sessionId, job.action.message);
   }
 

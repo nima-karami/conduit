@@ -1281,6 +1281,7 @@ export type WebviewToHost =
   | { type: 'timer:renew'; id: string }
   // Deliver now. Consumes no repeat and does not move nextAt (§2 "The dialog").
   | { type: 'timer:sendNow'; id: string }
+  | { type: 'timer:setSessionAutoResume'; sessionId: string; mode: 'on' | 'off' }
   // The composer's Send now with nothing armed — no schedule is created.
   | { type: 'timer:sendOnce'; sessionId: string; message: string }
   // Resolve a limit offer. A NO-OP when the session's episode is already resolved, which is

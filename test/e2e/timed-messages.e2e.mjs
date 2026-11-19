@@ -222,19 +222,24 @@ try {
   assert(cap.includes('conduit-interval'), 'the interval message never reached the shell');
   log('interval fired 3 times and stopped ✓');
 
-  // ── The chip ────────────────────────────────────────────────────────────────
-  await armIn(page, sid, 'conduit-chip', 30 * 60_000);
-  await page.locator('.term-timer').first().waitFor({ state: 'visible', timeout: 10000 });
-  const chipText = (await page.locator('.term-timer').first().innerText()).trim();
-  assert(/\bin \d+/.test(chipText), `the chip must count down, got "${chipText}"`);
-  await page.screenshot({ path: join(shotDir, 'timed-messages-chip.png') }).catch(() => {});
-  log(`chip reads "${chipText}" ✓`);
+  // ── The session bar ────────────────────────────────────────────────────────────────
+  await armIn(page, sid, 'conduit-bar', 30 * 60_000);
+  await page
+    .locator('.session-bar__schedule[data-mode="armed"]')
+    .first()
+    .waitFor({ state: 'visible', timeout: 10000 });
+  const barText = (
+    await page.locator('.session-bar__schedule[data-mode="armed"]').first().innerText()
+  ).trim();
+  assert(/\bin \d+/.test(barText), `the bar must count down, got "${barText}"`);
+  await page.screenshot({ path: join(shotDir, 'timed-messages-bar.png') }).catch(() => {});
+  log(`bar reads "${barText}" ✓`);
 
-  const chipId = (await schedules(page)).find((s) => s.message === 'conduit-chip').id;
-  await page.evaluate((id) => window.agentDeck.post({ type: 'timer:cancel', id }), chipId);
+  const barScheduleId = (await schedules(page)).find((s) => s.message === 'conduit-bar').id;
+  await page.evaluate((id) => window.agentDeck.post({ type: 'timer:cancel', id }), barScheduleId);
   await page.waitForFunction(
     (id) => !(window.__timers?.schedules ?? []).some((s) => s.id === id),
-    chipId,
+    barScheduleId,
     { timeout: 10000 },
   );
 

@@ -754,6 +754,22 @@ describe('cancel, renew, send now', () => {
     expect(h.fired).toHaveLength(0);
   });
 
+  it('sends an armed auto-resume now through the normal verification path only once', async () => {
+    const h = harness();
+    const r = resume(h);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    const first = h.scheduler.sendNow(r.job.id);
+    await expect(h.scheduler.sendNow(r.job.id)).resolves.toBe(false);
+    await expect(first).resolves.toBe(true);
+    await flush();
+
+    expect(h.preFired).toHaveLength(1);
+    expect(h.delivered).toEqual([{ sessionId: 's1', message: LIMIT_MESSAGE }]);
+    expect(h.scheduler.list()[0].state).toBe('verifying');
+  });
+
   it('send now answers false for a session with no live PTY', async () => {
     const h = harness();
     const r = arm(h);

@@ -2,8 +2,7 @@
  * TimedMessageDialog (`.tmdlg`) UI polish (spec 2026-08-28-timed-messages §2 "The dialog").
  *
  * No existing scenario ever opened the dialog itself — timed-messages.e2e.mjs arms
- * schedules by posting `timer:set` directly and only touches the chip, never
- * `.term-timer__open`. That gap is why the dialog shipped with `max-height: 82vh;
+ * schedules by posting `timer:set` directly and only reads the schedule on the session bar. That gap is why the dialog shipped with `max-height: 82vh;
  * overflow-y: auto;` on `.tmdlg`: switching the "When" trigger (In / At / Every) changes
  * the composer's height, and past a point the whole card started scrolling — one
  * container, several silently different heights depending which trigger was selected.
@@ -121,8 +120,9 @@ async function switchTheme(page, id) {
   });
 }
 
-async function openDialogViaChip(page) {
-  await page.locator('.term-timer__open').first().click();
+async function openDialogViaSessionBar(page) {
+  await page.locator('.session-bar__schedule:visible').first().click();
+  await page.getByRole('menuitem', { name: 'Timed messages…', exact: true }).click();
   await page.locator('.tmdlg').first().waitFor({ state: 'visible', timeout: 10000 });
 }
 
@@ -139,7 +139,7 @@ const countText = (page) =>
 
 /** The textarea: a line break on Enter (never an arm), the count, the over-limit state, Ctrl+Enter. */
 async function assertMessageField(page, sid) {
-  await openDialogViaChip(page);
+  await openDialogViaSessionBar(page);
   const field = page.locator('.tmdlg__input');
   assert(
     (await field.evaluate((el) => el.tagName)) === 'TEXTAREA',
@@ -228,7 +228,10 @@ runScenario('timed-message-dialog-ui', async ({ page, log }) => {
       }),
     sid,
   );
-  await page.locator('.term-timer').first().waitFor({ state: 'visible', timeout: 10000 });
+  await page
+    .locator('.session-bar__schedule[data-mode="armed"]')
+    .first()
+    .waitFor({ state: 'visible', timeout: 10000 });
   log('armed ✓');
 
   // A fresh profile boots on Aero Dark (DEFAULT_SETTINGS.theme, src/settings.ts) — asserted
@@ -241,7 +244,7 @@ runScenario('timed-message-dialog-ui', async ({ page, log }) => {
 
   for (const theme of ['aero-dark', 'neon']) {
     if (theme !== 'aero-dark') await switchTheme(page, theme);
-    await openDialogViaChip(page);
+    await openDialogViaSessionBar(page);
 
     for (const trigger of TRIGGERS) {
       await openTriggerTab(page, trigger);

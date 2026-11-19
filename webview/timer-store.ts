@@ -1,9 +1,10 @@
+import type { Job } from '../src/contracts/scheduler';
 import type { FireFailure, LimitOffer, TimedMessage, TimedMessageInput } from '../src/protocol';
 import { post, subscribe } from './bridge';
 
 /**
  * Renderer mirror of the host's timed messages (spec 2026-08-28-timed-messages §3). A
- * module-singleton external store, mirroring review-marks-store.ts: the chip, the dialog, the
+ * module-singleton external store, mirroring review-marks-store.ts: the bar, the dialog, the
  * stale card and the rail read it with useSyncExternalStore, and the host stays the single owner.
  *
  * `loaded` is the LOAD GATE: every control is disabled until the first push lands, so a click
@@ -18,6 +19,7 @@ export interface FireRecord {
   id: string;
   sessionId: string;
   at: number;
+  scheduledAt?: number;
   late: boolean;
   delivered: boolean;
   reason?: FireFailure;
@@ -26,8 +28,9 @@ export interface FireRecord {
 export interface TimerSnapshot {
   loaded: boolean;
   schedules: readonly TimedMessage[];
+  jobs: readonly Job[];
   offer: LimitOffer | null;
-  /** The most recent fire per session — the chip's `late` flash reads this. */
+  /** The most recent fire per session — the bar's `late` flash reads this. */
   fires: ReadonlyMap<string, FireRecord>;
 }
 
@@ -47,7 +50,13 @@ export type TimerEvent =
 type Listener = () => void;
 type EventListener = (e: TimerEvent) => void;
 
-const EMPTY: TimerSnapshot = { loaded: false, schedules: [], offer: null, fires: new Map() };
+const EMPTY: TimerSnapshot = {
+  loaded: false,
+  schedules: [],
+  jobs: [],
+  offer: null,
+  fires: new Map(),
+};
 
 let snapshot: TimerSnapshot = EMPTY;
 const listeners = new Set<Listener>();
@@ -66,9 +75,9 @@ function notify(next: TimerSnapshot): void {
   });
 }
 
-function applyState(schedules: TimedMessage[], offer: LimitOffer | null): void {
+function applyState(schedules: TimedMessage[], offer: LimitOffer | null, jobs: Job[] = []): void {
   const previous = snapshot;
-  notify({ loaded: true, schedules, offer, fires: previous.fires });
+  notify({ loaded: true, schedules, jobs, offer, fires: previous.fires });
   // The FIRST push is the restore, not news: a schedule that came back waiting was announced
   // when it happened, in the run that armed it.
   if (!previous.loaded) return;
@@ -92,14 +101,18 @@ function applyState(schedules: TimedMessage[], offer: LimitOffer | null): void {
 
 subscribe((msg) => {
   if (msg.type === 'timer:state') {
-    applyState(msg.schedules, msg.offer);
+    applyState(msg.schedules, msg.offer, msg.jobs);
     return;
   }
   if (msg.type === 'timer:fired') {
+    // The next projection can advance the job to a repeat or a verification deadline.
+    const schedule = snapshot.schedules.find((s) => s.id === msg.id);
+    const scheduledAt = snapshot.jobs.find((job) => job.id === msg.id)?.nextAt ?? schedule?.nextAt;
     const fire: FireRecord = {
       id: msg.id,
       sessionId: msg.sessionId,
       at: msg.at,
+      scheduledAt,
       late: msg.late,
       delivered: msg.delivered,
       ...(msg.reason ? { reason: msg.reason } : {}),
@@ -107,7 +120,7 @@ subscribe((msg) => {
     const fires = new Map(snapshot.fires);
     fires.set(fire.sessionId, fire);
     notify({ ...snapshot, fires });
-    emit({ kind: 'fired', fire, schedule: snapshot.schedules.find((s) => s.id === fire.id) });
+    emit({ kind: 'fired', fire, schedule });
     return;
   }
   if (msg.type === 'timer:error') emit({ kind: 'error', message: msg.message });
@@ -135,7 +148,7 @@ export function schedulesFor(snap: TimerSnapshot, sessionId: string): TimedMessa
   return snap.schedules.filter((s) => s.sessionId === sessionId);
 }
 
-/** Everything still on the clock — what the chip renders from. */
+/** Everything still on the clock — what the bar renders from. */
 export function liveSchedulesFor(snap: TimerSnapshot, sessionId: string): TimedMessage[] {
   return snap.schedules.filter((s) => s.sessionId === sessionId && s.state !== 'done');
 }

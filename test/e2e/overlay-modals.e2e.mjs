@@ -102,8 +102,12 @@ runScenario('overlay-modals', async ({ page, log }) => {
       }),
     sidA,
   );
-  await page.locator('.term-timer').first().waitFor({ state: 'visible', timeout: 10000 });
-  await page.locator('.term-timer__open').first().click();
+  await page
+    .locator('.session-bar__schedule[data-mode="armed"]')
+    .first()
+    .waitFor({ state: 'visible', timeout: 10000 });
+  await page.locator('.session-bar__schedule:visible').first().click();
+  await page.getByRole('menuitem', { name: 'Timed messages…', exact: true }).click();
   await page.locator('.tmdlg').first().waitFor({ state: 'visible', timeout: 10000 });
   // Dirty the composer (default 'Continue' matches its own seed, so Escape would close with no
   // confirm) — requestClose only asks when the message differs from what it was seeded with.
