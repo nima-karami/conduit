@@ -4,7 +4,7 @@
 //
 // Three routes, each driven by a real Ctrl+V into a real shell reader:
 //   text      → xterm paste(), bracketed when the program enabled DECSET 2004
-//   image     → a raw 0x16 to the PTY, which is how Claude Code reads a clipboard image on Linux
+//   image     → xterm forwards the original key, which asks Claude Code to read the image
 //   empty     → nothing reaches the child
 //
 // The clipboard is set from the MAIN process (app.evaluate). Headless Ozone keeps its own
@@ -138,10 +138,14 @@ await runScenario('paste-linux', async ({ app, page, log }) => {
   // a missing one cannot hang the scenario; READY is awaited before the keystroke.
   const emptyClip = await app.evaluate(({ clipboard }) => {
     clipboard.clear();
-    return { text: clipboard.readText(), image: clipboard.readImage().isEmpty() };
+    return {
+      text: clipboard.readText(),
+      image: clipboard.readImage().isEmpty(),
+      formats: clipboard.availableFormats(),
+    };
   });
   assert(
-    emptyClip.text === '' && emptyClip.image,
+    emptyClip.text === '' && emptyClip.image && emptyClip.formats.length === 0,
     `PRECONDITION (clipboard): clipboard was not cleared: ${JSON.stringify(emptyClip)}`,
   );
   const emptyBytes = await runReader('empty', { bytes: 1, bounded: true });

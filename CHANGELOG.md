@@ -6,6 +6,10 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed image paste shortcuts in Windows terminals. When the clipboard holds only an image, the terminal’s Paste menu shows a hint to use the program’s own shortcut.
+
 ## [0.69.1] — 2026-11-18
 
 ### Fixed

@@ -4787,6 +4787,15 @@ app.whenReady().then(() => {
     return bundle;
   });
 
+  // Chromium's web clipboard only exposes selected formats, so use native format metadata.
+  ipcMain.handle('read-terminal-clipboard', (e) => {
+    if (!BrowserWindow.fromWebContents(e.sender) || e.senderFrame !== e.sender.mainFrame) {
+      throw new Error('Terminal clipboard requires an application window');
+    }
+    const text = clipboard.readText();
+    return { text, hasData: !!text || clipboard.availableFormats().length > 0 };
+  });
+
   ipcMain.handle('readChangelog', () => readBundledChangelog());
 
   // Recent log tail for Settings→About (Slice B). Bounded host-side; disk content is already

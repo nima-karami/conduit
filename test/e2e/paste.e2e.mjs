@@ -19,6 +19,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { autoResumeProfile, workFolder } from './auto-resume-helpers.mjs';
 import {
   assert,
   finishScenario,
@@ -26,6 +27,7 @@ import {
   loadPlaywright,
   makeLog,
   openSession,
+  pollUntil,
   REPO,
   tapBridge,
   windowsOnlyScenario,
@@ -77,6 +79,9 @@ const payload = `${Array.from({ length: LINES }, (_, i) => `line-${i}-${'x'.repe
 // xterm wraps the paste in ESC[200~ … ESC[201~ — six bytes each side.
 const BRACKET_BYTES = 12;
 const log = makeLog('paste');
+const PNG_1X1 =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+const profile = autoResumeProfile('paste');
 
 // Ensure Playwright is loadable before we do anything expensive.
 loadPlaywright();
@@ -183,10 +188,48 @@ $name = if ($d -ne [IntPtr]::Zero) { $sb = New-Object Text.StringBuilder 256; $n
   return `${facts}: the clipboard is refused for a reason this probe does not recognise.`;
 }
 
+async function assertImagePaste({ app, page }) {
+  const sid = await openSession(page, {
+    path: workFolder('conduit-image-paste-'),
+    agentId: profile.agentId,
+  });
+  await profile.fake.ready();
+  await page.locator(`.session[data-sessionid="${sid}"]`).click();
+  await page.click(`.termhost[data-sessionid="${sid}"] .termpane`);
+  await page.waitForFunction(
+    (id) => !!document.activeElement?.closest(`.termhost[data-sessionid="${id}"] .xterm`),
+    sid,
+    { timeout: 5000 },
+  );
+  const imageOnly = await app.evaluate(({ clipboard, nativeImage }, url) => {
+    clipboard.clear();
+    clipboard.writeImage(nativeImage.createFromDataURL(url));
+    return !clipboard.readImage().isEmpty() && clipboard.readText() === '';
+  }, PNG_1X1);
+  assert(
+    imageOnly,
+    `PRECONDITION (clipboard): could not set image-only clipboard. ${clipboardDiagnosis()}`,
+  );
+
+  const before = profile.fake.raw().length;
+  const received = () => profile.fake.raw().slice(before);
+  await page.keyboard.press('Control+V');
+  assert(
+    await pollUntil(() => received() === '\x16', 10_000),
+    `image-only Ctrl+V should reach the program as Ctrl+V, got ${JSON.stringify(received())}`,
+  );
+  await page.keyboard.press('Alt+V');
+  assert(
+    await pollUntil(() => received() === '\x16\x1bv', 10_000),
+    `Alt+V should still reach the program as Alt+V, got ${JSON.stringify(received())}`,
+  );
+  log('PASS ✓ image-only Ctrl+V and Alt+V reach the program');
+}
+
 let launched;
 try {
   // Launch Electron in parallel with the Add-Type compilation.
-  launched = await launchApp();
+  launched = await launchApp({ userDataDir: profile.userDataDir, env: profile.env });
   const { app, page } = launched;
 
   await page.evaluate(() => {
@@ -277,8 +320,6 @@ try {
     if (existsSync(DUMP) && readFileSync(DUMP, 'utf8').includes('has201=')) break;
     await new Promise((r) => setTimeout(r, 200));
   }
-  await launched.cleanup();
-
   const result = existsSync(DUMP) ? readFileSync(DUMP, 'utf8').trim() : '(no dump)';
   log(`child received: ${result}`);
 
@@ -299,6 +340,8 @@ try {
   );
 
   log(`PASS ✓ bracketed AND byte-exact: ${got} bytes for a ${LINES}-line paste`);
+  await assertImagePaste(launched);
+  await launched.cleanup();
   await finishScenario(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';

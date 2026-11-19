@@ -52,6 +52,9 @@ const api = {
   copyDiagnostics(): Promise<string | null> {
     return ipcRenderer.invoke('copyDiagnostics');
   },
+  readTerminalClipboard(): Promise<{ text: string; hasData: boolean }> {
+    return ipcRenderer.invoke('read-terminal-clipboard');
+  },
   readChangelog(): Promise<string | null> {
     return ipcRenderer.invoke('readChangelog');
   },
