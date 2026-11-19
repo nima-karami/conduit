@@ -57,6 +57,7 @@ it('reviews the frozen copy and requires confirmation before saving its digest',
   await act(async () =>
     root.render(
       <PermissionsRoles
+        onViewAgents={() => {}}
         serverConnected
         mcp={api as never}
         registerBack={() => {}}
@@ -102,7 +103,13 @@ it('opens Sessions by default and reveals other groups and options on demand', a
   const root = createRoot(host);
   await act(async () =>
     root.render(
-      <PermissionsRoles serverConnected mcp={api as never} sessions={[]} registerBack={() => {}} />,
+      <PermissionsRoles
+        onViewAgents={() => {}}
+        serverConnected
+        mcp={api as never}
+        sessions={[]}
+        registerBack={() => {}}
+      />,
     ),
   );
   await selectRole(host, 'Custom');
@@ -154,10 +161,22 @@ it('shows only changed custom rules, including their conditions, in the review',
   const root = createRoot(host);
   await act(async () =>
     root.render(
-      <PermissionsRoles serverConnected mcp={api as never} sessions={[]} registerBack={() => {}} />,
+      <PermissionsRoles
+        onViewAgents={() => {}}
+        serverConnected
+        mcp={api as never}
+        sessions={[]}
+        registerBack={() => {}}
+      />,
     ),
   );
-  await selectRole(host, 'Custom');
+  const row = [...host.querySelectorAll<HTMLElement>('tbody tr')].find((tr) =>
+    tr.querySelector('th')?.textContent?.startsWith('Custom'),
+  );
+  await act(async () => {
+    row?.focus();
+    row?.click();
+  });
   const edit = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Edit');
   await act(async () => edit?.click());
   const group = host.querySelector('[aria-label="open_session decision"]');
@@ -208,6 +227,7 @@ it('steps back review, editor, drawer, closed, then reports nothing left', async
   await act(async () =>
     root.render(
       <PermissionsRoles
+        onViewAgents={() => {}}
         serverConnected
         mcp={api as never}
         sessions={[]}
@@ -256,7 +276,13 @@ it('counts assignments per role and tags the role that new agents start with', a
   const root = createRoot(host);
   await act(async () =>
     root.render(
-      <PermissionsRoles serverConnected mcp={api as never} sessions={[]} registerBack={() => {}} />,
+      <PermissionsRoles
+        onViewAgents={() => {}}
+        serverConnected
+        mcp={api as never}
+        sessions={[]}
+        registerBack={() => {}}
+      />,
     ),
   );
   const row = (name: string) =>
@@ -287,6 +313,7 @@ async function mountRoles() {
   await act(async () =>
     root.render(
       <PermissionsRoles
+        onViewAgents={() => {}}
         serverConnected
         mcp={api as never}
         sessions={[]}
@@ -349,7 +376,7 @@ it('selects the saved copy after a duplicate is saved, then steps back off it', 
   await click('Duplicate');
   await click('Review and save');
   await click('Confirm and save');
-  expect(host.querySelector('.permissions-drawer h4')?.textContent).toBe('Custom copy');
+  expect(host.querySelector('.permissions-drawer__title')?.textContent).toBe('Custom copy');
   expect(back()).toBe(true);
   await act(async () => void 0);
   expect(host.querySelector('.permissions-drawer')).toBeNull();
@@ -446,4 +473,43 @@ it('names every per-tool select after its tool', async () => {
   expect(host.querySelectorAll('select[aria-label$="Screen condition"]')).toHaveLength(1);
   await act(async () => root.unmount());
   api.state.policy.profiles = [];
+});
+
+it('keeps focus in the side panel when Edit swaps the drawer for the editor', async () => {
+  const profile: Profile = {
+    ...structuredClone(BUILT_IN_PROFILES[1]),
+    id: 'p-custom',
+    name: 'Custom',
+    builtIn: false,
+  };
+  api.state.policy.profiles = [profile];
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () =>
+    root.render(
+      <PermissionsRoles
+        onViewAgents={() => {}}
+        serverConnected
+        mcp={api as never}
+        sessions={[]}
+        registerBack={() => {}}
+      />,
+    ),
+  );
+  const row = [...host.querySelectorAll<HTMLElement>('tbody tr')].find((tr) =>
+    tr.querySelector('th')?.textContent?.startsWith('Custom'),
+  );
+  await act(async () => {
+    row?.focus();
+    row?.click();
+  });
+  const edit = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Edit');
+  await act(async () => {
+    edit?.focus();
+    edit?.click();
+  });
+  await act(async () => void 0);
+  expect(document.activeElement?.textContent).toBe('Edit role · Custom');
+  await act(async () => root.unmount());
 });

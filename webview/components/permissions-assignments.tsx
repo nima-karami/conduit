@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { pointKey } from '../../src/conduit-mcp/policy-profiles';
 import type {
   Assignment,
@@ -24,6 +24,7 @@ import type { BackHandler } from './mcp-section';
 import { type AgentRow, PermissionsAgentsList } from './permissions-agents-list';
 import { PermissionsAssignmentExceptions } from './permissions-assignment-exceptions';
 import { PermissionsCheckRequest } from './permissions-check-request';
+import { PermissionsDrawer } from './permissions-drawer';
 import { groupCounts, groupState, groupText } from './permissions-role-summary';
 import {
   describeExceptionScope,
@@ -78,6 +79,10 @@ function inheritedAt(policy: PolicyUiState, point: AssignmentPoint): Assignment 
   return point.kind === 'default'
     ? fallback
     : (assignmentAt(policy, { kind: 'default' }) ?? fallback);
+}
+function cliOf(policy: PolicyUiState, sessionId: string): string | null {
+  const cli = policy.sessions[sessionId]?.launchedCli;
+  return cli ? MCP_STR.tools.cliName[cli] : null;
 }
 function profileFor(policy: PolicyUiState, assignment: Assignment): Profile | undefined {
   return policy.profiles.find((profile) => profile.id === assignment.profileId);
@@ -216,6 +221,13 @@ function ReplayPreview({
   );
 }
 
+export type AgentStage = { kind: 'role'; profileId: ProfileId } | { kind: 'reset' };
+
+interface StagedDrawer {
+  body: ReactNode;
+  actions: ReactNode;
+}
+
 function AgentDrawer({
   title,
   subtitle,
@@ -228,6 +240,8 @@ function AgentDrawer({
   onRoleChange,
   onEditChanges,
   onResetAll,
+  onResetChange,
+  onOwnPermissions,
   staged,
   check,
 }: {
@@ -235,31 +249,29 @@ function AgentDrawer({
   subtitle: string;
   profile: Profile | undefined;
   profiles: readonly Profile[];
-  changes: { key: string; tool: ToolName; text: string }[];
+  changes: { key: string; index: number; tool: ToolName; text: string }[];
   readOnly: boolean;
   error: string | null;
   onClose(): void;
   onRoleChange(id: ProfileId): void;
   onEditChanges(): void;
   onResetAll(): void;
-  staged: ReactNode;
+  onResetChange(index: number): void;
+  /** The session dialog, until its native panel moves into this drawer (CON-71). */
+  onOwnPermissions?(): void;
+  staged: StagedDrawer | null;
   check: ReactNode;
 }) {
-  const heading = useRef<HTMLHeadingElement>(null);
-  const titleId = useId();
-  useEffect(() => heading.current?.focus(), []);
   return (
-    <aside className="permissions-drawer" aria-labelledby={titleId}>
-      <header className="permissions-drawer__head">
-        <h4 id={titleId} ref={heading} tabIndex={-1}>
-          {title}
-        </h4>
-        <button type="button" className="iconbtn" aria-label={STR.closeDrawer} onClick={onClose}>
-          {STR.closeGlyph}
-        </button>
-      </header>
-      <p className="permissions-drawer__note">{subtitle}</p>
-      {staged ?? (
+    <PermissionsDrawer
+      title={title}
+      subtitle={subtitle}
+      closeLabel={STR.closeDrawer}
+      closeGlyph={STR.closeGlyph}
+      onClose={onClose}
+      footer={staged?.actions}
+    >
+      {staged?.body ?? (
         <>
           <label className="permissions-agents-drawer__role">
             {STR.role}
@@ -301,47 +313,77 @@ function AgentDrawer({
           {changes.length > 0 && (
             <ul className="permissions-agents-drawer__changes">
               {changes.map((change) => (
-                <li key={change.key}>{change.text}</li>
+                <li key={change.key} className="permissions-agents-drawer__change">
+                  <div>
+                    <code>{change.tool}</code>
+                    <span>{change.text}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn--sm"
+                    disabled={readOnly}
+                    aria-label={STR.resetChange(change.tool)}
+                    onClick={() => onResetChange(change.index)}
+                  >
+                    {STR.reset}
+                  </button>
+                </li>
               ))}
             </ul>
           )}
           {error && <p role="alert">{error}</p>}
-          <button type="button" className="btn btn--sm" disabled={readOnly} onClick={onEditChanges}>
-            {STR.editChanges}
-          </button>
+          <div className="permissions-agents-drawer__actions">
+            <button
+              type="button"
+              className="btn btn--sm"
+              disabled={readOnly}
+              onClick={onEditChanges}
+            >
+              {STR.editChanges}
+            </button>
+            {onOwnPermissions && (
+              <button type="button" className="btn btn--sm" onClick={onOwnPermissions}>
+                {STR.ownPermissions}
+              </button>
+            )}
+          </div>
           {profile && (
             <section aria-label={STR.canDo}>
-              <h5>{STR.canDo}</h5>
-              {TOOL_GROUPS.map(({ group, tools }) => {
-                const counts = groupCounts(profile, tools);
-                return (
-                  <details key={group} className="permissions-drawer__group">
-                    <summary>
-                      {MCP_STR.tools.group[group]}{' '}
-                      <span className="permissions-pill" data-state={groupState(counts)}>
-                        {MCP_STR.sections.roles.pill[groupState(counts)]}
-                      </span>
-                      <span className="permissions-drawer__summary">{groupText(counts)}</span>
-                    </summary>
-                    <ul>
-                      {tools.map((tool) => (
-                        <li key={tool}>
-                          <code>{tool}</code>
-                          <span data-decision={profile.rules[tool].decision}>
-                            {MCP_STR.sections.roles.decision[profile.rules[tool].decision]}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                );
-              })}
+              <h4 className="permissions-agents-drawer__canhead">{STR.canDo}</h4>
+              <div className="permissions-drawer__groups">
+                {TOOL_GROUPS.map(({ group, tools }) => {
+                  const counts = groupCounts(profile, tools);
+                  return (
+                    <details key={group} className="permissions-drawer__group">
+                      <summary>
+                        <span className="permissions-drawer__groupname">
+                          {MCP_STR.tools.group[group]}
+                        </span>
+                        <span className="permissions-drawer__summary">{groupText(counts)}</span>
+                        <span className="permissions-pill" data-state={groupState(counts)}>
+                          {MCP_STR.sections.roles.pill[groupState(counts)]}
+                        </span>
+                      </summary>
+                      <ul>
+                        {tools.map((tool) => (
+                          <li key={tool}>
+                            <code>{tool}</code>
+                            <span data-decision={profile.rules[tool].decision}>
+                              {MCP_STR.sections.roles.decision[profile.rules[tool].decision]}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  );
+                })}
+              </div>
             </section>
           )}
           {check}
         </>
       )}
-    </aside>
+    </PermissionsDrawer>
   );
 }
 
@@ -353,7 +395,9 @@ export function PermissionsAssignments({
   exceptionSeed,
   onExceptionSeedConsumed,
   focusAgentKey,
+  focusAgentStage,
   onFocusAgentSpent,
+  onOpenSessionPermissions,
   registerBack,
 }: {
   policy: PolicyUiState;
@@ -363,7 +407,10 @@ export function PermissionsAssignments({
   exceptionSeed?: AssignmentExceptionSeed | null;
   onExceptionSeedConsumed?: () => void;
   focusAgentKey?: string;
+  /** With `focusAgentKey`: a change picked in the row menu (E1), staged and opened at Review. */
+  focusAgentStage?: AgentStage;
   onFocusAgentSpent?(): void;
+  onOpenSessionPermissions?(sessionId: string): void;
   registerBack(handler: BackHandler | null): void;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
@@ -406,6 +453,9 @@ export function PermissionsAssignments({
   const rows = [...points, ...peerPoints].map(rowFor);
   const selectedRow = rows.find((row) => row.key === selected);
   const openRow = editing ? rowFor(editing.point) : selectedRow;
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const applyStageRef = useRef<((target: AssignmentPoint, stage: AgentStage) => void) | null>(null);
   const consumedFocus = useRef<string | undefined>(undefined);
   const focusPresent = focusAgentKey !== undefined && rows.some((row) => row.key === focusAgentKey);
   useEffect(() => {
@@ -416,8 +466,19 @@ export function PermissionsAssignments({
     if (!focusPresent || consumedFocus.current === focusAgentKey) return;
     consumedFocus.current = focusAgentKey;
     setSelected(focusAgentKey);
+    // Another agent's staged edit is dropped, as a row click drops it; the same agent's survives
+    // a plain Customize… (no stage).
+    if (
+      focusAgentStage ||
+      (editingRef.current && pointKey(editingRef.current.point) !== focusAgentKey)
+    ) {
+      setEditing(null);
+      setReview(null);
+    }
+    const target = rowsRef.current.find((row) => row.key === focusAgentKey)?.point;
+    if (target && focusAgentStage) applyStageRef.current?.(target, focusAgentStage);
     onFocusAgentSpent?.();
-  }, [focusAgentKey, focusPresent, onFocusAgentSpent]);
+  }, [focusAgentKey, focusAgentStage, focusPresent, onFocusAgentSpent]);
   const consumedSeed = useRef<string | null>(null);
   useEffect(() => {
     if (!exceptionSeed) {
@@ -594,6 +655,10 @@ export function PermissionsAssignments({
       )}
       {stale && <p role="alert">Permissions changed. Cancel and review again.</p>}
       {error && <p role="alert">{error}</p>}
+    </section>
+  ) : null;
+  const reviewActions = (
+    <>
       <button
         type="button"
         className="btn"
@@ -603,18 +668,18 @@ export function PermissionsAssignments({
           setError(null);
         }}
       >
-        Back
-      </button>{' '}
+        {STR.back}
+      </button>
       <button
         type="button"
         className="btn btn--primary"
         disabled={pending || readOnly || stale}
         onClick={() => void save()}
       >
-        Confirm and save
+        {STR.confirm}
       </button>
-    </section>
-  ) : null;
+    </>
+  );
   const editor = (() => {
     if (!editing) return null;
     const session =
@@ -699,47 +764,58 @@ export function PermissionsAssignments({
             />
           </>
         )}
-        <button
-          type="button"
-          className="btn"
-          disabled={pending}
-          onClick={() => {
-            setEditing(null);
-            setError(null);
-          }}
-        >
-          Cancel
-        </button>{' '}
-        <button
-          type="button"
-          className="btn btn--primary"
-          disabled={disabled}
-          onClick={() => void requestReview(editing.draft)}
-        >
-          Review changes
-        </button>{' '}
-        {assignmentAt(policy, editing.point) && (
-          <button
-            type="button"
-            className="btn"
-            disabled={disabled}
-            onClick={() => void requestReview(null)}
-          >
-            Review reset
-          </button>
-        )}
       </section>
     );
   })();
+  const editorActions = editing ? (
+    <>
+      {assignmentAt(policy, editing.point) && (
+        <button
+          type="button"
+          className="btn permissions-drawer__lead"
+          disabled={readOnly || pending || stale}
+          onClick={() => void requestReview(null)}
+        >
+          {STR.reviewReset}
+        </button>
+      )}
+      <button
+        type="button"
+        className="btn"
+        disabled={pending}
+        onClick={() => {
+          setEditing(null);
+          setError(null);
+        }}
+      >
+        {STR.cancel}
+      </button>
+      <button
+        type="button"
+        className="btn btn--primary"
+        disabled={readOnly || pending || stale}
+        onClick={() => void requestReview(editing.draft)}
+      >
+        Review changes
+      </button>
+    </>
+  ) : null;
+  const staged: StagedDrawer | null = reviewing
+    ? { body: reviewing, actions: reviewActions }
+    : editor
+      ? { body: editor, actions: editorActions }
+      : null;
   const changesFor = (row: AgentRow) => {
     const assignment = assignmentAt(policy, row.point);
     if (!assignment || !row.profile) return [];
     const { rules } = row.profile;
-    return exceptionEntries(assignment).map(({ entry, key }) => ({
+    const roleName = row.profile.name;
+    return exceptionEntries(assignment).map(({ entry, key, index }) => ({
       key,
+      index,
       tool: entry.tool,
       text: STR.changeLine(
-        entry.tool,
+        roleName,
         MCP_STR.sections.roles.decision[rules[entry.tool].decision],
         MCP_STR.sections.roles.decision[entry.rule.decision ?? rules[entry.tool].decision],
       ),
@@ -750,6 +826,24 @@ export function PermissionsAssignments({
     const cleared = { ...edit, draft: { ...edit.draft, exceptions: [] } };
     setEditing(cleared);
     void requestReview(cleared.draft, cleared);
+  };
+  const resetChange = (target: AssignmentPoint, index: number) => {
+    const edit = start(target);
+    const trimmed = {
+      ...edit,
+      draft: { ...edit.draft, exceptions: edit.draft.exceptions.filter((_, i) => i !== index) },
+    };
+    setEditing(trimmed);
+    void requestReview(trimmed.draft, trimmed);
+  };
+  applyStageRef.current = (target, stage) => {
+    if (readOnly) return;
+    if (stage.kind === 'reset') {
+      resetAll(target);
+      return;
+    }
+    const edit = start(target, stage.profileId);
+    void requestReview(edit.draft, edit);
   };
   return (
     <>
@@ -780,7 +874,11 @@ export function PermissionsAssignments({
             <AgentDrawer
               key={openRow.key}
               title={openRow.title}
-              subtitle={openRow.subtitle}
+              subtitle={
+                openRow.point.kind === 'session'
+                  ? STR.subtitle(openRow.subtitle, cliOf(policy, openRow.point.sessionId))
+                  : openRow.subtitle
+              }
               profile={openRow.profile}
               profiles={policy.profiles}
               changes={changesFor(openRow)}
@@ -795,7 +893,16 @@ export function PermissionsAssignments({
               onRoleChange={(id) => start(openRow.point, id)}
               onEditChanges={() => start(openRow.point)}
               onResetAll={() => resetAll(openRow.point)}
-              staged={reviewing ?? editor}
+              onResetChange={(index) => resetChange(openRow.point, index)}
+              onOwnPermissions={
+                openRow.point.kind === 'session' && onOpenSessionPermissions
+                  ? () => {
+                      if (openRow.point.kind === 'session')
+                        onOpenSessionPermissions(openRow.point.sessionId);
+                    }
+                  : undefined
+              }
+              staged={staged}
               check={
                 <PermissionsCheckRequest
                   sessions={checkSessions}

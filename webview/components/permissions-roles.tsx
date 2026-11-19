@@ -47,11 +47,13 @@ export function PermissionsRoles({
   mcp,
   sessions,
   registerBack,
+  onViewAgents,
 }: {
   serverConnected: boolean;
   mcp: ConduitMcpApi;
   sessions: Session[];
   registerBack(handler: BackHandler | null): void;
+  onViewAgents(): void;
 }) {
   const policy = mcp.state?.policy;
   const [editing, setEditing] = useState<Editing | null>(null);
@@ -502,13 +504,16 @@ export function PermissionsRoles({
           Permissions are read-only while the policy store is unavailable or disconnected.
         </p>
       )}
-      <div className="permissions-roles">
+      <div
+        className={editing ? 'permissions-roles permissions-roles--editing' : 'permissions-roles'}
+      >
         <PermissionsRoleList
           profiles={roles}
-          selectedId={selected?.id ?? null}
+          selectedId={(editing ? editing.draft.id : selected?.id) ?? null}
           usage={usage}
           newAgentRole={newAgentRole}
           readOnly={readOnly}
+          compact={editing !== null || selected !== null}
           onSelect={(profile) => setSelectedId(profile.id)}
           onNew={() =>
             start(roles.find((p) => p.id === newAgentRole) ?? BUILT_IN_PROFILES[1], true)
@@ -516,17 +521,27 @@ export function PermissionsRoles({
         />
         {editing ? (
           <div className="permissions-roles__side">
-            {editing.token !== currentPolicy.editToken && (
-              <p role="alert">
-                Permissions changed. Cancel and reopen the role to edit the current version.
-              </p>
-            )}
             <PermissionsProfileEditor
               key={`${editing.draft.id}-${editing.token}`}
               draft={editing.draft}
               readOnly={readOnly || editing.token !== currentPolicy.editToken}
               onCancel={() => setEditing(null)}
               onReviewAndSave={requestReview}
+              onDelete={
+                editing.before && !editing.before.builtIn
+                  ? () => {
+                      const saved = roles.find((p) => p.id === editing.draft.id);
+                      if (saved) startDeletion(saved);
+                    }
+                  : undefined
+              }
+              notice={
+                editing.token !== currentPolicy.editToken && (
+                  <p role="alert">
+                    Permissions changed. Cancel and reopen the role to edit the current version.
+                  </p>
+                )
+              }
             />
           </div>
         ) : (
@@ -541,6 +556,7 @@ export function PermissionsRoles({
                 onDuplicate={(profile) => start(profile, true)}
                 onEdit={(profile) => start(profile, false)}
                 onDelete={startDeletion}
+                onViewAgents={onViewAgents}
               />
             </div>
           )

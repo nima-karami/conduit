@@ -17,6 +17,7 @@ import {
 } from '../../src/conduit-mcp/tool-policy';
 import type { NativeModes } from '../../src/contracts/native-launch';
 import { MCP_STR } from '../conduit-mcp-strings';
+import { PermissionsDrawer } from './permissions-drawer';
 import { groupCounts, groupState, groupText } from './permissions-role-summary';
 import { SegmentedRadios } from './segmented-radios';
 
@@ -25,6 +26,10 @@ export interface PermissionsProfileEditorProps {
   readOnly: boolean;
   onCancel(): void;
   onReviewAndSave(candidate: Profile): Promise<PolicyEditResult | null>;
+  /** Present for a saved custom role: canvas D4 puts Delete in the editor's footer. */
+  onDelete?(): void;
+  /** Shown above the form, e.g. the stale-policy alert. */
+  notice?: ReactNode;
 }
 
 const decisions: readonly { id: Decision; label: string }[] = [
@@ -68,6 +73,8 @@ export function PermissionsProfileEditor({
   readOnly,
   onCancel,
   onReviewAndSave,
+  onDelete,
+  notice,
 }: PermissionsProfileEditorProps) {
   const [profile, setProfile] = useState<Profile>(() => ({ ...draft, rules: { ...draft.rules } }));
   const [pending, setPending] = useState(false);
@@ -115,222 +122,240 @@ export function PermissionsProfileEditor({
   }
   const modes = profile.nativeModes ?? unsetModes;
   return (
-    <div className="permissions-profile-editor">
-      <header>
-        <h2>{STR.editor.title(draft.name)}</h2>
-        <p>{STR.editor.appliesEverywhere}</p>
-      </header>
-      <label htmlFor={`${id}-name`}>Name</label>{' '}
-      <input
-        id={`${id}-name`}
-        className="permissions-profile-editor__name"
-        value={profile.name}
-        disabled={disabled}
-        onChange={(e) => setProfile((current) => ({ ...current, name: e.target.value }))}
-      />
-      <h3>{STR.editor.decisions}</h3>
-      {TOOL_GROUPS.map(({ group, tools }) => {
-        const counts = groupCounts(profile, tools);
-        const state = groupState(counts);
-        return (
-          <Disclosure
-            key={group}
-            defaultOpen={group === 'sessions'}
-            summary={
-              <>
-                {MCP_STR.tools.group[group]}{' '}
-                <span className="permissions-pill" data-state={state}>
-                  {STR.pill[state]}
-                </span>{' '}
-                <span className="permissions-editor__counts">{groupText(counts)}</span>
-              </>
-            }
-          >
-            {tools.map((tool) => {
-              const rule = profile.rules[tool];
-              const spec = TOOL_SPECS[tool];
-              const hasReach = spec.fields.includes('reach') && rule.reach !== null;
-              const hasMove = spec.fields.includes('move') && rule.move !== null;
-              const hasWhen = spec.fields.includes('when') && rule.when !== null;
-              return (
-                <section className="policyrow" key={tool}>
-                  <div className="policyrow__main">
-                    <div className="policyrow__label">
-                      <code className="policyrow__name">{tool}</code>
-                      <span className="policyrow__desc">{MCP_STR.tools.description[tool]}</span>
+    <PermissionsDrawer
+      title={STR.editor.title(draft.name)}
+      subtitle={STR.editor.appliesEverywhere}
+      closeLabel={STR.closeDrawer}
+      closeGlyph={STR.closeGlyph}
+      onClose={onCancel}
+      footer={
+        <>
+          {onDelete && (
+            <button
+              className="btn btn--danger permissions-drawer__lead"
+              type="button"
+              disabled={disabled}
+              onClick={onDelete}
+            >
+              {STR.deleteRole}
+            </button>
+          )}
+          <button className="btn" type="button" disabled={pending} onClick={onCancel}>
+            Cancel
+          </button>
+          <button className="btn btn--primary" type="button" disabled={disabled} onClick={save}>
+            {pending ? 'Reviewing…' : 'Review and save'}
+          </button>
+        </>
+      }
+    >
+      <div className="permissions-profile-editor">
+        {notice}
+        <label htmlFor={`${id}-name`}>Name</label>{' '}
+        <input
+          id={`${id}-name`}
+          className="permissions-profile-editor__name"
+          value={profile.name}
+          disabled={disabled}
+          onChange={(e) => setProfile((current) => ({ ...current, name: e.target.value }))}
+        />
+        <h3>{STR.editor.decisions}</h3>
+        {TOOL_GROUPS.map(({ group, tools }) => {
+          const counts = groupCounts(profile, tools);
+          const state = groupState(counts);
+          return (
+            <Disclosure
+              key={group}
+              defaultOpen={group === 'sessions'}
+              summary={
+                <>
+                  {MCP_STR.tools.group[group]}{' '}
+                  <span className="permissions-pill" data-state={state}>
+                    {STR.pill[state]}
+                  </span>{' '}
+                  <span className="permissions-editor__counts">{groupText(counts)}</span>
+                </>
+              }
+            >
+              {tools.map((tool) => {
+                const rule = profile.rules[tool];
+                const spec = TOOL_SPECS[tool];
+                const hasReach = spec.fields.includes('reach') && rule.reach !== null;
+                const hasMove = spec.fields.includes('move') && rule.move !== null;
+                const hasWhen = spec.fields.includes('when') && rule.when !== null;
+                return (
+                  <section className="policyrow" key={tool}>
+                    <div className="policyrow__main">
+                      <div className="policyrow__label">
+                        <code className="policyrow__name">{tool}</code>
+                        <span className="policyrow__desc">{MCP_STR.tools.description[tool]}</span>
+                      </div>
+                      <SegmentedRadios
+                        label={`${tool} decision`}
+                        value={rule.decision}
+                        options={decisions}
+                        disabled={disabled}
+                        onChange={(decision) => updateRule(tool, { decision })}
+                      />
                     </div>
-                    <SegmentedRadios
-                      label={`${tool} decision`}
-                      value={rule.decision}
-                      options={decisions}
-                      disabled={disabled}
-                      onChange={(decision) => updateRule(tool, { decision })}
-                    />
-                  </div>
-                  {(hasReach || hasMove || hasWhen) && (
-                    <Disclosure summary={STR.moreOptions}>
-                      {hasWhen && (
-                        <label>
-                          {STR.screenCondition}{' '}
-                          <select
-                            aria-label={MCP_STR.tools.fieldAria(tool, STR.screenCondition)}
-                            className="selectfield"
-                            value={rule.when ?? ''}
-                            disabled={disabled}
-                            onChange={(e) =>
-                              updateRule(tool, {
-                                when: WHEN_VALUES.find((v) => v === e.target.value) ?? rule.when,
-                              })
-                            }
-                          >
-                            {WHEN_VALUES.map((value) => (
-                              <option key={value} value={value}>
-                                {MCP_STR.tools.when[value]}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      )}
-                      {hasReach && rule.reach !== null && (
-                        <label>
-                          Reach{' '}
-                          <select
-                            aria-label={MCP_STR.tools.fieldAria(
-                              tool,
-                              MCP_STR.tools.fieldLabel.reach,
-                            )}
-                            className="selectfield"
-                            value={rule.reach}
-                            disabled={disabled}
-                            onChange={(e) =>
-                              updateRule(tool, {
-                                reach: REACH_VALUES.find((v) => v === e.target.value) ?? rule.reach,
-                              })
-                            }
-                          >
-                            {(spec.reach ?? []).map((value) => (
-                              <option key={value} value={value}>
-                                {MCP_STR.tools.reach[value]}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      )}
-                      {hasMove && rule.move !== null && (
-                        <label>
-                          Move{' '}
-                          <select
-                            aria-label={MCP_STR.tools.fieldAria(
-                              tool,
-                              MCP_STR.tools.fieldLabel.move,
-                            )}
-                            className="selectfield"
-                            value={rule.move}
-                            disabled={disabled}
-                            onChange={(e) =>
-                              updateRule(tool, {
-                                move: MOVE_VALUES.find((v) => v === e.target.value) ?? rule.move,
-                              })
-                            }
-                          >
-                            {MOVE_VALUES.map((value) => (
-                              <option key={value} value={value}>
-                                {MCP_STR.tools.move[value]}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      )}
-                    </Disclosure>
-                  )}
-                </section>
+                    {(hasReach || hasMove || hasWhen) && (
+                      <Disclosure summary={STR.moreOptions}>
+                        {hasWhen && (
+                          <label>
+                            {STR.screenCondition}{' '}
+                            <select
+                              aria-label={MCP_STR.tools.fieldAria(tool, STR.screenCondition)}
+                              className="selectfield"
+                              value={rule.when ?? ''}
+                              disabled={disabled}
+                              onChange={(e) =>
+                                updateRule(tool, {
+                                  when: WHEN_VALUES.find((v) => v === e.target.value) ?? rule.when,
+                                })
+                              }
+                            >
+                              {WHEN_VALUES.map((value) => (
+                                <option key={value} value={value}>
+                                  {MCP_STR.tools.when[value]}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        )}
+                        {hasReach && rule.reach !== null && (
+                          <label>
+                            Reach{' '}
+                            <select
+                              aria-label={MCP_STR.tools.fieldAria(
+                                tool,
+                                MCP_STR.tools.fieldLabel.reach,
+                              )}
+                              className="selectfield"
+                              value={rule.reach}
+                              disabled={disabled}
+                              onChange={(e) =>
+                                updateRule(tool, {
+                                  reach:
+                                    REACH_VALUES.find((v) => v === e.target.value) ?? rule.reach,
+                                })
+                              }
+                            >
+                              {(spec.reach ?? []).map((value) => (
+                                <option key={value} value={value}>
+                                  {MCP_STR.tools.reach[value]}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        )}
+                        {hasMove && rule.move !== null && (
+                          <label>
+                            Move{' '}
+                            <select
+                              aria-label={MCP_STR.tools.fieldAria(
+                                tool,
+                                MCP_STR.tools.fieldLabel.move,
+                              )}
+                              className="selectfield"
+                              value={rule.move}
+                              disabled={disabled}
+                              onChange={(e) =>
+                                updateRule(tool, {
+                                  move: MOVE_VALUES.find((v) => v === e.target.value) ?? rule.move,
+                                })
+                              }
+                            >
+                              {MOVE_VALUES.map((value) => (
+                                <option key={value} value={value}>
+                                  {MCP_STR.tools.move[value]}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        )}
+                      </Disclosure>
+                    )}
+                  </section>
+                );
+              })}
+            </Disclosure>
+          );
+        })}
+        <fieldset disabled={disabled}>
+          <legend>Screen condition</legend>
+          <p>
+            Apply to all tools that support a screen condition. Existing conditions stay unchanged
+            until you choose an option.
+          </p>
+          {screenValue === null && <p>Mixed conditions</p>}
+          <label>
+            <input
+              type="radio"
+              name={`${id}-when`}
+              checked={screenValue === 'viewing'}
+              onChange={() => applyWhen('viewing')}
+            />{' '}
+            Only while its session is on screen
+          </label>
+          <br />
+          <label>
+            <input
+              type="radio"
+              name={`${id}-when`}
+              checked={screenValue === 'always'}
+              onChange={() => applyWhen('always')}
+            />{' '}
+            Always
+          </label>
+          <p>Other restrictions, including remote access rules, still apply.</p>
+        </fieldset>
+        <fieldset disabled={disabled}>
+          <legend>Agent’s own mode at launch</legend>
+          <p>Used at the next launch when native mode application is enabled.</p>
+          <label htmlFor={`${id}-claude-mode`}>Claude</label>{' '}
+          <select
+            id={`${id}-claude-mode`}
+            className="selectfield"
+            value={modes.claude}
+            onChange={(e) => {
+              const claude = (['unset', 'plan', 'acceptEdits'] as const).find(
+                (v) => v === e.target.value,
               );
-            })}
-          </Disclosure>
-        );
-      })}
-      <fieldset disabled={disabled}>
-        <legend>Screen condition</legend>
-        <p>
-          Apply to all tools that support a screen condition. Existing conditions stay unchanged
-          until you choose an option.
-        </p>
-        {screenValue === null && <p>Mixed conditions</p>}
-        <label>
-          <input
-            type="radio"
-            name={`${id}-when`}
-            checked={screenValue === 'viewing'}
-            onChange={() => applyWhen('viewing')}
-          />{' '}
-          Only while its session is on screen
-        </label>
-        <br />
-        <label>
-          <input
-            type="radio"
-            name={`${id}-when`}
-            checked={screenValue === 'always'}
-            onChange={() => applyWhen('always')}
-          />{' '}
-          Always
-        </label>
-        <p>Other restrictions, including remote access rules, still apply.</p>
-      </fieldset>
-      <fieldset disabled={disabled}>
-        <legend>Agent’s own mode at launch</legend>
-        <p>Used at the next launch when native mode application is enabled.</p>
-        <label htmlFor={`${id}-claude-mode`}>Claude</label>{' '}
-        <select
-          id={`${id}-claude-mode`}
-          className="selectfield"
-          value={modes.claude}
-          onChange={(e) => {
-            const claude = (['unset', 'plan', 'acceptEdits'] as const).find(
-              (v) => v === e.target.value,
-            );
-            if (claude)
-              setProfile((current) => ({
-                ...current,
-                nativeModes: { ...(current.nativeModes ?? unsetModes), claude },
-              }));
-          }}
-        >
-          <option value="unset">Use CLI default</option>
-          <option value="plan">Plan</option>
-          <option value="acceptEdits">Accept edits</option>
-        </select>{' '}
-        <label htmlFor={`${id}-codex-mode`}>Codex</label>{' '}
-        <select
-          id={`${id}-codex-mode`}
-          className="selectfield"
-          value={modes.codex}
-          onChange={(e) => {
-            const codex = (['unset', 'read-only', 'workspace-write'] as const).find(
-              (v) => v === e.target.value,
-            );
-            if (codex)
-              setProfile((current) => ({
-                ...current,
-                nativeModes: { ...(current.nativeModes ?? unsetModes), codex },
-              }));
-          }}
-        >
-          <option value="unset">Use CLI default</option>
-          <option value="read-only">Read only</option>
-          <option value="workspace-write">Workspace write</option>
-        </select>
-      </fieldset>
-      {readOnly && <p>Permissions are read-only.</p>}
-      {error && <p role="alert">{error}</p>}
-      <footer>
-        <button className="btn" type="button" disabled={pending} onClick={onCancel}>
-          Cancel
-        </button>{' '}
-        <button className="btn btn--primary" type="button" disabled={disabled} onClick={save}>
-          {pending ? 'Reviewing…' : 'Review and save'}
-        </button>
-      </footer>
-    </div>
+              if (claude)
+                setProfile((current) => ({
+                  ...current,
+                  nativeModes: { ...(current.nativeModes ?? unsetModes), claude },
+                }));
+            }}
+          >
+            <option value="unset">Use CLI default</option>
+            <option value="plan">Plan</option>
+            <option value="acceptEdits">Accept edits</option>
+          </select>{' '}
+          <label htmlFor={`${id}-codex-mode`}>Codex</label>{' '}
+          <select
+            id={`${id}-codex-mode`}
+            className="selectfield"
+            value={modes.codex}
+            onChange={(e) => {
+              const codex = (['unset', 'read-only', 'workspace-write'] as const).find(
+                (v) => v === e.target.value,
+              );
+              if (codex)
+                setProfile((current) => ({
+                  ...current,
+                  nativeModes: { ...(current.nativeModes ?? unsetModes), codex },
+                }));
+            }}
+          >
+            <option value="unset">Use CLI default</option>
+            <option value="read-only">Read only</option>
+            <option value="workspace-write">Workspace write</option>
+          </select>
+        </fieldset>
+        {readOnly && <p>Permissions are read-only.</p>}
+        {error && <p role="alert">{error}</p>}
+      </div>
+    </PermissionsDrawer>
   );
 }

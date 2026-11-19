@@ -6,6 +6,13 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Scrolling the role or agent side panel in MCP settings scrolls only the panel; the list beside it and the panel's title and buttons stay in place.
+- Right-clicking an agent and choosing Permissions now opens a submenu to switch its role, reset its changes or customize it, and lands on that agent's side panel in MCP › Agents instead of a pop-up in the middle of the window.
+- The side panel's buttons stay pinned at its bottom, and notifications sit above them instead of covering them.
+- Below 1100 px wide the side panel is solid and shadowed, so the list no longer shows through it.
+
 ## [0.70.2] — 2026-11-19
 
 ### Fixed

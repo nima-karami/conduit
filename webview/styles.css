@@ -7400,12 +7400,13 @@ body.gh-resizing {
 /* ---- Toasts (K2) and the window's one floating stack (sidebar-agent-tree spec §7): the docked
    approval card, transient toasts and the persistent update item share it, so nothing overlaps
    another outlet. Fixed at the window's bottom-right, --toast-inset from both edges; it overlays
-   content (the status bar's right end included) and never moves for a state, a panel or a view.
+   content (the status bar's right end included) and never moves for a state, a panel or a view,
+   except that it rises above a pinned drawer footer (--toast-floor, webview/toast-floor.ts).
    Above modals, below menus; pointer-events on the cards only. Silence = success. */
 .toasts {
   position: fixed;
   right: var(--toast-inset);
-  bottom: var(--toast-inset);
+  bottom: calc(var(--toast-floor, 0px) + var(--toast-inset));
   z-index: var(--layer-toast);
   display: flex;
   flex-direction: column;
@@ -17437,17 +17438,31 @@ button.toggle--on .toggle__knob {
   gap: 6px;
 }
 
-/* Roles tab: list plus drawer. Split from 1100px, overlay below; spec 2026-11-18-mcp-full-screen §4. */
+/* Roles and Agents: a list plus a drawer. Each scrolls on its own, so a wheel over one never
+   moves the other or the tabs (CON-71). Split from 1100px, overlay below; spec
+   2026-11-18-mcp-full-screen §4. */
+.mcp-section__panel--split {
+  display: flex;
+  flex-direction: column;
+}
 .permissions-roles {
   position: relative;
-  min-height: 100%;
+  flex: 1 1 0;
+  min-height: 0;
   min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+.permissions-roles > :is(.permissions-role-list, .permissions-agents-list) {
+  min-height: 0;
+  overflow: auto;
+  padding-inline-end: 16px;
 }
 
 .permissions-role-list {
   min-width: 0;
   color: var(--text);
-  overflow-x: auto;
 }
 
 .permissions-role-list__heading {
@@ -17464,7 +17479,6 @@ button.toggle--on .toggle__knob {
 
 .permissions-role-list__heading p,
 .permissions-role-list__counts,
-.permissions-drawer__summary,
 .permissions-drawer__conditions {
   color: var(--text-dim);
 }
@@ -17542,11 +17556,19 @@ button.toggle--on .toggle__knob {
   background: color-mix(in srgb, var(--danger) 16%, transparent);
 }
 
+.permissions-role-list--compact .permissions-role-list__group {
+  display: none;
+}
+
+/* The drawer column: its own surface, edge to edge in height; .permissions-drawer lays it out. */
 .permissions-roles__side {
+  --drawer-pad-start: 18px;
+  --drawer-pad-end: 4px;
   display: flex;
   flex-direction: column;
-  padding: 12px;
-  overflow-y: auto;
+  min-height: 0;
+  min-width: 0;
+  border-inline-start: 1px solid var(--border-2);
 }
 
 @media (max-width: 1099px) {
@@ -17554,15 +17576,19 @@ button.toggle--on .toggle__knob {
     display: none;
   }
 
+  /* Over live list text: the opaque raised surface (the panel material is translucent in Aero). */
   .permissions-roles__side {
+    --drawer-pad-start: 16px;
+    --drawer-pad-end: 16px;
     position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
+    inset-block: 0;
+    inset-inline-end: 0;
     z-index: 1;
-    width: min(340px, 100%);
-    background: var(--panel);
-    border-inline-start: 1px solid var(--border-2);
+    width: min(440px, 100%);
+    background: var(--raise);
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-card);
+    box-shadow: var(--elev-3);
   }
 }
 
@@ -17572,47 +17598,157 @@ button.toggle--on .toggle__knob {
   }
 
   .permissions-roles {
-    display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .permissions-roles__side {
-    width: 380px;
-    margin-inline-start: 12px;
+    width: 440px;
+  }
+
+  /* Canvas D4: the editor is wider than a drawer, but never takes more than half the list. */
+  .permissions-roles--editing {
+    grid-template-columns: minmax(0, 1fr) min(600px, 50%);
+  }
+
+  .permissions-roles--editing .permissions-roles__side {
+    width: auto;
   }
 }
 
 .permissions-drawer {
+  flex: 1 1 0;
+  min-height: 0;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
   color: var(--text);
 }
 
 .permissions-drawer__head {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 4px var(--drawer-pad-end) 10px var(--drawer-pad-start);
 }
 
-.permissions-drawer__head h4 {
-  margin: 0;
+.permissions-drawer__titles {
   flex: 1;
   min-width: 0;
 }
 
+.permissions-drawer__titleline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.permissions-drawer__title {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: calc(16px * var(--font-scale));
+  font-weight: 600;
+}
+
 .permissions-drawer__badge {
-  padding: 1px 6px;
+  padding: 1px 8px;
   border: 1px solid var(--border-2);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
+}
+
+.permissions-drawer__subtitle {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+}
+
+.permissions-drawer__body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px var(--drawer-pad-end) 14px var(--drawer-pad-start);
+}
+
+.permissions-drawer__body p {
+  margin: 0;
+}
+
+.permissions-drawer__foot {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px var(--drawer-pad-end) 4px var(--drawer-pad-start);
+  border-top: 1px solid var(--border);
+}
+
+.permissions-drawer__lead {
+  margin-inline-end: auto;
+}
+
+.permissions-drawer__note {
+  padding: 10px 12px;
+  border: 1px dashed var(--border-2);
   border-radius: var(--r-ctl);
   color: var(--text-dim);
 }
 
-.permissions-drawer__note {
+.permissions-drawer__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.permissions-drawer__link:focus-visible {
+  outline: none;
+  border-radius: 2px;
+  box-shadow: var(--focus-ring);
+}
+
+.permissions-drawer__group {
+  border-top: 1px solid var(--border);
+}
+
+.permissions-drawer__group > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  list-style: none;
+  cursor: pointer;
+}
+
+.permissions-drawer__group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.permissions-drawer__group > summary::before {
+  content: "▸";
   color: var(--text-dim);
 }
 
+.permissions-drawer__group[open] > summary::before {
+  content: "▾";
+}
+
+.permissions-drawer__groupname {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+}
+
 .permissions-drawer__group ul {
-  margin: 4px 0 8px;
-  padding-inline-start: 0;
+  margin: 0 0 8px;
+  padding-inline-start: 20px;
   list-style: none;
 }
 
@@ -17628,15 +17764,8 @@ button.toggle--on .toggle__knob {
 }
 
 .permissions-drawer__summary {
-  margin-inline-start: 8px;
-}
-
-.permissions-drawer__actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 6px;
-  margin-top: 12px;
+  color: var(--text-dim);
+  font-size: calc(12px * var(--font-scale));
 }
 
 .permissions-profile-editor details,
@@ -17930,9 +18059,24 @@ button.toggle--on .toggle__knob {
 }
 .permissions-agents-drawer__role {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-dim);
+  font-size: calc(12px * var(--font-scale));
+}
+.permissions-agents-drawer__role .selectfield {
+  width: 100%;
+}
+.permissions-agents-drawer__actions {
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
-  margin-block: 8px;
+}
+.permissions-agents-drawer__canhead {
+  margin: 0 0 4px;
+  color: var(--text-dim);
+  font-size: calc(12px * var(--font-scale));
+  font-weight: 400;
 }
 .permissions-agents-drawer__summary {
   display: flex;
@@ -17942,13 +18086,30 @@ button.toggle--on .toggle__knob {
   gap: 6px 12px;
 }
 .permissions-agents-drawer__changes {
-  margin: 4px 0 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
   padding-inline-start: 0;
   list-style: none;
 }
-.permissions-agents-drawer__changes li {
-  padding: 3px 0;
+.permissions-agents-drawer__change {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.permissions-agents-drawer__change > div {
+  flex: 1;
+  min-width: 0;
   overflow-wrap: anywhere;
+}
+.permissions-agents-drawer__change span {
+  display: block;
+  color: var(--text-dim);
+  font-size: calc(12px * var(--font-scale));
 }
 .permissions-profile-editor__name {
   padding: 5px 9px;

@@ -4,7 +4,11 @@ import { MCP_STR, MCP_TAB_ORDER, type McpTabId } from '../conduit-mcp-strings';
 import { useConduitMcp } from '../use-conduit-mcp';
 import { type ActivityScope, PermissionsActivity } from './permissions-activity';
 import type { ActivityExceptionSource } from './permissions-activity-why';
-import { type AssignmentExceptionSeed, PermissionsAssignments } from './permissions-assignments';
+import {
+  type AgentStage,
+  type AssignmentExceptionSeed,
+  PermissionsAssignments,
+} from './permissions-assignments';
 import { PermissionsGrants } from './permissions-grants';
 import { PermissionsRoles } from './permissions-roles';
 
@@ -19,7 +23,9 @@ export interface McpSectionProps {
   exceptionSeed?: AssignmentExceptionSeed | null;
   onExceptionSeedConsumed?(): void;
   focusedAgentKey?: string;
+  focusedAgentStage?: AgentStage;
   onFocusAgentSpent?(): void;
+  onOpenSessionPermissions?(sessionId: string): void;
   activityScope: ActivityScope;
   activityMachines: readonly { id: string; name: string }[];
   onAddActivityException?(source: ActivityExceptionSource): void;
@@ -35,7 +41,9 @@ export function McpSection({
   exceptionSeed,
   onExceptionSeedConsumed,
   focusedAgentKey,
+  focusedAgentStage,
   onFocusAgentSpent,
+  onOpenSessionPermissions,
   activityScope,
   activityMachines,
   onAddActivityException,
@@ -89,7 +97,11 @@ export function McpSection({
         ))}
       </div>
       <div
-        className="mcp-section__panel"
+        className={
+          tab === 'roles' || tab === 'agents'
+            ? 'mcp-section__panel mcp-section__panel--split'
+            : 'mcp-section__panel'
+        }
         role="tabpanel"
         id={`${tabsId}-section`}
         aria-labelledby={`${tabsId}-${tab}`}
@@ -101,6 +113,7 @@ export function McpSection({
             serverConnected={serverConnected}
             sessions={sessions}
             registerBack={registerBack}
+            onViewAgents={() => onTabChange('agents')}
           />
         )}
         {(tab === 'agents' || tab === 'grants') && !policy && <p>Loading permissions…</p>}
@@ -113,7 +126,9 @@ export function McpSection({
             mcp={mcp}
             serverConnected={serverConnected}
             focusAgentKey={focusedAgentKey}
+            focusAgentStage={focusedAgentStage}
             onFocusAgentSpent={onFocusAgentSpent}
+            onOpenSessionPermissions={onOpenSessionPermissions}
             registerBack={registerBack}
           />
         )}

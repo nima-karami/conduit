@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
 import { SNOOZE_MS } from '../src/attention';
+import { pointKey } from '../src/conduit-mcp/policy-profiles';
+import type { PolicyUiState, ProfileId } from '../src/conduit-mcp/policy-types';
 import type { Handle, McpUnavailableReason } from '../src/conduit-mcp/types';
 import type { HostPlatform } from '../src/lsp-binary';
 import { platformWords } from '../src/platform-words';
@@ -80,6 +82,8 @@ export interface SessionMenuInput {
   mcpHandle: Handle | null;
   mcpPaused: boolean;
   mcpSwitchable: boolean;
+  /** The row's role and change count, shown beside Permissions (canvas E1). */
+  mcpPermissions?: SessionPermissionSummary | null;
   mcpSetupNeeded: boolean;
   mcpLink?: SessionMcpLink | null;
   otherCount: number;
@@ -171,7 +175,16 @@ export function buildSessionMenu(input: SessionMenuInput): MenuItem[] {
       ),
     );
   }
-  if (input.mcpSwitchable) messaging.push(item('mcpTools', 'Permissions…'));
+  // Opens the role submenu beside this row (canvas E1); the action owns that second menu.
+  if (input.mcpSwitchable)
+    messaging.push(
+      item('mcpTools', PERM.permissions, {
+        detail: input.mcpPermissions
+          ? PERM.detail(input.mcpPermissions.roleName, input.mcpPermissions.changes)
+          : undefined,
+        hint: PERM.submenuGlyph,
+      }),
+    );
   if (input.mcpSetupNeeded) messaging.push(item('setupMcp', MCP_STR.install.setupCommand));
 
   const groups: MenuItem[][] = [
@@ -206,4 +219,81 @@ export function buildSessionMenu(input: SessionMenuInput): MenuItem[] {
     .flatMap((g, i) =>
       g.map((it, j) => (i > 0 && j === 0 ? { ...it, separatorBefore: true } : it)),
     );
+}
+
+const PERM = MCP_STR.sections.agents.menu;
+
+export interface SessionPermissionSummary {
+  profileId: ProfileId;
+  roleName: string;
+  /** The session's own changes; inherited assignments count as none, as in MCP › Agents. */
+  changes: number;
+}
+
+export function sessionPermissionSummary(
+  policy: PolicyUiState | undefined,
+  sessionId: string,
+): SessionPermissionSummary | null {
+  const row = policy?.sessions[sessionId];
+  if (!policy || !row) return null;
+  const key = pointKey({ kind: 'session', sessionId });
+  const own = policy.assignments.find((entry) => pointKey(entry.point) === key)?.assignment;
+  return {
+    profileId: row.profileId,
+    roleName: policy.profiles.find((p) => p.id === row.profileId)?.name ?? row.profileName,
+    changes: own?.exceptions.length ?? 0,
+  };
+}
+
+/**
+ * The Permissions submenu (canvas E1). Every pick lands in MCP › Agents on this agent's drawer:
+ * a role or a reset is staged and opened at Review, never applied from the menu (spec §2).
+ */
+export function buildPermissionsSubmenu(input: {
+  name: string;
+  roles: readonly { id: ProfileId; name: string }[];
+  summary: SessionPermissionSummary;
+  /** Nothing can be staged: role and reset rows are disabled, Customize… still opens the drawer. */
+  readOnly?: boolean;
+  onPick(id: ProfileId): void;
+  onReset(): void;
+  onCustomize(): void;
+}): MenuItem[] {
+  const { summary } = input;
+  return [
+    { label: PERM.roleFor(input.name), key: 'role-for', disabled: true, onClick: () => {} },
+    ...input.roles.map(
+      (role): MenuItem => ({
+        label: role.name,
+        key: `role:${role.id}`,
+        checked: role.id === summary.profileId,
+        radio: true,
+        disabled: input.readOnly === true,
+        onClick: () => input.onPick(role.id),
+      }),
+    ),
+    ...(summary.changes > 0
+      ? [
+          {
+            label: MCP_STR.sections.agents.changesFrom(summary.changes, summary.roleName),
+            key: 'changes',
+            disabled: true,
+            separatorBefore: true,
+            onClick: () => {},
+          },
+          {
+            label: PERM.resetToRole,
+            key: 'reset',
+            disabled: input.readOnly === true,
+            onClick: input.onReset,
+          },
+        ]
+      : []),
+    {
+      label: PERM.customize,
+      key: 'customize',
+      separatorBefore: true,
+      onClick: input.onCustomize,
+    },
+  ];
 }

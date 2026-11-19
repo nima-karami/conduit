@@ -333,10 +333,7 @@ const NOT_PROJECTED_HINT =
  */
 export async function enableToolViaDialog(page, sessionId, tool, value) {
   await tapMcp(page);
-  await page.locator(`.session[data-sessionid="${sessionId}"]`).click({ button: 'right' });
-  await page.locator('.ctxmenu__item', { hasText: 'Permissions…' }).click();
-  const dialog = page.getByRole('dialog', { name: /^Permissions · / });
-  await dialog.waitFor({ timeout: 5_000 });
+  const dialog = await openSessionPermissionsDialog(page, sessionId);
   const decision = { On: 'allow', Off: 'deny', Ask: 'ask' }[value];
   const matching = dialog
     .locator('.session-permissions__exception')
@@ -349,6 +346,8 @@ export async function enableToolViaDialog(page, sessionId, tool, value) {
         .click();
     } else {
       await page.keyboard.press('Escape');
+      await dialog.waitFor({ state: 'hidden', timeout: 5_000 });
+      await closeSettingsPage(page);
       return;
     }
   } else if ((await matching.count()) > 0) {
@@ -380,6 +379,39 @@ export async function enableToolViaDialog(page, sessionId, tool, value) {
     );
   }
   await dialog.waitFor({ state: 'hidden', timeout: 5_000 });
+  await closeSettingsPage(page);
+}
+
+/** Leave the full-screen Settings page if it is open, so the workbench takes input again. */
+export async function closeSettingsPage(page) {
+  const settings = page.locator('.settings-page');
+  if ((await settings.count()) === 0) return;
+  await settings.getByRole('button', { name: 'Back to Conduit' }).click();
+  await settings.waitFor({ state: 'hidden', timeout: 5_000 });
+}
+
+/**
+ * Row menu → Permissions ▸ → Customize… lands on the agent's drawer in MCP › Agents (canvas E1);
+ * its "Agent's own permissions…" button opens the session dialog (native modes, Codex link).
+ * @returns the dialog locator, open
+ */
+export async function openSessionPermissionsDialog(page, sessionId) {
+  const drawer = await openAgentDrawerFromRow(page, sessionId);
+  await drawer.getByRole('button', { name: 'Agent’s own permissions…' }).click();
+  const dialog = page.getByRole('dialog', { name: /^Permissions · / });
+  await dialog.waitFor({ timeout: 5_000 });
+  return dialog;
+}
+
+/** Row menu → Permissions ▸ → Customize…; @returns the open drawer locator. */
+export async function openAgentDrawerFromRow(page, sessionId) {
+  await closeSettingsPage(page);
+  await page.locator(`.session[data-sessionid="${sessionId}"]`).click({ button: 'right' });
+  await page.locator('.ctxmenu__item', { hasText: /^Permissions/ }).click();
+  await page.locator('.ctxmenu__item', { hasText: 'Customize…' }).click();
+  const drawer = page.locator('.settings-page aside.permissions-drawer');
+  await drawer.waitFor({ timeout: 5_000 });
+  return drawer;
 }
 
 /** The sessions of the latest host `state` (needs `tapBridge`). */

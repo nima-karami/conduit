@@ -57,7 +57,13 @@ it('requires replacement, reviews exact deletion and confirms the returned diges
   const root = createRoot(host);
   await act(async () =>
     root.render(
-      <PermissionsRoles serverConnected mcp={api as never} sessions={[]} registerBack={() => {}} />,
+      <PermissionsRoles
+        onViewAgents={() => {}}
+        serverConnected
+        mcp={api as never}
+        sessions={[]}
+        registerBack={() => {}}
+      />,
     ),
   );
   const click = async (label: string) => {
@@ -109,7 +115,13 @@ it('blocks a stale review from being confirmed', async () => {
   const root = createRoot(host);
   await act(async () =>
     root.render(
-      <PermissionsRoles serverConnected mcp={api as never} sessions={[]} registerBack={() => {}} />,
+      <PermissionsRoles
+        onViewAgents={() => {}}
+        serverConnected
+        mcp={api as never}
+        sessions={[]}
+        registerBack={() => {}}
+      />,
     ),
   );
   await selectRole(host, 'Stale');
@@ -122,7 +134,13 @@ it('blocks a stale review from being confirmed', async () => {
   api.state.policy.editToken = 'v2';
   await act(async () =>
     root.render(
-      <PermissionsRoles serverConnected mcp={api as never} sessions={[]} registerBack={() => {}} />,
+      <PermissionsRoles
+        onViewAgents={() => {}}
+        serverConnected
+        mcp={api as never}
+        sessions={[]}
+        registerBack={() => {}}
+      />,
     ),
   );
   expect(host.textContent).toContain('Permissions changed');

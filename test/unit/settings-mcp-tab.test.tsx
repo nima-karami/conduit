@@ -224,7 +224,7 @@ describe('Settings → MCP tab', () => {
   describe('agent deep link', () => {
     const agentsPage = { initialMcpTab: 'agents', initialAgentKey: 'cli:claude' } as const;
     const drawerTitle = () =>
-      document.body.querySelector('aside.permissions-drawer h4')?.textContent ?? null;
+      document.body.querySelector('aside .permissions-drawer__title')?.textContent ?? null;
     const nav = (label: string) =>
       [...document.body.querySelectorAll<HTMLButtonElement>('.settings__navitem')].find(
         (b) => b.textContent === label,

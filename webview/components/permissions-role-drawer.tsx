@@ -1,8 +1,8 @@
-import { useEffect, useRef } from 'react';
 import type { Profile, ToolRule } from '../../src/conduit-mcp/policy-types';
 import { TOOL_GROUPS } from '../../src/conduit-mcp/tool-policy';
 import { MCP_STR } from '../conduit-mcp-strings';
-import { groupCounts, groupText } from './permissions-role-summary';
+import { PermissionsDrawer } from './permissions-drawer';
+import { groupCounts, groupState, groupText } from './permissions-role-summary';
 
 export interface PermissionsRoleDrawerProps {
   profile: Profile;
@@ -12,6 +12,7 @@ export interface PermissionsRoleDrawerProps {
   onDuplicate(profile: Profile): void;
   onEdit(profile: Profile): void;
   onDelete(profile: Profile): void;
+  onViewAgents(): void;
 }
 
 const STR = MCP_STR.sections.roles;
@@ -34,53 +35,21 @@ export function PermissionsRoleDrawer({
   onDuplicate,
   onEdit,
   onDelete,
+  onViewAgents,
 }: PermissionsRoleDrawerProps) {
-  const heading = useRef<HTMLHeadingElement>(null);
-  useEffect(() => heading.current?.focus(), []);
   const description = profile.builtIn
     ? (STR.builtInDescription[profile.id] ?? STR.customDescription)
     : STR.customDescription;
   return (
-    <aside className="permissions-drawer" aria-labelledby="permissions-drawer-title">
-      <header className="permissions-drawer__head">
-        <h4 id="permissions-drawer-title" ref={heading} tabIndex={-1}>
-          {profile.name}
-        </h4>
-        <span className="permissions-drawer__badge">
-          {profile.builtIn ? STR.builtIn : STR.custom}
-        </span>
-        <button type="button" className="iconbtn" aria-label={STR.closeDrawer} onClick={onClose}>
-          {STR.closeGlyph}
-        </button>
-      </header>
-      <p>{description}</p>
-      <p className="permissions-drawer__used">{STR.usedBy(used)}</p>
-      {profile.builtIn && <p className="permissions-drawer__note">{STR.builtInNote}</p>}
-      {TOOL_GROUPS.map(({ group, tools }) => (
-        <details key={group} className="permissions-drawer__group">
-          <summary>
-            {MCP_STR.tools.group[group]}
-            <span className="permissions-drawer__summary">
-              {groupText(groupCounts(profile, tools))}
-            </span>
-          </summary>
-          <ul>
-            {tools.map((tool) => {
-              const rule = profile.rules[tool];
-              const extra = conditions(rule);
-              return (
-                <li key={tool}>
-                  <code>{tool}</code>
-                  <span data-decision={rule.decision}>{STR.decision[rule.decision]}</span>
-                  {extra && <span className="permissions-drawer__conditions">{extra}</span>}
-                </li>
-              );
-            })}
-          </ul>
-        </details>
-      ))}
-      <footer className="permissions-drawer__actions">
-        {profile.builtIn ? (
+    <PermissionsDrawer
+      title={profile.name}
+      badge={profile.builtIn ? STR.builtIn : STR.custom}
+      subtitle={description}
+      closeLabel={STR.closeDrawer}
+      closeGlyph={STR.closeGlyph}
+      onClose={onClose}
+      footer={
+        profile.builtIn ? (
           <button
             type="button"
             className="btn btn--primary"
@@ -93,7 +62,7 @@ export function PermissionsRoleDrawer({
           <>
             <button
               type="button"
-              className="btn"
+              className="btn btn--danger permissions-drawer__lead"
               disabled={readOnly}
               onClick={() => onDelete(profile)}
             >
@@ -116,8 +85,50 @@ export function PermissionsRoleDrawer({
               {STR.edit}
             </button>
           </>
+        )
+      }
+    >
+      <p className="permissions-drawer__used">
+        {STR.usedBy(used)}
+        {used > 0 && (
+          <>
+            {' · '}
+            <button type="button" className="permissions-drawer__link" onClick={onViewAgents}>
+              {STR.viewAgents}
+            </button>
+          </>
         )}
-      </footer>
-    </aside>
+      </p>
+      {profile.builtIn && <p className="permissions-drawer__note">{STR.builtInNote}</p>}
+      <div className="permissions-drawer__groups">
+        {TOOL_GROUPS.map(({ group, tools }) => {
+          const counts = groupCounts(profile, tools);
+          return (
+            <details key={group} className="permissions-drawer__group">
+              <summary>
+                <span className="permissions-drawer__groupname">{MCP_STR.tools.group[group]}</span>
+                <span className="permissions-drawer__summary">{groupText(counts)}</span>
+                <span className="permissions-pill" data-state={groupState(counts)}>
+                  {STR.pill[groupState(counts)]}
+                </span>
+              </summary>
+              <ul>
+                {tools.map((tool) => {
+                  const rule = profile.rules[tool];
+                  const extra = conditions(rule);
+                  return (
+                    <li key={tool}>
+                      <code>{tool}</code>
+                      <span data-decision={rule.decision}>{STR.decision[rule.decision]}</span>
+                      {extra && <span className="permissions-drawer__conditions">{extra}</span>}
+                    </li>
+                  );
+                })}
+              </ul>
+            </details>
+          );
+        })}
+      </div>
+    </PermissionsDrawer>
   );
 }
