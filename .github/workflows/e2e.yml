@@ -448,15 +448,17 @@ jobs:
           tree=$(git rev-parse 'HEAD^{tree}')
           node --input-type=module - "$tree" <<'JS'
           import { appendFileSync, readFileSync } from 'node:fs';
-          import { cleanFullResult } from './test/e2e/ci-full-proof.mjs';
-          if (cleanFullResult(JSON.parse(readFileSync('out/result.json', 'utf8')))) {
-            appendFileSync(process.env.GITHUB_OUTPUT, `tree=${process.argv[2]}\n`);
+          import { cleanFullResult, taggableFullResult } from './test/e2e/ci-full-proof.mjs';
+          const result = JSON.parse(readFileSync('out/result.json', 'utf8'));
+          if (taggableFullResult(result)) {
+            const prefix = cleanFullResult(result) ? 'e2e-full' : 'e2e-tested';
+            appendFileSync(process.env.GITHUB_OUTPUT, `artifact=${prefix}-${process.argv[2]}\n`);
           }
           JS
-      - if: steps.release-proof.outputs.tree != ''
+      - if: steps.release-proof.outputs.artifact != ''
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-full-${{ steps.release-proof.outputs.tree }}
+          name: ${{ steps.release-proof.outputs.artifact }}
           path: out/result.json
           if-no-files-found: error
           retention-days: 90

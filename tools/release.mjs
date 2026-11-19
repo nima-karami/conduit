@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { findReleaseTreeProof } from '../test/e2e/ci-full-proof.mjs';
+import { findTagTreeProof } from '../test/e2e/ci-full-proof.mjs';
 
 const UNRELEASED = /^## \[Unreleased\][^\S\r\n]*\r?\n/m;
 const SECTION = /^## \[/m;
@@ -127,13 +127,17 @@ function tagRelease(version) {
       encoding: 'utf8',
     },
   ).trim();
-  const proof = findReleaseTreeProof(repo, tree);
+  const proof = findTagTreeProof(repo, tree);
   if (!proof)
     throw new Error(
-      `No clean full e2e proof for tree ${tree}. Run npm run e2e:remote -- --full before tagging.`,
+      `No passing full e2e proof for tree ${tree}. Run npm run e2e:remote -- --full before tagging.`,
     );
   git('tag', '-a', tag, sha, '-m', `Conduit ${tag}`);
-  console.log(`Created local tag ${tag} at ${sha} using ${proof.html_url}`);
+  if (!proof.reuse)
+    console.log(
+      'Release will run the full e2e suite because the evidence has a quarantined failure.',
+    );
+  console.log(`Created local tag ${tag} at ${sha} using ${proof.run.html_url}`);
 }
 
 function main([action = 'patch', ...extra]) {

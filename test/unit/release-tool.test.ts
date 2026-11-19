@@ -69,7 +69,10 @@ describe('Release workflow', () => {
     expect([...downstream]).toEqual(expect.arrayContaining(['build-and-publish', 'build-linux']));
     downstream.delete('e2e');
     for (const name of downstream) {
-      expect(jobs[name].if).toMatch(/needs(?:\.[\w-]+|\[['"][\w-]+['"]\])\.result/);
+      expect(jobs[name].if).toMatch(/!\s*cancelled\(\s*\)/);
+      expect(jobs[name].if).toMatch(
+        /needs(?:\.[\w-]+|\[['"][\w-]+['"]\])\.result\s*==\s*'success'/,
+      );
     }
     expect(jobs['build-linux'].if).toContain("needs.build-and-publish.result == 'success'");
   });

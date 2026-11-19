@@ -21,6 +21,17 @@ interface ReleaseRun extends FullRun {
 }
 
 export function cleanFullResult(result: unknown): boolean;
+export function taggableFullResult(result: unknown): boolean;
+export function provesTagTree(
+  run: ReleaseRun,
+  result: unknown,
+  scope: { repo: string; tree: string },
+): boolean;
+export function findTagTreeProof(
+  repo: string,
+  tree: string,
+  gh?: (args: string[]) => string,
+): { run: ReleaseRun & { html_url: string }; reuse: boolean } | null;
 export function provesReleaseTree(
   run: ReleaseRun,
   result: unknown,

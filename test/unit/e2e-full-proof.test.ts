@@ -4,8 +4,10 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   cleanFullResult,
   findReleaseTreeProof,
+  findTagTreeProof,
   provesFullTree,
   provesReleaseTree,
+  provesTagTree,
 } from '../e2e/ci-full-proof.mjs';
 
 describe('nightly full-tree evidence', () => {
@@ -96,6 +98,38 @@ describe('release full-tree evidence', () => {
     ).toBe(true);
   });
 
+  it('allows a quarantined failure to authorize a tag without authorizing Release reuse', () => {
+    const withQuarantine = {
+      ...result,
+      results: [...result.results, { status: 'QUARANTINED-FAIL', attempts: 1 }],
+    };
+    expect(provesTagTree(run, withQuarantine, scope)).toBe(true);
+    expect(provesReleaseTree(run, withQuarantine, scope)).toBe(false);
+    for (const status of ['FAIL', 'FLAKY', 'TIMEOUT', 'INFRA']) {
+      expect(
+        provesTagTree(
+          run,
+          {
+            ...result,
+            results: [...result.results, { status, attempts: 1 }],
+          },
+          scope,
+        ),
+      ).toBe(false);
+    }
+    expect(
+      provesTagTree(
+        run,
+        {
+          ...result,
+          results: [...result.results, { status: 'PASS', attempts: 2 }],
+        },
+        scope,
+      ),
+    ).toBe(false);
+    expect(provesTagTree({ ...run, run_attempt: 2 }, withQuarantine, scope)).toBe(false);
+  });
+
   it('rejects different workflows, repositories and trees, reruns and unsuccessful conclusions', () => {
     for (const override of [
       { path: '.github/workflows/release.yml' },
@@ -181,6 +215,42 @@ describe('release evidence lookup', () => {
       warning.mockRestore();
     }
   });
+
+  it.each([false, true])(
+    'tag lookup reports strict versus quarantine evidence (%s)',
+    (quarantine) => {
+      const prefix = quarantine ? 'e2e-tested' : 'e2e-full';
+      const artifactName = `${prefix}-${tree}`;
+      const gh = (args: string[]) => {
+        if (args.includes('--paginate')) {
+          return JSON.stringify([
+            {
+              artifacts: args.at(-1)?.includes(`name=${artifactName}`)
+                ? [{ ...artifact(42), name: artifactName }]
+                : [],
+            },
+          ]);
+        }
+        if (args[0] === 'api') return JSON.stringify(valid);
+        expect(args).toContain(artifactName);
+        const results = [{ status: 'PASS', attempts: 1 }];
+        if (quarantine) results.push({ status: 'QUARANTINED-FAIL', attempts: 1 });
+        writeFileSync(
+          join(args[8], 'result.json'),
+          JSON.stringify({
+            sha: valid.head_sha,
+            runId: 42,
+            selection: 'full',
+            status: 'passed',
+            results,
+          }),
+        );
+        return '';
+      };
+      expect(findTagTreeProof(repo, tree, gh)).toEqual({ run: valid, reuse: !quarantine });
+      expect(findReleaseTreeProof(repo, tree, gh)).toEqual(quarantine ? null : valid);
+    },
+  );
 
   it('returns no proof for empty storage and exposes a lookup error to the workflow fallback', () => {
     expect(findReleaseTreeProof(repo, tree, () => '[{"artifacts":[]}]')).toBeNull();
