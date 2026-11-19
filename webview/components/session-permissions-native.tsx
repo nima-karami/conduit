@@ -28,8 +28,8 @@ function describeIntent(intent: NativeLaunchIntent): string {
 const RECOVERY: Record<NativeLaunchFailure, string> = {
   conflict: 'Remove the conflicting native permission flags from the agent launcher, then retry.',
   unsupported: 'Use a directly launched, supported Claude or Codex agent to apply a native mode.',
-  'policy-unavailable': 'Open MCP › Agents to inspect and retry the permissions store.',
-  'save-failed': 'Open MCP › Agents to inspect the permissions store, then retry the launch.',
+  'policy-unavailable': MCP_STR.sections.agents.nativeRecovery.policyUnavailable,
+  'save-failed': MCP_STR.sections.agents.nativeRecovery.saveFailed,
 };
 
 function reportedTime(timestamp: number): string {

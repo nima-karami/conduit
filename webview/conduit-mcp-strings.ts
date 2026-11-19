@@ -157,6 +157,10 @@ export const MCP_STR = {
       closeDrawer: 'Close',
       closeGlyph: '✕',
       openInAgents: 'Open in MCP › Agents',
+      nativeRecovery: {
+        policyUnavailable: 'Open MCP › Agents to inspect and retry the permissions store.',
+        saveFailed: 'Open MCP › Agents to inspect the permissions store, then retry the launch.',
+      },
     },
   },
   firstRun: 'Agents in your sessions can message each other and you. Messages appear here.',
