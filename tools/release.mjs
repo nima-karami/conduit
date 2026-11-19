@@ -59,6 +59,7 @@ const git = (...args) =>
   execFileSync('git', args, {
     encoding: 'utf8',
     env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+    stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
 
 function requireCleanTree() {
@@ -68,6 +69,14 @@ function requireCleanTree() {
 const readJson = (file) => JSON.parse(readFileSync(file, 'utf8'));
 
 function prepareRelease(pkg, bump, allowNonMain) {
+  try {
+    git('var', 'GIT_AUTHOR_IDENT');
+    git('var', 'GIT_COMMITTER_IDENT');
+  } catch {
+    throw new Error(
+      'Set Git user.name and user.email, or set GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL, GIT_COMMITTER_NAME and GIT_COMMITTER_EMAIL before preparing a release.',
+    );
+  }
   if (!allowNonMain) {
     git('fetch', 'origin', 'main');
     if (git('rev-parse', 'HEAD') !== git('rev-parse', 'origin/main')) {
