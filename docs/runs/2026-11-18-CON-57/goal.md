@@ -32,6 +32,7 @@ quarantined.
 3. Rename "profile" → "role" in copy only, or also identifiers?
 4. Per-CLI defaults (today) live under "Defaults by agent type" on the Agents tab.
 5. Runtime hint strings inside the frozen policy code still say "Settings → Permissions" (nav item is gone): `src/conduit-mcp/tool-policy.ts:451`, `screen-tools.ts:50`, `app-control-tools.ts:200`, asserted by `test/unit/conduit-mcp-call-flow.test.ts:406`; also `webview/components/session-permissions-native.tsx:30-31` says "Open Permissions…". Default: left alone (copy-only follow-up for the lead/owner).
+6. [high] The window's bottom-right is reserved for floating notices (toast stack `z-index: var(--layer-toast)`, up to 420px wide, plus the approval card dock). The full-screen page puts drawer actions (Cancel / Review and save / Delete) at the bottom-right, so an update notice or approval card covers them: remote e2e `permissions-session` failed on exactly this (run 44425499156, 'toast--info intercepts pointer events'). Default taken: the e2e dismisses the update notice; the product layout is unchanged (matches the approved canvas). Recommended fix for the owner: move drawer actions to the drawer header, and update canvas boards D3–D5 to match.
 
 **Lead requirements (claude-3, 2026-11-18T22:57, m_dlblduowv52vux22).**
 - Stay out of CON-60's files: `electron/updater.ts`, `deb-install-failure.ts`, update toast/card, whats-new.

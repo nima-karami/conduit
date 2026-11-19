@@ -147,6 +147,11 @@ await runScenario(
     await settings
       .getByRole('combobox', { name: 'Codex', exact: true })
       .selectOption('workspace-write');
+    // The floating update notice covers the page's bottom-right actions (CON-57 decision 6).
+    const updateNotice = page.locator('[data-post-update-toast]');
+    if ((await updateNotice.count()) > 0) {
+      await updateNotice.getByRole('button', { name: 'Dismiss update' }).click();
+    }
     await settings.getByRole('button', { name: 'Review and save' }).click();
     await settings.getByRole('heading', { name: 'Review profile changes' }).waitFor();
     await settings.getByRole('row', { name: /Codex.*workspace-write/ }).waitFor();
