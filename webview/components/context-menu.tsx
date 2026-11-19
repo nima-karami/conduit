@@ -57,6 +57,7 @@ export interface MenuState {
   x: number;
   y: number;
   items: MenuEntry[];
+  heading?: { title: string; description?: string };
   /** Opened via the keyboard (Shift+F10) — start the highlight on the first enabled item so arrow
    *  keys and Enter work immediately, instead of pointer mode's -1 (no highlight). */
   keyboard?: boolean;
@@ -376,6 +377,7 @@ export function ContextMenu({
         triggerRef={triggerRef}
         className="ctxmenu"
         role="menu"
+        aria-labelledby={menu.heading ? `${baseId}-heading` : undefined}
         aria-activedescendant={activeIndex >= 0 ? rootId(activeIndex) : undefined}
         data-pointer={pointer}
         style={menu.anchor ? { maxWidth } : { minWidth, maxWidth }}
@@ -386,6 +388,12 @@ export function ContextMenu({
           else cancelHover();
         }}
       >
+        {menu.heading && (
+          <div className="ctxmenu__heading" id={`${baseId}-heading`}>
+            <strong>{menu.heading.title}</strong>
+            {menu.heading.description && <span>{menu.heading.description}</span>}
+          </div>
+        )}
         {rows(menu.items, false)}
       </Popover>
       {child && (

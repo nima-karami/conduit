@@ -26,7 +26,7 @@ import {
 /**
  * The terminal surface. Aero re-scopes the page tiers to ink inside it, and a custom property
  * resolves where it is DECLARED — so anything painted over a terminal has to be measured with
- * this block layered on, not against :root. Without it a chip token can read 4.5:1 in the test
+ * this block layered on, not against :root. Without it a bar token can read 4.5:1 in the test
  * and under 3:1 on screen.
  */
 const AERO_TERM = tokensFor(
@@ -222,9 +222,8 @@ describe('change-marker tokens', () => {
 });
 
 /**
- * Timed-message tones (spec 2026-08-28-timed-messages §10, §11). The chip paints on --raise, so
- * that is the surface. §10 puts the bar at 4.5:1 for chip TEXT, which also clears the 3:1 its
- * border needs — the border reuses the same token.
+ * Timed-message tones (spec 2026-08-28-timed-messages §10, §11). The bar paints on --raise, so
+ * that is the surface. §10 requires 4.5:1 for the schedule text.
  */
 describe('timed-message tokens', () => {
   const TIMER_TOKENS = ['--timer-armed', '--timer-auto', '--timer-late'];
@@ -244,12 +243,12 @@ describe('timed-message tokens', () => {
     return `#${a.map((v, i) => hex(v * p + b[i] * (1 - p))).join('')}`;
   }
 
-  // The chip lives inside .termwrap, so the tiers it resolves against are that scope's — which
+  // The bar lives inside .termwrap, so the tiers it resolves against are that scope's — which
   // on Aero is the ink block, not the page one :root declares.
   for (const { id } of THEMES) {
     const surface = resolve(terminalScope(id), '--raise');
     for (const token of TIMER_TOKENS) {
-      it(`${id}: ${token} reads on the chip surface ${surface}`, () => {
+      it(`${id}: ${token} reads on the bar surface ${surface}`, () => {
         expect(
           contrast(resolveMixed(declaringScope(id, token), token), surface),
         ).toBeGreaterThanOrEqual(4.5);
@@ -257,30 +256,25 @@ describe('timed-message tokens', () => {
     }
   }
 
-  it('restates the timer tones inside the terminal scope, where the chip paints', () => {
-    // Without this the Aero cases above would silently measure a surface the chip never uses.
+  it('restates the timer tones inside the terminal scope, where the bar paints', () => {
+    // Without this the Aero cases above would silently measure a surface the bar never uses.
     expect(Object.keys(AERO_TERM)).toEqual(
       expect.arrayContaining(['--timer-armed', '--timer-auto', '--timer-late', '--raise']),
     );
   });
 
-  it('never signals with colour alone — Auto and late are words, not hues', () => {
-    expect(CSS).toMatch(/\.term-timer__badge\s*\{/);
-    expect(CSS).toMatch(/\.term-timer__word\s*\{/);
+  it('keeps the bar in flow so the terminal fits beneath it', () => {
+    expect(CSS).toMatch(/\.session-bar\s*\{[^}]*flex:\s*0 0 auto/);
   });
 
-  it('steps below the find bar instead of out-specifying it', () => {
-    expect(CSS).toMatch(/\.term-timer--stacked\s*\{[^}]*top:\s*44px/);
+  it('drops the bar animation under BOTH reduced-motion switches', () => {
+    expect(CSS).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]{0,400}\.session-bar/);
+    expect(CSS).toMatch(/:root\[data-reduce-motion="true"\][^{]*\.session-bar/);
   });
 
-  it('drops the chip animation under BOTH reduced-motion switches', () => {
-    expect(CSS).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]{0,400}\.term-timer/);
-    expect(CSS).toMatch(/:root\[data-reduce-motion="true"\][^{]*\.term-timer/);
-  });
-
-  it('carries state on the border under forced colors, never a background', () => {
+  it('keeps the bar boundary visible under forced colors', () => {
     expect(CSS).toMatch(
-      /@media \(forced-colors: active\)[\s\S]{0,400}\.term-timer\s*\{[^}]*border-color:\s*CanvasText/,
+      /@media \(forced-colors: active\)[\s\S]{0,400}\.session-bar\s*\{[^}]*border-color:\s*CanvasText/,
     );
   });
 });

@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { adapterFor } from '../../src/conduit-mcp/adapters';
 import type { AgentCli } from '../../src/conduit-mcp/install-types';
@@ -105,6 +106,7 @@ export function CenterPane({
   onCloseDoc,
   onRelaunch,
   onOpenTimedMessages,
+  renderSessionBar,
   onTabContextMenu,
   onTerminalTabContextMenu,
   onReorderDoc,
@@ -175,6 +177,7 @@ export function CenterPane({
   onCloseDoc: (id: string, group: GroupIndex) => void;
   onRelaunch: (id: string) => void;
   /** Open the timed-message dialog for a session — from the stale card's Waiting line. */
+  renderSessionBar: (session: Session, visible: boolean) => ReactNode;
   onOpenTimedMessages?: (sessionId: string) => void;
   onTabContextMenu?: (e: React.MouseEvent, doc: OpenDoc, group: GroupIndex) => void;
   onTerminalTabContextMenu?: (e: React.MouseEvent) => void;
@@ -460,6 +463,7 @@ export function CenterPane({
             data-sessionid={s.id}
             style={{ display: visible ? 'flex' : 'none', flex: visible ? 1 : undefined }}
           >
+            {renderSessionBar(s, visible)}
             {isSplit && (
               <div className="termhost__bar">
                 <span className="termhost__name">{s.name}</span>
@@ -538,7 +542,6 @@ export function CenterPane({
                 onOpenFile={onOpenFileAt}
                 onRevealFolder={onRevealFolder}
                 onOpenCommitReview={onOpenCommitReview}
-                onOpenTimedMessages={onOpenTimedMessages}
                 onSearchAllFiles={onSearchAllFiles}
                 onOpenAsSession={onOpenAsSessionFromTerminal}
                 openAsSessionHint={openAsSessionHintFor?.(s.id)}

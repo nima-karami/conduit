@@ -4034,6 +4034,12 @@ app.whenReady().then(() => {
         case 'timer:renew':
           await timerCall(replyHere, 'timers.renew', { id: m.id });
           break;
+        case 'timer:setSessionAutoResume':
+          await callServer('scheduler.setSessionAutoResume', {
+            sessionId: m.sessionId,
+            mode: m.mode,
+          });
+          break;
         case 'timer:sendNow':
           await timerCall(replyHere, 'timers.sendNow', { id: m.id });
           break;

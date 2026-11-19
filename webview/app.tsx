@@ -157,6 +157,7 @@ import { QuitScrim } from './components/quit-scrim';
 import { RightPane, type RightPaneHandle } from './components/right-pane';
 import type { SearchScopeModel } from './components/search-pane';
 import { ServerBanner } from './components/server-banner';
+import { SessionBar } from './components/session-bar';
 import { SettingsPage, type SettingsTab } from './components/settings-page';
 import { Sidebar } from './components/sidebar';
 import { StatusBar } from './components/status-bar';
@@ -726,8 +727,13 @@ export function App() {
     revision: number;
   } | null>(null);
   const closeWorkspacePermissions = useCallback(() => setWorkspacePermissions(null), []);
-  const openWorkspacePermissions = (sessionId: string, stage?: AgentStage) => {
+  const openWorkspacePermissions = (
+    sessionId: string,
+    stage?: AgentStage,
+    trigger?: HTMLElement,
+  ) => {
     const opener =
+      trigger ??
       document.querySelector<HTMLElement>(`.session[data-sessionid="${CSS.escape(sessionId)}"]`) ??
       (document.activeElement instanceof HTMLElement ? document.activeElement : undefined);
     setWorkspacePermissions((previous) => ({
@@ -738,7 +744,7 @@ export function App() {
     }));
   };
 
-  /** The palette acts on the ACTIVE session; the chip, the card menu and the stale card name one. */
+  /** The palette acts on the ACTIVE session; the session bar, the card menu and the stale card name one. */
   const openTimedMessages = useCallback(
     (sessionId?: string) => {
       const target = sessionId ?? activeId;
@@ -3889,13 +3895,15 @@ export function App() {
   // `scope` is the row's multi-selection and sub-agents (CON-167); a multi-selection gets its own menu.
   const openSessionMenu = (
     s: Session,
-    at: { x: number; y: number } | { anchor: Rect; keyboard: true },
+    at: { x: number; y: number } | { anchor: Rect; keyboard: boolean },
     scope: RowMenuScope = NO_SCOPE,
   ) => {
     const point = 'anchor' in at ? { x: at.anchor.left, y: at.anchor.bottom } : at;
     const showMenu = (items: MenuEntry[]) =>
       setMenu(
-        'anchor' in at ? { ...triggerMenu(at.anchor), keyboard: true, items } : { ...at, items },
+        'anchor' in at
+          ? { ...triggerMenu(at.anchor), keyboard: at.keyboard, items }
+          : { ...at, items },
       );
     if (scope.selectedIds.length >= 2) {
       const ids = [...scope.selectedIds];
@@ -5586,6 +5594,43 @@ export function App() {
               onCloseDoc={(id, group) => void closeTabsByUser([id], group, 'button')}
               onRelaunch={(id) => post({ type: 'relaunch', id })}
               onOpenTimedMessages={openTimedMessages}
+              renderSessionBar={(session, visible) => {
+                const handle = mcp.state?.sessions[session.id]?.handle ?? session.mcpHandle;
+                const isAgent = !!session.agentId && !session.agentId.startsWith('shell:');
+                const role = isAgent
+                  ? sessionPermissionSummary(mcp.state?.policy, session.id)?.roleName
+                  : undefined;
+                return (
+                  <SessionBar
+                    sessionId={session.id}
+                    name={isAgent ? (handle ?? session.name) : session.name}
+                    icon={<SessionGlyph icon={resolveSessionIcon(session, agents)} size={14} />}
+                    role={role}
+                    visible={visible}
+                    autoResume={
+                      isAgent
+                        ? {
+                            on: (session.autoResume ?? settings.autoResume) !== 'off',
+                            set: (on) =>
+                              post({
+                                type: 'timer:setSessionAutoResume',
+                                sessionId: session.id,
+                                mode: on ? 'on' : 'off',
+                              }),
+                          }
+                        : undefined
+                    }
+                    onSessionMenu={(anchor, keyboard) =>
+                      openSessionMenu(session, { anchor, keyboard })
+                    }
+                    onPermissions={(opener) =>
+                      openWorkspacePermissions(session.id, undefined, opener)
+                    }
+                    onOpen={() => openTimedMessages(session.id)}
+                    onScheduleMenu={setMenu}
+                  />
+                );
+              }}
               onTabContextMenu={onTabContextMenu}
               onGroupStripContextMenu={onGroupStripContextMenu}
               onTerminalTabContextMenu={onTerminalTabContextMenu}

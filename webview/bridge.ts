@@ -1172,6 +1172,14 @@ function mockHost(msg: WebviewToHost) {
     emitTimerState();
     return;
   }
+  if (msg.type === 'timer:setSessionAutoResume') {
+    const session = allMockSessions.find((s) => s.id === msg.sessionId);
+    if (session) {
+      session.autoResume = msg.mode;
+      emit(mockState());
+    }
+    return;
+  }
   if (msg.type === 'timer:cancel') {
     const i = previewSchedules.findIndex((s) => s.id === msg.id);
     if (i >= 0) previewSchedules.splice(i, 1);
