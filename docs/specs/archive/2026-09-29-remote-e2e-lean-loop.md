@@ -296,6 +296,8 @@ an overlap only queues jobs, it never cancels a run.
   - A failed or timed-out scenario is retried **once**, as a new Node child in the same shard job
     after the existing orphan sweep. If the retry passes, the result is **FLAKY** and the run
     passes.
+  - Quarantined scenarios still run once and report failures. Routine runs do not retry them.
+    Named repeat runs still count every requested attempt.
   - The report lists quarantine *candidates*: FLAKY 3+ times in 14 days of nightly history.
   - Quarantine itself is `test/e2e/quarantine.json`, edited by a normal reviewed commit, never by a
     bot. A quarantined scenario still runs and is reported (`QUARANTINED-FAIL`), but doesn't fail

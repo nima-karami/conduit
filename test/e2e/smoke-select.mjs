@@ -157,6 +157,10 @@ export function isGreen(status) {
   return status === 'PASS' || status === 'SKIP' || status === 'QUARANTINED-FAIL';
 }
 
+export function shouldRetryScenario(name, status, quarantine) {
+  return status !== 'LOCK-TIMEOUT' && !isGreen(applyQuarantine(name, status, quarantine));
+}
+
 /** Harness watchdog delay: the deadline counts from process start, minus the e2e-lock wait. */
 export function watchdogDelayMs({ deadlineMs, uptimeMs, lockWaitMs }) {
   return Math.max(0, deadlineMs - (uptimeMs - lockWaitMs));

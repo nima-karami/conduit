@@ -19,7 +19,7 @@
  *                 in repeat mode each attempt is `{ name, attempt, status, seconds, exit }`
  *   --artifacts   failure artifacts root: each non-PASS attempt's log (and, from the harness, its
  *                 trace and screenshots) lands in <dir>/<name>/attempt-<n>/
- *   --retry       a failed or timed-out scenario runs once more; a pass then is FLAKY
+ *   --retry       a failed or timed-out unquarantined scenario runs once more; a pass then is FLAKY
  *                 (ignored in repeat mode)
  *   --repeat K    run each scenario K times (K ≥ 1, default 1); every attempt is its own result row
  *   --attempt-base N  first attempt number (integer ≥ 1); implies repeat mode even when K is 1
@@ -54,6 +54,7 @@ import {
   repeatMode,
   resolveSelection,
   selectRunProfiles,
+  shouldRetryScenario,
 } from './smoke-select.mjs';
 
 /** Settle delay between scenarios: gives the prior Electron process time to fully
@@ -366,8 +367,7 @@ async function main() {
     process.stdout.write(`  ${name} ... `);
     const first = await runAttempt(name, 1);
     let last = first;
-    // A retry after a lock-wait timeout would only wait on the same other app again.
-    if (retry && !isGreen(first.status) && first.status !== 'LOCK-TIMEOUT') {
+    if (retry && shouldRetryScenario(name, first.status, quarantine)) {
       console.log(`${first.status} (${first.seconds}s, exit ${first.exit}), retrying`);
       await afterFailure(first);
       await settle();

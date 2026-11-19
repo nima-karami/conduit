@@ -969,15 +969,8 @@ export async function closeApp(app, _page) {
     .catch(() => []);
   const answerer = await answerQuitAsks(app, { proceed: true });
   await app.evaluate((electron) => electron.app.quit()).catch(() => {});
-  // Poll with plain setTimeout — the page closes mid-wait, so page.waitForTimeout would throw.
-  const deadline = Date.now() + 10000;
-  while (Date.now() < deadline) {
-    const n = await app
-      .evaluate((electron) => electron.BrowserWindow.getAllWindows().length)
-      .catch(() => 0);
-    if (n === 0) break;
-    await new Promise((r) => setTimeout(r, 150));
-  }
+  // Closing the last window comes before Electron releases the profile's singleton lock.
+  assert(await appExited(app, EXIT_WAIT_MS), 'Electron did not exit after the quit guard');
   if (startIds.length > 1) {
     const asked = new Set((await answerer.asks()).map((a) => a.windowId));
     const missed = startIds.filter((id) => !asked.has(id));

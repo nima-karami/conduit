@@ -48,6 +48,11 @@ export function applyQuarantine(
   status: ScenarioStatus,
   quarantine: { scenarios?: Record<string, { reason: string; since: string }> } | null,
 ): ScenarioStatus;
+export function shouldRetryScenario(
+  name: string,
+  status: string,
+  quarantine: { scenarios: Record<string, unknown> } | null,
+): boolean;
 export function isGreen(status: string): boolean;
 export function watchdogDelayMs(o: {
   deadlineMs: number;

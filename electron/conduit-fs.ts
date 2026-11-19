@@ -7,6 +7,7 @@ import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { type ArchDoc, restoreArchitecture } from '../src/architecture';
+import { renameWithSharingRetry } from '../src/atomic-write';
 import type { BoardData } from '../src/board';
 import {
   type ConduitKind,
@@ -233,7 +234,24 @@ export function readArchitectureForProject(projectRoot: string): ArchDoc | null 
  * SURFACED (the promise rejects) — a failed save must never be silently mistaken for
  * success, since `.conduit/` artifacts are committed and reviewed (ADR §5).
  */
-async function writeAtomic(target: string, text: string): Promise<void> {
+const writeTails = new Map<string, Promise<void>>();
+
+function writeAtomic(target: string, text: string): Promise<void> {
+  // A retry of an older edit must finish before a newer edit can replace the file.
+  const absolute = path.resolve(target);
+  const key = process.platform === 'win32' ? absolute.toLowerCase() : absolute;
+  const replace = () => replaceAtomic(absolute, text);
+  const previous = writeTails.get(key);
+  const write = previous ? previous.then(replace, replace) : replace();
+  writeTails.set(key, write);
+  const clear = () => {
+    if (writeTails.get(key) === write) writeTails.delete(key);
+  };
+  void write.then(clear, clear);
+  return write;
+}
+
+async function replaceAtomic(target: string, text: string): Promise<void> {
   const dir = path.dirname(target);
   await fs.promises.mkdir(dir, { recursive: true });
   const tmp = path.join(dir, `.${path.basename(target)}.${randomBytes(6).toString('hex')}.tmp`);
@@ -244,7 +262,7 @@ async function writeAtomic(target: string, text: string): Promise<void> {
     if (!replace.ok) throw new Error(replace.error);
     await fs.promises.writeFile(tmp, text, 'utf8');
     if (replace.original) await applyReplacedMode(tmp, replace.original);
-    await fs.promises.rename(tmp, target);
+    await renameWithSharingRetry(tmp, target);
   } catch (err) {
     // Best-effort cleanup of the temp file; never mask the original error.
     await fs.promises.rm(tmp, { force: true }).catch(() => {});

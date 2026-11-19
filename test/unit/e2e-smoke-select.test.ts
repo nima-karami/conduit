@@ -15,6 +15,7 @@ import {
   RUN_MARKER,
   repeatMode,
   resolveSelection,
+  shouldRetryScenario,
   watchdogDelayMs,
 } from '../e2e/smoke-select.mjs';
 
@@ -156,6 +157,15 @@ describe('repeatMode', () => {
 
 describe('applyQuarantine', () => {
   const q = { scenarios: { flaky: { reason: 'races the watcher', since: '2026-09-30' } } };
+
+  it('runs quarantined scenarios once and still retries ordinary failures', () => {
+    expect(shouldRetryScenario('flaky', 'FAIL', q)).toBe(false);
+    expect(shouldRetryScenario('flaky', 'TIMEOUT', q)).toBe(false);
+    expect(shouldRetryScenario('candidate', 'FAIL', q)).toBe(true);
+    expect(shouldRetryScenario('candidate', 'TIMEOUT', q)).toBe(true);
+    expect(shouldRetryScenario('candidate', 'LOCK-TIMEOUT', q)).toBe(false);
+    expect(shouldRetryScenario('candidate', 'PASS', q)).toBe(false);
+  });
 
   it('turns a quarantined FAIL or TIMEOUT into QUARANTINED-FAIL, which does not fail the run', () => {
     expect(applyQuarantine('flaky', 'FAIL', q)).toBe('QUARANTINED-FAIL');

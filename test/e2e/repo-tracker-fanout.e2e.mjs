@@ -62,7 +62,7 @@ function initRepo(dir) {
 /** page.waitForFunction that fails as an assertion, naming what the page actually held. */
 async function waitOrFail(page, fn, arg, timeout, what, observe) {
   try {
-    await page.waitForFunction(fn, arg, { timeout });
+    await page.waitForFunction(fn, arg, { timeout, polling: 25 });
   } catch (e) {
     if (e?.name !== 'TimeoutError') throw e;
     const seen = await page.evaluate(observe, arg);
@@ -128,6 +128,15 @@ runScenario('repo-tracker-fanout', async ({ app, page, log }) => {
     await installGitProbe(app);
     await installGitDirWatchProbe(app, [repoA, repoB]);
     const ticketId = await openSession(page, { path: slash(ticket) });
+    await openChangesTab(page);
+    // Hidden sessions cannot start their first Git refresh.
+    await page.waitForFunction(
+      (id) =>
+        Object.keys(window.__sessions?.find((session) => session.id === id)?.repoGit ?? {}).length >
+        0,
+      ticketId,
+      { timeout: 30000 },
+    );
     const parentId = await openSession(page, { path: slash(ws) });
     await openChangesTab(page);
 
