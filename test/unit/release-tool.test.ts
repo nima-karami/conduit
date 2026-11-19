@@ -81,6 +81,65 @@ describe('Release workflow', () => {
 describe('release command guards', () => {
   const cli = resolve('tools/release.mjs');
 
+  it.each(['author', 'committer'] as const)(
+    'leaves the branch, index and worktree untouched when the %s identity is missing',
+    (missing) => {
+      const repo = mkdtempSync(join(tmpdir(), 'conduit-release-identity-'));
+      const env = { ...process.env };
+      for (const key of Object.keys(env)) {
+        if (/^GIT_(AUTHOR|COMMITTER|CONFIG)(_|$)/.test(key) || key === 'EMAIL') delete env[key];
+      }
+      env.GIT_CONFIG_GLOBAL = join(repo, 'unused-global-config');
+      env.GIT_CONFIG_NOSYSTEM = '1';
+      const author = { GIT_AUTHOR_NAME: 'Release test', GIT_AUTHOR_EMAIL: 'test@example.com' };
+      const committer = {
+        GIT_COMMITTER_NAME: 'Release test',
+        GIT_COMMITTER_EMAIL: 'test@example.com',
+      };
+      const git = (...args: string[]) =>
+        execFileSync('git', args, {
+          cwd: repo,
+          env,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }).trim();
+      try {
+        git('init', '-q', '-b', 'main');
+        git('config', 'user.useConfigOnly', 'true');
+        writeFileSync(join(repo, 'README.md'), '> **Status:** early releases (`v0.70.0`).\n');
+        writeFileSync(join(repo, 'CHANGELOG.md'), '## [Unreleased]\n\n- Ship a fix.\n');
+        writeFileSync(join(repo, 'package.json'), '{"version":"0.70.0"}\n');
+        writeFileSync(
+          join(repo, 'package-lock.json'),
+          '{"version":"0.70.0","packages":{"":{"version":"0.70.0"}}}\n',
+        );
+        git('add', '.');
+        execFileSync('git', ['commit', '-qm', 'seed'], {
+          cwd: repo,
+          env: { ...env, ...author, ...committer },
+        });
+        const head = git('rev-parse', 'HEAD');
+
+        const result = spawnSync(process.execPath, [cli, 'patch', '--allow-non-main'], {
+          cwd: repo,
+          env: { ...env, ...(missing === 'author' ? committer : author) },
+          encoding: 'utf8',
+        });
+
+        expect(result.status).toBe(1);
+        expect(git('branch', '--show-current')).toBe('main');
+        expect(git('branch', '--list', 'release/*')).toBe('');
+        expect(git('rev-parse', 'HEAD')).toBe(head);
+        expect(git('status', '--porcelain')).toBe('');
+        expect(result.stderr).toContain('Set Git user.name and user.email');
+        expect(result.stderr).toContain('GIT_AUTHOR_NAME');
+        expect(result.stderr).toContain('GIT_COMMITTER_NAME');
+      } finally {
+        rmSync(repo, { recursive: true, force: true });
+      }
+    },
+  );
+
   it('rejects dirty releases, wrong tag branches and preparation away from origin/main', () => {
     const fixture = mkdtempSync(join(tmpdir(), 'conduit-release-guard-'));
     const remote = join(fixture, 'origin.git');

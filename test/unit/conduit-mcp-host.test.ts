@@ -16,7 +16,12 @@ import { AgentRegistry } from '../../src/agent-registry';
 import type { StuckScreen } from '../../src/cli-stuck-screens';
 import type { ActivityIo } from '../../src/conduit-mcp/activity-log';
 import { MCP_ADAPTERS } from '../../src/conduit-mcp/adapters';
-import type { McpFileRequest, McpOpenRequest, PathKind } from '../../src/conduit-mcp/control-tools';
+import {
+  ACT_RATE_PER_CALLER,
+  type McpFileRequest,
+  type McpOpenRequest,
+  type PathKind,
+} from '../../src/conduit-mcp/control-tools';
 import type { GrantChoice } from '../../src/conduit-mcp/grant-store';
 import {
   type ConduitMcpHost,
@@ -3404,6 +3409,32 @@ describe('control tools live: claimHandle at create, routing (spec 2026-10-27 §
     return setHostPolicy(h, id, layer);
   };
 
+  it.each([
+    { tool: 'open_session', args: { agent: 'e2e-fake-mcp' }, kind: 'dir' },
+    { tool: 'open_terminal', args: { command: '/opt/bin/claude' }, kind: 'dir' },
+    { tool: 'open_file', args: {}, kind: 'file' },
+  ] as const)(
+    '$tool passes the canonical policy path to the host action',
+    async ({ tool, args, kind }) => {
+      const h = harness({ kindOf: async () => kind });
+      const target = path.join(h.dir, 'target');
+      if (kind === 'dir') fs.mkdirSync(target);
+      else fs.writeFileSync(target, 'example');
+      const alias = path.join(h.dir, 'alias');
+      fs.symlinkSync(target, alias, kind === 'dir' ? 'junction' : 'file');
+      const canonical = fs.realpathSync(target);
+      await h.host.start();
+      const a = await launch(h, 's1');
+      await on(h, 's1', [tool]);
+      const c = await client(h.ep, a.token);
+
+      const r = await c.call(tool, { ...args, path: alias });
+
+      expect(r.isError).toBe(false);
+      expect(kind === 'dir' ? h.opens[0]?.home : h.files[0]?.path).toBe(canonical);
+    },
+  );
+
   it('open_session with the switch on calls control.openSession and returns the claimed handle', async () => {
     const h = harness({ kinds: { '/w/wt': 'dir' } });
     await h.host.start();
@@ -4890,6 +4921,41 @@ describe('policy gate, asks and cancellation (spec 2026-10-30-conduit-mcp-tool-p
     const c = await rawClient(h.ep, a.token);
     return { h, c };
   }
+
+  it.each([
+    { tool: 'open_session', args: { agent: 'e2e-fake-mcp' } },
+    { tool: 'open_terminal', args: { command: '/opt/bin/claude' } },
+  ] as const)(
+    '$tool refuses a removed approved folder and refunds its reservation',
+    async ({ tool, args }) => {
+      const { h, c } = await asking({ kindOf: async () => 'dir' });
+      const target = fs.mkdtempSync(path.join(h.dir, 'target-'));
+      const canonical = fs.realpathSync(target);
+      const request = { ...args, path: target, focus: false };
+      await setPolicy(h, { [tool]: { access: 'ask', when: 'always' } });
+
+      c.call(1, tool, request);
+      await until(() => asksOf(h).length === 1);
+      fs.rmdirSync(target);
+      await answer(h, askIdOf(h), 'approve');
+
+      expect(runningOutput(await c.reply(1))).toMatchObject({
+        error: {
+          code: 'open_failed',
+          message: `Path changed after policy evaluation: ${canonical}`,
+        },
+      });
+      expect(h.opens).toEqual([]);
+
+      fs.mkdirSync(target);
+      await setPolicy(h, { [tool]: { access: 'on', when: 'always' } });
+      for (let id = 2; id <= ACT_RATE_PER_CALLER + 1; id++) {
+        c.call(id, tool, request);
+        expect(c.errorOf(await c.reply(id))).toBe('ok');
+      }
+      expect(h.opens).toHaveLength(ACT_RATE_PER_CALLER);
+    },
+  );
 
   it('records the decisive local deny and initial ask traces only', async () => {
     const rows: Array<Record<string, unknown>> = [];

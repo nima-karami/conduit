@@ -97,6 +97,28 @@ function fileTargets(
   return out;
 }
 
+export function captureTargets(tool: ToolName, args: Args, caller: TargetCaller, deps: TargetDeps) {
+  const paths = new Map<string, string | null>();
+  const targets = resolveTargets(tool, args, caller, {
+    ...deps,
+    realPath: (abs) => {
+      if (!paths.has(abs)) paths.set(abs, deps.realPath(abs));
+      return paths.get(abs) ?? null;
+    },
+  });
+  return {
+    targets,
+    boundPath: (abs: string) => paths.get(path.resolve(abs)) ?? abs,
+    changedPath: () => {
+      for (const [abs, real] of paths) {
+        const bound = real ?? abs;
+        if (deps.realPath(bound) !== real) return bound;
+      }
+      return null;
+    },
+  };
+}
+
 /**
  * A remote principal reaches a session only when it opened it (reach `opened`). A remote lead's
  * handle is only unique on its own machine, so the machine must match too.

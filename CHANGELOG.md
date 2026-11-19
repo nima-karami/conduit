@@ -6,6 +6,10 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Conduit tools use the file or folder checked by permissions, even if a symbolic link is redirected before the action runs.
+
 ## [0.70.5] — 2026-11-19
 
 ### Fixed

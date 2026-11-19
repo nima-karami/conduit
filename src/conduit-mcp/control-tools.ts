@@ -189,6 +189,7 @@ export interface PreparedCall<T> {
 /** Built per call by the host from the caller's resolved policy. */
 export interface ControlCallContext {
   stillCurrent(): boolean;
+  boundPath?(absolute: string): string;
   move: Move | undefined;
   reach: Reach | undefined;
   /** Bound by the host to flow.requestUi with this call's in-flight entry and caller. */
@@ -723,7 +724,7 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
         return { ok: false, error: toolDisabled('send_message') };
       const resolved = resolveFor(deps, who, a.path);
       if (!resolved.ok) return resolved;
-      const abs = resolved.value;
+      const abs = ctx.boundPath?.(resolved.value) ?? resolved.value;
       const bad = await checkKind(abs, 'dir');
       if (bad) return bad;
       const target = await resolve();
@@ -933,7 +934,10 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
       if (isFail(a)) return a;
       if (a.kind === 'many') {
         return preparedLocal('open_file', caller, async (who) => {
-          const abs = a.paths.map((p) => deps.resolvePath(who.home, p));
+          const abs = a.paths.map((p) => {
+            const resolved = deps.resolvePath(who.home, p);
+            return ctx.boundPath?.(resolved) ?? resolved;
+          });
           const bad = await Promise.all(abs.map((p) => checkKind(p, 'file')));
           // Focus goes to the last file that will open, so a trailing bad path doesn't steal it.
           const lastGood = bad.reduce((last, b, i) => (b === null ? i : last), -1);
@@ -985,7 +989,8 @@ export function createControlHandlers(deps: ControlDeps): ControlHandlers {
         });
       }
       return preparedLocal('open_file', caller, async (who) => {
-        const abs = deps.resolvePath(who.home, a.path);
+        const resolved = deps.resolvePath(who.home, a.path);
+        const abs = ctx.boundPath?.(resolved) ?? resolved;
         const bad = await checkKind(abs, 'file');
         if (bad) return bad;
         return {
