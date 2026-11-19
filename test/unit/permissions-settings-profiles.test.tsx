@@ -432,3 +432,20 @@ it('swallows Esc while a save is in flight and steps back once it settles', asyn
   await act(async () => root.unmount());
   api.state.policy.profiles = [];
 });
+
+it('names every per-tool select after its tool', async () => {
+  api.state.policy.profiles = [customRole()];
+  const { host, root, click } = await mountRoles();
+  await selectRole(host, 'Custom');
+  await click('Edit');
+  const row = host.querySelector('[aria-label="open_session decision"]')?.closest('.policyrow');
+  const more = [...(row?.querySelectorAll('summary') ?? [])].find(
+    (s) => s.textContent === 'More options',
+  );
+  await act(async () => more?.click());
+  expect(host.querySelectorAll('[aria-label="open_session Screen condition"]')).toHaveLength(1);
+  expect(host.querySelectorAll('[aria-label="open_session Move"]')).toHaveLength(1);
+  expect(host.querySelectorAll('select[aria-label$="Screen condition"]')).toHaveLength(1);
+  await act(async () => root.unmount());
+  api.state.policy.profiles = [];
+});

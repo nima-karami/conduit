@@ -142,7 +142,7 @@ export function PermissionsProfileEditor({
                 <span className="permissions-pill" data-state={state}>
                   {STR.pill[state]}
                 </span>{' '}
-                <span className="permissions-role-list__counts">{groupText(counts)}</span>
+                <span className="permissions-editor__counts">{groupText(counts)}</span>
               </>
             }
           >
@@ -173,6 +173,7 @@ export function PermissionsProfileEditor({
                         <label>
                           {STR.screenCondition}{' '}
                           <select
+                            aria-label={MCP_STR.tools.fieldAria(tool, STR.screenCondition)}
                             className="selectfield"
                             value={rule.when ?? ''}
                             disabled={disabled}
@@ -194,6 +195,7 @@ export function PermissionsProfileEditor({
                         <label>
                           Reach{' '}
                           <select
+                            aria-label={MCP_STR.tools.fieldAria(tool, 'Reach')}
                             className="selectfield"
                             value={rule.reach}
                             disabled={disabled}
@@ -215,6 +217,7 @@ export function PermissionsProfileEditor({
                         <label>
                           Move{' '}
                           <select
+                            aria-label={MCP_STR.tools.fieldAria(tool, 'Move')}
                             className="selectfield"
                             value={rule.move}
                             disabled={disabled}

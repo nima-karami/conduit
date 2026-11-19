@@ -1,5 +1,4 @@
 import type { KeyboardEvent } from 'react';
-import { BUILT_IN_PROFILES } from '../../src/conduit-mcp/policy-profiles';
 import type { Profile, ProfileId } from '../../src/conduit-mcp/policy-types';
 import { TOOL_GROUPS } from '../../src/conduit-mcp/tool-policy';
 import { MCP_STR } from '../conduit-mcp-strings';
@@ -26,7 +25,6 @@ export function PermissionsRoleList({
   onSelect,
   onNew,
 }: PermissionsRoleListProps) {
-  const shown = [...BUILT_IN_PROFILES, ...profiles.filter((profile) => !profile.builtIn)];
   const onKeyDown = (event: KeyboardEvent, profile: Profile) => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
@@ -43,21 +41,21 @@ export function PermissionsRoleList({
           {STR.newRole}
         </button>
       </div>
-      <table className="permissions-role-list__table" role="grid">
+      <table className="permissions-role-list__table">
         <thead>
           <tr>
             <th scope="col">{STR.columns.role}</th>
             <th scope="col">{STR.columns.type}</th>
             <th scope="col">{STR.columns.usedBy}</th>
             {TOOL_GROUPS.map(({ group }) => (
-              <th scope="col" key={group}>
+              <th scope="col" key={group} className="permissions-role-list__group">
                 {MCP_STR.tools.group[group]}
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {shown.map((profile) => (
+          {profiles.map((profile) => (
             <tr
               key={profile.id}
               className="permissions-role-list__row"
@@ -78,7 +76,7 @@ export function PermissionsRoleList({
                 const counts = groupCounts(profile, tools);
                 const state = groupState(counts);
                 return (
-                  <td key={group}>
+                  <td key={group} className="permissions-role-list__group">
                     <span className="permissions-pill" data-state={state}>
                       {STR.pill[state]}
                     </span>

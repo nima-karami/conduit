@@ -81,7 +81,12 @@ export function PermissionsRoleDrawer({
       ))}
       <footer className="permissions-drawer__actions">
         {profile.builtIn ? (
-          <button type="button" className="btn btn--primary" onClick={() => onDuplicate(profile)}>
+          <button
+            type="button"
+            className="btn btn--primary"
+            disabled={readOnly}
+            onClick={() => onDuplicate(profile)}
+          >
             {STR.duplicateRole}
           </button>
         ) : (
@@ -94,10 +99,20 @@ export function PermissionsRoleDrawer({
             >
               {STR.delete}
             </button>
-            <button type="button" className="btn" onClick={() => onDuplicate(profile)}>
+            <button
+              type="button"
+              className="btn"
+              disabled={readOnly}
+              onClick={() => onDuplicate(profile)}
+            >
               {STR.duplicate}
             </button>
-            <button type="button" className="btn btn--primary" onClick={() => onEdit(profile)}>
+            <button
+              type="button"
+              className="btn btn--primary"
+              disabled={readOnly}
+              onClick={() => onEdit(profile)}
+            >
               {STR.edit}
             </button>
           </>

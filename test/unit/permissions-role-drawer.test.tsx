@@ -100,10 +100,15 @@ it('lists every tool under its group with the decision as a word', async () => {
   expect(decisions.size).toBeGreaterThan(1);
 });
 
-it('disables Delete while read-only', async () => {
-  const { host } = await mount(custom, { readOnly: true });
-  const del = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Delete');
-  expect(del?.disabled).toBe(true);
+it('disables every role action but Close while read-only', async () => {
+  for (const profile of [custom, BUILT_IN_PROFILES[0]]) {
+    const { host } = await mount(profile, { readOnly: true });
+    const actions = [
+      ...host.querySelectorAll<HTMLButtonElement>('.permissions-drawer__actions button'),
+    ];
+    expect(actions.length).toBeGreaterThan(0);
+    expect(actions.map((b) => b.disabled)).toEqual(actions.map(() => true));
+  }
 });
 
 it('moves focus to its heading on mount and closes from the close button', async () => {

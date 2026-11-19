@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
@@ -113,4 +114,40 @@ it('offers New role unless read-only', async () => {
     (b) => b.textContent === 'New role',
   );
   expect(disabled?.disabled).toBe(true);
+});
+
+const css = readFileSync('webview/styles.css', 'utf8');
+const mediaBlock = (query: string) => {
+  const start = css.indexOf(`@media (${query}) {`);
+  expect(start).toBeGreaterThan(-1);
+  const end = css.indexOf('\n}\n', start);
+  return css.slice(start, end);
+};
+
+it('keeps the editor group counts out of the list media rules', () => {
+  const editor = readFileSync('webview/components/permissions-profile-editor.tsx', 'utf8');
+  expect(editor).not.toContain('permissions-role-list__');
+  expect(editor).toContain('permissions-editor__counts');
+  expect(mediaBlock('max-width: 1099px')).not.toContain('permissions-editor__counts');
+  expect(mediaBlock('min-width: 1100px')).not.toContain('permissions-editor__counts');
+});
+
+it('drops the group summary columns below 1100px so the list needs no horizontal scroll', async () => {
+  const { host } = await mount();
+  const groupCells = host.querySelectorAll('.permissions-role-list__group');
+  expect(groupCells).toHaveLength((BUILT_IN_PROFILES.length + 2) * TOOL_GROUPS.length);
+  expect(mediaBlock('max-width: 1099px')).toMatch(
+    /\.permissions-role-list__group\s*\{\s*display: none;/,
+  );
+});
+
+it('is a plain table whose rows are focusable and select on Space', async () => {
+  const { host, props } = await mount();
+  expect(host.querySelector('[role="grid"]')).toBeNull();
+  expect(host.querySelector('table')?.getAttribute('role')).toBeNull();
+  expect(rows(host).every((r) => r.getAttribute('tabindex') === '0')).toBe(true);
+  await act(async () =>
+    rows(host)[1].dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true })),
+  );
+  expect(props.onSelect).toHaveBeenCalledWith(BUILT_IN_PROFILES[1]);
 });

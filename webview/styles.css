@@ -17488,6 +17488,11 @@ button.toggle--on .toggle__knob {
   font-size: calc(11px * var(--font-scale));
 }
 
+.permissions-editor__counts {
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
+}
+
 .permissions-pill {
   display: inline-block;
   padding: 1px 6px;
@@ -17520,7 +17525,7 @@ button.toggle--on .toggle__knob {
 }
 
 @media (max-width: 1099px) {
-  .permissions-role-list__counts {
+  .permissions-role-list__group {
     display: none;
   }
 
