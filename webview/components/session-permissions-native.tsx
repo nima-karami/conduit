@@ -7,6 +7,7 @@ import type {
 } from '../../src/contracts/native-launch';
 import { NATIVE_LAUNCH_REFUSAL_MESSAGES } from '../../src/contracts/native-launch';
 import type { StartRefusal } from '../../src/types';
+import { MCP_STR } from '../conduit-mcp-strings';
 
 export interface SessionPermissionsNativeProps {
   native: NativeSessionUi;
@@ -27,8 +28,8 @@ function describeIntent(intent: NativeLaunchIntent): string {
 const RECOVERY: Record<NativeLaunchFailure, string> = {
   conflict: 'Remove the conflicting native permission flags from the agent launcher, then retry.',
   unsupported: 'Use a directly launched, supported Claude or Codex agent to apply a native mode.',
-  'policy-unavailable': 'Open Permissions to inspect and retry the permissions store.',
-  'save-failed': 'Open Permissions to inspect the permissions store, then retry the launch.',
+  'policy-unavailable': MCP_STR.sections.agents.nativeRecovery.policyUnavailable,
+  'save-failed': MCP_STR.sections.agents.nativeRecovery.saveFailed,
 };
 
 function reportedTime(timestamp: number): string {
@@ -86,7 +87,7 @@ export function SessionPermissionsNative({
           <p>{NATIVE_LAUNCH_REFUSAL_MESSAGES[refusal.problem]}</p>
           <p>{RECOVERY[refusal.problem]}</p>
           <button type="button" className="btn btn--sm" onClick={onOpenSettings}>
-            Open Settings Permissions
+            {MCP_STR.sections.agents.openInAgents}
           </button>
         </div>
       )}

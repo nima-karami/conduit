@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { beforeAll, expect, it, vi } from 'vitest';
 import { BUILT_IN_PROFILES } from '../../src/conduit-mcp/policy-profiles';
 import type { PolicyUiState, Profile } from '../../src/conduit-mcp/policy-types';
-import { PermissionsSettings } from '../../webview/components/permissions-settings';
+import { PermissionsRoles } from '../../webview/components/permissions-roles';
 
 const api = vi.hoisted(() => ({
   state: {
@@ -22,6 +22,14 @@ vi.mock('../../webview/use-conduit-mcp', () => ({ useConduitMcp: () => api }));
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
+
+const selectRole = async (host: HTMLElement, name: string) => {
+  const row = [...host.querySelectorAll('tbody tr')].find((tr) =>
+    tr.querySelector('th')?.textContent?.startsWith(name),
+  );
+  expect(row).toBeTruthy();
+  await act(async () => (row as HTMLElement).click());
+};
 
 it('requires replacement, reviews exact deletion and confirms the returned digest', async () => {
   const profile = {
@@ -47,7 +55,11 @@ it('requires replacement, reviews exact deletion and confirms the returned diges
   const host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);
-  await act(async () => root.render(<PermissionsSettings serverConnected />));
+  await act(async () =>
+    root.render(
+      <PermissionsRoles serverConnected mcp={api as never} sessions={[]} registerBack={() => {}} />,
+    ),
+  );
   const click = async (label: string) => {
     const button = [...host.querySelectorAll('button')].find(
       (b) => b.textContent === label || b.getAttribute('aria-label') === label,
@@ -55,7 +67,8 @@ it('requires replacement, reviews exact deletion and confirms the returned diges
     expect(button).toBeTruthy();
     await act(async () => button?.click());
   };
-  await click('Delete Custom');
+  await selectRole(host, 'Custom');
+  await click('Delete');
   expect(host.textContent).toContain('Default · native modes enabled');
   expect(
     [...host.querySelectorAll('button')].find((b) => b.textContent === 'Review deletion')?.disabled,
@@ -94,15 +107,24 @@ it('blocks a stale review from being confirmed', async () => {
   const host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);
-  await act(async () => root.render(<PermissionsSettings serverConnected />));
   await act(async () =>
-    host.querySelector<HTMLButtonElement>('[aria-label="Delete Stale"]')?.click(),
+    root.render(
+      <PermissionsRoles serverConnected mcp={api as never} sessions={[]} registerBack={() => {}} />,
+    ),
+  );
+  await selectRole(host, 'Stale');
+  await act(async () =>
+    [...host.querySelectorAll('button')].find((b) => b.textContent === 'Delete')?.click(),
   );
   await act(async () =>
     [...host.querySelectorAll('button')].find((b) => b.textContent === 'Review deletion')?.click(),
   );
   api.state.policy.editToken = 'v2';
-  await act(async () => root.render(<PermissionsSettings serverConnected />));
+  await act(async () =>
+    root.render(
+      <PermissionsRoles serverConnected mcp={api as never} sessions={[]} registerBack={() => {}} />,
+    ),
+  );
   expect(host.textContent).toContain('Permissions changed');
   const confirm = [...host.querySelectorAll('button')].find(
     (b) => b.textContent === 'Confirm deletion',

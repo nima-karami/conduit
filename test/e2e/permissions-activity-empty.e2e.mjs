@@ -17,10 +17,10 @@ await runScenario(
   'permissions-activity-empty',
   async ({ page, log }) => {
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
-    const settings = page.locator('.settings');
-    await settings.getByRole('button', { name: 'Permissions', exact: true }).click();
-    await settings.getByRole('button', { name: 'Activity', exact: true }).click();
-    const activity = page.getByRole('main', { name: 'Permissions Activity' });
+    const settings = page.locator('.settings-page');
+    await settings.getByRole('button', { name: 'MCP', exact: true }).click();
+    await settings.getByRole('tab', { name: 'Activity', exact: true }).click();
+    const activity = page.getByRole('region', { name: 'Permissions Activity' });
     await activity.getByRole('heading', { name: 'Permissions Activity' }).waitFor();
     await activity.getByText('No activity found.', { exact: true }).waitFor();
     assert((await activity.getByRole('alert').count()) === 0, 'empty Activity showed an error');

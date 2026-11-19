@@ -3,7 +3,14 @@ import type { ActivityEntry, ActivityLookup } from '../../src/conduit-mcp/activi
 import type { ActivityPage, ActivityQuery } from '../../src/conduit-mcp/activity-query';
 import { CLI_KINDS } from '../../src/conduit-mcp/tool-policy';
 import { subscribe } from '../bridge';
+import type { BackHandler } from './mcp-section';
 import { type ActivityExceptionSource, PermissionsActivityWhy } from './permissions-activity-why';
+
+export interface ActivityScope {
+  sessionId?: string;
+  machineId?: string;
+  item?: Pick<ActivityEntry, 'id' | 'at'>;
+}
 
 type Option = { id: string; name: string };
 type Filters = {
@@ -26,6 +33,7 @@ export function PermissionsActivity({
   onAddException,
   sessions = [],
   machines = [],
+  registerBack,
 }: {
   sessionId?: string;
   machineId?: string;
@@ -36,6 +44,7 @@ export function PermissionsActivity({
   onAddException?(source: ActivityExceptionSource): void;
   sessions?: readonly Option[];
   machines?: readonly Option[];
+  registerBack?(handler: BackHandler | null): void;
 }) {
   const [filters, setFilters] = useState<Filters>({
     session: sessionId ?? '',
@@ -63,6 +72,19 @@ export function PermissionsActivity({
     setFocusIndex(0);
     setFilters((previous) => ({ ...previous, [key]: value }));
   };
+  const closeWhy = () => {
+    setSelected(null);
+    (rowRefs.current[focusIndex] ?? heading.current)?.focus();
+  };
+  useEffect(() => {
+    if (!registerBack) return;
+    registerBack(() => {
+      if (!selected) return false;
+      closeWhy();
+      return true;
+    });
+    return () => registerBack(null);
+  });
   useEffect(() => {
     if (!item || !getActivityRow) return;
     let alive = true;
@@ -152,7 +174,7 @@ export function PermissionsActivity({
       .filter(Boolean)
       .join(' · ') || 'Unknown';
   return (
-    <main className="permissions-activity" aria-label="Permissions Activity">
+    <section className="permissions-activity" aria-label="Permissions Activity">
       <header className="permissions-activity__header">
         <h1 ref={heading} tabIndex={-1}>
           Permissions Activity
@@ -353,13 +375,10 @@ export function PermissionsActivity({
             }
             onAllowOnce={(row) => allowOnce?.(row.id, row.at) ?? Promise.resolve(false)}
             onAddException={(source) => onAddException?.(source)}
-            onClose={() => {
-              setSelected(null);
-              (rowRefs.current[focusIndex] ?? heading.current)?.focus();
-            }}
+            onClose={closeWhy}
           />
         </div>
       )}
-    </main>
+    </section>
   );
 }

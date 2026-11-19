@@ -28,6 +28,7 @@ import type {
 } from '../src/conduit-mcp/types';
 import type { AskSummary, McpGateState } from '../src/conduit-mcp/ui-types';
 import { countNoun } from '../src/menu-selection';
+import { plural } from '../src/plural';
 
 // Only the tools whose On bypasses every prompt get a line under their row (spec §8).
 const ON_WARNING: Partial<Record<ToolName, string>> = {
@@ -73,8 +74,98 @@ const PROJECT_SCOPE = { project: 'Project', local: 'Local' } satisfies Record<Pr
 const installErrorText = (code: string): string => INSTALL_ERROR_TEXT[code] ?? code;
 const scopeThreadCount = (n: number) => `${n.toLocaleString()} ${n === 1 ? 'thread' : 'threads'}`;
 
+const BUILT_IN_ROLE_DESCRIPTION: Record<string, string> = {
+  observer: 'For observing and communicating, with other actions denied.',
+  worker: 'The standard tool policy for day-to-day work.',
+  lead: 'For coordinating work, with broader access to sessions and machines.',
+};
+
+export const MCP_TAB_ORDER = ['settings', 'roles', 'agents', 'grants', 'activity'] as const;
+export type McpTabId = (typeof MCP_TAB_ORDER)[number];
+
 export const MCP_STR = {
   tab: 'Messages',
+  sections: {
+    title: 'MCP',
+    subtitle: 'How agents talk to Conduit, and what they are allowed to do.',
+    tablistLabel: 'MCP sections',
+    tabs: {
+      settings: 'Settings',
+      roles: 'Roles',
+      agents: 'Agents',
+      grants: 'Grants',
+      activity: 'Activity',
+    } satisfies Record<McpTabId, string>,
+    roles: {
+      title: 'Roles',
+      intro: 'A role is a named set of tool permissions. Duplicate a built-in to make your own.',
+      newRole: 'New role',
+      columns: { role: 'Role', type: 'Type', usedBy: 'Used by' },
+      builtIn: 'Built-in',
+      custom: 'Custom',
+      newAgentsStartHere: 'New agents start here',
+      usedByCount: (n: number) => plural(n, 'agent'),
+      usedBy: (n: number) => `Used by ${plural(n, 'agent')}`,
+      pill: { allowed: 'Allowed', mixed: 'Mixed', denied: 'Denied' },
+      builtInDescription: BUILT_IN_ROLE_DESCRIPTION,
+      customDescription: 'Custom role.',
+      builtInNote: "Built-in roles can't be edited. Duplicate it to make your own.",
+      duplicateRole: 'Duplicate role',
+      duplicate: 'Duplicate',
+      edit: 'Edit',
+      delete: 'Delete',
+      closeDrawer: 'Close',
+      closeGlyph: '✕',
+      editor: {
+        title: (name: string) => `Edit role · ${name}`,
+        appliesEverywhere: 'Changes apply wherever this role is assigned.',
+        decisions: 'Decisions',
+      },
+      review: {
+        title: 'Review role changes',
+        back: 'Back',
+        confirm: 'Confirm and save',
+        saving: 'Saving…',
+      },
+      deletion: {
+        sectionLabel: 'Delete role',
+        heading: (name: string) => `Delete ${name}`,
+        replacementLabel: 'Replacement role',
+        choose: 'Choose a role…',
+        cancel: 'Cancel',
+        back: 'Back',
+        review: 'Review deletion',
+        confirm: 'Confirm deletion',
+        working: 'Working…',
+      },
+      decision: { allow: 'Allow', ask: 'Ask', deny: 'Deny' },
+      moreOptions: 'More options',
+      screenCondition: 'Screen condition',
+    },
+    agents: {
+      title: 'Agents',
+      empty: (role: string) => `No agents yet. New agents start with ${role}.`,
+      newAgentsStartWith: 'New agents start with',
+      defaultsByType: 'Defaults by agent type',
+      columns: { agent: 'Agent', role: 'Role', changes: 'Changes' },
+      roleFor: (title: string) => `Role for ${title}`,
+      changes: (n: number) => (n > 0 ? plural(n, 'change') : 'Follows role'),
+      role: 'Role',
+      changesFrom: (n: number, role: string) => `${plural(n, 'change')} from ${role}`,
+      resetAll: 'Reset all to role',
+      changeLine: (tool: string, roleDecision: string, decision: string) =>
+        `${tool}: role says ${roleDecision} → this agent: ${decision}`,
+      editChanges: 'Edit changes',
+      canDo: 'What this agent can do',
+      closeDrawer: 'Close',
+      closeGlyph: '✕',
+      openInAgents: 'Open in MCP › Agents',
+      nativeRecovery: {
+        policyUnavailable: 'Open MCP › Agents to inspect and retry the permissions store.',
+        saveFailed: 'Open MCP › Agents to inspect the permissions store, then retry the launch.',
+      },
+    },
+  },
   firstRun: 'Agents in your sessions can message each other and you. Messages appear here.',
   noUnread: 'No unread messages',
   noMessagesInScope: 'No messages in this scope',
@@ -417,7 +508,6 @@ export const MCP_STR = {
   install: {
     tab: 'MCP',
     clisTitle: 'Agent CLIs',
-    toolsTitle: 'Tools',
     suggestTitle: 'Suggestions',
     clisDesc:
       'Adds Conduit to each CLI’s own MCP config, so agents you start in any Conduit terminal can message each other and you. Outside Conduit the server lists no tools. Uninstall here before removing Conduit.',

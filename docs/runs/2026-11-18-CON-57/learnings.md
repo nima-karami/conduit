@@ -1,0 +1,11 @@
+# CON-57 learnings (tagged for routing)
+
+- [feature-spec] A source-read "current behavior" row marked ASSUMED let the reviewer disprove the persisted-doc edge case in one grep (`webview/docs.ts:973`, `src/persistence.ts:171`); measuring it first would have removed a bogus acceptance criterion.
+- [implementation-plan] Parallel groups were first drawn across files that one group consumed from the other (summary module, McpSection → PermissionsRoles); the self-review caught it. A "Consumes" line must be checked against the other group's `Produces` before a plan calls two groups disjoint.
+- [implementation-plan] The plan's focus-restore snippet fired on app mount (`settingsOpen` starts false). Effects keyed on a boolean that starts false need an "armed" guard; the executor found it, the plan should have.
+- [build-and-verify] A plan step "focus X on mount" can overwrite a child's own focus (release-notes open path); the executor caught it only because existing focus tests covered it.
+- [instruction-file] `npm run e2e:remote` pushes a temporary ref to origin; the agent brief for any build under a "no push" rule must say whether that counts.
+- [implementation-plan] Slice 2's tasks T2.3–T2.5 each removed something a later task still needed (a type, a required prop), so "commit per task, tsc green" was impossible; the plan check should ask of every deletion "does a later task fix its callers?" and merge those tasks.
+- [build-and-verify] Capture-phase Esc in the overlay store bypasses element-level Escape handlers, so any inner panel that used to own Esc (Activity Why) silently stops working once its host becomes a page; list such handlers in the plan's Esc ladder.
+- [build-and-verify] Slice 3's plan lists two parallel groups; ran as one executor in sequence because two executors committing into one worktree contend on the git index for a small saving. Plans should mark small same-slice groups as "may serialize".
+- [build-and-verify] verify:quick (vitest --changed) misses source-text guards over styles.css (state-vocabulary); run the FULL `npm run verify` at the end of every slice that touches styles.css, not only at the end of the run. Two slices shipped the same ad-hoc :hover row rule before CI's verify job caught it.

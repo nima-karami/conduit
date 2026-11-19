@@ -143,7 +143,7 @@ export function PermissionsAssignmentExceptions({
                 );
               }}
             >
-              <option value="">Use profile</option>
+              <option value="">Use role</option>
               {entry.rule.decision && !decisionsFor(entry.tool).includes(entry.rule.decision) && (
                 <option value={entry.rule.decision} disabled>
                   {entry.rule.decision} (existing)
@@ -196,7 +196,7 @@ export function PermissionsAssignmentExceptions({
                       );
                     }}
                   >
-                    <option value="">Use profile</option>
+                    <option value="">Use role</option>
                     {options.map((value) => (
                       <option key={value} value={value}>
                         {value}

@@ -48,8 +48,7 @@ export type DocKind =
   | 'web'
   | 'git-history'
   | 'commit-diff'
-  | 'request'
-  | 'permissions-activity';
+  | 'request';
 
 // What the singleton Review tab is scoped to: the live working tree (default), one commit's
 // diff (vs. its first parent), or a comparison of two refs (base...head — spec
@@ -120,8 +119,6 @@ export interface BackgroundOpenResult {
 // The Review-changes view is a singleton editor tab (R5.5) rather than a center-pane
 // overlay. It has no backing file, so it uses a sentinel path (the leading "@" can't
 // collide with a real working-tree path) and a fixed, human title.
-export const ACTIVITY_DOC_PATH = '@permissions-activity';
-
 export const REVIEW_DOC_PATH = '@review';
 export const REVIEW_DOC_ID = `review:${REVIEW_DOC_PATH}`;
 const REVIEW_DOC_TITLE = 'Review Changes';
@@ -245,7 +242,7 @@ export const initialDocs: DocsState = { docs: [], layouts: {}, activeId: null };
  * nothing keyed by a local path (saves, dirty, nav, reveal) may stand for it.
  */
 export function localPathOf(doc: Pick<OpenDoc, 'kind' | 'path'>): string | null {
-  return isRemoteKind(doc.kind) || doc.kind === 'permissions-activity' ? null : doc.path;
+  return isRemoteKind(doc.kind) ? null : doc.path;
 }
 
 /**
@@ -305,7 +302,6 @@ const titleOf = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() || p
 // A web doc's title starts as the URL's host/path (until the page <title> loads); a
 // file/diff title is its basename; review has a fixed human title.
 function initialTitle(kind: DocKind, path: string, diffScope?: DiffTabScope): string {
-  if (kind === 'permissions-activity') return 'Permissions Activity';
   if (kind === 'review') return REVIEW_DOC_TITLE;
   if (kind === 'git-history' || kind === 'remote-history') return GIT_HISTORY_DOC_TITLE;
   // The kind alone is known at open time, so the title is generic; the tab names the request.
@@ -970,8 +966,7 @@ export function toPersistedDocs(state: DocsState): PersistedDoc[] {
         const d = byId.get(tab.id);
         // A request is server state: a restored tab would point at a request that may be gone.
         // A remote doc's content lives on its machine: restoring it would read a local path.
-        if (!d || d.kind === 'request' || d.kind === 'permissions-activity' || isRemoteKind(d.kind))
-          return [];
+        if (!d || d.kind === 'request' || isRemoteKind(d.kind)) return [];
         if (d.kind === 'commit-diff' && parseCommitDiffPath(d.path).file === '') return [];
         return [
           {

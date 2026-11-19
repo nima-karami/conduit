@@ -86,9 +86,9 @@ await runScenario(
     await refusal.waitFor();
     await capture(page, '08-action-refused.png');
 
-    const settings = page.locator('.settings');
+    const settings = page.locator('.settings-page');
     await refusal.click();
-    const activity = page.getByRole('main', { name: 'Permissions Activity' });
+    const activity = page.getByRole('region', { name: 'Permissions Activity' });
     await activity.waitFor({ timeout: 7000 });
     const denial = activity
       .getByRole('row')
@@ -133,7 +133,7 @@ await runScenario(
     await replayOutput.waitFor({ timeout: 12_000 });
     await check.scrollIntoViewIfNeeded();
     await capture(page, '12-exception-from-event.png');
-    await settings.getByRole('button', { name: 'Close settings' }).click();
+    await settings.getByRole('tab', { name: 'Activity', exact: true }).click();
 
     await why.getByRole('button', { name: 'Allow this once' }).click();
     await why.getByText('The agent may retry this target once.').waitFor();

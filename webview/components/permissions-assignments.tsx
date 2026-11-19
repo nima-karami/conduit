@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { pointKey } from '../../src/conduit-mcp/policy-profiles';
 import type {
   Assignment,
@@ -10,16 +10,27 @@ import type {
   ReplayResult,
   Scope,
 } from '../../src/conduit-mcp/policy-types';
-import { CLI_KINDS, TOOL_NAMES, type ToolName } from '../../src/conduit-mcp/tool-policy';
+import {
+  CLI_KINDS,
+  TOOL_GROUPS,
+  TOOL_NAMES,
+  type ToolName,
+} from '../../src/conduit-mcp/tool-policy';
 import { folderKey } from '../../src/folder-key';
 import type { Session } from '../../src/types';
+import { MCP_STR } from '../conduit-mcp-strings';
 import type { ConduitMcpApi } from '../use-conduit-mcp';
+import type { BackHandler } from './mcp-section';
+import { type AgentRow, PermissionsAgentsList } from './permissions-agents-list';
 import { PermissionsAssignmentExceptions } from './permissions-assignment-exceptions';
 import { PermissionsCheckRequest } from './permissions-check-request';
+import { groupCounts, groupState, groupText } from './permissions-role-summary';
 import {
   describeExceptionScope,
   SessionPermissionExceptions,
 } from './session-permission-exceptions';
+
+const STR = MCP_STR.sections.agents;
 
 type Edit = {
   point: AssignmentPoint;
@@ -80,17 +91,12 @@ function exceptionEntries(assignment: Assignment) {
     return { entry, index, key: `${signature}:${count}` };
   });
 }
-/** A count, not the list: the list lives in the edit view, where it has room. */
-function exceptionCount(assignment: Assignment): string {
-  const n = assignment.exceptions.length;
-  return n === 0 ? 'None' : n === 1 ? '1 exception' : `${n} exceptions`;
-}
 function facts(policy: PolicyUiState, assignment: Assignment) {
   const profile = profileFor(policy, assignment);
   return (
     <>
       <p>
-        Profile: {profile?.name ?? assignment.profileId} · On-screen only:{' '}
+        Role: {profile?.name ?? assignment.profileId} · On-screen only:{' '}
         {assignment.onScreenOnly ? 'yes' : 'no'} · Native modes enabled:{' '}
         {assignment.applyNative ? 'yes' : 'no'}
       </p>
@@ -210,6 +216,135 @@ function ReplayPreview({
   );
 }
 
+function AgentDrawer({
+  title,
+  subtitle,
+  profile,
+  profiles,
+  changes,
+  readOnly,
+  error,
+  onClose,
+  onRoleChange,
+  onEditChanges,
+  onResetAll,
+  staged,
+  check,
+}: {
+  title: string;
+  subtitle: string;
+  profile: Profile | undefined;
+  profiles: readonly Profile[];
+  changes: { key: string; tool: ToolName; text: string }[];
+  readOnly: boolean;
+  error: string | null;
+  onClose(): void;
+  onRoleChange(id: ProfileId): void;
+  onEditChanges(): void;
+  onResetAll(): void;
+  staged: ReactNode;
+  check: ReactNode;
+}) {
+  const heading = useRef<HTMLHeadingElement>(null);
+  const titleId = useId();
+  useEffect(() => heading.current?.focus(), []);
+  return (
+    <aside className="permissions-drawer" aria-labelledby={titleId}>
+      <header className="permissions-drawer__head">
+        <h4 id={titleId} ref={heading} tabIndex={-1}>
+          {title}
+        </h4>
+        <button type="button" className="iconbtn" aria-label={STR.closeDrawer} onClick={onClose}>
+          {STR.closeGlyph}
+        </button>
+      </header>
+      <p className="permissions-drawer__note">{subtitle}</p>
+      {staged ?? (
+        <>
+          <label className="permissions-agents-drawer__role">
+            {STR.role}
+            <select
+              className="selectfield"
+              aria-label={STR.role}
+              value={profile?.id ?? ''}
+              disabled={readOnly}
+              onChange={(event) => {
+                const next = profiles.find((item) => item.id === event.target.value);
+                if (next) onRoleChange(next.id as ProfileId);
+              }}
+            >
+              {!profile && <option value="" />}
+              {profiles.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="permissions-agents-drawer__summary">
+            <p>
+              {changes.length > 0 && profile
+                ? STR.changesFrom(changes.length, profile.name)
+                : STR.changes(0)}
+            </p>
+            {changes.length > 0 && (
+              <button
+                type="button"
+                className="btn btn--sm"
+                disabled={readOnly}
+                onClick={onResetAll}
+              >
+                {STR.resetAll}
+              </button>
+            )}
+          </div>
+          {changes.length > 0 && (
+            <ul className="permissions-agents-drawer__changes">
+              {changes.map((change) => (
+                <li key={change.key}>{change.text}</li>
+              ))}
+            </ul>
+          )}
+          {error && <p role="alert">{error}</p>}
+          <button type="button" className="btn btn--sm" disabled={readOnly} onClick={onEditChanges}>
+            {STR.editChanges}
+          </button>
+          {profile && (
+            <section aria-label={STR.canDo}>
+              <h5>{STR.canDo}</h5>
+              {TOOL_GROUPS.map(({ group, tools }) => {
+                const counts = groupCounts(profile, tools);
+                return (
+                  <details key={group} className="permissions-drawer__group">
+                    <summary>
+                      {MCP_STR.tools.group[group]}{' '}
+                      <span className="permissions-pill" data-state={groupState(counts)}>
+                        {MCP_STR.sections.roles.pill[groupState(counts)]}
+                      </span>
+                      <span className="permissions-drawer__summary">{groupText(counts)}</span>
+                    </summary>
+                    <ul>
+                      {tools.map((tool) => (
+                        <li key={tool}>
+                          <code>{tool}</code>
+                          <span data-decision={profile.rules[tool].decision}>
+                            {MCP_STR.sections.roles.decision[profile.rules[tool].decision]}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                );
+              })}
+            </section>
+          )}
+          {check}
+        </>
+      )}
+    </aside>
+  );
+}
+
 export function PermissionsAssignments({
   policy,
   sessions,
@@ -217,6 +352,9 @@ export function PermissionsAssignments({
   serverConnected,
   exceptionSeed,
   onExceptionSeedConsumed,
+  focusAgentKey,
+  onFocusAgentSpent,
+  registerBack,
 }: {
   policy: PolicyUiState;
   sessions: Session[];
@@ -224,12 +362,17 @@ export function PermissionsAssignments({
   serverConnected: boolean;
   exceptionSeed?: AssignmentExceptionSeed | null;
   onExceptionSeedConsumed?: () => void;
+  focusAgentKey?: string;
+  onFocusAgentSpent?(): void;
+  registerBack(handler: BackHandler | null): void;
 }) {
-  const [selected, setSelected] = useState('default');
+  const [selected, setSelected] = useState<string | null>(null);
   const [editing, setEditing] = useState<Edit | null>(null);
   const [review, setReview] = useState<Review | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
   const readOnly = policy.readOnly || !serverConnected;
   const points: AssignmentPoint[] = [
     { kind: 'default' },
@@ -243,7 +386,38 @@ export function PermissionsAssignments({
         }),
       ),
   ];
-  const point = points.find((item) => pointKey(item) === selected) ?? points[0];
+  const peerPoints = policy.assignments
+    .map(({ point }) => point)
+    .filter((point) => point.kind === 'peer');
+  const rowFor = (item: AssignmentPoint): AgentRow => {
+    const name =
+      item.kind === 'session'
+        ? (sessions.find((session) => session.id === item.sessionId)?.name ?? label(item))
+        : label(item);
+    return {
+      point: item,
+      key: pointKey(item),
+      title: name,
+      subtitle: item.kind === 'session' ? item.sessionId : label(item),
+      profile: profileFor(policy, assignmentAt(policy, item) ?? inheritedAt(policy, item)),
+      changes: assignmentAt(policy, item)?.exceptions.length ?? 0,
+    };
+  };
+  const rows = [...points, ...peerPoints].map(rowFor);
+  const selectedRow = rows.find((row) => row.key === selected);
+  const openRow = editing ? rowFor(editing.point) : selectedRow;
+  const consumedFocus = useRef<string | undefined>(undefined);
+  const focusPresent = focusAgentKey !== undefined && rows.some((row) => row.key === focusAgentKey);
+  useEffect(() => {
+    if (!focusAgentKey) {
+      consumedFocus.current = undefined;
+      return;
+    }
+    if (!focusPresent || consumedFocus.current === focusAgentKey) return;
+    consumedFocus.current = focusAgentKey;
+    setSelected(focusAgentKey);
+    onFocusAgentSpent?.();
+  }, [focusAgentKey, focusPresent, onFocusAgentSpent]);
   const consumedSeed = useRef<string | null>(null);
   useEffect(() => {
     if (!exceptionSeed) {
@@ -299,49 +473,46 @@ export function PermissionsAssignments({
     setError(null);
     onExceptionSeedConsumed?.();
   }, [exceptionSeed, onExceptionSeedConsumed, policy, readOnly, sessions]);
+  // Esc ladder, spec 2026-11-18-mcp-full-screen §2.
+  useEffect(() => {
+    registerBack(() => {
+      if (pending) return true;
+      if (review) {
+        setReview(null);
+        setError(null);
+        return true;
+      }
+      if (editing) {
+        setEditing(null);
+        setError(null);
+        return true;
+      }
+      if (selectedRow) {
+        setSelected(null);
+        return true;
+      }
+      return false;
+    });
+    return () => registerBack(null);
+  }, [registerBack, pending, review, editing, selectedRow]);
   const checkSessions = sessions
     .filter((session) => policy.sessions[session.id])
     .map((session) => ({ id: session.id, label: session.name }));
 
-  const start = (target: AssignmentPoint): Edit => {
+  const start = (target: AssignmentPoint, profileId?: ProfileId): Edit => {
     const current = assignmentAt(policy, target) ?? inheritedAt(policy, target);
     const edit: Edit = {
       point: target,
-      draft: structuredClone(current),
+      draft: { ...structuredClone(current), ...(profileId ? { profileId } : {}) },
       before: structuredClone(current),
       token: policy.editToken,
     };
     setEditing(edit);
+    setSelected(pointKey(target));
+    setReview(null);
     setError(null);
     return edit;
   };
-  // Reset goes through the same review as an edit, so its impact is shown before saving.
-  const reviewReset = (target: AssignmentPoint) => void requestReview(null, start(target));
-  const actions = (item: AssignmentPoint, explicit: boolean, name: string) => (
-    <td className="permissions-assignments__actions">
-      <button
-        type="button"
-        className="btn btn--sm"
-        disabled={readOnly}
-        aria-label={`${explicit ? 'Edit' : 'Add'} assignment · ${name}`}
-        onClick={() => start(item)}
-      >
-        {explicit ? 'Edit' : 'Add'}
-      </button>
-      {explicit && (
-        <button
-          type="button"
-          className="btn btn--sm"
-          disabled={readOnly || pending}
-          aria-label={`Reset assignment · ${name}`}
-          title="Remove this assignment so it inherits again"
-          onClick={() => reviewReset(item)}
-        >
-          Reset
-        </button>
-      )}
-    </td>
-  );
   const requestReview = async (candidate: Assignment | null, from: Edit | null = editing) => {
     if (!from) return;
     const frozen = candidate === null ? null : structuredClone(candidate);
@@ -352,6 +523,7 @@ export function PermissionsAssignments({
         { kind: 'assignment', point: from.point, assignment: frozen },
         from.token,
       );
+      if (editingRef.current !== from) return;
       if (!result?.ok) {
         setError(`Could not review permissions (${result?.error ?? 'timeout'}).`);
         return;
@@ -363,7 +535,7 @@ export function PermissionsAssignments({
         ...(result.requiresNativeReview ? { digest: result.digest } : {}),
       });
     } catch {
-      setError('Could not review permissions.');
+      if (editingRef.current === from) setError('Could not review permissions.');
     } finally {
       setPending(false);
     }
@@ -395,56 +567,56 @@ export function PermissionsAssignments({
   };
   const stale =
     (review ?? editing)?.token !== undefined && (review ?? editing)?.token !== policy.editToken;
-  if (review)
-    return (
-      <section className="permissions-assignments">
-        <h2>Review assignment · {label(review.point)}</h2>
-        <h3>Before</h3>
-        {facts(policy, review.before)}
-        <h3>After</h3>
-        {facts(policy, review.after)}
-        {!stale && (
-          <>
-            <PermissionsCheckRequest
-              sessions={checkSessions}
-              draft={{ point: review.point, assignment: review.candidate }}
-              expectedToken={review.token}
-              previewPolicy={mcp.previewPolicy}
-            />
-            <ReplayPreview
-              draft={{ point: review.point, assignment: review.candidate }}
-              token={review.token}
-              replayPolicy={mcp.replayPolicy}
-            />
-          </>
-        )}
-        {review.digest && (
-          <p>Confirming authorizes the reviewed native mode changes for future launches.</p>
-        )}
-        {stale && <p role="alert">Permissions changed. Cancel and review again.</p>}
-        {error && <p role="alert">{error}</p>}
-        <button
-          type="button"
-          className="btn"
-          disabled={pending}
-          onClick={() => {
-            setReview(null);
-            setError(null);
-          }}
-        >
-          Back
-        </button>{' '}
-        <button
-          type="button"
-          className="btn btn--primary"
-          disabled={pending || readOnly || stale}
-          onClick={() => void save()}
-        >
-          Confirm and save
-        </button>
-      </section>
-    );
-  if (editing) {
+  const reviewing = review ? (
+    <section>
+      <h3>Review assignment · {label(review.point)}</h3>
+      <h3>Before</h3>
+      {facts(policy, review.before)}
+      <h3>After</h3>
+      {facts(policy, review.after)}
+      {!stale && (
+        <>
+          <PermissionsCheckRequest
+            sessions={checkSessions}
+            draft={{ point: review.point, assignment: review.candidate }}
+            expectedToken={review.token}
+            previewPolicy={mcp.previewPolicy}
+          />
+          <ReplayPreview
+            draft={{ point: review.point, assignment: review.candidate }}
+            token={review.token}
+            replayPolicy={mcp.replayPolicy}
+          />
+        </>
+      )}
+      {review.digest && (
+        <p>Confirming authorizes the reviewed native mode changes for future launches.</p>
+      )}
+      {stale && <p role="alert">Permissions changed. Cancel and review again.</p>}
+      {error && <p role="alert">{error}</p>}
+      <button
+        type="button"
+        className="btn"
+        disabled={pending}
+        onClick={() => {
+          setReview(null);
+          setError(null);
+        }}
+      >
+        Back
+      </button>{' '}
+      <button
+        type="button"
+        className="btn btn--primary"
+        disabled={pending || readOnly || stale}
+        onClick={() => void save()}
+      >
+        Confirm and save
+      </button>
+    </section>
+  ) : null;
+  const editor = (() => {
+    if (!editing) return null;
     const session =
       editing.point.kind === 'session'
         ? sessions.find(
@@ -454,12 +626,12 @@ export function PermissionsAssignments({
     const disabled = readOnly || pending || stale;
     const update = (draft: Assignment) => setEditing({ ...editing, draft });
     return (
-      <section className="permissions-assignments">
-        <h2>Edit assignment · {label(editing.point)}</h2>
+      <section>
+        <h3>Edit assignment · {label(editing.point)}</h3>
         {stale && <p role="alert">Permissions changed. Cancel and reopen this assignment.</p>}
         {error && <p role="alert">{error}</p>}
         <label>
-          Profile{' '}
+          Role{' '}
           <select
             className="selectfield"
             value={editing.draft.profileId}
@@ -496,7 +668,7 @@ export function PermissionsAssignments({
             disabled={disabled}
             onChange={(event) => update({ ...editing.draft, applyNative: event.target.checked })}
           />{' '}
-          Apply profile native modes at future launch
+          Apply role native modes at future launch
         </label>
         {session ? (
           <SessionPermissionExceptions
@@ -558,130 +730,84 @@ export function PermissionsAssignments({
         )}
       </section>
     );
-  }
+  })();
+  const changesFor = (row: AgentRow) => {
+    const assignment = assignmentAt(policy, row.point);
+    if (!assignment || !row.profile) return [];
+    const { rules } = row.profile;
+    return exceptionEntries(assignment).map(({ entry, key }) => ({
+      key,
+      tool: entry.tool,
+      text: STR.changeLine(
+        entry.tool,
+        MCP_STR.sections.roles.decision[rules[entry.tool].decision],
+        MCP_STR.sections.roles.decision[entry.rule.decision ?? rules[entry.tool].decision],
+      ),
+    }));
+  };
+  const resetAll = (target: AssignmentPoint) => {
+    const edit = start(target);
+    const cleared = { ...edit, draft: { ...edit.draft, exceptions: [] } };
+    setEditing(cleared);
+    void requestReview(cleared.draft, cleared);
+  };
   return (
-    <section className="permissions-assignments">
-      <h2>Assignments</h2>
+    <>
       {readOnly && (
         <p role="status">
           Permissions are read-only while the policy store is unavailable or disconnected.
         </p>
       )}
-      <label>
-        Assignment point{' '}
-        <select
-          className="selectfield"
-          value={selected}
-          onChange={(event) => setSelected(event.target.value)}
-        >
-          {points.map((item) => (
-            <option key={pointKey(item)} value={pointKey(item)}>
-              {item.kind === 'session'
-                ? (sessions.find((session) => session.id === item.sessionId)?.name ?? label(item))
-                : label(item)}
-            </option>
-          ))}
-        </select>
-      </label>{' '}
-      <button type="button" className="btn" disabled={readOnly} onClick={() => start(point)}>
-        {assignmentAt(policy, point) ? 'Edit assignment' : 'Add assignment'}
-      </button>
-      <PermissionsCheckRequest
-        sessions={checkSessions}
-        draft={null}
-        expectedToken={policy.editToken}
-        previewPolicy={mcp.previewPolicy}
-      />
-      {error && <p role="alert">{error}</p>}
-      <h3>Who gets which profile</h3>
-      <table className="permissions-assignments__table">
-        <thead>
-          <tr>
-            <th scope="col">Applies to</th>
-            <th scope="col">Profile</th>
-            <th scope="col">Exceptions</th>
-            <th scope="col">
-              <span className="sr-only">Actions</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {points
-            .filter((item) => item.kind !== 'session')
-            .map((item) => {
-              const explicit = assignmentAt(policy, item);
-              const value = explicit ?? inheritedAt(policy, item);
-              return (
-                <tr key={pointKey(item)}>
-                  <th scope="row">{label(item)}</th>
-                  <td>
-                    {profileFor(policy, value)?.name ?? value.profileId}
-                    {!explicit && item.kind !== 'default' && (
-                      <span className="permissions-assignments__muted"> · inherited</span>
-                    )}
-                  </td>
-                  <td>{exceptionCount(value)}</td>
-                  {actions(item, explicit !== undefined, label(item))}
-                </tr>
-              );
-            })}
-          {policy.assignments
-            .filter(({ point: item }) => item.kind === 'peer')
-            .map(({ point: item, assignment }) => (
-              <tr key={pointKey(item)}>
-                <th scope="row">{label(item)}</th>
-                <td>{profileFor(policy, assignment)?.name ?? assignment.profileId}</td>
-                <td>{exceptionCount(assignment)}</td>
-                <td />
-              </tr>
-            ))}
-        </tbody>
-      </table>
-      {Object.keys(policy.sessions).length > 0 && (
-        <details className="permissions-assignments__sessions">
-          <summary>Sessions ({Object.keys(policy.sessions).length})</summary>
-          <table className="permissions-assignments__table">
-            <thead>
-              <tr>
-                <th scope="col">Session</th>
-                <th scope="col">Profile</th>
-                <th scope="col">Exceptions</th>
-                <th scope="col">
-                  <span className="sr-only">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(policy.sessions).map(([id, row]) => {
-                const item: AssignmentPoint = { kind: 'session', sessionId: id };
-                const explicit = assignmentAt(policy, item);
-                const value = explicit ?? inheritedAt(policy, item);
-                const name = sessions.find((session) => session.id === id)?.name ?? id;
-                return (
-                  <tr key={id}>
-                    <th scope="row">{name}</th>
-                    <td>
-                      {row.profileName}
-                      {!explicit && (
-                        <span className="permissions-assignments__muted">
-                          {' '}
-                          · from {label(row.sourcePoint)}
-                        </span>
-                      )}
-                    </td>
-                    <td>{exceptionCount(value)}</td>
-                    {sessions.some((session) => session.id === id) ? (
-                      actions(item, explicit !== undefined, name)
-                    ) : (
-                      <td />
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </details>
-      )}
-    </section>
+      {error && !openRow && <p role="alert">{error}</p>}
+      <div className="permissions-roles">
+        <PermissionsAgentsList
+          rows={rows}
+          profiles={policy.profiles}
+          selectedKey={openRow?.key ?? null}
+          readOnly={readOnly}
+          newAgentRole={(assignmentAt(policy, { kind: 'default' }) ?? fallback).profileId}
+          onNewAgentRole={(id) => start({ kind: 'default' }, id)}
+          onSelect={(row) => {
+            setSelected(row.key);
+            setEditing(null);
+            setReview(null);
+            setError(null);
+          }}
+          onRoleChange={(row, id) => start(row.point, id)}
+        />
+        {openRow && (
+          <div className="permissions-roles__side">
+            <AgentDrawer
+              key={openRow.key}
+              title={openRow.title}
+              subtitle={openRow.subtitle}
+              profile={openRow.profile}
+              profiles={policy.profiles}
+              changes={changesFor(openRow)}
+              readOnly={readOnly}
+              error={error}
+              onClose={() => {
+                setSelected(null);
+                setEditing(null);
+                setReview(null);
+                setError(null);
+              }}
+              onRoleChange={(id) => start(openRow.point, id)}
+              onEditChanges={() => start(openRow.point)}
+              onResetAll={() => resetAll(openRow.point)}
+              staged={reviewing ?? editor}
+              check={
+                <PermissionsCheckRequest
+                  sessions={checkSessions}
+                  draft={null}
+                  expectedToken={policy.editToken}
+                  previewPolicy={mcp.previewPolicy}
+                />
+              }
+            />
+          </div>
+        )}
+      </div>
+    </>
   );
 }

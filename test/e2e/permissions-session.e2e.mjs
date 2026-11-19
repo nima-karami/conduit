@@ -124,32 +124,40 @@ await runScenario(
     await menu.click();
     await dialog.getByRole('button', { name: 'View Activity' }).click();
     await dialog.waitFor({ state: 'hidden' });
-    const activity = page.getByRole('main', { name: 'Permissions Activity' });
+    const activity = page.getByRole('region', { name: 'Permissions Activity' });
     await activity.waitFor();
     await activity.getByText('list_sessions', { exact: true }).first().waitFor();
     await capture(page, '11-session-activity.png');
 
+    const settings = page.locator('.settings-page');
+    await settings.getByRole('button', { name: 'Back to Conduit' }).click();
+    await settings.waitFor({ state: 'hidden' });
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
-    const settings = page.locator('.settings');
     await settings.getByRole('button', { name: 'MCP', exact: true }).click();
     await settings.getByRole('switch').first().waitFor();
-    await settings.getByRole('button', { name: 'Open Permissions', exact: true }).click();
-    const profiles = settings.getByRole('tab', { name: 'Profiles', exact: true });
-    await profiles.waitFor();
-    const copy = settings.getByRole('button', { name: 'Copy Worker' });
-    await copy.waitFor();
+    const profiles = settings.getByRole('tab', { name: 'Roles', exact: true });
+    await profiles.click();
+    const workerRow = settings.getByRole('row', { name: /^Worker/ });
+    await workerRow.waitFor();
     await capture(page, '13-settings-profiles.png');
-    await copy.click();
+    await workerRow.click();
+    await settings.getByRole('button', { name: 'Duplicate role' }).click();
     await settings.getByLabel('Name', { exact: true }).fill('Review workspace');
     await capture(page, '24-settings-profile-editor.png');
     await settings
       .getByRole('combobox', { name: 'Codex', exact: true })
       .selectOption('workspace-write');
+    // The floating update notice covers the page's bottom-right actions (CON-57 decision 6).
+    const updateNotice = page.locator('[data-post-update-toast]');
+    if ((await updateNotice.count()) > 0) {
+      await updateNotice.getByRole('button', { name: 'Dismiss update' }).click();
+    }
     await settings.getByRole('button', { name: 'Review and save' }).click();
-    await settings.getByRole('heading', { name: 'Review profile changes' }).waitFor();
+    await settings.getByRole('heading', { name: 'Review role changes' }).waitFor();
     await settings.getByRole('row', { name: /Codex.*workspace-write/ }).waitFor();
     await settings.getByRole('button', { name: 'Confirm and save' }).click();
-    await settings.getByRole('button', { name: 'Edit Review workspace' }).waitFor();
+    const reviewRow = settings.getByRole('row', { name: /^Review workspace/ });
+    await reviewRow.waitFor();
     const savedPolicy = JSON.parse(readFileSync(join(userDataDir, 'conduit-mcp', 'policy.json')));
     assert(
       savedPolicy.profiles.some(
@@ -158,14 +166,13 @@ await runScenario(
       ),
       'the exact reviewed native profile was not persisted',
     );
-    await settings.getByRole('button', { name: 'Delete Review workspace' }).click();
+    await reviewRow.click();
+    await settings.getByRole('button', { name: 'Delete', exact: true }).click();
     await settings.getByRole('button', { name: 'Review deletion' }).click();
     await settings.getByRole('button', { name: 'Confirm deletion' }).click();
     // The deletion editor hides the profile list before the host acknowledges deletion.
-    await settings.getByRole('heading', { name: 'Profiles', exact: true }).waitFor();
-    await settings
-      .getByRole('button', { name: 'Edit Review workspace' })
-      .waitFor({ state: 'hidden' });
+    await settings.getByRole('heading', { name: 'Roles', exact: true }).waitFor();
+    await reviewRow.waitFor({ state: 'hidden' });
     const afterDeletion = JSON.parse(readFileSync(join(userDataDir, 'conduit-mcp', 'policy.json')));
     assert(
       !afterDeletion.profiles.some((profile) => profile.name === 'Review workspace'),
@@ -173,18 +180,32 @@ await runScenario(
     );
     await profiles.focus();
     await page.keyboard.press('ArrowRight');
-    const assignments = settings.getByRole('tab', { name: 'Assignments' });
+    const assignments = settings.getByRole('tab', { name: 'Agents' });
     assert(
       (await assignments.getAttribute('aria-selected')) === 'true',
-      'keyboard did not select the Assignments tab',
+      'keyboard did not select the Agents tab',
     );
-    await settings.getByRole('heading', { name: 'Who gets which profile' }).waitFor();
+    await settings.getByRole('heading', { name: 'Agents', exact: true }).waitFor();
+    await settings.getByRole('combobox', { name: 'New agents start with' }).waitFor();
+    await settings
+      .getByRole('row', { name: new RegExp(session.sessionId) })
+      .getByRole('rowheader')
+      .click();
+    await settings.getByRole('complementary').getByRole('combobox', { name: 'Role' }).waitFor();
     await capture(page, '14-settings-assignments.png');
-    await page.keyboard.press('End');
+    await settings.getByRole('button', { name: 'Edit changes' }).click();
+    await settings.getByRole('heading', { name: /Edit assignment/ }).waitFor();
+    const staleNotice = page.locator('[data-post-update-toast]');
+    if ((await staleNotice.count()) > 0) {
+      await staleNotice.getByRole('button', { name: 'Dismiss update' }).click();
+    }
+    await settings.getByRole('button', { name: 'Cancel' }).click();
+    await settings.getByRole('button', { name: 'Edit changes' }).waitFor();
+    await assignments.focus();
+    await page.keyboard.press('ArrowRight');
     await settings.getByText('No grants yet.').waitFor();
     await capture(page, '07-settings-grants.png');
-    await settings.getByRole('button', { name: 'Activity', exact: true }).click();
-    await settings.waitFor({ state: 'hidden' });
+    await settings.getByRole('tab', { name: 'Activity', exact: true }).click();
     await activity.waitFor();
     log('owner modal, keyboard tabs, durable exact native profile and scoped Activity verified');
   },

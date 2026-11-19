@@ -6,7 +6,7 @@ import { useRef, useState } from 'react';
  * By default arrows move the selection (ARIA radio-group convention). `selectOnArrow={false}`
  * is manual activation: arrows/Home/End move focus only and Space/Enter/click select — for groups
  * where every value walked through would be persisted (spec 2026-10-27-conduit-mcp-control-tools
- * §9). Shares the `.seg` skin with the settings-modal segmented control, so it inherits the state
+ * §9). Shares the `.seg` skin with the settings-page segmented control, so it inherits the state
  * vocabulary's quiet-role hover / press / focus ladder (spec 2026-08-01-interaction-state-vocabulary).
  */
 export function SegmentedRadios<T extends string>({

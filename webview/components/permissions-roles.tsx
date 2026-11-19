@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { BUILT_IN_PROFILES } from '../../src/conduit-mcp/policy-profiles';
 import type {
   AssignmentPoint,
@@ -10,11 +10,15 @@ import type {
 } from '../../src/conduit-mcp/policy-types';
 import { TOOL_NAMES } from '../../src/conduit-mcp/tool-policy';
 import type { Session } from '../../src/types';
-import { type ConduitMcpApi, useConduitMcp } from '../use-conduit-mcp';
-import { type AssignmentExceptionSeed, PermissionsAssignments } from './permissions-assignments';
-import { PermissionsGrants } from './permissions-grants';
+import { MCP_STR } from '../conduit-mcp-strings';
+import type { ConduitMcpApi } from '../use-conduit-mcp';
+import type { BackHandler } from './mcp-section';
 import { PermissionsProfileEditor } from './permissions-profile-editor';
-import { PermissionsProfiles } from './permissions-profiles';
+import { PermissionsRoleDrawer } from './permissions-role-drawer';
+import { PermissionsRoleList } from './permissions-role-list';
+
+const DEL = MCP_STR.sections.roles.deletion;
+const REVIEW = MCP_STR.sections.roles.review;
 
 type Editing = { draft: Profile; before: Profile | null; token: string };
 type Review = Editing & { candidate: Profile; digest?: string; display: ProfileReviewDisplay };
@@ -27,7 +31,7 @@ type Deletion = {
 };
 
 function mode(profile: Profile | null, cli: 'claude' | 'codex'): string {
-  if (!profile) return 'No profile';
+  if (!profile) return 'No role';
   const value = profile.nativeModes?.[cli];
   return !value || value === 'unset' ? 'CLI default' : value;
 }
@@ -38,14 +42,16 @@ function ruleText(rule: ToolRule): string {
     .join(' · ');
 }
 
-function Profiles({
+export function PermissionsRoles({
   serverConnected,
   mcp,
   sessions,
+  registerBack,
 }: {
   serverConnected: boolean;
   mcp: ConduitMcpApi;
   sessions: Session[];
+  registerBack(handler: BackHandler | null): void;
 }) {
   const policy = mcp.state?.policy;
   const [editing, setEditing] = useState<Editing | null>(null);
@@ -54,6 +60,38 @@ function Profiles({
   const inFlight = useRef(false);
   const [deletion, setDeletion] = useState<Deletion | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<ProfileId | null>(null);
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
+  const roles = policy ? [...BUILT_IN_PROFILES, ...policy.profiles.filter((p) => !p.builtIn)] : [];
+  const selected = roles.find((p) => p.id === selectedId) ?? null;
+  // Esc ladder, spec 2026-11-18-mcp-full-screen §2.
+  useEffect(() => {
+    registerBack(() => {
+      if (pending) return true;
+      if (deletion) {
+        setDeletion(deletion.reviewed ? { ...deletion, reviewed: undefined } : null);
+        setError(null);
+        return true;
+      }
+      if (review) {
+        setEditing({ ...review, draft: review.candidate });
+        setReview(null);
+        setError(null);
+        return true;
+      }
+      if (editing) {
+        setEditing(null);
+        return true;
+      }
+      if (selected) {
+        setSelectedId(null);
+        return true;
+      }
+      return false;
+    });
+    return () => registerBack(null);
+  }, [registerBack, pending, deletion, review, editing, selected]);
   if (!policy) return <p>Loading permissions…</p>;
 
   const currentPolicy = policy;
@@ -75,13 +113,15 @@ function Profiles({
   }
   async function requestReview(candidate: Profile): Promise<PolicyEditResult | null> {
     if (!editing) return { ok: false, error: 'conflict' };
+    const started = editing;
     const frozen = structuredClone(candidate);
-    const result = await mcp.reviewLocalPolicy({ kind: 'profile', profile: frozen }, editing.token);
+    const result = await mcp.reviewLocalPolicy({ kind: 'profile', profile: frozen }, started.token);
     if (!result) return null;
+    if (editingRef.current !== started) return { ok: true };
     if (!result.ok) return result;
     if (!result.profileDisplay) return { ok: false, error: 'invalid-value' };
     setReview({
-      ...editing,
+      ...started,
       before: result.profileDisplay.before,
       candidate: result.profileDisplay.after,
       display: result.profileDisplay,
@@ -92,7 +132,7 @@ function Profiles({
   async function save() {
     if (!review) return;
     if (review.token !== currentPolicy.editToken) {
-      setError('Permissions changed while you were reviewing. Go back and reopen the profile.');
+      setError('Permissions changed while you were reviewing. Go back and reopen the role.');
       return;
     }
     setPending(true);
@@ -101,14 +141,15 @@ function Profiles({
       const result = await mcp.saveProfile(review.candidate, review.token, review.digest);
       if (!result?.ok) {
         setError(
-          `Could not save profile (${result?.error ?? 'timeout'}). Review the current permissions before retrying.`,
+          `Could not save role (${result?.error ?? 'timeout'}). Review the current permissions before retrying.`,
         );
       } else {
+        setSelectedId(review.candidate.id);
         setReview(null);
         setEditing(null);
       }
     } catch {
-      setError('Could not save profile. Review the current permissions before retrying.');
+      setError('Could not save role. Review the current permissions before retrying.');
     } finally {
       setPending(false);
     }
@@ -137,7 +178,7 @@ function Profiles({
       );
       if (!result?.ok)
         setError(
-          `Could not review deletion (${result?.error ?? 'timeout'}). Reopen the profile and try again.`,
+          `Could not review deletion (${result?.error ?? 'timeout'}). Reopen the role and try again.`,
         );
       else
         setDeletion({
@@ -148,7 +189,7 @@ function Profiles({
           },
         });
     } catch {
-      setError('Could not review deletion. Reopen the profile and try again.');
+      setError('Could not review deletion. Reopen the role and try again.');
     } finally {
       inFlight.current = false;
       setPending(false);
@@ -174,11 +215,14 @@ function Profiles({
       );
       if (!result?.ok)
         setError(
-          `Could not delete profile (${result?.error ?? 'timeout'}). Review current permissions before retrying.`,
+          `Could not delete role (${result?.error ?? 'timeout'}). Review current permissions before retrying.`,
         );
-      else setDeletion(null);
+      else {
+        setSelectedId(null);
+        setDeletion(null);
+      }
     } catch {
-      setError('Could not delete profile. Review current permissions before retrying.');
+      setError('Could not delete role. Review current permissions before retrying.');
     } finally {
       inFlight.current = false;
       setPending(false);
@@ -192,12 +236,12 @@ function Profiles({
     ].filter((p) => p.id !== deletion.profile.id);
     const replacement = deletion.reviewed?.replacement;
     return (
-      <section aria-label="Delete profile">
-        <h2>Delete {deletion.profile.name}</h2>
+      <section aria-label={DEL.sectionLabel}>
+        <h2>{DEL.heading(deletion.profile.name)}</h2>
         {deletion.points.length ? (
           <>
             <p>
-              These assignments will use the replacement profile. Their exceptions and native mode
+              These assignments will use the replacement role. Their exceptions and native mode
               setting stay in place.
             </p>
             <ul>
@@ -216,11 +260,11 @@ function Profiles({
             </ul>
           </>
         ) : (
-          <p>No assignments directly use this profile.</p>
+          <p>No assignments directly use this role.</p>
         )}
         {!replacement ? (
           <label>
-            Replacement profile{' '}
+            {DEL.replacementLabel}{' '}
             <select
               value={deletion.replacement}
               disabled={pending || readOnly || stale}
@@ -228,7 +272,7 @@ function Profiles({
                 setDeletion({ ...deletion, replacement: e.target.value as ProfileId | '' })
               }
             >
-              <option value="">Choose a profile…</option>
+              <option value="">{DEL.choose}</option>
               {options.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
@@ -278,7 +322,7 @@ function Profiles({
             )}
           </>
         )}
-        {stale && <p role="alert">Permissions changed. Cancel and reopen this profile.</p>}
+        {stale && <p role="alert">Permissions changed. Cancel and reopen this role.</p>}
         {error && <p role="alert">{error}</p>}
         <button
           type="button"
@@ -290,7 +334,7 @@ function Profiles({
             setError(null);
           }}
         >
-          {replacement ? 'Back' : 'Cancel'}
+          {replacement ? DEL.back : DEL.cancel}
         </button>{' '}
         <button
           type="button"
@@ -298,7 +342,7 @@ function Profiles({
           disabled={pending || readOnly || stale || !deletion.replacement}
           onClick={() => void (replacement ? confirmDeletion() : reviewDeletion())}
         >
-          {pending ? 'Working…' : replacement ? 'Confirm deletion' : 'Review deletion'}
+          {pending ? DEL.working : replacement ? DEL.confirm : DEL.review}
         </button>
       </section>
     );
@@ -307,9 +351,9 @@ function Profiles({
   if (review)
     return (
       <section className="permissions-settings__review" aria-labelledby="permissions-review-title">
-        <h2 id="permissions-review-title">Review profile changes</h2>
+        <h2 id="permissions-review-title">{REVIEW.title}</h2>
         <p>
-          Confirm the profile before saving. Native modes apply at a future launch only when enabled
+          Confirm the role before saving. Native modes apply at a future launch only when enabled
           for an assignment.
         </p>
         <table>
@@ -331,9 +375,9 @@ function Profiles({
           </tbody>
         </table>
         <p>
-          Profile: {review.before?.name ?? 'New profile'} → {review.candidate.name}
+          Role: {review.before?.name ?? 'New role'} → {review.candidate.name}
         </p>
-        <h3>{review.before ? 'Changed tool rules' : 'Tool rules in the new profile'}</h3>
+        <h3>{review.before ? 'Changed tool rules' : 'Tool rules in the new role'}</h3>
         <table>
           <thead>
             <tr>
@@ -350,7 +394,7 @@ function Profiles({
             ).map((tool) => (
               <tr key={tool}>
                 <th scope="row">{tool}</th>
-                <td>{review.before ? ruleText(review.before.rules[tool]) : 'No profile'}</td>
+                <td>{review.before ? ruleText(review.before.rules[tool]) : 'No role'}</td>
                 <td>{ruleText(review.candidate.rules[tool])}</td>
               </tr>
             ))}
@@ -360,7 +404,7 @@ function Profiles({
           <section aria-label="Native mode reach">
             <h3>Where native modes are enabled</h3>
             {review.display.optedInPoints.length === 0 ? (
-              <p>No assignment currently enables this profile's native modes.</p>
+              <p>No assignment currently enables this role's native modes.</p>
             ) : (
               <ul>
                 {review.display.optedInPoints.map((point) => (
@@ -401,10 +445,10 @@ function Profiles({
           </section>
         )}
         {review.digest && (
-          <p>Confirming authorizes these native mode changes for the reviewed profile.</p>
+          <p>Confirming authorizes these native mode changes for the reviewed role.</p>
         )}
         {review.token !== currentPolicy.editToken && (
-          <p role="alert">Permissions changed. Go back and reopen this profile.</p>
+          <p role="alert">Permissions changed. Go back and reopen this role.</p>
         )}
         {error && <p role="alert">{error}</p>}
         <button
@@ -417,7 +461,7 @@ function Profiles({
             setError(null);
           }}
         >
-          Back
+          {REVIEW.back}
         </button>{' '}
         <button
           className="btn btn--primary"
@@ -425,27 +469,32 @@ function Profiles({
           disabled={pending || readOnly || review.token !== currentPolicy.editToken}
           onClick={() => void save()}
         >
-          {pending ? 'Saving…' : 'Confirm and save'}
+          {pending ? REVIEW.saving : REVIEW.confirm}
         </button>
       </section>
     );
-  if (editing)
-    return (
-      <>
-        {editing.token !== currentPolicy.editToken && (
-          <p role="alert">
-            Permissions changed. Cancel and reopen the profile to edit the current version.
-          </p>
-        )}
-        <PermissionsProfileEditor
-          key={`${editing.draft.id}-${editing.token}`}
-          draft={editing.draft}
-          readOnly={readOnly || editing.token !== currentPolicy.editToken}
-          onCancel={() => setEditing(null)}
-          onReviewAndSave={requestReview}
-        />
-      </>
-    );
+  const usage = new Map<ProfileId, number>();
+  for (const { assignment } of currentPolicy.assignments)
+    usage.set(assignment.profileId, (usage.get(assignment.profileId) ?? 0) + 1);
+  const newAgentRole =
+    currentPolicy.assignments.find((entry) => entry.point.kind === 'default')?.assignment
+      .profileId ?? 'worker';
+  const startDeletion = (profile: Profile) => {
+    if (profile.builtIn || readOnly) return;
+    const points = currentPolicy.assignments
+      .filter(({ assignment }) => assignment.profileId === profile.id)
+      .map(({ point, assignment }) => ({
+        point: structuredClone(point),
+        native: assignment.applyNative === true,
+      }));
+    setDeletion({
+      profile: structuredClone(profile),
+      token: currentPolicy.editToken,
+      replacement: points.length ? '' : 'worker',
+      points,
+    });
+    setError(null);
+  };
   return (
     <>
       {readOnly && (
@@ -453,121 +502,48 @@ function Profiles({
           Permissions are read-only while the policy store is unavailable or disconnected.
         </p>
       )}
-      <PermissionsProfiles
-        profiles={currentPolicy.profiles}
-        readOnly={readOnly}
-        onDelete={(profile) => {
-          if (profile.builtIn || readOnly) return;
-          const points = (currentPolicy.assignments ?? [])
-            .filter(({ assignment }) => assignment.profileId === profile.id)
-            .map(({ point, assignment }) => ({
-              point: structuredClone(point),
-              native: assignment.applyNative === true,
-            }));
-          setDeletion({
-            profile: structuredClone(profile),
-            token: currentPolicy.editToken,
-            replacement: points.length ? '' : 'worker',
-            points,
-          });
-          setError(null);
-        }}
-        onCopy={(profile) => start(profile, true)}
-        onEdit={(profile) => {
-          if (!profile.builtIn) start(profile, false);
-        }}
-      />
-    </>
-  );
-}
-
-const sections = [
-  { id: 'profiles', name: 'Profiles' },
-  { id: 'assignments', name: 'Assignments' },
-  { id: 'grants', name: 'Grants' },
-] as const;
-
-export function PermissionsSettings({
-  serverConnected,
-  sessions = [],
-  onOpenActivity,
-  exceptionSeed,
-  onExceptionSeedConsumed,
-}: {
-  serverConnected: boolean;
-  sessions?: Session[];
-  onOpenActivity?: () => void;
-  exceptionSeed?: AssignmentExceptionSeed | null;
-  onExceptionSeedConsumed?: () => void;
-}) {
-  const mcp = useConduitMcp();
-  const policy = mcp.state?.policy;
-  const [section, setSection] = useState<(typeof sections)[number]['id']>(
-    exceptionSeed ? 'assignments' : 'profiles',
-  );
-  const tabButtons = useRef<Array<HTMLButtonElement | null>>([]);
-  const tabsId = useId();
-  return (
-    <>
-      <div className="permissions-settings__tabs">
-        <div role="tablist" aria-label="Permission sections">
-          {sections.map(({ id, name }, index) => (
-            <button
-              key={id}
-              ref={(node) => {
-                tabButtons.current[index] = node;
-              }}
-              type="button"
-              role="tab"
-              id={tabsId + '-' + id}
-              aria-selected={section === id}
-              aria-controls={tabsId + '-section'}
-              tabIndex={section === id ? 0 : -1}
-              className={section === id ? 'btn btn--sm btn--primary' : 'btn btn--sm'}
-              onClick={() => setSection(id)}
-              onKeyDown={(event) => {
-                let next: number;
-                if (event.key === 'ArrowRight') next = (index + 1) % sections.length;
-                else if (event.key === 'ArrowLeft')
-                  next = (index + sections.length - 1) % sections.length;
-                else if (event.key === 'Home') next = 0;
-                else if (event.key === 'End') next = sections.length - 1;
-                else return;
-                event.preventDefault();
-                setSection(sections[next].id);
-                tabButtons.current[next]?.focus();
-              }}
-            >
-              {name}
-            </button>
-          ))}
-        </div>
-        {onOpenActivity && (
-          <button type="button" className="btn btn--sm" onClick={() => onOpenActivity()}>
-            Activity
-          </button>
-        )}
-      </div>
-      <div role="tabpanel" id={tabsId + '-section'} aria-labelledby={tabsId + '-' + section}>
-        {section === 'profiles' && (
-          <Profiles mcp={mcp} serverConnected={serverConnected} sessions={sessions} />
-        )}
-        {section !== 'profiles' && !policy && <p>Loading permissions…</p>}
-        {section === 'assignments' && policy && (
-          <PermissionsAssignments
-            policy={policy}
-            sessions={sessions}
-            exceptionSeed={exceptionSeed}
-            onExceptionSeedConsumed={onExceptionSeedConsumed}
-            mcp={mcp}
-            serverConnected={serverConnected}
-          />
-        )}
-        {section === 'grants' && policy && (
-          <PermissionsGrants
-            policy={serverConnected ? policy : { ...policy, readOnly: true }}
-            grantLifecycle={mcp.grantLifecycle}
-          />
+      <div className="permissions-roles">
+        <PermissionsRoleList
+          profiles={roles}
+          selectedId={selected?.id ?? null}
+          usage={usage}
+          newAgentRole={newAgentRole}
+          readOnly={readOnly}
+          onSelect={(profile) => setSelectedId(profile.id)}
+          onNew={() =>
+            start(roles.find((p) => p.id === newAgentRole) ?? BUILT_IN_PROFILES[1], true)
+          }
+        />
+        {editing ? (
+          <div className="permissions-roles__side">
+            {editing.token !== currentPolicy.editToken && (
+              <p role="alert">
+                Permissions changed. Cancel and reopen the role to edit the current version.
+              </p>
+            )}
+            <PermissionsProfileEditor
+              key={`${editing.draft.id}-${editing.token}`}
+              draft={editing.draft}
+              readOnly={readOnly || editing.token !== currentPolicy.editToken}
+              onCancel={() => setEditing(null)}
+              onReviewAndSave={requestReview}
+            />
+          </div>
+        ) : (
+          selected && (
+            <div className="permissions-roles__side">
+              <PermissionsRoleDrawer
+                key={selected.id}
+                profile={selected}
+                used={usage.get(selected.id) ?? 0}
+                readOnly={readOnly}
+                onClose={() => setSelectedId(null)}
+                onDuplicate={(profile) => start(profile, true)}
+                onEdit={(profile) => start(profile, false)}
+                onDelete={startDeletion}
+              />
+            </div>
+          )
         )}
       </div>
     </>

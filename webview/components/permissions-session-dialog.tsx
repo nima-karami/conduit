@@ -87,7 +87,7 @@ function ReviewDifferences({
     >
       <h3 className="session-permissions__heading">Review changes</h3>
       <p>
-        Profile: {profileName(profiles, review.before.profileId)} →{' '}
+        Role: {profileName(profiles, review.before.profileId)} →{' '}
         {profileName(profiles, review.after.profileId)}
       </p>
       {changes.length > 0 && (
@@ -95,8 +95,8 @@ function ReviewDifferences({
           <thead>
             <tr>
               <th>Action</th>
-              <th>Before profile</th>
-              <th>After profile</th>
+              <th>Before role</th>
+              <th>After role</th>
             </tr>
           </thead>
           <tbody>
@@ -160,7 +160,7 @@ function ReviewDifferences({
         </>
       )}
       {changes.length > 0 && (
-        <p>Profile rules are shown above; matching exceptions can change individual fields.</p>
+        <p>Role rules are shown above; matching exceptions can change individual fields.</p>
       )}
     </section>
   );
@@ -267,7 +267,7 @@ export function PermissionsSessionDialog({
         </div>
         <div className="mcptools__scroll">
           <p>
-            Effective profile:{' '}
+            Effective role:{' '}
             {effective?.profileName ?? profileName(policy.profiles, draft.profileId)} · {source}
           </p>
           <PermissionStoreNotice
@@ -340,7 +340,7 @@ export function PermissionsSessionDialog({
                 disabled={disabled}
               >
                 <legend className="session-permissions__heading" id={profileId}>
-                  Profile
+                  Role
                 </legend>
                 <label className="session-permissions__profile">
                   <input
@@ -349,7 +349,7 @@ export function PermissionsSessionDialog({
                     checked={candidate === null}
                     onChange={() => setCandidate(null)}
                   />{' '}
-                  Use inherited profile
+                  Use inherited role
                 </label>
                 {policy.profiles.map((profile) => (
                   <label className="session-permissions__profile" key={profile.id}>
@@ -382,7 +382,7 @@ export function PermissionsSessionDialog({
                         checked={candidate.applyNative === true}
                         onChange={(event) => edit({ applyNative: event.target.checked })}
                       />{' '}
-                      Apply the profile’s native mode on launch
+                      Apply the role’s native mode on launch
                     </label>
                   )}
                   <p>

@@ -55,13 +55,13 @@ async function phaseSettings({ log }) {
     const select = page.locator('.selectfield[aria-label="Auto save"]');
     assert((await select.textContent())?.trim() === 'Off', 'Auto save starts at "Off"');
     assert(
-      (await page.locator('.settings input[type="number"]').count()) === 0,
+      (await page.locator('.settings-page input[type="number"]').count()) === 0,
       'no delay field while Off',
     );
 
     await select.click();
     await page.locator('.ctxmenu__item', { hasText: 'After delay' }).click();
-    const input = page.locator('.settings input[type="number"]');
+    const input = page.locator('.settings-page input[type="number"]');
     await input.waitFor({ timeout: 5000 });
     await shotter(page)('settings-auto-save');
     await input.fill('50');
@@ -81,9 +81,9 @@ async function phaseSettings({ log }) {
     await input.fill('7');
     await input.press('Escape');
     assert((await input.inputValue()) === '2000', 'the first Esc reverts the draft');
-    assert((await page.locator('.modal.settings').count()) === 1, 'the first Esc keeps Settings');
+    assert((await page.locator('.settings-page').count()) === 1, 'the first Esc keeps Settings');
     await input.press('Escape');
-    await page.locator('.modal.settings').waitFor({ state: 'detached', timeout: 5000 });
+    await page.locator('.settings-page').waitFor({ state: 'detached', timeout: 5000 });
     log('delay field: first Esc reverts the draft, second closes Settings ✓');
 
     await closeApp(launched.app, page);
@@ -96,7 +96,7 @@ async function phaseSettings({ log }) {
       'mode survives a relaunch',
     );
     assert(
-      (await page.locator('.settings input[type="number"]').inputValue()) === '2000',
+      (await page.locator('.settings-page input[type="number"]').inputValue()) === '2000',
       'delay survives a relaunch',
     );
     log('settings persist and the delay field is conditional ✓');

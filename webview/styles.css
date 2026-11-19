@@ -299,6 +299,7 @@
      live band is `--layer-modal` + clamped modal depth), the floating stack (toasts, the
      approval card, the update item) above every modal, popovers above it (a menu opened into
      the stack corner must take its clicks), the mermaid theatre above both. */
+  --layer-page: 50;
   --layer-modal: 60;
   --layer-toast: 80;
   --layer-popover: 200;
@@ -8091,22 +8092,38 @@ body.gh-resizing {
   cursor: default;
 }
 
-/* ---------- settings modal ---------- */
-/* Sixteen Appearance controls do not fit the 560px dialog this shipped as — 8d draws the
-   modal at ~1060px for exactly that reason (handoff open item 3). It takes whatever the
-   window gives it; at the design's own 820px window that clamps to ~756 and the pane still
-   scrolls, which 8d also shows. */
-.settings {
-  width: 830px;
-  max-width: calc(100vw - 48px);
-  height: 1060px;
-  max-height: calc(100vh - 52px);
-}
-.settings__head {
+/* ---------- settings page ---------- */
+/* A fixed page over the still-mounted, inert workbench (terminals keep their size), so it
+   reproduces the shell's geometry like .board and sits below the drag region of .topbar. */
+.settings-page {
+  position: fixed;
+  top: calc(var(--win-pad) + var(--density-topbar-h) + var(--gutter));
+  left: var(--win-pad);
+  right: var(--win-pad);
+  bottom: var(--win-pad);
+  z-index: var(--layer-page);
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+  overflow: hidden;
+  background: var(--panel);
+  border-radius: var(--r-card);
+}
+.settings-page__back {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-ctl);
+  padding: var(--density-settings-navitem-pad);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: calc(13px * var(--font-scale));
+  font-weight: 500;
+  cursor: pointer;
+}
+.settings-page__back svg {
+  transform: rotate(180deg);
 }
 .settings__body {
   flex: 1;
@@ -8150,6 +8167,60 @@ body.gh-resizing {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+/* Panels scroll inside the MCP section so its tab bar stays put; see spec 2026-11-18-mcp-full-screen §2. */
+.settings__pane--mcp {
+  display: flex;
+  flex-direction: column;
+}
+.mcp-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.mcp-section__head {
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+}
+.mcp-section__title {
+  margin: 0 0 4px;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 600;
+}
+.mcp-section__sub {
+  margin: 0;
+  color: var(--text-dim);
+}
+.mcp-section__tabs {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border-2);
+}
+.mcp-section__tab {
+  padding: 8px 12px;
+  margin-bottom: -1px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+.mcp-section__tab--active {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+  font-weight: 600;
+}
+.mcp-section__panel {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
 }
 
 /* Settings → About → Release notes sub-page. The version rail and notes each scroll on their
@@ -8630,7 +8701,7 @@ body.gh-resizing {
   height: 46px;
   padding: 4px;
   /* The chip's outline belongs to the picker, not to the theme it depicts — Aero's own
-     panel colour is white and would vanish against the settings modal. */
+     panel colour is white and would vanish against the settings page. */
   border: 1px solid rgba(var(--overlay), 0.22);
   border-radius: 6px;
   overflow: hidden;
@@ -17325,43 +17396,17 @@ button.toggle--on .toggle__knob {
   box-shadow: var(--focus-ring);
 }
 
-.permissions-profiles,
 .permissions-profile-editor,
 .permissions-settings__review {
   min-width: 0;
   color: var(--text);
 }
 
-.permissions-profiles__heading {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px 12px;
-}
-
-.permissions-profiles__heading h2,
 .permissions-settings__review h2,
 .permissions-profile-editor h2 {
   margin: 0 0 6px;
 }
 
-.permissions-profiles__description,
-.permissions-profiles__conditions,
-.permissions-profiles__note {
-  color: var(--text-dim);
-}
-
-.permissions-profiles__description,
-.permissions-profiles__conditions {
-  display: block;
-}
-
-.permissions-profiles__scroll {
-  overflow-x: auto;
-}
-
-.permissions-profiles__table,
 .permissions-settings__review table,
 .permissions-activity table {
   width: 100%;
@@ -17370,8 +17415,6 @@ button.toggle--on .toggle__knob {
   font-size: calc(13px * var(--font-scale));
 }
 
-.permissions-profiles__table th,
-.permissions-profiles__table td,
 .permissions-settings__review th,
 .permissions-settings__review td,
 .permissions-activity th,
@@ -17382,35 +17425,218 @@ button.toggle--on .toggle__knob {
   text-align: start;
 }
 
-.permissions-profiles__table thead th,
 .permissions-settings__review thead th,
 .permissions-activity thead th {
   color: var(--text-dim);
   border-bottom-color: var(--border-2);
 }
 
-.permissions-profiles__decision {
+.permissions-profile-editor fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Roles tab: list plus drawer. Split from 1100px, overlay below; spec 2026-11-18-mcp-full-screen §4. */
+.permissions-roles {
+  position: relative;
+  min-height: 100%;
+  min-width: 0;
+}
+
+.permissions-role-list {
+  min-width: 0;
+  color: var(--text);
+  overflow-x: auto;
+}
+
+.permissions-role-list__heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.permissions-role-list__heading h3 {
+  margin: 0 0 6px;
+}
+
+.permissions-role-list__heading p,
+.permissions-role-list__counts,
+.permissions-drawer__summary,
+.permissions-drawer__conditions {
+  color: var(--text-dim);
+}
+
+.permissions-role-list__table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: start;
+  font-size: calc(13px * var(--font-scale));
+}
+
+.permissions-role-list__table th,
+.permissions-role-list__table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  text-align: start;
+}
+
+.permissions-role-list__table thead th {
+  color: var(--text-dim);
+  border-bottom-color: var(--border-2);
+}
+
+.permissions-role-list__row {
+  cursor: pointer;
+}
+
+.permissions-role-list__row[aria-current="true"] {
+  background: var(--accent-soft);
+}
+
+.permissions-role-list__row:focus-visible {
+  outline: none;
+  box-shadow: inset var(--focus-ring);
+}
+
+.permissions-role-list__tag {
+  display: block;
+  color: var(--accent);
+  font-weight: 400;
+}
+
+.permissions-role-list__counts {
+  margin-top: 2px;
+  font-size: calc(11px * var(--font-scale));
+}
+
+.permissions-editor__counts {
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
+}
+
+.permissions-pill {
   display: inline-block;
-  padding: 2px 5px;
+  padding: 1px 6px;
   border: 1px solid var(--border-2);
   border-radius: var(--r-ctl);
   color: var(--text);
   font-weight: 600;
 }
 
-.permissions-profiles__decision[data-decision="ask"] {
-  border-style: dashed;
+.permissions-pill[data-state="allowed"] {
+  border-color: var(--success);
+  background: color-mix(in srgb, var(--success) 16%, transparent);
 }
 
-.permissions-profiles__decision[data-decision="deny"] {
-  background: var(--raise);
+.permissions-pill[data-state="mixed"] {
+  border-color: var(--yellow);
+  background: color-mix(in srgb, var(--yellow) 16%, transparent);
 }
 
-.permissions-profiles__actions,
-.permissions-profile-editor fieldset {
+.permissions-pill[data-state="denied"] {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+}
+
+.permissions-roles__side {
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+@media (max-width: 1099px) {
+  .permissions-role-list__group {
+    display: none;
+  }
+
+  .permissions-roles__side {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1;
+    width: min(340px, 100%);
+    background: var(--panel);
+    border-inline-start: 1px solid var(--border-2);
+  }
+}
+
+@media (min-width: 1100px) {
+  .permissions-role-list__counts {
+    display: block;
+  }
+
+  .permissions-roles {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .permissions-roles__side {
+    width: 380px;
+    margin-inline-start: 12px;
+  }
+}
+
+.permissions-drawer {
+  min-width: 0;
+  color: var(--text);
+}
+
+.permissions-drawer__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.permissions-drawer__head h4 {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.permissions-drawer__badge {
+  padding: 1px 6px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-ctl);
+  color: var(--text-dim);
+}
+
+.permissions-drawer__note {
+  color: var(--text-dim);
+}
+
+.permissions-drawer__group ul {
+  margin: 4px 0 8px;
+  padding-inline-start: 0;
+  list-style: none;
+}
+
+.permissions-drawer__group li {
   display: flex;
   flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 3px 0;
+}
+
+.permissions-drawer__group li [data-decision] {
+  font-weight: 600;
+}
+
+.permissions-drawer__summary {
+  margin-inline-start: 8px;
+}
+
+.permissions-drawer__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
+  margin-top: 12px;
 }
 
 .permissions-profile-editor details,
@@ -17511,20 +17737,6 @@ button.toggle--on .toggle__knob {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-}
-
-.permissions-settings__tabs,
-.permissions-settings__tabs [role="tablist"] {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.permissions-settings__tabs {
-  align-items: center;
-  padding-bottom: 10px;
-  margin-bottom: 10px;
-  border-bottom: 1px solid var(--border);
 }
 
 .permissions-grants__list {
@@ -17643,38 +17855,100 @@ button.toggle--on .toggle__knob {
   justify-content: space-between;
   gap: 8px;
 }
-.permissions-assignments__table {
-  width: 100%;
-  margin-block: 12px;
-  border-collapse: collapse;
-  text-align: start;
+/* Agents tab shares the Roles list + drawer split; spec 2026-11-18-mcp-full-screen §4. */
+.permissions-agents-list {
+  min-width: 0;
+  color: var(--text);
 }
-.permissions-assignments__table :is(th, td) {
+.permissions-agents-list h3 {
+  margin: 0 0 8px;
+}
+.permissions-agents-list__new {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.permissions-agents-list__table {
+  width: 100%;
+  margin-block: 8px;
+  border-collapse: collapse;
+  font-size: calc(13px * var(--font-scale));
+}
+.permissions-agents-list__table :is(th, td) {
+  padding: 7px 8px;
   border-bottom: 1px solid var(--border);
-  padding: 8px;
   text-align: start;
   vertical-align: middle;
-  white-space: nowrap;
 }
-/* Only the name column may wrap; the others are short by design. */
-.permissions-assignments__table tbody th {
-  width: 100%;
-  white-space: normal;
+.permissions-agents-list__table thead th {
+  color: var(--text-dim);
+  border-bottom-color: var(--border-2);
+}
+.permissions-agents-list__table tbody th {
   overflow-wrap: anywhere;
 }
-.permissions-assignments__table .permissions-assignments__actions {
-  text-align: end;
+.permissions-agents-list__table .selectfield {
+  max-width: 100%;
 }
-.permissions-assignments__actions > .btn + .btn {
-  margin-inline-start: 6px;
+.permissions-agents-list__row[tabindex] {
+  cursor: pointer;
 }
-.permissions-assignments__muted {
+.permissions-agents-list__row[aria-current="true"] {
+  background: var(--accent-soft);
+}
+.permissions-agents-list__row:focus-visible {
+  outline: none;
+  box-shadow: inset var(--focus-ring);
+}
+.permissions-agents-list__title,
+.permissions-agents-list__subtitle {
+  display: block;
+}
+.permissions-agents-list__subtitle {
   color: var(--text-dim);
+  font-weight: 400;
+  font-size: calc(11px * var(--font-scale));
 }
-.permissions-assignments__sessions > summary {
+.permissions-agents-list__chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-ctl);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.permissions-agents-list__chip[data-changes="true"] {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.permissions-agents-list__defaults > summary {
   cursor: pointer;
   padding-block: 6px;
   color: var(--text-dim);
+}
+.permissions-agents-drawer__role {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-block: 8px;
+}
+.permissions-agents-drawer__summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+.permissions-agents-drawer__changes {
+  margin: 4px 0 10px;
+  padding-inline-start: 0;
+  list-style: none;
+}
+.permissions-agents-drawer__changes li {
+  padding: 3px 0;
+  overflow-wrap: anywhere;
 }
 .permissions-profile-editor__name {
   padding: 5px 9px;
@@ -17738,6 +18012,10 @@ button.toggle--on .toggle__knob {
     .seg__btn,
     .statusbar__attn,
     .settings__navitem,
+    .mcp-section__tab,
+    .settings-page__back,
+    .permissions-role-list__row,
+    .permissions-agents-list__row[tabindex],
     .relnotes__ver,
     .searchgroup__head,
     .searchmatch,
@@ -17866,6 +18144,10 @@ button.toggle--on .toggle__knob {
     .seg__btn,
     .statusbar__attn,
     .settings__navitem,
+    .mcp-section__tab,
+    .settings-page__back,
+    .permissions-role-list__row,
+    .permissions-agents-list__row[tabindex],
     .relnotes__ver,
     .searchgroup__head,
     .searchmatch,

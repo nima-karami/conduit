@@ -169,7 +169,7 @@ describe('StartRefusedState (review B1)', () => {
       root?.render(createElement(StartRefusedState, { session: s, onRelaunch, relaunchRef: null })),
     );
     expect(host.querySelector('.session-stale__detail')?.textContent).toBe(
-      'Permissions could not be loaded. Open Settings → Permissions for recovery.',
+      'Permissions could not be loaded. Open Settings → MCP for recovery.',
     );
     expect(host.textContent).not.toContain("wasn't found");
   });

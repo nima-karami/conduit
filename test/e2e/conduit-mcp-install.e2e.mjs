@@ -105,7 +105,7 @@ await runScenario(
     );
     log('Install added mcp__conduit to the user settings allow list ✓');
     await page.keyboard.press('Escape');
-    await page.locator('.modal.settings').waitFor({ state: 'detached', timeout: 5_000 });
+    await page.locator('.settings-page').waitFor({ state: 'detached', timeout: 5_000 });
 
     // 2. connect from a plain shell
     const sid = await openSession(page, { path: work });

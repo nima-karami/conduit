@@ -138,7 +138,7 @@ export function SessionPermissionExceptions({
                 update(exceptions);
               }}
             >
-              <option value="">Use profile</option>
+              <option value="">Use role</option>
               <option value="allow">Allow</option>
               <option value="ask">Ask</option>
               <option value="deny">Deny</option>
@@ -184,7 +184,7 @@ export function SessionPermissionExceptions({
                       );
                     }}
                   >
-                    <option value="">Use profile</option>
+                    <option value="">Use role</option>
                     {choices.map((value) => (
                       <option key={value} value={value}>
                         {value}

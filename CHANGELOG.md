@@ -6,9 +6,17 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
-### Fixed
+## [0.70.0] — 2026-11-18
 
-- Fixed image paste shortcuts in Windows terminals. When the clipboard holds only an image, the terminal’s Paste menu shows a hint to use the program’s own shortcut.
+### Changed
+- Settings is now a full-screen page with a Back button instead of a pop-up.
+- MCP and Permissions are now one section, MCP, with Settings, Roles, Agents, Grants and Activity tabs.
+- Roles show at a glance what each allows and open in a side panel; built-in roles are read-only and can be duplicated.
+- The Agents tab lists each agent with its role and how many changes it has; an agent's role is staged and applied only after Review.
+- Permissions Activity now lives in MCP › Activity instead of opening as an editor tab.
+
+### Fixed
+- Pasting an image into a terminal works on Windows again: when the clipboard holds only an image, your paste key goes to the program in the terminal (for example Claude Code or Codex), which reads the image itself. Text pastes as before. The terminal's Paste menu shows a hint when the clipboard holds only an image.
 
 ## [0.69.1] — 2026-11-18
 

@@ -95,6 +95,7 @@ it('seeds an editable exact exception, preserves its fields, and replays the ful
           scope: { kind: 'session', sessionId: 's2' },
         }}
         onExceptionSeedConsumed={onExceptionSeedConsumed}
+        registerBack={vi.fn()}
       />,
     ),
   );

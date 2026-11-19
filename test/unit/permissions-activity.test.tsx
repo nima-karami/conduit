@@ -3,6 +3,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { expect, it, vi } from 'vitest';
 import type { ActivityEntry } from '../../src/conduit-mcp/activity-log';
+import type { BackHandler } from '../../webview/components/mcp-section';
 import { PermissionsActivity } from '../../webview/components/permissions-activity';
 
 it('queries the scoped activity and opens recorded facts by keyboard', async () => {
@@ -42,6 +43,8 @@ it('queries the scoped activity and opens recorded facts by keyboard', async () 
       />,
     ),
   );
+  expect(host.querySelector('section[aria-label="Permissions Activity"]')).not.toBeNull();
+  expect(host.querySelector('main')).toBeNull();
   expect(getActivity).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', limit: 50 }));
   expect(host.textContent).toContain('Observed');
   expect(host.textContent).toContain('Session One');
@@ -63,5 +66,49 @@ it('queries the scoped activity and opens recorded facts by keyboard', async () 
   await act(async () => more?.click());
   expect(getActivity).toHaveBeenLastCalledWith(expect.objectContaining({ before: 'cursor' }));
   await act(async () => root.unmount());
+  host.remove();
+});
+
+it('a registered back handler closes the Why panel and reports the step consumed, then reports nothing left', async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const row: ActivityEntry = {
+    v: 1,
+    id: '1',
+    at: '2026-11-17T00:00:00.000Z',
+    lane: 'observed',
+    principal: { handle: 'agent', sessionId: 's1', machineId: null },
+    cli: 'claude',
+    action: 'open_file',
+    target: '/a',
+    summary: null,
+    decision: null,
+    decidedBy: 'cli',
+    outcome: 'ok',
+    durationMs: 4,
+    requestId: null,
+    count: null,
+  };
+  const getActivity = vi.fn(async () => ({ rows: [row], next: null, writable: true, error: null }));
+  let handler: BackHandler | null = null;
+  const registerBack = (next: BackHandler | null) => {
+    handler = next;
+  };
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () =>
+    root.render(<PermissionsActivity getActivity={getActivity} registerBack={registerBack} />),
+  );
+  await act(async () => host.querySelector<HTMLButtonElement>('tbody button')?.click());
+  expect(host.querySelector('aside')).not.toBeNull();
+  let first: boolean | undefined;
+  await act(async () => {
+    first = (handler as BackHandler | null)?.();
+  });
+  expect(first).toBe(true);
+  expect(host.querySelector('aside')).toBeNull();
+  expect((handler as BackHandler | null)?.() ?? false).toBe(false);
+  await act(async () => root.unmount());
+  expect(handler).toBeNull();
   host.remove();
 });

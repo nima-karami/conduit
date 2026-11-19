@@ -382,7 +382,7 @@ await runScenario(
       .first()
       .waitFor({ timeout: 5_000 });
     await page.keyboard.press('Escape');
-    await page.locator('.modal.settings').first().waitFor({ state: 'detached', timeout: 5_000 });
+    await page.locator('.settings-page').first().waitFor({ state: 'detached', timeout: 5_000 });
     await waitItem(page, 'commands', 'Ctrl + Alt + J commands', 'a rebound openCommands');
     log('rebound hint ✓');
 

@@ -2,7 +2,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { SettingsModal } from '../../webview/components/settings-modal';
+import { SettingsPage } from '../../webview/components/settings-page';
 import { SettingsProvider } from '../../webview/settings';
 
 vi.mock('../../webview/bridge', async (importOriginal) => ({
@@ -30,7 +30,7 @@ async function mount() {
   await act(async () =>
     root?.render(
       <SettingsProvider>
-        <SettingsModal
+        <SettingsPage
           agents={[]}
           initialTab="appearance"
           onClose={() => {}}
