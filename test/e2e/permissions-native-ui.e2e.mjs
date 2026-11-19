@@ -9,7 +9,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { tapMcp, until } from './conduit-mcp-helpers.mjs';
+import { openSessionPermissionsDialog, tapMcp, until } from './conduit-mcp-helpers.mjs';
 import { assert, closeApp, finishScenario, launchApp, makeLog } from './harness.mjs';
 import { startServer } from './net-helpers.mjs';
 
@@ -138,10 +138,7 @@ async function run() {
     const row = page.locator(`.session[data-sessionid="${sessionId}"]`);
     await row.waitFor({ timeout: 30_000 });
     await row.locator('.session__select').click();
-    await row.click({ button: 'right' });
-    await page.locator('.ctxmenu__item', { hasText: 'Permissions…' }).click();
-    const dialog = page.getByRole('dialog', { name: /^Permissions · / });
-    await dialog.waitFor();
+    const dialog = await openSessionPermissionsDialog(page, sessionId);
     assert((await dialog.getAttribute('aria-modal')) === 'true', 'Permissions was not modal');
     const launchEvidence = dialog.locator('p').filter({ hasText: /^At launch:/ });
     await launchEvidence.waitFor();

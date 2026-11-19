@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
+import { BUILT_IN_PROFILES } from '../../src/conduit-mcp/policy-profiles';
+import type { PolicyUiState } from '../../src/conduit-mcp/policy-types';
 import type { MenuItem } from '../../webview/components/context-menu';
 import { MCP_STR } from '../../webview/conduit-mcp-strings';
 import {
+  buildPermissionsSubmenu,
   buildSelectionMenu,
   buildSessionMenu,
   canOpenSessionPermissions,
   type SessionMenuAction,
   type SessionMenuInput,
+  sessionPermissionSummary,
 } from '../../webview/session-menu';
 
 const ACTIONS: SessionMenuAction[] = [
@@ -168,7 +172,7 @@ describe('buildSessionMenu — entries, order and separators', () => {
       'Connected to Conduit as claude-1',
       'Open messages',
       'Pause notices for claude-1',
-      'Permissions…',
+      'Permissions',
       'Set up Conduit MCP…',
       'Rename',
     ]);
@@ -181,7 +185,7 @@ describe('buildSessionMenu — entries, order and separators', () => {
     expect(labels(paused)).toContain('Resume notices for claude-1');
     // Tools without a handle yet open their own group.
     const tools = buildSessionMenu(input({ mcpSwitchable: true }).value);
-    expect(find(tools, 'Permissions…')?.separatorBefore).toBe(true);
+    expect(find(tools, 'Permissions')?.separatorBefore).toBe(true);
     // Not connected or unavailable: the reason in words, with no messaging entries.
     const missing = buildSessionMenu(
       input({ mcpLink: { kind: 'not-connected', cli: 'codex', install: 'not-installed' } }).value,
@@ -309,4 +313,93 @@ it('requires both current window coverage and a policy projection', () => {
   expect(canOpenSessionPermissions('s1', [{ id: 's1' }], { s1: {} })).toBe(true);
   expect(canOpenSessionPermissions('s1', [], { s1: {} })).toBe(false);
   expect(canOpenSessionPermissions('s1', [{ id: 's1' }], {})).toBe(false);
+});
+
+describe('Permissions submenu (canvas E1)', () => {
+  const policy = {
+    profiles: BUILT_IN_PROFILES,
+    assignments: [
+      {
+        point: { kind: 'session', sessionId: 's1' },
+        assignment: {
+          profileId: 'worker',
+          onScreenOnly: false,
+          exceptions: [
+            { tool: 'close_session', scope: { kind: 'anywhere' }, rule: { decision: 'allow' } },
+            { tool: 'open_url', scope: { kind: 'anywhere' }, rule: { decision: 'deny' } },
+          ],
+        },
+      },
+    ],
+    sessions: {
+      s1: { profileId: 'worker', profileName: 'Worker' },
+      s2: { profileId: 'lead', profileName: 'Lead' },
+    },
+  } as unknown as PolicyUiState;
+
+  it('summarises the role and only the session’s own changes', () => {
+    expect(sessionPermissionSummary(policy, 's1')).toEqual({
+      profileId: 'worker',
+      roleName: 'Worker',
+      changes: 2,
+    });
+    expect(sessionPermissionSummary(policy, 's2')?.changes).toBe(0);
+    expect(sessionPermissionSummary(policy, 'missing')).toBeNull();
+    expect(sessionPermissionSummary(undefined, 's1')).toBeNull();
+  });
+
+  it('shows the role and change count beside Permissions in the row menu', () => {
+    const items = buildSessionMenu(
+      input({ mcpSwitchable: true, mcpPermissions: sessionPermissionSummary(policy, 's1') }).value,
+    );
+    const item = find(items, 'Permissions');
+    expect(item?.detail).toBe('Worker · 2 changes');
+    expect(item?.hint).toBe('▸');
+  });
+
+  it('lists the roles with the current one ticked, then the changes, Reset and Customize', () => {
+    const onPick = vi.fn();
+    const onReset = vi.fn();
+    const onCustomize = vi.fn();
+    const summary = sessionPermissionSummary(policy, 's1');
+    if (!summary) throw new Error('no summary');
+    const items = buildPermissionsSubmenu({
+      name: 'Docs refresh',
+      roles: BUILT_IN_PROFILES,
+      summary,
+      onPick,
+      onReset,
+      onCustomize,
+    });
+    expect(labels(items)).toEqual([
+      'Role for Docs refresh',
+      ...BUILT_IN_PROFILES.map((p) => p.name),
+      '2 changes from Worker',
+      'Reset to role',
+      'Customize…',
+    ]);
+    expect(items[0].disabled).toBe(true);
+    expect(items.filter((i) => i.checked).map((i) => i.label)).toEqual(['Worker']);
+    expect(find(items, '2 changes from Worker')?.disabled).toBe(true);
+    find(items, 'Lead')?.onClick();
+    expect(onPick).toHaveBeenCalledWith('lead');
+    find(items, 'Reset to role')?.onClick();
+    expect(onReset).toHaveBeenCalledOnce();
+    find(items, 'Customize…')?.onClick();
+    expect(onCustomize).toHaveBeenCalledOnce();
+  });
+
+  it('leaves out the change rows when the agent follows its role', () => {
+    const summary = { profileId: 'lead' as const, roleName: 'Lead', changes: 0 };
+    const items = buildPermissionsSubmenu({
+      name: 'x',
+      roles: BUILT_IN_PROFILES,
+      summary,
+      onPick: () => {},
+      onReset: () => {},
+      onCustomize: () => {},
+    });
+    expect(labels(items)).not.toContain('Reset to role');
+    expect(labels(items).at(-1)).toBe('Customize…');
+  });
 });

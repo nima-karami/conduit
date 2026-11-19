@@ -145,7 +145,7 @@ import { NewSessionModal } from './components/new-session-modal';
 import { type DockHandlers, PanelFrame } from './components/panel-frame';
 import { PermissionStoreNotice } from './components/permission-store-notice';
 import type { ActivityScope } from './components/permissions-activity';
-import type { AssignmentExceptionSeed } from './components/permissions-assignments';
+import type { AgentStage, AssignmentExceptionSeed } from './components/permissions-assignments';
 import { PermissionsUpgradeDialog } from './components/permissions-upgrade-dialog';
 import { ProjectPicker } from './components/project-picker';
 import { QuitScrim } from './components/quit-scrim';
@@ -357,10 +357,12 @@ import {
 import { selectionInActiveDoc } from './selection-registry';
 import { selectionSourceFor } from './selection-source';
 import {
+  buildPermissionsSubmenu,
   buildSelectionMenu,
   buildSessionMenu,
   canOpenSessionPermissions,
   type SessionMenuAction,
+  sessionPermissionSummary,
 } from './session-menu';
 import { sessionMcpLink, sessionSnoozeInput } from './session-menu-input';
 import { useSettings } from './settings';
@@ -648,10 +650,14 @@ export function App() {
   const [settingsFocusCli, setSettingsFocusCli] = useState<AgentCli | undefined>(undefined);
   const [settingsMcpTab, setSettingsMcpTab] = useState<McpTabId>('settings');
   const [settingsAgentKey, setSettingsAgentKey] = useState<string | undefined>(undefined);
+  const [settingsAgentStage, setSettingsAgentStage] = useState<AgentStage | undefined>(undefined);
   const [settingsSeq, setSettingsSeq] = useState(0);
   const [recentsBySession, setRecentsBySession] = useState<Record<string, RecentDoc[]>>({});
   const [corpus, setCorpus] = useState<FolderCorpus>({});
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // The row menu's Permissions submenu (canvas E1). Its own state: the row menu closes after the
+  // activating item's handler runs, which would otherwise close the submenu it just opened.
+  const [permissionsMenu, setPermissionsMenu] = useState<MenuState | null>(null);
   useEffect(() => {
     const open = menu;
     return () => open?.onClosed?.();
@@ -1089,13 +1095,19 @@ export function App() {
     (
       tab: SettingsTab,
       cli?: AgentCli,
-      opts?: { releaseNotes?: boolean; mcpTab?: McpTabId; agentKey?: string },
+      opts?: {
+        releaseNotes?: boolean;
+        mcpTab?: McpTabId;
+        agentKey?: string;
+        agentStage?: AgentStage;
+      },
     ) => {
       setSettingsTab(tab);
       setSettingsFocusCli(cli);
       setSettingsAboutReleaseNotes(!!opts?.releaseNotes);
       setSettingsMcpTab(opts?.mcpTab ?? 'settings');
       setSettingsAgentKey(opts?.agentKey);
+      setSettingsAgentStage(opts?.agentStage);
       setSettingsSeq((n) => n + 1);
       if (
         settingsOpenerRef.current === null &&
@@ -3877,6 +3889,7 @@ export function App() {
       mcpPaused: badge?.paused === true,
       // Offered before any launch: a switchable session may not have a handle yet (spec §4).
       mcpSwitchable: canOpenSessionPermissions(s.id, hostSessions, mcp.state?.policy.sessions),
+      mcpPermissions: sessionPermissionSummary(mcp.state?.policy, s.id),
       // The banner's actions, reachable by keyboard while focus sits in xterm (spec 2026-10-27-conduit-mcp-install §2.5).
       mcpSetupNeeded: notConnected !== undefined,
       mcpLink: sessionMcpLink(badge, notConnected, mcp.state?.enabled ?? false),
@@ -3894,10 +3907,33 @@ export function App() {
         timed: () => openTimedMessages(s.id),
         messages: () => openMessages(badge?.handle ?? null),
         pauseMcp: () => mcp.pause(s.id, badge?.paused !== true),
-        mcpTools: () => {
+        // Beside the row it was picked from; a bare call has only the right-click point.
+        mcpTools: (a) => {
           const coverage = permissionCoverageRef.current;
-          if (canOpenSessionPermissions(s.id, coverage.sessions, coverage.policy))
-            setPermissionsFor(s.id);
+          const policy = mcp.state?.policy;
+          const summary = sessionPermissionSummary(policy, s.id);
+          if (
+            !policy ||
+            !summary ||
+            !canOpenSessionPermissions(s.id, coverage.sessions, coverage.policy)
+          )
+            return;
+          const agentKey = pointKey({ kind: 'session', sessionId: s.id });
+          const toDrawer = (agentStage?: AgentStage) =>
+            openSettingsAt('mcp', undefined, { mcpTab: 'agents', agentKey, agentStage });
+          setPermissionsMenu({
+            ...(a ? { x: a.rect.right, y: a.rect.top } : point),
+            keyboard: 'anchor' in at,
+            items: buildPermissionsSubmenu({
+              name: s.name,
+              roles: policy.profiles,
+              summary,
+              onPick: (profileId) =>
+                toDrawer(profileId === summary.profileId ? undefined : { kind: 'role', profileId }),
+              onReset: () => toDrawer({ kind: 'reset' }),
+              onCustomize: () => toDrawer(),
+            }),
+          });
         },
         setupMcp: () => openSettingsAt('mcp', notConnected?.cli),
         // From the live value: the menu may outlive a sidebar edit made while it was open.
@@ -4654,6 +4690,7 @@ export function App() {
     !!palette ||
     settingsOpen ||
     !!menu ||
+    !!permissionsMenu ||
     slot.current !== null ||
     !!newSession ||
     webPromptOpen ||
@@ -5959,6 +5996,12 @@ export function App() {
               initialCli={settingsFocusCli}
               initialMcpTab={settingsMcpTab}
               initialAgentKey={settingsAgentKey}
+              initialAgentStage={settingsAgentStage}
+              onOpenSessionPermissions={(id) => {
+                const coverage = permissionCoverageRef.current;
+                if (canOpenSessionPermissions(id, coverage.sessions, coverage.policy))
+                  setPermissionsFor(id);
+              }}
               navSeq={settingsSeq}
               about={state?.about}
               projectPath={active?.home || null}
@@ -6005,6 +6048,9 @@ export function App() {
             />
           )}
           {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
+          {permissionsMenu && (
+            <ContextMenu menu={permissionsMenu} onClose={() => setPermissionsMenu(null)} />
+          )}
           {modal?.kind === 'dirty' && <DirtyCloseDialog key={modal.key} {...modal.props} />}
           {quitLocked && <QuitScrim />}
           {modal?.kind === 'confirm' && (

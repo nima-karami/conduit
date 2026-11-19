@@ -37,6 +37,7 @@ async function mount(profile: Profile, over: Partial<PermissionsRoleDrawerProps>
     onDuplicate: vi.fn(),
     onEdit: vi.fn(),
     onDelete: vi.fn(),
+    onViewAgents: vi.fn(),
     ...over,
   };
   await act(async () => root.render(<PermissionsRoleDrawer {...props} />));
@@ -104,7 +105,7 @@ it('disables every role action but Close while read-only', async () => {
   for (const profile of [custom, BUILT_IN_PROFILES[0]]) {
     const { host } = await mount(profile, { readOnly: true });
     const actions = [
-      ...host.querySelectorAll<HTMLButtonElement>('.permissions-drawer__actions button'),
+      ...host.querySelectorAll<HTMLButtonElement>('.permissions-drawer__foot button'),
     ];
     expect(actions.length).toBeGreaterThan(0);
     expect(actions.map((b) => b.disabled)).toEqual(actions.map(() => true));
@@ -113,7 +114,7 @@ it('disables every role action but Close while read-only', async () => {
 
 it('moves focus to its heading on mount and closes from the close button', async () => {
   const { host, props } = await mount(custom);
-  expect(document.activeElement).toBe(host.querySelector('h4'));
+  expect(document.activeElement).toBe(host.querySelector('.permissions-drawer__title'));
   const close = host.querySelector<HTMLButtonElement>('[aria-label="Close"]');
   await act(async () => close?.click());
   expect(props.onClose).toHaveBeenCalledOnce();
@@ -122,4 +123,15 @@ it('moves focus to its heading on mount and closes from the close button', async
 it('registers nothing on the overlay stack', () => {
   const source = readFileSync('webview/components/permissions-role-drawer.tsx', 'utf8');
   expect(source).not.toContain('useOverlayEntry');
+});
+
+it('links Used by to the Agents tab only when the role is in use', async () => {
+  const { host, props } = await mount(custom);
+  const link = [...host.querySelectorAll('button')].find((b) => b.textContent === 'View agents');
+  await act(async () => link?.click());
+  expect(props.onViewAgents).toHaveBeenCalledOnce();
+  const unused = await mount(custom, { used: 0 });
+  expect(
+    [...unused.host.querySelectorAll('button')].some((b) => b.textContent === 'View agents'),
+  ).toBe(false);
 });

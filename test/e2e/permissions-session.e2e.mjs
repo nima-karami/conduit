@@ -2,10 +2,12 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   callTool,
+  closeSettingsPage,
   fakeAgentProfile,
   isolatedHome,
   mcpState,
   openFake,
+  openSessionPermissionsDialog,
   tapMcp,
   until,
 } from './conduit-mcp-helpers.mjs';
@@ -34,7 +36,7 @@ await runScenario(
     const session = await openFake(page, work);
     const row = page.locator(`.session[data-sessionid="${session.sessionId}"]`);
     const dialog = page.getByRole('dialog', { name: /^Permissions · / });
-    const menu = page.locator('.ctxmenu__item', { hasText: 'Permissions…' });
+    const menu = page.locator('.ctxmenu__item', { hasText: /^Permissions/ });
 
     assert(
       await until(
@@ -52,7 +54,26 @@ await runScenario(
       throw error;
     }
     await capture(page, '01-session-menu.png');
+    // Canvas E1: Permissions opens a role submenu beside the row, not a dialog.
     await menu.click();
+    const customize = page.locator('.ctxmenu__item', { hasText: 'Customize…' });
+    await customize.waitFor();
+    assert(
+      (await page.locator('.ctxmenu__item', { hasText: 'Role for' }).count()) === 1,
+      'the Permissions submenu has no role list',
+    );
+    assert((await dialog.count()) === 0, 'Permissions opened the old dialog');
+    await capture(page, '01b-permissions-submenu.png');
+    await customize.click();
+    const drawer = page.locator('.settings-page aside.permissions-drawer');
+    await drawer.waitFor();
+    assert(
+      (await page
+        .getByRole('tab', { name: 'Agents', exact: true })
+        .getAttribute('aria-selected')) === 'true',
+      'Customize… did not land on MCP › Agents',
+    );
+    await drawer.getByRole('button', { name: 'Agent’s own permissions…' }).click();
     await dialog.waitFor();
     assert((await dialog.getAttribute('aria-modal')) === 'true', 'Permissions is not modal');
     assert(
@@ -105,11 +126,10 @@ await runScenario(
       'the session projection does not show the Lead profile',
     );
     await capture(page, '03-lead-applied.png');
-    await row.click({ button: 'right' });
-    await menu.click();
-    await dialog.waitFor();
+    await openSessionPermissionsDialog(page, session.sessionId);
     await page.keyboard.press('Escape');
     await dialog.waitFor({ state: 'hidden' });
+    await closeSettingsPage(page);
 
     assert(!(await callTool(page, session.sessionId, 'list_sessions', {}))?.error, 'list_sessions');
     assert(
@@ -120,8 +140,7 @@ await runScenario(
       ),
       'owner policy did not retain the saved profile',
     );
-    await row.click({ button: 'right' });
-    await menu.click();
+    await openSessionPermissionsDialog(page, session.sessionId);
     await dialog.getByRole('button', { name: 'View Activity' }).click();
     await dialog.waitFor({ state: 'hidden' });
     const activity = page.getByRole('region', { name: 'Permissions Activity' });
@@ -147,11 +166,6 @@ await runScenario(
     await settings
       .getByRole('combobox', { name: 'Codex', exact: true })
       .selectOption('workspace-write');
-    // The floating update notice covers the page's bottom-right actions (CON-57 decision 6).
-    const updateNotice = page.locator('[data-post-update-toast]');
-    if ((await updateNotice.count()) > 0) {
-      await updateNotice.getByRole('button', { name: 'Dismiss update' }).click();
-    }
     await settings.getByRole('button', { name: 'Review and save' }).click();
     await settings.getByRole('heading', { name: 'Review role changes' }).waitFor();
     await settings.getByRole('row', { name: /Codex.*workspace-write/ }).waitFor();
@@ -195,10 +209,6 @@ await runScenario(
     await capture(page, '14-settings-assignments.png');
     await settings.getByRole('button', { name: 'Edit changes' }).click();
     await settings.getByRole('heading', { name: /Edit assignment/ }).waitFor();
-    const staleNotice = page.locator('[data-post-update-toast]');
-    if ((await staleNotice.count()) > 0) {
-      await staleNotice.getByRole('button', { name: 'Dismiss update' }).click();
-    }
     await settings.getByRole('button', { name: 'Cancel' }).click();
     await settings.getByRole('button', { name: 'Edit changes' }).waitFor();
     await assignments.focus();

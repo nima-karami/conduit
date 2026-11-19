@@ -11,7 +11,10 @@ import type {
 } from '../../src/conduit-mcp/policy-types';
 import type { Session } from '../../src/types';
 import type { BackHandler } from '../../webview/components/mcp-section';
-import { PermissionsAssignments } from '../../webview/components/permissions-assignments';
+import {
+  type AgentStage,
+  PermissionsAssignments,
+} from '../../webview/components/permissions-assignments';
 import type { ConduitMcpApi } from '../../webview/use-conduit-mcp';
 
 beforeAll(() => {
@@ -78,7 +81,9 @@ async function mount(initial: {
   policy?: PolicyUiState;
   sessions?: Session[];
   focusAgentKey?: string;
+  focusAgentStage?: AgentStage;
   onFocusAgentSpent?: () => void;
+  onOpenSessionPermissions?: (sessionId: string) => void;
   reviewResult?: unknown;
 }): Promise<Mount> {
   const reviewLocalPolicy = vi.fn(
@@ -105,7 +110,9 @@ async function mount(initial: {
           mcp={mcp}
           serverConnected
           focusAgentKey={'focusAgentKey' in over ? over.focusAgentKey : initial.focusAgentKey}
+          focusAgentStage={initial.focusAgentStage}
           onFocusAgentSpent={initial.onFocusAgentSpent}
+          onOpenSessionPermissions={initial.onOpenSessionPermissions}
           registerBack={registerBack}
         />,
       ),
@@ -163,7 +170,7 @@ it('opens the drawer for the selected row and closes it again', async () => {
     policy: policyWith([], ['s1']),
   });
   await act(async () => rowOf(host, 'First').click());
-  expect(drawer(host)?.querySelector('h4')?.textContent).toBe('First');
+  expect(drawer(host)?.querySelector('.permissions-drawer__title')?.textContent).toBe('First');
   await act(async () => host.querySelector<HTMLElement>('[aria-label="Close"]')?.click());
   expect(drawer(host)).toBeNull();
 });
@@ -223,7 +230,7 @@ it('opens the drawer of the focused agent on mount', async () => {
     policy: policyWith([], ['s1', 's2']),
     focusAgentKey: 'session:s2',
   });
-  expect(drawer(host)?.querySelector('h4')?.textContent).toBe('Second');
+  expect(drawer(host)?.querySelector('.permissions-drawer__title')?.textContent).toBe('Second');
 });
 
 it('the spent callback fires once the drawer is opened from the key', async () => {
@@ -250,7 +257,7 @@ it('a deep link for the same agent reopens its drawer after it was closed', asyn
   expect(drawer(m.host)).toBeNull();
   await m.render({ focusAgentKey: undefined });
   await m.render({ focusAgentKey: 'session:s1' });
-  expect(drawer(m.host)?.querySelector('h4')?.textContent).toBe('First');
+  expect(drawer(m.host)?.querySelector('.permissions-drawer__title')?.textContent).toBe('First');
   expect(onFocusAgentSpent).toHaveBeenCalledTimes(2);
 });
 
@@ -261,7 +268,7 @@ it('opens the agent of a focus key that changes after mount', async () => {
   });
   expect(drawer(m.host)).toBeNull();
   await m.render({ focusAgentKey: 'session:s2' });
-  expect(drawer(m.host)?.querySelector('h4')?.textContent).toBe('Second');
+  expect(drawer(m.host)?.querySelector('.permissions-drawer__title')?.textContent).toBe('Second');
 });
 
 it('moves focus to the drawer heading when a row is selected', async () => {
@@ -270,7 +277,7 @@ it('moves focus to the drawer heading when a row is selected', async () => {
     policy: policyWith([], ['s1']),
   });
   await act(async () => rowOf(host, 'First').click());
-  expect(document.activeElement).toBe(drawer(host)?.querySelector('h4'));
+  expect(document.activeElement).toBe(drawer(host)?.querySelector('.permissions-drawer__title'));
 });
 
 it('read-only policy disables every drawer control and says why', async () => {
@@ -355,7 +362,7 @@ it('stages a role picked in the list and applies nothing until Review, then Appl
     select.value = 'lead';
     select.dispatchEvent(new Event('change', { bubbles: true }));
   });
-  expect(drawer(host)?.querySelector('h4')?.textContent).toBe('First');
+  expect(drawer(host)?.querySelector('.permissions-drawer__title')?.textContent).toBe('First');
   expect(host.textContent).toContain('Edit assignment');
   const staged = host.querySelector<HTMLSelectElement>('aside .selectfield');
   expect(staged?.value).toBe('lead');
@@ -428,12 +435,14 @@ async function openWithChanges() {
 
 it('lists each change as what the role says and what this agent does', async () => {
   const { host } = await openWithChanges();
-  const lines = [...(drawer(host)?.querySelectorAll('li') ?? [])].map((li) => li.textContent);
+  const lines = [
+    ...(drawer(host)?.querySelectorAll('.permissions-agents-drawer__change > div') ?? []),
+  ].map((row) => row.textContent);
   expect(lines).toContain(
-    `close_session: role says ${word[workerRules?.close_session.decision ?? 'ask']} → this agent: Allow`,
+    `close_sessionWorker says ${word[workerRules?.close_session.decision ?? 'ask']} → this agent: Allow`,
   );
   expect(lines).toContain(
-    `open_file: role says ${word[workerRules?.open_file.decision ?? 'ask']} → this agent: Deny`,
+    `open_fileWorker says ${word[workerRules?.open_file.decision ?? 'ask']} → this agent: Deny`,
   );
   expect(drawer(host)?.textContent).toContain('2 changes from Worker');
 });
@@ -489,4 +498,102 @@ it('summarises what the agent can do per group with a worded pill', async () => 
   expect(groups[0].closest('section')?.textContent).toContain('What this agent can do');
   for (const group of groups)
     expect(group.querySelector('.permissions-pill')?.textContent).toMatch(/Allowed|Mixed|Denied/);
+});
+
+const withChanges = (stage?: AgentStage, extra: Partial<Parameters<typeof mount>[0]> = {}) =>
+  mount({
+    sessions: [session('s1', 'First')],
+    policy: policyWith(
+      [{ point: { kind: 'session', sessionId: 's1' }, assignment: sessionWithChanges() }],
+      ['s1'],
+    ),
+    focusAgentKey: 'session:s1',
+    focusAgentStage: stage,
+    ...extra,
+  });
+
+it('opens the focused agent at Review with the role the row menu picked (E1)', async () => {
+  const { host, reviewLocalPolicy, saveAssignment } = await withChanges({
+    kind: 'role',
+    profileId: 'lead',
+  });
+  expect(drawer(host)?.querySelector('.permissions-drawer__title')?.textContent).toBe('First');
+  expect(reviewLocalPolicy).toHaveBeenCalledWith(
+    {
+      kind: 'assignment',
+      point: { kind: 'session', sessionId: 's1' },
+      assignment: expect.objectContaining({ profileId: 'lead' }),
+    },
+    'v1',
+  );
+  expect(host.textContent).toContain('Review assignment');
+  expect(button(host, 'Confirm and save')).toBeDefined();
+  expect(saveAssignment).not.toHaveBeenCalled();
+});
+
+it('opens the focused agent at a reset Review when the row menu picked Reset to role', async () => {
+  const { reviewLocalPolicy, saveAssignment } = await withChanges({ kind: 'reset' });
+  expect(reviewLocalPolicy).toHaveBeenCalledWith(
+    expect.objectContaining({ assignment: expect.objectContaining({ exceptions: [] }) }),
+    'v1',
+  );
+  expect(saveAssignment).not.toHaveBeenCalled();
+});
+
+it('resets one change from its own row and reviews only that', async () => {
+  const { host, reviewLocalPolicy } = await withChanges();
+  const reset = host.querySelector<HTMLButtonElement>('[aria-label="Reset close_session to role"]');
+  if (!reset) throw new Error('no per-change reset');
+  await act(async () => reset.click());
+  expect(reviewLocalPolicy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      assignment: expect.objectContaining({
+        exceptions: [expect.objectContaining({ tool: 'open_file' })],
+      }),
+    }),
+    'v1',
+  );
+});
+
+it('pins the staged actions in the drawer footer and scrolls only the body', async () => {
+  const { host } = await withChanges();
+  const aside = drawer(host);
+  expect(aside?.querySelector('.permissions-drawer__foot')).toBeNull();
+  await click(host, 'Edit changes');
+  const children = [...(drawer(host)?.children ?? [])].map((el) => el.className);
+  expect(children).toEqual([
+    'permissions-drawer__head',
+    'permissions-drawer__body',
+    'permissions-drawer__foot',
+  ]);
+  const foot = drawer(host)?.querySelector('.permissions-drawer__foot');
+  expect([...(foot?.querySelectorAll('button') ?? [])].map((b) => b.textContent)).toEqual([
+    'Review reset',
+    'Cancel',
+    'Review changes',
+  ]);
+});
+
+it('offers the session dialog for the agent’s own permissions on a session row only', async () => {
+  const onOpenSessionPermissions = vi.fn();
+  const { host } = await withChanges(undefined, { onOpenSessionPermissions });
+  await click(host, 'Agent’s own permissions…');
+  expect(onOpenSessionPermissions).toHaveBeenCalledWith('s1');
+  await act(async () => rowOf(host, 'Default').click());
+  expect(button(host, 'Agent’s own permissions…')).toBeUndefined();
+});
+
+it('returns focus to the row when the drawer closes', async () => {
+  const m = await mount({ sessions: [session('s1', 'First')], policy: policyWith([], ['s1']) });
+  const row = rowOf(m.host, 'First');
+  row.focus();
+  await act(async () => row.click());
+  expect(document.activeElement).toBe(drawer(m.host)?.querySelector('.permissions-drawer__title'));
+  const close = drawer(m.host)?.querySelector<HTMLButtonElement>('[aria-label="Close"]');
+  await act(async () => {
+    close?.focus();
+    close?.click();
+  });
+  expect(drawer(m.host)).toBeNull();
+  expect(document.activeElement).toBe(rowOf(m.host, 'First'));
 });

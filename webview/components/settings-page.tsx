@@ -53,7 +53,7 @@ import { type BackHandler, McpSection } from './mcp-section';
 import { OwnMachinePermissions } from './own-machine-permissions';
 import type { ActivityScope } from './permissions-activity';
 import type { ActivityExceptionSource } from './permissions-activity-why';
-import type { AssignmentExceptionSeed } from './permissions-assignments';
+import type { AgentStage, AssignmentExceptionSeed } from './permissions-assignments';
 import { ReleaseNotesPage } from './release-notes-page';
 import { SelectField } from './select-field';
 import { AgentRowPreview } from './session-card';
@@ -88,6 +88,8 @@ export function SettingsPage({
   initialCli,
   initialMcpTab = 'settings',
   initialAgentKey,
+  initialAgentStage,
+  onOpenSessionPermissions,
   navSeq = 0,
   activityScope = {},
   activityMachines = [],
@@ -118,6 +120,10 @@ export function SettingsPage({
   initialMcpTab?: McpTabId;
   /** An assignment point key; the Agents tab opens that agent. */
   initialAgentKey?: string;
+  /** With `initialAgentKey`: a change the row menu staged, opened at Review (E1). */
+  initialAgentStage?: AgentStage;
+  /** The session dialog for what the drawer does not show yet (native modes, Codex link). */
+  onOpenSessionPermissions?: (sessionId: string) => void;
   /** A change re-applies the initial* target without remounting, so staged edits survive. */
   navSeq?: number;
   activityScope?: ActivityScope;
@@ -156,11 +162,16 @@ export function SettingsPage({
   const spendFocusCli = useCallback(() => setFocusCli(undefined), []);
   const [mcpTab, setMcpTab] = useState<McpTabId>(initialMcpTab);
   const [agentKey, setAgentKey] = useState(initialAgentKey);
-  const spendAgentKey = useCallback(() => setAgentKey(undefined), []);
+  const [agentStage, setAgentStage] = useState(initialAgentStage);
+  const spendAgentKey = useCallback(() => {
+    setAgentKey(undefined);
+    setAgentStage(undefined);
+  }, []);
   const target = {
     initialTab,
     initialMcpTab,
     initialAgentKey,
+    initialAgentStage,
     initialCli,
     initialAboutReleaseNotes,
   };
@@ -175,6 +186,7 @@ export function SettingsPage({
     setAboutReleaseNotes(next.initialAboutReleaseNotes);
     setMcpTab(next.initialMcpTab);
     setAgentKey(next.initialAgentKey);
+    setAgentStage(next.initialAgentStage);
     setFocusCli(next.initialCli);
   }, [navSeq]);
 
@@ -271,7 +283,9 @@ export function SettingsPage({
               exceptionSeed={activityExceptionSeed}
               onExceptionSeedConsumed={onActivityExceptionSeedConsumed}
               focusedAgentKey={agentKey}
+              focusedAgentStage={agentStage}
               onFocusAgentSpent={spendAgentKey}
+              onOpenSessionPermissions={onOpenSessionPermissions}
               activityScope={activityScope}
               activityMachines={activityMachines}
               onAddActivityException={onAddActivityException}

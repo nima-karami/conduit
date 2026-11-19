@@ -12,6 +12,8 @@ export interface PermissionsRoleListProps {
   readOnly: boolean;
   onSelect(profile: Profile): void;
   onNew(): void;
+  /** A drawer is open beside the list: show Role, Type and Used by only (canvas D3). */
+  compact?: boolean;
 }
 
 const STR = MCP_STR.sections.roles;
@@ -24,6 +26,7 @@ export function PermissionsRoleList({
   readOnly,
   onSelect,
   onNew,
+  compact = false,
 }: PermissionsRoleListProps) {
   const onKeyDown = (event: KeyboardEvent, profile: Profile) => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -31,7 +34,12 @@ export function PermissionsRoleList({
     onSelect(profile);
   };
   return (
-    <section className="permissions-role-list" aria-label={STR.title}>
+    <section
+      className={
+        compact ? 'permissions-role-list permissions-role-list--compact' : 'permissions-role-list'
+      }
+      aria-label={STR.title}
+    >
       <div className="permissions-role-list__heading">
         <div>
           <h3>{STR.title}</h3>
