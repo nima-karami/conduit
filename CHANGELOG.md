@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.71.0] — 2026-11-19
+
 ### Changed
 
 - An agent’s Permissions opens in a side panel over the workspace, with native launch settings, recent activity, and active grants.
