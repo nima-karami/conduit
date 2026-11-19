@@ -193,7 +193,7 @@ export function OwnMachinePermissions({
           {policy?.backupWarning && <p role="status">{policy.backupWarning}</p>}
           {assignment && (
             <div>
-              <label htmlFor={profileId}>Default profile</label>{' '}
+              <label htmlFor={profileId}>Default role</label>{' '}
               <select
                 id={profileId}
                 className="selectfield"

@@ -153,7 +153,7 @@ await runScenario(
       await updateNotice.getByRole('button', { name: 'Dismiss update' }).click();
     }
     await settings.getByRole('button', { name: 'Review and save' }).click();
-    await settings.getByRole('heading', { name: 'Review profile changes' }).waitFor();
+    await settings.getByRole('heading', { name: 'Review role changes' }).waitFor();
     await settings.getByRole('row', { name: /Codex.*workspace-write/ }).waitFor();
     await settings.getByRole('button', { name: 'Confirm and save' }).click();
     const reviewRow = settings.getByRole('row', { name: /^Review workspace/ });

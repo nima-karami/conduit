@@ -56,7 +56,7 @@ export function PermissionsUpgradeDialog({
           Permissions have a new home
         </h2>
         <div className="whats-new__body">
-          <p>We converted your existing tool settings to permission profiles and exceptions.</p>
+          <p>We converted your existing tool settings to permission roles and exceptions.</p>
           <table className="permissions-upgrade__table">
             <thead>
               <tr>

@@ -30,7 +30,7 @@ function reasonLabel(reason: Reason): string {
     case 'exception':
       return `Exception at ${pointLabel(reason.point)}`;
     case 'profile':
-      return `Profile at ${pointLabel(reason.point)}`;
+      return `Role at ${pointLabel(reason.point)}`;
   }
 }
 
@@ -123,7 +123,7 @@ export function PermissionsActivityWhy({
           </p>
           {trace.assignment && (
             <p>
-              Profile: {trace.assignment.profileName} ({pointLabel(trace.assignment.point)})
+              Role: {trace.assignment.profileName} ({pointLabel(trace.assignment.point)})
             </p>
           )}
           <p>Decision time: {trace.decidedAt}</p>

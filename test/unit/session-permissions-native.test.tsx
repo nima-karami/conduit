@@ -35,7 +35,7 @@ it('shows the specific typed native refusal and its settings action only for nat
   );
   expect(host.textContent).toContain('Native flags conflict with launcher arguments');
   const button = [...host.querySelectorAll('button')].find(
-    (item) => item.textContent === 'Open Settings Permissions',
+    (item) => item.textContent === 'Open in MCP › Agents',
   );
   await act(async () => button?.click());
   expect(onOpenSettings).toHaveBeenCalledOnce();

@@ -50,7 +50,7 @@ export function PermissionsRoleDrawer({
           {profile.builtIn ? STR.builtIn : STR.custom}
         </span>
         <button type="button" className="iconbtn" aria-label={STR.closeDrawer} onClick={onClose}>
-          ✕
+          {STR.closeGlyph}
         </button>
       </header>
       <p>{description}</p>

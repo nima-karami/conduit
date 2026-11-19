@@ -93,7 +93,7 @@ export function PermissionsProfileEditor({
   }
   async function save() {
     if (!profile.name.trim()) {
-      setError('Enter a profile name.');
+      setError('Enter a role name.');
       return;
     }
     setPending(true);
@@ -104,11 +104,11 @@ export function PermissionsProfileEditor({
       else if (!result.ok)
         setError(
           result.error === 'conflict'
-            ? 'Permissions changed while you were editing. Reopen this profile and try again.'
-            : `Couldn’t save this profile (${result.error}).`,
+            ? 'Permissions changed while you were editing. Reopen this role and try again.'
+            : `Couldn’t save this role (${result.error}).`,
         );
     } catch {
-      setError('Couldn’t save this profile. Try again.');
+      setError('Couldn’t save this role. Try again.');
     } finally {
       setPending(false);
     }
@@ -117,8 +117,8 @@ export function PermissionsProfileEditor({
   return (
     <div className="permissions-profile-editor">
       <header>
-        <h2>Edit profile · {draft.name}</h2>
-        <p>Changes apply wherever this profile is assigned.</p>
+        <h2>{STR.editor.title(draft.name)}</h2>
+        <p>{STR.editor.appliesEverywhere}</p>
       </header>
       <label htmlFor={`${id}-name`}>Name</label>{' '}
       <input
@@ -128,7 +128,7 @@ export function PermissionsProfileEditor({
         disabled={disabled}
         onChange={(e) => setProfile((current) => ({ ...current, name: e.target.value }))}
       />
-      <h3>Decisions</h3>
+      <h3>{STR.editor.decisions}</h3>
       {TOOL_GROUPS.map(({ group, tools }) => {
         const counts = groupCounts(profile, tools);
         const state = groupState(counts);
@@ -195,7 +195,10 @@ export function PermissionsProfileEditor({
                         <label>
                           Reach{' '}
                           <select
-                            aria-label={MCP_STR.tools.fieldAria(tool, 'Reach')}
+                            aria-label={MCP_STR.tools.fieldAria(
+                              tool,
+                              MCP_STR.tools.fieldLabel.reach,
+                            )}
                             className="selectfield"
                             value={rule.reach}
                             disabled={disabled}
@@ -217,7 +220,10 @@ export function PermissionsProfileEditor({
                         <label>
                           Move{' '}
                           <select
-                            aria-label={MCP_STR.tools.fieldAria(tool, 'Move')}
+                            aria-label={MCP_STR.tools.fieldAria(
+                              tool,
+                              MCP_STR.tools.fieldLabel.move,
+                            )}
                             className="selectfield"
                             value={rule.move}
                             disabled={disabled}

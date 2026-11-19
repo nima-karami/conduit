@@ -561,7 +561,7 @@ async function run() {
       const draftProfile = defaultProfileOf(b) === 'lead' ? 'worker' : 'lead';
       const ownProfile = defaultProfileOf(b) === 'observer' ? 'worker' : 'observer';
       const token = (await machineRow(a, bId)).policy.editToken;
-      await remoteEditor.getByLabel('Default profile', { exact: true }).selectOption(draftProfile);
+      await remoteEditor.getByLabel('Default role', { exact: true }).selectOption(draftProfile);
       await eventually('Links editor saves the offline draft', async () => {
         const pending = await machineRow(a, bId);
         return (

@@ -96,7 +96,7 @@ function facts(policy: PolicyUiState, assignment: Assignment) {
   return (
     <>
       <p>
-        Profile: {profile?.name ?? assignment.profileId} · On-screen only:{' '}
+        Role: {profile?.name ?? assignment.profileId} · On-screen only:{' '}
         {assignment.onScreenOnly ? 'yes' : 'no'} · Native modes enabled:{' '}
         {assignment.applyNative ? 'yes' : 'no'}
       </p>
@@ -255,7 +255,7 @@ function AgentDrawer({
           {title}
         </h4>
         <button type="button" className="iconbtn" aria-label={STR.closeDrawer} onClick={onClose}>
-          ✕
+          {STR.closeGlyph}
         </button>
       </header>
       <p className="permissions-drawer__note">{subtitle}</p>
@@ -631,7 +631,7 @@ export function PermissionsAssignments({
         {stale && <p role="alert">Permissions changed. Cancel and reopen this assignment.</p>}
         {error && <p role="alert">{error}</p>}
         <label>
-          Profile{' '}
+          Role{' '}
           <select
             className="selectfield"
             value={editing.draft.profileId}
@@ -668,7 +668,7 @@ export function PermissionsAssignments({
             disabled={disabled}
             onChange={(event) => update({ ...editing.draft, applyNative: event.target.checked })}
           />{' '}
-          Apply profile native modes at future launch
+          Apply role native modes at future launch
         </label>
         {session ? (
           <SessionPermissionExceptions

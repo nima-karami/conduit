@@ -78,7 +78,7 @@ it('reviews the frozen copy and requires confirmation before saving its digest',
   expect(api.saveProfile).not.toHaveBeenCalled();
   expect(host.textContent).toContain('Before');
   expect(host.textContent).toContain('After');
-  expect(host.textContent).toContain('Tool rules in the new profile');
+  expect(host.textContent).toContain('Tool rules in the new role');
   expect(host.textContent).toContain('open_session');
   expect(host.textContent).toContain('Default assignment');
   expect(host.textContent).toContain('Lane one · claude · default assignment');
@@ -223,9 +223,9 @@ it('steps back review, editor, drawer, closed, then reports nothing left', async
   await act(async () =>
     [...host.querySelectorAll('button')].find((b) => b.textContent === 'Review and save')?.click(),
   );
-  expect(host.textContent).toContain('Review profile changes');
+  expect(host.textContent).toContain('Review role changes');
   await act(async () => void back());
-  expect(host.textContent).not.toContain('Review profile changes');
+  expect(host.textContent).not.toContain('Review role changes');
   expect(host.querySelector('.permissions-profile-editor')).toBeTruthy();
   await act(async () => void back());
   expect(host.querySelector('.permissions-profile-editor')).toBeNull();
@@ -382,7 +382,7 @@ it('does not open the review once the editor was backed out of mid-request', asy
       },
     }),
   );
-  expect(host.textContent).not.toContain('Review profile changes');
+  expect(host.textContent).not.toContain('Review role changes');
   expect(host.querySelector('.permissions-profile-editor')).toBeNull();
   await act(async () => root.unmount());
   api.state.policy.profiles = [];
@@ -398,9 +398,9 @@ it('steps back a reviewed deletion, then the deletion, then the drawer', async (
   expect(host.textContent).toContain('Before and after');
   await act(async () => void back());
   expect(host.textContent).not.toContain('Before and after');
-  expect(host.querySelector('section[aria-label="Delete profile"]')).toBeTruthy();
+  expect(host.querySelector('section[aria-label="Delete role"]')).toBeTruthy();
   await act(async () => void back());
-  expect(host.querySelector('section[aria-label="Delete profile"]')).toBeNull();
+  expect(host.querySelector('section[aria-label="Delete role"]')).toBeNull();
   expect(host.querySelector('.permissions-drawer')).toBeTruthy();
   expect(back()).toBe(true);
   await act(async () => void 0);
@@ -421,11 +421,11 @@ it('swallows Esc while a save is in flight and steps back once it settles', asyn
   await click('Confirm and save');
   expect(back()).toBe(true);
   await act(async () => void 0);
-  expect(host.textContent).toContain('Review profile changes');
+  expect(host.textContent).toContain('Review role changes');
   await act(async () => settle({ ok: false, error: 'conflict' }));
-  expect(host.textContent).toContain('Could not save profile');
+  expect(host.textContent).toContain('Could not save role');
   await act(async () => void back());
-  expect(host.textContent).not.toContain('Review profile changes');
+  expect(host.textContent).not.toContain('Review role changes');
   expect(host.querySelector('.permissions-profile-editor')).toBeTruthy();
   await act(async () => root.unmount());
   api.state.policy.profiles = [];

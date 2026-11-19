@@ -26,7 +26,7 @@ function reasonLabel(reason: Reason): string {
     case 'exception':
       return `Exception at ${reason.point.kind}`;
     case 'profile':
-      return `Profile at ${reason.point.kind}`;
+      return `Role at ${reason.point.kind}`;
   }
 }
 
