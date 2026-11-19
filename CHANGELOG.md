@@ -6,6 +6,14 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Settings › About fits the window again: a long line in the recent log scrolls inside the log box instead of pushing the page's right side out of view.
+- In the light Aero theme, the full-screen Settings page is solid, so the workspace behind it no longer shows through.
+- Dropdowns and buttons in the MCP side panel no longer touch: "Check a request", the exception editor and the role editor's launch modes keep each label next to its control, with even spacing between them.
+- Agent names in MCP › Agents no longer break letter by letter when the side panel is open.
+- Settings › Skills has room above its intro text and between its install buttons.
+
 ## [0.70.3] — 2026-11-19
 
 ### Fixed
