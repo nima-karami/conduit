@@ -20,10 +20,26 @@ vi.mock('node:child_process', () => ({
     stdout: cmd.endsWith('/xdg-mime') ? updater.handler : '54\n',
   }),
 }));
-vi.mock('electron', () => ({ app: { isPackaged: true }, shell: { openPath: updater.openPath } }));
+const electronUpdater = vi.hoisted(() => {
+  const { EventEmitter } = require('node:events') as typeof import('node:events');
+  return new EventEmitter();
+});
+vi.mock('electron', () => ({
+  app: { isPackaged: true },
+  autoUpdater: electronUpdater,
+  shell: { openPath: updater.openPath },
+}));
 vi.mock('electron-updater', () => ({ autoUpdater: updater }));
+const relaunchApp = vi.hoisted(() => vi.fn());
+vi.mock('../../electron/relaunch', () => ({ relaunchApp }));
 
-import { cgroupScopeKind, initUpdater, quitAndInstall } from '../../electron/updater';
+import {
+  cgroupScopeKind,
+  initUpdater,
+  installPlan,
+  noNewPrivsFromStatus,
+  quitAndInstall,
+} from '../../electron/updater';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -50,6 +66,8 @@ describe('explicit deb install failure', () => {
       handlers.error(new Error('Command pkexec exited with code 127'));
     });
     quitAndInstall();
+    expect(updater.quitAndInstall).toHaveBeenLastCalledWith(true, false);
+    expect(relaunchApp).not.toHaveBeenCalled();
     expect(updater.autoInstallOnAppQuit).toBe(false);
     expect(updater.openPath).toHaveBeenCalledWith('/tmp/update.deb');
     await vi.waitFor(() =>
@@ -134,4 +152,70 @@ it.each([
   ['2:cpu:/user.slice\n1:name=systemd:/user.slice/session-54.scope', 'session.scope'],
 ])('classifies the cgroup leaf in %s', (line, kind) => {
   expect(cgroupScopeKind(line)).toBe(kind);
+});
+
+describe('install relaunch', () => {
+  // Mirrors BaseUpdater.quitAndInstall: only an install that went through emits
+  // before-quit-for-update (in a setImmediate); a repeat call is ignored without an error.
+  function fakeBaseUpdater() {
+    let called = false;
+    updater.quitAndInstall.mockReset();
+    updater.quitAndInstall.mockImplementation(() => {
+      if (called) return;
+      called = true;
+      setImmediate(() => electronUpdater.emit('before-quit-for-update'));
+    });
+  }
+  const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+  it('relaunches with the helper after a .deb install goes through, not via electron-updater', async () => {
+    vi.stubGlobal('process', { ...process, platform: 'linux', env: {}, resourcesPath: '/tmp' });
+    fakeBaseUpdater();
+    relaunchApp.mockClear();
+    quitAndInstall();
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(true, false);
+    await tick();
+    expect(relaunchApp).toHaveBeenCalledOnce();
+    expect(electronUpdater.listenerCount('before-quit-for-update')).toBe(0);
+  });
+
+  it('does not relaunch when a repeat Update click is ignored by electron-updater', async () => {
+    vi.stubGlobal('process', { ...process, platform: 'linux', env: {}, resourcesPath: '/tmp' });
+    fakeBaseUpdater();
+    quitAndInstall();
+    await tick();
+    relaunchApp.mockClear();
+    quitAndInstall();
+    await tick();
+    expect(relaunchApp).not.toHaveBeenCalled();
+    expect(electronUpdater.listenerCount('before-quit-for-update')).toBe(0);
+    electronUpdater.emit('before-quit-for-update');
+    expect(relaunchApp).not.toHaveBeenCalled();
+  });
+
+  it('does not relaunch on Windows, where electron-updater relaunches', async () => {
+    vi.stubGlobal('process', { ...process, platform: 'win32', env: {}, resourcesPath: '/tmp' });
+    fakeBaseUpdater();
+    relaunchApp.mockClear();
+    quitAndInstall();
+    await tick();
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true);
+    expect(relaunchApp).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['linux', {}, { forceRunAfter: false, relaunchOurselves: true }],
+    ['linux', { APPIMAGE: '/a/C.AppImage' }, { forceRunAfter: true, relaunchOurselves: false }],
+    ['win32', {}, { forceRunAfter: true, relaunchOurselves: false }],
+  ])('plans %s %j', (platform, env, plan) => {
+    expect(installPlan(platform, env)).toEqual(plan);
+  });
+});
+
+describe('noNewPrivsFromStatus', () => {
+  it('reads the flag from /proc status', () => {
+    expect(noNewPrivsFromStatus('Name:\tconduit\nNoNewPrivs:\t1\nSeccomp:\t0\n')).toBe(true);
+    expect(noNewPrivsFromStatus('NoNewPrivs:\t0\n')).toBe(false);
+    expect(noNewPrivsFromStatus('Name:\tconduit\n')).toBeNull();
+  });
 });

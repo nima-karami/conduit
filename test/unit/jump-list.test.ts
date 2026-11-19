@@ -130,9 +130,9 @@ describe('Electron Jump List native boundaries', () => {
     const app = Object.assign(new EventEmitter(), {
       isPackaged: true,
       getAppPath: () => '/installed/app',
-      relaunch: vi.fn(),
       quit: vi.fn(),
     });
+    const relaunchApp = vi.fn();
     const stop = vi.fn(async (_options: unknown) => {
       app.emit('second-instance', {}, ['/Conduit.exe', '/workspace']);
       return { ok: true, killed: 2, fallback: false };
@@ -140,6 +140,7 @@ describe('Electron Jump List native boundaries', () => {
     const showErrorBox = vi.fn();
     await runInNewContext(`${mainFunction('stopAllAgentsHeadless')} stopAllAgentsHeadless();`, {
       app,
+      relaunchApp,
       process: { argv: ['/Conduit.exe', '--stop-all-agents'], platform: 'win32', env: {} },
       STOP_ALL_AGENTS_FLAG,
       runStopAllAgents,
@@ -161,7 +162,7 @@ describe('Electron Jump List native boundaries', () => {
     // The headless stop is a C2 client: without the secret the gated server refuses the stop with
     // 'auth required' and the stop reports failure.
     expect(stop.mock.calls[0][0]).toMatchObject({ auth: 'headless-secret' });
-    expect(app.relaunch).toHaveBeenCalledWith({ args: ['/workspace'] });
+    expect(relaunchApp).toHaveBeenCalledWith(['/workspace']);
     expect(app.quit).toHaveBeenCalledTimes(1);
     expect(app.listenerCount('second-instance')).toBe(0);
     expect(showErrorBox).not.toHaveBeenCalled();
