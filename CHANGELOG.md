@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.70.1] — 2026-11-19
+
 ### Fixed
 
 - On Windows, plan edits retry the save when another process briefly holds the destination file open.
