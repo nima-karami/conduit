@@ -7,7 +7,7 @@ import {
   isE2eIrrelevant,
   parseNameStatus,
   parseZeroContextDiff,
-  scenarioImports,
+  scenarioUsage,
   selectAffected,
   withMapBuildHunks,
 } from '../e2e/ci-affected.mjs';
@@ -70,6 +70,10 @@ describe('selectAffected: rule order', () => {
 
   it.each([
     'test/e2e/harness.mjs',
+    'test/e2e/quarantine.json',
+    'test/e2e/core-smoke.json',
+    'test/e2e/remote-exclusions.json',
+    'server/network/link-manager.ts',
     'test/e2e/fixtures/notes.md',
     'electron/main.ts',
     'electron/preload.ts',
@@ -206,7 +210,7 @@ describe('selectAffected: recent merged diffs', () => {
     map: null,
     all: scenarios,
     core: ['cwd', 'session-bootstrap'],
-    imports: scenarioImports(directory),
+    usage: scenarioUsage(directory),
   };
 
   const cases = [
@@ -224,23 +228,6 @@ describe('selectAffected: recent merged diffs', () => {
       covers: ['conduit-mcp-policy-migrate', 'net-remote-files', 'activity-observed'],
       fraction: 1 / 3,
     },
-    {
-      merge: '8f903047',
-      changed: [
-        'M\tserver/network/link-connection.ts',
-        'M\tserver/network/link-manager.ts',
-        'M\ttest/unit/network-link-connection.test.ts',
-        'M\ttest/unit/network-link-manager.test.ts',
-      ],
-      covers: ['net-ssh-link', 'net-messaging', 'server-runtime', 'permissions-remote-ui'],
-      fraction: 1 / 4,
-    },
-    {
-      merge: '6d783c78',
-      changed: ['M\tsrc/conduit-mcp/request-service.ts', 'M\ttest/unit/request-remote.test.ts'],
-      covers: ['net-requests', 'requests-ui', 'asks-no-window'],
-      fraction: 1 / 4,
-    },
   ];
 
   it.each(cases)(
@@ -257,12 +244,86 @@ describe('selectAffected: recent merged diffs', () => {
     const direct = selectAffected([m('test/e2e/sidebar-dnd.e2e.mjs')], current);
     expect(direct.names).toEqual(['cwd', 'session-bootstrap', 'sidebar-dnd']);
     expect(isE2eIrrelevant('CHANGELOG.md')).toBe(false);
-    expect(selectAffected([m('CHANGELOG.md')], current).names).toContain('settings-release-notes');
+    expect(selectAffected([m('CHANGELOG.md')], current).names).toEqual(
+      expect.arrayContaining([
+        'settings-release-notes',
+        'markdown-viewer',
+        'markdown-search',
+        'markdown-toc-collapse',
+      ]),
+    );
   });
 
   it('retains full coverage for helpers whose import consumers cannot be identified', () => {
     const changed = [m('test/e2e/conduit-mcp-helpers.mjs')];
-    expect(selectAffected(changed, { ...current, imports: {} }).kind).toBe('full');
+    expect(selectAffected(changed, { ...current, usage: undefined }).kind).toBe('full');
+  });
+
+  it('keeps all directly and transitively discovered MCP callers plus credited coverage', () => {
+    const file = 'src/conduit-mcp/control-tools.ts';
+    const unrelated = 'auto-save';
+    const usageMap = {
+      schema: 3,
+      builtFrom: 'nightly',
+      scenarios: Object.fromEntries(
+        scenarios.map((name) => [
+          name,
+          { builtFrom: 'nightly', files: name === unrelated ? { [file]: [[1, 10]] } : {} },
+        ]),
+      ),
+    };
+    const result = selectAffected([m(file, 'M', [lines(3)])], { ...current, map: usageMap });
+    expect(result.kind).toBe('names');
+    expect(result.names).toEqual(
+      expect.arrayContaining([
+        unrelated,
+        'notice-visible-session',
+        'status-bar',
+        'sidebar-agent-tree',
+        'sidebar-space-filter',
+        'agents-survive-update',
+        'role-brief',
+      ]),
+    );
+    const omittedCallers = scenarios.filter(
+      (name) =>
+        /\b(?:callTool|startCall|open_session|send_message|list_sessions)\b/.test(
+          readFileSync(join(directory, `${name}.e2e.mjs`), 'utf8'),
+        ) && !result.names.includes(name),
+    );
+    expect(omittedCallers).toEqual([]);
+    expect(selectAffected([m(file)], current).kind).toBe('full');
+    expect(selectAffected([m(file, 'A')], { ...current, map: usageMap }).kind).toBe('full');
+  });
+
+  it('keeps full coverage for a real server boot-path diff and for scenario edits with harness changes', () => {
+    const diff = parseNameStatus(
+      [
+        'M\tserver/network/link-connection.ts',
+        'M\tserver/network/link-manager.ts',
+        'M\ttest/unit/network-link-connection.test.ts',
+        'M\ttest/unit/network-link-manager.test.ts',
+      ].join('\n'),
+    );
+    expect(selectAffected(diff, current).kind).toBe('full');
+    expect(
+      selectAffected([m('test/e2e/sidebar-dnd.e2e.mjs'), m('test/e2e/harness.mjs')], current).kind,
+    ).toBe('full');
+  });
+
+  it('resolves literal dynamic imports, new URL references and nested parent paths', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'affected-imports-'));
+    try {
+      mkdirSync(join(dir, 'nested'));
+      writeFileSync(join(dir, 'one.e2e.mjs'), "import('./nested/link.mjs');");
+      writeFileSync(
+        join(dir, 'nested', 'link.mjs'),
+        "new URL('../net-helpers.mjs', import.meta.url);",
+      );
+      expect(scenarioUsage(dir).mcp).toContain('one.e2e.mjs');
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
   });
 });
 

@@ -23,7 +23,11 @@ export function withMapBuildHunks(
   map: { builtFrom: string },
   cwd?: string,
 ): Change[];
-export function scenarioImports(dir: string): Record<string, string[]>;
+interface ScenarioUsage {
+  imports: Record<string, string[]>;
+  mcp: string[];
+}
+export function scenarioUsage(dir: string): ScenarioUsage;
 export function selectAffected(
   changed: Change[],
   ctx: {
@@ -32,6 +36,6 @@ export function selectAffected(
     all: string[];
     core: string[];
     excluded?: string[];
-    imports?: Record<string, string[]>;
+    usage?: ScenarioUsage;
   },
 ): Affected;

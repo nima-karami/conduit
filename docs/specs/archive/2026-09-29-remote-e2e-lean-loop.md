@@ -232,17 +232,19 @@ an overlap only queues jobs, it never cancels a run.
     renderer, mapped back through esbuild sourcemaps.
   - **Rule, in order** (updated for CON-64):
     1. Changes to `electron/main.ts`, `electron/preload.ts`, `esbuild.mjs`, `package.json`,
-       the lockfile or `e2e.yml` select the full suite.
+       the lockfile or `e2e.yml` select the full suite. Networking is on the server boot path,
+       so `server/network/**`, `src/network/**` and its wire contracts also use full.
     2. Strip the e2e-irrelevant set: `test/unit/**`, `docs/**`, `*.md`, `designs/**`,
        `.conduit/**`, and `.github/**` except `.github/workflows/e2e.yml`. The changelog,
        fixtures and shipped resources are runtime inputs. If nothing is left, the selection
        is none: "no e2e needed", exit 0.
     3. A scenario file selects itself if it still exists. The selector follows local imports
        transitively for known import-only helpers. Shared runner changes and fixtures with
-       unknown consumers require the full suite. Explicit service and changelog ownership in
-       `test/e2e/ci-affected.mjs` covers networking, MCP routing and release notes where the
-       host and renderer coverage map has no corresponding runtime data. Changes limited to
-       these paths run their scenarios and core smoke even when no coverage map is available.
+       unknown consumers require the full suite. The selector derives MCP consumers from local
+       helper imports and tool calls. For the listed MCP routing files it adds those consumers
+       to scenarios credited by the map, including when the server file has no recorded spans.
+       Source edits still require a valid coverage map and new source files select the full suite.
+       Changelog-only edits run release-note, update and Markdown scenarios that read the file.
     4. For other files, the coverage map credits, per scenario, the **line spans of the functions it ran**. Every
        changed line of a modified code file must lie inside a credited span, and selects the
        scenarios whose spans hold it; a line outside every span selects the full suite. That covers
