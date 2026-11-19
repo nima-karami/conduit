@@ -19,6 +19,7 @@ export interface McpSectionProps {
   exceptionSeed?: AssignmentExceptionSeed | null;
   onExceptionSeedConsumed?(): void;
   focusedAgentKey?: string;
+  onFocusAgentSpent?(): void;
   activityScope: ActivityScope;
   activityMachines: readonly { id: string; name: string }[];
   onAddActivityException?(source: ActivityExceptionSource): void;
@@ -34,6 +35,7 @@ export function McpSection({
   exceptionSeed,
   onExceptionSeedConsumed,
   focusedAgentKey,
+  onFocusAgentSpent,
   activityScope,
   activityMachines,
   onAddActivityException,
@@ -103,6 +105,7 @@ export function McpSection({
             mcp={mcp}
             serverConnected={serverConnected}
             focusAgentKey={focusedAgentKey}
+            onFocusAgentSpent={onFocusAgentSpent}
             registerBack={registerBack}
           />
         )}

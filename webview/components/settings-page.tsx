@@ -156,6 +156,7 @@ export function SettingsPage({
   const spendFocusCli = useCallback(() => setFocusCli(undefined), []);
   const [mcpTab, setMcpTab] = useState<McpTabId>(initialMcpTab);
   const [agentKey, setAgentKey] = useState(initialAgentKey);
+  const spendAgentKey = useCallback(() => setAgentKey(undefined), []);
   const target = {
     initialTab,
     initialMcpTab,
@@ -270,6 +271,7 @@ export function SettingsPage({
               exceptionSeed={activityExceptionSeed}
               onExceptionSeedConsumed={onActivityExceptionSeedConsumed}
               focusedAgentKey={agentKey}
+              onFocusAgentSpent={spendAgentKey}
               activityScope={activityScope}
               activityMachines={activityMachines}
               onAddActivityException={onAddActivityException}

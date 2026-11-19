@@ -78,6 +78,7 @@ async function mount(initial: {
   policy?: PolicyUiState;
   sessions?: Session[];
   focusAgentKey?: string;
+  onFocusAgentSpent?: () => void;
   reviewResult?: unknown;
 }): Promise<Mount> {
   const reviewLocalPolicy = vi.fn(
@@ -103,7 +104,8 @@ async function mount(initial: {
           sessions={over.sessions ?? initial.sessions ?? []}
           mcp={mcp}
           serverConnected
-          focusAgentKey={over.focusAgentKey ?? initial.focusAgentKey}
+          focusAgentKey={'focusAgentKey' in over ? over.focusAgentKey : initial.focusAgentKey}
+          onFocusAgentSpent={initial.onFocusAgentSpent}
           registerBack={registerBack}
         />,
       ),
@@ -222,6 +224,68 @@ it('opens the drawer of the focused agent on mount', async () => {
     focusAgentKey: 'session:s2',
   });
   expect(drawer(host)?.querySelector('h4')?.textContent).toBe('Second');
+});
+
+it('the spent callback fires once the drawer is opened from the key', async () => {
+  const onFocusAgentSpent = vi.fn();
+  const { host } = await mount({
+    sessions: [session('s1', 'First')],
+    policy: policyWith([], ['s1']),
+    focusAgentKey: 'session:s1',
+    onFocusAgentSpent,
+  });
+  expect(drawer(host)).not.toBeNull();
+  expect(onFocusAgentSpent).toHaveBeenCalledOnce();
+});
+
+it('a deep link for the same agent reopens its drawer after it was closed', async () => {
+  const onFocusAgentSpent = vi.fn();
+  const m = await mount({
+    sessions: [session('s1', 'First')],
+    policy: policyWith([], ['s1']),
+    focusAgentKey: 'session:s1',
+    onFocusAgentSpent,
+  });
+  await act(async () => m.host.querySelector<HTMLElement>('[aria-label="Close"]')?.click());
+  expect(drawer(m.host)).toBeNull();
+  await m.render({ focusAgentKey: undefined });
+  await m.render({ focusAgentKey: 'session:s1' });
+  expect(drawer(m.host)?.querySelector('h4')?.textContent).toBe('First');
+  expect(onFocusAgentSpent).toHaveBeenCalledTimes(2);
+});
+
+it('opens the agent of a focus key that changes after mount', async () => {
+  const m = await mount({
+    sessions: [session('s1', 'First'), session('s2', 'Second')],
+    policy: policyWith([], ['s1', 's2']),
+  });
+  expect(drawer(m.host)).toBeNull();
+  await m.render({ focusAgentKey: 'session:s2' });
+  expect(drawer(m.host)?.querySelector('h4')?.textContent).toBe('Second');
+});
+
+it('moves focus to the drawer heading when a row is selected', async () => {
+  const { host } = await mount({
+    sessions: [session('s1', 'First')],
+    policy: policyWith([], ['s1']),
+  });
+  await act(async () => rowOf(host, 'First').click());
+  expect(document.activeElement).toBe(drawer(host)?.querySelector('h4'));
+});
+
+it('read-only policy disables every drawer control and says why', async () => {
+  const { host } = await mount({
+    policy: {
+      ...policyWith([{ point: { kind: 'cli', cli: 'claude' }, assignment: claudeAssignment }]),
+      readOnly: true,
+    },
+  });
+  await act(async () => rowOf(host, 'claude sessions').click());
+  const scope = drawer(host) as HTMLElement;
+  expect(button(scope, 'Edit changes')?.disabled).toBe(true);
+  expect(button(scope, 'Reset all to role')?.disabled).toBe(true);
+  expect(scope.querySelector<HTMLSelectElement>('select[aria-label="Role"]')?.disabled).toBe(true);
+  expect(host.textContent).toContain('Permissions are read-only');
 });
 
 it('closes the drawer when its agent disappears', async () => {

@@ -3,6 +3,8 @@ import { act, type ComponentProps, useEffect, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentCli, McpInstallStatus } from '../../src/conduit-mcp/install-types';
+import { BUILT_IN_PROFILES } from '../../src/conduit-mcp/policy-profiles';
+import type { PolicyUiState } from '../../src/conduit-mcp/policy-types';
 import type { WebviewToHost } from '../../src/protocol';
 import { type AppSettings, DEFAULT_SETTINGS } from '../../src/settings';
 import { SettingsPage } from '../../webview/components/settings-page';
@@ -44,6 +46,23 @@ vi.mock('../../webview/components/permissions-roles', () => ({
       </>
     );
   },
+}));
+vi.mock('../../webview/use-conduit-mcp', () => ({
+  useConduitMcp: () => ({
+    state: {
+      policy: {
+        editToken: 'v1',
+        saveError: null,
+        backupWarning: null,
+        profiles: [...BUILT_IN_PROFILES],
+        assignments: [],
+        sessions: {},
+        grants: [],
+        legacy: { global: {}, byCli: {}, sessions: {} },
+        readOnly: false,
+      } satisfies PolicyUiState,
+    },
+  }),
 }));
 vi.mock('../../webview/bridge', async (importOriginal) => {
   const orig = await importOriginal<typeof import('../../webview/bridge')>();
@@ -200,6 +219,35 @@ describe('Settings → MCP tab', () => {
     await render({ page: { navSeq: 5 } });
     expect(document.body.querySelector('.settings-page')).toBe(page);
     expect(selectedMcpTab()).toBe('Settings');
+  });
+
+  describe('agent deep link', () => {
+    const agentsPage = { initialMcpTab: 'agents', initialAgentKey: 'cli:claude' } as const;
+    const drawerTitle = () =>
+      document.body.querySelector('aside.permissions-drawer h4')?.textContent ?? null;
+    const nav = (label: string) =>
+      [...document.body.querySelectorAll<HTMLButtonElement>('.settings__navitem')].find(
+        (b) => b.textContent === label,
+      );
+
+    it('leaving the Agents tab and returning does not reopen the old agent', async () => {
+      await mount({ page: agentsPage });
+      expect(drawerTitle()).toBe('claude sessions');
+      await act(async () => nav('General')?.click());
+      await act(async () => nav(S.tab)?.click());
+      expect(selectedMcpTab()).toBe('Agents');
+      expect(drawerTitle()).toBeNull();
+    });
+
+    it('bumping navSeq with the same agent key reopens it', async () => {
+      await mount({ page: { ...agentsPage, navSeq: 1 } });
+      await act(async () =>
+        document.body.querySelector<HTMLElement>('[aria-label="Close"]')?.click(),
+      );
+      expect(drawerTitle()).toBeNull();
+      await render({ page: { ...agentsPage, navSeq: 2 } });
+      expect(drawerTitle()).toBe('claude sessions');
+    });
   });
 
   it('Esc steps back through a registered handler before closing', async () => {

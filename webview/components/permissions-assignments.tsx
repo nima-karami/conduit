@@ -353,6 +353,7 @@ export function PermissionsAssignments({
   exceptionSeed,
   onExceptionSeedConsumed,
   focusAgentKey,
+  onFocusAgentSpent,
   registerBack,
 }: {
   policy: PolicyUiState;
@@ -362,6 +363,7 @@ export function PermissionsAssignments({
   exceptionSeed?: AssignmentExceptionSeed | null;
   onExceptionSeedConsumed?: () => void;
   focusAgentKey?: string;
+  onFocusAgentSpent?(): void;
   registerBack(handler: BackHandler | null): void;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
@@ -414,7 +416,8 @@ export function PermissionsAssignments({
     if (!focusPresent || consumedFocus.current === focusAgentKey) return;
     consumedFocus.current = focusAgentKey;
     setSelected(focusAgentKey);
-  }, [focusAgentKey, focusPresent]);
+    onFocusAgentSpent?.();
+  }, [focusAgentKey, focusPresent, onFocusAgentSpent]);
   const consumedSeed = useRef<string | null>(null);
   useEffect(() => {
     if (!exceptionSeed) {
