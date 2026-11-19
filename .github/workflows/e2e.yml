@@ -448,11 +448,10 @@ jobs:
           tree=$(git rev-parse 'HEAD^{tree}')
           node --input-type=module - "$tree" <<'JS'
           import { appendFileSync, readFileSync } from 'node:fs';
-          import { cleanFullResult, taggableFullResult } from './test/e2e/ci-full-proof.mjs';
+          import { eligibleFullResult } from './test/e2e/ci-full-proof.mjs';
           const result = JSON.parse(readFileSync('out/result.json', 'utf8'));
-          if (taggableFullResult(result)) {
-            const prefix = cleanFullResult(result) ? 'e2e-full' : 'e2e-tested';
-            appendFileSync(process.env.GITHUB_OUTPUT, `artifact=${prefix}-${process.argv[2]}\n`);
+          if (eligibleFullResult(result)) {
+            appendFileSync(process.env.GITHUB_OUTPUT, `artifact=e2e-full-${process.argv[2]}\n`);
           }
           JS
       - if: steps.release-proof.outputs.artifact != ''

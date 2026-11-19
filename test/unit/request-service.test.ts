@@ -436,6 +436,31 @@ describe('request service: persistence', () => {
     expect(h.store.writes).toHaveLength(1);
   });
 
+  it('keeps shutdown open until a timer-started save has finished', async () => {
+    const h = harness();
+    const write = h.store.io.write;
+    const release = Promise.withResolvers<void>();
+    h.store.io.write = vi.fn(async (text) => {
+      await release.promise;
+      await write(text);
+    });
+    h.service.setAway(true, null);
+    h.c.advance(PERSIST_COALESCE_MS);
+    expect(h.store.io.write).toHaveBeenCalledTimes(1);
+
+    let stopped = false;
+    const stopping = h.service.stop().then(() => {
+      stopped = true;
+    });
+    await flush();
+    const completedWhileSaving = stopped;
+    release.resolve();
+    await stopping;
+
+    expect(completedWhileSaving).toBe(false);
+    expect(h.store.writes).toHaveLength(1);
+  });
+
   it('a failed save is written again on stop', async () => {
     const h = harness();
     const ok = h.store.io.write;

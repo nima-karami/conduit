@@ -2,13 +2,25 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
-  cleanFullResult,
+  eligibleFullResult,
   findReleaseTreeProof,
-  findTagTreeProof,
   provesFullTree,
   provesReleaseTree,
-  provesTagTree,
 } from '../e2e/ci-full-proof.mjs';
+
+const inventory = new Map([
+  ['cwd', 'run'],
+  ['platform', 'run'],
+  ['excluded', 'excluded'],
+  ['scrollback-inrun', 'quarantined'],
+] as const);
+
+const fullRows = [
+  { name: 'cwd', status: 'PASS', attempts: 1 },
+  { name: 'platform', status: 'SKIP', attempts: 1 },
+  { name: 'excluded', status: 'EXCLUDED', attempts: 0 },
+  { name: 'scrollback-inrun', status: 'QUARANTINED-FAIL', attempts: 1 },
+];
 
 describe('nightly full-tree evidence', () => {
   const tree = 'tree-a';
@@ -83,63 +95,50 @@ describe('release full-tree evidence', () => {
     sha: 'tested-sha',
     selection: 'full',
     status: 'passed',
-    results: [
-      { status: 'PASS', attempts: 1 },
-      { status: 'SKIP', attempts: 1 },
-      { status: 'EXCLUDED', attempts: 0 },
-    ],
+    results: fullRows,
   };
+  const proves = (candidate: typeof run, evidence: unknown, expected = scope) =>
+    provesReleaseTree(candidate, evidence, expected, inventory);
 
-  it('accepts a different commit with the exact tested tree and clean first-attempt proof', () => {
-    expect(cleanFullResult(result)).toBe(true);
-    expect(provesReleaseTree(run, result, scope)).toBe(true);
-    expect(
-      provesReleaseTree({ ...run, event: 'schedule', head_branch: 'main' }, result, scope),
-    ).toBe(true);
+  it.each(['PASS', 'QUARANTINED-FAIL'])(
+    'accepts complete evidence with a declared quarantine status of %s',
+    (status) => {
+      const results = fullRows.map((row) =>
+        row.name === 'scrollback-inrun' ? { ...row, status } : row,
+      );
+      const evidence = { ...result, results };
+      expect(eligibleFullResult(evidence, inventory)).toBe(true);
+      expect(proves(run, evidence)).toBe(true);
+      expect(proves({ ...run, event: 'schedule', head_branch: 'main' }, evidence)).toBe(true);
+    },
+  );
+
+  it('rejects missing, extra, duplicate or unknown scenario rows', () => {
+    for (const results of [
+      fullRows.slice(1),
+      [...fullRows, fullRows[0]],
+      [fullRows[0], ...fullRows.slice(0, 3)],
+      [{ ...fullRows[0], name: 'unrecognized' }, ...fullRows.slice(1)],
+      [null, ...fullRows.slice(1)],
+    ]) {
+      expect(proves(run, { ...result, results })).toBe(false);
+    }
   });
 
-  it('allows a quarantined failure to authorize a tag without authorizing Release reuse', () => {
-    const withQuarantine = {
-      ...result,
-      results: [...result.results, { status: 'QUARANTINED-FAIL', attempts: 1 }],
-    };
-    expect(provesTagTree(run, withQuarantine, scope)).toBe(true);
-    expect(provesReleaseTree(run, withQuarantine, scope)).toBe(false);
-    for (const status of ['FAIL', 'FLAKY', 'TIMEOUT', 'INFRA']) {
-      expect(
-        provesTagTree(
-          run,
-          {
-            ...result,
-            results: [...result.results, { status, attempts: 1 }],
-          },
-          scope,
-        ),
-      ).toBe(false);
+  it('rejects undeclared quarantine, wrong exclusions, and non-first attempts', () => {
+    for (const [index, patch] of [
+      [0, { status: 'QUARANTINED-FAIL' }],
+      [0, { attempts: 2 }],
+      [0, { attempt: 1 }],
+      [1, { status: 'EXCLUDED', attempts: 0 }],
+      [1, { attempts: 2 }],
+      [2, { status: 'PASS', attempts: 1 }],
+      [2, { attempts: 1 }],
+      [3, { attempts: 2 }],
+    ] as const) {
+      const results = fullRows.map((row, i) => (i === index ? { ...row, ...patch } : row));
+      expect(proves(run, { ...result, results })).toBe(false);
     }
-    expect(
-      provesTagTree(
-        run,
-        {
-          ...result,
-          results: [...result.results, { status: 'PASS', attempts: 2 }],
-        },
-        scope,
-      ),
-    ).toBe(false);
-    expect(provesTagTree(run, withQuarantine, { ...scope, tree: 'another-tree' })).toBe(false);
-    expect(provesTagTree(run, { ...withQuarantine, selection: 'names' }, scope)).toBe(false);
-    expect(
-      provesTagTree(
-        run,
-        {
-          ...result,
-          results: [...result.results, { status: 'QUARANTINED-FAIL', attempts: 2 }],
-        },
-        scope,
-      ),
-    ).toBe(false);
-    expect(provesTagTree({ ...run, run_attempt: 2 }, withQuarantine, scope)).toBe(false);
   });
 
   it('rejects different workflows, repositories and trees, reruns and unsuccessful conclusions', () => {
@@ -153,7 +152,7 @@ describe('release full-tree evidence', () => {
       { event: 'schedule', head_branch: 'feature' },
       { event: 'push' },
     ]) {
-      expect(provesReleaseTree({ ...run, ...override }, result, scope)).toBe(false);
+      expect(proves({ ...run, ...override }, result)).toBe(false);
     }
   });
 
@@ -166,12 +165,12 @@ describe('release full-tree evidence', () => {
       { ...result, status: 'failed' },
       { ...result, results: [] },
       { ...result, results: [{ status: 'PASS', attempts: 2 }] },
-      ...['FAIL', 'FLAKY', 'TIMEOUT', 'INFRA', 'QUARANTINED-FAIL'].map((status) => ({
+      ...['FAIL', 'FLAKY', 'TIMEOUT', 'INFRA'].map((status) => ({
         ...result,
-        results: [...result.results, { status, attempts: 1 }],
+        results: [{ ...fullRows[0], status }, ...fullRows.slice(1)],
       })),
     ]) {
-      expect(provesReleaseTree(run, bad, scope)).toBe(false);
+      expect(proves(run, bad)).toBe(false);
     }
   });
 });
@@ -214,55 +213,19 @@ describe('release evidence lookup', () => {
           runId: 42,
           selection: 'full',
           status: 'passed',
-          results: [{ status: 'PASS', attempts: 1 }],
+          results: fullRows,
         }),
       );
       return '';
     });
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      expect(findReleaseTreeProof(repo, tree, gh)).toEqual(valid);
+      expect(findReleaseTreeProof(repo, tree, gh, inventory)).toEqual(valid);
       expect(warning).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('artifact 2'));
     } finally {
       warning.mockRestore();
     }
   });
-
-  it.each([false, true])(
-    'tag lookup reports strict versus quarantine evidence (%s)',
-    (quarantine) => {
-      const prefix = quarantine ? 'e2e-tested' : 'e2e-full';
-      const artifactName = `${prefix}-${tree}`;
-      const gh = (args: string[]) => {
-        if (args.includes('--paginate')) {
-          return JSON.stringify([
-            {
-              artifacts: args.at(-1)?.includes(`name=${artifactName}`)
-                ? [{ ...artifact(42), name: artifactName }]
-                : [],
-            },
-          ]);
-        }
-        if (args[0] === 'api') return JSON.stringify(valid);
-        expect(args).toContain(artifactName);
-        const results = [{ status: 'PASS', attempts: 1 }];
-        if (quarantine) results.push({ status: 'QUARANTINED-FAIL', attempts: 1 });
-        writeFileSync(
-          join(args[8], 'result.json'),
-          JSON.stringify({
-            sha: valid.head_sha,
-            runId: 42,
-            selection: 'full',
-            status: 'passed',
-            results,
-          }),
-        );
-        return '';
-      };
-      expect(findTagTreeProof(repo, tree, gh)).toEqual({ run: valid, reuse: !quarantine });
-      expect(findReleaseTreeProof(repo, tree, gh)).toEqual(quarantine ? null : valid);
-    },
-  );
 
   it('returns no proof for empty storage and exposes a lookup error to the workflow fallback', () => {
     expect(findReleaseTreeProof(repo, tree, () => '[{"artifacts":[]}]')).toBeNull();

@@ -318,6 +318,8 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
   let writable = true;
   let presence: HumanPresence = emptyPresence(deps.now());
   let dirty = false;
+  let stopping = false;
+  const activeWrites = new Set<Promise<void>>();
   let persistTimer: Timer | null = null;
   let awayTimer: Timer | null = null;
   const inFlight = new Set<string>();
@@ -346,11 +348,13 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
   const markDirty = (): void => {
     if (!writable) return;
     dirty = true;
-    if (persistTimer !== null) return;
+    if (stopping || persistTimer !== null) return;
     persistTimer = {
       handle: deps.setTimer(() => {
         persistTimer = null;
-        void writeNow();
+        const write = writeNow();
+        activeWrites.add(write);
+        void write.finally(() => activeWrites.delete(write));
       }, PERSIST_COALESCE_MS),
     };
   };
@@ -782,15 +786,18 @@ export function createRequestService(deps: RequestServiceDeps): RequestService {
     },
 
     async stop() {
+      stopping = true;
       for (const id of [...remoteWaits.keys()]) queue.withdraw(id, 'conduit', 'Conduit stopped');
       if (persistTimer !== null) {
         deps.clearTimer(persistTimer.handle);
         persistTimer = null;
       }
-      await writeNow();
       disarmAway();
       waits.dispose();
       queue.dispose();
+      // A timer clears dirty before its write settles. Drain it before the final flush.
+      await Promise.all(activeWrites);
+      await writeNow();
     },
 
     tools: {
