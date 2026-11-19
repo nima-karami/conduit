@@ -6,6 +6,13 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Changed
+- Settings is now a full-screen page with a Back button instead of a pop-up.
+- MCP and Permissions are now one section, MCP, with Settings, Roles, Agents, Grants and Activity tabs.
+- Roles show at a glance what each allows and open in a side panel; built-in roles are read-only and can be duplicated.
+- The Agents tab lists each agent with its role and how many changes it has; an agent's role is staged and applied only after Review.
+- Permissions Activity now lives in MCP › Activity instead of opening as an editor tab.
+
 ## [0.69.0] — 2026-11-18
 
 ### Changed
