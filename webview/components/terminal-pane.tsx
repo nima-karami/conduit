@@ -1369,27 +1369,32 @@ export function TerminalPane({
   const pasteFromClipboard = async (key?: KeyboardEvent) => {
     const term = termRef.current;
     if (!term) return;
+    let contents: Awaited<ReturnType<typeof readTerminalClipboard>>;
     try {
-      const contents = await readTerminalClipboard();
-      if (termRef.current !== term) return;
-      const route = pasteRoute(contents);
-      if (route === 'text') {
-        // TUIs need xterm to apply bracketed paste when they request it.
-        term.paste(contents.text);
-      } else if (route === 'program') {
-        if (key) {
-          // xterm and its keyboard protocol handler need the original modifiers and keyCode.
-          forwardedPasteKeys.add(key);
-          term.textarea?.dispatchEvent(key);
-        } else {
-          pushToast({
-            message: 'To paste an image, press your program’s paste shortcut in the terminal.',
-            variant: 'info',
-          });
-        }
-      }
-    } catch {
+      contents = await readTerminalClipboard();
+    } catch (error) {
+      logToHost(`Terminal clipboard read failed: ${String(error)}`, { level: 'error' });
       pushToast({ message: 'Paste failed: clipboard is unavailable.', variant: 'error' });
+      return;
+    }
+    if (termRef.current !== term) return;
+    const route = pasteRoute(contents);
+    if (route === 'text') {
+      // TUIs need xterm to apply bracketed paste when they request it.
+      term.paste(contents.text);
+    } else if (route === 'program') {
+      if (key) {
+        const textarea = term.textarea;
+        if (!textarea || document.activeElement !== textarea) return;
+        // xterm and its keyboard protocol handler need the original modifiers and keyCode.
+        forwardedPasteKeys.add(key);
+        textarea.dispatchEvent(key);
+      } else {
+        pushToast({
+          message: 'To paste an image, press your program’s paste shortcut in the terminal.',
+          variant: 'info',
+        });
+      }
     }
   };
 
@@ -1618,9 +1623,7 @@ export function TerminalPane({
             update({ terminalFontSize: zoom });
             return;
           }
-          // No native Edit menu means no clipboard accelerator, so handle copy/paste
-          // here (capture + stopPropagation so xterm doesn't also send a raw ^C/^V).
-          // Ctrl+C with no selection returns null → falls through to the shell as SIGINT.
+          // Without the native Edit menu, Ctrl/Cmd+V has no clipboard accelerator.
           const clip = termRef.current
             ? terminalClipboardAction(e, termRef.current.hasSelection(), IS_MAC)
             : null;

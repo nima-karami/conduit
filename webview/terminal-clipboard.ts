@@ -42,5 +42,6 @@ export interface TerminalClipboard {
 
 export function pasteRoute({ text, hasData }: TerminalClipboard): 'text' | 'program' | 'none' {
   if (text) return 'text';
+  // With an empty clipboard, Ctrl+V would be readline's quoted-insert and consume the next key.
   return hasData ? 'program' : 'none';
 }
