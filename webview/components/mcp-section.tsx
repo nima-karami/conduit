@@ -33,6 +33,7 @@ export function McpSection({
   sessions,
   exceptionSeed,
   onExceptionSeedConsumed,
+  focusedAgentKey,
   activityScope,
   activityMachines,
   onAddActivityException,
@@ -101,6 +102,8 @@ export function McpSection({
             onExceptionSeedConsumed={onExceptionSeedConsumed}
             mcp={mcp}
             serverConnected={serverConnected}
+            focusAgentKey={focusedAgentKey}
+            registerBack={registerBack}
           />
         )}
         {tab === 'grants' && policy && (
