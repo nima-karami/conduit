@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.70.5] — 2026-11-19
+
 ### Fixed
 
 - On Linux, Update asks for your password again after Conduit restarted itself for an earlier update. Before, a Conduit started by the updater couldn't show the password prompt, so installing the next update failed until you quit and reopened it by hand.
