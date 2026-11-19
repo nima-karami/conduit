@@ -961,6 +961,7 @@ body {
   box-shadow: var(--win-hairline);
 }
 .workbench {
+  position: relative;
   flex: 1;
   display: flex;
   gap: var(--gutter);
@@ -7401,17 +7402,17 @@ body.gh-resizing {
    approval card, transient toasts and the persistent update item share it, so nothing overlaps
    another outlet. Fixed at the window's bottom-right, --toast-inset from both edges; it overlays
    content (the status bar's right end included) and never moves for a state, a panel or a view,
-   except that it rises above a pinned drawer footer (--toast-floor, webview/toast-floor.ts).
+   except where a drawer reserves space above its footer or beside its panel (webview/toast-floor.ts).
    Above modals, below menus; pointer-events on the cards only. Silence = success. */
 .toasts {
   position: fixed;
-  right: var(--toast-inset);
+  right: calc(var(--toast-side, 0px) + var(--toast-inset));
   bottom: calc(var(--toast-floor, 0px) + var(--toast-inset));
   z-index: var(--layer-toast);
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-width: min(420px, calc(100vw - 2 * var(--toast-inset)));
+  max-width: min(420px, calc(100vw - var(--toast-side, 0px) - 2 * var(--toast-inset)));
   pointer-events: none;
 }
 .toast {
@@ -15876,102 +15877,6 @@ button.toggle--on .toggle__knob {
   overflow-wrap: anywhere;
 }
 
-/* ---------- Session Permissions dialog ---------- */
-/* The frame never scrolls: Neon's chamfer ::after pokes past its corner, which on a scroll
-   container is sideways overflow and parks the cut at the content's bottom (see .ctxmenu).
-   The rows scroll in .mcptools__scroll; horizontal padding lives on the parts so the
-   scrollbar sits at the frame's edge. */
-.mcptools {
-  width: min(640px, 92vw);
-  max-height: 86vh;
-  display: flex;
-  flex-direction: column;
-  padding: 16px 0;
-  background: var(--panel);
-  border: 1px solid var(--border-2);
-  border-radius: var(--r-panel);
-  box-shadow: var(--elev-3);
-}
-.mcptools__head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-  padding: 0 16px;
-}
-.mcptools__scroll {
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 0 16px;
-}
-.mcptools__title {
-  flex: 1;
-  min-width: 0;
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-.mcptools__group {
-  margin-top: 12px;
-}
-.mcptools__grouptitle {
-  font-size: calc(11px * var(--font-scale));
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-faint);
-  font-weight: 600;
-  margin: 0 0 4px;
-}
-.mcptools__row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px 16px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border);
-}
-.mcptools__group .mcptools__row:last-child {
-  border-bottom: 0;
-}
-.mcptools__label {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1 1 220px;
-  min-width: 0;
-}
-.mcptools__name {
-  font-family: var(--font-mono);
-  font-size: calc(12px * var(--font-scale));
-  color: var(--text);
-}
-.mcptools__desc {
-  font-size: calc(11.5px * var(--font-scale));
-  color: var(--text-faint);
-}
-.mcptools__hint {
-  margin: 0;
-  color: var(--text-dim);
-  font-size: calc(12px * var(--font-scale));
-}
-.mcptools__error {
-  flex-basis: 100%;
-  margin: 0;
-  font-size: calc(11.5px * var(--font-scale));
-  color: var(--danger);
-}
-.mcptools__relaunch {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
-}
-
 /* Needs you: menu (CON-20) */
 .needs-menu {
   position: relative;
@@ -17367,18 +17272,6 @@ button.toggle--on .toggle__knob {
 .session-permissions__select:focus-visible {
   box-shadow: var(--focus-ring);
 }
-.session-permissions__review {
-  background: var(--raise);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  padding: 12px;
-}
-.session-permissions__table {
-  width: 100%;
-  border-collapse: collapse;
-  text-align: left;
-  font-size: calc(12px * var(--font-scale));
-}
 .session-permissions__activity {
   list-style: none;
   padding: 0;
@@ -17390,25 +17283,55 @@ button.toggle--on .toggle__knob {
   padding: 10px;
 }
 
-.session-permissions__profiles {
+.permissions-add-change {
+  display: grid;
+  gap: 8px;
+  align-items: start;
+  margin: 0;
+  padding: 12px;
+  background: var(--raise);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  min-inline-size: 0;
+}
+.permissions-add-change > legend {
+  padding: 0;
+}
+.permissions-add-change__field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.permissions-add-change__decision,
+.permissions-add-change__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
 }
-.session-permissions__profile {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 8px;
-  background: var(--raise);
-  border: 1px solid var(--border-2);
-  border-radius: var(--r-md);
+.permissions-add-change__decision > label {
+  position: relative;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
   cursor: pointer;
 }
-.session-permissions__profile:has(input:checked) {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+.permissions-add-change__decision input {
+  position: absolute;
+  opacity: 0;
 }
-.session-permissions__profile:focus-within {
+.permissions-add-change__decision > label:has(input:checked) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.permissions-add-change__decision > label:focus-within {
   box-shadow: var(--focus-ring);
+}
+.permissions-add-change__actions {
+  justify-content: flex-end;
+}
+.permissions-agents-drawer__add {
+  align-self: flex-start;
 }
 
 .permissions-profile-editor,
@@ -17634,6 +17557,31 @@ button.toggle--on .toggle__knob {
   }
 }
 
+/* E2 aligns the floating panel with the workspace without resizing its panes. */
+.workspace-permissions__content {
+  --drawer-pad-start: 16px;
+  --drawer-pad-end: 16px;
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  z-index: var(--layer-page);
+  width: min(460px, 100%);
+  display: flex;
+  background: var(--raise);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-panel);
+  box-shadow: var(--elev-3);
+  overflow: hidden;
+  padding-block: 12px;
+}
+.workspace-permissions__layout,
+.workspace-permissions__side {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
 .permissions-drawer {
   flex: 1 1 0;
   min-height: 0;
@@ -17687,6 +17635,7 @@ button.toggle--on .toggle__knob {
   flex: 1 1 0;
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -17748,6 +17697,7 @@ button.toggle--on .toggle__knob {
 }
 
 .permissions-drawer__link {
+  align-self: flex-start;
   padding: 0;
   border: 0;
   background: none;
@@ -18119,11 +18069,6 @@ button.toggle--on .toggle__knob {
 }
 .permissions-agents-drawer__role .selectfield {
   width: 100%;
-}
-.permissions-agents-drawer__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
 }
 .permissions-agents-drawer__canhead {
   margin: 0 0 4px;

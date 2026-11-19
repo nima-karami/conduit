@@ -1,29 +1,40 @@
 import { type RefObject, useLayoutEffect } from 'react';
 
-// The floating stack (.toasts) is anchored to the window's bottom-right, where a drawer pins its
-// actions. Elements registered here raise the stack's floor above them instead of being covered
-// (CON-71; CON-57 goal.md decision 6). The floor is measured, so it follows density and layout.
-const floors = new Map<symbol, number>();
+// Pinned footers need vertical clearance where the stack normally sits (CON-71).
+// Floating side panels occupy that entire column, so the stack uses the space beside them.
+type Edge = 'floor' | 'side';
+const reservations = new Map<symbol, { edge: Edge; distance: number }>();
+
+function clearance(edge: Edge): number {
+  let distance = 0;
+  for (const reservation of reservations.values()) {
+    if (reservation.edge === edge) distance = Math.max(distance, reservation.distance);
+  }
+  return distance;
+}
+
+export function toastFloorPx(): number {
+  return clearance('side') > 0 ? 0 : clearance('floor');
+}
 
 function apply() {
   const root = document.documentElement;
-  const floor = Math.max(0, ...floors.values());
-  if (floor > 0) root.style.setProperty('--toast-floor', `${Math.ceil(floor)}px`);
-  else root.style.removeProperty('--toast-floor');
+  const positions = { '--toast-floor': toastFloorPx(), '--toast-side': clearance('side') };
+  for (const [property, distance] of Object.entries(positions)) {
+    if (distance > 0) root.style.setProperty(property, `${Math.ceil(distance)}px`);
+    else root.style.removeProperty(property);
+  }
 }
 
-/** Exported for tests; components use `useToastFloor`. */
-export function toastFloorPx(): number {
-  return Math.max(0, ...floors.values());
-}
-
-export function useToastFloor(ref: RefObject<HTMLElement | null>, active: boolean) {
+function useToastClearance(ref: RefObject<HTMLElement | null>, edge: Edge, active: boolean) {
   useLayoutEffect(() => {
     const el = ref.current;
     if (!active || !el) return;
-    const key = Symbol('toast-floor');
+    const key = Symbol(edge);
     const measure = () => {
-      floors.set(key, window.innerHeight - el.getBoundingClientRect().top);
+      const { left, top } = el.getBoundingClientRect();
+      const distance = edge === 'side' ? window.innerWidth - left : window.innerHeight - top;
+      reservations.set(key, { edge, distance });
       apply();
     };
     measure();
@@ -33,8 +44,16 @@ export function useToastFloor(ref: RefObject<HTMLElement | null>, active: boolea
     return () => {
       observer?.disconnect();
       window.removeEventListener('resize', measure);
-      floors.delete(key);
+      reservations.delete(key);
       apply();
     };
-  }, [ref, active]);
+  }, [ref, edge, active]);
+}
+
+export function useToastFloor(ref: RefObject<HTMLElement | null>, active: boolean) {
+  useToastClearance(ref, 'floor', active);
+}
+
+export function useToastSide(ref: RefObject<HTMLElement | null>) {
+  useToastClearance(ref, 'side', true);
 }

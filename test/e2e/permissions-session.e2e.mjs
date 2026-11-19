@@ -2,12 +2,11 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   callTool,
-  closeSettingsPage,
   fakeAgentProfile,
   isolatedHome,
   mcpState,
+  openAgentDrawerFromRow,
   openFake,
-  openSessionPermissionsDialog,
   tapMcp,
   until,
 } from './conduit-mcp-helpers.mjs';
@@ -35,7 +34,7 @@ await runScenario(
     await tapMcp(page);
     const session = await openFake(page, work);
     const row = page.locator(`.session[data-sessionid="${session.sessionId}"]`);
-    const dialog = page.getByRole('dialog', { name: /^Permissions · / });
+    const oldDialog = page.getByRole('dialog', { name: /^Permissions · / });
     const menu = page.locator('.ctxmenu__item', { hasText: /^Permissions/ });
 
     assert(
@@ -62,30 +61,21 @@ await runScenario(
       (await page.locator('.ctxmenu__item', { hasText: 'Role for' }).count()) === 1,
       'the Permissions submenu has no role list',
     );
-    assert((await dialog.count()) === 0, 'Permissions opened the old dialog');
+    assert((await oldDialog.count()) === 0, 'Permissions opened the old dialog');
     await capture(page, '01b-permissions-submenu.png');
     await customize.click();
-    const drawer = page.locator('.settings-page aside.permissions-drawer');
+    const drawer = page.locator('.workspace-permissions__content aside.permissions-drawer');
     await drawer.waitFor();
     assert(
-      (await page
-        .getByRole('tab', { name: 'Agents', exact: true })
-        .getAttribute('aria-selected')) === 'true',
-      'Customize… did not land on MCP › Agents',
-    );
-    await drawer.getByRole('button', { name: 'Agent’s own permissions…' }).click();
-    await dialog.waitFor();
-    assert((await dialog.getAttribute('aria-modal')) === 'true', 'Permissions is not modal');
-    assert(
-      await dialog.evaluate((node) => node.contains(node.ownerDocument.activeElement)),
-      'focus did not enter the Permissions dialog',
+      await drawer.evaluate((node) => node.contains(node.ownerDocument.activeElement)),
+      'focus did not enter the Permissions drawer',
     );
 
-    await dialog.getByRole('radio', { name: 'Lead', exact: true }).check();
-    const review = dialog.getByRole('button', { name: 'Review changes' });
+    await drawer.getByRole('combobox', { name: 'Role', exact: true }).selectOption('lead');
+    const review = drawer.getByRole('button', { name: 'Review', exact: true });
     await review.focus();
     await page.keyboard.press('Enter');
-    const back = dialog.getByRole('button', { name: 'Back', exact: true });
+    const back = drawer.getByRole('button', { name: 'Back', exact: true });
     await back.waitFor();
     assert(
       await back.evaluate((node) => node === node.ownerDocument.activeElement),
@@ -99,8 +89,8 @@ await runScenario(
       'returning from review lost focus',
     );
     await review.click();
-    await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
-    await dialog.waitFor({ state: 'hidden' });
+    await drawer.getByRole('button', { name: 'Confirm and save', exact: true }).click();
+    await drawer.waitFor({ state: 'hidden' });
 
     const readPolicy = () =>
       JSON.parse(readFileSync(join(userDataDir, 'conduit-mcp', 'policy.json'), 'utf8'));
@@ -126,10 +116,9 @@ await runScenario(
       'the session projection does not show the Lead profile',
     );
     await capture(page, '03-lead-applied.png');
-    await openSessionPermissionsDialog(page, session.sessionId);
+    await openAgentDrawerFromRow(page, session.sessionId);
     await page.keyboard.press('Escape');
-    await dialog.waitFor({ state: 'hidden' });
-    await closeSettingsPage(page);
+    await drawer.waitFor({ state: 'hidden' });
 
     assert(!(await callTool(page, session.sessionId, 'list_sessions', {}))?.error, 'list_sessions');
     assert(
@@ -140,9 +129,9 @@ await runScenario(
       ),
       'owner policy did not retain the saved profile',
     );
-    await openSessionPermissionsDialog(page, session.sessionId);
-    await dialog.getByRole('button', { name: 'View Activity' }).click();
-    await dialog.waitFor({ state: 'hidden' });
+    await openAgentDrawerFromRow(page, session.sessionId);
+    await drawer.getByRole('button', { name: 'View Activity' }).click();
+    await drawer.waitFor({ state: 'hidden' });
     const activity = page.getByRole('region', { name: 'Permissions Activity' });
     await activity.waitFor();
     await activity.getByText('list_sessions', { exact: true }).first().waitFor();
@@ -207,17 +196,18 @@ await runScenario(
       .click();
     await settings.getByRole('complementary').getByRole('combobox', { name: 'Role' }).waitFor();
     await capture(page, '14-settings-assignments.png');
-    await settings.getByRole('button', { name: 'Edit changes' }).click();
+    await settings.getByText('Advanced settings', { exact: true }).click();
+    await settings.getByRole('button', { name: 'Edit assignment', exact: true }).click();
     await settings.getByRole('heading', { name: /Edit assignment/ }).waitFor();
     await settings.getByRole('button', { name: 'Cancel' }).click();
-    await settings.getByRole('button', { name: 'Edit changes' }).waitFor();
+    await settings.getByText('Advanced settings', { exact: true }).waitFor();
     await assignments.focus();
     await page.keyboard.press('ArrowRight');
     await settings.getByText('No grants yet.').waitFor();
     await capture(page, '07-settings-grants.png');
     await settings.getByRole('tab', { name: 'Activity', exact: true }).click();
     await activity.waitFor();
-    log('owner modal, keyboard tabs, durable exact native profile and scoped Activity verified');
+    log('agent drawer, keyboard tabs, durable exact native profile and scoped Activity verified');
   },
   { userDataDir, env, openFolder: false },
 );

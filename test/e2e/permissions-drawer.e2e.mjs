@@ -1,7 +1,7 @@
 /**
  * CON-71 — the MCP › Agents drawer as a side panel (canvas D5, E1):
- *   1. Right-click an agent → Permissions ▸ → a role: Settings opens on MCP › Agents with that
- *      agent's drawer at Review (no centered dialog); Confirm writes the role.
+ *   1. Right-click an agent → Permissions ▸ → a role opens the workspace drawer at Review.
+ *      Confirm writes the role. The header link takes the user to the same agent in Settings.
  *   2. A real wheel over the drawer scrolls only the drawer body: the list, the MCP panel and the
  *      drawer header stay where they were.
  *   3. Esc steps back one level at a time: drawer → closed → Settings closed.
@@ -12,6 +12,7 @@ import {
   fakeAgentProfile,
   isolatedHome,
   mcpState,
+  openAgentDrawerFromRow,
   openFake,
   tapMcp,
   until,
@@ -62,21 +63,20 @@ await runScenario(
     await lead.click();
 
     const settings = page.locator('.settings-page');
-    const drawer = settings.locator('aside.permissions-drawer');
-    await drawer.waitFor();
+    const workspaceDrawer = page.locator(
+      '.workspace-permissions__content aside.permissions-drawer',
+    );
+    await workspaceDrawer.waitFor();
+    assert(!(await settings.isVisible()), 'choosing a role opened Settings');
     assert(
       (await page.getByRole('dialog', { name: /^Permissions · / }).count()) === 0,
       'Permissions opened the centered dialog',
     );
-    assert(
-      (await settings
-        .getByRole('tab', { name: 'Agents', exact: true })
-        .getAttribute('aria-selected')) === 'true',
-      'the submenu did not land on MCP › Agents',
-    );
-    const title = (await drawer.locator('.permissions-drawer__title').textContent())?.trim();
+    const title = (
+      await workspaceDrawer.locator('.permissions-drawer__title').textContent()
+    )?.trim();
     assert(!name || title === name, `drawer opened for "${title}", not "${name}"`);
-    const confirm = drawer.getByRole('button', { name: 'Confirm and save' });
+    const confirm = workspaceDrawer.getByRole('button', { name: 'Confirm and save' });
     await confirm.waitFor();
     log('row menu → Permissions ▸ Lead landed on the agent drawer at Review');
 
@@ -101,6 +101,18 @@ await runScenario(
         10_000,
       ),
       'the staged Lead role was not written after Confirm',
+    );
+
+    await workspaceDrawer.waitFor({ state: 'hidden' });
+    const reopened = await openAgentDrawerFromRow(page, session.sessionId);
+    await reopened.getByRole('button', { name: 'Open in MCP › Agents' }).click();
+    const drawer = settings.locator('aside.permissions-drawer');
+    await drawer.waitFor();
+    assert(
+      (await settings
+        .getByRole('tab', { name: 'Agents', exact: true })
+        .getAttribute('aria-selected')) === 'true',
+      'the drawer link did not select MCP › Agents',
     );
 
     // Give the drawer body more than it can show, then wheel over it.

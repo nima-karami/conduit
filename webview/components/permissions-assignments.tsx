@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { pointKey } from '../../src/conduit-mcp/policy-profiles';
 import type {
   Assignment,
@@ -28,8 +28,14 @@ import { PermissionsDrawer } from './permissions-drawer';
 import { groupCounts, groupState, groupText } from './permissions-role-summary';
 import {
   describeExceptionScope,
+  SessionPermissionAddChange,
   SessionPermissionExceptions,
 } from './session-permission-exceptions';
+import {
+  type OpenSessionActivity,
+  SessionActiveGrants,
+  SessionPermissionsDetails,
+} from './session-permissions-details';
 
 const STR = MCP_STR.sections.agents;
 
@@ -38,11 +44,13 @@ type Edit = {
   draft: Assignment;
   before: Assignment;
   token: string;
+  inline?: boolean;
 };
 type Review = Edit & {
   candidate: Assignment | null;
   after: Assignment;
   digest?: string;
+  nativeRelaunch?: { sessionId: string; generation: number | null };
 };
 const fallback: Assignment = {
   profileId: 'worker',
@@ -241,12 +249,16 @@ function AgentDrawer({
   onEditChanges,
   onResetAll,
   onResetChange,
-  onOwnPermissions,
+  inlineChange,
+  details,
+  footer,
+  opener,
+  phase,
   staged,
   check,
 }: {
   title: string;
-  subtitle: string;
+  subtitle: ReactNode;
   profile: Profile | undefined;
   profiles: readonly Profile[];
   changes: { key: string; index: number; tool: ToolName; text: string }[];
@@ -257,8 +269,11 @@ function AgentDrawer({
   onEditChanges(): void;
   onResetAll(): void;
   onResetChange(index: number): void;
-  /** The session dialog, until its native panel moves into this drawer (CON-71). */
-  onOwnPermissions?(): void;
+  inlineChange?: ReactNode;
+  details?: ReactNode;
+  footer?: ReactNode;
+  opener?: HTMLElement;
+  phase: string;
   staged: StagedDrawer | null;
   check: ReactNode;
 }) {
@@ -269,7 +284,9 @@ function AgentDrawer({
       closeLabel={STR.closeDrawer}
       closeGlyph={STR.closeGlyph}
       onClose={onClose}
-      footer={staged?.actions}
+      footer={staged?.actions ?? footer}
+      opener={opener}
+      scrollKey={phase}
     >
       {staged?.body ?? (
         <>
@@ -332,21 +349,8 @@ function AgentDrawer({
             </ul>
           )}
           {error && <p role="alert">{error}</p>}
-          <div className="permissions-agents-drawer__actions">
-            <button
-              type="button"
-              className="btn btn--sm"
-              disabled={readOnly}
-              onClick={onEditChanges}
-            >
-              {STR.editChanges}
-            </button>
-            {onOwnPermissions && (
-              <button type="button" className="btn btn--sm" onClick={onOwnPermissions}>
-                {STR.ownPermissions}
-              </button>
-            )}
-          </div>
+          {inlineChange}
+          {details}
           {profile && (
             <section aria-label={STR.canDo}>
               <h4 className="permissions-agents-drawer__canhead">{STR.canDo}</h4>
@@ -381,6 +385,17 @@ function AgentDrawer({
             </section>
           )}
           {check}
+          <details className="permissions-drawer__group">
+            <summary className="permissions-drawer__link">{STR.advancedSettings}</summary>
+            <button
+              type="button"
+              className="btn btn--sm"
+              disabled={readOnly}
+              onClick={onEditChanges}
+            >
+              {STR.editAssignment}
+            </button>
+          </details>
         </>
       )}
     </PermissionsDrawer>
@@ -397,7 +412,9 @@ export function PermissionsAssignments({
   focusAgentKey,
   focusAgentStage,
   onFocusAgentSpent,
-  onOpenSessionPermissions,
+  onOpenActivity,
+  onRelaunch,
+  workspace,
   registerBack,
 }: {
   policy: PolicyUiState;
@@ -410,7 +427,9 @@ export function PermissionsAssignments({
   /** With `focusAgentKey`: a change picked in the row menu (E1), staged and opened at Review. */
   focusAgentStage?: AgentStage;
   onFocusAgentSpent?(): void;
-  onOpenSessionPermissions?(sessionId: string): void;
+  onOpenActivity?: OpenSessionActivity;
+  onRelaunch?(sessionId: string, generation: number | null): Promise<void>;
+  workspace?: { onClose(): void; onOpenInSettings(): void; opener?: HTMLElement };
   registerBack(handler: BackHandler | null): void;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
@@ -418,6 +437,10 @@ export function PermissionsAssignments({
   const [review, setReview] = useState<Review | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [addingChange, setAddingChange] = useState(false);
+  const reviewBack = useRef<HTMLButtonElement>(null);
+  const reviewButton = useRef<HTMLButtonElement>(null);
+  const wasReview = useRef(false);
   const editingRef = useRef(editing);
   editingRef.current = editing;
   const readOnly = policy.readOnly || !serverConnected;
@@ -453,6 +476,9 @@ export function PermissionsAssignments({
   const rows = [...points, ...peerPoints].map(rowFor);
   const selectedRow = rows.find((row) => row.key === selected);
   const openRow = editing ? rowFor(editing.point) : selectedRow;
+  const openSessionId = openRow?.point.kind === 'session' ? openRow.point.sessionId : undefined;
+  const openSession = sessions.find((session) => session.id === openSessionId);
+  const closeWorkspace = workspace?.onClose;
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
   const applyStageRef = useRef<((target: AssignmentPoint, stage: AgentStage) => void) | null>(null);
@@ -543,6 +569,10 @@ export function PermissionsAssignments({
         setError(null);
         return true;
       }
+      if (closeWorkspace) {
+        closeWorkspace();
+        return true;
+      }
       if (editing) {
         setEditing(null);
         setError(null);
@@ -555,18 +585,24 @@ export function PermissionsAssignments({
       return false;
     });
     return () => registerBack(null);
-  }, [registerBack, pending, review, editing, selectedRow]);
+  }, [registerBack, pending, review, editing, selectedRow, closeWorkspace]);
+  useLayoutEffect(() => {
+    if (review) reviewBack.current?.focus();
+    else if (wasReview.current) reviewButton.current?.focus();
+    wasReview.current = review !== null;
+  }, [review]);
   const checkSessions = sessions
     .filter((session) => policy.sessions[session.id])
     .map((session) => ({ id: session.id, label: session.name }));
 
-  const start = (target: AssignmentPoint, profileId?: ProfileId): Edit => {
+  const start = (target: AssignmentPoint, profileId?: ProfileId, inline = false): Edit => {
     const current = assignmentAt(policy, target) ?? inheritedAt(policy, target);
     const edit: Edit = {
       point: target,
       draft: { ...structuredClone(current), ...(profileId ? { profileId } : {}) },
       before: structuredClone(current),
       token: policy.editToken,
+      inline,
     };
     setEditing(edit);
     setSelected(pointKey(target));
@@ -589,11 +625,23 @@ export function PermissionsAssignments({
         setError(`Could not review permissions (${result?.error ?? 'timeout'}).`);
         return;
       }
+      const sessionId = from.point.kind === 'session' ? from.point.sessionId : undefined;
+      const session = sessions.find((current) => current.id === sessionId);
+      const runtime = session?.runtime;
+      const generation = runtime?.spawn === 'live' ? runtime.generation : null;
+      const canRelaunch =
+        onRelaunch &&
+        sessionId &&
+        result.requiresNativeReview &&
+        mcp.state?.native[sessionId]?.next.status === 'available' &&
+        policy.sessions[sessionId]?.launchedCli != null &&
+        (runtime?.spawn === 'none' || generation !== null);
       setReview({
         ...from,
         candidate: frozen,
         after: structuredClone(frozen ?? inheritedAt(policy, from.point)),
         ...(result.requiresNativeReview ? { digest: result.digest } : {}),
+        ...(canRelaunch && sessionId ? { nativeRelaunch: { sessionId, generation } } : {}),
       });
     } catch {
       if (editingRef.current === from) setError('Could not review permissions.');
@@ -601,8 +649,11 @@ export function PermissionsAssignments({
       setPending(false);
     }
   };
-  const save = async () => {
-    if (!review || review.token !== policy.editToken) {
+  const restart = review?.nativeRelaunch;
+  const launchChanged =
+    restart !== undefined && (openSession?.runtime?.generation ?? null) !== restart.generation;
+  const save = async (relaunch = false) => {
+    if (!review || review.token !== policy.editToken || launchChanged) {
       setError('Permissions changed. Cancel and review again.');
       return;
     }
@@ -619,6 +670,17 @@ export function PermissionsAssignments({
       else {
         setReview(null);
         setEditing(null);
+        if (relaunch && restart && onRelaunch) {
+          try {
+            await onRelaunch(restart.sessionId, restart.generation);
+          } catch (failure) {
+            setError(
+              `Saved, but could not relaunch: ${failure instanceof Error ? failure.message : String(failure)}`,
+            );
+            return;
+          }
+        }
+        closeWorkspace?.();
       }
     } catch {
       setError('Could not save permissions.');
@@ -626,8 +688,8 @@ export function PermissionsAssignments({
       setPending(false);
     }
   };
-  const stale =
-    (review ?? editing)?.token !== undefined && (review ?? editing)?.token !== policy.editToken;
+  const draftToken = (review ?? editing)?.token;
+  const stale = launchChanged || (draftToken !== undefined && draftToken !== policy.editToken);
   const reviewing = review ? (
     <section className="permissions-stack">
       <h3>Review assignment · {label(review.point)}</h3>
@@ -653,6 +715,13 @@ export function PermissionsAssignments({
       {review.digest && (
         <p>Confirming authorizes the reviewed native mode changes for future launches.</p>
       )}
+      {review.nativeRelaunch && (
+        <p>
+          {openSession?.busy
+            ? 'This session is busy. Relaunch later is recommended.'
+            : 'You can relaunch now to apply the native mode.'}
+        </p>
+      )}
       {stale && <p role="alert">Permissions changed. Cancel and review again.</p>}
       {error && <p role="alert">{error}</p>}
     </section>
@@ -660,6 +729,7 @@ export function PermissionsAssignments({
   const reviewActions = (
     <>
       <button
+        ref={reviewBack}
         type="button"
         className="btn"
         disabled={pending}
@@ -672,16 +742,26 @@ export function PermissionsAssignments({
       </button>
       <button
         type="button"
-        className="btn btn--primary"
+        className={review?.nativeRelaunch && !openSession?.busy ? 'btn' : 'btn btn--primary'}
         disabled={pending || readOnly || stale}
         onClick={() => void save()}
       >
-        {STR.confirm}
+        {review?.nativeRelaunch ? 'Apply, relaunch later' : STR.confirm}
       </button>
+      {review?.nativeRelaunch && (
+        <button
+          type="button"
+          className={openSession?.busy ? 'btn' : 'btn btn--primary'}
+          disabled={pending || readOnly || stale}
+          onClick={() => void save(true)}
+        >
+          Apply and relaunch
+        </button>
+      )}
     </>
   );
   const editor = (() => {
-    if (!editing) return null;
+    if (!editing || editing.inline) return null;
     const session =
       editing.point.kind === 'session'
         ? sessions.find(
@@ -794,6 +874,7 @@ export function PermissionsAssignments({
       </button>
       <button
         type="button"
+        ref={reviewButton}
         className="btn btn--primary"
         disabled={readOnly || pending || stale}
         onClick={() => void requestReview(editing.draft)}
@@ -808,10 +889,10 @@ export function PermissionsAssignments({
       ? { body: editor, actions: editorActions }
       : null;
   const changesFor = (row: AgentRow) => {
-    const assignment = assignmentAt(policy, row.point);
-    if (!assignment || !row.profile) return [];
-    const { rules } = row.profile;
-    const roleName = row.profile.name;
+    const assignment = editing?.inline ? editing.draft : assignmentAt(policy, row.point);
+    const profile = assignment ? profileFor(policy, assignment) : row.profile;
+    if (!assignment || !profile) return [];
+    const { rules, name: roleName } = profile;
     return exceptionEntries(assignment).map(({ entry, key, index }) => ({
       key,
       index,
@@ -823,8 +904,13 @@ export function PermissionsAssignments({
       ),
     }));
   };
+  const updateInline = (target: AssignmentPoint, update: (draft: Assignment) => Assignment) => {
+    const edit = editing?.inline ? editing : start(target, undefined, true);
+    setEditing({ ...edit, draft: update(edit.draft) });
+    setError(null);
+  };
   const resetAll = (target: AssignmentPoint) => {
-    const edit = start(target);
+    const edit = start(target, undefined, Boolean(workspace));
     const cleared = { ...edit, draft: { ...edit.draft, exceptions: [] } };
     setEditing(cleared);
     void requestReview(cleared.draft, cleared);
@@ -844,66 +930,182 @@ export function PermissionsAssignments({
       resetAll(target);
       return;
     }
-    const edit = start(target, stage.profileId);
+    const edit = start(target, stage.profileId, Boolean(workspace));
     void requestReview(edit.draft, edit);
   };
+  const closeDrawer = () => {
+    if (pending && closeWorkspace) return;
+    if (closeWorkspace) {
+      closeWorkspace();
+      return;
+    }
+    setSelected(null);
+    setEditing(null);
+    setReview(null);
+    setError(null);
+    setAddingChange(false);
+  };
+  const drawerFooter = (workspace || editing?.inline) && (
+    <>
+      <button type="button" className="btn" disabled={pending} onClick={closeDrawer}>
+        Cancel
+      </button>
+      <button
+        ref={reviewButton}
+        type="button"
+        className="btn btn--primary"
+        disabled={!editing || pending || readOnly || stale}
+        onClick={() => editing && void requestReview(editing.draft)}
+      >
+        Review
+      </button>
+    </>
+  );
+  const drawerAssignment = openRow
+    ? editing?.inline
+      ? editing.draft
+      : (assignmentAt(policy, openRow.point) ?? inheritedAt(policy, openRow.point))
+    : undefined;
+  const drawerProfile = editing?.inline ? profileFor(policy, editing.draft) : openRow?.profile;
+  const handle = openSession ? mcp.state?.sessions[openSession.id]?.handle : undefined;
+  const subtitle = openSession
+    ? [handle ?? openSession.id, cliOf(policy, openSession.id)].filter(Boolean).join(' · ')
+    : openRow?.subtitle;
   return (
     <>
-      {readOnly && (
+      {!workspace && readOnly && (
         <p role="status">
           Permissions are read-only while the policy store is unavailable or disconnected.
         </p>
       )}
       {error && !openRow && <p role="alert">{error}</p>}
-      <div className="permissions-roles">
-        <PermissionsAgentsList
-          rows={rows}
-          profiles={policy.profiles}
-          selectedKey={openRow?.key ?? null}
-          readOnly={readOnly}
-          newAgentRole={(assignmentAt(policy, { kind: 'default' }) ?? fallback).profileId}
-          onNewAgentRole={(id) => start({ kind: 'default' }, id)}
-          onSelect={(row) => {
-            setSelected(row.key);
-            setEditing(null);
-            setReview(null);
-            setError(null);
-          }}
-          onRoleChange={(row, id) => start(row.point, id)}
-        />
+      <div className={workspace ? 'workspace-permissions__layout' : 'permissions-roles'}>
+        {!workspace && (
+          <PermissionsAgentsList
+            rows={rows}
+            profiles={policy.profiles}
+            selectedKey={openRow?.key ?? null}
+            readOnly={readOnly}
+            newAgentRole={(assignmentAt(policy, { kind: 'default' }) ?? fallback).profileId}
+            onNewAgentRole={(id) => start({ kind: 'default' }, id)}
+            onSelect={(row) => {
+              setSelected(row.key);
+              setEditing(null);
+              setReview(null);
+              setError(null);
+              setAddingChange(false);
+            }}
+            onRoleChange={(row, id) => start(row.point, id)}
+          />
+        )}
         {openRow && (
-          <div className="permissions-roles__side">
+          <div className={workspace ? 'workspace-permissions__side' : 'permissions-roles__side'}>
             <AgentDrawer
               key={openRow.key}
               title={openRow.title}
               subtitle={
-                openRow.point.kind === 'session'
-                  ? STR.subtitle(openRow.subtitle, cliOf(policy, openRow.point.sessionId))
-                  : openRow.subtitle
+                workspace ? (
+                  <>
+                    {subtitle} ·{' '}
+                    <button
+                      type="button"
+                      className="permissions-drawer__link"
+                      disabled={pending}
+                      onClick={workspace.onOpenInSettings}
+                    >
+                      {STR.openInAgents}
+                    </button>
+                  </>
+                ) : (
+                  subtitle
+                )
               }
-              profile={openRow.profile}
+              profile={drawerProfile}
               profiles={policy.profiles}
               changes={changesFor(openRow)}
-              readOnly={readOnly}
-              error={error}
-              onClose={() => {
-                setSelected(null);
-                setEditing(null);
-                setReview(null);
-                setError(null);
-              }}
-              onRoleChange={(id) => start(openRow.point, id)}
-              onEditChanges={() => start(openRow.point)}
-              onResetAll={() => resetAll(openRow.point)}
-              onResetChange={(index) => resetChange(openRow.point, index)}
-              onOwnPermissions={
-                openRow.point.kind === 'session' && onOpenSessionPermissions
-                  ? () => {
-                      if (openRow.point.kind === 'session')
-                        onOpenSessionPermissions(openRow.point.sessionId);
-                    }
-                  : undefined
+              readOnly={readOnly || pending || stale}
+              error={stale ? 'Permissions changed. Cancel and reopen this assignment.' : error}
+              onClose={closeDrawer}
+              opener={workspace?.opener}
+              footer={drawerFooter || undefined}
+              onRoleChange={(id) =>
+                workspace || editing?.inline
+                  ? updateInline(openRow.point, (draft) => ({ ...draft, profileId: id }))
+                  : start(openRow.point, id)
               }
+              onEditChanges={() => {
+                if (editing?.inline) setEditing({ ...editing, inline: false });
+                else start(openRow.point);
+              }}
+              onResetAll={() =>
+                workspace || editing?.inline
+                  ? updateInline(openRow.point, (draft) => ({ ...draft, exceptions: [] }))
+                  : resetAll(openRow.point)
+              }
+              onResetChange={(index) =>
+                workspace || editing?.inline
+                  ? updateInline(openRow.point, (draft) => ({
+                      ...draft,
+                      exceptions: draft.exceptions.filter((_, i) => i !== index),
+                    }))
+                  : resetChange(openRow.point, index)
+              }
+              inlineChange={
+                openSession &&
+                (addingChange ? (
+                  <SessionPermissionAddChange
+                    key={openSession.id}
+                    session={openSession}
+                    role={drawerProfile}
+                    disabled={readOnly || pending || stale}
+                    onCancel={() => setAddingChange(false)}
+                    onAdd={(entry) => {
+                      updateInline(openRow.point, (draft) => ({
+                        ...draft,
+                        exceptions: [...draft.exceptions, entry],
+                      }));
+                      setAddingChange(false);
+                    }}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn--sm permissions-agents-drawer__add"
+                    disabled={readOnly || pending || stale}
+                    onClick={() => setAddingChange(true)}
+                  >
+                    Add a change
+                  </button>
+                ))
+              }
+              details={
+                openSession && (
+                  <>
+                    <SessionActiveGrants
+                      key={`grants:${openSession.id}`}
+                      sessionId={openSession.id}
+                      policy={policy}
+                      readOnly={readOnly}
+                      revokeGrant={mcp.revokeGrant}
+                    />
+                    <SessionPermissionsDetails
+                      key={`details:${openSession.id}`}
+                      session={openSession}
+                      mcp={mcp}
+                      policy={policy}
+                      onOpenActivity={onOpenActivity}
+                      applyNative={drawerAssignment?.applyNative === true}
+                      onApplyNativeChange={
+                        readOnly || pending || stale
+                          ? undefined
+                          : (applyNative) =>
+                              updateInline(openRow.point, (draft) => ({ ...draft, applyNative }))
+                      }
+                    />
+                  </>
+                )
+              }
+              phase={review ? 'review' : editor ? 'editor' : 'overview'}
               staged={staged}
               check={
                 <PermissionsCheckRequest

@@ -9,7 +9,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openSessionPermissionsDialog, tapMcp, until } from './conduit-mcp-helpers.mjs';
+import { openAgentDrawerFromRow, tapMcp, until } from './conduit-mcp-helpers.mjs';
 import { assert, closeApp, finishScenario, launchApp, makeLog } from './harness.mjs';
 import { startServer } from './net-helpers.mjs';
 
@@ -138,22 +138,22 @@ async function run() {
     const row = page.locator(`.session[data-sessionid="${sessionId}"]`);
     await row.waitFor({ timeout: 30_000 });
     await row.locator('.session__select').click();
-    const dialog = await openSessionPermissionsDialog(page, sessionId);
-    assert((await dialog.getAttribute('aria-modal')) === 'true', 'Permissions was not modal');
-    const launchEvidence = dialog.locator('p').filter({ hasText: /^At launch:/ });
+    const drawer = await openAgentDrawerFromRow(page, sessionId);
+    assert(await drawer.isVisible(), 'Permissions side panel was not visible');
+    const launchEvidence = drawer.locator('p').filter({ hasText: /^At launch:/ });
     await launchEvidence.waitFor();
     const requested = await launchEvidence.innerText();
     assert(
       requested.includes('Requested workspace-write · on-request'),
       `actual launch request was not shown: ${requested}`,
     );
-    await dialog.getByText('Codex thread unavailable; reported mode unknown.').waitFor();
-    await dialog.getByLabel('Codex thread UUID from /status').fill(threadId);
-    const link = dialog.getByRole('button', { name: 'Link thread' });
+    await drawer.getByText('Codex thread unavailable; reported mode unknown.').waitFor();
+    await drawer.getByLabel('Codex thread UUID from /status').fill(threadId);
+    const link = drawer.getByRole('button', { name: 'Link thread' });
     assert(
       await until(
         async () => {
-          const linked = dialog.getByText('Linked Codex thread', { exact: true });
+          const linked = drawer.getByText('Linked Codex thread', { exact: true });
           if (await linked.isVisible()) return true;
           if (await link.isEnabled()) await link.click();
           return linked.isVisible();
@@ -161,7 +161,7 @@ async function run() {
         30_000,
         500,
       ),
-      'the rendered dialog did not link the owned rollout',
+      'the rendered drawer did not link the owned rollout',
     );
     appendFileSync(
       file,
@@ -171,16 +171,16 @@ async function run() {
         payload: { sandbox_policy: { type: 'workspace-write' }, approval_policy: 'on-request' },
       }),
     );
-    const reported = dialog.locator('p').filter({ hasText: /^reported by the Codex thread:/ });
+    const reported = drawer.locator('p').filter({ hasText: /^reported by the Codex thread:/ });
     assert(
       await until(
         async () => (await reported.innerText()).includes('workspace-write · on-request'),
         30_000,
       ),
-      'linked rollout reading did not reach the dialog',
+      'linked rollout reading did not reach the drawer',
     );
     assert(
-      !(await dialog.innerText()).includes(threadId),
+      !(await drawer.innerText()).includes(threadId),
       'raw thread UUID remained visible after linking',
     );
     if (process.env.CONDUIT_PERMISSIONS_EVIDENCE_DIR) {

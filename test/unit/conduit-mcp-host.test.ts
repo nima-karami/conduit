@@ -8165,7 +8165,7 @@ describe('app-control tools at the host (spec 2026-10-30-conduit-mcp-app-control
     });
     c.call(2, 'read_screen', { session: 's2' });
     expect(resultOf(await c.reply(2))).toMatchObject({
-      error: { code: 'out_of_reach', hint: expect.stringContaining('Settings') },
+      error: { code: 'out_of_reach', hint: expect.stringContaining('Permissions side panel') },
     });
     c.call(5, 'read_screen', { session: 'claude-9@m-0123abcd' });
     expect(c.errorOf(await c.reply(5))).toBe('unknown_session');

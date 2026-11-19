@@ -83,14 +83,14 @@ it('edits and removes only selected exceptions while preserving pins and other f
   );
   expect(changed.mock.lastCall?.[0]).toEqual({ ...initial, exceptions: [initial.exceptions[1]] });
   const add = [...host.querySelectorAll('button')].find(
-    (element) => element.textContent === 'Add exception',
+    (element) => element.textContent === 'Add change',
   );
   await act(async () => add?.click());
   expect(changed.mock.lastCall?.[0]).toEqual({
     ...initial,
     exceptions: [
       initial.exceptions[1],
-      { tool: 'open_session', scope: { kind: 'anywhere' }, rule: { decision: 'ask' } },
+      { tool: 'send_input', scope: { kind: 'anywhere' }, rule: { decision: 'ask' } },
     ],
   });
   await act(async () => root.unmount());

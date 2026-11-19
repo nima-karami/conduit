@@ -14,10 +14,11 @@ describe('pushOverlay', () => {
       { id: 1, kind: 'popover' },
       { id: 2, kind: 'modal' },
       { id: 3, kind: 'popover' },
+      { id: 5, kind: 'panel' },
     ];
     const result = pushOverlay(stack, { id: 4, kind: 'modal' });
     expect(result.dismissed).toEqual([1, 3]);
-    expect(result.stack.map((e) => e.kind)).toEqual(['modal', 'modal']);
+    expect(result.stack.map((e) => e.kind)).toEqual(['modal', 'panel', 'modal']);
   });
 
   it('pushing a popover displaces nothing', () => {

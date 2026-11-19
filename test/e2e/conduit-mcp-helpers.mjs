@@ -327,15 +327,17 @@ const NOT_PROJECTED_HINT =
   "A value equal to the lower point is never shown: send 'inherit' or drop the field.";
 
 /**
- * Set one tool's exact session exception through the Session Permissions dialog, review the
+ * Set one tool's exact session exception through the agent’s Permissions side panel, review the
  * candidate, and wait for the owner to persist its effective legacy projection.
  * @param {'On' | 'Off' | 'Ask' | 'Inherit'} value
  */
-export async function enableToolViaDialog(page, sessionId, tool, value) {
+export async function enableToolViaDrawer(page, sessionId, tool, value) {
   await tapMcp(page);
-  const dialog = await openSessionPermissionsDialog(page, sessionId);
+  const drawer = await openAgentDrawerFromRow(page, sessionId);
+  await drawer.getByText('Advanced settings', { exact: true }).click();
+  await drawer.getByRole('button', { name: 'Edit assignment', exact: true }).click();
   const decision = { On: 'allow', Off: 'deny', Ask: 'ask' }[value];
-  const matching = dialog
+  const matching = drawer
     .locator('.session-permissions__exception')
     .filter({ hasText: `${tool} · Anywhere` });
   if (value === 'Inherit') {
@@ -345,22 +347,24 @@ export async function enableToolViaDialog(page, sessionId, tool, value) {
         .getByRole('button', { name: /^Remove exception / })
         .click();
     } else {
-      await page.keyboard.press('Escape');
-      await dialog.waitFor({ state: 'hidden', timeout: 5_000 });
+      await drawer.getByRole('button', { name: 'Close', exact: true }).click();
+      await drawer.waitFor({ state: 'hidden', timeout: 5_000 });
       await closeSettingsPage(page);
       return;
     }
   } else if ((await matching.count()) > 0) {
     await matching.first().getByLabel('Decision').selectOption(decision);
   } else {
-    const editor = dialog.getByRole('group', { name: 'Add exception' });
-    await editor.getByLabel('Action').selectOption(tool);
-    await editor.getByLabel('Decision').selectOption(decision);
-    await editor.getByLabel('Target').selectOption('anywhere');
-    await editor.getByRole('button', { name: 'Add exception' }).click();
+    const editor = drawer.getByRole('group', { name: 'Add a change' });
+    await editor.getByLabel('Tool').selectOption(tool);
+    await editor
+      .getByText({ allow: 'Allow', deny: 'Deny', ask: 'Ask' }[decision], { exact: true })
+      .click();
+    await editor.getByLabel('Where').selectOption('anywhere');
+    await editor.getByRole('button', { name: 'Add change' }).click();
   }
-  await dialog.getByRole('button', { name: 'Review changes' }).click();
-  await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
+  await drawer.getByRole('button', { name: 'Review changes' }).click();
+  await drawer.getByRole('button', { name: 'Confirm and save', exact: true }).click();
   const want = value === 'Inherit' ? null : SEG[value];
   try {
     await page.waitForFunction(
@@ -374,11 +378,11 @@ export async function enableToolViaDialog(page, sessionId, tool, value) {
       { id: sessionId, t: tool },
     );
     throw new Error(
-      `enableToolViaDialog ${tool} ${value} on ${sessionId}: not projected in 10000 ms (last: ${seen}). ${NOT_PROJECTED_HINT}`,
+      `enableToolViaDrawer ${tool} ${value} on ${sessionId}: not projected in 10000 ms (last: ${seen}). ${NOT_PROJECTED_HINT}`,
       { cause },
     );
   }
-  await dialog.waitFor({ state: 'hidden', timeout: 5_000 });
+  await drawer.waitFor({ state: 'hidden', timeout: 5_000 });
   await closeSettingsPage(page);
 }
 
@@ -390,26 +394,13 @@ export async function closeSettingsPage(page) {
   await settings.waitFor({ state: 'hidden', timeout: 5_000 });
 }
 
-/**
- * Row menu → Permissions ▸ → Customize… lands on the agent's drawer in MCP › Agents (canvas E1);
- * its "Agent's own permissions…" button opens the session dialog (native modes, Codex link).
- * @returns the dialog locator, open
- */
-export async function openSessionPermissionsDialog(page, sessionId) {
-  const drawer = await openAgentDrawerFromRow(page, sessionId);
-  await drawer.getByRole('button', { name: 'Agent’s own permissions…' }).click();
-  const dialog = page.getByRole('dialog', { name: /^Permissions · / });
-  await dialog.waitFor({ timeout: 5_000 });
-  return dialog;
-}
-
 /** Row menu → Permissions ▸ → Customize…; @returns the open drawer locator. */
 export async function openAgentDrawerFromRow(page, sessionId) {
   await closeSettingsPage(page);
   await page.locator(`.session[data-sessionid="${sessionId}"]`).click({ button: 'right' });
   await page.locator('.ctxmenu__item', { hasText: /^Permissions/ }).click();
   await page.locator('.ctxmenu__item', { hasText: 'Customize…' }).click();
-  const drawer = page.locator('.settings-page aside.permissions-drawer');
+  const drawer = page.locator('.workspace-permissions__content aside.permissions-drawer');
   await drawer.waitFor({ timeout: 5_000 });
   return drawer;
 }

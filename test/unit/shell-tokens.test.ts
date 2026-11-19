@@ -197,7 +197,7 @@ describe('the Neon chamfer is one continuous edge', () => {
   // The diagonal is an absolutely positioned ::after that pokes past the corner it redraws: on a
   // scroll container that is scrollable overflow (a 2 px sideways scrollbar on the MCP tools
   // dialog), and the cut lands at the bottom of the content, not the visible corner. A chamfered
-  // frame keeps its corner; an inner element scrolls (.ctxmenu__scroll, .mcptools__scroll).
+  // frame keeps its corner; an inner element scrolls (.ctxmenu__scroll, .permissions-drawer__body).
   it('a chamfered frame never scrolls itself', () => {
     const dir = join(__dirname, '..', '..', 'webview');
     const tsx = readdirSync(dir, { recursive: true, encoding: 'utf8' })
@@ -207,7 +207,7 @@ describe('the Neon chamfer is one continuous edge', () => {
     const frames = [...tsx.matchAll(/className="([a-z0-9_-]+) chamfer(?:--sm)?"/g)].map(
       (m) => m[1],
     );
-    expect(frames).toContain('mcptools');
+    expect(frames).toContain('workspace-permissions__content');
     for (const cls of new Set(frames)) {
       const rules = [...CSS.matchAll(new RegExp(`(?:^|\\n)\\.${cls} \\{([^}]*)\\}`, 'g'))];
       expect(rules.length, cls).toBeGreaterThan(0);

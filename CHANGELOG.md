@@ -6,6 +6,10 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- An agent’s Permissions opens in a side panel over the workspace, with native launch settings, recent activity, and active grants.
+
 ### Fixed
 
 - Permissions in an agent’s right-click menu opens beside the menu on hover and supports keyboard navigation.

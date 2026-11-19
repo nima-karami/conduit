@@ -4,13 +4,11 @@ import { MCP_STR, MCP_TAB_ORDER, type McpTabId } from '../conduit-mcp-strings';
 import { useConduitMcp } from '../use-conduit-mcp';
 import { type ActivityScope, PermissionsActivity } from './permissions-activity';
 import type { ActivityExceptionSource } from './permissions-activity-why';
-import {
-  type AgentStage,
-  type AssignmentExceptionSeed,
-  PermissionsAssignments,
-} from './permissions-assignments';
+import { type AssignmentExceptionSeed, PermissionsAssignments } from './permissions-assignments';
 import { PermissionsGrants } from './permissions-grants';
 import { PermissionsRoles } from './permissions-roles';
+
+import type { OpenSessionActivity } from './session-permissions-details';
 
 export type BackHandler = () => boolean;
 
@@ -23,9 +21,9 @@ export interface McpSectionProps {
   exceptionSeed?: AssignmentExceptionSeed | null;
   onExceptionSeedConsumed?(): void;
   focusedAgentKey?: string;
-  focusedAgentStage?: AgentStage;
   onFocusAgentSpent?(): void;
-  onOpenSessionPermissions?(sessionId: string): void;
+  onOpenSessionActivity?: OpenSessionActivity;
+  onRelaunchPermissionSession?(sessionId: string, generation: number | null): Promise<void>;
   activityScope: ActivityScope;
   activityMachines: readonly { id: string; name: string }[];
   onAddActivityException?(source: ActivityExceptionSource): void;
@@ -41,9 +39,9 @@ export function McpSection({
   exceptionSeed,
   onExceptionSeedConsumed,
   focusedAgentKey,
-  focusedAgentStage,
   onFocusAgentSpent,
-  onOpenSessionPermissions,
+  onOpenSessionActivity,
+  onRelaunchPermissionSession,
   activityScope,
   activityMachines,
   onAddActivityException,
@@ -126,9 +124,9 @@ export function McpSection({
             mcp={mcp}
             serverConnected={serverConnected}
             focusAgentKey={focusedAgentKey}
-            focusAgentStage={focusedAgentStage}
             onFocusAgentSpent={onFocusAgentSpent}
-            onOpenSessionPermissions={onOpenSessionPermissions}
+            onOpenActivity={onOpenSessionActivity}
+            onRelaunch={onRelaunchPermissionSession}
             registerBack={registerBack}
           />
         )}

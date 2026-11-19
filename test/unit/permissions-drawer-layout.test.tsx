@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { act, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { toastFloorPx, useToastFloor } from '../../webview/toast-floor';
+import { toastFloorPx, useToastFloor, useToastSide } from '../../webview/toast-floor';
 
 /**
  * CON-71: scrolling the MCP drawer scrolled the whole tab (list, drawer and all), because the
@@ -98,4 +98,39 @@ describe('useToastFloor', () => {
       host.remove();
     }
   });
+});
+
+function SidePanel() {
+  const ref = useRef<HTMLElement>(null);
+  useToastSide(ref);
+  return <aside ref={ref} />;
+}
+
+it('uses horizontal clearance while a side panel is present, then restores the footer reserve', async () => {
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  const measure = Element.prototype.getBoundingClientRect;
+  Element.prototype.getBoundingClientRect = () =>
+    ({ top: window.innerHeight - 60, left: window.innerWidth - 460 }) as DOMRect;
+  const style = document.documentElement.style;
+  try {
+    await act(async () =>
+      root.render(
+        <>
+          <Footer active />
+          <SidePanel />
+        </>,
+      ),
+    );
+    expect(style.getPropertyValue('--toast-side')).toBe('460px');
+    expect(style.getPropertyValue('--toast-floor')).toBe('');
+    await act(async () => root.render(<Footer active />));
+    expect(style.getPropertyValue('--toast-side')).toBe('');
+    expect(style.getPropertyValue('--toast-floor')).toBe('60px');
+  } finally {
+    Element.prototype.getBoundingClientRect = measure;
+    await act(async () => root.unmount());
+    host.remove();
+  }
 });

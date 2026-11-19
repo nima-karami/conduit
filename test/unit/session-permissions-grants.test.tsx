@@ -1,24 +1,13 @@
 // @vitest-environment jsdom
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { BUILT_IN_PROFILES } from '../../src/conduit-mcp/policy-profiles';
 import type { Grant, PolicyUiState } from '../../src/conduit-mcp/policy-types';
-import type { Session } from '../../src/types';
-import { PermissionsSessionDialog } from '../../webview/components/permissions-session-dialog';
+import { SessionActiveGrants } from '../../webview/components/session-permissions-details';
 
 it('shows active grants for the trusted session and launched CLI only', async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  const session: Session = {
-    id: 's1',
-    name: 'api',
-    agentId: 'cli:codex',
-    home: '/p',
-    roots: [],
-    status: 'running',
-    createdAt: 1,
-    lastActiveAt: 1,
-  };
   const grant = (
     id: string,
     who: Grant['who'],
@@ -70,28 +59,14 @@ it('shows active grants for the trusted session and launched CLI only', async ()
   const host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);
+  const revokeGrant = vi.fn(async () => true);
   await act(async () =>
     root.render(
-      <PermissionsSessionDialog
-        session={session}
+      <SessionActiveGrants
+        sessionId="s1"
         policy={policy}
-        draft={{ profileId: 'worker', exceptions: [], onScreenOnly: false }}
-        inherited
-        native={{ atLaunch: null, next: { status: 'not-applicable' } }}
-        posture={{ status: 'unavailable' }}
-        handStarted={false}
-        nativeOptInSupported={false}
-        review={null}
-        pending={false}
-        error={null}
-        getActivity={async () => ({ rows: [], next: null, writable: true, error: null })}
-        onRetry={async () => ({ ok: true })}
-        onOpenSettings={() => {}}
-        onOpenActivity={() => {}}
-        onClose={() => {}}
-        onReview={() => {}}
-        onBack={() => {}}
-        onConfirm={() => {}}
+        readOnly={false}
+        revokeGrant={revokeGrant}
       />,
     ),
   );
@@ -101,6 +76,12 @@ it('shows active grants for the trusted session and launched CLI only', async ()
   expect(grants?.textContent).not.toContain('close_session');
   expect(grants?.textContent).not.toContain('open_terminal');
   expect(grants?.textContent).not.toContain('send_input');
+  const revoke = grants?.querySelector<HTMLButtonElement>(
+    '[aria-label="Revoke open_session grant"]',
+  );
+  expect(revoke).toBeDefined();
+  await act(async () => revoke?.click());
+  expect(revokeGrant).toHaveBeenCalledWith('a');
   await act(async () => root.unmount());
   host.remove();
 });
