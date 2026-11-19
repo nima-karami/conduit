@@ -1,8 +1,6 @@
 import * as fs from 'node:fs';
-import { mkdtempSync, rmSync } from 'node:fs';
 import * as net from 'node:net';
 import * as os from 'node:os';
-import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -90,6 +88,7 @@ import type { HostToWebview } from '../../src/protocol';
 import { createPtyWriter } from '../../src/pty-writer';
 import { COMMAND_AGENT_ID, commandDef } from '../../src/session-command';
 import type { AgentDefinition, Session, SessionCommand, SpawnSpec } from '../../src/types';
+import { testTempDir } from '../helpers/temp-roots';
 import { testEndpoint } from '../helpers/test-endpoint';
 
 const quiet = {
@@ -118,7 +117,7 @@ function grantNetworkServer(
   endpointIn?: (root: string) => string,
   opts: ServerOpts = {},
 ) {
-  const root = mkdtempSync(join(tmpdir(), 'conduit-net-'));
+  const root = testTempDir('conduit-net-');
   const dir = join(root, 'network');
   const loaded = loadIdentity(dir);
   if (loaded.kind === 'newer') throw new Error('unexpected');
@@ -210,7 +209,6 @@ function grantNetworkServer(
       agents: () => [],
     },
   });
-  grantNetworkCleanup.push(() => rmSync(root, { recursive: true, force: true }));
   grantNetworkCleanup.push(() => net.stop());
   return { net, dir, states, opened };
 }

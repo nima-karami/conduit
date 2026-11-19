@@ -1,9 +1,9 @@
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { readFile } from '../../src/file-service';
 import { imageMime, isHtmlDocPath, mediaKindForPath, pdfKindForPath } from '../../src/media-kind';
+import { testTempDir } from '../helpers/temp-roots';
 
 // ── mediaKindForPath ──────────────────────────────────────────────────────────
 
@@ -111,13 +111,9 @@ describe('imageMime', () => {
 
 // ── readFile image path (size-cap decision) ───────────────────────────────────
 
-function makeTmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'media-test-'));
-}
-
 describe('readFile image path', () => {
   it('returns a base64 data URL for a small image file', async () => {
-    const dir = makeTmpDir();
+    const dir = testTempDir('media-test-');
     // Minimal 1×1 PNG (89 bytes — real PNG header so it's a valid image, but the
     // test only checks the DTO shape, not the rendered pixel).
     const pngBytes = Buffer.from(
@@ -139,7 +135,7 @@ describe('readFile image path', () => {
   });
 
   it('returns an error (no image field) when the file exceeds MAX_IMAGE_BYTES', async () => {
-    const dir = makeTmpDir();
+    const dir = testTempDir('media-test-');
     // Write a tiny PNG but lie about size by patching the cap — instead, use the
     // exported constant and write a file larger than the default MAX_BYTES but
     // smaller than MAX_IMAGE_BYTES so we can test the cap path directly by
@@ -165,9 +161,12 @@ describe('readFile image path', () => {
     // Use a sparse file trick: write a file with truncate to avoid allocating disk.
     const bigPath = path.join(dir, 'huge.png');
     const handle = await fs.promises.open(bigPath, 'w');
-    // Truncate to MAX_IMAGE_BYTES + 1 creates a sparse file (just metadata).
-    await handle.truncate(25 * 1024 * 1024 + 1);
-    await handle.close();
+    try {
+      // Truncate to MAX_IMAGE_BYTES + 1 creates a sparse file (just metadata).
+      await handle.truncate(25 * 1024 * 1024 + 1);
+    } finally {
+      await handle.close();
+    }
 
     const docBig = await readFile(bigPath);
     expect(docBig.binary).toBe(true);
@@ -194,12 +193,15 @@ describe('readFile image path', () => {
   });
 
   it('returns an error (no pdf field) when the PDF exceeds MAX_PDF_BYTES', async () => {
-    const dir = makeTmpDir();
+    const dir = testTempDir('media-test-');
     const bigPath = path.join(dir, 'huge.pdf');
     const handle = await fs.promises.open(bigPath, 'w');
-    // Sparse truncate to just over the 50 MB cap — metadata only, no disk allocation.
-    await handle.truncate(50 * 1024 * 1024 + 1);
-    await handle.close();
+    try {
+      // Sparse truncate to just over the 50 MB cap — metadata only, no disk allocation.
+      await handle.truncate(50 * 1024 * 1024 + 1);
+    } finally {
+      await handle.close();
+    }
 
     const doc = await readFile(bigPath);
     expect(doc.binary).toBe(true);
@@ -209,7 +211,7 @@ describe('readFile image path', () => {
   });
 
   it('returns a data URL for an SVG file (text file detected by extension)', async () => {
-    const dir = makeTmpDir();
+    const dir = testTempDir('media-test-');
     const svgContent =
       '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>';
     const f = path.join(dir, 'icon.svg');

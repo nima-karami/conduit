@@ -1,14 +1,14 @@
-import fs, { mkdtempSync, truncateSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import fs, { truncateSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { readDiff, readDiffReply } from '../../src/file-service';
+import { testTempDir } from '../helpers/temp-roots';
 
 const MB = 1024 * 1024;
 
 describe('readDiff oversize cap', () => {
   it('refuses a >25MB work-side image without reading it', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'rd-'));
+    const dir = testTempDir('rd-');
     const p = join(dir, 'huge.png');
     writeFileSync(p, '');
     truncateSync(p, 26 * MB);
@@ -28,7 +28,7 @@ describe('readDiff oversize cap', () => {
   });
 
   it('marks a >2MB working file oversize instead of shipping its content', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'rd-'));
+    const dir = testTempDir('rd-');
     const p = join(dir, 'big.txt');
     writeFileSync(p, 'x'.repeat(2 * MB + 10));
     const dto = await readDiff(
@@ -42,7 +42,7 @@ describe('readDiff oversize cap', () => {
   });
 
   it('marks oversize when the HEAD side exceeds the cap (a file that shrank)', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'rd-'));
+    const dir = testTempDir('rd-');
     const p = join(dir, 'small.txt');
     writeFileSync(p, 'now tiny\n');
     const hugeHead = 'y'.repeat(2 * MB + 10);
@@ -55,7 +55,7 @@ describe('readDiff oversize cap', () => {
   });
 
   it('leaves a normal small file un-flagged', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'rd-'));
+    const dir = testTempDir('rd-');
     const p = join(dir, 'ok.txt');
     writeFileSync(p, 'line1\nline2\n');
     const dto = await readDiff(
@@ -82,7 +82,7 @@ describe('readDiffReply', () => {
   });
 
   it('passes a normal read through', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'rd-'));
+    const dir = testTempDir('rd-');
     const p = join(dir, 'ok.txt');
     writeFileSync(p, 'line1\nline2\n');
     const gitShow = async () => 'line1\n';

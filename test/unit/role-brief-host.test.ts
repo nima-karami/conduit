@@ -37,6 +37,7 @@ const CMD = def('cli:cmd', 'cmd.exe');
 const prompt = (f: string) => `Read your role brief at ${f} and follow it.`;
 const BOM = String.fromCharCode(0xfeff);
 
+let fixtureRoot: string;
 let userData: string;
 let sessions: Map<string, { id: string; brief?: BriefState }>;
 let setBrief: ReturnType<typeof vi.fn>;
@@ -63,7 +64,8 @@ function make(
 }
 
 beforeEach(() => {
-  userData = fs.mkdtempSync(path.join(os.tmpdir(), 'role-brief-'));
+  fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'role-brief-'));
+  userData = fixtureRoot;
   sessions = new Map();
   n = 0;
   setBrief = vi.fn((id: string, brief: BriefState | undefined) => {
@@ -76,7 +78,7 @@ beforeEach(() => {
   log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 });
 afterEach(() => {
-  fs.rmSync(userData, { recursive: true, force: true });
+  fs.rmSync(fixtureRoot, { recursive: true, force: true });
 });
 
 const store = () => path.join(userData, 'brief-store');

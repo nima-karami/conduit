@@ -1,5 +1,4 @@
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -17,6 +16,7 @@ import {
 import { langFromPathAndText } from '../../src/lang';
 import type { DirEntryDTO } from '../../src/protocol';
 import { createGrantStore, hostCanonical } from '../../src/read-grants';
+import { testTempDir } from '../helpers/temp-roots';
 
 vi.mock('../../src/lang', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/lang')>();
@@ -24,7 +24,7 @@ vi.mock('../../src/lang', async (importOriginal) => {
 });
 
 function tmp(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'fsvc-'));
+  return testTempDir('fsvc-');
 }
 
 describe('fileService helpers', () => {

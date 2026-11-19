@@ -1,11 +1,12 @@
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, promises as fsp, truncateSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRolloutFs, type RolloutReadEvent } from '../../server/domain/codex-rollout-fs';
 import { tempRoots } from '../helpers/temp-roots';
 
 const roots = tempRoots('rollout-fs-');
+afterEach(roots.cleanup);
 
 async function events(
   fs: ReturnType<typeof createRolloutFs>,

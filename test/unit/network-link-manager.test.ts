@@ -1,6 +1,4 @@
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Duplex, PassThrough } from 'node:stream';
 import type tls from 'node:tls';
@@ -33,9 +31,10 @@ import type { LinkRecord } from '../../src/network/link-file';
 import { linkIdFor } from '../../src/network/pairing-transcript';
 import { createRemoteDirectory } from '../../src/network/remote-directory';
 import { selfSignedCert } from '../../src/network/self-signed-cert';
+import { testTempDir } from '../helpers/temp-roots';
 
 const quiet = { debug: () => undefined, warn: () => undefined, error: () => undefined };
-const cleanup: Array<() => Promise<void>> = [];
+const cleanup: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
   for (const c of cleanup.splice(0).reverse()) await c();
 });
@@ -758,7 +757,7 @@ function fakeMcp(inbox: string[]): McpNetworkPort {
 
 /** Messaging wired to a node the way the network service does: links from the manager, frames back in. */
 function messagingOver(n: Node, mcp: McpNetworkPort): Messaging {
-  const dir = mkdtempSync(join(tmpdir(), 'ssh-messaging-'));
+  const dir = testTempDir('ssh-messaging-');
   const svc = createMessaging({
     file: join(dir, 'outbox.json'),
     machineId: () => n.id.machineId,
@@ -783,10 +782,7 @@ function messagingOver(n: Node, mcp: McpNetworkPort): Messaging {
     if (f.t === 'msg' || f.t === 'ack' || f.t === 'receipt') svc.onFrame(machineId, f);
   });
   svc.start();
-  cleanup.push(async () => {
-    svc.stop();
-    rmSync(dir, { recursive: true, force: true });
-  });
+  cleanup.push(() => svc.stop());
   return svc;
 }
 

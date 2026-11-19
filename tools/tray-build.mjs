@@ -3,7 +3,7 @@ import { copyFileSync, mkdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { checkRust } from './check-rust.mjs';
-import { TRAY_CRATE_DIR } from './tray-check.mjs';
+import { getTrayTargetDir, runCargo } from './tray-cargo.mjs';
 
 const TARGET = 'x86_64-pc-windows-msvc';
 const MAX_BYTES = 2 * 1024 * 1024;
@@ -29,13 +29,11 @@ export function runTrayBuild(o = {}) {
     console.error(pre.message);
     return 1;
   }
-  const build = spawn('cargo', ['build', '--release', '--locked', '--target', TARGET], {
-    stdio: 'inherit',
-    cwd: TRAY_CRATE_DIR,
-  });
+  const targetDir = getTrayTargetDir(spawn);
+  const build = runCargo(['build', '--release', '--target', TARGET], targetDir, spawn);
   if (build.status !== 0) return build.status ?? 1;
 
-  const built = join('native/tray/target', TARGET, 'release/conduit-tray.exe');
+  const built = join(targetDir, TARGET, 'release', 'conduit-tray.exe');
   const size = stat(built).size;
   if (size > MAX_BYTES) {
     console.error(`conduit-tray.exe ${size} bytes exceeds ${MAX_BYTES} byte budget`);

@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, win32 } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { compareToBaseline, countSleeps, run, toPosixRel } from '../../tools/check-e2e-sleeps.mjs';
+import { testTempDir } from '../helpers/temp-roots';
 
 describe('countSleeps', () => {
   it('counts page and win receivers', () => {
@@ -87,7 +87,7 @@ describe('toPosixRel', () => {
 });
 
 function tempFixtureRoot() {
-  return mkdtempSync(join(tmpdir(), 'check-e2e-sleeps-'));
+  return testTempDir('check-e2e-sleeps-');
 }
 
 function writeE2eFile(root: string, relPosix: string, source: string) {

@@ -15,6 +15,7 @@ import { instanceNames } from '../../src/instance-names';
 import type { AgentDefinition } from '../../src/types';
 import { onLines, writeJsonLine } from '../helpers/line-socket';
 import { allowPeerReset } from '../helpers/peer-socket';
+import { testTempDir } from '../helpers/temp-roots';
 import { testEndpoint } from '../helpers/test-endpoint';
 
 const SHELL: AgentDefinition = {
@@ -43,7 +44,7 @@ async function harness(options: Partial<ServicesOptions> = {}, userDataOf?: stri
     reconnectDelayMs: 10,
     log: () => {},
   });
-  const userData = userDataOf ?? fs.mkdtempSync(path.join(os.tmpdir(), 'compose-'));
+  const userData = userDataOf ?? testTempDir('compose-');
   const names: InstanceNames = {
     ...instanceNames(userData, process.platform === 'win32' ? 'win32' : 'posix', os.tmpdir(), {
       home: '/home/conduit-test',
@@ -86,7 +87,6 @@ async function harness(options: Partial<ServicesOptions> = {}, userDataOf?: stri
   cleanups.push(async () => {
     await services.close();
     await fake.close();
-    fs.rmSync(userData, { recursive: true, force: true });
   });
   return { fake, services, sent, health, startCore, userData, names };
 }
@@ -543,7 +543,7 @@ describe.sequential('compose: per-peer events', () => {
 describe.sequential('compose: NET audit and link revoke reach the MCP side', () => {
   /** Loopback with an ephemeral port: the default settings bind the fixed pairing port on the LAN. */
   const dirFor = () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'compose-net-'));
+    const dir = testTempDir('compose-net-');
     fs.writeFileSync(
       path.join(dir, 'settings.json'),
       JSON.stringify({

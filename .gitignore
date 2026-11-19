@@ -32,5 +32,6 @@ designs/
 *.stackdump
 .shots/
 build/vendor/
+# Direct Cargo invocations can still use the crate-local target.
 native/tray/target/
 build/release-notes.md

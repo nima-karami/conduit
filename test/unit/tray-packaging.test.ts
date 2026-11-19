@@ -76,7 +76,12 @@ describe('tray helper packaging and CI', () => {
     expect(read('.github/workflows/e2e.yml')).toContain('restore-keys:');
   });
 
-  it('ignores native/tray/target in git', () => {
+  it('caches the shared Cargo target on Windows CI', () => {
+    expect(read('.github/workflows/release.yml')).toContain('.git/tray-target');
+    expect(read('.github/workflows/e2e.yml')).toContain('.git/tray-target');
+  });
+
+  it('ignores the crate-local target for direct Cargo invocations', () => {
     expect(read('.gitignore')).toMatch(/native\/tray\/target\/?/);
   });
 
