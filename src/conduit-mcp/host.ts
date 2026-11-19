@@ -111,7 +111,7 @@ import { validatePolicyAssignment, validatePolicyProfile } from './policy-file';
 import { createPolicyIo, POLICY_MAX_BYTES, type PolicyIo } from './policy-file-fs';
 import { isNativeFamily } from './policy-native';
 import { createPolicyService } from './policy-service';
-import { forcesAsk, resolveTargets, type TargetDeps } from './policy-targets';
+import { captureTargets, forcesAsk, resolveTargets, type TargetDeps } from './policy-targets';
 import type {
   ActivityDecisionTraceV1,
   Assignment,
@@ -2512,12 +2512,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           typeof args === 'object' && args !== null && !Array.isArray(args)
             ? (args as Record<string, unknown>)
             : {};
-        const targets = resolveTargets(
+        const pathSnapshot = captureTargets(
           name,
           rawArgs,
           { sessionId, home: principal.homeFolder },
           targetDepsOf(),
         );
+        const { targets } = pathSnapshot;
         const traceable = traceableSingle(name, rawArgs, targets);
         const policyInput = {
           principal,
@@ -2890,7 +2891,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           source: sourceOf(resolved),
           args,
           prepare: async () => {
-            const prepared = await prepareControl(caller, name, args, controlCtx);
+            const prepared = await prepareBoundControl(
+              caller,
+              name,
+              args,
+              controlCtx,
+              pathSnapshot,
+            );
             if (!prepared.ok || 'done' in prepared.value) return prepared;
             const p = prepared.value;
             return {
@@ -3270,7 +3277,13 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
       typeof args === 'object' && args !== null && !Array.isArray(args)
         ? (args as Record<string, unknown>)
         : {};
-    const targets = resolveTargets(name, rawArgs, { sessionId: null, home: null }, targetDepsOf());
+    const pathSnapshot = captureTargets(
+      name,
+      rawArgs,
+      { sessionId: null, home: null },
+      targetDepsOf(),
+    );
+    const { targets } = pathSnapshot;
     const policyInput = {
       principal: remote,
       tool: name,
@@ -3362,7 +3375,7 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           return pending.deadline - 5_000;
         },
       };
-      const prepared = await prepareControl(caller, name, args, ctx);
+      const prepared = await prepareBoundControl(caller, name, args, ctx, pathSnapshot);
       if (!prepared.ok) return prepared;
       const p = prepared.value;
       if ('done' in p) {
@@ -3591,6 +3604,41 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
         return machines.prepareDisconnectMachine(caller, args);
     }
     throw new Error(`prepareControl: ${name} is not a control tool`);
+  };
+
+  // See CON-55.
+  const prepareBoundControl = async (
+    caller: Caller,
+    name: ToolName,
+    args: unknown,
+    ctx: ControlCallContext,
+    snapshot: ReturnType<typeof captureTargets>,
+  ): Promise<Result<Prepared<StructuredOutput>>> => {
+    const pathError = (path: string) =>
+      toolError('open_failed', `Path changed after policy evaluation: ${path}`);
+    const before = snapshot.changedPath();
+    if (before !== null) return { ok: false, error: pathError(before) };
+    const prepared = await prepareControl(caller, name, args, {
+      ...ctx,
+      get deadlineMs() {
+        return ctx.deadlineMs;
+      },
+      boundPath: snapshot.boundPath,
+    });
+    if (!prepared.ok || 'done' in prepared.value) return prepared;
+    const call = prepared.value;
+    return {
+      ok: true,
+      value: {
+        ...call,
+        run: async () => {
+          const changed = snapshot.changedPath();
+          if (changed === null) return call.run();
+          call.release();
+          return { ok: false, error: pathError(changed) };
+        },
+      },
+    };
   };
 
   /**

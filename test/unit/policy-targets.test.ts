@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  captureTargets,
   forcesAsk,
   openedByRemote,
   resolveTargets,
@@ -145,6 +146,21 @@ describe('resolveTargets', () => {
     );
     expect(targets.map((t) => t.sessionId)).toEqual(['s-alpha']);
     expect(asked).toEqual(['alpha']);
+  });
+});
+
+describe('captureTargets', () => {
+  it('detects removal of a captured canonical target', () => {
+    let present = true;
+    const snapshot = captureTargets('open_session', { path: '/link' }, caller, {
+      ...deps,
+      realPath: (p) => (present && (p === '/link' || p === '/real') ? '/real' : null),
+    });
+
+    expect(snapshot.boundPath('/link')).toBe('/real');
+    expect(snapshot.changedPath()).toBeNull();
+    present = false;
+    expect(snapshot.changedPath()).toBe('/real');
   });
 });
 

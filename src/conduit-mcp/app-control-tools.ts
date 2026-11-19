@@ -263,7 +263,11 @@ export function createAppControlHandlers(
   };
 
   /** The repo must be the caller's own folder: home or an attached root (plan B6). */
-  const resolveRepo = async (who: Who, repo: unknown): Promise<Result<string>> => {
+  const resolveRepo = async (
+    who: Who,
+    repo: unknown,
+    ctx: ControlCallContext,
+  ): Promise<Result<string>> => {
     if (repo !== undefined && (typeof repo !== 'string' || repo.length === 0))
       return fail('invalid_args', 'repo must be a non-empty string');
     const f = repo === undefined ? who.home : deps.resolvePath(who.home, repo);
@@ -271,7 +275,7 @@ export function createAppControlHandlers(
     const mine = [who.home, ...(folders?.roots ?? [])].map(folderKey);
     if (!mine.includes(folderKey(f)))
       return fail('not_a_repo', 'repo must be your home folder or an attached folder');
-    return repoRootOf(deps.git, f);
+    return repoRootOf(deps.git, ctx.boundPath?.(f) ?? f);
   };
 
   /** `unknownSession` is the caller's own session-lookup for this tool, so it carries the same valid list. */
@@ -554,13 +558,14 @@ export function createAppControlHandlers(
           if (!isAbsolute(o.path as string))
             return fail('invalid_args', `use an absolute path on ${deps.selfName()}`);
           abs = resolve(o.path as string);
-          const real = (await deps.realPath(abs)) ?? abs;
+          const real = ctx.boundPath?.(abs) ?? (await deps.realPath(abs)) ?? abs;
           if (isDenied(abs) || isDenied(real))
             return fail(
               'attach_refused',
               `can't attach ${abs}: credential and agent folders are never served`,
             );
         }
+        abs = ctx.boundPath?.(abs) ?? abs;
         let target: { sessionId: string; handle: string } | undefined = isLocalWho(who)
           ? { sessionId: who.sessionId, handle: caller.handle }
           : undefined;
@@ -637,7 +642,10 @@ export function createAppControlHandlers(
               'invalid_args',
               `paths must be 1–${MAX_CLOSE_PATHS} non-empty strings of up to ${MAX_PATH_CHARS} chars`,
             );
-          paths = p.map((x: string) => deps.resolvePath(who.home, x));
+          paths = p.map((x: string) => {
+            const resolved = deps.resolvePath(who.home, x);
+            return ctx.boundPath?.(resolved) ?? resolved;
+          });
         }
         const w = routeWindow(who.sessionId);
         if (isFail(w)) return w;
@@ -712,7 +720,7 @@ export function createAppControlHandlers(
         }
         const w = routeWindow(who.sessionId);
         if (isFail(w)) return w;
-        const repo = await resolveRepo(who, o.repo);
+        const repo = await resolveRepo(who, o.repo, ctx);
         if (!repo.ok) return repo;
         const repoRoot = repo.value;
         let source: McpReviewSource;
@@ -793,8 +801,11 @@ export function createAppControlHandlers(
           if (!isPatchExtension(filePath)) {
             return fail('invalid_args', 'patch_file must have a .diff or .patch extension');
           }
-          const real = await deps.realPath(filePath);
+          const bound = ctx.boundPath?.(filePath);
+          const real = await deps.realPath(bound ?? filePath);
           if (real === null) return fail('path_missing', `no such file: ${filePath}`);
+          if (bound !== undefined && resolve(real) !== resolve(bound))
+            return fail('open_failed', `Path changed after policy evaluation: ${bound}`);
           if (!isPatchExtension(real)) {
             return fail('invalid_args', 'patch_file must have a .diff or .patch extension');
           }
@@ -852,7 +863,7 @@ export function createAppControlHandlers(
           return fail('invalid_args', 'ref must be a string');
         const w = routeWindow(who.sessionId);
         if (isFail(w)) return w;
-        const repo = await resolveRepo(who, o.repo);
+        const repo = await resolveRepo(who, o.repo, ctx);
         if (!repo.ok) return repo;
         let commit: CommitNode | null = null;
         if (typeof o.ref === 'string') {
