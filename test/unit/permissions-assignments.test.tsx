@@ -279,3 +279,62 @@ it('drops a review result that arrives after the user stepped back to the list',
   await act(async () => gate.resolve({ ok: true, requiresNativeReview: false }));
   expect(m.back()?.()).toBe(false);
 });
+
+it('stages a role picked in the list and applies nothing until Review, then Apply', async () => {
+  const { host, reviewLocalPolicy, saveAssignment } = await mount({
+    sessions: [session('s1', 'First')],
+    policy: policyWith([], ['s1']),
+  });
+  const select = host.querySelector<HTMLSelectElement>('select[aria-label="Role for First"]');
+  if (!select) throw new Error('missing role select');
+  await act(async () => {
+    select.value = 'lead';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  expect(drawer(host)?.querySelector('h4')?.textContent).toBe('First');
+  expect(host.textContent).toContain('Edit assignment');
+  const staged = host.querySelector<HTMLSelectElement>('aside .selectfield');
+  expect(staged?.value).toBe('lead');
+  expect(reviewLocalPolicy).not.toHaveBeenCalled();
+  expect(saveAssignment).not.toHaveBeenCalled();
+  await click(host, 'Review changes');
+  expect(reviewLocalPolicy).toHaveBeenCalledWith(
+    {
+      kind: 'assignment',
+      point: { kind: 'session', sessionId: 's1' },
+      assignment: expect.objectContaining({ profileId: 'lead' }),
+    },
+    'v1',
+  );
+  expect(saveAssignment).not.toHaveBeenCalled();
+  await click(host, 'Confirm and save');
+  expect(saveAssignment).toHaveBeenCalledOnce();
+  expect(saveAssignment).toHaveBeenCalledWith(
+    { kind: 'session', sessionId: 's1' },
+    expect.objectContaining({ profileId: 'lead' }),
+    'v1',
+    undefined,
+  );
+});
+
+it('stages the new-agent role on the default assignment', async () => {
+  const { host, saveAssignment, reviewLocalPolicy } = await mount({});
+  const select = [...host.querySelectorAll('select')].find((s) =>
+    s.parentElement?.textContent?.startsWith('New agents start with'),
+  );
+  if (!select) throw new Error('missing select');
+  await act(async () => {
+    select.value = 'observer';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await click(host, 'Review changes');
+  expect(reviewLocalPolicy).toHaveBeenCalledWith(
+    {
+      kind: 'assignment',
+      point: { kind: 'default' },
+      assignment: expect.objectContaining({ profileId: 'observer' }),
+    },
+    'v1',
+  );
+  expect(saveAssignment).not.toHaveBeenCalled();
+});
