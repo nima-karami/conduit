@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -28,20 +28,20 @@ export function provesFullTree(run, result, tree) {
   );
 }
 
-function downloadResult(repo, artifactId) {
+const runGh = (args) => execFileSync('gh', args, { encoding: 'utf8' });
+
+function downloadResult(repo, runId, name, gh = runGh) {
   const dir = mkdtempSync(join(tmpdir(), 'conduit-full-proof-'));
   try {
-    const file = join(dir, 'result.zip');
-    const zip = execFileSync('gh', ['api', `repos/${repo}/actions/artifacts/${artifactId}/zip`]);
-    writeFileSync(file, zip);
-    return JSON.parse(execFileSync('unzip', ['-p', file, 'result.json']));
+    gh(['run', 'download', String(runId), '-R', repo, '-n', name, '-D', dir]);
+    return JSON.parse(readFileSync(join(dir, 'result.json'), 'utf8'));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
-function actionsApi(repo, path) {
-  return JSON.parse(execFileSync('gh', ['api', `repos/${repo}/${path}`], { encoding: 'utf8' }));
+function actionsApi(repo, path, gh = runGh) {
+  return JSON.parse(gh(['api', `repos/${repo}/${path}`]));
 }
 
 export function cleanFullResult(result) {
@@ -73,15 +73,23 @@ export function provesReleaseTree(run, result, { repo, tree }) {
   );
 }
 
-export function findReleaseTreeProof(repo, tree) {
+export function findReleaseTreeProof(repo, tree, gh = runGh) {
   if (!/^[0-9a-f]{40}$/.test(tree)) throw new Error('Expected a Git tree SHA');
   const name = `e2e-full-${tree}`;
-  const { artifacts } = actionsApi(repo, `actions/artifacts?name=${name}&per_page=100`);
-  for (const artifact of artifacts) {
+  const pages = JSON.parse(
+    gh([
+      'api',
+      '--paginate',
+      '--slurp',
+      `repos/${repo}/actions/artifacts?name=${name}&per_page=100`,
+    ]),
+  );
+  for (const artifact of pages.flatMap((page) => page.artifacts)) {
     if (artifact.expired || artifact.name !== name || !artifact.workflow_run) continue;
     try {
-      const run = actionsApi(repo, `actions/runs/${artifact.workflow_run.id}`);
-      const result = downloadResult(repo, artifact.id);
+      const run = actionsApi(repo, `actions/runs/${artifact.workflow_run.id}`, gh);
+      if (run.run_attempt !== 1 || run.id !== artifact.workflow_run.id) continue;
+      const result = downloadResult(repo, run.id, name, gh);
       if (provesReleaseTree(run, result, { repo, tree })) return run;
     } catch (error) {
       console.warn(`Could not read release evidence artifact ${artifact.id}: ${error.message}`);
@@ -102,7 +110,7 @@ export function findFullTreeProof(repo, tree) {
       const available = (name) => artifacts.find((item) => item.name === name && !item.expired);
       const result = available('e2e-result');
       if (!result || !available('e2e-state')) continue;
-      if (provesFullTree(run, downloadResult(repo, result.id), tree)) return run;
+      if (provesFullTree(run, downloadResult(repo, run.id, result.name), tree)) return run;
     } catch (error) {
       console.warn(`Could not read nightly run ${run.id}: ${error.message}`);
     }

@@ -45,7 +45,7 @@ function dependentFiles(imports, seeds) {
   return dependents;
 }
 
-function registeredToolNames(dir) {
+export function registeredToolNames(dir) {
   const schemas = readFileSync(join(dir, '../../src/conduit-mcp/tool-schemas.ts'), 'utf8');
   return [...schemas.matchAll(/^\s*name:\s*['"]([a-z][a-z_]+)['"],?\s*$/gm)].map(
     (match) => match[1],

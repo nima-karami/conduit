@@ -11,9 +11,10 @@ A version bump changes runtime inputs. Release notes come from CHANGELOG.md, and
 ## Prepare and tag
 
 1. On a clean checkout of the intended release source, put the notes under Unreleased in CHANGELOG.md. An already-authored next-version section is also accepted when Unreleased is empty.
-2. Run `npm run release -- patch` or `npm run release -- minor`. This creates `release/v<version>` and commits the dated notes, README status version, package version and lockfile. The existing major and minor script aliases prepare branches through the same path. The no-argument command prepares a patch.
+2. Run `npm run release -- patch` or `npm run release -- minor`. Preparation fetches main and requires HEAD to equal `origin/main`. Pass `--allow-non-main` to start from an explicitly chosen clean commit. The command creates `release/v<version>` and commits the dated notes, README status version, package version and lockfile. The existing major and minor script aliases prepare branches through the same path. The no-argument command prepares a patch.
 3. Run `npm run e2e:remote -- --full` on the prepared tree.
-4. Run `npm run release -- tag` on the clean prepared branch. This creates a local annotated tag after finding clean full-suite proof for its tree. Push the tag through the normal release process when ready.
+4. Switch to main and run `git merge --ff-only release/v<version>`. This keeps the tested release tree and its version history on main.
+5. Run `npm run release -- tag` on clean main. It verifies that the prepared release commit is in main's history, both trees match and the tested tree has clean full-suite proof. Push main and its local annotated tag through the normal release process when ready.
 
 If notes or version metadata are inconsistent, preparation stops before switching branches. If the branch or tag already exists, Git refuses to replace it. After a failed commit hook, resolve the error and finish the prepared commit on the release branch before testing. If a later merge changes the tree, test that new tree before tagging.
 

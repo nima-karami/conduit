@@ -1,5 +1,12 @@
-import { describe, expect, it } from 'vitest';
-import { cleanFullResult, provesFullTree, provesReleaseTree } from '../e2e/ci-full-proof.mjs';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  cleanFullResult,
+  findReleaseTreeProof,
+  provesFullTree,
+  provesReleaseTree,
+} from '../e2e/ci-full-proof.mjs';
 
 describe('nightly full-tree evidence', () => {
   const tree = 'tree-a';
@@ -120,5 +127,67 @@ describe('release full-tree evidence', () => {
     ]) {
       expect(provesReleaseTree(run, bad, scope)).toBe(false);
     }
+  });
+});
+
+describe('release evidence lookup', () => {
+  const repo = 'owner/repo';
+  const tree = 'a'.repeat(40);
+  const name = `e2e-full-${tree}`;
+  const artifact = (id: number) => ({ id, name, expired: false, workflow_run: { id } });
+  const valid = {
+    id: 42,
+    path: '.github/workflows/e2e.yml',
+    event: 'workflow_dispatch',
+    conclusion: 'success',
+    head_repository: { full_name: repo },
+    head_commit: { tree_id: tree },
+    head_sha: 'tested-sha',
+    run_attempt: 1,
+  };
+
+  it('continues past expired, missing and invalid artifacts on earlier pages', () => {
+    const gh = vi.fn((args: string[]) => {
+      if (args.includes('--paginate')) {
+        expect(args).toContain('--slurp');
+        return JSON.stringify([
+          { artifacts: [{ ...artifact(1), expired: true }, artifact(2), artifact(3)] },
+          { artifacts: [artifact(42)] },
+        ]);
+      }
+      if (args[0] === 'api') {
+        if (args[1].endsWith('/2')) throw new Error('artifact run no longer exists');
+        if (args[1].endsWith('/3')) return JSON.stringify({ ...valid, id: 3, run_attempt: 2 });
+        if (args[1].endsWith('/42')) return JSON.stringify(valid);
+      }
+      expect(args.slice(0, 7)).toEqual(['run', 'download', '42', '-R', repo, '-n', name]);
+      writeFileSync(
+        join(args[8], 'result.json'),
+        JSON.stringify({
+          sha: valid.head_sha,
+          runId: 42,
+          selection: 'full',
+          status: 'passed',
+          results: [{ status: 'PASS', attempts: 1 }],
+        }),
+      );
+      return '';
+    });
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(findReleaseTreeProof(repo, tree, gh)).toEqual(valid);
+      expect(warning).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('artifact 2'));
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it('returns no proof for empty storage and exposes a lookup error to the workflow fallback', () => {
+    expect(findReleaseTreeProof(repo, tree, () => '[{"artifacts":[]}]')).toBeNull();
+    expect(() =>
+      findReleaseTreeProof(repo, tree, () => {
+        throw new Error('GitHub unavailable');
+      }),
+    ).toThrow('GitHub unavailable');
   });
 });

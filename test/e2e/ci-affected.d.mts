@@ -27,6 +27,7 @@ interface ScenarioUsage {
   imports: Record<string, string[]>;
   mcp: string[];
 }
+export function registeredToolNames(dir: string): string[];
 export function scenarioUsage(dir: string, toolNames?: string[]): ScenarioUsage;
 export function selectAffected(
   changed: Change[],

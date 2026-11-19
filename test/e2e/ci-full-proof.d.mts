@@ -29,4 +29,5 @@ export function provesReleaseTree(
 export function findReleaseTreeProof(
   repo: string,
   tree: string,
+  gh?: (args: string[]) => string,
 ): (ReleaseRun & { html_url: string }) | null;

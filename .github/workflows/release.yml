@@ -6,7 +6,7 @@ on:
 
 permissions:
   contents: write
-  # e2e.yml reads the newest e2e-state artifact.
+  # Release checks full-suite evidence and e2e reads the nightly state artifact.
   actions: read
 
 jobs:
@@ -154,6 +154,7 @@ jobs:
     # Linux ships in the release the Windows job just created; uploading after it avoids two
     # jobs racing to create the release. latest-linux.yml is what the deb/AppImage updater reads.
     needs: build-and-publish
+    if: ${{ !cancelled() && needs.build-and-publish.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

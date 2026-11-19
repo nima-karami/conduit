@@ -1,4 +1,9 @@
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { parse } from 'yaml';
 import { changelogSection } from '../../src/changelog';
 import { nextReleaseVersion, releaseChangelog, releaseReadme } from '../../tools/release.mjs';
 
@@ -42,5 +47,75 @@ describe('release preparation', () => {
       readme.replace('(`v0.70.0`)', '(`v0.70.1`)'),
     );
     expect(() => releaseReadme(readme, '0.70.1', '0.70.2')).toThrow(/status/);
+  });
+});
+
+describe('Release workflow', () => {
+  it('inspects upstream results explicitly for every publish job descended from e2e', () => {
+    const file = resolve('.github/workflows/release.yml');
+    const jobs = parse(readFileSync(file, 'utf8')).jobs as Record<
+      string,
+      {
+        needs?: string | string[];
+        if?: string;
+      }
+    >;
+    const downstream = new Set(['e2e']);
+    for (const parent of downstream) {
+      for (const [name, job] of Object.entries(jobs)) {
+        if ([job.needs ?? []].flat().includes(parent)) downstream.add(name);
+      }
+    }
+    expect([...downstream]).toEqual(expect.arrayContaining(['build-and-publish', 'build-linux']));
+    downstream.delete('e2e');
+    for (const name of downstream) {
+      expect(jobs[name].if).toMatch(/needs(?:\.[\w-]+|\[['"][\w-]+['"]\])\.result/);
+    }
+    expect(jobs['build-linux'].if).toContain("needs.build-and-publish.result == 'success'");
+  });
+});
+
+describe('release command guards', () => {
+  const cli = resolve('tools/release.mjs');
+
+  it('rejects dirty releases, wrong tag branches and preparation away from origin/main', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'conduit-release-guard-'));
+    const remote = join(fixture, 'origin.git');
+    const repo = join(fixture, 'repo');
+    const git = (...args: string[]) =>
+      execFileSync('git', args, {
+        cwd: repo,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
+    const release = (...args: string[]) =>
+      spawnSync(process.execPath, [cli, ...args], {
+        cwd: repo,
+        encoding: 'utf8',
+      });
+    try {
+      execFileSync('git', ['init', '-q', '--bare', remote]);
+      execFileSync('git', ['init', '-q', '-b', 'main', repo]);
+      git('config', 'user.name', 'Release test');
+      git('config', 'user.email', 'test@example.com');
+      git('config', 'commit.gpgsign', 'false');
+      writeFileSync(join(repo, 'package.json'), '{"version":"0.70.0"}');
+      git('add', 'package.json');
+      git('commit', '-qm', 'seed');
+      git('remote', 'add', 'origin', remote);
+      git('push', '-q', 'origin', 'main');
+      git('switch', '-qc', 'feature');
+
+      expect(release('tag').stderr).toContain('Tag from the main branch');
+      writeFileSync(join(repo, 'feature.txt'), 'change');
+      expect(release('patch').stderr).toContain('Commit or stash');
+      git('add', 'feature.txt');
+      git('commit', '-qm', 'feature');
+      expect(release('patch').stderr).toContain('Prepare from origin/main');
+      expect(git('branch', '--show-current')).toBe('feature');
+      expect(git('tag', '--list')).toBe('');
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
   });
 });

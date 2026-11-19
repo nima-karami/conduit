@@ -65,25 +65,42 @@ function requireCleanTree() {
   if (git('status', '--porcelain')) throw new Error('Commit or stash working tree changes first');
 }
 
-function prepareRelease(current, bump) {
+const readJson = (file) => JSON.parse(readFileSync(file, 'utf8'));
+
+function prepareRelease(pkg, bump, allowNonMain) {
+  if (!allowNonMain) {
+    git('fetch', 'origin', 'main');
+    if (git('rev-parse', 'HEAD') !== git('rev-parse', 'origin/main')) {
+      throw new Error('Prepare from origin/main or pass --allow-non-main');
+    }
+  }
+  const current = pkg.version;
   const next = nextReleaseVersion(current, bump);
   const date = new Date().toISOString().slice(0, 10);
   const readme = releaseReadme(readFileSync('README.md', 'utf8'), current, next);
   const changelog = releaseChangelog(readFileSync('CHANGELOG.md', 'utf8'), next, date);
-  const npm = process.env.npm_execpath;
-  if (!npm) throw new Error('Run with npm run release');
+  const lock = readJson('package-lock.json');
+  if (lock.version !== current || lock.packages?.['']?.version !== current) {
+    throw new Error('package-lock.json version must match package.json');
+  }
+  const updates = {
+    'README.md': readme,
+    'CHANGELOG.md': changelog,
+    'package.json': `${JSON.stringify({ ...pkg, version: next }, null, 2)}\n`,
+    'package-lock.json': `${JSON.stringify(
+      {
+        ...lock,
+        version: next,
+        packages: { ...lock.packages, '': { ...lock.packages[''], version: next } },
+      },
+      null,
+      2,
+    )}\n`,
+  };
   const branch = `release/v${next}`;
   git('switch', '-c', branch);
-  execFileSync(
-    process.execPath,
-    [npm, 'version', next, '--no-git-tag-version', '--ignore-scripts'],
-    {
-      stdio: 'inherit',
-    },
-  );
-  writeFileSync('README.md', readme);
-  writeFileSync('CHANGELOG.md', changelog);
-  git('add', '--', 'README.md', 'CHANGELOG.md', 'package.json', 'package-lock.json');
+  for (const [file, text] of Object.entries(updates)) writeFileSync(file, text);
+  git('add', '--', ...Object.keys(updates));
   git('commit', '-m', `release: v${next}`);
   console.log(
     `Prepared ${branch} at ${git('rev-parse', '--short', 'HEAD')}. Run npm run e2e:remote -- --full on this tree.`,
@@ -91,11 +108,18 @@ function prepareRelease(current, bump) {
 }
 
 function tagRelease(version) {
+  if (git('branch', '--show-current') !== 'main') throw new Error('Tag from the main branch');
   const tag = `v${version}`;
-  const branch = git('branch', '--show-current');
-  if (branch !== `release/${tag}`) throw new Error(`Check out the prepared release/${tag} branch`);
+  const branch = `release/${tag}`;
   const sha = git('rev-parse', 'HEAD');
   const tree = git('rev-parse', `${sha}^{tree}`);
+  const prepared = git('rev-parse', '--verify', `refs/heads/${branch}^{commit}`);
+  if (
+    git('merge-base', sha, prepared) !== prepared ||
+    git('rev-parse', `${prepared}^{tree}`) !== tree
+  ) {
+    throw new Error(`Fast-forward main to ${branch} before tagging`);
+  }
   const repo = execFileSync(
     'gh',
     ['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'],
@@ -113,13 +137,16 @@ function tagRelease(version) {
 }
 
 function main([action = 'patch', ...extra]) {
-  if (extra.length || !['patch', 'minor', 'major', 'tag'].includes(action)) {
-    throw new Error('Usage: npm run release -- patch|minor|major|tag');
+  const allowNonMain = extra.length === 1 && extra[0] === '--allow-non-main' && action !== 'tag';
+  if ((extra.length && !allowNonMain) || !['patch', 'minor', 'major', 'tag'].includes(action)) {
+    throw new Error(
+      'Usage: npm run release -- patch|minor|major [--allow-non-main] or npm run release -- tag',
+    );
   }
   requireCleanTree();
-  const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
-  if (action === 'tag') tagRelease(version);
-  else prepareRelease(version, action);
+  const pkg = readJson('package.json');
+  if (action === 'tag') tagRelease(pkg.version);
+  else prepareRelease(pkg, action, allowNonMain);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

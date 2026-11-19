@@ -8,6 +8,7 @@ import {
   isE2eIrrelevant,
   parseNameStatus,
   parseZeroContextDiff,
+  registeredToolNames,
   scenarioUsage,
   selectAffected,
   withMapBuildHunks,
@@ -258,6 +259,10 @@ describe('selectAffected: recent merged diffs', () => {
   it('retains full coverage for helpers whose import consumers cannot be identified', () => {
     const changed = [m('test/e2e/conduit-mcp-helpers.mjs')];
     expect(selectAffected(changed, { ...current, usage: undefined }).kind).toBe('full');
+  });
+
+  it('reads every name in the product tool registry', () => {
+    expect(registeredToolNames(directory).sort()).toEqual([...TOOL_NAMES].sort());
   });
 
   it('keeps all directly and transitively discovered MCP callers plus credited coverage', () => {
