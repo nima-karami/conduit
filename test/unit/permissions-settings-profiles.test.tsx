@@ -3,13 +3,21 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { BUILT_IN_PROFILES } from '../../src/conduit-mcp/policy-profiles';
-import type { Profile } from '../../src/conduit-mcp/policy-types';
+import type { PolicyEditResult, PolicyUiState, Profile } from '../../src/conduit-mcp/policy-types';
 import { PermissionsRoles } from '../../webview/components/permissions-roles';
 
 const api = vi.hoisted(() => ({
-  state: { policy: { editToken: 'v1', readOnly: false, profiles: [] as Profile[] } },
+  state: {
+    policy: {
+      editToken: 'v1',
+      readOnly: false,
+      profiles: [] as Profile[],
+      assignments: [] as PolicyUiState['assignments'],
+    },
+  },
   reviewLocalPolicy: vi.fn(),
   saveProfile: vi.fn(),
+  deleteProfile: vi.fn(),
 }));
 vi.mock('../../webview/use-conduit-mcp', () => ({ useConduitMcp: () => api }));
 
@@ -261,5 +269,166 @@ it('counts assignments per role and tags the role that new agents start with', a
   expect(row('Worker')?.textContent).not.toContain('New agents start here');
   await act(async () => root.unmount());
   policy.profiles = [];
-  delete policy.assignments;
+  policy.assignments = [];
+});
+
+const customRole = (): Profile => ({
+  ...structuredClone(BUILT_IN_PROFILES[1]),
+  id: 'p-custom',
+  name: 'Custom',
+  builtIn: false,
+});
+
+async function mountRoles() {
+  const registerBack = vi.fn();
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () =>
+    root.render(
+      <PermissionsRoles
+        serverConnected
+        mcp={api as never}
+        sessions={[]}
+        registerBack={registerBack}
+      />,
+    ),
+  );
+  const back = () => (registerBack.mock.lastCall?.[0] as (() => boolean) | null)?.();
+  const click = async (label: string) => {
+    const button = [...host.querySelectorAll('button')].find(
+      (b) => b.textContent === label || b.getAttribute('aria-label') === label,
+    );
+    expect(button).toBeTruthy();
+    await act(async () => button?.click());
+  };
+  return { host, root, back, click };
+}
+
+const reviewOf =
+  (before: Profile | null) =>
+  async ({ profile }: { profile: Profile }) => ({
+    ok: true as const,
+    requiresNativeReview: false,
+    profileDisplay: {
+      before,
+      after: profile,
+      optedInPoints: [],
+      affectedSessions: [],
+      truncated: false,
+    },
+  });
+
+it('has nothing left to step back from after the selected role is deleted', async () => {
+  api.state.policy.profiles = [customRole()];
+  api.reviewLocalPolicy.mockResolvedValue({ ok: true, requiresNativeReview: false });
+  api.deleteProfile.mockImplementation(async () => {
+    api.state.policy.profiles = [];
+    return { ok: true };
+  });
+  const { host, root, back, click } = await mountRoles();
+  await selectRole(host, 'Custom');
+  await click('Delete');
+  await click('Review deletion');
+  await click('Confirm deletion');
+  expect(host.querySelector('.permissions-drawer')).toBeNull();
+  expect(back()).toBe(false);
+  await act(async () => root.unmount());
+  api.state.policy.profiles = [];
+});
+
+it('selects the saved copy after a duplicate is saved, then steps back off it', async () => {
+  api.state.policy.profiles = [customRole()];
+  api.reviewLocalPolicy.mockImplementation(reviewOf(null));
+  api.saveProfile.mockImplementation(async (candidate: Profile) => {
+    api.state.policy.profiles = [...api.state.policy.profiles, candidate];
+    return { ok: true };
+  });
+  const { host, root, back, click } = await mountRoles();
+  await selectRole(host, 'Custom');
+  await click('Duplicate');
+  await click('Review and save');
+  await click('Confirm and save');
+  expect(host.querySelector('.permissions-drawer h4')?.textContent).toBe('Custom copy');
+  expect(back()).toBe(true);
+  await act(async () => void 0);
+  expect(host.querySelector('.permissions-drawer')).toBeNull();
+  expect(back()).toBe(false);
+  await act(async () => root.unmount());
+  api.state.policy.profiles = [];
+});
+
+it('does not open the review once the editor was backed out of mid-request', async () => {
+  const profile = customRole();
+  api.state.policy.profiles = [profile];
+  let resolve: (result: PolicyEditResult & { profileDisplay?: unknown }) => void = () => {};
+  api.reviewLocalPolicy.mockImplementation(
+    () => new Promise<PolicyEditResult>((r) => (resolve = r)),
+  );
+  const { host, root, back, click } = await mountRoles();
+  await selectRole(host, 'Custom');
+  await click('Edit');
+  await click('Review and save');
+  await act(async () => void back());
+  expect(host.querySelector('.permissions-profile-editor')).toBeNull();
+  await act(async () =>
+    resolve({
+      ok: true,
+      requiresNativeReview: false,
+      profileDisplay: {
+        before: profile,
+        after: profile,
+        optedInPoints: [],
+        affectedSessions: [],
+        truncated: false,
+      },
+    }),
+  );
+  expect(host.textContent).not.toContain('Review profile changes');
+  expect(host.querySelector('.permissions-profile-editor')).toBeNull();
+  await act(async () => root.unmount());
+  api.state.policy.profiles = [];
+});
+
+it('steps back a reviewed deletion, then the deletion, then the drawer', async () => {
+  api.state.policy.profiles = [customRole()];
+  api.reviewLocalPolicy.mockResolvedValue({ ok: true, requiresNativeReview: false });
+  const { host, root, back, click } = await mountRoles();
+  await selectRole(host, 'Custom');
+  await click('Delete');
+  await click('Review deletion');
+  expect(host.textContent).toContain('Before and after');
+  await act(async () => void back());
+  expect(host.textContent).not.toContain('Before and after');
+  expect(host.querySelector('section[aria-label="Delete profile"]')).toBeTruthy();
+  await act(async () => void back());
+  expect(host.querySelector('section[aria-label="Delete profile"]')).toBeNull();
+  expect(host.querySelector('.permissions-drawer')).toBeTruthy();
+  expect(back()).toBe(true);
+  await act(async () => void 0);
+  expect(back()).toBe(false);
+  await act(async () => root.unmount());
+  api.state.policy.profiles = [];
+});
+
+it('swallows Esc while a save is in flight and steps back once it settles', async () => {
+  api.state.policy.profiles = [customRole()];
+  api.reviewLocalPolicy.mockImplementation(reviewOf(customRole()));
+  let settle: (result: PolicyEditResult) => void = () => {};
+  api.saveProfile.mockImplementation(() => new Promise<PolicyEditResult>((r) => (settle = r)));
+  const { host, root, back, click } = await mountRoles();
+  await selectRole(host, 'Custom');
+  await click('Edit');
+  await click('Review and save');
+  await click('Confirm and save');
+  expect(back()).toBe(true);
+  await act(async () => void 0);
+  expect(host.textContent).toContain('Review profile changes');
+  await act(async () => settle({ ok: false, error: 'conflict' }));
+  expect(host.textContent).toContain('Could not save profile');
+  await act(async () => void back());
+  expect(host.textContent).not.toContain('Review profile changes');
+  expect(host.querySelector('.permissions-profile-editor')).toBeTruthy();
+  await act(async () => root.unmount());
+  api.state.policy.profiles = [];
 });

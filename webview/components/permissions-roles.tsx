@@ -57,6 +57,10 @@ export function PermissionsRoles({
   const [deletion, setDeletion] = useState<Deletion | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<ProfileId | null>(null);
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
+  const roles = policy ? [...BUILT_IN_PROFILES, ...policy.profiles.filter((p) => !p.builtIn)] : [];
+  const selected = roles.find((p) => p.id === selectedId) ?? null;
   // Esc ladder, spec 2026-11-18-mcp-full-screen §2.
   useEffect(() => {
     registerBack(() => {
@@ -76,14 +80,14 @@ export function PermissionsRoles({
         setEditing(null);
         return true;
       }
-      if (selectedId) {
+      if (selected) {
         setSelectedId(null);
         return true;
       }
       return false;
     });
     return () => registerBack(null);
-  }, [registerBack, pending, deletion, review, editing, selectedId]);
+  }, [registerBack, pending, deletion, review, editing, selected]);
   if (!policy) return <p>Loading permissions…</p>;
 
   const currentPolicy = policy;
@@ -105,13 +109,15 @@ export function PermissionsRoles({
   }
   async function requestReview(candidate: Profile): Promise<PolicyEditResult | null> {
     if (!editing) return { ok: false, error: 'conflict' };
+    const started = editing;
     const frozen = structuredClone(candidate);
-    const result = await mcp.reviewLocalPolicy({ kind: 'profile', profile: frozen }, editing.token);
+    const result = await mcp.reviewLocalPolicy({ kind: 'profile', profile: frozen }, started.token);
     if (!result) return null;
+    if (editingRef.current !== started) return { ok: true };
     if (!result.ok) return result;
     if (!result.profileDisplay) return { ok: false, error: 'invalid-value' };
     setReview({
-      ...editing,
+      ...started,
       before: result.profileDisplay.before,
       candidate: result.profileDisplay.after,
       display: result.profileDisplay,
@@ -134,6 +140,7 @@ export function PermissionsRoles({
           `Could not save profile (${result?.error ?? 'timeout'}). Review the current permissions before retrying.`,
         );
       } else {
+        setSelectedId(review.candidate.id);
         setReview(null);
         setEditing(null);
       }
@@ -206,7 +213,10 @@ export function PermissionsRoles({
         setError(
           `Could not delete profile (${result?.error ?? 'timeout'}). Review current permissions before retrying.`,
         );
-      else setDeletion(null);
+      else {
+        setSelectedId(null);
+        setDeletion(null);
+      }
     } catch {
       setError('Could not delete profile. Review current permissions before retrying.');
     } finally {
@@ -459,17 +469,15 @@ export function PermissionsRoles({
         </button>
       </section>
     );
-  const roles = [...BUILT_IN_PROFILES, ...currentPolicy.profiles.filter((p) => !p.builtIn)];
   const usage = new Map<ProfileId, number>();
-  for (const { assignment } of currentPolicy.assignments ?? [])
+  for (const { assignment } of currentPolicy.assignments)
     usage.set(assignment.profileId, (usage.get(assignment.profileId) ?? 0) + 1);
   const newAgentRole =
-    currentPolicy.assignments?.find((entry) => entry.point.kind === 'default')?.assignment
+    currentPolicy.assignments.find((entry) => entry.point.kind === 'default')?.assignment
       .profileId ?? 'worker';
-  const selected = roles.find((p) => p.id === selectedId) ?? null;
   const startDeletion = (profile: Profile) => {
     if (profile.builtIn || readOnly) return;
-    const points = (currentPolicy.assignments ?? [])
+    const points = currentPolicy.assignments
       .filter(({ assignment }) => assignment.profileId === profile.id)
       .map(({ point, assignment }) => ({
         point: structuredClone(point),
