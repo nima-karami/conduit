@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { repeatRates } from '../test/e2e/ci-merge-results.mjs';
 
 export const USAGE =
-  'usage: npm run e2e:remote -- [--affected (default) | --full | <name>…] [--repeat N] [--shards N] [--no-wait] [--no-verify] [--out <dir>] [--timeout <min>]';
+  'usage: npm run e2e:remote -- [--affected (default) | --full | <name>…] [--repeat N] [--shards N] [--no-wait] [--verify | --no-verify] [--out <dir>] [--timeout <min>]';
 
 const IN_FLIGHT = new Set(['queued', 'in_progress', 'waiting', 'pending', 'requested']);
 
@@ -17,7 +17,7 @@ export function parseArgs(argv) {
     names: [],
     shards: 0,
     wait: true,
-    verify: true,
+    verify: undefined,
     out: null,
     timeoutMin: 60,
     repeat: 1,
@@ -31,6 +31,7 @@ export function parseArgs(argv) {
     if (a === '--full') o.full = true;
     else if (a === '--affected') o.affected = true;
     else if (a === '--no-wait') o.wait = false;
+    else if (a === '--verify') o.verify = true;
     else if (a === '--no-verify') o.verify = false;
     else if (a === '--repeat') {
       const n = Number(argv[++i]);
@@ -57,6 +58,7 @@ export function parseArgs(argv) {
     return { error: '--repeat only works with named scenarios' };
   }
   o.names = [...new Set(o.names)].sort();
+  o.verify ??= o.full || o.affected;
   return o;
 }
 
@@ -70,28 +72,57 @@ export function selectionKey({ full, affected, names, verify, base, repeat }) {
   return verify ? key : `${key}-nv`;
 }
 
-export function makeNonce(selKey, rand) {
-  return `${selKey}.${rand}`;
+export function makeNonce(selKey, rand, lane) {
+  return `${selKey}.${lane}.${rand}`;
 }
 
 /** Inverse of e2e.yml's `run-name: e2e <selection> <nonce>`. */
 export function parseTitle(title) {
   const m = /^e2e (\S+) (\S+)$/.exec(title ?? '');
   if (!m) return null;
-  const dot = m[2].lastIndexOf('.');
-  return { selection: m[1], nonce: m[2], selKey: dot > 0 ? m[2].slice(0, dot) : null };
+  const [selKey, lane, rand] = m[2].split('.');
+  const validLane = rand && /^[a-f0-9]{32}$/.test(lane) ? lane : null;
+  return { selection: m[1], nonce: m[2], selKey: lane ? selKey : null, lane: validLane };
 }
 
-/**
- * @param {{ databaseId: number, displayTitle: string, status: string, headSha: string, url: string }[]} runs
- * @returns {{ attach: object } | { waitFor: object } | { dispatch: true }}
- */
-export function matchInFlight(runs, { sha, selKey, full }) {
+function toolRunTitle(run) {
+  const title = parseTitle(run.displayTitle);
+  if (!title?.selKey || run.event !== 'workflow_dispatch') return null;
+  const rand = title.nonce.split('.').at(-1);
+  return /^[a-f0-9]{8}$/.test(rand) &&
+    run.headBranch === `ci/e2e/${run.headSha.slice(0, 7)}-${rand}`
+    ? title
+    : null;
+}
+
+export function supersededRuns(runs, { lane, newer }) {
+  const next = toolRunTitle(newer);
+  if (next?.lane !== lane) return [];
+  return runs.filter((run) => {
+    if (
+      !IN_FLIGHT.has(run.status) ||
+      run.databaseId >= newer.databaseId ||
+      run.headSha === newer.headSha
+    )
+      return false;
+    const old = toolRunTitle(run);
+    return (
+      old?.lane === lane &&
+      (old.selKey === next.selKey || (next.selection === 'full' && old.selection !== 'full'))
+    );
+  });
+}
+
+export function matchInFlight(runs, { sha, selKey, full, lane }) {
   const live = runs.filter((r) => IN_FLIGHT.has(r.status));
-  const same = live.find((r) => r.headSha === sha && parseTitle(r.displayTitle)?.selKey === selKey);
+  const same = live.find((r) => r.headSha === sha && toolRunTitle(r)?.selKey === selKey);
   if (same) return { attach: same };
   if (full) {
-    const other = live.find((r) => parseTitle(r.displayTitle)?.selection === 'full');
+    const other = live.find(
+      (r) =>
+        parseTitle(r.displayTitle)?.selection === 'full' &&
+        (toolRunTitle(r)?.lane !== lane || toolRunTitle(r)?.selKey !== selKey),
+    );
     if (other) return { waitFor: other };
   }
   return { dispatch: true };

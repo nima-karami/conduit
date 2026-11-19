@@ -14,12 +14,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildGotoFixture } from './fixtures/goto/build-fixture.mjs';
 import {
+  awaitNav,
   clearTransients,
   createMatrix,
   describe,
   landed,
   openDoc,
   placeCursor,
+  readNavSeq,
   tapIndex,
   trigger,
   waitForIndexReady,
@@ -41,6 +43,7 @@ runScenario('goto-matrix-cap', async ({ app, page, log }) => {
 
   // 45 — the pre-deadline window: with >5000 files the stream is still running while the
   // first navigation is asked for.
+  const preIndexNav = await readNavSeq(page);
   await m.row(
     '45',
     { flow: 'navigation while indexing', trigger: 'f12', current: '✅', target: '✅' },
@@ -70,6 +73,9 @@ runScenario('goto-matrix-cap', async ({ app, page, log }) => {
   );
 
   await waitForIndexReady(page, log);
+  // The previous on-demand navigation can still land after the index finishes.
+  await page.waitForFunction(() => document.documentElement.dataset.navState !== 'running');
+  await awaitNav(page, preIndexNav);
 
   await m.row(
     '34',

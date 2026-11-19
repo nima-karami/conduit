@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 type WriteCallback = (err: NodeJS.ErrnoException | null) => void;
 interface Snapshot {
@@ -136,6 +137,31 @@ const LOCKED_RENAME_CODES = new Set(['EPERM', 'EBUSY', 'EACCES']);
 /** graceful-fs's schedule; the rename is retried after each delay, then the error is final. */
 const LOCKED_RENAME_BACKOFF_MS = [20, 40, 80, 160, 320];
 
+function sharingBackoff(error: NodeJS.ErrnoException, attempt: number): number | undefined {
+  return LOCKED_RENAME_CODES.has(error.code ?? '') ? LOCKED_RENAME_BACKOFF_MS[attempt] : undefined;
+}
+
+/** Reuse the same sharing-violation policy for replacements that preserve filesystem metadata. */
+export async function renameWithSharingRetry(
+  source: string,
+  target: string,
+  rename = fs.promises.rename,
+  wait = (ms: number): Promise<void> => delay(ms),
+  platform = process.platform,
+): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rename(source, target);
+      return;
+    } catch (error) {
+      if (platform !== 'win32') throw error;
+      const backoff = sharingBackoff(error as NodeJS.ErrnoException, attempt);
+      if (backoff === undefined) throw error;
+      await wait(backoff);
+    }
+  }
+}
+
 export function atomicWriteFile(
   filePath: string,
   data: string,
@@ -185,8 +211,8 @@ function writeSnapshot(
       io.renameSync(tmp, filePath);
     } catch (renameError) {
       const error = renameError as NodeJS.ErrnoException;
-      const backoff = LOCKED_RENAME_BACKOFF_MS[attempt];
-      if (LOCKED_RENAME_CODES.has(error.code ?? '') && backoff !== undefined) {
+      const backoff = sharingBackoff(error, attempt);
+      if (backoff !== undefined) {
         io.delay(backoff, () => promote(attempt + 1));
         return;
       }

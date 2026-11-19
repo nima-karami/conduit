@@ -2,8 +2,13 @@ import * as fs from 'node:fs';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { type AsyncWriteFs, atomicWriteFile, atomicWriteFileSync } from '../../src/atomic-write';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  type AsyncWriteFs,
+  atomicWriteFile,
+  atomicWriteFileSync,
+  renameWithSharingRetry,
+} from '../../src/atomic-write';
 
 const trees: string[] = [];
 afterEach(() => {
@@ -340,4 +345,44 @@ it('sync partial writes clean temporary bytes and transient locks eventually pro
   );
   expect(attempts).toBe(3);
   expect(fs.readFileSync(file, 'utf8')).toBe('new');
+});
+
+describe('atomic replacement sharing retries', () => {
+  it('reuses the same temporary file through a sharing violation', async () => {
+    const rename = vi
+      .fn<typeof fs.promises.rename>()
+      .mockRejectedValueOnce(Object.assign(new Error('sharing violation'), { code: 'EPERM' }))
+      .mockResolvedValueOnce(undefined);
+    const wait = vi.fn(async () => {});
+    await renameWithSharingRetry('temporary', 'plan.md', rename, wait, 'win32');
+    expect(rename.mock.calls).toEqual([
+      ['temporary', 'plan.md'],
+      ['temporary', 'plan.md'],
+    ]);
+    expect(wait).toHaveBeenCalledExactlyOnceWith(20);
+  });
+
+  it.each(['linux', 'darwin'] as const)(
+    'reports permission errors immediately on %s',
+    async (platform) => {
+      const error = Object.assign(new Error('permission denied'), { code: 'EPERM' });
+      const rename = vi.fn<typeof fs.promises.rename>().mockRejectedValue(error);
+      const wait = vi.fn(async () => {});
+      await expect(
+        renameWithSharingRetry('temporary', 'plan.md', rename, wait, platform),
+      ).rejects.toBe(error);
+      expect(rename).toHaveBeenCalledTimes(1);
+      expect(wait).not.toHaveBeenCalled();
+    },
+  );
+
+  it('reports other errors without retrying', async () => {
+    const error = Object.assign(new Error('missing directory'), { code: 'ENOENT' });
+    const rename = vi.fn<typeof fs.promises.rename>().mockRejectedValue(error);
+    const wait = vi.fn(async () => {});
+    await expect(
+      renameWithSharingRetry('temporary', 'plan.md', rename, wait, 'win32'),
+    ).rejects.toBe(error);
+    expect(wait).not.toHaveBeenCalled();
+  });
 });

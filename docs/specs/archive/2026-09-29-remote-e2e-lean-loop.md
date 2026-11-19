@@ -187,6 +187,8 @@ flaky-passed | failed | infra-error | cancelled | timed-out`.
   TIMEOUT in the run; it is never reported as a test failure. A real failure beats INFRA: a run with
   both is `failed`, and the INFRA names are listed with the command that re-runs them.
 
+Release reuse is specified in [Release tree proof](../2026-11-18-release-tree-proof.md).
+
 **When full runs happen:** nightly on `main` (schedule) and before a release. Integration merges run
 `--affected`. There is no `push: main` trigger and **no workflow concurrency group** (GitHub keeps
 one pending run per group and cancels the older one). Instead, `e2e:remote --full` attaches to an
@@ -230,14 +232,22 @@ an overlap only queues jobs, it never cancels a run.
   - The diff against the merge-base with `main` is mapped to scenarios through a **coverage map**
     (scenario → source files). The nightly full run builds the map from V8 coverage of host and
     renderer, mapped back through esbuild sourcemaps.
-  - **Rule, in order** (revised after the v1 review, 2026-09-30):
-    1. Any change to `test/e2e/**`, `electron/main.ts`, `electron/preload.ts`, `esbuild.mjs`,
-       `package.json`, the lockfile or `e2e.yml` selects the full suite.
+  - **Rule, in order** (updated for CON-64):
+    1. Changes to `electron/main.ts`, `electron/preload.ts`, `esbuild.mjs`, `package.json`,
+       the lockfile or `e2e.yml` select the full suite. Networking is on the server boot path,
+       so `server/network/**`, `src/network/**` and its wire contracts also use full.
     2. Strip the e2e-irrelevant set: `test/unit/**`, `docs/**`, `*.md`, `designs/**`,
-       `.conduit/**`, and `.github/**` except `.github/workflows/e2e.yml`. `test/e2e/**` and
-       `resources/**` are never in it (fixtures and skills' `SKILL.md` are read at runtime). If
-       nothing is left, the selection is none: "no e2e needed", exit 0.
-    3. The coverage map credits, per scenario, the **line spans of the functions it ran**. Every
+       `.conduit/**`, and `.github/**` except `.github/workflows/e2e.yml`. The changelog,
+       fixtures and shipped resources are runtime inputs. If nothing is left, the selection
+       is none: "no e2e needed", exit 0.
+    3. A scenario file selects itself if it still exists. The selector follows local imports
+       transitively for known import-only helpers. Shared runner changes and fixtures with
+       unknown consumers require the full suite. The selector derives MCP consumers from local
+       helper imports and tool calls. For the listed MCP routing files it adds those consumers
+       to scenarios credited by the map, including when the server file has no recorded spans.
+       Source edits still require a valid coverage map and new source files select the full suite.
+       Changelog-only edits run release-note, update and Markdown scenarios that read the file.
+    4. For other files, the coverage map credits, per scenario, the **line spans of the functions it ran**. Every
        changed line of a modified code file must lie inside a credited span, and selects the
        scenarios whose spans hold it; a line outside every span selects the full suite. That covers
        top-level code (esbuild hoists module top levels into one load-time scope, and wraps lazily
@@ -246,20 +256,20 @@ an overlap only queues jobs, it never cancels a run.
        A pure insertion after base line `a` is inside a function only if one span holds both `a`
        and `a + 1`. A function's first or last line is not credited when other code of the same
        file shares it (a one-line arrow in a data table, `export const f = () => {`).
-    4. Line positions are **base-side positions in the map's build**: the changed files come from
+    5. Line positions are **base-side positions in the map's build**: the changed files come from
        the merge-base diff, their lines from `git diff -U0 <map.builtFrom> HEAD` (a deleted or
        replaced line at its `-` position, an insertion after its `-` anchor). A file absent from
        that build, or a build commit the checkout lacks, selects the full suite. An entry kept from
        an older nightly (its scenario failed since) is in that build's line numbers: it credits
        nothing and always runs.
-    5. A **new** file selects the full suite (conservative: its code has never run, and adding it
+    6. An unowned **new** file selects the full suite (conservative: its code has never run, and adding it
        also changes an importer's top-level `import`). A deleted `.ts`/`.tsx` file selects every
        scenario that ran any of its functions (its importers' own edits are judged by rule 3); any
-       other deleted file (CSS, JSON, a resource) selects the full suite. A modified file absent
+       other deleted file (CSS, JSON, a resource), or a deleted file with no coverage, selects the full suite. A modified file absent
        from the map selects the full suite.
-    6. The core smoke set is always added, and so is every scenario the map has never seen, and
-       every scenario whose entry is flagged `alwaysRun` (rule 7).
-    7. **Coverage the map can't trust is never merged** (map schema 3; a schema-2 map selects the
+    7. The core smoke set is always added. When using the coverage map, the selector also adds
+       every scenario it has never seen and every scenario flagged `alwaysRun`.
+    8. **Coverage the map can't trust is never merged** (map schema 3; a schema-2 map selects the
        full suite). Coverage starts once an app is up, so the startup of a *relaunched* app or of
        a *second window* is never credited to the scenario that depends on it. Each attempt's
        harness writes a sentinel (`meta-<pid>.json`: apps launched, most windows one app opened,
@@ -286,6 +296,8 @@ an overlap only queues jobs, it never cancels a run.
   - A failed or timed-out scenario is retried **once**, as a new Node child in the same shard job
     after the existing orphan sweep. If the retry passes, the result is **FLAKY** and the run
     passes.
+  - Quarantined scenarios still run once and report failures. Routine runs do not retry them.
+    Named repeat runs still count every requested attempt.
   - The report lists quarantine *candidates*: FLAKY 3+ times in 14 days of nightly history.
   - Quarantine itself is `test/e2e/quarantine.json`, edited by a normal reviewed commit, never by a
     bot. A quarantined scenario still runs and is reported (`QUARANTINED-FAIL`), but doesn't fail
@@ -323,9 +335,16 @@ an overlap only queues jobs, it never cancels a run.
     the final `cleanup` job (`if: always()`, deletes `github.ref` when it starts with
     `refs/heads/ci/e2e/`) and the sweep job get `contents: write`.
   - Must exist on the default branch before it can be dispatched (Slice 0 lands it first).
-  - A `verify` job calls `verify.yml` (`workflow_call`; input `verify`, default true) and is part of
-    the verdict: a failed verify makes the run `failed` (exit 1) and the summary says so. It is the
-    remote integration gate while local `npm run verify` is paused.
+  - Named CLI runs default to skipping `verify.yml` because they target scenario feedback.
+    Pass `--verify` to include the local gate's CI equivalent. Affected and full CLI runs retain
+    verify by default so a broader run still reports gate failures. Pass `--no-verify` when the gate
+    already ran. Verify failures are included in the verdict when verify runs.
+  - A scheduled nightly checks prior successful scheduled full runs on main for unexpired
+    `e2e-result` and `e2e-state` artifacts. It reuses the result only when the tested Git tree
+    matches the nightly checkout and the full result passed without flakes. The ref sweep still
+    runs. Each new tree refreshes coverage and timing state even after a full dispatch.
+    A full dispatch with `mode=nightly` also exercises the lookup. Missing or unreadable evidence
+    triggers the full suite.
   - `test/e2e/remote-exclusions.json` (`{ "<name>": "<reason>" }`) lists scenarios the hosted
     runner can't run. `prepare` drops them from the plan and the result lists each as `EXCLUDED`
     with its reason (never silently); EXCLUDED is neutral to the verdict, but a selection with
@@ -397,8 +416,8 @@ an overlap only queues jobs, it never cancels a run.
 | Condition | Expected behavior |
 |---|---|
 | Two callers, same sha + selection | Second attaches to the first's run (found by querying in-flight runs' names/inputs) and pushes no ref; the run's `cleanup` job deletes the one ref |
-| Two `--full` for different SHAs | Second waits client-side for the first to finish, printing "waiting for full run <url>", then dispatches. Best-effort: nightly/release don't coordinate, and an overlap only queues jobs |
-| New commit while an older run is in flight | Older run continues (an agent may be gating on it) |
+| Two `--full` from different worktrees | Second waits client-side for the first to finish, printing "waiting for full run <url>", then dispatches. Best-effort: nightly/release don't coordinate, and an overlap only queues jobs |
+| New commit while an older run is in flight | The CLI cancels an older dispatch at a different SHA only when both use the same worktree marker and the replacement carries the same selection or is full and replaces a partial run |
 | Selection resolves to zero on a code change | Impossible by the §B2 rule (unmapped → full); docs-only → exit 0 "no e2e needed" |
 | Shard runner dies | Its unfinished scenarios → `INFRA`. Any FAIL/TIMEOUT elsewhere → run `failed`, exit 1; otherwise `infra-error`, exit 2. Either way the command prints `e2e:remote -- <INFRA names>` |
 | Run cancelled | `cancelled`, exit 2, even though report wrote INFRA rows; `cleanup` still deletes the ref |

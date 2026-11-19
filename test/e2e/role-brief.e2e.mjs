@@ -62,6 +62,11 @@ await runScenario(
     );
     log('first launch: prompt is the last argv entry and the file holds the brief ✓');
 
+    // ARGV is emitted before the fake installs its raw stdin handler.
+    assert(
+      await until(() => records(sid, 'READY').length > 0, 20_000),
+      'the fake agent never became ready to accept quit',
+    );
     await typeLine(page, sid, 'quit');
     assert(
       await until(

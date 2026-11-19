@@ -36,9 +36,9 @@
     "pack": "npm run build && node build/fetch-runtime.mjs && npm run tray:build && electron-builder --dir",
     "dist": "npm run build && node build/fetch-runtime.mjs && npm run tray:build && electron-builder --win",
     "dist:linux": "npm run build && node build/fetch-runtime.mjs --platform linux --arch x64 && electron-builder --linux --x64 --publish never",
-    "release": "npm version patch && git push --follow-tags",
-    "release:minor": "npm version minor && git push --follow-tags",
-    "release:major": "npm version major && git push --follow-tags",
+    "release": "node tools/release.mjs",
+    "release:minor": "node tools/release.mjs minor",
+    "release:major": "node tools/release.mjs major",
     "version": "node tools/sync-readme-version.mjs && git add README.md",
     "prepare": "husky",
     "shots": "node test/e2e/visual/shoot.mjs",
@@ -242,7 +242,8 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "typescript": "7.0.2",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.8",
+    "yaml": "^2.9.0"
   },
   "dependencies": {
     "@milkdown/kit": "^7.22.1",

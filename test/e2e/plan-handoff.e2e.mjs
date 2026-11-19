@@ -227,11 +227,23 @@ try {
   await menu.waitFor({ state: 'visible', timeout: 4000 });
   await menu.locator('.ctxmenu__item', { hasText: 'Delete' }).first().click();
 
-  const afterDelete = await until(() => {
-    const fence = fenceOf(readPlan(), 'mermaid');
-    return fence && !fence.includes('txn -->|lookup| identity') ? fence : null;
-  }, 6000);
-  assert(afterDelete !== null, 'deleting the edge must reach the file within 6 s');
+  const saveDeadline = Date.now() + 6000;
+  // The save acknowledgment avoids opening the Windows destination while the host replaces it.
+  await page.waitForFunction(
+    () =>
+      !document.querySelector('.react-flow__edge[data-id="e2"]') &&
+      !!document.querySelector('.plan__save[data-plan-save="saved"]'),
+    null,
+    { timeout: 6000 },
+  );
+  const remaining = saveDeadline - Date.now();
+  const afterDelete =
+    remaining > 0 &&
+    (await until(() => {
+      const fence = fenceOf(readPlan(), 'mermaid');
+      return fence !== null && !fence.includes('txn -->|lookup| identity') ? fence : null;
+    }, remaining));
+  assert(afterDelete, 'deleting the edge must reach the file within 6 s');
   log('edge deleted and written through ✓');
 
   // ── the bar counts one changed block plus one open comment ───────────────────────────────

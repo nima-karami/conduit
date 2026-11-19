@@ -12,15 +12,29 @@ import {
   parseTitle,
   runState,
   selectionKey,
+  supersededRuns,
   withGhRetry,
 } from '../../tools/e2e-remote-lib.mjs';
 
-const run = (over: Partial<{ displayTitle: string; status: string; headSha: string }>) => ({
+const lane = 'a'.repeat(32);
+const namesTitle = `e2e names n-12345678.${lane}.deadbeef`;
+const run = (
+  over: Partial<{
+    databaseId: number;
+    displayTitle: string;
+    status: string;
+    headSha: string;
+    headBranch: string;
+    event: string;
+  }>,
+) => ({
   databaseId: 1,
   url: 'https://x/runs/1',
-  displayTitle: 'e2e full full.aaaa',
+  displayTitle: 'e2e full full.deadbeef',
   status: 'in_progress',
   headSha: 'sha1',
+  headBranch: 'ci/e2e/sha1-deadbeef',
+  event: 'workflow_dispatch',
   ...over,
 });
 
@@ -44,7 +58,9 @@ describe('parseArgs', () => {
       verify: false,
     });
     expect(parseArgs(['--full'])).toMatchObject({ affected: false });
-    expect(parseArgs(['cwd'])).toMatchObject({ affected: false });
+    expect(parseArgs(['cwd'])).toMatchObject({ affected: false, verify: false });
+    expect(parseArgs(['cwd', '--verify'])).toMatchObject({ verify: true });
+    expect(parseArgs(['--full', '--no-verify'])).toMatchObject({ verify: false });
   });
 
   it('takes one kind of selection', () => {
@@ -80,33 +96,101 @@ describe('run correlation', () => {
     const key = selectionKey({ full: false, names: ['a', 'b'], verify: true });
     expect(key).toMatch(/^n-[0-9a-f]{8}$/);
     expect(selectionKey({ full: true, names: [], verify: false })).toBe('full-nv');
-    expect(parseTitle(`e2e names ${makeNonce(key, 'deadbeef')}`)).toEqual({
+    expect(parseTitle(`e2e names ${makeNonce(key, 'deadbeef', lane)}`)).toEqual({
       selection: 'names',
-      nonce: `${key}.deadbeef`,
+      nonce: `${key}.${lane}.deadbeef`,
+      lane,
       selKey: key,
     });
     expect(parseTitle('something else')).toBeNull();
   });
 
   it('same sha and selection → attach', () => {
-    const r = run({ displayTitle: 'e2e names n-12345678.aaaa' });
-    expect(matchInFlight([r], { sha: 'sha1', selKey: 'n-12345678', full: false })).toEqual({
+    const r = run({ displayTitle: namesTitle });
+    expect(matchInFlight([r], { sha: 'sha1', selKey: 'n-12345678', full: false, lane })).toEqual({
       attach: r,
     });
   });
 
   it('--full with a full run in flight at another sha → waitFor', () => {
     const r = run({ headSha: 'other' });
-    expect(matchInFlight([r], { sha: 'sha1', selKey: 'full', full: true })).toEqual({ waitFor: r });
+    expect(matchInFlight([r], { sha: 'sha1', selKey: 'full', full: true, lane })).toEqual({
+      waitFor: r,
+    });
+  });
+
+  it('only supersedes older tool runs with the same worktree marker and matching ref', () => {
+    const old = run({ displayTitle: namesTitle });
+    const newer = run({
+      databaseId: 8,
+      displayTitle: namesTitle,
+      headSha: 'sha2',
+      headBranch: 'ci/e2e/sha2-deadbeef',
+    });
+    expect(
+      supersededRuns(
+        [
+          old,
+          run({ databaseId: 2, displayTitle: namesTitle.replace(lane, 'b'.repeat(32)) }),
+          run({ databaseId: 3, displayTitle: namesTitle, event: 'schedule' }),
+          run({ databaseId: 4, displayTitle: namesTitle, headBranch: 'main' }),
+          run({ databaseId: 5, displayTitle: namesTitle, status: 'completed' }),
+          run({ databaseId: 9, displayTitle: namesTitle }),
+        ],
+        { lane, newer },
+      ),
+    ).toEqual([old]);
+  });
+
+  it('attaches to an equivalent dispatch in another lane only if the selection matches', () => {
+    const other = run({ displayTitle: namesTitle.replace(lane, 'b'.repeat(32)) });
+    const input = { sha: 'sha1', selKey: 'n-12345678', full: false, lane };
+    expect(matchInFlight([other], input)).toEqual({ attach: other });
+    expect(matchInFlight([other], { ...input, selKey: 'n-87654321' })).toEqual({ dispatch: true });
+    const older = run({
+      displayTitle: namesTitle,
+      headSha: 'older',
+      headBranch: 'ci/e2e/older-deadbeef',
+      databaseId: 0,
+    });
+    expect(supersededRuns([older], { lane, newer: other })).toEqual([]);
+  });
+
+  it('lets independent named and full runs at the same sha finish', () => {
+    const runs = [
+      run({ databaseId: 1, displayTitle: namesTitle }),
+      run({ databaseId: 2, displayTitle: namesTitle.replace('12345678', '87654321') }),
+      run({ databaseId: 3, displayTitle: `e2e full full.${lane}.deadbeef` }),
+      run({ databaseId: 4, displayTitle: namesTitle }),
+    ];
+    for (const newer of runs) {
+      expect(supersededRuns(runs, { lane, newer })).toEqual([]);
+    }
+  });
+
+  it('only a full dispatch can replace a different selection at an older sha', () => {
+    const old = run({ displayTitle: namesTitle });
+    const newer = run({
+      databaseId: 8,
+      displayTitle: `e2e full full.${lane}.deadbeef`,
+      headSha: 'sha2',
+      headBranch: 'ci/e2e/sha2-deadbeef',
+    });
+    expect(supersededRuns([old], { lane, newer })).toEqual([old]);
+    expect(supersededRuns([newer], { lane, newer: { ...old, databaseId: 9 } })).toEqual([]);
+    const differentSelection = { ...old, displayTitle: namesTitle.replace('12345678', '87654321') };
+    expect(
+      supersededRuns([differentSelection], { lane, newer: { ...newer, displayTitle: namesTitle } }),
+    ).toEqual([]);
   });
 
   it('names at a different sha → dispatch; completed runs are ignored', () => {
-    const r = run({ displayTitle: 'e2e names n-12345678.aaaa', headSha: 'other' });
-    expect(matchInFlight([r], { sha: 'sha1', selKey: 'n-12345678', full: false })).toEqual({
+    const r = run({ displayTitle: namesTitle, headSha: 'other' });
+    expect(matchInFlight([r], { sha: 'sha1', selKey: 'n-12345678', full: false, lane })).toEqual({
       dispatch: true,
     });
     const done = run({ status: 'completed' });
-    expect(matchInFlight([done], { sha: 'sha1', selKey: 'full', full: true })).toEqual({
+    expect(matchInFlight([done], { sha: 'sha1', selKey: 'full', full: true, lane })).toEqual({
       dispatch: true,
     });
   });

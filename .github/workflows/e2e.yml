@@ -85,6 +85,7 @@ jobs:
       excluded: ${{ steps.plan.outputs.excluded }}
       count: ${{ steps.plan.outputs.count }}
       state-id: ${{ steps.state.outputs.id }}
+      reused: ${{ steps.proof.outputs.reused }}
     steps:
       # Full history: `--affected` diffs against the merge-base with main.
       - uses: actions/checkout@v5
@@ -93,9 +94,29 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+      - id: proof
+        if: github.event_name == 'schedule' || (inputs.mode == 'nightly' && inputs.selection == 'full')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tree=$(git rev-parse 'HEAD^{tree}')
+          node --input-type=module - "$tree" <<'JS'
+          import { appendFileSync } from 'node:fs';
+          import { findFullTreeProof } from './test/e2e/ci-full-proof.mjs';
+          try {
+            const run = findFullTreeProof(process.env.GITHUB_REPOSITORY, process.argv[2]);
+            if (run) {
+              appendFileSync(process.env.GITHUB_OUTPUT, 'reused=true\n');
+              appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Full suite already passed for this tree in ${run.html_url}\n`);
+            }
+          } catch (error) {
+            console.warn(`Could not verify prior full run. Running the nightly suite. ${error.message}`);
+          }
+          JS
       # By artifact name, never by run conclusion: a red nightly's state is as current as a green
       # one's. Re-uploaded into this run so the state and report jobs don't look it up again.
       - id: state
+        if: steps.proof.outputs.reused != 'true'
         name: Latest e2e-state
         env:
           GH_TOKEN: ${{ github.token }}
@@ -130,6 +151,7 @@ jobs:
           BASE: ${{ inputs.base }}
         run: node test/e2e/ci-affected.mjs "$BASE" state/coverage-map.json affected.json
       - id: plan
+        if: steps.proof.outputs.reused != 'true'
         env:
           SELECTION: ${{ inputs.selection || 'full' }}
           SCENARIOS: ${{ inputs.scenarios }}
@@ -193,7 +215,7 @@ jobs:
   shard:
     needs: prepare
     # An empty matrix `include` fails the run, so a selection that is all exclusions skips this.
-    if: needs.prepare.outputs.count != '0'
+    if: needs.prepare.outputs.reused != 'true' && needs.prepare.outputs.count != '0'
     runs-on: windows-latest
     timeout-minutes: 45
     strategy:
@@ -340,7 +362,7 @@ jobs:
 
   report:
     needs: [verify, prepare, shard]
-    if: always()
+    if: always() && needs.prepare.outputs.reused != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -420,10 +442,31 @@ jobs:
           echo "run status: $status"
           [ "$status" = passed ]
 
+      - id: release-proof
+        if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (inputs.selection || 'full') == 'full' && github.run_attempt == '1'
+        run: |
+          tree=$(git rev-parse 'HEAD^{tree}')
+          node --input-type=module - "$tree" <<'JS'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          import { cleanFullResult, taggableFullResult } from './test/e2e/ci-full-proof.mjs';
+          const result = JSON.parse(readFileSync('out/result.json', 'utf8'));
+          if (taggableFullResult(result)) {
+            const prefix = cleanFullResult(result) ? 'e2e-full' : 'e2e-tested';
+            appendFileSync(process.env.GITHUB_OUTPUT, `artifact=${prefix}-${process.argv[2]}\n`);
+          }
+          JS
+      - if: steps.release-proof.outputs.artifact != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.release-proof.outputs.artifact }}
+          path: out/result.json
+          if-no-files-found: error
+          retention-days: 90
+
   # Nightly only, and whatever the verdict: a red nightly still records timings and flakes.
   state:
     needs: [prepare, shard]
-    if: always() && needs.prepare.result == 'success' && (github.event_name == 'schedule' || inputs.mode == 'nightly')
+    if: always() && needs.prepare.result == 'success' && needs.prepare.outputs.reused != 'true' && (github.event_name == 'schedule' || inputs.mode == 'nightly')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

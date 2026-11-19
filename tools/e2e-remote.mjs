@@ -1,5 +1,5 @@
 /**
- * `npm run e2e:remote -- [--affected | --full | <name>…] [--repeat N] [--shards N] [--no-wait] [--no-verify]
+ * `npm run e2e:remote -- [--affected | --full | <name>…] [--repeat N] [--shards N] [--no-wait] [--verify | --no-verify]
  * [--out <dir>] [--timeout <min>]` — run e2e scenarios on GitHub-hosted Windows runners at the committed HEAD
  * and print run-smoke-style results. Spec: docs/specs/archive/2026-09-29-remote-e2e-lean-loop.md §A, §3.
  *
@@ -7,7 +7,8 @@
  *
  * Pushes HEAD to an ephemeral `ci/e2e/<sha7>-<rand>` ref and dispatches e2e.yml there; the run
  * deletes its own ref, so this never does (and Ctrl-C needs no handling). A run already in flight
- * for the same sha and selection is attached to instead.
+ * for the same sha and selection is attached to instead. Only superseded runs from the
+ * same worktree can be cancelled.
  *
  * `--affected` (the default) diffs HEAD against its merge-base with origin/main; a diff of only
  * e2e-irrelevant files ends here, "no e2e needed", and pushes nothing. The run's `prepare` job
@@ -20,9 +21,9 @@
  * 3 dispatched with --no-wait.
  */
 import { spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isE2eIrrelevant, parseNameStatus } from '../test/e2e/ci-affected.mjs';
 import {
@@ -35,12 +36,13 @@ import {
   parseArgs,
   runState,
   selectionKey,
+  supersededRuns,
   USAGE,
   withGhRetry,
 } from './e2e-remote-lib.mjs';
 
 const WORKFLOW = 'e2e.yml';
-const RUN_FIELDS = 'databaseId,displayTitle,status,headSha,url,createdAt';
+const RUN_FIELDS = 'databaseId,displayTitle,status,headSha,url,headBranch,event';
 
 function sh(cmd, args, { allowFail = false } = {}) {
   const r = spawnSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -113,10 +115,10 @@ async function waitUntilDone(run) {
   }
 }
 
-async function dispatch(o, sha, selKey) {
+async function dispatch(o, sha, selKey, lane) {
   const rand = randomBytes(4).toString('hex');
   const ref = `ci/e2e/${sha.slice(0, 7)}-${rand}`;
-  const nonce = makeNonce(selKey, rand);
+  const nonce = makeNonce(selKey, rand, lane);
   sh('git', ['push', '--quiet', 'origin', `HEAD:refs/heads/${ref}`]);
   say(`pushed ${ref}`);
   const inputs = {
@@ -217,10 +219,15 @@ async function main() {
   if (o.affected) o.base = affectedBase();
   const sha = sh('git', ['rev-parse', 'HEAD']).stdout.trim();
   const selKey = selectionKey(o);
+  const worktree = sh('git', ['rev-parse', '--absolute-git-dir']).stdout.trim();
+  const lane = createHash('sha256')
+    .update(JSON.stringify([hostname(), worktree]))
+    .digest('hex')
+    .slice(0, 32);
 
   let run;
   for (;;) {
-    const m = matchInFlight(await inFlight(), { sha, selKey, full: o.full });
+    const m = matchInFlight(await inFlight(), { sha, selKey, full: o.full, lane });
     if (m.attach) {
       run = m.attach;
       say(`attaching to run ${run.url} (same sha and selection already in flight)`);
@@ -233,9 +240,14 @@ async function main() {
       await waitUntilDone(m.waitFor);
       continue;
     }
-    run = await dispatch(o, sha, selKey);
+    run = await dispatch(o, sha, selKey, lane);
     say(`dispatched ${run.url}`);
     break;
+  }
+  for (const old of supersededRuns(await inFlight(), { lane, newer: run })) {
+    const result = sh('gh', ['run', 'cancel', String(old.databaseId)], { allowFail: true });
+    if (result.status === 0) say(`cancelled superseded run ${old.url}`);
+    else console.error(`[e2e:remote] could not cancel ${old.url}: ${result.stderr.trim()}`);
   }
   if (!o.wait) {
     say(`not waiting (--no-wait): ${run.url}`);
