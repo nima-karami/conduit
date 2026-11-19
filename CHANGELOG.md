@@ -6,6 +6,10 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- If Conduit can’t install a Linux .deb update, it opens the package in your system installer and gives you a terminal command as a fallback. Conduit stays open and won’t retry the failed update when you quit.
+
 ## [0.69.0] — 2026-11-18
 
 ### Changed
