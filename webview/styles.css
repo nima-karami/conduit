@@ -17464,10 +17464,6 @@ button.toggle--on .toggle__knob {
   cursor: pointer;
 }
 
-.permissions-role-list__row:hover {
-  background: var(--raise);
-}
-
 .permissions-role-list__row[aria-selected="true"] {
   background: var(--accent-soft);
 }
@@ -17870,9 +17866,6 @@ button.toggle--on .toggle__knob {
 .permissions-agents-list__row[tabindex] {
   cursor: pointer;
 }
-.permissions-agents-list__row[tabindex]:hover {
-  background: var(--raise);
-}
 .permissions-agents-list__row[aria-selected="true"] {
   background: var(--accent-soft);
 }
@@ -17991,6 +17984,8 @@ button.toggle--on .toggle__knob {
     .statusbar__attn,
     .settings__navitem,
     .settings-page__back,
+    .permissions-role-list__row,
+    .permissions-agents-list__row[tabindex],
     .relnotes__ver,
     .searchgroup__head,
     .searchmatch,
@@ -18120,6 +18115,8 @@ button.toggle--on .toggle__knob {
     .statusbar__attn,
     .settings__navitem,
     .settings-page__back,
+    .permissions-role-list__row,
+    .permissions-agents-list__row[tabindex],
     .relnotes__ver,
     .searchgroup__head,
     .searchmatch,
