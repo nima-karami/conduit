@@ -389,6 +389,22 @@ describe('Permissions submenu (canvas E1)', () => {
     expect(onCustomize).toHaveBeenCalledOnce();
   });
 
+  it('disables the staging rows but keeps Customize… while read-only', () => {
+    const summary = { profileId: 'worker' as const, roleName: 'Worker', changes: 1 };
+    const items = buildPermissionsSubmenu({
+      name: 'x',
+      roles: BUILT_IN_PROFILES,
+      summary,
+      readOnly: true,
+      onPick: () => {},
+      onReset: () => {},
+      onCustomize: () => {},
+    });
+    for (const p of BUILT_IN_PROFILES) expect(find(items, p.name)?.disabled).toBe(true);
+    expect(find(items, 'Reset to role')?.disabled).toBe(true);
+    expect(find(items, 'Customize…')?.disabled).toBeFalsy();
+  });
+
   it('leaves out the change rows when the agent follows its role', () => {
     const summary = { profileId: 'lead' as const, roleName: 'Lead', changes: 0 };
     const items = buildPermissionsSubmenu({

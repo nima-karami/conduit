@@ -253,6 +253,8 @@ export function buildPermissionsSubmenu(input: {
   name: string;
   roles: readonly { id: ProfileId; name: string }[];
   summary: SessionPermissionSummary;
+  /** Nothing can be staged: role and reset rows are disabled, Customize… still opens the drawer. */
+  readOnly?: boolean;
   onPick(id: ProfileId): void;
   onReset(): void;
   onCustomize(): void;
@@ -266,6 +268,7 @@ export function buildPermissionsSubmenu(input: {
         key: `role:${role.id}`,
         checked: role.id === summary.profileId,
         radio: true,
+        disabled: input.readOnly === true,
         onClick: () => input.onPick(role.id),
       }),
     ),
@@ -278,7 +281,12 @@ export function buildPermissionsSubmenu(input: {
             separatorBefore: true,
             onClick: () => {},
           },
-          { label: PERM.resetToRole, key: 'reset', onClick: input.onReset },
+          {
+            label: PERM.resetToRole,
+            key: 'reset',
+            disabled: input.readOnly === true,
+            onClick: input.onReset,
+          },
         ]
       : []),
     {

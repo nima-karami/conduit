@@ -1141,6 +1141,11 @@ export function App() {
     policy: mcp.state?.policy.sessions,
   });
   permissionCoverageRef.current = { sessions: hostSessions, policy: mcp.state?.policy.sessions };
+  // The row menu can outlive a policy change; its Permissions submenu reads the live one.
+  const mcpPolicyRef = useRef(mcp.state?.policy);
+  mcpPolicyRef.current = mcp.state?.policy;
+  const serverStateRef = useRef(serverState.state);
+  serverStateRef.current = serverState.state;
   const asks = useAsks();
   const agents: AgentDefinition[] = state?.agents ?? [];
 
@@ -3910,7 +3915,7 @@ export function App() {
         // Beside the row it was picked from; a bare call has only the right-click point.
         mcpTools: (a) => {
           const coverage = permissionCoverageRef.current;
-          const policy = mcp.state?.policy;
+          const policy = mcpPolicyRef.current;
           const summary = sessionPermissionSummary(policy, s.id);
           if (
             !policy ||
@@ -3928,6 +3933,7 @@ export function App() {
               name: s.name,
               roles: policy.profiles,
               summary,
+              readOnly: policy.readOnly || serverStateRef.current !== 'connected',
               onPick: (profileId) =>
                 toDrawer(profileId === summary.profileId ? undefined : { kind: 'role', profileId }),
               onReset: () => toDrawer({ kind: 'reset' }),

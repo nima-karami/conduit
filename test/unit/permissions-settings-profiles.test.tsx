@@ -170,7 +170,13 @@ it('shows only changed custom rules, including their conditions, in the review',
       />,
     ),
   );
-  await selectRole(host, 'Custom');
+  const row = [...host.querySelectorAll<HTMLElement>('tbody tr')].find((tr) =>
+    tr.querySelector('th')?.textContent?.startsWith('Custom'),
+  );
+  await act(async () => {
+    row?.focus();
+    row?.click();
+  });
   const edit = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Edit');
   await act(async () => edit?.click());
   const group = host.querySelector('[aria-label="open_session decision"]');
@@ -467,4 +473,43 @@ it('names every per-tool select after its tool', async () => {
   expect(host.querySelectorAll('select[aria-label$="Screen condition"]')).toHaveLength(1);
   await act(async () => root.unmount());
   api.state.policy.profiles = [];
+});
+
+it('keeps focus in the side panel when Edit swaps the drawer for the editor', async () => {
+  const profile: Profile = {
+    ...structuredClone(BUILT_IN_PROFILES[1]),
+    id: 'p-custom',
+    name: 'Custom',
+    builtIn: false,
+  };
+  api.state.policy.profiles = [profile];
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () =>
+    root.render(
+      <PermissionsRoles
+        onViewAgents={() => {}}
+        serverConnected
+        mcp={api as never}
+        sessions={[]}
+        registerBack={() => {}}
+      />,
+    ),
+  );
+  const row = [...host.querySelectorAll<HTMLElement>('tbody tr')].find((tr) =>
+    tr.querySelector('th')?.textContent?.startsWith('Custom'),
+  );
+  await act(async () => {
+    row?.focus();
+    row?.click();
+  });
+  const edit = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Edit');
+  await act(async () => {
+    edit?.focus();
+    edit?.click();
+  });
+  await act(async () => void 0);
+  expect(document.activeElement?.textContent).toBe('Edit role · Custom');
+  await act(async () => root.unmount());
 });

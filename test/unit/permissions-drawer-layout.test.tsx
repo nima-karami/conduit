@@ -10,7 +10,7 @@ import { toastFloorPx, useToastFloor } from '../../webview/toast-floor';
  * CON-71: scrolling the MCP drawer scrolled the whole tab (list, drawer and all), because the
  * panel was the only scroll container. jsdom has no layout, so the height chain that makes the
  * list and the drawer body their own scrollers is pinned here at the stylesheet. The real wheel
- * is exercised by the `permissions-drawer-scroll` e2e.
+ * is exercised by the `permissions-drawer` e2e.
  */
 const CSS = readFileSync(join(__dirname, '..', '..', 'webview', 'styles.css'), 'utf8').replace(
   /\/\*[\s\S]*?\*\//g,

@@ -466,8 +466,15 @@ export function PermissionsAssignments({
     if (!focusPresent || consumedFocus.current === focusAgentKey) return;
     consumedFocus.current = focusAgentKey;
     setSelected(focusAgentKey);
-    setEditing(null);
-    setReview(null);
+    // Another agent's staged edit is dropped, as a row click drops it; the same agent's survives
+    // a plain Customize… (no stage).
+    if (
+      focusAgentStage ||
+      (editingRef.current && pointKey(editingRef.current.point) !== focusAgentKey)
+    ) {
+      setEditing(null);
+      setReview(null);
+    }
     const target = rowsRef.current.find((row) => row.key === focusAgentKey)?.point;
     if (target && focusAgentStage) applyStageRef.current?.(target, focusAgentStage);
     onFocusAgentSpent?.();

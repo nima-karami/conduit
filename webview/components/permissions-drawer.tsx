@@ -41,10 +41,14 @@ export function PermissionsDrawer({
       if (
         focusInside &&
         opener instanceof HTMLElement &&
+        opener !== document.body &&
         opener.isConnected &&
         !node.contains(opener)
       )
         queueMicrotask(() => {
+          // The panel switched content (drawer → editor) rather than closing: the new one has
+          // already taken focus.
+          if (document.activeElement?.closest('.permissions-drawer')) return;
           if (opener.isConnected) opener.focus();
         });
     };
