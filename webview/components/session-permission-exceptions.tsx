@@ -73,9 +73,9 @@ export function SessionPermissionExceptions({
             {Object.entries(exception.rule)
               .map(([field, value]) => `${field}: ${value}`)
               .join(', ')}
-          </span>{' '}
-          <label>
-            Target{' '}
+          </span>
+          <label className="permissions-field">
+            Target
             <select
               className="session-permissions__select"
               disabled={disabled}
@@ -118,9 +118,9 @@ export function SessionPermissionExceptions({
                   </option>
                 ))}
             </select>
-          </label>{' '}
-          <label>
-            Decision{' '}
+          </label>
+          <label className="permissions-field">
+            Decision
             <select
               className="session-permissions__select"
               value={exception.rule.decision ?? ''}
@@ -143,7 +143,7 @@ export function SessionPermissionExceptions({
               <option value="ask">Ask</option>
               <option value="deny">Deny</option>
             </select>
-          </label>{' '}
+          </label>
           {(['when', 'reach', 'move'] as const)
             .filter((field) => TOOL_SPECS[exception.tool].fields.includes(field))
             .map((field) => {
@@ -154,8 +154,8 @@ export function SessionPermissionExceptions({
                     ? (TOOL_SPECS[exception.tool].reach ?? REACH_VALUES)
                     : MOVE_VALUES;
               return (
-                <label key={field}>
-                  {field}{' '}
+                <label key={field} className="permissions-field">
+                  {field}
                   <select
                     className="session-permissions__select"
                     value={exception.rule[field] ?? ''}
@@ -193,7 +193,7 @@ export function SessionPermissionExceptions({
                   </select>
                 </label>
               );
-            })}{' '}
+            })}
           <button
             type="button"
             className="btn btn--sm"
@@ -207,8 +207,8 @@ export function SessionPermissionExceptions({
       ))}
       <fieldset className="session-permissions__fieldset" disabled={disabled}>
         <legend className="session-permissions__heading">Add exception</legend>
-        <label>
-          Action{' '}
+        <label className="permissions-field">
+          Action
           <select
             className="session-permissions__select"
             value={tool}
@@ -223,9 +223,9 @@ export function SessionPermissionExceptions({
               </option>
             ))}
           </select>
-        </label>{' '}
-        <label>
-          Decision{' '}
+        </label>
+        <label className="permissions-field">
+          Decision
           <select
             className="session-permissions__select"
             value={decision}
@@ -239,9 +239,9 @@ export function SessionPermissionExceptions({
             <option value="ask">Ask</option>
             <option value="deny">Deny</option>
           </select>
-        </label>{' '}
-        <label>
-          Target{' '}
+        </label>
+        <label className="permissions-field">
+          Target
           <select
             className="session-permissions__select"
             value={scopeKind}
@@ -263,10 +263,10 @@ export function SessionPermissionExceptions({
             <option value="folder">Folder</option>
             <option value="path">Exact path</option>
           </select>
-        </label>{' '}
+        </label>
         {(scopeKind === 'folder' || scopeKind === 'path') && (
-          <label>
-            Path{' '}
+          <label className="permissions-field">
+            Path
             <input
               className="modal__input"
               value={path}

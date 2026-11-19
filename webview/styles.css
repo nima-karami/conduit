@@ -8105,7 +8105,9 @@ body.gh-resizing {
   z-index: var(--layer-page);
   display: flex;
   overflow: hidden;
-  background: var(--panel);
+  /* The panel material is translucent in Aero; the window ground under it keeps the inert
+     workbench from showing through. */
+  background: linear-gradient(var(--panel), var(--panel)), var(--ground);
   border-radius: var(--r-card);
 }
 .settings-page__back {
@@ -8130,6 +8132,7 @@ body.gh-resizing {
   flex: 1;
   display: flex;
   min-height: 0;
+  min-width: 0;
 }
 .settings__nav {
   width: 168px;
@@ -8549,12 +8552,14 @@ body.gh-resizing {
   border-bottom: 0;
 }
 
-/* Skills panel (skill installer) */
+/* Skills panel (skill installer). The group body has no vertical padding (its .set rows carry
+   it), so these blocks bring their own. */
 .skills__intro,
 .skills__empty {
   font-size: calc(12px * var(--font-scale));
   color: var(--text-dim);
-  margin: 0 0 10px;
+  margin: 0;
+  padding: 12px 0;
   line-height: 1.5;
 }
 .skills__intro code {
@@ -8565,17 +8570,17 @@ body.gh-resizing {
 .skills__list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0 0 12px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 .skillrow {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 14px;
-  padding: 10px 0;
+  gap: 16px;
+  padding: 12px 0 0;
   border-top: 1px solid var(--border);
 }
 .skillrow:first-child {
@@ -8615,7 +8620,7 @@ body.gh-resizing {
 .skillrow__actions {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   flex: 0 0 auto;
 }
 .btn--sm {
@@ -17311,15 +17316,21 @@ button.toggle--on .toggle__knob {
 }
 
 .session-permissions__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   border-top: 1px solid var(--border);
-  padding: 14px 0;
+  padding: 16px 0;
   overflow-wrap: anywhere;
+}
+.session-permissions__section > :is(h3, h4, p, ul, fieldset) {
+  margin: 0;
 }
 .session-permissions__heading {
   color: var(--text);
   font-size: calc(12px * var(--font-scale));
   font-weight: 600;
-  margin: 0 0 8px;
+  margin: 0;
 }
 .session-permissions__fieldset {
   border: 0;
@@ -17327,15 +17338,19 @@ button.toggle--on .toggle__knob {
   margin: 0;
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px 12px;
 }
-.session-permissions__exception {
-  padding: 10px;
+.session-permissions__fieldset > legend {
   margin-bottom: 8px;
+  padding: 0;
+}
+.session-permissions__exception {
+  padding: 12px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 8px 12px;
   background: var(--raise);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
@@ -17373,7 +17388,6 @@ button.toggle--on .toggle__knob {
   border: 1px solid var(--border-2);
   border-radius: var(--r-md);
   padding: 10px;
-  margin-bottom: 12px;
 }
 
 .session-permissions__profiles {
@@ -17435,7 +17449,12 @@ button.toggle--on .toggle__knob {
 .permissions-profile-editor fieldset {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  align-items: center;
+  gap: 8px 12px;
+}
+.permissions-profile-editor fieldset > p {
+  flex-basis: 100%;
+  margin: 0;
 }
 
 /* Roles and Agents: a list plus a drawer. Each scrolls on its own, so a wheel over one never
@@ -17670,12 +17689,41 @@ button.toggle--on .toggle__knob {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 4px var(--drawer-pad-end) 14px var(--drawer-pad-start);
+  gap: 12px;
+  padding: 4px var(--drawer-pad-end) 16px var(--drawer-pad-start);
 }
 
 .permissions-drawer__body p {
   margin: 0;
+}
+
+/* One spacing rhythm for the side panel and the permission sections in it, from the UI.md scale:
+   12 between blocks, 8 between stacked or wrapped controls, 8 between a label and its control.
+   Gaps, not per-element margins, so no two controls can end up touching. */
+.permissions-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.permissions-stack > :is(h2, h3, h4, p, ul, fieldset) {
+  margin: 0;
+}
+.permissions-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+}
+.permissions-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+.permissions-field > :is(select, input:not([type="checkbox"])) {
+  min-width: 0;
 }
 
 .permissions-drawer__foot {
@@ -17771,11 +17819,11 @@ button.toggle--on .toggle__knob {
 .permissions-profile-editor details,
 .permissions-profile-editor fieldset,
 .permissions-settings__review table {
-  margin-block: 10px;
+  margin-block: 12px;
 }
 
 .permissions-profile-editor fieldset {
-  padding: 8px;
+  padding: 12px;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
 }
@@ -18016,10 +18064,15 @@ button.toggle--on .toggle__knob {
   border-bottom-color: var(--border-2);
 }
 .permissions-agents-list__table tbody th {
+  min-width: 8em;
   overflow-wrap: anywhere;
 }
+/* A percentage width lets the select give way to the name column instead of sizing the column
+   to its longest role name. */
 .permissions-agents-list__table .selectfield {
-  max-width: 100%;
+  width: 100%;
+  min-width: 8em;
+  max-width: 16em;
 }
 .permissions-agents-list__row[tabindex] {
   cursor: pointer;

@@ -297,7 +297,6 @@ export function PermissionsProfileEditor({
             />{' '}
             Only while its session is on screen
           </label>
-          <br />
           <label>
             <input
               type="radio"
@@ -312,46 +311,50 @@ export function PermissionsProfileEditor({
         <fieldset disabled={disabled}>
           <legend>Agent’s own mode at launch</legend>
           <p>Used at the next launch when native mode application is enabled.</p>
-          <label htmlFor={`${id}-claude-mode`}>Claude</label>{' '}
-          <select
-            id={`${id}-claude-mode`}
-            className="selectfield"
-            value={modes.claude}
-            onChange={(e) => {
-              const claude = (['unset', 'plan', 'acceptEdits'] as const).find(
-                (v) => v === e.target.value,
-              );
-              if (claude)
-                setProfile((current) => ({
-                  ...current,
-                  nativeModes: { ...(current.nativeModes ?? unsetModes), claude },
-                }));
-            }}
-          >
-            <option value="unset">Use CLI default</option>
-            <option value="plan">Plan</option>
-            <option value="acceptEdits">Accept edits</option>
-          </select>{' '}
-          <label htmlFor={`${id}-codex-mode`}>Codex</label>{' '}
-          <select
-            id={`${id}-codex-mode`}
-            className="selectfield"
-            value={modes.codex}
-            onChange={(e) => {
-              const codex = (['unset', 'read-only', 'workspace-write'] as const).find(
-                (v) => v === e.target.value,
-              );
-              if (codex)
-                setProfile((current) => ({
-                  ...current,
-                  nativeModes: { ...(current.nativeModes ?? unsetModes), codex },
-                }));
-            }}
-          >
-            <option value="unset">Use CLI default</option>
-            <option value="read-only">Read only</option>
-            <option value="workspace-write">Workspace write</option>
-          </select>
+          <span className="permissions-field">
+            <label htmlFor={`${id}-claude-mode`}>Claude</label>
+            <select
+              id={`${id}-claude-mode`}
+              className="selectfield"
+              value={modes.claude}
+              onChange={(e) => {
+                const claude = (['unset', 'plan', 'acceptEdits'] as const).find(
+                  (v) => v === e.target.value,
+                );
+                if (claude)
+                  setProfile((current) => ({
+                    ...current,
+                    nativeModes: { ...(current.nativeModes ?? unsetModes), claude },
+                  }));
+              }}
+            >
+              <option value="unset">Use CLI default</option>
+              <option value="plan">Plan</option>
+              <option value="acceptEdits">Accept edits</option>
+            </select>
+          </span>
+          <span className="permissions-field">
+            <label htmlFor={`${id}-codex-mode`}>Codex</label>
+            <select
+              id={`${id}-codex-mode`}
+              className="selectfield"
+              value={modes.codex}
+              onChange={(e) => {
+                const codex = (['unset', 'read-only', 'workspace-write'] as const).find(
+                  (v) => v === e.target.value,
+                );
+                if (codex)
+                  setProfile((current) => ({
+                    ...current,
+                    nativeModes: { ...(current.nativeModes ?? unsetModes), codex },
+                  }));
+              }}
+            >
+              <option value="unset">Use CLI default</option>
+              <option value="read-only">Read only</option>
+              <option value="workspace-write">Workspace write</option>
+            </select>
+          </span>
         </fieldset>
         {readOnly && <p>Permissions are read-only.</p>}
         {error && <p role="alert">{error}</p>}

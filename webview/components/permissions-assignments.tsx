@@ -629,7 +629,7 @@ export function PermissionsAssignments({
   const stale =
     (review ?? editing)?.token !== undefined && (review ?? editing)?.token !== policy.editToken;
   const reviewing = review ? (
-    <section>
+    <section className="permissions-stack">
       <h3>Review assignment · {label(review.point)}</h3>
       <h3>Before</h3>
       {facts(policy, review.before)}
@@ -691,50 +691,52 @@ export function PermissionsAssignments({
     const disabled = readOnly || pending || stale;
     const update = (draft: Assignment) => setEditing({ ...editing, draft });
     return (
-      <section>
+      <section className="permissions-stack">
         <h3>Edit assignment · {label(editing.point)}</h3>
         {stale && <p role="alert">Permissions changed. Cancel and reopen this assignment.</p>}
         {error && <p role="alert">{error}</p>}
-        <label>
-          Role{' '}
-          <select
-            className="selectfield"
-            value={editing.draft.profileId}
-            disabled={disabled}
-            onChange={(event) => {
-              const profile = policy.profiles.find((item) => item.id === event.target.value);
-              if (profile)
-                update({
-                  ...editing.draft,
-                  profileId: profile.id as ProfileId,
-                });
-            }}
-          >
-            {policy.profiles.map((profile) => (
-              <option key={profile.id} value={profile.id}>
-                {profile.name}
-              </option>
-            ))}
-          </select>
-        </label>{' '}
-        <label>
-          <input
-            type="checkbox"
-            checked={editing.draft.onScreenOnly}
-            disabled={disabled}
-            onChange={(event) => update({ ...editing.draft, onScreenOnly: event.target.checked })}
-          />{' '}
-          On-screen only
-        </label>{' '}
-        <label>
-          <input
-            type="checkbox"
-            checked={editing.draft.applyNative === true}
-            disabled={disabled}
-            onChange={(event) => update({ ...editing.draft, applyNative: event.target.checked })}
-          />{' '}
-          Apply role native modes at future launch
-        </label>
+        <div className="permissions-fields">
+          <label className="permissions-field">
+            Role
+            <select
+              className="selectfield"
+              value={editing.draft.profileId}
+              disabled={disabled}
+              onChange={(event) => {
+                const profile = policy.profiles.find((item) => item.id === event.target.value);
+                if (profile)
+                  update({
+                    ...editing.draft,
+                    profileId: profile.id as ProfileId,
+                  });
+              }}
+            >
+              {policy.profiles.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="permissions-field">
+            <input
+              type="checkbox"
+              checked={editing.draft.onScreenOnly}
+              disabled={disabled}
+              onChange={(event) => update({ ...editing.draft, onScreenOnly: event.target.checked })}
+            />
+            On-screen only
+          </label>
+          <label className="permissions-field">
+            <input
+              type="checkbox"
+              checked={editing.draft.applyNative === true}
+              disabled={disabled}
+              onChange={(event) => update({ ...editing.draft, applyNative: event.target.checked })}
+            />
+            Apply role native modes at future launch
+          </label>
+        </div>
         {session ? (
           <SessionPermissionExceptions
             session={session}

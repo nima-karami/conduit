@@ -102,46 +102,16 @@ export function PermissionsCheckRequest({
         Check current policy without running the request.{' '}
         {draft ? 'The current draft is included.' : 'No draft is included.'}
       </p>
-      <span>
-        <label htmlFor={`${fieldsId}-session`}>Session</label>{' '}
-        <select
-          id={`${fieldsId}-session`}
-          className="session-permissions__select"
-          value={sessionId}
-          onChange={(event) => setSessionId(event.target.value)}
-        >
-          <option value="">Choose a session</option>
-          {sessions.map((session) => (
-            <option key={session.id} value={session.id}>
-              {session.label}
-            </option>
-          ))}
-        </select>
-      </span>{' '}
-      <span>
-        <label htmlFor={`${fieldsId}-action`}>Action</label>{' '}
-        <select
-          id={`${fieldsId}-action`}
-          className="session-permissions__select"
-          value={tool}
-          onChange={(event) =>
-            setTool(event.target.value === 'open_file' ? 'open_file' : 'close_session')
-          }
-        >
-          <option value="close_session">close_session</option>
-          <option value="open_file">open_file</option>
-        </select>
-      </span>{' '}
-      {tool === 'close_session' ? (
-        <span>
-          <label htmlFor={`${fieldsId}-target`}>Target session</label>{' '}
+      <div className="permissions-fields">
+        <span className="permissions-field">
+          <label htmlFor={`${fieldsId}-session`}>Session</label>
           <select
-            id={`${fieldsId}-target`}
+            id={`${fieldsId}-session`}
             className="session-permissions__select"
-            value={targetSessionId}
-            onChange={(event) => setTargetSessionId(event.target.value)}
+            value={sessionId}
+            onChange={(event) => setSessionId(event.target.value)}
           >
-            <option value="">Choose a target</option>
+            <option value="">Choose a session</option>
             {sessions.map((session) => (
               <option key={session.id} value={session.id}>
                 {session.label}
@@ -149,20 +119,52 @@ export function PermissionsCheckRequest({
             ))}
           </select>
         </span>
-      ) : (
-        <label>
-          Absolute file path
-          <input value={filePath} onChange={(event) => setFilePath(event.target.value)} />
-        </label>
-      )}{' '}
-      <button
-        type="button"
-        className="btn btn--sm"
-        disabled={!canCheck || pending}
-        onClick={() => void check()}
-      >
-        {pending ? 'Checking…' : 'Check request'}
-      </button>
+        <span className="permissions-field">
+          <label htmlFor={`${fieldsId}-action`}>Action</label>
+          <select
+            id={`${fieldsId}-action`}
+            className="session-permissions__select"
+            value={tool}
+            onChange={(event) =>
+              setTool(event.target.value === 'open_file' ? 'open_file' : 'close_session')
+            }
+          >
+            <option value="close_session">close_session</option>
+            <option value="open_file">open_file</option>
+          </select>
+        </span>
+        {tool === 'close_session' ? (
+          <span className="permissions-field">
+            <label htmlFor={`${fieldsId}-target`}>Target session</label>
+            <select
+              id={`${fieldsId}-target`}
+              className="session-permissions__select"
+              value={targetSessionId}
+              onChange={(event) => setTargetSessionId(event.target.value)}
+            >
+              <option value="">Choose a target</option>
+              {sessions.map((session) => (
+                <option key={session.id} value={session.id}>
+                  {session.label}
+                </option>
+              ))}
+            </select>
+          </span>
+        ) : (
+          <label className="permissions-field">
+            Absolute file path
+            <input value={filePath} onChange={(event) => setFilePath(event.target.value)} />
+          </label>
+        )}
+        <button
+          type="button"
+          className="btn btn--sm"
+          disabled={!canCheck || pending}
+          onClick={() => void check()}
+        >
+          {pending ? 'Checking…' : 'Check request'}
+        </button>
+      </div>
       <div role="status" aria-live="polite">
         {result?.ok && (
           <p>

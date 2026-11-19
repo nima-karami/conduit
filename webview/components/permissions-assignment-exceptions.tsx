@@ -50,33 +50,36 @@ function TargetEditor({
   const [value, setValue] = useState(scopeValue(scope));
   const candidate = scopeFrom(kind, value);
   return (
-    <fieldset disabled={disabled}>
-      <legend>Target</legend>
-      <label htmlFor={`${id}-kind`}>Scope</label>{' '}
-      <select
-        id={`${id}-kind`}
-        value={kind}
-        onChange={(event) => {
-          const found = (['anywhere', 'space', 'session', 'folder', 'path'] as const).find(
-            (item) => item === event.target.value,
-          );
-          if (found) setKind(found);
-        }}
-      >
-        <option value="anywhere">Anywhere</option>
-        <option value="space">Space</option>
-        <option value="session">Session</option>
-        <option value="folder">Folder</option>
-        <option value="path">Exact path</option>
-      </select>{' '}
+    <fieldset className="session-permissions__fieldset" disabled={disabled}>
+      <legend className="session-permissions__heading">Target</legend>
+      <span className="permissions-field">
+        <label htmlFor={`${id}-kind`}>Scope</label>
+        <select
+          id={`${id}-kind`}
+          value={kind}
+          onChange={(event) => {
+            const found = (['anywhere', 'space', 'session', 'folder', 'path'] as const).find(
+              (item) => item === event.target.value,
+            );
+            if (found) setKind(found);
+          }}
+        >
+          <option value="anywhere">Anywhere</option>
+          <option value="space">Space</option>
+          <option value="session">Session</option>
+          <option value="folder">Folder</option>
+          <option value="path">Exact path</option>
+        </select>
+      </span>
       {kind !== 'anywhere' && (
-        <label>
-          {scopeName(kind)}{' '}
+        <label className="permissions-field">
+          {scopeName(kind)}
           <input value={value} onChange={(event) => setValue(event.target.value)} />
         </label>
-      )}{' '}
+      )}
       <button
         type="button"
+        className="btn btn--sm"
         disabled={!candidate}
         onClick={() => {
           if (candidate) onApply(candidate);
@@ -108,8 +111,8 @@ export function PermissionsAssignmentExceptions({
     return { entry, index, key: `${text}:${count}` };
   });
   return (
-    <section>
-      <h3>Exceptions</h3>
+    <section className="session-permissions__section">
+      <h3 className="session-permissions__heading">Exceptions</h3>
       {rows.map(({ entry, index, key }) => (
         <div className="session-permissions__exception" key={key}>
           <p>
@@ -124,8 +127,8 @@ export function PermissionsAssignmentExceptions({
               )
             }
           />
-          <label>
-            Decision{' '}
+          <label className="permissions-field">
+            Decision
             <select
               disabled={disabled}
               value={entry.rule.decision ?? ''}
@@ -155,7 +158,7 @@ export function PermissionsAssignmentExceptions({
                 </option>
               ))}
             </select>
-          </label>{' '}
+          </label>
           {(['when', 'reach', 'move'] as const)
             .filter((field) => TOOL_SPECS[entry.tool].fields.includes(field))
             .map((field) => {
@@ -166,8 +169,8 @@ export function PermissionsAssignmentExceptions({
                     ? (TOOL_SPECS[entry.tool].reach ?? REACH_VALUES)
                     : MOVE_VALUES;
               return (
-                <label key={field}>
-                  {field}{' '}
+                <label key={field} className="permissions-field">
+                  {field}
                   <select
                     value={entry.rule[field] ?? ''}
                     disabled={disabled}
@@ -205,9 +208,10 @@ export function PermissionsAssignmentExceptions({
                   </select>
                 </label>
               );
-            })}{' '}
+            })}
           <button
             type="button"
+            className="btn btn--sm"
             disabled={disabled}
             aria-label={`Remove exception ${index + 1}: ${entry.tool}`}
             onClick={() => update(assignment.exceptions.filter((_, at) => at !== index))}
@@ -216,10 +220,10 @@ export function PermissionsAssignmentExceptions({
           </button>
         </div>
       ))}
-      <fieldset disabled={disabled}>
-        <legend>Add exception</legend>
-        <label>
-          Action{' '}
+      <fieldset className="session-permissions__fieldset" disabled={disabled}>
+        <legend className="session-permissions__heading">Add exception</legend>
+        <label className="permissions-field">
+          Action
           <select
             value={tool}
             onChange={(event) => {
@@ -234,9 +238,9 @@ export function PermissionsAssignmentExceptions({
               <option key={name}>{name}</option>
             ))}
           </select>
-        </label>{' '}
-        <label>
-          Decision{' '}
+        </label>
+        <label className="permissions-field">
+          Decision
           <select
             value={decision}
             onChange={(event) => {
@@ -250,9 +254,10 @@ export function PermissionsAssignmentExceptions({
               </option>
             ))}
           </select>
-        </label>{' '}
+        </label>
         <button
           type="button"
+          className="btn btn--sm"
           onClick={() =>
             update([
               ...assignment.exceptions,
