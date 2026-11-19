@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.70.3] — 2026-11-19
+
 ### Fixed
 
 - Scrolling the role or agent side panel in MCP settings scrolls only the panel; the list beside it and the panel's title and buttons stay in place.
