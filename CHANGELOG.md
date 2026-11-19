@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.72.0] — 2026-11-19
+
 ### Changed
 
 - Every local terminal now has a session bar with its session menu, agent permissions, and timed messages. Open a scheduled message from the bar to send it now, cancel it, or change the agent’s auto-resume setting.
