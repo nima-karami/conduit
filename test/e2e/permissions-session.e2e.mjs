@@ -185,8 +185,23 @@ await runScenario(
       (await assignments.getAttribute('aria-selected')) === 'true',
       'keyboard did not select the Agents tab',
     );
-    await settings.getByRole('heading', { name: 'Who gets which profile' }).waitFor();
+    await settings.getByRole('heading', { name: 'Agents', exact: true }).waitFor();
+    await settings.getByRole('combobox', { name: 'New agents start with' }).waitFor();
+    await settings
+      .getByRole('row', { name: new RegExp(session.sessionId) })
+      .getByRole('rowheader')
+      .click();
+    await settings.getByRole('complementary').getByRole('combobox', { name: 'Role' }).waitFor();
     await capture(page, '14-settings-assignments.png');
+    await settings.getByRole('button', { name: 'Edit changes' }).click();
+    await settings.getByRole('heading', { name: /Edit assignment/ }).waitFor();
+    const staleNotice = page.locator('[data-post-update-toast]');
+    if ((await staleNotice.count()) > 0) {
+      await staleNotice.getByRole('button', { name: 'Dismiss update' }).click();
+    }
+    await settings.getByRole('button', { name: 'Cancel' }).click();
+    await settings.getByRole('button', { name: 'Edit changes' }).waitFor();
+    await assignments.focus();
     await page.keyboard.press('ArrowRight');
     await settings.getByText('No grants yet.').waitFor();
     await capture(page, '07-settings-grants.png');
