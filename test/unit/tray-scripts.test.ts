@@ -15,11 +15,13 @@ describe('tray-check.mjs', () => {
   it('runs fmt, clippy host, clippy msvc, then test in native/tray cwd', () => {
     const r = runSnippet(`
       import { runTrayCheck } from './tools/tray-check.mjs';
-      import { join } from 'node:path';
+      import { join, resolve } from 'node:path';
       const wantCwd = join('native', 'tray');
+      delete process.env.CARGO_TARGET_DIR;
       const calls = [];
       const spawn = (cmd, args, opts) => {
-        calls.push({ cmd, args: [...args], cwd: opts?.cwd });
+        if (cmd === 'git') return { status: 0, stdout: '.git\\n' };
+        calls.push({ cmd, args: [...args], cwd: opts?.cwd, targetDir: opts?.env?.CARGO_TARGET_DIR });
         if (cmd === 'cargo' && args[0] === '--version') return { status: 0, stdout: '', stderr: '' };
         return { status: 0, stdout: '', stderr: '' };
       };
@@ -33,6 +35,7 @@ describe('tray-check.mjs', () => {
       if (!cargo.every((c) => c.args[0] === 'fmt' || c.args.includes('--locked'))) process.exit(7);
       const beforeSep = (a) => !a.includes('--') || a.indexOf('--locked') < a.indexOf('--');
       if (!cargo.every((c) => beforeSep(c.args))) process.exit(8);
+      if (!cargo.every((c) => c.targetDir === resolve('.git', 'tray-target'))) process.exit(9);
     `);
     expect(r.status, r.stderr).toBe(0);
   });
@@ -42,6 +45,7 @@ describe('tray-check.mjs', () => {
       import { runTrayCheck } from './tools/tray-check.mjs';
       let n = 0;
       const spawn = (cmd, args) => {
+        if (cmd === 'git') return { status: 0, stdout: '.git\\n' };
         if (cmd === 'cargo' && args[0] === '--version') return { status: 0, stdout: '', stderr: '' };
         if (cmd === 'cargo' && args[0] === 'fmt') return { status: null, stdout: '', stderr: '' };
         n++;
@@ -71,6 +75,7 @@ describe('tray-build.mjs', () => {
       const wantCwd = join('native', 'tray');
       let buildArgs = [];
       const spawn = (cmd, args, opts) => {
+        if (cmd === 'git') return { status: 0, stdout: '.git\\n' };
         if (cmd === 'cargo' && args[0] === '--version') return { status: 0, stdout: '', stderr: '' };
         if (cmd === 'cargo' && args[0] === 'build') {
           buildArgs = args;
@@ -84,7 +89,7 @@ describe('tray-build.mjs', () => {
         stat: () => ({ size: 3 * 1024 * 1024 }),
         mkdir: () => {}, copyFile: () => {},
       }) !== 1) process.exit(3);
-      const want = ['build','--release','--locked','--target','x86_64-pc-windows-msvc'];
+      const want = ['build','--release','--target','x86_64-pc-windows-msvc','--locked'];
       if (JSON.stringify(buildArgs) !== JSON.stringify(want)) process.exit(4);
       if (runTrayBuild({
         platform: 'win32', spawn,

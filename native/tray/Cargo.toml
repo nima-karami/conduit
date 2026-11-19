@@ -23,6 +23,9 @@ windows-sys = { version = "0.61.2", features = [
 [build-dependencies]
 embed-resource = "3.0.6"
 
+[profile.dev.package."*"]
+debug = 0
+
 [profile.release]
 opt-level = "z"
 lto = true
