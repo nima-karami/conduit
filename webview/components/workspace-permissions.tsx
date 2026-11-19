@@ -1,7 +1,6 @@
 import { useCallback, useRef } from 'react';
 import type { PolicyUiState } from '../../src/conduit-mcp/policy-types';
 import type { Session } from '../../src/types';
-import { useToastSide } from '../toast-floor';
 import type { ConduitMcpApi } from '../use-conduit-mcp';
 import { useOverlayEntry } from '../use-overlay-entry';
 import type { BackHandler } from './mcp-section';
@@ -33,8 +32,6 @@ export function WorkspacePermissions({
   onOpenActivity: OpenSessionActivity;
   onRelaunch(sessionId: string, generation: number | null): Promise<void>;
 }) {
-  const frame = useRef<HTMLDivElement>(null);
-  useToastSide(frame);
   const stepBack = useRef<BackHandler | null>(null);
   const registerBack = useCallback((handler: BackHandler | null) => {
     stepBack.current = handler;
@@ -43,7 +40,7 @@ export function WorkspacePermissions({
     if (!stepBack.current?.()) onClose();
   });
   return (
-    <div ref={frame} className="workspace-permissions__content chamfer">
+    <div className="workspace-permissions__content chamfer">
       <PermissionsAssignments
         policy={policy}
         sessions={sessions}
