@@ -361,10 +361,8 @@ it('selects the saved copy after a duplicate is saved, then steps back off it', 
 it('does not open the review once the editor was backed out of mid-request', async () => {
   const profile = customRole();
   api.state.policy.profiles = [profile];
-  let resolve: (result: PolicyEditResult & { profileDisplay?: unknown }) => void = () => {};
-  api.reviewLocalPolicy.mockImplementation(
-    () => new Promise<PolicyEditResult>((r) => (resolve = r)),
-  );
+  let resolve: (result: unknown) => void = () => {};
+  api.reviewLocalPolicy.mockImplementation(() => new Promise<unknown>((r) => (resolve = r)));
   const { host, root, back, click } = await mountRoles();
   await selectRole(host, 'Custom');
   await click('Edit');
