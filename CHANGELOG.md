@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.70.2] — 2026-11-19
+
 ### Fixed
 
 - Requests waiting for your answer are fully saved when Conduit quits, even if a save was already in progress.
