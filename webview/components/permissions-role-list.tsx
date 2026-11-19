@@ -60,7 +60,7 @@ export function PermissionsRoleList({
               key={profile.id}
               className="permissions-role-list__row"
               tabIndex={0}
-              aria-selected={profile.id === selectedId}
+              aria-current={profile.id === selectedId ? 'true' : undefined}
               onClick={() => onSelect(profile)}
               onKeyDown={(event) => onKeyDown(event, profile)}
             >

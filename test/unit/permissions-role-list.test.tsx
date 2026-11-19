@@ -86,12 +86,7 @@ it('says how many agents use each role and which type it is', async () => {
 
 it('marks the selected row and reports a click', async () => {
   const { host, props } = await mount({ selectedId: 'p-custom' });
-  expect(rows(host).map((r) => r.getAttribute('aria-selected'))).toEqual([
-    'false',
-    'false',
-    'false',
-    'true',
-  ]);
+  expect(rows(host).map((r) => r.getAttribute('aria-current'))).toEqual([null, null, null, 'true']);
   await act(async () => (rows(host)[2] as HTMLElement).click());
   expect(props.onSelect).toHaveBeenCalledWith(BUILT_IN_PROFILES[2]);
 });

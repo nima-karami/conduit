@@ -58,6 +58,13 @@ const change = async (select: HTMLSelectElement, value: string) =>
     select.dispatchEvent(new Event('change', { bubbles: true }));
   });
 
+it('marks only the selected row as current', async () => {
+  const { host } = await mount({ selectedKey: 'session:s2' });
+  const rows = [...host.querySelectorAll('tbody tr')];
+  expect(rows.map((r) => r.getAttribute('aria-current'))).toEqual([null, 'true', null]);
+  expect(rows.some((r) => r.hasAttribute('aria-selected'))).toBe(false);
+});
+
 it('says there are no agents yet and names the starting role', async () => {
   const { host } = await mount({ rows: [] });
   expect(host.textContent).toContain('No agents yet. New agents start with Worker.');

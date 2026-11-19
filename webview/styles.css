@@ -17464,7 +17464,7 @@ button.toggle--on .toggle__knob {
   cursor: pointer;
 }
 
-.permissions-role-list__row[aria-selected="true"] {
+.permissions-role-list__row[aria-current="true"] {
   background: var(--accent-soft);
 }
 
@@ -17866,7 +17866,7 @@ button.toggle--on .toggle__knob {
 .permissions-agents-list__row[tabindex] {
   cursor: pointer;
 }
-.permissions-agents-list__row[aria-selected="true"] {
+.permissions-agents-list__row[aria-current="true"] {
   background: var(--accent-soft);
 }
 .permissions-agents-list__row:focus-visible {

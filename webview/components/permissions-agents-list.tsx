@@ -59,7 +59,7 @@ function AgentTable({
               key={row.key}
               className="permissions-agents-list__row"
               tabIndex={editable ? 0 : undefined}
-              aria-selected={editable ? row.key === selectedKey : undefined}
+              aria-current={editable && row.key === selectedKey ? 'true' : undefined}
               onClick={editable ? () => onSelect(row) : undefined}
               onKeyDown={editable ? (event) => onKeyDown(event, row) : undefined}
             >
