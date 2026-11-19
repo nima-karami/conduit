@@ -323,9 +323,15 @@ an overlap only queues jobs, it never cancels a run.
     the final `cleanup` job (`if: always()`, deletes `github.ref` when it starts with
     `refs/heads/ci/e2e/`) and the sweep job get `contents: write`.
   - Must exist on the default branch before it can be dispatched (Slice 0 lands it first).
-  - A `verify` job calls `verify.yml` (`workflow_call`; input `verify`, default true) and is part of
-    the verdict: a failed verify makes the run `failed` (exit 1) and the summary says so. It is the
-    remote integration gate while local `npm run verify` is paused.
+  - Named CLI runs default to skipping `verify.yml` because they target scenario feedback.
+    Pass `--verify` to include the local gate's CI equivalent. Affected and full CLI runs retain
+    verify by default so a broader run still reports gate failures. Pass `--no-verify` when the gate
+    already ran. Verify failures are included in the verdict when verify runs.
+  - A scheduled nightly checks successful full runs from the same workflow for an unexpired
+    `e2e-result` artifact. It reuses the result only when the tested Git tree matches the
+    nightly checkout and the full result passed without flakes. The ref sweep still runs.
+    Reuse leaves the previous coverage and timing state in place. An absent or unreadable result
+    triggers the full nightly.
   - `test/e2e/remote-exclusions.json` (`{ "<name>": "<reason>" }`) lists scenarios the hosted
     runner can't run. `prepare` drops them from the plan and the result lists each as `EXCLUDED`
     with its reason (never silently); EXCLUDED is neutral to the verdict, but a selection with
@@ -396,9 +402,9 @@ an overlap only queues jobs, it never cancels a run.
 
 | Condition | Expected behavior |
 |---|---|
-| Two callers, same sha + selection | Second attaches to the first's run (found by querying in-flight runs' names/inputs) and pushes no ref; the run's `cleanup` job deletes the one ref |
-| Two `--full` for different SHAs | Second waits client-side for the first to finish, printing "waiting for full run <url>", then dispatches. Best-effort: nightly/release don't coordinate, and an overlap only queues jobs |
-| New commit while an older run is in flight | Older run continues (an agent may be gating on it) |
+| Two callers, same worktree + sha + selection | Second attaches to the first's run (found by querying in-flight runs' names/inputs) and pushes no ref; the run's `cleanup` job deletes the one ref |
+| Two `--full` from different worktrees | Second waits client-side for the first to finish, printing "waiting for full run <url>", then dispatches. Best-effort: nightly/release don't coordinate, and an overlap only queues jobs |
+| New commit while an older run is in flight | Once the replacement appears, the CLI cancels older dispatches with the same worktree marker and matching CI ref |
 | Selection resolves to zero on a code change | Impossible by the §B2 rule (unmapped → full); docs-only → exit 0 "no e2e needed" |
 | Shard runner dies | Its unfinished scenarios → `INFRA`. Any FAIL/TIMEOUT elsewhere → run `failed`, exit 1; otherwise `infra-error`, exit 2. Either way the command prints `e2e:remote -- <INFRA names>` |
 | Run cancelled | `cancelled`, exit 2, even though report wrote INFRA rows; `cleanup` still deletes the ref |

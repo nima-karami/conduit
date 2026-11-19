@@ -15,6 +15,8 @@ export interface RunListItem {
   displayTitle: string;
   status: string;
   headSha: string;
+  headBranch: string;
+  event: string;
   url: string;
 }
 export function parseArgs(argv: string[]): RemoteArgs | { error: string };
@@ -26,14 +28,18 @@ export function selectionKey(o: {
   base?: string;
   repeat?: number;
 }): string;
-export function makeNonce(selKey: string, rand: string): string;
+export function makeNonce(selKey: string, rand: string, lane: string): string;
 export function parseTitle(
   title: string,
-): { selection: string; nonce: string; selKey: string | null } | null;
+): { selection: string; nonce: string; selKey: string | null; lane: string | null } | null;
 export function matchInFlight(
   runs: RunListItem[],
-  o: { sha: string; selKey: string; full: boolean },
+  o: { sha: string; selKey: string; full: boolean; lane: string },
 ): { attach: RunListItem } | { waitFor: RunListItem } | { dispatch: true };
+export function supersededRuns(
+  runs: RunListItem[],
+  o: { lane: string; newer: RunListItem },
+): RunListItem[];
 export function runState(view: {
   status: string;
   jobs?: { name: string; status: string }[];
