@@ -230,14 +230,20 @@ an overlap only queues jobs, it never cancels a run.
   - The diff against the merge-base with `main` is mapped to scenarios through a **coverage map**
     (scenario → source files). The nightly full run builds the map from V8 coverage of host and
     renderer, mapped back through esbuild sourcemaps.
-  - **Rule, in order** (revised after the v1 review, 2026-09-30):
-    1. Any change to `test/e2e/**`, `electron/main.ts`, `electron/preload.ts`, `esbuild.mjs`,
-       `package.json`, the lockfile or `e2e.yml` selects the full suite.
+  - **Rule, in order** (updated for CON-64):
+    1. Changes to `electron/main.ts`, `electron/preload.ts`, `esbuild.mjs`, `package.json`,
+       the lockfile or `e2e.yml` select the full suite.
     2. Strip the e2e-irrelevant set: `test/unit/**`, `docs/**`, `*.md`, `designs/**`,
-       `.conduit/**`, and `.github/**` except `.github/workflows/e2e.yml`. `test/e2e/**` and
-       `resources/**` are never in it (fixtures and skills' `SKILL.md` are read at runtime). If
-       nothing is left, the selection is none: "no e2e needed", exit 0.
-    3. The coverage map credits, per scenario, the **line spans of the functions it ran**. Every
+       `.conduit/**`, and `.github/**` except `.github/workflows/e2e.yml`. The changelog,
+       fixtures and shipped resources are runtime inputs. If nothing is left, the selection
+       is none: "no e2e needed", exit 0.
+    3. A scenario file selects itself if it still exists. The selector follows local imports
+       transitively for known import-only helpers. Shared runner changes and fixtures with
+       unknown consumers require the full suite. Explicit service and changelog ownership in
+       `test/e2e/ci-affected.mjs` covers networking, MCP routing and release notes where the
+       host and renderer coverage map has no corresponding runtime data. Changes limited to
+       these paths run their scenarios and core smoke even when no coverage map is available.
+    4. For other files, the coverage map credits, per scenario, the **line spans of the functions it ran**. Every
        changed line of a modified code file must lie inside a credited span, and selects the
        scenarios whose spans hold it; a line outside every span selects the full suite. That covers
        top-level code (esbuild hoists module top levels into one load-time scope, and wraps lazily
@@ -246,20 +252,20 @@ an overlap only queues jobs, it never cancels a run.
        A pure insertion after base line `a` is inside a function only if one span holds both `a`
        and `a + 1`. A function's first or last line is not credited when other code of the same
        file shares it (a one-line arrow in a data table, `export const f = () => {`).
-    4. Line positions are **base-side positions in the map's build**: the changed files come from
+    5. Line positions are **base-side positions in the map's build**: the changed files come from
        the merge-base diff, their lines from `git diff -U0 <map.builtFrom> HEAD` (a deleted or
        replaced line at its `-` position, an insertion after its `-` anchor). A file absent from
        that build, or a build commit the checkout lacks, selects the full suite. An entry kept from
        an older nightly (its scenario failed since) is in that build's line numbers: it credits
        nothing and always runs.
-    5. A **new** file selects the full suite (conservative: its code has never run, and adding it
+    6. An unowned **new** file selects the full suite (conservative: its code has never run, and adding it
        also changes an importer's top-level `import`). A deleted `.ts`/`.tsx` file selects every
        scenario that ran any of its functions (its importers' own edits are judged by rule 3); any
-       other deleted file (CSS, JSON, a resource) selects the full suite. A modified file absent
+       other deleted file (CSS, JSON, a resource), or a deleted file with no coverage, selects the full suite. A modified file absent
        from the map selects the full suite.
-    6. The core smoke set is always added, and so is every scenario the map has never seen, and
-       every scenario whose entry is flagged `alwaysRun` (rule 7).
-    7. **Coverage the map can't trust is never merged** (map schema 3; a schema-2 map selects the
+    7. The core smoke set is always added. When using the coverage map, the selector also adds
+       every scenario it has never seen and every scenario flagged `alwaysRun`.
+    8. **Coverage the map can't trust is never merged** (map schema 3; a schema-2 map selects the
        full suite). Coverage starts once an app is up, so the startup of a *relaunched* app or of
        a *second window* is never credited to the scenario that depends on it. Each attempt's
        harness writes a sentinel (`meta-<pid>.json`: apps launched, most windows one app opened,

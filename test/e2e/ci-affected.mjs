@@ -7,10 +7,10 @@
  */
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const FULL = [
-  /^test\/e2e\//,
   /^electron\/main\.ts$/,
   /^electron\/preload\.ts$/,
   /^esbuild\.mjs$/,
@@ -18,11 +18,59 @@ const FULL = [
   /^\.github\/workflows\/e2e\.yml$/,
 ];
 // Shipped or read by scenarios at runtime, whatever the extension (skills' SKILL.md, fixtures).
-const NEVER_IRRELEVANT = [/^test\/e2e\//, /^resources\//];
+const NEVER_IRRELEVANT = [/^test\/e2e\//, /^resources\//, /^CHANGELOG\.md$/];
 const IRRELEVANT = [/^test\/unit\//, /^docs\//, /\.md$/i, /^designs\//, /^\.conduit\//];
 const CODE = /\.tsx?$/;
 /** 3: entries carry `alwaysRun`; a schema-2 map can't say which scenarios need it. */
 export const MAP_SCHEMA = 3;
+
+const SCENARIO_PATH = /^test\/e2e\/([^/]+)\.e2e\.mjs$/;
+const NETWORK = /^(net-|requests-|permissions-|policy-|conduit-mcp-|server-)/;
+const IMPORT_ONLY_HELPER =
+  /^test\/e2e\/(net-helpers|permissions-policy-helpers|conduit-mcp-helpers)\.mjs$/;
+const LOCAL_IMPORT = /(?:\bfrom\s*|\bimport\s*(?:\(\s*)?)['"]\.\/([^/'"]+\.mjs)['"]/g;
+const MCP = /^(conduit-mcp-|mcp-|permissions-|policy-|net-|requests-|server-|asks-no-window$)/;
+const UPDATES = /^(settings-release-notes$|update-)/;
+const OWNERS = [
+  [/^(server|src)\/network\//, NETWORK],
+  [/^src\/contracts\/(link-protocol|ssh-link)\.ts$/, NETWORK],
+  [
+    /^src\/conduit-mcp\/(request-service|request-types|remote-requests|remote-routing|control-tools|tools)\.ts$/,
+    MCP,
+  ],
+  [/^CHANGELOG\.md$/, UPDATES],
+];
+
+export function scenarioImports(dir) {
+  return Object.fromEntries(
+    readdirSync(dir)
+      .filter((file) => file.endsWith('.mjs'))
+      .map((file) => [
+        file,
+        [...readFileSync(join(dir, file), 'utf8').matchAll(LOCAL_IMPORT)].map((match) => match[1]),
+      ]),
+  );
+}
+
+function helperConsumers(helper, imports, all) {
+  const dependents = new Set([helper]);
+  for (const dependency of dependents) {
+    for (const [file, edges] of Object.entries(imports)) {
+      if (edges.includes(dependency)) dependents.add(file);
+    }
+  }
+  const names = all.filter((name) => dependents.has(`${name}.e2e.mjs`));
+  return names.length ? names : null;
+}
+
+function ownedScenarios(path, { all, imports = {} }) {
+  const direct = SCENARIO_PATH.exec(path);
+  if (direct) return all.includes(direct[1]) ? [direct[1]] : [];
+  const helper = IMPORT_ONLY_HELPER.exec(path);
+  if (helper) return helperConsumers(`${helper[1]}.mjs`, imports, all);
+  const rule = OWNERS.find(([pattern]) => pattern.test(path));
+  return rule ? all.filter((name) => rule[1].test(name)) : null;
+}
 
 function isFullTrigger(path) {
   return FULL.some((re) => re.test(path));
@@ -188,7 +236,7 @@ function scenariosForHunks(hunks, spans) {
  * @param {{ path: string, status: 'A'|'M'|'D', hunks?: { start: number, count: number }[] }[]} changed
  * @param {{ map: { schema?: number, builtFrom: string, scenarios: Record<string, {
  *   builtFrom: string, files: Record<string, [number, number][]> }> } | null,
- *   all: string[], core: string[], excluded?: string[] }} ctx
+ *   all: string[], core: string[], excluded?: string[], imports?: Record<string, string[]> }} ctx
  * @returns {{ kind: 'none'|'full'|'names', names: string[], reasons: string[] }}
  */
 export function selectAffected(changed, ctx) {
@@ -199,19 +247,35 @@ export function selectAffected(changed, ctx) {
   if (!relevant.length) {
     return { kind: 'none', names: [], reasons: ['only e2e-irrelevant files changed'] };
   }
+  const names = new Set();
+  const reasons = [];
+  const unmapped = relevant.filter(({ path }) => {
+    const owned = ownedScenarios(path, ctx);
+    if (!owned) return true;
+    for (const name of owned) names.add(name);
+    reasons.push(`${path}: selects its ${owned.length} scenario(s)`);
+    return false;
+  });
+  if (unmapped.some(({ path }) => path.startsWith('test/e2e/'))) {
+    return full(
+      unmapped
+        .filter(({ path }) => path.startsWith('test/e2e/'))
+        .map(({ path }) => `${path}: shared test infrastructure or unknown fixture consumers`),
+    );
+  }
+  if (!unmapped.length) return selectionWithCore(names, reasons, ctx.core);
   if (ctx.map?.schema !== MAP_SCHEMA) {
     return full(['no coverage map with function ranges yet']);
   }
 
   const { byFile, older, always } = spansByFile(ctx.map, new Set(ctx.all));
-  const names = new Set();
-  const reasons = [];
-  for (const { path, status, hunks } of relevant) {
+  for (const { path, status, hunks } of unmapped) {
     const spans = byFile.get(path);
     if (status === 'A') return full([`${path}: new, so no scenario has run its code yet`]);
     if (status === 'D') {
       if (!CODE.test(path)) return full([`${path}: deleted, and it is not code a scenario ran`]);
-      const ran = [...new Set((spans ?? []).map((s) => s.scenario))];
+      if (!spans) return full([`${path}: deleted, and no scenario coverage is available`]);
+      const ran = [...new Set(spans.map((s) => s.scenario))];
       for (const n of ran) names.add(n);
       reasons.push(`${path}: deleted; ${ran.length} scenario(s) ran its functions`);
       continue;
@@ -245,8 +309,12 @@ export function selectAffected(changed, ctx) {
       `relaunches the app or opens a second window (always run): ${always.sort().join(', ')}`,
     );
   }
-  for (const n of ctx.core) names.add(n);
-  reasons.push(`core smoke set: ${ctx.core.join(', ')}`);
+  return selectionWithCore(names, reasons, ctx.core);
+}
+
+function selectionWithCore(names, reasons, core) {
+  for (const name of core) names.add(name);
+  reasons.push(`core smoke set: ${core.join(', ')}`);
   return { kind: 'names', names: [...names].sort(), reasons };
 }
 
@@ -315,6 +383,9 @@ function main([base, mapFile, outFile]) {
     r = selectAffected(map?.schema === MAP_SCHEMA ? withMapBuildHunks(changed, map) : changed, {
       map,
       all,
+      imports: changed.some(({ path }) => IMPORT_ONLY_HELPER.test(path))
+        ? scenarioImports('test/e2e')
+        : {},
       core: read('test/e2e/core-smoke.json'),
       excluded: Object.keys(read('test/e2e/remote-exclusions.json')),
     });
