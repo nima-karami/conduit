@@ -27,12 +27,6 @@ export function coupledAdapterId(agentId: string): AgentIdentityAdapterId | unde
   return leaf === 'claude' || leaf === 'codex' ? leaf : undefined;
 }
 
-export function isManagedAgent(agentId: string): boolean {
-  return /^(claude|codex|cursor-agent|agent|gemini|kiro-cli|opencode|aider)$/.test(
-    launcherLeaf(agentId),
-  );
-}
-
 function isPlainShell(agentId: string): boolean {
   return (
     typeof agentId === 'string' &&
@@ -109,15 +103,11 @@ export function validConversationRef(ref: ConversationReference | undefined): bo
 
 export function planSessionLaunch(input: {
   live: boolean;
-  managed: boolean;
-  previouslyLaunched: boolean;
   startNew: boolean;
   canResume: boolean;
   ref?: ConversationReference;
-}): SessionLaunchPlan {
+}): Exclude<SessionLaunchPlan, { kind: 'refused' }> {
   if (input.live) return { kind: 'attach' };
-  if (!input.managed || input.startNew || !input.previouslyLaunched) return { kind: 'fresh' };
-  if (!input.canResume) return { kind: 'refused', reason: 'resume-unsupported' };
-  if (!input.ref) return { kind: 'refused', reason: 'resume-reference-missing' };
+  if (input.startNew || !input.canResume || !input.ref) return { kind: 'fresh' };
   return { kind: 'resume', ref: input.ref };
 }

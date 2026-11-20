@@ -97,7 +97,7 @@ import {
   serializeSchedulerFile,
 } from '../../src/scheduler-store';
 import { scrollbackReplayPadding, spawnPrelude } from '../../src/scrollback-persistence';
-import { isManagedAgent, planSessionLaunch } from '../../src/session-agent-identity';
+import { planSessionLaunch } from '../../src/session-agent-identity';
 import {
   COMMAND_AGENT_ID,
   coerceLocalOpenedBy,
@@ -429,6 +429,7 @@ export function createDomain(deps: DomainDeps): Domain {
   const requestedSizes = new Map<string, TermGeometry>();
   const startRefusals = new Map<string, StartRefusal>();
   const pendingRelaunchMarker = new Set<string>();
+  const freshReplacements = new Set<string>();
   const restoredSessions = new Set(startup.sessions.map((s) => s.id));
   const starts = new Map<string, Promise<SessionStartResult>>();
   const lastLines = new Map<string, string>();
@@ -600,6 +601,7 @@ export function createDomain(deps: DomainDeps): Domain {
         ...(agentScope ? { agentScope } : {}),
         ...(seq === undefined ? {} : { restartSeq: seq }),
         ...(startRefusal ? { startRefusal } : {}),
+        ...(freshReplacements.has(s.id) ? { startedNewConversation: true } : {}),
         runtime: {
           generation: f.generation,
           spawn: f.spawn,
@@ -1176,7 +1178,8 @@ export function createDomain(deps: DomainDeps): Domain {
       return refused({ reason: 'command-invalid' });
     }
     const def = effectiveDef(s, registry);
-    const plan = buildSessionLaunch(s, def, !startNew && isManagedAgent(s.agentId));
+    const canResume = !!def && !!identity.adapterFor(s, def.command)?.capabilities.exactResume;
+    const plan = buildSessionLaunch(s, def, !startNew && canResume);
     if (!plan.ok) {
       const why =
         plan.reason === 'unresolvable'
@@ -1222,16 +1225,12 @@ export function createDomain(deps: DomainDeps): Domain {
     const adapter = identity.adapterFor(s, spec.command);
     const launchPlan = planSessionLaunch({
       live: false,
-      managed: isManagedAgent(s.agentId),
-      previouslyLaunched:
-        (lastGenerationOf(s) > 0 || restoredSessions.has(id)) &&
-        !(retry && factsOf(id).spawn === 'unconfirmed' && !s.conversationRef),
       startNew,
       canResume: !!adapter?.capabilities.exactResume,
       ...(s.conversationRef ? { ref: s.conversationRef } : {}),
     });
-    if (launchPlan.kind === 'refused') return refuseResume(launchPlan.reason);
     const ref = launchPlan.kind === 'resume' ? launchPlan.ref : undefined;
+    const replacesPrevious = !ref && (lastGenerationOf(s) > 0 || restoredSessions.has(id));
     const codexBatch = adapter?.id === 'codex' && batchGuarded(hostPlatform, spec.command);
     if (ref && codexBatch) return refuseResume('resume-unsupported');
     const freshNamingIssue =
@@ -1365,6 +1364,7 @@ export function createDomain(deps: DomainDeps): Domain {
         // panel reads "not found" and hc's message says what really failed.
         setFacts(id, { spawn: 'none' });
         endEpisode(id);
+        if (ref) return refuseResume('resume-unconfirmed', prelude);
         refuseStart(id, `can't start: ${refusal.message}`);
         log.warn('pty', 'refused', {
           sessionId: id,
@@ -1386,6 +1386,8 @@ export function createDomain(deps: DomainDeps): Domain {
       );
       return refused(refusal, prelude);
     }
+    if (replacesPrevious) freshReplacements.add(id);
+    else freshReplacements.delete(id);
     if ('finished' in result) {
       identity.close(id);
       if (ref) return refuseResume('resume-unconfirmed', prelude);
@@ -1632,6 +1634,7 @@ export function createDomain(deps: DomainDeps): Domain {
       m.delete(id);
     pendingRelaunchMarker.delete(id);
     restoredSessions.delete(id);
+    freshReplacements.delete(id);
     identity.close(id);
     timers.onSessionDisposed(id);
     monitor.onSessionClosed(id);
@@ -1664,14 +1667,12 @@ export function createDomain(deps: DomainDeps): Domain {
     ) {
       return { sessionId: id, ok: false, reason: 'staleGeneration' };
     }
-    if (isLive(id) && isManagedAgent(s.agentId)) {
+    const def = effectiveDef(s, registry);
+    const adapter = def && identity.adapterFor(s, def.command);
+    if (isLive(id) && adapter?.capabilities.exactResume && s.conversationRef) {
       const generation = runtime.get(id)?.generation;
-      const def = effectiveDef(s, registry);
-      const adapter = def && identity.adapterFor(s, def.command);
       const base = buildSessionLaunch(s, def, true);
       if (
-        !adapter?.capabilities.exactResume ||
-        !s.conversationRef ||
         !base.ok ||
         (adapter.id === 'codex' && batchGuarded(hostPlatform, base.spec.command)) ||
         (await identity.check(adapter, s.conversationRef, withServerEnv(base.spec, deps.env)))

@@ -52,6 +52,7 @@ export function serializeSessions(sessions: Session[]): string {
       restartSeq: _restartSeq,
       startRefusal: _startRefusal,
       namingUnavailableReason: _namingUnavailableReason,
+      startedNewConversation: _startedNewConversation,
       ...rest
     }) => ({ ...rest, projectPath: rest.home }), // downgrade mirror; see mf-model spec §2.3
   );
@@ -113,6 +114,7 @@ export function parseSessions(blob: string | undefined): SessionsParse {
       stuckReason: _stuckReason,
       completions: _completions,
       namingUnavailableReason: _namingUnavailableReason,
+      startedNewConversation: _startedNewConversation,
       ...rest
     } = entry as Record<string, unknown>;
     const legacy = !nonEmpty(rawHome);

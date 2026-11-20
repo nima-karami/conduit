@@ -117,6 +117,7 @@ export interface Session {
   namingState?: SessionNamingState;
   conversationRef?: ConversationReference;
   namingUnavailableReason?: string;
+  startedNewConversation?: true;
   agentId: string;
   home: string; // absolute folder used as group key + cwd
   roots: string[]; // attached folders only: never home's key, folderKey-unique, add order

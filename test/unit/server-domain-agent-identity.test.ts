@@ -274,3 +274,41 @@ it('refuses identity preparation failure on exact resume without spawning fresh'
   expect(h.runtime.spawns).toHaveLength(1);
   expect(h.domain.sessions.get(id)?.conversationRef?.conversationId).toBe('conversation-fixture');
 });
+
+it('relaunches an unbound adapter-backed session and reports the fresh conversation', async () => {
+  const fake = fakeIdentity();
+  fake.adapter.observe = async () => {};
+  const h = harness({ identityAdapters: [fake.adapter] });
+  const id = await h.create({ agentId: 'claude' });
+  const view = () => h.domain.snapshot().sessions.find((session) => session.id === id);
+
+  await h.call('sessions.start', { sessionId: id });
+  expect(view()?.startedNewConversation).toBeUndefined();
+  expect(await h.call('sessions.restart', { sessionId: id })).toMatchObject({ ok: true });
+  expect(await h.call('sessions.start', { sessionId: id })).toMatchObject({
+    ok: true,
+    spawned: true,
+  });
+  expect(h.runtime.spawns.at(-1)?.spec.args).toContain('--fake-new-conversation');
+  expect(view()).toMatchObject({ startedNewConversation: true });
+  expect(view()?.startRefusal).toBeUndefined();
+});
+
+it('relaunches with a saved reference when the adapter cannot resume', async () => {
+  const fake = fakeIdentity();
+  const h = harness({ identityAdapters: [fake.adapter] });
+  const id = await h.create({ agentId: 'claude' });
+  await h.call('sessions.start', { sessionId: id });
+  expect(h.domain.sessions.get(id)?.conversationRef).toBeDefined();
+  fake.adapter.capabilities.exactResume = false;
+
+  expect(await h.call('sessions.restart', { sessionId: id })).toMatchObject({ ok: true });
+  expect(await h.call('sessions.start', { sessionId: id })).toMatchObject({
+    ok: true,
+    spawned: true,
+  });
+  expect(h.runtime.spawns.at(-1)?.spec.args).toContain('--fake-new-conversation');
+  expect(h.domain.snapshot().sessions.find((session) => session.id === id)).toMatchObject({
+    startedNewConversation: true,
+  });
+});
