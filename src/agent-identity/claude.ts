@@ -10,6 +10,7 @@ import {
   appendTitle,
   checkTranscript,
   findTranscript,
+  isClaudeId,
   isMissing,
   readTitles,
   type TranscriptCursor,
@@ -81,6 +82,7 @@ export function createClaudeIdentityAdapter(deps: ClaudeIdentityDeps): AgentIden
       launch.env.CLAUDE_CONFIG_DIR || launch.scope.storageHome,
     );
     const projects = path.join(config, 'projects');
+    const initialName = planned.name;
     const resumeFile =
       planned.source === 'resume' ? await fs.findTranscript(config, planned.id) : undefined;
     // Capture history before spawn so a rename immediately after SessionStart still counts.
@@ -88,40 +90,30 @@ export function createClaudeIdentityAdapter(deps: ClaudeIdentityDeps): AgentIden
       ? await fs.readTitles(resumeFile, undefined, () => undefined)
       : undefined;
     if (launch.signal.aborted) return;
-    let bound = false;
-    let timer: NodeJS.Timeout | undefined;
-    let registration: { file: string; token: object } | undefined;
+    let active: { id: string; stop: () => void } | undefined;
+    let pending = Promise.resolve();
     let unsubscribe: (() => void) | undefined;
 
     const stop = () => {
-      clearTimeout(timer);
       unsubscribe?.();
-      if (!registration) return;
-      const { file, token } = registration;
-      const listeners = registrations.get(file);
-      listeners?.delete(token);
-      if (listeners?.size === 0) {
-        registrations.delete(file);
-        for (const [nonce, writes] of echoes) {
-          if (writes.file === file) echoes.delete(nonce);
-        }
-      }
+      active?.stop();
     };
     launch.signal.addEventListener('abort', stop, { once: true });
 
-    function watch(candidate: string, file: string, plan: PlannedConversation) {
+    function watch(candidate: string, file: string, id: string, initial: boolean) {
       const token = {};
       const listeners = registrations.get(file) ?? new Set();
       listeners.add(token);
       registrations.set(file, listeners);
-      registration = { file, token };
-      let cursor: TranscriptCursor | undefined = resumeCursor;
-      let lastTitle = plan.name;
+      let running = true;
+      let timer: NodeJS.Timeout | undefined;
+      let cursor: TranscriptCursor | undefined = initial ? resumeCursor : undefined;
+      let lastTitle = initial ? initialName : undefined;
       let hasRead = Boolean(cursor);
 
       async function poll() {
         try {
-          const resolved = await fs.checkTranscript(projects, candidate, plan.id);
+          const resolved = await fs.checkTranscript(projects, candidate, id);
           if (resolved !== file) throw new Error('Claude transcript project moved');
           const previous = cursor;
           const records: { name: string; nonce: string | undefined }[] = [];
@@ -129,7 +121,7 @@ export function createClaudeIdentityAdapter(deps: ClaudeIdentityDeps): AgentIden
             const record = titleRecord(line);
             if (
               record?.type !== 'custom-title' ||
-              record.sessionId !== plan.id ||
+              record.sessionId !== id ||
               typeof record.customTitle !== 'string'
             )
               return;
@@ -138,25 +130,26 @@ export function createClaudeIdentityAdapter(deps: ClaudeIdentityDeps): AgentIden
               nonce: typeof record.conduitWrite === 'string' ? record.conduitWrite : undefined,
             });
           });
-          const replaced =
-            hasRead &&
-            (!previous ||
-              previous.inode !== cursor.inode ||
-              previous.device !== cursor.device ||
-              cursor.offset < previous.offset ||
-              cursor.restarted);
+          const latestOnly =
+            (!initial && !hasRead) ||
+            (hasRead &&
+              (!previous ||
+                previous.inode !== cursor.inode ||
+                previous.device !== cursor.device ||
+                cursor.offset < previous.offset ||
+                cursor.restarted));
           hasRead = true;
           for (const [index, { name, nonce }] of records.entries()) {
-            if (launch.signal.aborted) return;
+            if (!running || launch.signal.aborted) return;
             const write = nonce ? echoes.get(nonce) : undefined;
             const echo = write?.file === file ? write : undefined;
             if (echo && nonce) echoes.delete(nonce);
-            const effective = !replaced || index === records.length - 1;
+            const effective = !latestOnly || index === records.length - 1;
             const changed = effective && name !== lastTitle;
             if (effective) lastTitle = name;
             if (changed || echo) {
               observer.rename({
-                conversationId: plan.id,
+                conversationId: id,
                 name,
                 source: 'native',
                 ...(echo ? { echoRevision: echo.revision } : {}),
@@ -165,20 +158,30 @@ export function createClaudeIdentityAdapter(deps: ClaudeIdentityDeps): AgentIden
           }
         } catch (error) {
           if (isMissing(error)) cursor = undefined;
-          else deps.onError?.(error);
+          else if (running && !launch.signal.aborted) deps.onError?.(error);
         }
-        if (!launch.signal.aborted) {
+        if (running && !launch.signal.aborted) {
           timer = setTimeout(() => void poll(), POLL_MS);
           timer.unref();
         }
       }
 
       void poll();
+      return () => {
+        running = false;
+        clearTimeout(timer);
+        listeners.delete(token);
+        if (listeners.size === 0) {
+          registrations.delete(file);
+          for (const [nonce, write] of echoes) {
+            if (write.file === file) echoes.delete(nonce);
+          }
+        }
+      };
     }
 
     unsubscribe = deps.subscribeSessionStart(launch, (ids, payload) => {
       if (
-        bound ||
         launch.signal.aborted ||
         ids.generation !== launch.ids.generation ||
         ids.launchId !== launch.ids.launchId ||
@@ -186,28 +189,38 @@ export function createClaudeIdentityAdapter(deps: ClaudeIdentityDeps): AgentIden
         typeof payload !== 'object'
       )
         return;
-      const hook = payload as {
+      const {
+        session_id: id,
+        source,
+        transcript_path: transcript,
+      } = payload as {
         session_id?: unknown;
         source?: unknown;
         transcript_path?: unknown;
       };
-      if (
-        hook.session_id !== planned.id ||
-        hook.source !== planned.source ||
-        typeof hook.transcript_path !== 'string' ||
-        !path.isAbsolute(hook.transcript_path)
-      )
-        return;
-      const candidate = path.normalize(hook.transcript_path);
-      void fs
-        .checkTranscript(projects, candidate, planned.id)
-        .then((file) => {
-          if (bound || launch.signal.aborted || (resumeFile && file !== resumeFile)) return;
-          bound = true;
-          watch(candidate, file, planned);
-          observer.bind(planned.id);
+      if (!isClaudeId(id) || typeof transcript !== 'string' || !path.isAbsolute(transcript)) return;
+      const candidate = path.normalize(transcript);
+
+      // Keep hook order even when a later transcript path is quicker to validate.
+      pending = pending
+        .then(async () => {
+          if (launch.signal.aborted || active?.id === id) return;
+          const initial = active === undefined;
+          if (
+            initial
+              ? id !== planned.id || source !== planned.source
+              : source !== 'clear' && source !== 'resume'
+          )
+            return;
+          const file = await fs.checkTranscript(projects, candidate, id);
+          if (launch.signal.aborted || (initial && resumeFile && file !== resumeFile)) return;
+          active?.stop();
+          active = { id, stop: watch(candidate, file, id, initial) };
+          observer.bind(id);
         })
-        .catch((error: unknown) => deps.onError?.(error));
+        .catch((error: unknown) => {
+          if (!launch.signal.aborted) deps.onError?.(error);
+        });
     });
     if (launch.signal.aborted) stop();
   }
