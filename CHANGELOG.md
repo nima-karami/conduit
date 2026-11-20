@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.73.0] — 2026-11-20
+
 ### Changed
 
 - Agent and shell titles no longer overwrite an explicit Conduit session name. An unnamed shell can still follow its terminal title.
