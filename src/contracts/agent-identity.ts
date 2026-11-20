@@ -1,0 +1,117 @@
+import type { SessionStartResult } from './server-protocol';
+import type { LaunchIds } from './terminal-runtime';
+
+export type AgentIdentityAdapterId = 'claude' | 'codex';
+
+export type NativeNameSync =
+  | { status: 'pending' }
+  | { status: 'synced' }
+  | { status: 'failed'; reason: string };
+
+interface SessionNamingBase {
+  version: 1;
+  name: string;
+  revision: number;
+}
+
+export type SessionNamingState = SessionNamingBase &
+  (
+    | { naming: 'coupled'; nativeSync: NativeNameSync }
+    | { naming: 'decoupled'; followTerminalTitle: boolean }
+  );
+
+export interface ConversationScope {
+  cwd: string;
+  storageHome: string;
+  machineId: string;
+}
+
+export interface ConversationReference {
+  version: 1;
+  adapterId: AgentIdentityAdapterId;
+  conversationId: string;
+  scope: ConversationScope;
+  capturedAt: LaunchIds;
+}
+
+export interface AgentIdentityLaunch {
+  sessionId: string;
+  ids: LaunchIds;
+  scope: ConversationScope;
+  command: string;
+  argv: readonly string[];
+  env: Readonly<NodeJS.ProcessEnv>;
+  signal: AbortSignal;
+}
+
+export interface AgentIdentityCommand {
+  argv: readonly string[];
+  env?: Readonly<NodeJS.ProcessEnv>;
+}
+
+export interface NativeNameEvent {
+  conversationId: string;
+  name: string;
+  source: 'native';
+  /** An adapter may attach a revision only when it can attest which host write caused this event. */
+  echoRevision?: number;
+}
+
+export interface AgentIdentityObserver {
+  bind(conversationId: string): void;
+  rename(event: NativeNameEvent): void;
+}
+
+export interface AgentIdentityAdapter {
+  readonly id: AgentIdentityAdapterId;
+  readonly capabilities: { coupledNaming: boolean; exactResume: boolean };
+  /** argv is composed here because resume subcommands and variadic flags have different positions. */
+  fresh(launch: AgentIdentityLaunch, name: string): Promise<AgentIdentityCommand>;
+  resume(launch: AgentIdentityLaunch, ref: ConversationReference): Promise<AgentIdentityCommand>;
+  exists(ref: ConversationReference): Promise<'present' | 'missing' | 'unavailable'>;
+  setName(ref: ConversationReference, name: string, revision: number): Promise<void>;
+  /** Register before spawn so an early ID event can be attributed to this generation. */
+  observe(launch: AgentIdentityLaunch, observer: AgentIdentityObserver): Promise<void>;
+}
+
+export type ResumeRefusalReason =
+  | 'resume-reference-missing'
+  | 'resume-reference-invalid'
+  | 'resume-unsupported'
+  | 'resume-scope-mismatch'
+  | 'resume-conversation-missing'
+  | 'resume-check-unavailable'
+  | 'resume-argv-conflict'
+  | 'resume-unconfirmed';
+
+export type SessionLaunchPlan =
+  | { kind: 'attach' }
+  | { kind: 'fresh' }
+  | { kind: 'resume'; ref: ConversationReference }
+  | { kind: 'refused'; reason: ResumeRefusalReason };
+
+export interface ConversationResumeRefusal {
+  reason: 'conversation-resume';
+  problem: ResumeRefusalReason;
+  refusalId: string;
+}
+
+/** The host checks the refusal ID so a delayed or replayed confirmation cannot replace a newer run. */
+export interface ResolveConversationResume {
+  sessionId: string;
+  refusalId: string;
+  action: 'retry' | 'start-new';
+}
+
+export type ConversationRecoveryResult =
+  | SessionStartResult
+  | (Omit<Extract<SessionStartResult, { ok: false }>, 'refusal'> & {
+      refusal: ConversationResumeRefusal;
+    });
+
+export interface ConversationRecoveryMethods {
+  'sessions.resolveConversationResume': {
+    params: ResolveConversationResume;
+    result: ConversationRecoveryResult;
+  };
+}
