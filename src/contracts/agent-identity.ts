@@ -57,9 +57,14 @@ export interface NativeNameEvent {
   echoRevision?: number;
 }
 
+/** Why a bound conversation stopped being trustworthy; the session then shows as decoupled. */
+export type IdentityUnbindReason = 'primary-archived' | 'primary-deleted' | 'server-exited';
+
 export interface AgentIdentityObserver {
   bind(conversationId: string): void;
   rename(event: NativeNameEvent): void;
+  /** Keeps the last verified resume reference; only live naming stops until the next relaunch. */
+  unbind(reason: IdentityUnbindReason): void;
 }
 
 export interface AgentIdentityAdapter {
