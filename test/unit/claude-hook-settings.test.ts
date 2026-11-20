@@ -10,6 +10,7 @@ const hook = (event: string) => ({ type: 'command', command: `${RUN} hook ${even
 describe('claudeHookSettings', () => {
   it('registers each event with the matcher Claude names for it', () => {
     expect(claudeHookSettings(NONE).hooks).toEqual({
+      SessionStart: [{ hooks: [hook('SessionStart')] }],
       StopFailure: [{ matcher: 'rate_limit', hooks: [hook('StopFailure')] }],
       UserPromptSubmit: [{ hooks: [hook('UserPromptSubmit')] }],
       Stop: [{ hooks: [hook('Stop')] }],
@@ -108,7 +109,7 @@ describe('claudeHookSettings', () => {
   it('with statusLine null injects the hooks but leaves the status line alone (blockers D6)', () => {
     const s = claudeHookSettings({ ...NONE, statusLine: null });
     expect('statusLine' in s).toBe(false);
-    expect(Object.keys(s.hooks as object)).toHaveLength(6);
+    expect(Object.keys(s.hooks as object)).toHaveLength(7);
   });
 
   it('is plain JSON with no undefined values', () => {

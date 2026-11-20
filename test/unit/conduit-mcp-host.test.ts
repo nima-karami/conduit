@@ -1131,6 +1131,7 @@ describe('createConduitMcpHost — launch', () => {
     expect(i).toBeLessThan(out.args.indexOf('--mcp-config'));
     const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
     expect(Object.keys(settings.hooks)).toEqual([
+      'SessionStart',
       'StopFailure',
       'UserPromptSubmit',
       'Stop',
@@ -1158,7 +1159,7 @@ describe('createConduitMcpHost — launch', () => {
       fs.readFileSync(path.join(h.dir, 'launch', 'c1.settings.json'), 'utf8'),
     );
     expect('statusLine' in settings).toBe(false);
-    expect(Object.keys(settings.hooks)).toHaveLength(6);
+    expect(Object.keys(settings.hooks)).toHaveLength(7);
     expect(rec.of('status line not wrapped')).toHaveLength(1);
   });
 
