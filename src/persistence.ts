@@ -8,6 +8,7 @@ import {
 import { judgePersistedVersion } from './contracts/session-identity';
 import { folderKey } from './folder-key';
 import type { PersistedDoc } from './protocol';
+import { restoreNaming, validConversationRef } from './session-agent-identity';
 import { coerceModel, coerceOpenedBy, coerceSessionCommand } from './session-command';
 import type { Session } from './types';
 
@@ -50,6 +51,8 @@ export function serializeSessions(sessions: Session[]): string {
       agentScope: _agentScope,
       restartSeq: _restartSeq,
       startRefusal: _startRefusal,
+      namingUnavailableReason: _namingUnavailableReason,
+      startedNewConversation: _startedNewConversation,
       ...rest
     }) => ({ ...rest, projectPath: rest.home }), // downgrade mirror; see mf-model spec §2.3
   );
@@ -110,6 +113,8 @@ export function parseSessions(blob: string | undefined): SessionsParse {
       attentionReason: _attentionReason,
       stuckReason: _stuckReason,
       completions: _completions,
+      namingUnavailableReason: _namingUnavailableReason,
+      startedNewConversation: _startedNewConversation,
       ...rest
     } = entry as Record<string, unknown>;
     const legacy = !nonEmpty(rawHome);
@@ -139,8 +144,12 @@ export function parseSessions(blob: string | undefined): SessionsParse {
     delete s.openedBy;
     delete s.command;
     delete s.model;
+    if (!validConversationRef(s.conversationRef)) delete s.conversationRef;
+    const namingState = restoreNaming({ ...s, home, roots: [] });
     sessions.push({
       ...s,
+      name: namingState.name,
+      namingState,
       ...(mcpToolPolicy ? { mcpToolPolicy } : {}),
       ...(openedBy ? { openedBy } : {}),
       ...(command ? { command } : {}),

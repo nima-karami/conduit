@@ -39,6 +39,7 @@ import type {
   SessionCommand,
   SessionOpener,
 } from '../types';
+import type { ConversationRecoveryMethods } from './agent-identity';
 import type { DisplayFacts } from './frames';
 import type { Capability, GitOp, GitReqArgs, GitResult } from './link-protocol';
 import type {
@@ -368,7 +369,7 @@ export function versionOrder(
   return d > 0 ? 'appNewer' : 'appOlder';
 }
 
-export interface ServerMethods {
+export interface ServerMethods extends ConversationRecoveryMethods {
   // ── frozen across versions ──
   hello: {
     params: {

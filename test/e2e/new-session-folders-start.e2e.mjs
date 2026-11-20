@@ -27,6 +27,19 @@ import {
   waitStubArgs,
 } from './new-session-folders-helpers.mjs';
 
+function hasIdentityAndRoot(args, root) {
+  const prefix =
+    /^STUB-ARGS:--session-id [0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12} --name .+?(?= --add-dir )/i;
+  const identity = prefix.exec(args);
+  const rootArg = ` --add-dir ${root}`;
+  const remaining = identity && args.slice(identity[0].length);
+  return (
+    !!remaining &&
+    (remaining === rootArg || remaining.startsWith(`${rootArg} `)) &&
+    (args.match(/(?:^| )--add-dir(?= )/g) ?? []).length === 1
+  );
+}
+
 await windowsOnlyScenario('new-session-folders-start', '.cmd stubs and cmd prompt');
 
 await runNewSession('new-session-folders-start', async ({ fx, log, launch, close }) => {
@@ -115,10 +128,10 @@ await runNewSession('new-session-folders-start', async ({ fx, log, launch, close
   log('session: home A, roots [B], RMB pipeline, cli:claude ✓ (AC5)');
   const args = await waitStubArgs(page, s1, 'first');
   assert(
-    args.startsWith(`STUB-ARGS:--add-dir ${B}`) && args.split('--add-dir').length === 2,
+    hasIdentityAndRoot(args, B),
     `the spawned stub got exactly one --add-dir B (got ${JSON.stringify(args.slice(0, 200))})`,
   );
-  log('terminal: STUB-ARGS:--add-dir B ✓ (AC4 spawn half)');
+  log('terminal: identity prefix and one --add-dir B ✓ (AC4 spawn half)');
 
   phase('make home');
   await openDialog(page);
@@ -201,7 +214,7 @@ await runNewSession('new-session-folders-start', async ({ fx, log, launch, close
   await second.page.locator(`.session[data-sessionid="${s1}"]`).click();
   const aliasArgs = await waitStubArgs(second.page, s1, 'second');
   assert(
-    aliasArgs.startsWith(`STUB-ARGS:--add-dir ${B}`),
+    hasIdentityAndRoot(aliasArgs, B),
     `the cli:claude session launches my-claude's claude with its root (got ${JSON.stringify(aliasArgs.slice(0, 200))})`,
   );
   log('alias: my-claude shown, persisted cli:claude session launches it ✓ (AC9)');

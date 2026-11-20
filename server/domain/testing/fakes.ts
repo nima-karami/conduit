@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { AgentIdentityAdapter } from '../../../src/contracts/agent-identity';
 import type { ServerEvent, ServerEvents } from '../../../src/contracts/server-protocol';
 import type { ConduitLabels } from '../../../src/contracts/session-identity';
 import type { FirstPaint } from '../../../src/contracts/terminal-link';
@@ -142,6 +143,7 @@ export interface RecordedEvent {
 }
 
 export interface HarnessOptions {
+  identityAdapters?: readonly AgentIdentityAdapter[];
   /** Files written into userData before the domain is created. */
   files?: Record<string, string>;
   userData?: string;
@@ -216,6 +218,7 @@ export function harness(opts: HarnessOptions = {}) {
     homeDir: home,
     platform: opts.platform ?? process.platform,
     instance: 'inst',
+    identityAdapters: opts.identityAdapters,
     e2e: opts.e2e ?? false,
     env: opts.env ?? {},
     transcriptSize: opts.transcriptSize,
@@ -386,3 +389,33 @@ export function harness(opts: HarnessOptions = {}) {
 
 export const isFault = (e: unknown, kind: string): boolean =>
   e instanceof RpcFault && e.kind === kind;
+
+export function fakeIdentity(id: AgentIdentityAdapter['id'] = 'claude') {
+  const observers: Parameters<AgentIdentityAdapter['observe']>[1][] = [];
+  const writes: { conversationId: string; name: string; revision: number }[] = [];
+  let exists: Awaited<ReturnType<AgentIdentityAdapter['exists']>> = 'present';
+  const adapter: AgentIdentityAdapter = {
+    id,
+    capabilities: { coupledNaming: true, exactResume: true },
+    fresh: async (launch) => ({ argv: [...launch.argv, '--fake-new-conversation'] }),
+    resume: async (launch, ref) => ({
+      argv: [...launch.argv, '--fake-resume', ref.conversationId],
+    }),
+    exists: async () => exists,
+    setName: async (ref, name, revision) => {
+      writes.push({ conversationId: ref.conversationId, name, revision });
+    },
+    observe: async (_launch, observer) => {
+      observers.push(observer);
+      observer.bind('conversation-fixture');
+    },
+  };
+  return {
+    adapter,
+    observers,
+    writes,
+    setExists: (value: typeof exists) => {
+      exists = value;
+    },
+  };
+}

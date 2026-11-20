@@ -2,6 +2,8 @@ import { appendFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { version } from '../package.json';
+import { createClaudeIdentityAdapter } from '../src/agent-identity/claude';
+import { createCodexIdentityAdapter } from '../src/agent-identity/codex';
 import { SHIM_LEAF } from '../src/conduit-mcp/install-entries';
 import type { InstanceNames } from '../src/contracts/session-identity';
 import { instanceNames } from '../src/instance-names';
@@ -234,7 +236,18 @@ function createServerServices(o: {
         );
     };
   const log = { debug: at('debug'), info: at('info'), warn: at('warn'), error: at('error') };
+  const runtimeDir = o.platform === 'win32' ? undefined : process.env.XDG_RUNTIME_DIR;
+  const rendezvousDir = runtimeDir
+    ? path.join(runtimeDir, `conduit-${o.names.instance}`, 'codex')
+    : path.join(o.userData, 'run', 'codex');
   return createServices({
+    identityAdapters: (feed) => [
+      createClaudeIdentityAdapter({
+        subscribeSessionStart: feed.subscribe,
+        onError: (error) => log.warn('claude-identity', String(error)),
+      }),
+      createCodexIdentityAdapter({ rendezvousDir }),
+    ],
     userData: o.userData,
     names: o.names,
     secret: o.secret,

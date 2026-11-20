@@ -10,7 +10,8 @@ export type AgentScopeReason =
   | 'busy'
   | 'writeFailed'
   | 'notReady'
-  | 'homeMissing';
+  | 'homeMissing'
+  | 'conversationResume';
 
 export type AddDirResult = { ok: true; pasted: string } | { ok: false; reason: AgentScopeReason };
 

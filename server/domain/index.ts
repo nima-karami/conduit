@@ -15,6 +15,11 @@ import { adapterFor } from '../../src/conduit-mcp/adapters';
 import type { McpOpenRequest } from '../../src/conduit-mcp/control-tools';
 import { CLI_KINDS, type CliKind } from '../../src/conduit-mcp/tool-policy';
 import { type AgentsConfig, loadAgentsConfig, readBlob, readFileState } from '../../src/config';
+import type {
+  AgentIdentityAdapter,
+  ConversationResumeRefusal,
+  ResumeRefusalReason,
+} from '../../src/contracts/agent-identity';
 import type { HookPost } from '../../src/contracts/hook-protocol';
 import {
   type NativeLaunchEvidence,
@@ -70,6 +75,7 @@ import { type DroppedRoot, type FolderProbeDeps, probeFolder } from '../../src/f
 import { GIT_TIMEOUT, runGit } from '../../src/git-exec';
 import { getGitInfo } from '../../src/git-info';
 import { lastNonEmptyLine } from '../../src/last-line';
+import { batchGuarded, firstCmdMetachar } from '../../src/launch-args';
 import { previewLaunch } from '../../src/launch-preview';
 import { buildLaunchSpec, sanitizeChildEnv } from '../../src/launch-spec';
 import { LauncherHost } from '../../src/launcher-host';
@@ -78,6 +84,7 @@ import { matchLimitRules } from '../../src/limit-rules';
 import type { HostPlatform } from '../../src/lsp-binary';
 import { deliverableText, normalizeMessage } from '../../src/message-text';
 import { CwdScanner } from '../../src/osc-cwd';
+import { isInsideAnyRealRoot } from '../../src/path-guard';
 import { userRootsOf } from '../../src/path-link-roots';
 import { parseSessions, serializeSessions } from '../../src/persistence';
 import { ProjectStore, parseProjects, serializeProjects } from '../../src/project-store';
@@ -90,6 +97,7 @@ import {
   serializeSchedulerFile,
 } from '../../src/scheduler-store';
 import { scrollbackReplayPadding, spawnPrelude } from '../../src/scrollback-persistence';
+import { planSessionLaunch } from '../../src/session-agent-identity';
 import {
   COMMAND_AGENT_ID,
   coerceLocalOpenedBy,
@@ -119,6 +127,7 @@ import type {
 } from '../../src/types';
 import { HC_XDG_ISOLATED_ENV } from '../hc-cli';
 import { type RpcAnswer, RpcFault, type RpcRequest } from '../transport/pipe';
+import { createIdentityRegistry } from './agent-identity';
 import { createClaudeFeedGap } from './claude-feed-gap';
 import { createRolloutFs } from './codex-rollout-fs';
 import type { CodexWatch, CodexWatchDeps } from './codex-rollout-watch';
@@ -141,6 +150,8 @@ export interface DomainDeps {
   /** The `conduit.instance` label (InstanceNames.instance). */
   instance: string;
   e2e: boolean;
+  identityAdapters?: readonly AgentIdentityAdapter[];
+  identityMachineId?: () => string;
   /** The server's own env (process.env): every session's base env (withServerEnv). */
   env: Readonly<Record<string, string | undefined>>;
   /** Test seam: the Stop-time size lookup of the feed gap. Production uses readTranscriptSize. */
@@ -257,6 +268,7 @@ function viewFields(s: Session): Omit<Session, AppSessionField> {
   for (const k of APP_SESSION_FIELDS) delete record[k];
   delete record.lastGeneration;
   delete record.nativeLaunch;
+  delete record.conversationRef;
   return record;
 }
 
@@ -417,6 +429,8 @@ export function createDomain(deps: DomainDeps): Domain {
   const requestedSizes = new Map<string, TermGeometry>();
   const startRefusals = new Map<string, StartRefusal>();
   const pendingRelaunchMarker = new Set<string>();
+  const freshReplacements = new Set<string>();
+  const restoredSessions = new Set(startup.sessions.map((s) => s.id));
   const starts = new Map<string, Promise<SessionStartResult>>();
   const lastLines = new Map<string, string>();
   /** The last run's exit code, from its transition to exited until the next run starts. */
@@ -456,6 +470,35 @@ export function createDomain(deps: DomainDeps): Domain {
   // With restore off the held records are only in memory until reconcile says which run.
   const sessionsWriteAllowed = () =>
     sessionsWritable && (reconciled || settingsAtLoad.restoreSessions);
+  const writeSessionsNow = () => {
+    if (!sessionsWriteAllowed()) throw new RpcFault('unavailable', 'sessions-unavailable');
+    atomicWriteFileSync(file('sessions.json'), serializeSessions(persistedSessions()));
+  };
+  const identity = createIdentityRegistry({
+    adapters: deps.identityAdapters ?? [],
+    machineId: deps.identityMachineId ?? (() => deps.instance),
+    homeDir: deps.homeDir,
+    session: (id) => mgr.get(id),
+    save: (id, ref) => {
+      const s = mgr.get(id);
+      if (!s) throw new RpcFault('not_found', 'Session no longer exists');
+      const previous = s.conversationRef;
+      s.conversationRef = ref;
+      try {
+        writeSessionsNow();
+      } catch (error) {
+        if (previous) s.conversationRef = previous;
+        else delete s.conversationRef;
+        throw error;
+      }
+    },
+    nativeRename: (id, name) => {
+      mgr.rename(id, name, true, writeSessionsNow);
+    },
+    sync: (id, revision, status) => mgr.setNativeSync(id, revision, status),
+    changed: () => changed(false),
+    warn: (message, data) => log.warn('session', message, data),
+  });
   const writers: Record<'sessions' | 'timers' | 'projects', () => string | null> = {
     sessions: () => (sessionsWriteAllowed() ? serializeSessions(persistedSessions()) : null),
     // Unloaded (restore off, before reconcile) the in-memory list is empty, not the file's.
@@ -531,6 +574,19 @@ export function createDomain(deps: DomainDeps): Domain {
   function views(): SessionView[] {
     return mgr.list().map((s) => {
       const rest = viewFields(s);
+      const naming = rest.namingState;
+      if (naming?.naming === 'coupled' && isLive(s.id) && !identity.hasObserver(s.id)) {
+        rest.namingUnavailableReason =
+          identity.reasonUnavailable(s.id) ??
+          'Agent name sync is unavailable until this conversation is relaunched.';
+        rest.namingState = {
+          version: naming.version,
+          revision: naming.revision,
+          name: naming.name,
+          naming: 'decoupled',
+          followTerminalTitle: false,
+        };
+      }
       const f = factsOf(s.id);
       const agentScope = scopes.view(s.id);
       const seq = restartSeq.get(s.id);
@@ -545,6 +601,7 @@ export function createDomain(deps: DomainDeps): Domain {
         ...(agentScope ? { agentScope } : {}),
         ...(seq === undefined ? {} : { restartSeq: seq }),
         ...(startRefusal ? { startRefusal } : {}),
+        ...(freshReplacements.has(s.id) ? { startedNewConversation: true } : {}),
         runtime: {
           generation: f.generation,
           spawn: f.spawn,
@@ -819,6 +876,13 @@ export function createDomain(deps: DomainDeps): Domain {
         // A job loaded before reconcile saw no live PTY and is waiting: an adopted terminal is
         // its PTY coming back (spec §4 "Server restarted between arm and fire").
         timers.onPtyStart(t.sessionId);
+        queueMicrotask(() => {
+          const s = mgr.get(t.sessionId);
+          if (!s || !isLive(t.sessionId) || factsOf(t.sessionId).generation !== t.generation)
+            return;
+          const plan = buildSessionLaunch(s, effectiveDef(s, registry), true);
+          if (plan.ok) void identity.adopt(s, withServerEnv(plan.spec, deps.env), t);
+        });
       } else mgr.setStatus(t.sessionId, 'exited');
     }
     reconciled = true;
@@ -888,6 +952,8 @@ export function createDomain(deps: DomainDeps): Domain {
           );
         return;
       case 'spawned':
+        if (current(e.sessionId, e.generation)) identity.activate(e.sessionId);
+        if (identity.awaitingResume(e.sessionId)) return;
         setFacts(e.sessionId, { generation: e.generation, spawn: 'live', lastSize: e.size });
         if (mgr.get(e.sessionId)?.status !== 'running') mgr.setStatus(e.sessionId, 'running');
         return;
@@ -909,6 +975,7 @@ export function createDomain(deps: DomainDeps): Domain {
             return;
           setFacts(e.sessionId, { generation: e.generation });
         }
+        identity.close(e.sessionId);
         log.info('pty', 'exit', { sessionId: e.sessionId, code: e.code, reason: e.reason });
         exitCodes.set(e.sessionId, e.code);
         setFacts(e.sessionId, { spawn: 'none' });
@@ -992,7 +1059,7 @@ export function createDomain(deps: DomainDeps): Domain {
 
   const attachResult = (id: string): SessionStartResult | undefined => {
     const t = runtime.get(id);
-    if (t?.state !== 'live') return undefined;
+    if (t?.state !== 'live' || identity.awaitingResume(id)) return undefined;
     const prelude = earlierRuns(id);
     return {
       ok: true,
@@ -1015,13 +1082,13 @@ export function createDomain(deps: DomainDeps): Domain {
     return undefined;
   };
 
-  function start(id: string, retry: boolean): Promise<SessionStartResult> {
+  function start(id: string, retry: boolean, startNew = false): Promise<SessionStartResult> {
     const inFlight = starts.get(id);
     if (inFlight) return inFlight.then((r) => attachResult(id) ?? r);
     if (!mgr.get(id)) return Promise.reject(new RpcFault('not_found', 'Session no longer exists'));
     const early = preflight(id, retry);
     if (early) return Promise.resolve(early);
-    const run = coldStart(id, retry).finally(() => starts.delete(id));
+    const run = coldStart(id, retry, startNew).finally(() => starts.delete(id));
     starts.set(id, run);
     return run;
   }
@@ -1049,7 +1116,32 @@ export function createDomain(deps: DomainDeps): Domain {
     mgr.setStatus(id, 'stale');
   };
 
-  async function coldStart(id: string, retry: boolean): Promise<SessionStartResult> {
+  const buildSessionLaunch = (
+    session: Session,
+    def: AgentDefinition | undefined,
+    resume: boolean,
+  ) => {
+    const roots = presentRoots(session);
+    const refCwd = resume ? session.conversationRef?.scope.cwd : undefined;
+    const cwd =
+      refCwd && isInsideAnyRealRoot(refCwd, [session.home, ...roots]) ? refCwd : session.cwd;
+    return buildLaunchSpec({
+      def,
+      cwd,
+      home: session.home,
+      homeMissing: !!session.homeMissing,
+      roots,
+      exists: existsSync,
+      resolveCommand,
+      platform: hostPlatform,
+    });
+  };
+
+  async function coldStart(
+    id: string,
+    retry: boolean,
+    startNew: boolean,
+  ): Promise<SessionStartResult> {
     // Until the first reconcile a running terminal or an unconfirmed launch of this session is not
     // known yet, and spawning would start a second run of it.
     await reconciledReady;
@@ -1059,9 +1151,18 @@ export function createDomain(deps: DomainDeps): Domain {
     // A restored session's first health check may still be marking missing folders.
     await folders.pending(id);
     // A session restored at start launches before the MCP endpoint listens; it waits, bounded.
-    await deps.launch.whenLaunchReady();
+    const opening = mgr.get(id);
+    const openingDef = opening && effectiveDef(opening, registry);
+    await deps.launch.whenLaunchReady(
+      !!opening &&
+        !!openingDef &&
+        identity.adapterFor(opening, openingDef.command)?.id === 'claude',
+    );
     const s = mgr.get(id);
     if (!s) throw new RpcFault('not_found', 'Session no longer exists');
+    const previousRefusal = startRefusals.get(id);
+    if (previousRefusal?.reason === 'conversation-resume' && !retry && !startNew)
+      return { ok: false, refusal: previousRefusal };
     if (startRefusals.delete(id)) changed(false);
     // Neutralized history of the previous process, before the plan check as today, so a refused
     // start still shows it. Once per start: each call records the replay's tail in the ring.
@@ -1077,16 +1178,8 @@ export function createDomain(deps: DomainDeps): Domain {
       return refused({ reason: 'command-invalid' });
     }
     const def = effectiveDef(s, registry);
-    const plan = buildLaunchSpec({
-      def,
-      cwd: s.cwd,
-      home: s.home,
-      homeMissing: !!s.homeMissing,
-      roots: presentRoots(s),
-      exists: existsSync,
-      resolveCommand,
-      platform: hostPlatform,
-    });
+    const canResume = !!def && !!identity.adapterFor(s, def.command)?.capabilities.exactResume;
+    const plan = buildSessionLaunch(s, def, !startNew && canResume);
     if (!plan.ok) {
       const why =
         plan.reason === 'unresolvable'
@@ -1118,6 +1211,40 @@ export function createDomain(deps: DomainDeps): Domain {
       changed(false);
       return refused({ reason: 'native_permissions', problem });
     };
+    const refuseResume = (problem: ResumeRefusalReason, paint = history): SessionStartResult => {
+      const refusal: ConversationResumeRefusal = {
+        reason: 'conversation-resume',
+        problem,
+        refusalId: randomBytes(16).toString('hex'),
+      };
+      startRefusals.set(id, refusal);
+      refuseStart(id, "Can't resume this conversation.");
+      changed(false);
+      return refused(refusal, paint);
+    };
+    const adapter = identity.adapterFor(s, spec.command);
+    const launchPlan = planSessionLaunch({
+      live: false,
+      startNew,
+      canResume: !!adapter?.capabilities.exactResume,
+      ...(s.conversationRef ? { ref: s.conversationRef } : {}),
+    });
+    const ref = launchPlan.kind === 'resume' ? launchPlan.ref : undefined;
+    const replacesPrevious = !ref && (lastGenerationOf(s) > 0 || restoredSessions.has(id));
+    const codexBatch = adapter?.id === 'codex' && batchGuarded(hostPlatform, spec.command);
+    if (ref && codexBatch) return refuseResume('resume-unsupported');
+    const freshNamingIssue =
+      !ref && adapter
+        ? codexBatch
+          ? 'Agent name sync is unavailable for this Windows batch launcher.'
+          : identity.hasIdentityConflict(adapter, spec.args)
+            ? 'Agent name sync is unavailable because this launcher sets its own conversation options.'
+            : undefined
+        : undefined;
+    if (ref && adapter) {
+      const problem = await identity.check(adapter, ref, spec);
+      if (problem) return refuseResume(problem);
+    }
     const native = def ? deps.launch.prepareNativeLaunch(id, def, spec) : undefined;
     if (native?.ok === false) return refuseNative(native.problem);
 
@@ -1132,9 +1259,47 @@ export function createDomain(deps: DomainDeps): Domain {
     if (def && native) spec = deps.launch.prepareLaunch(id, def, native.spec, ids);
     // brief --add-dir is not a session root (role-brief spec §3.2)
     const scopeArgs = spec.args;
-    const brief = roleBriefs.prepareSpawn(id, def, spec);
-    spec = brief.spec;
-    for (const banner of brief.banners) scrollback.show(id, banner);
+    const brief = ref ? undefined : roleBriefs.prepareSpawn(id, def, spec);
+    if (brief) spec = brief.spec;
+    let preparedIdentity: Awaited<ReturnType<typeof identity.prepare>> | undefined;
+    if (freshNamingIssue) {
+      identity.disable(id, freshNamingIssue);
+    } else if (adapter) {
+      try {
+        const prepared = await identity.prepare(s, spec, ids, adapter, ref);
+        const unsafeArgs =
+          batchGuarded(hostPlatform, prepared.spec.command) &&
+          prepared.spec.args.some((arg) => !spec.args.includes(arg) && firstCmdMetachar(arg));
+        if (unsafeArgs) {
+          if (ref) {
+            identity.close(id);
+            brief?.commit(false);
+            return refuseResume('resume-argv-conflict');
+          }
+          identity.disable(id, 'Agent name sync could not pass this name to the Windows launcher.');
+        } else {
+          preparedIdentity = prepared;
+          spec = prepared.spec;
+        }
+      } catch (error) {
+        log.warn('session', 'agent launch preparation failed', {
+          sessionId: id,
+          error: String(error),
+        });
+        if (ref) {
+          brief?.commit(false);
+          return refuseResume('resume-check-unavailable');
+        }
+        identity.disable(id, 'Agent name sync could not start with this launcher.');
+      }
+    }
+    if (!mgr.get(id) || deps.stopping()) {
+      identity.close(id);
+      brief?.commit(false);
+      if (!mgr.get(id)) throw new RpcFault('not_found', 'Session no longer exists');
+      return refused({ reason: 'server_stopping' });
+    }
+    for (const banner of brief?.banners ?? []) scrollback.show(id, banner);
     log.info('pty', 'spawn', {
       sessionId: id,
       agentId: s.agentId,
@@ -1170,10 +1335,15 @@ export function createDomain(deps: DomainDeps): Domain {
     // ring and pane agree (lead decision, w4 round 3 SF2).
     if (marker) scrollback.record(id, marker);
     const launchAt = Date.now();
-    const result = await runtime.spawn(id, spec, labels, ids);
-    brief.commit(result.ok && 'terminal' in result);
+    const result = await runtime.spawn(id, spec, labels, ids).catch((error: unknown) => {
+      identity.close(id);
+      brief?.commit(false);
+      throw error;
+    });
+    brief?.commit(result.ok && 'terminal' in result);
     if (!(result.ok && 'terminal' in result)) scopes.ended(id);
     if (!result.ok) {
+      if (result.refusal.reason !== 'spawn_unconfirmed') identity.close(id);
       const { refusal } = result;
       if (!mgr.get(id)) {
         // Closed mid-spawn: the close found nothing to discard yet.
@@ -1182,12 +1352,19 @@ export function createDomain(deps: DomainDeps): Domain {
         facts.delete(id);
         throw new RpcFault('not_found', 'Session no longer exists');
       }
+      if (ref && refusal.reason === 'spawn_unconfirmed') {
+        identity.close(id);
+        await runtime.discardLaunch(id, refusal.launchId);
+        setFacts(id, { spawn: 'none' });
+        return refuseResume('resume-unconfirmed', prelude);
+      }
       if (refusal.reason === 'spawn_failed') {
         // hc refused the run: a can't-start like a missing command. C2 has no spawn_failed refusal,
         // so the result maps to `unresolvable`; the view's startRefusal stays unset, since its
         // panel reads "not found" and hc's message says what really failed.
         setFacts(id, { spawn: 'none' });
         endEpisode(id);
+        if (ref) return refuseResume('resume-unconfirmed', prelude);
         refuseStart(id, `can't start: ${refusal.message}`);
         log.warn('pty', 'refused', {
           sessionId: id,
@@ -1209,7 +1386,11 @@ export function createDomain(deps: DomainDeps): Domain {
       );
       return refused(refusal, prelude);
     }
+    if (replacesPrevious) freshReplacements.add(id);
+    else freshReplacements.delete(id);
     if ('finished' in result) {
+      identity.close(id);
+      if (ref) return refuseResume('resume-unconfirmed', prelude);
       startRefusals.delete(id);
       exitCodes.set(id, result.finished.exitCode);
       setFacts(id, { spawn: 'none' });
@@ -1223,6 +1404,13 @@ export function createDomain(deps: DomainDeps): Domain {
     if (!mgr.get(id)) {
       await runtime.kill(id);
       throw new RpcFault('not_found', 'Session no longer exists');
+    }
+    if (preparedIdentity) identity.activate(id);
+    if (ref && preparedIdentity && !(await identity.confirm(id, preparedIdentity.instance))) {
+      identity.close(id);
+      await runtime.retire(id);
+      setFacts(id, { spawn: 'none' });
+      return refuseResume('resume-unconfirmed', prelude);
     }
     setFacts(id, { generation: terminal.generation, spawn: 'live', lastSize: terminal.size });
     startRefusals.delete(id);
@@ -1445,6 +1633,9 @@ export function createDomain(deps: DomainDeps): Domain {
     for (const m of [facts, restartSeq, startRefusals, lastLines, requestedSizes, exitCodes])
       m.delete(id);
     pendingRelaunchMarker.delete(id);
+    restoredSessions.delete(id);
+    freshReplacements.delete(id);
+    identity.close(id);
     timers.onSessionDisposed(id);
     monitor.onSessionClosed(id);
     codexWatch.untrack(id);
@@ -1476,6 +1667,22 @@ export function createDomain(deps: DomainDeps): Domain {
     ) {
       return { sessionId: id, ok: false, reason: 'staleGeneration' };
     }
+    const def = effectiveDef(s, registry);
+    const adapter = def && identity.adapterFor(s, def.command);
+    if (isLive(id) && adapter?.capabilities.exactResume && s.conversationRef) {
+      const generation = runtime.get(id)?.generation;
+      const base = buildSessionLaunch(s, def, true);
+      if (
+        !base.ok ||
+        (adapter.id === 'codex' && batchGuarded(hostPlatform, base.spec.command)) ||
+        (await identity.check(adapter, s.conversationRef, withServerEnv(base.spec, deps.env)))
+      ) {
+        return { sessionId: id, ok: false, reason: 'conversationResume' };
+      }
+      if (mgr.get(id) !== s || !isLive(id) || runtime.get(id)?.generation !== generation) {
+        return { sessionId: id, ok: false, reason: 'staleGeneration' };
+      }
+    }
     // No exit for this generation: the session stays, and the remounted pane's start spawns.
     if (isLive(id)) {
       const terminal = runtime.get(id);
@@ -1484,6 +1691,7 @@ export function createDomain(deps: DomainDeps): Domain {
         launchId: terminal.launchId,
       };
       await runtime.retire(id);
+      identity.close(id);
       if (retiredIds) codexWatch.unlinkPosture(id, retiredIds);
       setFacts(id, { spawn: 'none' });
       endEpisode(id);
@@ -1550,7 +1758,9 @@ export function createDomain(deps: DomainDeps): Domain {
     if (!mgr.get(id)) return { ok: false, reason: 'unknown-session' };
     switch (m?.op) {
       case 'rename':
-        mgr.rename(id, String(m.name ?? ''));
+        if (typeof m.name !== 'string' || !mgr.rename(id, m.name, false, writeSessionsNow))
+          return { ok: false, reason: 'invalid-name' };
+        identity.sendName(id);
         return { ok: true };
       case 'setIconOverride':
         mgr.setIconOverride(id, typeof m.icon === 'string' ? m.icon : null);
@@ -1593,11 +1803,25 @@ export function createDomain(deps: DomainDeps): Domain {
     'sessions.start': (p) =>
       p.mode === 'view' ? view(str(p, 'sessionId')) : start(str(p, 'sessionId'), false),
     'sessions.retryLaunch': (p) => start(str(p, 'sessionId'), true),
+    'sessions.resolveConversationResume': (p) => {
+      const id = str(p, 'sessionId');
+      const refusal = startRefusals.get(id);
+      if (p.action !== 'retry' && p.action !== 'start-new')
+        throw new RpcFault('invalid', 'Invalid conversation recovery action');
+      if (
+        refusal?.reason !== 'conversation-resume' ||
+        p.refusalId !== refusal.refusalId ||
+        starts.has(id)
+      )
+        throw new RpcFault('refused', 'The conversation recovery request is no longer current');
+      return start(id, true, p.action === 'start-new');
+    },
     'sessions.discardLaunch': async (p) => {
       const id = str(p, 'sessionId');
       const f = factsOf(id);
       if (f.spawn === 'unconfirmed' && f.launchId) {
         await runtime.discardLaunch(id, f.launchId);
+        identity.close(id);
         setFacts(id, { spawn: 'none' });
         mgr.setStatus(id, 'stale');
       }
@@ -1906,6 +2130,7 @@ export function createDomain(deps: DomainDeps): Domain {
     },
     dispose: async () => {
       unsubscribe();
+      identity.dispose();
       timers.stop();
       monitor.dispose();
       codexWatch.dispose();

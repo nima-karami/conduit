@@ -1,6 +1,7 @@
 // Every string of the 12c banner and the 12d missing-home state, and the banner's action model
 // (mf-live-edits spec §2.2, §2.6, §3.3). No i18n layer exists; keep strings here, not in JSX.
 import type { AgentScopeReason } from '../src/add-dir-delivery';
+import type { ResumeRefusalReason } from '../src/contracts/agent-identity';
 import { plural } from '../src/plural';
 import { sessionNameFromPath } from '../src/session-name';
 import type { AgentScopeView } from '../src/types';
@@ -120,3 +121,14 @@ export const RELAUNCH_LABEL = '↻ Relaunch';
 export function notFoundSegments(command: string): CopySegment[] {
   return [{ kind: 'name', text: command }, text(" wasn't found")];
 }
+
+export const resumeRefusalMessage: Record<ResumeRefusalReason, string> = {
+  'resume-reference-missing': 'Conduit has no saved conversation ID for this session.',
+  'resume-reference-invalid': 'The saved conversation ID is invalid.',
+  'resume-unsupported': 'This agent launcher does not support resuming a saved conversation.',
+  'resume-scope-mismatch': 'This conversation was saved in a different folder or agent profile.',
+  'resume-conversation-missing': 'The agent could not find the saved conversation.',
+  'resume-check-unavailable': 'Conduit could not check the saved conversation.',
+  'resume-argv-conflict': 'This launcher already includes a conversation option.',
+  'resume-unconfirmed': 'The agent did not confirm that it resumed the saved conversation.',
+};

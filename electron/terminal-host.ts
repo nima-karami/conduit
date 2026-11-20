@@ -1,3 +1,4 @@
+import type { ResolveConversationResume } from '../src/contracts/agent-identity';
 import type { DisplayFacts } from '../src/contracts/frames';
 import type { AppSessionView, ServerMethods } from '../src/contracts/server-protocol';
 import {
@@ -134,7 +135,10 @@ export function createTerminalHost(d: TerminalHostDeps) {
   async function run(
     sessionId: string,
     pane: Pane,
-    method: 'sessions.start' | 'sessions.retryLaunch' = 'sessions.start',
+    method:
+      | 'sessions.start'
+      | 'sessions.retryLaunch'
+      | ResolveConversationResume = 'sessions.start',
   ): Promise<void> {
     const c = d.client();
     if (!c || pane.starting || pane.retired) return;
@@ -149,9 +153,16 @@ export function createTerminalHost(d: TerminalHostDeps) {
       try {
         // A run start's params stay what an older app sent; a retry is always a new launch.
         const view = method === 'sessions.start' && pane.mode === 'view';
-        r = await c.call(method, view ? { sessionId, mode: 'view' } : { sessionId });
+        r =
+          typeof method === 'string'
+            ? await c.call(method, view ? { sessionId, mode: 'view' } : { sessionId })
+            : await c.call('sessions.resolveConversationResume', method);
       } catch (error) {
-        d.log('warn', `${method} failed`, { sessionId, err: String(error) });
+        d.log(
+          'warn',
+          `${typeof method === 'string' ? method : 'sessions.resolveConversationResume'} failed`,
+          { sessionId, err: String(error) },
+        );
         return;
       }
       if (!current(sessionId, pane)) return;
@@ -230,6 +241,22 @@ export function createTerminalHost(d: TerminalHostDeps) {
         await c.call('sessions.retryLaunch', { sessionId });
       } catch (error) {
         d.log('warn', 'sessions.retryLaunch failed', { sessionId, err: String(error) });
+      }
+    },
+
+    async resolveConversationResume(input: ResolveConversationResume): Promise<void> {
+      const pane = panes.get(input.sessionId);
+      if (pane) {
+        await run(input.sessionId, pane, input);
+        return;
+      }
+      try {
+        await d.client()?.call('sessions.resolveConversationResume', input);
+      } catch (error) {
+        d.log('warn', 'sessions.resolveConversationResume failed', {
+          sessionId: input.sessionId,
+          err: String(error),
+        });
       }
     },
 

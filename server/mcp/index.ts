@@ -31,7 +31,7 @@ import type {
   ServerNotifications,
   WindowPresence,
 } from '../../src/contracts/server-protocol';
-import type { AdoptedTerminal } from '../../src/contracts/terminal-runtime';
+import type { AdoptedTerminal, LaunchIds } from '../../src/contracts/terminal-runtime';
 import type { HostPlatform } from '../../src/lsp-binary';
 import type { HostToWebview } from '../../src/protocol';
 import { createBindingStore } from './bindings-file';
@@ -75,7 +75,7 @@ export interface McpServerDeps extends Omit<McpHostDeps, 'tokens'> {
   hookClientPath: string | null;
   gitBashPath: () => string | undefined;
   /** A hook post the endpoint authenticated. */
-  onHook: (sessionId: string, post: HookPost) => void;
+  onHook: (sessionId: string, post: HookPost, ids: LaunchIds) => void;
   homeDir: string;
   platform: HostPlatform;
   e2e: boolean;

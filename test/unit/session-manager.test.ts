@@ -74,12 +74,12 @@ describe('SessionManager (model)', () => {
     expect(restored.get(s.id)?.name).toBe('Renamed by user');
   });
 
-  it('still adopts terminal titles when an MCP opener gave no label', () => {
+  it('preserves the fallback label for an agent opened without a label', () => {
     const s = mgr.create('claude', '/work/proj', {
       openedBy: { handle: 'lead', sessionId: 'lead-id' },
     });
     mgr.applyTitle(s.id, 'CLI generated title');
-    expect(mgr.get(s.id)?.name).toBe('CLI generated title');
+    expect(mgr.get(s.id)?.name).toBe('proj');
   });
 
   it('stamps createdAt and lastActiveAt from injected now on create', () => {

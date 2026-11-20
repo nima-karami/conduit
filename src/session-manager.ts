@@ -1,6 +1,8 @@
 import type { AgentRegistry } from './agent-registry';
+import type { NativeNameSync, SessionNamingState } from './contracts/agent-identity';
 import type { SessionAutoResume } from './contracts/scheduler';
 import { folderKey } from './folder-key';
+import { initialNaming, normalizeSessionLabel, restoreNaming } from './session-agent-identity';
 import { COMMAND_AGENT_ID, effectiveDef } from './session-command';
 import { iconKindFromText } from './session-icon';
 import { sessionNameFromPath } from './session-name';
@@ -77,7 +79,7 @@ export class SessionManager {
     const session: Session = {
       id,
       // Default name is the folder basename only — no agent suffix or counter.
-      name: name || sessionNameFromPath(home),
+      name: (name && normalizeSessionLabel(name)) || sessionNameFromPath(home),
       agentId,
       home,
       roots: [...(opts.roots ?? [])],
@@ -96,6 +98,7 @@ export class SessionManager {
       ...(opts.closeWhenDone ? { closeWhenDone: true } : {}),
       ...(opts.model !== undefined ? { model: opts.model } : {}),
     };
+    session.namingState = initialNaming(session, Boolean(name || opts.lockTitle));
     setMissing(session, new Set((opts.missingRoots ?? []).map(folderKey)));
     this.sessions.set(id, session);
     this.emit();
@@ -258,17 +261,57 @@ export class SessionManager {
       // Back-compat: sessions persisted before lastActiveAt/createdAt existed.
       const createdAt = s.createdAt ?? this.now();
       const lastActiveAt = s.lastActiveAt ?? createdAt;
-      this.sessions.set(s.id, { ...s, status: 'stale', createdAt, lastActiveAt });
+      const namingState = restoreNaming(s);
+      this.sessions.set(s.id, {
+        ...s,
+        name: namingState.name,
+        namingState,
+        status: 'stale',
+        createdAt,
+        lastActiveAt,
+      });
     }
     this.emit();
   }
 
-  rename(id: string, name: string) {
+  rename(id: string, name: string, native = false, persist?: () => void): boolean {
     const s = this.sessions.get(id);
-    if (s && name.trim()) {
-      s.name = name.trim();
-      this.emit();
+    const label = normalizeSessionLabel(name);
+    if (!s || !label) return false;
+    const state = s.namingState ?? restoreNaming(s);
+    if (native && (state.naming !== 'coupled' || state.name === label)) return false;
+    const next: SessionNamingState =
+      state.naming === 'coupled'
+        ? {
+            ...state,
+            name: label,
+            revision: state.revision + 1,
+            nativeSync: { status: native ? 'synced' : 'pending' },
+          }
+        : { ...state, name: label, revision: state.revision + 1, followTerminalTitle: false };
+    this.updateNaming(s, next, persist);
+    return true;
+  }
+
+  setNativeSync(id: string, revision: number, nativeSync: NativeNameSync): void {
+    const s = this.sessions.get(id);
+    const state = s?.namingState;
+    if (!s || state?.naming !== 'coupled' || state.revision !== revision) return;
+    this.updateNaming(s, { ...state, nativeSync });
+  }
+
+  private updateNaming(s: Session, next: SessionNamingState, persist?: () => void): void {
+    const previous = s.namingState ?? restoreNaming(s);
+    s.name = next.name;
+    s.namingState = next;
+    try {
+      persist?.();
+    } catch (error) {
+      s.name = previous.name;
+      s.namingState = previous;
+      throw error;
     }
+    this.emit();
   }
 
   /**
@@ -312,9 +355,14 @@ export class SessionManager {
     const s = this.sessions.get(id);
     if (!s) return;
     let changed = false;
-    const next = s.titleLocked ? null : resolveTitleSync(s, title);
-    if (next && next !== s.name) {
+    const naming = s.namingState;
+    const next =
+      naming?.naming === 'decoupled' && naming.followTerminalTitle
+        ? resolveTitleSync(s, title)
+        : null;
+    if (next && naming?.naming === 'decoupled') {
       s.name = next;
+      s.namingState = { ...naming, name: next, revision: naming.revision + 1 };
       changed = true;
     }
     // Sticky icon: if the title names a known app (e.g. `claude` running inside a

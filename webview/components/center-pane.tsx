@@ -478,6 +478,11 @@ export function CenterPane({
               </div>
             )}
             <div className="termhost__body">
+              {s.startedNewConversation && (
+                <div className="exit-banner" role="status">
+                  Started a new conversation
+                </div>
+              )}
               {s.runtime?.spawn === 'unconfirmed' && (
                 <div className="launch-banner">
                   <div className="launch-banner__msg" role="status" aria-live="polite">

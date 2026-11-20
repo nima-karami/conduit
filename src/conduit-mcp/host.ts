@@ -18,6 +18,7 @@ import type { DraftPort, LaunchPort, McpHostDeps, ObservedEntry } from '../contr
 import type { CliBindingRecord } from '../contracts/session-identity';
 import type { LaunchIds } from '../contracts/terminal-runtime';
 import { inputBoxTop } from '../input-box-rows';
+import { batchGuarded, firstCmdMetachar } from '../launch-args';
 import type { HostPlatform } from '../lsp-binary';
 import { mcpLaunchWiring, mcpServerCommand } from '../mcp-launch';
 import { prepareNativeLaunch } from '../native-launch';
@@ -306,7 +307,7 @@ export interface ConduitMcpHost extends LaunchPort, DraftPort {
    * start's listen attempt settles, bounded by ENDPOINT_READY_WAIT_MS. A session restored at app
    * start launches before start() has listened; without the wait it would read endpoint-down.
    */
-  whenLaunchReady(): Promise<void>;
+  whenLaunchReady(needsIdentityHooks?: boolean): Promise<void>;
   onRendererInput(sessionId: string, data: string): void;
   /** After an install action: re-reads the install state behind every notConnected entry. */
   onInstallChanged(): void;
@@ -4307,8 +4308,9 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
 
     // Every definition waits, not only adapters: a shell restored at start would otherwise launch
     // tokenless before the endpoint listens (plan amendment B1).
-    whenLaunchReady() {
-      if (endpointSettled || !deps.domain.messagingOn()) return Promise.resolve();
+    whenLaunchReady(needsIdentityHooks = false) {
+      if (endpointSettled || (!needsIdentityHooks && !deps.domain.messagingOn()))
+        return Promise.resolve();
       return new Promise<void>((resolve) => {
         const timer = setTimeout(done, ENDPOINT_READY_WAIT_MS);
         function done() {
@@ -4363,7 +4365,34 @@ export function createConduitMcpHost(deps: ConduitMcpHostDeps): ConduitMcpHost {
           deps.log.info('conduit-mcp', 'Claude hooks not injected', { sessionId, reason });
         return spec;
       };
-      if (!deps.domain.messagingOn()) return unavailable('messaging-off');
+      if (!deps.domain.messagingOn()) {
+        if (adapter.id !== 'claude' || session.namingState?.naming !== 'coupled' || !endpointReady)
+          return unavailable('messaging-off');
+        const settings = claudeSettingsFor(sessionId, spec);
+        if (
+          !settings ||
+          (batchGuarded(deps.platform, spec.command) && firstCmdMetachar(settings.file))
+        )
+          return unavailable('messaging-off');
+        try {
+          fs.mkdirSync(launchDir, { recursive: true });
+          atomicWriteFileSync(settings.file, settings.json);
+        } catch (error) {
+          deps.log.error('conduit-mcp', 'identity hook settings write failed', {
+            err: String(error),
+          });
+          return unavailable('launch-io');
+        }
+        return {
+          ...spec,
+          args: [...spec.args, '--settings', settings.file],
+          env: {
+            ...spec.env,
+            CONDUIT_SESSION_TOKEN: token,
+            CONDUIT_MCP_ENDPOINT: deps.endpointPath,
+          },
+        };
+      }
       if (!endpointReady) return unavailable('endpoint-down');
       if (adapter.wiring === 'cursor-global' && !readCursorLaunchEntry(deps.homeDir)) {
         r.notConnected = {

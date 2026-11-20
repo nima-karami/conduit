@@ -1,4 +1,9 @@
 import type { PolicyLayer } from './conduit-mcp/tool-policy';
+import type {
+  ConversationReference,
+  ConversationResumeRefusal,
+  SessionNamingState,
+} from './contracts/agent-identity';
 import type { NativeLaunchFailure } from './contracts/native-launch';
 import type { SessionRuntime } from './contracts/session-identity';
 import type { RepoInfo } from './repo-scan';
@@ -109,6 +114,10 @@ export type SessionOpener =
 export interface Session {
   id: string;
   name: string;
+  namingState?: SessionNamingState;
+  conversationRef?: ConversationReference;
+  namingUnavailableReason?: string;
+  startedNewConversation?: true;
   agentId: string;
   home: string; // absolute folder used as group key + cwd
   roots: string[]; // attached folders only: never home's key, folderKey-unique, add order
@@ -204,6 +213,7 @@ export interface Session {
 
 /** A missing home is `homeMissing`; this is the other reason a start is refused. */
 export type StartRefusal =
+  | ConversationResumeRefusal
   | { reason: 'unresolvable'; command: string }
   | { reason: 'native_permissions'; problem: NativeLaunchFailure };
 

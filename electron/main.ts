@@ -4445,6 +4445,13 @@ app.whenReady().then(() => {
         case 'app:quitAndStopAgents':
           closeGuard.requestAppQuit('quitAndStop', senderId);
           break;
+        case 'session:resolveConversationResume':
+          await terminals.resolveConversationResume({
+            sessionId: m.sessionId,
+            refusalId: m.refusalId,
+            action: m.action,
+          });
+          break;
         case 'session:retryLaunch':
           await terminals.retryLaunch(m.sessionId);
           break;

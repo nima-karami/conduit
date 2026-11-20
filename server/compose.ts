@@ -198,7 +198,11 @@ export function compose(options: ComposeOptions) {
     if (lifecycle.stopping) {
       if (request.method === 'sessions.create')
         throw new RpcFault('server_stopping', 'Conduit is stopping');
-      if (request.method === 'sessions.start' || request.method === 'sessions.retryLaunch') {
+      if (
+        request.method === 'sessions.start' ||
+        request.method === 'sessions.retryLaunch' ||
+        request.method === 'sessions.resolveConversationResume'
+      ) {
         return { result: { ok: false, refusal: { reason: 'server_stopping' } } };
       }
     }
