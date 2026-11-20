@@ -1,3 +1,4 @@
+import { MAX_SESSION_LABEL_CHARS, normalizeSessionLabel } from '../session-agent-identity';
 // The three open tools (spec 2026-10-27-conduit-mcp-control-tools §3.1) and the pipeline every
 // control tool shares; the app-control tools live in app-control-tools.ts. No IO here: stat,
 // registry, command resolution, session creation and git are deps, so tests run on POSIX fakes.
@@ -45,7 +46,7 @@ import type { AskSummary, McpUiAction, McpUiResult } from './ui-types';
 export const ACT_RATE_PER_CALLER = 10;
 export const ACT_RATE_GLOBAL = 20;
 export const SHOW_RATE_PER_CALLER = 30;
-export const MAX_LABEL_CHARS = 80;
+export const MAX_LABEL_CHARS = MAX_SESSION_LABEL_CHARS;
 export const MAX_OPEN_MESSAGE_CHARS = 16_000;
 const RATE_WINDOW_MS = 60_000;
 
@@ -276,7 +277,9 @@ function parseLabel(v: unknown): string | undefined | Fail {
   // Code points, as JSON Schema's maxLength counts them.
   if (Array.from(v).length > MAX_LABEL_CHARS)
     return fail('invalid_args', `label is over ${MAX_LABEL_CHARS} chars`);
-  return v;
+  return (
+    normalizeSessionLabel(v) ?? fail('invalid_args', 'label must contain visible text on one line')
+  );
 }
 
 /** What only the two open-a-session tools carry. */

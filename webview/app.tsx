@@ -77,6 +77,7 @@ import { isUnderRoot } from '../src/repo-rel';
 import { normalizeRoot } from '../src/review-marks';
 import { type RightPanelEvent, rightPanelTransition } from '../src/right-panel-toggle';
 import { retainSessionScopes, type SearchScope, scopeChipFolders } from '../src/search-scope';
+import { coupledAdapterId } from '../src/session-agent-identity';
 import { resolveSessionIcon } from '../src/session-icon';
 import { sessionNameFromPath } from '../src/session-name';
 import {
@@ -1201,7 +1202,12 @@ export function App() {
       ['agentScope:result'],
       10_000,
     );
-    if (!result?.ok) throw new Error(result?.reason ?? 'Restart timed out');
+    if (!result?.ok)
+      throw new Error(
+        result?.reason === 'conversationResume'
+          ? 'Conduit could not verify that this conversation can resume. The current agent is still running.'
+          : (result?.reason ?? 'Restart timed out'),
+      );
     requestAnimationFrame(() => requestTerminalFocus(sessionId));
   };
   const openSessionActivity = (sessionId: string, item?: ActivityScope['item']) => {
@@ -5600,12 +5606,27 @@ export function App() {
                 const role = isAgent
                   ? sessionPermissionSummary(mcp.state?.policy, session.id)?.roleName
                   : undefined;
+                const sync =
+                  session.namingState?.naming === 'coupled'
+                    ? session.namingState.nativeSync
+                    : undefined;
+                const namingStatus =
+                  session.namingUnavailableReason ??
+                  (sync?.status === 'failed'
+                    ? sync.reason
+                    : sync?.status === 'pending'
+                      ? 'Agent name sync pending'
+                      : session.namingState?.naming === 'coupled' &&
+                          coupledAdapterId(session.agentId) === 'codex'
+                        ? 'The session name follows the main Codex thread. Other threads keep their own names.'
+                        : undefined);
                 return (
                   <SessionBar
                     sessionId={session.id}
                     name={isAgent ? (handle ?? session.name) : session.name}
                     icon={<SessionGlyph icon={resolveSessionIcon(session, agents)} size={14} />}
                     role={role}
+                    namingStatus={namingStatus}
                     visible={visible}
                     autoResume={
                       isAgent

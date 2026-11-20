@@ -715,6 +715,7 @@ function mockHost(msg: WebviewToHost) {
   }
   if (
     msg.type === 'session:retryLaunch' ||
+    msg.type === 'session:resolveConversationResume' ||
     msg.type === 'session:discardLaunch' ||
     msg.type === 'app:quitAndStopAgents'
   )

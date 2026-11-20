@@ -97,12 +97,16 @@ describe('hook posts on the MCP endpoint', () => {
     await d.closed;
     expect(d.got).toEqual([ACK_OK]);
     expect(onHook).toHaveBeenCalledTimes(1);
-    expect(onHook).toHaveBeenCalledWith('s1', {
-      conduitHook: 1,
-      token: TOKEN,
-      event: 'StopFailure',
-      payload: { error: 'rate_limit' },
-    });
+    expect(onHook).toHaveBeenCalledWith(
+      's1',
+      {
+        conduitHook: 1,
+        token: TOKEN,
+        event: 'StopFailure',
+        payload: { error: 'rate_limit' },
+      },
+      { generation: 1, launchId: 'a'.repeat(32) },
+    );
   });
 
   it('a PostToolUse post is allowed by the endpoint', async () => {
@@ -111,12 +115,16 @@ describe('hook posts on the MCP endpoint', () => {
     d.write(hookLine({ event: 'PostToolUse', payload: { tool_name: 'Bash' } }));
     await d.closed;
     expect(d.got).toEqual([ACK_OK]);
-    expect(onHook).toHaveBeenCalledWith('s1', {
-      conduitHook: 1,
-      token: TOKEN,
-      event: 'PostToolUse',
-      payload: { tool_name: 'Bash' },
-    });
+    expect(onHook).toHaveBeenCalledWith(
+      's1',
+      {
+        conduitHook: 1,
+        token: TOKEN,
+        event: 'PostToolUse',
+        payload: { tool_name: 'Bash' },
+      },
+      { generation: 1, launchId: 'a'.repeat(32) },
+    );
   });
 
   it('a PostToolUseFailure post is allowed by the endpoint', async () => {
@@ -125,12 +133,30 @@ describe('hook posts on the MCP endpoint', () => {
     d.write(hookLine({ event: 'PostToolUseFailure', payload: { tool_name: 'Bash' } }));
     await d.closed;
     expect(d.got).toEqual([ACK_OK]);
-    expect(onHook).toHaveBeenCalledWith('s1', {
-      conduitHook: 1,
-      token: TOKEN,
-      event: 'PostToolUseFailure',
-      payload: { tool_name: 'Bash' },
-    });
+    expect(onHook).toHaveBeenCalledWith(
+      's1',
+      {
+        conduitHook: 1,
+        token: TOKEN,
+        event: 'PostToolUseFailure',
+        payload: { tool_name: 'Bash' },
+      },
+      { generation: 1, launchId: 'a'.repeat(32) },
+    );
+  });
+
+  it('passes authenticated launch IDs to a SessionStart observer', async () => {
+    const { p, onHook } = await serve(live);
+    const d = dial(p);
+    const payload = { session_id: 'conversation', generation: 99, launchId: 'spoofed' };
+    d.write(hookLine({ event: 'SessionStart', payload }));
+    await d.closed;
+    expect(d.got).toEqual([ACK_OK]);
+    expect(onHook).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({ event: 'SessionStart', payload }),
+      { generation: 1, launchId: 'a'.repeat(32) },
+    );
   });
 
   it('an unknown token → ok:false, no onHook', async () => {

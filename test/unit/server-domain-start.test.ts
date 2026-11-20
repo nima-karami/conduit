@@ -2,7 +2,13 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDomain } from '../../server/domain';
-import { disposeHarnesses, FakeRuntime, harness, isFault } from '../../server/domain/testing/fakes';
+import {
+  disposeHarnesses,
+  FakeRuntime,
+  fakeIdentity,
+  harness,
+  isFault,
+} from '../../server/domain/testing/fakes';
 import { createPersistentTokenStore } from '../../server/mcp/token-file';
 import { hcLabelsFor, runtimeHarness } from '../../server/runtime/testing/harness';
 import type { SessionStartResult } from '../../src/contracts/server-protocol';
@@ -40,7 +46,7 @@ describe('server domain: sessions.start', () => {
   });
 
   it('tracks spawned Codex launch IDs and retires the old association on relaunch', async () => {
-    const h = harness();
+    const h = harness({ identityAdapters: [fakeIdentity('codex').adapter] });
     await h.domain.dispose();
     const tracks: { sessionId: string; ids: { generation: number; launchId: string } }[] = [];
     const retirements: string[] = [];

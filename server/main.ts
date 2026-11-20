@@ -2,6 +2,7 @@ import { appendFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { version } from '../package.json';
+import { createClaudeIdentityAdapter } from '../src/agent-identity/claude';
 import { SHIM_LEAF } from '../src/conduit-mcp/install-entries';
 import type { InstanceNames } from '../src/contracts/session-identity';
 import { instanceNames } from '../src/instance-names';
@@ -235,6 +236,12 @@ function createServerServices(o: {
     };
   const log = { debug: at('debug'), info: at('info'), warn: at('warn'), error: at('error') };
   return createServices({
+    identityAdapters: (feed) => [
+      createClaudeIdentityAdapter({
+        subscribeSessionStart: feed.subscribe,
+        onError: (error) => log.warn('claude-identity', String(error)),
+      }),
+    ],
     userData: o.userData,
     names: o.names,
     secret: o.secret,

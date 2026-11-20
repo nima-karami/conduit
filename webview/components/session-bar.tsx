@@ -26,6 +26,7 @@ export function SessionBar({
   name,
   icon,
   role,
+  namingStatus,
   visible,
   autoResume,
   onSessionMenu,
@@ -37,6 +38,7 @@ export function SessionBar({
   name: string;
   icon: ReactNode;
   role?: string;
+  namingStatus?: string;
   visible: boolean;
   autoResume?: { on: boolean; set: (on: boolean) => void };
   onSessionMenu: (rect: Rect, keyboard: boolean) => void;
@@ -185,6 +187,8 @@ export function SessionBar({
         type="button"
         className="session-bar__session"
         aria-label={`Session menu for ${name}`}
+        aria-description={namingStatus}
+        title={namingStatus}
         aria-haspopup="menu"
         onClick={(event) =>
           onSessionMenu(event.currentTarget.getBoundingClientRect(), event.detail === 0)
@@ -193,6 +197,11 @@ export function SessionBar({
         {icon}
         <span>{name}</span>
       </button>
+      {namingStatus && (
+        <span role="status" className="sr-only">
+          {namingStatus}
+        </span>
+      )}
       {role && (
         <button
           type="button"

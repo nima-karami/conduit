@@ -149,7 +149,7 @@ export interface DomainPort
  */
 export interface LaunchPort {
   /** Today's wait for the MCP endpoint, so a launch restored at start isn't wired tokenless. */
-  whenLaunchReady(): Promise<void>;
+  whenLaunchReady(needsIdentityHooks?: boolean): Promise<void>;
   prepareNativeLaunch(
     sessionId: string,
     def: AgentDefinition,

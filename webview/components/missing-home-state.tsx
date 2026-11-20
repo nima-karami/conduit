@@ -14,6 +14,7 @@ import {
   nativePath,
   notFoundSegments,
   RELAUNCH_LABEL,
+  resumeRefusalMessage,
 } from '../agent-scope-copy';
 import { post } from '../bridge';
 import { getDirtySnapshot } from '../dirty-store';
@@ -122,14 +123,45 @@ export function StartRefusedState({
   onRelaunch: (id: string) => void;
   relaunchRef: ((el: HTMLButtonElement | null) => void) | null;
 }) {
-  if (!session.startRefusal) return null;
+  const refusal = session.startRefusal;
+  if (!refusal) return null;
+  if (refusal.reason === 'conversation-resume') {
+    const resolve = (action: 'retry' | 'start-new') =>
+      post({
+        type: 'session:resolveConversationResume',
+        sessionId: session.id,
+        refusalId: refusal.refusalId,
+        action,
+      });
+    return (
+      <>
+        <h2 className="session-stale__title">Could not resume conversation</h2>
+        <p role="status" className="session-stale__detail">
+          {resumeRefusalMessage[refusal.problem]}
+        </p>
+        <div className="session-stale__actions">
+          <button
+            type="button"
+            className="btn btn--primary"
+            ref={relaunchRef}
+            onClick={() => resolve('retry')}
+          >
+            Retry
+          </button>
+          <button type="button" className="btn" onClick={() => resolve('start-new')}>
+            Start new conversation
+          </button>
+        </div>
+      </>
+    );
+  }
   return (
     <>
       <h2 className="session-stale__title">{CANT_START_TITLE}</h2>
       <p className="session-stale__detail">
-        {session.startRefusal.reason === 'native_permissions'
-          ? NATIVE_LAUNCH_REFUSAL_MESSAGES[session.startRefusal.problem]
-          : notFoundSegments(session.startRefusal.command).map((seg) =>
+        {refusal.reason === 'native_permissions'
+          ? NATIVE_LAUNCH_REFUSAL_MESSAGES[refusal.problem]
+          : notFoundSegments(refusal.command).map((seg) =>
               seg.kind === 'name' ? (
                 <span key="name" className="session-stale__cmd" dir="ltr">
                   {seg.text}

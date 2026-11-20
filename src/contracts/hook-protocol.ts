@@ -3,6 +3,7 @@
 // Client: resources/conduit-mcp/conduit-hook.cjs. see docs/specs/2026-11-13-scheduler-auto-resume.md §3
 
 export type HookEvent =
+  | 'SessionStart'
   | 'StopFailure'
   | 'UserPromptSubmit'
   | 'Stop'

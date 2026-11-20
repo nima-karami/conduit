@@ -20,6 +20,7 @@ import {
   type ShimResume,
   type ShimWelcome,
 } from '../../src/contracts/shim-protocol';
+import type { LaunchIds } from '../../src/contracts/terminal-runtime';
 import { LineReader } from '../../src/line-reader';
 
 /** As v0.51's endpoint: bounds one relayed line so a stray client can't grow the server. */
@@ -118,6 +119,7 @@ function firstLineKind(
 }
 
 const HOOK_EVENTS: Record<HookEvent, true> = {
+  SessionStart: true,
   StopFailure: true,
   UserPromptSubmit: true,
   Stop: true,
@@ -164,7 +166,7 @@ const isResumeReply = (line: string): boolean =>
 export function createShimEndpoint(opts: {
   path: string;
   onConnection(conn: EndpointConnection): void;
-  onHook?: (sessionId: string, post: HookPost) => void;
+  onHook?: (sessionId: string, post: HookPost, ids: LaunchIds) => void;
   log: EndpointLog;
   tokens: Pick<TokenStorePort, 'rows'>;
   closeFlushMs?: number;
@@ -270,7 +272,7 @@ export function createShimEndpoint(opts: {
         write(JSON.stringify(ack(false)));
         return close();
       }
-      opts.onHook?.(row.sessionId, post);
+      opts.onHook?.(row.sessionId, post, { generation: row.generation, launchId: row.launchId });
       write(JSON.stringify(ack(true)));
       close();
     };

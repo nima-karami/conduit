@@ -128,6 +128,7 @@ describe('agentScopeToast (spec §3.3)', () => {
       homeMissing: null,
       noSession: null,
       nothingPending: null,
+      conversationResume: null,
     };
     for (const [reason, copy] of Object.entries(all)) {
       expect(agentScopeToast(reason as AgentScopeReason), reason).toBe(copy);

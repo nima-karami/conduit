@@ -6,6 +6,11 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Agent and shell titles no longer overwrite an explicit Conduit session name. An unnamed shell can still follow its terminal title.
+- If Conduit cannot resume a saved conversation, it offers Retry and Start new conversation so you can choose what happens next.
+
 ## [0.72.0] — 2026-11-19
 
 ### Changed

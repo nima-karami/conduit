@@ -39,6 +39,7 @@ import type {
   RemotePolicyEdit,
 } from './conduit-mcp/ui-types';
 import type { SearchFileResult, SearchQuery, TruncatedBy } from './content-search';
+import type { ResolveConversationResume } from './contracts/agent-identity';
 import type { DisplayFacts } from './contracts/frames';
 import type { GitOp, GitReqArgs, GitResult } from './contracts/link-protocol';
 import type { AgentSetupStep, MachineActionResult, MachineMode } from './contracts/machines';
@@ -469,7 +470,7 @@ export interface AboutInfo {
   e2e: boolean;
 }
 
-export type SessionOpReason = FolderSessionOpReason | 'server-unavailable';
+export type SessionOpReason = FolderSessionOpReason | 'server-unavailable' | 'invalid-name';
 export type LocateReason = SessionOpReason | 'cancelled';
 
 // ServerLifecycleState minus `hello`, kept here because the renderer can't import electron/
@@ -1585,6 +1586,7 @@ export type WebviewToHost =
   // The palette's "Quit and stop all agents": a quit through the close guard that ends in stopAll.
   | { type: 'app:quitAndStopAgents' }
   | { type: 'session:retryLaunch'; sessionId: string }
+  | ({ type: 'session:resolveConversationResume' } & ResolveConversationResume)
   | { type: 'session:discardLaunch'; sessionId: string }
   // D11: cheap existence check for terminal path-link validation. The host replies with
   // `pathExistsResult`. This is a read-only check (no write surface); the host uses

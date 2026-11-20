@@ -4,6 +4,7 @@ import { atomicWriteFileSync } from '../src/atomic-write';
 import { isCountedInput } from '../src/conduit-mcp/draft-input';
 import type { McpRendererMessage } from '../src/conduit-mcp/host';
 import { CLI_BINARIES } from '../src/conduit-mcp/install-types';
+import type { AgentIdentityAdapter } from '../src/contracts/agent-identity';
 import type { DisplayFacts } from '../src/contracts/frames';
 import type { HcClient } from '../src/contracts/hc';
 import type { MonitorSession } from '../src/contracts/link-protocol';
@@ -25,6 +26,7 @@ import {
 } from '../src/shells';
 import type { AgentDefinition, SessionCommand } from '../src/types';
 import { createDomain, type DomainLog } from './domain';
+import { createSessionStartFeed } from './domain/agent-identity';
 import { createCodexRolloutWatch } from './domain/codex-rollout-watch';
 import type { ShellCore } from './lifecycle/shell';
 import { type AppEventSink, createMcp, type McpServerDeps, type ServerMcp } from './mcp';
@@ -41,6 +43,9 @@ import { RpcFault, type RpcHandler, RpcProtocolFault } from './transport/pipe';
 const STATUS_RESEND_MS = 150;
 
 export interface ServicesOptions {
+  identityAdapters?: (
+    sessionStartFeed: ReturnType<typeof createSessionStartFeed>,
+  ) => readonly AgentIdentityAdapter[];
   userData: string;
   names: InstanceNames;
   /** The per-start secret the ssh bridge proves with; main.ts writes it before the services exist. */
@@ -186,16 +191,39 @@ export function createServices(o: ServicesOptions) {
   const hostPlatform: HostPlatform =
     o.platform === 'win32' ? 'win32' : o.platform === 'darwin' ? 'darwin' : 'linux';
   const resolve = o.resolveCommand ?? ((c: string) => resolveCommand(c, hostPlatform));
+  const networkDir = path.join(o.userData, 'network');
+  const loaded = loadIdentity(networkDir);
+  let machineId: string;
+  if (loaded.kind === 'newer') {
+    log.error('network', 'identity.json is from a newer build; networking is off', {});
+    const readOnly = readOnlyMachineId(networkDir);
+    if (readOnly === null) {
+      throw new Error(
+        `${path.join(networkDir, 'identity.json')} is unreadable; no server identity`,
+      );
+    }
+    machineId = readOnly;
+  } else {
+    if (loaded.kind === 'recovered') {
+      log.error('network', 'identity.json was unreadable; moved to identity.corrupt.json', {
+        machineId: loaded.identity.machineId,
+      });
+    }
+    machineId = loaded.identity.machineId;
+  }
+  const sessionStartFeed = createSessionStartFeed();
   const domain = createDomain({
     userData: o.userData,
     homeDir: o.homeDir,
     platform: o.platform,
     instance: o.names.instance,
+    identityMachineId: () => machineId,
+    identityAdapters: o.identityAdapters?.(sessionStartFeed),
     e2e: o.e2e,
     env: o.env,
     runtime,
     launch: {
-      whenLaunchReady: () => m().launch.whenLaunchReady(),
+      whenLaunchReady: (needsIdentityHooks) => m().launch.whenLaunchReady(needsIdentityHooks),
       prepareNativeLaunch: (sessionId, def, spec) =>
         m().launch.prepareNativeLaunch(sessionId, def, spec),
       prepareLaunch: (sessionId, def, spec, ids) =>
@@ -262,26 +290,6 @@ export function createServices(o: ServicesOptions) {
     if (answer && 'error' in answer) throw answer.error;
   };
 
-  const networkDir = path.join(o.userData, 'network');
-  const loaded = loadIdentity(networkDir);
-  let machineId: string;
-  if (loaded.kind === 'newer') {
-    log.error('network', 'identity.json is from a newer build; networking is off', {});
-    const readOnly = readOnlyMachineId(networkDir);
-    if (readOnly === null) {
-      throw new Error(
-        `${path.join(networkDir, 'identity.json')} is unreadable; no server identity`,
-      );
-    }
-    machineId = readOnly;
-  } else {
-    if (loaded.kind === 'recovered') {
-      log.error('network', 'identity.json was unreadable; moved to identity.corrupt.json', {
-        machineId: loaded.identity.machineId,
-      });
-    }
-    machineId = loaded.identity.machineId;
-  }
   // Only e2e reads the stand-in's argv; see readE2eSshArgsPrefix.
   const sshArgs = readE2eSshArgsPrefix(o.env.CONDUIT_E2E_SSH_ARGS_PREFIX, o.e2e);
   if (sshArgs.kind === 'invalid') {
@@ -462,7 +470,10 @@ export function createServices(o: ServicesOptions) {
       warn: (msg, data) => log.warn('scheduler', msg, data),
     }),
     gitBashPath: () => (hostPlatform === 'win32' ? gitBashPath() : undefined),
-    onHook: (sessionId, post) => domain.hookPost(sessionId, post),
+    onHook: (sessionId, post, ids) => {
+      if (post.event === 'SessionStart') sessionStartFeed.post(ids, post.payload);
+      else domain.hookPost(sessionId, post);
+    },
     homeDir: o.homeDir,
     platform: hostPlatform,
     e2e: o.e2e,

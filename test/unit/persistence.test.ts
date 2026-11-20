@@ -234,7 +234,19 @@ describe('persistence', () => {
     const olderRewrite = v1(written.map((e) => ({ ...e })));
     expect(parseSessions(olderRewrite)).toEqual({
       kind: 'ok',
-      sessions: [{ ...live, status: 'stale' }],
+      sessions: [
+        {
+          ...live,
+          status: 'stale',
+          namingState: {
+            version: 1,
+            name: live.name,
+            revision: 0,
+            naming: 'coupled',
+            nativeSync: { status: 'pending' },
+          },
+        },
+      ],
       legacyIds: [],
       dropped: 0,
     });
@@ -242,7 +254,19 @@ describe('persistence', () => {
     const { home: _home, ...mirrorOnly } = written[0];
     expect(parseSessions(v1([mirrorOnly]))).toEqual({
       kind: 'ok',
-      sessions: [{ ...live, status: 'stale' }],
+      sessions: [
+        {
+          ...live,
+          status: 'stale',
+          namingState: {
+            version: 1,
+            name: live.name,
+            revision: 0,
+            naming: 'coupled',
+            nativeSync: { status: 'pending' },
+          },
+        },
+      ],
       legacyIds: ['1'],
       dropped: 0,
     });

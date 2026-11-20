@@ -23,6 +23,7 @@ export function claudeSignalsFromHook(
       ];
     case 'UserPromptSubmit':
       return [{ kind: 'resumed', sessionId, at: now, by: 'turn', source: 'claude-hook' }];
+    case 'SessionStart':
     case 'Stop':
       return [];
     case 'PostToolUse':
