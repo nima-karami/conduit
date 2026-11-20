@@ -26,6 +26,7 @@ export function claudeHookSettings(i: {
   });
   const hooks = {
     hooks: {
+      SessionStart: [{ hooks: [hook('SessionStart')] }],
       StopFailure: [{ matcher: 'rate_limit', hooks: [hook('StopFailure')] }],
       UserPromptSubmit: [{ hooks: [hook('UserPromptSubmit')] }],
       Stop: [{ hooks: [hook('Stop')] }],
