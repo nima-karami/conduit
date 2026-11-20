@@ -9,6 +9,7 @@ All notable user-facing changes to Conduit. Format follows
 ### Changed
 
 - Agent and shell titles no longer overwrite an explicit Conduit session name. An unnamed shell can still follow its terminal title.
+- Renaming a Claude Code or Codex session in Conduit renames its conversation too. Using `/rename` in Claude Code or in the main Codex thread updates the Conduit session name. Relaunch resumes that same conversation.
 - If Conduit cannot resume a saved conversation, it offers Retry and Start new conversation so you can choose what happens next.
 
 ## [0.72.0] — 2026-11-19

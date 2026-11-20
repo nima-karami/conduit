@@ -64,6 +64,12 @@ export function createIdentityRegistry(deps: {
     active.delete(id);
   }
 
+  function disable(id: string, reason: string) {
+    close(id);
+    unavailable.set(id, reason);
+    deps.changed();
+  }
+
   function sendName(id: string) {
     const instance = active.get(id);
     const state = deps.session(id)?.namingState;
@@ -259,14 +265,12 @@ export function createIdentityRegistry(deps: {
     };
     const unbind = (reason: IdentityUnbindReason) => {
       if (!current()) return;
-      close(session.id);
       const message = {
         'primary-archived': 'The main Codex thread was archived. Agent name sync has stopped.',
         'primary-deleted': 'The main Codex thread was deleted. Agent name sync has stopped.',
         'server-exited': 'The agent connection closed. Relaunch to restore name sync.',
       }[reason];
-      unavailable.set(session.id, message);
-      deps.changed();
+      disable(session.id, message);
     };
     const observer: AgentIdentityObserver = { bind, rename, unbind };
     return { launch, instance, observer, current };
@@ -362,6 +366,7 @@ export function createIdentityRegistry(deps: {
     hasIdentityConflict,
     check,
     prepare,
+    disable,
     adopt,
     confirm,
     close,

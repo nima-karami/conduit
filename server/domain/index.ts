@@ -1232,8 +1232,16 @@ export function createDomain(deps: DomainDeps): Domain {
     });
     if (launchPlan.kind === 'refused') return refuseResume(launchPlan.reason);
     const ref = launchPlan.kind === 'resume' ? launchPlan.ref : undefined;
-    if (!ref && adapter && identity.hasIdentityConflict(adapter, spec.args))
-      return refuseResume('resume-argv-conflict');
+    const codexBatch = adapter?.id === 'codex' && batchGuarded(hostPlatform, spec.command);
+    if (ref && codexBatch) return refuseResume('resume-unsupported');
+    const freshNamingIssue =
+      !ref && adapter
+        ? codexBatch
+          ? 'Agent name sync is unavailable for this Windows batch launcher.'
+          : identity.hasIdentityConflict(adapter, spec.args)
+            ? 'Agent name sync is unavailable because this launcher sets its own conversation options.'
+            : undefined
+        : undefined;
     if (ref && adapter) {
       const problem = await identity.check(adapter, ref, spec);
       if (problem) return refuseResume(problem);
@@ -1255,27 +1263,35 @@ export function createDomain(deps: DomainDeps): Domain {
     const brief = ref ? undefined : roleBriefs.prepareSpawn(id, def, spec);
     if (brief) spec = brief.spec;
     let preparedIdentity: Awaited<ReturnType<typeof identity.prepare>> | undefined;
-    if (adapter) {
+    if (freshNamingIssue) {
+      identity.disable(id, freshNamingIssue);
+    } else if (adapter) {
       try {
-        preparedIdentity = await identity.prepare(s, spec, ids, adapter, ref);
-        if (
-          batchGuarded(hostPlatform, preparedIdentity.spec.command) &&
-          preparedIdentity.spec.args.some(
-            (arg) => !spec.args.includes(arg) && firstCmdMetachar(arg),
-          )
-        ) {
-          identity.close(id);
-          brief?.commit(false);
-          return refuseResume('resume-argv-conflict');
+        const prepared = await identity.prepare(s, spec, ids, adapter, ref);
+        const unsafeArgs =
+          batchGuarded(hostPlatform, prepared.spec.command) &&
+          prepared.spec.args.some((arg) => !spec.args.includes(arg) && firstCmdMetachar(arg));
+        if (unsafeArgs) {
+          if (ref) {
+            identity.close(id);
+            brief?.commit(false);
+            return refuseResume('resume-argv-conflict');
+          }
+          identity.disable(id, 'Agent name sync could not pass this name to the Windows launcher.');
+        } else {
+          preparedIdentity = prepared;
+          spec = prepared.spec;
         }
-        spec = preparedIdentity.spec;
       } catch (error) {
         log.warn('session', 'agent launch preparation failed', {
           sessionId: id,
           error: String(error),
         });
-        brief?.commit(false);
-        return refuseResume('resume-check-unavailable');
+        if (ref) {
+          brief?.commit(false);
+          return refuseResume('resume-check-unavailable');
+        }
+        identity.disable(id, 'Agent name sync could not start with this launcher.');
       }
     }
     if (!mgr.get(id) || deps.stopping()) {
@@ -1657,6 +1673,7 @@ export function createDomain(deps: DomainDeps): Domain {
         !adapter?.capabilities.exactResume ||
         !s.conversationRef ||
         !base.ok ||
+        (adapter.id === 'codex' && batchGuarded(hostPlatform, base.spec.command)) ||
         (await identity.check(adapter, s.conversationRef, withServerEnv(base.spec, deps.env)))
       ) {
         return { sessionId: id, ok: false, reason: 'conversationResume' };

@@ -237,3 +237,40 @@ it('recouples an adopted PTY only after the adapter verifies its original launch
   expect(h.domain.sessions.get(id)?.conversationRef?.conversationId).toBe('adopted-conversation');
   expect(h.runtime.spawns).toHaveLength(0);
 });
+
+it('starts with the original launcher when fresh identity preparation fails', async () => {
+  const fake = fakeIdentity();
+  fake.adapter.fresh = async () => {
+    throw new Error('unsupported launch flag');
+  };
+  const h = harness({ identityAdapters: [fake.adapter] });
+  const id = await h.create({ agentId: 'claude', name: 'Fallback' });
+  expect(await h.call('sessions.start', { sessionId: id })).toMatchObject({
+    ok: true,
+    spawned: true,
+  });
+  expect(h.runtime.spawns).toHaveLength(1);
+  expect(h.runtime.spawns[0]?.spec).toMatchObject({ command: 'claude', args: [] });
+  expect(h.domain.snapshot().sessions.find((s) => s.id === id)).toMatchObject({
+    name: 'Fallback',
+    namingState: { naming: 'decoupled' },
+    namingUnavailableReason: 'Agent name sync could not start with this launcher.',
+  });
+});
+
+it('refuses identity preparation failure on exact resume without spawning fresh', async () => {
+  const fake = fakeIdentity();
+  fake.adapter.resume = async () => {
+    throw new Error('could not prepare exact resume');
+  };
+  const h = harness({ identityAdapters: [fake.adapter] });
+  const id = await h.create({ agentId: 'claude' });
+  await h.call('sessions.start', { sessionId: id });
+  await h.call('sessions.restart', { sessionId: id });
+  expect(await h.call('sessions.start', { sessionId: id })).toMatchObject({
+    ok: false,
+    refusal: { reason: 'conversation-resume', problem: 'resume-check-unavailable' },
+  });
+  expect(h.runtime.spawns).toHaveLength(1);
+  expect(h.domain.sessions.get(id)?.conversationRef?.conversationId).toBe('conversation-fixture');
+});
