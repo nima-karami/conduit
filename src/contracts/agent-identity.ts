@@ -67,7 +67,12 @@ export interface AgentIdentityAdapter {
   readonly capabilities: { coupledNaming: boolean; exactResume: boolean };
   /** argv is composed here because resume subcommands and variadic flags have different positions. */
   fresh(launch: AgentIdentityLaunch, name: string): Promise<AgentIdentityCommand>;
-  resume(launch: AgentIdentityLaunch, ref: ConversationReference): Promise<AgentIdentityCommand>;
+  /** name is the current Conduit name: Claude re-applies it with --name on resume. */
+  resume(
+    launch: AgentIdentityLaunch,
+    ref: ConversationReference,
+    name: string,
+  ): Promise<AgentIdentityCommand>;
   exists(ref: ConversationReference): Promise<'present' | 'missing' | 'unavailable'>;
   setName(ref: ConversationReference, name: string, revision: number): Promise<void>;
   /** Register before spawn so an early ID event can be attributed to this generation. */
