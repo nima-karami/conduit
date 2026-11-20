@@ -45,13 +45,14 @@ function setup() {
     capturedAt: { generation: 1, launchId: 'b'.repeat(32) },
     conversationId: ID,
   };
-  const file = path.join(storageHome, 'projects', 'encoding', `${ID}.jsonl`);
+  const fileFor = (id: string) => path.join(storageHome, 'projects', 'encoding', `${id}.jsonl`);
+  const file = fileFor(ID);
   let lines = [title('Historical')];
   let inode = 1n;
   let receiver: (ids: LaunchIds, payload: unknown) => void = () => undefined;
   const unsubscribe = vi.fn();
   const fs = {
-    checkTranscript: vi.fn(async (_root: string, _candidate: string, _id: string) => file),
+    checkTranscript: vi.fn(async (_root: string, candidate: string, _id: string) => candidate),
     findTranscript: vi.fn(async (): Promise<string | undefined> => file),
     appendTitle: vi.fn(async (_file: string, record: object) => {
       lines.push(JSON.stringify(record));
@@ -74,7 +75,7 @@ function setup() {
     },
     fs,
   });
-  const observer = { bind: vi.fn(), rename: vi.fn() };
+  const observer = { bind: vi.fn(), rename: vi.fn(), unbind: vi.fn() };
   return {
     adapter,
     controller,
@@ -84,7 +85,7 @@ function setup() {
     fs,
     unsubscribe,
     hook: (id = ID, launchIds = ids, source = 'resume') =>
-      receiver(launchIds, { session_id: id, transcript_path: file, source }),
+      receiver(launchIds, { session_id: id, transcript_path: fileFor(id), source }),
     push: (...newLines: string[]) => lines.push(...newLines),
     replace: (...newLines: string[]) => {
       inode += 1n;
@@ -134,6 +135,63 @@ describe('Claude identity argv and SessionStart', () => {
     const reads = fs.readTitles.mock.calls.length;
     await vi.advanceTimersByTimeAsync(1000);
     expect(fs.readTitles).toHaveBeenCalledTimes(reads);
+  });
+
+  it('rebinds on clear, cancels the old watcher, and ignores compact and foreign launches', async () => {
+    vi.useFakeTimers();
+    const { adapter, launch, ref, hook, observer, fs, push, controller } = setup();
+    await adapter.resume(launch, ref, 'Current');
+    await adapter.observe(launch, observer);
+    hook();
+    await vi.advanceTimersByTimeAsync(0);
+
+    let finishOldRead: () => void = () => undefined;
+    fs.readTitles.mockImplementationOnce(async (_file, _cursor, onLine) => {
+      await new Promise<void>((resolve) => {
+        finishOldRead = resolve;
+      });
+      onLine(title('Stale title'));
+      return { inode: 1n, device: 1n, offset: 1, fragment: Buffer.alloc(0) };
+    });
+    await vi.advanceTimersByTimeAsync(250);
+    hook(OTHER, ref.capturedAt, 'clear');
+    hook(ID, launch.ids, 'compact');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(observer.bind.mock.calls).toEqual([[ID]]);
+
+    hook(OTHER, launch.ids, 'clear');
+    await vi.advanceTimersByTimeAsync(0);
+    finishOldRead();
+    push(title('After clear', OTHER));
+    await vi.advanceTimersByTimeAsync(250);
+    expect(observer.bind.mock.calls).toEqual([[ID], [OTHER]]);
+    expect(observer.rename.mock.calls).toEqual([
+      [{ name: 'After clear', conversationId: OTHER, source: 'native' }],
+    ]);
+    expect(observer.unbind).not.toHaveBeenCalled();
+    const watched = fs.readTitles.mock.calls.slice(-2).map(([file]) => path.basename(file));
+    expect(watched).toEqual([`${OTHER}.jsonl`, `${OTHER}.jsonl`]);
+    controller.abort();
+  });
+
+  it('rebinds on resume and reports only the selected conversation’s latest saved title', async () => {
+    vi.useFakeTimers();
+    const { adapter, launch, ref, hook, observer, push, controller } = setup();
+    await adapter.resume(launch, ref, 'Current');
+    await adapter.observe(launch, observer);
+    hook();
+    await vi.advanceTimersByTimeAsync(0);
+
+    push(title('Old saved title', OTHER), title('Current saved title', OTHER));
+    hook(OTHER, launch.ids, 'resume');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(observer.bind.mock.calls).toEqual([[ID], [OTHER]]);
+    expect(observer.rename).toHaveBeenCalledExactlyOnceWith({
+      name: 'Current saved title',
+      conversationId: OTHER,
+      source: 'native',
+    });
+    controller.abort();
   });
 
   it('dedupes titles and correlates echoed writes by record marker', async () => {
