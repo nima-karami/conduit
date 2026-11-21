@@ -9,6 +9,7 @@ import type { ImportConflictPolicy, ImportResult } from '../src/fs-import';
 import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
 import type { GitActionRequest, GitActionResult } from '../src/git-actions';
 import type { LspCallType, LspMessage, LspResult } from '../src/lsp-protocol';
+import type { FileManagerStatus } from '../src/os-integration/status';
 import type { WriteOptions, WriteResult } from '../src/path-guard';
 import type { HostToWebview, WebviewToHost, WindowsPtyInfo } from '../src/protocol';
 import type { AppSettings } from '../src/settings';
@@ -54,6 +55,9 @@ const api = {
   },
   readTerminalClipboard(): Promise<{ text: string; hasData: boolean }> {
     return ipcRenderer.invoke('read-terminal-clipboard');
+  },
+  fileManagerIntegration(enabled?: boolean): Promise<FileManagerStatus | null> {
+    return ipcRenderer.invoke('file-manager-integration', enabled);
   },
   readChangelog(): Promise<string | null> {
     return ipcRenderer.invoke('readChangelog');

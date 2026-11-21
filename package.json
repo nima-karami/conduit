@@ -131,6 +131,58 @@
       "uninstallDisplayName": "Conduit",
       "include": "build/installer.nsh"
     },
+    "deb": {
+      "executableArgs": [
+        "%F"
+      ],
+      "recommends": [
+        "libappindicator3-1",
+        "python3-nautilus"
+      ],
+      "fpm": [
+        "build/linux/conduit.py=/usr/share/nautilus-python/extensions/conduit.py"
+      ],
+      "mimeTypes": [
+        "inode/directory",
+        "text/plain",
+        "text/markdown",
+        "application/json",
+        "application/schema+json",
+        "application/yaml",
+        "application/toml",
+        "application/xml",
+        "text/csv",
+        "text/x-log",
+        "text/x-ini",
+        "text/javascript",
+        "application/typescript",
+        "text/typescript",
+        "text/css",
+        "text/x-scss",
+        "text/x-less",
+        "text/html",
+        "application/xhtml+xml",
+        "text/x-python",
+        "text/x-python3",
+        "text/rust",
+        "text/x-go",
+        "application/x-ruby",
+        "text/x-java",
+        "text/x-kotlin",
+        "text/x-csrc",
+        "text/x-chdr",
+        "text/x-c++src",
+        "text/x-c++hdr",
+        "text/x-csharp",
+        "application/x-php",
+        "text/x-lua",
+        "application/x-shellscript",
+        "application/x-powershell",
+        "application/sql",
+        "text/x-dockerfile",
+        "application/pdf"
+      ]
+    },
     "linux": {
       "target": [
         "AppImage",
@@ -142,6 +194,10 @@
       "maintainer": "Nima Karami <94768955+nima-karami@users.noreply.github.com>",
       "artifactName": "${productName}-${version}-linux-x64.${ext}",
       "extraResources": [
+        {
+          "from": "build/linux/conduit.py",
+          "to": "file-manager/conduit.py"
+        },
         {
           "from": "build/vendor/node/node",
           "to": "runtime/node"

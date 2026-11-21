@@ -5,6 +5,9 @@ All notable user-facing changes to Conduit. Format follows
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
 ## [Unreleased]
+### Added
+
+- Settings can turn file manager integration on or off on Linux and Windows. On Linux, supported file managers get an Open in Conduit action for files and folders.
 
 ## [0.73.0] — 2026-11-20
 
