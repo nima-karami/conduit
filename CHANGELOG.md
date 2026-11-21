@@ -5,6 +5,9 @@ All notable user-facing changes to Conduit. Format follows
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
 ## [Unreleased]
+
+## [0.74.0] — 2026-11-21
+
 ### Added
 
 - **Open in Conduit lets you choose where things go.** Opening a folder or file from the file
