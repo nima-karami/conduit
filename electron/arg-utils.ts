@@ -1,30 +1,27 @@
 export type OpenTarget = { kind: 'dir' | 'file'; path: string };
 
-/**
- * First argv entry that classifies as an existing dir or file. The OS launch actions
- * invoke `Conduit.exe "<path>"`, so on launch (or via the single-instance `second-instance`
- * event) we scan argv for the target to open. Skips the Electron dev `.` arg, any `--flags`,
- * and every entry in `skip` — the caller passes the executable path there. On a packaged
- * build `argv[0]` is the absolute path to `Conduit.exe`, which is itself an existing file, so
- * `classify` would happily return it as the open target before reaching the real argument;
- * excluding it is essential, not cosmetic. Returns the first remaining entry `classify`
- * accepts, else `undefined`.
- *
- * `classify` is injected so this stays pure and unit-testable without touching the filesystem;
- * `skip` keeps the exe-path knowledge at the call site rather than hardcoding `process.execPath`.
- */
+/** Skip the launcher itself: on a packaged build it also classifies as an existing file. */
+export function extractOpenTargets(
+  argv: readonly string[],
+  classify: (p: string) => 'dir' | 'file' | 'none',
+  skip: readonly string[] = [],
+): OpenTarget[] {
+  const skipSet = new Set(skip);
+  const targets: OpenTarget[] = [];
+  for (const arg of argv) {
+    if (!arg || arg === '.' || arg.startsWith('-') || skipSet.has(arg)) continue;
+    const kind = classify(arg);
+    if (kind === 'dir' || kind === 'file') targets.push({ kind, path: arg });
+  }
+  return targets;
+}
+
 export function extractOpenTarget(
   argv: readonly string[],
   classify: (p: string) => 'dir' | 'file' | 'none',
   skip: readonly string[] = [],
 ): OpenTarget | undefined {
-  const skipSet = new Set(skip);
-  for (const arg of argv) {
-    if (!arg || arg === '.' || arg.startsWith('-') || skipSet.has(arg)) continue;
-    const kind = classify(arg);
-    if (kind === 'dir' || kind === 'file') return { kind, path: arg };
-  }
-  return undefined;
+  return extractOpenTargets(argv, classify, skip)[0];
 }
 
 /**

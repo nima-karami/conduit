@@ -43,6 +43,7 @@ export type NewSessionAction =
   | { type: 'newProject'; name: string }
   | { type: 'probed'; results: FolderProbeResult[] }
   | { type: 'revalidate' }
+  | { type: 'clearStartError' }
   | { type: 'start' }
   | { type: 'startFailed'; reason: string; project: boolean };
 
@@ -166,6 +167,8 @@ export function reduceNewSession(
         extraPillId: extraOk ? s.extraPillId : undefined,
       };
     }
+    case 'clearStartError':
+      return { ...s, startError: undefined };
     case 'start':
       if (s.phase === 'starting') return s;
       return { ...s, phase: 'starting', startError: undefined, projectError: false };
