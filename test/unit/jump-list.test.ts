@@ -11,7 +11,9 @@ const mainSource = readFileSync(path.resolve(__dirname, '../../electron/main.ts'
 function startupBoundary(
   input: { packaged?: boolean; platform?: string; argv?: string[]; lock?: boolean } = {},
 ) {
-  const prefix = mainSource.split('app.whenReady().then(() => {')[1]?.split('  // Cold launch')[0];
+  const prefix = mainSource
+    .split('app.whenReady().then(() => {')[1]
+    ?.split('  let jumpListStopPending = false;')[0];
   if (!prefix) throw new Error('missing production startup boundary');
   const calls: string[] = [];
   const tasks: Electron.Task[][] = [];
@@ -93,7 +95,7 @@ describe('Electron Jump List native boundaries', () => {
 
   it('owns warm confirmation with the focused window and stops only after accepting', async () => {
     const handlerSource = mainSource.match(
-      /^ {2}app.on\('second-instance', \(_event, argv\) => \{[\s\S]*?^ {2}\}\);/m,
+      /^ {2}app.on\('second-instance', \(_event, argv, cwd\) => \{[\s\S]*?^ {2}\}\);/m,
     )?.[0];
     if (!handlerSource) throw new Error('missing production second-instance callback');
     const app = new EventEmitter();

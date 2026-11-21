@@ -5,6 +5,16 @@ All notable user-facing changes to Conduit. Format follows
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
 ## [Unreleased]
+### Added
+
+- **Open in Conduit lets you choose where things go.** Opening a folder or file from the file
+  manager shows a picker: an existing session (any running session, for a file), or a new one
+  with the agent and project you pick, in this window or a new one. Your last choice is ready, so
+  Enter opens it. Settings can skip the picker.
+- **Open in Conduit on Linux.** GNOME Files, Dolphin, Nemo and Thunar get an Open in Conduit
+  item, and Conduit is listed under Open With. GNOME Files needs `python3-nautilus` for the
+  top-level item. A Settings switch turns the menu items on or off on Linux and Windows, and an
+  off choice stays off after updates.
 
 ## [0.73.0] — 2026-11-20
 

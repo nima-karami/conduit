@@ -16,5 +16,6 @@ paths = [
   '''(^|/)\.conduit/''',
   '''(^|/)\.vscode-test/''',
   '''(^|/)node_modules/''',
+  '''(^|/)build/vendor/''',
   '''\.(png|jpg|jpeg|gif|ico|webp|woff2?|ttf|pen|node|bin)$''',
 ]

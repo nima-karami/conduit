@@ -18,6 +18,7 @@ import type { GitActionRequest, GitActionResult } from '../src/git-actions';
 import { launchArgsFor } from '../src/launch-args';
 import type { LogLevel } from '../src/logging';
 import type { LspCallType, LspMessage, LspResult } from '../src/lsp-protocol';
+import type { FileManagerStatus } from '../src/os-integration/status';
 import type { WriteOptions, WriteResult } from '../src/path-guard';
 import {
   appendQueueEntry,
@@ -85,6 +86,7 @@ interface HostBridge {
   revealLogs(): void;
   copyDiagnostics(): Promise<string | null>;
   readLogTail(n: number): Promise<{ off: boolean; tail: string }>;
+  fileManagerIntegration(enabled?: boolean): Promise<FileManagerStatus | null>;
   readChangelog(): Promise<string | null>;
   skills: {
     list(projectRoot: string | null): Promise<SkillInfo[]>;
@@ -196,6 +198,10 @@ export function copyDiagnostics(): Promise<string | null> {
 export function readLogTail(n: number): Promise<{ off: boolean; tail: string }> {
   if (host) return host.readLogTail(n);
   return Promise.resolve({ off: true, tail: '' });
+}
+
+export function fileManagerIntegration(enabled?: boolean): Promise<FileManagerStatus | null> {
+  return host?.fileManagerIntegration(enabled) ?? Promise.resolve(null);
 }
 
 /** The browser preview has no host to read it from: null. */

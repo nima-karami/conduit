@@ -477,27 +477,26 @@ function serverRuntimeEnv(env) {
 const COLD_OPEN_WAIT_MS = 30000;
 
 /**
- * Wait for the launch's folder-arg open (`REPO`) to land. It waits for the server, so its session
- * arrives after the first state; one that lands mid-scenario takes the selection and unmounts the
- * pane a scenario just opened. Returns once the window's state holds that session; a no-op for an
- * app launched without CONDUIT_E2E or without a folder arg.
+ * Settle the fixture's argv open before the scenario starts, so its session can't steal the
+ * selection halfway through the scenario. Launches without an open target resolve immediately.
  */
 async function settleColdOpen(app, page) {
   const deadline = Date.now() + COLD_OPEN_WAIT_MS;
   for (;;) {
-    const left = deadline - Date.now();
-    const r = await app.evaluate(
-      async (_, ms) => {
-        if (process.env.CONDUIT_E2E !== '1') return { state: 'done' };
-        if (!('__coldOpen' in global)) return { state: 'pending' };
-        const timeout = new Promise((res) => setTimeout(() => res({ state: 'pending' }), ms));
-        return Promise.race([
-          global.__coldOpen.then((sessionId) => ({ state: 'done', sessionId })),
-          timeout,
-        ]);
-      },
-      Math.max(left, 0),
-    );
+    const picker = page.getByRole('dialog', { name: 'Open in Conduit' });
+    if (await picker.isVisible()) {
+      const accept = picker.getByRole('button', { name: /^(Start|Open) session$/ });
+      if (await accept.isEnabled()) await picker.press('Enter');
+    }
+    const r = await app.evaluate(async (_, ms) => {
+      if (process.env.CONDUIT_E2E !== '1') return { state: 'done' };
+      if (!('__coldOpen' in global)) return { state: 'pending' };
+      const timeout = new Promise((res) => setTimeout(() => res({ state: 'pending' }), ms));
+      return Promise.race([
+        global.__coldOpen.then((sessionId) => ({ state: 'done', sessionId })),
+        timeout,
+      ]);
+    }, 100);
     if (r.state === 'done') {
       if (r.sessionId) {
         // Its row may be legitimately hidden (a Space filter is on, or its group is folded), so the
@@ -1860,9 +1859,9 @@ class AssertionError extends Error {
  * @param {{ env?: Record<string, string>, userDataDir?: string }} [opts]  env overrides for the
  *   launched app only — never mutate this process's env: the harness itself resolves Playwright
  *   through it. `userDataDir`: a profile the scenario prepared (from `profileDir()`), e.g. with an
- *   agents.json written before launch.
+ *   agents.json written before launch. `openFolder: false` leaves argv without the repo fixture.
  */
-export async function runScenario(name, fn, { env, userDataDir } = {}) {
+export async function runScenario(name, fn, { env, userDataDir, openFolder } = {}) {
   if (!e2ePlatformSupported()) {
     console.log(`[${name}] SKIP — suite does not run on this platform (macOS)`);
     await finishScenario(0);
@@ -1872,7 +1871,7 @@ export async function runScenario(name, fn, { env, userDataDir } = {}) {
   let launched = null;
   let code = 0;
   try {
-    launched = await launchApp({ env, userDataDir });
+    launched = await launchApp({ env, userDataDir, openFolder });
     await fn({
       app: launched.app,
       page: launched.page,

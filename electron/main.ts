@@ -118,8 +118,21 @@ import {
   resolveModuleWithClosure,
   touchResolution,
 } from '../src/module-resolver-fs';
+import { seedNewSession } from '../src/new-session-seed';
 import { openWithCommand } from '../src/open-with';
 import { attentionBody } from '../src/os-attention';
+import { hasNautilusPython, linuxIntegration, linuxRoots } from '../src/os-integration/linux';
+import { fileManagerPreference } from '../src/os-integration/preference';
+import { windowsIntegration } from '../src/os-integration/windows';
+import {
+  type OsOpenChoice,
+  type OsOpenPicker,
+  type OsOpenWindow,
+  osOpenPrefill,
+  osOpenSelection,
+  osOpenSessions,
+  parseOsOpenChoice,
+} from '../src/os-open';
 import {
   nodeOutgoingPathDeps,
   outgoingFoldersFor,
@@ -207,7 +220,7 @@ import {
 import { currentWindowsPty } from '../src/windows-pty-info';
 import { parseTrustStore, serializeTrustStore } from '../src/workspace-trust';
 import { AppSessionStore, type SessionDiff } from './app-session-store';
-import { extractOpenTarget, gitRootOf } from './arg-utils';
+import { extractOpenTargets, gitRootOf, type OpenTarget } from './arg-utils';
 import { BoardWatcher } from './board-watcher';
 import {
   acceptProposal,
@@ -1154,23 +1167,6 @@ app.whenReady().then(() => {
   }
   let jumpListStopPending = false;
 
-  // Cold launch ("app was closed → Open with Conduit") parses the open target right after
-  // createWindow(), long before the renderer has loaded and subscribed to 'to-webview'.
-  // webContents.send before the page attaches its listener is dropped (no host-side buffering),
-  // so a one-shot openFileInEditor would silently vanish. We hold such opens until the renderer
-  // signals readiness (its first 'ready' → postState) and flush them then. A warm
-  // second-instance (renderer already ready) sends immediately.
-  let rendererReady = false;
-  const pendingOsOpens: OpenFileInEditor[] = [];
-  const sendOpenFileInEditor = (msg: OpenFileInEditor) => {
-    if (rendererReady) sendToOwner(msg.sessionId, msg);
-    else pendingOsOpens.push(msg);
-  };
-  const flushPendingOsOpens = () => {
-    rendererReady = true;
-    for (const msg of pendingOsOpens.splice(0)) sendToOwner(msg.sessionId, msg);
-  };
-
   if (process.env.CONDUIT_E2E === '1') {
     const holding = new Set<E2eHoldPoint>();
     const parked: Record<E2eHoldPoint, Array<() => void>> = {
@@ -1198,20 +1194,6 @@ app.whenReady().then(() => {
     };
   }
 
-  // Smoke-only seam: the renderer is always loaded by the time a scenario runs, so the harness
-  // can't reproduce true cold-launch timing on its own. Expose the readiness gate + queue depth
-  // so a scenario can flip readiness off, fire a `second-instance` open, assert it was buffered
-  // (not dropped), then flush and assert the doc opens. Gated on CONDUIT_E2E so it never exists
-  // in a shipped build.
-  if (process.env.CONDUIT_E2E === '1') {
-    (global as Record<string, unknown>).__osOpenColdHook = {
-      setRendererReady: (v: boolean) => {
-        rendererReady = v;
-      },
-      pendingCount: () => pendingOsOpens.length,
-      flush: () => flushPendingOsOpens(),
-    };
-  }
   const folderPicker = createFolderPicker({
     showOpenDialog: (w, o) => (w ? dialog.showOpenDialog(w, o) : dialog.showOpenDialog(o)),
     e2e: process.env.CONDUIT_E2E === '1',
@@ -1482,6 +1464,36 @@ app.whenReady().then(() => {
   // Fail-closed per-window readiness and visible set for the MCP policy gate; separate from
   // activity/gitDemand, which fail open (spec 2026-10-30-conduit-mcp-tool-policy §2.3).
   const presence = createWindowPresence();
+  const osOpenFile = path.join(userData(), 'os-open.json');
+  let osOpenChoice = parseOsOpenChoice(readBlob(osOpenFile));
+  const osOpenQueue: OsOpenJob[] = [];
+  let activeOsOpen: OsOpenJob | undefined;
+  let nextOsOpenId = 0;
+  let holdOsOpenForTest = false;
+  const editorOpens: OpenFileInEditor[] = [];
+  const sendOpenFileInEditor = (msg: OpenFileInEditor) => {
+    const owner = sessionOwner.get(msg.sessionId);
+    if (owner !== undefined && presence.isReady(owner)) sendToOwner(msg.sessionId, msg);
+    else editorOpens.push(msg);
+  };
+  const pendingOsActivations = new Set<string>();
+  const flushPendingOsOpens = (windowId: number) => {
+    for (const id of pendingOsActivations) {
+      if (sessionOwner.get(id) !== windowId) continue;
+      pendingOsActivations.delete(id);
+      sendToOwner(id, { type: 'activateSession', sessionId: id });
+    }
+    for (let i = 0; i < editorOpens.length; ) {
+      const msg = editorOpens[i];
+      if (sessionOwner.get(msg.sessionId) !== windowId) {
+        i++;
+        continue;
+      }
+      editorOpens.splice(i, 1);
+      sendToOwner(msg.sessionId, msg);
+    }
+    void showNextOsOpen();
+  };
 
   // The overlay's own mutators (repo scans, pins, cwd follow) re-post; server lists post themselves.
   store.onChange(() => postState());
@@ -1495,6 +1507,7 @@ app.whenReady().then(() => {
   // window's tabs restore. Not a data-safety issue — sessions.json is untouched and restore drops
   // docs whose session this window doesn't own. Per-window keying is a deliberate follow-up.
   let lastDocs: PersistedDoc[] = parseDocs(readBlob(docsFile()));
+  const openDocsByWindow = new Map<number, PersistedDoc[]>();
 
   // Recently-opened repositories (with the terminal last used in each).
   let repos = restoreRepos(readBlob(reposFile()));
@@ -1867,18 +1880,52 @@ app.whenReady().then(() => {
       answer({ droppedRoots: [], error: 'invalid-path' });
       return;
     }
+    const osOpen = m.osOpen;
+    const job = osOpen ? osOpenForReply(osOpen.id, ownerWindowId) : undefined;
+    if (osOpen && (!job || !validOsOpenWindow(osOpen.window))) {
+      answer({ droppedRoots: [], error: 'invalid-path' });
+      return;
+    }
+    if (job && osOpen) {
+      if (!serverCalls.client() || !stores.agents.length) {
+        answer({ droppedRoots: [], error: 'server-unavailable' });
+        return;
+      }
+      job.busy = true;
+    }
+    let destination = ownerWindowId;
     try {
-      const r = await openRepo(m.path, m.agentId, ownerWindowId, {
+      if (job && osOpen?.window === 'new') destination = spawnWindow().id;
+      const r = await openRepo(m.path, m.agentId, destination, {
         ...(Array.isArray(m.roots) ? { roots: m.roots } : {}),
         ...(typeof m.projectId === 'string' ? { projectId: m.projectId } : {}),
         ...(m.cardId ? { cardId: m.cardId } : {}),
         ...(m.brief !== undefined ? { brief: m.brief } : {}),
       });
+      if (job && osOpen) {
+        completeOsOpen(job, r.sessionId, {
+          mode: 'new',
+          agentId: m.agentId,
+          projectId: typeof m.projectId === 'string' ? m.projectId : null,
+          window: osOpen.window,
+        });
+      }
       answer({ sessionId: r.sessionId, droppedRoots: r.droppedRoots ?? [] });
     } catch (err) {
+      if (
+        destination !== ownerWindowId &&
+        !sessionsOwnedBy(sessionOwner, destination, store.list()).length
+      )
+        liveWindow(destination)?.close();
       const error = openRepoErrorOf(err);
-      if (!error) throw err;
-      answer({ droppedRoots: [], error });
+      if (!error && !job) throw err;
+      if (!error) log.warn('app', 'os-open failed', { err: String(err) });
+      answer({ droppedRoots: [], error: error ?? 'server-unavailable' });
+    } finally {
+      if (job) {
+        job.busy = false;
+        if (job.abandoned) finishOsOpen(job);
+      }
     }
   }
 
@@ -2316,6 +2363,9 @@ app.whenReady().then(() => {
     repoTrackerHost.tracker.dropSession(id);
     removeOwner(sessionOwner, id);
     pendingActivate.delete(id);
+    pendingOsActivations.delete(id);
+    for (let i = editorOpens.length - 1; i >= 0; i--)
+      if (editorOpens[i].sessionId === id) editorOpens.splice(i, 1);
   };
 
   /** The app's side of every server list: owners, cwd auto-follow, folder runtime, indexes. */
@@ -2636,8 +2686,6 @@ app.whenReady().then(() => {
           // A just-loaded window may have missed the create/focus win:list broadcasts (it
           // wasn't subscribed yet); send the current picker list now (Slice B).
           broadcastWinList?.();
-          // Renderer has subscribed; release any OS file-opens buffered during cold launch.
-          flushPendingOsOpens();
           // One-shot tab restore (editor-tabs-persist): the renderer applies it once, after its
           // sessions land, and drops docs whose session this window doesn't own. Gated on the
           // same setting as session restore — off ⇒ no message ⇒ no tabs (spec §3.3 D5).
@@ -2655,6 +2703,7 @@ app.whenReady().then(() => {
           // Before the first snapshot these arrive with it, as broadcasts.
           if (lastTimers) replyHere(lastTimers);
           if (lastMcp) replyHere(lastMcp);
+          flushPendingOsOpens(senderId);
           break;
         case 'log': {
           // Back-compatible: a bare {type:'log', message} defaults to info / scope 'renderer'.
@@ -2703,6 +2752,16 @@ app.whenReady().then(() => {
           break;
         case 'openRepo':
           await openRepoRequest(m, senderId, replyHere);
+          break;
+        case 'osOpen:existing':
+          replyHere({
+            type: 'osOpen:existingResult',
+            requestId: m.requestId,
+            ok: acceptExistingOsOpen(m, senderId),
+          });
+          break;
+        case 'osOpen:dismiss':
+          if (activeOsOpen?.id === m.id) abandonOsPicker(senderId);
           break;
         case 'session:addRoot':
           replyOp(replyHere, m, await mutateSession(m.sessionId, { op: 'addRoot', path: m.path }));
@@ -3004,6 +3063,7 @@ app.whenReady().then(() => {
           // payload for the before-quit sync flush and atomic-write it now (already debounced
           // renderer-side). See spec §3.3.
           lastDocs = m.docs;
+          openDocsByWindow.set(senderId, m.docs);
           persistFile(docsFile(), serializeDocs(lastDocs), 'docs.json');
           break;
         }
@@ -4758,6 +4818,56 @@ app.whenReady().then(() => {
       installSkill(id, dest, projectRoot),
   );
 
+  const integrationRoot = process.env.CONDUIT_OS_INTEGRATION_ROOT;
+  const fileManagerIntegration =
+    process.platform === 'linux'
+      ? linuxIntegration({
+          ...linuxRoots(os.homedir(), process.env),
+          userData: userData(),
+          executable:
+            process.env.APPIMAGE ||
+            (fs.existsSync('/usr/bin/conduit') ? '/usr/bin/conduit' : process.execPath),
+          extension: app.isPackaged
+            ? path.join(process.resourcesPath, 'file-manager', 'conduit.py')
+            : path.join(app.getAppPath(), 'build', 'linux', 'conduit.py'),
+          systemExtension: integrationRoot
+            ? path.join(integrationRoot, 'system', 'conduit.py')
+            : '/usr/share/nautilus-python/extensions/conduit.py',
+          hasNautilus: hasNautilusPython,
+        })
+      : process.platform === 'win32'
+        ? windowsIntegration(
+            process.execPath,
+            integrationRoot ? 'HKCU\\Software\\ConduitE2E' : undefined,
+          )
+        : null;
+  const fileManager =
+    fileManagerIntegration && fileManagerPreference(userData(), fileManagerIntegration);
+  let fileManagerQueue =
+    fileManager?.reconcileStartup().catch((error: unknown) => {
+      log.warn('file-manager', 'could not restore file manager preference', {
+        error: String(error),
+      });
+    }) ?? Promise.resolve();
+  ipcMain.handle('file-manager-integration', (event, enabled: unknown) => {
+    if (
+      !BrowserWindow.fromWebContents(event.sender) ||
+      event.senderFrame !== event.sender.mainFrame
+    )
+      throw new Error('File manager integration requires a Conduit window');
+    if (enabled !== undefined && typeof enabled !== 'boolean')
+      throw new Error('Invalid file manager integration setting');
+    const result = fileManagerQueue.then(() => {
+      if (!fileManager) return null;
+      return enabled === undefined ? fileManager.status() : fileManager.setEnabled(enabled);
+    });
+    fileManagerQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  });
+
   // MCP install (spec 2026-10-27-conduit-mcp-install §3.6): nothing is written without a click.
   ipcMain.handle('mcpInstall:status', (_e, p: unknown) =>
     callServer('mcp.installStatus', { projectPath: typeof p === 'string' ? p : null }).catch(
@@ -4912,12 +5022,14 @@ app.whenReady().then(() => {
       onClose: onWindowClose,
       onNavigationStart: (windowId) => {
         presence.startLoading(windowId);
+        abandonOsPicker(windowId);
         schedulePresence();
       },
       onGone: (windowId) => {
         closeGuard.onWindowGone(windowId);
         // A crashed renderer that is not reloaded fires no navigation, so reset here too.
         presence.startLoading(windowId);
+        abandonOsPicker(windowId);
         schedulePresence();
       },
       onUnresponsive: (windowId) => closeGuard.onUnresponsive(windowId),
@@ -4926,6 +5038,8 @@ app.whenReady().then(() => {
         releaseNotesOffers.delete(windowId);
         closeGuard.onWindowGone(windowId);
         presence.drop(windowId);
+        openDocsByWindow.delete(windowId);
+        abandonOsPicker(windowId);
         sidebarUiByWindow.delete(windowId);
         // Its visible-session set dies with it, or sessions it was showing would stay
         // exempt from attention forever.
@@ -5069,10 +5183,7 @@ app.whenReady().then(() => {
     contents.on('destroyed', () => allowedGuests.delete(guestId));
   });
 
-  // The OS integrations launch `Conduit.exe "<path>"`. "Open in Conduit" passes a folder;
-  // "Open with Conduit" / a default-editor association passes a file. Classify the launch
-  // target and route accordingly; a new session runs the server's first agent, a shell. Used for
-  // both a second launch and this first launch.
+  // The same parser handles file-manager selections and default-editor association launches.
   const classifyPath = (p: string): 'dir' | 'file' | 'none' => {
     try {
       const st = fs.statSync(p);
@@ -5084,73 +5195,250 @@ app.whenReady().then(() => {
     }
   };
 
-  // Open a lone file launched from the OS: root its session at the file's git repo (else its
-  // parent dir), reuse an existing session whose home is the nearest ancestor of the
-  // file (else create one at the root), then tell the renderer to open the doc. The host has
-  // no view of which docs are open in the renderer, so the nearest-ancestor (Rule 2) reuse is
-  // all that applies here; the renderer's own resolveOwningSession Rule 1 still de-dupes an
-  // already-open file when the doc actually opens.
-  const openFileFromOS = async (
-    filePath: string,
-    ownerWindowId: number,
-  ): Promise<string | undefined> => {
-    const root = gitRootOf(filePath, (p) => fs.existsSync(p)) ?? path.dirname(filePath);
-    const existing = resolveOwningSession({
-      path: filePath,
-      sessions: store.list().map((s) => ({ id: s.id, home: s.home, roots: s.roots })),
-      openDocs: [],
-      activeId: null,
+  function validOsOpenWindow(value: unknown): value is OsOpenWindow {
+    return value === 'new' || value === 'this';
+  }
+
+  function osOpenForReply(id: number, windowId: number): OsOpenJob | undefined {
+    const job = activeOsOpen;
+    if (
+      job &&
+      job.id === id &&
+      job.windowId === windowId &&
+      job.picker &&
+      !job.busy &&
+      !job.sessionId
+    )
+      return job;
+    return undefined;
+  }
+
+  function completeOsOpen(job: OsOpenJob, sessionId: string, choice?: OsOpenChoice): void {
+    job.sessionId = sessionId;
+    if (choice) {
+      osOpenChoice = choice;
+      persistFile(osOpenFile, JSON.stringify(choice), 'os-open.json');
+    }
+    const owner = sessionOwner.get(sessionId);
+    if (owner !== undefined && presence.isReady(owner)) {
+      sendToOwner(sessionId, { type: 'activateSession', sessionId });
+    } else {
+      pendingOsActivations.add(sessionId);
+    }
+    for (const target of job.targets) {
+      if (target.kind === 'file')
+        sendOpenFileInEditor({
+          type: 'openFileInEditor',
+          path: target.path,
+          sessionId,
+          source: 'os',
+        });
+    }
+  }
+
+  function acceptExistingOsOpen(
+    m: Extract<WebviewToHost, { type: 'osOpen:existing' }>,
+    senderId: number,
+  ): boolean {
+    const job = osOpenForReply(m.id, senderId);
+    if (!job?.picker || !validOsOpenWindow(m.window)) return false;
+    const offered = [...job.picker.matching, ...job.picker.other];
+    const session = store.get(m.sessionId);
+    if (!serverCalls.client() || !session || !offered.some((s) => s.id === session.id))
+      return false;
+    const destination = m.window === 'new' ? spawnWindow().id : senderId;
+    if (sessionOwner.get(session.id) !== destination) moveSessionToWindow(session.id, destination);
+    completeOsOpen(job, session.id, {
+      mode: 'existing',
+      agentId: session.agentId,
+      projectId: session.projectId ?? null,
+      window: m.window,
     });
-    const send = (sessionId: string) =>
-      sendOpenFileInEditor({ type: 'openFileInEditor', path: filePath, sessionId, source: 'os' });
-    const sessionId = existing ?? (await openFromOS(root, ownerWindowId));
-    if (sessionId) send(sessionId);
-    return sessionId;
+    return true;
+  }
+
+  type OsOpenJob = {
+    id: number;
+    windowId: number;
+    targets: OpenTarget[];
+    resolve(sessionId: string | undefined): void;
+    picker?: OsOpenPicker;
+    busy?: boolean;
+    abandoned?: boolean;
+    sessionId?: string;
   };
 
-  /** A new session for an OS open, once the server's agents are known. */
-  const openFromOS = async (home: string, ownerWindowId: number): Promise<string | undefined> => {
-    try {
-      await serverCalls.whenConnected();
-      if (!lifecycle) throw new ServerCallError('disconnected', 'Background service unavailable');
-      await waitForServerSnapshot(firstSnapshot, lifecycle);
-    } catch (err) {
-      log.warn('app', 'os-open unavailable', { home, err: String(err) });
-      dialog.showErrorBox('Conduit', 'No terminals available.');
-      return undefined;
-    }
-    const agentId = stores.agents[0]?.id;
-    if (!agentId) {
-      dialog.showErrorBox('Conduit', 'No terminals available.');
-      return undefined;
-    }
-    try {
-      return (await openRepo(home, agentId, ownerWindowId)).sessionId;
-    } catch (err) {
-      log.warn('app', 'os-open failed', { home, err: String(err) });
-      return undefined;
-    }
-  };
+  function abandonOsPicker(windowId: number): void {
+    if (activeOsOpen?.windowId !== windowId || !activeOsOpen.picker) return;
+    if (activeOsOpen.busy) activeOsOpen.abandoned = true;
+    else finishOsOpen(activeOsOpen);
+  }
 
-  // OS opens are owned by the given window (multi-window Slice A): the focused window for a
-  // warm second-instance, the primary window at cold launch.
-  /** Resolves with the session the open landed in, once it has. */
-  const openArg = async (
+  function finishOsOpen(job: OsOpenJob): void {
+    if (activeOsOpen !== job) return;
+    activeOsOpen = undefined;
+    job.resolve(job.sessionId);
+    void showNextOsOpen();
+  }
+
+  async function showNextOsOpen(): Promise<void> {
+    const job = osOpenQueue[0];
+    if (!job || activeOsOpen || holdOsOpenForTest || isQuitting) return;
+    const target = liveWindow(job.windowId) ?? focusedWindow() ?? windows.values().next().value;
+    if (!target || !presence.isReady(target.id)) return;
+    job.windowId = target.id;
+    activeOsOpen = job;
+    osOpenQueue.shift();
+    job.busy = true;
+    let unavailable = false;
+    let spawned: BrowserWindow | undefined;
+    try {
+      try {
+        await serverCalls.whenConnected();
+        if (lifecycle && !sessionsLoaded) await waitForServerSnapshot(firstSnapshot, lifecycle);
+      } catch (err) {
+        log.warn('app', 'os-open unavailable', { err: String(err) });
+        unavailable = true;
+      }
+      if (!presence.isReady(target.id)) {
+        if (isLiveWindow(target.id)) osOpenQueue.unshift(job);
+        return;
+      }
+      const folders = job.targets.filter((t) => t.kind === 'dir').map((t) => t.path);
+      const files = job.targets.filter((t) => t.kind === 'file').map((t) => t.path);
+      const targetPaths = job.targets.map((t) => t.path);
+      const prefill = osOpenPrefill(
+        folders,
+        files.map((p) => gitRootOf(p, fs.existsSync) ?? path.dirname(p)),
+        osOpenChoice,
+      );
+      const all = store.list();
+      const openDocs = [...openDocsByWindow.entries()].flatMap(([id, docs]) =>
+        docs.filter((d) => d.kind === 'file' && sessionOwner.get(d.sessionId) === id),
+      );
+      const options = osOpenSessions(targetPaths, files, all, openDocs);
+      const window = osOpenChoice?.window ?? 'this';
+      const picker: OsOpenPicker = {
+        id: job.id,
+        prefill,
+        ...options,
+        targetPaths,
+        window,
+        selectedSessionId: osOpenSelection(osOpenChoice, options.matching),
+      };
+      if (settings.askOsOpen || unavailable || !stores.agents.length) {
+        job.picker = picker;
+        if (process.env.CONDUIT_E2E !== '1') {
+          if (target.isMinimized()) target.restore();
+          target.show();
+          target.focus();
+        }
+        sendToWindow(target.id, { type: 'osOpen:picker', picker });
+        return;
+      }
+      const existing = osOpenChoice
+        ? picker.selectedSessionId
+        : job.targets[0].kind === 'file' &&
+          resolveOwningSession({
+            path: job.targets[0].path,
+            sessions: all,
+            openDocs: [],
+            activeId: null,
+          });
+      if (window === 'new') spawned = spawnWindow();
+      const destination = spawned?.id ?? target.id;
+      if (existing) {
+        // With no saved destination, a file follows its existing session across windows.
+        if (osOpenChoice && sessionOwner.get(existing) !== destination)
+          moveSessionToWindow(existing, destination);
+        completeOsOpen(job, existing);
+        return;
+      }
+      const sessions = sessionsOwnedBy(sessionOwner, target.id, all);
+      const seed = seedNewSession(prefill, {
+        active: sessions.reduce<(typeof sessions)[number] | undefined>(
+          (recent, s) => (!recent || s.lastActiveAt > recent.lastActiveAt ? s : recent),
+          undefined,
+        ),
+        sessions,
+        ...stores,
+        repos: reposForState(),
+        defaultAgentId: settings.defaultAgentId,
+      });
+      const agentId = osOpenChoice ? seed.agentId : stores.agents[0].id;
+      if (!seed.home) return;
+      const result = await openRepo(seed.home, agentId, destination, {
+        roots: seed.roots,
+        projectId: osOpenChoice ? (seed.projectId ?? undefined) : undefined,
+      });
+      completeOsOpen(job, result.sessionId);
+    } catch (err) {
+      if (spawned && !spawned.isDestroyed()) spawned.close();
+      log.warn('app', 'os-open failed', { err: String(err) });
+    } finally {
+      job.busy = false;
+      if (!job.picker) {
+        if (osOpenQueue[0] === job) {
+          activeOsOpen = undefined;
+        } else {
+          finishOsOpen(job);
+        }
+      }
+    }
+  }
+
+  let osOpenIntake = Promise.resolve();
+  function openArg(
     argv: readonly string[],
     ownerWindowId: number,
-  ): Promise<string | undefined> => {
-    // argv[0] is the executable (the absolute path to Conduit.exe on a packaged build); skip
-    // it explicitly, else classifyPath would return the exe itself as the file to open.
-    const target = extractOpenTarget(argv, classifyPath, [process.execPath, argv[0] ?? '']);
-    if (!target) return undefined;
-    log.info('app', 'os-open', { kind: target.kind, path: target.path });
-    const p = hasShortComponent(target.path)
-      ? await expandShortNames(target.path, hostShortNameDeps)
-      : target.path;
-    return target.kind === 'dir' ? openFromOS(p, ownerWindowId) : openFileFromOS(p, ownerWindowId);
-  };
+    cwd: string,
+  ): Promise<string | undefined> {
+    const targets = extractOpenTargets(argv, (p) => classifyPath(path.resolve(cwd, p)), [
+      process.execPath,
+      argv[0] ?? '',
+    ]);
+    if (!targets.length) return Promise.resolve(undefined);
+    return new Promise((resolve) => {
+      osOpenIntake = osOpenIntake
+        .then(async () => {
+          const expanded = await Promise.all(
+            targets.map(async (target) => {
+              const absolute = path.resolve(cwd, target.path);
+              const p = hasShortComponent(absolute)
+                ? await expandShortNames(absolute, hostShortNameDeps)
+                : absolute;
+              return { ...target, path: p };
+            }),
+          );
+          osOpenQueue.push({
+            id: ++nextOsOpenId,
+            windowId: ownerWindowId,
+            targets: expanded,
+            resolve,
+          });
+          void showNextOsOpen();
+        })
+        .catch((err: unknown) => {
+          log.warn('app', 'os-open arguments failed', { err: String(err) });
+          resolve(undefined);
+        });
+    });
+  }
 
-  app.on('second-instance', (_event, argv) => {
+  if (process.env.CONDUIT_E2E === '1') {
+    (global as Record<string, unknown>).__osOpenColdHook = {
+      setRendererReady: (ready: boolean) => {
+        holdOsOpenForTest = !ready;
+      },
+      pendingCount: () => osOpenQueue.length,
+      flush: () => {
+        holdOsOpenForTest = false;
+        void showNextOsOpen();
+      },
+    };
+  }
+
+  app.on('second-instance', (_event, argv, cwd) => {
     log.info('app', 'second-instance');
     const target = focusedWindow();
     if (argv.includes(STOP_ALL_AGENTS_FLAG)) {
@@ -5175,17 +5463,16 @@ app.whenReady().then(() => {
         });
       return;
     }
-    void openArg(argv, target?.id ?? primaryWindowId);
-    if (target) {
+    void openArg(argv, target?.id ?? primaryWindowId, cwd || process.cwd());
+    if (target && !activeOsOpen && process.env.CONDUIT_E2E !== '1') {
       if (target.isMinimized()) target.restore();
       target.focus();
     }
   });
 
   // First launch opened via the context menu while the app was closed → primary window.
-  const coldOpen = openArg(process.argv, primaryWindowId);
-  // Smoke-only: the open waits for the server, so it lands after the first state; a scenario
-  // waits for it before acting, else its session appears mid-scenario and takes the selection.
+  const coldOpen = openArg(process.argv, primaryWindowId, process.cwd());
+  // The harness settles the fixture's launch before a scenario can change the selection.
   if (process.env.CONDUIT_E2E === '1') (global as Record<string, unknown>).__coldOpen = coldOpen;
 
   startServer().catch((err: unknown) =>

@@ -135,6 +135,7 @@ export interface AppSettings {
   sidebarSpacesView: SpacesView;
   // behaviour
   shortcuts: Record<string, string>; // actionId -> combo override (defaults used when absent)
+  askOsOpen: boolean;
   defaultAgentId: string; // '' = ask each time
   restoreSessions: boolean;
   autoSwitchSession: boolean;
@@ -257,6 +258,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sidebarAgentsView: DEFAULT_AGENTS_VIEW,
   sidebarSpacesView: DEFAULT_SPACES_VIEW,
   shortcuts: {},
+  askOsOpen: true,
   defaultAgentId: '',
   restoreSessions: true,
   autoSwitchSession: true,
@@ -532,6 +534,7 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     sidebarAgentsView: coerceAgentsView(payload.sidebarAgentsView),
     sidebarSpacesView: coerceSpacesView(payload.sidebarSpacesView),
     shortcuts: strMap(payload.shortcuts),
+    askOsOpen: bool(payload.askOsOpen, DEFAULT_SETTINGS.askOsOpen),
     defaultAgentId: strOr(payload.defaultAgentId, DEFAULT_SETTINGS.defaultAgentId),
     restoreSessions: bool(payload.restoreSessions, DEFAULT_SETTINGS.restoreSessions),
     autoSwitchSession: bool(payload.autoSwitchSession, DEFAULT_SETTINGS.autoSwitchSession),

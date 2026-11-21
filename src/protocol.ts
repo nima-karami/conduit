@@ -53,6 +53,7 @@ import type { RefEndpoint } from './git-range';
 import type { LauncherDTO } from './launchers';
 import type { LogLevel } from './logging';
 import type { LspServerStatus, LspTrustState } from './lsp-protocol';
+import type { OsOpenPicker, OsOpenWindow } from './os-open';
 import type { DragOutRefusal } from './outgoing-paths';
 import type { ResolveRoot } from './path-link-roots';
 import type { TokenResolution } from './path-resolve';
@@ -915,10 +916,12 @@ export type HostToWebview =
   // tabs. The renderer consumes it once (orphan docs whose session is unknown are dropped). See
   // docs/specs/archive/2026-06-27-editor-tab-behavior.md §3.3 (D5).
   | { type: 'restoreDocs'; docs: PersistedDoc[] }
+  | { type: 'osOpen:picker'; picker: OsOpenPicker }
+  | { type: 'osOpen:existingResult'; requestId: number; ok: boolean }
   // Host routes an OS "Open with Conduit" file launch: open `path` as a doc in `sessionId`
   // (the host already created/reused the owning session). The renderer opens it via the
   // existing open-file flow; if the session isn't in state yet (just created), it defers
-  // until that session's `state` arrives. See electron/main.ts openFileFromOS. An MCP open_file
+  // until that session's `state` arrives. An MCP open_file
   // carries its own position and focus (spec 2026-10-27-conduit-mcp-control-tools §3.1).
   | { type: 'openFileInEditor'; path: string; sessionId: string; source: 'os' }
   | {
@@ -1146,9 +1149,18 @@ export type WebviewToHost =
       roots?: string[];
       projectId?: string | null;
       requestId?: number;
+      osOpen?: { id: number; window: OsOpenWindow };
       /** Absent ⇒ { kind: 'agent' }. */
       brief?: BriefRequest;
     }
+  | {
+      type: 'osOpen:existing';
+      id: number;
+      sessionId: string;
+      window: OsOpenWindow;
+      requestId: number;
+    }
+  | { type: 'osOpen:dismiss'; id: number }
   // New session launchers (mf-new-session spec §3.2). A rescan posts `state` only on a change.
   | { type: 'launchers:rescan' }
   | { type: 'launcher:addCustom'; requestId: number; commandLine: string; label?: string }

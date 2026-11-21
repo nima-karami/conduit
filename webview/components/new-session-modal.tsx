@@ -7,6 +7,7 @@ import {
   type SeedContext,
   seedNewSession,
 } from '../../src/new-session-seed';
+import type { OsOpenPicker, OsOpenWindow } from '../../src/os-open';
 import { type HostToWebview, MAX_PROBE_PATHS } from '../../src/protocol';
 import { post } from '../bridge';
 import { requestHost } from '../host-request';
@@ -34,6 +35,7 @@ import { NewSessionLaunchRow } from './new-session-launch-row';
 import { NewSessionPreview } from './new-session-preview';
 import { NewSessionProjectChip } from './new-session-project-chip';
 import { NewSessionRoleBrief } from './new-session-role-brief';
+import { SelectField } from './select-field';
 
 const REPLY_TIMEOUT_MS = 5000;
 const PICK_TIMEOUT_MS = 30 * 60_000;
@@ -53,11 +55,20 @@ const START_ERROR: Record<OpenRepoError, string> = {
 export interface NewSessionModalProps {
   prefill: NewSessionPrefill;
   ctx: SeedContext;
+  osOpen?: OsOpenPicker;
+  serverConnected?: boolean;
   onClose: () => void;
   onStarted: (sessionId: string, dropped: DroppedRoot[]) => void;
 }
 
-export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSessionModalProps) {
+export function NewSessionModal({
+  prefill,
+  ctx,
+  osOpen,
+  serverConnected = true,
+  onClose,
+  onStarted,
+}: NewSessionModalProps) {
   const ctxRef = useRef(ctx);
   ctxRef.current = ctx;
   const [state, dispatch] = useReducer(
@@ -77,6 +88,8 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
   const probed = useRef(new Set<string>());
   const previewSeq = useRef(0);
   const startingRef = useRef(false);
+  const [existingSessionId, setExistingSessionId] = useState(osOpen?.selectedSessionId ?? '');
+  const [destination, setDestination] = useState<OsOpenWindow>(osOpen?.window ?? 'this');
 
   // Ids only: the seed is never recomputed mid-edit (spec §4 "State updates mid-edit").
   // biome-ignore lint/correctness/useExhaustiveDependencies: each new ctx is the trigger.
@@ -86,13 +99,17 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
 
   useEffect(() => {
     post({ type: 'launchers:rescan' });
+    if (osOpen) {
+      frameRef.current?.focus();
+      return;
+    }
     // In priority order: one selector list would match whichever comes first in the DOM.
     const frame = frameRef.current;
     const target = ['.ns-pill[aria-checked="true"]', '.ns-pill', '.ns-folders__add']
       .map((sel) => frame?.querySelector<HTMLElement>(sel))
       .find(Boolean);
     target?.focus();
-  }, []);
+  }, [osOpen]);
 
   useEffect(() => {
     const fresh = state.folders.filter((f) => !probed.current.has(folderKey(f)));
@@ -204,8 +221,13 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
     () => rankLaunchers(agents, launchers, preferredShellId(launchers, ctx.defaultAgentId)),
     [agents, launchers, ctx.defaultAgentId],
   );
-  const block =
-    startBlock(state, preview, agents) ?? briefStartBlock(brief, preview.result?.briefBlocked);
+  const unavailable = osOpen && (!serverConnected || agents.length === 0);
+  const block = unavailable
+    ? { reason: 'No terminals available' }
+    : existingSessionId
+      ? null
+      : (startBlock(state, preview, agents) ??
+        briefStartBlock(brief, preview.result?.briefBlocked));
   const label = agents.find((a) => a.id === state.agentId)?.label ?? state.agentId;
   const starting = state.phase === 'starting';
 
@@ -215,6 +237,30 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
     dispatch({ type: 'start' });
     let started = false;
     try {
+      if (osOpen && existingSessionId) {
+        const reply = await requestHost(
+          (requestId) => ({
+            type: 'osOpen:existing',
+            id: osOpen.id,
+            sessionId: existingSessionId,
+            window: destination,
+            requestId,
+          }),
+          ['osOpen:existingResult'],
+          REPLY_TIMEOUT_MS,
+        );
+        if (reply?.ok) {
+          started = true;
+          onStarted(existingSessionId, []);
+        } else {
+          dispatch({
+            type: 'startFailed',
+            reason: 'The selected session is unavailable',
+            project: false,
+          });
+        }
+        return;
+      }
       let projectId = state.projectId;
       if (state.pendingProjectName !== undefined) {
         const name = state.pendingProjectName;
@@ -241,6 +287,7 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
           projectId,
           ...(briefReq ? { brief: briefReq } : {}),
           ...(prefill.cardId ? { cardId: prefill.cardId } : {}),
+          ...(osOpen ? { osOpen: { id: osOpen.id, window: destination } } : {}),
           requestId,
         }),
         ['openRepo:result'],
@@ -268,8 +315,12 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
     void start();
   };
 
+  const dismiss = () => {
+    if (!osOpen || !startingRef.current) onClose();
+  };
+
   return (
-    <ModalLayer onDismiss={onClose}>
+    <ModalLayer onDismiss={dismiss}>
       <div
         ref={frameRef}
         className="modal ns"
@@ -282,8 +333,15 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
         <div className="ns__head">
           <div className="ns__titles">
             <span id={titleId} className="modal__title modal__title--compact">
-              New session
+              {osOpen ? 'Open in Conduit' : 'New session'}
             </span>
+            {osOpen && (
+              <span className="modal__sub" title={osOpen.targetPaths.join('\n')}>
+                {osOpen.targetPaths.length === 1
+                  ? osOpen.targetPaths[0]
+                  : `${osOpen.targetPaths.length} files and folders`}
+              </span>
+            )}
             {prefill.cardTitle && (
               <span className="modal__sub">{`Start a session for "${prefill.cardTitle}"`}</span>
             )}
@@ -294,58 +352,105 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
         </div>
 
         <div className="ns__body">
-          <section className="ns__section">
-            <span className="ns__label">Launch</span>
-            <NewSessionLaunchRow
-              agents={agents}
-              launchers={launchers}
-              ranking={ranking}
-              selectedId={state.agentId}
-              extraPillId={state.extraPillId}
-              onPick={(id, fromMore) => dispatch({ type: 'pickAgent', id, fromMore })}
-              customCount={launchers.filter((l) => l.kind === 'custom').length}
-            />
-          </section>
+          {osOpen && (
+            <>
+              <section className="ns__section">
+                <span className="ns__label">Open in</span>
+                <SelectField
+                  ariaLabel="Open in"
+                  value={existingSessionId}
+                  disabled={starting}
+                  options={[
+                    { value: '', label: 'New session' },
+                    ...osOpen.matching.map((s) => ({ value: s.id, label: s.name, detail: s.home })),
+                    ...osOpen.other.map((s, index) => ({
+                      value: s.id,
+                      label: s.name,
+                      detail: s.home,
+                      ...(index === 0 ? { group: 'Other sessions' } : {}),
+                    })),
+                  ]}
+                  onChange={(id) => {
+                    setExistingSessionId(id);
+                    dispatch({ type: 'clearStartError' });
+                  }}
+                />
+              </section>
+              <section className="ns__section">
+                <span className="ns__label">Window</span>
+                <SelectField
+                  ariaLabel="Window"
+                  value={destination}
+                  disabled={starting}
+                  options={[
+                    { value: 'this', label: 'This window' },
+                    { value: 'new', label: 'New window' },
+                  ]}
+                  onChange={(value) => setDestination(value === 'new' ? 'new' : 'this')}
+                />
+              </section>
+            </>
+          )}
+          {!existingSessionId && (
+            <>
+              <section className="ns__section">
+                <span className="ns__label">Launch</span>
+                <NewSessionLaunchRow
+                  agents={agents}
+                  launchers={launchers}
+                  ranking={ranking}
+                  selectedId={state.agentId}
+                  extraPillId={state.extraPillId}
+                  onPick={(id, fromMore) => dispatch({ type: 'pickAgent', id, fromMore })}
+                  customCount={launchers.filter((l) => l.kind === 'custom').length}
+                />
+              </section>
 
-          <section className="ns__section">
-            <NewSessionProjectChip
-              projects={[...ctx.projects]}
-              projectId={state.projectId}
-              pendingName={state.pendingProjectName}
-              error={state.projectError}
-              onSet={(projectId) => dispatch({ type: 'setProject', projectId })}
-              onNew={(name) => dispatch({ type: 'newProject', name })}
-            />
-          </section>
+              <section className="ns__section">
+                <NewSessionProjectChip
+                  projects={[...ctx.projects]}
+                  projectId={state.projectId}
+                  pendingName={state.pendingProjectName}
+                  error={state.projectError}
+                  onSet={(projectId) => dispatch({ type: 'setProject', projectId })}
+                  onNew={(name) => dispatch({ type: 'newProject', name })}
+                />
+              </section>
 
-          <section className="ns__section">
-            <span className="ns__label">Folders</span>
-            <NewSessionFolders
-              folders={state.folders}
-              probes={state.probes}
-              repos={[...ctx.repos]}
-              flashKey={state.flashKey}
-              hint={state.hint}
-              atCap={state.folders.length >= MAX_DIALOG_FOLDERS}
-              onAdd={(path) => dispatch({ type: 'addFolder', path })}
-              onRemove={(path) => dispatch({ type: 'removeFolder', path })}
-              onMakeHome={(path) => dispatch({ type: 'makeHome', path })}
-            />
-          </section>
+              <section className="ns__section">
+                <span className="ns__label">Folders</span>
+                <NewSessionFolders
+                  folders={state.folders}
+                  probes={state.probes}
+                  repos={[...ctx.repos]}
+                  flashKey={state.flashKey}
+                  hint={state.hint}
+                  atCap={state.folders.length >= MAX_DIALOG_FOLDERS}
+                  onAdd={(path) => dispatch({ type: 'addFolder', path })}
+                  onRemove={(path) => dispatch({ type: 'removeFolder', path })}
+                  onMakeHome={(path) => dispatch({ type: 'makeHome', path })}
+                />
+              </section>
 
-          <NewSessionRoleBrief
-            state={brief}
-            dispatch={dispatchBrief}
-            onBrowse={() => void browseBrief()}
-          />
+              <NewSessionRoleBrief
+                state={brief}
+                dispatch={dispatchBrief}
+                onBrowse={() => void browseBrief()}
+              />
 
-          <section className="ns__section">
-            <span className="ns__label">Launches as</span>
-            <NewSessionPreview view={preview} hasFolders={state.folders.length > 0} label={label} />
-          </section>
+              <section className="ns__section">
+                <span className="ns__label">Launches as</span>
+                <NewSessionPreview
+                  view={preview}
+                  hasFolders={state.folders.length > 0}
+                  label={label}
+                />
+              </section>
+            </>
+          )}
         </div>
 
-        {(state.startError || probeUnavailable) && (
+        {(state.startError || (probeUnavailable && !unavailable && !existingSessionId)) && (
           <div className="ns__error" role="alert">
             {state.startError ?? SERVICE_UNAVAILABLE_COPY}
           </div>
@@ -355,7 +460,7 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
             {block?.reason}
           </span>
           <div className="modal__actions">
-            <button type="button" className="btn" onClick={onClose}>
+            <button type="button" className="btn" onClick={dismiss} disabled={osOpen && starting}>
               Cancel
             </button>
             <button
@@ -365,7 +470,7 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
               aria-describedby={block ? reasonId : undefined}
               onClick={() => void start()}
             >
-              Start session
+              {existingSessionId ? 'Open session' : 'Start session'}
             </button>
           </div>
         </div>
