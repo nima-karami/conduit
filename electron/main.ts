@@ -121,6 +121,9 @@ import {
 import { seedNewSession } from '../src/new-session-seed';
 import { openWithCommand } from '../src/open-with';
 import { attentionBody } from '../src/os-attention';
+import { hasNautilusPython, linuxIntegration, linuxRoots } from '../src/os-integration/linux';
+import { fileManagerPreference } from '../src/os-integration/preference';
+import { windowsIntegration } from '../src/os-integration/windows';
 import {
   type OsOpenChoice,
   type OsOpenPicker,
@@ -4814,6 +4817,56 @@ app.whenReady().then(() => {
     (_e, id: string, dest: SkillDestination, projectRoot: string | null): SkillInstallResult =>
       installSkill(id, dest, projectRoot),
   );
+
+  const integrationRoot = process.env.CONDUIT_OS_INTEGRATION_ROOT;
+  const fileManagerIntegration =
+    process.platform === 'linux'
+      ? linuxIntegration({
+          ...linuxRoots(os.homedir(), process.env),
+          userData: userData(),
+          executable:
+            process.env.APPIMAGE ||
+            (fs.existsSync('/usr/bin/conduit') ? '/usr/bin/conduit' : process.execPath),
+          extension: app.isPackaged
+            ? path.join(process.resourcesPath, 'file-manager', 'conduit.py')
+            : path.join(app.getAppPath(), 'build', 'linux', 'conduit.py'),
+          systemExtension: integrationRoot
+            ? path.join(integrationRoot, 'system', 'conduit.py')
+            : '/usr/share/nautilus-python/extensions/conduit.py',
+          hasNautilus: hasNautilusPython,
+        })
+      : process.platform === 'win32'
+        ? windowsIntegration(
+            process.execPath,
+            integrationRoot ? 'HKCU\\Software\\ConduitE2E' : undefined,
+          )
+        : null;
+  const fileManager =
+    fileManagerIntegration && fileManagerPreference(userData(), fileManagerIntegration);
+  let fileManagerQueue =
+    fileManager?.reconcileStartup().catch((error: unknown) => {
+      log.warn('file-manager', 'could not restore file manager preference', {
+        error: String(error),
+      });
+    }) ?? Promise.resolve();
+  ipcMain.handle('file-manager-integration', (event, enabled: unknown) => {
+    if (
+      !BrowserWindow.fromWebContents(event.sender) ||
+      event.senderFrame !== event.sender.mainFrame
+    )
+      throw new Error('File manager integration requires a Conduit window');
+    if (enabled !== undefined && typeof enabled !== 'boolean')
+      throw new Error('Invalid file manager integration setting');
+    const result = fileManagerQueue.then(() => {
+      if (!fileManager) return null;
+      return enabled === undefined ? fileManager.status() : fileManager.setEnabled(enabled);
+    });
+    fileManagerQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  });
 
   // MCP install (spec 2026-10-27-conduit-mcp-install §3.6): nothing is written without a click.
   ipcMain.handle('mcpInstall:status', (_e, p: unknown) =>

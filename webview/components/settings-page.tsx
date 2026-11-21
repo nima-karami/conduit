@@ -3,6 +3,7 @@ import {
   type RefObject,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -10,6 +11,7 @@ import {
 import { AGENT_CLIS, type AgentCli } from '../../src/conduit-mcp/install-types';
 import type { AutoResumeMode } from '../../src/contracts/scheduler';
 import type { LogLevel } from '../../src/logging';
+import type { FileManagerStatus } from '../../src/os-integration/status';
 import type { AboutInfo } from '../../src/protocol';
 import type {
   AppSettings,
@@ -29,6 +31,7 @@ import { APPEARANCE_SECTIONS, type AppearanceControlId } from '../appearance-sec
 import { AUTO_SAVE_COPY } from '../auto-save-copy';
 import {
   copyDiagnostics,
+  fileManagerIntegration,
   installSkill,
   listSkills,
   openExternal,
@@ -383,17 +386,25 @@ function Section({
   desc,
   children,
   controlClassName,
+  id,
 }: {
   title: string;
-  desc?: string;
+  desc?: React.ReactNode;
+  id?: string;
   children: React.ReactNode;
   controlClassName?: string;
 }) {
   return (
     <section className="set">
       <div className="set__label">
-        <span className="set__title">{title}</span>
-        {desc && <span className="set__desc">{desc}</span>}
+        <span id={id} className="set__title">
+          {title}
+        </span>
+        {desc && (
+          <span id={id ? `${id}-desc` : undefined} className="set__desc">
+            {desc}
+          </span>
+        )}
       </div>
       <div className={`set__control${controlClassName ? ` ${controlClassName}` : ''}`}>
         {children}
@@ -1122,6 +1133,64 @@ function McpTab({
   );
 }
 
+function FileManagerSetting() {
+  const id = useId();
+  const [status, setStatus] = useState<FileManagerStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    fileManagerIntegration().then(
+      (result) => {
+        if (active) setStatus(result);
+      },
+      (error: unknown) => {
+        if (active) setError(String(error));
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function change(enabled: boolean) {
+    setBusy(true);
+    setError('');
+    try {
+      setStatus(await fileManagerIntegration(enabled));
+    } catch (error) {
+      setError(String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!status && !error) return null;
+  const desc =
+    status?.notice === 'missing-nautilus' ? (
+      <>
+        On, but GNOME Files needs python3-nautilus. <code>sudo apt install python3-nautilus</code>
+      </>
+    ) : (
+      <>
+        {status?.enabled ? 'On' : 'Off'}
+        {status?.notice === 'restart-files' && ' · Restart Files to see it'}
+      </>
+    );
+  return (
+    <Section id={id} title="Open in Conduit from the file manager" desc={error || desc}>
+      <Toggle
+        value={status?.enabled ?? false}
+        disabled={busy || !status}
+        labelledBy={id}
+        describedBy={`${id}-desc`}
+        onChange={(enabled) => void change(enabled)}
+      />
+    </Section>
+  );
+}
+
 function General({
   settings,
   update,
@@ -1197,6 +1266,7 @@ function General({
       </SetGroup>
 
       <SetGroup title="Workspace">
+        <FileManagerSetting />
         <Section
           title="Track live working directory"
           desc="Re-root the Files and Changes views when the terminal reports a new working directory via OSC escape sequences"
