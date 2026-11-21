@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { extractDirArg, extractOpenTarget, gitRootOf } from '../../electron/arg-utils';
+import {
+  extractDirArg,
+  extractOpenTarget,
+  extractOpenTargets,
+  gitRootOf,
+} from '../../electron/arg-utils';
 
 // Injected directory predicate: treat exactly these paths as existing directories.
 const dirsAre = (dirs: string[]) => (p: string) => dirs.includes(p);
@@ -138,5 +143,23 @@ describe('gitRootOf', () => {
     expect(gitRootOf('C:\\work\\proj\\src\\a.ts', exist(['C:\\work\\proj\\.git']))).toBe(
       'C:\\work\\proj',
     );
+  });
+});
+
+describe('extractOpenTargets', () => {
+  it('keeps mixed existing arguments in order without rewriting path characters', () => {
+    const exe = '/opt/Conduit app/conduit';
+    const folder = '/work/space ü';
+    const file = '/work/space ü/a "quote"\n.txt';
+    expect(
+      extractOpenTargets(
+        [exe, '.', file, '--flag', '/missing', folder],
+        classifyAs({ [exe]: 'file', [file]: 'file', [folder]: 'dir' }),
+        [exe],
+      ),
+    ).toEqual([
+      { kind: 'file', path: file },
+      { kind: 'dir', path: folder },
+    ]);
   });
 });

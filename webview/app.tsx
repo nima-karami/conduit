@@ -43,6 +43,7 @@ import { type Rect, triggerMenu } from '../src/menu-position';
 import { unreadMessagesOutsideScope } from '../src/messages-scope';
 import type { ApplyResult } from '../src/nav-history';
 import { type NewSessionPrefill, projectForNewSession } from '../src/new-session-seed';
+import type { OsOpenPicker } from '../src/os-open';
 import { resolveOwningSession } from '../src/owning-session';
 import { sessionPaletteFields } from '../src/palette-state';
 import { PLANS_DIR } from '../src/plan-path';
@@ -609,6 +610,9 @@ export function App() {
   // The new-session flow. `null` = closed; the prefill shape is the public contract other
   // callers pass (mf-new-session spec §3.1).
   const [newSession, setNewSession] = useState<NewSessionPrefill | null>(null);
+  const [osOpenPicker, setOsOpenPicker] = useState<OsOpenPicker | null>(null);
+  const shownOsOpen = newSession ? undefined : (osOpenPicker ?? undefined);
+  const sessionPrefill = newSession ?? shownOsOpen?.prefill;
   const openNewSession = useCallback((home?: string) => setNewSession(home ? { home } : {}), []);
   // The implicit New agent (sidebar, Mod+N, palette) defaults to the selected Space; explicit
   // contexts (board card, MCP caller, folder menu) keep their own (sidebar-agent-tree spec §3).
@@ -1000,6 +1004,8 @@ export function App() {
           pendingRestoreDocsRef.current = msg.docs;
           applyRestoreRef.current();
         }
+      } else if (msg.type === 'osOpen:picker') {
+        setOsOpenPicker(msg.picker);
       } else if (msg.type === 'openFileInEditor') {
         // OS "Open with Conduit" or an MCP open_file: enqueue the open; the flush effect opens it
         // once the target session is present in state (it may have just been created host-side).
@@ -4753,7 +4759,7 @@ export function App() {
     !!menu ||
     !!workspacePermissions ||
     slot.current !== null ||
-    !!newSession ||
+    !!sessionPrefill ||
     webPromptOpen ||
     iconPickerSessionId !== null ||
     movePicker !== null;
@@ -6079,9 +6085,12 @@ export function App() {
                 />
               )}
           </div>
-          {newSession && (
+          {sessionPrefill && (
             <NewSessionModal
-              prefill={newSession}
+              key={shownOsOpen?.id ?? 'new'}
+              prefill={sessionPrefill}
+              osOpen={shownOsOpen}
+              serverConnected={serverState.state === 'connected'}
               ctx={{
                 active,
                 sessions,
@@ -6092,6 +6101,11 @@ export function App() {
                 defaultAgentId: settings.defaultAgentId,
               }}
               onClose={() => {
+                if (shownOsOpen) {
+                  setOsOpenPicker(null);
+                  post({ type: 'osOpen:dismiss', id: shownOsOpen.id });
+                  return;
+                }
                 setNewSession(null);
                 if (newSessionReturnFocus.current?.isConnected)
                   newSessionReturnFocus.current.focus();
@@ -6099,8 +6113,12 @@ export function App() {
               }}
               onStarted={(_id, dropped) => {
                 newSessionReturnFocus.current = null;
-                // The knownIds effect activates the new session; nothing else to do here.
-                setNewSession(null);
+                if (shownOsOpen) {
+                  setOsOpenPicker(null);
+                  post({ type: 'osOpen:dismiss', id: shownOsOpen.id });
+                } else {
+                  setNewSession(null);
+                }
                 for (const d of dropped) {
                   pushToast({
                     message: `Skipped ${sessionNameFromPath(d.path)}: not a valid folder`,

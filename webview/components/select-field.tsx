@@ -7,6 +7,8 @@ import { ContextMenu, type MenuState } from './context-menu';
 export interface SelectOption {
   value: string;
   label: string;
+  detail?: string;
+  group?: string;
 }
 
 /**
@@ -45,11 +47,26 @@ export function SelectField({
     if (!el) return;
     setMenu({
       ...triggerMenu(el.getBoundingClientRect()),
-      items: options.map((o) => ({
-        label: o.label,
-        icon: o.value === value ? <IconCheck size={13} /> : undefined,
-        onClick: () => onChange(o.value),
-      })),
+      items: options.flatMap((o) => [
+        ...(o.group
+          ? [
+              {
+                label: o.group,
+                key: `group:${o.value}`,
+                separatorBefore: true,
+                disabled: true,
+                onClick: () => {},
+              },
+            ]
+          : []),
+        {
+          key: o.value,
+          label: o.label,
+          detail: o.detail,
+          icon: o.value === value ? <IconCheck size={13} /> : undefined,
+          onClick: () => onChange(o.value),
+        },
+      ]),
     });
   };
 

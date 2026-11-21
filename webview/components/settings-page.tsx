@@ -1013,12 +1013,14 @@ function Slider({
 function Toggle({
   value,
   onChange,
+  ariaLabel,
   labelledBy,
   describedBy,
   disabled,
 }: {
   value: boolean;
   onChange: (v: boolean) => void;
+  ariaLabel?: string;
   labelledBy?: string;
   describedBy?: string;
   disabled?: boolean;
@@ -1028,6 +1030,7 @@ function Toggle({
       className={`toggle ${value ? 'toggle--on' : ''}`}
       role="switch"
       aria-checked={value}
+      aria-label={ariaLabel}
       aria-labelledby={labelledBy}
       aria-describedby={describedBy}
       disabled={disabled}
@@ -1147,6 +1150,13 @@ function General({
               ...agents.map((a) => ({ value: a.id, label: a.label })),
             ]}
             onChange={(v) => update({ defaultAgentId: v })}
+          />
+        </Section>
+        <Section title="Ask how to open files and folders from the OS">
+          <Toggle
+            value={settings.askOsOpen}
+            onChange={(v) => update({ askOsOpen: v })}
+            ariaLabel="Ask how to open files and folders from the OS"
           />
         </Section>
         <Section
