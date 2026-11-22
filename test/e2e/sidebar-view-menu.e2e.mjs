@@ -4,9 +4,10 @@
  *     and an agent of no named kind that exits): the defaults group them by status;
  *   - Group: By agent type regroups them under Claude / Codex / Other headers;
  *   - Running only, picked with the keyboard (Space on the focused row), drops the exited one;
- *   - Escape closes the menu and returns focus to ⋯, which carries a dot while options differ;
- *   - after a relaunch the choices are still checked and the dot is still there;
- *   - Reset restores By status and clears the dot.
+ *   - Escape closes the menu and returns focus to ⋯, which is labelled customized (and shows no
+ *     dot) while options differ;
+ *   - after a relaunch the choices are still checked and the label still says so;
+ *   - Reset restores By status and clears the label.
  */
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -25,6 +26,8 @@ import {
   tapBridge,
 } from './harness.mjs';
 import { groupOf, rowIds, treeItems, waitFact } from './sidebar-tree-helpers.mjs';
+
+const CUSTOMIZED = 'button[aria-label="Agents view options, customized"]';
 
 // The agent's kind comes from its id's tokens (src/agent-icon.ts), so the same long-lived program
 // plays Claude and Codex.
@@ -96,8 +99,8 @@ await runScenario(
     );
     assert((await groupOf(page, a)) === 'idle', 'a running agent starts under a status group');
     assert((await groupOf(page, b)) === 'idle', 'the second running agent too');
-    assert((await page.locator('.viewmenu__dot').count()) === 0, 'no dot at the defaults');
-    log('defaults group by status, no dot ✓');
+    assert((await page.locator(CUSTOMIZED).count()) === 0, 'not customized at the defaults');
+    log('defaults group by status, not customized ✓');
 
     phase('Group: By agent type');
     await openMenu(page);
@@ -137,7 +140,7 @@ await runScenario(
     assert((await groupOf(page, a)) === 'type:claude', 'the rest stay grouped by type');
     log('Running only applied ✓');
 
-    phase('Escape returns focus, dot shows');
+    phase('Escape returns focus, labelled customized');
     await page.keyboard.press('Escape');
     await page.getByRole('menu', { name: 'Agents view options' }).waitFor({ state: 'detached' });
     assert(
@@ -148,10 +151,8 @@ await runScenario(
       ),
       'focus returns to the ⋯ button',
     );
-    assert(
-      (await page.locator('.viewmenu__dot').count()) === 1,
-      'the dot marks non-default options',
-    );
+    assert((await page.locator(CUSTOMIZED).count()) === 1, 'the label marks non-default options');
+    assert((await page.locator('.viewmenu__dot').count()) === 0, 'no dot covers the ⋯ button');
 
     phase('relaunch: the choices persist');
     await closeApp(app, page);
@@ -160,7 +161,7 @@ await runScenario(
       second = await launchApp({ userDataDir, openFolder: false });
       const p2 = second.page;
       await tapBridge(p2);
-      await p2.locator('.viewmenu__dot').waitFor({ state: 'attached', timeout: 20_000 });
+      await p2.locator(CUSTOMIZED).waitFor({ state: 'attached', timeout: 20_000 });
       await openMenu(p2);
       const restored = await menuState(p2);
       assert(
@@ -176,7 +177,7 @@ await runScenario(
         (s) => s.status === 'true' && s.type === 'false' && s.running === 'false',
         'Reset restores the defaults',
       );
-      assert((await p2.locator('.viewmenu__dot').count()) === 0, 'the dot goes with the changes');
+      assert((await p2.locator(CUSTOMIZED).count()) === 0, 'the label goes with the changes');
       assert(
         (await groupKeys(p2)).every((k) => !k.startsWith('type:')),
         'the tree is grouped by status again',
