@@ -355,9 +355,8 @@ export function Sidebar({
         sessions,
         runtime,
         askSessionIds,
-        lastFocusedBySpace: tree.lastFocusedBySpace,
       }),
-    [projects, sessions, runtime, askSessionIds, tree.lastFocusedBySpace],
+    [projects, sessions, runtime, askSessionIds],
   );
   const visibleSpaceRows = useMemo(
     () =>
@@ -370,8 +369,6 @@ export function Sidebar({
       : row.key === SPACE_KEY_NONE
         ? SIDEBAR_STR.noSpace
         : row.name;
-  const spaceDetail = (row: SpaceRowModel) =>
-    row.key === SPACE_KEY_ALL ? SIDEBAR_STR.agentCount(row.count) : row.branch;
 
   const setUi = (patch: Partial<SidebarUiState>) => updateUi({ ...ui, ...patch });
 
@@ -1135,7 +1132,7 @@ export function Sidebar({
             key={row.key}
             row={row}
             name={spaceName(row)}
-            detail={spaceDetail(row)}
+            detail={SIDEBAR_STR.agentCount(row.count)}
             selected={selected === row.key}
             renaming={row.projectId !== null && renamingProjectId === row.projectId}
             dropCue={dropKey === row.key}

@@ -254,50 +254,12 @@ describe('buildSpaceRows', () => {
     { id: 'p1', name: 'alpha', order: 0 },
     { id: 'p3', name: 'empty', order: 2 },
   ];
-  const git = (branch: string) => ({
-    repoGit: { '/r': { kind: 'branch' as const, branch } },
-    activeRepoRoot: '/r',
-  });
-
-  it('retains focused branches independently for each Space including No space', () => {
-    const sessions = [
-      S('a', { projectId: 'p1', lastActiveAt: 1, ...git('a-focused') }),
-      S('a2', { projectId: 'p1', lastActiveAt: 9, ...git('a-output') }),
-      S('b', { projectId: 'p2', ...git('b-focused') }),
-      S('n', { lastActiveAt: 1, ...git('loose-focused') }),
-      S('n2', { lastActiveAt: 9, ...git('loose-output') }),
-    ];
-    const input = {
-      projects,
-      sessions,
-      runtime: runtimeOf(sessions),
-      askSessionIds: new Set<string>(),
-      lastFocusedBySpace: { p1: 'a', p2: 'b', 'no-space': 'n' },
-    };
-    const r = buildSpaceRows(input);
-    expect(r.find((x) => x.key === 'p1')?.branch).toBe('a-focused');
-    expect(r.find((x) => x.key === 'p2')?.branch).toBe('b-focused');
-    expect(r.find((x) => x.key === 'no-space')?.branch).toBe('loose-focused');
-    expect(
-      buildSpaceRows({ ...input, sessions: sessions.filter((s) => s.id !== 'a') }).find(
-        (x) => x.key === 'p1',
-      )?.branch,
-    ).toBe('a-output');
-  });
-
-  function rows(sessions: Session[], lastFocusedId?: string, asks: string[] = []) {
+  function rows(sessions: Session[], asks: string[] = []) {
     return buildSpaceRows({
       projects,
       sessions,
       runtime: runtimeOf(sessions),
       askSessionIds: new Set(asks),
-      lastFocusedBySpace: lastFocusedId
-        ? Object.fromEntries(
-            sessions
-              .filter((s) => s.id === lastFocusedId)
-              .map((s) => [s.projectId ?? 'no-space', s.id]),
-          )
-        : {},
     });
   }
 
@@ -322,7 +284,6 @@ describe('buildSpaceRows', () => {
       sessions: [],
       runtime: { seen: {}, stateSince: {} },
       askSessionIds: new Set(),
-      lastFocusedBySpace: {},
     });
     expect(renamed.find((x) => x.key === 'p1')?.hue).toBe(r.find((x) => x.key === 'p1')?.hue);
     for (const x of r) expect(['green', 'violet', 'blue', 'accent', 'neutral']).toContain(x.hue);
@@ -335,28 +296,13 @@ describe('buildSpaceRows', () => {
       S('q', { projectId: 'p2', busy: true }),
       S('r', { projectId: 'p2' }),
     ];
-    const r = rows(sessions, undefined, ['r']);
+    const r = rows(sessions, ['r']);
     expect(r.find((x) => x.key === 'p1')?.state).toBe('done');
     expect(r.find((x) => x.key === 'p2')?.state).toBe('blocked');
     expect(r.find((x) => x.key === 'p3')?.state).toBeNull();
     expect(r.find((x) => x.key === 'all')?.state).toBe('blocked');
   });
 
-  it("takes the branch from the Space's last focused member, else its most recently active", () => {
-    const sessions = [
-      S('a', { projectId: 'p1', lastActiveAt: 5, ...git('feat') }),
-      S('b', { projectId: 'p1', lastActiveAt: 9, ...git('main') }),
-      S('c', {
-        projectId: 'p2',
-        repoGit: { '/r': { kind: 'detached', sha: 'abc1234' } },
-        activeRepoRoot: '/r',
-      }),
-    ];
-    expect(rows(sessions, 'a').find((x) => x.key === 'p1')?.branch).toBe('feat');
-    expect(rows(sessions, 'zzz').find((x) => x.key === 'p1')?.branch).toBe('main');
-    expect(rows(sessions, 'c').find((x) => x.key === 'p2')?.branch).toBeNull();
-    expect(rows(sessions).find((x) => x.key === 'all')?.branch).toBeNull();
-  });
 });
 
 describe('buildAgentTree — age fallback', () => {

@@ -191,9 +191,9 @@ describe('ViewMenu', () => {
     expect(q('[role="menu"]')).toBeNull();
   });
 
-  it('shows a dot and says so when an option is not the default', async () => {
+  it('says so in its label, without a dot, when an option is not the default', async () => {
     await renderAgents({ runningOnly: true });
-    expect(q('.viewmenu__dot')).not.toBeNull();
+    expect(q('.viewmenu__dot')).toBeNull();
     expect(trigger().getAttribute('aria-label')).toBe('Agents view options, customized');
   });
 
@@ -231,7 +231,7 @@ describe('ViewMenu', () => {
     expect(item('Name')?.getAttribute('aria-checked')).toBe('true');
     expect(item('Recent activity')?.getAttribute('aria-checked')).toBe('false');
     expect(item('Codex')?.getAttribute('aria-checked')).toBe('true');
-    expect(q('.viewmenu__dot')).not.toBeNull();
+    expect(q('.viewmenu__dot')).toBeNull();
   });
 
   it('chips are multi-select', async () => {

@@ -2273,18 +2273,10 @@ export function App() {
     viewedTerminalIds,
   });
   const [lastFocusedId, setLastFocusedId] = useState<string | undefined>(undefined);
-  const [lastFocusedBySpace, setLastFocusedBySpace] = useState<Readonly<Record<string, string>>>(
-    {},
-  );
-  const activeSpace = active?.projectId ?? 'no-space';
   useEffect(() => {
     if (activeId === undefined) return;
     setLastFocusedId(activeId);
-    if (active)
-      setLastFocusedBySpace((cur) =>
-        cur[activeSpace] === activeId ? cur : { ...cur, [activeSpace]: activeId },
-      );
-  }, [activeId, activeSpace, active]);
+  }, [activeId]);
   const sidebarUi = sidebarSync.ui;
   const selectedProjectId =
     sidebarUi.selection.kind === 'space' ? sidebarUi.selection.projectId : null;
@@ -2330,7 +2322,6 @@ export function App() {
       runtime: nextAgentRuntime,
       askSessionIds,
       bindings,
-      lastFocusedBySpace,
       filterRequest,
       requestFilter,
       updateUi: updateSidebarUi,
@@ -2346,7 +2337,6 @@ export function App() {
       nextAgentRuntime,
       askSessionIds,
       bindings,
-      lastFocusedBySpace,
       filterRequest,
       requestFilter,
       updateSidebarUi,

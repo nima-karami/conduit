@@ -88,7 +88,6 @@ async function render(
             hydrated: true,
             askSessionIds: new Set<string>(),
             bindings: {},
-            lastFocusedBySpace: {},
             filterRequest: 0,
             requestFilter: noop,
             updateUi: noop,
