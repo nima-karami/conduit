@@ -302,7 +302,6 @@ describe('buildSpaceRows', () => {
     expect(r.find((x) => x.key === 'p3')?.state).toBeNull();
     expect(r.find((x) => x.key === 'all')?.state).toBe('blocked');
   });
-
 });
 
 describe('buildAgentTree — age fallback', () => {
