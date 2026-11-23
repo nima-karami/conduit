@@ -7,6 +7,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { menuToggleIntent } from '../../src/menu-toggle';
+import { insertionEdge, isUnchangedInsertion } from '../../src/reorder';
 import type { ResolvedSessionIcon } from '../../src/session-icon';
 import { AUTO_SAVE_COPY } from '../auto-save-copy';
 import { getDirtySnapshot, subscribeDirty } from '../dirty-store';
@@ -27,6 +28,7 @@ import {
   SessionGlyph,
 } from '../icons';
 import { middleClickProps } from '../middle-click';
+import { leftDropTarget, pointerInsertionIndex } from '../reorder-drop';
 import { saveDocByPath } from '../save-registry';
 import { SPLIT_COPY } from '../split-editor-copy';
 import { acceptTabDrop, beginTabDrag, endTabDrag, tabDragOf, tabTerminalPath } from '../tab-drag';
@@ -113,10 +115,7 @@ export function DocTabs({
    *  save store here, which would pull Monaco into the tab strip. */
   saveStatuses?: ReadonlyMap<string, FileSaveStatus>;
 }) {
-  const [overId, setOverId] = useState<string | null>(null);
-  // Hovering the trailing strip past the last tab — drops there move the tab to the end
-  // (targetId=null). Without it the rightmost slot was unreachable (R5.6).
-  const [overEnd, setOverEnd] = useState(false);
+  const [insertion, setInsertion] = useState<number | null>(null);
   const dirty = useDirtySet();
   const terminalRef = useFocusTargetRef<HTMLButtonElement>(terminalFocusKey);
   const saves = saveStatuses;
@@ -258,15 +257,37 @@ export function DocTabs({
 
   const activeClass = groupActive ? 'tab--active' : 'tab--current';
 
-  const dropTab = (e: React.DragEvent, beforeId: string | null) => {
-    const dr = tabDragOf(e);
-    if (!dr) return;
+  const tabInsertionAt = (e: React.DragEvent) =>
+    (e.target as Element).closest('.tabbar__tabs, .tabbar__tail')
+      ? pointerInsertionIndex(e, '.tabbar__tabs > [data-tabid]')
+      : null;
+  const onTabDragOver = (e: React.DragEvent) => {
+    const drag = tabDragOf(e);
+    if (!drag) return;
+    const index = tabInsertionAt(e);
+    if (index === null) {
+      setInsertion(null);
+      return;
+    }
+    acceptTabDrop(e);
+    const source = drag.group === group ? docs.findIndex((d) => d.id === drag.id) : -1;
+    setInsertion(isUnchangedInsertion(source, index) ? null : index);
+  };
+  const dropTab = (e: React.DragEvent) => {
+    const drag = tabDragOf(e);
+    if (!drag) return;
+    const index = tabInsertionAt(e);
+    if (index === null) return;
     e.preventDefault();
-    if (dr.group === group) onReorder?.(dr.id, beforeId);
-    else onMoveTab?.(dr.id, group, beforeId, e.ctrlKey);
+    const beforeId = docs[index]?.id ?? null;
+    if (drag.group === group) {
+      const hovered = (e.target as Element).closest('[data-tabid]');
+      if (hovered?.getAttribute('data-tabid') !== drag.id) onReorder?.(drag.id, beforeId);
+    } else {
+      onMoveTab?.(drag.id, group, beforeId, e.ctrlKey);
+    }
     endTabDrag();
-    setOverId(null);
-    setOverEnd(false);
+    setInsertion(null);
   };
 
   return (
@@ -274,6 +295,11 @@ export function DocTabs({
       <div
         ref={stripRef}
         className="tabbar"
+        onDragOver={onTabDragOver}
+        onDragLeave={(e) => {
+          if (leftDropTarget(e)) setInsertion(null);
+        }}
+        onDrop={dropTab}
         onContextMenu={
           onStripContextMenu
             ? (e) => {
@@ -314,17 +340,18 @@ export function DocTabs({
           role={docs.length > 0 ? 'tablist' : undefined}
           aria-label={docs.length > 0 ? SPLIT_COPY.tablistLabel(group) : undefined}
         >
-          {docs.map((d) => (
+          {docs.map((d, index) => (
             <div
               key={d.id}
               data-tabid={d.id}
+              data-reorder-edge={insertionEdge(insertion, index, docs.length)}
               role="tab"
               tabIndex={0}
               aria-selected={activeId === d.id}
               // Preview is signalled visually by italic only; carry it in the accessible
               // name too so it isn't conveyed by styling alone (WCAG 1.4.1, spec §10).
               aria-label={previewIds.has(d.id) ? `${d.title} (preview)` : undefined}
-              className={`tab ${activeId === d.id ? activeClass : ''} ${overId === d.id ? 'tab--dropbefore' : ''} ${isDocDirty(d, dirty) ? 'tab--dirty' : ''} ${previewIds.has(d.id) ? 'tab--preview' : ''} ${flashTab === d.id ? 'tab--flash' : ''}`}
+              className={`tab ${activeId === d.id ? activeClass : ''} ${isDocDirty(d, dirty) ? 'tab--dirty' : ''} ${previewIds.has(d.id) ? 'tab--preview' : ''} ${flashTab === d.id ? 'tab--flash' : ''}`}
               onClick={() => onSelect(d.id)}
               // Middle-click closes the tab (VS Code parity), routing through the same
               // unsaved-changes path as the × button. `auxclick` (down+up on the element)
@@ -352,19 +379,9 @@ export function DocTabs({
                 e.dataTransfer.effectAllowed =
                   splitBehavior(d.kind) === 'duplicate' ? 'copyMove' : 'move';
               }}
-              onDragOver={(e) => {
-                const dr = tabDragOf(e);
-                if (dr && !(dr.group === group && dr.id === d.id)) {
-                  acceptTabDrop(e);
-                  setOverId(d.id);
-                }
-              }}
-              onDragLeave={() => setOverId((o) => (o === d.id ? null : o))}
-              onDrop={(e) => dropTab(e, d.id)}
               onDragEnd={() => {
                 endTabDrag();
-                setOverId(null);
-                setOverEnd(false);
+                setInsertion(null);
               }}
             >
               {d.kind === 'diff' && <IconBranch size={12} className="tab__spark" />}
@@ -419,14 +436,8 @@ export function DocTabs({
             tab (→ end) reaches the rightmost slot (R5.6). Inert unless a tab drag is live. */}
         {onReorder && (
           <div
-            className={`tabbar__tail ${overEnd ? 'tabbar__tail--over' : ''}`}
-            onDragOver={(e) => {
-              if (!tabDragOf(e)) return;
-              acceptTabDrop(e);
-              setOverEnd(true);
-            }}
-            onDragLeave={() => setOverEnd(false)}
-            onDrop={(e) => dropTab(e, null)}
+            className="tabbar__tail"
+            data-reorder-edge={insertion === 0 && docs.length === 0 ? 'before' : undefined}
           />
         )}
       </div>

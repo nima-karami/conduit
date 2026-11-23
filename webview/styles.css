@@ -3220,6 +3220,7 @@ body.resizing .panel__resize::after {
 /* The center region: the pane above its footer, one --gutter apart like any two surfaces, so at
    Neon (gutter 0) the footer's own top hairline is the only rule between them. */
 .centercol {
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -9838,18 +9839,26 @@ button.toggle--on .toggle__knob {
 }
 
 /* ---------- drag & drop reordering ---------- */
-.tab--dropbefore {
-  --rest-shadow: inset 2px 0 0 var(--accent);
+[data-reorder-edge]::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  width: 2px;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 2;
 }
-/* Trailing drop zone past the last tab (R5.6). Fills the remaining strip width so a
-   tab can be dropped at the end; keeps a small min-width so it stays reachable even
-   when the strip scrolls. The --over state echoes .tab--dropbefore's accent edge. */
+[data-reorder-edge="before"]::before {
+  left: 0;
+}
+[data-reorder-edge="after"]::before {
+  right: 0;
+}
+/* Reserve room to drop after the last tab even when the strip scrolls (R5.6). */
 .tabbar__tail {
+  position: relative;
   flex: 1 0 32px;
   align-self: stretch;
-}
-.tabbar__tail--over {
-  box-shadow: inset 2px 0 0 var(--accent);
 }
 .session[draggable="true"] {
   cursor: grab;

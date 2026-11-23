@@ -11,8 +11,6 @@ export interface DockHandlers {
   isOver: boolean;
   onDragStart: () => void;
   onDragEnd: () => void;
-  onDragOver: (e: React.DragEvent) => void;
-  onDrop: () => void;
 }
 
 /**
@@ -28,6 +26,7 @@ export function PanelFrame({
   edge,
   onWidthCommit,
   dock,
+  reorderEdge,
   onPanelContextMenu,
   barless = false,
   children,
@@ -38,6 +37,7 @@ export function PanelFrame({
   edge: 'left' | 'right'; // center-facing edge
   onWidthCommit: (width: number) => void;
   dock: DockHandlers;
+  reorderEdge?: 'before' | 'after';
   // Opens the panel show/hide menu. Bound at the panel root, so it must check
   // `e.defaultPrevented` to no-op when a child item menu already handled the event (B1).
   onPanelContextMenu?: (e: React.MouseEvent) => void;
@@ -99,11 +99,8 @@ export function PanelFrame({
       ref={ref}
       style={{ width: `var(${widthVar})` }}
       onContextMenu={onPanelContextMenu}
-      onDragOver={dock.onDragOver}
-      onDrop={(e) => {
-        e.preventDefault();
-        dock.onDrop();
-      }}
+      data-dock-region={region}
+      data-reorder-edge={reorderEdge}
     >
       {!barless && (
         <div
