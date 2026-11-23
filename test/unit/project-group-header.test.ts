@@ -43,7 +43,6 @@ const SPACE: SpaceRowModel = {
   name: 'RMB',
   letter: 'R',
   hue: 'violet',
-  branch: 'main',
   state: 'blocked',
   count: 2,
 };
@@ -53,7 +52,7 @@ function spaceProps(over: Partial<SpaceProps> = {}): SpaceProps {
   return {
     row: SPACE,
     name: 'RMB',
-    detail: 'main',
+    detail: '2 agents',
     selected: false,
     renaming: false,
     dropCue: false,
@@ -67,14 +66,14 @@ function spaceProps(over: Partial<SpaceProps> = {}): SpaceProps {
 }
 
 describe('SpaceRow', () => {
-  it('is a pressed-state button named exactly the Space, described by its branch', async () => {
+  it('is a pressed-state button named exactly the Space, described by its agent count', async () => {
     const p = spaceProps({ selected: true });
     await render(createElement(SpaceRow, p));
     const btn = q<HTMLButtonElement>('button[data-space-id="p-1"]');
     expect(btn.getAttribute('aria-pressed')).toBe('true');
     expect(btn.getAttribute('aria-label')).toBe('RMB');
     const desc = document.getElementById(btn.getAttribute('aria-describedby') ?? '');
-    expect(desc?.textContent).toBe('main');
+    expect(desc?.textContent).toBe('2 agents');
     expect(btn.className).toBe('space space--violet space--on');
     expect(btn.querySelector('.space__tile')?.textContent).toBe('R');
     expect(btn.querySelector('.agentmark__dot--blocked')).not.toBeNull();

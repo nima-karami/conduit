@@ -19,8 +19,10 @@ enum Direction {
 
 #[test]
 fn shared_protocol_fixtures_match_the_rust_mirror() {
-    let fixture_dir =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures/tray-protocol");
+    // Runtime, not env!(): worktrees share one target dir (tools/tray-cargo.mjs), so a binary
+    // built in another worktree would point at that checkout's fixtures.
+    let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR").expect("run through cargo test");
+    let fixture_dir = PathBuf::from(manifest_dir).join("../../test/fixtures/tray-protocol");
     let mut paths = fs::read_dir(&fixture_dir)
         .expect("shared fixture directory")
         .map(|entry| entry.expect("fixture entry").path())

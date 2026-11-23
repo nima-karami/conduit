@@ -126,7 +126,6 @@ async function render(s: Setup) {
       runtime: { seen: {}, stateSince: {} },
       askSessionIds: new Set(),
       bindings: {},
-      lastFocusedBySpace: {},
       filterRequest,
       requestFilter: () => {},
       updateUi: (next) => {
@@ -786,7 +785,7 @@ describe('panel ⋯ view menus', () => {
     await pick('By agent type');
     expect(headers()).toEqual(['Claude (2)', 'Codex (1)', 'Other (1)']);
     expect(rowIds()).toEqual(['a', 'c', 'b', 'd']);
-    expect(q('.viewmenu__dot')).not.toBeNull();
+    expect(q('.viewmenu__dot')).toBeNull();
   });
 
   it('By space titles each group with its Space, and None drops the headers', async () => {

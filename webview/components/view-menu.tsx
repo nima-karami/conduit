@@ -73,7 +73,6 @@ export function ViewMenu({ label, model }: { label: string; model: ViewMenuModel
         onClick={onClick}
       >
         <IconMore size={15} />
-        {customized && <span className="viewmenu__dot" aria-hidden />}
       </button>
       {anchor && (
         <Popover

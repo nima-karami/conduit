@@ -13,7 +13,6 @@ export interface SidebarTreeContextValue {
   runtime: AgentRuntime;
   askSessionIds: ReadonlySet<string>;
   bindings: Readonly<Record<string, { cli?: string; handle?: string }>>;
-  lastFocusedBySpace: Readonly<Record<string, string>>;
   /** Bumped by requestFilter; the sidebar reveals and focuses its filter on each change. */
   filterRequest: number;
   requestFilter(): void;

@@ -331,7 +331,6 @@ export interface SpaceRowModel {
   name: string;
   letter: string;
   hue: SpaceHue;
-  branch: string | null;
   state: AgentState | null;
   count: number;
 }
@@ -348,27 +347,11 @@ function hueOf(projectId: string): SpaceHue {
   return HUES[h % HUES.length];
 }
 
-function branchOf(s: Session | undefined): string | null {
-  const root = s?.activeRepoRoot;
-  const git = root === undefined ? undefined : s?.repoGit?.[root];
-  return git?.kind === 'branch' && git.branch ? git.branch : null;
-}
-
-/** §3: the last focused member, else the most recently active one (ties: creation, then id). */
-function branchSource(members: readonly Session[], lastFocusedId: string | undefined) {
-  const focused = members.find((s) => s.id === lastFocusedId);
-  if (focused) return focused;
-  return [...members].sort(
-    (a, b) => b.lastActiveAt - a.lastActiveAt || a.createdAt - b.createdAt || byId(a.id, b.id),
-  )[0];
-}
-
 export function buildSpaceRows(input: {
   projects: readonly Project[];
   sessions: readonly Session[];
   runtime: AgentRuntime;
   askSessionIds: ReadonlySet<string>;
-  lastFocusedBySpace: Readonly<Record<string, string>>;
 }): SpaceRowModel[] {
   const { sessions, runtime, askSessionIds } = input;
   const stateOf = (members: readonly Session[]): AgentState | null => {
@@ -387,7 +370,6 @@ export function buildSpaceRows(input: {
       name: 'All',
       letter: '',
       hue: 'neutral',
-      branch: null,
       state: stateOf(sessions),
       count: sessions.length,
     },
@@ -400,7 +382,6 @@ export function buildSpaceRows(input: {
       name: p.name,
       letter: letterOf(p.name),
       hue: hueOf(p.id),
-      branch: branchOf(branchSource(members, input.lastFocusedBySpace[p.id])),
       state: stateOf(members),
       count: members.length,
     });
@@ -413,7 +394,6 @@ export function buildSpaceRows(input: {
       name: 'No space',
       letter: '',
       hue: 'neutral',
-      branch: branchOf(branchSource(loose, input.lastFocusedBySpace['no-space'])),
       state: stateOf(loose),
       count: loose.length,
     });

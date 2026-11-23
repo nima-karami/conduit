@@ -6,6 +6,13 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Every Space shows how many agents it holds.** Each row in Spaces now reads like All, for
+  example "3 agents", instead of mixing a count with branch names.
+- **No blue dot on the ⋯ menus.** The Agents and Spaces ⋯ buttons no longer show a dot when
+  their sort, group or filter isn't the default; the dot covered the button.
+
 ## [0.74.0] — 2026-11-21
 
 ### Added

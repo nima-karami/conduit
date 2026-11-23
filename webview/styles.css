@@ -9187,17 +9187,6 @@ body.gh-resizing {
   background: var(--state-sel-bg);
   border-color: var(--state-on-fg);
 }
-/* Non-default options: a mark on the button, which stays legible when the menu is shut. */
-.viewmenu__dot {
-  position: absolute;
-  top: 3px;
-  right: 3px;
-  width: 7px;
-  height: 7px;
-  border-radius: var(--r-round);
-  background: var(--accent);
-  pointer-events: none;
-}
 .viewmenu__section + .viewmenu__section {
   margin-top: 4px;
   border-top: 1px solid var(--border);

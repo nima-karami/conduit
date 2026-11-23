@@ -189,7 +189,11 @@ try {
     `Space order, got ${JSON.stringify(order)}`,
   );
   assert((await spaceDetail(page, 'all')) === '3 agents', 'All counts the three agents');
-  // A Space row shows no count of its own; selecting it is how its membership shows.
+  // Every Space row describes the same thing: how many agents it holds.
+  for (const key of [alphaId, betaId, 'no-space']) {
+    const detail = await spaceDetail(page, key);
+    assert(detail === '1 agent', `Space ${key} counts its one agent, got ${detail}`);
+  }
   for (const [key, sid] of [
     [alphaId, sAlpha],
     [betaId, sBeta],
