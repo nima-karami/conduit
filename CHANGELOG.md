@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.74.1] — 2026-11-23
+
 ### Changed
 
 - **Every Space shows how many agents it holds.** Each row in Spaces now reads like All, for
