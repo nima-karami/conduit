@@ -12,7 +12,7 @@
  *     file follows into Files. Both are transient: the remembered rightPaneTab is unchanged.
  *  6. Persistence across reload: the remembered view, and the panel's open/closed state.
  *  7. Palette routes: feature board, architecture canvas, back to the editor.
- *  8. The panel context menu moves the side panel.
+ *  8. The title band re-docks on either side of the workspace, and the keyboard menu moves it.
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -415,17 +415,32 @@ runScenario('right-panel-toggles', async ({ app, page, log }) => {
     'the title band names the shown view',
   );
   assert((await head.getAttribute('draggable')) === 'true', 'the title band is a drag surface');
-  await head.dragTo(page.locator('main.centerpane'));
-  s = await waitSettings(app, (x) => x.layout !== 'sessions,center,explorer');
+  const center = page.locator('main.centerpane');
+  const dropOnCenterHalf = async (fraction) => {
+    const box = await center.boundingBox();
+    assert(box, 'the workspace is visible during a panel drag');
+    await head.dragTo(center, {
+      targetPosition: { x: box.width * fraction, y: box.height / 2 },
+    });
+  };
+  // The same-side half selects the Explorer's current slot.
+  await dropOnCenterHalf(0.75);
+  assert((await sideOfCenter()) === 'right', 'dropping after the workspace keeps Explorer there');
+
+  await dropOnCenterHalf(0.25);
+  const beforeCenter = 'sessions,explorer,center';
+  s = await waitSettings(app, (x) => x.layout === beforeCenter);
   assert(
-    s && (await sideOfCenter()) !== 'right',
-    `dragging the title band onto the center re-docks the panel (layout ${s?.layout})`,
+    s?.layout === beforeCenter && (await sideOfCenter()) === 'left',
+    `dropping on the left half puts Explorer before the workspace (layout ${s?.layout})`,
   );
-  await head.dragTo(page.locator('main.centerpane'));
-  s = await waitSettings(app, (x) => x.layout === 'sessions,center,explorer');
+
+  await dropOnCenterHalf(0.75);
+  const afterCenter = 'sessions,center,explorer';
+  s = await waitSettings(app, (x) => x.layout === afterCenter);
   assert(
-    s && (await sideOfCenter()) === 'right',
-    `dragging it back restores the default dock (layout ${s?.layout})`,
+    s?.layout === afterCenter && (await sideOfCenter()) === 'right',
+    `dropping on the right half puts Explorer after the workspace (layout ${s?.layout})`,
   );
   log('title band re-docks the panel both ways ✓');
   // The panel root keeps keyboard access to its move menu after the grip is removed.
