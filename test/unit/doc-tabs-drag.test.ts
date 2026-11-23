@@ -47,6 +47,11 @@ async function render() {
       }),
     );
   });
+  for (const [index, doc] of docs.entries()) {
+    vi.spyOn(tab(doc.id), 'getBoundingClientRect').mockReturnValue(
+      new DOMRect(index * 100, 0, 100, 24),
+    );
+  }
 }
 
 const tab = (id: string) => {
@@ -55,8 +60,8 @@ const tab = (id: string) => {
   return el;
 };
 
-function dragEvent(type: string, el: EventTarget, dt: object | null) {
-  const ev = new Event(type, { bubbles: true, cancelable: true });
+function dragEvent(type: string, el: EventTarget, dt: object | null, clientX = 0) {
+  const ev = new MouseEvent(type, { bubbles: true, cancelable: true, clientX });
   Object.defineProperty(ev, 'dataTransfer', { value: dt });
   el.dispatchEvent(ev);
 }
@@ -113,7 +118,7 @@ describe('DocTabs drag-out', () => {
     expect(dt.effectAllowed).toBe('copyMove');
     expect(posted).toEqual([{ type: 'fs:armDragDownload', path: '/w/a.ts' }]);
     await act(async () => {
-      dragEvent('drop', tab('file:/w/c.ts'), dt);
+      dragEvent('drop', tab('file:/w/c.ts'), dt, 210);
     });
     expect(onReorder).toHaveBeenCalledWith('file:/w/a.ts', 'file:/w/c.ts');
   });

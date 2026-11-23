@@ -696,18 +696,7 @@ export function CenterPane({
   };
 
   return (
-    <main
-      className={`centerpane ${dock?.isOver ? 'centerpane--droptarget' : ''}`}
-      onDragOver={dock?.onDragOver}
-      onDrop={
-        dock
-          ? (e) => {
-              e.preventDefault();
-              dock.onDrop();
-            }
-          : undefined
-      }
-    >
+    <main className={`centerpane ${dock?.isOver ? 'centerpane--droptarget' : ''}`}>
       <RequestPopup sessions={sessions} />
       {sessions.length === 0 && groupOne.activeDocId === null ? (
         <CenterEmptyState repos={repos} agents={agents} onNewSession={onNewSession} />

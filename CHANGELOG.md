@@ -6,6 +6,11 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Drop editor tabs and docked panels before or after an item by dragging to the corresponding
+  half. The accent line shows the insertion point, including the first and last positions.
+
 ## [0.74.1] — 2026-11-23
 
 ### Changed

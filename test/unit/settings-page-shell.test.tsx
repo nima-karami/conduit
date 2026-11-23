@@ -75,7 +75,7 @@ describe('SettingsPage shell', () => {
 describe('workbench behind Settings', () => {
   it('app.tsx marks the workbench inert exactly while Settings is open', () => {
     const app = readFileSync(join(__dirname, '../../webview/app.tsx'), 'utf8');
-    expect(app).toMatch(/<div className="workbench" inert=\{settingsOpen\}>/);
+    expect(app).toMatch(/<div\s+className="workbench"\s+inert=\{settingsOpen\}(?=\s|>)/);
   });
 
   it('app.tsx closes Settings only through closeSettings', () => {

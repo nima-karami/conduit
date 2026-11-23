@@ -12,14 +12,12 @@ import { installUnclaimedDropGuard } from '../../webview/unclaimed-drop-guard';
 // drag only by setting its own dropEffect (os-drag-out spec §2.2). Every file with a dragover
 // handler is listed here with how it satisfies that; a new one fails until someone checks it.
 const AUDITED: Record<string, string> = {
-  'webview/app.tsx': 'dock: acts only on its own panel drag, never Files',
+  'webview/app.tsx': 'workbench capture claims only panel drags started by a move grip',
   'webview/components/board-view.tsx': 'acts only on its own card drag',
-  'webview/components/center-pane.tsx': 'dock handlers from app.tsx',
   'webview/components/doc-tabs.tsx': 'acts only on its own tab drag',
   'webview/components/editor-groups.tsx': 'drop zones mount only during a tab drag, act only on it',
   'webview/components/files-view.tsx': 'scroller sets dropEffect; + Add folder only stops it',
   'webview/components/folder-section.tsx': 'rows and sections set dropEffect',
-  'webview/components/panel-frame.tsx': 'dock handlers from app.tsx',
   'webview/components/project-group-header.tsx': 'sidebar handlers, own drags only',
   'webview/components/settings-page.tsx': 'shader textarea sets dropEffect (tested below)',
   'webview/components/sidebar.tsx': 'acts only on its own card/group drags',

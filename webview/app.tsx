@@ -66,6 +66,7 @@ import {
   quickOpenFileRows,
 } from '../src/quick-open-folders';
 import { quitConfirmState } from '../src/quit-guard';
+import { insertionEdge, isUnchangedInsertion, moveBefore } from '../src/reorder';
 import {
   historyRepoFor,
   orderRepos,
@@ -341,6 +342,7 @@ import {
   remoteKeyId,
   remoteSessionRows,
 } from './remote-sessions';
+import { leftDropTarget, pointerInsertionIndex } from './reorder-drop';
 import { openRequest, setRequestOpeners } from './request-open';
 import { sortRequests } from './request-view-model';
 import { resolveModuleOnDemand } from './resolve-module';
@@ -770,7 +772,7 @@ export function App() {
   useEffect(() => endTabDrag(), [activeId, centerView]);
   const [splitId, setSplitId] = useState<string | null>(null);
   const dragRegionRef = useRef<Region | null>(null);
-  const [overRegion, setOverRegion] = useState<Region | null>(null);
+  const [dockInsertion, setDockInsertion] = useState<number | null>(null);
   const {
     hydrate,
     settings,
@@ -5522,36 +5524,57 @@ export function App() {
   );
   const resetDock = () => {
     dragRegionRef.current = null;
-    setOverRegion(null);
+    setDockInsertion(null);
   };
-  const dockHandlers = (region: Region): DockHandlers => ({
-    isOver: overRegion === region,
+  const dockHandlers = (region: Region, isOver: boolean): DockHandlers => ({
+    isOver,
     onDragStart: () => {
       dragRegionRef.current = region;
     },
     onDragEnd: resetDock,
-    onDragOver: (e) => {
-      const d = dragRegionRef.current;
-      if (d && d !== region) {
-        e.preventDefault();
-        setOverRegion(region);
-      }
-    },
-    onDrop: () => {
-      const d = dragRegionRef.current;
-      if (d && d !== region) update({ layout: serializeLayout(reorderDock(order, d, region)) });
-      resetDock();
-    },
   });
+  const dockInsertionAt = (e: React.DragEvent) =>
+    pointerInsertionIndex(e, ':scope > [data-dock-region]');
+  const onDockDragOver = (e: React.DragEvent) => {
+    const source = dragRegionRef.current;
+    if (!source) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const index = dockInsertionAt(e);
+    setDockInsertion(isUnchangedInsertion(visibleOrder.indexOf(source), index) ? null : index);
+  };
+  const onDockDrop = (e: React.DragEvent) => {
+    const source = dragRegionRef.current;
+    if (!source) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const index = dockInsertionAt(e);
+    if (!isUnchangedInsertion(visibleOrder.indexOf(source), index)) {
+      const lastVisible = visibleOrder[visibleOrder.length - 1];
+      const before = visibleOrder[index] ?? order[order.indexOf(lastVisible) + 1] ?? null;
+      update({ layout: serializeLayout(moveBefore(order, source, before)) });
+    }
+    resetDock();
+  };
   const commitWidth = (region: Region, w: number) =>
     update(region === 'sessions' ? { leftWidth: w } : { rightWidth: w });
 
   const renderRegion = (region: Region) => {
+    const reorderEdge = insertionEdge(
+      dockInsertion,
+      visibleOrder.indexOf(region),
+      visibleOrder.length,
+    );
     if (region === 'center') {
       return (
         // The footer sits outside the boundary, so a center-pane crash keeps the window's
         // status (sidebar-agent-tree spec §7: the status bar belongs to the center column).
-        <div key="center" className="centercol">
+        <div
+          key="center"
+          className="centercol"
+          data-dock-region="center"
+          data-reorder-edge={reorderEdge}
+        >
           {/* Guard the center pane: a render/teardown throw here (e.g. the xterm
             WebGL addon failing to dispose when a running session is closed) would
             otherwise blank the whole React root to black. The boundary catches it
@@ -5656,7 +5679,7 @@ export function App() {
               }
               onPinDoc={(id, group) => dispatchDocs({ type: 'pinDoc', id, group })}
               onMoveTab={moveTabToGroup}
-              dock={dockHandlers('center')}
+              dock={dockHandlers('center', reorderEdge !== undefined)}
               splitId={splitId}
               onCloseSplit={() => setSplitId(null)}
               onOpenFile={(p, mode) => openFile(p, undefined, mode)}
@@ -5707,7 +5730,7 @@ export function App() {
       // One dock object shared by the frame (drop target + resize) and the Sidebar's
       // own header band (the panel-move drag source, via moveGrip). barless: the
       // Sidebar's header IS the bar, so it aligns with the center tab strip.
-      const sdock = dockHandlers('sessions');
+      const sdock = dockHandlers('sessions', reorderEdge !== undefined);
       return (
         <PanelFrame
           key="sessions"
@@ -5717,6 +5740,7 @@ export function App() {
           edge={centerFacingEdge(visibleOrder, 'sessions')}
           onWidthCommit={(w) => commitWidth('sessions', w)}
           dock={sdock}
+          reorderEdge={reorderEdge}
           onPanelContextMenu={onPanelTogglesMenu}
           barless
         >
@@ -5784,7 +5808,7 @@ export function App() {
         </PanelFrame>
       );
     }
-    const edock = dockHandlers('explorer');
+    const edock = dockHandlers('explorer', reorderEdge !== undefined);
     return (
       <PanelFrame
         key="explorer"
@@ -5794,6 +5818,7 @@ export function App() {
         edge={centerFacingEdge(visibleOrder, 'explorer')}
         onWidthCommit={(w) => commitWidth('explorer', w)}
         dock={edock}
+        reorderEdge={reorderEdge}
         onPanelContextMenu={(e) => onPanelTogglesMenu(e, 'explorer')}
         barless
       >
@@ -6035,7 +6060,16 @@ export function App() {
               openSettings={() => openSettingsAt('mcp', undefined, { mcpTab: 'agents' })}
             />
           )}
-          <div className="workbench" inert={settingsOpen}>
+          <div
+            className="workbench"
+            inert={settingsOpen}
+            // Panel drags belong to the layout even over children with their own drop handlers.
+            onDragOverCapture={onDockDragOver}
+            onDragLeave={(e) => {
+              if (dragRegionRef.current && leftDropTarget(e)) setDockInsertion(null);
+            }}
+            onDropCapture={onDockDrop}
+          >
             {visibleOrder.map(renderRegion)}
             {workspacePermissions &&
               !settingsOpen &&
